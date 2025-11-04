@@ -17,7 +17,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 )
 
 var (
@@ -82,14 +81,6 @@ func main() {
 		monitor.Start(shutdownChan)
 	}()
 
-	// Start garbage collector thread
-	log.Println("Starting garbage collector thread...")
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		runGarbageCollector(ds, shutdownChan)
-	}()
-
 	log.Println("Collector is running. Press Ctrl+C to stop.")
 
 	// Wait for shutdown signal
@@ -147,25 +138,4 @@ func waitForShutdown() {
 	// For now, just wait indefinitely
 	// In production, this would handle OS signals
 	select {}
-}
-
-// runGarbageCollector runs the garbage collector thread
-func runGarbageCollector(ds *Datastore, shutdown <-chan struct{}) {
-	ticker := time.NewTicker(24 * time.Hour)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-shutdown:
-			log.Println("Garbage collector thread stopping")
-			return
-		case <-ticker.C:
-			log.Println("Running garbage collector...")
-			if err := ds.CollectGarbage(); err != nil {
-				log.Printf("Garbage collection error: %v", err)
-			} else {
-				log.Println("Garbage collection completed")
-			}
-		}
-	}
 }

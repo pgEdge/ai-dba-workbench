@@ -52,7 +52,9 @@ func getTestConnection(t *testing.T) *sql.DB {
 // cleanupTestSchema drops all test tables
 func cleanupTestSchema(t *testing.T, db *sql.DB) {
 	tables := []string{
-		"probes",
+		"user_tokens",
+		"service_tokens",
+		"user_accounts",
 		"monitored_connections",
 		"schema_version",
 	}
@@ -77,7 +79,7 @@ func TestNewSchemaManager(t *testing.T) {
 	}
 
 	// Verify migrations are registered in order
-	expectedVersions := []int{1, 2, 3, 4, 5}
+	expectedVersions := []int{1, 2, 3, 4, 5, 6, 7, 8, 9}
 	if len(sm.migrations) != len(expectedVersions) {
 		t.Fatalf("Expected %d migrations, got %d", len(expectedVersions), len(sm.migrations))
 	}
@@ -155,19 +157,6 @@ func TestMigrateFromScratch(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatal("monitored_connections table was not created")
-	}
-
-	// Verify probes table exists
-	err = db.QueryRow(`
-        SELECT COUNT(*)
-        FROM information_schema.tables
-        WHERE table_name = 'probes'
-    `).Scan(&count)
-	if err != nil {
-		t.Fatalf("Failed to check for probes table: %v", err)
-	}
-	if count != 1 {
-		t.Fatal("probes table was not created")
 	}
 
 	// Clean up
@@ -384,63 +373,6 @@ func TestMonitoredConnectionsConstraints(t *testing.T) {
 	cleanupTestSchema(t, db)
 }
 
-func TestProbesConstraints(t *testing.T) {
-	db := getTestConnection(t)
-	if db == nil {
-		return
-	}
-	defer func() {
-		if err := db.Close(); err != nil {
-			t.Logf("Error closing database: %v", err)
-		}
-	}()
-
-	// Clean up and migrate
-	cleanupTestSchema(t, db)
-	sm := NewSchemaManager()
-	if err := sm.Migrate(db); err != nil {
-		t.Fatalf("Failed to migrate: %v", err)
-	}
-
-	// Test collection_interval constraint
-	_, err := db.Exec(`
-        INSERT INTO probes (name, sql_query, collection_interval)
-        VALUES ('test_probe', 'SELECT 1', 0)
-    `)
-	if err == nil {
-		t.Error("Expected error for invalid collection_interval, got nil")
-	}
-
-	// Test retention_days constraint
-	_, err = db.Exec(`
-        INSERT INTO probes (name, sql_query, retention_days)
-        VALUES ('test_probe', 'SELECT 1', 0)
-    `)
-	if err == nil {
-		t.Error("Expected error for invalid retention_days, got nil")
-	}
-
-	// Test unique constraint on name
-	_, err = db.Exec(`
-        INSERT INTO probes (name, sql_query)
-        VALUES ('test_probe', 'SELECT 1')
-    `)
-	if err != nil {
-		t.Errorf("Failed to insert first probe: %v", err)
-	}
-
-	_, err = db.Exec(`
-        INSERT INTO probes (name, sql_query)
-        VALUES ('test_probe', 'SELECT 2')
-    `)
-	if err == nil {
-		t.Error("Expected error for duplicate probe name, got nil")
-	}
-
-	// Clean up
-	cleanupTestSchema(t, db)
-}
-
 func TestIndexesCreated(t *testing.T) {
 	db := getTestConnection(t)
 	if db == nil {
@@ -482,10 +414,309 @@ func TestIndexesCreated(t *testing.T) {
 		}
 	}
 
-	// Check for indexes on probes
-	expectedIndexes = []string{
-		"idx_probes_enabled",
-		"idx_probes_name",
+	// Clean up
+	cleanupTestSchema(t, db)
+}
+func TestUserAccountsTable(t *testing.T) {
+	db := getTestConnection(t)
+	if db == nil {
+		return
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Logf("Error closing database: %v", err)
+		}
+	}()
+
+	// Clean up and migrate
+	cleanupTestSchema(t, db)
+	sm := NewSchemaManager()
+	if err := sm.Migrate(db); err != nil {
+		t.Fatalf("Failed to migrate: %v", err)
+	}
+
+	// Verify table exists
+	var count int
+	err := db.QueryRow(`
+        SELECT COUNT(*)
+        FROM information_schema.tables
+        WHERE table_name = 'user_accounts'
+    `).Scan(&count)
+	if err != nil {
+		t.Fatalf("Failed to check for user_accounts table: %v", err)
+	}
+	if count != 1 {
+		t.Fatal("user_accounts table was not created")
+	}
+
+	// Test unique constraint on username
+	_, err = db.Exec(`
+        INSERT INTO user_accounts (username, email, full_name, password_hash)
+        VALUES ('testuser', 'test@example.com', 'Test User', 'hash123')
+    `)
+	if err != nil {
+		t.Errorf("Failed to insert first user: %v", err)
+	}
+
+	_, err = db.Exec(`
+        INSERT INTO user_accounts (username, email, full_name, password_hash)
+        VALUES ('testuser', 'test2@example.com', 'Test User 2', 'hash456')
+    `)
+	if err == nil {
+		t.Error("Expected error for duplicate username, got nil")
+	}
+
+	// Test empty username constraint
+	_, err = db.Exec(`
+        INSERT INTO user_accounts (username, email, full_name, password_hash)
+        VALUES ('', 'test3@example.com', 'Test User 3', 'hash789')
+    `)
+	if err == nil {
+		t.Error("Expected error for empty username, got nil")
+	}
+
+	// Test empty email constraint
+	_, err = db.Exec(`
+        INSERT INTO user_accounts (username, email, full_name, password_hash)
+        VALUES ('testuser2', '', 'Test User 2', 'hash789')
+    `)
+	if err == nil {
+		t.Error("Expected error for empty email, got nil")
+	}
+
+	// Test empty password_hash constraint
+	_, err = db.Exec(`
+        INSERT INTO user_accounts (username, email, full_name, password_hash)
+        VALUES ('testuser2', 'test2@example.com', 'Test User 2', '')
+    `)
+	if err == nil {
+		t.Error("Expected error for empty password_hash, got nil")
+	}
+
+	// Clean up
+	cleanupTestSchema(t, db)
+}
+
+func TestUserTokensTable(t *testing.T) {
+	db := getTestConnection(t)
+	if db == nil {
+		return
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Logf("Error closing database: %v", err)
+		}
+	}()
+
+	// Clean up and migrate
+	cleanupTestSchema(t, db)
+	sm := NewSchemaManager()
+	if err := sm.Migrate(db); err != nil {
+		t.Fatalf("Failed to migrate: %v", err)
+	}
+
+	// Verify table exists
+	var count int
+	err := db.QueryRow(`
+        SELECT COUNT(*)
+        FROM information_schema.tables
+        WHERE table_name = 'user_tokens'
+    `).Scan(&count)
+	if err != nil {
+		t.Fatalf("Failed to check for user_tokens table: %v", err)
+	}
+	if count != 1 {
+		t.Fatal("user_tokens table was not created")
+	}
+
+	// Create a test user first
+	var userID int
+	err = db.QueryRow(`
+        INSERT INTO user_accounts (username, email, full_name, password_hash)
+        VALUES ('testuser', 'test@example.com', 'Test User', 'hash123')
+        RETURNING id
+    `).Scan(&userID)
+	if err != nil {
+		t.Fatalf("Failed to create test user: %v", err)
+	}
+
+	// Test foreign key constraint
+	_, err = db.Exec(`
+        INSERT INTO user_tokens (user_id, token_hash, expires_at)
+        VALUES (99999, 'token123', NOW() + INTERVAL '24 hours')
+    `)
+	if err == nil {
+		t.Error("Expected error for invalid user_id foreign key, got nil")
+	}
+
+	// Test valid token insertion
+	_, err = db.Exec(`
+        INSERT INTO user_tokens (user_id, token_hash, expires_at)
+        VALUES ($1, 'token123', NOW() + INTERVAL '24 hours')
+    `, userID)
+	if err != nil {
+		t.Errorf("Failed to insert valid token: %v", err)
+	}
+
+	// Test unique constraint on token_hash
+	_, err = db.Exec(`
+        INSERT INTO user_tokens (user_id, token_hash, expires_at)
+        VALUES ($1, 'token123', NOW() + INTERVAL '24 hours')
+    `, userID)
+	if err == nil {
+		t.Error("Expected error for duplicate token_hash, got nil")
+	}
+
+	// Test empty token_hash constraint
+	_, err = db.Exec(`
+        INSERT INTO user_tokens (user_id, token_hash, expires_at)
+        VALUES ($1, '', NOW() + INTERVAL '24 hours')
+    `, userID)
+	if err == nil {
+		t.Error("Expected error for empty token_hash, got nil")
+	}
+
+	// Test expires_at constraint (must be in future)
+	_, err = db.Exec(`
+        INSERT INTO user_tokens (user_id, token_hash, expires_at)
+        VALUES ($1, 'token456', NOW() - INTERVAL '1 hour')
+    `, userID)
+	if err == nil {
+		t.Error("Expected error for expires_at in the past, got nil")
+	}
+
+	// Test cascade delete
+	_, err = db.Exec(`DELETE FROM user_accounts WHERE id = $1`, userID)
+	if err != nil {
+		t.Errorf("Failed to delete user: %v", err)
+	}
+
+	err = db.QueryRow(`
+        SELECT COUNT(*) FROM user_tokens WHERE user_id = $1
+    `, userID).Scan(&count)
+	if err != nil {
+		t.Errorf("Failed to count tokens: %v", err)
+	}
+	if count != 0 {
+		t.Error("Expected cascade delete to remove tokens")
+	}
+
+	// Clean up
+	cleanupTestSchema(t, db)
+}
+
+func TestServiceTokensTable(t *testing.T) {
+	db := getTestConnection(t)
+	if db == nil {
+		return
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Logf("Error closing database: %v", err)
+		}
+	}()
+
+	// Clean up and migrate
+	cleanupTestSchema(t, db)
+	sm := NewSchemaManager()
+	if err := sm.Migrate(db); err != nil {
+		t.Fatalf("Failed to migrate: %v", err)
+	}
+
+	// Verify table exists
+	var count int
+	err := db.QueryRow(`
+        SELECT COUNT(*)
+        FROM information_schema.tables
+        WHERE table_name = 'service_tokens'
+    `).Scan(&count)
+	if err != nil {
+		t.Fatalf("Failed to check for service_tokens table: %v", err)
+	}
+	if count != 1 {
+		t.Fatal("service_tokens table was not created")
+	}
+
+	// Test valid token insertion
+	_, err = db.Exec(`
+        INSERT INTO service_tokens (name, token_hash, note)
+        VALUES ('service1', 'stoken123', 'Test service token')
+    `)
+	if err != nil {
+		t.Errorf("Failed to insert valid service token: %v", err)
+	}
+
+	// Test unique constraint on name
+	_, err = db.Exec(`
+        INSERT INTO service_tokens (name, token_hash, note)
+        VALUES ('service1', 'stoken456', 'Another test token')
+    `)
+	if err == nil {
+		t.Error("Expected error for duplicate service name, got nil")
+	}
+
+	// Test unique constraint on token_hash
+	_, err = db.Exec(`
+        INSERT INTO service_tokens (name, token_hash, note)
+        VALUES ('service2', 'stoken123', 'Another test token')
+    `)
+	if err == nil {
+		t.Error("Expected error for duplicate token_hash, got nil")
+	}
+
+	// Test empty name constraint
+	_, err = db.Exec(`
+        INSERT INTO service_tokens (name, token_hash, note)
+        VALUES ('', 'stoken789', 'Test token')
+    `)
+	if err == nil {
+		t.Error("Expected error for empty name, got nil")
+	}
+
+	// Test empty token_hash constraint
+	_, err = db.Exec(`
+        INSERT INTO service_tokens (name, token_hash, note)
+        VALUES ('service2', '', 'Test token')
+    `)
+	if err == nil {
+		t.Error("Expected error for empty token_hash, got nil")
+	}
+
+	// Test nullable expires_at (service tokens can be permanent)
+	_, err = db.Exec(`
+        INSERT INTO service_tokens (name, token_hash, expires_at, note)
+        VALUES ('service2', 'stoken456', NULL, 'Permanent token')
+    `)
+	if err != nil {
+		t.Errorf("Failed to insert service token with null expires_at: %v", err)
+	}
+
+	// Clean up
+	cleanupTestSchema(t, db)
+}
+
+func TestAuthenticationIndexes(t *testing.T) {
+	db := getTestConnection(t)
+	if db == nil {
+		return
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Logf("Error closing database: %v", err)
+		}
+	}()
+
+	// Clean up and migrate
+	cleanupTestSchema(t, db)
+	sm := NewSchemaManager()
+	if err := sm.Migrate(db); err != nil {
+		t.Fatalf("Failed to migrate: %v", err)
+	}
+
+	// Check for indexes on user_accounts
+	expectedIndexes := []string{
+		"idx_user_accounts_username",
+		"idx_user_accounts_email",
 	}
 
 	for _, indexName := range expectedIndexes {
@@ -493,7 +724,53 @@ func TestIndexesCreated(t *testing.T) {
 		err := db.QueryRow(`
             SELECT COUNT(*)
             FROM pg_indexes
-            WHERE tablename = 'probes'
+            WHERE tablename = 'user_accounts'
+            AND indexname = $1
+        `, indexName).Scan(&count)
+		if err != nil {
+			t.Fatalf("Failed to check for index %s: %v", indexName, err)
+		}
+		if count != 1 {
+			t.Errorf("Index %s not found", indexName)
+		}
+	}
+
+	// Check for indexes on user_tokens
+	expectedIndexes = []string{
+		"idx_user_tokens_user_id",
+		"idx_user_tokens_token_hash",
+		"idx_user_tokens_expires_at",
+	}
+
+	for _, indexName := range expectedIndexes {
+		var count int
+		err := db.QueryRow(`
+            SELECT COUNT(*)
+            FROM pg_indexes
+            WHERE tablename = 'user_tokens'
+            AND indexname = $1
+        `, indexName).Scan(&count)
+		if err != nil {
+			t.Fatalf("Failed to check for index %s: %v", indexName, err)
+		}
+		if count != 1 {
+			t.Errorf("Index %s not found", indexName)
+		}
+	}
+
+	// Check for indexes on service_tokens
+	expectedIndexes = []string{
+		"idx_service_tokens_name",
+		"idx_service_tokens_token_hash",
+		"idx_service_tokens_expires_at",
+	}
+
+	for _, indexName := range expectedIndexes {
+		var count int
+		err := db.QueryRow(`
+            SELECT COUNT(*)
+            FROM pg_indexes
+            WHERE tablename = 'service_tokens'
             AND indexname = $1
         `, indexName).Scan(&count)
 		if err != nil {

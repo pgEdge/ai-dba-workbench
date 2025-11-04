@@ -14,7 +14,6 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
-	"time"
 
 	_ "github.com/lib/pq"
 )
@@ -172,56 +171,6 @@ func (ds *Datastore) Close() error {
 		return ds.pool.Close()
 	}
 	return nil
-}
-
-// CollectGarbage drops old metric partitions based on retention policies
-func (ds *Datastore) CollectGarbage() error {
-	conn, err := ds.GetConnection()
-	if err != nil {
-		return fmt.Errorf("failed to get connection: %w", err)
-	}
-	defer func() {
-		if cerr := ds.ReturnConnection(conn); cerr != nil {
-			log.Printf("Error returning connection: %v", cerr)
-		}
-	}()
-
-	// Get all probes with their retention policies
-	rows, err := conn.Query(`
-        SELECT id, name, retention_days
-        FROM probes
-        WHERE enabled = TRUE
-    `)
-	if err != nil {
-		return fmt.Errorf("failed to query probes: %w", err)
-	}
-	defer func() {
-		if cerr := rows.Close(); cerr != nil {
-			log.Printf("Error closing rows: %v", cerr)
-		}
-	}()
-
-	for rows.Next() {
-		var probeID int
-		var probeName string
-		var retentionDays int
-
-		if err := rows.Scan(&probeID, &probeName, &retentionDays); err != nil {
-			log.Printf("Error scanning probe row: %v", err)
-			continue
-		}
-
-		// Calculate cutoff date
-		cutoffDate := time.Now().AddDate(0, 0, -retentionDays)
-
-		log.Printf("Cleaning up probe %s (id=%d) data older than %v",
-			probeName, probeID, cutoffDate)
-
-		// This is a placeholder - actual partition dropping logic would go here
-		// For now, we just log the intent
-	}
-
-	return rows.Err()
 }
 
 // GetMonitoredConnections returns all connections that should be monitored

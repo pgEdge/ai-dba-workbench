@@ -34,8 +34,8 @@ type Config struct {
 	PgSSLRootCert string
 
 	// Connection pool settings
-	PoolMaxConnections         int
-	PoolMaxIdleSeconds         int
+	PoolMaxConnections          int
+	PoolMaxIdleSeconds          int
 	MonitoredPoolMaxConnections int
 
 	// Server secret for encryption

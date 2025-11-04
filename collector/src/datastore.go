@@ -198,8 +198,9 @@ func (ds *Datastore) GetMonitoredConnections() ([]MonitoredConnection, error) {
 
 	rows, err := conn.Query(`
         SELECT id, name, host, hostaddr, port, database_name, username,
-               password_encrypted, sslmode, sslcert, sslkey, sslrootcert
-        FROM monitored_connections
+               password_encrypted, sslmode, sslcert, sslkey, sslrootcert,
+               owner_username, owner_token
+        FROM connections
         WHERE is_monitored = TRUE
     `)
 	if err != nil {
@@ -218,6 +219,7 @@ func (ds *Datastore) GetMonitoredConnections() ([]MonitoredConnection, error) {
 			&c.ID, &c.Name, &c.Host, &c.HostAddr, &c.Port,
 			&c.DatabaseName, &c.Username, &c.PasswordEncrypted,
 			&c.SSLMode, &c.SSLCert, &c.SSLKey, &c.SSLRootCert,
+			&c.OwnerUsername, &c.OwnerToken,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan connection row: %w", err)
 		}
@@ -241,4 +243,6 @@ type MonitoredConnection struct {
 	SSLCert           sql.NullString
 	SSLKey            sql.NullString
 	SSLRootCert       sql.NullString
+	OwnerUsername     sql.NullString
+	OwnerToken        sql.NullString
 }

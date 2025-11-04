@@ -68,13 +68,13 @@ func (sm *SchemaManager) registerMigrations() {
 		},
 	})
 
-	// Migration 2: Create monitored_connections table
+	// Migration 2: Create connections table
 	sm.migrations = append(sm.migrations, Migration{
 		Version:     2,
-		Description: "Create monitored_connections table",
+		Description: "Create connections table",
 		Up: func(db *sql.DB) error {
 			_, err := db.Exec(`
-                CREATE TABLE IF NOT EXISTS monitored_connections (
+                CREATE TABLE IF NOT EXISTS connections (
                     id SERIAL PRIMARY KEY,
                     name VARCHAR(255) NOT NULL,
                     host VARCHAR(255) NOT NULL,
@@ -88,69 +88,72 @@ func (sm *SchemaManager) registerMigrations() {
                     sslkey TEXT,
                     sslrootcert TEXT,
                     is_shared BOOLEAN NOT NULL DEFAULT FALSE,
+                    owner_username VARCHAR(255),
                     owner_token VARCHAR(255),
                     is_monitored BOOLEAN NOT NULL DEFAULT FALSE,
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     CONSTRAINT chk_port CHECK (port > 0 AND port <= 65535),
-                    CONSTRAINT chk_owner_token CHECK (
-                        (is_shared = TRUE) OR
-                        (is_shared = FALSE AND owner_token IS NOT NULL)
+                    CONSTRAINT chk_owner CHECK (
+                        (owner_username IS NOT NULL AND owner_token IS NULL) OR
+                        (owner_username IS NULL AND owner_token IS NOT NULL)
                     )
                 );
 
-                COMMENT ON TABLE monitored_connections IS
+                COMMENT ON TABLE connections IS
                     'PostgreSQL server connections that can be monitored by the collector';
-                COMMENT ON COLUMN monitored_connections.id IS
+                COMMENT ON COLUMN connections.id IS
                     'Unique identifier for the connection';
-                COMMENT ON COLUMN monitored_connections.name IS
+                COMMENT ON COLUMN connections.name IS
                     'User-friendly name for the connection';
-                COMMENT ON COLUMN monitored_connections.host IS
+                COMMENT ON COLUMN connections.host IS
                     'Hostname or IP address of the PostgreSQL server';
-                COMMENT ON COLUMN monitored_connections.hostaddr IS
+                COMMENT ON COLUMN connections.hostaddr IS
                     'IP address to bypass DNS lookup (optional)';
-                COMMENT ON COLUMN monitored_connections.port IS
+                COMMENT ON COLUMN connections.port IS
                     'Port number for PostgreSQL connection (default 5432)';
-                COMMENT ON COLUMN monitored_connections.database_name IS
+                COMMENT ON COLUMN connections.database_name IS
                     'Maintenance database name for initial connection';
-                COMMENT ON COLUMN monitored_connections.username IS
+                COMMENT ON COLUMN connections.username IS
                     'Username for PostgreSQL authentication';
-                COMMENT ON COLUMN monitored_connections.password_encrypted IS
+                COMMENT ON COLUMN connections.password_encrypted IS
                     'Encrypted password for authentication';
-                COMMENT ON COLUMN monitored_connections.sslmode IS
+                COMMENT ON COLUMN connections.sslmode IS
                     'SSL mode (disable, allow, prefer, require, verify-ca, verify-full)';
-                COMMENT ON COLUMN monitored_connections.sslcert IS
+                COMMENT ON COLUMN connections.sslcert IS
                     'Path to client SSL certificate';
-                COMMENT ON COLUMN monitored_connections.sslkey IS
+                COMMENT ON COLUMN connections.sslkey IS
                     'Path to client SSL key';
-                COMMENT ON COLUMN monitored_connections.sslrootcert IS
+                COMMENT ON COLUMN connections.sslrootcert IS
                     'Path to root SSL certificate';
-                COMMENT ON COLUMN monitored_connections.is_shared IS
+                COMMENT ON COLUMN connections.is_shared IS
                     'Whether the connection is shared among users or private';
-                COMMENT ON COLUMN monitored_connections.owner_token IS
-                    'Token or username that owns this connection (required for non-shared)';
-                COMMENT ON COLUMN monitored_connections.is_monitored IS
+                COMMENT ON COLUMN connections.owner_username IS
+                    'Username of the user who owns this connection (mutually exclusive with owner_token)';
+                COMMENT ON COLUMN connections.owner_token IS
+                    'Service token that owns this connection (mutually exclusive with owner_username)';
+                COMMENT ON COLUMN connections.is_monitored IS
                     'Whether this connection is actively being monitored';
-                COMMENT ON COLUMN monitored_connections.created_at IS
+                COMMENT ON COLUMN connections.created_at IS
                     'Timestamp when the connection was created';
-                COMMENT ON COLUMN monitored_connections.updated_at IS
+                COMMENT ON COLUMN connections.updated_at IS
                     'Timestamp when the connection was last updated';
-                COMMENT ON CONSTRAINT chk_port ON monitored_connections IS
+                COMMENT ON CONSTRAINT chk_port ON connections IS
                     'Ensures port is in valid range (1-65535)';
-                COMMENT ON CONSTRAINT chk_owner_token ON monitored_connections IS
-                    'Ensures non-shared connections have an owner_token';
+                COMMENT ON CONSTRAINT chk_owner ON connections IS
+                    'Ensures exactly one of owner_username or owner_token is set';
             `)
 			if err != nil {
-				return fmt.Errorf("failed to create monitored_connections table: %w", err)
+				return fmt.Errorf("failed to create connections table: %w", err)
 			}
 			return nil
 		},
 	})
 
-	// Migration 3: Create indexes on monitored_connections
+	// Migration 3: Create indexes on connections
 	sm.migrations = append(sm.migrations, Migration{
 		Version:     3,
-		Description: "Create indexes on monitored_connections table",
+		Description: "Create indexes on connections table",
 		Up: func(db *sql.DB) error {
 			indexes := []struct {
 				name    string
@@ -158,21 +161,27 @@ func (sm *SchemaManager) registerMigrations() {
 				comment string
 			}{
 				{
-					"idx_monitored_connections_owner_token",
-					`CREATE INDEX IF NOT EXISTS idx_monitored_connections_owner_token
-                     ON monitored_connections(owner_token)`,
+					"idx_connections_owner_username",
+					`CREATE INDEX IF NOT EXISTS idx_connections_owner_username
+                     ON connections(owner_username)`,
+					"Index for fast lookup of connections by owner username",
+				},
+				{
+					"idx_connections_owner_token",
+					`CREATE INDEX IF NOT EXISTS idx_connections_owner_token
+                     ON connections(owner_token)`,
 					"Index for fast lookup of connections by owner token",
 				},
 				{
-					"idx_monitored_connections_is_monitored",
-					`CREATE INDEX IF NOT EXISTS idx_monitored_connections_is_monitored
-                     ON monitored_connections(is_monitored) WHERE is_monitored = TRUE`,
+					"idx_connections_is_monitored",
+					`CREATE INDEX IF NOT EXISTS idx_connections_is_monitored
+                     ON connections(is_monitored) WHERE is_monitored = TRUE`,
 					"Partial index for efficiently finding actively monitored connections",
 				},
 				{
-					"idx_monitored_connections_name",
-					`CREATE INDEX IF NOT EXISTS idx_monitored_connections_name
-                     ON monitored_connections(name)`,
+					"idx_connections_name",
+					`CREATE INDEX IF NOT EXISTS idx_connections_name
+                     ON connections(name)`,
 					"Index for fast lookup of connections by name",
 				},
 			}
@@ -587,7 +596,7 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON TABLE metrics.pg_stat_activity IS
 					'Metrics collected from pg_stat_activity view, showing current server activity';
 				COMMENT ON COLUMN metrics.pg_stat_activity.connection_id IS
-					'ID of the monitored connection from monitored_connections table';
+					'ID of the monitored connection from connections table';
 				COMMENT ON COLUMN metrics.pg_stat_activity.collected_at IS
 					'Timestamp when the metrics were collected';
 				COMMENT ON COLUMN metrics.pg_stat_activity.datid IS
@@ -722,7 +731,7 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON TABLE metrics.pg_stat_all_tables IS
 					'Metrics collected from pg_stat_all_tables view, showing table-level statistics per database';
 				COMMENT ON COLUMN metrics.pg_stat_all_tables.connection_id IS
-					'ID of the monitored connection from monitored_connections table';
+					'ID of the monitored connection from connections table';
 				COMMENT ON COLUMN metrics.pg_stat_all_tables.collected_at IS
 					'Timestamp when the metrics were collected';
 				COMMENT ON COLUMN metrics.pg_stat_all_tables.database_name IS
@@ -860,7 +869,7 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON TABLE metrics.pg_stat_statements IS
 					'Metrics collected from pg_stat_statements extension, showing query execution statistics per database';
 				COMMENT ON COLUMN metrics.pg_stat_statements.connection_id IS
-					'ID of the monitored connection from monitored_connections table';
+					'ID of the monitored connection from connections table';
 				COMMENT ON COLUMN metrics.pg_stat_statements.collected_at IS
 					'Timestamp when the metrics were collected';
 				COMMENT ON COLUMN metrics.pg_stat_statements.database_name IS
@@ -997,6 +1006,153 @@ func (sm *SchemaManager) registerMigrations() {
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to fix pg_stat_all_tables primary key: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 15: Rename monitored_connections to connections and add ownership fields
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     15,
+		Description: "Rename monitored_connections to connections and add owner_username field",
+		Up: func(db *sql.DB) error {
+			// Check if monitored_connections table exists
+			// If it doesn't exist, that means we're on a fresh installation that started
+			// with Migration 2's updated schema, so we can skip this migration
+			var exists bool
+			err := db.QueryRow(`
+				SELECT EXISTS (
+					SELECT 1 FROM pg_class
+					WHERE relname = 'monitored_connections'
+					AND relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
+				)
+			`).Scan(&exists)
+			if err != nil {
+				return fmt.Errorf("failed to check if monitored_connections exists: %w", err)
+			}
+
+			if !exists {
+				// Table already has the new schema, nothing to do
+				return nil
+			}
+
+			// Step 1: Add owner_username column
+			_, err = db.Exec(`
+				ALTER TABLE monitored_connections
+					ADD COLUMN owner_username VARCHAR(255);
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to add owner_username column: %w", err)
+			}
+
+			// Step 2: Drop old constraint
+			_, err = db.Exec(`
+				ALTER TABLE monitored_connections
+					DROP CONSTRAINT IF EXISTS chk_owner_token;
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to drop old constraint: %w", err)
+			}
+
+			// Step 2.5: Update existing rows where service_token is NULL to have a default owner_username
+			// This handles shared connections where service_token was NULL
+			_, err = db.Exec(`
+				UPDATE monitored_connections
+				SET owner_username = 'admin'
+				WHERE service_token IS NULL AND owner_username IS NULL;
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to set default owner_username: %w", err)
+			}
+
+			// Step 3: Add new constraint to ensure exactly one of owner_username or service_token is set
+			_, err = db.Exec(`
+				ALTER TABLE monitored_connections
+					ADD CONSTRAINT chk_owner CHECK (
+						(owner_username IS NOT NULL AND service_token IS NULL) OR
+						(owner_username IS NULL AND service_token IS NOT NULL)
+					);
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to add ownership constraint: %w", err)
+			}
+
+			// Step 4: Rename service_token column to owner_token
+			_, err = db.Exec(`
+				ALTER TABLE monitored_connections RENAME COLUMN service_token TO owner_token;
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to rename service_token column: %w", err)
+			}
+
+			// Step 5: Rename table
+			_, err = db.Exec(`
+				ALTER TABLE monitored_connections RENAME TO connections;
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to rename table: %w", err)
+			}
+
+			// Step 6: Update comments
+			_, err = db.Exec(`
+				COMMENT ON TABLE connections IS
+					'PostgreSQL server connections that can be monitored by the collector';
+				COMMENT ON COLUMN connections.id IS
+					'Unique identifier for the connection';
+				COMMENT ON COLUMN connections.owner_username IS
+					'Username of the user who owns this connection (mutually exclusive with owner_token)';
+				COMMENT ON COLUMN connections.owner_token IS
+					'Service token that owns this connection (mutually exclusive with owner_username)';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to update comments: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 16: Add foreign key constraints for owner_username and owner_token
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     16,
+		Description: "Add foreign key constraints to connections table",
+		Up: func(db *sql.DB) error {
+			// Add foreign key from connections.owner_username to user_accounts.username
+			_, err := db.Exec(`
+				ALTER TABLE connections
+					ADD CONSTRAINT fk_connections_owner_username
+					FOREIGN KEY (owner_username)
+					REFERENCES user_accounts(username)
+					ON DELETE RESTRICT
+					ON UPDATE CASCADE;
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to add foreign key for owner_username: %w", err)
+			}
+
+			// Add foreign key from connections.owner_token to service_tokens.name
+			_, err = db.Exec(`
+				ALTER TABLE connections
+					ADD CONSTRAINT fk_connections_owner_token
+					FOREIGN KEY (owner_token)
+					REFERENCES service_tokens(name)
+					ON DELETE RESTRICT
+					ON UPDATE CASCADE;
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to add foreign key for owner_token: %w", err)
+			}
+
+			// Add comments for the foreign keys
+			_, err = db.Exec(`
+				COMMENT ON CONSTRAINT fk_connections_owner_username ON connections IS
+					'Foreign key to user_accounts ensuring valid owner username';
+				COMMENT ON CONSTRAINT fk_connections_owner_token ON connections IS
+					'Foreign key to service_tokens ensuring valid owner token';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to add foreign key comments: %w", err)
 			}
 
 			return nil

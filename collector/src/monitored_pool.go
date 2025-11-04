@@ -238,8 +238,7 @@ func (m *MonitoredConnectionPoolManager) Close() error {
 
 // buildMonitoredConnectionStringForDatabase builds a connection string for a monitored connection
 // with an optional database name override
-func buildMonitoredConnectionStringForDatabase(conn MonitoredConnection, databaseName string, _ string) (string, error) {
-	// TODO: Use serverSecret to decrypt password
+func buildMonitoredConnectionStringForDatabase(conn MonitoredConnection, databaseName string, serverSecret string) (string, error) {
 	// Build connection string
 	params := make(map[string]string)
 
@@ -260,9 +259,20 @@ func buildMonitoredConnectionStringForDatabase(conn MonitoredConnection, databas
 
 	params["user"] = conn.Username
 
-	// TODO: Implement actual password decryption using server_secret
+	// Decrypt password if encrypted and we have an owner username
 	if conn.PasswordEncrypted.Valid && conn.PasswordEncrypted.String != "" {
-		params["password"] = conn.PasswordEncrypted.String
+		if conn.OwnerUsername.Valid && conn.OwnerUsername.String != "" {
+			// Decrypt the password using the server secret and owner username
+			decryptedPassword, err := DecryptPassword(conn.PasswordEncrypted.String, serverSecret, conn.OwnerUsername.String)
+			if err != nil {
+				return "", fmt.Errorf("failed to decrypt password for connection %d: %w", conn.ID, err)
+			}
+			params["password"] = decryptedPassword
+		} else {
+			// No owner username - password might not be encrypted or uses legacy encryption
+			// For now, use it as-is (this handles backward compatibility)
+			params["password"] = conn.PasswordEncrypted.String
+		}
 	}
 
 	if conn.SSLMode.Valid && conn.SSLMode.String != "" {

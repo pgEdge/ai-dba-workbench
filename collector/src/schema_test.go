@@ -220,7 +220,7 @@ func cleanupTestSchema(t *testing.T, db *sql.DB) {
 		"user_tokens",
 		"service_tokens",
 		"user_accounts",
-		"monitored_connections",
+		"connections",
 		"schema_version",
 	}
 
@@ -244,7 +244,7 @@ func TestNewSchemaManager(t *testing.T) {
 	}
 
 	// Verify migrations are registered in order
-	expectedVersions := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14}
+	expectedVersions := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
 	if len(sm.migrations) != len(expectedVersions) {
 		t.Fatalf("Expected %d migrations, got %d", len(expectedVersions), len(sm.migrations))
 	}
@@ -311,17 +311,17 @@ func TestMigrateFromScratch(t *testing.T) {
 		t.Fatalf("Expected %d migrations to be applied, got %d", len(sm.migrations), count)
 	}
 
-	// Verify monitored_connections table exists
+	// Verify connections table exists
 	err = db.QueryRow(`
         SELECT COUNT(*)
         FROM information_schema.tables
-        WHERE table_name = 'monitored_connections'
+        WHERE table_name = 'connections'
     `).Scan(&count)
 	if err != nil {
-		t.Fatalf("Failed to check for monitored_connections table: %v", err)
+		t.Fatalf("Failed to check for connections table: %v", err)
 	}
 	if count != 1 {
-		t.Fatal("monitored_connections table was not created")
+		t.Fatal("connections table was not created")
 	}
 
 	// Clean up
@@ -497,8 +497,8 @@ func TestMonitoredConnectionsConstraints(t *testing.T) {
 
 	// Test port constraint
 	_, err := db.Exec(`
-        INSERT INTO monitored_connections
-        (name, host, port, database_name, username, owner_token)
+        INSERT INTO connections
+        (name, host, port, database_name, username, owner_username)
         VALUES ('test', 'localhost', 0, 'testdb', 'testuser', 'token')
     `)
 	if err == nil {
@@ -506,32 +506,41 @@ func TestMonitoredConnectionsConstraints(t *testing.T) {
 	}
 
 	_, err = db.Exec(`
-        INSERT INTO monitored_connections
-        (name, host, port, database_name, username, owner_token)
+        INSERT INTO connections
+        (name, host, port, database_name, username, owner_username)
         VALUES ('test', 'localhost', 70000, 'testdb', 'testuser', 'token')
     `)
 	if err == nil {
 		t.Error("Expected error for invalid port, got nil")
 	}
 
-	// Test owner_token constraint for non-shared connections
+	// Test owner_username constraint for non-shared connections
 	_, err = db.Exec(`
-        INSERT INTO monitored_connections
+        INSERT INTO connections
         (name, host, port, database_name, username, is_shared)
         VALUES ('test', 'localhost', 5432, 'testdb', 'testuser', FALSE)
     `)
 	if err == nil {
-		t.Error("Expected error for missing owner_token on non-shared connection")
+		t.Error("Expected error for missing owner_username on non-shared connection")
 	}
 
-	// Test valid insertion
+	// Create a test user account for the valid insertion test
 	_, err = db.Exec(`
-        INSERT INTO monitored_connections
-        (name, host, port, database_name, username, owner_token)
-        VALUES ('test', 'localhost', 5432, 'testdb', 'testuser', 'token')
+        INSERT INTO user_accounts (username, email, full_name, password_hash)
+        VALUES ('testowner', 'testowner@example.com', 'Test Owner', 'hash123')
     `)
 	if err != nil {
-		t.Errorf("Failed to insert valid connection: %v", err)
+		t.Fatalf("Failed to create test user: %v", err)
+	}
+
+	// Test valid insertion with owner_username
+	_, err = db.Exec(`
+        INSERT INTO connections
+        (name, host, port, database_name, username, owner_username)
+        VALUES ('test', 'localhost', 5432, 'testdb', 'testuser', 'testowner')
+    `)
+	if err != nil {
+		t.Errorf("Failed to insert valid connection with owner_username: %v", err)
 	}
 
 	// Clean up
@@ -556,11 +565,12 @@ func TestIndexesCreated(t *testing.T) {
 		t.Fatalf("Failed to migrate: %v", err)
 	}
 
-	// Check for indexes on monitored_connections
+	// Check for indexes on connections
 	expectedIndexes := []string{
-		"idx_monitored_connections_owner_token",
-		"idx_monitored_connections_is_monitored",
-		"idx_monitored_connections_name",
+		"idx_connections_owner_username",
+		"idx_connections_owner_token",
+		"idx_connections_is_monitored",
+		"idx_connections_name",
 	}
 
 	for _, indexName := range expectedIndexes {
@@ -568,7 +578,7 @@ func TestIndexesCreated(t *testing.T) {
 		err := db.QueryRow(`
             SELECT COUNT(*)
             FROM pg_indexes
-            WHERE tablename = 'monitored_connections'
+            WHERE tablename = 'connections'
             AND indexname = $1
         `, indexName).Scan(&count)
 		if err != nil {
@@ -976,7 +986,7 @@ func TestZZZ_FullSchemaForInspection(t *testing.T) {
 	// Verify all tables exist
 	expectedTables := []string{
 		"schema_version",
-		"monitored_connections",
+		"connections",
 		"user_accounts",
 		"user_tokens",
 		"service_tokens",

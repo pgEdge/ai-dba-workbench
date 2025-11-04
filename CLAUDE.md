@@ -99,6 +99,9 @@
 
     * Always ensure code duplication is minimised, refactoring where needed.
 
+    * When creating database migrations, always use COMMENT ON to describe
+        the objects created.
+
     * Include the following copyright notice at the top of every source
       file:
 

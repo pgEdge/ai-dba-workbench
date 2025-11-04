@@ -1,0 +1,22 @@
+# Claude
+.claude/
+
+# Configuration files with sensitive data
+*.conf
+*.password
+password.txt
+.env
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Temporary files
+*.log
+*.tmp
+tmp/
+temp/

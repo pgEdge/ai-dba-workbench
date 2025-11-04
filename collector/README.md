@@ -91,12 +91,48 @@ Or, if you place the configuration file in the same directory as the collector b
 
 For detailed documentation, see [docs/index.md](docs/index.md).
 
-## Testing
+## Testing and Linting
 
-To run the test suite:
+The project uses a Makefile to manage testing, linting, and building.
+
+### Run tests and linting together (recommended)
 
 ```bash
-go test ./...
+make check
+```
+
+This will run formatting, go vet, tests, and linting in sequence.
+
+### Run tests only
+
+```bash
+make test
+```
+
+Or use Go directly:
+
+```bash
+cd src
+go test -v ./...
+```
+
+### Run linting only
+
+```bash
+make lint
+```
+
+This runs `golangci-lint` which performs comprehensive static analysis including error checking, security analysis, and code quality checks.
+
+### Other useful commands
+
+```bash
+make build      # Build the collector binary
+make fmt        # Format code with gofmt
+make vet        # Run go vet
+make coverage   # Generate test coverage report
+make clean      # Remove build artifacts
+make help       # Show all available targets
 ```
 
 ## License

@@ -212,12 +212,24 @@ func (p *ConnectionPool) Close() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	connCount := len(p.connections)
+	if connCount > 0 {
+		log.Printf("Closing %d connection(s) in pool...", connCount)
+	}
+
 	var lastErr error
+	closedCount := 0
 	for _, pc := range p.connections {
 		if err := pc.conn.Close(); err != nil {
 			lastErr = err
 			log.Printf("Error closing connection: %v", err)
+		} else {
+			closedCount++
 		}
+	}
+
+	if connCount > 0 {
+		log.Printf("Closed %d of %d connection(s) in pool", closedCount, connCount)
 	}
 
 	p.connections = nil

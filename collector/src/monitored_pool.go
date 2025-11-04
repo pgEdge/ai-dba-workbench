@@ -22,25 +22,70 @@ import (
 
 // MonitoredConnectionPoolManager manages connection pools for monitored databases
 type MonitoredConnectionPoolManager struct {
-	pools map[int]*ConnectionPool
-	mu    sync.RWMutex
+	pools          map[int]*ConnectionPool
+	semaphores     map[int]chan struct{} // Per-connection semaphores for limiting concurrent connections
+	maxConnections int                   // Maximum concurrent connections per monitored server
+	mu             sync.RWMutex
 }
 
 // NewMonitoredConnectionPoolManager creates a new pool manager
-func NewMonitoredConnectionPoolManager() *MonitoredConnectionPoolManager {
+func NewMonitoredConnectionPoolManager(maxConnectionsPerServer int) *MonitoredConnectionPoolManager {
 	return &MonitoredConnectionPoolManager{
-		pools: make(map[int]*ConnectionPool),
+		pools:          make(map[int]*ConnectionPool),
+		semaphores:     make(map[int]chan struct{}),
+		maxConnections: maxConnectionsPerServer,
+	}
+}
+
+// getSemaphore gets or creates a semaphore for a connection ID
+func (m *MonitoredConnectionPoolManager) getSemaphore(connectionID int) chan struct{} {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	sem, exists := m.semaphores[connectionID]
+	if !exists {
+		// Create a buffered channel as a semaphore with maxConnections slots
+		sem = make(chan struct{}, m.maxConnections)
+		m.semaphores[connectionID] = sem
+		log.Printf("Created semaphore for connection %d with %d slots", connectionID, m.maxConnections)
+	}
+	return sem
+}
+
+// acquireSlot acquires a slot from the semaphore, blocking if all slots are in use
+func (m *MonitoredConnectionPoolManager) acquireSlot(ctx context.Context, connectionID int) error {
+	sem := m.getSemaphore(connectionID)
+	select {
+	case sem <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// releaseSlot releases a slot back to the semaphore
+func (m *MonitoredConnectionPoolManager) releaseSlot(connectionID int) {
+	m.mu.RLock()
+	sem, exists := m.semaphores[connectionID]
+	m.mu.RUnlock()
+
+	if exists {
+		<-sem
 	}
 }
 
 // GetConnection retrieves a connection for a monitored database
-func (m *MonitoredConnectionPoolManager) GetConnection(_ context.Context, conn MonitoredConnection, serverSecret string) (*sql.DB, error) {
-	return m.GetConnectionForDatabase(context.Background(), conn, "", serverSecret)
+func (m *MonitoredConnectionPoolManager) GetConnection(ctx context.Context, conn MonitoredConnection, serverSecret string) (*sql.DB, error) {
+	return m.GetConnectionForDatabase(ctx, conn, "", serverSecret)
 }
 
 // GetConnectionForDatabase retrieves a connection for a specific database on a monitored server
 // If databaseName is empty, uses the database name from the monitored connection
-func (m *MonitoredConnectionPoolManager) GetConnectionForDatabase(_ context.Context, conn MonitoredConnection, databaseName string, serverSecret string) (*sql.DB, error) {
+func (m *MonitoredConnectionPoolManager) GetConnectionForDatabase(ctx context.Context, conn MonitoredConnection, databaseName string, serverSecret string) (*sql.DB, error) {
+	// Acquire a slot from the semaphore (blocks if all slots are in use)
+	if err := m.acquireSlot(ctx, conn.ID); err != nil {
+		return nil, fmt.Errorf("failed to acquire connection slot: %w", err)
+	}
 	// Generate a unique pool key based on connection ID and database name
 	poolKey := conn.ID
 	if databaseName != "" {
@@ -55,7 +100,12 @@ func (m *MonitoredConnectionPoolManager) GetConnectionForDatabase(_ context.Cont
 	m.mu.RUnlock()
 
 	if exists {
-		return pool.GetConnection()
+		db, err := pool.GetConnection()
+		if err != nil {
+			m.releaseSlot(conn.ID)
+			return nil, err
+		}
+		return db, nil
 	}
 
 	// Pool doesn't exist, create it
@@ -65,18 +115,25 @@ func (m *MonitoredConnectionPoolManager) GetConnectionForDatabase(_ context.Cont
 	// Check again in case another goroutine created it
 	pool, exists = m.pools[poolKey]
 	if exists {
-		return pool.GetConnection()
+		db, err := pool.GetConnection()
+		if err != nil {
+			m.releaseSlot(conn.ID)
+			return nil, err
+		}
+		return db, nil
 	}
 
 	// Build connection string with specified database
 	connStr, err := buildMonitoredConnectionStringForDatabase(conn, databaseName, serverSecret)
 	if err != nil {
+		m.releaseSlot(conn.ID)
 		return nil, fmt.Errorf("failed to build connection string: %w", err)
 	}
 
 	// Create new pool
 	newPool, err := NewConnectionPool(connStr, 5, 300)
 	if err != nil {
+		m.releaseSlot(conn.ID)
 		return nil, fmt.Errorf("failed to create connection pool for monitored connection %d: %w", conn.ID, err)
 	}
 
@@ -87,10 +144,15 @@ func (m *MonitoredConnectionPoolManager) GetConnectionForDatabase(_ context.Cont
 	}
 	log.Printf("Created connection pool for monitored connection %d (%s)", conn.ID, dbInfo)
 
-	return newPool.GetConnection()
+	db, err := newPool.GetConnection()
+	if err != nil {
+		m.releaseSlot(conn.ID)
+		return nil, err
+	}
+	return db, nil
 }
 
-// ReturnConnection returns a connection to the pool
+// ReturnConnection returns a connection to the pool and releases the semaphore slot
 func (m *MonitoredConnectionPoolManager) ReturnConnection(connectionID int, db *sql.DB) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -98,6 +160,7 @@ func (m *MonitoredConnectionPoolManager) ReturnConnection(connectionID int, db *
 	// First try the default pool for this connection
 	if pool, exists := m.pools[connectionID]; exists {
 		if err := pool.ReturnConnection(db); err == nil {
+			m.releaseSlot(connectionID)
 			return nil
 		}
 	}
@@ -105,10 +168,13 @@ func (m *MonitoredConnectionPoolManager) ReturnConnection(connectionID int, db *
 	// If not found, search all pools (needed for database-specific pools)
 	for _, pool := range m.pools {
 		if err := pool.ReturnConnection(db); err == nil {
+			m.releaseSlot(connectionID)
 			return nil
 		}
 	}
 
+	// If we couldn't return the connection, still release the slot to avoid leaks
+	m.releaseSlot(connectionID)
 	return fmt.Errorf("connection not found in any pool for connection ID %d", connectionID)
 }
 
@@ -137,21 +203,29 @@ func (m *MonitoredConnectionPoolManager) Close() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	poolCount := len(m.pools)
+	if poolCount == 0 {
+		log.Println("No monitored connection pools to close")
+		return nil
+	}
+
+	log.Printf("Closing %d monitored connection pool(s)...", poolCount)
+
 	var lastErr error
+	closedCount := 0
 	for id, pool := range m.pools {
 		if err := pool.Close(); err != nil {
 			log.Printf("Error closing pool for connection %d: %v", id, err)
 			lastErr = err
+		} else {
+			closedCount++
 		}
 	}
 
+	log.Printf("Closed %d of %d monitored connection pool(s)", closedCount, poolCount)
+
 	m.pools = make(map[int]*ConnectionPool)
 	return lastErr
-}
-
-// buildMonitoredConnectionString builds a connection string for a monitored connection
-func buildMonitoredConnectionString(conn MonitoredConnection, serverSecret string) (string, error) {
-	return buildMonitoredConnectionStringForDatabase(conn, "", serverSecret)
 }
 
 // buildMonitoredConnectionStringForDatabase builds a connection string for a monitored connection

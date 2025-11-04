@@ -166,6 +166,9 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 		return
 	}
 
+	log.Printf("Discovered %d database(s) for probe %s on connection %s: %v",
+		len(databases), config.Name, conn.Name, databases)
+
 	// Execute probe for each database
 	for _, dbName := range databases {
 		ps.executeProbeForSingleDatabase(ctx, probe, conn, dbName)

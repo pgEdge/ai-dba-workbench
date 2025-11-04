@@ -7,10 +7,10 @@
 #
 #-------------------------------------------------------------------------
 
-.PHONY: all build test lint clean vet fmt help
+.PHONY: all build test lint clean vet fmt help killall
 
 # Default target
-all: test lint build
+all: build
 
 # Build the collector binary
 build:
@@ -18,9 +18,10 @@ build:
 	cd src && go build -o ../collector
 
 # Run tests
-test:
+test: killall
 	@echo "Running tests..."
 	cd src && go test -v ./...
+	@$(MAKE) --no-print-directory killall
 
 # Run linting
 lint:
@@ -38,11 +39,12 @@ fmt:
 	cd src && go fmt ./...
 
 # Run tests with coverage
-coverage:
+coverage: killall
 	@echo "Running tests with coverage..."
 	cd src && go test -coverprofile=coverage.out ./...
 	cd src && go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated: src/coverage.html"
+	@$(MAKE) --no-print-directory killall
 
 # Clean build artifacts
 clean:
@@ -63,7 +65,7 @@ check: fmt vet test lint
 # Help target
 help:
 	@echo "Available targets:"
-	@echo "  all       - Run tests, linting, and build (default)"
+	@echo "  all       - Build the collector binary (default)"
 	@echo "  build     - Build the collector binary"
 	@echo "  test      - Run tests"
 	@echo "  lint      - Run golangci-lint"
@@ -72,5 +74,11 @@ help:
 	@echo "  coverage  - Generate test coverage report"
 	@echo "  clean     - Remove build artifacts"
 	@echo "  deps      - Install/update dependencies"
-	@echo "  check     - Run all checks before committing"
+	@echo "  check     - Run all checks (fmt, vet, test, lint)"
+	@echo "  killall   - Kill any running collector processes"
 	@echo "  help      - Show this help message"
+
+# Kill all running collector processes
+killall:
+	@pkill -9 collector 2>/dev/null || true
+	@pkill -9 -f "go run.*collector" 2>/dev/null || true

@@ -38,6 +38,7 @@ pg_sslmode = disable
 # Connection pool settings
 pool_max_connections = 50
 pool_max_idle_seconds = 300
+monitored_pool_max_connections = 5
 
 # Optional: Server secret for encryption
 # server_secret = your-secret-key-here
@@ -60,8 +61,9 @@ pool_max_idle_seconds = 300
 
 ### Connection Pool
 
-- `pool_max_connections` - Maximum number of connections in the pool
+- `pool_max_connections` - Maximum number of connections in the datastore pool
 - `pool_max_idle_seconds` - Maximum time a connection can remain idle
+- `monitored_pool_max_connections` - Maximum concurrent connections per monitored server (default: 5)
 
 ### Security
 

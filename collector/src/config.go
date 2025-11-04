@@ -34,8 +34,9 @@ type Config struct {
 	PgSSLRootCert string
 
 	// Connection pool settings
-	PoolMaxConnections int
-	PoolMaxIdleSeconds int
+	PoolMaxConnections         int
+	PoolMaxIdleSeconds         int
+	MonitoredPoolMaxConnections int
 
 	// Server secret for encryption
 	ServerSecret string
@@ -44,13 +45,14 @@ type Config struct {
 // NewConfig creates a new Config with default values
 func NewConfig() *Config {
 	return &Config{
-		PgHost:             "localhost",
-		PgDatabase:         "ai_workbench",
-		PgUsername:         "postgres",
-		PgPort:             5432,
-		PgSSLMode:          "prefer",
-		PoolMaxConnections: 25,
-		PoolMaxIdleSeconds: 300,
+		PgHost:                      "localhost",
+		PgDatabase:                  "ai_workbench",
+		PgUsername:                  "postgres",
+		PgPort:                      5432,
+		PgSSLMode:                   "prefer",
+		PoolMaxConnections:          25,
+		PoolMaxIdleSeconds:          300,
+		MonitoredPoolMaxConnections: 5,
 	}
 }
 
@@ -147,6 +149,12 @@ func (c *Config) setConfigValue(key, value string) error {
 			return fmt.Errorf("invalid pool_max_idle_seconds: %w", err)
 		}
 		c.PoolMaxIdleSeconds = maxIdle
+	case "monitored_pool_max_connections":
+		maxConn, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("invalid monitored_pool_max_connections: %w", err)
+		}
+		c.MonitoredPoolMaxConnections = maxConn
 	case "server_secret":
 		c.ServerSecret = value
 	default:
@@ -223,6 +231,9 @@ func (c *Config) Validate() error {
 	}
 	if c.PoolMaxIdleSeconds < 0 {
 		return fmt.Errorf("pool_max_idle_seconds must be non-negative")
+	}
+	if c.MonitoredPoolMaxConnections <= 0 {
+		return fmt.Errorf("monitored_pool_max_connections must be greater than 0")
 	}
 	return nil
 }

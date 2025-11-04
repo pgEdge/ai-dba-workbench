@@ -57,11 +57,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize datastore: %v", err)
 	}
-	defer func() {
-		if cerr := ds.Close(); cerr != nil {
-			log.Printf("Error closing datastore: %v", cerr)
-		}
-	}()
 
 	log.Println("Datastore connection established")
 
@@ -69,12 +64,7 @@ func main() {
 	ctx := context.Background()
 
 	// Initialize monitored connection pool manager
-	poolManager := NewMonitoredConnectionPoolManager()
-	defer func() {
-		if cerr := poolManager.Close(); cerr != nil {
-			log.Printf("Error closing pool manager: %v", cerr)
-		}
-	}()
+	poolManager := NewMonitoredConnectionPoolManager(config.MonitoredPoolMaxConnections)
 
 	// Initialize probe scheduler
 	scheduler := NewProbeScheduler(ds, poolManager, config.ServerSecret)
@@ -95,9 +85,28 @@ func main() {
 
 	log.Println("Shutdown signal received, stopping...")
 
-	// Stop scheduler and garbage collector
+	// Shutdown in proper order to ensure clean connection closure
+	// 1. Stop probe scheduler (no new probe queries)
 	scheduler.Stop()
+
+	// 2. Stop garbage collector (no new cleanup queries)
 	gc.Stop()
+
+	// 3. Close monitored connection pools (all probe connections)
+	log.Println("Closing monitored connection pools...")
+	if err := poolManager.Close(); err != nil {
+		log.Printf("Error closing pool manager: %v", err)
+	} else {
+		log.Println("Monitored connection pools closed")
+	}
+
+	// 4. Close datastore connection pool (last to close)
+	log.Println("Closing datastore connection pool...")
+	if err := ds.Close(); err != nil {
+		log.Printf("Error closing datastore: %v", err)
+	} else {
+		log.Println("Datastore connection pool closed")
+	}
 
 	log.Println("Collector stopped")
 }

@@ -244,7 +244,7 @@ func TestNewSchemaManager(t *testing.T) {
 	}
 
 	// Verify migrations are registered in order
-	expectedVersions := []int{1, 2, 3, 4, 5, 6, 7, 8, 9}
+	expectedVersions := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14}
 	if len(sm.migrations) != len(expectedVersions) {
 		t.Fatalf("Expected %d migrations, got %d", len(expectedVersions), len(sm.migrations))
 	}
@@ -980,6 +980,7 @@ func TestZZZ_FullSchemaForInspection(t *testing.T) {
 		"user_accounts",
 		"user_tokens",
 		"service_tokens",
+		"probe_configs",
 	}
 
 	for _, tableName := range expectedTables {

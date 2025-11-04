@@ -458,6 +458,550 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration 10: Create metrics schema and probe_configs table
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     10,
+		Description: "Create metrics schema and probe_configs table",
+		Up: func(db *sql.DB) error {
+			// Create metrics schema
+			if _, err := db.Exec(`CREATE SCHEMA IF NOT EXISTS metrics`); err != nil {
+				return fmt.Errorf("failed to create metrics schema: %w", err)
+			}
+			if _, err := db.Exec(`COMMENT ON SCHEMA metrics IS 'Schema for storing monitoring probe metrics data'`); err != nil {
+				return fmt.Errorf("failed to add comment on metrics schema: %w", err)
+			}
+
+			// Create probe_configs table
+			_, err := db.Exec(`
+				CREATE TABLE IF NOT EXISTS probe_configs (
+					id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+					name TEXT NOT NULL UNIQUE,
+					description TEXT NOT NULL,
+					collection_interval_seconds INTEGER NOT NULL DEFAULT 60,
+					retention_days INTEGER NOT NULL DEFAULT 28,
+					is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+					created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+					updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+					CONSTRAINT chk_name_not_empty CHECK (name <> ''),
+					CONSTRAINT chk_collection_interval_positive CHECK (collection_interval_seconds > 0),
+					CONSTRAINT chk_retention_days_positive CHECK (retention_days > 0)
+				);
+
+				COMMENT ON TABLE probe_configs IS
+					'Configuration for monitoring probes';
+				COMMENT ON COLUMN probe_configs.id IS
+					'Unique identifier for the probe configuration';
+				COMMENT ON COLUMN probe_configs.name IS
+					'Unique name of the probe';
+				COMMENT ON COLUMN probe_configs.description IS
+					'Description of what the probe monitors';
+				COMMENT ON COLUMN probe_configs.collection_interval_seconds IS
+					'How often to run the probe (in seconds)';
+				COMMENT ON COLUMN probe_configs.retention_days IS
+					'How long to keep collected data (in days)';
+				COMMENT ON COLUMN probe_configs.is_enabled IS
+					'Whether the probe is currently enabled';
+				COMMENT ON COLUMN probe_configs.created_at IS
+					'When the probe configuration was created';
+				COMMENT ON COLUMN probe_configs.updated_at IS
+					'When the probe configuration was last updated';
+				COMMENT ON CONSTRAINT chk_name_not_empty ON probe_configs IS
+					'Probe name must not be empty';
+				COMMENT ON CONSTRAINT chk_collection_interval_positive ON probe_configs IS
+					'Collection interval must be positive';
+				COMMENT ON CONSTRAINT chk_retention_days_positive ON probe_configs IS
+					'Retention days must be positive';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to create probe_configs table: %w", err)
+			}
+
+			// Create indexes on probe_configs
+			indexes := []struct {
+				name    string
+				sql     string
+				comment string
+			}{
+				{
+					"idx_probe_configs_name",
+					`CREATE INDEX IF NOT EXISTS idx_probe_configs_name
+					 ON probe_configs(name)`,
+					"Index for fast lookup of probe configurations by name",
+				},
+				{
+					"idx_probe_configs_enabled",
+					`CREATE INDEX IF NOT EXISTS idx_probe_configs_enabled
+					 ON probe_configs(is_enabled)`,
+					"Index for efficiently finding enabled probes",
+				},
+			}
+
+			for _, idx := range indexes {
+				if _, err := db.Exec(idx.sql); err != nil {
+					return fmt.Errorf("failed to create index %s: %w", idx.name, err)
+				}
+				if _, err := db.Exec(fmt.Sprintf("COMMENT ON INDEX %s IS '%s'", idx.name, idx.comment)); err != nil {
+					return fmt.Errorf("failed to add comment on index %s: %w", idx.name, err)
+				}
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 11: Create pg_stat_activity metrics table
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     11,
+		Description: "Create pg_stat_activity metrics table",
+		Up: func(db *sql.DB) error {
+			// Create the partitioned table for pg_stat_activity metrics
+			_, err := db.Exec(`
+				CREATE TABLE IF NOT EXISTS metrics.pg_stat_activity (
+					connection_id INTEGER NOT NULL,
+					collected_at TIMESTAMP NOT NULL,
+					datid OID,
+					datname TEXT,
+					pid INTEGER,
+					leader_pid INTEGER,
+					usesysid OID,
+					usename TEXT,
+					application_name TEXT,
+					client_addr INET,
+					client_hostname TEXT,
+					client_port INTEGER,
+					backend_start TIMESTAMP,
+					xact_start TIMESTAMP,
+					query_start TIMESTAMP,
+					state_change TIMESTAMP,
+					wait_event_type TEXT,
+					wait_event TEXT,
+					state TEXT,
+					backend_xid TEXT,
+					backend_xmin TEXT,
+					query TEXT,
+					backend_type TEXT,
+					PRIMARY KEY (connection_id, collected_at)
+				) PARTITION BY RANGE (collected_at);
+
+				COMMENT ON TABLE metrics.pg_stat_activity IS
+					'Metrics collected from pg_stat_activity view, showing current server activity';
+				COMMENT ON COLUMN metrics.pg_stat_activity.connection_id IS
+					'ID of the monitored connection from monitored_connections table';
+				COMMENT ON COLUMN metrics.pg_stat_activity.collected_at IS
+					'Timestamp when the metrics were collected';
+				COMMENT ON COLUMN metrics.pg_stat_activity.datid IS
+					'OID of the database this backend is connected to';
+				COMMENT ON COLUMN metrics.pg_stat_activity.datname IS
+					'Name of the database this backend is connected to';
+				COMMENT ON COLUMN metrics.pg_stat_activity.pid IS
+					'Process ID of this backend';
+				COMMENT ON COLUMN metrics.pg_stat_activity.leader_pid IS
+					'Process ID of the parallel group leader if this is a parallel worker';
+				COMMENT ON COLUMN metrics.pg_stat_activity.usesysid IS
+					'OID of the user logged into this backend';
+				COMMENT ON COLUMN metrics.pg_stat_activity.usename IS
+					'Name of the user logged into this backend';
+				COMMENT ON COLUMN metrics.pg_stat_activity.application_name IS
+					'Name of the application connected to this backend';
+				COMMENT ON COLUMN metrics.pg_stat_activity.client_addr IS
+					'IP address of the client connected to this backend';
+				COMMENT ON COLUMN metrics.pg_stat_activity.client_hostname IS
+					'Host name of the client connected to this backend';
+				COMMENT ON COLUMN metrics.pg_stat_activity.client_port IS
+					'TCP port number that the client is using for communication';
+				COMMENT ON COLUMN metrics.pg_stat_activity.backend_start IS
+					'Time when this process was started';
+				COMMENT ON COLUMN metrics.pg_stat_activity.xact_start IS
+					'Time when the backend''s current transaction was started';
+				COMMENT ON COLUMN metrics.pg_stat_activity.query_start IS
+					'Time when the currently active query was started';
+				COMMENT ON COLUMN metrics.pg_stat_activity.state_change IS
+					'Time when the state was last changed';
+				COMMENT ON COLUMN metrics.pg_stat_activity.wait_event_type IS
+					'Type of event the backend is waiting for';
+				COMMENT ON COLUMN metrics.pg_stat_activity.wait_event IS
+					'Wait event name if backend is waiting';
+				COMMENT ON COLUMN metrics.pg_stat_activity.state IS
+					'Current overall state of this backend';
+				COMMENT ON COLUMN metrics.pg_stat_activity.backend_xid IS
+					'Top-level transaction identifier of this backend';
+				COMMENT ON COLUMN metrics.pg_stat_activity.backend_xmin IS
+					'Current backend''s xmin horizon';
+				COMMENT ON COLUMN metrics.pg_stat_activity.query IS
+					'Text of this backend''s most recent query';
+				COMMENT ON COLUMN metrics.pg_stat_activity.backend_type IS
+					'Type of backend';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to create pg_stat_activity metrics table: %w", err)
+			}
+
+			// Create indexes for efficient querying
+			// Note: Indexes on partitioned tables are created on each partition automatically
+			indexes := []struct {
+				name    string
+				sql     string
+				comment string
+			}{
+				{
+					"idx_pg_stat_activity_connection_time",
+					`CREATE INDEX IF NOT EXISTS idx_pg_stat_activity_connection_time
+					 ON metrics.pg_stat_activity(connection_id, collected_at DESC)`,
+					"Index for efficiently querying metrics by connection and time range",
+				},
+				{
+					"idx_pg_stat_activity_collected_at",
+					`CREATE INDEX IF NOT EXISTS idx_pg_stat_activity_collected_at
+					 ON metrics.pg_stat_activity(collected_at DESC)`,
+					"Index for efficiently querying metrics by time range",
+				},
+			}
+
+			for _, idx := range indexes {
+				if _, err := db.Exec(idx.sql); err != nil {
+					return fmt.Errorf("failed to create index %s: %w", idx.name, err)
+				}
+				// Comments on indexes of partitioned tables must be added per partition
+				// or we can skip them for the parent table
+				if _, err := db.Exec(fmt.Sprintf("COMMENT ON INDEX metrics.%s IS '%s'", idx.name, idx.comment)); err != nil {
+					// Log warning but don't fail - index comments on partitioned tables can be tricky
+					log.Printf("Warning: failed to add comment on index %s: %v (this may be expected for partitioned tables)", idx.name, err)
+				}
+			}
+
+			// Insert probe configuration
+			_, err = db.Exec(`
+				INSERT INTO probe_configs (name, description, collection_interval_seconds, retention_days, is_enabled)
+				VALUES ('pg_stat_activity', 'Collects current server activity from pg_stat_activity view', 60, 28, TRUE)
+				ON CONFLICT (name) DO NOTHING
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to insert pg_stat_activity probe config: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 12: Create pg_stat_all_tables metrics table
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     12,
+		Description: "Create pg_stat_all_tables metrics table",
+		Up: func(db *sql.DB) error {
+			// Create the partitioned table for pg_stat_all_tables metrics
+			_, err := db.Exec(`
+				CREATE TABLE IF NOT EXISTS metrics.pg_stat_all_tables (
+					connection_id INTEGER NOT NULL,
+					collected_at TIMESTAMP NOT NULL,
+					database_name TEXT NOT NULL,
+					schemaname TEXT,
+					relname TEXT,
+					seq_scan BIGINT,
+					seq_tup_read BIGINT,
+					idx_scan BIGINT,
+					idx_tup_fetch BIGINT,
+					n_tup_ins BIGINT,
+					n_tup_upd BIGINT,
+					n_tup_del BIGINT,
+					n_tup_hot_upd BIGINT,
+					n_live_tup BIGINT,
+					n_dead_tup BIGINT,
+					n_mod_since_analyze BIGINT,
+					last_vacuum TIMESTAMP,
+					last_autovacuum TIMESTAMP,
+					last_analyze TIMESTAMP,
+					last_autoanalyze TIMESTAMP,
+					vacuum_count BIGINT,
+					autovacuum_count BIGINT,
+					analyze_count BIGINT,
+					autoanalyze_count BIGINT,
+					PRIMARY KEY (connection_id, database_name, collected_at)
+				) PARTITION BY RANGE (collected_at);
+
+				COMMENT ON TABLE metrics.pg_stat_all_tables IS
+					'Metrics collected from pg_stat_all_tables view, showing table-level statistics per database';
+				COMMENT ON COLUMN metrics.pg_stat_all_tables.connection_id IS
+					'ID of the monitored connection from monitored_connections table';
+				COMMENT ON COLUMN metrics.pg_stat_all_tables.collected_at IS
+					'Timestamp when the metrics were collected';
+				COMMENT ON COLUMN metrics.pg_stat_all_tables.database_name IS
+					'Name of the database where these table statistics were collected';
+				COMMENT ON COLUMN metrics.pg_stat_all_tables.schemaname IS
+					'Name of the schema containing the table';
+				COMMENT ON COLUMN metrics.pg_stat_all_tables.relname IS
+					'Name of the table';
+				COMMENT ON COLUMN metrics.pg_stat_all_tables.seq_scan IS
+					'Number of sequential scans initiated on this table';
+				COMMENT ON COLUMN metrics.pg_stat_all_tables.seq_tup_read IS
+					'Number of live rows fetched by sequential scans';
+				COMMENT ON COLUMN metrics.pg_stat_all_tables.idx_scan IS
+					'Number of index scans initiated on this table';
+				COMMENT ON COLUMN metrics.pg_stat_all_tables.idx_tup_fetch IS
+					'Number of live rows fetched by index scans';
+				COMMENT ON COLUMN metrics.pg_stat_all_tables.n_tup_ins IS
+					'Number of rows inserted';
+				COMMENT ON COLUMN metrics.pg_stat_all_tables.n_tup_upd IS
+					'Number of rows updated';
+				COMMENT ON COLUMN metrics.pg_stat_all_tables.n_tup_del IS
+					'Number of rows deleted';
+				COMMENT ON COLUMN metrics.pg_stat_all_tables.n_tup_hot_upd IS
+					'Number of rows HOT updated (i.e., with no separate index update required)';
+				COMMENT ON COLUMN metrics.pg_stat_all_tables.n_live_tup IS
+					'Estimated number of live rows';
+				COMMENT ON COLUMN metrics.pg_stat_all_tables.n_dead_tup IS
+					'Estimated number of dead rows';
+				COMMENT ON COLUMN metrics.pg_stat_all_tables.n_mod_since_analyze IS
+					'Estimated number of rows modified since this table was last analyzed';
+				COMMENT ON COLUMN metrics.pg_stat_all_tables.last_vacuum IS
+					'Time of the last vacuum run on this table (not including VACUUM FULL)';
+				COMMENT ON COLUMN metrics.pg_stat_all_tables.last_autovacuum IS
+					'Time of the last autovacuum run on this table';
+				COMMENT ON COLUMN metrics.pg_stat_all_tables.last_analyze IS
+					'Time of the last analyze run on this table';
+				COMMENT ON COLUMN metrics.pg_stat_all_tables.last_autoanalyze IS
+					'Time of the last autoanalyze run on this table';
+				COMMENT ON COLUMN metrics.pg_stat_all_tables.vacuum_count IS
+					'Number of times this table has been manually vacuumed';
+				COMMENT ON COLUMN metrics.pg_stat_all_tables.autovacuum_count IS
+					'Number of times this table has been vacuumed by the autovacuum daemon';
+				COMMENT ON COLUMN metrics.pg_stat_all_tables.analyze_count IS
+					'Number of times this table has been manually analyzed';
+				COMMENT ON COLUMN metrics.pg_stat_all_tables.autoanalyze_count IS
+					'Number of times this table has been analyzed by the autovacuum daemon';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to create pg_stat_all_tables metrics table: %w", err)
+			}
+
+			// Create indexes for efficient querying
+			indexes := []struct {
+				name    string
+				sql     string
+				comment string
+			}{
+				{
+					"idx_pg_stat_all_tables_connection_db_time",
+					`CREATE INDEX IF NOT EXISTS idx_pg_stat_all_tables_connection_db_time
+					 ON metrics.pg_stat_all_tables(connection_id, database_name, collected_at DESC)`,
+					"Index for efficiently querying metrics by connection, database and time range",
+				},
+				{
+					"idx_pg_stat_all_tables_collected_at",
+					`CREATE INDEX IF NOT EXISTS idx_pg_stat_all_tables_collected_at
+					 ON metrics.pg_stat_all_tables(collected_at DESC)`,
+					"Index for efficiently querying metrics by time range",
+				},
+			}
+
+			for _, idx := range indexes {
+				if _, err := db.Exec(idx.sql); err != nil {
+					return fmt.Errorf("failed to create index %s: %w", idx.name, err)
+				}
+				// Comments on indexes of partitioned tables must be added per partition
+				// or we can skip them for the parent table
+				if _, err := db.Exec(fmt.Sprintf("COMMENT ON INDEX metrics.%s IS '%s'", idx.name, idx.comment)); err != nil {
+					// Log warning but don't fail - index comments on partitioned tables can be tricky
+					log.Printf("Warning: failed to add comment on index %s: %v (this may be expected for partitioned tables)", idx.name, err)
+				}
+			}
+
+			// Insert probe configuration
+			_, err = db.Exec(`
+				INSERT INTO probe_configs (name, description, collection_interval_seconds, retention_days, is_enabled)
+				VALUES ('pg_stat_all_tables', 'Collects table-level statistics from pg_stat_all_tables view for each database', 300, 28, TRUE)
+				ON CONFLICT (name) DO NOTHING
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to insert pg_stat_all_tables probe config: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 13: Create pg_stat_statements metrics table
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     13,
+		Description: "Create pg_stat_statements metrics table",
+		Up: func(db *sql.DB) error {
+			// Create the partitioned table for pg_stat_statements metrics
+			_, err := db.Exec(`
+				CREATE TABLE IF NOT EXISTS metrics.pg_stat_statements (
+					connection_id INTEGER NOT NULL,
+					collected_at TIMESTAMP NOT NULL,
+					database_name TEXT NOT NULL,
+					userid OID,
+					dbid OID,
+					queryid BIGINT,
+					query TEXT,
+					calls BIGINT,
+					total_exec_time DOUBLE PRECISION,
+					mean_exec_time DOUBLE PRECISION,
+					min_exec_time DOUBLE PRECISION,
+					max_exec_time DOUBLE PRECISION,
+					stddev_exec_time DOUBLE PRECISION,
+					rows BIGINT,
+					shared_blks_hit BIGINT,
+					shared_blks_read BIGINT,
+					shared_blks_dirtied BIGINT,
+					shared_blks_written BIGINT,
+					local_blks_hit BIGINT,
+					local_blks_read BIGINT,
+					local_blks_dirtied BIGINT,
+					local_blks_written BIGINT,
+					temp_blks_read BIGINT,
+					temp_blks_written BIGINT,
+					blk_read_time DOUBLE PRECISION,
+					blk_write_time DOUBLE PRECISION,
+					PRIMARY KEY (connection_id, database_name, collected_at, queryid)
+				) PARTITION BY RANGE (collected_at);
+
+				COMMENT ON TABLE metrics.pg_stat_statements IS
+					'Metrics collected from pg_stat_statements extension, showing query execution statistics per database';
+				COMMENT ON COLUMN metrics.pg_stat_statements.connection_id IS
+					'ID of the monitored connection from monitored_connections table';
+				COMMENT ON COLUMN metrics.pg_stat_statements.collected_at IS
+					'Timestamp when the metrics were collected';
+				COMMENT ON COLUMN metrics.pg_stat_statements.database_name IS
+					'Name of the database where these query statistics were collected';
+				COMMENT ON COLUMN metrics.pg_stat_statements.userid IS
+					'OID of user who executed the statement';
+				COMMENT ON COLUMN metrics.pg_stat_statements.dbid IS
+					'OID of database in which the statement was executed';
+				COMMENT ON COLUMN metrics.pg_stat_statements.queryid IS
+					'Internal hash code computed from the statement''s parse tree';
+				COMMENT ON COLUMN metrics.pg_stat_statements.query IS
+					'Text of a representative statement';
+				COMMENT ON COLUMN metrics.pg_stat_statements.calls IS
+					'Number of times executed';
+				COMMENT ON COLUMN metrics.pg_stat_statements.total_exec_time IS
+					'Total time spent executing the statement, in milliseconds';
+				COMMENT ON COLUMN metrics.pg_stat_statements.mean_exec_time IS
+					'Mean time spent executing the statement, in milliseconds';
+				COMMENT ON COLUMN metrics.pg_stat_statements.min_exec_time IS
+					'Minimum time spent executing the statement, in milliseconds';
+				COMMENT ON COLUMN metrics.pg_stat_statements.max_exec_time IS
+					'Maximum time spent executing the statement, in milliseconds';
+				COMMENT ON COLUMN metrics.pg_stat_statements.stddev_exec_time IS
+					'Population standard deviation of time spent executing the statement, in milliseconds';
+				COMMENT ON COLUMN metrics.pg_stat_statements.rows IS
+					'Total number of rows retrieved or affected by the statement';
+				COMMENT ON COLUMN metrics.pg_stat_statements.shared_blks_hit IS
+					'Total number of shared block cache hits by the statement';
+				COMMENT ON COLUMN metrics.pg_stat_statements.shared_blks_read IS
+					'Total number of shared blocks read by the statement';
+				COMMENT ON COLUMN metrics.pg_stat_statements.shared_blks_dirtied IS
+					'Total number of shared blocks dirtied by the statement';
+				COMMENT ON COLUMN metrics.pg_stat_statements.shared_blks_written IS
+					'Total number of shared blocks written by the statement';
+				COMMENT ON COLUMN metrics.pg_stat_statements.local_blks_hit IS
+					'Total number of local block cache hits by the statement';
+				COMMENT ON COLUMN metrics.pg_stat_statements.local_blks_read IS
+					'Total number of local blocks read by the statement';
+				COMMENT ON COLUMN metrics.pg_stat_statements.local_blks_dirtied IS
+					'Total number of local blocks dirtied by the statement';
+				COMMENT ON COLUMN metrics.pg_stat_statements.local_blks_written IS
+					'Total number of local blocks written by the statement';
+				COMMENT ON COLUMN metrics.pg_stat_statements.temp_blks_read IS
+					'Total number of temp blocks read by the statement';
+				COMMENT ON COLUMN metrics.pg_stat_statements.temp_blks_written IS
+					'Total number of temp blocks written by the statement';
+				COMMENT ON COLUMN metrics.pg_stat_statements.blk_read_time IS
+					'Total time the statement spent reading blocks, in milliseconds (if track_io_timing is enabled)';
+				COMMENT ON COLUMN metrics.pg_stat_statements.blk_write_time IS
+					'Total time the statement spent writing blocks, in milliseconds (if track_io_timing is enabled)';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to create pg_stat_statements metrics table: %w", err)
+			}
+
+			// Create indexes for efficient querying
+			indexes := []struct {
+				name    string
+				sql     string
+				comment string
+			}{
+				{
+					"idx_pg_stat_statements_connection_db_time",
+					`CREATE INDEX IF NOT EXISTS idx_pg_stat_statements_connection_db_time
+					 ON metrics.pg_stat_statements(connection_id, database_name, collected_at DESC)`,
+					"Index for efficiently querying metrics by connection, database and time range",
+				},
+				{
+					"idx_pg_stat_statements_collected_at",
+					`CREATE INDEX IF NOT EXISTS idx_pg_stat_statements_collected_at
+					 ON metrics.pg_stat_statements(collected_at DESC)`,
+					"Index for efficiently querying metrics by time range",
+				},
+				{
+					"idx_pg_stat_statements_queryid",
+					`CREATE INDEX IF NOT EXISTS idx_pg_stat_statements_queryid
+					 ON metrics.pg_stat_statements(queryid, collected_at DESC)`,
+					"Index for efficiently tracking specific queries over time",
+				},
+			}
+
+			for _, idx := range indexes {
+				if _, err := db.Exec(idx.sql); err != nil {
+					return fmt.Errorf("failed to create index %s: %w", idx.name, err)
+				}
+				// Comments on indexes of partitioned tables must be added per partition
+				// or we can skip them for the parent table
+				if _, err := db.Exec(fmt.Sprintf("COMMENT ON INDEX metrics.%s IS '%s'", idx.name, idx.comment)); err != nil {
+					// Log warning but don't fail - index comments on partitioned tables can be tricky
+					log.Printf("Warning: failed to add comment on index %s: %v (this may be expected for partitioned tables)", idx.name, err)
+				}
+			}
+
+			// Insert probe configuration
+			_, err = db.Exec(`
+				INSERT INTO probe_configs (name, description, collection_interval_seconds, retention_days, is_enabled)
+				VALUES ('pg_stat_statements', 'Collects query execution statistics from pg_stat_statements extension for each database', 300, 28, TRUE)
+				ON CONFLICT (name) DO NOTHING
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to insert pg_stat_statements probe config: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 14: Fix primary keys for pg_stat_activity and pg_stat_all_tables
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     14,
+		Description: "Fix primary keys for pg_stat_activity and pg_stat_all_tables",
+		Up: func(db *sql.DB) error {
+			// Fix pg_stat_activity: add pid to primary key
+			_, err := db.Exec(`
+				-- Drop existing primary key constraint on parent table
+				ALTER TABLE metrics.pg_stat_activity DROP CONSTRAINT IF EXISTS pg_stat_activity_pkey CASCADE;
+
+				-- Add new primary key including pid
+				ALTER TABLE metrics.pg_stat_activity
+					ADD PRIMARY KEY (connection_id, collected_at, pid);
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to fix pg_stat_activity primary key: %w", err)
+			}
+
+			// Fix pg_stat_all_tables: add schemaname and relname to primary key
+			_, err = db.Exec(`
+				-- Drop existing primary key constraint on parent table
+				ALTER TABLE metrics.pg_stat_all_tables DROP CONSTRAINT IF EXISTS pg_stat_all_tables_pkey CASCADE;
+
+				-- Add new primary key including schemaname and relname
+				ALTER TABLE metrics.pg_stat_all_tables
+					ADD PRIMARY KEY (connection_id, database_name, collected_at, schemaname, relname);
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to fix pg_stat_all_tables primary key: %w", err)
+			}
+
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations

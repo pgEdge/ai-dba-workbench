@@ -119,6 +119,9 @@ func (ds *Datastore) buildConnectionString() string {
 		params["sslrootcert"] = cfg.PgSSLRootCert
 	}
 
+	// Set application name to identify datastore connections
+	params["application_name"] = "pgEdge AI Workbench - Metric Storage"
+
 	// Build the connection string
 	var connStr string
 	for key, value := range params {

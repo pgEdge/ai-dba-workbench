@@ -11,12 +11,14 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"path/filepath"
-	"sync"
+	"syscall"
 )
 
 var (
@@ -37,10 +39,6 @@ var (
 	pgSSLCert      = flag.String("pg-sslcert", "", "Path to PostgreSQL client SSL certificate")
 	pgSSLKey       = flag.String("pg-sslkey", "", "Path to PostgreSQL client SSL key")
 	pgSSLRootCert  = flag.String("pg-sslrootcert", "", "Path to PostgreSQL root SSL certificate")
-
-	// Global state
-	shutdownChan = make(chan struct{})
-	wg           sync.WaitGroup
 )
 
 func main() {
@@ -67,19 +65,28 @@ func main() {
 
 	log.Println("Datastore connection established")
 
-	// Initialize monitoring system
-	monitor, err := initMonitor(ds, config)
-	if err != nil {
-		log.Fatalf("Failed to initialize monitoring system: %v", err)
+	// Create context for operations
+	ctx := context.Background()
+
+	// Initialize monitored connection pool manager
+	poolManager := NewMonitoredConnectionPoolManager()
+	defer func() {
+		if cerr := poolManager.Close(); cerr != nil {
+			log.Printf("Error closing pool manager: %v", cerr)
+		}
+	}()
+
+	// Initialize probe scheduler
+	scheduler := NewProbeScheduler(ds, poolManager, config.ServerSecret)
+	if err := scheduler.Start(ctx); err != nil {
+		log.Fatalf("Failed to start probe scheduler: %v", err)
 	}
 
-	// Start monitoring threads
-	log.Println("Starting monitoring threads...")
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		monitor.Start(shutdownChan)
-	}()
+	// Initialize garbage collector
+	gc := NewGarbageCollector(ds)
+	if err := gc.Start(ctx); err != nil {
+		log.Fatalf("Failed to start garbage collector: %v", err)
+	}
 
 	log.Println("Collector is running. Press Ctrl+C to stop.")
 
@@ -87,10 +94,10 @@ func main() {
 	waitForShutdown()
 
 	log.Println("Shutdown signal received, stopping...")
-	close(shutdownChan)
 
-	// Wait for all goroutines to finish
-	wg.Wait()
+	// Stop scheduler and garbage collector
+	scheduler.Stop()
+	gc.Stop()
 
 	log.Println("Collector stopped")
 }
@@ -135,7 +142,7 @@ func loadConfiguration() (*Config, error) {
 
 // waitForShutdown waits for an interrupt signal
 func waitForShutdown() {
-	// For now, just wait indefinitely
-	// In production, this would handle OS signals
-	select {}
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	<-sigChan
 }

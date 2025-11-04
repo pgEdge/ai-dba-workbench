@@ -102,7 +102,7 @@ tokens to authenticate individual API calls.
 User accounts will be stored in the PostgreSQL datastore, including the 
 following attributes:
 
-* Username (immutable)
+* Username
 * Email address
 * Full name
 * Hashed (SHA256) password
@@ -122,9 +122,9 @@ provided), or after 24 hours. An API will be provided to allow the client to
 request a new token at any time.
 
 The system will also support service tokens. These will not be associated with
-any user account, and include only an immutable name, the expiry timestamp and 
-superuser status, as well as a note in which the user can record the purpose of
-the token. A similar command line option will be provided to allow service 
+any user account, and include only a name, the expiry timestamp and superuser 
+status, as well as a note in which the user can record the purpose of the 
+token. A similar command line option will be provided to allow service 
 tokens to be created.
 
 Tool APIs will be provided to allow those with superuser permissions to add,

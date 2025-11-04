@@ -254,10 +254,7 @@ func (ps *ProbeScheduler) executeProbeForSingleDatabase(ctx context.Context, pro
 
 	// Check if context is already cancelled
 	if ctx.Err() != nil {
-		dbInfo := conn.Name
-		if databaseName != "" {
-			dbInfo = fmt.Sprintf("%s/%s", conn.Name, databaseName)
-		}
+		dbInfo := formatDatabaseInfo(conn.Name, databaseName)
 		log.Printf("Context cancelled before getting connection for probe %s on %s: %v",
 			config.Name, dbInfo, ctx.Err())
 		return
@@ -266,10 +263,7 @@ func (ps *ProbeScheduler) executeProbeForSingleDatabase(ctx context.Context, pro
 	// Get connection to the specific database
 	monitoredDB, err := ps.poolManager.GetConnectionForDatabase(ctx, conn, databaseName, ps.serverSecret)
 	if err != nil {
-		dbInfo := conn.Name
-		if databaseName != "" {
-			dbInfo = fmt.Sprintf("%s/%s", conn.Name, databaseName)
-		}
+		dbInfo := formatDatabaseInfo(conn.Name, databaseName)
 		// Check if this was a timeout/cancellation
 		if ctx.Err() != nil {
 			log.Printf("Context error while getting connection to %s for probe %s: %v (original error: %v)",
@@ -290,10 +284,7 @@ func (ps *ProbeScheduler) executeProbeForSingleDatabase(ctx context.Context, pro
 	timestamp := time.Now()
 	metrics, err := probe.Execute(ctx, monitoredDB)
 	if err != nil {
-		dbInfo := conn.Name
-		if databaseName != "" {
-			dbInfo = fmt.Sprintf("%s/%s", conn.Name, databaseName)
-		}
+		dbInfo := formatDatabaseInfo(conn.Name, databaseName)
 		log.Printf("Error executing probe %s on connection %s: %v",
 			config.Name, dbInfo, err)
 		return
@@ -325,19 +316,13 @@ func (ps *ProbeScheduler) executeProbeForSingleDatabase(ctx context.Context, pro
 	// Store metrics
 	err = probe.Store(ctx, datastoreDB, conn.ID, timestamp, metrics)
 	if err != nil {
-		dbInfo := conn.Name
-		if databaseName != "" {
-			dbInfo = fmt.Sprintf("%s/%s", conn.Name, databaseName)
-		}
+		dbInfo := formatDatabaseInfo(conn.Name, databaseName)
 		log.Printf("Error storing metrics for probe %s on connection %s: %v",
 			config.Name, dbInfo, err)
 		return
 	}
 
-	dbInfo := conn.Name
-	if databaseName != "" {
-		dbInfo = fmt.Sprintf("%s/%s", conn.Name, databaseName)
-	}
+	dbInfo := formatDatabaseInfo(conn.Name, databaseName)
 	log.Printf("Probe %s collected %d metric(s) from connection %s",
 		config.Name, len(metrics), dbInfo)
 }

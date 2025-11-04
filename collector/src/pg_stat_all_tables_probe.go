@@ -14,7 +14,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"time"
 )
 
@@ -32,12 +31,12 @@ func NewPgStatAllTablesProbe(config *ProbeConfig) *PgStatAllTablesProbe {
 
 // GetName returns the probe name
 func (p *PgStatAllTablesProbe) GetName() string {
-	return "pg_stat_all_tables"
+	return ProbeNamePgStatAllTables
 }
 
 // GetTableName returns the metrics table name
 func (p *PgStatAllTablesProbe) GetTableName() string {
-	return "pg_stat_all_tables"
+	return ProbeNamePgStatAllTables
 }
 
 // IsDatabaseScoped returns true as pg_stat_all_tables is database-scoped
@@ -81,54 +80,9 @@ func (p *PgStatAllTablesProbe) Execute(ctx context.Context, monitoredDB *sql.DB)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute query: %w", err)
 	}
-	defer func() {
-		if cerr := rows.Close(); cerr != nil {
-			log.Printf("Error closing rows: %v", cerr)
-		}
-	}()
+	defer closeRows(rows)
 
-	// Get column names
-	columns, err := rows.Columns()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get columns: %w", err)
-	}
-
-	// Prepare result set
-	var results []map[string]interface{}
-
-	for rows.Next() {
-		// Create a slice of interface{} to hold values
-		values := make([]interface{}, len(columns))
-		valuePtrs := make([]interface{}, len(columns))
-		for i := range values {
-			valuePtrs[i] = &values[i]
-		}
-
-		// Scan the row
-		if err := rows.Scan(valuePtrs...); err != nil {
-			return nil, fmt.Errorf("failed to scan row: %w", err)
-		}
-
-		// Create a map for this row
-		rowMap := make(map[string]interface{})
-		for i, colName := range columns {
-			val := values[i]
-			// Convert []byte to string for readability
-			if b, ok := val.([]byte); ok {
-				rowMap[colName] = string(b)
-			} else {
-				rowMap[colName] = val
-			}
-		}
-
-		results = append(results, rowMap)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating rows: %w", err)
-	}
-
-	return results, nil
+	return scanRowsToMaps(rows)
 }
 
 // Store stores the collected metrics in the datastore

@@ -126,16 +126,7 @@ func (ds *Datastore) buildConnectionString() string {
 	// Set application name to identify datastore connections
 	params["application_name"] = "pgEdge AI Workbench - Metric Storage"
 
-	// Build the connection string
-	var connStr string
-	for key, value := range params {
-		if connStr != "" {
-			connStr += " "
-		}
-		connStr += fmt.Sprintf("%s='%s'", key, value)
-	}
-
-	return connStr
+	return buildPostgresConnectionString(params)
 }
 
 // initializeSchema creates the necessary database schema if it doesn't exist

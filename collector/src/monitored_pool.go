@@ -294,19 +294,10 @@ func buildMonitoredConnectionStringForDatabase(conn MonitoredConnection, databas
 	}
 
 	// Set application name to identify monitoring connections
-	params["application_name"] = "pgEdge AI Workbench - Monitoring"
+	params["application_name"] = ApplicationName
 
 	// Set connection timeout (10 seconds)
 	params["connect_timeout"] = "10"
 
-	// Build connection string from params
-	var connStr string
-	for key, value := range params {
-		if connStr != "" {
-			connStr += " "
-		}
-		connStr += fmt.Sprintf("%s='%s'", key, value)
-	}
-
-	return connStr, nil
+	return buildPostgresConnectionString(params), nil
 }

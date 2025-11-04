@@ -94,6 +94,11 @@
 
     * Always use four spaces for indentation.
 
+    * Always ensure the code is written in a way that is readable, extensible,
+        and is appropriately modularised.
+
+    * Always ensure code duplication is minimised, refactoring where needed.
+
     * Include the following copyright notice at the top of every source file:
 
         > /*-------------------------------------------------------------------------

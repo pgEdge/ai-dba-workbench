@@ -2,7 +2,6 @@
 .claude/
 
 # Configuration files with sensitive data
-*.conf
 *.password
 password.txt
 .env

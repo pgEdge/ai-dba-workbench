@@ -6,7 +6,9 @@ This directory contains sample configuration files for the pgEdge AI Workbench.
 
 ### ai-workbench.conf.sample
 
-This is the sample configuration file for both the collector and MCP server components. It contains all available configuration options with detailed comments.
+This is the sample configuration file for both the collector and MCP server
+components. It contains all available configuration options with detailed
+comments.
 
 To use this configuration:
 
@@ -17,7 +19,8 @@ To use this configuration:
 
 2. Edit `ai-workbench.conf` with your specific settings
 
-3. **Important**: Update the `server_secret` to a strong random string for production use
+3. **Important**: Update the `server_secret` to a strong random string for
+   production use
 
 4. Place the configuration file in one of these locations:
    - Same directory as the collector or server binary (default)
@@ -42,8 +45,10 @@ The configuration file is shared between:
 
 ## Security Notes
 
-- **Never commit `ai-workbench.conf`** (without .sample suffix) to version control as it may contain sensitive information
-- Use `pg_password_file` to store passwords in a separate file with restricted permissions
+- **Never commit `ai-workbench.conf`** (without .sample suffix) to version
+  control as it may contain sensitive information
+- Use `pg_password_file` to store passwords in a separate file with
+  restricted permissions
 - Generate a strong random string for `server_secret` and keep it secure
 - Use TLS/SSL connections in production environments
 - Set appropriate file permissions (e.g., `chmod 600 ai-workbench.conf`)
@@ -72,4 +77,5 @@ Settings are applied in the following order (later takes precedence):
 2. Configuration file values
 3. Command line flag values
 
-This allows you to set common settings in the configuration file and override specific values via command line flags as needed.
+This allows you to set common settings in the configuration file and
+override specific values via command line flags as needed.

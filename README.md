@@ -19,10 +19,15 @@ intelligence and traditional methods. It combines a Model Context Protocol
 
 The pgEdge AI Workbench consists of three main components:
 
-- **[Collector](collector/README.md)** - A monitoring service that collects metrics from PostgreSQL servers and stores them in a centralized datastore for analysis
-- **Server** - An MCP server that provides tools and resources for interacting with PostgreSQL systems (coming soon)
-- **Client** - A web-based user interface for interacting with the AI Workbench (coming soon)
+- **[Collector](collector/README.md)** - A monitoring service that collects
+  metrics from PostgreSQL servers and stores them in a centralized datastore
+  for analysis
+- **Server** - An MCP server that provides tools and resources for
+  interacting with PostgreSQL systems (coming soon)
+- **Client** - A web-based user interface for interacting with the AI
+  Workbench (coming soon)
 
 ## Getting Started
 
-For information on getting started with each component, please refer to their individual README files linked above.
+For information on getting started with each component, please refer to
+their individual README files linked above.

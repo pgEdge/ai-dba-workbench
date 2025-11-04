@@ -99,14 +99,15 @@
 
     * Always ensure code duplication is minimised, refactoring where needed.
 
-    * Include the following copyright notice at the top of every source file:
+    * Include the following copyright notice at the top of every source
+      file:
 
-        > /*-------------------------------------------------------------------------
+        > /*-----------------------------------------------------------
         >  *
         >  * pgEdge AI Workbench
         >  *
         >  * Copyright (c) 2025, pgEdge, Inc.
         >  * This software is released under The PostgreSQL License
         >  *
-        >  *-------------------------------------------------------------------------
+        >  *-----------------------------------------------------------
         >  */

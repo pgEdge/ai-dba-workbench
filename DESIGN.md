@@ -30,12 +30,13 @@ less bug prone code, than for example, C or C++.
 The pgEdge AI server will consist of two components; the server and collector
 which together will be responsible for metric collection and storage into a
 PostgreSQL database (the collector), and will function as an MCP server using
-Server-Sent Events (SSE) over HTTP (for testing/non-production) and HTTPS (the 
-server). The server will not implement any AI related features itself; along 
-with storing monitoring data, it will implement tools and resources that will 
-enable the client to undertake operations such as updating the server 
-configuration or retrieving log files, and returning data sets, such as history 
-data from the metric datastore, or realtime data from the monitored servers.
+Server-Sent Events (SSE) over HTTP (for testing/non-production) and HTTPS
+(the server). The server will not implement any AI related features itself;
+along with storing monitoring data, it will implement tools and resources
+that will enable the client to undertake operations such as updating the
+server configuration or retrieving log files, and returning data sets, such
+as history data from the metric datastore, or realtime data from the
+monitored servers.
 
 Initially, we will build a simple frontend client application. This will be 
 written in React, running under NodeJS, and use the MUI library for ease of 

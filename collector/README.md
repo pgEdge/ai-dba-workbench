@@ -1,6 +1,8 @@
 # pgEdge AI Workbench Collector
 
-The pgEdge AI Workbench Collector is a monitoring service that collects metrics from PostgreSQL servers and stores them in a centralized datastore for analysis by the AI Workbench system.
+The pgEdge AI Workbench Collector is a monitoring service that collects
+metrics from PostgreSQL servers and stores them in a centralized datastore
+for analysis by the AI Workbench system.
 
 ## Overview
 
@@ -29,15 +31,23 @@ go build -o collector
 
 ### Configuration
 
-The collector can be configured using a configuration file, command line flags, or a combination of both. Command line flags take precedence over configuration file settings.
+The collector can be configured using a configuration file, command line
+flags, or a combination of both. Command line flags take precedence over
+configuration file settings.
 
-The configuration file is shared with the MCP server component and uses a common format.
+The configuration file is shared with the MCP server component and uses a
+common format.
 
 #### Configuration File
 
-By default, the collector looks for `ai-workbench.conf` in the same directory as the executable. You can specify a different path using the `-config` flag.
+By default, the collector looks for `ai-workbench.conf` in the same
+directory as the executable. You can specify a different path using the
+`-config` flag.
 
-A sample configuration file is provided at [../configs/ai-workbench.conf.sample](../configs/ai-workbench.conf.sample). Copy this file to `ai-workbench.conf` and customize it for your environment.
+A sample configuration file is provided at
+[../configs/ai-workbench.conf.sample](../configs/ai-workbench.conf.sample).
+Copy this file to `ai-workbench.conf` and customize it for your
+environment.
 
 Key configuration options:
 
@@ -81,7 +91,8 @@ See the sample configuration file for all available options.
 ./collector -config /path/to/ai-workbench.conf
 ```
 
-Or, if you place the configuration file in the same directory as the collector binary:
+Or, if you place the configuration file in the same directory as the
+collector binary:
 
 ```bash
 ./collector
@@ -122,7 +133,8 @@ go test -v ./...
 make lint
 ```
 
-This runs `golangci-lint` which performs comprehensive static analysis including error checking, security analysis, and code quality checks.
+This runs `golangci-lint` which performs comprehensive static analysis
+including error checking, security analysis, and code quality checks.
 
 ### Other useful commands
 
@@ -137,4 +149,5 @@ make help       # Show all available targets
 
 ## License
 
-This software is released under The PostgreSQL License. See [LICENSE.md](../LICENSE.md) for details.
+This software is released under The PostgreSQL License. See
+[LICENSE.md](../LICENSE.md) for details.

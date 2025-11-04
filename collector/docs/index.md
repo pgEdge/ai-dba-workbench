@@ -11,15 +11,24 @@
 
 ## Introduction
 
-The pgEdge AI Workbench Collector is a critical component of the AI Workbench system, responsible for collecting and storing metrics from monitored PostgreSQL servers. It operates as a standalone service that continuously monitors configured PostgreSQL instances and stores their metrics in a centralized datastore.
+The pgEdge AI Workbench Collector is a critical component of the AI
+Workbench system, responsible for collecting and storing metrics from
+monitored PostgreSQL servers. It operates as a standalone service that
+continuously monitors configured PostgreSQL instances and stores their
+metrics in a centralized datastore.
 
 ### Key Features
 
-- **Multi-Server Monitoring**: Monitor multiple PostgreSQL servers simultaneously
-- **Configurable Probes**: Define custom SQL queries to collect specific metrics
-- **Automated Data Management**: Built-in garbage collection for metric retention
-- **Secure Connections**: Support for SSL/TLS connections to both datastore and monitored servers
-- **Flexible Configuration**: Support for file-based and command-line configuration
+- **Multi-Server Monitoring**: Monitor multiple PostgreSQL servers
+  simultaneously
+- **Configurable Probes**: Define custom SQL queries to collect specific
+  metrics
+- **Automated Data Management**: Built-in garbage collection for metric
+  retention
+- **Secure Connections**: Support for SSL/TLS connections to both datastore
+  and monitored servers
+- **Flexible Configuration**: Support for file-based and command-line
+  configuration
 
 ## Architecture
 
@@ -38,11 +47,14 @@ The main thread is responsible for:
 
 #### Monitoring Threads
 
-Each enabled probe runs in its own goroutine, executing at configured intervals. Probes are executed against all monitored connections that have monitoring enabled.
+Each enabled probe runs in its own goroutine, executing at configured
+intervals. Probes are executed against all monitored connections that have
+monitoring enabled.
 
 #### Garbage Collector Thread
 
-Runs daily to drop old metric partitions based on each probe's retention policy.
+Runs daily to drop old metric partitions based on each probe's retention
+policy.
 
 ### Data Flow
 
@@ -55,9 +67,18 @@ Runs daily to drop old metric partitions based on each probe's retention policy.
 
 ## Configuration
 
-The collector uses a shared configuration file format that is also used by the MCP server component. By default, the collector looks for `ai-workbench.conf` in the same directory as the executable, but you can specify a different path using the `-config` command line flag.
+The collector uses a shared configuration file format that is also used by
+the MCP server component. By default, the collector looks for
+`ai-workbench.conf` in the same directory as the executable, but you can
+specify a different path using the `-config` command line flag.
 
-A sample configuration file is provided at [../../configs/ai-workbench.conf.sample](../../configs/ai-workbench.conf.sample) in the project root. Copy this file to your desired location and customize it for your environment.
+A sample configuration file is provided in the project root:
+[ai-workbench.conf.sample][sample-config]
+
+Copy this file to your desired location and customize it for your
+environment.
+
+[sample-config]: ../../configs/ai-workbench.conf.sample
 
 ### Configuration File Format
 
@@ -79,7 +100,8 @@ key = "quoted value"
 - `pg_username`: Username for datastore connection
 - `pg_password_file`: Path to file containing the password
 - `pg_port`: PostgreSQL server port (default: 5432)
-- `pg_sslmode`: SSL mode (disable, allow, prefer, require, verify-ca, verify-full)
+- `pg_sslmode`: SSL mode (disable, allow, prefer, require, verify-ca,
+  verify-full)
 - `pg_sslcert`: Path to client SSL certificate
 - `pg_sslkey`: Path to client SSL key
 - `pg_sslrootcert`: Path to root SSL certificate
@@ -90,7 +112,8 @@ key = "quoted value"
 
 ### Command Line Flags
 
-All datastore configuration options can be specified as command-line flags using the `--` prefix and `-` instead of `_`. For example:
+All datastore configuration options can be specified as command-line flags
+using the `--` prefix and `-` instead of `_`. For example:
 
 ```bash
 ./collector --pg-host localhost --pg-database ai_workbench
@@ -127,7 +150,8 @@ Defines monitoring probes:
 
 ### Metric Tables
 
-Each probe stores its data in a dedicated table, partitioned by week for efficient data management and garbage collection.
+Each probe stores its data in a dedicated table, partitioned by week for
+efficient data management and garbage collection.
 
 ## Monitoring Probes
 
@@ -151,7 +175,8 @@ Probes execute as follows:
 
 ### Creating Custom Probes
 
-Custom probes can be added by inserting records into the `probes` table. The SQL query should return consistent columns across executions.
+Custom probes can be added by inserting records into the `probes` table.
+The SQL query should return consistent columns across executions.
 
 ## Development
 

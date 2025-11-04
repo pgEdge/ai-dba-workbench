@@ -24,7 +24,8 @@
 
     * Unit and integration tests should be created under the /tests 
         subdirectory of each project, e.g. /client/tests, /collector/tests, 
-        and /server/tests.
+        and /server/tests, except where the language convention is to include
+        unit tests in the same directory as the code they are testing.
 
     * Source code should be created under the /src subdirectory of each 
         project, e.g. /client/src, /collector/src, and /server/src.
@@ -43,6 +44,8 @@
     * When editing markdown files, always leave a blank line before the first 
         item in any list or sub-list to ensure the lists render properly in 
         tools such as mkdocs.
+
+    * Wrap all markdown files at 79 characters or less.
 
 ## Tests
 
@@ -64,6 +67,12 @@
 
     * Existing tests should never be modified unless the functionality they are
         exercising has been changed, or to fix bugs or refactor code.
+
+    * Ensure linting tests are included, and run under the standard test suites
+        utilising locally installable tools.
+
+    * Ensure coverage can be checked, using the standard test suites utilising
+        locally installable tools.
 
 ## Security
 

@@ -100,7 +100,7 @@ func (m *MonitoredConnectionPoolManager) GetConnectionForDatabase(ctx context.Co
 	m.mu.RUnlock()
 
 	if exists {
-		db, err := pool.GetConnection()
+		db, err := pool.GetConnection(ctx)
 		if err != nil {
 			m.releaseSlot(conn.ID)
 			return nil, err
@@ -109,20 +109,6 @@ func (m *MonitoredConnectionPoolManager) GetConnectionForDatabase(ctx context.Co
 	}
 
 	// Pool doesn't exist, create it
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	// Check again in case another goroutine created it
-	pool, exists = m.pools[poolKey]
-	if exists {
-		db, err := pool.GetConnection()
-		if err != nil {
-			m.releaseSlot(conn.ID)
-			return nil, err
-		}
-		return db, nil
-	}
-
 	// Build connection string with specified database
 	connStr, err := buildMonitoredConnectionStringForDatabase(conn, databaseName, serverSecret)
 	if err != nil {
@@ -130,21 +116,43 @@ func (m *MonitoredConnectionPoolManager) GetConnectionForDatabase(ctx context.Co
 		return nil, fmt.Errorf("failed to build connection string: %w", err)
 	}
 
-	// Create new pool
+	// Create new pool (without holding lock)
 	newPool, err := NewConnectionPool(connStr, 5, 300)
 	if err != nil {
 		m.releaseSlot(conn.ID)
 		return nil, fmt.Errorf("failed to create connection pool for monitored connection %d: %w", conn.ID, err)
 	}
 
+	// Now acquire lock just to add pool to map
+	m.mu.Lock()
+	// Check again in case another goroutine created it while we were creating ours
+	if existingPool, exists := m.pools[poolKey]; exists {
+		m.mu.Unlock()
+		// Close our newly created pool since we don't need it
+		if cerr := newPool.Close(); cerr != nil {
+			log.Printf("Error closing unused pool: %v", cerr)
+		}
+		// Use the existing pool instead
+		db, err := existingPool.GetConnection(ctx)
+		if err != nil {
+			m.releaseSlot(conn.ID)
+			return nil, err
+		}
+		return db, nil
+	}
+
+	// Add our new pool to the map
 	m.pools[poolKey] = newPool
+	m.mu.Unlock()
+
 	dbInfo := conn.Name
 	if databaseName != "" {
 		dbInfo = fmt.Sprintf("%s/%s", conn.Name, databaseName)
 	}
 	log.Printf("Created connection pool for monitored connection %d (%s)", conn.ID, dbInfo)
 
-	db, err := newPool.GetConnection()
+	// Get connection from pool (without holding lock)
+	db, err := newPool.GetConnection(ctx)
 	if err != nil {
 		m.releaseSlot(conn.ID)
 		return nil, err
@@ -277,6 +285,9 @@ func buildMonitoredConnectionStringForDatabase(conn MonitoredConnection, databas
 
 	// Set application name to identify monitoring connections
 	params["application_name"] = "pgEdge AI Workbench - Monitoring"
+
+	// Set connection timeout (10 seconds)
+	params["connect_timeout"] = "10"
 
 	// Build connection string from params
 	var connStr string

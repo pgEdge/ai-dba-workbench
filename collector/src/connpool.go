@@ -11,6 +11,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -61,60 +62,96 @@ func NewConnectionPool(connStr string, maxConnections, maxIdleSeconds int) (*Con
 }
 
 // GetConnection retrieves a connection from the pool or creates a new one
-func (p *ConnectionPool) GetConnection() (*sql.DB, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+func (p *ConnectionPool) GetConnection(ctx context.Context) (*sql.DB, error) {
+	// Check if context is already cancelled
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 
-	// Check if pool is shutting down
+	// Check if pool is shutting down (without holding lock)
 	select {
 	case <-p.shutdown:
 		return nil, fmt.Errorf("connection pool is closed")
 	default:
 	}
 
-	// First, try to find an available connection in the pool
+	// Try to find an available connection (with minimal lock time)
+	p.mu.Lock()
+	var candidateConn *PooledConnection
 	for _, pc := range p.connections {
 		if !pc.inUse {
-			// Test if connection is still alive
-			if err := pc.conn.Ping(); err == nil {
-				pc.inUse = true
-				return pc.conn, nil
-			}
-			// Connection is dead, close it and remove from pool
-			if cerr := pc.conn.Close(); cerr != nil {
-				log.Printf("Error closing dead connection: %v", cerr)
-			}
-			p.removeConnection(pc)
+			candidateConn = pc
+			candidateConn.inUse = true // Mark as in-use before releasing lock
+			break
 		}
 	}
 
-	// No available connection, check if we can create a new one
-	if len(p.connections) >= p.maxConnections {
+	canCreateNew := len(p.connections) < p.maxConnections
+	p.mu.Unlock()
+
+	// If we found a candidate connection, test it (without holding lock)
+	if candidateConn != nil {
+		if err := candidateConn.conn.PingContext(ctx); err == nil {
+			// Connection is good, return it
+			return candidateConn.conn, nil
+		}
+
+		// Connection is dead, close it and remove from pool
+		if cerr := candidateConn.conn.Close(); cerr != nil {
+			log.Printf("Error closing dead connection: %v", cerr)
+		}
+
+		// Remove the dead connection from the pool
+		p.mu.Lock()
+		p.removeConnection(candidateConn)
+		canCreateNew = len(p.connections) < p.maxConnections
+		p.mu.Unlock()
+
+		// If we can't create a new one, try to find another available connection
+		if !canCreateNew {
+			return nil, fmt.Errorf("connection pool exhausted (max: %d)", p.maxConnections)
+		}
+	}
+
+	// No available connection and we can create a new one
+	if !canCreateNew {
 		return nil, fmt.Errorf("connection pool exhausted (max: %d)", p.maxConnections)
 	}
 
-	// Create a new connection
+	// Create a new connection (without holding lock)
 	conn, err := sql.Open("postgres", p.connStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create connection: %w", err)
 	}
 
-	// Test the connection
-	if err := conn.Ping(); err != nil {
+	// Test the connection with timeout (without holding lock)
+	if err := conn.PingContext(ctx); err != nil {
 		if cerr := conn.Close(); cerr != nil {
 			log.Printf("Error closing failed connection: %v", cerr)
 		}
 		return nil, fmt.Errorf("failed to ping new connection: %w", err)
 	}
 
-	// Add to pool
+	// Add to pool (briefly acquire lock)
 	pc := &PooledConnection{
 		conn:       conn,
 		inUse:      true,
 		createdAt:  time.Now(),
 		returnedAt: time.Time{},
 	}
+
+	p.mu.Lock()
+	// Check again if we're still under the limit (race condition)
+	if len(p.connections) >= p.maxConnections {
+		p.mu.Unlock()
+		// Close the connection we just created since pool is now full
+		if cerr := conn.Close(); cerr != nil {
+			log.Printf("Error closing excess connection: %v", cerr)
+		}
+		return nil, fmt.Errorf("connection pool exhausted (max: %d)", p.maxConnections)
+	}
 	p.connections = append(p.connections, pc)
+	p.mu.Unlock()
 
 	return conn, nil
 }

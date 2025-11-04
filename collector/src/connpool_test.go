@@ -11,6 +11,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"strings"
 	"testing"
@@ -120,7 +121,7 @@ func TestConnectionPoolClose(t *testing.T) {
 	}
 
 	// Verify we can't get connections after close
-	_, err = pool.GetConnection()
+	_, err = pool.GetConnection(context.Background())
 	if err == nil {
 		t.Error("Expected error when getting connection from closed pool")
 	}
@@ -166,7 +167,7 @@ func TestConnectionPoolWithTestDB(t *testing.T) {
 	}()
 
 	// Test 1: Get a connection
-	conn1, err := pool.GetConnection()
+	conn1, err := pool.GetConnection(context.Background())
 	if err != nil {
 		t.Fatalf("Failed to get first connection: %v", err)
 	}
@@ -189,7 +190,7 @@ func TestConnectionPoolWithTestDB(t *testing.T) {
 	}
 
 	// Test 3: Re-request the same connection from pool
-	conn2, err := pool.GetConnection()
+	conn2, err := pool.GetConnection(context.Background())
 	if err != nil {
 		t.Fatalf("Failed to get second connection: %v", err)
 	}
@@ -221,7 +222,7 @@ func TestConnectionPoolWithTestDB(t *testing.T) {
 	}
 
 	// Test 5: Get connection after cleanup should create a new one
-	conn3, err := pool.GetConnection()
+	conn3, err := pool.GetConnection(context.Background())
 	if err != nil {
 		t.Fatalf("Failed to get connection after cleanup: %v", err)
 	}
@@ -268,19 +269,19 @@ func TestConnectionPoolMaxConnectionsLimit(t *testing.T) {
 	}()
 
 	// Get first connection
-	conn1, err := pool.GetConnection()
+	conn1, err := pool.GetConnection(context.Background())
 	if err != nil {
 		t.Fatalf("Failed to get first connection: %v", err)
 	}
 
 	// Get second connection
-	conn2, err := pool.GetConnection()
+	conn2, err := pool.GetConnection(context.Background())
 	if err != nil {
 		t.Fatalf("Failed to get second connection: %v", err)
 	}
 
 	// Try to get third connection - should fail
-	_, err = pool.GetConnection()
+	_, err = pool.GetConnection(context.Background())
 	if err == nil {
 		t.Error("Expected error when exceeding max connections")
 	}
@@ -294,7 +295,7 @@ func TestConnectionPoolMaxConnectionsLimit(t *testing.T) {
 	}
 
 	// Now we should be able to get another connection
-	conn3, err := pool.GetConnection()
+	conn3, err := pool.GetConnection(context.Background())
 	if err != nil {
 		t.Fatalf("Failed to get connection after returning one: %v", err)
 	}
@@ -336,7 +337,7 @@ func TestConnectionPoolDoubleReturn(t *testing.T) {
 		}
 	}()
 
-	conn, err := pool.GetConnection()
+	conn, err := pool.GetConnection(context.Background())
 	if err != nil {
 		t.Fatalf("Failed to get connection: %v", err)
 	}

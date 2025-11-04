@@ -11,9 +11,11 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
+	"time"
 
 	_ "github.com/lib/pq"
 )
@@ -62,7 +64,9 @@ func (ds *Datastore) connect() error {
 	}
 
 	// Test the connection pool by getting a connection
-	conn, err := pool.GetConnection()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := pool.GetConnection(ctx)
 	if err != nil {
 		if cerr := pool.Close(); cerr != nil {
 			log.Printf("Error closing pool after connection test failure: %v", cerr)
@@ -160,7 +164,11 @@ func (ds *Datastore) initializeSchema() error {
 
 // GetConnection retrieves a connection from the pool
 func (ds *Datastore) GetConnection() (*sql.DB, error) {
-	return ds.pool.GetConnection()
+	// Create a context with timeout for datastore connections
+	// Datastore should be local and fast, so use a shorter timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return ds.pool.GetConnection(ctx)
 }
 
 // ReturnConnection returns a connection to the pool

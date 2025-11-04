@@ -162,13 +162,16 @@ func DropExpiredPartitions(ctx context.Context, db *sql.DB, tableName string, re
 		// Parse the partition bound to get the end timestamp
 		// Format is: FOR VALUES FROM ('...') TO ('...')
 		// We need to extract the TO timestamp
-		var endTimestamp time.Time
+		var year, month, day, hour, minute, second int
 		_, err := fmt.Sscanf(partitionBound, "FOR VALUES FROM ('%*[^']') TO ('%d-%d-%d %d:%d:%d')",
-			&endTimestamp)
+			&year, &month, &day, &hour, &minute, &second)
 		if err != nil {
 			log.Printf("Warning: failed to parse partition bound for %s: %v", partitionName, err)
 			continue
 		}
+
+		// Construct time.Time from parsed components
+		endTimestamp := time.Date(year, time.Month(month), day, hour, minute, second, 0, time.UTC)
 
 		// If the partition end time is before the cutoff, drop it
 		if endTimestamp.Before(cutoff) {

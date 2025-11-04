@@ -1,0 +1,1694 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>src: Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">github.com/pgedge/ai-workbench/collector/src/config.go (47.9%)</option>
+				
+				<option value="file1">github.com/pgedge/ai-workbench/collector/src/connpool.go (86.2%)</option>
+				
+				<option value="file2">github.com/pgedge/ai-workbench/collector/src/datastore.go (21.1%)</option>
+				
+				<option value="file3">github.com/pgedge/ai-workbench/collector/src/main.go (0.0%)</option>
+				
+				<option value="file4">github.com/pgedge/ai-workbench/collector/src/monitor.go (0.0%)</option>
+				
+				<option value="file5">github.com/pgedge/ai-workbench/collector/src/schema.go (77.8%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">not covered</span>
+				<span class="cov8">covered</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">/*-------------------------------------------------------------------------
+ *
+ * pgEdge AI Workbench
+ *
+ * Copyright (c) 2025, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-------------------------------------------------------------------------
+ */
+
+// Package main implements the pgEdge AI Workbench Collector.
+package main
+
+import (
+        "bufio"
+        "fmt"
+        "os"
+        "strconv"
+        "strings"
+)
+
+// Config holds all configuration options for the collector
+type Config struct {
+        // Datastore connection settings
+        PgHost        string
+        PgHostAddr    string
+        PgDatabase    string
+        PgUsername    string
+        PgPassword    string
+        PgPort        int
+        PgSSLMode     string
+        PgSSLCert     string
+        PgSSLKey      string
+        PgSSLRootCert string
+
+        // Connection pool settings
+        PoolMaxConnections int
+        PoolMaxIdleSeconds int
+
+        // Server secret for encryption
+        ServerSecret string
+}
+
+// NewConfig creates a new Config with default values
+func NewConfig() *Config <span class="cov8" title="1">{
+        return &amp;Config{
+                PgHost:             "localhost",
+                PgDatabase:         "ai_workbench",
+                PgUsername:         "postgres",
+                PgPort:             5432,
+                PgSSLMode:          "prefer",
+                PoolMaxConnections: 25,
+                PoolMaxIdleSeconds: 300,
+        }
+}</span>
+
+// LoadFromFile loads configuration from a file
+func (c *Config) LoadFromFile(filename string) error <span class="cov8" title="1">{
+        file, err := os.Open(filename) // #nosec G304 - Config file path is provided by administrator
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to open config file: %w", err)
+        }</span>
+        <span class="cov8" title="1">defer func() </span><span class="cov8" title="1">{
+                if cerr := file.Close(); cerr != nil &amp;&amp; err == nil </span><span class="cov0" title="0">{
+                        err = fmt.Errorf("failed to close config file: %w", cerr)
+                }</span>
+        }()
+
+        <span class="cov8" title="1">scanner := bufio.NewScanner(file)
+        lineNum := 0
+
+        for scanner.Scan() </span><span class="cov8" title="1">{
+                lineNum++
+                line := strings.TrimSpace(scanner.Text())
+
+                // Skip empty lines and comments
+                if line == "" || strings.HasPrefix(line, "#") </span><span class="cov8" title="1">{
+                        continue</span>
+                }
+
+                // Parse key = value
+                <span class="cov8" title="1">parts := strings.SplitN(line, "=", 2)
+                if len(parts) != 2 </span><span class="cov0" title="0">{
+                        return fmt.Errorf("invalid config line %d: %s", lineNum, line)
+                }</span>
+
+                <span class="cov8" title="1">key := strings.TrimSpace(parts[0])
+                value := strings.TrimSpace(parts[1])
+
+                // Remove quotes if present
+                if len(value) &gt;= 2 &amp;&amp; value[0] == '"' &amp;&amp; value[len(value)-1] == '"' </span><span class="cov8" title="1">{
+                        value = value[1 : len(value)-1]
+                }</span>
+
+                <span class="cov8" title="1">if err := c.setConfigValue(key, value); err != nil </span><span class="cov0" title="0">{
+                        return fmt.Errorf("error on line %d: %w", lineNum, err)
+                }</span>
+        }
+
+        <span class="cov8" title="1">if err := scanner.Err(); err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("error reading config file: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">return nil</span>
+}
+
+// setConfigValue sets a configuration value by key
+func (c *Config) setConfigValue(key, value string) error <span class="cov8" title="1">{
+        switch key </span>{
+        case "pg_host":<span class="cov8" title="1">
+                c.PgHost = value</span>
+        case "pg_hostaddr":<span class="cov0" title="0">
+                c.PgHostAddr = value</span>
+        case "pg_database":<span class="cov8" title="1">
+                c.PgDatabase = value</span>
+        case "pg_username":<span class="cov8" title="1">
+                c.PgUsername = value</span>
+        case "pg_password_file":<span class="cov0" title="0">
+                password, err := readPasswordFile(value)
+                if err != nil </span><span class="cov0" title="0">{
+                        return fmt.Errorf("failed to read password file: %w", err)
+                }</span>
+                <span class="cov0" title="0">c.PgPassword = password</span>
+        case "pg_port":<span class="cov8" title="1">
+                port, err := strconv.Atoi(value)
+                if err != nil </span><span class="cov0" title="0">{
+                        return fmt.Errorf("invalid port number: %w", err)
+                }</span>
+                <span class="cov8" title="1">c.PgPort = port</span>
+        case "pg_sslmode":<span class="cov0" title="0">
+                c.PgSSLMode = value</span>
+        case "pg_sslcert":<span class="cov0" title="0">
+                c.PgSSLCert = value</span>
+        case "pg_sslkey":<span class="cov0" title="0">
+                c.PgSSLKey = value</span>
+        case "pg_sslrootcert":<span class="cov0" title="0">
+                c.PgSSLRootCert = value</span>
+        case "pool_max_connections":<span class="cov0" title="0">
+                maxConn, err := strconv.Atoi(value)
+                if err != nil </span><span class="cov0" title="0">{
+                        return fmt.Errorf("invalid pool_max_connections: %w", err)
+                }</span>
+                <span class="cov0" title="0">c.PoolMaxConnections = maxConn</span>
+        case "pool_max_idle_seconds":<span class="cov0" title="0">
+                maxIdle, err := strconv.Atoi(value)
+                if err != nil </span><span class="cov0" title="0">{
+                        return fmt.Errorf("invalid pool_max_idle_seconds: %w", err)
+                }</span>
+                <span class="cov0" title="0">c.PoolMaxIdleSeconds = maxIdle</span>
+        case "server_secret":<span class="cov8" title="1">
+                c.ServerSecret = value</span>
+        default:<span class="cov0" title="0">
+                return fmt.Errorf("unknown configuration key: %s", key)</span>
+        }
+        <span class="cov8" title="1">return nil</span>
+}
+
+// ApplyFlags applies command line flags to override config file values
+func (c *Config) ApplyFlags() <span class="cov0" title="0">{
+        if *pgHost != "" </span><span class="cov0" title="0">{
+                c.PgHost = *pgHost
+        }</span>
+        <span class="cov0" title="0">if *pgHostAddr != "" </span><span class="cov0" title="0">{
+                c.PgHostAddr = *pgHostAddr
+        }</span>
+        <span class="cov0" title="0">if *pgDatabase != "" </span><span class="cov0" title="0">{
+                c.PgDatabase = *pgDatabase
+        }</span>
+        <span class="cov0" title="0">if *pgUsername != "" </span><span class="cov0" title="0">{
+                c.PgUsername = *pgUsername
+        }</span>
+        <span class="cov0" title="0">if *pgPasswordFile != "" </span><span class="cov0" title="0">{
+                password, err := readPasswordFile(*pgPasswordFile)
+                if err != nil </span><span class="cov0" title="0">{
+                        fmt.Fprintf(os.Stderr, "Warning: failed to read password file: %v\n", err)
+                }</span> else<span class="cov0" title="0"> {
+                        c.PgPassword = password
+                }</span>
+        }
+        <span class="cov0" title="0">if *pgPort != 5432 </span><span class="cov0" title="0">{
+                c.PgPort = *pgPort
+        }</span>
+        <span class="cov0" title="0">if *pgSSLMode != "prefer" </span><span class="cov0" title="0">{
+                c.PgSSLMode = *pgSSLMode
+        }</span>
+        <span class="cov0" title="0">if *pgSSLCert != "" </span><span class="cov0" title="0">{
+                c.PgSSLCert = *pgSSLCert
+        }</span>
+        <span class="cov0" title="0">if *pgSSLKey != "" </span><span class="cov0" title="0">{
+                c.PgSSLKey = *pgSSLKey
+        }</span>
+        <span class="cov0" title="0">if *pgSSLRootCert != "" </span><span class="cov0" title="0">{
+                c.PgSSLRootCert = *pgSSLRootCert
+        }</span>
+}
+
+// readPasswordFile reads a password from a file
+func readPasswordFile(filename string) (string, error) <span class="cov8" title="1">{
+        content, err := os.ReadFile(filename) // #nosec G304 - Password file path is provided by administrator
+        if err != nil </span><span class="cov0" title="0">{
+                return "", err
+        }</span>
+        // Trim whitespace and newlines
+        <span class="cov8" title="1">return strings.TrimSpace(string(content)), nil</span>
+}
+
+// Validate checks if the configuration is valid
+func (c *Config) Validate() error <span class="cov8" title="1">{
+        if c.PgHost == "" </span><span class="cov8" title="1">{
+                return fmt.Errorf("pg_host is required")
+        }</span>
+        <span class="cov8" title="1">if c.PgDatabase == "" </span><span class="cov8" title="1">{
+                return fmt.Errorf("pg_database is required")
+        }</span>
+        <span class="cov8" title="1">if c.PgUsername == "" </span><span class="cov0" title="0">{
+                return fmt.Errorf("pg_username is required")
+        }</span>
+        <span class="cov8" title="1">if c.PgPort &lt;= 0 || c.PgPort &gt; 65535 </span><span class="cov8" title="1">{
+                return fmt.Errorf("pg_port must be between 1 and 65535")
+        }</span>
+        <span class="cov8" title="1">if c.PoolMaxConnections &lt;= 0 </span><span class="cov8" title="1">{
+                return fmt.Errorf("pool_max_connections must be greater than 0")
+        }</span>
+        <span class="cov8" title="1">if c.PoolMaxIdleSeconds &lt; 0 </span><span class="cov8" title="1">{
+                return fmt.Errorf("pool_max_idle_seconds must be non-negative")
+        }</span>
+        <span class="cov8" title="1">return nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file1" style="display: none">/*-------------------------------------------------------------------------
+ *
+ * pgEdge AI Workbench
+ *
+ * Copyright (c) 2025, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-------------------------------------------------------------------------
+ */
+
+package main
+
+import (
+        "database/sql"
+        "fmt"
+        "log"
+        "sync"
+        "time"
+
+        _ "github.com/lib/pq"
+)
+
+// PooledConnection represents a connection in the pool with metadata
+type PooledConnection struct {
+        conn       *sql.DB
+        returnedAt time.Time
+        inUse      bool
+        createdAt  time.Time
+}
+
+// ConnectionPool manages a pool of database connections
+type ConnectionPool struct {
+        connStr        string
+        maxConnections int
+        maxIdleSeconds int
+        connections    []*PooledConnection
+        mu             sync.Mutex
+        shutdown       chan struct{}
+        cleanupWg      sync.WaitGroup
+}
+
+// NewConnectionPool creates a new connection pool
+func NewConnectionPool(connStr string, maxConnections, maxIdleSeconds int) (*ConnectionPool, error) <span class="cov8" title="1">{
+        if maxConnections &lt;= 0 </span><span class="cov8" title="1">{
+                return nil, fmt.Errorf("maxConnections must be greater than 0")
+        }</span>
+
+        <span class="cov8" title="1">pool := &amp;ConnectionPool{
+                connStr:        connStr,
+                maxConnections: maxConnections,
+                maxIdleSeconds: maxIdleSeconds,
+                connections:    make([]*PooledConnection, 0, maxConnections),
+                shutdown:       make(chan struct{}),
+        }
+
+        // Start cleanup goroutine
+        pool.cleanupWg.Add(1)
+        go pool.cleanupIdleConnections()
+
+        return pool, nil</span>
+}
+
+// GetConnection retrieves a connection from the pool or creates a new one
+func (p *ConnectionPool) GetConnection() (*sql.DB, error) <span class="cov8" title="1">{
+        p.mu.Lock()
+        defer p.mu.Unlock()
+
+        // Check if pool is shutting down
+        select </span>{
+        case &lt;-p.shutdown:<span class="cov8" title="1">
+                return nil, fmt.Errorf("connection pool is closed")</span>
+        default:<span class="cov8" title="1"></span>
+        }
+
+        // First, try to find an available connection in the pool
+        <span class="cov8" title="1">for _, pc := range p.connections </span><span class="cov8" title="1">{
+                if !pc.inUse </span><span class="cov8" title="1">{
+                        // Test if connection is still alive
+                        if err := pc.conn.Ping(); err == nil </span><span class="cov8" title="1">{
+                                pc.inUse = true
+                                return pc.conn, nil
+                        }</span>
+                        // Connection is dead, close it and remove from pool
+                        <span class="cov0" title="0">if cerr := pc.conn.Close(); cerr != nil </span><span class="cov0" title="0">{
+                                log.Printf("Error closing dead connection: %v", cerr)
+                        }</span>
+                        <span class="cov0" title="0">p.removeConnection(pc)</span>
+                }
+        }
+
+        // No available connection, check if we can create a new one
+        <span class="cov8" title="1">if len(p.connections) &gt;= p.maxConnections </span><span class="cov8" title="1">{
+                return nil, fmt.Errorf("connection pool exhausted (max: %d)", p.maxConnections)
+        }</span>
+
+        // Create a new connection
+        <span class="cov8" title="1">conn, err := sql.Open("postgres", p.connStr)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to create connection: %w", err)
+        }</span>
+
+        // Test the connection
+        <span class="cov8" title="1">if err := conn.Ping(); err != nil </span><span class="cov0" title="0">{
+                if cerr := conn.Close(); cerr != nil </span><span class="cov0" title="0">{
+                        log.Printf("Error closing failed connection: %v", cerr)
+                }</span>
+                <span class="cov0" title="0">return nil, fmt.Errorf("failed to ping new connection: %w", err)</span>
+        }
+
+        // Add to pool
+        <span class="cov8" title="1">pc := &amp;PooledConnection{
+                conn:       conn,
+                inUse:      true,
+                createdAt:  time.Now(),
+                returnedAt: time.Time{},
+        }
+        p.connections = append(p.connections, pc)
+
+        return conn, nil</span>
+}
+
+// ReturnConnection returns a connection to the pool
+func (p *ConnectionPool) ReturnConnection(conn *sql.DB) error <span class="cov8" title="1">{
+        p.mu.Lock()
+        defer p.mu.Unlock()
+
+        // Find the connection in the pool
+        for _, pc := range p.connections </span><span class="cov8" title="1">{
+                if pc.conn == conn </span><span class="cov8" title="1">{
+                        if !pc.inUse </span><span class="cov8" title="1">{
+                                return fmt.Errorf("connection was not in use")
+                        }</span>
+                        <span class="cov8" title="1">pc.inUse = false
+                        pc.returnedAt = time.Now()
+                        return nil</span>
+                }
+        }
+
+        <span class="cov0" title="0">return fmt.Errorf("connection not found in pool")</span>
+}
+
+// removeConnection removes a connection from the pool (must be called with lock held)
+func (p *ConnectionPool) removeConnection(target *PooledConnection) <span class="cov8" title="1">{
+        for i, pc := range p.connections </span><span class="cov8" title="1">{
+                if pc == target </span><span class="cov8" title="1">{
+                        p.connections = append(p.connections[:i], p.connections[i+1:]...)
+                        return
+                }</span>
+        }
+}
+
+// cleanupIdleConnections periodically closes idle connections
+func (p *ConnectionPool) cleanupIdleConnections() <span class="cov8" title="1">{
+        defer p.cleanupWg.Done()
+
+        ticker := time.NewTicker(1 * time.Second)
+        defer ticker.Stop()
+
+        for </span><span class="cov8" title="1">{
+                select </span>{
+                case &lt;-p.shutdown:<span class="cov8" title="1">
+                        return</span>
+                case &lt;-ticker.C:<span class="cov8" title="1">
+                        p.performCleanup()</span>
+                }
+        }
+}
+
+// performCleanup closes connections that have been idle too long
+func (p *ConnectionPool) performCleanup() <span class="cov8" title="1">{
+        if p.maxIdleSeconds &lt;= 0 </span><span class="cov0" title="0">{
+                return // Cleanup disabled
+        }</span>
+
+        <span class="cov8" title="1">p.mu.Lock()
+        defer p.mu.Unlock()
+
+        now := time.Now()
+        toRemove := make([]*PooledConnection, 0)
+
+        for _, pc := range p.connections </span><span class="cov8" title="1">{
+                if !pc.inUse &amp;&amp; !pc.returnedAt.IsZero() </span><span class="cov8" title="1">{
+                        idleTime := now.Sub(pc.returnedAt)
+                        if idleTime.Seconds() &gt;= float64(p.maxIdleSeconds) </span><span class="cov8" title="1">{
+                                toRemove = append(toRemove, pc)
+                        }</span>
+                }
+        }
+
+        // Close and remove idle connections
+        <span class="cov8" title="1">for _, pc := range toRemove </span><span class="cov8" title="1">{
+                if err := pc.conn.Close(); err != nil </span><span class="cov0" title="0">{
+                        log.Printf("Error closing idle connection: %v", err)
+                }</span>
+                <span class="cov8" title="1">p.removeConnection(pc)</span>
+        }
+
+        <span class="cov8" title="1">if len(toRemove) &gt; 0 </span><span class="cov8" title="1">{
+                log.Printf("Closed %d idle connections", len(toRemove))
+        }</span>
+}
+
+// Close closes all connections in the pool
+func (p *ConnectionPool) Close() error <span class="cov8" title="1">{
+        // Signal shutdown
+        close(p.shutdown)
+
+        // Wait for cleanup goroutine to finish
+        p.cleanupWg.Wait()
+
+        // Close all connections
+        p.mu.Lock()
+        defer p.mu.Unlock()
+
+        var lastErr error
+        for _, pc := range p.connections </span><span class="cov8" title="1">{
+                if err := pc.conn.Close(); err != nil </span><span class="cov0" title="0">{
+                        lastErr = err
+                        log.Printf("Error closing connection: %v", err)
+                }</span>
+        }
+
+        <span class="cov8" title="1">p.connections = nil
+        return lastErr</span>
+}
+
+// Stats returns statistics about the connection pool
+func (p *ConnectionPool) Stats() (total, inUse, idle int) <span class="cov8" title="1">{
+        p.mu.Lock()
+        defer p.mu.Unlock()
+
+        total = len(p.connections)
+        for _, pc := range p.connections </span><span class="cov8" title="1">{
+                if pc.inUse </span><span class="cov8" title="1">{
+                        inUse++
+                }</span> else<span class="cov8" title="1"> {
+                        idle++
+                }</span>
+        }
+        <span class="cov8" title="1">return</span>
+}
+</pre>
+		
+		<pre class="file" id="file2" style="display: none">/*-------------------------------------------------------------------------
+ *
+ * pgEdge AI Workbench
+ *
+ * Copyright (c) 2025, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-------------------------------------------------------------------------
+ */
+
+package main
+
+import (
+        "database/sql"
+        "fmt"
+        "log"
+        "time"
+
+        _ "github.com/lib/pq"
+)
+
+// Datastore represents a connection to the PostgreSQL datastore
+type Datastore struct {
+        pool   *ConnectionPool
+        config *Config
+}
+
+// initDatastore initializes the datastore connection
+func initDatastore(config *Config) (*Datastore, error) <span class="cov0" title="0">{
+        if err := config.Validate(); err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("invalid configuration: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">ds := &amp;Datastore{
+                config: config,
+        }
+
+        if err := ds.connect(); err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        <span class="cov0" title="0">if err := ds.initializeSchema(); err != nil </span><span class="cov0" title="0">{
+                if cerr := ds.Close(); cerr != nil </span><span class="cov0" title="0">{
+                        log.Printf("Error closing datastore after schema initialization failure: %v", cerr)
+                }</span>
+                <span class="cov0" title="0">return nil, fmt.Errorf("failed to initialize schema: %w", err)</span>
+        }
+
+        <span class="cov0" title="0">return ds, nil</span>
+}
+
+// connect establishes a connection pool to the PostgreSQL datastore
+func (ds *Datastore) connect() error <span class="cov0" title="0">{
+        connStr := ds.buildConnectionString()
+
+        pool, err := NewConnectionPool(
+                connStr,
+                ds.config.PoolMaxConnections,
+                ds.config.PoolMaxIdleSeconds,
+        )
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to create connection pool: %w", err)
+        }</span>
+
+        // Test the connection pool by getting a connection
+        <span class="cov0" title="0">conn, err := pool.GetConnection()
+        if err != nil </span><span class="cov0" title="0">{
+                if cerr := pool.Close(); cerr != nil </span><span class="cov0" title="0">{
+                        log.Printf("Error closing pool after connection test failure: %v", cerr)
+                }</span>
+                <span class="cov0" title="0">return fmt.Errorf("failed to get test connection: %w", err)</span>
+        }
+
+        // Return the test connection
+        <span class="cov0" title="0">if err := pool.ReturnConnection(conn); err != nil </span><span class="cov0" title="0">{
+                if cerr := pool.Close(); cerr != nil </span><span class="cov0" title="0">{
+                        log.Printf("Error closing pool after return connection failure: %v", cerr)
+                }</span>
+                <span class="cov0" title="0">return fmt.Errorf("failed to return test connection: %w", err)</span>
+        }
+
+        <span class="cov0" title="0">ds.pool = pool
+        return nil</span>
+}
+
+// buildConnectionString builds a PostgreSQL connection string from config
+func (ds *Datastore) buildConnectionString() string <span class="cov8" title="1">{
+        cfg := ds.config
+
+        // Start with basic connection parameters
+        params := make(map[string]string)
+        params["dbname"] = cfg.PgDatabase
+        params["user"] = cfg.PgUsername
+
+        if cfg.PgHostAddr != "" </span><span class="cov8" title="1">{
+                params["hostaddr"] = cfg.PgHostAddr
+        }</span> else<span class="cov8" title="1"> if cfg.PgHost != "" </span><span class="cov8" title="1">{
+                params["host"] = cfg.PgHost
+        }</span>
+
+        <span class="cov8" title="1">if cfg.PgPort != 0 </span><span class="cov8" title="1">{
+                params["port"] = fmt.Sprintf("%d", cfg.PgPort)
+        }</span>
+
+        <span class="cov8" title="1">if cfg.PgPassword != "" </span><span class="cov8" title="1">{
+                params["password"] = cfg.PgPassword
+        }</span>
+
+        // SSL parameters
+        <span class="cov8" title="1">if cfg.PgSSLMode != "" </span><span class="cov8" title="1">{
+                params["sslmode"] = cfg.PgSSLMode
+        }</span>
+        <span class="cov8" title="1">if cfg.PgSSLCert != "" </span><span class="cov0" title="0">{
+                params["sslcert"] = cfg.PgSSLCert
+        }</span>
+        <span class="cov8" title="1">if cfg.PgSSLKey != "" </span><span class="cov0" title="0">{
+                params["sslkey"] = cfg.PgSSLKey
+        }</span>
+        <span class="cov8" title="1">if cfg.PgSSLRootCert != "" </span><span class="cov0" title="0">{
+                params["sslrootcert"] = cfg.PgSSLRootCert
+        }</span>
+
+        // Build the connection string
+        <span class="cov8" title="1">var connStr string
+        for key, value := range params </span><span class="cov8" title="1">{
+                if connStr != "" </span><span class="cov8" title="1">{
+                        connStr += " "
+                }</span>
+                <span class="cov8" title="1">connStr += fmt.Sprintf("%s='%s'", key, value)</span>
+        }
+
+        <span class="cov8" title="1">return connStr</span>
+}
+
+// initializeSchema creates the necessary database schema if it doesn't exist
+func (ds *Datastore) initializeSchema() error <span class="cov0" title="0">{
+        log.Println("Initializing database schema...")
+
+        conn, err := ds.GetConnection()
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to get connection: %w", err)
+        }</span>
+        <span class="cov0" title="0">defer func() </span><span class="cov0" title="0">{
+                if cerr := ds.ReturnConnection(conn); cerr != nil </span><span class="cov0" title="0">{
+                        log.Printf("Error returning connection: %v", cerr)
+                }</span>
+        }()
+
+        // Use the schema manager to apply migrations
+        <span class="cov0" title="0">schemaManager := NewSchemaManager()
+        if err := schemaManager.Migrate(conn); err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to migrate schema: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">log.Println("Database schema initialized")
+        return nil</span>
+}
+
+// GetConnection retrieves a connection from the pool
+func (ds *Datastore) GetConnection() (*sql.DB, error) <span class="cov0" title="0">{
+        return ds.pool.GetConnection()
+}</span>
+
+// ReturnConnection returns a connection to the pool
+func (ds *Datastore) ReturnConnection(conn *sql.DB) error <span class="cov0" title="0">{
+        return ds.pool.ReturnConnection(conn)
+}</span>
+
+// Close closes the datastore connection pool
+func (ds *Datastore) Close() error <span class="cov0" title="0">{
+        if ds.pool != nil </span><span class="cov0" title="0">{
+                return ds.pool.Close()
+        }</span>
+        <span class="cov0" title="0">return nil</span>
+}
+
+// CollectGarbage drops old metric partitions based on retention policies
+func (ds *Datastore) CollectGarbage() error <span class="cov0" title="0">{
+        conn, err := ds.GetConnection()
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to get connection: %w", err)
+        }</span>
+        <span class="cov0" title="0">defer func() </span><span class="cov0" title="0">{
+                if cerr := ds.ReturnConnection(conn); cerr != nil </span><span class="cov0" title="0">{
+                        log.Printf("Error returning connection: %v", cerr)
+                }</span>
+        }()
+
+        // Get all probes with their retention policies
+        <span class="cov0" title="0">rows, err := conn.Query(`
+        SELECT id, name, retention_days
+        FROM probes
+        WHERE enabled = TRUE
+    `)
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to query probes: %w", err)
+        }</span>
+        <span class="cov0" title="0">defer func() </span><span class="cov0" title="0">{
+                if cerr := rows.Close(); cerr != nil </span><span class="cov0" title="0">{
+                        log.Printf("Error closing rows: %v", cerr)
+                }</span>
+        }()
+
+        <span class="cov0" title="0">for rows.Next() </span><span class="cov0" title="0">{
+                var probeID int
+                var probeName string
+                var retentionDays int
+
+                if err := rows.Scan(&amp;probeID, &amp;probeName, &amp;retentionDays); err != nil </span><span class="cov0" title="0">{
+                        log.Printf("Error scanning probe row: %v", err)
+                        continue</span>
+                }
+
+                // Calculate cutoff date
+                <span class="cov0" title="0">cutoffDate := time.Now().AddDate(0, 0, -retentionDays)
+
+                log.Printf("Cleaning up probe %s (id=%d) data older than %v",
+                        probeName, probeID, cutoffDate)</span>
+
+                // This is a placeholder - actual partition dropping logic would go here
+                // For now, we just log the intent
+        }
+
+        <span class="cov0" title="0">return rows.Err()</span>
+}
+
+// GetMonitoredConnections returns all connections that should be monitored
+func (ds *Datastore) GetMonitoredConnections() ([]MonitoredConnection, error) <span class="cov0" title="0">{
+        conn, err := ds.GetConnection()
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to get connection: %w", err)
+        }</span>
+        <span class="cov0" title="0">defer func() </span><span class="cov0" title="0">{
+                if cerr := ds.ReturnConnection(conn); cerr != nil </span><span class="cov0" title="0">{
+                        log.Printf("Error returning connection: %v", cerr)
+                }</span>
+        }()
+
+        <span class="cov0" title="0">rows, err := conn.Query(`
+        SELECT id, name, host, hostaddr, port, database_name, username,
+               password_encrypted, sslmode, sslcert, sslkey, sslrootcert
+        FROM monitored_connections
+        WHERE is_monitored = TRUE
+    `)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to query monitored connections: %w", err)
+        }</span>
+        <span class="cov0" title="0">defer func() </span><span class="cov0" title="0">{
+                if cerr := rows.Close(); cerr != nil </span><span class="cov0" title="0">{
+                        log.Printf("Error closing rows: %v", cerr)
+                }</span>
+        }()
+
+        <span class="cov0" title="0">var connections []MonitoredConnection
+        for rows.Next() </span><span class="cov0" title="0">{
+                var c MonitoredConnection
+                if err := rows.Scan(
+                        &amp;c.ID, &amp;c.Name, &amp;c.Host, &amp;c.HostAddr, &amp;c.Port,
+                        &amp;c.DatabaseName, &amp;c.Username, &amp;c.PasswordEncrypted,
+                        &amp;c.SSLMode, &amp;c.SSLCert, &amp;c.SSLKey, &amp;c.SSLRootCert,
+                ); err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to scan connection row: %w", err)
+                }</span>
+                <span class="cov0" title="0">connections = append(connections, c)</span>
+        }
+
+        <span class="cov0" title="0">return connections, rows.Err()</span>
+}
+
+// MonitoredConnection represents a PostgreSQL connection to monitor
+type MonitoredConnection struct {
+        ID                int
+        Name              string
+        Host              string
+        HostAddr          sql.NullString
+        Port              int
+        DatabaseName      string
+        Username          string
+        PasswordEncrypted sql.NullString
+        SSLMode           sql.NullString
+        SSLCert           sql.NullString
+        SSLKey            sql.NullString
+        SSLRootCert       sql.NullString
+}
+</pre>
+		
+		<pre class="file" id="file3" style="display: none">/*-------------------------------------------------------------------------
+ *
+ * pgEdge AI Workbench
+ *
+ * Copyright (c) 2025, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-------------------------------------------------------------------------
+ */
+
+package main
+
+import (
+        "flag"
+        "fmt"
+        "log"
+        "os"
+        "path/filepath"
+        "sync"
+        "time"
+)
+
+var (
+        // Version information
+        Version = "0.1.0"
+
+        // Command line flags
+        configFile = flag.String("config", "", "Path to configuration file")
+
+        // Datastore connection flags
+        pgHost         = flag.String("pg-host", "", "PostgreSQL server hostname or IP address")
+        pgHostAddr     = flag.String("pg-hostaddr", "", "PostgreSQL server IP address")
+        pgDatabase     = flag.String("pg-database", "", "PostgreSQL database name")
+        pgUsername     = flag.String("pg-username", "", "PostgreSQL username")
+        pgPasswordFile = flag.String("pg-password-file", "", "Path to file containing PostgreSQL password")
+        pgPort         = flag.Int("pg-port", 5432, "PostgreSQL server port")
+        pgSSLMode      = flag.String("pg-sslmode", "prefer", "PostgreSQL SSL mode")
+        pgSSLCert      = flag.String("pg-sslcert", "", "Path to PostgreSQL client SSL certificate")
+        pgSSLKey       = flag.String("pg-sslkey", "", "Path to PostgreSQL client SSL key")
+        pgSSLRootCert  = flag.String("pg-sslrootcert", "", "Path to PostgreSQL root SSL certificate")
+
+        // Global state
+        shutdownChan = make(chan struct{})
+        wg           sync.WaitGroup
+)
+
+func main() <span class="cov0" title="0">{
+        flag.Parse()
+
+        log.Printf("pgEdge AI Workbench Collector v%s starting...", Version)
+
+        // Load configuration
+        config, err := loadConfiguration()
+        if err != nil </span><span class="cov0" title="0">{
+                log.Fatalf("Failed to load configuration: %v", err)
+        }</span>
+
+        // Initialize datastore connection
+        <span class="cov0" title="0">ds, err := initDatastore(config)
+        if err != nil </span><span class="cov0" title="0">{
+                log.Fatalf("Failed to initialize datastore: %v", err)
+        }</span>
+        <span class="cov0" title="0">defer func() </span><span class="cov0" title="0">{
+                if cerr := ds.Close(); cerr != nil </span><span class="cov0" title="0">{
+                        log.Printf("Error closing datastore: %v", cerr)
+                }</span>
+        }()
+
+        <span class="cov0" title="0">log.Println("Datastore connection established")
+
+        // Initialize monitoring system
+        monitor, err := initMonitor(ds, config)
+        if err != nil </span><span class="cov0" title="0">{
+                log.Fatalf("Failed to initialize monitoring system: %v", err)
+        }</span>
+
+        // Start monitoring threads
+        <span class="cov0" title="0">log.Println("Starting monitoring threads...")
+        wg.Add(1)
+        go func() </span><span class="cov0" title="0">{
+                defer wg.Done()
+                monitor.Start(shutdownChan)
+        }</span>()
+
+        // Start garbage collector thread
+        <span class="cov0" title="0">log.Println("Starting garbage collector thread...")
+        wg.Add(1)
+        go func() </span><span class="cov0" title="0">{
+                defer wg.Done()
+                runGarbageCollector(ds, shutdownChan)
+        }</span>()
+
+        <span class="cov0" title="0">log.Println("Collector is running. Press Ctrl+C to stop.")
+
+        // Wait for shutdown signal
+        waitForShutdown()
+
+        log.Println("Shutdown signal received, stopping...")
+        close(shutdownChan)
+
+        // Wait for all goroutines to finish
+        wg.Wait()
+
+        log.Println("Collector stopped")</span>
+}
+
+// loadConfiguration loads configuration from file and command line
+func loadConfiguration() (*Config, error) <span class="cov0" title="0">{
+        config := NewConfig()
+
+        // Determine config file path
+        configPath := *configFile
+        explicitConfigPath := (configPath != "")
+
+        if configPath == "" </span><span class="cov0" title="0">{
+                // Default to executable directory
+                exe, err := os.Executable()
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to get executable path: %w", err)
+                }</span>
+                <span class="cov0" title="0">configPath = filepath.Join(filepath.Dir(exe), "ai-workbench.conf")</span>
+        }
+
+        // Load config file if it exists
+        <span class="cov0" title="0">if _, err := os.Stat(configPath); err == nil </span><span class="cov0" title="0">{
+                if err := config.LoadFromFile(configPath); err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to load config file: %w", err)
+                }</span>
+                <span class="cov0" title="0">log.Printf("Configuration loaded from: %s", configPath)</span>
+        } else<span class="cov0" title="0"> {
+                // If user explicitly specified a config file that doesn't exist, fail
+                if explicitConfigPath </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("specified config file not found: %s", configPath)
+                }</span>
+                // Otherwise, just log and continue with defaults
+                <span class="cov0" title="0">log.Printf("Configuration file not found: %s, using defaults", configPath)</span>
+        }
+
+        // Override with command line flags
+        <span class="cov0" title="0">config.ApplyFlags()
+
+        return config, nil</span>
+}
+
+// waitForShutdown waits for an interrupt signal
+func waitForShutdown() <span class="cov0" title="0">{
+        // For now, just wait indefinitely
+        // In production, this would handle OS signals
+        select </span>{}
+}
+
+// runGarbageCollector runs the garbage collector thread
+func runGarbageCollector(ds *Datastore, shutdown &lt;-chan struct{}) <span class="cov0" title="0">{
+        ticker := time.NewTicker(24 * time.Hour)
+        defer ticker.Stop()
+
+        for </span><span class="cov0" title="0">{
+                select </span>{
+                case &lt;-shutdown:<span class="cov0" title="0">
+                        log.Println("Garbage collector thread stopping")
+                        return</span>
+                case &lt;-ticker.C:<span class="cov0" title="0">
+                        log.Println("Running garbage collector...")
+                        if err := ds.CollectGarbage(); err != nil </span><span class="cov0" title="0">{
+                                log.Printf("Garbage collection error: %v", err)
+                        }</span> else<span class="cov0" title="0"> {
+                                log.Println("Garbage collection completed")
+                        }</span>
+                }
+        }
+}
+</pre>
+		
+		<pre class="file" id="file4" style="display: none">/*-------------------------------------------------------------------------
+ *
+ * pgEdge AI Workbench
+ *
+ * Copyright (c) 2025, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-------------------------------------------------------------------------
+ */
+
+package main
+
+import (
+        "database/sql"
+        "fmt"
+        "log"
+        "sync"
+        "time"
+
+        _ "github.com/lib/pq"
+)
+
+// Monitor manages the monitoring of PostgreSQL servers
+type Monitor struct {
+        datastore   *Datastore
+        config      *Config
+        connections map[int]*MonitoredConn
+        probes      map[int]*Probe
+        mu          sync.RWMutex
+}
+
+// MonitoredConn represents an active connection to a monitored server
+type MonitoredConn struct {
+        connection MonitoredConnection
+        db         *sql.DB
+}
+
+// Probe represents a monitoring probe configuration
+type Probe struct {
+        ID                 int
+        Name               string
+        Description        string
+        SQLQuery           string
+        CollectionInterval int
+        RetentionDays      int
+        Enabled            bool
+}
+
+// initMonitor initializes the monitoring system
+func initMonitor(ds *Datastore, config *Config) (*Monitor, error) <span class="cov0" title="0">{
+        m := &amp;Monitor{
+                datastore:   ds,
+                config:      config,
+                connections: make(map[int]*MonitoredConn),
+                probes:      make(map[int]*Probe),
+        }
+
+        // Load monitored connections
+        if err := m.loadConnections(); err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to load connections: %w", err)
+        }</span>
+
+        // Load probes
+        <span class="cov0" title="0">if err := m.loadProbes(); err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to load probes: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">return m, nil</span>
+}
+
+// loadConnections loads all monitored connections from the datastore
+func (m *Monitor) loadConnections() error <span class="cov0" title="0">{
+        connections, err := m.datastore.GetMonitoredConnections()
+        if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">m.mu.Lock()
+        defer m.mu.Unlock()
+
+        for _, conn := range connections </span><span class="cov0" title="0">{
+                monConn := &amp;MonitoredConn{
+                        connection: conn,
+                }
+
+                // Establish connection to monitored server
+                if err := monConn.connect(m.config); err != nil </span><span class="cov0" title="0">{
+                        log.Printf("Warning: failed to connect to %s: %v", conn.Name, err)
+                        continue</span>
+                }
+
+                <span class="cov0" title="0">m.connections[conn.ID] = monConn
+                log.Printf("Connected to monitored server: %s", conn.Name)</span>
+        }
+
+        <span class="cov0" title="0">return nil</span>
+}
+
+// loadProbes loads all enabled probes from the datastore
+func (m *Monitor) loadProbes() error <span class="cov0" title="0">{
+        conn, err := m.datastore.GetConnection()
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to get connection: %w", err)
+        }</span>
+        <span class="cov0" title="0">defer func() </span><span class="cov0" title="0">{
+                if cerr := m.datastore.ReturnConnection(conn); cerr != nil </span><span class="cov0" title="0">{
+                        log.Printf("Error returning connection: %v", cerr)
+                }</span>
+        }()
+
+        <span class="cov0" title="0">rows, err := conn.Query(`
+        SELECT id, name, description, sql_query, collection_interval, retention_days, enabled
+        FROM probes
+        WHERE enabled = TRUE
+    `)
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to query probes: %w", err)
+        }</span>
+        <span class="cov0" title="0">defer func() </span><span class="cov0" title="0">{
+                if cerr := rows.Close(); cerr != nil </span><span class="cov0" title="0">{
+                        log.Printf("Error closing rows: %v", cerr)
+                }</span>
+        }()
+
+        <span class="cov0" title="0">m.mu.Lock()
+        defer m.mu.Unlock()
+
+        for rows.Next() </span><span class="cov0" title="0">{
+                probe := &amp;Probe{}
+                if err := rows.Scan(
+                        &amp;probe.ID, &amp;probe.Name, &amp;probe.Description, &amp;probe.SQLQuery,
+                        &amp;probe.CollectionInterval, &amp;probe.RetentionDays, &amp;probe.Enabled,
+                ); err != nil </span><span class="cov0" title="0">{
+                        return fmt.Errorf("failed to scan probe row: %w", err)
+                }</span>
+
+                <span class="cov0" title="0">m.probes[probe.ID] = probe
+                log.Printf("Loaded probe: %s (interval: %ds)", probe.Name, probe.CollectionInterval)</span>
+        }
+
+        <span class="cov0" title="0">return rows.Err()</span>
+}
+
+// Start starts the monitoring threads
+func (m *Monitor) Start(shutdown &lt;-chan struct{}) <span class="cov0" title="0">{
+        log.Println("Monitor starting...")
+
+        // Create a wait group for all probe threads
+        var wg sync.WaitGroup
+
+        m.mu.RLock()
+        probes := make([]*Probe, 0, len(m.probes))
+        for _, probe := range m.probes </span><span class="cov0" title="0">{
+                probes = append(probes, probe)
+        }</span>
+        <span class="cov0" title="0">m.mu.RUnlock()
+
+        // Start a goroutine for each probe
+        for _, probe := range probes </span><span class="cov0" title="0">{
+                wg.Add(1)
+                go func(p *Probe) </span><span class="cov0" title="0">{
+                        defer wg.Done()
+                        m.runProbe(p, shutdown)
+                }</span>(probe)
+        }
+
+        // Wait for all probe threads to finish
+        <span class="cov0" title="0">wg.Wait()
+        log.Println("Monitor stopped")</span>
+}
+
+// runProbe runs a single probe on all monitored connections
+func (m *Monitor) runProbe(probe *Probe, shutdown &lt;-chan struct{}) <span class="cov0" title="0">{
+        ticker := time.NewTicker(time.Duration(probe.CollectionInterval) * time.Second)
+        defer ticker.Stop()
+
+        log.Printf("Starting probe thread: %s", probe.Name)
+
+        for </span><span class="cov0" title="0">{
+                select </span>{
+                case &lt;-shutdown:<span class="cov0" title="0">
+                        log.Printf("Probe thread stopping: %s", probe.Name)
+                        return</span>
+                case &lt;-ticker.C:<span class="cov0" title="0">
+                        m.executeProbe(probe)</span>
+                }
+        }
+}
+
+// executeProbe executes a probe against all monitored connections
+func (m *Monitor) executeProbe(probe *Probe) <span class="cov0" title="0">{
+        m.mu.RLock()
+        connections := make([]*MonitoredConn, 0, len(m.connections))
+        for _, conn := range m.connections </span><span class="cov0" title="0">{
+                connections = append(connections, conn)
+        }</span>
+        <span class="cov0" title="0">m.mu.RUnlock()
+
+        for _, conn := range connections </span><span class="cov0" title="0">{
+                if err := m.collectMetrics(conn, probe); err != nil </span><span class="cov0" title="0">{
+                        log.Printf("Error collecting metrics for %s with probe %s: %v",
+                                conn.connection.Name, probe.Name, err)
+                }</span>
+        }
+}
+
+// collectMetrics executes a probe query and stores the results
+func (m *Monitor) collectMetrics(conn *MonitoredConn, probe *Probe) error <span class="cov0" title="0">{
+        // Execute the probe query
+        rows, err := conn.db.Query(probe.SQLQuery)
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to execute probe query: %w", err)
+        }</span>
+        <span class="cov0" title="0">defer func() </span><span class="cov0" title="0">{
+                if cerr := rows.Close(); cerr != nil </span><span class="cov0" title="0">{
+                        log.Printf("Error closing rows: %v", cerr)
+                }</span>
+        }()
+
+        // For now, just log that we executed the probe
+        // In a full implementation, we would store the results in partitioned tables
+        <span class="cov0" title="0">log.Printf("Executed probe %s on %s", probe.Name, conn.connection.Name)
+
+        return nil</span>
+}
+
+// connect establishes a connection to a monitored PostgreSQL server
+func (mc *MonitoredConn) connect(config *Config) error <span class="cov0" title="0">{
+        connStr := mc.buildConnectionString(config)
+
+        db, err := sql.Open("postgres", connStr)
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to open connection: %w", err)
+        }</span>
+
+        // Set connection pool settings
+        <span class="cov0" title="0">db.SetMaxOpenConns(5)
+        db.SetMaxIdleConns(2)
+        db.SetConnMaxLifetime(5 * time.Minute)
+
+        // Test the connection
+        if err := db.Ping(); err != nil </span><span class="cov0" title="0">{
+                if cerr := db.Close(); cerr != nil </span><span class="cov0" title="0">{
+                        log.Printf("Error closing database connection after ping failure: %v", cerr)
+                }</span>
+                <span class="cov0" title="0">return fmt.Errorf("failed to ping server: %w", err)</span>
+        }
+
+        <span class="cov0" title="0">mc.db = db
+        return nil</span>
+}
+
+// buildConnectionString builds a connection string for a monitored connection
+func (mc *MonitoredConn) buildConnectionString(_ *Config) string <span class="cov0" title="0">{
+        conn := mc.connection
+
+        params := make(map[string]string)
+        params["dbname"] = conn.DatabaseName
+        params["user"] = conn.Username
+
+        if conn.HostAddr.Valid &amp;&amp; conn.HostAddr.String != "" </span><span class="cov0" title="0">{
+                params["hostaddr"] = conn.HostAddr.String
+        }</span> else<span class="cov0" title="0"> {
+                params["host"] = conn.Host
+        }</span>
+
+        <span class="cov0" title="0">if conn.Port != 0 </span><span class="cov0" title="0">{
+                params["port"] = fmt.Sprintf("%d", conn.Port)
+        }</span>
+
+        // Decrypt password if present (placeholder - would need actual decryption)
+        <span class="cov0" title="0">if conn.PasswordEncrypted.Valid &amp;&amp; conn.PasswordEncrypted.String != "" </span><span class="cov0" title="0">{
+                // TODO: Implement actual password decryption using server_secret
+                params["password"] = conn.PasswordEncrypted.String
+        }</span>
+
+        // SSL parameters
+        <span class="cov0" title="0">if conn.SSLMode.Valid &amp;&amp; conn.SSLMode.String != "" </span><span class="cov0" title="0">{
+                params["sslmode"] = conn.SSLMode.String
+        }</span>
+        <span class="cov0" title="0">if conn.SSLCert.Valid &amp;&amp; conn.SSLCert.String != "" </span><span class="cov0" title="0">{
+                params["sslcert"] = conn.SSLCert.String
+        }</span>
+        <span class="cov0" title="0">if conn.SSLKey.Valid &amp;&amp; conn.SSLKey.String != "" </span><span class="cov0" title="0">{
+                params["sslkey"] = conn.SSLKey.String
+        }</span>
+        <span class="cov0" title="0">if conn.SSLRootCert.Valid &amp;&amp; conn.SSLRootCert.String != "" </span><span class="cov0" title="0">{
+                params["sslrootcert"] = conn.SSLRootCert.String
+        }</span>
+
+        // Build the connection string
+        <span class="cov0" title="0">var connStr string
+        for key, value := range params </span><span class="cov0" title="0">{
+                if connStr != "" </span><span class="cov0" title="0">{
+                        connStr += " "
+                }</span>
+                <span class="cov0" title="0">connStr += fmt.Sprintf("%s='%s'", key, value)</span>
+        }
+
+        <span class="cov0" title="0">return connStr</span>
+}
+</pre>
+		
+		<pre class="file" id="file5" style="display: none">/*-------------------------------------------------------------------------
+ *
+ * pgEdge AI Workbench
+ *
+ * Copyright (c) 2025, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-------------------------------------------------------------------------
+ */
+
+package main
+
+import (
+    "database/sql"
+    "fmt"
+    "log"
+    "sort"
+)
+
+// Migration represents a database schema migration
+type Migration struct {
+    Version     int
+    Description string
+    Up          func(*sql.DB) error
+}
+
+// SchemaManager handles database schema migrations
+type SchemaManager struct {
+    migrations []Migration
+}
+
+// NewSchemaManager creates a new schema manager
+func NewSchemaManager() *SchemaManager <span class="cov8" title="1">{
+    sm := &amp;SchemaManager{
+        migrations: []Migration{},
+    }
+    sm.registerMigrations()
+    return sm
+}</span>
+
+// registerMigrations registers all available migrations
+func (sm *SchemaManager) registerMigrations() <span class="cov8" title="1">{
+    // Migration 1: Initial schema with core tables
+    sm.migrations = append(sm.migrations, Migration{
+        Version:     1,
+        Description: "Create schema_version table",
+        Up: func(db *sql.DB) error </span><span class="cov8" title="1">{
+            _, err := db.Exec(`
+                CREATE TABLE IF NOT EXISTS schema_version (
+                    version INTEGER PRIMARY KEY,
+                    description TEXT NOT NULL,
+                    applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            `)
+            if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to create schema_version table: %w", err)
+            }</span>
+            <span class="cov8" title="1">return nil</span>
+        },
+    })
+
+    // Migration 2: Create monitored_connections table
+    <span class="cov8" title="1">sm.migrations = append(sm.migrations, Migration{
+        Version:     2,
+        Description: "Create monitored_connections table",
+        Up: func(db *sql.DB) error </span><span class="cov8" title="1">{
+            _, err := db.Exec(`
+                CREATE TABLE IF NOT EXISTS monitored_connections (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(255) NOT NULL,
+                    host VARCHAR(255) NOT NULL,
+                    hostaddr VARCHAR(255),
+                    port INTEGER NOT NULL DEFAULT 5432,
+                    database_name VARCHAR(255) NOT NULL,
+                    username VARCHAR(255) NOT NULL,
+                    password_encrypted TEXT,
+                    sslmode VARCHAR(50),
+                    sslcert TEXT,
+                    sslkey TEXT,
+                    sslrootcert TEXT,
+                    is_shared BOOLEAN NOT NULL DEFAULT FALSE,
+                    owner_token VARCHAR(255),
+                    is_monitored BOOLEAN NOT NULL DEFAULT FALSE,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    CONSTRAINT chk_port CHECK (port &gt; 0 AND port &lt;= 65535),
+                    CONSTRAINT chk_owner_token CHECK (
+                        (is_shared = TRUE) OR
+                        (is_shared = FALSE AND owner_token IS NOT NULL)
+                    )
+                )
+            `)
+            if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to create monitored_connections table: %w", err)
+            }</span>
+            <span class="cov8" title="1">return nil</span>
+        },
+    })
+
+    // Migration 3: Create indexes on monitored_connections
+    <span class="cov8" title="1">sm.migrations = append(sm.migrations, Migration{
+        Version:     3,
+        Description: "Create indexes on monitored_connections table",
+        Up: func(db *sql.DB) error </span><span class="cov8" title="1">{
+            indexes := []string{
+                `CREATE INDEX IF NOT EXISTS idx_monitored_connections_owner_token
+                 ON monitored_connections(owner_token)`,
+                `CREATE INDEX IF NOT EXISTS idx_monitored_connections_is_monitored
+                 ON monitored_connections(is_monitored) WHERE is_monitored = TRUE`,
+                `CREATE INDEX IF NOT EXISTS idx_monitored_connections_name
+                 ON monitored_connections(name)`,
+            }
+
+            for _, idx := range indexes </span><span class="cov8" title="1">{
+                if _, err := db.Exec(idx); err != nil </span><span class="cov0" title="0">{
+                    return fmt.Errorf("failed to create index: %w", err)
+                }</span>
+            }
+            <span class="cov8" title="1">return nil</span>
+        },
+    })
+
+    // Migration 4: Create probes table
+    <span class="cov8" title="1">sm.migrations = append(sm.migrations, Migration{
+        Version:     4,
+        Description: "Create probes configuration table",
+        Up: func(db *sql.DB) error </span><span class="cov8" title="1">{
+            _, err := db.Exec(`
+                CREATE TABLE IF NOT EXISTS probes (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(255) NOT NULL UNIQUE,
+                    description TEXT,
+                    sql_query TEXT NOT NULL,
+                    collection_interval INTEGER NOT NULL DEFAULT 60,
+                    retention_days INTEGER NOT NULL DEFAULT 7,
+                    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    CONSTRAINT chk_collection_interval CHECK (collection_interval &gt; 0),
+                    CONSTRAINT chk_retention_days CHECK (retention_days &gt; 0)
+                )
+            `)
+            if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to create probes table: %w", err)
+            }</span>
+            <span class="cov8" title="1">return nil</span>
+        },
+    })
+
+    // Migration 5: Create indexes on probes
+    <span class="cov8" title="1">sm.migrations = append(sm.migrations, Migration{
+        Version:     5,
+        Description: "Create indexes on probes table",
+        Up: func(db *sql.DB) error </span><span class="cov8" title="1">{
+            indexes := []string{
+                `CREATE INDEX IF NOT EXISTS idx_probes_enabled
+                 ON probes(enabled) WHERE enabled = TRUE`,
+                `CREATE INDEX IF NOT EXISTS idx_probes_name
+                 ON probes(name)`,
+            }
+
+            for _, idx := range indexes </span><span class="cov8" title="1">{
+                if _, err := db.Exec(idx); err != nil </span><span class="cov0" title="0">{
+                    return fmt.Errorf("failed to create index: %w", err)
+                }</span>
+            }
+            <span class="cov8" title="1">return nil</span>
+        },
+    })
+}
+
+// Migrate applies all pending migrations
+func (sm *SchemaManager) Migrate(db *sql.DB) error <span class="cov8" title="1">{
+    log.Println("Starting schema migration...")
+
+    // Sort migrations by version
+    sort.Slice(sm.migrations, func(i, j int) bool </span><span class="cov8" title="1">{
+        return sm.migrations[i].Version &lt; sm.migrations[j].Version
+    }</span>)
+
+    // Get current schema version
+    <span class="cov8" title="1">currentVersion, err := sm.getCurrentVersion(db)
+    if err != nil </span><span class="cov0" title="0">{
+        return fmt.Errorf("failed to get current version: %w", err)
+    }</span>
+
+    <span class="cov8" title="1">log.Printf("Current schema version: %d", currentVersion)
+
+    // Apply each pending migration
+    appliedCount := 0
+    for _, migration := range sm.migrations </span><span class="cov8" title="1">{
+        if migration.Version &lt;= currentVersion </span><span class="cov8" title="1">{
+            continue</span>
+        }
+
+        <span class="cov8" title="1">log.Printf("Applying migration %d: %s", migration.Version, migration.Description)
+
+        // Start a transaction for the migration
+        tx, err := db.Begin()
+        if err != nil </span><span class="cov0" title="0">{
+            return fmt.Errorf("failed to begin transaction for migration %d: %w",
+                migration.Version, err)
+        }</span>
+
+        // Apply the migration
+        <span class="cov8" title="1">if err := migration.Up(db); err != nil </span><span class="cov0" title="0">{
+            if rbErr := tx.Rollback(); rbErr != nil </span><span class="cov0" title="0">{
+                log.Printf("Failed to rollback transaction: %v", rbErr)
+            }</span>
+            <span class="cov0" title="0">return fmt.Errorf("failed to apply migration %d: %w", migration.Version, err)</span>
+        }
+
+        // Record the migration in schema_version
+        <span class="cov8" title="1">_, err = db.Exec(`
+            INSERT INTO schema_version (version, description)
+            VALUES ($1, $2)
+            ON CONFLICT (version) DO NOTHING
+        `, migration.Version, migration.Description)
+        if err != nil </span><span class="cov0" title="0">{
+            if rbErr := tx.Rollback(); rbErr != nil </span><span class="cov0" title="0">{
+                log.Printf("Failed to rollback transaction: %v", rbErr)
+            }</span>
+            <span class="cov0" title="0">return fmt.Errorf("failed to record migration %d: %w", migration.Version, err)</span>
+        }
+
+        // Commit the transaction
+        <span class="cov8" title="1">if err := tx.Commit(); err != nil </span><span class="cov0" title="0">{
+            return fmt.Errorf("failed to commit migration %d: %w", migration.Version, err)
+        }</span>
+
+        <span class="cov8" title="1">log.Printf("Successfully applied migration %d", migration.Version)
+        appliedCount++</span>
+    }
+
+    <span class="cov8" title="1">if appliedCount == 0 </span><span class="cov8" title="1">{
+        log.Println("Schema is up to date")
+    }</span> else<span class="cov8" title="1"> {
+        log.Printf("Applied %d migration(s)", appliedCount)
+    }</span>
+
+    <span class="cov8" title="1">return nil</span>
+}
+
+// getCurrentVersion returns the current schema version
+func (sm *SchemaManager) getCurrentVersion(db *sql.DB) (int, error) <span class="cov8" title="1">{
+    var version int
+    err := db.QueryRow(`
+        SELECT COALESCE(MAX(version), 0)
+        FROM schema_version
+    `).Scan(&amp;version)
+
+    if err != nil </span><span class="cov8" title="1">{
+        // If the table doesn't exist, return version 0
+        if err == sql.ErrNoRows </span><span class="cov0" title="0">{
+            return 0, nil
+        }</span>
+        // Check if the error is because the table doesn't exist
+        <span class="cov8" title="1">if isTableNotExistError(err) </span><span class="cov8" title="1">{
+            return 0, nil
+        }</span>
+        <span class="cov0" title="0">return 0, fmt.Errorf("failed to query schema version: %w", err)</span>
+    }
+
+    <span class="cov8" title="1">return version, nil</span>
+}
+
+// isTableNotExistError checks if an error is due to a non-existent table
+func isTableNotExistError(err error) bool <span class="cov8" title="1">{
+    if err == nil </span><span class="cov0" title="0">{
+        return false
+    }</span>
+    // PostgreSQL error code 42P01 is "undefined_table"
+    <span class="cov8" title="1">return err.Error() == `pq: relation "schema_version" does not exist`</span>
+}
+
+// GetMigrationStatus returns information about migration status
+func (sm *SchemaManager) GetMigrationStatus(db *sql.DB) ([]MigrationStatus, error) <span class="cov8" title="1">{
+    currentVersion, err := sm.getCurrentVersion(db)
+    if err != nil </span><span class="cov0" title="0">{
+        return nil, fmt.Errorf("failed to get current version: %w", err)
+    }</span>
+
+    // Get applied migrations from database
+    <span class="cov8" title="1">appliedMigrations := make(map[int]MigrationRecord)
+    rows, err := db.Query(`
+        SELECT version, description, applied_at
+        FROM schema_version
+        ORDER BY version
+    `)
+    if err != nil &amp;&amp; !isTableNotExistError(err) </span><span class="cov0" title="0">{
+        return nil, fmt.Errorf("failed to query applied migrations: %w", err)
+    }</span>
+
+    <span class="cov8" title="1">if rows != nil </span><span class="cov8" title="1">{
+        defer func() </span><span class="cov8" title="1">{
+            if cerr := rows.Close(); cerr != nil </span><span class="cov0" title="0">{
+                log.Printf("Error closing rows: %v", cerr)
+            }</span>
+        }()
+
+        <span class="cov8" title="1">for rows.Next() </span><span class="cov8" title="1">{
+            var record MigrationRecord
+            if err := rows.Scan(&amp;record.Version, &amp;record.Description, &amp;record.AppliedAt); err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to scan migration record: %w", err)
+            }</span>
+            <span class="cov8" title="1">appliedMigrations[record.Version] = record</span>
+        }
+
+        <span class="cov8" title="1">if err := rows.Err(); err != nil </span><span class="cov0" title="0">{
+            return nil, fmt.Errorf("error iterating migrations: %w", err)
+        }</span>
+    }
+
+    // Build status for each migration
+    <span class="cov8" title="1">var statuses []MigrationStatus
+    for _, migration := range sm.migrations </span><span class="cov8" title="1">{
+        status := MigrationStatus{
+            Version:     migration.Version,
+            Description: migration.Description,
+            Applied:     migration.Version &lt;= currentVersion,
+        }
+
+        if record, ok := appliedMigrations[migration.Version]; ok </span><span class="cov8" title="1">{
+            status.AppliedAt = &amp;record.AppliedAt
+        }</span>
+
+        <span class="cov8" title="1">statuses = append(statuses, status)</span>
+    }
+
+    <span class="cov8" title="1">return statuses, nil</span>
+}
+
+// MigrationRecord represents a migration record in the database
+type MigrationRecord struct {
+    Version     int
+    Description string
+    AppliedAt   string
+}
+
+// MigrationStatus represents the status of a migration
+type MigrationStatus struct {
+    Version     int
+    Description string
+    Applied     bool
+    AppliedAt   *string
+}
+</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>

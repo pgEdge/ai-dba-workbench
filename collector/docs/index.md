@@ -8,6 +8,7 @@
 - [Database Schema](#database-schema)
 - [Monitoring Probes](#monitoring-probes)
 - [Development](#development)
+- [Schema Management](schema-management.md)
 
 ## Introduction
 
@@ -122,6 +123,11 @@ using the `--` prefix and `-` instead of `_`. For example:
 Command line flags take precedence over configuration file values.
 
 ## Database Schema
+
+The collector uses a migration-based schema management system to automatically
+create and update database schemas at startup. For detailed information about
+the schema management system, including how to add new migrations, see the
+[Schema Management](schema-management.md) documentation.
 
 ### Core Tables
 

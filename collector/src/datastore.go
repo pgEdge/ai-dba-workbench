@@ -146,59 +146,10 @@ func (ds *Datastore) initializeSchema() error {
 		}
 	}()
 
-	// Create schema version table
-	_, err = conn.Exec(`
-        CREATE TABLE IF NOT EXISTS schema_version (
-            version INTEGER PRIMARY KEY,
-            applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )
-    `)
-	if err != nil {
-		return fmt.Errorf("failed to create schema_version table: %w", err)
-	}
-
-	// Create monitored connections table
-	_, err = conn.Exec(`
-        CREATE TABLE IF NOT EXISTS monitored_connections (
-            id SERIAL PRIMARY KEY,
-            name VARCHAR(255) NOT NULL,
-            host VARCHAR(255) NOT NULL,
-            hostaddr VARCHAR(255),
-            port INTEGER NOT NULL DEFAULT 5432,
-            database_name VARCHAR(255) NOT NULL,
-            username VARCHAR(255) NOT NULL,
-            password_encrypted TEXT,
-            sslmode VARCHAR(50),
-            sslcert TEXT,
-            sslkey TEXT,
-            sslrootcert TEXT,
-            is_shared BOOLEAN NOT NULL DEFAULT FALSE,
-            owner_token VARCHAR(255),
-            is_monitored BOOLEAN NOT NULL DEFAULT FALSE,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )
-    `)
-	if err != nil {
-		return fmt.Errorf("failed to create monitored_connections table: %w", err)
-	}
-
-	// Create probes configuration table
-	_, err = conn.Exec(`
-        CREATE TABLE IF NOT EXISTS probes (
-            id SERIAL PRIMARY KEY,
-            name VARCHAR(255) NOT NULL UNIQUE,
-            description TEXT,
-            sql_query TEXT NOT NULL,
-            collection_interval INTEGER NOT NULL DEFAULT 60,
-            retention_days INTEGER NOT NULL DEFAULT 7,
-            enabled BOOLEAN NOT NULL DEFAULT TRUE,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )
-    `)
-	if err != nil {
-		return fmt.Errorf("failed to create probes table: %w", err)
+	// Use the schema manager to apply migrations
+	schemaManager := NewSchemaManager()
+	if err := schemaManager.Migrate(conn); err != nil {
+		return fmt.Errorf("failed to migrate schema: %w", err)
 	}
 
 	log.Println("Database schema initialized")

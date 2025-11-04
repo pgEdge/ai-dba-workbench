@@ -210,8 +210,52 @@ go build -o collector
 
 ### Running Tests
 
+The test suite automatically creates a temporary test database, runs all
+tests against it, and then drops the database when complete.
+
 ```bash
 go test ./...
+```
+
+#### Test Environment Variables
+
+The following environment variables can be used to configure test behavior:
+
+- **`TEST_DB_URL`**: PostgreSQL URL for the test database server (e.g.,
+  `postgres://user:pass@localhost:5432/postgres`). The tests will connect to
+  this server, create a temporary database, run tests, and drop it.
+
+- **`TEST_DB_CONN`**: Alternative connection string format (e.g.,
+  `host=localhost port=5432 user=postgres sslmode=disable`). Use this for
+  backward compatibility or if you prefer the key=value format.
+
+- **`TEST_DB_KEEP`**: Set to `1` or `true` to prevent automatic cleanup of
+  the test database. Useful for inspecting the database state after tests
+  run. The test database name includes a timestamp for easy identification.
+
+- **`SKIP_DB_TESTS`**: Set to any value to skip all database tests. Useful
+  when PostgreSQL is not available.
+
+#### Examples
+
+Run tests against a remote PostgreSQL server:
+
+```bash
+TEST_DB_URL="postgres://testuser:testpass@testserver:5432/postgres" go test ./...
+```
+
+Keep the test database for inspection:
+
+```bash
+TEST_DB_KEEP=1 go test ./...
+# Test database will be named like: ai_workbench_test_20251104_133248_374204
+# Clean up manually when done: DROP DATABASE ai_workbench_test_20251104_133248_374204
+```
+
+Skip database tests when PostgreSQL is unavailable:
+
+```bash
+SKIP_DB_TESTS=1 go test ./...
 ```
 
 ### Code Style

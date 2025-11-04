@@ -14,27 +14,192 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
+	"time"
 
 	_ "github.com/lib/pq"
 )
 
-// getTestConnection creates a connection for testing
-func getTestConnection(t *testing.T) *sql.DB {
-	// Skip if PostgreSQL is not available
+// testDBName holds the name of the temporary test database
+var testDBName string
+
+// TestMain sets up and tears down the test database for all tests
+func TestMain(m *testing.M) {
+	// Skip if PostgreSQL tests are disabled
 	if os.Getenv("SKIP_DB_TESTS") != "" {
-		t.Skip("Skipping database tests (SKIP_DB_TESTS is set)")
+		fmt.Println("Skipping database tests (SKIP_DB_TESTS is set)")
+		os.Exit(0)
 	}
 
-	// Use test database
-	connStr := "host=localhost port=5432 user=postgres dbname=postgres sslmode=disable"
-	if testConnStr := os.Getenv("TEST_DB_CONN"); testConnStr != "" {
-		connStr = testConnStr
+	// Setup test database
+	if err := setupTestDatabase(); err != nil {
+		fmt.Printf("Failed to setup test database: %v\n", err)
+		fmt.Println("Skipping database tests")
+		os.Exit(0)
 	}
+
+	// Run tests
+	exitCode := m.Run()
+
+	// Teardown test database
+	teardownTestDatabase()
+
+	os.Exit(exitCode)
+}
+
+// setupTestDatabase creates a temporary test database
+func setupTestDatabase() error {
+	// Generate test database name with timestamp
+	now := time.Now()
+	timestamp := now.Format("20060102_150405")
+	microseconds := now.Nanosecond() / 1000
+	testDBName = fmt.Sprintf("ai_workbench_test_%s_%06d", timestamp, microseconds)
+
+	// Get connection string for admin database (postgres)
+	adminConnStr := getAdminConnectionString()
+
+	// Connect to admin database
+	adminDB, err := sql.Open("postgres", adminConnStr)
+	if err != nil {
+		return fmt.Errorf("failed to open connection to admin database: %w", err)
+	}
+	defer func() {
+		if cerr := adminDB.Close(); cerr != nil {
+			fmt.Printf("Error closing admin database: %v\n", cerr)
+		}
+	}()
+
+	if err := adminDB.Ping(); err != nil {
+		return fmt.Errorf("failed to ping admin database: %w", err)
+	}
+
+	// Create test database
+	_, err = adminDB.Exec(fmt.Sprintf("CREATE DATABASE %s", testDBName))
+	if err != nil {
+		return fmt.Errorf("failed to create test database: %w", err)
+	}
+
+	fmt.Printf("Created test database: %s\n", testDBName)
+	return nil
+}
+
+// teardownTestDatabase drops the temporary test database
+func teardownTestDatabase() {
+	if testDBName == "" {
+		return
+	}
+
+	// Check if we should keep the test database
+	if keep := os.Getenv("TEST_DB_KEEP"); keep == "1" || keep == "true" {
+		fmt.Printf("Keeping test database: %s (TEST_DB_KEEP is set)\n", testDBName)
+		return
+	}
+
+	// Get connection string for admin database
+	adminConnStr := getAdminConnectionString()
+
+	// Connect to admin database
+	adminDB, err := sql.Open("postgres", adminConnStr)
+	if err != nil {
+		fmt.Printf("Failed to connect to admin database for cleanup: %v\n", err)
+		return
+	}
+	defer func() {
+		if cerr := adminDB.Close(); cerr != nil {
+			fmt.Printf("Error closing admin database: %v\n", cerr)
+		}
+	}()
+
+	// Drop test database
+	_, err = adminDB.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s", testDBName))
+	if err != nil {
+		fmt.Printf("Warning: failed to drop test database %s: %v\n", testDBName, err)
+	} else {
+		fmt.Printf("Dropped test database: %s\n", testDBName)
+	}
+}
+
+// getAdminConnectionString returns the connection string for the admin database (postgres)
+func getAdminConnectionString() string {
+	// Check for postgres:// URL format first
+	if testURL := os.Getenv("TEST_DB_URL"); testURL != "" {
+		return replaceDatabase(testURL, "postgres")
+	}
+
+	// Check for connection string format (backward compatibility)
+	if testConnStr := os.Getenv("TEST_DB_CONN"); testConnStr != "" {
+		return replaceDatabase(testConnStr, "postgres")
+	}
+
+	// Default connection to postgres database
+	return "host=localhost port=5432 user=postgres dbname=postgres sslmode=disable"
+}
+
+// replaceDatabase replaces the database name in a connection string or URL
+func replaceDatabase(connStr, dbName string) string {
+	// Check if it's a postgres:// or postgresql:// URL
+	if strings.HasPrefix(connStr, "postgres://") || strings.HasPrefix(connStr, "postgresql://") {
+		// Parse URL: postgres://user:pass@host:port/dbname?params
+		parts := strings.SplitN(connStr, "?", 2)
+		baseURL := parts[0]
+		queryString := ""
+		if len(parts) > 1 {
+			queryString = "?" + parts[1]
+		}
+
+		// Find the database name part (after last /)
+		lastSlash := strings.LastIndex(baseURL, "/")
+		if lastSlash != -1 {
+			// Replace or add database name
+			baseURL = baseURL[:lastSlash+1] + dbName
+		} else {
+			// No database specified, add it
+			baseURL = baseURL + "/" + dbName
+		}
+
+		return baseURL + queryString
+	}
+
+	// Handle connection string format (key=value pairs)
+	parts := strings.Fields(connStr)
+	var newParts []string
+	found := false
+
+	for _, part := range parts {
+		if strings.HasPrefix(part, "dbname=") {
+			newParts = append(newParts, "dbname="+dbName)
+			found = true
+		} else {
+			newParts = append(newParts, part)
+		}
+	}
+
+	if !found {
+		newParts = append(newParts, "dbname="+dbName)
+	}
+
+	return strings.Join(newParts, " ")
+}
+
+// getTestConnection creates a connection for testing
+func getTestConnection(t *testing.T) *sql.DB {
+	// Get base connection string
+	var baseConnStr string
+	if testURL := os.Getenv("TEST_DB_URL"); testURL != "" {
+		baseConnStr = testURL
+	} else if testConnStr := os.Getenv("TEST_DB_CONN"); testConnStr != "" {
+		baseConnStr = testConnStr
+	} else {
+		baseConnStr = "host=localhost port=5432 user=postgres sslmode=disable"
+	}
+
+	// Replace with test database name
+	connStr := replaceDatabase(baseConnStr, testDBName)
 
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
-		t.Skip("PostgreSQL not available: " + err.Error())
+		t.Fatalf("Failed to connect to test database: %v", err)
 		return nil
 	}
 
@@ -42,7 +207,7 @@ func getTestConnection(t *testing.T) *sql.DB {
 		if cerr := db.Close(); cerr != nil {
 			t.Logf("Error closing database: %v", cerr)
 		}
-		t.Skip("PostgreSQL not available: " + err.Error())
+		t.Fatalf("Failed to ping test database: %v", err)
 		return nil
 	}
 
@@ -783,4 +948,62 @@ func TestAuthenticationIndexes(t *testing.T) {
 
 	// Clean up
 	cleanupTestSchema(t, db)
+}
+
+// TestZZZ_FullSchemaForInspection creates the full schema and leaves it in
+// place for inspection. This test runs last (due to ZZZ prefix) and does not
+// clean up, allowing users to inspect the schema when TEST_DB_KEEP=1 is set.
+func TestZZZ_FullSchemaForInspection(t *testing.T) {
+	db := getTestConnection(t)
+	if db == nil {
+		return
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Logf("Error closing database: %v", err)
+		}
+	}()
+
+	// Clean up any existing schema from previous tests
+	cleanupTestSchema(t, db)
+
+	// Create the full schema
+	sm := NewSchemaManager()
+	if err := sm.Migrate(db); err != nil {
+		t.Fatalf("Failed to create full schema: %v", err)
+	}
+
+	// Verify all tables exist
+	expectedTables := []string{
+		"schema_version",
+		"monitored_connections",
+		"user_accounts",
+		"user_tokens",
+		"service_tokens",
+	}
+
+	for _, tableName := range expectedTables {
+		var count int
+		err := db.QueryRow(`
+            SELECT COUNT(*)
+            FROM information_schema.tables
+            WHERE table_name = $1
+        `, tableName).Scan(&count)
+		if err != nil {
+			t.Fatalf("Failed to check for table %s: %v", tableName, err)
+		}
+		if count != 1 {
+			t.Errorf("Table %s not found", tableName)
+		}
+	}
+
+	// Log message about schema inspection
+	if keep := os.Getenv("TEST_DB_KEEP"); keep == "1" || keep == "true" {
+		t.Logf("Full schema created in test database: %s", testDBName)
+		t.Logf("Database will be kept for inspection (TEST_DB_KEEP is set)")
+		t.Logf("To inspect: psql -d %s", testDBName)
+		t.Logf("To clean up manually: DROP DATABASE %s", testDBName)
+	}
+
+	// DO NOT call cleanupTestSchema here - leave schema in place for inspection
 }

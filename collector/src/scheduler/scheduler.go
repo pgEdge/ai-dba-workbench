@@ -178,6 +178,40 @@ func (ps *ProbeScheduler) configReloadLoop() {
 	}
 }
 
+// calculateInitialDelay calculates how long to wait before the first probe execution
+// based on the last collection time. Returns 0 or negative if probe should run immediately.
+func (ps *ProbeScheduler) calculateInitialDelay(probe probes.MetricsProbe, connectionID int, connectionName string, config *probes.ProbeConfig) time.Duration {
+	// Get a datastore connection to query last collection time
+	conn, err := ps.datastore.GetConnection()
+	if err != nil {
+		log.Printf("Warning: failed to get datastore connection for initial delay calculation: %v", err)
+		return 0 // Run immediately if we can't determine last collection time
+	}
+	defer ps.datastore.ReturnConnection(conn)
+
+	// Query last collection time for this probe/connection pair
+	lastCollected, err := probes.GetLastCollectionTime(ps.ctx, conn, probe.GetName(), connectionID)
+	if err != nil {
+		log.Printf("Warning: failed to query last collection time for probe %s on %s: %v",
+			probe.GetName(), connectionName, err)
+		return 0 // Run immediately if we can't determine last collection time
+	}
+
+	// If no previous collection (zero time), run immediately
+	if lastCollected.IsZero() {
+		log.Printf("No previous collection found for probe %s on %s, running immediately",
+			probe.GetName(), connectionName)
+		return 0
+	}
+
+	// Calculate when the next collection should happen
+	interval := time.Duration(config.CollectionIntervalSeconds) * time.Second
+	nextCollection := lastCollected.Add(interval)
+	delay := time.Until(nextCollection)
+
+	return delay
+}
+
 // scheduleProbeForConnection runs a probe at its configured interval for a specific connection
 func (ps *ProbeScheduler) scheduleProbeForConnection(probe probes.MetricsProbe, connectionID int) {
 	defer ps.wg.Done()
@@ -208,16 +242,41 @@ func (ps *ProbeScheduler) scheduleProbeForConnection(probe probes.MetricsProbe, 
 		return
 	}
 
-	// Run immediately on startup
-	ps.executeProbeForConnection(ps.ctx, probe, conn)
+	// Calculate initial delay based on last collection time
+	initialDelay := ps.calculateInitialDelay(probe, connectionID, conn.Name, config)
+
+	if initialDelay > 0 {
+		log.Printf("Delaying first execution of probe %s on %s by %v (last collected recently)",
+			config.Name, conn.Name, initialDelay)
+
+		// Wait for the initial delay before first execution
+		select {
+		case <-ps.shutdownChan:
+			log.Printf("Stopping probe scheduler for %s on %s during initial delay", config.Name, conn.Name)
+			return
+		case <-ps.ctx.Done():
+			log.Printf("Context cancelled, stopping probe scheduler for %s on %s during initial delay", config.Name, conn.Name)
+			return
+		case <-time.After(initialDelay):
+			// Initial delay elapsed, execute probe now
+			ps.executeProbeForConnection(ps.ctx, probe, conn)
+		}
+	} else {
+		// No delay needed, run immediately
+		if initialDelay < 0 {
+			log.Printf("Probe %s on %s is past due by %v, executing immediately",
+				config.Name, conn.Name, -initialDelay)
+		}
+		ps.executeProbeForConnection(ps.ctx, probe, conn)
+	}
 
 	for {
 		select {
 		case <-ps.shutdownChan:
-			log.Printf("Stopping probe scheduler for %s on connection %d", config.Name, connectionID)
+			log.Printf("Stopping probe scheduler for %s on %s", config.Name, conn.Name)
 			return
 		case <-ps.ctx.Done():
-			log.Printf("Context cancelled, stopping probe scheduler for %s on connection %d", config.Name, connectionID)
+			log.Printf("Context cancelled, stopping probe scheduler for %s on %s", config.Name, conn.Name)
 			return
 		case <-ticker.C:
 			// Check if probe still exists and config hasn't changed
@@ -227,7 +286,7 @@ func (ps *ProbeScheduler) scheduleProbeForConnection(probe probes.MetricsProbe, 
 
 			if !exists || currentProbe.GetConfig().CollectionIntervalSeconds != config.CollectionIntervalSeconds {
 				// Probe was removed or interval changed, stop this goroutine
-				log.Printf("Probe %s for connection %d has changed, stopping scheduler", config.Name, connectionID)
+				log.Printf("Probe %s for %s has changed, stopping scheduler", config.Name, conn.Name)
 				return
 			}
 

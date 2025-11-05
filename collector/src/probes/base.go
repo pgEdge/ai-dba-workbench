@@ -427,3 +427,33 @@ func getDefaultInterval(probeName string) int {
 
 	return 300 // Default 5 minutes
 }
+
+// GetLastCollectionTime queries the last collection timestamp for a probe/connection pair
+// Returns the timestamp of the most recent metrics collection, or zero time if no data exists
+func GetLastCollectionTime(ctx context.Context, conn *pgxpool.Conn, probeName string, connectionID int) (time.Time, error) {
+	tableName := fmt.Sprintf("metrics.%s", probeName)
+
+	// Query the maximum collected_at timestamp for this probe and connection
+	var lastCollected *time.Time
+	query := fmt.Sprintf(`
+		SELECT MAX(collected_at)
+		FROM %s
+		WHERE connection_id = $1
+	`, tableName)
+
+	err := conn.QueryRow(ctx, query, connectionID).Scan(&lastCollected)
+	if err != nil {
+		// If the table doesn't exist yet, that's okay - return zero time
+		if strings.Contains(err.Error(), "does not exist") {
+			return time.Time{}, nil
+		}
+		return time.Time{}, fmt.Errorf("failed to query last collection time for %s: %w", probeName, err)
+	}
+
+	// If no rows found (NULL), return zero time
+	if lastCollected == nil {
+		return time.Time{}, nil
+	}
+
+	return *lastCollected, nil
+}

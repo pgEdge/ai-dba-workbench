@@ -30,6 +30,14 @@ func TestNewConfig(t *testing.T) {
 	if config.PgDatabase != "ai_workbench" {
 		t.Errorf("Expected default PgDatabase to be 'ai_workbench', got '%s'", config.PgDatabase)
 	}
+
+	if config.DatastorePoolMaxWaitSeconds != 60 {
+		t.Errorf("Expected default DatastorePoolMaxWaitSeconds to be 60, got %d", config.DatastorePoolMaxWaitSeconds)
+	}
+
+	if config.MonitoredPoolMaxWaitSeconds != 60 {
+		t.Errorf("Expected default MonitoredPoolMaxWaitSeconds to be 60, got %d", config.MonitoredPoolMaxWaitSeconds)
+	}
 }
 
 func TestConfigLoadFromFile(t *testing.T) {
@@ -88,9 +96,11 @@ func TestConfigValidate(t *testing.T) {
 				PgDatabase:                  "testdb",
 				PgUsername:                  "testuser",
 				PgPort:                      5432,
-				PoolMaxConnections:          10,
-				PoolMaxIdleSeconds:          60,
+				DatastorePoolMaxConnections: 10,
+				DatastorePoolMaxIdleSeconds: 60,
+				DatastorePoolMaxWaitSeconds: 60,
 				MonitoredPoolMaxConnections: 5,
+				MonitoredPoolMaxWaitSeconds: 60,
 			},
 			wantErr: false,
 		},
@@ -121,7 +131,7 @@ func TestConfigValidate(t *testing.T) {
 				PgDatabase:         "testdb",
 				PgUsername:         "testuser",
 				PgPort:             -1,
-				PoolMaxConnections: 10,
+				DatastorePoolMaxConnections: 10,
 			},
 			wantErr: true,
 		},
@@ -132,7 +142,7 @@ func TestConfigValidate(t *testing.T) {
 				PgDatabase:         "testdb",
 				PgUsername:         "testuser",
 				PgPort:             5432,
-				PoolMaxConnections: 0,
+				DatastorePoolMaxConnections: 0,
 			},
 			wantErr: true,
 		},
@@ -143,8 +153,38 @@ func TestConfigValidate(t *testing.T) {
 				PgDatabase:         "testdb",
 				PgUsername:         "testuser",
 				PgPort:             5432,
-				PoolMaxConnections: 10,
-				PoolMaxIdleSeconds: -1,
+				DatastorePoolMaxConnections: 10,
+				DatastorePoolMaxIdleSeconds: -1,
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid datastore_pool_max_wait_seconds",
+			config: &Config{
+				PgHost:                      "localhost",
+				PgDatabase:                  "testdb",
+				PgUsername:                  "testuser",
+				PgPort:                      5432,
+				DatastorePoolMaxConnections: 10,
+				DatastorePoolMaxIdleSeconds: 60,
+				DatastorePoolMaxWaitSeconds: 0,
+				MonitoredPoolMaxConnections: 5,
+				MonitoredPoolMaxWaitSeconds: 60,
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid monitored_pool_max_wait_seconds",
+			config: &Config{
+				PgHost:                      "localhost",
+				PgDatabase:                  "testdb",
+				PgUsername:                  "testuser",
+				PgPort:                      5432,
+				DatastorePoolMaxConnections: 10,
+				DatastorePoolMaxIdleSeconds: 60,
+				DatastorePoolMaxWaitSeconds: 60,
+				MonitoredPoolMaxConnections: 5,
+				MonitoredPoolMaxWaitSeconds: -1,
 			},
 			wantErr: true,
 		},

@@ -11,22 +11,26 @@
 package main
 
 import (
+    "github.com/pgedge/ai-workbench/collector/src/probes"
+    "github.com/pgedge/ai-workbench/collector/src/database"
+
 	"context"
-	"database/sql"
 	"log"
 	"sync"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // GarbageCollector manages cleanup of expired metrics data
 type GarbageCollector struct {
-	datastore    *Datastore
+	datastore    *database.Datastore
 	shutdownChan chan struct{}
 	wg           sync.WaitGroup
 }
 
 // NewGarbageCollector creates a new garbage collector
-func NewGarbageCollector(datastore *Datastore) *GarbageCollector {
+func NewGarbageCollector(datastore *database.Datastore) *GarbageCollector {
 	return &GarbageCollector{
 		datastore:    datastore,
 		shutdownChan: make(chan struct{}),
@@ -83,14 +87,10 @@ func (gc *GarbageCollector) collectGarbage(ctx context.Context) {
 		log.Printf("Error getting database connection for garbage collection: %v", err)
 		return
 	}
-	defer func() {
-		if rerr := gc.datastore.ReturnConnection(conn); rerr != nil {
-			log.Printf("Error returning connection: %v", rerr)
-		}
-	}()
+	defer gc.datastore.ReturnConnection(conn)
 
 	// Load probe configurations
-	configs, err := LoadProbeConfigs(ctx, conn)
+	configs, err := probes.LoadProbeConfigs(ctx, conn)
 	if err != nil {
 		log.Printf("Error loading probe configs for garbage collection: %v", err)
 		return
@@ -115,7 +115,7 @@ func (gc *GarbageCollector) collectGarbage(ctx context.Context) {
 }
 
 // collectGarbageForProbe performs garbage collection for a single probe
-func (gc *GarbageCollector) collectGarbageForProbe(ctx context.Context, conn *sql.DB, config *ProbeConfig) (int, error) {
+func (gc *GarbageCollector) collectGarbageForProbe(ctx context.Context, conn *pgxpool.Conn, config *probes.ProbeConfig) (int, error) {
 	// Get the table name for this probe
 	tableName := getProbeTableName(config.Name)
 	if tableName == "" {
@@ -124,7 +124,7 @@ func (gc *GarbageCollector) collectGarbageForProbe(ctx context.Context, conn *sq
 	}
 
 	// Drop expired partitions
-	err := DropExpiredPartitions(ctx, conn, tableName, config.RetentionDays)
+	err := probes.DropExpiredPartitions(ctx, conn, tableName, config.RetentionDays)
 	if err != nil {
 		return 0, err
 	}

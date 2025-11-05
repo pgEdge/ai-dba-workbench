@@ -34,9 +34,12 @@ type Config struct {
 	PgSSLRootCert string
 
 	// Connection pool settings
-	PoolMaxConnections          int
-	PoolMaxIdleSeconds          int
-	MonitoredPoolMaxConnections int
+	DatastorePoolMaxConnections int // Max connections in the datastore connection pool
+	DatastorePoolMaxIdleSeconds int // Max idle time (seconds) before closing idle datastore connections
+	DatastorePoolMaxWaitSeconds int // Max wait time (seconds) to acquire a datastore connection before timeout
+	MonitoredPoolMaxConnections int // Max concurrent connections PER monitored database server
+	MonitoredPoolMaxIdleSeconds int // Max idle time (seconds) before closing idle monitored connections
+	MonitoredPoolMaxWaitSeconds int // Max wait time (seconds) to acquire a monitored connection before timeout
 
 	// Server secret for encryption
 	ServerSecret string
@@ -50,9 +53,12 @@ func NewConfig() *Config {
 		PgUsername:                  "postgres",
 		PgPort:                      5432,
 		PgSSLMode:                   "prefer",
-		PoolMaxConnections:          25,
-		PoolMaxIdleSeconds:          300,
+		DatastorePoolMaxConnections: 25,
+		DatastorePoolMaxIdleSeconds: 300,
+		DatastorePoolMaxWaitSeconds: 60,
 		MonitoredPoolMaxConnections: 5,
+		MonitoredPoolMaxIdleSeconds: 300,
+		MonitoredPoolMaxWaitSeconds: 60,
 	}
 }
 
@@ -137,24 +143,42 @@ func (c *Config) setConfigValue(key, value string) error {
 		c.PgSSLKey = value
 	case "pg_sslrootcert":
 		c.PgSSLRootCert = value
-	case "pool_max_connections":
+	case "datastore_pool_max_connections":
 		maxConn, err := strconv.Atoi(value)
 		if err != nil {
-			return fmt.Errorf("invalid pool_max_connections: %w", err)
+			return fmt.Errorf("invalid datastore_pool_max_connections: %w", err)
 		}
-		c.PoolMaxConnections = maxConn
-	case "pool_max_idle_seconds":
+		c.DatastorePoolMaxConnections = maxConn
+	case "datastore_pool_max_idle_seconds":
 		maxIdle, err := strconv.Atoi(value)
 		if err != nil {
-			return fmt.Errorf("invalid pool_max_idle_seconds: %w", err)
+			return fmt.Errorf("invalid datastore_pool_max_idle_seconds: %w", err)
 		}
-		c.PoolMaxIdleSeconds = maxIdle
+		c.DatastorePoolMaxIdleSeconds = maxIdle
 	case "monitored_pool_max_connections":
 		maxConn, err := strconv.Atoi(value)
 		if err != nil {
 			return fmt.Errorf("invalid monitored_pool_max_connections: %w", err)
 		}
 		c.MonitoredPoolMaxConnections = maxConn
+	case "monitored_pool_max_idle_seconds":
+		maxIdle, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("invalid monitored_pool_max_idle_seconds: %w", err)
+		}
+		c.MonitoredPoolMaxIdleSeconds = maxIdle
+	case "datastore_pool_max_wait_seconds":
+		maxWait, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("invalid datastore_pool_max_wait_seconds: %w", err)
+		}
+		c.DatastorePoolMaxWaitSeconds = maxWait
+	case "monitored_pool_max_wait_seconds":
+		maxWait, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("invalid monitored_pool_max_wait_seconds: %w", err)
+		}
+		c.MonitoredPoolMaxWaitSeconds = maxWait
 	case "server_secret":
 		c.ServerSecret = value
 	default:
@@ -226,14 +250,39 @@ func (c *Config) Validate() error {
 	if c.PgPort <= 0 || c.PgPort > 65535 {
 		return fmt.Errorf("pg_port must be between 1 and 65535")
 	}
-	if c.PoolMaxConnections <= 0 {
-		return fmt.Errorf("pool_max_connections must be greater than 0")
+	if c.DatastorePoolMaxConnections <= 0 {
+		return fmt.Errorf("datastore_pool_max_connections must be greater than 0")
 	}
-	if c.PoolMaxIdleSeconds < 0 {
-		return fmt.Errorf("pool_max_idle_seconds must be non-negative")
+	if c.DatastorePoolMaxIdleSeconds < 0 {
+		return fmt.Errorf("datastore_pool_max_idle_seconds must be non-negative")
 	}
 	if c.MonitoredPoolMaxConnections <= 0 {
 		return fmt.Errorf("monitored_pool_max_connections must be greater than 0")
 	}
+	if c.MonitoredPoolMaxIdleSeconds < 0 {
+		return fmt.Errorf("monitored_pool_max_idle_seconds must be non-negative")
+	}
+	if c.DatastorePoolMaxWaitSeconds <= 0 {
+		return fmt.Errorf("datastore_pool_max_wait_seconds must be greater than 0")
+	}
+	if c.MonitoredPoolMaxWaitSeconds <= 0 {
+		return fmt.Errorf("monitored_pool_max_wait_seconds must be greater than 0")
+	}
 	return nil
 }
+
+// Getter methods to implement database.Config and scheduler.Config interfaces
+func (c *Config) GetPgHost() string        { return c.PgHost }
+func (c *Config) GetPgHostAddr() string    { return c.PgHostAddr }
+func (c *Config) GetPgDatabase() string    { return c.PgDatabase }
+func (c *Config) GetPgUsername() string    { return c.PgUsername }
+func (c *Config) GetPgPassword() string    { return c.PgPassword }
+func (c *Config) GetPgPort() int           { return c.PgPort }
+func (c *Config) GetPgSSLMode() string     { return c.PgSSLMode }
+func (c *Config) GetPgSSLCert() string     { return c.PgSSLCert }
+func (c *Config) GetPgSSLKey() string      { return c.PgSSLKey }
+func (c *Config) GetPgSSLRootCert() string { return c.PgSSLRootCert }
+func (c *Config) GetDatastorePoolMaxConnections() int { return c.DatastorePoolMaxConnections }
+func (c *Config) GetDatastorePoolMaxIdleSeconds() int { return c.DatastorePoolMaxIdleSeconds }
+func (c *Config) GetDatastorePoolMaxWaitSeconds() int { return c.DatastorePoolMaxWaitSeconds }
+func (c *Config) GetMonitoredPoolMaxWaitSeconds() int { return c.MonitoredPoolMaxWaitSeconds }

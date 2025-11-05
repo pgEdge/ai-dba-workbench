@@ -11,6 +11,9 @@
 package main
 
 import (
+    "github.com/pgedge/ai-workbench/collector/src/database"
+    "github.com/pgedge/ai-workbench/collector/src/scheduler"
+
 	"context"
 	"flag"
 	"fmt"
@@ -53,7 +56,7 @@ func main() {
 	}
 
 	// Initialize datastore connection
-	ds, err := initDatastore(config)
+	ds, err := database.NewDatastore(config)
 	if err != nil {
 		log.Fatalf("Failed to initialize datastore: %v", err)
 	}
@@ -64,11 +67,13 @@ func main() {
 	ctx := context.Background()
 
 	// Initialize monitored connection pool manager
-	poolManager := NewMonitoredConnectionPoolManager(config.MonitoredPoolMaxConnections)
+	log.Printf("Creating monitored pool manager with max %d connections per server, idle timeout %ds",
+		config.MonitoredPoolMaxConnections, config.MonitoredPoolMaxIdleSeconds)
+	poolManager := database.NewMonitoredConnectionPoolManager(config.MonitoredPoolMaxConnections, config.MonitoredPoolMaxIdleSeconds)
 
 	// Initialize probe scheduler
-	scheduler := NewProbeScheduler(ds, poolManager, config.ServerSecret)
-	if err := scheduler.Start(ctx); err != nil {
+	probeScheduler := scheduler.NewProbeScheduler(ds, poolManager, config, config.ServerSecret)
+	if err := probeScheduler.Start(ctx); err != nil {
 		log.Fatalf("Failed to start probe scheduler: %v", err)
 	}
 
@@ -87,7 +92,7 @@ func main() {
 
 	// Shutdown in proper order to ensure clean connection closure
 	// 1. Stop probe scheduler (no new probe queries)
-	scheduler.Stop()
+	probeScheduler.Stop()
 
 	// 2. Stop garbage collector (no new cleanup queries)
 	gc.Stop()
@@ -102,11 +107,8 @@ func main() {
 
 	// 4. Close datastore connection pool (last to close)
 	log.Println("Closing datastore connection pool...")
-	if err := ds.Close(); err != nil {
-		log.Printf("Error closing datastore: %v", err)
-	} else {
-		log.Println("Datastore connection pool closed")
-	}
+	ds.Close()
+	log.Println("Datastore connection pool closed")
 
 	log.Println("Collector stopped")
 }

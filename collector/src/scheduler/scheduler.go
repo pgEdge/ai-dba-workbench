@@ -11,8 +11,8 @@
 package scheduler
 
 import (
-    "github.com/pgedge/ai-workbench/collector/src/probes"
-    "github.com/pgedge/ai-workbench/collector/src/database"
+	"github.com/pgedge/ai-workbench/collector/src/database"
+	"github.com/pgedge/ai-workbench/collector/src/probes"
 
 	"context"
 	"fmt"
@@ -299,10 +299,6 @@ func (ps *ProbeScheduler) scheduleProbeForConnection(probe probes.MetricsProbe, 
 func (ps *ProbeScheduler) executeProbeForConnection(ctx context.Context, probe probes.MetricsProbe, conn database.MonitoredConnection) {
 	config := probe.GetConfig()
 	startTime := time.Now()
-	defer func() {
-		duration := time.Since(startTime)
-		log.Printf("Probe %s on %s completed in %.2fms", config.Name, conn.Name, float64(duration.Microseconds())/1000.0)
-	}()
 
 	// Create a timeout context for this probe execution using configured timeout
 	// This ensures that if a connection hangs, we don't wait forever
@@ -312,11 +308,12 @@ func (ps *ProbeScheduler) executeProbeForConnection(ctx context.Context, probe p
 
 	// Collect all metrics before storing
 	var allMetrics []map[string]interface{}
+	var databases []string
 	timestamp := time.Now()
 
 	if probe.IsDatabaseScoped() {
 		// Execute probe for each database and collect metrics
-		allMetrics = ps.executeProbeForAllDatabases(execCtx, probe, conn)
+		allMetrics, databases = ps.executeProbeForAllDatabases(execCtx, probe, conn)
 	} else {
 		// Execute probe once for the connection
 		allMetrics = ps.executeProbeForServerWide(execCtx, probe, conn)
@@ -330,21 +327,38 @@ func (ps *ProbeScheduler) executeProbeForConnection(ctx context.Context, probe p
 	}
 
 	// If we have metrics, store them all at once
+	metricsStored := 0
 	if len(allMetrics) > 0 {
-		ps.storeMetrics(ctx, probe, conn.ID, timestamp, allMetrics)
+		metricsStored = ps.storeMetrics(ctx, probe, conn.ID, timestamp, allMetrics)
+	}
+
+	// Log a single comprehensive message
+	duration := time.Since(startTime)
+	if metricsStored > 0 {
+		if probe.IsDatabaseScoped() && len(databases) > 0 {
+			log.Printf("Probe %s on %s in databases %v stored %d metrics in %.2fms",
+				config.Name, conn.Name, databases, metricsStored, float64(duration.Microseconds())/1000.0)
+		} else {
+			log.Printf("Probe %s on %s stored %d metrics in %.2fms",
+				config.Name, conn.Name, metricsStored, float64(duration.Microseconds())/1000.0)
+		}
+	} else {
+		log.Printf("Probe %s on %s completed in %.2fms (no metrics collected)",
+			config.Name, conn.Name, float64(duration.Microseconds())/1000.0)
 	}
 }
 
-// executeProbeForAllDatabases executes a database-scoped probe for all databases and returns all collected metrics
-func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe probes.MetricsProbe, conn database.MonitoredConnection) []map[string]interface{} {
+// executeProbeForAllDatabases executes a database-scoped probe for all databases and returns all collected metrics and database list
+func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe probes.MetricsProbe, conn database.MonitoredConnection) ([]map[string]interface{}, []string) {
 	config := probe.GetConfig()
 	var allMetrics []map[string]interface{}
+	var databases []string
 
 	// Check if context is already cancelled
 	if ctx.Err() != nil {
 		log.Printf("Error getting connection for probe %s on %s: context already cancelled",
 			config.Name, conn.Name)
-		return allMetrics
+		return allMetrics, databases
 	}
 
 	// Get connection to query pg_database (connects to default database)
@@ -358,11 +372,11 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 			log.Printf("Error getting connection to monitored database %s for probe %s: %v",
 				conn.Name, config.Name, err)
 		}
-		return allMetrics
+		return allMetrics, databases
 	}
 
 	// Query pg_database to get list of databases
-	databases, err := ps.getDatabaseList(ctx, monitoredDB)
+	databases, err = ps.getDatabaseList(ctx, monitoredDB)
 	if err != nil {
 		// Return connection before returning
 		ps.poolManager.ReturnConnection(conn.ID, monitoredDB)
@@ -375,11 +389,8 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 			log.Printf("Error getting database list for probe %s on connection %s: %v",
 				config.Name, conn.Name, err)
 		}
-		return allMetrics
+		return allMetrics, databases
 	}
-
-	log.Printf("Discovered %d database(s) for probe %s on connection %s: %v",
-		len(databases), config.Name, conn.Name, databases)
 
 	// Execute probe on the default/first database using the connection we already have
 	if len(databases) > 0 {
@@ -394,8 +405,6 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 				metrics[i]["_database_name"] = defaultDB
 			}
 			allMetrics = append(allMetrics, metrics...)
-			log.Printf("Probe %s collected %d metric(s) from %s/%s",
-				config.Name, len(metrics), conn.Name, defaultDB)
 		}
 	}
 
@@ -443,12 +452,10 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 				metrics[j]["_database_name"] = dbName
 			}
 			allMetrics = append(allMetrics, metrics...)
-			log.Printf("Probe %s collected %d metric(s) from %s/%s",
-				config.Name, len(metrics), conn.Name, dbName)
 		}
 	}
 
-	return allMetrics
+	return allMetrics, databases
 }
 
 // getDatabaseList queries pg_database to get list of accessible databases
@@ -525,16 +532,11 @@ func (ps *ProbeScheduler) executeProbeForServerWide(ctx context.Context, probe p
 		return nil
 	}
 
-	if len(metrics) > 0 {
-		log.Printf("Probe %s collected %d metric(s) from %s",
-			config.Name, len(metrics), conn.Name)
-	}
-
 	return metrics
 }
 
-// storeMetrics stores collected metrics to the datastore
-func (ps *ProbeScheduler) storeMetrics(ctx context.Context, probe probes.MetricsProbe, connectionID int, timestamp time.Time, metrics []map[string]interface{}) {
+// storeMetrics stores collected metrics to the datastore and returns the number of metrics stored
+func (ps *ProbeScheduler) storeMetrics(ctx context.Context, probe probes.MetricsProbe, connectionID int, timestamp time.Time, metrics []map[string]interface{}) int {
 	config := probe.GetConfig()
 
 	// Get datastore connection with configured timeout
@@ -553,7 +555,7 @@ func (ps *ProbeScheduler) storeMetrics(ctx context.Context, probe probes.Metrics
 		} else {
 			log.Printf("Error getting datastore connection for probe %s: %v", config.Name, err)
 		}
-		return
+		return 0
 	}
 	defer ps.datastore.ReturnConnection(datastoreDB)
 
@@ -561,10 +563,10 @@ func (ps *ProbeScheduler) storeMetrics(ctx context.Context, probe probes.Metrics
 	err = probe.Store(ctx, datastoreDB, connectionID, timestamp, metrics)
 	if err != nil {
 		log.Printf("Error storing metrics for probe %s: %v", config.Name, err)
-		return
+		return 0
 	}
 
-	log.Printf("Stored %d metric(s) for probe %s", len(metrics), config.Name)
+	return len(metrics)
 }
 
 // createProbe creates a probe instance based on the configuration

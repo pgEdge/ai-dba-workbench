@@ -25,15 +25,17 @@ import (
 
 // ProbeScheduler manages the execution of monitoring probes
 type ProbeScheduler struct {
-	datastore    *database.Datastore
-	poolManager  *database.MonitoredConnectionPoolManager
-	serverSecret string
-	config       Config
-	probes       map[string]probes.MetricsProbe
-	shutdownChan chan struct{}
-	ctx          context.Context
-	cancel       context.CancelFunc
-	wg           sync.WaitGroup
+	datastore      *database.Datastore
+	poolManager    *database.MonitoredConnectionPoolManager
+	serverSecret   string
+	config         Config
+	probesByConn   map[int]map[string]probes.MetricsProbe // connection_id -> probe_name -> probe
+	probesMutex    sync.RWMutex
+	shutdownChan   chan struct{}
+	ctx            context.Context
+	cancel         context.CancelFunc
+	wg             sync.WaitGroup
+	configReloader *time.Ticker
 }
 
 // Config interface defines the minimal configuration needed by ProbeScheduler
@@ -50,7 +52,7 @@ func NewProbeScheduler(datastore *database.Datastore, poolManager *database.Moni
 		poolManager:  poolManager,
 		serverSecret: serverSecret,
 		config:       config,
-		probes:       make(map[string]probes.MetricsProbe),
+		probesByConn: make(map[int]map[string]probes.MetricsProbe),
 		shutdownChan: make(chan struct{}),
 		ctx:          ctx,
 		cancel:       cancel,
@@ -59,91 +61,179 @@ func NewProbeScheduler(datastore *database.Datastore, poolManager *database.Moni
 
 // Start begins the probe scheduling loop
 func (ps *ProbeScheduler) Start(ctx context.Context) error {
-	// Load probe configurations from database
+	// Load initial probe configurations
+	if err := ps.loadConfigs(ctx); err != nil {
+		return err
+	}
+
+	// Start config reloader (every 5 minutes)
+	ps.configReloader = time.NewTicker(5 * time.Minute)
+	ps.wg.Add(1)
+	go ps.configReloadLoop()
+
+	log.Printf("Probe scheduler started")
+	return nil
+}
+
+// loadConfigs loads probe configurations and starts probe scheduling
+func (ps *ProbeScheduler) loadConfigs(ctx context.Context) error {
 	conn, err := ps.datastore.GetConnection()
 	if err != nil {
 		return err
 	}
+	defer ps.datastore.ReturnConnection(conn)
 
-	configs, err := probes.LoadProbeConfigs(ctx, conn)
+	configsByConnection, err := probes.LoadProbeConfigs(ctx, conn)
 	if err != nil {
-		ps.datastore.ReturnConnection(conn)
 		return err
 	}
 
-	ps.datastore.ReturnConnection(conn)
+	ps.probesMutex.Lock()
+	defer ps.probesMutex.Unlock()
 
-	// Initialize probes
-	for _, config := range configs {
-		probe := ps.createProbe(&config)
-		if probe != nil {
-			ps.probes[config.Name] = probe
-			log.Printf("Initialized probe: %s (interval: %ds, retention: %dd)",
-				config.Name, config.CollectionIntervalSeconds, config.RetentionDays)
+	// Get all monitored connections
+	connections, err := ps.datastore.GetMonitoredConnections()
+	if err != nil {
+		return fmt.Errorf("failed to get monitored connections: %w", err)
+	}
+
+	// For each connection, ensure probe configs exist and initialize probes
+	for _, conn := range connections {
+		if _, exists := ps.probesByConn[conn.ID]; !exists {
+			ps.probesByConn[conn.ID] = make(map[string]probes.MetricsProbe)
+		}
+
+		// Get global default probe configs (connection_id = 0)
+		globalConfigs := configsByConnection[0]
+
+		// For each global probe, ensure a connection-specific config exists
+		for _, globalConfig := range globalConfigs {
+			// Check if there's a connection-specific config
+			var config *probes.ProbeConfig
+			if connConfigs, exists := configsByConnection[conn.ID]; exists {
+				for i := range connConfigs {
+					if connConfigs[i].Name == globalConfig.Name {
+						config = &connConfigs[i]
+						break
+					}
+				}
+			}
+
+			// If no connection-specific config, ensure one is created
+			if config == nil {
+				datastoreConn, err := ps.datastore.GetConnection()
+				if err != nil {
+					log.Printf("Error getting datastore connection for probe config creation: %v", err)
+					continue
+				}
+
+				config, err = probes.EnsureProbeConfig(ctx, datastoreConn, conn.ID, globalConfig.Name)
+				ps.datastore.ReturnConnection(datastoreConn)
+
+				if err != nil {
+					log.Printf("Error ensuring probe config for %s on connection %d: %v",
+						globalConfig.Name, conn.ID, err)
+					continue
+				}
+			}
+
+			// Create probe if it doesn't exist or if interval changed
+			existingProbe := ps.probesByConn[conn.ID][config.Name]
+			if existingProbe == nil || existingProbe.GetConfig().CollectionIntervalSeconds != config.CollectionIntervalSeconds {
+				probe := ps.createProbe(config)
+				if probe != nil {
+					ps.probesByConn[conn.ID][config.Name] = probe
+					log.Printf("Initialized probe %s for connection %d (interval: %ds, retention: %dd)",
+						config.Name, conn.ID, config.CollectionIntervalSeconds, config.RetentionDays)
+
+					// Start scheduling if this is a new probe
+					if existingProbe == nil {
+						ps.wg.Add(1)
+						go ps.scheduleProbeForConnection(probe, conn.ID)
+					}
+				}
+			}
 		}
 	}
 
-	// Start scheduling goroutines for each probe
-	for _, probe := range ps.probes {
-		ps.wg.Add(1)
-		go ps.scheduleProbe(probe)
-	}
-
-	log.Printf("Probe scheduler started with %d probe(s)", len(ps.probes))
 	return nil
 }
 
-// scheduleProbe runs a probe at its configured interval
-func (ps *ProbeScheduler) scheduleProbe(probe probes.MetricsProbe) {
+// configReloadLoop periodically reloads probe configurations
+func (ps *ProbeScheduler) configReloadLoop() {
+	defer ps.wg.Done()
+
+	for {
+		select {
+		case <-ps.shutdownChan:
+			return
+		case <-ps.ctx.Done():
+			return
+		case <-ps.configReloader.C:
+			log.Println("Reloading probe configurations...")
+			if err := ps.loadConfigs(ps.ctx); err != nil {
+				log.Printf("Error reloading probe configurations: %v", err)
+			}
+		}
+	}
+}
+
+// scheduleProbeForConnection runs a probe at its configured interval for a specific connection
+func (ps *ProbeScheduler) scheduleProbeForConnection(probe probes.MetricsProbe, connectionID int) {
 	defer ps.wg.Done()
 
 	config := probe.GetConfig()
 	ticker := time.NewTicker(time.Duration(config.CollectionIntervalSeconds) * time.Second)
 	defer ticker.Stop()
 
-	// Run immediately on startup
-	ps.executeProbe(ps.ctx, probe)
-
-	for {
-		select {
-		case <-ps.shutdownChan:
-			log.Printf("Stopping probe scheduler for %s", config.Name)
-			return
-		case <-ps.ctx.Done():
-			log.Printf("Context cancelled, stopping probe scheduler for %s", config.Name)
-			return
-		case <-ticker.C:
-			ps.executeProbe(ps.ctx, probe)
-		}
-	}
-}
-
-// executeProbe executes a probe against all monitored connections
-func (ps *ProbeScheduler) executeProbe(ctx context.Context, probe probes.MetricsProbe) {
-	config := probe.GetConfig()
-
-	// Get all monitored connections
+	// Get connection info
 	connections, err := ps.datastore.GetMonitoredConnections()
 	if err != nil {
 		log.Printf("Error getting monitored connections for probe %s: %v", config.Name, err)
 		return
 	}
 
-	if len(connections) == 0 {
-		return // No connections to monitor
+	var conn database.MonitoredConnection
+	found := false
+	for _, c := range connections {
+		if c.ID == connectionID {
+			conn = c
+			found = true
+			break
+		}
 	}
 
-	// Execute probe against each connection in parallel
-	var wg sync.WaitGroup
-	for _, conn := range connections {
-		wg.Add(1)
-		go func(connection database.MonitoredConnection) {
-			defer wg.Done()
-			ps.executeProbeForConnection(ctx, probe, connection)
-		}(conn)
+	if !found {
+		log.Printf("Connection %d not found for probe %s", connectionID, config.Name)
+		return
 	}
 
-	wg.Wait()
+	// Run immediately on startup
+	ps.executeProbeForConnection(ps.ctx, probe, conn)
+
+	for {
+		select {
+		case <-ps.shutdownChan:
+			log.Printf("Stopping probe scheduler for %s on connection %d", config.Name, connectionID)
+			return
+		case <-ps.ctx.Done():
+			log.Printf("Context cancelled, stopping probe scheduler for %s on connection %d", config.Name, connectionID)
+			return
+		case <-ticker.C:
+			// Check if probe still exists and config hasn't changed
+			ps.probesMutex.RLock()
+			currentProbe, exists := ps.probesByConn[connectionID][config.Name]
+			ps.probesMutex.RUnlock()
+
+			if !exists || currentProbe.GetConfig().CollectionIntervalSeconds != config.CollectionIntervalSeconds {
+				// Probe was removed or interval changed, stop this goroutine
+				log.Printf("Probe %s for connection %d has changed, stopping scheduler", config.Name, connectionID)
+				return
+			}
+
+			ps.executeProbeForConnection(ps.ctx, probe, conn)
+		}
+	}
 }
 
 // executeProbeForConnection executes a probe against a single monitored connection
@@ -481,6 +571,10 @@ func (ps *ProbeScheduler) createProbe(config *probes.ProbeConfig) probes.Metrics
 // Stop stops the probe scheduler
 func (ps *ProbeScheduler) Stop() {
 	log.Println("Stopping probe scheduler...")
+	// Stop config reloader
+	if ps.configReloader != nil {
+		ps.configReloader.Stop()
+	}
 	// Cancel the context to interrupt any pending operations
 	ps.cancel()
 	// Close the shutdown channel to signal goroutines

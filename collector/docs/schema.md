@@ -85,39 +85,57 @@ CREATE TABLE connections (
 - Partial index on `is_monitored = TRUE` for active connections
 - Index on `name` for lookups by name
 
-### probes
+### probe_configs
 
-Defines monitoring probes and their configuration.
+Defines monitoring probes and their configuration. Supports both global
+defaults and per-connection overrides.
 
 ```sql
-CREATE TABLE probes (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(255) NOT NULL UNIQUE,
-    description TEXT,
-    collection_interval_seconds INTEGER NOT NULL DEFAULT 300,
-    retention_days INTEGER NOT NULL DEFAULT 7,
+CREATE TABLE probe_configs (
+    id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL,
+    collection_interval_seconds INTEGER NOT NULL DEFAULT 60,
+    retention_days INTEGER NOT NULL DEFAULT 28,
     is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    connection_id INTEGER REFERENCES connections(id) ON DELETE CASCADE,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT chk_collection_interval CHECK (collection_interval_seconds > 0),
-    CONSTRAINT chk_retention_days CHECK (retention_days > 0)
+    CONSTRAINT chk_name_not_empty CHECK (name <> ''),
+    CONSTRAINT chk_collection_interval_positive CHECK (collection_interval_seconds > 0),
+    CONSTRAINT chk_retention_days_positive CHECK (retention_days > 0)
 );
 ```
 
 **Key Columns:**
 
-- `id` - Unique probe identifier
+- `id` - Unique probe configuration identifier
 - `name` - Probe name (matches pg_stat_* view name)
 - `description` - Human-readable description
 - `collection_interval_seconds` - How often to run (in seconds)
 - `retention_days` - How long to keep data (in days)
 - `is_enabled` - If false, probe won't run
+- `connection_id` - Connection ID for per-server config. NULL means global
+  default
+
+**Configuration Hierarchy:**
+
+The Collector uses a fallback hierarchy for probe settings:
+
+1. **Per-Server Config**: If a probe_configs row exists with the specific
+   `connection_id`, use those settings
+2. **Global Default**: If no per-server config exists, use the probe_configs
+   row where `connection_id IS NULL`
+3. **Hardcoded Default**: If no database config exists, use built-in defaults
 
 **Indexes:**
 
 - Primary key on `id`
-- Unique index on `name`
-- Partial index on `is_enabled = TRUE`
+- Unique composite index on `(name, COALESCE(connection_id, 0))` - Allows one
+  config per probe per connection
+- Partial unique index on `name WHERE connection_id IS NULL` - Ensures only
+  one global default per probe
+- Partial index on `is_enabled = TRUE` for fast enabled probe lookups
 
 ## Metrics Tables (metrics schema)
 
@@ -289,12 +307,20 @@ DROP TABLE metrics.pg_stat_activity_20251104;
 
 ### Adjusting Retention
 
-Update the `probes` table:
+Update the `probe_configs` table:
 
 ```sql
-UPDATE probes
+-- Update global default retention for all connections
+UPDATE probe_configs
 SET retention_days = 30
-WHERE name = 'pg_stat_activity';
+WHERE name = 'pg_stat_activity'
+  AND connection_id IS NULL;
+
+-- Or set retention for a specific connection
+UPDATE probe_configs
+SET retention_days = 30
+WHERE name = 'pg_stat_activity'
+  AND connection_id = 1;
 ```
 
 Changes take effect on the next garbage collection run.

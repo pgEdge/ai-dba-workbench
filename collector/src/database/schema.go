@@ -501,7 +501,7 @@ func (sm *SchemaManager) registerMigrations() {
 			_, err := conn.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS probe_configs (
 					id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-					name TEXT NOT NULL UNIQUE,
+					name TEXT NOT NULL,
 					description TEXT NOT NULL,
 					collection_interval_seconds INTEGER NOT NULL DEFAULT 60,
 					retention_days INTEGER NOT NULL DEFAULT 28,
@@ -549,10 +549,10 @@ func (sm *SchemaManager) registerMigrations() {
 				comment string
 			}{
 				{
-					"idx_probe_configs_name",
-					`CREATE INDEX IF NOT EXISTS idx_probe_configs_name
+					"probe_configs_name_key",
+					`CREATE UNIQUE INDEX IF NOT EXISTS probe_configs_name_key
 					 ON probe_configs(name)`,
-					"Index for fast lookup of probe configurations by name",
+					"Unique constraint on probe name for global configurations",
 				},
 				{
 					"idx_probe_configs_enabled",
@@ -2618,6 +2618,146 @@ func (sm *SchemaManager) registerMigrations() {
             `)
 			if err != nil {
 				return fmt.Errorf("failed to update primary key: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 22: Add connection_id column to probe_configs for per-server configuration
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     22,
+		Description: "Add connection_id column to probe_configs for per-server configuration",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Check if connection_id column already exists
+			var hasColumn bool
+			err := conn.QueryRow(ctx, `
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'probe_configs'
+                      AND column_name = 'connection_id'
+                )
+            `).Scan(&hasColumn)
+
+			if err != nil {
+				return fmt.Errorf("failed to check for connection_id column: %w", err)
+			}
+
+			// Add connection_id column if it doesn't exist
+			if !hasColumn {
+				_, err = conn.Exec(ctx, `
+                    ALTER TABLE probe_configs
+                    ADD COLUMN connection_id INTEGER REFERENCES connections(id) ON DELETE CASCADE
+                `)
+				if err != nil {
+					return fmt.Errorf("failed to add connection_id column: %w", err)
+				}
+
+				// Add comment
+				_, err = conn.Exec(ctx, `
+                    COMMENT ON COLUMN probe_configs.connection_id IS
+                        'Connection ID for per-server configuration. NULL means global default.'
+                `)
+				if err != nil {
+					return fmt.Errorf("failed to add comment on connection_id column: %w", err)
+				}
+			}
+
+			// Check if unique index already exists
+			var hasIndex bool
+			err = conn.QueryRow(ctx, `
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM pg_indexes
+                    WHERE schemaname = 'public'
+                      AND tablename = 'probe_configs'
+                      AND indexname = 'probe_configs_name_connection_key'
+                )
+            `).Scan(&hasIndex)
+
+			if err != nil {
+				return fmt.Errorf("failed to check for unique index: %w", err)
+			}
+
+			// Create unique index if it doesn't exist
+			if !hasIndex {
+				_, err = conn.Exec(ctx, `
+                    CREATE UNIQUE INDEX probe_configs_name_connection_key
+                    ON probe_configs(name, COALESCE(connection_id, 0))
+                `)
+				if err != nil {
+					return fmt.Errorf("failed to create unique index: %w", err)
+				}
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 23: Replace unique constraint on probe_configs.name with partial constraint
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     23,
+		Description: "Replace unique constraint on probe_configs.name with partial constraint for global configs",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Check if the old constraint still exists
+			var hasOldConstraint bool
+			err := conn.QueryRow(ctx, `
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'probe_configs_name_key'
+                      AND conrelid = 'public.probe_configs'::regclass
+                )
+            `).Scan(&hasOldConstraint)
+
+			if err != nil {
+				return fmt.Errorf("failed to check for old constraint: %w", err)
+			}
+
+			// Drop the old constraint if it exists
+			if hasOldConstraint {
+				_, err = conn.Exec(ctx, `
+                    ALTER TABLE probe_configs
+                    DROP CONSTRAINT IF EXISTS probe_configs_name_key
+                `)
+				if err != nil {
+					return fmt.Errorf("failed to drop old constraint: %w", err)
+				}
+			}
+
+			// Check if the partial unique index already exists
+			var hasPartialIndex bool
+			err = conn.QueryRow(ctx, `
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM pg_indexes
+                    WHERE schemaname = 'public'
+                      AND tablename = 'probe_configs'
+                      AND indexname = 'probe_configs_name_global_key'
+                )
+            `).Scan(&hasPartialIndex)
+
+			if err != nil {
+				return fmt.Errorf("failed to check for partial index: %w", err)
+			}
+
+			// Create a partial unique index on name for global configs (connection_id IS NULL)
+			// This ensures global configs remain unique by name, while allowing per-server configs
+			if !hasPartialIndex {
+				_, err = conn.Exec(ctx, `
+                    CREATE UNIQUE INDEX probe_configs_name_global_key
+                    ON probe_configs(name)
+                    WHERE connection_id IS NULL
+                `)
+				if err != nil {
+					return fmt.Errorf("failed to create partial unique index: %w", err)
+				}
 			}
 
 			return nil

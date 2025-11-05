@@ -142,11 +142,26 @@ The garbage collector:
 
 ## Probe Configuration
 
-Probes are configured in the `probes` table:
+Probes are configured in the `probe_configs` table, which supports both global
+defaults and per-server overrides:
 
 ```sql
+-- View all probe configurations
+SELECT name, connection_id, collection_interval_seconds, retention_days,
+       is_enabled
+FROM probe_configs
+ORDER BY name, COALESCE(connection_id, 0);
+
+-- View only global defaults
 SELECT name, collection_interval_seconds, retention_days, is_enabled
-FROM probes
+FROM probe_configs
+WHERE connection_id IS NULL
+ORDER BY name;
+
+-- View configurations for a specific connection
+SELECT name, collection_interval_seconds, retention_days, is_enabled
+FROM probe_configs
+WHERE connection_id = 1
 ORDER BY name;
 ```
 
@@ -160,35 +175,79 @@ how frequently their data changes:
 - **Slow**: 600 seconds / 10 minutes (archiver, bgwriter, checkpointer)
 - **Very Slow**: 900 seconds / 15 minutes (I/O statistics)
 
+### Per-Server Configuration
+
+The Collector supports customizing probe settings for individual monitored
+connections. The configuration hierarchy is:
+
+1. **Connection-Specific**: Override for a specific connection
+2. **Global Default**: Default settings when `connection_id IS NULL`
+3. **Hardcoded Default**: Built-in values if no database config exists
+
+When a new monitored connection is added, the Collector automatically creates
+per-server probe configurations based on the global defaults.
+
+### Automatic Configuration Reload
+
+**Important**: The Collector automatically reloads probe configurations from
+the database every 5 minutes. Changes to `collection_interval_seconds`,
+`retention_days`, or `is_enabled` take effect within 5 minutes without
+requiring a restart.
+
 ### Adjusting Collection Interval
 
 ```sql
-UPDATE probes
+-- Update global default for all connections
+UPDATE probe_configs
 SET collection_interval_seconds = 60
-WHERE name = 'pg_stat_activity';
+WHERE name = 'pg_stat_activity'
+  AND connection_id IS NULL;
+
+-- Override for a specific connection
+UPDATE probe_configs
+SET collection_interval_seconds = 30
+WHERE name = 'pg_stat_activity'
+  AND connection_id = 1;
 ```
 
-Changes take effect on the next collector restart.
+Changes take effect within 5 minutes (automatic config reload).
 
 ### Adjusting Retention
 
 ```sql
-UPDATE probes
+-- Update global default retention
+UPDATE probe_configs
 SET retention_days = 30
-WHERE name = 'pg_stat_activity';
+WHERE name = 'pg_stat_activity'
+  AND connection_id IS NULL;
+
+-- Override retention for a specific connection
+UPDATE probe_configs
+SET retention_days = 60
+WHERE name = 'pg_stat_activity'
+  AND connection_id = 3;
 ```
 
-Changes take effect on the next garbage collection run (within 24 hours).
+Retention changes take effect on the next garbage collection run (within 24
+hours).
 
 ### Disabling a Probe
 
 ```sql
-UPDATE probes
+-- Disable globally
+UPDATE probe_configs
 SET is_enabled = FALSE
-WHERE name = 'pg_stat_statements';
+WHERE name = 'pg_stat_statements'
+  AND connection_id IS NULL;
+
+-- Disable for a specific connection only
+UPDATE probe_configs
+SET is_enabled = FALSE
+WHERE name = 'pg_stat_statements'
+  AND connection_id = 2;
 ```
 
-The probe will stop executing on the next collector restart.
+Changes take effect within 5 minutes (automatic config reload).
 
 ## Probe Interface
 
@@ -363,9 +422,18 @@ The COPY protocol is much faster than INSERT:
 View configured probes:
 
 ```sql
-SELECT name, collection_interval_seconds, retention_days, is_enabled
-FROM probes
+-- View all enabled probe configurations
+SELECT name, connection_id, collection_interval_seconds, retention_days,
+       is_enabled
+FROM probe_configs
 WHERE is_enabled = TRUE
+ORDER BY name, COALESCE(connection_id, 0);
+
+-- View enabled global defaults only
+SELECT name, collection_interval_seconds, retention_days
+FROM probe_configs
+WHERE is_enabled = TRUE
+  AND connection_id IS NULL
 ORDER BY name;
 ```
 
@@ -409,7 +477,13 @@ WHERE schemaname = 'metrics'
 
 1. Check if probe is enabled:
    ```sql
-   SELECT is_enabled FROM probes WHERE name = 'probe_name';
+   -- Check global default
+   SELECT is_enabled FROM probe_configs
+   WHERE name = 'probe_name' AND connection_id IS NULL;
+
+   -- Check for specific connection
+   SELECT is_enabled FROM probe_configs
+   WHERE name = 'probe_name' AND connection_id = 1;
    ```
 
 2. Check collector logs for errors

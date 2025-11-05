@@ -477,9 +477,118 @@ openssl req -new -x509 -days 365 -nodes \
     -out client-cert.pem -keyout client-key.pem
 ```
 
+## Per-Server Probe Configuration
+
+The Collector supports customizing probe settings for individual monitored
+servers through the `probe_configs` database table. This allows fine-tuning
+collection intervals and retention periods per connection.
+
+### Configuration Hierarchy
+
+Probe settings use a three-level fallback hierarchy:
+
+1. **Connection-Specific**: Settings in `probe_configs` where `connection_id`
+   matches the monitored connection
+2. **Global Default**: Settings in `probe_configs` where `connection_id IS
+   NULL`
+3. **Hardcoded Default**: Built-in values defined in the Collector source code
+
+### Automatic Configuration
+
+When a new connection is marked as monitored (`is_monitored = TRUE`), the
+Collector automatically creates per-server probe configurations by copying the
+global defaults.
+
+### Modifying Probe Settings
+
+Probe settings are managed through direct SQL updates to the `probe_configs`
+table:
+
+```sql
+-- Change collection interval for a specific server
+UPDATE probe_configs
+SET collection_interval_seconds = 30
+WHERE name = 'pg_stat_activity'
+  AND connection_id = 1;
+
+-- Change retention for all servers (global default)
+UPDATE probe_configs
+SET retention_days = 60
+WHERE name = 'pg_stat_database'
+  AND connection_id IS NULL;
+
+-- Disable a probe for a specific server
+UPDATE probe_configs
+SET is_enabled = FALSE
+WHERE name = 'pg_stat_statements'
+  AND connection_id = 2;
+```
+
+### Automatic Reload
+
+**Important**: The Collector automatically reloads probe configurations from
+the database every 5 minutes. Changes take effect without requiring a restart.
+
+**Timing**:
+
+- Collection interval and enabled status changes: Within 5 minutes
+- Retention changes: Next garbage collection run (within 24 hours)
+
+### Example: High-Frequency Monitoring
+
+Monitor replication lag more frequently for critical production servers:
+
+```sql
+-- Reduce replication probe interval for critical server
+UPDATE probe_configs
+SET collection_interval_seconds = 10
+WHERE name = 'pg_stat_replication'
+  AND connection_id = (
+      SELECT id FROM connections WHERE name = 'prod-primary'
+  );
+```
+
+### Example: Extended Retention
+
+Keep historical data longer for compliance servers:
+
+```sql
+-- Extend retention for compliance database
+UPDATE probe_configs
+SET retention_days = 365
+WHERE connection_id = (
+    SELECT id FROM connections WHERE name = 'compliance-db'
+);
+```
+
+### Viewing Current Configuration
+
+```sql
+-- View all configurations for a specific connection
+SELECT pc.name, pc.collection_interval_seconds, pc.retention_days,
+       pc.is_enabled
+FROM probe_configs pc
+WHERE pc.connection_id = 1
+ORDER BY pc.name;
+
+-- Compare connection-specific vs global defaults
+SELECT
+    pc.name,
+    global.collection_interval_seconds AS global_interval,
+    pc.collection_interval_seconds AS connection_interval,
+    global.retention_days AS global_retention,
+    pc.retention_days AS connection_retention
+FROM probe_configs pc
+LEFT JOIN probe_configs global
+    ON pc.name = global.name AND global.connection_id IS NULL
+WHERE pc.connection_id = 1
+ORDER BY pc.name;
+```
+
 ## Next Steps
 
 - [Architecture](architecture.md) - Understand how configuration affects
   architecture
 - [Development](development.md) - Learn about development configuration
+- [Probes](probes.md) - Learn more about probe configuration and scheduling
 - [Config Reference](config-reference.md) - Complete configuration reference

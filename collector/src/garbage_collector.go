@@ -90,21 +90,31 @@ func (gc *GarbageCollector) collectGarbage(ctx context.Context) {
 	defer gc.datastore.ReturnConnection(conn)
 
 	// Load probe configurations
-	configs, err := probes.LoadProbeConfigs(ctx, conn)
+	configsByConnection, err := probes.LoadProbeConfigs(ctx, conn)
 	if err != nil {
 		log.Printf("Error loading probe configs for garbage collection: %v", err)
 		return
 	}
 
-	// Process each probe
+	// Process each probe from all connections (including global defaults)
 	var totalDropped int
-	for _, config := range configs {
-		dropped, err := gc.collectGarbageForProbe(ctx, conn, &config)
-		if err != nil {
-			log.Printf("Error collecting garbage for probe %s: %v", config.Name, err)
-			continue
+	seenProbes := make(map[string]bool)
+	for _, configs := range configsByConnection {
+		for _, config := range configs {
+			// Skip if we've already processed this probe (same probe may exist for multiple connections)
+			// We only need to drop partitions once per probe, not per connection
+			if seenProbes[config.Name] {
+				continue
+			}
+			seenProbes[config.Name] = true
+
+			dropped, err := gc.collectGarbageForProbe(ctx, conn, &config)
+			if err != nil {
+				log.Printf("Error collecting garbage for probe %s: %v", config.Name, err)
+				continue
+			}
+			totalDropped += dropped
 		}
-		totalDropped += dropped
 	}
 
 	if totalDropped > 0 {

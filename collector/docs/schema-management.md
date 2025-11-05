@@ -144,6 +144,47 @@ Creates indexes to optimize probe queries.
 - `idx_probes_enabled`: Partial index on enabled probes
 - `idx_probes_name`: Index on probe name for fast lookups
 
+### Migration 22: Add connection_id to probe_configs
+
+Adds per-server probe configuration support by adding a `connection_id` column
+to the `probe_configs` table.
+
+**Objects created/modified:**
+
+- `connection_id` column added to `probe_configs` table
+- Foreign key constraint to `connections(id)` with CASCADE delete
+- Composite unique index `probe_configs_name_connection_key` on
+  `(name, COALESCE(connection_id, 0))`
+
+**Purpose**: Enables customizing probe collection intervals and retention
+periods for individual monitored connections while maintaining global defaults.
+
+**Behavior**: When `connection_id IS NULL`, the configuration acts as a global
+default. When set, it overrides the default for that specific connection.
+
+### Migration 23: Fix unique constraint for global probe configs
+
+Fixes a duplicate key constraint issue by replacing the global unique
+constraint on `probe_configs.name` with a partial unique index.
+
+**Objects removed:**
+
+- `probe_configs_name_key` constraint (previously created as inline UNIQUE
+  constraint)
+
+**Objects created:**
+
+- `probe_configs_name_global_key` partial unique index on `name WHERE
+  connection_id IS NULL`
+
+**Purpose**: Ensures global probe configurations (where `connection_id IS
+NULL`) remain unique by name, while allowing multiple per-server configurations
+with the same probe name but different connection IDs.
+
+**Background**: Migration 22 added a composite unique index but didn't remove
+the old inline unique constraint, causing duplicate key violations when
+inserting per-server configs.
+
 ## Adding New Migrations
 
 To add a new migration:

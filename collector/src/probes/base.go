@@ -28,6 +28,7 @@ type ProbeConfig struct {
 	CollectionIntervalSeconds int
 	RetentionDays             int
 	IsEnabled                 bool
+	ConnectionID              *int // NULL means global default
 }
 
 // MetricsProbe represents a monitoring probe that collects metrics
@@ -284,31 +285,145 @@ func StoreMetricsWithCopy(ctx context.Context, conn *pgxpool.Conn, tableName str
 }
 
 // LoadProbeConfigs loads all enabled probe configurations from the database
-func LoadProbeConfigs(ctx context.Context, conn *pgxpool.Conn) ([]ProbeConfig, error) {
+// Returns a map of connection ID to probe configs, where connection ID 0 represents global defaults
+func LoadProbeConfigs(ctx context.Context, conn *pgxpool.Conn) (map[int][]ProbeConfig, error) {
 	rows, err := conn.Query(ctx, `
-		SELECT id, name, description, collection_interval_seconds, retention_days, is_enabled
+		SELECT id, name, description, collection_interval_seconds, retention_days, is_enabled, connection_id
 		FROM probe_configs
 		WHERE is_enabled = TRUE
-		ORDER BY name
+		ORDER BY COALESCE(connection_id, 0), name
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query probe configs: %w", err)
 	}
 	defer rows.Close()
 
-	var configs []ProbeConfig
+	configsByConnection := make(map[int][]ProbeConfig)
 	for rows.Next() {
 		var config ProbeConfig
 		if err := rows.Scan(&config.ID, &config.Name, &config.Description,
-			&config.CollectionIntervalSeconds, &config.RetentionDays, &config.IsEnabled); err != nil {
+			&config.CollectionIntervalSeconds, &config.RetentionDays, &config.IsEnabled,
+			&config.ConnectionID); err != nil {
 			return nil, fmt.Errorf("failed to scan probe config: %w", err)
 		}
-		configs = append(configs, config)
+
+		// Use connection ID 0 for global defaults (NULL connection_id)
+		connID := 0
+		if config.ConnectionID != nil {
+			connID = *config.ConnectionID
+		}
+
+		configsByConnection[connID] = append(configsByConnection[connID], config)
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating probe configs: %w", err)
 	}
 
-	return configs, nil
+	return configsByConnection, nil
+}
+
+// EnsureProbeConfig ensures a probe configuration exists for the given connection and probe
+// If no config exists, it creates one with default values based on the probe name
+func EnsureProbeConfig(ctx context.Context, conn *pgxpool.Conn, connectionID int, probeName string) (*ProbeConfig, error) {
+	// First, try to find an existing config for this connection and probe
+	var config ProbeConfig
+	err := conn.QueryRow(ctx, `
+		SELECT id, name, description, collection_interval_seconds, retention_days, is_enabled, connection_id
+		FROM probe_configs
+		WHERE name = $1 AND connection_id = $2
+	`, probeName, connectionID).Scan(
+		&config.ID, &config.Name, &config.Description,
+		&config.CollectionIntervalSeconds, &config.RetentionDays, &config.IsEnabled,
+		&config.ConnectionID)
+
+	if err == nil {
+		// Config exists
+		return &config, nil
+	}
+
+	// If error is not "no rows", return the error
+	if err.Error() != "no rows in result set" {
+		return nil, fmt.Errorf("failed to query probe config: %w", err)
+	}
+
+	// Config doesn't exist, check if there's a global default
+	var defaultConfig ProbeConfig
+	err = conn.QueryRow(ctx, `
+		SELECT id, name, description, collection_interval_seconds, retention_days, is_enabled, connection_id
+		FROM probe_configs
+		WHERE name = $1 AND connection_id IS NULL
+	`, probeName).Scan(
+		&defaultConfig.ID, &defaultConfig.Name, &defaultConfig.Description,
+		&defaultConfig.CollectionIntervalSeconds, &defaultConfig.RetentionDays, &defaultConfig.IsEnabled,
+		&defaultConfig.ConnectionID)
+
+	// If no global default exists either, we'll use hardcoded defaults
+	interval := defaultConfig.CollectionIntervalSeconds
+	retention := defaultConfig.RetentionDays
+	description := defaultConfig.Description
+
+	if err != nil {
+		// No global default exists, use hardcoded defaults from constants
+		interval = getDefaultInterval(probeName)
+		retention = 28 // Default retention
+		description = fmt.Sprintf("Configuration for %s probe", probeName)
+	}
+
+	// Insert a new config for this connection
+	err = conn.QueryRow(ctx, `
+		INSERT INTO probe_configs (name, description, collection_interval_seconds, retention_days, is_enabled, connection_id)
+		VALUES ($1, $2, $3, $4, TRUE, $5)
+		RETURNING id, name, description, collection_interval_seconds, retention_days, is_enabled, connection_id
+	`, probeName, description, interval, retention, connectionID).Scan(
+		&config.ID, &config.Name, &config.Description,
+		&config.CollectionIntervalSeconds, &config.RetentionDays, &config.IsEnabled,
+		&config.ConnectionID)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to insert probe config: %w", err)
+	}
+
+	log.Printf("Created probe config for %s on connection %d (interval: %ds, retention: %dd)",
+		probeName, connectionID, interval, retention)
+
+	return &config, nil
+}
+
+// getDefaultInterval returns the default collection interval for a probe based on its name
+func getDefaultInterval(probeName string) int {
+	// These constants need to be imported from the main package
+	// For now, we'll use a map to avoid circular dependencies
+	defaultIntervals := map[string]int{
+		"pg_stat_replication":          30,  // IntervalReplication
+		"pg_stat_wal_receiver":         30,  // IntervalWALReceiver
+		"pg_stat_activity":             60,  // IntervalActivity
+		"pg_stat_database":             300, // IntervalDatabase
+		"pg_stat_all_tables":           300, // IntervalTables
+		"pg_stat_all_indexes":          300, // IntervalIndexes
+		"pg_statio_all_tables":         300, // IntervalTables
+		"pg_statio_all_indexes":        300, // IntervalIndexes
+		"pg_statio_all_sequences":      300, // IntervalDefault
+		"pg_stat_user_functions":       300, // IntervalFunctions
+		"pg_stat_statements":           300, // IntervalDefault
+		"pg_stat_archiver":             600, // IntervalArchiver
+		"pg_stat_bgwriter":             600, // IntervalBgwriter
+		"pg_stat_checkpointer":         600, // IntervalCheckpointer
+		"pg_stat_wal":                  600, // IntervalWAL
+		"pg_stat_slru":                 600, // IntervalSLRU
+		"pg_stat_io":                   900, // IntervalIO
+		"pg_stat_subscription":         300, // IntervalSubscription
+		"pg_stat_subscription_stats":   300, // IntervalDefault
+		"pg_stat_replication_slots":    300, // IntervalReplicationSlots
+		"pg_stat_recovery_prefetch":    600, // IntervalRecoveryPrefetch
+		"pg_stat_database_conflicts":   300, // IntervalDefault
+		"pg_stat_ssl":                  300, // IntervalDefault
+		"pg_stat_gssapi":               300, // IntervalDefault
+	}
+
+	if interval, ok := defaultIntervals[probeName]; ok {
+		return interval
+	}
+
+	return 300 // Default 5 minutes
 }

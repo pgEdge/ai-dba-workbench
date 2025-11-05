@@ -220,7 +220,9 @@ func createMonitoredPool(connStr string, maxConnections int, maxIdleSeconds int)
 	}
 
 	// Configure pool settings
-	config.MaxConns = int32(maxConnections)
+	// Set MaxConns to 1 since each database gets its own pool
+	// The semaphore in the pool manager controls the actual concurrency limit
+	config.MaxConns = 1
 	config.MinConns = 0 // Start with no connections
 
 	// Set max connection lifetime (use maxIdleSeconds as max conn lifetime)

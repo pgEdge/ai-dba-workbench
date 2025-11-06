@@ -16,10 +16,11 @@
 * All three sub projects should follow the following base structure.
 
     * Comprehensive documentation files should be created in markdown format 
-        under the /docs subdirectory of each project, e.g. /client/docs, 
-        /collector/docs, and /server/docs.
+        under the /docs directory, for each sub-project, e.g. /docs/collector, 
+        /docs/cli, /docs/client, and /docs/server, with a top level index in
+        /docs
 
-    * Documentation files in the docs/ directories should always use lower 
+    * Documentation files in the /docs directory should always use lower 
         case filename.
 
     * Unit and integration tests should be created under the /tests 

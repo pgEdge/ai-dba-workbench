@@ -1,6 +1,25 @@
 # Claude
 .claude/
 
+# Binaries
+collector/collector
+cli/ai-cli
+server/mcp-server
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binaries and coverage
+*.test
+*.out
+coverage.txt
+*.coverprofile
+
+# Go workspace file
+go.work
+
 # Configuration files with sensitive data
 *.password
 password.txt

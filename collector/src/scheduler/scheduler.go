@@ -98,6 +98,30 @@ func (ps *ProbeScheduler) loadConfigs(ctx context.Context) error {
 		return fmt.Errorf("failed to get monitored connections: %w", err)
 	}
 
+	// Build list of active connection IDs
+	activeConnectionIDs := make([]int, len(connections))
+	activeConnectionMap := make(map[int]bool)
+	for i, conn := range connections {
+		activeConnectionIDs[i] = conn.ID
+		activeConnectionMap[conn.ID] = true
+	}
+
+	// Sync connection pools with active connections
+	// This closes pools for connections that are no longer monitored
+	ps.poolManager.SyncPools(activeConnectionIDs)
+
+	// Clean up probes for connections that are no longer monitored
+	var connectionsToRemove []int
+	for connID := range ps.probesByConn {
+		if !activeConnectionMap[connID] {
+			connectionsToRemove = append(connectionsToRemove, connID)
+		}
+	}
+	for _, connID := range connectionsToRemove {
+		delete(ps.probesByConn, connID)
+		logger.Infof("Removed probes for connection %d (no longer monitored)", connID)
+	}
+
 	// For each connection, ensure probe configs exist and initialize probes
 	for _, conn := range connections {
 		if _, exists := ps.probesByConn[conn.ID]; !exists {

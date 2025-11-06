@@ -185,6 +185,65 @@ func (m *MonitoredConnectionPoolManager) RemovePool(connectionID int) error {
 	return nil
 }
 
+// SyncPools synchronizes the pools with the current list of monitored connections
+// Closes and removes pools for connections that are no longer monitored
+func (m *MonitoredConnectionPoolManager) SyncPools(activeConnectionIDs []int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Build a set of active connection IDs for fast lookup
+	activeSet := make(map[int]bool)
+	for _, id := range activeConnectionIDs {
+		activeSet[id] = true
+	}
+
+	// Find and close pools for connections that are no longer monitored
+	var toRemove []int
+	for poolKey := range m.pools {
+		// Extract the actual connection ID from the pool key
+		// Positive keys are regular connections, negative keys are database-specific pools
+		connID := poolKey
+		if poolKey < 0 {
+			// Database-specific pool - extract connection ID
+			connID = -(poolKey / 10000)
+		}
+
+		// If this connection is no longer in the active set, mark for removal
+		if !activeSet[connID] {
+			toRemove = append(toRemove, poolKey)
+		}
+	}
+
+	// Close and remove pools that are no longer needed
+	for _, poolKey := range toRemove {
+		pool := m.pools[poolKey]
+		pool.Close()
+		delete(m.pools, poolKey)
+
+		// Also remove the semaphore for regular connections
+		connID := poolKey
+		if poolKey < 0 {
+			connID = -(poolKey / 10000)
+		}
+		// Only remove semaphore if there are no more pools for this connection
+		hasOtherPools := false
+		for pk := range m.pools {
+			pkConnID := pk
+			if pk < 0 {
+				pkConnID = -(pk / 10000)
+			}
+			if pkConnID == connID {
+				hasOtherPools = true
+				break
+			}
+		}
+		if !hasOtherPools {
+			delete(m.semaphores, connID)
+			logger.Infof("Removed connection pool for connection %d (no longer monitored)", connID)
+		}
+	}
+}
+
 // Close closes all pools
 func (m *MonitoredConnectionPoolManager) Close() error {
 	m.mu.Lock()

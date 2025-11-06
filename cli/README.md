@@ -127,8 +127,8 @@ Exit codes:
 
 ## Development
 
-See the [documentation](docs/index.md) for detailed information about the CLI
-architecture and development guidelines.
+See the [documentation](../docs/cli/index.md) for detailed information about
+the CLI architecture and development guidelines.
 
 ### Building
 

@@ -202,7 +202,7 @@ Example response:
 
 ## Documentation
 
-For detailed documentation, see [docs/index.md](docs/index.md).
+For detailed documentation, see [../docs/server/index.md](../docs/server/index.md).
 
 ## Testing
 

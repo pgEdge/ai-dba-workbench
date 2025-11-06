@@ -43,11 +43,79 @@ Response:
 }
 ```
 
+## Authentication
+
+### authenticate_user
+
+Authenticates a user and returns a session token.
+
+**Note:** This tool does NOT require superuser privileges, as users need to
+authenticate to obtain a session token.
+
+#### Input Schema
+
+```json
+{
+    "type": "object",
+    "properties": {
+        "username": {
+            "type": "string",
+            "description": "Username to authenticate"
+        },
+        "password": {
+            "type": "string",
+            "description": "Password for authentication"
+        }
+    },
+    "required": ["username", "password"]
+}
+```
+
+#### Example Usage
+
+Request:
+
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/call",
+    "params": {
+        "name": "authenticate_user",
+        "arguments": {
+            "username": "admin",
+            "password": "password123"
+        }
+    }
+}
+```
+
+Response:
+
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "result": {
+        "content": [
+            {
+                "type": "text",
+                "text": "Authentication successful. Session token: abc123...\nExpires at: 2025-11-07T16:00:00Z"
+            }
+        ]
+    }
+}
+```
+
 ## User Management Tools
+
+**IMPORTANT:** All user management tools require superuser privileges. See the
+[Authentication Guide](../authentication.md) for details on superuser access
+control.
 
 ### create_user
 
-Creates a new user account.
+Creates a new user account. **Requires superuser privileges.**
 
 #### Input Schema
 
@@ -127,8 +195,9 @@ Response:
 
 ### update_user
 
-Updates an existing user account. Supports partial updates - only the fields
-provided will be changed.
+Updates an existing user account. **Requires superuser privileges.**
+
+Supports partial updates - only the fields provided will be changed.
 
 #### Input Schema
 
@@ -209,7 +278,7 @@ Response:
 
 ### delete_user
 
-Deletes a user account.
+Deletes a user account. **Requires superuser privileges.**
 
 #### Input Schema
 
@@ -263,9 +332,14 @@ Response:
 
 ## Service Token Management Tools
 
+**IMPORTANT:** All service token management tools require superuser privileges.
+See the [Authentication Guide](../authentication.md) for details on superuser
+access control.
+
 ### create_service_token
 
-Creates a new service token for API authentication.
+Creates a new service token for API authentication. **Requires superuser
+privileges.**
 
 #### Input Schema
 
@@ -338,7 +412,9 @@ securely as it cannot be retrieved later.
 
 ### update_service_token
 
-Updates an existing service token. Supports partial updates.
+Updates an existing service token. **Requires superuser privileges.**
+
+Supports partial updates.
 
 #### Input Schema
 
@@ -416,7 +492,7 @@ Response:
 
 ### delete_service_token
 
-Deletes a service token.
+Deletes a service token. **Requires superuser privileges.**
 
 #### Input Schema
 
@@ -490,16 +566,23 @@ Common error scenarios:
 - User or token not found (during update/delete)
 - Invalid input parameters (invalid date format, missing required fields)
 - Database connection errors
-- Permission denied
+- Permission denied (user or token lacks superuser privileges)
+- Authentication failed (invalid or expired token)
 
 ## Security Considerations
 
-- All tool operations require authentication
-- Superuser privileges may be required for certain operations
-- Password hashing is performed server-side
+- All tool operations (except `authenticate_user`) require authentication
+- User management and service token management operations require superuser
+  privileges
+- Password hashing is performed server-side using SHA-256
 - Service token values are generated cryptographically
+- Session tokens inherit superuser status from the user account
+- Service tokens have independent superuser status
 - All operations are logged for audit purposes
 - Rate limiting may apply to prevent abuse
+
+For detailed information on authentication and authorization, see the
+[Authentication Guide](../authentication.md).
 
 ## Best Practices
 

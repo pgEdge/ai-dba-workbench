@@ -22,9 +22,11 @@ import (
 	"time"
 
 	"github.com/pgEdge/ai-workbench/server/src/config"
+	"github.com/pgEdge/ai-workbench/server/src/database"
 	"github.com/pgEdge/ai-workbench/server/src/logger"
 	"github.com/pgEdge/ai-workbench/server/src/mcp"
 	"github.com/pgEdge/ai-workbench/server/src/server"
+	"github.com/pgEdge/ai-workbench/server/src/usermgmt"
 )
 
 const (
@@ -59,6 +61,17 @@ var (
 	pgSSLKey      = flag.String("pg-sslkey", "", "PostgreSQL SSL key")
 	pgSSLRootCert = flag.String("pg-sslrootcert", "",
 		"PostgreSQL SSL root certificate")
+
+	// User account management flags
+	createUser = flag.String("create-user", "", "Create a new user account")
+	listUsers  = flag.Bool("list-users", false, "List all user accounts")
+	deleteUser = flag.String("delete-user", "", "Delete a user account")
+
+	// Service token management flags
+	createToken = flag.String("create-token", "",
+		"Create a new service token")
+	listTokens = flag.Bool("list-tokens", false, "List all service tokens")
+	deleteToken = flag.String("delete-token", "", "Delete a service token")
 )
 
 func main() {
@@ -82,6 +95,13 @@ func main() {
 	// Validate configuration
 	if err := cfg.Validate(); err != nil {
 		logger.Fatalf("Invalid configuration: %v", err)
+	}
+
+	// Check if any user management commands were specified
+	if *createUser != "" || *listUsers || *deleteUser != "" ||
+		*createToken != "" || *listTokens || *deleteToken != "" {
+		handleUserManagement(cfg)
+		return
 	}
 
 	logger.Infof("Configuration loaded successfully")
@@ -212,5 +232,59 @@ func applyFlags(cfg *config.Config) {
 	}
 	if *pgSSLRootCert != "" {
 		cfg.PgSSLRootCert = *pgSSLRootCert
+	}
+}
+
+// handleUserManagement handles user account and service token management commands
+func handleUserManagement(cfg *config.Config) {
+	// Connect to the database
+	pool, err := database.Connect(cfg)
+	if err != nil {
+		logger.Fatalf("Failed to connect to database: %v", err)
+	}
+	defer pool.Close()
+
+	// Handle user account commands
+	if *createUser != "" {
+		if err := usermgmt.CreateUser(pool, *createUser, true); err != nil {
+			logger.Fatalf("Failed to create user: %v", err)
+		}
+		return
+	}
+
+	if *listUsers {
+		if err := usermgmt.ListUsers(pool); err != nil {
+			logger.Fatalf("Failed to list users: %v", err)
+		}
+		return
+	}
+
+	if *deleteUser != "" {
+		if err := usermgmt.DeleteUser(pool, *deleteUser, true); err != nil {
+			logger.Fatalf("Failed to delete user: %v", err)
+		}
+		return
+	}
+
+	// Handle service token commands
+	if *createToken != "" {
+		if err := usermgmt.CreateServiceToken(pool, *createToken, true); err != nil {
+			logger.Fatalf("Failed to create service token: %v", err)
+		}
+		return
+	}
+
+	if *listTokens {
+		if err := usermgmt.ListServiceTokens(pool); err != nil {
+			logger.Fatalf("Failed to list service tokens: %v", err)
+		}
+		return
+	}
+
+	if *deleteToken != "" {
+		if err := usermgmt.DeleteServiceToken(pool, *deleteToken, true); err != nil {
+			logger.Fatalf("Failed to delete service token: %v", err)
+		}
+		return
 	}
 }

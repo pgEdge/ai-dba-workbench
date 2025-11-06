@@ -465,3 +465,311 @@ func DeleteServiceToken(pool *pgxpool.Pool, name string, confirm bool) error {
     fmt.Printf("Service token '%s' deleted successfully\n", name)
     return nil
 }
+
+// CreateUserNonInteractive creates a new user account (non-interactive for MCP)
+func CreateUserNonInteractive(pool *pgxpool.Pool, username, email, fullName,
+    password string, isSuperuser bool,
+    passwordExpiry *time.Time) (string, error) {
+    ctx := context.Background()
+
+    // Check if user already exists
+    var exists bool
+    err := pool.QueryRow(ctx,
+        "SELECT EXISTS(SELECT 1 FROM user_accounts WHERE username = $1)",
+        username).Scan(&exists)
+    if err != nil {
+        return "", fmt.Errorf("failed to check if user exists: %w", err)
+    }
+    if exists {
+        return "", fmt.Errorf("user '%s' already exists", username)
+    }
+
+    // Validate required fields
+    if email == "" {
+        return "", fmt.Errorf("email is required")
+    }
+    if fullName == "" {
+        return "", fmt.Errorf("full name is required")
+    }
+    if password == "" {
+        return "", fmt.Errorf("password is required")
+    }
+
+    // Hash the password
+    passwordHash := HashPassword(password)
+
+    // Prepare password expiry
+    var pwdExpiry sql.NullTime
+    if passwordExpiry != nil {
+        pwdExpiry = sql.NullTime{Time: *passwordExpiry, Valid: true}
+    }
+
+    // Insert the user
+    _, err = pool.Exec(ctx, `
+        INSERT INTO user_accounts
+            (username, email, full_name, password_hash, password_expiry,
+             is_superuser)
+        VALUES ($1, $2, $3, $4, $5, $6)
+    `, username, email, fullName, passwordHash, pwdExpiry, isSuperuser)
+    if err != nil {
+        return "", fmt.Errorf("failed to create user: %w", err)
+    }
+
+    return fmt.Sprintf("User '%s' created successfully", username), nil
+}
+
+// UpdateUserNonInteractive updates a user account (non-interactive for MCP)
+func UpdateUserNonInteractive(pool *pgxpool.Pool, username string,
+    email, fullName, password *string, isSuperuser *bool,
+    passwordExpiry *time.Time, clearPasswordExpiry bool) (string, error) {
+    ctx := context.Background()
+
+    // Check if user exists
+    var exists bool
+    err := pool.QueryRow(ctx,
+        "SELECT EXISTS(SELECT 1 FROM user_accounts WHERE username = $1)",
+        username).Scan(&exists)
+    if err != nil {
+        return "", fmt.Errorf("failed to check if user exists: %w", err)
+    }
+    if !exists {
+        return "", fmt.Errorf("user '%s' does not exist", username)
+    }
+
+    // Build dynamic update query
+    updates := []string{}
+    args := []interface{}{}
+    argCount := 1
+
+    if email != nil {
+        updates = append(updates, fmt.Sprintf("email = $%d", argCount))
+        args = append(args, *email)
+        argCount++
+    }
+
+    if fullName != nil {
+        updates = append(updates, fmt.Sprintf("full_name = $%d", argCount))
+        args = append(args, *fullName)
+        argCount++
+    }
+
+    if password != nil {
+        passwordHash := HashPassword(*password)
+        updates = append(updates, fmt.Sprintf("password_hash = $%d", argCount))
+        args = append(args, passwordHash)
+        argCount++
+    }
+
+    if isSuperuser != nil {
+        updates = append(updates, fmt.Sprintf("is_superuser = $%d", argCount))
+        args = append(args, *isSuperuser)
+        argCount++
+    }
+
+    if clearPasswordExpiry {
+        updates = append(updates, "password_expiry = NULL")
+    } else if passwordExpiry != nil {
+        updates = append(updates, fmt.Sprintf("password_expiry = $%d",
+            argCount))
+        args = append(args, *passwordExpiry)
+        argCount++
+    }
+
+    if len(updates) == 0 {
+        return "", fmt.Errorf("no fields to update")
+    }
+
+    // Always update the updated_at field
+    updates = append(updates, fmt.Sprintf("updated_at = $%d", argCount))
+    args = append(args, time.Now())
+    argCount++
+
+    // Add username as the last argument for WHERE clause
+    args = append(args, username)
+
+    query := fmt.Sprintf("UPDATE user_accounts SET %s WHERE username = $%d",
+        strings.Join(updates, ", "), argCount)
+
+    _, err = pool.Exec(ctx, query, args...)
+    if err != nil {
+        return "", fmt.Errorf("failed to update user: %w", err)
+    }
+
+    return fmt.Sprintf("User '%s' updated successfully", username), nil
+}
+
+// DeleteUserNonInteractive deletes a user account (non-interactive for MCP)
+func DeleteUserNonInteractive(pool *pgxpool.Pool, username string) (string,
+    error) {
+    ctx := context.Background()
+
+    // Check if user exists
+    var exists bool
+    err := pool.QueryRow(ctx,
+        "SELECT EXISTS(SELECT 1 FROM user_accounts WHERE username = $1)",
+        username).Scan(&exists)
+    if err != nil {
+        return "", fmt.Errorf("failed to check if user exists: %w", err)
+    }
+    if !exists {
+        return "", fmt.Errorf("user '%s' does not exist", username)
+    }
+
+    // Delete the user
+    _, err = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username = $1",
+        username)
+    if err != nil {
+        return "", fmt.Errorf("failed to delete user: %w", err)
+    }
+
+    return fmt.Sprintf("User '%s' deleted successfully", username), nil
+}
+
+// CreateServiceTokenNonInteractive creates a new service token
+// (non-interactive for MCP)
+func CreateServiceTokenNonInteractive(pool *pgxpool.Pool, name string,
+    isSuperuser bool, note *string, expiresAt *time.Time) (string, string,
+    error) {
+    ctx := context.Background()
+
+    // Check if token already exists
+    var exists bool
+    err := pool.QueryRow(ctx,
+        "SELECT EXISTS(SELECT 1 FROM service_tokens WHERE name = $1)",
+        name).Scan(&exists)
+    if err != nil {
+        return "", "", fmt.Errorf("failed to check if token exists: %w", err)
+    }
+    if exists {
+        return "", "", fmt.Errorf("service token '%s' already exists", name)
+    }
+
+    // Prepare optional fields
+    var noteVal sql.NullString
+    if note != nil {
+        noteVal = sql.NullString{String: *note, Valid: true}
+    }
+
+    var expiresAtVal sql.NullTime
+    if expiresAt != nil {
+        expiresAtVal = sql.NullTime{Time: *expiresAt, Valid: true}
+    }
+
+    // Generate token
+    token, err := GenerateToken()
+    if err != nil {
+        return "", "", err
+    }
+
+    // Hash the token
+    tokenHash := HashPassword(token)
+
+    // Insert the service token
+    _, err = pool.Exec(ctx, `
+        INSERT INTO service_tokens
+            (name, token_hash, is_superuser, note, expires_at)
+        VALUES ($1, $2, $3, $4, $5)
+    `, name, tokenHash, isSuperuser, noteVal, expiresAtVal)
+    if err != nil {
+        return "", "", fmt.Errorf("failed to create service token: %w", err)
+    }
+
+    message := fmt.Sprintf("Service token '%s' created successfully", name)
+    return message, token, nil
+}
+
+// UpdateServiceTokenNonInteractive updates a service token
+// (non-interactive for MCP)
+func UpdateServiceTokenNonInteractive(pool *pgxpool.Pool, name string,
+    isSuperuser *bool, note *string, expiresAt *time.Time,
+    clearNote, clearExpiresAt bool) (string, error) {
+    ctx := context.Background()
+
+    // Check if token exists
+    var exists bool
+    err := pool.QueryRow(ctx,
+        "SELECT EXISTS(SELECT 1 FROM service_tokens WHERE name = $1)",
+        name).Scan(&exists)
+    if err != nil {
+        return "", fmt.Errorf("failed to check if token exists: %w", err)
+    }
+    if !exists {
+        return "", fmt.Errorf("service token '%s' does not exist", name)
+    }
+
+    // Build dynamic update query
+    updates := []string{}
+    args := []interface{}{}
+    argCount := 1
+
+    if isSuperuser != nil {
+        updates = append(updates, fmt.Sprintf("is_superuser = $%d", argCount))
+        args = append(args, *isSuperuser)
+        argCount++
+    }
+
+    if clearNote {
+        updates = append(updates, "note = NULL")
+    } else if note != nil {
+        updates = append(updates, fmt.Sprintf("note = $%d", argCount))
+        args = append(args, *note)
+        argCount++
+    }
+
+    if clearExpiresAt {
+        updates = append(updates, "expires_at = NULL")
+    } else if expiresAt != nil {
+        updates = append(updates, fmt.Sprintf("expires_at = $%d", argCount))
+        args = append(args, *expiresAt)
+        argCount++
+    }
+
+    if len(updates) == 0 {
+        return "", fmt.Errorf("no fields to update")
+    }
+
+    // Always update the updated_at field
+    updates = append(updates, fmt.Sprintf("updated_at = $%d", argCount))
+    args = append(args, time.Now())
+    argCount++
+
+    // Add name as the last argument for WHERE clause
+    args = append(args, name)
+
+    query := fmt.Sprintf("UPDATE service_tokens SET %s WHERE name = $%d",
+        strings.Join(updates, ", "), argCount)
+
+    _, err = pool.Exec(ctx, query, args...)
+    if err != nil {
+        return "", fmt.Errorf("failed to update service token: %w", err)
+    }
+
+    return fmt.Sprintf("Service token '%s' updated successfully", name), nil
+}
+
+// DeleteServiceTokenNonInteractive deletes a service token
+// (non-interactive for MCP)
+func DeleteServiceTokenNonInteractive(pool *pgxpool.Pool, name string) (string,
+    error) {
+    ctx := context.Background()
+
+    // Check if token exists
+    var exists bool
+    err := pool.QueryRow(ctx,
+        "SELECT EXISTS(SELECT 1 FROM service_tokens WHERE name = $1)",
+        name).Scan(&exists)
+    if err != nil {
+        return "", fmt.Errorf("failed to check if token exists: %w", err)
+    }
+    if !exists {
+        return "", fmt.Errorf("service token '%s' does not exist", name)
+    }
+
+    // Delete the service token
+    _, err = pool.Exec(ctx, "DELETE FROM service_tokens WHERE name = $1", name)
+    if err != nil {
+        return "", fmt.Errorf("failed to delete service token: %w", err)
+    }
+
+    return fmt.Sprintf("Service token '%s' deleted successfully", name), nil
+}

@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/pgEdge/ai-workbench/server/src/config"
@@ -30,7 +29,6 @@ type Server struct {
 	config  *config.Config
 	handler *mcp.Handler
 	server  *http.Server
-	mu      sync.RWMutex
 }
 
 // New creates a new server instance
@@ -103,7 +101,10 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Send initial connection success message
-	fmt.Fprintf(w, "event: connected\ndata: {\"status\":\"connected\"}\n\n")
+	if _, err := fmt.Fprintf(w, "event: connected\ndata: {\"status\":\"connected\"}\n\n"); err != nil {
+		logger.Errorf("Failed to write connection event: %v", err)
+		return
+	}
 	flusher.Flush()
 
 	// Create a context that will be canceled when the client disconnects
@@ -147,7 +148,10 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Send response via SSE
-			fmt.Fprintf(w, "event: message\ndata: %s\n\n", respData)
+			if _, err := fmt.Fprintf(w, "event: message\ndata: %s\n\n", respData); err != nil {
+				logger.Errorf("Failed to write message event: %v", err)
+				return
+			}
 			flusher.Flush()
 
 			logger.Infof("Sent response to %s", r.RemoteAddr)
@@ -170,7 +174,11 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to read request", http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
+	defer func() {
+		if err := r.Body.Close(); err != nil {
+			logger.Errorf("Failed to close request body: %v", err)
+		}
+	}()
 
 	logger.Infof("Received MCP request from %s: %s", r.RemoteAddr, string(body))
 
@@ -193,7 +201,10 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 	// Send JSON response
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(respData))
+	if _, err := w.Write([]byte(respData)); err != nil {
+		logger.Errorf("Failed to write response: %v", err)
+		return
+	}
 
 	logger.Infof("Sent MCP response to %s", r.RemoteAddr)
 }
@@ -202,6 +213,8 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, "{\"status\":\"ok\",\"initialized\":%t}\n",
-		s.handler.IsInitialized())
+	if _, err := fmt.Fprintf(w, "{\"status\":\"ok\",\"initialized\":%t}\n",
+		s.handler.IsInitialized()); err != nil {
+		logger.Errorf("Failed to write health response: %v", err)
+	}
 }

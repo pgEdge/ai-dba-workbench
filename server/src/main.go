@@ -111,8 +111,16 @@ func main() {
 	}
 	logger.Infof("Server will listen on port %d", cfg.GetPort())
 
+	// Connect to database
+	dbPool, err := database.Connect(cfg)
+	if err != nil {
+		logger.Fatalf("Failed to connect to database: %v", err)
+	}
+	defer dbPool.Close()
+	logger.Info("Database connection established")
+
 	// Create MCP handler
-	mcpHandler := mcp.NewHandler(serverName, serverVersion)
+	mcpHandler := mcp.NewHandler(serverName, serverVersion, dbPool)
 
 	// Create server
 	srv := server.New(cfg, mcpHandler)

@@ -11,233 +11,233 @@
 package mcp
 
 import (
-    "encoding/json"
-    "testing"
+	"encoding/json"
+	"testing"
 )
 
 // TestNewHandler tests handler creation
 func TestNewHandler(t *testing.T) {
-    handler := NewHandler("TestServer", "1.0.0")
+	handler := NewHandler("TestServer", "1.0.0", nil)
 
-    if handler == nil {
-        t.Fatal("NewHandler returned nil")
-    }
-    if handler.serverName != "TestServer" {
-        t.Errorf("serverName = %v, want TestServer", handler.serverName)
-    }
-    if handler.serverVersion != "1.0.0" {
-        t.Errorf("serverVersion = %v, want 1.0.0", handler.serverVersion)
-    }
-    if handler.initialized {
-        t.Error("Handler should not be initialized on creation")
-    }
+	if handler == nil {
+		t.Fatal("NewHandler returned nil")
+	}
+	if handler.serverName != "TestServer" {
+		t.Errorf("serverName = %v, want TestServer", handler.serverName)
+	}
+	if handler.serverVersion != "1.0.0" {
+		t.Errorf("serverVersion = %v, want 1.0.0", handler.serverVersion)
+	}
+	if handler.initialized {
+		t.Error("Handler should not be initialized on creation")
+	}
 }
 
 // TestHandleInitialize tests the initialize method
 func TestHandleInitialize(t *testing.T) {
-    handler := NewHandler("TestServer", "1.0.0")
+	handler := NewHandler("TestServer", "1.0.0", nil)
 
-    reqData := []byte(`{
+	reqData := []byte(`{
         "jsonrpc": "2.0",
         "id": "test-1",
         "method": "initialize",
         "params": {}
     }`)
 
-    resp, err := handler.HandleRequest(reqData)
-    if err != nil {
-        t.Fatalf("HandleRequest failed: %v", err)
-    }
+	resp, err := handler.HandleRequest(reqData)
+	if err != nil {
+		t.Fatalf("HandleRequest failed: %v", err)
+	}
 
-    if resp == nil {
-        t.Fatal("Response is nil")
-    }
+	if resp == nil {
+		t.Fatal("Response is nil")
+	}
 
-    if resp.Error != nil {
-        t.Errorf("Expected no error, got: %v", resp.Error)
-    }
+	if resp.Error != nil {
+		t.Errorf("Expected no error, got: %v", resp.Error)
+	}
 
-    if resp.ID != "test-1" {
-        t.Errorf("Response ID = %v, want test-1", resp.ID)
-    }
+	if resp.ID != "test-1" {
+		t.Errorf("Response ID = %v, want test-1", resp.ID)
+	}
 
-    // Verify the result structure
-    result, ok := resp.Result.(InitializeResult)
-    if !ok {
-        t.Fatalf("Result is not InitializeResult, got %T", resp.Result)
-    }
+	// Verify the result structure
+	result, ok := resp.Result.(InitializeResult)
+	if !ok {
+		t.Fatalf("Result is not InitializeResult, got %T", resp.Result)
+	}
 
-    if result.ProtocolVersion != "2024-11-05" {
-        t.Errorf("ProtocolVersion = %v, want 2024-11-05",
-            result.ProtocolVersion)
-    }
+	if result.ProtocolVersion != "2024-11-05" {
+		t.Errorf("ProtocolVersion = %v, want 2024-11-05",
+			result.ProtocolVersion)
+	}
 
-    if result.ServerInfo.Name != "TestServer" {
-        t.Errorf("ServerInfo.Name = %v, want TestServer",
-            result.ServerInfo.Name)
-    }
+	if result.ServerInfo.Name != "TestServer" {
+		t.Errorf("ServerInfo.Name = %v, want TestServer",
+			result.ServerInfo.Name)
+	}
 
-    if result.ServerInfo.Version != "1.0.0" {
-        t.Errorf("ServerInfo.Version = %v, want 1.0.0",
-            result.ServerInfo.Version)
-    }
+	if result.ServerInfo.Version != "1.0.0" {
+		t.Errorf("ServerInfo.Version = %v, want 1.0.0",
+			result.ServerInfo.Version)
+	}
 
-    // Verify handler is now initialized
-    if !handler.initialized {
-        t.Error("Handler should be initialized after initialize method")
-    }
+	// Verify handler is now initialized
+	if !handler.initialized {
+		t.Error("Handler should be initialized after initialize method")
+	}
 }
 
 // TestHandlePing tests the ping method
 func TestHandlePing(t *testing.T) {
-    handler := NewHandler("TestServer", "1.0.0")
+	handler := NewHandler("TestServer", "1.0.0", nil)
 
-    reqData := []byte(`{
+	reqData := []byte(`{
         "jsonrpc": "2.0",
         "id": 42,
         "method": "ping"
     }`)
 
-    resp, err := handler.HandleRequest(reqData)
-    if err != nil {
-        t.Fatalf("HandleRequest failed: %v", err)
-    }
+	resp, err := handler.HandleRequest(reqData)
+	if err != nil {
+		t.Fatalf("HandleRequest failed: %v", err)
+	}
 
-    if resp == nil {
-        t.Fatal("Response is nil")
-    }
+	if resp == nil {
+		t.Fatal("Response is nil")
+	}
 
-    if resp.Error != nil {
-        t.Errorf("Expected no error, got: %v", resp.Error)
-    }
+	if resp.Error != nil {
+		t.Errorf("Expected no error, got: %v", resp.Error)
+	}
 
-    if resp.ID != float64(42) {
-        t.Errorf("Response ID = %v, want 42", resp.ID)
-    }
+	if resp.ID != float64(42) {
+		t.Errorf("Response ID = %v, want 42", resp.ID)
+	}
 
-    // Ping returns a map with status: ok
-    result, ok := resp.Result.(map[string]interface{})
-    if !ok {
-        t.Fatalf("Result is not a map, got %T", resp.Result)
-    }
-    if result["status"] != "ok" {
-        t.Errorf("Result status = %v, want ok", result["status"])
-    }
+	// Ping returns a map with status: ok
+	result, ok := resp.Result.(map[string]interface{})
+	if !ok {
+		t.Fatalf("Result is not a map, got %T", resp.Result)
+	}
+	if result["status"] != "ok" {
+		t.Errorf("Result status = %v, want ok", result["status"])
+	}
 }
 
 // TestHandleInvalidJSON tests handling of invalid JSON
 func TestHandleInvalidJSON(t *testing.T) {
-    handler := NewHandler("TestServer", "1.0.0")
+	handler := NewHandler("TestServer", "1.0.0", nil)
 
-    reqData := []byte(`{invalid json}`)
+	reqData := []byte(`{invalid json}`)
 
-    resp, err := handler.HandleRequest(reqData)
-    if err != nil {
-        t.Fatalf("HandleRequest failed: %v", err)
-    }
+	resp, err := handler.HandleRequest(reqData)
+	if err != nil {
+		t.Fatalf("HandleRequest failed: %v", err)
+	}
 
-    if resp == nil {
-        t.Fatal("Response is nil")
-    }
+	if resp == nil {
+		t.Fatal("Response is nil")
+	}
 
-    if resp.Error == nil {
-        t.Fatal("Expected error response for invalid JSON")
-    }
+	if resp.Error == nil {
+		t.Fatal("Expected error response for invalid JSON")
+	}
 
-    if resp.Error.Code != ParseError {
-        t.Errorf("Error code = %v, want %v (ParseError)", resp.Error.Code,
-            ParseError)
-    }
+	if resp.Error.Code != ParseError {
+		t.Errorf("Error code = %v, want %v (ParseError)", resp.Error.Code,
+			ParseError)
+	}
 }
 
 // TestHandleInvalidJSONRPCVersion tests handling of invalid JSON-RPC version
 func TestHandleInvalidJSONRPCVersion(t *testing.T) {
-    handler := NewHandler("TestServer", "1.0.0")
+	handler := NewHandler("TestServer", "1.0.0", nil)
 
-    reqData := []byte(`{
+	reqData := []byte(`{
         "jsonrpc": "1.0",
         "id": "test-1",
         "method": "ping"
     }`)
 
-    resp, err := handler.HandleRequest(reqData)
-    if err != nil {
-        t.Fatalf("HandleRequest failed: %v", err)
-    }
+	resp, err := handler.HandleRequest(reqData)
+	if err != nil {
+		t.Fatalf("HandleRequest failed: %v", err)
+	}
 
-    if resp == nil {
-        t.Fatal("Response is nil")
-    }
+	if resp == nil {
+		t.Fatal("Response is nil")
+	}
 
-    if resp.Error == nil {
-        t.Fatal("Expected error response for invalid JSON-RPC version")
-    }
+	if resp.Error == nil {
+		t.Fatal("Expected error response for invalid JSON-RPC version")
+	}
 
-    if resp.Error.Code != InvalidRequest {
-        t.Errorf("Error code = %v, want %v (InvalidRequest)",
-            resp.Error.Code, InvalidRequest)
-    }
+	if resp.Error.Code != InvalidRequest {
+		t.Errorf("Error code = %v, want %v (InvalidRequest)",
+			resp.Error.Code, InvalidRequest)
+	}
 }
 
 // TestHandleUnknownMethod tests handling of unknown methods
 func TestHandleUnknownMethod(t *testing.T) {
-    handler := NewHandler("TestServer", "1.0.0")
+	handler := NewHandler("TestServer", "1.0.0", nil)
 
-    reqData := []byte(`{
+	reqData := []byte(`{
         "jsonrpc": "2.0",
         "id": "test-1",
         "method": "unknownMethod"
     }`)
 
-    resp, err := handler.HandleRequest(reqData)
-    if err != nil {
-        t.Fatalf("HandleRequest failed: %v", err)
-    }
+	resp, err := handler.HandleRequest(reqData)
+	if err != nil {
+		t.Fatalf("HandleRequest failed: %v", err)
+	}
 
-    if resp == nil {
-        t.Fatal("Response is nil")
-    }
+	if resp == nil {
+		t.Fatal("Response is nil")
+	}
 
-    if resp.Error == nil {
-        t.Fatal("Expected error response for unknown method")
-    }
+	if resp.Error == nil {
+		t.Fatal("Expected error response for unknown method")
+	}
 
-    if resp.Error.Code != MethodNotFound {
-        t.Errorf("Error code = %v, want %v (MethodNotFound)",
-            resp.Error.Code, MethodNotFound)
-    }
+	if resp.Error.Code != MethodNotFound {
+		t.Errorf("Error code = %v, want %v (MethodNotFound)",
+			resp.Error.Code, MethodNotFound)
+	}
 }
 
 // TestFormatResponse tests the FormatResponse helper
 func TestFormatResponse(t *testing.T) {
-    resp := NewResponse("test-1", map[string]string{"status": "ok"})
+	resp := NewResponse("test-1", map[string]string{"status": "ok"})
 
-    jsonBytes, err := FormatResponse(resp)
-    if err != nil {
-        t.Fatalf("FormatResponse failed: %v", err)
-    }
+	jsonBytes, err := FormatResponse(resp)
+	if err != nil {
+		t.Fatalf("FormatResponse failed: %v", err)
+	}
 
-    if len(jsonBytes) == 0 {
-        t.Error("FormatResponse returned empty bytes")
-    }
+	if len(jsonBytes) == 0 {
+		t.Error("FormatResponse returned empty bytes")
+	}
 
-    // Verify it's valid JSON
-    var decoded Response
-    if err := json.Unmarshal(jsonBytes, &decoded); err != nil {
-        t.Fatalf("FormatResponse produced invalid JSON: %v", err)
-    }
+	// Verify it's valid JSON
+	var decoded Response
+	if err := json.Unmarshal(jsonBytes, &decoded); err != nil {
+		t.Fatalf("FormatResponse produced invalid JSON: %v", err)
+	}
 
-    if decoded.ID != "test-1" {
-        t.Errorf("Decoded ID = %v, want test-1", decoded.ID)
-    }
+	if decoded.ID != "test-1" {
+		t.Errorf("Decoded ID = %v, want test-1", decoded.ID)
+	}
 }
 
 // TestHandleRequestSequence tests a sequence of requests
 func TestHandleRequestSequence(t *testing.T) {
-    handler := NewHandler("TestServer", "1.0.0")
+	handler := NewHandler("TestServer", "1.0.0", nil)
 
-    // First, send initialize
-    initReq := []byte(`{
+	// First, send initialize
+	initReq := []byte(`{
         "jsonrpc": "2.0",
         "id": 1,
         "method": "initialize",
@@ -251,47 +251,501 @@ func TestHandleRequestSequence(t *testing.T) {
         }
     }`)
 
-    resp, err := handler.HandleRequest(initReq)
-    if err != nil {
-        t.Fatalf("Initialize failed: %v", err)
-    }
-    if resp.Error != nil {
-        t.Fatalf("Initialize returned error: %v", resp.Error)
-    }
-    if !handler.initialized {
-        t.Error("Handler should be initialized")
-    }
+	resp, err := handler.HandleRequest(initReq)
+	if err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+	if resp.Error != nil {
+		t.Fatalf("Initialize returned error: %v", resp.Error)
+	}
+	if !handler.initialized {
+		t.Error("Handler should be initialized")
+	}
 
-    // Then send ping
-    pingReq := []byte(`{
+	// Then send ping
+	pingReq := []byte(`{
         "jsonrpc": "2.0",
         "id": 2,
         "method": "ping"
     }`)
 
-    resp, err = handler.HandleRequest(pingReq)
-    if err != nil {
-        t.Fatalf("Ping failed: %v", err)
-    }
-    if resp.Error != nil {
-        t.Fatalf("Ping returned error: %v", resp.Error)
-    }
+	resp, err = handler.HandleRequest(pingReq)
+	if err != nil {
+		t.Fatalf("Ping failed: %v", err)
+	}
+	if resp.Error != nil {
+		t.Fatalf("Ping returned error: %v", resp.Error)
+	}
 
-    // Ping returns a map with status: ok
-    result, ok := resp.Result.(map[string]interface{})
-    if !ok {
-        t.Fatalf("Result is not a map, got %T", resp.Result)
-    }
-    if result["status"] != "ok" {
-        t.Errorf("Result status = %v, want ok", result["status"])
-    }
+	// Ping returns a map with status: ok
+	result, ok := resp.Result.(map[string]interface{})
+	if !ok {
+		t.Fatalf("Result is not a map, got %T", resp.Result)
+	}
+	if result["status"] != "ok" {
+		t.Errorf("Result status = %v, want ok", result["status"])
+	}
 
-    // Send initialize again (should still work)
-    resp, err = handler.HandleRequest(initReq)
-    if err != nil {
-        t.Fatalf("Second initialize failed: %v", err)
-    }
-    if resp.Error != nil {
-        t.Fatalf("Second initialize returned error: %v", resp.Error)
-    }
+	// Send initialize again (should still work)
+	resp, err = handler.HandleRequest(initReq)
+	if err != nil {
+		t.Fatalf("Second initialize failed: %v", err)
+	}
+	if resp.Error != nil {
+		t.Fatalf("Second initialize returned error: %v", resp.Error)
+	}
+}
+
+// TestHandleListResources tests the resources/list method
+func TestHandleListResources(t *testing.T) {
+	handler := NewHandler("TestServer", "1.0.0", nil)
+
+	reqData := []byte(`{
+        "jsonrpc": "2.0",
+        "id": "test-list-resources",
+        "method": "resources/list"
+    }`)
+
+	resp, err := handler.HandleRequest(reqData)
+	if err != nil {
+		t.Fatalf("HandleRequest failed: %v", err)
+	}
+
+	if resp == nil {
+		t.Fatal("Response is nil")
+	}
+
+	if resp.Error != nil {
+		t.Errorf("Expected no error, got: %v", resp.Error)
+	}
+
+	// Verify result structure
+	result, ok := resp.Result.(map[string]interface{})
+	if !ok {
+		t.Fatalf("Result is not a map, got %T", resp.Result)
+	}
+
+	resources, ok := result["resources"].([]map[string]interface{})
+	if !ok {
+		t.Fatalf("resources is not an array, got %T", result["resources"])
+	}
+
+	// Should have 2 resources: users and service-tokens
+	if len(resources) != 2 {
+		t.Errorf("Expected 2 resources, got %d", len(resources))
+	}
+
+	// Verify users resource
+	foundUsers := false
+	foundTokens := false
+	for _, res := range resources {
+		uri, _ := res["uri"].(string)
+		if uri == "ai-workbench://users" {
+			foundUsers = true
+			if res["name"] != "User Accounts" {
+				t.Errorf("Users resource name = %v, want User Accounts",
+					res["name"])
+			}
+			if res["mimeType"] != "application/json" {
+				t.Errorf("Users resource mimeType = %v, want "+
+					"application/json", res["mimeType"])
+			}
+		} else if uri == "ai-workbench://service-tokens" {
+			foundTokens = true
+			if res["name"] != "Service Tokens" {
+				t.Errorf("Tokens resource name = %v, want Service Tokens",
+					res["name"])
+			}
+		}
+	}
+
+	if !foundUsers {
+		t.Error("Users resource not found in list")
+	}
+	if !foundTokens {
+		t.Error("Service tokens resource not found in list")
+	}
+}
+
+// TestHandleReadResourceInvalidURI tests resources/read with invalid URI
+func TestHandleReadResourceInvalidURI(t *testing.T) {
+	handler := NewHandler("TestServer", "1.0.0", nil)
+
+	reqData := []byte(`{
+        "jsonrpc": "2.0",
+        "id": "test-read-invalid",
+        "method": "resources/read",
+        "params": {
+            "uri": "ai-workbench://invalid"
+        }
+    }`)
+
+	resp, err := handler.HandleRequest(reqData)
+	if err != nil {
+		t.Fatalf("HandleRequest failed: %v", err)
+	}
+
+	if resp == nil {
+		t.Fatal("Response is nil")
+	}
+
+	if resp.Error == nil {
+		t.Fatal("Expected error for invalid URI")
+	}
+
+	if resp.Error.Code != InvalidParams {
+		t.Errorf("Error code = %v, want %v (InvalidParams)",
+			resp.Error.Code, InvalidParams)
+	}
+}
+
+// TestHandleReadResourceMissingParams tests resources/read without params
+func TestHandleReadResourceMissingParams(t *testing.T) {
+	handler := NewHandler("TestServer", "1.0.0", nil)
+
+	reqData := []byte(`{
+        "jsonrpc": "2.0",
+        "id": "test-read-missing",
+        "method": "resources/read"
+    }`)
+
+	resp, err := handler.HandleRequest(reqData)
+	if err != nil {
+		t.Fatalf("HandleRequest failed: %v", err)
+	}
+
+	if resp == nil {
+		t.Fatal("Response is nil")
+	}
+
+	if resp.Error == nil {
+		t.Fatal("Expected error for missing params")
+	}
+
+	if resp.Error.Code != InvalidParams {
+		t.Errorf("Error code = %v, want %v (InvalidParams)",
+			resp.Error.Code, InvalidParams)
+	}
+}
+
+// TestHandleListTools tests the tools/list method
+func TestHandleListTools(t *testing.T) {
+	handler := NewHandler("TestServer", "1.0.0", nil)
+
+	reqData := []byte(`{
+        "jsonrpc": "2.0",
+        "id": "test-list-tools",
+        "method": "tools/list"
+    }`)
+
+	resp, err := handler.HandleRequest(reqData)
+	if err != nil {
+		t.Fatalf("HandleRequest failed: %v", err)
+	}
+
+	if resp == nil {
+		t.Fatal("Response is nil")
+	}
+
+	if resp.Error != nil {
+		t.Errorf("Expected no error, got: %v", resp.Error)
+	}
+
+	// Verify result structure
+	result, ok := resp.Result.(map[string]interface{})
+	if !ok {
+		t.Fatalf("Result is not a map, got %T", resp.Result)
+	}
+
+	tools, ok := result["tools"].([]map[string]interface{})
+	if !ok {
+		t.Fatalf("tools is not an array, got %T", result["tools"])
+	}
+
+	// Should have 6 tools
+	expectedTools := []string{
+		"create_user",
+		"update_user",
+		"delete_user",
+		"create_service_token",
+		"update_service_token",
+		"delete_service_token",
+	}
+
+	if len(tools) != len(expectedTools) {
+		t.Errorf("Expected %d tools, got %d", len(expectedTools),
+			len(tools))
+	}
+
+	// Verify each tool is present and has required fields
+	foundTools := make(map[string]bool)
+	for _, tool := range tools {
+		name, _ := tool["name"].(string)
+		foundTools[name] = true
+
+		// Verify tool has required fields
+		if tool["description"] == nil {
+			t.Errorf("Tool %s missing description", name)
+		}
+		if tool["inputSchema"] == nil {
+			t.Errorf("Tool %s missing inputSchema", name)
+		}
+
+		// Verify inputSchema structure
+		schema, ok := tool["inputSchema"].(map[string]interface{})
+		if !ok {
+			t.Errorf("Tool %s inputSchema is not a map", name)
+			continue
+		}
+		if schema["type"] != "object" {
+			t.Errorf("Tool %s inputSchema type = %v, want object",
+				name, schema["type"])
+		}
+		if schema["properties"] == nil {
+			t.Errorf("Tool %s inputSchema missing properties", name)
+		}
+		if schema["required"] == nil {
+			t.Errorf("Tool %s inputSchema missing required fields", name)
+		}
+	}
+
+	// Verify all expected tools were found
+	for _, expectedTool := range expectedTools {
+		if !foundTools[expectedTool] {
+			t.Errorf("Expected tool %s not found", expectedTool)
+		}
+	}
+}
+
+// TestHandleCallToolUnknown tests calling an unknown tool
+func TestHandleCallToolUnknown(t *testing.T) {
+	handler := NewHandler("TestServer", "1.0.0", nil)
+
+	reqData := []byte(`{
+        "jsonrpc": "2.0",
+        "id": "test-unknown-tool",
+        "method": "tools/call",
+        "params": {
+            "name": "unknown_tool",
+            "arguments": {}
+        }
+    }`)
+
+	resp, err := handler.HandleRequest(reqData)
+	if err != nil {
+		t.Fatalf("HandleRequest failed: %v", err)
+	}
+
+	if resp == nil {
+		t.Fatal("Response is nil")
+	}
+
+	if resp.Error == nil {
+		t.Fatal("Expected error for unknown tool")
+	}
+
+	if resp.Error.Code != MethodNotFound {
+		t.Errorf("Error code = %v, want %v (MethodNotFound)",
+			resp.Error.Code, MethodNotFound)
+	}
+}
+
+// TestHandleCallToolMissingParams tests calling a tool without params
+func TestHandleCallToolMissingParams(t *testing.T) {
+	handler := NewHandler("TestServer", "1.0.0", nil)
+
+	reqData := []byte(`{
+        "jsonrpc": "2.0",
+        "id": "test-missing-params",
+        "method": "tools/call"
+    }`)
+
+	resp, err := handler.HandleRequest(reqData)
+	if err != nil {
+		t.Fatalf("HandleRequest failed: %v", err)
+	}
+
+	if resp == nil {
+		t.Fatal("Response is nil")
+	}
+
+	if resp.Error == nil {
+		t.Fatal("Expected error for missing params")
+	}
+
+	if resp.Error.Code != InvalidParams {
+		t.Errorf("Error code = %v, want %v (InvalidParams)",
+			resp.Error.Code, InvalidParams)
+	}
+}
+
+// TestHandleListPrompts tests the prompts/list method
+func TestHandleListPrompts(t *testing.T) {
+	handler := NewHandler("TestServer", "1.0.0", nil)
+
+	reqData := []byte(`{
+        "jsonrpc": "2.0",
+        "id": "test-list-prompts",
+        "method": "prompts/list"
+    }`)
+
+	resp, err := handler.HandleRequest(reqData)
+	if err != nil {
+		t.Fatalf("HandleRequest failed: %v", err)
+	}
+
+	if resp == nil {
+		t.Fatal("Response is nil")
+	}
+
+	if resp.Error != nil {
+		t.Errorf("Expected no error, got: %v", resp.Error)
+	}
+
+	// Verify result structure
+	result, ok := resp.Result.(map[string]interface{})
+	if !ok {
+		t.Fatalf("Result is not a map, got %T", resp.Result)
+	}
+
+	// prompts can be either []interface{} or []map[string]interface{}
+	// When empty, it's []interface{}
+	prompts, ok := result["prompts"]
+	if !ok {
+		t.Fatal("prompts field not found in result")
+	}
+
+	// Use reflection to get length
+	switch p := prompts.(type) {
+	case []interface{}:
+		if len(p) != 0 {
+			t.Errorf("Expected 0 prompts, got %d", len(p))
+		}
+	case []map[string]interface{}:
+		if len(p) != 0 {
+			t.Errorf("Expected 0 prompts, got %d", len(p))
+		}
+	default:
+		t.Fatalf("prompts is not an array, got %T", prompts)
+	}
+}
+
+// TestToolInputSchemaValidation tests that tool schemas are properly defined
+func TestToolInputSchemaValidation(t *testing.T) {
+	handler := NewHandler("TestServer", "1.0.0", nil)
+
+	reqData := []byte(`{
+        "jsonrpc": "2.0",
+        "id": "test",
+        "method": "tools/list"
+    }`)
+
+	resp, err := handler.HandleRequest(reqData)
+	if err != nil {
+		t.Fatalf("HandleRequest failed: %v", err)
+	}
+
+	result := resp.Result.(map[string]interface{})
+	tools := result["tools"].([]map[string]interface{})
+
+	// Test create_user schema
+	createUserTool := findTool(tools, "create_user")
+	if createUserTool == nil {
+		t.Fatal("create_user tool not found")
+	}
+	schema := createUserTool["inputSchema"].(map[string]interface{})
+	required := schema["required"].([]string)
+	expectedRequired := []string{"username", "email", "fullName", "password"}
+	if !stringSlicesEqual(required, expectedRequired) {
+		t.Errorf("create_user required fields = %v, want %v",
+			required, expectedRequired)
+	}
+
+	// Test update_user schema
+	updateUserTool := findTool(tools, "update_user")
+	if updateUserTool == nil {
+		t.Fatal("update_user tool not found")
+	}
+	schema = updateUserTool["inputSchema"].(map[string]interface{})
+	required = schema["required"].([]string)
+	expectedRequired = []string{"username"}
+	if !stringSlicesEqual(required, expectedRequired) {
+		t.Errorf("update_user required fields = %v, want %v",
+			required, expectedRequired)
+	}
+
+	// Test delete_user schema
+	deleteUserTool := findTool(tools, "delete_user")
+	if deleteUserTool == nil {
+		t.Fatal("delete_user tool not found")
+	}
+	schema = deleteUserTool["inputSchema"].(map[string]interface{})
+	required = schema["required"].([]string)
+	expectedRequired = []string{"username"}
+	if !stringSlicesEqual(required, expectedRequired) {
+		t.Errorf("delete_user required fields = %v, want %v",
+			required, expectedRequired)
+	}
+
+	// Test create_service_token schema
+	createTokenTool := findTool(tools, "create_service_token")
+	if createTokenTool == nil {
+		t.Fatal("create_service_token tool not found")
+	}
+	schema = createTokenTool["inputSchema"].(map[string]interface{})
+	required = schema["required"].([]string)
+	expectedRequired = []string{"name"}
+	if !stringSlicesEqual(required, expectedRequired) {
+		t.Errorf("create_service_token required fields = %v, want %v",
+			required, expectedRequired)
+	}
+
+	// Test update_service_token schema
+	updateTokenTool := findTool(tools, "update_service_token")
+	if updateTokenTool == nil {
+		t.Fatal("update_service_token tool not found")
+	}
+	schema = updateTokenTool["inputSchema"].(map[string]interface{})
+	required = schema["required"].([]string)
+	expectedRequired = []string{"name"}
+	if !stringSlicesEqual(required, expectedRequired) {
+		t.Errorf("update_service_token required fields = %v, want %v",
+			required, expectedRequired)
+	}
+
+	// Test delete_service_token schema
+	deleteTokenTool := findTool(tools, "delete_service_token")
+	if deleteTokenTool == nil {
+		t.Fatal("delete_service_token tool not found")
+	}
+	schema = deleteTokenTool["inputSchema"].(map[string]interface{})
+	required = schema["required"].([]string)
+	expectedRequired = []string{"name"}
+	if !stringSlicesEqual(required, expectedRequired) {
+		t.Errorf("delete_service_token required fields = %v, want %v",
+			required, expectedRequired)
+	}
+}
+
+// Helper function to find a tool by name
+func findTool(tools []map[string]interface{}, name string) map[string]interface{} {
+	for _, tool := range tools {
+		if tool["name"] == name {
+			return tool
+		}
+	}
+	return nil
+}
+
+// Helper function to compare string slices
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

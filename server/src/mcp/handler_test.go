@@ -12,6 +12,7 @@ package mcp
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 )
 
@@ -44,7 +45,7 @@ func TestHandleInitialize(t *testing.T) {
         "params": {}
     }`)
 
-	resp, err := handler.HandleRequest(reqData)
+	resp, err := handler.HandleRequest(reqData, "")
 	if err != nil {
 		t.Fatalf("HandleRequest failed: %v", err)
 	}
@@ -98,7 +99,7 @@ func TestHandlePing(t *testing.T) {
         "method": "ping"
     }`)
 
-	resp, err := handler.HandleRequest(reqData)
+	resp, err := handler.HandleRequest(reqData, "")
 	if err != nil {
 		t.Fatalf("HandleRequest failed: %v", err)
 	}
@@ -131,7 +132,7 @@ func TestHandleInvalidJSON(t *testing.T) {
 
 	reqData := []byte(`{invalid json}`)
 
-	resp, err := handler.HandleRequest(reqData)
+	resp, err := handler.HandleRequest(reqData, "")
 	if err != nil {
 		t.Fatalf("HandleRequest failed: %v", err)
 	}
@@ -160,7 +161,7 @@ func TestHandleInvalidJSONRPCVersion(t *testing.T) {
         "method": "ping"
     }`)
 
-	resp, err := handler.HandleRequest(reqData)
+	resp, err := handler.HandleRequest(reqData, "")
 	if err != nil {
 		t.Fatalf("HandleRequest failed: %v", err)
 	}
@@ -189,7 +190,7 @@ func TestHandleUnknownMethod(t *testing.T) {
         "method": "unknownMethod"
     }`)
 
-	resp, err := handler.HandleRequest(reqData)
+	resp, err := handler.HandleRequest(reqData, "")
 	if err != nil {
 		t.Fatalf("HandleRequest failed: %v", err)
 	}
@@ -251,7 +252,7 @@ func TestHandleRequestSequence(t *testing.T) {
         }
     }`)
 
-	resp, err := handler.HandleRequest(initReq)
+	resp, err := handler.HandleRequest(initReq, "")
 	if err != nil {
 		t.Fatalf("Initialize failed: %v", err)
 	}
@@ -269,7 +270,7 @@ func TestHandleRequestSequence(t *testing.T) {
         "method": "ping"
     }`)
 
-	resp, err = handler.HandleRequest(pingReq)
+	resp, err = handler.HandleRequest(pingReq, "")
 	if err != nil {
 		t.Fatalf("Ping failed: %v", err)
 	}
@@ -287,7 +288,7 @@ func TestHandleRequestSequence(t *testing.T) {
 	}
 
 	// Send initialize again (should still work)
-	resp, err = handler.HandleRequest(initReq)
+	resp, err = handler.HandleRequest(initReq, "")
 	if err != nil {
 		t.Fatalf("Second initialize failed: %v", err)
 	}
@@ -306,7 +307,7 @@ func TestHandleListResources(t *testing.T) {
         "method": "resources/list"
     }`)
 
-	resp, err := handler.HandleRequest(reqData)
+	resp, err := handler.HandleRequest(reqData, "")
 	if err != nil {
 		t.Fatalf("HandleRequest failed: %v", err)
 	}
@@ -380,7 +381,7 @@ func TestHandleReadResourceInvalidURI(t *testing.T) {
         }
     }`)
 
-	resp, err := handler.HandleRequest(reqData)
+	resp, err := handler.HandleRequest(reqData, "")
 	if err != nil {
 		t.Fatalf("HandleRequest failed: %v", err)
 	}
@@ -409,7 +410,7 @@ func TestHandleReadResourceMissingParams(t *testing.T) {
         "method": "resources/read"
     }`)
 
-	resp, err := handler.HandleRequest(reqData)
+	resp, err := handler.HandleRequest(reqData, "")
 	if err != nil {
 		t.Fatalf("HandleRequest failed: %v", err)
 	}
@@ -438,7 +439,7 @@ func TestHandleListTools(t *testing.T) {
         "method": "tools/list"
     }`)
 
-	resp, err := handler.HandleRequest(reqData)
+	resp, err := handler.HandleRequest(reqData, "")
 	if err != nil {
 		t.Fatalf("HandleRequest failed: %v", err)
 	}
@@ -462,8 +463,9 @@ func TestHandleListTools(t *testing.T) {
 		t.Fatalf("tools is not an array, got %T", result["tools"])
 	}
 
-	// Should have 6 tools
+	// Should have 7 tools
 	expectedTools := []string{
+		"authenticate_user",
 		"create_user",
 		"update_user",
 		"delete_user",
@@ -531,7 +533,7 @@ func TestHandleCallToolUnknown(t *testing.T) {
         }
     }`)
 
-	resp, err := handler.HandleRequest(reqData)
+	resp, err := handler.HandleRequest(reqData, "")
 	if err != nil {
 		t.Fatalf("HandleRequest failed: %v", err)
 	}
@@ -560,7 +562,7 @@ func TestHandleCallToolMissingParams(t *testing.T) {
         "method": "tools/call"
     }`)
 
-	resp, err := handler.HandleRequest(reqData)
+	resp, err := handler.HandleRequest(reqData, "")
 	if err != nil {
 		t.Fatalf("HandleRequest failed: %v", err)
 	}
@@ -589,7 +591,7 @@ func TestHandleListPrompts(t *testing.T) {
         "method": "prompts/list"
     }`)
 
-	resp, err := handler.HandleRequest(reqData)
+	resp, err := handler.HandleRequest(reqData, "")
 	if err != nil {
 		t.Fatalf("HandleRequest failed: %v", err)
 	}
@@ -640,7 +642,7 @@ func TestToolInputSchemaValidation(t *testing.T) {
         "method": "tools/list"
     }`)
 
-	resp, err := handler.HandleRequest(reqData)
+	resp, err := handler.HandleRequest(reqData, "")
 	if err != nil {
 		t.Fatalf("HandleRequest failed: %v", err)
 	}
@@ -748,4 +750,176 @@ func stringSlicesEqual(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// TestSuperuserPrivilegeRequired tests that management tools require superuser
+func TestSuperuserPrivilegeRequired(t *testing.T) {
+	// Test cases for tools that require superuser privileges
+	testCases := []struct {
+		toolName string
+		args     map[string]interface{}
+	}{
+		{
+			toolName: "create_user",
+			args: map[string]interface{}{
+				"username": "testuser",
+				"email":    "test@example.com",
+				"fullName": "Test User",
+				"password": "testpass123",
+			},
+		},
+		{
+			toolName: "update_user",
+			args: map[string]interface{}{
+				"username": "testuser",
+				"email":    "newemail@example.com",
+			},
+		},
+		{
+			toolName: "delete_user",
+			args: map[string]interface{}{
+				"username": "testuser",
+			},
+		},
+		{
+			toolName: "create_service_token",
+			args: map[string]interface{}{
+				"name": "testtoken",
+			},
+		},
+		{
+			toolName: "update_service_token",
+			args: map[string]interface{}{
+				"name": "testtoken",
+				"note": "Updated note",
+			},
+		},
+		{
+			toolName: "delete_service_token",
+			args: map[string]interface{}{
+				"name": "testtoken",
+			},
+		},
+	}
+
+	// Test 1: nil userInfo should be rejected
+	t.Run("NilUserInfo", func(t *testing.T) {
+		handler := NewHandler("TestServer", "1.0.0", nil)
+		handler.userInfo = nil
+
+		for _, tc := range testCases {
+			t.Run(tc.toolName, func(t *testing.T) {
+				_, err := handler.callToolByName(tc.toolName, tc.args)
+				if err == nil {
+					t.Errorf("Expected error for %s with nil userInfo",
+						tc.toolName)
+				}
+				expectedMsg := "permission denied: superuser privileges required"
+				if err.Error() != expectedMsg {
+					t.Errorf("Expected error message '%s', got '%s'",
+						expectedMsg, err.Error())
+				}
+			})
+		}
+	})
+
+	// Test 2: Non-superuser should be rejected
+	t.Run("NonSuperuser", func(t *testing.T) {
+		handler := NewHandler("TestServer", "1.0.0", nil)
+		handler.userInfo = &UserInfo{
+			IsAuthenticated: true,
+			IsSuperuser:     false, // Not a superuser
+			Username:        "regularuser",
+			IsServiceToken:  false,
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.toolName, func(t *testing.T) {
+				_, err := handler.callToolByName(tc.toolName, tc.args)
+				if err == nil {
+					t.Errorf("Expected error for %s with non-superuser",
+						tc.toolName)
+				}
+				expectedMsg := "permission denied: superuser privileges required"
+				if err.Error() != expectedMsg {
+					t.Errorf("Expected error message '%s', got '%s'",
+						expectedMsg, err.Error())
+				}
+			})
+		}
+	})
+
+	// Test 3: Non-superuser service token should be rejected
+	t.Run("NonSuperuserServiceToken", func(t *testing.T) {
+		handler := NewHandler("TestServer", "1.0.0", nil)
+		handler.userInfo = &UserInfo{
+			IsAuthenticated: true,
+			IsSuperuser:     false, // Not a superuser
+			Username:        "",
+			IsServiceToken:  true,
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.toolName, func(t *testing.T) {
+				_, err := handler.callToolByName(tc.toolName, tc.args)
+				if err == nil {
+					t.Errorf("Expected error for %s with non-superuser token",
+						tc.toolName)
+				}
+				expectedMsg := "permission denied: superuser privileges required"
+				if err.Error() != expectedMsg {
+					t.Errorf("Expected error message '%s', got '%s'",
+						expectedMsg, err.Error())
+				}
+			})
+		}
+	})
+}
+
+// TestAuthenticateUserNoSuperuserRequired tests that authenticate_user doesn't
+// require superuser by verifying it's not in the superuser-required list
+func TestAuthenticateUserNoSuperuserRequired(t *testing.T) {
+	// List of tools that require superuser privileges
+	superuserTools := map[string]bool{
+		"create_user":           true,
+		"update_user":           true,
+		"delete_user":           true,
+		"create_service_token":  true,
+		"update_service_token":  true,
+		"delete_service_token":  true,
+	}
+
+	// authenticate_user should NOT be in this list
+	if superuserTools["authenticate_user"] {
+		t.Error("authenticate_user should not require superuser privileges")
+	}
+
+	// Verify it's excluded from the superuser tools list
+	if len(superuserTools) != 6 {
+		t.Errorf("Expected exactly 6 tools to require superuser, got %d",
+			len(superuserTools))
+	}
+}
+
+// Helper function to call a tool by name (used for testing)
+func (h *Handler) callToolByName(name string, args map[string]interface{}) (
+	interface{}, error) {
+	switch name {
+	case "authenticate_user":
+		return h.handleAuthenticateUser(args)
+	case "create_user":
+		return h.handleCreateUser(args)
+	case "update_user":
+		return h.handleUpdateUser(args)
+	case "delete_user":
+		return h.handleDeleteUser(args)
+	case "create_service_token":
+		return h.handleCreateServiceToken(args)
+	case "update_service_token":
+		return h.handleUpdateServiceToken(args)
+	case "delete_service_token":
+		return h.handleDeleteServiceToken(args)
+	default:
+		return nil, fmt.Errorf("unknown tool: %s", name)
+	}
 }

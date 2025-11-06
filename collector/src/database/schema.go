@@ -1593,6 +1593,62 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration 2: Add user_sessions table for authentication tokens
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     2,
+		Description: "Add user_sessions table for authentication",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Create user_sessions table
+			_, err := conn.Exec(ctx, `
+			CREATE TABLE user_sessions (
+				session_token TEXT PRIMARY KEY,
+				username TEXT NOT NULL,
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				expires_at TIMESTAMP NOT NULL,
+				last_used_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				CONSTRAINT fk_username FOREIGN KEY (username)
+					REFERENCES user_accounts(username) ON DELETE CASCADE
+			);
+
+			COMMENT ON TABLE user_sessions IS
+				'User session tokens for API authentication';
+			COMMENT ON COLUMN user_sessions.session_token IS
+				'Unique session token used as bearer token for authentication';
+			COMMENT ON COLUMN user_sessions.username IS
+				'Username associated with this session';
+			COMMENT ON COLUMN user_sessions.created_at IS
+				'Timestamp when the session was created';
+			COMMENT ON COLUMN user_sessions.expires_at IS
+				'Timestamp when the session expires';
+			COMMENT ON COLUMN user_sessions.last_used_at IS
+				'Timestamp when the session was last used for authentication';
+			COMMENT ON CONSTRAINT fk_username ON user_sessions IS
+				'Links session to user account, cascading delete';
+
+			CREATE INDEX IF NOT EXISTS idx_user_sessions_username
+				ON user_sessions(username);
+			CREATE INDEX IF NOT EXISTS idx_user_sessions_expires_at
+				ON user_sessions(expires_at);
+			CREATE INDEX IF NOT EXISTS idx_user_sessions_last_used_at
+				ON user_sessions(last_used_at);
+
+			COMMENT ON INDEX idx_user_sessions_username IS
+				'Index for fast lookup of sessions by username';
+			COMMENT ON INDEX idx_user_sessions_expires_at IS
+				'Index for efficient expiration cleanup queries';
+			COMMENT ON INDEX idx_user_sessions_last_used_at IS
+				'Index for tracking session activity';
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to create user_sessions table: %w", err)
+			}
+
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations

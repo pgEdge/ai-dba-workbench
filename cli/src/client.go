@@ -20,9 +20,10 @@ import (
 
 // MCPClient represents a client for interacting with an MCP server
 type MCPClient struct {
-	serverURL  string
-	httpClient *http.Client
-	requestID  int
+	serverURL   string
+	httpClient  *http.Client
+	requestID   int
+	bearerToken string
 }
 
 // MCPRequest represents an MCP JSON-RPC request
@@ -51,10 +52,16 @@ type MCPError struct {
 // NewMCPClient creates a new MCP client
 func NewMCPClient(serverURL string) *MCPClient {
 	return &MCPClient{
-		serverURL:  serverURL,
-		httpClient: &http.Client{},
-		requestID:  1,
+		serverURL:   serverURL,
+		httpClient:  &http.Client{},
+		requestID:   1,
+		bearerToken: "",
 	}
+}
+
+// SetBearerToken sets the bearer token for authentication
+func (c *MCPClient) SetBearerToken(token string) {
+	c.bearerToken = token
 }
 
 // CallTool calls an MCP tool
@@ -119,6 +126,11 @@ func (c *MCPClient) makeRequest(method string, params interface{}) (interface{},
 		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+
+	// Add Authorization header if bearer token is set
+	if c.bearerToken != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+c.bearerToken)
+	}
 
 	// Execute request
 	resp, err := c.httpClient.Do(httpReq)

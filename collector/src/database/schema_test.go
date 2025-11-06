@@ -223,6 +223,7 @@ func cleanupTestSchema(t *testing.T, pool *pgxpool.Pool) {
 	ctx := context.Background()
 
 	tables := []string{
+		"user_sessions",
 		"user_tokens",
 		"service_tokens",
 		"user_accounts",
@@ -250,7 +251,7 @@ func TestNewSchemaManager(t *testing.T) {
 	}
 
 	// Verify migrations are registered in order
-	expectedVersions := []int{1}
+	expectedVersions := []int{1, 2}
 	if len(sm.migrations) != len(expectedVersions) {
 		t.Fatalf("Expected %d migrations, got %d", len(expectedVersions), len(sm.migrations))
 	}

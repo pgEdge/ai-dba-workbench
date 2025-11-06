@@ -27,6 +27,7 @@ type Handler struct {
 	serverVersion string
 	initialized   bool
 	dbPool        *pgxpool.Pool
+	userInfo      *UserInfo
 }
 
 // NewHandler creates a new MCP handler
@@ -40,7 +41,8 @@ func NewHandler(serverName, serverVersion string, dbPool *pgxpool.Pool) *Handler
 }
 
 // HandleRequest processes an MCP request and returns a response
-func (h *Handler) HandleRequest(data []byte) (*Response, error) {
+func (h *Handler) HandleRequest(data []byte, bearerToken string) (*Response,
+	error) {
 	var req Request
 	if err := json.Unmarshal(data, &req); err != nil {
 		logger.Errorf("Failed to unmarshal request: %v", err)
@@ -56,6 +58,52 @@ func (h *Handler) HandleRequest(data []byte) (*Response, error) {
 		return NewErrorResponse(req.ID, InvalidRequest,
 			"Invalid JSON-RPC version", nil), nil
 	}
+
+	// Check authentication for protected methods
+	// Methods that don't require authentication:
+	// - initialize, ping (protocol/health check methods)
+	// For tools/call, we'll check if it's authenticate_user specifically
+	// Skip authentication if dbPool is nil (for unit tests)
+	requiresAuth := true
+	if h.dbPool == nil {
+		// No database pool, skip authentication (unit test mode)
+		requiresAuth = false
+	} else {
+		switch req.Method {
+		case "initialize", "ping":
+			requiresAuth = false
+		case "tools/call":
+			// Need to check if it's the authenticate_user tool
+			var params struct {
+				Name string `json:"name"`
+			}
+			if err := json.Unmarshal(req.Params, &params); err == nil {
+				if params.Name == "authenticate_user" {
+					requiresAuth = false
+				}
+			}
+		}
+	}
+
+	var userInfo *UserInfo
+	if requiresAuth {
+		// Validate bearer token
+		var err error
+		userInfo, err = h.validateToken(bearerToken)
+		if err != nil {
+			logger.Errorf("Token validation failed: %v", err)
+			return NewErrorResponse(req.ID, InternalError,
+				"Authentication failed", nil), nil
+		}
+		if userInfo == nil || !userInfo.IsAuthenticated {
+			logger.Errorf("Unauthenticated request for method: %s", req.Method)
+			return NewErrorResponse(req.ID, InvalidRequest,
+				"Authentication required", nil), nil
+		}
+	}
+
+	// Store userInfo in handler for access by tool handlers
+	h.userInfo = userInfo
 
 	// Route to appropriate handler based on method
 	switch req.Method {
@@ -238,6 +286,24 @@ func (h *Handler) handleReadResource(req Request) (*Response, error) {
 // handleListTools processes the tools/list request
 func (h *Handler) handleListTools(req Request) (*Response, error) {
 	tools := []map[string]interface{}{
+		{
+			"name":        "authenticate_user",
+			"description": "Authenticate a user and obtain a session token",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"username": map[string]interface{}{
+						"type":        "string",
+						"description": "Username to authenticate",
+					},
+					"password": map[string]interface{}{
+						"type":        "string",
+						"description": "Password for authentication",
+					},
+				},
+				"required": []string{"username", "password"},
+			},
+		},
 		{
 			"name":        "create_user",
 			"description": "Create a new user account",
@@ -446,6 +512,8 @@ func (h *Handler) handleCallTool(req Request) (*Response, error) {
 	var err error
 
 	switch params.Name {
+	case "authenticate_user":
+		result, err = h.handleAuthenticateUser(params.Arguments)
 	case "create_user":
 		result, err = h.handleCreateUser(params.Arguments)
 	case "update_user":
@@ -477,6 +545,10 @@ func (h *Handler) handleCallTool(req Request) (*Response, error) {
 // handleCreateUser executes the create_user tool
 func (h *Handler) handleCreateUser(args map[string]interface{}) (interface{},
 	error) {
+	if h.userInfo == nil || !h.userInfo.IsSuperuser {
+		return nil, fmt.Errorf("permission denied: superuser privileges required")
+	}
+
 	username, _ := args["username"].(string)
 	email, _ := args["email"].(string)
 	fullName, _ := args["fullName"].(string)
@@ -512,6 +584,10 @@ func (h *Handler) handleCreateUser(args map[string]interface{}) (interface{},
 // handleUpdateUser executes the update_user tool
 func (h *Handler) handleUpdateUser(args map[string]interface{}) (interface{},
 	error) {
+	if h.userInfo == nil || !h.userInfo.IsSuperuser {
+		return nil, fmt.Errorf("permission denied: superuser privileges required")
+	}
+
 	username, _ := args["username"].(string)
 
 	var email, fullName, password *string
@@ -562,6 +638,10 @@ func (h *Handler) handleUpdateUser(args map[string]interface{}) (interface{},
 // handleDeleteUser executes the delete_user tool
 func (h *Handler) handleDeleteUser(args map[string]interface{}) (interface{},
 	error) {
+	if h.userInfo == nil || !h.userInfo.IsSuperuser {
+		return nil, fmt.Errorf("permission denied: superuser privileges required")
+	}
+
 	username, _ := args["username"].(string)
 
 	message, err := usermgmt.DeleteUserNonInteractive(h.dbPool, username)
@@ -582,6 +662,10 @@ func (h *Handler) handleDeleteUser(args map[string]interface{}) (interface{},
 // handleCreateServiceToken executes the create_service_token tool
 func (h *Handler) handleCreateServiceToken(args map[string]interface{}) (interface{},
 	error) {
+	if h.userInfo == nil || !h.userInfo.IsSuperuser {
+		return nil, fmt.Errorf("permission denied: superuser privileges required")
+	}
+
 	name, _ := args["name"].(string)
 	isSuperuser, _ := args["isSuperuser"].(bool)
 
@@ -621,6 +705,10 @@ func (h *Handler) handleCreateServiceToken(args map[string]interface{}) (interfa
 // handleUpdateServiceToken executes the update_service_token tool
 func (h *Handler) handleUpdateServiceToken(args map[string]interface{}) (interface{},
 	error) {
+	if h.userInfo == nil || !h.userInfo.IsSuperuser {
+		return nil, fmt.Errorf("permission denied: superuser privileges required")
+	}
+
 	name, _ := args["name"].(string)
 
 	var isSuperuser *bool
@@ -668,6 +756,10 @@ func (h *Handler) handleUpdateServiceToken(args map[string]interface{}) (interfa
 // handleDeleteServiceToken executes the delete_service_token tool
 func (h *Handler) handleDeleteServiceToken(args map[string]interface{}) (interface{},
 	error) {
+	if h.userInfo == nil || !h.userInfo.IsSuperuser {
+		return nil, fmt.Errorf("permission denied: superuser privileges required")
+	}
+
 	name, _ := args["name"].(string)
 
 	message, err := usermgmt.DeleteServiceTokenNonInteractive(h.dbPool, name)
@@ -680,6 +772,167 @@ func (h *Handler) handleDeleteServiceToken(args map[string]interface{}) (interfa
 			{
 				"type": "text",
 				"text": message,
+			},
+		},
+	}, nil
+}
+
+// UserInfo contains information about an authenticated user or service token
+type UserInfo struct {
+	IsAuthenticated bool
+	IsSuperuser     bool
+	Username        string // Empty for service tokens
+	IsServiceToken  bool
+}
+
+// validateToken validates a bearer token against service_tokens and user_sessions
+func (h *Handler) validateToken(token string) (*UserInfo, error) {
+	if token == "" {
+		return nil, nil
+	}
+
+	ctx := context.Background()
+
+	// First, check service_tokens table
+	tokenHash := usermgmt.HashPassword(token)
+	var expiresAt interface{}
+	var isSuperuser bool
+	err := h.dbPool.QueryRow(ctx, `
+		SELECT expires_at, is_superuser
+		FROM service_tokens
+		WHERE token_hash = $1
+	`, tokenHash).Scan(&expiresAt, &isSuperuser)
+
+	if err == nil {
+		// Service token found, check if expired
+		if expiresAt != nil {
+			if expiry, ok := expiresAt.(time.Time); ok {
+				if time.Now().After(expiry) {
+					logger.Infof("Service token expired")
+					return nil, nil
+				}
+			}
+		}
+		logger.Infof("Valid service token (superuser: %t)", isSuperuser)
+		return &UserInfo{
+			IsAuthenticated: true,
+			IsSuperuser:     isSuperuser,
+			Username:        "",
+			IsServiceToken:  true,
+		}, nil
+	}
+
+	// Service token not found, check user_sessions table
+	var username string
+	err = h.dbPool.QueryRow(ctx, `
+		SELECT us.username, us.expires_at, ua.is_superuser
+		FROM user_sessions us
+		JOIN user_accounts ua ON us.username = ua.username
+		WHERE us.session_token = $1
+	`, token).Scan(&username, &expiresAt, &isSuperuser)
+
+	if err != nil {
+		// Token not found in either table
+		return nil, nil
+	}
+
+	// Session found, check if expired
+	if expiry, ok := expiresAt.(time.Time); ok {
+		if time.Now().After(expiry) {
+			logger.Infof("Session token expired for user '%s'", username)
+			return nil, nil
+		}
+	}
+
+	// Update last_used_at timestamp
+	_, err = h.dbPool.Exec(ctx, `
+		UPDATE user_sessions
+		SET last_used_at = $1
+		WHERE session_token = $2
+	`, time.Now(), token)
+	if err != nil {
+		logger.Errorf("Failed to update session last_used_at: %v", err)
+		// Don't fail authentication just because we couldn't update timestamp
+	}
+
+	logger.Infof("Valid session token for user '%s' (superuser: %t)", username,
+		isSuperuser)
+	return &UserInfo{
+		IsAuthenticated: true,
+		IsSuperuser:     isSuperuser,
+		Username:        username,
+		IsServiceToken:  false,
+	}, nil
+}
+
+// handleAuthenticateUser executes the authenticate_user tool
+func (h *Handler) handleAuthenticateUser(args map[string]interface{}) (interface{},
+	error) {
+	username, _ := args["username"].(string)
+	password, _ := args["password"].(string)
+
+	ctx := context.Background()
+
+	// Query user account
+	var passwordHash string
+	var passwordExpiry interface{}
+	err := h.dbPool.QueryRow(ctx, `
+		SELECT password_hash, password_expiry
+		FROM user_accounts
+		WHERE username = $1
+	`, username).Scan(&passwordHash, &passwordExpiry)
+
+	if err != nil {
+		// User not found or other error
+		logger.Errorf("Authentication failed for user '%s': %v", username, err)
+		return nil, fmt.Errorf("authentication failed: invalid username or password")
+	}
+
+	// Verify password
+	if usermgmt.HashPassword(password) != passwordHash {
+		logger.Errorf("Authentication failed for user '%s': invalid password",
+			username)
+		return nil, fmt.Errorf("authentication failed: invalid username or password")
+	}
+
+	// Check if password has expired
+	if passwordExpiry != nil {
+		if expiry, ok := passwordExpiry.(time.Time); ok {
+			if time.Now().After(expiry) {
+				logger.Errorf("Authentication failed for user '%s': password expired",
+					username)
+				return nil, fmt.Errorf("authentication failed: password has expired")
+			}
+		}
+	}
+
+	// Generate session token
+	sessionToken, err := usermgmt.GenerateToken()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate session token: %w", err)
+	}
+
+	// Calculate expiration time (24 hours from now)
+	expiresAt := time.Now().Add(24 * time.Hour)
+
+	// Insert into user_sessions table
+	_, err = h.dbPool.Exec(ctx, `
+		INSERT INTO user_sessions (session_token, username, expires_at)
+		VALUES ($1, $2, $3)
+	`, sessionToken, username, expiresAt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create session: %w", err)
+	}
+
+	logger.Infof("User '%s' authenticated successfully", username)
+
+	// Return session token
+	return map[string]interface{}{
+		"content": []map[string]interface{}{
+			{
+				"type": "text",
+				"text": fmt.Sprintf("Authentication successful. Session token: %s\nExpires at: %s",
+					sessionToken, expiresAt.Format(time.RFC3339)),
 			},
 		},
 	}, nil

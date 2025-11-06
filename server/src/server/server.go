@@ -82,9 +82,28 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return nil
 }
 
+// extractBearerToken extracts the bearer token from the Authorization header
+func extractBearerToken(r *http.Request) string {
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		return ""
+	}
+
+	// Check if it starts with "Bearer "
+	const bearerPrefix = "Bearer "
+	if len(authHeader) > len(bearerPrefix) && authHeader[:len(bearerPrefix)] == bearerPrefix {
+		return authHeader[len(bearerPrefix):]
+	}
+
+	return ""
+}
+
 // handleSSE handles Server-Sent Events connections for MCP
 func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 	logger.Infof("New SSE connection from %s", r.RemoteAddr)
+
+	// Extract bearer token from Authorization header
+	bearerToken := extractBearerToken(r)
 
 	// Set headers for SSE
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -134,7 +153,7 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Process the request
-			resp, err := s.handler.HandleRequest(line)
+			resp, err := s.handler.HandleRequest(line, bearerToken)
 			if err != nil {
 				logger.Errorf("Error handling request: %v", err)
 				continue
@@ -167,6 +186,9 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Extract bearer token from Authorization header
+	bearerToken := extractBearerToken(r)
+
 	// Read request body
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -183,7 +205,7 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 	logger.Infof("Received MCP request from %s: %s", r.RemoteAddr, string(body))
 
 	// Process the request
-	resp, err := s.handler.HandleRequest(body)
+	resp, err := s.handler.HandleRequest(body, bearerToken)
 	if err != nil {
 		logger.Errorf("Error handling MCP request: %v", err)
 		http.Error(w, fmt.Sprintf("Request failed: %v", err), http.StatusInternalServerError)

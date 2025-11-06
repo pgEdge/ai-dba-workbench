@@ -110,6 +110,7 @@ Key topics:
 - [Architecture](server/index.md#architecture) - Server components
 - [Configuration](server/index.md#configuration) - Setup options
 - [Protocol](server/index.md#protocol) - MCP protocol details
+- [Authentication](authentication.md) - User and service token management
 - [MCP Resources](server/mcp-resources.md) - Available resources
 - [MCP Tools](server/mcp-tools.md) - Available tools
 - [Development](server/index.md#development) - Development guide
@@ -124,6 +125,8 @@ Key topics:
 
 - [Architecture](cli/index.md#architecture) - CLI components
 - [Commands](cli/index.md#commands) - Available commands
+- [Authentication](authentication.md#cli-authentication) - Token and credential
+  management
 - [Error Handling](cli/index.md#error-handling) - Error messages
 - [Development](cli/index.md#development) - Building and testing
 
@@ -151,7 +154,10 @@ The system uses several security mechanisms:
 - **Authentication**: User and service token management
 - **Isolation**: Session and connection isolation
 
-See component-specific documentation for detailed security configuration.
+For detailed authentication configuration and best practices, see the
+[Authentication Guide](authentication.md).
+
+See component-specific documentation for additional security configuration.
 
 ## Development
 

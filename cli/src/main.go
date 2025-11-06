@@ -12,11 +12,17 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
+	"syscall"
+
+	"golang.org/x/term"
 )
 
 const (
@@ -26,6 +32,7 @@ const (
 func main() {
 	// Define command-line flags
 	serverURL := flag.String("server", "http://localhost:8080", "MCP server URL")
+	token := flag.String("token", "", "Bearer token for authentication")
 	showVersion := flag.Bool("version", false, "Show version information")
 	flag.Parse()
 
@@ -49,6 +56,14 @@ func main() {
 
 	// Create MCP client
 	client := NewMCPClient(*serverURL)
+
+	// Handle authentication for commands that need it
+	if needsAuth(command) {
+		if err := handleAuthentication(client, *token); err != nil {
+			fmt.Fprintf(os.Stderr, "Authentication error: %v\n", err)
+			os.Exit(1)
+		}
+	}
 
 	// Execute command
 	var err error
@@ -85,6 +100,7 @@ Usage:
 
 Options:
     -server <url>    MCP server URL (default: http://localhost:8080)
+    -token <token>   Bearer token for authentication
     -version         Show version information
 
 Commands:
@@ -315,4 +331,128 @@ func getToolExample() string {
 
 func readAllStdin() ([]byte, error) {
 	return io.ReadAll(os.Stdin)
+}
+
+// needsAuth determines if a command requires authentication
+func needsAuth(command string) bool {
+	// These commands do not require authentication
+	exemptCommands := map[string]bool{
+		"ping": true,
+	}
+	return !exemptCommands[command]
+}
+
+// handleAuthentication handles the authentication flow
+func handleAuthentication(client *MCPClient, token string) error {
+	// If token was provided via flag, use it
+	if token != "" {
+		client.SetBearerToken(token)
+		return nil
+	}
+
+	// Try to read token from file
+	homeDir, err := os.UserHomeDir()
+	if err == nil {
+		tokenFile := filepath.Join(homeDir, ".pgedge-ai-workbench-token")
+		fileToken, err := readTokenFromFile(tokenFile)
+		if err == nil && fileToken != "" {
+			client.SetBearerToken(fileToken)
+			return nil
+		}
+	}
+
+	// No token found, prompt for username and password
+	username, password, err := promptForCredentials()
+	if err != nil {
+		return fmt.Errorf("failed to get credentials: %w", err)
+	}
+
+	// Authenticate and get session token
+	sessionToken, err := authenticateUser(client, username, password)
+	if err != nil {
+		return fmt.Errorf("authentication failed: %w", err)
+	}
+
+	// Set the session token for subsequent requests
+	client.SetBearerToken(sessionToken)
+	return nil
+}
+
+// readTokenFromFile reads a token from a file
+func readTokenFromFile(filename string) (string, error) {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(data)), nil
+}
+
+// promptForCredentials prompts the user for username and password
+func promptForCredentials() (string, string, error) {
+	reader := bufio.NewReader(os.Stdin)
+
+	// Prompt for username
+	fmt.Fprint(os.Stderr, "Username: ")
+	username, err := reader.ReadString('\n')
+	if err != nil {
+		return "", "", fmt.Errorf("failed to read username: %w", err)
+	}
+	username = strings.TrimSpace(username)
+
+	// Prompt for password (hidden)
+	fmt.Fprint(os.Stderr, "Password: ")
+	passwordBytes, err := term.ReadPassword(int(syscall.Stdin))
+	if err != nil {
+		return "", "", fmt.Errorf("failed to read password: %w", err)
+	}
+	fmt.Fprintln(os.Stderr) // Print newline after password input
+	password := string(passwordBytes)
+
+	return username, password, nil
+}
+
+// authenticateUser calls the authenticate_user tool to get a session token
+func authenticateUser(client *MCPClient, username, password string) (string, error) {
+	arguments := map[string]interface{}{
+		"username": username,
+		"password": password,
+	}
+
+	result, err := client.CallTool("authenticate_user", arguments)
+	if err != nil {
+		return "", err
+	}
+
+	// Parse the result to extract the session token
+	resultMap, ok := result.(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("unexpected response format")
+	}
+
+	content, ok := resultMap["content"].([]interface{})
+	if !ok || len(content) == 0 {
+		return "", fmt.Errorf("no content in response")
+	}
+
+	firstContent, ok := content[0].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("unexpected content format")
+	}
+
+	text, ok := firstContent["text"].(string)
+	if !ok {
+		return "", fmt.Errorf("no text in response")
+	}
+
+	// Extract session token from text
+	// Text format: "Authentication successful. Session token: <token>\nExpires at: <timestamp>"
+	lines := strings.Split(text, "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "Authentication successful. Session token: ") {
+			token := strings.TrimPrefix(line, "Authentication successful. Session token: ")
+			return token, nil
+		}
+	}
+
+	return "", fmt.Errorf("session token not found in response")
 }

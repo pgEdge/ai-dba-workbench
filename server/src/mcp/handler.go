@@ -57,6 +57,12 @@ func (h *Handler) HandleRequest(data []byte) (*Response, error) {
 		return h.handleInitialize(req)
 	case "ping":
 		return h.handlePing(req)
+	case "resources/list":
+		return h.handleListResources(req)
+	case "tools/list":
+		return h.handleListTools(req)
+	case "prompts/list":
+		return h.handleListPrompts(req)
 	default:
 		logger.Errorf("Method not found: %s", req.Method)
 		return NewErrorResponse(req.ID, MethodNotFound, "Method not found",
@@ -98,6 +104,36 @@ func (h *Handler) handlePing(req Request) (*Response, error) {
 	result := map[string]interface{}{
 		"status": "ok",
 	}
+	return NewResponse(req.ID, result), nil
+}
+
+// handleListResources processes the resources/list request
+func (h *Handler) handleListResources(req Request) (*Response, error) {
+	// Return empty list for now - resources will be added later
+	result := map[string]interface{}{
+		"resources": []interface{}{},
+	}
+	logger.Info("Listed resources")
+	return NewResponse(req.ID, result), nil
+}
+
+// handleListTools processes the tools/list request
+func (h *Handler) handleListTools(req Request) (*Response, error) {
+	// Return empty list for now - tools will be added later
+	result := map[string]interface{}{
+		"tools": []interface{}{},
+	}
+	logger.Info("Listed tools")
+	return NewResponse(req.ID, result), nil
+}
+
+// handleListPrompts processes the prompts/list request
+func (h *Handler) handleListPrompts(req Request) (*Response, error) {
+	// Return empty list for now - prompts will be added later
+	result := map[string]interface{}{
+		"prompts": []interface{}{},
+	}
+	logger.Info("Listed prompts")
 	return NewResponse(req.ID, result), nil
 }
 

@@ -81,6 +81,21 @@ func (c *MCPClient) Ping() (interface{}, error) {
 	return c.makeRequest("ping", nil)
 }
 
+// ListResources lists available MCP resources
+func (c *MCPClient) ListResources() (interface{}, error) {
+	return c.makeRequest("resources/list", nil)
+}
+
+// ListTools lists available MCP tools
+func (c *MCPClient) ListTools() (interface{}, error) {
+	return c.makeRequest("tools/list", nil)
+}
+
+// ListPrompts lists available MCP prompts
+func (c *MCPClient) ListPrompts() (interface{}, error) {
+	return c.makeRequest("prompts/list", nil)
+}
+
 // makeRequest makes an MCP JSON-RPC request
 func (c *MCPClient) makeRequest(method string, params interface{}) (interface{}, error) {
 	// Create request

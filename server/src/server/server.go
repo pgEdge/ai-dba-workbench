@@ -45,6 +45,7 @@ func New(cfg *config.Config, mcpHandler *mcp.Handler) *Server {
 func (s *Server) Start() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/sse", s.handleSSE)
+	mux.HandleFunc("/mcp", s.handleMCP)
 	mux.HandleFunc("/health", s.handleHealth)
 
 	addr := fmt.Sprintf(":%d", s.config.GetPort())
@@ -152,6 +153,49 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 			logger.Infof("Sent response to %s", r.RemoteAddr)
 		}
 	}
+}
+
+// handleMCP handles JSON-RPC POST requests for one-off MCP calls
+func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
+	// Only accept POST requests
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Read request body
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		logger.Errorf("Error reading request body: %v", err)
+		http.Error(w, "Failed to read request", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	logger.Infof("Received MCP request from %s: %s", r.RemoteAddr, string(body))
+
+	// Process the request
+	resp, err := s.handler.HandleRequest(body)
+	if err != nil {
+		logger.Errorf("Error handling MCP request: %v", err)
+		http.Error(w, fmt.Sprintf("Request failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Format response
+	respData, err := mcp.FormatResponse(resp)
+	if err != nil {
+		logger.Errorf("Error formatting response: %v", err)
+		http.Error(w, "Failed to format response", http.StatusInternalServerError)
+		return
+	}
+
+	// Send JSON response
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(respData))
+
+	logger.Infof("Sent MCP response to %s", r.RemoteAddr)
 }
 
 // handleHealth handles health check requests

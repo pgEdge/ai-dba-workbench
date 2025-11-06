@@ -59,6 +59,12 @@ func main() {
 		err = readResource(client, commandArgs)
 	case "ping":
 		err = ping(client)
+	case "list-resources":
+		err = listResources(client)
+	case "list-tools":
+		err = listTools(client)
+	case "list-prompts":
+		err = listPrompts(client)
 	default:
 		fmt.Fprintf(os.Stderr, "Error: unknown command: %s\n\n", command)
 		printUsage()
@@ -85,6 +91,9 @@ Commands:
     run-tool <tool-name>         Run an MCP tool
     read-resource <resource-uri> Read an MCP resource
     ping                         Ping the server
+    list-resources               List available resources
+    list-tools                   List available tools
+    list-prompts                 List available prompts
 
 Examples:
     # Ping the server
@@ -95,6 +104,9 @@ Examples:
 
     # Read a resource
     ai-cli read-resource system://stats
+
+    # List available tools
+    ai-cli list-tools
 
     # Use a different server
     ai-cli -server http://example.com:9000 ping
@@ -162,6 +174,127 @@ func ping(client *MCPClient) error {
 
 	// Pretty-print the result
 	return printJSON(result)
+}
+
+func listResources(client *MCPClient) error {
+	result, err := client.ListResources()
+	if err != nil {
+		return fmt.Errorf("failed to list resources: %w", err)
+	}
+
+	// Parse the result
+	resultMap, ok := result.(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("unexpected response format")
+	}
+
+	resources, ok := resultMap["resources"].([]interface{})
+	if !ok {
+		return fmt.Errorf("no resources found in response")
+	}
+
+	// Print resources in plain text
+	for _, r := range resources {
+		resource, ok := r.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		uri, _ := resource["uri"].(string)
+		name, _ := resource["name"].(string)
+		description, _ := resource["description"].(string)
+
+		if uri != "" {
+			fmt.Printf("%s", uri)
+			if name != "" {
+				fmt.Printf(" (%s)", name)
+			}
+			if description != "" {
+				fmt.Printf(" - %s", description)
+			}
+			fmt.Println()
+		}
+	}
+
+	return nil
+}
+
+func listTools(client *MCPClient) error {
+	result, err := client.ListTools()
+	if err != nil {
+		return fmt.Errorf("failed to list tools: %w", err)
+	}
+
+	// Parse the result
+	resultMap, ok := result.(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("unexpected response format")
+	}
+
+	tools, ok := resultMap["tools"].([]interface{})
+	if !ok {
+		return fmt.Errorf("no tools found in response")
+	}
+
+	// Print tools in plain text
+	for _, t := range tools {
+		tool, ok := t.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		name, _ := tool["name"].(string)
+		description, _ := tool["description"].(string)
+
+		if name != "" {
+			fmt.Printf("%s", name)
+			if description != "" {
+				fmt.Printf(" - %s", description)
+			}
+			fmt.Println()
+		}
+	}
+
+	return nil
+}
+
+func listPrompts(client *MCPClient) error {
+	result, err := client.ListPrompts()
+	if err != nil {
+		return fmt.Errorf("failed to list prompts: %w", err)
+	}
+
+	// Parse the result
+	resultMap, ok := result.(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("unexpected response format")
+	}
+
+	prompts, ok := resultMap["prompts"].([]interface{})
+	if !ok {
+		return fmt.Errorf("no prompts found in response")
+	}
+
+	// Print prompts in plain text
+	for _, p := range prompts {
+		prompt, ok := p.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		name, _ := prompt["name"].(string)
+		description, _ := prompt["description"].(string)
+
+		if name != "" {
+			fmt.Printf("%s", name)
+			if description != "" {
+				fmt.Printf(" - %s", description)
+			}
+			fmt.Println()
+		}
+	}
+
+	return nil
 }
 
 func printJSON(data interface{}) error {

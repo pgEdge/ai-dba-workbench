@@ -4074,6 +4074,110 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration 43: Enable all remaining probes by default
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     43,
+		Description: "Enable all remaining probes by default",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Fast probes (60 seconds) - replication, recovery, subscriptions
+			fastProbes := []struct {
+				name        string
+				description string
+			}{
+				{"pg_stat_replication", "Collects replication statistics from pg_stat_replication view"},
+				{"pg_stat_recovery_prefetch", "Collects recovery prefetch statistics from pg_stat_recovery_prefetch view"},
+				{"pg_stat_wal_receiver", "Collects WAL receiver statistics from pg_stat_wal_receiver view"},
+				{"pg_stat_subscription", "Collects logical replication subscription statistics from pg_stat_subscription view"},
+			}
+
+			for _, probe := range fastProbes {
+				_, err := conn.Exec(ctx, `
+					INSERT INTO probe_configs (name, description, collection_interval_seconds, retention_days, is_enabled)
+					VALUES ($1, $2, 60, 28, TRUE)
+					ON CONFLICT (name) WHERE connection_id IS NULL DO NOTHING
+				`, probe.name, probe.description)
+				if err != nil {
+					return fmt.Errorf("failed to insert %s probe config: %w", probe.name, err)
+				}
+			}
+
+			// Normal probes (300 seconds / 5 minutes) - most statistics views
+			normalProbes := []struct {
+				name        string
+				description string
+			}{
+				{"pg_stat_database", "Collects database-wide statistics from pg_stat_database view"},
+				{"pg_stat_database_conflicts", "Collects recovery conflict statistics from pg_stat_database_conflicts view"},
+				{"pg_stat_all_indexes", "Collects index usage statistics from pg_stat_all_indexes view for each database"},
+				{"pg_stat_user_functions", "Collects user function statistics from pg_stat_user_functions view for each database"},
+				{"pg_stat_replication_slots", "Collects replication slot statistics from pg_stat_replication_slots view"},
+				{"pg_stat_subscription_stats", "Collects subscription statistics from pg_stat_subscription_stats view"},
+				{"pg_statio_all_tables", "Collects table I/O statistics from pg_statio_all_tables view for each database"},
+				{"pg_statio_all_indexes", "Collects index I/O statistics from pg_statio_all_indexes view for each database"},
+				{"pg_statio_all_sequences", "Collects sequence I/O statistics from pg_statio_all_sequences view for each database"},
+				{"pg_stat_ssl", "Collects SSL connection information from pg_stat_ssl view"},
+				{"pg_stat_gssapi", "Collects GSSAPI connection information from pg_stat_gssapi view"},
+				{"pg_stat_slru", "Collects SLRU (Simple LRU) cache statistics from pg_stat_slru view"},
+			}
+
+			for _, probe := range normalProbes {
+				_, err := conn.Exec(ctx, `
+					INSERT INTO probe_configs (name, description, collection_interval_seconds, retention_days, is_enabled)
+					VALUES ($1, $2, 300, 28, TRUE)
+					ON CONFLICT (name) WHERE connection_id IS NULL DO NOTHING
+				`, probe.name, probe.description)
+				if err != nil {
+					return fmt.Errorf("failed to insert %s probe config: %w", probe.name, err)
+				}
+			}
+
+			// Slow probes (600 seconds / 10 minutes) - archiver, bgwriter, checkpointer, WAL
+			slowProbes := []struct {
+				name        string
+				description string
+			}{
+				{"pg_stat_archiver", "Collects WAL archiver statistics from pg_stat_archiver view"},
+				{"pg_stat_bgwriter", "Collects background writer statistics from pg_stat_bgwriter view"},
+				{"pg_stat_checkpointer", "Collects checkpointer statistics from pg_stat_checkpointer view"},
+				{"pg_stat_wal", "Collects WAL generation statistics from pg_stat_wal view"},
+			}
+
+			for _, probe := range slowProbes {
+				_, err := conn.Exec(ctx, `
+					INSERT INTO probe_configs (name, description, collection_interval_seconds, retention_days, is_enabled)
+					VALUES ($1, $2, 600, 28, TRUE)
+					ON CONFLICT (name) WHERE connection_id IS NULL DO NOTHING
+				`, probe.name, probe.description)
+				if err != nil {
+					return fmt.Errorf("failed to insert %s probe config: %w", probe.name, err)
+				}
+			}
+
+			// Very slow probes (900 seconds / 15 minutes) - I/O statistics
+			verySlowProbes := []struct {
+				name        string
+				description string
+			}{
+				{"pg_stat_io", "Collects I/O statistics from pg_stat_io view"},
+			}
+
+			for _, probe := range verySlowProbes {
+				_, err := conn.Exec(ctx, `
+					INSERT INTO probe_configs (name, description, collection_interval_seconds, retention_days, is_enabled)
+					VALUES ($1, $2, 900, 28, TRUE)
+					ON CONFLICT (name) WHERE connection_id IS NULL DO NOTHING
+				`, probe.name, probe.description)
+				if err != nil {
+					return fmt.Errorf("failed to insert %s probe config: %w", probe.name, err)
+				}
+			}
+
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations

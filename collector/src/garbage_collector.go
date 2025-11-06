@@ -15,7 +15,7 @@ import (
 	"github.com/pgedge/ai-workbench/collector/src/probes"
 
 	"context"
-	"log"
+	"github.com/pgedge/ai-workbench/collector/src/logger"
 	"sync"
 	"time"
 
@@ -42,7 +42,7 @@ func (gc *GarbageCollector) Start(ctx context.Context) error {
 	gc.wg.Add(1)
 	go gc.run(ctx)
 
-	log.Println("Garbage collector started")
+	logger.Info("Garbage collector started")
 	return nil
 }
 
@@ -52,7 +52,7 @@ func (gc *GarbageCollector) run(ctx context.Context) {
 
 	// Wait a short time after startup before first collection
 	startupDelay := 5 * time.Minute
-	log.Printf("Garbage collector will run first collection in %v", startupDelay)
+	logger.Infof("Garbage collector will run first collection in %v", startupDelay)
 
 	select {
 	case <-gc.shutdownChan:
@@ -69,7 +69,7 @@ func (gc *GarbageCollector) run(ctx context.Context) {
 	for {
 		select {
 		case <-gc.shutdownChan:
-			log.Println("Stopping garbage collector")
+			logger.Info("Stopping garbage collector")
 			return
 		case <-ticker.C:
 			gc.collectGarbage(ctx)
@@ -79,12 +79,12 @@ func (gc *GarbageCollector) run(ctx context.Context) {
 
 // collectGarbage performs garbage collection for all probes
 func (gc *GarbageCollector) collectGarbage(ctx context.Context) {
-	log.Println("Starting garbage collection...")
+	logger.Info("Starting garbage collection...")
 
 	// Get database connection
 	conn, err := gc.datastore.GetConnection()
 	if err != nil {
-		log.Printf("Error getting database connection for garbage collection: %v", err)
+		logger.Errorf("Error getting database connection for garbage collection: %v", err)
 		return
 	}
 	defer gc.datastore.ReturnConnection(conn)
@@ -92,7 +92,7 @@ func (gc *GarbageCollector) collectGarbage(ctx context.Context) {
 	// Load probe configurations
 	configsByConnection, err := probes.LoadProbeConfigs(ctx, conn)
 	if err != nil {
-		log.Printf("Error loading probe configs for garbage collection: %v", err)
+		logger.Errorf("Error loading probe configs for garbage collection: %v", err)
 		return
 	}
 
@@ -110,7 +110,7 @@ func (gc *GarbageCollector) collectGarbage(ctx context.Context) {
 
 			dropped, err := gc.collectGarbageForProbe(ctx, conn, &config)
 			if err != nil {
-				log.Printf("Error collecting garbage for probe %s: %v", config.Name, err)
+				logger.Errorf("Error collecting garbage for probe %s: %v", config.Name, err)
 				continue
 			}
 			totalDropped += dropped
@@ -118,9 +118,9 @@ func (gc *GarbageCollector) collectGarbage(ctx context.Context) {
 	}
 
 	if totalDropped > 0 {
-		log.Printf("Garbage collection completed: dropped %d partition(s)", totalDropped)
+		logger.Infof("Garbage collection completed: dropped %d partition(s)", totalDropped)
 	} else {
-		log.Println("Garbage collection completed: no partitions to drop")
+		logger.Info("Garbage collection completed: no partitions to drop")
 	}
 }
 
@@ -129,7 +129,7 @@ func (gc *GarbageCollector) collectGarbageForProbe(ctx context.Context, conn *pg
 	// Get the table name for this probe
 	tableName := getProbeTableName(config.Name)
 	if tableName == "" {
-		log.Printf("Warning: unknown table name for probe %s", config.Name)
+		logger.Errorf("Warning: unknown table name for probe %s", config.Name)
 		return 0, nil
 	}
 
@@ -163,5 +163,5 @@ func getProbeTableName(probeName string) string {
 func (gc *GarbageCollector) Stop() {
 	close(gc.shutdownChan)
 	gc.wg.Wait()
-	log.Println("Garbage collector stopped")
+	logger.Startup("Garbage collector stopped")
 }

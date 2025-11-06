@@ -14,7 +14,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
+	"github.com/pgedge/ai-workbench/collector/src/logger"
 	"sync"
 	"time"
 
@@ -105,7 +105,7 @@ func (p *ConnectionPool) GetConnection(ctx context.Context) (*sql.DB, error) {
 
 			// Connection is dead, close it and remove from pool
 			if cerr := candidateConn.conn.Close(); cerr != nil {
-				log.Printf("Error closing dead connection: %v", cerr)
+				logger.Errorf("Error closing dead connection: %v", cerr)
 			}
 
 			// Remove the dead connection from the pool
@@ -129,7 +129,7 @@ func (p *ConnectionPool) GetConnection(ctx context.Context) (*sql.DB, error) {
 			// Test the connection with timeout (without holding lock)
 			if err := conn.PingContext(ctx); err != nil {
 				if cerr := conn.Close(); cerr != nil {
-					log.Printf("Error closing failed connection: %v", cerr)
+					logger.Errorf("Error closing failed connection: %v", cerr)
 				}
 				return nil, fmt.Errorf("failed to ping new connection: %w", err)
 			}
@@ -148,7 +148,7 @@ func (p *ConnectionPool) GetConnection(ctx context.Context) (*sql.DB, error) {
 				p.mu.Unlock()
 				// Close the connection we just created since pool is now full
 				if cerr := conn.Close(); cerr != nil {
-					log.Printf("Error closing excess connection: %v", cerr)
+					logger.Errorf("Error closing excess connection: %v", cerr)
 				}
 				// Continue waiting for an available connection instead of returning error
 				continue
@@ -253,13 +253,13 @@ func (p *ConnectionPool) performCleanup() {
 	// Close and remove idle connections
 	for _, pc := range toRemove {
 		if err := pc.conn.Close(); err != nil {
-			log.Printf("Error closing idle connection: %v", err)
+			logger.Errorf("Error closing idle connection: %v", err)
 		}
 		p.removeConnection(pc)
 	}
 
 	if len(toRemove) > 0 {
-		log.Printf("Closed %d idle connections", len(toRemove))
+		logger.Infof("Closed %d idle connections", len(toRemove))
 	}
 }
 
@@ -277,7 +277,7 @@ func (p *ConnectionPool) Close() error {
 
 	connCount := len(p.connections)
 	if connCount > 0 {
-		log.Printf("Closing %d connection(s) in pool...", connCount)
+		logger.Infof("Closing %d connection(s) in pool...", connCount)
 	}
 
 	var lastErr error
@@ -285,14 +285,14 @@ func (p *ConnectionPool) Close() error {
 	for _, pc := range p.connections {
 		if err := pc.conn.Close(); err != nil {
 			lastErr = err
-			log.Printf("Error closing connection: %v", err)
+			logger.Errorf("Error closing connection: %v", err)
 		} else {
 			closedCount++
 		}
 	}
 
 	if connCount > 0 {
-		log.Printf("Closed %d of %d connection(s) in pool", closedCount, connCount)
+		logger.Infof("Closed %d of %d connection(s) in pool", closedCount, connCount)
 	}
 
 	p.connections = nil

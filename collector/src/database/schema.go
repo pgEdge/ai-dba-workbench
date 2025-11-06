@@ -14,7 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"github.com/pgedge/ai-workbench/collector/src/logger"
 	"sort"
 	"time"
 
@@ -692,7 +692,7 @@ func (sm *SchemaManager) registerMigrations() {
 				// or we can skip them for the parent table
 				if _, err := conn.Exec(ctx, fmt.Sprintf("COMMENT ON INDEX metrics.%s IS '%s'", idx.name, idx.comment)); err != nil {
 					// Log warning but don't fail - index comments on partitioned tables can be tricky
-					log.Printf("Warning: failed to add comment on index %s: %v (this may be expected for partitioned tables)", idx.name, err)
+					logger.Errorf("Warning: failed to add comment on index %s: %v (this may be expected for partitioned tables)", idx.name, err)
 				}
 			}
 
@@ -829,7 +829,7 @@ func (sm *SchemaManager) registerMigrations() {
 				// or we can skip them for the parent table
 				if _, err := conn.Exec(ctx, fmt.Sprintf("COMMENT ON INDEX metrics.%s IS '%s'", idx.name, idx.comment)); err != nil {
 					// Log warning but don't fail - index comments on partitioned tables can be tricky
-					log.Printf("Warning: failed to add comment on index %s: %v (this may be expected for partitioned tables)", idx.name, err)
+					logger.Errorf("Warning: failed to add comment on index %s: %v (this may be expected for partitioned tables)", idx.name, err)
 				}
 			}
 
@@ -984,7 +984,7 @@ func (sm *SchemaManager) registerMigrations() {
 				// or we can skip them for the parent table
 				if _, err := conn.Exec(ctx, fmt.Sprintf("COMMENT ON INDEX metrics.%s IS '%s'", idx.name, idx.comment)); err != nil {
 					// Log warning but don't fail - index comments on partitioned tables can be tricky
-					log.Printf("Warning: failed to add comment on index %s: %v (this may be expected for partitioned tables)", idx.name, err)
+					logger.Errorf("Warning: failed to add comment on index %s: %v (this may be expected for partitioned tables)", idx.name, err)
 				}
 			}
 
@@ -2934,7 +2934,7 @@ func (sm *SchemaManager) registerMigrations() {
 					return fmt.Errorf("failed to create index %s: %w", idx.name, err)
 				}
 				if _, err := conn.Exec(ctx, fmt.Sprintf("COMMENT ON INDEX metrics.%s IS '%s'", idx.name, idx.comment)); err != nil {
-					log.Printf("Warning: failed to add comment on index %s: %v", idx.name, err)
+					logger.Errorf("Warning: failed to add comment on index %s: %v", idx.name, err)
 				}
 			}
 
@@ -3006,7 +3006,7 @@ func (sm *SchemaManager) registerMigrations() {
 					return fmt.Errorf("failed to create index %s: %w", idx.name, err)
 				}
 				if _, err := conn.Exec(ctx, fmt.Sprintf("COMMENT ON INDEX metrics.%s IS '%s'", idx.name, idx.comment)); err != nil {
-					log.Printf("Warning: failed to add comment on index %s: %v", idx.name, err)
+					logger.Errorf("Warning: failed to add comment on index %s: %v", idx.name, err)
 				}
 			}
 
@@ -3070,7 +3070,7 @@ func (sm *SchemaManager) registerMigrations() {
 					return fmt.Errorf("failed to create index %s: %w", idx.name, err)
 				}
 				if _, err := conn.Exec(ctx, fmt.Sprintf("COMMENT ON INDEX metrics.%s IS '%s'", idx.name, idx.comment)); err != nil {
-					log.Printf("Warning: failed to add comment on index %s: %v", idx.name, err)
+					logger.Errorf("Warning: failed to add comment on index %s: %v", idx.name, err)
 				}
 			}
 
@@ -3137,7 +3137,7 @@ func (sm *SchemaManager) registerMigrations() {
 					return fmt.Errorf("failed to create index %s: %w", idx.name, err)
 				}
 				if _, err := conn.Exec(ctx, fmt.Sprintf("COMMENT ON INDEX metrics.%s IS '%s'", idx.name, idx.comment)); err != nil {
-					log.Printf("Warning: failed to add comment on index %s: %v", idx.name, err)
+					logger.Errorf("Warning: failed to add comment on index %s: %v", idx.name, err)
 				}
 			}
 
@@ -3205,7 +3205,7 @@ func (sm *SchemaManager) registerMigrations() {
 					return fmt.Errorf("failed to create index %s: %w", idx.name, err)
 				}
 				if _, err := conn.Exec(ctx, fmt.Sprintf("COMMENT ON INDEX metrics.%s IS '%s'", idx.name, idx.comment)); err != nil {
-					log.Printf("Warning: failed to add comment on index %s: %v", idx.name, err)
+					logger.Errorf("Warning: failed to add comment on index %s: %v", idx.name, err)
 				}
 			}
 
@@ -3272,7 +3272,7 @@ func (sm *SchemaManager) registerMigrations() {
 					return fmt.Errorf("failed to create index %s: %w", idx.name, err)
 				}
 				if _, err := conn.Exec(ctx, fmt.Sprintf("COMMENT ON INDEX metrics.%s IS '%s'", idx.name, idx.comment)); err != nil {
-					log.Printf("Warning: failed to add comment on index %s: %v", idx.name, err)
+					logger.Errorf("Warning: failed to add comment on index %s: %v", idx.name, err)
 				}
 			}
 
@@ -3333,7 +3333,7 @@ func (sm *SchemaManager) registerMigrations() {
 					return fmt.Errorf("failed to create index %s: %w", idx.name, err)
 				}
 				if _, err := conn.Exec(ctx, fmt.Sprintf("COMMENT ON INDEX metrics.%s IS '%s'", idx.name, idx.comment)); err != nil {
-					log.Printf("Warning: failed to add comment on index %s: %v", idx.name, err)
+					logger.Errorf("Warning: failed to add comment on index %s: %v", idx.name, err)
 				}
 			}
 
@@ -3395,7 +3395,7 @@ func (sm *SchemaManager) registerMigrations() {
 					return fmt.Errorf("failed to create index %s: %w", idx.name, err)
 				}
 				if _, err := conn.Exec(ctx, fmt.Sprintf("COMMENT ON INDEX metrics.%s IS '%s'", idx.name, idx.comment)); err != nil {
-					log.Printf("Warning: failed to add comment on index %s: %v", idx.name, err)
+					logger.Errorf("Warning: failed to add comment on index %s: %v", idx.name, err)
 				}
 			}
 
@@ -3463,7 +3463,7 @@ func (sm *SchemaManager) registerMigrations() {
 					return fmt.Errorf("failed to create index %s: %w", idx.name, err)
 				}
 				if _, err := conn.Exec(ctx, fmt.Sprintf("COMMENT ON INDEX metrics.%s IS '%s'", idx.name, idx.comment)); err != nil {
-					log.Printf("Warning: failed to add comment on index %s: %v", idx.name, err)
+					logger.Errorf("Warning: failed to add comment on index %s: %v", idx.name, err)
 				}
 			}
 
@@ -3526,7 +3526,7 @@ func (sm *SchemaManager) registerMigrations() {
 					return fmt.Errorf("failed to create index %s: %w", idx.name, err)
 				}
 				if _, err := conn.Exec(ctx, fmt.Sprintf("COMMENT ON INDEX metrics.%s IS '%s'", idx.name, idx.comment)); err != nil {
-					log.Printf("Warning: failed to add comment on index %s: %v", idx.name, err)
+					logger.Errorf("Warning: failed to add comment on index %s: %v", idx.name, err)
 				}
 			}
 
@@ -4183,7 +4183,7 @@ func (sm *SchemaManager) registerMigrations() {
 // Migrate applies all pending migrations
 func (sm *SchemaManager) Migrate(conn *pgxpool.Conn) error {
 	ctx := context.Background()
-	log.Println("Starting schema migration...")
+	logger.Info("Starting schema migration...")
 
 	// Sort migrations by version
 	sort.Slice(sm.migrations, func(i, j int) bool {
@@ -4196,7 +4196,7 @@ func (sm *SchemaManager) Migrate(conn *pgxpool.Conn) error {
 		return fmt.Errorf("failed to get current version: %w", err)
 	}
 
-	log.Printf("Current schema version: %d", currentVersion)
+	logger.Infof("Current schema version: %d", currentVersion)
 
 	// Apply each pending migration
 	appliedCount := 0
@@ -4205,7 +4205,7 @@ func (sm *SchemaManager) Migrate(conn *pgxpool.Conn) error {
 			continue
 		}
 
-		log.Printf("Applying migration %d: %s", migration.Version, migration.Description)
+		logger.Infof("Applying migration %d: %s", migration.Version, migration.Description)
 
 		// Start a transaction for the migration
 		tx, err := conn.Begin(ctx)
@@ -4217,7 +4217,7 @@ func (sm *SchemaManager) Migrate(conn *pgxpool.Conn) error {
 		// Apply the migration
 		if err := migration.Up(conn); err != nil {
 			if rbErr := tx.Rollback(ctx); rbErr != nil {
-				log.Printf("Failed to rollback transaction: %v", rbErr)
+				logger.Errorf("Failed to rollback transaction: %v", rbErr)
 			}
 			return fmt.Errorf("failed to apply migration %d: %w", migration.Version, err)
 		}
@@ -4230,7 +4230,7 @@ func (sm *SchemaManager) Migrate(conn *pgxpool.Conn) error {
         `, migration.Version, migration.Description)
 		if err != nil {
 			if rbErr := tx.Rollback(ctx); rbErr != nil {
-				log.Printf("Failed to rollback transaction: %v", rbErr)
+				logger.Errorf("Failed to rollback transaction: %v", rbErr)
 			}
 			return fmt.Errorf("failed to record migration %d: %w", migration.Version, err)
 		}
@@ -4240,14 +4240,14 @@ func (sm *SchemaManager) Migrate(conn *pgxpool.Conn) error {
 			return fmt.Errorf("failed to commit migration %d: %w", migration.Version, err)
 		}
 
-		log.Printf("Successfully applied migration %d", migration.Version)
+		logger.Infof("Successfully applied migration %d", migration.Version)
 		appliedCount++
 	}
 
 	if appliedCount == 0 {
-		log.Println("Schema is up to date")
+		logger.Startup("Schema is up to date")
 	} else {
-		log.Printf("Applied %d migration(s)", appliedCount)
+		logger.Infof("Applied %d migration(s)", appliedCount)
 	}
 
 	return nil

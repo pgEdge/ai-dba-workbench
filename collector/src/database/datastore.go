@@ -13,7 +13,7 @@ package database
 import (
 	"context"
 	"fmt"
-	"log"
+	"github.com/pgedge/ai-workbench/collector/src/logger"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -147,7 +147,7 @@ func (ds *Datastore) buildConnectionString() string {
 
 // initializeSchema creates the necessary database schema if it doesn't exist
 func (ds *Datastore) initializeSchema() error {
-	log.Println("Initializing database schema...")
+	logger.Info("Initializing database schema...")
 
 	conn, err := ds.GetConnection()
 	if err != nil {
@@ -161,7 +161,7 @@ func (ds *Datastore) initializeSchema() error {
 		return fmt.Errorf("failed to migrate schema: %w", err)
 	}
 
-	log.Println("Database schema initialized")
+	logger.Info("Database schema initialized")
 	return nil
 }
 

@@ -71,6 +71,8 @@ See the sample configuration file for all available options.
 ```
 -config string
     Path to configuration file
+-v
+    Enable verbose logging (shows detailed operational information)
 -pg-host string
     PostgreSQL server hostname or IP address
 -pg-database string
@@ -97,6 +99,17 @@ collector binary:
 ```bash
 ./collector
 ```
+
+To enable verbose logging for troubleshooting or development:
+
+```bash
+./collector -v -config /path/to/ai-workbench.conf
+```
+
+Verbose mode displays detailed operational information including probe
+initialization, connection management, and data collection activities. Without
+the `-v` flag, only startup messages, shutdown messages, and errors are
+displayed.
 
 ## Documentation
 

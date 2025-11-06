@@ -13,7 +13,7 @@ package probes
 import (
 	"context"
 	"fmt"
-	"log"
+	"github.com/pgedge/ai-workbench/collector/src/logger"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -348,7 +348,7 @@ func (p *PgStatStatementsProbe) Store(ctx context.Context, datastoreConn *pgxpoo
 		if seenKeys[key] {
 			// Duplicate found - skip it and log
 			duplicateCount++
-			log.Printf("Skipping duplicate row: database=%s, queryid=%v, userid=%v, dbid=%v, toplevel=%v",
+			logger.Infof("Skipping duplicate row: database=%s, queryid=%v, userid=%v, dbid=%v, toplevel=%v",
 				key.database, key.queryid, key.userid, key.dbid, key.toplevel)
 			continue
 		}
@@ -390,10 +390,10 @@ func (p *PgStatStatementsProbe) Store(ctx context.Context, datastoreConn *pgxpoo
 
 	// Log if we skipped any rows
 	if skippedCount > 0 {
-		log.Printf("Skipped %d pg_stat_statements row(s) with NULL queryid (utility statements)", skippedCount)
+		logger.Infof("Skipped %d pg_stat_statements row(s) with NULL queryid (utility statements)", skippedCount)
 	}
 	if duplicateCount > 0 {
-		log.Printf("Skipped %d duplicate pg_stat_statements row(s)", duplicateCount)
+		logger.Infof("Skipped %d duplicate pg_stat_statements row(s)", duplicateCount)
 	}
 
 	// If all rows were filtered out, nothing to store

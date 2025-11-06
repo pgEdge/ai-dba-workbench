@@ -13,11 +13,11 @@ package scheduler
 
 import (
 	"github.com/pgedge/ai-workbench/collector/src/database"
+	"github.com/pgedge/ai-workbench/collector/src/logger"
 	"github.com/pgedge/ai-workbench/collector/src/probes"
 
 	"context"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
@@ -72,7 +72,7 @@ func (ps *ProbeScheduler) Start(ctx context.Context) error {
 	ps.wg.Add(1)
 	go ps.configReloadLoop()
 
-	log.Printf("Probe scheduler started")
+	logger.Startup("Probe scheduler started")
 	return nil
 }
 
@@ -124,7 +124,7 @@ func (ps *ProbeScheduler) loadConfigs(ctx context.Context) error {
 			if config == nil {
 				datastoreConn, err := ps.datastore.GetConnection()
 				if err != nil {
-					log.Printf("Error getting datastore connection for probe config creation: %v", err)
+					logger.Errorf("Error getting datastore connection for probe config creation: %v", err)
 					continue
 				}
 
@@ -132,7 +132,7 @@ func (ps *ProbeScheduler) loadConfigs(ctx context.Context) error {
 				ps.datastore.ReturnConnection(datastoreConn)
 
 				if err != nil {
-					log.Printf("Error ensuring probe config for %s on connection %d: %v",
+					logger.Errorf("Error ensuring probe config for %s on connection %d: %v",
 						globalConfig.Name, conn.ID, err)
 					continue
 				}
@@ -144,7 +144,7 @@ func (ps *ProbeScheduler) loadConfigs(ctx context.Context) error {
 				probe := ps.createProbe(config)
 				if probe != nil {
 					ps.probesByConn[conn.ID][config.Name] = probe
-					log.Printf("Initialized probe %s for connection %d (interval: %ds, retention: %dd)",
+					logger.Infof("Initialized probe %s for connection %d (interval: %ds, retention: %dd)",
 						config.Name, conn.ID, config.CollectionIntervalSeconds, config.RetentionDays)
 
 					// Start scheduling if this is a new probe
@@ -171,9 +171,9 @@ func (ps *ProbeScheduler) configReloadLoop() {
 		case <-ps.ctx.Done():
 			return
 		case <-ps.configReloader.C:
-			log.Println("Reloading probe configurations...")
+			logger.Info("Reloading probe configurations...")
 			if err := ps.loadConfigs(ps.ctx); err != nil {
-				log.Printf("Error reloading probe configurations: %v", err)
+				logger.Errorf("Error reloading probe configurations: %v", err)
 			}
 		}
 	}
@@ -185,7 +185,7 @@ func (ps *ProbeScheduler) calculateInitialDelay(probe probes.MetricsProbe, conne
 	// Get a datastore connection to query last collection time
 	conn, err := ps.datastore.GetConnection()
 	if err != nil {
-		log.Printf("Warning: failed to get datastore connection for initial delay calculation: %v", err)
+		logger.Errorf("Warning: failed to get datastore connection for initial delay calculation: %v", err)
 		return 0 // Run immediately if we can't determine last collection time
 	}
 	defer ps.datastore.ReturnConnection(conn)
@@ -193,14 +193,14 @@ func (ps *ProbeScheduler) calculateInitialDelay(probe probes.MetricsProbe, conne
 	// Query last collection time for this probe/connection pair
 	lastCollected, err := probes.GetLastCollectionTime(ps.ctx, conn, probe.GetName(), connectionID)
 	if err != nil {
-		log.Printf("Warning: failed to query last collection time for probe %s on %s: %v",
+		logger.Errorf("Warning: failed to query last collection time for probe %s on %s: %v",
 			probe.GetName(), connectionName, err)
 		return 0 // Run immediately if we can't determine last collection time
 	}
 
 	// If no previous collection (zero time), run immediately
 	if lastCollected.IsZero() {
-		log.Printf("No previous collection found for probe %s on %s, running immediately",
+		logger.Infof("No previous collection found for probe %s on %s, running immediately",
 			probe.GetName(), connectionName)
 		return 0
 	}
@@ -224,7 +224,7 @@ func (ps *ProbeScheduler) scheduleProbeForConnection(probe probes.MetricsProbe, 
 	// Get connection info
 	connections, err := ps.datastore.GetMonitoredConnections()
 	if err != nil {
-		log.Printf("Error getting monitored connections for probe %s: %v", config.Name, err)
+		logger.Errorf("Error getting monitored connections for probe %s: %v", config.Name, err)
 		return
 	}
 
@@ -239,7 +239,7 @@ func (ps *ProbeScheduler) scheduleProbeForConnection(probe probes.MetricsProbe, 
 	}
 
 	if !found {
-		log.Printf("Connection %d not found for probe %s", connectionID, config.Name)
+		logger.Errorf("Connection %d not found for probe %s", connectionID, config.Name)
 		return
 	}
 
@@ -247,16 +247,16 @@ func (ps *ProbeScheduler) scheduleProbeForConnection(probe probes.MetricsProbe, 
 	initialDelay := ps.calculateInitialDelay(probe, connectionID, conn.Name, config)
 
 	if initialDelay > 0 {
-		log.Printf("Delaying first execution of probe %s on %s by %v (last collected recently)",
+		logger.Infof("Delaying first execution of probe %s on %s by %v (last collected recently)",
 			config.Name, conn.Name, initialDelay)
 
 		// Wait for the initial delay before first execution
 		select {
 		case <-ps.shutdownChan:
-			log.Printf("Stopping probe scheduler for %s on %s during initial delay", config.Name, conn.Name)
+			logger.Infof("Stopping probe scheduler for %s on %s during initial delay", config.Name, conn.Name)
 			return
 		case <-ps.ctx.Done():
-			log.Printf("Context cancelled, stopping probe scheduler for %s on %s during initial delay", config.Name, conn.Name)
+			logger.Infof("Context cancelled, stopping probe scheduler for %s on %s during initial delay", config.Name, conn.Name)
 			return
 		case <-time.After(initialDelay):
 			// Initial delay elapsed, execute probe now
@@ -265,7 +265,7 @@ func (ps *ProbeScheduler) scheduleProbeForConnection(probe probes.MetricsProbe, 
 	} else {
 		// No delay needed, run immediately
 		if initialDelay < 0 {
-			log.Printf("Probe %s on %s is past due by %v, executing immediately",
+			logger.Infof("Probe %s on %s is past due by %v, executing immediately",
 				config.Name, conn.Name, -initialDelay)
 		}
 		ps.executeProbeForConnection(ps.ctx, probe, conn)
@@ -274,10 +274,10 @@ func (ps *ProbeScheduler) scheduleProbeForConnection(probe probes.MetricsProbe, 
 	for {
 		select {
 		case <-ps.shutdownChan:
-			log.Printf("Stopping probe scheduler for %s on %s", config.Name, conn.Name)
+			logger.Infof("Stopping probe scheduler for %s on %s", config.Name, conn.Name)
 			return
 		case <-ps.ctx.Done():
-			log.Printf("Context cancelled, stopping probe scheduler for %s on %s", config.Name, conn.Name)
+			logger.Infof("Context cancelled, stopping probe scheduler for %s on %s", config.Name, conn.Name)
 			return
 		case <-ticker.C:
 			// Check if probe still exists and config hasn't changed
@@ -287,7 +287,7 @@ func (ps *ProbeScheduler) scheduleProbeForConnection(probe probes.MetricsProbe, 
 
 			if !exists || currentProbe.GetConfig().CollectionIntervalSeconds != config.CollectionIntervalSeconds {
 				// Probe was removed or interval changed, stop this goroutine
-				log.Printf("Probe %s for %s has changed, stopping scheduler", config.Name, conn.Name)
+				logger.Infof("Probe %s for %s has changed, stopping scheduler", config.Name, conn.Name)
 				return
 			}
 
@@ -322,7 +322,7 @@ func (ps *ProbeScheduler) executeProbeForConnection(ctx context.Context, probe p
 
 	// Check if we hit the timeout
 	if execCtx.Err() == context.DeadlineExceeded {
-		log.Printf("Probe %s execution timed out for connection %s (timeout: %d seconds)",
+		logger.Errorf("Probe %s execution timed out for connection %s (timeout: %d seconds)",
 			config.Name, conn.Name, ps.config.GetMonitoredPoolMaxWaitSeconds())
 		return
 	}
@@ -337,14 +337,14 @@ func (ps *ProbeScheduler) executeProbeForConnection(ctx context.Context, probe p
 	duration := time.Since(startTime)
 	if metricsStored > 0 {
 		if probe.IsDatabaseScoped() && len(databases) > 0 {
-			log.Printf("Probe %s on %s in databases %v stored %d metrics in %.2fms",
+			logger.Infof("Probe %s on %s in databases %v stored %d metrics in %.2fms",
 				config.Name, conn.Name, databases, metricsStored, float64(duration.Microseconds())/1000.0)
 		} else {
-			log.Printf("Probe %s on %s stored %d metrics in %.2fms",
+			logger.Infof("Probe %s on %s stored %d metrics in %.2fms",
 				config.Name, conn.Name, metricsStored, float64(duration.Microseconds())/1000.0)
 		}
 	} else {
-		log.Printf("Probe %s on %s completed in %.2fms (no metrics collected)",
+		logger.Infof("Probe %s on %s completed in %.2fms (no metrics collected)",
 			config.Name, conn.Name, float64(duration.Microseconds())/1000.0)
 	}
 }
@@ -357,7 +357,7 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 
 	// Check if context is already cancelled
 	if ctx.Err() != nil {
-		log.Printf("Error getting connection for probe %s on %s: context already cancelled",
+		logger.Errorf("Error getting connection for probe %s on %s: context already cancelled",
 			config.Name, conn.Name)
 		return allMetrics, databases
 	}
@@ -367,10 +367,10 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 	if err != nil {
 		// Check if this was a timeout/cancellation
 		if ctx.Err() != nil {
-			log.Printf("Error getting connection to %s for probe %s: timed out after %d seconds while waiting for a connection from the monitored connection pool",
+			logger.Errorf("Error getting connection to %s for probe %s: timed out after %d seconds while waiting for a connection from the monitored connection pool",
 				conn.Name, config.Name, ps.config.GetMonitoredPoolMaxWaitSeconds())
 		} else {
-			log.Printf("Error getting connection to monitored database %s for probe %s: %v",
+			logger.Errorf("Error getting connection to monitored database %s for probe %s: %v",
 				conn.Name, config.Name, err)
 		}
 		return allMetrics, databases
@@ -384,10 +384,10 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 
 		// Check if this was a timeout/cancellation
 		if ctx.Err() != nil {
-			log.Printf("Error getting database list for probe %s on %s: timed out after %d seconds while waiting for a connection from the monitored connection pool",
+			logger.Errorf("Error getting database list for probe %s on %s: timed out after %d seconds while waiting for a connection from the monitored connection pool",
 				config.Name, conn.Name, ps.config.GetMonitoredPoolMaxWaitSeconds())
 		} else {
-			log.Printf("Error getting database list for probe %s on connection %s: %v",
+			logger.Errorf("Error getting database list for probe %s on connection %s: %v",
 				config.Name, conn.Name, err)
 		}
 		return allMetrics, databases
@@ -398,7 +398,7 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 		defaultDB := databases[0]
 		metrics, err := probe.Execute(ctx, conn.Name, monitoredDB)
 		if err != nil {
-			log.Printf("Error executing probe %s on default database %s/%s: %v",
+			logger.Errorf("Error executing probe %s on default database %s/%s: %v",
 				config.Name, conn.Name, defaultDB, err)
 		} else if len(metrics) > 0 {
 			// Add database name to metrics
@@ -418,7 +418,7 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 
 		// Check if context is cancelled (e.g., during shutdown) before processing next database
 		if ctx.Err() != nil {
-			log.Printf("Stopping probe %s execution on %s due to context cancellation", config.Name, conn.Name)
+			logger.Infof("Stopping probe %s execution on %s due to context cancellation", config.Name, conn.Name)
 			break
 		}
 
@@ -426,10 +426,10 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 		db, err := ps.poolManager.GetConnectionForDatabase(ctx, conn, dbName, ps.serverSecret)
 		if err != nil {
 			if ctx.Err() != nil {
-				log.Printf("Error getting connection to %s/%s for probe %s: timed out after %d seconds while waiting for a connection from the monitored connection pool",
+				logger.Errorf("Error getting connection to %s/%s for probe %s: timed out after %d seconds while waiting for a connection from the monitored connection pool",
 					conn.Name, dbName, config.Name, ps.config.GetMonitoredPoolMaxWaitSeconds())
 			} else {
-				log.Printf("Error getting connection to %s/%s for probe %s: %v",
+				logger.Errorf("Error getting connection to %s/%s for probe %s: %v",
 					conn.Name, dbName, config.Name, err)
 			}
 			continue // Skip this database but continue with others
@@ -442,7 +442,7 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 		ps.poolManager.ReturnConnection(conn.ID, db)
 
 		if err != nil {
-			log.Printf("Error executing probe %s on database %s/%s: %v",
+			logger.Errorf("Error executing probe %s on database %s/%s: %v",
 				config.Name, conn.Name, dbName, err)
 			continue // Skip this database but continue with others
 		}
@@ -496,7 +496,7 @@ func (ps *ProbeScheduler) executeProbeForServerWide(ctx context.Context, probe p
 
 	// Check if context is already cancelled
 	if ctx.Err() != nil {
-		log.Printf("Error getting connection for probe %s on %s: context already cancelled",
+		logger.Errorf("Error getting connection for probe %s on %s: context already cancelled",
 			config.Name, conn.Name)
 		return metrics
 	}
@@ -506,10 +506,10 @@ func (ps *ProbeScheduler) executeProbeForServerWide(ctx context.Context, probe p
 	if err != nil {
 		// Check if this was a timeout/cancellation
 		if ctx.Err() != nil {
-			log.Printf("Error getting connection to %s for probe %s: timed out after %d seconds while waiting for a connection from the monitored connection pool",
+			logger.Errorf("Error getting connection to %s for probe %s: timed out after %d seconds while waiting for a connection from the monitored connection pool",
 				conn.Name, config.Name, ps.config.GetMonitoredPoolMaxWaitSeconds())
 		} else {
-			log.Printf("Error getting connection to monitored database %s for probe %s: %v",
+			logger.Errorf("Error getting connection to monitored database %s for probe %s: %v",
 				conn.Name, config.Name, err)
 		}
 		return metrics
@@ -524,10 +524,10 @@ func (ps *ProbeScheduler) executeProbeForServerWide(ctx context.Context, probe p
 	if err != nil {
 		// Check if this was a timeout during query execution
 		if ctx.Err() != nil {
-			log.Printf("Error executing probe %s on connection %s: query execution timed out after %d seconds",
+			logger.Errorf("Error executing probe %s on connection %s: query execution timed out after %d seconds",
 				config.Name, conn.Name, ps.config.GetMonitoredPoolMaxWaitSeconds())
 		} else {
-			log.Printf("Error executing probe %s on connection %s: %v",
+			logger.Errorf("Error executing probe %s on connection %s: %v",
 				config.Name, conn.Name, err)
 		}
 		return nil
@@ -551,10 +551,10 @@ func (ps *ProbeScheduler) storeMetrics(ctx context.Context, probe probes.Metrics
 	if err != nil {
 		// Check if this was a timeout
 		if datastoreCtx.Err() != nil {
-			log.Printf("Error storing metrics for probe %s: timed out after %d seconds while waiting for a connection from the datastore pool",
+			logger.Errorf("Error storing metrics for probe %s: timed out after %d seconds while waiting for a connection from the datastore pool",
 				config.Name, ps.config.GetDatastorePoolMaxWaitSeconds())
 		} else {
-			log.Printf("Error getting datastore connection for probe %s: %v", config.Name, err)
+			logger.Errorf("Error getting datastore connection for probe %s: %v", config.Name, err)
 		}
 		return 0
 	}
@@ -563,7 +563,7 @@ func (ps *ProbeScheduler) storeMetrics(ctx context.Context, probe probes.Metrics
 	// Store metrics
 	err = probe.Store(ctx, datastoreDB, connectionID, timestamp, metrics)
 	if err != nil {
-		log.Printf("Error storing metrics for probe %s: %v", config.Name, err)
+		logger.Errorf("Error storing metrics for probe %s: %v", config.Name, err)
 		return 0
 	}
 
@@ -646,14 +646,14 @@ func (ps *ProbeScheduler) createProbe(config *probes.ProbeConfig) probes.Metrics
 	case probes.ProbeNamePgSysCPUMemoryByProcess:
 		return probes.NewPgSysCPUMemoryByProcessProbe(config)
 	default:
-		log.Printf("Warning: unknown probe type: %s", config.Name)
+		logger.Errorf("Warning: unknown probe type: %s", config.Name)
 		return nil
 	}
 }
 
 // Stop stops the probe scheduler
 func (ps *ProbeScheduler) Stop() {
-	log.Println("Stopping probe scheduler...")
+	logger.Startup("Stopping probe scheduler...")
 	// Stop config reloader
 	if ps.configReloader != nil {
 		ps.configReloader.Stop()
@@ -664,5 +664,5 @@ func (ps *ProbeScheduler) Stop() {
 	close(ps.shutdownChan)
 	// Wait for all goroutines to finish
 	ps.wg.Wait()
-	log.Println("Probe scheduler stopped")
+	logger.Startup("Probe scheduler stopped")
 }

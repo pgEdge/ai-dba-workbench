@@ -14,7 +14,7 @@ package probes
 import (
 	"context"
 	"fmt"
-	"log"
+	"github.com/pgedge/ai-workbench/collector/src/logger"
 	"strings"
 	"time"
 
@@ -121,7 +121,7 @@ func EnsurePartition(ctx context.Context, conn *pgxpool.Conn, tableName string, 
 		return fmt.Errorf("failed to create partition %s: %w", partitionName, err)
 	}
 
-	log.Printf("Created partition %s for table %s", partitionName, tableName)
+	logger.Infof("Created partition %s for table %s", partitionName, tableName)
 	return nil
 }
 
@@ -164,7 +164,7 @@ func DropExpiredPartitions(ctx context.Context, conn *pgxpool.Conn, tableName st
 		// We need to extract the TO timestamp
 		toIdx := strings.Index(partitionBound, "TO ('")
 		if toIdx == -1 {
-			log.Printf("Warning: failed to find TO clause in partition bound for %s: %s", partitionName, partitionBound)
+			logger.Errorf("Warning: failed to find TO clause in partition bound for %s: %s", partitionName, partitionBound)
 			continue
 		}
 
@@ -172,7 +172,7 @@ func DropExpiredPartitions(ctx context.Context, conn *pgxpool.Conn, tableName st
 		timestampStart := toIdx + 5 // len("TO ('")
 		timestampEnd := strings.Index(partitionBound[timestampStart:], "'")
 		if timestampEnd == -1 {
-			log.Printf("Warning: failed to find end quote in partition bound for %s: %s", partitionName, partitionBound)
+			logger.Errorf("Warning: failed to find end quote in partition bound for %s: %s", partitionName, partitionBound)
 			continue
 		}
 
@@ -181,7 +181,7 @@ func DropExpiredPartitions(ctx context.Context, conn *pgxpool.Conn, tableName st
 		// Parse the timestamp string
 		endTimestamp, err := time.Parse("2006-01-02 15:04:05", timestampStr)
 		if err != nil {
-			log.Printf("Warning: failed to parse timestamp in partition bound for %s: %v", partitionName, err)
+			logger.Errorf("Warning: failed to parse timestamp in partition bound for %s: %v", partitionName, err)
 			continue
 		}
 
@@ -189,10 +189,10 @@ func DropExpiredPartitions(ctx context.Context, conn *pgxpool.Conn, tableName st
 		if endTimestamp.Before(cutoff) {
 			dropSQL := fmt.Sprintf("DROP TABLE IF EXISTS metrics.%s", partitionName)
 			if _, err := conn.Exec(ctx, dropSQL); err != nil {
-				log.Printf("Warning: failed to drop partition %s: %v", partitionName, err)
+				logger.Errorf("Warning: failed to drop partition %s: %v", partitionName, err)
 				continue
 			}
-			log.Printf("Dropped expired partition %s (end: %s, cutoff: %s)",
+			logger.Infof("Dropped expired partition %s (end: %s, cutoff: %s)",
 				partitionName, endTimestamp.Format("2006-01-02"), cutoff.Format("2006-01-02"))
 			droppedCount++
 		}
@@ -203,7 +203,7 @@ func DropExpiredPartitions(ctx context.Context, conn *pgxpool.Conn, tableName st
 	}
 
 	if droppedCount > 0 {
-		log.Printf("Dropped %d expired partition(s) for table %s", droppedCount, tableName)
+		logger.Infof("Dropped %d expired partition(s) for table %s", droppedCount, tableName)
 	}
 
 	return nil
@@ -226,7 +226,7 @@ func StoreMetricsWithCopy(ctx context.Context, conn *pgxpool.Conn, tableName str
 	defer func() {
 		if err != nil {
 			if rerr := txn.Rollback(ctx); rerr != nil {
-				log.Printf("Error rolling back transaction: %v", rerr)
+				logger.Errorf("Error rolling back transaction: %v", rerr)
 			}
 		}
 	}()
@@ -385,7 +385,7 @@ func EnsureProbeConfig(ctx context.Context, conn *pgxpool.Conn, connectionID int
 		return nil, fmt.Errorf("failed to insert probe config: %w", err)
 	}
 
-	log.Printf("Created probe config for %s on connection %d (interval: %ds, retention: %dd)",
+	logger.Infof("Created probe config for %s on connection %d (interval: %ds, retention: %dd)",
 		probeName, connectionID, interval, retention)
 
 	return &config, nil
@@ -477,7 +477,7 @@ func CheckExtensionExists(ctx context.Context, connectionName string, conn *pgxp
 		// Get connection info for better logging
 		config := conn.Conn().Config()
 		database := config.Database
-		log.Printf("Extension %s not found in the %s database on %s. Skipping probe.", extensionName, database, connectionName)
+		logger.Infof("Extension %s not found in the %s database on %s. Skipping probe.", extensionName, database, connectionName)
 	}
 
 	return exists, nil

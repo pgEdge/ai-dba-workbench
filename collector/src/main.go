@@ -12,12 +12,12 @@ package main
 
 import (
 	"github.com/pgedge/ai-workbench/collector/src/database"
+	"github.com/pgedge/ai-workbench/collector/src/logger"
 	"github.com/pgedge/ai-workbench/collector/src/scheduler"
 
 	"context"
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -30,6 +30,7 @@ var (
 
 	// Command line flags
 	configFile = flag.String("config", "", "Path to configuration file")
+	verbose    = flag.Bool("v", false, "Enable verbose logging")
 
 	// Datastore connection flags
 	pgHost         = flag.String("pg-host", "", "PostgreSQL server hostname or IP address")
@@ -47,48 +48,52 @@ var (
 func main() {
 	flag.Parse()
 
-	log.Printf("pgEdge AI Workbench Collector v%s starting...", Version)
+	// Initialize logger
+	logger.Init()
+	logger.SetVerbose(*verbose)
+
+	logger.Startupf("pgEdge AI Workbench Collector v%s starting...", Version)
 
 	// Load configuration
 	config, err := loadConfiguration()
 	if err != nil {
-		log.Fatalf("Failed to load configuration: %v", err)
+		logger.Fatalf("Failed to load configuration: %v", err)
 	}
 
 	// Initialize datastore connection
 	ds, err := database.NewDatastore(config)
 	if err != nil {
-		log.Fatalf("Failed to initialize datastore: %v", err)
+		logger.Fatalf("Failed to initialize datastore: %v", err)
 	}
 
-	log.Println("Datastore connection established")
+	logger.Startup("Datastore connection established")
 
 	// Create context for operations
 	ctx := context.Background()
 
 	// Initialize monitored connection pool manager
-	log.Printf("Creating monitored pool manager with max %d connections per server, idle timeout %ds",
+	logger.Infof("Creating monitored pool manager with max %d connections per server, idle timeout %ds",
 		config.MonitoredPoolMaxConnections, config.MonitoredPoolMaxIdleSeconds)
 	poolManager := database.NewMonitoredConnectionPoolManager(config.MonitoredPoolMaxConnections, config.MonitoredPoolMaxIdleSeconds)
 
 	// Initialize probe scheduler
 	probeScheduler := scheduler.NewProbeScheduler(ds, poolManager, config, config.ServerSecret)
 	if err := probeScheduler.Start(ctx); err != nil {
-		log.Fatalf("Failed to start probe scheduler: %v", err)
+		logger.Fatalf("Failed to start probe scheduler: %v", err)
 	}
 
 	// Initialize garbage collector
 	gc := NewGarbageCollector(ds)
 	if err := gc.Start(ctx); err != nil {
-		log.Fatalf("Failed to start garbage collector: %v", err)
+		logger.Fatalf("Failed to start garbage collector: %v", err)
 	}
 
-	log.Println("Collector is running. Press Ctrl+C to stop.")
+	logger.Startup("Collector is running. Press Ctrl+C to stop.")
 
 	// Wait for shutdown signal
 	waitForShutdown()
 
-	log.Println("Shutdown signal received, stopping...")
+	logger.Startup("Shutdown signal received, stopping...")
 
 	// Shutdown in proper order to ensure clean connection closure
 	// 1. Stop probe scheduler (no new probe queries)
@@ -98,19 +103,19 @@ func main() {
 	gc.Stop()
 
 	// 3. Close monitored connection pools (all probe connections)
-	log.Println("Closing monitored connection pools...")
+	logger.Info("Closing monitored connection pools...")
 	if err := poolManager.Close(); err != nil {
-		log.Printf("Error closing pool manager: %v", err)
+		logger.Errorf("Error closing pool manager: %v", err)
 	} else {
-		log.Println("Monitored connection pools closed")
+		logger.Info("Monitored connection pools closed")
 	}
 
 	// 4. Close datastore connection pool (last to close)
-	log.Println("Closing datastore connection pool...")
+	logger.Info("Closing datastore connection pool...")
 	ds.Close()
-	log.Println("Datastore connection pool closed")
+	logger.Info("Datastore connection pool closed")
 
-	log.Println("Collector stopped")
+	logger.Startup("Collector stopped")
 }
 
 // loadConfiguration loads configuration from file and command line
@@ -135,14 +140,14 @@ func loadConfiguration() (*Config, error) {
 		if err := config.LoadFromFile(configPath); err != nil {
 			return nil, fmt.Errorf("failed to load config file: %w", err)
 		}
-		log.Printf("Configuration loaded from: %s", configPath)
+		logger.Startupf("Configuration loaded from: %s", configPath)
 	} else {
 		// If user explicitly specified a config file that doesn't exist, fail
 		if explicitConfigPath {
 			return nil, fmt.Errorf("specified config file not found: %s", configPath)
 		}
 		// Otherwise, just log and continue with defaults
-		log.Printf("Configuration file not found: %s, using defaults", configPath)
+		logger.Infof("Configuration file not found: %s, using defaults", configPath)
 	}
 
 	// Override with command line flags

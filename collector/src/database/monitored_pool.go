@@ -13,7 +13,7 @@ package database
 import (
 	"context"
 	"fmt"
-	"log"
+	"github.com/pgedge/ai-workbench/collector/src/logger"
 	"sync"
 	"time"
 
@@ -49,7 +49,7 @@ func (m *MonitoredConnectionPoolManager) getSemaphore(connectionID int) chan str
 		// Create a buffered channel as a semaphore with maxConnections slots
 		sem = make(chan struct{}, m.maxConnections)
 		m.semaphores[connectionID] = sem
-		log.Printf("Created semaphore for connection %d with %d slots", connectionID, m.maxConnections)
+		logger.Infof("Created semaphore for connection %d with %d slots", connectionID, m.maxConnections)
 	}
 	return sem
 }
@@ -149,7 +149,7 @@ func (m *MonitoredConnectionPoolManager) GetConnectionForDatabase(ctx context.Co
 	if databaseName != "" {
 		dbInfo = fmt.Sprintf("%s/%s", conn.Name, databaseName)
 	}
-	log.Printf("Created connection pool for monitored connection %d (%s)", conn.ID, dbInfo)
+	logger.Infof("Created connection pool for monitored connection %d (%s)", conn.ID, dbInfo)
 
 	// Get connection from pool (without holding lock)
 	pgxConn, err := newPool.Acquire(ctx)
@@ -180,7 +180,7 @@ func (m *MonitoredConnectionPoolManager) RemovePool(connectionID int) error {
 
 	pool.Close()
 	delete(m.pools, connectionID)
-	log.Printf("Removed connection pool for monitored connection %d", connectionID)
+	logger.Infof("Removed connection pool for monitored connection %d", connectionID)
 
 	return nil
 }
@@ -192,18 +192,18 @@ func (m *MonitoredConnectionPoolManager) Close() error {
 
 	poolCount := len(m.pools)
 	if poolCount == 0 {
-		log.Println("No monitored connection pools to close")
+		logger.Info("No monitored connection pools to close")
 		return nil
 	}
 
-	log.Printf("Closing %d monitored connection pool(s)...", poolCount)
+	logger.Infof("Closing %d monitored connection pool(s)...", poolCount)
 
 	for id, pool := range m.pools {
 		pool.Close()
-		log.Printf("Closed pool for connection %d", id)
+		logger.Infof("Closed pool for connection %d", id)
 	}
 
-	log.Printf("Closed %d monitored connection pool(s)", poolCount)
+	logger.Infof("Closed %d monitored connection pool(s)", poolCount)
 
 	m.pools = make(map[int]*pgxpool.Pool)
 	return nil

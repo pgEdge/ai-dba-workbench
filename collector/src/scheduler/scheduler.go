@@ -8,6 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
+// Package scheduler manages the execution of monitoring probes
 package scheduler
 
 import (
@@ -395,7 +396,7 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 	// Execute probe on the default/first database using the connection we already have
 	if len(databases) > 0 {
 		defaultDB := databases[0]
-		metrics, err := probe.Execute(ctx, monitoredDB)
+		metrics, err := probe.Execute(ctx, conn.Name, monitoredDB)
 		if err != nil {
 			log.Printf("Error executing probe %s on default database %s/%s: %v",
 				config.Name, conn.Name, defaultDB, err)
@@ -435,7 +436,7 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 		}
 
 		// Execute probe
-		metrics, err := probe.Execute(ctx, db)
+		metrics, err := probe.Execute(ctx, conn.Name, db)
 
 		// Return the connection immediately
 		ps.poolManager.ReturnConnection(conn.ID, db)
@@ -515,7 +516,7 @@ func (ps *ProbeScheduler) executeProbeForServerWide(ctx context.Context, probe p
 	}
 
 	// Execute probe
-	metrics, err = probe.Execute(ctx, monitoredDB)
+	metrics, err = probe.Execute(ctx, conn.Name, monitoredDB)
 
 	// Return the connection immediately
 	ps.poolManager.ReturnConnection(conn.ID, monitoredDB)
@@ -623,6 +624,27 @@ func (ps *ProbeScheduler) createProbe(config *probes.ProbeConfig) probes.Metrics
 		return probes.NewPgStatUserFunctionsProbe(config)
 	case probes.ProbeNamePgStatStatements:
 		return probes.NewPgStatStatementsProbe(config)
+	// System Stats Extension probes (server-scoped)
+	case probes.ProbeNamePgSysOsInfo:
+		return probes.NewPgSysOsInfoProbe(config)
+	case probes.ProbeNamePgSysCPUInfo:
+		return probes.NewPgSysCPUInfoProbe(config)
+	case probes.ProbeNamePgSysCPUUsageInfo:
+		return probes.NewPgSysCPUUsageInfoProbe(config)
+	case probes.ProbeNamePgSysMemoryInfo:
+		return probes.NewPgSysMemoryInfoProbe(config)
+	case probes.ProbeNamePgSysIoAnalysisInfo:
+		return probes.NewPgSysIoAnalysisInfoProbe(config)
+	case probes.ProbeNamePgSysDiskInfo:
+		return probes.NewPgSysDiskInfoProbe(config)
+	case probes.ProbeNamePgSysLoadAvgInfo:
+		return probes.NewPgSysLoadAvgInfoProbe(config)
+	case probes.ProbeNamePgSysProcessInfo:
+		return probes.NewPgSysProcessInfoProbe(config)
+	case probes.ProbeNamePgSysNetworkInfo:
+		return probes.NewPgSysNetworkInfoProbe(config)
+	case probes.ProbeNamePgSysCPUMemoryByProcess:
+		return probes.NewPgSysCPUMemoryByProcessProbe(config)
 	default:
 		log.Printf("Warning: unknown probe type: %s", config.Name)
 		return nil

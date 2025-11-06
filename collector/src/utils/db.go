@@ -8,6 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
+// Package utils provides utility functions for the collector
 package utils
 
 import (
@@ -16,8 +17,8 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// scanRowsToMaps scans all rows from a result set and returns them as a slice of maps
-// Each map represents one row with column names as keys
+// ScanRowsToMaps scans all rows from a result set and returns them as a slice of maps.
+// Each map represents one row with column names as keys.
 func ScanRowsToMaps(rows pgx.Rows) ([]map[string]interface{}, error) {
 	// Get column descriptions
 	fieldDescs := rows.FieldDescriptions()
@@ -52,8 +53,8 @@ func ScanRowsToMaps(rows pgx.Rows) ([]map[string]interface{}, error) {
 	return results, nil
 }
 
-// formatDatabaseInfo formats a connection name and optional database name
-// into a display string like "ConnectionName" or "ConnectionName/database"
+// FormatDatabaseInfo formats a connection name and optional database name
+// into a display string like "ConnectionName" or "ConnectionName/database".
 func FormatDatabaseInfo(connectionName string, databaseName string) string {
 	if databaseName != "" {
 		return fmt.Sprintf("%s/%s", connectionName, databaseName)

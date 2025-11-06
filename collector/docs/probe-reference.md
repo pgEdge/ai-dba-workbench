@@ -341,7 +341,14 @@ Monitors query performance statistics (requires pg_stat_statements extension).
 - **Default Retention**: 7 days
 - **Key Metrics**: Query execution times, calls, rows, I/O, planning
 - **Use Cases**: Query performance analysis, slow query identification
-- **Limit**: Top 1000 queries by execution time
+- **Query Limit**: Top 1000 queries by total execution time
+
+**Important**: This probe collects only the **top 1000 queries** ordered by total
+execution time to prevent excessive data collection on busy systems. Queries with
+NULL queryid (utility statements like VACUUM, ANALYZE) are automatically filtered
+out. If your database tracks more than 1000 queries, lower-impact queries will
+not be collected. This limit is hard-coded in the probe implementation. Focus on
+optimizing the highest-impact queries first.
 
 **Columns Collected**: userid, dbid, toplevel, queryid, query, plans,
 total_plan_time, min_plan_time, max_plan_time, mean_plan_time,
@@ -389,6 +396,113 @@ WHERE name = 'pg_stat_io';
 ```
 
 Changes require collector restart.
+
+## System Limits and Constants
+
+The Collector enforces several limits to ensure stable operation and prevent
+resource exhaustion. These limits are hard-coded in the implementation.
+
+### Query Collection Limits
+
+**pg_stat_statements Query Limit: 1000**
+
+- Defined in: `src/probes/constants.go`
+- Constant: `PgStatStatementsQueryLimit = 1000`
+- Applies to: pg_stat_statements probe only
+- Behavior: Collects top 1000 queries ordered by total execution time
+- Rationale: Prevents excessive data collection on busy systems with thousands
+  of tracked queries
+- Override: Not configurable; requires code modification
+
+### Connection Pool Limits
+
+**Datastore Pool Max Connections: 25**
+
+- Defined in: `src/constants.go`
+- Constant: `DefaultPoolMaxConnections = 25`
+- Applies to: Connection pool for the datastore database
+- Behavior: Maximum concurrent connections to the datastore
+- Configurable via: `pool_max_connections` in configuration file
+
+**Monitored Pool Max Connections: 5 per server**
+
+- Defined in: `src/constants.go`
+- Constant: `DefaultMonitoredPoolMaxConnections = 5`
+- Applies to: Connection pool for each monitored database server
+- Behavior: Maximum concurrent connections per monitored server
+- Rationale: Prevents overwhelming monitored servers with connections
+- Configurable via: `monitored_pool_max_connections` in configuration file
+
+**Idle Connection Timeout: 300 seconds (5 minutes)**
+
+- Defined in: `src/constants.go`
+- Constant: `DefaultPoolIdleSeconds = 300`
+- Applies to: Both datastore and monitored connection pools
+- Behavior: Idle connections are closed after 5 minutes
+- Configurable via: `pool_max_idle_seconds` in configuration file
+
+### Operation Timeouts
+
+**Connection Timeout: 10 seconds**
+
+- Defined in: `src/constants.go`
+- Constant: `ConnectionTimeout = 10 * time.Second`
+- Applies to: Initial database connection establishment
+- Behavior: Connection attempt fails if not established within 10 seconds
+
+**Context Timeout: 30 seconds**
+
+- Defined in: `src/constants.go`
+- Constant: `ContextTimeout = 30 * time.Second`
+- Applies to: General context operations
+- Behavior: Operations time out after 30 seconds
+
+**Probe Execution Timeout: 60 seconds**
+
+- Defined in: `src/constants.go`
+- Constant: `ProbeExecutionTimeout = 60 * time.Second`
+- Applies to: Individual probe query execution
+- Behavior: Probe execution fails if query doesn't complete within 60 seconds
+- Note: Includes time to acquire connection + query execution + result
+  processing
+
+**Datastore Wait Timeout: 5 seconds**
+
+- Defined in: `src/constants.go`
+- Constant: `DatastoreWaitTimeout = 5 * time.Second`
+- Applies to: Waiting for datastore connection from pool
+- Behavior: Returns error if datastore connection not available within 5 seconds
+- Configurable via: `datastore_pool_max_wait_seconds` in configuration file
+
+**Monitored Pool Wait Timeout: 120 seconds (2 minutes)**
+
+- Defined in: Default configuration
+- Configurable via: `monitored_pool_max_wait_seconds` in configuration file
+- Applies to: Waiting for monitored connection from pool
+- Behavior: Returns error if monitored connection not available within timeout
+- Rationale: Allows more time for connections to busy monitored servers
+
+### Configuration Reload
+
+**Probe Configuration Reload Interval: 5 minutes**
+
+- Behavior: Probe configurations automatically reload from database every 5
+  minutes
+- Effect: Changes to `collection_interval_seconds`, `retention_days`, or
+  `is_enabled` take effect within 5 minutes without restart
+
+### Modifying Limits
+
+Most limits are configured through the configuration file. To modify hard-coded
+limits:
+
+1. Edit the constant in the source file
+2. Rebuild the collector: `make build`
+3. Restart the collector with the new binary
+
+**Important**: Hard-coded limits exist for stability and performance reasons.
+Increasing them may impact system resources or data quality. Test thoroughly in
+a non-production environment before modifying.
 
 ## See Also
 

@@ -11,44 +11,44 @@
 package probes
 
 import (
+	"context"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/collector/src/utils"
-    "context"
-    
-    "fmt"
-    "time"
+
+	"fmt"
+	"time"
 )
 
 // PgStatSubscriptionStatsProbe collects metrics from pg_stat_subscription_stats view
 type PgStatSubscriptionStatsProbe struct {
-    BaseMetricsProbe
+	BaseMetricsProbe
 }
 
 // NewPgStatSubscriptionStatsProbe creates a new pg_stat_subscription_stats probe
 func NewPgStatSubscriptionStatsProbe(config *ProbeConfig) *PgStatSubscriptionStatsProbe {
-    return &PgStatSubscriptionStatsProbe{
-        BaseMetricsProbe: BaseMetricsProbe{config: config},
-    }
+	return &PgStatSubscriptionStatsProbe{
+		BaseMetricsProbe: BaseMetricsProbe{config: config},
+	}
 }
 
 // GetName returns the probe name
 func (p *PgStatSubscriptionStatsProbe) GetName() string {
-    return ProbeNamePgStatSubscriptionStats
+	return ProbeNamePgStatSubscriptionStats
 }
 
 // GetTableName returns the metrics table name
 func (p *PgStatSubscriptionStatsProbe) GetTableName() string {
-    return ProbeNamePgStatSubscriptionStats
+	return ProbeNamePgStatSubscriptionStats
 }
 
 // IsDatabaseScoped returns false as pg_stat_subscription_stats is server-scoped
 func (p *PgStatSubscriptionStatsProbe) IsDatabaseScoped() bool {
-    return false
+	return false
 }
 
 // GetQuery returns the SQL query to execute
 func (p *PgStatSubscriptionStatsProbe) GetQuery() string {
-    return `
+	return `
         SELECT
             subid,
             subname,
@@ -61,8 +61,8 @@ func (p *PgStatSubscriptionStatsProbe) GetQuery() string {
 
 // checkViewAvailable checks if pg_stat_subscription_stats view exists (PG 15+)
 func (p *PgStatSubscriptionStatsProbe) checkViewAvailable(ctx context.Context, conn *pgxpool.Conn) (bool, error) {
-    var exists bool
-    err := conn.QueryRow(ctx, `
+	var exists bool
+	err := conn.QueryRow(ctx, `
         SELECT EXISTS(
             SELECT 1
             FROM pg_views
@@ -71,76 +71,76 @@ func (p *PgStatSubscriptionStatsProbe) checkViewAvailable(ctx context.Context, c
         )
     `).Scan(&exists)
 
-    if err != nil {
-        return false, fmt.Errorf("failed to check for pg_stat_subscription_stats view: %w", err)
-    }
+	if err != nil {
+		return false, fmt.Errorf("failed to check for pg_stat_subscription_stats view: %w", err)
+	}
 
-    return exists, nil
+	return exists, nil
 }
 
 // Execute runs the probe against a monitored connection
-func (p *PgStatSubscriptionStatsProbe) Execute(ctx context.Context, monitoredConn *pgxpool.Conn) ([]map[string]interface{}, error) {
-    // Check if view is available (PG 15+)
-    available, err := p.checkViewAvailable(ctx, monitoredConn)
-    if err != nil {
-        return nil, err
-    }
+func (p *PgStatSubscriptionStatsProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn) ([]map[string]interface{}, error) {
+	// Check if view is available (PG 15+)
+	available, err := p.checkViewAvailable(ctx, monitoredConn)
+	if err != nil {
+		return nil, err
+	}
 
-    if !available {
-        // View not available, return empty metrics (not an error)
-        return []map[string]interface{}{}, nil
-    }
+	if !available {
+		// View not available, return empty metrics (not an error)
+		return []map[string]interface{}{}, nil
+	}
 
-    rows, err := monitoredConn.Query(ctx, p.GetQuery())
-    if err != nil {
-        return nil, fmt.Errorf("failed to execute query: %w", err)
-    }
-    defer rows.Close()
+	rows, err := monitoredConn.Query(ctx, p.GetQuery())
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute query: %w", err)
+	}
+	defer rows.Close()
 
-    return utils.ScanRowsToMaps(rows)
+	return utils.ScanRowsToMaps(rows)
 }
 
 // Store stores the collected metrics in the datastore
 func (p *PgStatSubscriptionStatsProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]interface{}) error {
-    if len(metrics) == 0 {
-        return nil // Nothing to store
-    }
+	if len(metrics) == 0 {
+		return nil // Nothing to store
+	}
 
-    // Ensure partition exists for this timestamp
-    if err := p.EnsurePartition(ctx, datastoreConn, timestamp); err != nil {
-        return fmt.Errorf("failed to ensure partition: %w", err)
-    }
+	// Ensure partition exists for this timestamp
+	if err := p.EnsurePartition(ctx, datastoreConn, timestamp); err != nil {
+		return fmt.Errorf("failed to ensure partition: %w", err)
+	}
 
-    // Define columns in order
-    columns := []string{
-        "connection_id", "collected_at",
-        "subid", "subname", "apply_error_count", "sync_error_count", "stats_reset",
-    }
+	// Define columns in order
+	columns := []string{
+		"connection_id", "collected_at",
+		"subid", "subname", "apply_error_count", "sync_error_count", "stats_reset",
+	}
 
-    // Build values array
-    var values [][]interface{}
-    for _, metric := range metrics {
-        row := []interface{}{
-            connectionID,
-            timestamp,
-            metric["subid"],
-            metric["subname"],
-            metric["apply_error_count"],
-            metric["sync_error_count"],
-            metric["stats_reset"],
-        }
-        values = append(values, row)
-    }
+	// Build values array
+	var values [][]interface{}
+	for _, metric := range metrics {
+		row := []interface{}{
+			connectionID,
+			timestamp,
+			metric["subid"],
+			metric["subname"],
+			metric["apply_error_count"],
+			metric["sync_error_count"],
+			metric["stats_reset"],
+		}
+		values = append(values, row)
+	}
 
-    // Use COPY protocol to store metrics
-    if err := StoreMetricsWithCopy(ctx, datastoreConn, p.GetTableName(), columns, values); err != nil {
-        return fmt.Errorf("failed to store metrics: %w", err)
-    }
+	// Use COPY protocol to store metrics
+	if err := StoreMetricsWithCopy(ctx, datastoreConn, p.GetTableName(), columns, values); err != nil {
+		return fmt.Errorf("failed to store metrics: %w", err)
+	}
 
-    return nil
+	return nil
 }
 
 // EnsurePartition ensures a partition exists for the given timestamp
 func (p *PgStatSubscriptionStatsProbe) EnsurePartition(ctx context.Context, datastoreConn *pgxpool.Conn, timestamp time.Time) error {
-    return EnsurePartition(ctx, datastoreConn, p.GetTableName(), timestamp)
+	return EnsurePartition(ctx, datastoreConn, p.GetTableName(), timestamp)
 }

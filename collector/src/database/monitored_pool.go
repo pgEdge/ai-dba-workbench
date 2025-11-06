@@ -210,7 +210,7 @@ func (m *MonitoredConnectionPoolManager) Close() error {
 }
 
 // createMonitoredPool creates a pgxpool.Pool for a monitored connection
-func createMonitoredPool(connStr string, maxConnections int, maxIdleSeconds int) (*pgxpool.Pool, error) {
+func createMonitoredPool(connStr string, _ int, maxIdleSeconds int) (*pgxpool.Pool, error) {
 	ctx := context.Background()
 
 	// Parse connection string

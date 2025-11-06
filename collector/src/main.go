@@ -11,8 +11,8 @@
 package main
 
 import (
-    "github.com/pgedge/ai-workbench/collector/src/database"
-    "github.com/pgedge/ai-workbench/collector/src/scheduler"
+	"github.com/pgedge/ai-workbench/collector/src/database"
+	"github.com/pgedge/ai-workbench/collector/src/scheduler"
 
 	"context"
 	"flag"

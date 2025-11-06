@@ -2705,29 +2705,29 @@ func (sm *SchemaManager) registerMigrations() {
 		Up: func(conn *pgxpool.Conn) error {
 			ctx := context.Background()
 
-			// Check if the old constraint still exists
-			var hasOldConstraint bool
+			// Check if the old index still exists
+			var hasOldIndex bool
 			err := conn.QueryRow(ctx, `
                 SELECT EXISTS (
                     SELECT 1
-                    FROM pg_constraint
-                    WHERE conname = 'probe_configs_name_key'
-                      AND conrelid = 'public.probe_configs'::regclass
+                    FROM pg_indexes
+                    WHERE schemaname = 'public'
+                      AND tablename = 'probe_configs'
+                      AND indexname = 'probe_configs_name_key'
                 )
-            `).Scan(&hasOldConstraint)
+            `).Scan(&hasOldIndex)
 
 			if err != nil {
-				return fmt.Errorf("failed to check for old constraint: %w", err)
+				return fmt.Errorf("failed to check for old index: %w", err)
 			}
 
-			// Drop the old constraint if it exists
-			if hasOldConstraint {
+			// Drop the old index if it exists
+			if hasOldIndex {
 				_, err = conn.Exec(ctx, `
-                    ALTER TABLE probe_configs
-                    DROP CONSTRAINT IF EXISTS probe_configs_name_key
+                    DROP INDEX IF EXISTS probe_configs_name_key
                 `)
 				if err != nil {
-					return fmt.Errorf("failed to drop old constraint: %w", err)
+					return fmt.Errorf("failed to drop old index: %w", err)
 				}
 			}
 
@@ -2758,6 +2758,1317 @@ func (sm *SchemaManager) registerMigrations() {
 				if err != nil {
 					return fmt.Errorf("failed to create partial unique index: %w", err)
 				}
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 24: Add system_stats extension probe configs
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     24,
+		Description: "Add system_stats extension probe configs",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Insert probe config for pg_sys_os_info
+			_, err := conn.Exec(ctx, `
+				INSERT INTO probe_configs (name, description, collection_interval_seconds, retention_days, is_enabled)
+				VALUES ('pg_sys_os_info', 'Collects OS information via system_stats extension (requires system_stats extension)', 300, 28, TRUE)
+				ON CONFLICT (name) WHERE connection_id IS NULL DO NOTHING
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to insert pg_sys_os_info probe config: %w", err)
+			}
+
+			// Insert probe config for pg_sys_cpu_info
+			_, err = conn.Exec(ctx, `
+				INSERT INTO probe_configs (name, description, collection_interval_seconds, retention_days, is_enabled)
+				VALUES ('pg_sys_cpu_info', 'Collects CPU information via system_stats extension (requires system_stats extension)', 300, 28, TRUE)
+				ON CONFLICT (name) WHERE connection_id IS NULL DO NOTHING
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to insert pg_sys_cpu_info probe config: %w", err)
+			}
+
+			// Insert probe config for pg_sys_cpu_usage_info
+			_, err = conn.Exec(ctx, `
+				INSERT INTO probe_configs (name, description, collection_interval_seconds, retention_days, is_enabled)
+				VALUES ('pg_sys_cpu_usage_info', 'Collects CPU usage statistics via system_stats extension (requires system_stats extension)', 60, 28, TRUE)
+				ON CONFLICT (name) WHERE connection_id IS NULL DO NOTHING
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to insert pg_sys_cpu_usage_info probe config: %w", err)
+			}
+
+			// Insert probe config for pg_sys_memory_info
+			_, err = conn.Exec(ctx, `
+				INSERT INTO probe_configs (name, description, collection_interval_seconds, retention_days, is_enabled)
+				VALUES ('pg_sys_memory_info', 'Collects memory information via system_stats extension (requires system_stats extension)', 60, 28, TRUE)
+				ON CONFLICT (name) WHERE connection_id IS NULL DO NOTHING
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to insert pg_sys_memory_info probe config: %w", err)
+			}
+
+			// Insert probe config for pg_sys_io_analysis_info
+			_, err = conn.Exec(ctx, `
+				INSERT INTO probe_configs (name, description, collection_interval_seconds, retention_days, is_enabled)
+				VALUES ('pg_sys_io_analysis_info', 'Collects I/O analysis information via system_stats extension (requires system_stats extension)', 60, 28, TRUE)
+				ON CONFLICT (name) WHERE connection_id IS NULL DO NOTHING
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to insert pg_sys_io_analysis_info probe config: %w", err)
+			}
+
+			// Insert probe config for pg_sys_disk_info
+			_, err = conn.Exec(ctx, `
+				INSERT INTO probe_configs (name, description, collection_interval_seconds, retention_days, is_enabled)
+				VALUES ('pg_sys_disk_info', 'Collects disk information via system_stats extension (requires system_stats extension)', 300, 28, TRUE)
+				ON CONFLICT (name) WHERE connection_id IS NULL DO NOTHING
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to insert pg_sys_disk_info probe config: %w", err)
+			}
+
+			// Insert probe config for pg_sys_load_avg_info
+			_, err = conn.Exec(ctx, `
+				INSERT INTO probe_configs (name, description, collection_interval_seconds, retention_days, is_enabled)
+				VALUES ('pg_sys_load_avg_info', 'Collects system load average via system_stats extension (requires system_stats extension)', 60, 28, TRUE)
+				ON CONFLICT (name) WHERE connection_id IS NULL DO NOTHING
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to insert pg_sys_load_avg_info probe config: %w", err)
+			}
+
+			// Insert probe config for pg_sys_process_info
+			_, err = conn.Exec(ctx, `
+				INSERT INTO probe_configs (name, description, collection_interval_seconds, retention_days, is_enabled)
+				VALUES ('pg_sys_process_info', 'Collects process information via system_stats extension (requires system_stats extension)', 60, 28, TRUE)
+				ON CONFLICT (name) WHERE connection_id IS NULL DO NOTHING
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to insert pg_sys_process_info probe config: %w", err)
+			}
+
+			// Insert probe config for pg_sys_network_info
+			_, err = conn.Exec(ctx, `
+				INSERT INTO probe_configs (name, description, collection_interval_seconds, retention_days, is_enabled)
+				VALUES ('pg_sys_network_info', 'Collects network information via system_stats extension (requires system_stats extension)', 60, 28, TRUE)
+				ON CONFLICT (name) WHERE connection_id IS NULL DO NOTHING
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to insert pg_sys_network_info probe config: %w", err)
+			}
+
+			// Insert probe config for pg_sys_cpu_memory_by_process
+			_, err = conn.Exec(ctx, `
+				INSERT INTO probe_configs (name, description, collection_interval_seconds, retention_days, is_enabled)
+				VALUES ('pg_sys_cpu_memory_by_process', 'Collects per-process CPU and memory usage via system_stats extension (requires system_stats extension)', 60, 28, TRUE)
+				ON CONFLICT (name) WHERE connection_id IS NULL DO NOTHING
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to insert pg_sys_cpu_memory_by_process probe config: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 25: Create pg_sys_os_info metrics table
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     25,
+		Description: "Create pg_sys_os_info metrics table",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			_, err := conn.Exec(ctx, `
+				CREATE TABLE IF NOT EXISTS metrics.pg_sys_os_info (
+					connection_id INTEGER NOT NULL,
+					collected_at TIMESTAMP NOT NULL,
+					name TEXT,
+					version TEXT,
+					host_name TEXT,
+					domain_name TEXT,
+					handle_count BIGINT,
+					process_count BIGINT,
+					thread_count BIGINT,
+					architecture TEXT,
+					last_bootup_time TIMESTAMP,
+					os_up_since_seconds BIGINT,
+					PRIMARY KEY (connection_id, collected_at),
+					CONSTRAINT fk_pg_sys_os_info_connection_id
+						FOREIGN KEY (connection_id)
+						REFERENCES connections(id)
+						ON DELETE CASCADE
+				) PARTITION BY RANGE (collected_at);
+
+				COMMENT ON TABLE metrics.pg_sys_os_info IS
+					'OS information collected via system_stats extension';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to create pg_sys_os_info metrics table: %w", err)
+			}
+
+			indexes := []struct {
+				name    string
+				sql     string
+				comment string
+			}{
+				{
+					"idx_pg_sys_os_info_connection_time",
+					`CREATE INDEX IF NOT EXISTS idx_pg_sys_os_info_connection_time
+					 ON metrics.pg_sys_os_info(connection_id, collected_at DESC)`,
+					"Index for efficiently querying metrics by connection and time range",
+				},
+				{
+					"idx_pg_sys_os_info_collected_at",
+					`CREATE INDEX IF NOT EXISTS idx_pg_sys_os_info_collected_at
+					 ON metrics.pg_sys_os_info(collected_at DESC)`,
+					"Index for efficiently querying metrics by time range",
+				},
+			}
+
+			for _, idx := range indexes {
+				if _, err := conn.Exec(ctx, idx.sql); err != nil {
+					return fmt.Errorf("failed to create index %s: %w", idx.name, err)
+				}
+				if _, err := conn.Exec(ctx, fmt.Sprintf("COMMENT ON INDEX metrics.%s IS '%s'", idx.name, idx.comment)); err != nil {
+					log.Printf("Warning: failed to add comment on index %s: %v", idx.name, err)
+				}
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 26: Create pg_sys_cpu_info metrics table
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     26,
+		Description: "Create pg_sys_cpu_info metrics table",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			_, err := conn.Exec(ctx, `
+				CREATE TABLE IF NOT EXISTS metrics.pg_sys_cpu_info (
+					connection_id INTEGER NOT NULL,
+					collected_at TIMESTAMP NOT NULL,
+					manufacturer TEXT,
+					processor_type TEXT,
+					architecture TEXT,
+					cpu_family INTEGER,
+					model_number INTEGER,
+					model_name TEXT,
+					stepping INTEGER,
+					number_of_cores INTEGER,
+					number_of_logical_processors INTEGER,
+					total_sockets INTEGER,
+					max_clock_speed_mhz NUMERIC,
+					current_clock_speed_mhz NUMERIC,
+					cache_l1_kb INTEGER,
+					cache_l2_kb INTEGER,
+					cache_l3_kb INTEGER,
+					PRIMARY KEY (connection_id, collected_at),
+					CONSTRAINT fk_pg_sys_cpu_info_connection_id
+						FOREIGN KEY (connection_id)
+						REFERENCES connections(id)
+						ON DELETE CASCADE
+				) PARTITION BY RANGE (collected_at);
+
+				COMMENT ON TABLE metrics.pg_sys_cpu_info IS
+					'CPU information collected via system_stats extension';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to create pg_sys_cpu_info metrics table: %w", err)
+			}
+
+			indexes := []struct {
+				name    string
+				sql     string
+				comment string
+			}{
+				{
+					"idx_pg_sys_cpu_info_connection_time",
+					`CREATE INDEX IF NOT EXISTS idx_pg_sys_cpu_info_connection_time
+					 ON metrics.pg_sys_cpu_info(connection_id, collected_at DESC)`,
+					"Index for efficiently querying metrics by connection and time range",
+				},
+				{
+					"idx_pg_sys_cpu_info_collected_at",
+					`CREATE INDEX IF NOT EXISTS idx_pg_sys_cpu_info_collected_at
+					 ON metrics.pg_sys_cpu_info(collected_at DESC)`,
+					"Index for efficiently querying metrics by time range",
+				},
+			}
+
+			for _, idx := range indexes {
+				if _, err := conn.Exec(ctx, idx.sql); err != nil {
+					return fmt.Errorf("failed to create index %s: %w", idx.name, err)
+				}
+				if _, err := conn.Exec(ctx, fmt.Sprintf("COMMENT ON INDEX metrics.%s IS '%s'", idx.name, idx.comment)); err != nil {
+					log.Printf("Warning: failed to add comment on index %s: %v", idx.name, err)
+				}
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 27: Create pg_sys_cpu_usage_info metrics table
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     27,
+		Description: "Create pg_sys_cpu_usage_info metrics table",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			_, err := conn.Exec(ctx, `
+				CREATE TABLE IF NOT EXISTS metrics.pg_sys_cpu_usage_info (
+					connection_id INTEGER NOT NULL,
+					collected_at TIMESTAMP NOT NULL,
+					usermode_normal_process_percent REAL,
+					usermode_niced_process_percent REAL,
+					kernelmode_process_percent REAL,
+					io_completion_percent REAL,
+					servicing_irq_percent REAL,
+					servicing_softirq_percent REAL,
+					idle_percent REAL,
+					PRIMARY KEY (connection_id, collected_at),
+					CONSTRAINT fk_pg_sys_cpu_usage_info_connection_id
+						FOREIGN KEY (connection_id)
+						REFERENCES connections(id)
+						ON DELETE CASCADE
+				) PARTITION BY RANGE (collected_at);
+
+				COMMENT ON TABLE metrics.pg_sys_cpu_usage_info IS
+					'CPU usage statistics collected via system_stats extension';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to create pg_sys_cpu_usage_info metrics table: %w", err)
+			}
+
+			indexes := []struct {
+				name    string
+				sql     string
+				comment string
+			}{
+				{
+					"idx_pg_sys_cpu_usage_info_connection_time",
+					`CREATE INDEX IF NOT EXISTS idx_pg_sys_cpu_usage_info_connection_time
+					 ON metrics.pg_sys_cpu_usage_info(connection_id, collected_at DESC)`,
+					"Index for efficiently querying metrics by connection and time range",
+				},
+				{
+					"idx_pg_sys_cpu_usage_info_collected_at",
+					`CREATE INDEX IF NOT EXISTS idx_pg_sys_cpu_usage_info_collected_at
+					 ON metrics.pg_sys_cpu_usage_info(collected_at DESC)`,
+					"Index for efficiently querying metrics by time range",
+				},
+			}
+
+			for _, idx := range indexes {
+				if _, err := conn.Exec(ctx, idx.sql); err != nil {
+					return fmt.Errorf("failed to create index %s: %w", idx.name, err)
+				}
+				if _, err := conn.Exec(ctx, fmt.Sprintf("COMMENT ON INDEX metrics.%s IS '%s'", idx.name, idx.comment)); err != nil {
+					log.Printf("Warning: failed to add comment on index %s: %v", idx.name, err)
+				}
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 28: Create pg_sys_memory_info metrics table
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     28,
+		Description: "Create pg_sys_memory_info metrics table",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			_, err := conn.Exec(ctx, `
+				CREATE TABLE IF NOT EXISTS metrics.pg_sys_memory_info (
+					connection_id INTEGER NOT NULL,
+					collected_at TIMESTAMP NOT NULL,
+					total_memory_bytes BIGINT,
+					free_memory_bytes BIGINT,
+					used_memory_bytes BIGINT,
+					total_swap_memory_bytes BIGINT,
+					free_swap_memory_bytes BIGINT,
+					used_swap_memory_bytes BIGINT,
+					cached_memory_bytes BIGINT,
+					kernel_memory_bytes BIGINT,
+					locked_memory_bytes BIGINT,
+					available_memory_bytes BIGINT,
+					PRIMARY KEY (connection_id, collected_at),
+					CONSTRAINT fk_pg_sys_memory_info_connection_id
+						FOREIGN KEY (connection_id)
+						REFERENCES connections(id)
+						ON DELETE CASCADE
+				) PARTITION BY RANGE (collected_at);
+
+				COMMENT ON TABLE metrics.pg_sys_memory_info IS
+					'Memory information collected via system_stats extension';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to create pg_sys_memory_info metrics table: %w", err)
+			}
+
+			indexes := []struct {
+				name    string
+				sql     string
+				comment string
+			}{
+				{
+					"idx_pg_sys_memory_info_connection_time",
+					`CREATE INDEX IF NOT EXISTS idx_pg_sys_memory_info_connection_time
+					 ON metrics.pg_sys_memory_info(connection_id, collected_at DESC)`,
+					"Index for efficiently querying metrics by connection and time range",
+				},
+				{
+					"idx_pg_sys_memory_info_collected_at",
+					`CREATE INDEX IF NOT EXISTS idx_pg_sys_memory_info_collected_at
+					 ON metrics.pg_sys_memory_info(collected_at DESC)`,
+					"Index for efficiently querying metrics by time range",
+				},
+			}
+
+			for _, idx := range indexes {
+				if _, err := conn.Exec(ctx, idx.sql); err != nil {
+					return fmt.Errorf("failed to create index %s: %w", idx.name, err)
+				}
+				if _, err := conn.Exec(ctx, fmt.Sprintf("COMMENT ON INDEX metrics.%s IS '%s'", idx.name, idx.comment)); err != nil {
+					log.Printf("Warning: failed to add comment on index %s: %v", idx.name, err)
+				}
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 29: Create pg_sys_io_analysis_info metrics table
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     29,
+		Description: "Create pg_sys_io_analysis_info metrics table",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			_, err := conn.Exec(ctx, `
+				CREATE TABLE IF NOT EXISTS metrics.pg_sys_io_analysis_info (
+					connection_id INTEGER NOT NULL,
+					collected_at TIMESTAMP NOT NULL,
+					device_name TEXT,
+					total_bytes BIGINT,
+					free_bytes BIGINT,
+					used_bytes BIGINT,
+					total_iops BIGINT,
+					read_iops BIGINT,
+					write_iops BIGINT,
+					read_bytes BIGINT,
+					write_bytes BIGINT,
+					read_latency_ms REAL,
+					write_latency_ms REAL,
+					PRIMARY KEY (connection_id, collected_at),
+					CONSTRAINT fk_pg_sys_io_analysis_info_connection_id
+						FOREIGN KEY (connection_id)
+						REFERENCES connections(id)
+						ON DELETE CASCADE
+				) PARTITION BY RANGE (collected_at);
+
+				COMMENT ON TABLE metrics.pg_sys_io_analysis_info IS
+					'I/O analysis information collected via system_stats extension';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to create pg_sys_io_analysis_info metrics table: %w", err)
+			}
+
+			indexes := []struct {
+				name    string
+				sql     string
+				comment string
+			}{
+				{
+					"idx_pg_sys_io_analysis_info_connection_time",
+					`CREATE INDEX IF NOT EXISTS idx_pg_sys_io_analysis_info_connection_time
+					 ON metrics.pg_sys_io_analysis_info(connection_id, collected_at DESC)`,
+					"Index for efficiently querying metrics by connection and time range",
+				},
+				{
+					"idx_pg_sys_io_analysis_info_collected_at",
+					`CREATE INDEX IF NOT EXISTS idx_pg_sys_io_analysis_info_collected_at
+					 ON metrics.pg_sys_io_analysis_info(collected_at DESC)`,
+					"Index for efficiently querying metrics by time range",
+				},
+			}
+
+			for _, idx := range indexes {
+				if _, err := conn.Exec(ctx, idx.sql); err != nil {
+					return fmt.Errorf("failed to create index %s: %w", idx.name, err)
+				}
+				if _, err := conn.Exec(ctx, fmt.Sprintf("COMMENT ON INDEX metrics.%s IS '%s'", idx.name, idx.comment)); err != nil {
+					log.Printf("Warning: failed to add comment on index %s: %v", idx.name, err)
+				}
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 30: Create pg_sys_disk_info metrics table
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     30,
+		Description: "Create pg_sys_disk_info metrics table",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			_, err := conn.Exec(ctx, `
+				CREATE TABLE IF NOT EXISTS metrics.pg_sys_disk_info (
+					connection_id INTEGER NOT NULL,
+					collected_at TIMESTAMP NOT NULL,
+					drive TEXT,
+					file_system TEXT,
+					type TEXT,
+					mount_point TEXT,
+					total_space_bytes BIGINT,
+					used_space_bytes BIGINT,
+					free_space_bytes BIGINT,
+					total_inodes BIGINT,
+					used_inodes BIGINT,
+					free_inodes BIGINT,
+					PRIMARY KEY (connection_id, collected_at),
+					CONSTRAINT fk_pg_sys_disk_info_connection_id
+						FOREIGN KEY (connection_id)
+						REFERENCES connections(id)
+						ON DELETE CASCADE
+				) PARTITION BY RANGE (collected_at);
+
+				COMMENT ON TABLE metrics.pg_sys_disk_info IS
+					'Disk information collected via system_stats extension';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to create pg_sys_disk_info metrics table: %w", err)
+			}
+
+			indexes := []struct {
+				name    string
+				sql     string
+				comment string
+			}{
+				{
+					"idx_pg_sys_disk_info_connection_time",
+					`CREATE INDEX IF NOT EXISTS idx_pg_sys_disk_info_connection_time
+					 ON metrics.pg_sys_disk_info(connection_id, collected_at DESC)`,
+					"Index for efficiently querying metrics by connection and time range",
+				},
+				{
+					"idx_pg_sys_disk_info_collected_at",
+					`CREATE INDEX IF NOT EXISTS idx_pg_sys_disk_info_collected_at
+					 ON metrics.pg_sys_disk_info(collected_at DESC)`,
+					"Index for efficiently querying metrics by time range",
+				},
+			}
+
+			for _, idx := range indexes {
+				if _, err := conn.Exec(ctx, idx.sql); err != nil {
+					return fmt.Errorf("failed to create index %s: %w", idx.name, err)
+				}
+				if _, err := conn.Exec(ctx, fmt.Sprintf("COMMENT ON INDEX metrics.%s IS '%s'", idx.name, idx.comment)); err != nil {
+					log.Printf("Warning: failed to add comment on index %s: %v", idx.name, err)
+				}
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 31: Create pg_sys_load_avg_info metrics table
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     31,
+		Description: "Create pg_sys_load_avg_info metrics table",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			_, err := conn.Exec(ctx, `
+				CREATE TABLE IF NOT EXISTS metrics.pg_sys_load_avg_info (
+					connection_id INTEGER NOT NULL,
+					collected_at TIMESTAMP NOT NULL,
+					load_avg_one_minute REAL,
+					load_avg_five_minutes REAL,
+					load_avg_ten_minutes REAL,
+					load_avg_fifteen_minutes REAL,
+					PRIMARY KEY (connection_id, collected_at),
+					CONSTRAINT fk_pg_sys_load_avg_info_connection_id
+						FOREIGN KEY (connection_id)
+						REFERENCES connections(id)
+						ON DELETE CASCADE
+				) PARTITION BY RANGE (collected_at);
+
+				COMMENT ON TABLE metrics.pg_sys_load_avg_info IS
+					'System load average collected via system_stats extension';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to create pg_sys_load_avg_info metrics table: %w", err)
+			}
+
+			indexes := []struct {
+				name    string
+				sql     string
+				comment string
+			}{
+				{
+					"idx_pg_sys_load_avg_info_connection_time",
+					`CREATE INDEX IF NOT EXISTS idx_pg_sys_load_avg_info_connection_time
+					 ON metrics.pg_sys_load_avg_info(connection_id, collected_at DESC)`,
+					"Index for efficiently querying metrics by connection and time range",
+				},
+				{
+					"idx_pg_sys_load_avg_info_collected_at",
+					`CREATE INDEX IF NOT EXISTS idx_pg_sys_load_avg_info_collected_at
+					 ON metrics.pg_sys_load_avg_info(collected_at DESC)`,
+					"Index for efficiently querying metrics by time range",
+				},
+			}
+
+			for _, idx := range indexes {
+				if _, err := conn.Exec(ctx, idx.sql); err != nil {
+					return fmt.Errorf("failed to create index %s: %w", idx.name, err)
+				}
+				if _, err := conn.Exec(ctx, fmt.Sprintf("COMMENT ON INDEX metrics.%s IS '%s'", idx.name, idx.comment)); err != nil {
+					log.Printf("Warning: failed to add comment on index %s: %v", idx.name, err)
+				}
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 32: Create pg_sys_process_info metrics table
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     32,
+		Description: "Create pg_sys_process_info metrics table",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			_, err := conn.Exec(ctx, `
+				CREATE TABLE IF NOT EXISTS metrics.pg_sys_process_info (
+					connection_id INTEGER NOT NULL,
+					collected_at TIMESTAMP NOT NULL,
+					total_processes INTEGER,
+					running_processes INTEGER,
+					sleeping_processes INTEGER,
+					stopped_processes INTEGER,
+					zombie_processes INTEGER,
+					PRIMARY KEY (connection_id, collected_at),
+					CONSTRAINT fk_pg_sys_process_info_connection_id
+						FOREIGN KEY (connection_id)
+						REFERENCES connections(id)
+						ON DELETE CASCADE
+				) PARTITION BY RANGE (collected_at);
+
+				COMMENT ON TABLE metrics.pg_sys_process_info IS
+					'Process information collected via system_stats extension';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to create pg_sys_process_info metrics table: %w", err)
+			}
+
+			indexes := []struct {
+				name    string
+				sql     string
+				comment string
+			}{
+				{
+					"idx_pg_sys_process_info_connection_time",
+					`CREATE INDEX IF NOT EXISTS idx_pg_sys_process_info_connection_time
+					 ON metrics.pg_sys_process_info(connection_id, collected_at DESC)`,
+					"Index for efficiently querying metrics by connection and time range",
+				},
+				{
+					"idx_pg_sys_process_info_collected_at",
+					`CREATE INDEX IF NOT EXISTS idx_pg_sys_process_info_collected_at
+					 ON metrics.pg_sys_process_info(collected_at DESC)`,
+					"Index for efficiently querying metrics by time range",
+				},
+			}
+
+			for _, idx := range indexes {
+				if _, err := conn.Exec(ctx, idx.sql); err != nil {
+					return fmt.Errorf("failed to create index %s: %w", idx.name, err)
+				}
+				if _, err := conn.Exec(ctx, fmt.Sprintf("COMMENT ON INDEX metrics.%s IS '%s'", idx.name, idx.comment)); err != nil {
+					log.Printf("Warning: failed to add comment on index %s: %v", idx.name, err)
+				}
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 33: Create pg_sys_network_info metrics table
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     33,
+		Description: "Create pg_sys_network_info metrics table",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			_, err := conn.Exec(ctx, `
+				CREATE TABLE IF NOT EXISTS metrics.pg_sys_network_info (
+					connection_id INTEGER NOT NULL,
+					collected_at TIMESTAMP NOT NULL,
+					interface_name TEXT,
+					ip_address TEXT,
+					tx_bytes BIGINT,
+					tx_packets BIGINT,
+					tx_errors BIGINT,
+					tx_dropped BIGINT,
+					rx_bytes BIGINT,
+					rx_packets BIGINT,
+					rx_errors BIGINT,
+					rx_dropped BIGINT,
+					link_speed_mbps INTEGER,
+					PRIMARY KEY (connection_id, collected_at),
+					CONSTRAINT fk_pg_sys_network_info_connection_id
+						FOREIGN KEY (connection_id)
+						REFERENCES connections(id)
+						ON DELETE CASCADE
+				) PARTITION BY RANGE (collected_at);
+
+				COMMENT ON TABLE metrics.pg_sys_network_info IS
+					'Network information collected via system_stats extension';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to create pg_sys_network_info metrics table: %w", err)
+			}
+
+			indexes := []struct {
+				name    string
+				sql     string
+				comment string
+			}{
+				{
+					"idx_pg_sys_network_info_connection_time",
+					`CREATE INDEX IF NOT EXISTS idx_pg_sys_network_info_connection_time
+					 ON metrics.pg_sys_network_info(connection_id, collected_at DESC)`,
+					"Index for efficiently querying metrics by connection and time range",
+				},
+				{
+					"idx_pg_sys_network_info_collected_at",
+					`CREATE INDEX IF NOT EXISTS idx_pg_sys_network_info_collected_at
+					 ON metrics.pg_sys_network_info(collected_at DESC)`,
+					"Index for efficiently querying metrics by time range",
+				},
+			}
+
+			for _, idx := range indexes {
+				if _, err := conn.Exec(ctx, idx.sql); err != nil {
+					return fmt.Errorf("failed to create index %s: %w", idx.name, err)
+				}
+				if _, err := conn.Exec(ctx, fmt.Sprintf("COMMENT ON INDEX metrics.%s IS '%s'", idx.name, idx.comment)); err != nil {
+					log.Printf("Warning: failed to add comment on index %s: %v", idx.name, err)
+				}
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 34: Create pg_sys_cpu_memory_by_process metrics table
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     34,
+		Description: "Create pg_sys_cpu_memory_by_process metrics table",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			_, err := conn.Exec(ctx, `
+				CREATE TABLE IF NOT EXISTS metrics.pg_sys_cpu_memory_by_process (
+					connection_id INTEGER NOT NULL,
+					collected_at TIMESTAMP NOT NULL,
+					pid INTEGER,
+					name TEXT,
+					running_since_seconds BIGINT,
+					cpu_usage REAL,
+					memory_usage REAL,
+					memory_bytes BIGINT,
+					PRIMARY KEY (connection_id, collected_at),
+					CONSTRAINT fk_pg_sys_cpu_memory_by_process_connection_id
+						FOREIGN KEY (connection_id)
+						REFERENCES connections(id)
+						ON DELETE CASCADE
+				) PARTITION BY RANGE (collected_at);
+
+				COMMENT ON TABLE metrics.pg_sys_cpu_memory_by_process IS
+					'Per-process CPU and memory usage collected via system_stats extension';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to create pg_sys_cpu_memory_by_process metrics table: %w", err)
+			}
+
+			indexes := []struct {
+				name    string
+				sql     string
+				comment string
+			}{
+				{
+					"idx_pg_sys_cpu_memory_by_process_connection_time",
+					`CREATE INDEX IF NOT EXISTS idx_pg_sys_cpu_memory_by_process_connection_time
+					 ON metrics.pg_sys_cpu_memory_by_process(connection_id, collected_at DESC)`,
+					"Index for efficiently querying metrics by connection and time range",
+				},
+				{
+					"idx_pg_sys_cpu_memory_by_process_collected_at",
+					`CREATE INDEX IF NOT EXISTS idx_pg_sys_cpu_memory_by_process_collected_at
+					 ON metrics.pg_sys_cpu_memory_by_process(collected_at DESC)`,
+					"Index for efficiently querying metrics by time range",
+				},
+			}
+
+			for _, idx := range indexes {
+				if _, err := conn.Exec(ctx, idx.sql); err != nil {
+					return fmt.Errorf("failed to create index %s: %w", idx.name, err)
+				}
+				if _, err := conn.Exec(ctx, fmt.Sprintf("COMMENT ON INDEX metrics.%s IS '%s'", idx.name, idx.comment)); err != nil {
+					log.Printf("Warning: failed to add comment on index %s: %v", idx.name, err)
+				}
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 35: Fix pg_sys_cpu_usage_info schema mismatches
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     35,
+		Description: "Fix pg_sys_cpu_usage_info schema mismatches",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Check if idle_percent exists before renaming
+			var hasOldColumn bool
+			err := conn.QueryRow(ctx, `
+				SELECT EXISTS (
+					SELECT 1
+					FROM information_schema.columns
+					WHERE table_schema = 'metrics'
+					  AND table_name = 'pg_sys_cpu_usage_info'
+					  AND column_name = 'idle_percent'
+				)
+			`).Scan(&hasOldColumn)
+			if err != nil {
+				return fmt.Errorf("failed to check for idle_percent column: %w", err)
+			}
+
+			// Rename idle_percent to idle_mode_percent if it exists
+			if hasOldColumn {
+				_, err = conn.Exec(ctx, `
+					ALTER TABLE metrics.pg_sys_cpu_usage_info
+					RENAME COLUMN idle_percent TO idle_mode_percent
+				`)
+				if err != nil {
+					return fmt.Errorf("failed to rename idle_percent: %w", err)
+				}
+			}
+
+			// Add missing columns (IF NOT EXISTS not supported, so check first)
+			var hasUserTimeColumn bool
+			err = conn.QueryRow(ctx, `
+				SELECT EXISTS (
+					SELECT 1
+					FROM information_schema.columns
+					WHERE table_schema = 'metrics'
+					  AND table_name = 'pg_sys_cpu_usage_info'
+					  AND column_name = 'user_time_percent'
+				)
+			`).Scan(&hasUserTimeColumn)
+			if err != nil {
+				return fmt.Errorf("failed to check for user_time_percent column: %w", err)
+			}
+
+			if !hasUserTimeColumn {
+				_, err = conn.Exec(ctx, `
+					ALTER TABLE metrics.pg_sys_cpu_usage_info
+					ADD COLUMN user_time_percent REAL,
+					ADD COLUMN processor_time_percent REAL,
+					ADD COLUMN privileged_time_percent REAL,
+					ADD COLUMN interrupt_time_percent REAL
+				`)
+				if err != nil {
+					return fmt.Errorf("failed to add missing columns: %w", err)
+				}
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 36: Fix pg_sys_network_info primary key
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     36,
+		Description: "Fix pg_sys_network_info primary key to include interface_name",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Drop the existing primary key constraint
+			_, err := conn.Exec(ctx, `
+				ALTER TABLE metrics.pg_sys_network_info
+				DROP CONSTRAINT pg_sys_network_info_pkey
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to drop old primary key: %w", err)
+			}
+
+			// Add new primary key including interface_name
+			_, err = conn.Exec(ctx, `
+				ALTER TABLE metrics.pg_sys_network_info
+				ADD PRIMARY KEY (connection_id, collected_at, interface_name)
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to add new primary key: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 37: Fix pg_sys_cpu_memory_by_process primary key
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     37,
+		Description: "Fix pg_sys_cpu_memory_by_process primary key to include pid",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Drop the existing primary key constraint
+			_, err := conn.Exec(ctx, `
+				ALTER TABLE metrics.pg_sys_cpu_memory_by_process
+				DROP CONSTRAINT pg_sys_cpu_memory_by_process_pkey
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to drop old primary key: %w", err)
+			}
+
+			// Add new primary key including pid
+			_, err = conn.Exec(ctx, `
+				ALTER TABLE metrics.pg_sys_cpu_memory_by_process
+				ADD PRIMARY KEY (connection_id, collected_at, pid)
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to add new primary key: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 38: Disable probes with complex schema mismatches pending investigation
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     38,
+		Description: "Disable probes with schema mismatches pending investigation",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Disable probes that have complex schema mismatches
+			// These need to be investigated against actual system_stats extension output
+			_, err := conn.Exec(ctx, `
+				UPDATE probe_configs
+				SET is_enabled = FALSE,
+					description = description || ' (DISABLED: schema mismatch needs investigation)'
+				WHERE name IN (
+					'pg_sys_cpu_info',
+					'pg_sys_memory_info',
+					'pg_sys_io_analysis_info',
+					'pg_sys_disk_info'
+				)
+				AND connection_id IS NULL
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to disable probes with schema mismatches: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 39: Fix pg_sys_disk_info schema mismatches and re-enable
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     39,
+		Description: "Fix pg_sys_disk_info schema mismatches and re-enable",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Check if columns need to be renamed
+			var hasDriveColumn bool
+			err := conn.QueryRow(ctx, `
+				SELECT EXISTS (
+					SELECT 1
+					FROM information_schema.columns
+					WHERE table_schema = 'metrics'
+					  AND table_name = 'pg_sys_disk_info'
+					  AND column_name = 'drive'
+				)
+			`).Scan(&hasDriveColumn)
+			if err != nil {
+				return fmt.Errorf("failed to check for drive column: %w", err)
+			}
+
+			if hasDriveColumn {
+				// Rename columns to match probe expectations
+				_, err = conn.Exec(ctx, `
+					ALTER TABLE metrics.pg_sys_disk_info
+					RENAME COLUMN drive TO drive_letter
+				`)
+				if err != nil {
+					return fmt.Errorf("failed to rename drive column: %w", err)
+				}
+
+				_, err = conn.Exec(ctx, `
+					ALTER TABLE metrics.pg_sys_disk_info
+					RENAME COLUMN type TO drive_type
+				`)
+				if err != nil {
+					return fmt.Errorf("failed to rename type column: %w", err)
+				}
+
+				_, err = conn.Exec(ctx, `
+					ALTER TABLE metrics.pg_sys_disk_info
+					RENAME COLUMN total_space_bytes TO total_space
+				`)
+				if err != nil {
+					return fmt.Errorf("failed to rename total_space_bytes column: %w", err)
+				}
+
+				_, err = conn.Exec(ctx, `
+					ALTER TABLE metrics.pg_sys_disk_info
+					RENAME COLUMN used_space_bytes TO used_space
+				`)
+				if err != nil {
+					return fmt.Errorf("failed to rename used_space_bytes column: %w", err)
+				}
+
+				_, err = conn.Exec(ctx, `
+					ALTER TABLE metrics.pg_sys_disk_info
+					RENAME COLUMN free_space_bytes TO free_space
+				`)
+				if err != nil {
+					return fmt.Errorf("failed to rename free_space_bytes column: %w", err)
+				}
+			}
+
+			// Check if file_system_type column exists
+			var hasFileSystemTypeColumn bool
+			err = conn.QueryRow(ctx, `
+				SELECT EXISTS (
+					SELECT 1
+					FROM information_schema.columns
+					WHERE table_schema = 'metrics'
+					  AND table_name = 'pg_sys_disk_info'
+					  AND column_name = 'file_system_type'
+				)
+			`).Scan(&hasFileSystemTypeColumn)
+			if err != nil {
+				return fmt.Errorf("failed to check for file_system_type column: %w", err)
+			}
+
+			if !hasFileSystemTypeColumn {
+				// Add missing file_system_type column
+				_, err = conn.Exec(ctx, `
+					ALTER TABLE metrics.pg_sys_disk_info
+					ADD COLUMN file_system_type TEXT
+				`)
+				if err != nil {
+					return fmt.Errorf("failed to add file_system_type column: %w", err)
+				}
+			}
+
+			// Fix primary key to include mount_point (needed for multiple disks)
+			// Drop existing primary key constraint
+			_, err = conn.Exec(ctx, `
+				ALTER TABLE metrics.pg_sys_disk_info
+				DROP CONSTRAINT pg_sys_disk_info_pkey
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to drop old primary key: %w", err)
+			}
+
+			// Add new primary key including mount_point
+			_, err = conn.Exec(ctx, `
+				ALTER TABLE metrics.pg_sys_disk_info
+				ADD PRIMARY KEY (connection_id, collected_at, mount_point)
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to add new primary key: %w", err)
+			}
+
+			// Re-enable the pg_sys_disk_info probe
+			_, err = conn.Exec(ctx, `
+				UPDATE probe_configs
+				SET is_enabled = TRUE,
+					description = 'Collects disk information via system_stats extension (requires system_stats extension)'
+				WHERE name = 'pg_sys_disk_info'
+				AND connection_id IS NULL
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to re-enable pg_sys_disk_info probe: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 40: Fix pg_sys_cpu_info schema mismatches and re-enable
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     40,
+		Description: "Fix pg_sys_cpu_info schema mismatches and re-enable",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Check if table exists
+			var tableExists bool
+			err := conn.QueryRow(ctx, `
+				SELECT EXISTS (
+					SELECT 1
+					FROM information_schema.tables
+					WHERE table_schema = 'metrics'
+					  AND table_name = 'pg_sys_cpu_info'
+				)
+			`).Scan(&tableExists)
+			if err != nil {
+				return fmt.Errorf("failed to check if table exists: %w", err)
+			}
+
+			if tableExists {
+				// Drop the existing table with CASCADE to drop partitions
+				_, err = conn.Exec(ctx, `
+					DROP TABLE IF EXISTS metrics.pg_sys_cpu_info CASCADE
+				`)
+				if err != nil {
+					return fmt.Errorf("failed to drop old pg_sys_cpu_info table: %w", err)
+				}
+			}
+
+			// Create the table with correct schema matching actual function output
+			_, err = conn.Exec(ctx, `
+				CREATE TABLE metrics.pg_sys_cpu_info (
+					connection_id INTEGER NOT NULL,
+					collected_at TIMESTAMPTZ NOT NULL,
+					vendor TEXT,
+					description TEXT,
+					model_name TEXT,
+					processor_type TEXT,
+					logical_processor INTEGER,
+					physical_processor INTEGER,
+					no_of_cores INTEGER,
+					architecture TEXT,
+					clock_speed_hz BIGINT,
+					cpu_type TEXT,
+					cpu_family TEXT,
+					byte_order TEXT,
+					l1dcache_size BIGINT,
+					l1icache_size BIGINT,
+					l2cache_size BIGINT,
+					l3cache_size BIGINT,
+					PRIMARY KEY (connection_id, collected_at)
+				) PARTITION BY RANGE (collected_at)
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to create pg_sys_cpu_info table: %w", err)
+			}
+
+			// Create indexes
+			_, err = conn.Exec(ctx, `
+				CREATE INDEX idx_pg_sys_cpu_info_collected_at
+				ON metrics.pg_sys_cpu_info (collected_at)
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to create index on pg_sys_cpu_info: %w", err)
+			}
+
+			_, err = conn.Exec(ctx, `
+				CREATE INDEX idx_pg_sys_cpu_info_connection_id
+				ON metrics.pg_sys_cpu_info (connection_id)
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to create index on pg_sys_cpu_info: %w", err)
+			}
+
+			// Re-enable the pg_sys_cpu_info probe
+			_, err = conn.Exec(ctx, `
+				UPDATE probe_configs
+				SET is_enabled = TRUE,
+					description = 'Collects CPU information via system_stats extension (requires system_stats extension)'
+				WHERE name = 'pg_sys_cpu_info'
+				AND connection_id IS NULL
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to re-enable pg_sys_cpu_info probe: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 41: Fix pg_sys_memory_info schema mismatches and re-enable
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     41,
+		Description: "Fix pg_sys_memory_info schema mismatches and re-enable",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Check if table exists
+			var tableExists bool
+			err := conn.QueryRow(ctx, `
+				SELECT EXISTS (
+					SELECT 1
+					FROM information_schema.tables
+					WHERE table_schema = 'metrics'
+					  AND table_name = 'pg_sys_memory_info'
+				)
+			`).Scan(&tableExists)
+			if err != nil {
+				return fmt.Errorf("failed to check if table exists: %w", err)
+			}
+
+			if tableExists {
+				// Drop the existing table with CASCADE to drop partitions
+				_, err = conn.Exec(ctx, `
+					DROP TABLE IF EXISTS metrics.pg_sys_memory_info CASCADE
+				`)
+				if err != nil {
+					return fmt.Errorf("failed to drop old pg_sys_memory_info table: %w", err)
+				}
+			}
+
+			// Create the table with correct schema matching actual function output
+			_, err = conn.Exec(ctx, `
+				CREATE TABLE metrics.pg_sys_memory_info (
+					connection_id INTEGER NOT NULL,
+					collected_at TIMESTAMPTZ NOT NULL,
+					total_memory BIGINT,
+					used_memory BIGINT,
+					free_memory BIGINT,
+					swap_total BIGINT,
+					swap_used BIGINT,
+					swap_free BIGINT,
+					cache_total BIGINT,
+					kernel_total BIGINT,
+					kernel_paged BIGINT,
+					kernel_non_paged BIGINT,
+					total_page_file BIGINT,
+					avail_page_file BIGINT,
+					PRIMARY KEY (connection_id, collected_at)
+				) PARTITION BY RANGE (collected_at)
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to create pg_sys_memory_info table: %w", err)
+			}
+
+			// Create indexes
+			_, err = conn.Exec(ctx, `
+				CREATE INDEX idx_pg_sys_memory_info_collected_at
+				ON metrics.pg_sys_memory_info (collected_at)
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to create index on pg_sys_memory_info: %w", err)
+			}
+
+			_, err = conn.Exec(ctx, `
+				CREATE INDEX idx_pg_sys_memory_info_connection_id
+				ON metrics.pg_sys_memory_info (connection_id)
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to create index on pg_sys_memory_info: %w", err)
+			}
+
+			// Re-enable the pg_sys_memory_info probe
+			_, err = conn.Exec(ctx, `
+				UPDATE probe_configs
+				SET is_enabled = TRUE,
+					description = 'Collects memory information via system_stats extension (requires system_stats extension)'
+				WHERE name = 'pg_sys_memory_info'
+				AND connection_id IS NULL
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to re-enable pg_sys_memory_info probe: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 42: Fix pg_sys_io_analysis_info schema mismatches and re-enable
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     42,
+		Description: "Fix pg_sys_io_analysis_info schema mismatches and re-enable",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Check if table exists
+			var tableExists bool
+			err := conn.QueryRow(ctx, `
+				SELECT EXISTS (
+					SELECT 1
+					FROM information_schema.tables
+					WHERE table_schema = 'metrics'
+					  AND table_name = 'pg_sys_io_analysis_info'
+				)
+			`).Scan(&tableExists)
+			if err != nil {
+				return fmt.Errorf("failed to check if table exists: %w", err)
+			}
+
+			if tableExists {
+				// Drop the existing table with CASCADE to drop partitions
+				_, err = conn.Exec(ctx, `
+					DROP TABLE IF EXISTS metrics.pg_sys_io_analysis_info CASCADE
+				`)
+				if err != nil {
+					return fmt.Errorf("failed to drop old pg_sys_io_analysis_info table: %w", err)
+				}
+			}
+
+			// Create the table with correct schema matching actual function output
+			_, err = conn.Exec(ctx, `
+				CREATE TABLE metrics.pg_sys_io_analysis_info (
+					connection_id INTEGER NOT NULL,
+					collected_at TIMESTAMPTZ NOT NULL,
+					device_name TEXT NOT NULL,
+					total_reads BIGINT,
+					total_writes BIGINT,
+					read_bytes BIGINT,
+					write_bytes BIGINT,
+					read_time_ms BIGINT,
+					write_time_ms BIGINT,
+					PRIMARY KEY (connection_id, collected_at, device_name)
+				) PARTITION BY RANGE (collected_at)
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to create pg_sys_io_analysis_info table: %w", err)
+			}
+
+			// Create indexes
+			_, err = conn.Exec(ctx, `
+				CREATE INDEX idx_pg_sys_io_analysis_info_collected_at
+				ON metrics.pg_sys_io_analysis_info (collected_at)
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to create index on pg_sys_io_analysis_info: %w", err)
+			}
+
+			_, err = conn.Exec(ctx, `
+				CREATE INDEX idx_pg_sys_io_analysis_info_connection_id
+				ON metrics.pg_sys_io_analysis_info (connection_id)
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to create index on pg_sys_io_analysis_info: %w", err)
+			}
+
+			// Re-enable the pg_sys_io_analysis_info probe
+			_, err = conn.Exec(ctx, `
+				UPDATE probe_configs
+				SET is_enabled = TRUE,
+					description = 'Collects I/O analysis information via system_stats extension (requires system_stats extension)'
+				WHERE name = 'pg_sys_io_analysis_info'
+				AND connection_id IS NULL
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to re-enable pg_sys_io_analysis_info probe: %w", err)
 			}
 
 			return nil
@@ -2892,7 +4203,7 @@ func (sm *SchemaManager) GetMigrationStatus(conn *pgxpool.Conn) ([]MigrationStat
 		return nil, fmt.Errorf("failed to query applied migrations: %w", err)
 	}
 
-	if rows != nil && !tableNotExist {
+	if !tableNotExist {
 		defer rows.Close()
 
 		for rows.Next() {

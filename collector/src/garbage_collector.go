@@ -11,8 +11,8 @@
 package main
 
 import (
-    "github.com/pgedge/ai-workbench/collector/src/probes"
-    "github.com/pgedge/ai-workbench/collector/src/database"
+	"github.com/pgedge/ai-workbench/collector/src/database"
+	"github.com/pgedge/ai-workbench/collector/src/probes"
 
 	"context"
 	"log"

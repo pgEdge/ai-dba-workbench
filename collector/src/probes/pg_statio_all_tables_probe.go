@@ -11,10 +11,10 @@
 package probes
 
 import (
+	"context"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/collector/src/utils"
-	"context"
-	
+
 	"fmt"
 	"time"
 )
@@ -67,7 +67,7 @@ func (p *PgStatioAllTablesProbe) GetQuery() string {
 }
 
 // Execute runs the probe against a monitored connection
-func (p *PgStatioAllTablesProbe) Execute(ctx context.Context, monitoredConn *pgxpool.Conn) ([]map[string]interface{}, error) {
+func (p *PgStatioAllTablesProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn) ([]map[string]interface{}, error) {
 	rows, err := monitoredConn.Query(ctx, p.GetQuery())
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute query: %w", err)

@@ -127,10 +127,10 @@ func TestConfigValidate(t *testing.T) {
 		{
 			name: "invalid port",
 			config: &Config{
-				PgHost:             "localhost",
-				PgDatabase:         "testdb",
-				PgUsername:         "testuser",
-				PgPort:             -1,
+				PgHost:                      "localhost",
+				PgDatabase:                  "testdb",
+				PgUsername:                  "testuser",
+				PgPort:                      -1,
 				DatastorePoolMaxConnections: 10,
 			},
 			wantErr: true,
@@ -138,10 +138,10 @@ func TestConfigValidate(t *testing.T) {
 		{
 			name: "invalid pool_max_connections",
 			config: &Config{
-				PgHost:             "localhost",
-				PgDatabase:         "testdb",
-				PgUsername:         "testuser",
-				PgPort:             5432,
+				PgHost:                      "localhost",
+				PgDatabase:                  "testdb",
+				PgUsername:                  "testuser",
+				PgPort:                      5432,
 				DatastorePoolMaxConnections: 0,
 			},
 			wantErr: true,
@@ -149,10 +149,10 @@ func TestConfigValidate(t *testing.T) {
 		{
 			name: "invalid pool_max_idle_seconds",
 			config: &Config{
-				PgHost:             "localhost",
-				PgDatabase:         "testdb",
-				PgUsername:         "testuser",
-				PgPort:             5432,
+				PgHost:                      "localhost",
+				PgDatabase:                  "testdb",
+				PgUsername:                  "testuser",
+				PgPort:                      5432,
 				DatastorePoolMaxConnections: 10,
 				DatastorePoolMaxIdleSeconds: -1,
 			},

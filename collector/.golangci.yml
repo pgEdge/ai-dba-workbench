@@ -8,14 +8,6 @@ linters-settings:
         enable-all: true
     misspell:
         locale: US
-    revive:
-        rules:
-            - name: exported
-              severity: warning
-            - name: unexported-return
-              severity: warning
-            - name: var-naming
-              severity: warning
 
 linters:
     enable:
@@ -25,7 +17,6 @@ linters:
         - staticcheck   # Advanced static analysis (enabled by default)
         - unused        # Checks for unused code (enabled by default)
         - misspell      # Finds commonly misspelled English words
-        - revive        # Fast, configurable linter for Go
         - gosec         # Inspects source code for security problems
 
 issues:

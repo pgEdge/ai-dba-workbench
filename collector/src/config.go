@@ -272,16 +272,16 @@ func (c *Config) Validate() error {
 }
 
 // Getter methods to implement database.Config and scheduler.Config interfaces
-func (c *Config) GetPgHost() string        { return c.PgHost }
-func (c *Config) GetPgHostAddr() string    { return c.PgHostAddr }
-func (c *Config) GetPgDatabase() string    { return c.PgDatabase }
-func (c *Config) GetPgUsername() string    { return c.PgUsername }
-func (c *Config) GetPgPassword() string    { return c.PgPassword }
-func (c *Config) GetPgPort() int           { return c.PgPort }
-func (c *Config) GetPgSSLMode() string     { return c.PgSSLMode }
-func (c *Config) GetPgSSLCert() string     { return c.PgSSLCert }
-func (c *Config) GetPgSSLKey() string      { return c.PgSSLKey }
-func (c *Config) GetPgSSLRootCert() string { return c.PgSSLRootCert }
+func (c *Config) GetPgHost() string                   { return c.PgHost }
+func (c *Config) GetPgHostAddr() string               { return c.PgHostAddr }
+func (c *Config) GetPgDatabase() string               { return c.PgDatabase }
+func (c *Config) GetPgUsername() string               { return c.PgUsername }
+func (c *Config) GetPgPassword() string               { return c.PgPassword }
+func (c *Config) GetPgPort() int                      { return c.PgPort }
+func (c *Config) GetPgSSLMode() string                { return c.PgSSLMode }
+func (c *Config) GetPgSSLCert() string                { return c.PgSSLCert }
+func (c *Config) GetPgSSLKey() string                 { return c.PgSSLKey }
+func (c *Config) GetPgSSLRootCert() string            { return c.PgSSLRootCert }
 func (c *Config) GetDatastorePoolMaxConnections() int { return c.DatastorePoolMaxConnections }
 func (c *Config) GetDatastorePoolMaxIdleSeconds() int { return c.DatastorePoolMaxIdleSeconds }
 func (c *Config) GetDatastorePoolMaxWaitSeconds() int { return c.DatastorePoolMaxWaitSeconds }

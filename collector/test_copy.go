@@ -1,3 +1,14 @@
+/*-------------------------------------------------------------------------
+ *
+ * pgEdge AI Workbench
+ *
+ * Copyright (c) 2025, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-------------------------------------------------------------------------
+ */
+
+// Package main provides a test utility for PostgreSQL COPY functionality
 package main
 
 import (
@@ -16,7 +27,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		_ = db.Close()
+	}()
 
 	if err := db.Ping(); err != nil {
 		log.Fatal(err)
@@ -46,7 +59,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer txn.Rollback()
+	defer func() {
+		_ = txn.Rollback()
+	}()
 
 	//Test 1: Try with a temporary table (non-partitioned)
 	_, err = txn.Exec("CREATE TEMP TABLE test_copy_table (connection_id int, collected_at timestamp, datid oid, datname text)")
@@ -60,7 +75,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("PrepareContext failed: %v", err)
 	}
-	defer stmt.Close()
+	defer func() {
+		_ = stmt.Close()
+	}()
 
 	fmt.Println("CopyIn prepared successfully!")
 

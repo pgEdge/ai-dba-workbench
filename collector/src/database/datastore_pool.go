@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/lib/pq"
+	_ "github.com/lib/pq" // PostgreSQL driver for database/sql
 )
 
 // PooledConnection represents a connection in the pool with metadata
@@ -111,10 +111,10 @@ func (p *ConnectionPool) GetConnection(ctx context.Context) (*sql.DB, error) {
 			// Remove the dead connection from the pool
 			p.mu.Lock()
 			p.removeConnection(candidateConn)
-			canCreateNew = len(p.connections) < p.maxConnections
 			p.mu.Unlock()
 
 			// Continue to try creating a new connection or finding another available one
+			// canCreateNew will be re-evaluated at the top of the loop
 			continue
 		}
 

@@ -11,10 +11,10 @@
 package probes
 
 import (
+	"context"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/collector/src/utils"
-	"context"
-	
+
 	"fmt"
 	"time"
 )
@@ -87,7 +87,7 @@ func (p *PgStatSubscriptionProbe) checkHasWorkerType(ctx context.Context, conn *
 }
 
 // Execute runs the probe against a monitored connection
-func (p *PgStatSubscriptionProbe) Execute(ctx context.Context, monitoredConn *pgxpool.Conn) ([]map[string]interface{}, error) {
+func (p *PgStatSubscriptionProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn) ([]map[string]interface{}, error) {
 	// Check if we have worker_type column (PG 16+)
 	hasWorkerType, err := p.checkHasWorkerType(ctx, monitoredConn)
 	if err != nil {

@@ -1,6 +1,6 @@
 module github.com/pgEdge/ai-workbench/server
 
-go 1.25.3
+go 1.24.0
 
 require (
 	github.com/jackc/pgx/v5 v5.7.6

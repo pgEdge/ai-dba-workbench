@@ -7,7 +7,7 @@ quickly.
 
 Before you begin, ensure you have:
 
-- Go 1.21 or later installed
+- Go 1.23 or later installed
 - PostgreSQL 12 or later for the datastore
 - Network access to the PostgreSQL servers you want to monitor
 - Basic understanding of PostgreSQL administration

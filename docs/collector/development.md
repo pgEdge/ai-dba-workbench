@@ -5,7 +5,7 @@ Collector.
 
 ## Prerequisites
 
-- Go 1.21 or later
+- Go 1.23 or later
 - PostgreSQL 12 or later (for testing)
 - Git
 - Make (optional, for build automation)

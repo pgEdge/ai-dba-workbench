@@ -21,7 +21,7 @@ The collector is a standalone Go application that:
 
 ### Prerequisites
 
-- Go 1.21 or later
+- Go 1.23 or later
 - PostgreSQL 12 or later (for the datastore)
 - Network access to monitored PostgreSQL servers
 

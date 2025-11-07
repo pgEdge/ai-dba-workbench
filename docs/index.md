@@ -78,7 +78,7 @@ Each component can be deployed and operated independently:
 ### System Requirements
 
 - PostgreSQL 12 or higher
-- Go 1.21 or higher (for building from source)
+- Go 1.23 or higher (for building from source)
 - Network connectivity between components
 - Appropriate database credentials and permissions
 

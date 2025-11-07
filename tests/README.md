@@ -16,7 +16,7 @@ The integration tests:
 
 ## Prerequisites
 
-- Go 1.21 or later
+- Go 1.23 or later
 - PostgreSQL 12 or later (running and accessible)
 - All AI Workbench components built (collector, server, CLI)
 

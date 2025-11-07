@@ -13,12 +13,13 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"testing"
 )
 
 // TestNewHandler tests handler creation
 func TestNewHandler(t *testing.T) {
-	handler := NewHandler("TestServer", "1.0.0", nil)
+	handler := NewHandler("TestServer", "1.0.0", nil, nil)
 
 	if handler == nil {
 		t.Fatal("NewHandler returned nil")
@@ -36,7 +37,7 @@ func TestNewHandler(t *testing.T) {
 
 // TestHandleInitialize tests the initialize method
 func TestHandleInitialize(t *testing.T) {
-	handler := NewHandler("TestServer", "1.0.0", nil)
+	handler := NewHandler("TestServer", "1.0.0", nil, nil)
 
 	reqData := []byte(`{
         "jsonrpc": "2.0",
@@ -91,7 +92,7 @@ func TestHandleInitialize(t *testing.T) {
 
 // TestHandlePing tests the ping method
 func TestHandlePing(t *testing.T) {
-	handler := NewHandler("TestServer", "1.0.0", nil)
+	handler := NewHandler("TestServer", "1.0.0", nil, nil)
 
 	reqData := []byte(`{
         "jsonrpc": "2.0",
@@ -128,7 +129,7 @@ func TestHandlePing(t *testing.T) {
 
 // TestHandleInvalidJSON tests handling of invalid JSON
 func TestHandleInvalidJSON(t *testing.T) {
-	handler := NewHandler("TestServer", "1.0.0", nil)
+	handler := NewHandler("TestServer", "1.0.0", nil, nil)
 
 	reqData := []byte(`{invalid json}`)
 
@@ -153,7 +154,7 @@ func TestHandleInvalidJSON(t *testing.T) {
 
 // TestHandleInvalidJSONRPCVersion tests handling of invalid JSON-RPC version
 func TestHandleInvalidJSONRPCVersion(t *testing.T) {
-	handler := NewHandler("TestServer", "1.0.0", nil)
+	handler := NewHandler("TestServer", "1.0.0", nil, nil)
 
 	reqData := []byte(`{
         "jsonrpc": "1.0",
@@ -182,7 +183,7 @@ func TestHandleInvalidJSONRPCVersion(t *testing.T) {
 
 // TestHandleUnknownMethod tests handling of unknown methods
 func TestHandleUnknownMethod(t *testing.T) {
-	handler := NewHandler("TestServer", "1.0.0", nil)
+	handler := NewHandler("TestServer", "1.0.0", nil, nil)
 
 	reqData := []byte(`{
         "jsonrpc": "2.0",
@@ -235,7 +236,7 @@ func TestFormatResponse(t *testing.T) {
 
 // TestHandleRequestSequence tests a sequence of requests
 func TestHandleRequestSequence(t *testing.T) {
-	handler := NewHandler("TestServer", "1.0.0", nil)
+	handler := NewHandler("TestServer", "1.0.0", nil, nil)
 
 	// First, send initialize
 	initReq := []byte(`{
@@ -299,7 +300,7 @@ func TestHandleRequestSequence(t *testing.T) {
 
 // TestHandleListResources tests the resources/list method
 func TestHandleListResources(t *testing.T) {
-	handler := NewHandler("TestServer", "1.0.0", nil)
+	handler := NewHandler("TestServer", "1.0.0", nil, nil)
 
 	reqData := []byte(`{
         "jsonrpc": "2.0",
@@ -371,7 +372,7 @@ func TestHandleListResources(t *testing.T) {
 
 // TestHandleReadResourceInvalidURI tests resources/read with invalid URI
 func TestHandleReadResourceInvalidURI(t *testing.T) {
-	handler := NewHandler("TestServer", "1.0.0", nil)
+	handler := NewHandler("TestServer", "1.0.0", nil, nil)
 
 	reqData := []byte(`{
         "jsonrpc": "2.0",
@@ -403,7 +404,7 @@ func TestHandleReadResourceInvalidURI(t *testing.T) {
 
 // TestHandleReadResourceMissingParams tests resources/read without params
 func TestHandleReadResourceMissingParams(t *testing.T) {
-	handler := NewHandler("TestServer", "1.0.0", nil)
+	handler := NewHandler("TestServer", "1.0.0", nil, nil)
 
 	reqData := []byte(`{
         "jsonrpc": "2.0",
@@ -432,7 +433,7 @@ func TestHandleReadResourceMissingParams(t *testing.T) {
 
 // TestHandleListTools tests the tools/list method
 func TestHandleListTools(t *testing.T) {
-	handler := NewHandler("TestServer", "1.0.0", nil)
+	handler := NewHandler("TestServer", "1.0.0", nil, nil)
 
 	reqData := []byte(`{
         "jsonrpc": "2.0",
@@ -464,7 +465,7 @@ func TestHandleListTools(t *testing.T) {
 		t.Fatalf("tools is not an array, got %T", result["tools"])
 	}
 
-	// Should have 7 tools
+	// Should have 10 tools
 	expectedTools := []string{
 		"authenticate_user",
 		"create_user",
@@ -473,6 +474,9 @@ func TestHandleListTools(t *testing.T) {
 		"create_service_token",
 		"update_service_token",
 		"delete_service_token",
+		"create_user_token",
+		"list_user_tokens",
+		"delete_user_token",
 	}
 
 	if len(tools) != len(expectedTools) {
@@ -522,7 +526,7 @@ func TestHandleListTools(t *testing.T) {
 
 // TestHandleCallToolUnknown tests calling an unknown tool
 func TestHandleCallToolUnknown(t *testing.T) {
-	handler := NewHandler("TestServer", "1.0.0", nil)
+	handler := NewHandler("TestServer", "1.0.0", nil, nil)
 
 	reqData := []byte(`{
         "jsonrpc": "2.0",
@@ -555,7 +559,7 @@ func TestHandleCallToolUnknown(t *testing.T) {
 
 // TestHandleCallToolMissingParams tests calling a tool without params
 func TestHandleCallToolMissingParams(t *testing.T) {
-	handler := NewHandler("TestServer", "1.0.0", nil)
+	handler := NewHandler("TestServer", "1.0.0", nil, nil)
 
 	reqData := []byte(`{
         "jsonrpc": "2.0",
@@ -584,7 +588,7 @@ func TestHandleCallToolMissingParams(t *testing.T) {
 
 // TestHandleListPrompts tests the prompts/list method
 func TestHandleListPrompts(t *testing.T) {
-	handler := NewHandler("TestServer", "1.0.0", nil)
+	handler := NewHandler("TestServer", "1.0.0", nil, nil)
 
 	reqData := []byte(`{
         "jsonrpc": "2.0",
@@ -635,7 +639,7 @@ func TestHandleListPrompts(t *testing.T) {
 
 // TestToolInputSchemaValidation tests that tool schemas are properly defined
 func TestToolInputSchemaValidation(t *testing.T) {
-	handler := NewHandler("TestServer", "1.0.0", nil)
+	handler := NewHandler("TestServer", "1.0.0", nil, nil)
 
 	reqData := []byte(`{
         "jsonrpc": "2.0",
@@ -805,7 +809,7 @@ func TestSuperuserPrivilegeRequired(t *testing.T) {
 
 	// Test 1: nil userInfo should be rejected
 	t.Run("NilUserInfo", func(t *testing.T) {
-		handler := NewHandler("TestServer", "1.0.0", nil)
+		handler := NewHandler("TestServer", "1.0.0", nil, nil)
 		handler.userInfo = nil
 
 		for _, tc := range testCases {
@@ -826,7 +830,7 @@ func TestSuperuserPrivilegeRequired(t *testing.T) {
 
 	// Test 2: Non-superuser should be rejected
 	t.Run("NonSuperuser", func(t *testing.T) {
-		handler := NewHandler("TestServer", "1.0.0", nil)
+		handler := NewHandler("TestServer", "1.0.0", nil, nil)
 		handler.userInfo = &UserInfo{
 			IsAuthenticated: true,
 			IsSuperuser:     false, // Not a superuser
@@ -852,7 +856,7 @@ func TestSuperuserPrivilegeRequired(t *testing.T) {
 
 	// Test 3: Non-superuser service token should be rejected
 	t.Run("NonSuperuserServiceToken", func(t *testing.T) {
-		handler := NewHandler("TestServer", "1.0.0", nil)
+		handler := NewHandler("TestServer", "1.0.0", nil, nil)
 		handler.userInfo = &UserInfo{
 			IsAuthenticated: true,
 			IsSuperuser:     false, // Not a superuser
@@ -920,7 +924,243 @@ func (h *Handler) callToolByName(name string, args map[string]interface{}) (
 		return h.handleUpdateServiceToken(args)
 	case "delete_service_token":
 		return h.handleDeleteServiceToken(args)
+	case "create_user_token":
+		return h.handleCreateUserToken(args)
+	case "list_user_tokens":
+		return h.handleListUserTokens(args)
+	case "delete_user_token":
+		return h.handleDeleteUserToken(args)
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)
+	}
+}
+
+// TestUserTokenToolsAuthorization tests authorization for user token management tools
+func TestUserTokenToolsAuthorization(t *testing.T) {
+	// Skip database-dependent tests if SKIP_DB_TESTS is set
+	if os.Getenv("SKIP_DB_TESTS") != "" {
+		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
+	}
+
+	t.Run("CreateUserToken_SelfAccess", func(t *testing.T) {
+		handler := NewHandler("TestServer", "1.0.0", nil, nil)
+		handler.userInfo = &UserInfo{
+			IsAuthenticated: true,
+			IsSuperuser:     false,
+			Username:        "testuser",
+			IsServiceToken:  false,
+		}
+
+		args := map[string]interface{}{
+			"username":     "testuser",
+			"lifetimeDays": float64(30),
+		}
+
+		// Should succeed - user creating their own token
+		// Note: Will fail in practice because no dbPool, but we're testing authorization
+		_, err := handler.handleCreateUserToken(args)
+		// We expect it to fail on database access, not authorization
+		if err != nil && err.Error() == "permission denied: can only create tokens for your own account" {
+			t.Error("User should be able to create their own tokens")
+		}
+	})
+
+	t.Run("CreateUserToken_OtherUserDenied", func(t *testing.T) {
+		handler := NewHandler("TestServer", "1.0.0", nil, nil)
+		handler.userInfo = &UserInfo{
+			IsAuthenticated: true,
+			IsSuperuser:     false,
+			Username:        "testuser",
+			IsServiceToken:  false,
+		}
+
+		args := map[string]interface{}{
+			"username":     "otheruser",
+			"lifetimeDays": float64(30),
+		}
+
+		_, err := handler.handleCreateUserToken(args)
+		if err == nil {
+			t.Error("Expected permission denied error")
+		}
+		if err.Error() != "permission denied: can only create tokens for your own account" {
+			t.Errorf("Expected permission denied, got: %v", err)
+		}
+	})
+
+	t.Run("CreateUserToken_SuperuserAllowed", func(t *testing.T) {
+		handler := NewHandler("TestServer", "1.0.0", nil, nil)
+		handler.userInfo = &UserInfo{
+			IsAuthenticated: true,
+			IsSuperuser:     true,
+			Username:        "admin",
+			IsServiceToken:  false,
+		}
+
+		args := map[string]interface{}{
+			"username":     "otheruser",
+			"lifetimeDays": float64(30),
+		}
+
+		// Should not fail on authorization (will fail on database)
+		_, err := handler.handleCreateUserToken(args)
+		if err != nil && err.Error() == "permission denied: can only create tokens for your own account" {
+			t.Error("Superuser should be able to create tokens for any user")
+		}
+	})
+
+	t.Run("CreateUserToken_UnauthenticatedDenied", func(t *testing.T) {
+		handler := NewHandler("TestServer", "1.0.0", nil, nil)
+		handler.userInfo = nil
+
+		args := map[string]interface{}{
+			"username":     "testuser",
+			"lifetimeDays": float64(30),
+		}
+
+		_, err := handler.handleCreateUserToken(args)
+		if err == nil {
+			t.Error("Expected authentication required error")
+		}
+		if err.Error() != "authentication required" {
+			t.Errorf("Expected authentication required, got: %v", err)
+		}
+	})
+
+	t.Run("ListUserTokens_SelfAccess", func(t *testing.T) {
+		handler := NewHandler("TestServer", "1.0.0", nil, nil)
+		handler.userInfo = &UserInfo{
+			IsAuthenticated: true,
+			IsSuperuser:     false,
+			Username:        "testuser",
+			IsServiceToken:  false,
+		}
+
+		args := map[string]interface{}{
+			"username": "testuser",
+		}
+
+		_, err := handler.handleListUserTokens(args)
+		if err != nil && err.Error() == "permission denied: can only list your own tokens" {
+			t.Error("User should be able to list their own tokens")
+		}
+	})
+
+	t.Run("ListUserTokens_OtherUserDenied", func(t *testing.T) {
+		handler := NewHandler("TestServer", "1.0.0", nil, nil)
+		handler.userInfo = &UserInfo{
+			IsAuthenticated: true,
+			IsSuperuser:     false,
+			Username:        "testuser",
+			IsServiceToken:  false,
+		}
+
+		args := map[string]interface{}{
+			"username": "otheruser",
+		}
+
+		_, err := handler.handleListUserTokens(args)
+		if err == nil {
+			t.Error("Expected permission denied error")
+		}
+		if err.Error() != "permission denied: can only list your own tokens" {
+			t.Errorf("Expected permission denied, got: %v", err)
+		}
+	})
+
+	t.Run("DeleteUserToken_SelfAccess", func(t *testing.T) {
+		handler := NewHandler("TestServer", "1.0.0", nil, nil)
+		handler.userInfo = &UserInfo{
+			IsAuthenticated: true,
+			IsSuperuser:     false,
+			Username:        "testuser",
+			IsServiceToken:  false,
+		}
+
+		args := map[string]interface{}{
+			"username": "testuser",
+			"tokenId":  float64(123),
+		}
+
+		_, err := handler.handleDeleteUserToken(args)
+		if err != nil && err.Error() == "permission denied: can only delete your own tokens" {
+			t.Error("User should be able to delete their own tokens")
+		}
+	})
+
+	t.Run("DeleteUserToken_OtherUserDenied", func(t *testing.T) {
+		handler := NewHandler("TestServer", "1.0.0", nil, nil)
+		handler.userInfo = &UserInfo{
+			IsAuthenticated: true,
+			IsSuperuser:     false,
+			Username:        "testuser",
+			IsServiceToken:  false,
+		}
+
+		args := map[string]interface{}{
+			"username": "otheruser",
+			"tokenId":  float64(123),
+		}
+
+		_, err := handler.handleDeleteUserToken(args)
+		if err == nil {
+			t.Error("Expected permission denied error")
+		}
+		if err.Error() != "permission denied: can only delete your own tokens" {
+			t.Errorf("Expected permission denied, got: %v", err)
+		}
+	})
+}
+
+// TestHandleListTools_IncludesUserTokenTools tests that user token tools are listed
+func TestHandleListTools_IncludesUserTokenTools(t *testing.T) {
+	handler := NewHandler("TestServer", "1.0.0", nil, nil)
+
+	reqData := []byte(`{
+        "jsonrpc": "2.0",
+        "id": "test-1",
+        "method": "tools/list"
+    }`)
+
+	resp, err := handler.HandleRequest(reqData, "")
+	if err != nil {
+		t.Fatalf("HandleRequest failed: %v", err)
+	}
+
+	if resp.Error != nil {
+		t.Fatalf("Expected no error, got: %v", resp.Error)
+	}
+
+	result, ok := resp.Result.(map[string]interface{})
+	if !ok {
+		t.Fatalf("Result is not a map")
+	}
+
+	tools, ok := result["tools"].([]map[string]interface{})
+	if !ok {
+		t.Fatalf("Tools is not an array")
+	}
+
+	// Check that user token tools are present
+	expectedTools := map[string]bool{
+		"create_user_token": false,
+		"list_user_tokens":  false,
+		"delete_user_token": false,
+	}
+
+	for _, tool := range tools {
+		name, ok := tool["name"].(string)
+		if !ok {
+			continue
+		}
+		if _, exists := expectedTools[name]; exists {
+			expectedTools[name] = true
+		}
+	}
+
+	for toolName, found := range expectedTools {
+		if !found {
+			t.Errorf("Expected tool '%s' not found in tools list", toolName)
+		}
 	}
 }

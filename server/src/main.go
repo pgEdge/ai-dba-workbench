@@ -120,7 +120,7 @@ func main() {
 	logger.Info("Database connection established")
 
 	// Create MCP handler
-	mcpHandler := mcp.NewHandler(serverName, serverVersion, dbPool)
+	mcpHandler := mcp.NewHandler(serverName, serverVersion, dbPool, cfg)
 
 	// Create server
 	srv := server.New(cfg, mcpHandler)

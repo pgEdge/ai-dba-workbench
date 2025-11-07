@@ -1793,6 +1793,71 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration 5: Enhance user_tokens table for user-owned API tokens
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     5,
+		Description: "Enhance user_tokens table to support user-owned API tokens with optional expiry",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Drop the check constraint that requires expires_at to be in the future
+			_, err := conn.Exec(ctx, `
+			ALTER TABLE user_tokens
+				DROP CONSTRAINT IF EXISTS chk_expires_at_future;
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to drop chk_expires_at_future constraint: %w", err)
+			}
+
+			// Make expires_at nullable to support indefinite lifetime
+			_, err = conn.Exec(ctx, `
+			ALTER TABLE user_tokens
+				ALTER COLUMN expires_at DROP NOT NULL;
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to make expires_at nullable: %w", err)
+			}
+
+			// Add name field for token description
+			_, err = conn.Exec(ctx, `
+			ALTER TABLE user_tokens
+				ADD COLUMN IF NOT EXISTS name TEXT;
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to add name column: %w", err)
+			}
+
+			// Add note field for additional token information
+			_, err = conn.Exec(ctx, `
+			ALTER TABLE user_tokens
+				ADD COLUMN IF NOT EXISTS note TEXT;
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to add note column: %w", err)
+			}
+
+			// Note: Foreign key constraint fk_user_tokens_user_id with CASCADE delete
+			// already exists from Migration 1, no need to add it again
+
+			// Update table and column comments
+			_, err = conn.Exec(ctx, `
+			COMMENT ON TABLE user_tokens IS
+				'API authentication tokens owned by individual users for command-line and automation use';
+			COMMENT ON COLUMN user_tokens.name IS
+				'Optional name identifying the purpose of this token';
+			COMMENT ON COLUMN user_tokens.note IS
+				'Optional note with additional information about the token';
+			COMMENT ON COLUMN user_tokens.expires_at IS
+				'Timestamp when the token expires (NULL for indefinite lifetime)';
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to update comments: %w", err)
+			}
+
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations

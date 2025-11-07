@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgEdge/ai-workbench/server/src/config"
 	"github.com/pgEdge/ai-workbench/server/src/logger"
 	"github.com/pgEdge/ai-workbench/server/src/usermgmt"
 )
@@ -27,16 +28,18 @@ type Handler struct {
 	serverVersion string
 	initialized   bool
 	dbPool        *pgxpool.Pool
+	config        *config.Config
 	userInfo      *UserInfo
 }
 
 // NewHandler creates a new MCP handler
-func NewHandler(serverName, serverVersion string, dbPool *pgxpool.Pool) *Handler {
+func NewHandler(serverName, serverVersion string, dbPool *pgxpool.Pool, cfg *config.Config) *Handler {
 	return &Handler{
 		serverName:    serverName,
 		serverVersion: serverVersion,
 		initialized:   false,
 		dbPool:        dbPool,
+		config:        cfg,
 	}
 }
 
@@ -469,6 +472,64 @@ func (h *Handler) handleListTools(req Request) (*Response, error) {
 				"required": []string{"name"},
 			},
 		},
+		{
+			"name":        "create_user_token",
+			"description": "Create a new user token for command-line API access",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"username": map[string]interface{}{
+						"type":        "string",
+						"description": "Username who will own this token",
+					},
+					"name": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional name for the token",
+					},
+					"lifetimeDays": map[string]interface{}{
+						"type":        "integer",
+						"description": "Token lifetime in days (0 = indefinite, subject to server maximum)",
+					},
+					"note": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional note about the token",
+					},
+				},
+				"required": []string{"username", "lifetimeDays"},
+			},
+		},
+		{
+			"name":        "list_user_tokens",
+			"description": "List all tokens for a specific user",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"username": map[string]interface{}{
+						"type":        "string",
+						"description": "Username whose tokens to list",
+					},
+				},
+				"required": []string{"username"},
+			},
+		},
+		{
+			"name":        "delete_user_token",
+			"description": "Delete a user token by ID",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"username": map[string]interface{}{
+						"type":        "string",
+						"description": "Username who owns the token",
+					},
+					"tokenId": map[string]interface{}{
+						"type":        "integer",
+						"description": "ID of the token to delete",
+					},
+				},
+				"required": []string{"username", "tokenId"},
+			},
+		},
 	}
 
 	result := map[string]interface{}{
@@ -526,6 +587,12 @@ func (h *Handler) handleCallTool(req Request) (*Response, error) {
 		result, err = h.handleUpdateServiceToken(params.Arguments)
 	case "delete_service_token":
 		result, err = h.handleDeleteServiceToken(params.Arguments)
+	case "create_user_token":
+		result, err = h.handleCreateUserToken(params.Arguments)
+	case "list_user_tokens":
+		result, err = h.handleListUserTokens(params.Arguments)
+	case "delete_user_token":
+		result, err = h.handleDeleteUserToken(params.Arguments)
 	default:
 		logger.Errorf("Unknown tool: %s", params.Name)
 		return NewErrorResponse(req.ID, MethodNotFound, "Tool not found",
@@ -777,6 +844,132 @@ func (h *Handler) handleDeleteServiceToken(args map[string]interface{}) (interfa
 	}, nil
 }
 
+// handleCreateUserToken executes the create_user_token tool
+func (h *Handler) handleCreateUserToken(args map[string]interface{}) (interface{},
+	error) {
+	// Check authentication
+	if h.userInfo == nil || !h.userInfo.IsAuthenticated {
+		return nil, fmt.Errorf("authentication required")
+	}
+
+	username, _ := args["username"].(string) //nolint:errcheck // Required argument, empty string handled by validation
+	lifetimeDays := 0
+	if val, ok := args["lifetimeDays"].(float64); ok {
+		lifetimeDays = int(val)
+	}
+
+	// Check authorization: users can only create tokens for themselves unless they're superuser
+	if h.userInfo.Username != username && !h.userInfo.IsSuperuser {
+		return nil, fmt.Errorf("permission denied: can only create tokens for your own account")
+	}
+
+	var name *string
+	var note *string
+
+	if val, ok := args["name"].(string); ok && val != "" {
+		name = &val
+	}
+	if val, ok := args["note"].(string); ok && val != "" {
+		note = &val
+	}
+
+	// Get max lifetime from config
+	maxLifetimeDays := 0
+	if h.config != nil {
+		maxLifetimeDays = h.config.GetMaxUserTokenLifetimeDays()
+	}
+
+	message, token, err := usermgmt.CreateUserTokenNonInteractive(h.dbPool,
+		username, name, lifetimeDays, maxLifetimeDays, note)
+	if err != nil {
+		return nil, err
+	}
+
+	fullMessage := fmt.Sprintf("%s\nToken: %s\nIMPORTANT: Save this token "+
+		"now. You won't be able to see it again.", message, token)
+
+	return map[string]interface{}{
+		"content": []map[string]interface{}{
+			{
+				"type": "text",
+				"text": fullMessage,
+			},
+		},
+	}, nil
+}
+
+// handleListUserTokens executes the list_user_tokens tool
+func (h *Handler) handleListUserTokens(args map[string]interface{}) (interface{},
+	error) {
+	// Check authentication
+	if h.userInfo == nil || !h.userInfo.IsAuthenticated {
+		return nil, fmt.Errorf("authentication required")
+	}
+
+	username, _ := args["username"].(string) //nolint:errcheck // Required argument, empty string handled by validation
+
+	// Check authorization: users can only list their own tokens unless they're superuser
+	if h.userInfo.Username != username && !h.userInfo.IsSuperuser {
+		return nil, fmt.Errorf("permission denied: can only list your own tokens")
+	}
+
+	tokens, err := usermgmt.ListUserTokens(h.dbPool, username)
+	if err != nil {
+		return nil, err
+	}
+
+	// Format tokens as JSON for display
+	tokensJSON, err := json.MarshalIndent(tokens, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("failed to format tokens: %w", err)
+	}
+
+	return map[string]interface{}{
+		"content": []map[string]interface{}{
+			{
+				"type": "text",
+				"text": fmt.Sprintf("User tokens for '%s':\n%s", username,
+					string(tokensJSON)),
+			},
+		},
+	}, nil
+}
+
+// handleDeleteUserToken executes the delete_user_token tool
+func (h *Handler) handleDeleteUserToken(args map[string]interface{}) (interface{},
+	error) {
+	// Check authentication
+	if h.userInfo == nil || !h.userInfo.IsAuthenticated {
+		return nil, fmt.Errorf("authentication required")
+	}
+
+	username, _ := args["username"].(string) //nolint:errcheck // Required argument, empty string handled by validation
+	tokenID := 0
+	if val, ok := args["tokenId"].(float64); ok {
+		tokenID = int(val)
+	}
+
+	// Check authorization: users can only delete their own tokens unless they're superuser
+	if h.userInfo.Username != username && !h.userInfo.IsSuperuser {
+		return nil, fmt.Errorf("permission denied: can only delete your own tokens")
+	}
+
+	message, err := usermgmt.DeleteUserTokenNonInteractive(h.dbPool, username,
+		tokenID)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"content": []map[string]interface{}{
+			{
+				"type": "text",
+				"text": message,
+			},
+		},
+	}, nil
+}
+
 // UserInfo contains information about an authenticated user or service token
 type UserInfo struct {
 	IsAuthenticated bool
@@ -785,7 +978,7 @@ type UserInfo struct {
 	IsServiceToken  bool
 }
 
-// validateToken validates a bearer token against service_tokens and user_sessions
+// validateToken validates a bearer token against service_tokens, user_tokens, and user_sessions
 func (h *Handler) validateToken(token string) (*UserInfo, error) {
 	if token == "" {
 		return nil, nil
@@ -822,8 +1015,36 @@ func (h *Handler) validateToken(token string) (*UserInfo, error) {
 		}, nil
 	}
 
-	// Service token not found, check user_sessions table
+	// Service token not found, check user_tokens table
 	var username string
+	err = h.dbPool.QueryRow(ctx, `
+		SELECT ua.username, ut.expires_at, ua.is_superuser
+		FROM user_tokens ut
+		JOIN user_accounts ua ON ut.user_id = ua.id
+		WHERE ut.token_hash = $1
+	`, tokenHash).Scan(&username, &expiresAt, &isSuperuser)
+
+	if err == nil {
+		// User token found, check if expired
+		if expiresAt != nil {
+			if expiry, ok := expiresAt.(time.Time); ok {
+				if time.Now().After(expiry) {
+					logger.Infof("User token expired for user '%s'", username)
+					return nil, nil
+				}
+			}
+		}
+		logger.Infof("Valid user token for user '%s' (superuser: %t)", username,
+			isSuperuser)
+		return &UserInfo{
+			IsAuthenticated: true,
+			IsSuperuser:     isSuperuser,
+			Username:        username,
+			IsServiceToken:  false,
+		}, nil
+	}
+
+	// User token not found, check user_sessions table
 	err = h.dbPool.QueryRow(ctx, `
 		SELECT us.username, us.expires_at, ua.is_superuser
 		FROM user_sessions us
@@ -832,7 +1053,7 @@ func (h *Handler) validateToken(token string) (*UserInfo, error) {
 	`, token).Scan(&username, &expiresAt, &isSuperuser)
 
 	if err != nil {
-		// Token not found in either table
+		// Token not found in any table
 		return nil, nil
 	}
 

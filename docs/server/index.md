@@ -15,6 +15,7 @@ database operations.
 - [README](../../server/README.md) - Getting started guide
 - [Architecture](#architecture) - Server architecture and components
 - [Configuration](#configuration) - Configuration reference
+- [User Token Management](user-tokens.md) - Managing user-owned API tokens
 - [Protocol](#protocol) - MCP protocol details
 - [Development](#development) - Development guide
 
@@ -142,6 +143,12 @@ tls = false
 #### Security Settings
 
 - `server_secret` (string) - Server secret for encryption (REQUIRED)
+
+#### User Token Settings
+
+- `max_user_token_lifetime_days` (int) - Maximum lifetime for user tokens in
+    days (default: 90). Set to 0 to allow indefinite lifetime tokens. See
+    [User Token Management](user-tokens.md) for details.
 
 ### Configuration Precedence
 

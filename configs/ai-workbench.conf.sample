@@ -98,6 +98,13 @@ pg_sslmode = prefer
 # WARNING: Keep this secret secure and do not share it.
 server_secret = CHANGE-ME-TO-A-RANDOM-SECRET-STRING
 
+# Maximum lifetime for user-owned API tokens in days
+# Users can create tokens for command-line and programmatic access to the
+# MCP server. This setting controls the maximum lifetime they can specify.
+# Set to 0 to allow users to create tokens with indefinite lifetime.
+# Default: 90 days
+# max_user_token_lifetime_days = 90
+
 #
 # MCP Server Settings (used by the server component only)
 #

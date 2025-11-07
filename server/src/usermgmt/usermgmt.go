@@ -23,6 +23,7 @@ import (
     "strings"
     "time"
 
+    "github.com/jackc/pgx/v5"
     "github.com/jackc/pgx/v5/pgxpool"
     "golang.org/x/term"
 )
@@ -772,4 +773,192 @@ func DeleteServiceTokenNonInteractive(pool *pgxpool.Pool, name string) (string,
     }
 
     return fmt.Sprintf("Service token '%s' deleted successfully", name), nil
+}
+
+// CreateUserTokenNonInteractive creates a new user token
+// (non-interactive for MCP)
+// maxLifetimeDays: maximum allowed token lifetime (0 = indefinite allowed)
+func CreateUserTokenNonInteractive(pool *pgxpool.Pool, username string,
+    name *string, lifetimeDays int, maxLifetimeDays int, note *string) (string,
+    string, error) {
+    ctx := context.Background()
+
+    // Validate lifetime
+    if maxLifetimeDays > 0 && (lifetimeDays <= 0 || lifetimeDays > maxLifetimeDays) {
+        return "", "", fmt.Errorf("lifetime_days must be between 1 and %d (configured maximum)", maxLifetimeDays)
+    }
+    if maxLifetimeDays == 0 && lifetimeDays < 0 {
+        return "", "", fmt.Errorf("lifetime_days must be non-negative (0 = indefinite)")
+    }
+
+    // Get user ID and check if user exists
+    var userID int
+    err := pool.QueryRow(ctx,
+        "SELECT id FROM user_accounts WHERE username = $1",
+        username).Scan(&userID)
+    if err == pgx.ErrNoRows {
+        return "", "", fmt.Errorf("user '%s' does not exist", username)
+    }
+    if err != nil {
+        return "", "", fmt.Errorf("failed to lookup user: %w", err)
+    }
+
+    // Prepare optional fields
+    var nameVal sql.NullString
+    if name != nil && *name != "" {
+        nameVal = sql.NullString{String: *name, Valid: true}
+    }
+
+    var noteVal sql.NullString
+    if note != nil && *note != "" {
+        noteVal = sql.NullString{String: *note, Valid: true}
+    }
+
+    var expiresAtVal sql.NullTime
+    if lifetimeDays > 0 {
+        expiresAt := time.Now().AddDate(0, 0, lifetimeDays)
+        expiresAtVal = sql.NullTime{Time: expiresAt, Valid: true}
+    }
+    // If lifetimeDays == 0, expiresAtVal remains null (indefinite lifetime)
+
+    // Generate token
+    token, err := GenerateToken()
+    if err != nil {
+        return "", "", err
+    }
+
+    // Hash the token
+    tokenHash := HashPassword(token)
+
+    // Insert the user token
+    _, err = pool.Exec(ctx, `
+        INSERT INTO user_tokens
+            (user_id, name, token_hash, note, expires_at)
+        VALUES ($1, $2, $3, $4, $5)
+    `, userID, nameVal, tokenHash, noteVal, expiresAtVal)
+    if err != nil {
+        return "", "", fmt.Errorf("failed to create user token: %w", err)
+    }
+
+    var expiryMsg string
+    if lifetimeDays > 0 {
+        expiryMsg = fmt.Sprintf(" (expires in %d days)", lifetimeDays)
+    } else {
+        expiryMsg = " (no expiration)"
+    }
+
+    message := fmt.Sprintf("User token created successfully for '%s'%s", username, expiryMsg)
+    return message, token, nil
+}
+
+// ListUserTokens lists all tokens for a specific user
+// (non-interactive for MCP)
+func ListUserTokens(pool *pgxpool.Pool, username string) ([]map[string]interface{}, error) {
+    ctx := context.Background()
+
+    // Get user ID
+    var userID int
+    err := pool.QueryRow(ctx,
+        "SELECT id FROM user_accounts WHERE username = $1",
+        username).Scan(&userID)
+    if err == pgx.ErrNoRows {
+        return nil, fmt.Errorf("user '%s' does not exist", username)
+    }
+    if err != nil {
+        return nil, fmt.Errorf("failed to lookup user: %w", err)
+    }
+
+    rows, err := pool.Query(ctx, `
+        SELECT id, name, note, expires_at, created_at
+        FROM user_tokens
+        WHERE user_id = $1
+        ORDER BY created_at DESC
+    `, userID)
+    if err != nil {
+        return nil, fmt.Errorf("failed to query user tokens: %w", err)
+    }
+    defer rows.Close()
+
+    tokens := []map[string]interface{}{}
+    for rows.Next() {
+        var id int
+        var name, note sql.NullString
+        var expiresAt, createdAt sql.NullTime
+
+        if err := rows.Scan(&id, &name, &note, &expiresAt, &createdAt); err != nil {
+            return nil, fmt.Errorf("failed to scan token row: %w", err)
+        }
+
+        token := map[string]interface{}{
+            "id":         id,
+            "name":       nil,
+            "note":       nil,
+            "expires_at": nil,
+            "created_at": nil,
+            "is_expired": false,
+        }
+
+        if name.Valid {
+            token["name"] = name.String
+        }
+        if note.Valid {
+            token["note"] = note.String
+        }
+        if expiresAt.Valid {
+            token["expires_at"] = expiresAt.Time.Format("2006-01-02 15:04:05")
+            token["is_expired"] = time.Now().After(expiresAt.Time)
+        }
+        if createdAt.Valid {
+            token["created_at"] = createdAt.Time.Format("2006-01-02 15:04:05")
+        }
+
+        tokens = append(tokens, token)
+    }
+
+    if err := rows.Err(); err != nil {
+        return nil, fmt.Errorf("error iterating tokens: %w", err)
+    }
+
+    return tokens, nil
+}
+
+// DeleteUserTokenNonInteractive deletes a user token by ID
+// (non-interactive for MCP)
+func DeleteUserTokenNonInteractive(pool *pgxpool.Pool, username string,
+    tokenID int) (string, error) {
+    ctx := context.Background()
+
+    // Get user ID
+    var userID int
+    err := pool.QueryRow(ctx,
+        "SELECT id FROM user_accounts WHERE username = $1",
+        username).Scan(&userID)
+    if err == pgx.ErrNoRows {
+        return "", fmt.Errorf("user '%s' does not exist", username)
+    }
+    if err != nil {
+        return "", fmt.Errorf("failed to lookup user: %w", err)
+    }
+
+    // Check if token exists and belongs to this user
+    var exists bool
+    err = pool.QueryRow(ctx,
+        "SELECT EXISTS(SELECT 1 FROM user_tokens WHERE id = $1 AND user_id = $2)",
+        tokenID, userID).Scan(&exists)
+    if err != nil {
+        return "", fmt.Errorf("failed to check if token exists: %w", err)
+    }
+    if !exists {
+        return "", fmt.Errorf("token with ID %d does not exist or does not belong to user '%s'", tokenID, username)
+    }
+
+    // Delete the user token
+    _, err = pool.Exec(ctx,
+        "DELETE FROM user_tokens WHERE id = $1 AND user_id = $2",
+        tokenID, userID)
+    if err != nil {
+        return "", fmt.Errorf("failed to delete user token: %w", err)
+    }
+
+    return fmt.Sprintf("User token %d deleted successfully", tokenID), nil
 }

@@ -42,18 +42,22 @@ type Config struct {
 
 	// Server secret for encryption
 	ServerSecret string
+
+	// User token settings
+	MaxUserTokenLifetimeDays int // Maximum lifetime for user tokens in days (0 = indefinite)
 }
 
 // NewConfig creates a new Config with default values
 func NewConfig() *Config {
 	return &Config{
-		TLS:        false,
-		Port:       8080,
-		PgHost:     "localhost",
-		PgDatabase: "ai_workbench",
-		PgUsername: "postgres",
-		PgPort:     5432,
-		PgSSLMode:  "prefer",
+		TLS:                      false,
+		Port:                     8080,
+		PgHost:                   "localhost",
+		PgDatabase:               "ai_workbench",
+		PgUsername:               "postgres",
+		PgPort:                   5432,
+		PgSSLMode:                "prefer",
+		MaxUserTokenLifetimeDays: 90, // Default to 90 days maximum token lifetime
 	}
 }
 
@@ -160,6 +164,15 @@ func (c *Config) setConfigValue(key, value string) error {
 		c.PgSSLRootCert = value
 	case "server_secret":
 		c.ServerSecret = value
+	case "max_user_token_lifetime_days":
+		days, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("invalid max_user_token_lifetime_days value: %w", err)
+		}
+		if days < 0 {
+			return fmt.Errorf("max_user_token_lifetime_days must be non-negative (0 = indefinite)")
+		}
+		c.MaxUserTokenLifetimeDays = days
 	default:
 		// Ignore unknown keys (allows sharing config with collector)
 		// No error - just skip keys we don't recognize
@@ -256,3 +269,6 @@ func (c *Config) GetPgSSLRootCert() string { return c.PgSSLRootCert }
 
 // GetServerSecret returns the server secret
 func (c *Config) GetServerSecret() string { return c.ServerSecret }
+
+// GetMaxUserTokenLifetimeDays returns the maximum user token lifetime in days (0 = indefinite)
+func (c *Config) GetMaxUserTokenLifetimeDays() int { return c.MaxUserTokenLifetimeDays }

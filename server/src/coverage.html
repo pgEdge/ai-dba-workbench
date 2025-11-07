@@ -55,7 +55,7 @@
 			<div id="nav">
 				<select id="files">
 				
-				<option value="file0">github.com/pgEdge/ai-workbench/server/src/config/config.go (85.9%)</option>
+				<option value="file0">github.com/pgEdge/ai-workbench/server/src/config/config.go (79.8%)</option>
 				
 				<option value="file1">github.com/pgEdge/ai-workbench/server/src/database/database.go (0.0%)</option>
 				
@@ -63,7 +63,7 @@
 				
 				<option value="file3">github.com/pgEdge/ai-workbench/server/src/main.go (0.0%)</option>
 				
-				<option value="file4">github.com/pgEdge/ai-workbench/server/src/mcp/handler.go (27.7%)</option>
+				<option value="file4">github.com/pgEdge/ai-workbench/server/src/mcp/handler.go (22.9%)</option>
 				
 				<option value="file5">github.com/pgEdge/ai-workbench/server/src/mcp/protocol.go (88.9%)</option>
 				
@@ -127,18 +127,22 @@ type Config struct {
 
         // Server secret for encryption
         ServerSecret string
+
+        // User token settings
+        MaxUserTokenLifetimeDays int // Maximum lifetime for user tokens in days (0 = indefinite)
 }
 
 // NewConfig creates a new Config with default values
 func NewConfig() *Config <span class="cov8" title="1">{
         return &amp;Config{
-                TLS:        false,
-                Port:       8080,
-                PgHost:     "localhost",
-                PgDatabase: "ai_workbench",
-                PgUsername: "postgres",
-                PgPort:     5432,
-                PgSSLMode:  "prefer",
+                TLS:                      false,
+                Port:                     8080,
+                PgHost:                   "localhost",
+                PgDatabase:               "ai_workbench",
+                PgUsername:               "postgres",
+                PgPort:                   5432,
+                PgSSLMode:                "prefer",
+                MaxUserTokenLifetimeDays: 90, // Default to 90 days maximum token lifetime
         }
 }</span>
 
@@ -245,6 +249,15 @@ func (c *Config) setConfigValue(key, value string) error <span class="cov8" titl
                 c.PgSSLRootCert = value</span>
         case "server_secret":<span class="cov8" title="1">
                 c.ServerSecret = value</span>
+        case "max_user_token_lifetime_days":<span class="cov0" title="0">
+                days, err := strconv.Atoi(value)
+                if err != nil </span><span class="cov0" title="0">{
+                        return fmt.Errorf("invalid max_user_token_lifetime_days value: %w", err)
+                }</span>
+                <span class="cov0" title="0">if days &lt; 0 </span><span class="cov0" title="0">{
+                        return fmt.Errorf("max_user_token_lifetime_days must be non-negative (0 = indefinite)")
+                }</span>
+                <span class="cov0" title="0">c.MaxUserTokenLifetimeDays = days</span>
         default:<span class="cov0" title="0"></span>
                 // Ignore unknown keys (allows sharing config with collector)
                 // No error - just skip keys we don't recognize
@@ -341,6 +354,9 @@ func (c *Config) GetPgSSLRootCert() string <span class="cov8" title="1">{ return
 
 // GetServerSecret returns the server secret
 func (c *Config) GetServerSecret() string <span class="cov8" title="1">{ return c.ServerSecret }</span>
+
+// GetMaxUserTokenLifetimeDays returns the maximum user token lifetime in days (0 = indefinite)
+func (c *Config) GetMaxUserTokenLifetimeDays() int <span class="cov0" title="0">{ return c.MaxUserTokenLifetimeDays }</span>
 </pre>
 		
 		<pre class="file" id="file1" style="display: none">/*-------------------------------------------------------------------------
@@ -624,7 +640,7 @@ func main() <span class="cov0" title="0">{
         logger.Info("Database connection established")
 
         // Create MCP handler
-        mcpHandler := mcp.NewHandler(serverName, serverVersion, dbPool)
+        mcpHandler := mcp.NewHandler(serverName, serverVersion, dbPool, cfg)
 
         // Create server
         srv := server.New(cfg, mcpHandler)
@@ -821,6 +837,7 @@ import (
         "time"
 
         "github.com/jackc/pgx/v5/pgxpool"
+        "github.com/pgEdge/ai-workbench/server/src/config"
         "github.com/pgEdge/ai-workbench/server/src/logger"
         "github.com/pgEdge/ai-workbench/server/src/usermgmt"
 )
@@ -831,16 +848,18 @@ type Handler struct {
         serverVersion string
         initialized   bool
         dbPool        *pgxpool.Pool
+        config        *config.Config
         userInfo      *UserInfo
 }
 
 // NewHandler creates a new MCP handler
-func NewHandler(serverName, serverVersion string, dbPool *pgxpool.Pool) *Handler <span class="cov8" title="1">{
+func NewHandler(serverName, serverVersion string, dbPool *pgxpool.Pool, cfg *config.Config) *Handler <span class="cov8" title="1">{
         return &amp;Handler{
                 serverName:    serverName,
                 serverVersion: serverVersion,
                 initialized:   false,
                 dbPool:        dbPool,
+                config:        cfg,
         }
 }</span>
 
@@ -1273,6 +1292,64 @@ func (h *Handler) handleListTools(req Request) (*Response, error) <span class="c
                                 "required": []string{"name"},
                         },
                 },
+                {
+                        "name":        "create_user_token",
+                        "description": "Create a new user token for command-line API access",
+                        "inputSchema": map[string]interface{}{
+                                "type": "object",
+                                "properties": map[string]interface{}{
+                                        "username": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Username who will own this token",
+                                        },
+                                        "name": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Optional name for the token",
+                                        },
+                                        "lifetimeDays": map[string]interface{}{
+                                                "type":        "integer",
+                                                "description": "Token lifetime in days (0 = indefinite, subject to server maximum)",
+                                        },
+                                        "note": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Optional note about the token",
+                                        },
+                                },
+                                "required": []string{"username", "lifetimeDays"},
+                        },
+                },
+                {
+                        "name":        "list_user_tokens",
+                        "description": "List all tokens for a specific user",
+                        "inputSchema": map[string]interface{}{
+                                "type": "object",
+                                "properties": map[string]interface{}{
+                                        "username": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Username whose tokens to list",
+                                        },
+                                },
+                                "required": []string{"username"},
+                        },
+                },
+                {
+                        "name":        "delete_user_token",
+                        "description": "Delete a user token by ID",
+                        "inputSchema": map[string]interface{}{
+                                "type": "object",
+                                "properties": map[string]interface{}{
+                                        "username": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Username who owns the token",
+                                        },
+                                        "tokenId": map[string]interface{}{
+                                                "type":        "integer",
+                                                "description": "ID of the token to delete",
+                                        },
+                                },
+                                "required": []string{"username", "tokenId"},
+                        },
+                },
         }
 
         result := map[string]interface{}{
@@ -1330,6 +1407,12 @@ func (h *Handler) handleCallTool(req Request) (*Response, error) <span class="co
                 result, err = h.handleUpdateServiceToken(params.Arguments)</span>
         case "delete_service_token":<span class="cov0" title="0">
                 result, err = h.handleDeleteServiceToken(params.Arguments)</span>
+        case "create_user_token":<span class="cov0" title="0">
+                result, err = h.handleCreateUserToken(params.Arguments)</span>
+        case "list_user_tokens":<span class="cov0" title="0">
+                result, err = h.handleListUserTokens(params.Arguments)</span>
+        case "delete_user_token":<span class="cov0" title="0">
+                result, err = h.handleDeleteUserToken(params.Arguments)</span>
         default:<span class="cov8" title="1">
                 logger.Errorf("Unknown tool: %s", params.Name)
                 return NewErrorResponse(req.ID, MethodNotFound, "Tool not found",
@@ -1392,7 +1475,7 @@ func (h *Handler) handleUpdateUser(args map[string]interface{}) (interface{},
                 return nil, fmt.Errorf("permission denied: superuser privileges required")
         }</span>
 
-        <span class="cov0" title="0">username, _ := args["username"].(string)
+        <span class="cov0" title="0">username, _ := args["username"].(string) //nolint:errcheck // Required argument, empty string handled by validation
 
         var email, fullName, password *string
         var isSuperuser *bool
@@ -1446,7 +1529,7 @@ func (h *Handler) handleDeleteUser(args map[string]interface{}) (interface{},
                 return nil, fmt.Errorf("permission denied: superuser privileges required")
         }</span>
 
-        <span class="cov0" title="0">username, _ := args["username"].(string)
+        <span class="cov0" title="0">username, _ := args["username"].(string) //nolint:errcheck // Required argument, empty string handled by validation
 
         message, err := usermgmt.DeleteUserNonInteractive(h.dbPool, username)
         if err != nil </span><span class="cov0" title="0">{
@@ -1470,8 +1553,8 @@ func (h *Handler) handleCreateServiceToken(args map[string]interface{}) (interfa
                 return nil, fmt.Errorf("permission denied: superuser privileges required")
         }</span>
 
-        <span class="cov0" title="0">name, _ := args["name"].(string)
-        isSuperuser, _ := args["isSuperuser"].(bool)
+        <span class="cov0" title="0">name, _ := args["name"].(string)           //nolint:errcheck // Required argument, empty string handled by validation
+        isSuperuser, _ := args["isSuperuser"].(bool) //nolint:errcheck // Optional argument, false is acceptable default
 
         var note *string
         var expiresAt *time.Time
@@ -1513,7 +1596,7 @@ func (h *Handler) handleUpdateServiceToken(args map[string]interface{}) (interfa
                 return nil, fmt.Errorf("permission denied: superuser privileges required")
         }</span>
 
-        <span class="cov0" title="0">name, _ := args["name"].(string)
+        <span class="cov0" title="0">name, _ := args["name"].(string) //nolint:errcheck // Required argument, empty string handled by validation
 
         var isSuperuser *bool
         var note *string
@@ -1564,9 +1647,135 @@ func (h *Handler) handleDeleteServiceToken(args map[string]interface{}) (interfa
                 return nil, fmt.Errorf("permission denied: superuser privileges required")
         }</span>
 
-        <span class="cov0" title="0">name, _ := args["name"].(string)
+        <span class="cov0" title="0">name, _ := args["name"].(string) //nolint:errcheck // Required argument, empty string handled by validation
 
         message, err := usermgmt.DeleteServiceTokenNonInteractive(h.dbPool, name)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        <span class="cov0" title="0">return map[string]interface{}{
+                "content": []map[string]interface{}{
+                        {
+                                "type": "text",
+                                "text": message,
+                        },
+                },
+        }, nil</span>
+}
+
+// handleCreateUserToken executes the create_user_token tool
+func (h *Handler) handleCreateUserToken(args map[string]interface{}) (interface{},
+        error) <span class="cov0" title="0">{
+        // Check authentication
+        if h.userInfo == nil || !h.userInfo.IsAuthenticated </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("authentication required")
+        }</span>
+
+        <span class="cov0" title="0">username, _ := args["username"].(string) //nolint:errcheck // Required argument, empty string handled by validation
+        lifetimeDays := 0
+        if val, ok := args["lifetimeDays"].(float64); ok </span><span class="cov0" title="0">{
+                lifetimeDays = int(val)
+        }</span>
+
+        // Check authorization: users can only create tokens for themselves unless they're superuser
+        <span class="cov0" title="0">if h.userInfo.Username != username &amp;&amp; !h.userInfo.IsSuperuser </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("permission denied: can only create tokens for your own account")
+        }</span>
+
+        <span class="cov0" title="0">var name *string
+        var note *string
+
+        if val, ok := args["name"].(string); ok &amp;&amp; val != "" </span><span class="cov0" title="0">{
+                name = &amp;val
+        }</span>
+        <span class="cov0" title="0">if val, ok := args["note"].(string); ok &amp;&amp; val != "" </span><span class="cov0" title="0">{
+                note = &amp;val
+        }</span>
+
+        // Get max lifetime from config
+        <span class="cov0" title="0">maxLifetimeDays := 0
+        if h.config != nil </span><span class="cov0" title="0">{
+                maxLifetimeDays = h.config.GetMaxUserTokenLifetimeDays()
+        }</span>
+
+        <span class="cov0" title="0">message, token, err := usermgmt.CreateUserTokenNonInteractive(h.dbPool,
+                username, name, lifetimeDays, maxLifetimeDays, note)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        <span class="cov0" title="0">fullMessage := fmt.Sprintf("%s\nToken: %s\nIMPORTANT: Save this token "+
+                "now. You won't be able to see it again.", message, token)
+
+        return map[string]interface{}{
+                "content": []map[string]interface{}{
+                        {
+                                "type": "text",
+                                "text": fullMessage,
+                        },
+                },
+        }, nil</span>
+}
+
+// handleListUserTokens executes the list_user_tokens tool
+func (h *Handler) handleListUserTokens(args map[string]interface{}) (interface{},
+        error) <span class="cov0" title="0">{
+        // Check authentication
+        if h.userInfo == nil || !h.userInfo.IsAuthenticated </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("authentication required")
+        }</span>
+
+        <span class="cov0" title="0">username, _ := args["username"].(string) //nolint:errcheck // Required argument, empty string handled by validation
+
+        // Check authorization: users can only list their own tokens unless they're superuser
+        if h.userInfo.Username != username &amp;&amp; !h.userInfo.IsSuperuser </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("permission denied: can only list your own tokens")
+        }</span>
+
+        <span class="cov0" title="0">tokens, err := usermgmt.ListUserTokens(h.dbPool, username)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        // Format tokens as JSON for display
+        <span class="cov0" title="0">tokensJSON, err := json.MarshalIndent(tokens, "", "  ")
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to format tokens: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">return map[string]interface{}{
+                "content": []map[string]interface{}{
+                        {
+                                "type": "text",
+                                "text": fmt.Sprintf("User tokens for '%s':\n%s", username,
+                                        string(tokensJSON)),
+                        },
+                },
+        }, nil</span>
+}
+
+// handleDeleteUserToken executes the delete_user_token tool
+func (h *Handler) handleDeleteUserToken(args map[string]interface{}) (interface{},
+        error) <span class="cov0" title="0">{
+        // Check authentication
+        if h.userInfo == nil || !h.userInfo.IsAuthenticated </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("authentication required")
+        }</span>
+
+        <span class="cov0" title="0">username, _ := args["username"].(string) //nolint:errcheck // Required argument, empty string handled by validation
+        tokenID := 0
+        if val, ok := args["tokenId"].(float64); ok </span><span class="cov0" title="0">{
+                tokenID = int(val)
+        }</span>
+
+        // Check authorization: users can only delete their own tokens unless they're superuser
+        <span class="cov0" title="0">if h.userInfo.Username != username &amp;&amp; !h.userInfo.IsSuperuser </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("permission denied: can only delete your own tokens")
+        }</span>
+
+        <span class="cov0" title="0">message, err := usermgmt.DeleteUserTokenNonInteractive(h.dbPool, username,
+                tokenID)
         if err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
@@ -1589,7 +1798,7 @@ type UserInfo struct {
         IsServiceToken  bool
 }
 
-// validateToken validates a bearer token against service_tokens and user_sessions
+// validateToken validates a bearer token against service_tokens, user_tokens, and user_sessions
 func (h *Handler) validateToken(token string) (*UserInfo, error) <span class="cov0" title="0">{
         if token == "" </span><span class="cov0" title="0">{
                 return nil, nil
@@ -1626,9 +1835,37 @@ func (h *Handler) validateToken(token string) (*UserInfo, error) <span class="co
                 }, nil</span>
         }
 
-        // Service token not found, check user_sessions table
+        // Service token not found, check user_tokens table
         <span class="cov0" title="0">var username string
         err = h.dbPool.QueryRow(ctx, `
+                SELECT ua.username, ut.expires_at, ua.is_superuser
+                FROM user_tokens ut
+                JOIN user_accounts ua ON ut.user_id = ua.id
+                WHERE ut.token_hash = $1
+        `, tokenHash).Scan(&amp;username, &amp;expiresAt, &amp;isSuperuser)
+
+        if err == nil </span><span class="cov0" title="0">{
+                // User token found, check if expired
+                if expiresAt != nil </span><span class="cov0" title="0">{
+                        if expiry, ok := expiresAt.(time.Time); ok </span><span class="cov0" title="0">{
+                                if time.Now().After(expiry) </span><span class="cov0" title="0">{
+                                        logger.Infof("User token expired for user '%s'", username)
+                                        return nil, nil
+                                }</span>
+                        }
+                }
+                <span class="cov0" title="0">logger.Infof("Valid user token for user '%s' (superuser: %t)", username,
+                        isSuperuser)
+                return &amp;UserInfo{
+                        IsAuthenticated: true,
+                        IsSuperuser:     isSuperuser,
+                        Username:        username,
+                        IsServiceToken:  false,
+                }, nil</span>
+        }
+
+        // User token not found, check user_sessions table
+        <span class="cov0" title="0">err = h.dbPool.QueryRow(ctx, `
                 SELECT us.username, us.expires_at, ua.is_superuser
                 FROM user_sessions us
                 JOIN user_accounts ua ON us.username = ua.username
@@ -1636,7 +1873,7 @@ func (h *Handler) validateToken(token string) (*UserInfo, error) <span class="co
         `, token).Scan(&amp;username, &amp;expiresAt, &amp;isSuperuser)
 
         if err != nil </span><span class="cov0" title="0">{
-                // Token not found in either table
+                // Token not found in any table
                 return nil, nil
         }</span>
 
@@ -1672,8 +1909,8 @@ func (h *Handler) validateToken(token string) (*UserInfo, error) <span class="co
 // handleAuthenticateUser executes the authenticate_user tool
 func (h *Handler) handleAuthenticateUser(args map[string]interface{}) (interface{},
         error) <span class="cov0" title="0">{
-        username, _ := args["username"].(string)
-        password, _ := args["password"].(string)
+        username, _ := args["username"].(string) //nolint:errcheck // Required argument, empty string handled by validation
+        password, _ := args["password"].(string) //nolint:errcheck // Required argument, empty string handled by validation
 
         ctx := context.Background()
 
@@ -2141,6 +2378,7 @@ import (
     "strings"
     "time"
 
+    "github.com/jackc/pgx/v5"
     "github.com/jackc/pgx/v5/pgxpool"
     "golang.org/x/term"
 )
@@ -2890,6 +3128,194 @@ func DeleteServiceTokenNonInteractive(pool *pgxpool.Pool, name string) (string,
     }</span>
 
     <span class="cov0" title="0">return fmt.Sprintf("Service token '%s' deleted successfully", name), nil</span>
+}
+
+// CreateUserTokenNonInteractive creates a new user token
+// (non-interactive for MCP)
+// maxLifetimeDays: maximum allowed token lifetime (0 = indefinite allowed)
+func CreateUserTokenNonInteractive(pool *pgxpool.Pool, username string,
+    name *string, lifetimeDays int, maxLifetimeDays int, note *string) (string,
+    string, error) <span class="cov0" title="0">{
+    ctx := context.Background()
+
+    // Validate lifetime
+    if maxLifetimeDays &gt; 0 &amp;&amp; (lifetimeDays &lt;= 0 || lifetimeDays &gt; maxLifetimeDays) </span><span class="cov0" title="0">{
+        return "", "", fmt.Errorf("lifetime_days must be between 1 and %d (configured maximum)", maxLifetimeDays)
+    }</span>
+    <span class="cov0" title="0">if maxLifetimeDays == 0 &amp;&amp; lifetimeDays &lt; 0 </span><span class="cov0" title="0">{
+        return "", "", fmt.Errorf("lifetime_days must be non-negative (0 = indefinite)")
+    }</span>
+
+    // Get user ID and check if user exists
+    <span class="cov0" title="0">var userID int
+    err := pool.QueryRow(ctx,
+        "SELECT id FROM user_accounts WHERE username = $1",
+        username).Scan(&amp;userID)
+    if err == pgx.ErrNoRows </span><span class="cov0" title="0">{
+        return "", "", fmt.Errorf("user '%s' does not exist", username)
+    }</span>
+    <span class="cov0" title="0">if err != nil </span><span class="cov0" title="0">{
+        return "", "", fmt.Errorf("failed to lookup user: %w", err)
+    }</span>
+
+    // Prepare optional fields
+    <span class="cov0" title="0">var nameVal sql.NullString
+    if name != nil &amp;&amp; *name != "" </span><span class="cov0" title="0">{
+        nameVal = sql.NullString{String: *name, Valid: true}
+    }</span>
+
+    <span class="cov0" title="0">var noteVal sql.NullString
+    if note != nil &amp;&amp; *note != "" </span><span class="cov0" title="0">{
+        noteVal = sql.NullString{String: *note, Valid: true}
+    }</span>
+
+    <span class="cov0" title="0">var expiresAtVal sql.NullTime
+    if lifetimeDays &gt; 0 </span><span class="cov0" title="0">{
+        expiresAt := time.Now().AddDate(0, 0, lifetimeDays)
+        expiresAtVal = sql.NullTime{Time: expiresAt, Valid: true}
+    }</span>
+    // If lifetimeDays == 0, expiresAtVal remains null (indefinite lifetime)
+
+    // Generate token
+    <span class="cov0" title="0">token, err := GenerateToken()
+    if err != nil </span><span class="cov0" title="0">{
+        return "", "", err
+    }</span>
+
+    // Hash the token
+    <span class="cov0" title="0">tokenHash := HashPassword(token)
+
+    // Insert the user token
+    _, err = pool.Exec(ctx, `
+        INSERT INTO user_tokens
+            (user_id, name, token_hash, note, expires_at)
+        VALUES ($1, $2, $3, $4, $5)
+    `, userID, nameVal, tokenHash, noteVal, expiresAtVal)
+    if err != nil </span><span class="cov0" title="0">{
+        return "", "", fmt.Errorf("failed to create user token: %w", err)
+    }</span>
+
+    <span class="cov0" title="0">var expiryMsg string
+    if lifetimeDays &gt; 0 </span><span class="cov0" title="0">{
+        expiryMsg = fmt.Sprintf(" (expires in %d days)", lifetimeDays)
+    }</span> else<span class="cov0" title="0"> {
+        expiryMsg = " (no expiration)"
+    }</span>
+
+    <span class="cov0" title="0">message := fmt.Sprintf("User token created successfully for '%s'%s", username, expiryMsg)
+    return message, token, nil</span>
+}
+
+// ListUserTokens lists all tokens for a specific user
+// (non-interactive for MCP)
+func ListUserTokens(pool *pgxpool.Pool, username string) ([]map[string]interface{}, error) <span class="cov0" title="0">{
+    ctx := context.Background()
+
+    // Get user ID
+    var userID int
+    err := pool.QueryRow(ctx,
+        "SELECT id FROM user_accounts WHERE username = $1",
+        username).Scan(&amp;userID)
+    if err == pgx.ErrNoRows </span><span class="cov0" title="0">{
+        return nil, fmt.Errorf("user '%s' does not exist", username)
+    }</span>
+    <span class="cov0" title="0">if err != nil </span><span class="cov0" title="0">{
+        return nil, fmt.Errorf("failed to lookup user: %w", err)
+    }</span>
+
+    <span class="cov0" title="0">rows, err := pool.Query(ctx, `
+        SELECT id, name, note, expires_at, created_at
+        FROM user_tokens
+        WHERE user_id = $1
+        ORDER BY created_at DESC
+    `, userID)
+    if err != nil </span><span class="cov0" title="0">{
+        return nil, fmt.Errorf("failed to query user tokens: %w", err)
+    }</span>
+    <span class="cov0" title="0">defer rows.Close()
+
+    tokens := []map[string]interface{}{}
+    for rows.Next() </span><span class="cov0" title="0">{
+        var id int
+        var name, note sql.NullString
+        var expiresAt, createdAt sql.NullTime
+
+        if err := rows.Scan(&amp;id, &amp;name, &amp;note, &amp;expiresAt, &amp;createdAt); err != nil </span><span class="cov0" title="0">{
+            return nil, fmt.Errorf("failed to scan token row: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">token := map[string]interface{}{
+            "id":         id,
+            "name":       nil,
+            "note":       nil,
+            "expires_at": nil,
+            "created_at": nil,
+            "is_expired": false,
+        }
+
+        if name.Valid </span><span class="cov0" title="0">{
+            token["name"] = name.String
+        }</span>
+        <span class="cov0" title="0">if note.Valid </span><span class="cov0" title="0">{
+            token["note"] = note.String
+        }</span>
+        <span class="cov0" title="0">if expiresAt.Valid </span><span class="cov0" title="0">{
+            token["expires_at"] = expiresAt.Time.Format("2006-01-02 15:04:05")
+            token["is_expired"] = time.Now().After(expiresAt.Time)
+        }</span>
+        <span class="cov0" title="0">if createdAt.Valid </span><span class="cov0" title="0">{
+            token["created_at"] = createdAt.Time.Format("2006-01-02 15:04:05")
+        }</span>
+
+        <span class="cov0" title="0">tokens = append(tokens, token)</span>
+    }
+
+    <span class="cov0" title="0">if err := rows.Err(); err != nil </span><span class="cov0" title="0">{
+        return nil, fmt.Errorf("error iterating tokens: %w", err)
+    }</span>
+
+    <span class="cov0" title="0">return tokens, nil</span>
+}
+
+// DeleteUserTokenNonInteractive deletes a user token by ID
+// (non-interactive for MCP)
+func DeleteUserTokenNonInteractive(pool *pgxpool.Pool, username string,
+    tokenID int) (string, error) <span class="cov0" title="0">{
+    ctx := context.Background()
+
+    // Get user ID
+    var userID int
+    err := pool.QueryRow(ctx,
+        "SELECT id FROM user_accounts WHERE username = $1",
+        username).Scan(&amp;userID)
+    if err == pgx.ErrNoRows </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("user '%s' does not exist", username)
+    }</span>
+    <span class="cov0" title="0">if err != nil </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("failed to lookup user: %w", err)
+    }</span>
+
+    // Check if token exists and belongs to this user
+    <span class="cov0" title="0">var exists bool
+    err = pool.QueryRow(ctx,
+        "SELECT EXISTS(SELECT 1 FROM user_tokens WHERE id = $1 AND user_id = $2)",
+        tokenID, userID).Scan(&amp;exists)
+    if err != nil </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("failed to check if token exists: %w", err)
+    }</span>
+    <span class="cov0" title="0">if !exists </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("token with ID %d does not exist or does not belong to user '%s'", tokenID, username)
+    }</span>
+
+    // Delete the user token
+    <span class="cov0" title="0">_, err = pool.Exec(ctx,
+        "DELETE FROM user_tokens WHERE id = $1 AND user_id = $2",
+        tokenID, userID)
+    if err != nil </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("failed to delete user token: %w", err)
+    }</span>
+
+    <span class="cov0" title="0">return fmt.Sprintf("User token %d deleted successfully", tokenID), nil</span>
 }
 </pre>
 		

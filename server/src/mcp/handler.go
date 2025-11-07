@@ -709,7 +709,7 @@ func (h *Handler) handleUpdateServiceToken(args map[string]interface{}) (interfa
 		return nil, fmt.Errorf("permission denied: superuser privileges required")
 	}
 
-	name, _ := args["name"].(string)
+	name, _ := args["name"].(string) //nolint:errcheck // Required argument, empty string handled by validation
 
 	var isSuperuser *bool
 	var note *string
@@ -760,7 +760,7 @@ func (h *Handler) handleDeleteServiceToken(args map[string]interface{}) (interfa
 		return nil, fmt.Errorf("permission denied: superuser privileges required")
 	}
 
-	name, _ := args["name"].(string)
+	name, _ := args["name"].(string) //nolint:errcheck // Required argument, empty string handled by validation
 
 	message, err := usermgmt.DeleteServiceTokenNonInteractive(h.dbPool, name)
 	if err != nil {
@@ -868,8 +868,8 @@ func (h *Handler) validateToken(token string) (*UserInfo, error) {
 // handleAuthenticateUser executes the authenticate_user tool
 func (h *Handler) handleAuthenticateUser(args map[string]interface{}) (interface{},
 	error) {
-	username, _ := args["username"].(string)
-	password, _ := args["password"].(string)
+	username, _ := args["username"].(string) //nolint:errcheck // Required argument, empty string handled by validation
+	password, _ := args["password"].(string) //nolint:errcheck // Required argument, empty string handled by validation
 
 	ctx := context.Background()
 

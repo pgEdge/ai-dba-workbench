@@ -38,3 +38,4 @@ password.txt
 *.tmp
 tmp/
 temp/
+coverage.html

@@ -1,5 +1,7 @@
 # pgEdge AI Workbench CLI
 
+[![Build CLI](https://github.com/pgEdge/ai-workbench/actions/workflows/build-cli.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/build-cli.yml)
+
 A command-line interface tool for interacting with the pgEdge AI Workbench MCP
 (Model Context Protocol) server.
 

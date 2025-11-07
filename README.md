@@ -1,5 +1,7 @@
 # pgEdge AI Workbench
 
+[![Build CLI](https://github.com/pgEdge/ai-workbench/actions/workflows/build-cli.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/build-cli.yml)
+
 The pgEdge AI Workbench is a unified environment for interacting with pgEdge's
 distributed and non-distributed PostgreSQL systems through artificial
 intelligence and traditional methods. It combines a Model Context Protocol

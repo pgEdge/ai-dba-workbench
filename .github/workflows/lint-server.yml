@@ -14,20 +14,17 @@ on:
 
 jobs:
   lint:
-    name: Lint Server (Go ${{ matrix.go-version }})
+    name: Lint Server
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        go-version: ['1.21', '1.22', '1.23', '1.24', '1.25']
 
     steps:
     - name: Check out code
       uses: actions/checkout@v4
 
-    - name: Set up Go ${{ matrix.go-version }}
+    - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: ${{ matrix.go-version }}
+        go-version: '1.23'
         cache-dependency-path: server/go.sum
 
     - name: Install golangci-lint

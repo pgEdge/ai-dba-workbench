@@ -1858,6 +1858,174 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration 6: User Groups and Privilege Management
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     6,
+		Description: "User groups and privilege management",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Read and execute the migration SQL file
+			migrationSQL := `
+/*-----------------------------------------------------------
+ * Migration 6: User Groups and Privilege Management
+ *-----------------------------------------------------------
+ */
+
+-- User Groups
+CREATE TABLE IF NOT EXISTS user_groups (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL UNIQUE,
+    description TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE user_groups IS 'Hierarchical groups for organizing users and permissions';
+COMMENT ON COLUMN user_groups.id IS 'Unique identifier for the group';
+COMMENT ON COLUMN user_groups.name IS 'Unique name for the group';
+COMMENT ON COLUMN user_groups.description IS 'Optional description of the group purpose';
+COMMENT ON COLUMN user_groups.created_at IS 'Timestamp when the group was created';
+COMMENT ON COLUMN user_groups.updated_at IS 'Timestamp when the group was last updated';
+
+-- Group Memberships
+CREATE TABLE IF NOT EXISTS group_memberships (
+    id SERIAL PRIMARY KEY,
+    parent_group_id INTEGER NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
+    member_user_id INTEGER REFERENCES user_accounts(id) ON DELETE CASCADE,
+    member_group_id INTEGER REFERENCES user_groups(id) ON DELETE CASCADE,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT member_type_check CHECK (
+        (member_user_id IS NOT NULL AND member_group_id IS NULL) OR
+        (member_user_id IS NULL AND member_group_id IS NOT NULL)
+    ),
+    CONSTRAINT unique_user_membership UNIQUE (parent_group_id, member_user_id),
+    CONSTRAINT unique_group_membership UNIQUE (parent_group_id, member_group_id),
+    CONSTRAINT no_self_reference CHECK (parent_group_id != member_group_id)
+);
+
+COMMENT ON TABLE group_memberships IS 'Membership relationships between groups, users, and nested groups';
+COMMENT ON COLUMN group_memberships.id IS 'Unique identifier for the membership';
+COMMENT ON COLUMN group_memberships.parent_group_id IS 'The group that contains this member';
+COMMENT ON COLUMN group_memberships.member_user_id IS 'User ID if this membership is for a user';
+COMMENT ON COLUMN group_memberships.member_group_id IS 'Group ID if this membership is for a nested group';
+COMMENT ON COLUMN group_memberships.created_at IS 'Timestamp when the membership was created';
+
+CREATE INDEX IF NOT EXISTS idx_group_memberships_parent ON group_memberships(parent_group_id);
+CREATE INDEX IF NOT EXISTS idx_group_memberships_user ON group_memberships(member_user_id);
+CREATE INDEX IF NOT EXISTS idx_group_memberships_group ON group_memberships(member_group_id);
+
+-- Connection Privileges
+CREATE TABLE IF NOT EXISTS connection_privileges (
+    id SERIAL PRIMARY KEY,
+    group_id INTEGER NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
+    connection_id INTEGER NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+    access_level VARCHAR(20) NOT NULL CHECK (access_level IN ('read', 'read_write')),
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_group_connection UNIQUE (group_id, connection_id)
+);
+
+COMMENT ON TABLE connection_privileges IS 'Access privileges for groups to monitored connections';
+COMMENT ON COLUMN connection_privileges.id IS 'Unique identifier for the privilege';
+COMMENT ON COLUMN connection_privileges.group_id IS 'Group that is granted this privilege';
+COMMENT ON COLUMN connection_privileges.connection_id IS 'Connection that this privilege applies to';
+COMMENT ON COLUMN connection_privileges.access_level IS 'Level of access: read or read_write';
+COMMENT ON COLUMN connection_privileges.created_at IS 'Timestamp when the privilege was granted';
+
+CREATE INDEX IF NOT EXISTS idx_connection_privileges_group ON connection_privileges(group_id);
+CREATE INDEX IF NOT EXISTS idx_connection_privileges_connection ON connection_privileges(connection_id);
+
+-- MCP Privilege Identifiers
+CREATE TABLE IF NOT EXISTS mcp_privilege_identifiers (
+    id SERIAL PRIMARY KEY,
+    identifier VARCHAR(255) NOT NULL UNIQUE,
+    item_type VARCHAR(20) NOT NULL CHECK (item_type IN ('tool', 'resource', 'prompt')),
+    description TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE mcp_privilege_identifiers IS 'Registry of privilege identifiers for MCP tools, resources, and prompts';
+COMMENT ON COLUMN mcp_privilege_identifiers.id IS 'Unique identifier for the privilege identifier';
+COMMENT ON COLUMN mcp_privilege_identifiers.identifier IS 'Unique string identifier for the MCP item';
+COMMENT ON COLUMN mcp_privilege_identifiers.item_type IS 'Type of MCP item: tool, resource, or prompt';
+COMMENT ON COLUMN mcp_privilege_identifiers.description IS 'Human-readable description of what this privilege allows';
+COMMENT ON COLUMN mcp_privilege_identifiers.created_at IS 'Timestamp when the identifier was registered';
+
+CREATE INDEX IF NOT EXISTS idx_mcp_privilege_identifiers_type ON mcp_privilege_identifiers(item_type);
+
+-- Group MCP Privileges
+CREATE TABLE IF NOT EXISTS group_mcp_privileges (
+    id SERIAL PRIMARY KEY,
+    group_id INTEGER NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
+    privilege_identifier_id INTEGER NOT NULL REFERENCES mcp_privilege_identifiers(id) ON DELETE CASCADE,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_group_privilege UNIQUE (group_id, privilege_identifier_id)
+);
+
+COMMENT ON TABLE group_mcp_privileges IS 'Privileges granted to groups for MCP tools, resources, and prompts';
+COMMENT ON COLUMN group_mcp_privileges.id IS 'Unique identifier for the privilege grant';
+COMMENT ON COLUMN group_mcp_privileges.group_id IS 'Group that is granted this privilege';
+COMMENT ON COLUMN group_mcp_privileges.privilege_identifier_id IS 'MCP item that this privilege grants access to';
+COMMENT ON COLUMN group_mcp_privileges.created_at IS 'Timestamp when the privilege was granted';
+
+CREATE INDEX IF NOT EXISTS idx_group_mcp_privileges_group ON group_mcp_privileges(group_id);
+CREATE INDEX IF NOT EXISTS idx_group_mcp_privileges_privilege ON group_mcp_privileges(privilege_identifier_id);
+
+-- Token Connection Scope
+CREATE TABLE IF NOT EXISTS token_connection_scope (
+    id SERIAL PRIMARY KEY,
+    token_id INTEGER NOT NULL,
+    token_type VARCHAR(20) NOT NULL CHECK (token_type IN ('user', 'service')),
+    connection_id INTEGER NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_token_connection UNIQUE (token_id, token_type, connection_id)
+);
+
+COMMENT ON TABLE token_connection_scope IS 'Limits token access to specific connections (empty = all accessible connections)';
+COMMENT ON COLUMN token_connection_scope.id IS 'Unique identifier for the scope entry';
+COMMENT ON COLUMN token_connection_scope.token_id IS 'ID of the token (user_tokens.id or service_tokens.id)';
+COMMENT ON COLUMN token_connection_scope.token_type IS 'Type of token: user or service';
+COMMENT ON COLUMN token_connection_scope.connection_id IS 'Connection that this token can access';
+COMMENT ON COLUMN token_connection_scope.created_at IS 'Timestamp when the scope was set';
+
+CREATE INDEX IF NOT EXISTS idx_token_connection_scope_token ON token_connection_scope(token_id, token_type);
+CREATE INDEX IF NOT EXISTS idx_token_connection_scope_connection ON token_connection_scope(connection_id);
+
+-- Token MCP Scope
+CREATE TABLE IF NOT EXISTS token_mcp_scope (
+    id SERIAL PRIMARY KEY,
+    token_id INTEGER NOT NULL,
+    token_type VARCHAR(20) NOT NULL CHECK (token_type IN ('user', 'service')),
+    privilege_identifier_id INTEGER NOT NULL REFERENCES mcp_privilege_identifiers(id) ON DELETE CASCADE,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_token_privilege UNIQUE (token_id, token_type, privilege_identifier_id)
+);
+
+COMMENT ON TABLE token_mcp_scope IS 'Limits token access to specific MCP items (empty = all accessible items)';
+COMMENT ON COLUMN token_mcp_scope.id IS 'Unique identifier for the scope entry';
+COMMENT ON COLUMN token_mcp_scope.token_id IS 'ID of the token (user_tokens.id or service_tokens.id)';
+COMMENT ON COLUMN token_mcp_scope.token_type IS 'Type of token: user or service';
+COMMENT ON COLUMN token_mcp_scope.privilege_identifier_id IS 'MCP item that this token can access';
+COMMENT ON COLUMN token_mcp_scope.created_at IS 'Timestamp when the scope was set';
+
+CREATE INDEX IF NOT EXISTS idx_token_mcp_scope_token ON token_mcp_scope(token_id, token_type);
+CREATE INDEX IF NOT EXISTS idx_token_mcp_scope_privilege ON token_mcp_scope(privilege_identifier_id);
+
+-- Update schema version
+INSERT INTO schema_version (version, description, applied_at)
+VALUES (6, 'User groups and privilege management', CURRENT_TIMESTAMP);
+`
+
+			_, err := conn.Exec(ctx, migrationSQL)
+			if err != nil {
+				return fmt.Errorf("failed to execute migration 6: %w", err)
+			}
+
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations

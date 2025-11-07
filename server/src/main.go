@@ -25,6 +25,7 @@ import (
 	"github.com/pgEdge/ai-workbench/server/src/database"
 	"github.com/pgEdge/ai-workbench/server/src/logger"
 	"github.com/pgEdge/ai-workbench/server/src/mcp"
+	"github.com/pgEdge/ai-workbench/server/src/privileges"
 	"github.com/pgEdge/ai-workbench/server/src/server"
 	"github.com/pgEdge/ai-workbench/server/src/usermgmt"
 )
@@ -118,6 +119,15 @@ func main() {
 	}
 	defer dbPool.Close()
 	logger.Info("Database connection established")
+
+	// Seed MCP privilege identifiers
+	ctx := context.Background()
+	if err := privileges.SeedMCPPrivileges(ctx, dbPool); err != nil {
+		logger.Errorf("Warning: Failed to seed MCP privilege identifiers: %v", err)
+		// Continue anyway - this is not a fatal error
+	} else {
+		logger.Info("MCP privilege identifiers seeded successfully")
+	}
 
 	// Create MCP handler
 	mcpHandler := mcp.NewHandler(serverName, serverVersion, dbPool, cfg)

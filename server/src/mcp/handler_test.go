@@ -465,7 +465,7 @@ func TestHandleListTools(t *testing.T) {
 		t.Fatalf("tools is not an array, got %T", result["tools"])
 	}
 
-	// Should have 10 tools
+	// Should have 29 tools (10 existing + 8 group management + 11 privilege/scope management)
 	expectedTools := []string{
 		"authenticate_user",
 		"create_user",
@@ -477,6 +477,25 @@ func TestHandleListTools(t *testing.T) {
 		"create_user_token",
 		"list_user_tokens",
 		"delete_user_token",
+		"create_user_group",
+		"update_user_group",
+		"delete_user_group",
+		"list_user_groups",
+		"add_group_member",
+		"remove_group_member",
+		"list_group_members",
+		"list_user_group_memberships",
+		"grant_connection_privilege",
+		"revoke_connection_privilege",
+		"list_connection_privileges",
+		"list_mcp_privilege_identifiers",
+		"grant_mcp_privilege",
+		"revoke_mcp_privilege",
+		"list_group_mcp_privileges",
+		"set_token_connection_scope",
+		"set_token_mcp_scope",
+		"get_token_scope",
+		"clear_token_scope",
 	}
 
 	if len(tools) != len(expectedTools) {

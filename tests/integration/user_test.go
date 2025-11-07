@@ -161,6 +161,87 @@ func runSchemaMigrations(db *testutil.TestDatabase) error {
         return fmt.Errorf("failed to create user_accounts table: %w", err)
     }
 
+    // Create service_tokens table
+    _, err = db.Pool.Exec(ctx, `
+        CREATE TABLE IF NOT EXISTS service_tokens (
+            id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE,
+            token_hash TEXT NOT NULL UNIQUE,
+            is_superuser BOOLEAN NOT NULL DEFAULT FALSE,
+            note TEXT,
+            expires_at TIMESTAMP,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT chk_name_not_empty CHECK (name <> ''),
+            CONSTRAINT chk_token_hash_not_empty CHECK (token_hash <> '')
+        )
+    `)
+    if err != nil {
+        return fmt.Errorf("failed to create service_tokens table: %w", err)
+    }
+
+    // Create user_tokens table
+    _, err = db.Pool.Exec(ctx, `
+        CREATE TABLE IF NOT EXISTS user_tokens (
+            id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            token_hash TEXT NOT NULL UNIQUE,
+            expires_at TIMESTAMP NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT chk_token_hash_not_empty CHECK (token_hash <> ''),
+            CONSTRAINT chk_expires_at_future CHECK (expires_at > created_at)
+        );
+
+        ALTER TABLE user_tokens
+            ADD CONSTRAINT fk_user_tokens_user_id
+            FOREIGN KEY (user_id) REFERENCES user_accounts(id) ON DELETE CASCADE
+    `)
+    if err != nil {
+        return fmt.Errorf("failed to create user_tokens table: %w", err)
+    }
+
+    // Create connections table
+    _, err = db.Pool.Exec(ctx, `
+        CREATE TABLE IF NOT EXISTS connections (
+            id SERIAL PRIMARY KEY,
+            owner_username VARCHAR(255),
+            owner_token VARCHAR(255),
+            is_shared BOOLEAN NOT NULL DEFAULT FALSE,
+            is_monitored BOOLEAN NOT NULL DEFAULT FALSE,
+            name VARCHAR(255) NOT NULL,
+            host VARCHAR(255) NOT NULL,
+            hostaddr VARCHAR(255),
+            port INTEGER NOT NULL DEFAULT 5432,
+            database_name VARCHAR(255) NOT NULL,
+            username VARCHAR(255) NOT NULL,
+            password_encrypted TEXT,
+            sslmode VARCHAR(50),
+            sslcert TEXT,
+            sslkey TEXT,
+            sslrootcert TEXT,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT chk_owner CHECK (
+                (owner_username IS NOT NULL AND owner_token IS NULL) OR
+                (owner_username IS NULL AND owner_token IS NOT NULL)
+            ),
+            CONSTRAINT chk_port CHECK (port > 0 AND port <= 65535)
+        );
+
+        ALTER TABLE connections
+            ADD CONSTRAINT fk_connections_owner_username
+            FOREIGN KEY (owner_username) REFERENCES user_accounts(username)
+            ON UPDATE CASCADE ON DELETE RESTRICT;
+
+        ALTER TABLE connections
+            ADD CONSTRAINT fk_connections_owner_token
+            FOREIGN KEY (owner_token) REFERENCES service_tokens(name)
+            ON UPDATE CASCADE ON DELETE RESTRICT
+    `)
+    if err != nil {
+        return fmt.Errorf("failed to create connections table: %w", err)
+    }
+
     // Create user_sessions table
     _, err = db.Pool.Exec(ctx, `
         CREATE TABLE IF NOT EXISTS user_sessions (
@@ -175,6 +256,104 @@ func runSchemaMigrations(db *testutil.TestDatabase) error {
     `)
     if err != nil {
         return fmt.Errorf("failed to create user_sessions table: %w", err)
+    }
+
+    // Create Migration 6 tables: User Groups and Privilege Management
+    _, err = db.Pool.Exec(ctx, `
+        -- User Groups
+        CREATE TABLE IF NOT EXISTS user_groups (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(255) NOT NULL UNIQUE,
+            description TEXT,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- Group Memberships
+        CREATE TABLE IF NOT EXISTS group_memberships (
+            id SERIAL PRIMARY KEY,
+            parent_group_id INTEGER NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
+            member_user_id INTEGER REFERENCES user_accounts(id) ON DELETE CASCADE,
+            member_group_id INTEGER REFERENCES user_groups(id) ON DELETE CASCADE,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+            CONSTRAINT member_type_check CHECK (
+                (member_user_id IS NOT NULL AND member_group_id IS NULL) OR
+                (member_user_id IS NULL AND member_group_id IS NOT NULL)
+            ),
+            CONSTRAINT unique_user_membership UNIQUE (parent_group_id, member_user_id),
+            CONSTRAINT unique_group_membership UNIQUE (parent_group_id, member_group_id),
+            CONSTRAINT no_self_reference CHECK (parent_group_id != member_group_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_group_memberships_parent ON group_memberships(parent_group_id);
+        CREATE INDEX IF NOT EXISTS idx_group_memberships_user ON group_memberships(member_user_id);
+        CREATE INDEX IF NOT EXISTS idx_group_memberships_group ON group_memberships(member_group_id);
+
+        -- Connection Privileges
+        CREATE TABLE IF NOT EXISTS connection_privileges (
+            id SERIAL PRIMARY KEY,
+            group_id INTEGER NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
+            connection_id INTEGER NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+            access_level VARCHAR(20) NOT NULL CHECK (access_level IN ('read', 'read_write')),
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT unique_group_connection UNIQUE (group_id, connection_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_connection_privileges_group ON connection_privileges(group_id);
+        CREATE INDEX IF NOT EXISTS idx_connection_privileges_connection ON connection_privileges(connection_id);
+
+        -- MCP Privilege Identifiers
+        CREATE TABLE IF NOT EXISTS mcp_privilege_identifiers (
+            id SERIAL PRIMARY KEY,
+            identifier VARCHAR(255) NOT NULL UNIQUE,
+            item_type VARCHAR(20) NOT NULL CHECK (item_type IN ('tool', 'resource', 'prompt')),
+            description TEXT,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_mcp_privilege_identifiers_type ON mcp_privilege_identifiers(item_type);
+
+        -- Group MCP Privileges
+        CREATE TABLE IF NOT EXISTS group_mcp_privileges (
+            id SERIAL PRIMARY KEY,
+            group_id INTEGER NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
+            privilege_identifier_id INTEGER NOT NULL REFERENCES mcp_privilege_identifiers(id) ON DELETE CASCADE,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT unique_group_privilege UNIQUE (group_id, privilege_identifier_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_group_mcp_privileges_group ON group_mcp_privileges(group_id);
+        CREATE INDEX IF NOT EXISTS idx_group_mcp_privileges_privilege ON group_mcp_privileges(privilege_identifier_id);
+
+        -- Token Connection Scope
+        CREATE TABLE IF NOT EXISTS token_connection_scope (
+            id SERIAL PRIMARY KEY,
+            token_id INTEGER NOT NULL,
+            token_type VARCHAR(20) NOT NULL CHECK (token_type IN ('user', 'service')),
+            connection_id INTEGER NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT unique_token_connection UNIQUE (token_id, token_type, connection_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_token_connection_scope_token ON token_connection_scope(token_id, token_type);
+        CREATE INDEX IF NOT EXISTS idx_token_connection_scope_connection ON token_connection_scope(connection_id);
+
+        -- Token MCP Scope
+        CREATE TABLE IF NOT EXISTS token_mcp_scope (
+            id SERIAL PRIMARY KEY,
+            token_id INTEGER NOT NULL,
+            token_type VARCHAR(20) NOT NULL CHECK (token_type IN ('user', 'service')),
+            privilege_identifier_id INTEGER NOT NULL REFERENCES mcp_privilege_identifiers(id) ON DELETE CASCADE,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT unique_token_privilege UNIQUE (token_id, token_type, privilege_identifier_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_token_mcp_scope_token ON token_mcp_scope(token_id, token_type);
+        CREATE INDEX IF NOT EXISTS idx_token_mcp_scope_privilege ON token_mcp_scope(privilege_identifier_id)
+    `)
+    if err != nil {
+        return fmt.Errorf("failed to create Migration 6 tables: %w", err)
     }
 
     return nil

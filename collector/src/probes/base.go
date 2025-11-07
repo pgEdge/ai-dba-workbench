@@ -130,6 +130,42 @@ func DropExpiredPartitions(ctx context.Context, conn *pgxpool.Conn, tableName st
 	// Calculate the cutoff timestamp
 	cutoff := time.Now().AddDate(0, 0, -retentionDays)
 
+	// For pg_settings, find the most recent partition with data for each connection
+	// These partitions must never be dropped, regardless of age
+	protectedPartitions := make(map[string]bool)
+	if tableName == "pg_settings" {
+		// #nosec G201 - table name is from probe definition
+		protQuery := fmt.Sprintf(`
+			SELECT DISTINCT
+				c.relname AS partition_name
+			FROM (
+				SELECT connection_id, MAX(collected_at) as max_collected_at
+				FROM metrics.pg_settings
+				GROUP BY connection_id
+			) latest
+			JOIN metrics.pg_settings ps ON ps.connection_id = latest.connection_id
+				AND ps.collected_at = latest.max_collected_at
+			JOIN pg_class c ON c.oid = ps.tableoid
+		`)
+		protRows, err := conn.Query(ctx, protQuery)
+		if err != nil {
+			return fmt.Errorf("failed to query protected partitions for pg_settings: %w", err)
+		}
+		defer protRows.Close()
+
+		for protRows.Next() {
+			var partitionName string
+			if err := protRows.Scan(&partitionName); err != nil {
+				return fmt.Errorf("failed to scan protected partition name: %w", err)
+			}
+			protectedPartitions[partitionName] = true
+		}
+
+		if len(protectedPartitions) > 0 {
+			logger.Infof("Protected %d partition(s) for pg_settings containing most recent data per connection", len(protectedPartitions))
+		}
+	}
+
 	// Find partitions that are entirely before the cutoff
 	// #nosec G201 - table name is not user-provided, it comes from probe definitions
 	query := fmt.Sprintf(`
@@ -157,6 +193,12 @@ func DropExpiredPartitions(ctx context.Context, conn *pgxpool.Conn, tableName st
 		var partitionName, partitionBound string
 		if err := rows.Scan(&partitionName, &partitionBound); err != nil {
 			return fmt.Errorf("failed to scan partition info: %w", err)
+		}
+
+		// Check if this partition is protected (for pg_settings)
+		if protectedPartitions[partitionName] {
+			logger.Infof("Skipping protected partition %s (contains most recent data for pg_settings)", partitionName)
+			continue
 		}
 
 		// Parse the partition bound to get the end timestamp

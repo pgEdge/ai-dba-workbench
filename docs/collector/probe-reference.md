@@ -217,6 +217,30 @@ written_lsn, flushed_lsn, received_tli, last_msg_send_time,
 last_msg_receipt_time, latest_end_lsn, latest_end_time, slot_name, sender_host,
 sender_port, conninfo
 
+### pg_settings
+
+Monitors PostgreSQL configuration settings with change detection. This probe
+only stores data when configuration changes are detected, making it ideal for
+tracking configuration drift and historical changes over long periods.
+
+- **Source View**: `pg_settings`
+- **Default Interval**: 3600 seconds (1 hour)
+- **Default Retention**: 365 days (1 year)
+- **Key Metrics**: PostgreSQL configuration parameters and their sources
+- **Use Cases**: Configuration change tracking, configuration drift detection,
+    historical configuration analysis, compliance auditing
+- **Special Behavior**: Uses SHA256 hash comparison to detect changes. Data is
+    only stored when configuration differs from the most recent snapshot. The
+    garbage collector ensures the most recent snapshot for each server is never
+    deleted, regardless of age.
+
+**Columns Collected**: name, setting, unit, category, short_desc, extra_desc,
+context, vartype, source, min_val, max_val, enumvals, boot_val, reset_val,
+sourcefile, sourceline, pending_restart
+
+**See Also**: [pg_settings Usage Guide](pg-settings-usage.md) for detailed
+examples and query patterns.
+
 ## Database-Scoped Probes
 
 These probes execute once for each database on a monitored server.
@@ -509,3 +533,5 @@ a non-production environment before modifying.
 - [Probes System](probes.md) - How probes work
 - [Adding Probes](adding-probes.md) - Create custom probes
 - [Configuration](configuration.md) - Configure collection intervals
+- [pg_settings Usage Guide](pg-settings-usage.md) - Examples and best
+    practices for using pg_settings probe data

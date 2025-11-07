@@ -31,6 +31,8 @@ the AI Workbench system.
 
 - [Configuration Reference](config-reference.md) - All configuration options
 - [Probe Reference](probe-reference.md) - List of available probes
+- [pg_settings Usage Guide](pg-settings-usage.md) - Examples and best
+    practices for configuration tracking
 
 ## Quick Links
 
@@ -45,8 +47,8 @@ The Collector provides:
 
 - **Multi-Server Monitoring**: Monitor multiple PostgreSQL servers
   simultaneously with independent connection pools
-- **24 Built-in Probes**: Comprehensive coverage of PostgreSQL system views
-  and statistics
+- **25 Built-in Probes**: Comprehensive coverage of PostgreSQL system views
+  and statistics, including configuration change tracking
 - **Flexible Scheduling**: Configurable collection intervals per probe
 - **Automated Data Management**: Weekly partitioning and retention-based
   garbage collection

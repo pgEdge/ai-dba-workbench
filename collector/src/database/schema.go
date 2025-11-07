@@ -1649,6 +1649,63 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration 3: Add pg_settings probe and metrics table
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     3,
+		Description: "Add pg_settings probe for configuration tracking",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Create pg_settings metrics table
+			_, err := conn.Exec(ctx, `
+			CREATE TABLE IF NOT EXISTS metrics.pg_settings (
+				connection_id INTEGER NOT NULL,
+				name TEXT NOT NULL,
+				setting TEXT,
+				unit TEXT,
+				category TEXT,
+				short_desc TEXT,
+				extra_desc TEXT,
+				context TEXT,
+				vartype TEXT,
+				source TEXT,
+				min_val TEXT,
+				max_val TEXT,
+				enumvals TEXT[],
+				boot_val TEXT,
+				reset_val TEXT,
+				sourcefile TEXT,
+				sourceline INTEGER,
+				pending_restart BOOLEAN,
+				collected_at TIMESTAMP NOT NULL,
+				PRIMARY KEY (connection_id, collected_at, name)
+			) PARTITION BY RANGE (collected_at);
+
+			COMMENT ON TABLE metrics.pg_settings IS
+				'PostgreSQL configuration settings - only stores snapshots when changes are detected';
+
+			ALTER TABLE metrics.pg_settings
+				ADD CONSTRAINT fk_pg_settings_connection_id
+				FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to create pg_settings table: %w", err)
+			}
+
+			// Insert probe configuration
+			_, err = conn.Exec(ctx, `
+			INSERT INTO probe_configs (connection_id, is_enabled, name, description, collection_interval_seconds, retention_days)
+			VALUES (NULL, TRUE, 'pg_settings', 'Monitors PostgreSQL configuration settings (change-tracked)', 3600, 365)
+			ON CONFLICT (COALESCE(connection_id, 0), name) DO NOTHING;
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to insert pg_settings probe configuration: %w", err)
+			}
+
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations

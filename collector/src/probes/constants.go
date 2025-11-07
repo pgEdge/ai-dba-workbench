@@ -27,6 +27,7 @@ const (
 	ProbeNamePgStatCheckpointer      = "pg_stat_checkpointer"
 	ProbeNamePgStatWAL               = "pg_stat_wal"
 	ProbeNamePgStatSLRU              = "pg_stat_slru"
+	ProbeNamePgSettings              = "pg_settings"
 )
 
 // Probe names - Database-scoped probes

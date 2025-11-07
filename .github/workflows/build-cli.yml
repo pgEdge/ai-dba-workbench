@@ -1,0 +1,40 @@
+name: Build CLI
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'cli/**'
+      - '.github/workflows/build-cli.yml'
+  pull_request:
+    branches: [ main, master ]
+    paths:
+      - 'cli/**'
+      - '.github/workflows/build-cli.yml'
+
+jobs:
+  build:
+    name: Build CLI Binary
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.21'
+
+    - name: Build CLI
+      run: |
+        cd cli
+        make build
+
+    - name: Verify binary was created
+      run: |
+        if [ ! -f cli/ai-cli ]; then
+          echo "Error: Binary cli/ai-cli was not created"
+          exit 1
+        fi
+        echo "Build successful: cli/ai-cli created"

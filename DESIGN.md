@@ -38,6 +38,10 @@ server configuration or retrieving log files, and returning data sets, such
 as history data from the metric datastore, or realtime data from the
 monitored servers.
 
+A simple CLI will be created, primarily intended for testing of the MCP 
+server, with the ability to list tools, resources, and prompts, and to 
+exercise them and display raw output from the MCP server.
+
 Initially, we will build a simple frontend client application. This will be 
 written in React, running under NodeJS, and use the MUI library for ease of 
 development of a professional, and clean design. It will connect to the AI
@@ -194,6 +198,18 @@ as an additional data source for probes and realtime data.
 
 If Spock is installed, it's status tables will be used and as an additional
 data source for probes and realtime data.
+
+### Testing
+
+Each sub-project will contain a test suite in the <project>/tests/ directory 
+that will contain both unit and regression tests. Unit tests will exercise
+individual code functions, and regression tests will test the functionality of
+the built code. Tests will be written such that they run under "go test" or
+"npm test" as appropriate. 100% coverage will be targetted.
+
+A /tests directory in the top level of the project will provide end to end 
+integration testing. The collector and server will be started in a temporary
+test database, and the system exercised using both the CLI and web client.
 
 ### Future Enhancements
 

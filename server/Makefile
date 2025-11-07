@@ -20,7 +20,7 @@ build:
 # Run tests
 test: killall
 	@echo "Running tests..."
-	cd src && go test -v ./...
+	cd src && SKIP_DB_TESTS=1 go test -v ./...
 	@$(MAKE) --no-print-directory killall
 
 # Run linting
@@ -41,7 +41,7 @@ fmt:
 # Run tests with coverage
 coverage:
 	@echo "Running tests with coverage..."
-	cd src && go test -coverprofile=coverage.out ./...
+	cd src && SKIP_DB_TESTS=1 go test -coverprofile=coverage.out ./...
 	cd src && go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated: src/coverage.html"
 

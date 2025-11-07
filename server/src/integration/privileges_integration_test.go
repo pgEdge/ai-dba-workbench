@@ -60,15 +60,15 @@ func TestGroupHierarchyAndInheritance(t *testing.T) {
 
 	// Clean up test data
 	defer func() {
-		pool.Exec(ctx, "DELETE FROM user_groups WHERE name LIKE 'test_%'")
-		pool.Exec(ctx, "DELETE FROM user_accounts WHERE username LIKE 'test_%'")
+		_, _ = pool.Exec(ctx, "DELETE FROM user_groups WHERE name LIKE 'test_%'") //nolint:errcheck // Cleanup code
+		_, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username LIKE 'test_%'") //nolint:errcheck // Cleanup code
 	}()
 
 	// Create test users
 	var user1ID, user2ID int
 	err := pool.QueryRow(ctx, `
-		INSERT INTO user_accounts (username, email, password_hash, is_superuser)
-		VALUES ('test_user1', 'user1@test.com', 'hash1', false)
+		INSERT INTO user_accounts (username, email, full_name, password_hash, is_superuser)
+		VALUES ('test_user1', 'user1@test.com', 'Test User 1', 'hash1', false)
 		RETURNING id
 	`).Scan(&user1ID)
 	if err != nil {
@@ -76,8 +76,8 @@ func TestGroupHierarchyAndInheritance(t *testing.T) {
 	}
 
 	err = pool.QueryRow(ctx, `
-		INSERT INTO user_accounts (username, email, password_hash, is_superuser)
-		VALUES ('test_user2', 'user2@test.com', 'hash2', false)
+		INSERT INTO user_accounts (username, email, full_name, password_hash, is_superuser)
+		VALUES ('test_user2', 'user2@test.com', 'Test User 2', 'hash2', false)
 		RETURNING id
 	`).Scan(&user2ID)
 	if err != nil {
@@ -163,7 +163,7 @@ func TestCircularReferencePrevention(t *testing.T) {
 
 	// Clean up test data
 	defer func() {
-		pool.Exec(ctx, "DELETE FROM user_groups WHERE name LIKE 'test_%'")
+		_, _ = pool.Exec(ctx, "DELETE FROM user_groups WHERE name LIKE 'test_%'") //nolint:errcheck // Cleanup code
 	}()
 
 	// Create three groups: A -> B -> C
@@ -213,15 +213,15 @@ func TestMCPPrivilegeEnforcement(t *testing.T) {
 
 	// Clean up test data
 	defer func() {
-		pool.Exec(ctx, "DELETE FROM user_groups WHERE name LIKE 'test_%'")
-		pool.Exec(ctx, "DELETE FROM user_accounts WHERE username LIKE 'test_%'")
+		_, _ = pool.Exec(ctx, "DELETE FROM user_groups WHERE name LIKE 'test_%'") //nolint:errcheck // Cleanup code
+		_, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username LIKE 'test_%'") //nolint:errcheck // Cleanup code
 	}()
 
 	// Create test user (non-superuser)
 	var userID int
 	err := pool.QueryRow(ctx, `
-		INSERT INTO user_accounts (username, email, password_hash, is_superuser)
-		VALUES ('test_privilege_user', 'privuser@test.com', 'hash', false)
+		INSERT INTO user_accounts (username, email, full_name, password_hash, is_superuser)
+		VALUES ('test_privilege_user', 'privuser@test.com', 'Test Privilege User', 'hash', false)
 		RETURNING id
 	`).Scan(&userID)
 	if err != nil {
@@ -231,8 +231,8 @@ func TestMCPPrivilegeEnforcement(t *testing.T) {
 	// Create superuser for comparison
 	var superuserID int
 	err = pool.QueryRow(ctx, `
-		INSERT INTO user_accounts (username, email, password_hash, is_superuser)
-		VALUES ('test_superuser', 'super@test.com', 'hash', true)
+		INSERT INTO user_accounts (username, email, full_name, password_hash, is_superuser)
+		VALUES ('test_superuser', 'super@test.com', 'Test Superuser', 'hash', true)
 		RETURNING id
 	`).Scan(&superuserID)
 	if err != nil {
@@ -307,16 +307,16 @@ func TestConnectionPrivileges(t *testing.T) {
 
 	// Clean up test data
 	defer func() {
-		pool.Exec(ctx, "DELETE FROM user_groups WHERE name LIKE 'test_%'")
-		pool.Exec(ctx, "DELETE FROM user_accounts WHERE username LIKE 'test_%'")
-		pool.Exec(ctx, "DELETE FROM connections WHERE connection_name LIKE 'test_%'")
+		_, _ = pool.Exec(ctx, "DELETE FROM user_groups WHERE name LIKE 'test_%'") //nolint:errcheck // Cleanup code
+		_, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username LIKE 'test_%'") //nolint:errcheck // Cleanup code
+		_, _ = pool.Exec(ctx, "DELETE FROM connections WHERE name LIKE 'test_%'") //nolint:errcheck // Cleanup code
 	}()
 
 	// Create test user
 	var userID int
 	err := pool.QueryRow(ctx, `
-		INSERT INTO user_accounts (username, email, password_hash, is_superuser)
-		VALUES ('test_conn_user', 'connuser@test.com', 'hash', false)
+		INSERT INTO user_accounts (username, email, full_name, password_hash, is_superuser)
+		VALUES ('test_conn_user', 'connuser@test.com', 'Test Connection User', 'hash', false)
 		RETURNING id
 	`).Scan(&userID)
 	if err != nil {
@@ -326,8 +326,8 @@ func TestConnectionPrivileges(t *testing.T) {
 	// Create test connection
 	var connectionID int
 	err = pool.QueryRow(ctx, `
-		INSERT INTO connections (connection_name, host, port, database_name, is_shared)
-		VALUES ('test_connection', 'localhost', 5432, 'testdb', true)
+		INSERT INTO connections (name, host, port, database_name, username, owner_username, is_shared)
+		VALUES ('test_connection', 'localhost', 5432, 'testdb', 'testuser', 'test_conn_user', true)
 		RETURNING id
 	`).Scan(&connectionID)
 	if err != nil {
@@ -413,15 +413,15 @@ func TestCascadeDeletes(t *testing.T) {
 
 	// Clean up test data
 	defer func() {
-		pool.Exec(ctx, "DELETE FROM user_groups WHERE name LIKE 'test_%'")
-		pool.Exec(ctx, "DELETE FROM user_accounts WHERE username LIKE 'test_%'")
+		_, _ = pool.Exec(ctx, "DELETE FROM user_groups WHERE name LIKE 'test_%'") //nolint:errcheck // Cleanup code
+		_, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username LIKE 'test_%'") //nolint:errcheck // Cleanup code
 	}()
 
 	// Create test user
 	var userID int
 	err := pool.QueryRow(ctx, `
-		INSERT INTO user_accounts (username, email, password_hash, is_superuser)
-		VALUES ('test_cascade_user', 'cascade@test.com', 'hash', false)
+		INSERT INTO user_accounts (username, email, full_name, password_hash, is_superuser)
+		VALUES ('test_cascade_user', 'cascade@test.com', 'Test Cascade User', 'hash', false)
 		RETURNING id
 	`).Scan(&userID)
 	if err != nil {
@@ -501,15 +501,15 @@ func TestTokenScoping(t *testing.T) {
 
 	// Clean up test data
 	defer func() {
-		pool.Exec(ctx, "DELETE FROM service_tokens WHERE token_name LIKE 'test_%'")
-		pool.Exec(ctx, "DELETE FROM connections WHERE connection_name LIKE 'test_%'")
+		_, _ = pool.Exec(ctx, "DELETE FROM service_tokens WHERE name LIKE 'test_%'") //nolint:errcheck // Cleanup code
+		_, _ = pool.Exec(ctx, "DELETE FROM connections WHERE name LIKE 'test_%'") //nolint:errcheck // Cleanup code
 	}()
 
 	// Create test connections
 	var conn1ID, conn2ID int
 	err := pool.QueryRow(ctx, `
-		INSERT INTO connections (connection_name, host, port, database_name, is_shared)
-		VALUES ('test_conn1', 'localhost', 5432, 'testdb1', true)
+		INSERT INTO connections (name, host, port, database_name, username, owner_token, is_shared)
+		VALUES ('test_conn1', 'localhost', 5432, 'testdb1', 'testuser', 'test_scoped_token', true)
 		RETURNING id
 	`).Scan(&conn1ID)
 	if err != nil {
@@ -517,8 +517,8 @@ func TestTokenScoping(t *testing.T) {
 	}
 
 	err = pool.QueryRow(ctx, `
-		INSERT INTO connections (connection_name, host, port, database_name, is_shared)
-		VALUES ('test_conn2', 'localhost', 5432, 'testdb2', true)
+		INSERT INTO connections (name, host, port, database_name, username, owner_token, is_shared)
+		VALUES ('test_conn2', 'localhost', 5432, 'testdb2', 'testuser', 'test_scoped_token', true)
 		RETURNING id
 	`).Scan(&conn2ID)
 	if err != nil {
@@ -528,7 +528,7 @@ func TestTokenScoping(t *testing.T) {
 	// Create a service token
 	var tokenID int
 	err = pool.QueryRow(ctx, `
-		INSERT INTO service_tokens (token_name, token_hash, is_superuser)
+		INSERT INTO service_tokens (name, token_hash, is_superuser)
 		VALUES ('test_scoped_token', 'hash123', false)
 		RETURNING id
 	`).Scan(&tokenID)

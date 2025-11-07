@@ -68,7 +68,7 @@ func CreateTestConfig(dbName string) (string, error) {
 
     // Write config file
     configPath := filepath.Join(testsDir, "config", fmt.Sprintf("test-%s.conf", dbName))
-    if err := os.WriteFile(configPath, []byte(config), 0644); err != nil {
+    if err := os.WriteFile(configPath, []byte(config), 0600); err != nil {
         return "", fmt.Errorf("failed to write config file: %w", err)
     }
 

@@ -67,7 +67,7 @@ func (c *CLIClient) RunTool(toolName string, input map[string]interface{}) (map[
     }
     args = append(args, "run-tool", toolName)
 
-    cmd := exec.Command(c.cliPath, args...)
+    cmd := exec.Command(c.cliPath, args...) //nolint:gosec // Test code with controlled inputs
     cmd.Stdin = bytes.NewReader(inputJSON)
 
     // Capture output
@@ -99,7 +99,7 @@ func (c *CLIClient) ReadResource(uri string) (map[string]interface{}, error) {
     }
     args = append(args, "read-resource", uri)
 
-    cmd := exec.Command(c.cliPath, args...)
+    cmd := exec.Command(c.cliPath, args...) //nolint:gosec // Test code with controlled inputs
 
     // Capture output
     var stdout, stderr bytes.Buffer
@@ -124,7 +124,7 @@ func (c *CLIClient) ReadResource(uri string) (map[string]interface{}, error) {
 // Ping pings the server via the CLI
 func (c *CLIClient) Ping() error {
     args := []string{"--server", c.ServerURL, "ping"}
-    cmd := exec.Command(c.cliPath, args...)
+    cmd := exec.Command(c.cliPath, args...) //nolint:gosec // Test code with controlled inputs
 
     var stderr bytes.Buffer
     cmd.Stderr = &stderr
@@ -145,7 +145,7 @@ func (c *CLIClient) ListTools() ([]string, error) {
     }
     args = append(args, "list-tools")
 
-    cmd := exec.Command(c.cliPath, args...)
+    cmd := exec.Command(c.cliPath, args...) //nolint:gosec // Test code with controlled inputs
 
     var stdout, stderr bytes.Buffer
     cmd.Stdout = &stdout

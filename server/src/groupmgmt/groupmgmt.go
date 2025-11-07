@@ -516,7 +516,7 @@ func SetTokenConnectionScope(ctx context.Context, pool *pgxpool.Pool, tokenID in
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // Rollback error not relevant after commit
 
 	// Clear existing scope
 	_, err = tx.Exec(ctx, `
@@ -558,7 +558,7 @@ func SetTokenMCPScope(ctx context.Context, pool *pgxpool.Pool, tokenID int, toke
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // Rollback error not relevant after commit
 
 	// Clear existing scope
 	_, err = tx.Exec(ctx, `
@@ -702,7 +702,7 @@ func ClearTokenScope(ctx context.Context, pool *pgxpool.Pool, tokenID int, token
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // Rollback error not relevant after commit
 
 	// Clear connection scope
 	_, err = tx.Exec(ctx, `

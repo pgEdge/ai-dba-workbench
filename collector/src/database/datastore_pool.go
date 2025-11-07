@@ -65,7 +65,7 @@ func NewConnectionPool(connStr string, maxConnections, maxIdleSeconds int) (*Con
 // If the pool is exhausted, it will wait for a connection to become available
 // until the context deadline is reached
 func (p *ConnectionPool) GetConnection(ctx context.Context) (*sql.DB, error) {
-	// Check if context is already cancelled
+	// Check if context is already canceled
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -160,7 +160,7 @@ func (p *ConnectionPool) GetConnection(ctx context.Context) (*sql.DB, error) {
 		}
 
 		// Pool is exhausted and we can't create new connections
-		// Wait for a connection to be returned or context to be cancelled
+		// Wait for a connection to be returned or context to be canceled
 		select {
 		case <-ctx.Done():
 			return nil, fmt.Errorf("connection pool exhausted (max: %d), timed out waiting for available connection: %w",

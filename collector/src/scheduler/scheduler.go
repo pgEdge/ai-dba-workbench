@@ -280,7 +280,7 @@ func (ps *ProbeScheduler) scheduleProbeForConnection(probe probes.MetricsProbe, 
 			logger.Infof("Stopping probe scheduler for %s on %s during initial delay", config.Name, conn.Name)
 			return
 		case <-ps.ctx.Done():
-			logger.Infof("Context cancelled, stopping probe scheduler for %s on %s during initial delay", config.Name, conn.Name)
+			logger.Infof("Context canceled, stopping probe scheduler for %s on %s during initial delay", config.Name, conn.Name)
 			return
 		case <-time.After(initialDelay):
 			// Initial delay elapsed, execute probe now
@@ -301,7 +301,7 @@ func (ps *ProbeScheduler) scheduleProbeForConnection(probe probes.MetricsProbe, 
 			logger.Infof("Stopping probe scheduler for %s on %s", config.Name, conn.Name)
 			return
 		case <-ps.ctx.Done():
-			logger.Infof("Context cancelled, stopping probe scheduler for %s on %s", config.Name, conn.Name)
+			logger.Infof("Context canceled, stopping probe scheduler for %s on %s", config.Name, conn.Name)
 			return
 		case <-ticker.C:
 			// Check if probe still exists and config hasn't changed
@@ -379,9 +379,9 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 	var allMetrics []map[string]interface{}
 	var databases []string
 
-	// Check if context is already cancelled
+	// Check if context is already canceled
 	if ctx.Err() != nil {
-		logger.Errorf("Error getting connection for probe %s on %s: context already cancelled",
+		logger.Errorf("Error getting connection for probe %s on %s: context already canceled",
 			config.Name, conn.Name)
 		return allMetrics, databases
 	}
@@ -440,7 +440,7 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 	for i := 1; i < len(databases); i++ {
 		dbName := databases[i]
 
-		// Check if context is cancelled (e.g., during shutdown) before processing next database
+		// Check if context is canceled (e.g., during shutdown) before processing next database
 		if ctx.Err() != nil {
 			logger.Infof("Stopping probe %s execution on %s due to context cancellation", config.Name, conn.Name)
 			break
@@ -518,9 +518,9 @@ func (ps *ProbeScheduler) executeProbeForServerWide(ctx context.Context, probe p
 	config := probe.GetConfig()
 	var metrics []map[string]interface{}
 
-	// Check if context is already cancelled
+	// Check if context is already canceled
 	if ctx.Err() != nil {
-		logger.Errorf("Error getting connection for probe %s on %s: context already cancelled",
+		logger.Errorf("Error getting connection for probe %s on %s: context already canceled",
 			config.Name, conn.Name)
 		return metrics
 	}

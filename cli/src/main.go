@@ -375,6 +375,7 @@ func handleAuthentication(client *MCPClient, token string) error {
 
 // readTokenFromFile reads a token from a file
 func readTokenFromFile(filename string) (string, error) {
+	// #nosec G304 -- CLI intentionally reads user-specified file paths
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		return "", err

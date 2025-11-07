@@ -1,5 +1,7 @@
 # pgEdge AI Workbench
 
+[![Build Collector](https://github.com/pgEdge/ai-workbench/actions/workflows/build-collector.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/build-collector.yml)
+[![Build Server](https://github.com/pgEdge/ai-workbench/actions/workflows/build-server.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/build-server.yml)
 [![Build CLI](https://github.com/pgEdge/ai-workbench/actions/workflows/build-cli.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/build-cli.yml)
 
 The pgEdge AI Workbench is a unified environment for interacting with pgEdge's

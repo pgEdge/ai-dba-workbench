@@ -1,0 +1,44 @@
+name: Build Collector
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'collector/**'
+      - '.github/workflows/build-collector.yml'
+  pull_request:
+    branches: [ main, master ]
+    paths:
+      - 'collector/**'
+      - '.github/workflows/build-collector.yml'
+
+jobs:
+  build:
+    name: Build Collector Binary (Go ${{ matrix.go-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ['1.21', '1.22', '1.23', '1.24', '1.25']
+
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Set up Go ${{ matrix.go-version }}
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ matrix.go-version }}
+        cache-dependency-path: collector/go.sum
+
+    - name: Build Collector
+      run: |
+        cd collector
+        make build
+
+    - name: Verify binary was created
+      run: |
+        if [ ! -f collector/collector ]; then
+          echo "Error: Binary collector/collector was not created"
+          exit 1
+        fi
+        echo "Build successful: collector/collector created with Go ${{ matrix.go-version }}"

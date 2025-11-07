@@ -1,5 +1,7 @@
 # pgEdge AI Workbench Collector
 
+[![Build Collector](https://github.com/pgEdge/ai-workbench/actions/workflows/build-collector.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/build-collector.yml)
+
 The pgEdge AI Workbench Collector is a monitoring service that collects
 metrics from PostgreSQL servers and stores them in a centralized datastore
 for analysis by the AI Workbench system.

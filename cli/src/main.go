@@ -57,7 +57,13 @@ func main() {
 	client := NewMCPClient(*serverURL)
 
 	// Handle authentication for commands that need it
-	if needsAuth(command) {
+	// Special case: skip authentication for authenticate_user tool
+	skipAuth := false
+	if command == "run-tool" && len(commandArgs) > 0 && commandArgs[0] == "authenticate_user" {
+		skipAuth = true
+	}
+
+	if needsAuth(command) && !skipAuth {
 		if err := handleAuthentication(client, *token); err != nil {
 			fmt.Fprintf(os.Stderr, "Authentication error: %v\n", err)
 			os.Exit(1)

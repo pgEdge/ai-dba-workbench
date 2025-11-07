@@ -740,13 +740,22 @@ func TestUserTokensTable(t *testing.T) {
 		t.Error("Expected error for empty token_hash, got nil")
 	}
 
-	// Test expires_at constraint (must be in future)
+	// Test expires_at can be in the past (constraint removed in Migration 5)
 	_, err = pool.Exec(ctx, `
         INSERT INTO user_tokens (user_id, token_hash, expires_at)
         VALUES ($1, 'token456', NOW() - INTERVAL '1 hour')
     `, userID)
-	if err == nil {
-		t.Error("Expected error for expires_at in the past, got nil")
+	if err != nil {
+		t.Errorf("Should allow expires_at in the past, got error: %v", err)
+	}
+
+	// Test expires_at can be NULL (for indefinite lifetime)
+	_, err = pool.Exec(ctx, `
+        INSERT INTO user_tokens (user_id, token_hash, expires_at)
+        VALUES ($1, 'token789', NULL)
+    `, userID)
+	if err != nil {
+		t.Errorf("Should allow NULL expires_at, got error: %v", err)
 	}
 
 	// Test cascade delete

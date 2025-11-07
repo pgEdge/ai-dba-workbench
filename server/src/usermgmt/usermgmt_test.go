@@ -61,14 +61,14 @@ func TestCreateUserTokenNonInteractive_Validation(t *testing.T) {
     testPassword := "TestPassword123!"
 
     // Clean up any existing test user
-    _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username = $1", testUsername)
+    _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username = $1", testUsername) //nolint:errcheck // Cleanup code, failure is acceptable
 
     _, err := CreateUserNonInteractive(pool, testUsername, testEmail, testFullName, testPassword, false, nil)
     if err != nil {
         t.Fatalf("Failed to create test user: %v", err)
     }
     defer func() {
-        _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username = $1", testUsername)
+        _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username = $1", testUsername) //nolint:errcheck // Cleanup code, failure is acceptable
     }()
 
     t.Run("ValidToken_WithMaxLifetime", func(t *testing.T) {
@@ -157,14 +157,14 @@ func TestListUserTokens(t *testing.T) {
     testPassword := "TestPassword123!"
 
     // Clean up any existing test user
-    _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username = $1", testUsername)
+    _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username = $1", testUsername) //nolint:errcheck // Cleanup code, failure is acceptable
 
     _, err := CreateUserNonInteractive(pool, testUsername, testEmail, testFullName, testPassword, false, nil)
     if err != nil {
         t.Fatalf("Failed to create test user: %v", err)
     }
     defer func() {
-        _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username = $1", testUsername)
+        _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username = $1", testUsername) //nolint:errcheck // Cleanup code, failure is acceptable
     }()
 
     // Create a few tokens
@@ -227,14 +227,14 @@ func TestDeleteUserTokenNonInteractive(t *testing.T) {
     testPassword := "TestPassword123!"
 
     // Clean up any existing test user
-    _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username = $1", testUsername)
+    _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username = $1", testUsername) //nolint:errcheck // Cleanup code, failure is acceptable
 
     _, err := CreateUserNonInteractive(pool, testUsername, testEmail, testFullName, testPassword, false, nil)
     if err != nil {
         t.Fatalf("Failed to create test user: %v", err)
     }
     defer func() {
-        _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username = $1", testUsername)
+        _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username = $1", testUsername) //nolint:errcheck // Cleanup code, failure is acceptable
     }()
 
     // Create a token
@@ -253,7 +253,7 @@ func TestDeleteUserTokenNonInteractive(t *testing.T) {
         t.Fatal("No tokens found")
     }
 
-    tokenID := tokens[0]["id"].(int)
+    tokenID := tokens[0]["id"].(int) //nolint:errcheck // Test code, type assertion expected to succeed
 
     // Delete the token
     message, err := DeleteUserTokenNonInteractive(pool, testUsername, tokenID)
@@ -270,7 +270,7 @@ func TestDeleteUserTokenNonInteractive(t *testing.T) {
         t.Fatalf("Failed to list tokens after deletion: %v", err)
     }
     for _, token := range tokens {
-        if token["id"].(int) == tokenID {
+        if token["id"].(int) == tokenID { //nolint:errcheck // Test code, type assertion expected to succeed
             t.Error("Token was not deleted")
         }
     }
@@ -302,7 +302,7 @@ func TestUserTokenCascadeDelete(t *testing.T) {
     testPassword := "TestPassword123!"
 
     // Clean up any existing test user
-    _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username = $1", testUsername)
+    _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username = $1", testUsername) //nolint:errcheck // Cleanup code, failure is acceptable
 
     _, err := CreateUserNonInteractive(pool, testUsername, testEmail, testFullName, testPassword, false, nil)
     if err != nil {
@@ -325,7 +325,7 @@ func TestUserTokenCascadeDelete(t *testing.T) {
         t.Fatal("No tokens found")
     }
 
-    tokenID := tokens[0]["id"].(int)
+    tokenID := tokens[0]["id"].(int) //nolint:errcheck // Test code, type assertion expected to succeed
 
     // Delete the user
     _, err = DeleteUserNonInteractive(pool, testUsername)
@@ -358,14 +358,14 @@ func TestUserTokenExpiration(t *testing.T) {
     testPassword := "TestPassword123!"
 
     // Clean up any existing test user
-    _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username = $1", testUsername)
+    _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username = $1", testUsername) //nolint:errcheck // Cleanup code, failure is acceptable
 
     _, err := CreateUserNonInteractive(pool, testUsername, testEmail, testFullName, testPassword, false, nil)
     if err != nil {
         t.Fatalf("Failed to create test user: %v", err)
     }
     defer func() {
-        _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username = $1", testUsername)
+        _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username = $1", testUsername) //nolint:errcheck // Cleanup code, failure is acceptable
     }()
 
     // Create an expired token by manually setting expires_at in the past
@@ -384,7 +384,7 @@ func TestUserTokenExpiration(t *testing.T) {
         t.Fatal("No tokens found")
     }
 
-    tokenID := tokens[0]["id"].(int)
+    tokenID := tokens[0]["id"].(int) //nolint:errcheck // Test code, type assertion expected to succeed
 
     // Manually set the expiration to the past
     pastTime := time.Now().Add(-1 * time.Hour)
@@ -401,7 +401,7 @@ func TestUserTokenExpiration(t *testing.T) {
 
     found := false
     for _, token := range tokens {
-        if token["id"].(int) == tokenID {
+        if token["id"].(int) == tokenID { //nolint:errcheck // Test code, type assertion expected to succeed
             found = true
             if expired, ok := token["is_expired"].(bool); !ok || !expired {
                 t.Error("Expected token to be marked as expired")
@@ -428,7 +428,7 @@ func TestUserTokenPermissions_RegularUser(t *testing.T) {
     testPassword := "TestPassword123!"
 
     // Clean up
-    _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username IN ($1, $2)", user1Username, user2Username)
+    _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username IN ($1, $2)", user1Username, user2Username) //nolint:errcheck // Cleanup code, failure is acceptable
 
     // Create both users as regular users (not superusers)
     _, err := CreateUserNonInteractive(pool, user1Username, user1Email, "User One", testPassword, false, nil)
@@ -436,7 +436,7 @@ func TestUserTokenPermissions_RegularUser(t *testing.T) {
         t.Fatalf("Failed to create user1: %v", err)
     }
     defer func() {
-        _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username = $1", user1Username)
+        _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username = $1", user1Username) //nolint:errcheck // Cleanup code, failure is acceptable
     }()
 
     _, err = CreateUserNonInteractive(pool, user2Username, user2Email, "User Two", testPassword, false, nil)
@@ -444,7 +444,7 @@ func TestUserTokenPermissions_RegularUser(t *testing.T) {
         t.Fatalf("Failed to create user2: %v", err)
     }
     defer func() {
-        _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username = $1", user2Username)
+        _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username = $1", user2Username) //nolint:errcheck // Cleanup code, failure is acceptable
     }()
 
     t.Run("RegularUser_CanCreateOwnToken", func(t *testing.T) {
@@ -478,7 +478,7 @@ func TestUserTokenPermissions_RegularUser(t *testing.T) {
             t.Fatal("No tokens to delete")
         }
 
-        tokenID := tokens[0]["id"].(int)
+        tokenID := tokens[0]["id"].(int) //nolint:errcheck // Test code, type assertion expected to succeed
         _, err = DeleteUserTokenNonInteractive(pool, user1Username, tokenID)
         if err != nil {
             t.Errorf("Regular user should be able to delete their own token: %v", err)
@@ -501,7 +501,7 @@ func TestUserTokenPermissions_Superuser(t *testing.T) {
     testPassword := "TestPassword123!"
 
     // Clean up
-    _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username IN ($1, $2)", superUsername, regularUsername)
+    _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username IN ($1, $2)", superUsername, regularUsername) //nolint:errcheck // Cleanup code, failure is acceptable
 
     // Create superuser
     _, err := CreateUserNonInteractive(pool, superUsername, superEmail, "Super Admin", testPassword, true, nil)
@@ -509,7 +509,7 @@ func TestUserTokenPermissions_Superuser(t *testing.T) {
         t.Fatalf("Failed to create superuser: %v", err)
     }
     defer func() {
-        _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username = $1", superUsername)
+        _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username = $1", superUsername) //nolint:errcheck // Cleanup code, failure is acceptable
     }()
 
     // Create regular user
@@ -518,7 +518,7 @@ func TestUserTokenPermissions_Superuser(t *testing.T) {
         t.Fatalf("Failed to create regular user: %v", err)
     }
     defer func() {
-        _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username = $1", regularUsername)
+        _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username = $1", regularUsername) //nolint:errcheck // Cleanup code, failure is acceptable
     }()
 
     t.Run("Superuser_CanCreateTokenForOtherUser", func(t *testing.T) {
@@ -573,7 +573,7 @@ func TestUserTokenPermissions_Superuser(t *testing.T) {
             t.Fatal("No tokens to delete")
         }
 
-        tokenID := tokens[0]["id"].(int)
+        tokenID := tokens[0]["id"].(int) //nolint:errcheck // Test code, type assertion expected to succeed
         _, err = DeleteUserTokenNonInteractive(pool, regularUsername, tokenID)
         if err != nil {
             t.Errorf("Superuser should be able to delete any user's tokens: %v", err)
@@ -586,7 +586,7 @@ func TestUserTokenPermissions_Superuser(t *testing.T) {
         }
 
         for _, tok := range tokensAfter {
-            if tok["id"].(int) == tokenID {
+            if tok["id"].(int) == tokenID { //nolint:errcheck // Test code, type assertion expected to succeed
                 t.Error("Token should have been deleted")
             }
         }
@@ -670,14 +670,14 @@ func TestUserTokenWithChangingPermissions(t *testing.T) {
     testPassword := "TestPassword123!"
 
     // Clean up
-    _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username = $1", testUsername)
+    _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username = $1", testUsername) //nolint:errcheck // Cleanup code, failure is acceptable
 
     _, err := CreateUserNonInteractive(pool, testUsername, testEmail, "Permission Test", testPassword, false, nil)
     if err != nil {
         t.Fatalf("Failed to create test user: %v", err)
     }
     defer func() {
-        _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username = $1", testUsername)
+        _, _ = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username = $1", testUsername) //nolint:errcheck // Cleanup code, failure is acceptable
     }()
 
     // Create a token

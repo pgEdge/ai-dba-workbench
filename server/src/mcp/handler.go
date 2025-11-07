@@ -588,7 +588,7 @@ func (h *Handler) handleUpdateUser(args map[string]interface{}) (interface{},
 		return nil, fmt.Errorf("permission denied: superuser privileges required")
 	}
 
-	username, _ := args["username"].(string)
+	username, _ := args["username"].(string) //nolint:errcheck // Required argument, empty string handled by validation
 
 	var email, fullName, password *string
 	var isSuperuser *bool
@@ -642,7 +642,7 @@ func (h *Handler) handleDeleteUser(args map[string]interface{}) (interface{},
 		return nil, fmt.Errorf("permission denied: superuser privileges required")
 	}
 
-	username, _ := args["username"].(string)
+	username, _ := args["username"].(string) //nolint:errcheck // Required argument, empty string handled by validation
 
 	message, err := usermgmt.DeleteUserNonInteractive(h.dbPool, username)
 	if err != nil {
@@ -666,8 +666,8 @@ func (h *Handler) handleCreateServiceToken(args map[string]interface{}) (interfa
 		return nil, fmt.Errorf("permission denied: superuser privileges required")
 	}
 
-	name, _ := args["name"].(string)
-	isSuperuser, _ := args["isSuperuser"].(bool)
+	name, _ := args["name"].(string)           //nolint:errcheck // Required argument, empty string handled by validation
+	isSuperuser, _ := args["isSuperuser"].(bool) //nolint:errcheck // Optional argument, false is acceptable default
 
 	var note *string
 	var expiresAt *time.Time

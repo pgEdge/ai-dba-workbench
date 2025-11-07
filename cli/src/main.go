@@ -258,8 +258,8 @@ func listTools(client *MCPClient) error {
 			continue
 		}
 
-		name, _ := tool["name"].(string)
-		description, _ := tool["description"].(string)
+		name, _ := tool["name"].(string)               //nolint:errcheck // Optional field, empty string is acceptable default
+		description, _ := tool["description"].(string) //nolint:errcheck // Optional field, empty string is acceptable default
 
 		if name != "" {
 			fmt.Printf("%s", name)
@@ -297,8 +297,8 @@ func listPrompts(client *MCPClient) error {
 			continue
 		}
 
-		name, _ := prompt["name"].(string)
-		description, _ := prompt["description"].(string)
+		name, _ := prompt["name"].(string)               //nolint:errcheck // Optional field, empty string is acceptable default
+		description, _ := prompt["description"].(string) //nolint:errcheck // Optional field, empty string is acceptable default
 
 		if name != "" {
 			fmt.Printf("%s", name)

@@ -12,7 +12,7 @@ A probe is a data collection unit that:
 3. Stores the results in a partitioned metrics table
 4. Manages data retention through automated cleanup
 
-The Collector includes 25 built-in probes covering the most important
+The Collector includes 27 built-in probes covering the most important
 PostgreSQL statistics views.
 
 ## Probe Types
@@ -40,6 +40,8 @@ connection:
 - `pg_stat_wal` - WAL generation statistics
 - `pg_stat_slru` - SLRU (Simple LRU) cache statistics
 - `pg_settings` - PostgreSQL configuration settings (change-tracked)
+- `pg_hba_file_rules` - pg_hba.conf authentication rules (change-tracked)
+- `pg_ident_file_mappings` - pg_ident.conf user mappings (change-tracked)
 
 ### Database-Scoped Probes
 
@@ -140,11 +142,11 @@ The garbage collector:
    - Find partitions entirely before cutoff
    - DROP those partitions
    - Free disk space
-3. Special handling for `pg_settings`:
+3. Special handling for change-tracked probes (`pg_settings`,
+   `pg_hba_file_rules`, `pg_ident_file_mappings`):
    - Identifies the most recent snapshot for each monitored connection
    - Protects those partitions from deletion regardless of age
-   - Ensures at least one configuration snapshot is always retained per
-       server
+   - Ensures at least one snapshot is always retained per server
 
 ## Probe Configuration
 

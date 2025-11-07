@@ -1706,6 +1706,93 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration 4: Add pg_hba_file_rules and pg_ident_file_mappings probes
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     4,
+		Description: "Add pg_hba_file_rules and pg_ident_file_mappings probes for authentication configuration tracking",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Create pg_hba_file_rules metrics table
+			_, err := conn.Exec(ctx, `
+			CREATE TABLE IF NOT EXISTS metrics.pg_hba_file_rules (
+				connection_id INTEGER NOT NULL,
+				rule_number INTEGER NOT NULL,
+				file_name TEXT,
+				line_number INTEGER,
+				type TEXT,
+				database TEXT[],
+				user_name TEXT[],
+				address TEXT,
+				netmask TEXT,
+				auth_method TEXT,
+				options TEXT[],
+				error TEXT,
+				collected_at TIMESTAMP NOT NULL,
+				PRIMARY KEY (connection_id, collected_at, rule_number)
+			) PARTITION BY RANGE (collected_at);
+
+			COMMENT ON TABLE metrics.pg_hba_file_rules IS
+				'PostgreSQL HBA configuration rules - only stores snapshots when changes are detected';
+
+			ALTER TABLE metrics.pg_hba_file_rules
+				ADD CONSTRAINT fk_pg_hba_file_rules_connection_id
+				FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to create pg_hba_file_rules table: %w", err)
+			}
+
+			// Create pg_ident_file_mappings metrics table
+			_, err = conn.Exec(ctx, `
+			CREATE TABLE IF NOT EXISTS metrics.pg_ident_file_mappings (
+				connection_id INTEGER NOT NULL,
+				map_number INTEGER NOT NULL,
+				file_name TEXT,
+				line_number INTEGER,
+				map_name TEXT,
+				sys_name TEXT,
+				pg_username TEXT,
+				error TEXT,
+				collected_at TIMESTAMP NOT NULL,
+				PRIMARY KEY (connection_id, collected_at, map_number)
+			) PARTITION BY RANGE (collected_at);
+
+			COMMENT ON TABLE metrics.pg_ident_file_mappings IS
+				'PostgreSQL ident mapping configuration - only stores snapshots when changes are detected';
+
+			ALTER TABLE metrics.pg_ident_file_mappings
+				ADD CONSTRAINT fk_pg_ident_file_mappings_connection_id
+				FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to create pg_ident_file_mappings table: %w", err)
+			}
+
+			// Insert pg_hba_file_rules probe configuration
+			_, err = conn.Exec(ctx, `
+			INSERT INTO probe_configs (connection_id, is_enabled, name, description, collection_interval_seconds, retention_days)
+			VALUES (NULL, TRUE, 'pg_hba_file_rules', 'Monitors pg_hba.conf authentication rules (change-tracked)', 3600, 365)
+			ON CONFLICT (COALESCE(connection_id, 0), name) DO NOTHING;
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to insert pg_hba_file_rules probe configuration: %w", err)
+			}
+
+			// Insert pg_ident_file_mappings probe configuration
+			_, err = conn.Exec(ctx, `
+			INSERT INTO probe_configs (connection_id, is_enabled, name, description, collection_interval_seconds, retention_days)
+			VALUES (NULL, TRUE, 'pg_ident_file_mappings', 'Monitors pg_ident.conf user mappings (change-tracked)', 3600, 365)
+			ON CONFLICT (COALESCE(connection_id, 0), name) DO NOTHING;
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to insert pg_ident_file_mappings probe configuration: %w", err)
+			}
+
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations

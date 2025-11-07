@@ -28,6 +28,8 @@ const (
 	ProbeNamePgStatWAL               = "pg_stat_wal"
 	ProbeNamePgStatSLRU              = "pg_stat_slru"
 	ProbeNamePgSettings              = "pg_settings"
+	ProbeNamePgHbaFileRules          = "pg_hba_file_rules"
+	ProbeNamePgIdentFileMappings     = "pg_ident_file_mappings"
 )
 
 // Probe names - Database-scoped probes

@@ -47,8 +47,8 @@ The Collector provides:
 
 - **Multi-Server Monitoring**: Monitor multiple PostgreSQL servers
   simultaneously with independent connection pools
-- **25 Built-in Probes**: Comprehensive coverage of PostgreSQL system views
-  and statistics, including configuration change tracking
+- **27 Built-in Probes**: Comprehensive coverage of PostgreSQL system views
+  and statistics, including configuration and authentication change tracking
 - **Flexible Scheduling**: Configurable collection intervals per probe
 - **Automated Data Management**: Weekly partitioning and retention-based
   garbage collection

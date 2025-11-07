@@ -631,6 +631,10 @@ func (ps *ProbeScheduler) createProbe(config *probes.ProbeConfig) probes.Metrics
 		return probes.NewPgStatSLRUProbe(config)
 	case probes.ProbeNamePgSettings:
 		return probes.NewPgSettingsProbe(config)
+	case probes.ProbeNamePgHbaFileRules:
+		return probes.NewPgHbaFileRulesProbe(config)
+	case probes.ProbeNamePgIdentFileMappings:
+		return probes.NewPgIdentFileMappingsProbe(config)
 	// Database-scoped probes
 	case probes.ProbeNamePgStatDatabase:
 		return probes.NewPgStatDatabaseProbe(config)

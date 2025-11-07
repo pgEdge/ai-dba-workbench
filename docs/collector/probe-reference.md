@@ -241,6 +241,46 @@ sourcefile, sourceline, pending_restart
 **See Also**: [pg_settings Usage Guide](pg-settings-usage.md) for detailed
 examples and query patterns.
 
+### pg_hba_file_rules
+
+Monitors PostgreSQL pg_hba.conf authentication configuration with change
+detection. This probe only stores data when HBA rules change, making it ideal
+for tracking authentication policy changes over time.
+
+- **Source View**: `pg_hba_file_rules`
+- **Default Interval**: 3600 seconds (1 hour)
+- **Default Retention**: 365 days (1 year)
+- **Key Metrics**: Authentication rules, methods, databases, users, addresses
+- **Use Cases**: Authentication policy tracking, security audit compliance,
+    HBA configuration drift detection, forensic analysis
+- **Special Behavior**: Uses SHA256 hash comparison to detect changes. Data is
+    only stored when configuration differs from the most recent snapshot. The
+    garbage collector ensures the most recent snapshot for each server is never
+    deleted, regardless of age.
+
+**Columns Collected**: rule_number, file_name, line_number, type, database,
+user_name, address, netmask, auth_method, options, error
+
+### pg_ident_file_mappings
+
+Monitors PostgreSQL pg_ident.conf user mapping configuration with change
+detection. This probe only stores data when ident mappings change, enabling
+tracking of user mapping changes for audit and compliance purposes.
+
+- **Source View**: `pg_ident_file_mappings`
+- **Default Interval**: 3600 seconds (1 hour)
+- **Default Retention**: 365 days (1 year)
+- **Key Metrics**: Ident map names, system usernames, PostgreSQL usernames
+- **Use Cases**: User mapping audit tracking, compliance verification, mapping
+    drift detection, security policy enforcement
+- **Special Behavior**: Uses SHA256 hash comparison to detect changes. Data is
+    only stored when configuration differs from the most recent snapshot. The
+    garbage collector ensures the most recent snapshot for each server is never
+    deleted, regardless of age.
+
+**Columns Collected**: map_number, file_name, line_number, map_name, sys_name,
+pg_username, error
+
 ## Database-Scoped Probes
 
 These probes execute once for each database on a monitored server.

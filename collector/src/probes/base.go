@@ -130,26 +130,27 @@ func DropExpiredPartitions(ctx context.Context, conn *pgxpool.Conn, tableName st
 	// Calculate the cutoff timestamp
 	cutoff := time.Now().AddDate(0, 0, -retentionDays)
 
-	// For pg_settings, find the most recent partition with data for each connection
+	// For change-tracked probes (pg_settings, pg_hba_file_rules, pg_ident_file_mappings),
+	// find the most recent partition with data for each connection
 	// These partitions must never be dropped, regardless of age
 	protectedPartitions := make(map[string]bool)
-	if tableName == "pg_settings" {
+	if tableName == "pg_settings" || tableName == "pg_hba_file_rules" || tableName == "pg_ident_file_mappings" {
 		// #nosec G201 - table name is from probe definition
 		protQuery := fmt.Sprintf(`
 			SELECT DISTINCT
 				c.relname AS partition_name
 			FROM (
 				SELECT connection_id, MAX(collected_at) as max_collected_at
-				FROM metrics.pg_settings
+				FROM metrics.%s
 				GROUP BY connection_id
 			) latest
-			JOIN metrics.pg_settings ps ON ps.connection_id = latest.connection_id
-				AND ps.collected_at = latest.max_collected_at
-			JOIN pg_class c ON c.oid = ps.tableoid
-		`)
+			JOIN metrics.%s tbl ON tbl.connection_id = latest.connection_id
+				AND tbl.collected_at = latest.max_collected_at
+			JOIN pg_class c ON c.oid = tbl.tableoid
+		`, tableName, tableName)
 		protRows, err := conn.Query(ctx, protQuery)
 		if err != nil {
-			return fmt.Errorf("failed to query protected partitions for pg_settings: %w", err)
+			return fmt.Errorf("failed to query protected partitions for %s: %w", tableName, err)
 		}
 		defer protRows.Close()
 
@@ -162,7 +163,7 @@ func DropExpiredPartitions(ctx context.Context, conn *pgxpool.Conn, tableName st
 		}
 
 		if len(protectedPartitions) > 0 {
-			logger.Infof("Protected %d partition(s) for pg_settings containing most recent data per connection", len(protectedPartitions))
+			logger.Infof("Protected %d partition(s) for %s containing most recent data per connection", len(protectedPartitions), tableName)
 		}
 	}
 

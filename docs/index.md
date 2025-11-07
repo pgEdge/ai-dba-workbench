@@ -161,6 +161,22 @@ See component-specific documentation for additional security configuration.
 
 ## Development
 
+### Prerequisites
+
+Before developing any component, install the required tools:
+
+```bash
+# Install golangci-lint for linting
+go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+```
+
+Ensure `$(go env GOPATH)/bin` is in your PATH:
+
+```bash
+# Add to your ~/.bashrc, ~/.zshrc, or ~/.zprofile
+export PATH="$PATH:$(go env GOPATH)/bin"
+```
+
 ### Project Structure
 
 ```

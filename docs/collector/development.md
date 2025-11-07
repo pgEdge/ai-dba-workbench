@@ -32,11 +32,14 @@ go mod download
 Install golangci-lint for linting:
 
 ```bash
-# macOS
-brew install golangci-lint
+go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+```
 
-# Linux
-curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin
+Ensure `$(go env GOPATH)/bin` is in your PATH:
+
+```bash
+# Add to your ~/.bashrc, ~/.zshrc, or ~/.zprofile
+export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
 ### 4. Set Up Test Database

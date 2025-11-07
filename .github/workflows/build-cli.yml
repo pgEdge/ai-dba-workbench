@@ -14,17 +14,20 @@ on:
 
 jobs:
   build:
-    name: Build CLI Binary
+    name: Build CLI Binary (Go ${{ matrix.go-version }})
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ['1.21', '1.22', '1.23', '1.24', '1.25']
 
     steps:
     - name: Check out code
       uses: actions/checkout@v4
 
-    - name: Set up Go
+    - name: Set up Go ${{ matrix.go-version }}
       uses: actions/setup-go@v5
       with:
-        go-version: '1.21'
+        go-version: ${{ matrix.go-version }}
         cache-dependency-path: cli/src/go.sum
 
     - name: Build CLI
@@ -38,4 +41,4 @@ jobs:
           echo "Error: Binary cli/ai-cli was not created"
           exit 1
         fi
-        echo "Build successful: cli/ai-cli created"
+        echo "Build successful: cli/ai-cli created with Go ${{ matrix.go-version }}"

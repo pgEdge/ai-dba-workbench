@@ -649,15 +649,15 @@ func TestToolInputSchemaValidation(t *testing.T) {
 	}
 
 	result := resp.Result.(map[string]interface{}) //nolint:errcheck // Test code, type assertion checked in test logic
-	tools := result["tools"].([]map[string]interface{})
+	tools := result["tools"].([]map[string]interface{}) //nolint:errcheck // Test code, type assertion checked in test logic
 
 	// Test create_user schema
 	createUserTool := findTool(tools, "create_user")
 	if createUserTool == nil {
 		t.Fatal("create_user tool not found")
 	}
-	schema := createUserTool["inputSchema"].(map[string]interface{})
-	required := schema["required"].([]string)
+	schema := createUserTool["inputSchema"].(map[string]interface{}) //nolint:errcheck // Test code, type assertion checked in test logic
+	required := schema["required"].([]string) //nolint:errcheck // Test code, type assertion checked in test logic
 	expectedRequired := []string{"username", "email", "fullName", "password"}
 	if !stringSlicesEqual(required, expectedRequired) {
 		t.Errorf("create_user required fields = %v, want %v",

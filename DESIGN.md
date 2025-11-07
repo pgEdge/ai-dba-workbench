@@ -211,6 +211,53 @@ A /tests directory in the top level of the project will provide end to end
 integration testing. The collector and server will be started in a temporary
 test database, and the system exercised using both the CLI and web client.
 
+All tests that require or use a database will create a temporary database
+including a timestamp in the name for easy identification. This should assume
+the default PostgreSQL connection parameters by default, with the ability to
+override them using a command line variable, e.g:
+
+TEST_AI_WORKBENCH_SERVER=postgres://user:password@hostname/postgres
+
+If this is set, the test framework will connect using that connection string, 
+create the test database, and then run the tests against the created database.
+
+An additional environment variable (TEST_AI_WORKBENCH_KEEP_DB) will be 
+provided, which if set to 1 will cause the test database to remain in place 
+after tests have completed. In all other cases, the test database will be 
+automatically dropped at the end of the test run.
+
+All temporary files must be removed at the end of a test run, except where 
+they may provide useful debugging information for failures, such as test logs.
+
+### Makefiles
+
+Each sub-project will include a Makefile for ease of development. The 
+following targets will be included in all cases, where applicable:
+
+all - Compile/build the code (this should be the default target).
+test - Run the sub-project's test suite.
+coverage - Run coverage checks.
+lint - Run linter tests.
+test-all - Run the sub-project's test suite, coverage checks, and linter tests.
+clean - Remove all build artifacts.
+killall - Kill any instances of the sub-project that are running and may 
+    interfere with tests. 
+
+A top level Makefile will also be provided for convenience. It will call 
+targets in the sub-projects as needed, and implement it's own targets where 
+appropriate. Targets will include:
+
+all - Call the 'all' target for all sub-projects.
+test - Call the 'test' target for all sub-projects.
+coverage - Call the 'coverage' target for all sub-projects.
+lint - Call the 'lint' target for all sub-projects.
+test-integration - Run the integration test suite.
+test-all - Run all the sub-projects 'test-all' targets, and then the 
+    integration tests.
+clean - Call the 'clean' target for all sub-projects, and clean the 
+    integration test suit of any build artifacts.
+killall - Call the 'killall' target for all sub-projects.
+
 ### Future Enhancements
 
 Role Based Access Controls may be added to limit access to specific Tools and

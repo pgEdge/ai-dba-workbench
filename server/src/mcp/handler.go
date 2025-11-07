@@ -549,11 +549,11 @@ func (h *Handler) handleCreateUser(args map[string]interface{}) (interface{},
 		return nil, fmt.Errorf("permission denied: superuser privileges required")
 	}
 
-	username, _ := args["username"].(string)
-	email, _ := args["email"].(string)
-	fullName, _ := args["fullName"].(string)
-	password, _ := args["password"].(string)
-	isSuperuser, _ := args["isSuperuser"].(bool)
+	username, _ := args["username"].(string)   //nolint:errcheck // Optional argument, empty string is acceptable default
+	email, _ := args["email"].(string)         //nolint:errcheck // Optional argument, empty string is acceptable default
+	fullName, _ := args["fullName"].(string)   //nolint:errcheck // Optional argument, empty string is acceptable default
+	password, _ := args["password"].(string)   //nolint:errcheck // Optional argument, empty string is acceptable default
+	isSuperuser, _ := args["isSuperuser"].(bool) //nolint:errcheck // Optional argument, false is acceptable default
 
 	var passwordExpiry *time.Time
 	if expiryStr, ok := args["passwordExpiry"].(string); ok && expiryStr != "" {

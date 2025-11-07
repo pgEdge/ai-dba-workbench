@@ -55,5 +55,5 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: server-coverage-go-${{ matrix.go-version }}
-        path: server/coverage.html
+        path: server/src/coverage.html
         retention-days: 30

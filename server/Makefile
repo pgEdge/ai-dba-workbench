@@ -39,12 +39,11 @@ fmt:
 	cd src && go fmt ./...
 
 # Run tests with coverage
-coverage: killall
+coverage:
 	@echo "Running tests with coverage..."
 	cd src && go test -coverprofile=coverage.out ./...
 	cd src && go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated: src/coverage.html"
-	@$(MAKE) --no-print-directory killall
 
 # Clean build artifacts
 clean:

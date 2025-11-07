@@ -268,7 +268,7 @@ func DeleteUser(pool *pgxpool.Pool, username string, confirm bool) error {
             return err
         }
         if strings.ToLower(input) != "yes" {
-            fmt.Println("Delete cancelled")
+            fmt.Println("Delete canceled")
             return nil
         }
     }
@@ -451,7 +451,7 @@ func DeleteServiceToken(pool *pgxpool.Pool, name string, confirm bool) error {
             return err
         }
         if strings.ToLower(input) != "yes" {
-            fmt.Println("Delete cancelled")
+            fmt.Println("Delete canceled")
             return nil
         }
     }

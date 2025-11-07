@@ -39,5 +39,5 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: cli-coverage-go-${{ matrix.go-version }}
-        path: cli/coverage.html
+        path: cli/src/coverage.html
         retention-days: 30

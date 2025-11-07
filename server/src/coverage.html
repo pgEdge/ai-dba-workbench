@@ -1,0 +1,2925 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>config: Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">github.com/pgEdge/ai-workbench/server/src/config/config.go (85.9%)</option>
+				
+				<option value="file1">github.com/pgEdge/ai-workbench/server/src/database/database.go (0.0%)</option>
+				
+				<option value="file2">github.com/pgEdge/ai-workbench/server/src/logger/logger.go (85.7%)</option>
+				
+				<option value="file3">github.com/pgEdge/ai-workbench/server/src/main.go (0.0%)</option>
+				
+				<option value="file4">github.com/pgEdge/ai-workbench/server/src/mcp/handler.go (27.7%)</option>
+				
+				<option value="file5">github.com/pgEdge/ai-workbench/server/src/mcp/protocol.go (88.9%)</option>
+				
+				<option value="file6">github.com/pgEdge/ai-workbench/server/src/server/server.go (0.0%)</option>
+				
+				<option value="file7">github.com/pgEdge/ai-workbench/server/src/usermgmt/usermgmt.go (0.0%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">not covered</span>
+				<span class="cov8">covered</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">/*-------------------------------------------------------------------------
+ *
+ * pgEdge AI Workbench
+ *
+ * Copyright (c) 2025, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-------------------------------------------------------------------------
+ */
+
+// Package config provides configuration handling for the MCP server
+package config
+
+import (
+        "bufio"
+        "fmt"
+        "os"
+        "strconv"
+        "strings"
+)
+
+// Config holds all configuration options for the MCP server
+type Config struct {
+        // MCP Server settings
+        TLS      bool   // Enable HTTPS mode
+        TLSCert  string // Path to TLS certificate file
+        TLSKey   string // Path to TLS key file
+        TLSChain string // Path to TLS certificate chain file
+        Port     int    // Server listening port
+
+        // Datastore connection settings
+        PgHost        string
+        PgHostAddr    string
+        PgDatabase    string
+        PgUsername    string
+        PgPassword    string
+        PgPort        int
+        PgSSLMode     string
+        PgSSLCert     string
+        PgSSLKey      string
+        PgSSLRootCert string
+
+        // Server secret for encryption
+        ServerSecret string
+}
+
+// NewConfig creates a new Config with default values
+func NewConfig() *Config <span class="cov8" title="1">{
+        return &amp;Config{
+                TLS:        false,
+                Port:       8080,
+                PgHost:     "localhost",
+                PgDatabase: "ai_workbench",
+                PgUsername: "postgres",
+                PgPort:     5432,
+                PgSSLMode:  "prefer",
+        }
+}</span>
+
+// LoadFromFile loads configuration from a file
+func (c *Config) LoadFromFile(filename string) error <span class="cov8" title="1">{
+        file, err := os.Open(filename) // #nosec G304 - Config file path is provided by administrator
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to open config file: %w", err)
+        }</span>
+        <span class="cov8" title="1">defer func() </span><span class="cov8" title="1">{
+                if cerr := file.Close(); cerr != nil &amp;&amp; err == nil </span><span class="cov0" title="0">{
+                        err = fmt.Errorf("failed to close config file: %w", cerr)
+                }</span>
+        }()
+
+        <span class="cov8" title="1">scanner := bufio.NewScanner(file)
+        lineNum := 0
+
+        for scanner.Scan() </span><span class="cov8" title="1">{
+                lineNum++
+                line := strings.TrimSpace(scanner.Text())
+
+                // Skip empty lines and comments
+                if line == "" || strings.HasPrefix(line, "#") </span><span class="cov8" title="1">{
+                        continue</span>
+                }
+
+                // Parse key = value
+                <span class="cov8" title="1">parts := strings.SplitN(line, "=", 2)
+                if len(parts) != 2 </span><span class="cov8" title="1">{
+                        return fmt.Errorf("invalid config line %d: %s", lineNum, line)
+                }</span>
+
+                <span class="cov8" title="1">key := strings.TrimSpace(parts[0])
+                value := strings.TrimSpace(parts[1])
+
+                // Remove quotes if present
+                if len(value) &gt;= 2 &amp;&amp; value[0] == '"' &amp;&amp; value[len(value)-1] == '"' </span><span class="cov8" title="1">{
+                        value = value[1 : len(value)-1]
+                }</span>
+
+                <span class="cov8" title="1">if err := c.setConfigValue(key, value); err != nil </span><span class="cov0" title="0">{
+                        return fmt.Errorf("error on line %d: %w", lineNum, err)
+                }</span>
+        }
+
+        <span class="cov8" title="1">if err := scanner.Err(); err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("error reading config file: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">return nil</span>
+}
+
+// setConfigValue sets a configuration value by key
+func (c *Config) setConfigValue(key, value string) error <span class="cov8" title="1">{
+        switch key </span>{
+        // MCP Server options
+        case "tls":<span class="cov8" title="1">
+                tls, err := strconv.ParseBool(value)
+                if err != nil </span><span class="cov0" title="0">{
+                        return fmt.Errorf("invalid tls value: %w", err)
+                }</span>
+                <span class="cov8" title="1">c.TLS = tls</span>
+        case "tls_cert":<span class="cov8" title="1">
+                c.TLSCert = value</span>
+        case "tls_key":<span class="cov8" title="1">
+                c.TLSKey = value</span>
+        case "tls_chain":<span class="cov8" title="1">
+                c.TLSChain = value</span>
+        case "port":<span class="cov8" title="1">
+                port, err := strconv.Atoi(value)
+                if err != nil </span><span class="cov0" title="0">{
+                        return fmt.Errorf("invalid port number: %w", err)
+                }</span>
+                <span class="cov8" title="1">c.Port = port</span>
+        // Datastore options
+        case "pg_host":<span class="cov8" title="1">
+                c.PgHost = value</span>
+        case "pg_hostaddr":<span class="cov0" title="0">
+                c.PgHostAddr = value</span>
+        case "pg_database":<span class="cov8" title="1">
+                c.PgDatabase = value</span>
+        case "pg_username":<span class="cov8" title="1">
+                c.PgUsername = value</span>
+        case "pg_password_file":<span class="cov8" title="1">
+                password, err := readPasswordFile(value)
+                if err != nil </span><span class="cov0" title="0">{
+                        return fmt.Errorf("failed to read password file: %w", err)
+                }</span>
+                <span class="cov8" title="1">c.PgPassword = password</span>
+        case "pg_port":<span class="cov8" title="1">
+                port, err := strconv.Atoi(value)
+                if err != nil </span><span class="cov0" title="0">{
+                        return fmt.Errorf("invalid port number: %w", err)
+                }</span>
+                <span class="cov8" title="1">c.PgPort = port</span>
+        case "pg_sslmode":<span class="cov8" title="1">
+                c.PgSSLMode = value</span>
+        case "pg_sslcert":<span class="cov0" title="0">
+                c.PgSSLCert = value</span>
+        case "pg_sslkey":<span class="cov0" title="0">
+                c.PgSSLKey = value</span>
+        case "pg_sslrootcert":<span class="cov0" title="0">
+                c.PgSSLRootCert = value</span>
+        case "server_secret":<span class="cov8" title="1">
+                c.ServerSecret = value</span>
+        default:<span class="cov0" title="0"></span>
+                // Ignore unknown keys (allows sharing config with collector)
+                // No error - just skip keys we don't recognize
+        }
+        <span class="cov8" title="1">return nil</span>
+}
+
+// readPasswordFile reads a password from a file
+func readPasswordFile(filename string) (string, error) <span class="cov8" title="1">{
+        content, err := os.ReadFile(filename) // #nosec G304 - Password file path is provided by administrator
+        if err != nil </span><span class="cov0" title="0">{
+                return "", err
+        }</span>
+        // Trim whitespace and newlines
+        <span class="cov8" title="1">return strings.TrimSpace(string(content)), nil</span>
+}
+
+// Validate checks if the configuration is valid
+func (c *Config) Validate() error <span class="cov8" title="1">{
+        // Validate MCP server options
+        if c.TLS </span><span class="cov8" title="1">{
+                if c.TLSCert == "" </span><span class="cov8" title="1">{
+                        return fmt.Errorf("tls_cert is required when TLS is enabled")
+                }</span>
+                <span class="cov8" title="1">if c.TLSKey == "" </span><span class="cov8" title="1">{
+                        return fmt.Errorf("tls_key is required when TLS is enabled")
+                }</span>
+        }
+        <span class="cov8" title="1">if c.Port &lt;= 0 || c.Port &gt; 65535 </span><span class="cov8" title="1">{
+                return fmt.Errorf("port must be between 1 and 65535")
+        }</span>
+
+        // Validate datastore options
+        <span class="cov8" title="1">if c.PgHost == "" </span><span class="cov8" title="1">{
+                return fmt.Errorf("pg_host is required")
+        }</span>
+        <span class="cov8" title="1">if c.PgDatabase == "" </span><span class="cov8" title="1">{
+                return fmt.Errorf("pg_database is required")
+        }</span>
+        <span class="cov8" title="1">if c.PgUsername == "" </span><span class="cov8" title="1">{
+                return fmt.Errorf("pg_username is required")
+        }</span>
+        <span class="cov8" title="1">if c.PgPort &lt;= 0 || c.PgPort &gt; 65535 </span><span class="cov8" title="1">{
+                return fmt.Errorf("pg_port must be between 1 and 65535")
+        }</span>
+
+        <span class="cov8" title="1">return nil</span>
+}
+
+// GetTLS returns whether TLS is enabled
+func (c *Config) GetTLS() bool <span class="cov8" title="1">{ return c.TLS }</span>
+
+// GetTLSCert returns the TLS certificate path
+func (c *Config) GetTLSCert() string <span class="cov8" title="1">{ return c.TLSCert }</span>
+
+// GetTLSKey returns the TLS key path
+func (c *Config) GetTLSKey() string <span class="cov8" title="1">{ return c.TLSKey }</span>
+
+// GetTLSChain returns the TLS chain path
+func (c *Config) GetTLSChain() string <span class="cov8" title="1">{ return c.TLSChain }</span>
+
+// GetPort returns the server port
+func (c *Config) GetPort() int <span class="cov8" title="1">{ return c.Port }</span>
+
+// GetPgHost returns the PostgreSQL host
+func (c *Config) GetPgHost() string <span class="cov8" title="1">{ return c.PgHost }</span>
+
+// GetPgHostAddr returns the PostgreSQL host address
+func (c *Config) GetPgHostAddr() string <span class="cov8" title="1">{ return c.PgHostAddr }</span>
+
+// GetPgDatabase returns the PostgreSQL database name
+func (c *Config) GetPgDatabase() string <span class="cov8" title="1">{ return c.PgDatabase }</span>
+
+// GetPgUsername returns the PostgreSQL username
+func (c *Config) GetPgUsername() string <span class="cov8" title="1">{ return c.PgUsername }</span>
+
+// GetPgPassword returns the PostgreSQL password
+func (c *Config) GetPgPassword() string <span class="cov8" title="1">{ return c.PgPassword }</span>
+
+// GetPgPort returns the PostgreSQL port
+func (c *Config) GetPgPort() int <span class="cov8" title="1">{ return c.PgPort }</span>
+
+// GetPgSSLMode returns the PostgreSQL SSL mode
+func (c *Config) GetPgSSLMode() string <span class="cov8" title="1">{ return c.PgSSLMode }</span>
+
+// GetPgSSLCert returns the PostgreSQL SSL certificate path
+func (c *Config) GetPgSSLCert() string <span class="cov8" title="1">{ return c.PgSSLCert }</span>
+
+// GetPgSSLKey returns the PostgreSQL SSL key path
+func (c *Config) GetPgSSLKey() string <span class="cov8" title="1">{ return c.PgSSLKey }</span>
+
+// GetPgSSLRootCert returns the PostgreSQL SSL root certificate path
+func (c *Config) GetPgSSLRootCert() string <span class="cov8" title="1">{ return c.PgSSLRootCert }</span>
+
+// GetServerSecret returns the server secret
+func (c *Config) GetServerSecret() string <span class="cov8" title="1">{ return c.ServerSecret }</span>
+</pre>
+		
+		<pre class="file" id="file1" style="display: none">/*-------------------------------------------------------------------------
+ *
+ * pgEdge AI Workbench
+ *
+ * Copyright (c) 2025, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-------------------------------------------------------------------------
+ */
+
+// Package database provides database connection management for the MCP server
+package database
+
+import (
+    "context"
+    "fmt"
+
+    "github.com/jackc/pgx/v5/pgxpool"
+    "github.com/pgEdge/ai-workbench/server/src/config"
+)
+
+// GetConnectionString builds a PostgreSQL connection string from config
+func GetConnectionString(cfg *config.Config) string <span class="cov0" title="0">{
+    connStr := fmt.Sprintf("host=%s port=%d dbname=%s user=%s",
+        cfg.GetPgHost(), cfg.GetPgPort(), cfg.GetPgDatabase(), cfg.GetPgUsername())
+
+    if cfg.GetPgPassword() != "" </span><span class="cov0" title="0">{
+        connStr += fmt.Sprintf(" password=%s", cfg.GetPgPassword())
+    }</span>
+
+    <span class="cov0" title="0">if cfg.GetPgHostAddr() != "" </span><span class="cov0" title="0">{
+        connStr += fmt.Sprintf(" hostaddr=%s", cfg.GetPgHostAddr())
+    }</span>
+
+    <span class="cov0" title="0">if cfg.GetPgSSLMode() != "" </span><span class="cov0" title="0">{
+        connStr += fmt.Sprintf(" sslmode=%s", cfg.GetPgSSLMode())
+    }</span>
+
+    <span class="cov0" title="0">if cfg.GetPgSSLCert() != "" </span><span class="cov0" title="0">{
+        connStr += fmt.Sprintf(" sslcert=%s", cfg.GetPgSSLCert())
+    }</span>
+
+    <span class="cov0" title="0">if cfg.GetPgSSLKey() != "" </span><span class="cov0" title="0">{
+        connStr += fmt.Sprintf(" sslkey=%s", cfg.GetPgSSLKey())
+    }</span>
+
+    <span class="cov0" title="0">if cfg.GetPgSSLRootCert() != "" </span><span class="cov0" title="0">{
+        connStr += fmt.Sprintf(" sslrootcert=%s", cfg.GetPgSSLRootCert())
+    }</span>
+
+    <span class="cov0" title="0">connStr += " application_name='pgEdge AI Workbench - MCP Server'"
+
+    return connStr</span>
+}
+
+// Connect establishes a connection pool to the datastore database
+func Connect(cfg *config.Config) (*pgxpool.Pool, error) <span class="cov0" title="0">{
+    ctx := context.Background()
+    connStr := GetConnectionString(cfg)
+
+    pool, err := pgxpool.New(ctx, connStr)
+    if err != nil </span><span class="cov0" title="0">{
+        return nil, fmt.Errorf("failed to create connection pool: %w", err)
+    }</span>
+
+    // Test the connection
+    <span class="cov0" title="0">if err := pool.Ping(ctx); err != nil </span><span class="cov0" title="0">{
+        pool.Close()
+        return nil, fmt.Errorf("failed to ping database: %w", err)
+    }</span>
+
+    <span class="cov0" title="0">return pool, nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file2" style="display: none">/*-------------------------------------------------------------------------
+ *
+ * pgEdge AI Workbench
+ *
+ * Copyright (c) 2025, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-------------------------------------------------------------------------
+ */
+
+// Package logger provides a simple logging interface with verbosity control
+package logger
+
+import (
+        "log"
+        "os"
+)
+
+var (
+        verbose = false
+)
+
+// SetVerbose enables or disables verbose logging
+func SetVerbose(v bool) <span class="cov8" title="1">{
+        verbose = v
+}</span>
+
+// IsVerbose returns whether verbose logging is enabled
+func IsVerbose() bool <span class="cov8" title="1">{
+        return verbose
+}</span>
+
+// Error logs error messages (always shown)
+func Error(v ...interface{}) <span class="cov8" title="1">{
+        log.Print(v...)
+}</span>
+
+// Errorf logs formatted error messages (always shown)
+func Errorf(format string, v ...interface{}) <span class="cov8" title="1">{
+        log.Printf(format, v...)
+}</span>
+
+// Fatal logs a message and exits (always shown)
+func Fatal(v ...interface{}) <span class="cov0" title="0">{
+        log.Fatal(v...)
+}</span>
+
+// Fatalf logs a formatted message and exits (always shown)
+func Fatalf(format string, v ...interface{}) <span class="cov0" title="0">{
+        log.Fatalf(format, v...)
+}</span>
+
+// Info logs informational messages (only shown in verbose mode)
+func Info(v ...interface{}) <span class="cov8" title="1">{
+        if verbose </span><span class="cov8" title="1">{
+                log.Print(v...)
+        }</span>
+}
+
+// Infof logs formatted informational messages (only shown in verbose mode)
+func Infof(format string, v ...interface{}) <span class="cov8" title="1">{
+        if verbose </span><span class="cov8" title="1">{
+                log.Printf(format, v...)
+        }</span>
+}
+
+// Startup logs startup messages (always shown)
+func Startup(v ...interface{}) <span class="cov8" title="1">{
+        log.Print(v...)
+}</span>
+
+// Startupf logs formatted startup messages (always shown)
+func Startupf(format string, v ...interface{}) <span class="cov8" title="1">{
+        log.Printf(format, v...)
+}</span>
+
+// Init initializes the logger
+func Init() <span class="cov8" title="1">{
+        // Set log output to stdout and configure format
+        log.SetOutput(os.Stdout)
+        log.SetFlags(log.Ldate | log.Ltime)
+}</span>
+</pre>
+		
+		<pre class="file" id="file3" style="display: none">/*-------------------------------------------------------------------------
+ *
+ * pgEdge AI Workbench
+ *
+ * Copyright (c) 2025, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-------------------------------------------------------------------------
+ */
+
+// Package main is the entry point for the pgEdge AI Workbench MCP server
+package main
+
+import (
+        "context"
+        "flag"
+        "fmt"
+        "os"
+        "os/signal"
+        "path/filepath"
+        "syscall"
+        "time"
+
+        "github.com/pgEdge/ai-workbench/server/src/config"
+        "github.com/pgEdge/ai-workbench/server/src/database"
+        "github.com/pgEdge/ai-workbench/server/src/logger"
+        "github.com/pgEdge/ai-workbench/server/src/mcp"
+        "github.com/pgEdge/ai-workbench/server/src/server"
+        "github.com/pgEdge/ai-workbench/server/src/usermgmt"
+)
+
+const (
+        serverName    = "pgEdge AI Workbench MCP Server"
+        serverVersion = "0.1.0"
+)
+
+var (
+        // Configuration file flag
+        configFile = flag.String("config", "", "Path to configuration file")
+
+        // Verbose logging flag
+        verbose = flag.Bool("v", false, "Enable verbose logging")
+
+        // MCP Server flags
+        tls      = flag.Bool("tls", false, "Enable HTTPS mode")
+        tlsCert  = flag.String("tls-cert", "", "Path to TLS certificate")
+        tlsKey   = flag.String("tls-key", "", "Path to TLS key")
+        tlsChain = flag.String("tls-chain", "", "Path to TLS certificate chain")
+        port     = flag.Int("port", 8080, "Server listening port")
+
+        // Datastore flags
+        pgHost         = flag.String("pg-host", "", "PostgreSQL host")
+        pgHostAddr     = flag.String("pg-hostaddr", "", "PostgreSQL host address")
+        pgDatabase     = flag.String("pg-database", "", "PostgreSQL database")
+        pgUsername     = flag.String("pg-username", "", "PostgreSQL username")
+        pgPasswordFile = flag.String("pg-password-file", "",
+                "Path to file containing PostgreSQL password")
+        pgPort        = flag.Int("pg-port", 5432, "PostgreSQL port")
+        pgSSLMode     = flag.String("pg-sslmode", "prefer", "PostgreSQL SSL mode")
+        pgSSLCert     = flag.String("pg-sslcert", "", "PostgreSQL SSL certificate")
+        pgSSLKey      = flag.String("pg-sslkey", "", "PostgreSQL SSL key")
+        pgSSLRootCert = flag.String("pg-sslrootcert", "",
+                "PostgreSQL SSL root certificate")
+
+        // User account management flags
+        createUser = flag.String("create-user", "", "Create a new user account")
+        listUsers  = flag.Bool("list-users", false, "List all user accounts")
+        deleteUser = flag.String("delete-user", "", "Delete a user account")
+
+        // Service token management flags
+        createToken = flag.String("create-token", "",
+                "Create a new service token")
+        listTokens = flag.Bool("list-tokens", false, "List all service tokens")
+        deleteToken = flag.String("delete-token", "", "Delete a service token")
+)
+
+func main() <span class="cov0" title="0">{
+        flag.Parse()
+
+        // Initialize logger
+        logger.Init()
+        logger.SetVerbose(*verbose)
+
+        logger.Startup(serverName + " v" + serverVersion)
+
+        // Load configuration
+        cfg, err := loadConfiguration()
+        if err != nil </span><span class="cov0" title="0">{
+                logger.Fatalf("Configuration error: %v", err)
+        }</span>
+
+        // Apply command-line flags (they override config file)
+        <span class="cov0" title="0">applyFlags(cfg)
+
+        // Validate configuration
+        if err := cfg.Validate(); err != nil </span><span class="cov0" title="0">{
+                logger.Fatalf("Invalid configuration: %v", err)
+        }</span>
+
+        // Check if any user management commands were specified
+        <span class="cov0" title="0">if *createUser != "" || *listUsers || *deleteUser != "" ||
+                *createToken != "" || *listTokens || *deleteToken != "" </span><span class="cov0" title="0">{
+                handleUserManagement(cfg)
+                return
+        }</span>
+
+        <span class="cov0" title="0">logger.Infof("Configuration loaded successfully")
+        if cfg.GetTLS() </span><span class="cov0" title="0">{
+                logger.Infof("TLS enabled: cert=%s, key=%s", cfg.GetTLSCert(),
+                        cfg.GetTLSKey())
+        }</span>
+        <span class="cov0" title="0">logger.Infof("Server will listen on port %d", cfg.GetPort())
+
+        // Connect to database
+        dbPool, err := database.Connect(cfg)
+        if err != nil </span><span class="cov0" title="0">{
+                logger.Fatalf("Failed to connect to database: %v", err)
+        }</span>
+        <span class="cov0" title="0">defer dbPool.Close()
+        logger.Info("Database connection established")
+
+        // Create MCP handler
+        mcpHandler := mcp.NewHandler(serverName, serverVersion, dbPool)
+
+        // Create server
+        srv := server.New(cfg, mcpHandler)
+
+        // Setup signal handling for graceful shutdown
+        sigChan := make(chan os.Signal, 1)
+        signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+        // Start server in a goroutine
+        go func() </span><span class="cov0" title="0">{
+                if err := srv.Start(); err != nil </span><span class="cov0" title="0">{
+                        logger.Errorf("Server error: %v", err)
+                        sigChan &lt;- os.Interrupt
+                }</span>
+        }()
+
+        <span class="cov0" title="0">logger.Startup("Server started successfully")
+
+        // Wait for shutdown signal
+        sig := &lt;-sigChan
+        logger.Infof("Received signal: %v", sig)
+
+        // Graceful shutdown with timeout
+        ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+        defer cancel()
+
+        if err := srv.Shutdown(ctx); err != nil </span><span class="cov0" title="0">{
+                logger.Errorf("Error during shutdown: %v", err)
+                os.Exit(1)
+        }</span>
+
+        <span class="cov0" title="0">logger.Startup("Server stopped gracefully")</span>
+}
+
+// loadConfiguration loads configuration from file or creates default
+func loadConfiguration() (*config.Config, error) <span class="cov0" title="0">{
+        cfg := config.NewConfig()
+
+        // If config file is specified, load it
+        if *configFile != "" </span><span class="cov0" title="0">{
+                logger.Infof("Loading configuration from: %s", *configFile)
+                if err := cfg.LoadFromFile(*configFile); err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to load config file: %w", err)
+                }</span>
+        } else<span class="cov0" title="0"> {
+                // Try to load from default location (same directory as binary)
+                execPath, err := os.Executable()
+                if err == nil </span><span class="cov0" title="0">{
+                        defaultConfigPath := filepath.Join(filepath.Dir(execPath),
+                                "server.conf")
+                        if _, err := os.Stat(defaultConfigPath); err == nil </span><span class="cov0" title="0">{
+                                logger.Infof("Loading configuration from: %s",
+                                        defaultConfigPath)
+                                if err := cfg.LoadFromFile(defaultConfigPath); err != nil </span><span class="cov0" title="0">{
+                                        logger.Errorf("Warning: failed to load default config: %v",
+                                                err)
+                                }</span>
+                        }
+                }
+        }
+
+        <span class="cov0" title="0">return cfg, nil</span>
+}
+
+// applyFlags applies command-line flags to override config file values
+func applyFlags(cfg *config.Config) <span class="cov0" title="0">{
+        // MCP Server flags
+        if *tls </span><span class="cov0" title="0">{
+                cfg.TLS = *tls
+        }</span>
+        <span class="cov0" title="0">if *tlsCert != "" </span><span class="cov0" title="0">{
+                cfg.TLSCert = *tlsCert
+        }</span>
+        <span class="cov0" title="0">if *tlsKey != "" </span><span class="cov0" title="0">{
+                cfg.TLSKey = *tlsKey
+        }</span>
+        <span class="cov0" title="0">if *tlsChain != "" </span><span class="cov0" title="0">{
+                cfg.TLSChain = *tlsChain
+        }</span>
+        <span class="cov0" title="0">if *port != 8080 </span><span class="cov0" title="0">{
+                cfg.Port = *port
+        }</span>
+
+        // Datastore flags
+        <span class="cov0" title="0">if *pgHost != "" </span><span class="cov0" title="0">{
+                cfg.PgHost = *pgHost
+        }</span>
+        <span class="cov0" title="0">if *pgHostAddr != "" </span><span class="cov0" title="0">{
+                cfg.PgHostAddr = *pgHostAddr
+        }</span>
+        <span class="cov0" title="0">if *pgDatabase != "" </span><span class="cov0" title="0">{
+                cfg.PgDatabase = *pgDatabase
+        }</span>
+        <span class="cov0" title="0">if *pgUsername != "" </span><span class="cov0" title="0">{
+                cfg.PgUsername = *pgUsername
+        }</span>
+        <span class="cov0" title="0">if *pgPasswordFile != "" </span><span class="cov0" title="0">{
+                // Read password from file
+                content, err := os.ReadFile(*pgPasswordFile)
+                if err != nil </span><span class="cov0" title="0">{
+                        logger.Errorf("Warning: failed to read password file: %v", err)
+                }</span> else<span class="cov0" title="0"> {
+                        cfg.PgPassword = string(content)
+                }</span>
+        }
+        <span class="cov0" title="0">if *pgPort != 5432 </span><span class="cov0" title="0">{
+                cfg.PgPort = *pgPort
+        }</span>
+        <span class="cov0" title="0">if *pgSSLMode != "prefer" </span><span class="cov0" title="0">{
+                cfg.PgSSLMode = *pgSSLMode
+        }</span>
+        <span class="cov0" title="0">if *pgSSLCert != "" </span><span class="cov0" title="0">{
+                cfg.PgSSLCert = *pgSSLCert
+        }</span>
+        <span class="cov0" title="0">if *pgSSLKey != "" </span><span class="cov0" title="0">{
+                cfg.PgSSLKey = *pgSSLKey
+        }</span>
+        <span class="cov0" title="0">if *pgSSLRootCert != "" </span><span class="cov0" title="0">{
+                cfg.PgSSLRootCert = *pgSSLRootCert
+        }</span>
+}
+
+// handleUserManagement handles user account and service token management commands
+func handleUserManagement(cfg *config.Config) <span class="cov0" title="0">{
+        // Connect to the database
+        pool, err := database.Connect(cfg)
+        if err != nil </span><span class="cov0" title="0">{
+                logger.Fatalf("Failed to connect to database: %v", err)
+        }</span>
+        <span class="cov0" title="0">defer pool.Close()
+
+        // Handle user account commands
+        if *createUser != "" </span><span class="cov0" title="0">{
+                if err := usermgmt.CreateUser(pool, *createUser, true); err != nil </span><span class="cov0" title="0">{
+                        logger.Fatalf("Failed to create user: %v", err)
+                }</span>
+                <span class="cov0" title="0">return</span>
+        }
+
+        <span class="cov0" title="0">if *listUsers </span><span class="cov0" title="0">{
+                if err := usermgmt.ListUsers(pool); err != nil </span><span class="cov0" title="0">{
+                        logger.Fatalf("Failed to list users: %v", err)
+                }</span>
+                <span class="cov0" title="0">return</span>
+        }
+
+        <span class="cov0" title="0">if *deleteUser != "" </span><span class="cov0" title="0">{
+                if err := usermgmt.DeleteUser(pool, *deleteUser, true); err != nil </span><span class="cov0" title="0">{
+                        logger.Fatalf("Failed to delete user: %v", err)
+                }</span>
+                <span class="cov0" title="0">return</span>
+        }
+
+        // Handle service token commands
+        <span class="cov0" title="0">if *createToken != "" </span><span class="cov0" title="0">{
+                if err := usermgmt.CreateServiceToken(pool, *createToken, true); err != nil </span><span class="cov0" title="0">{
+                        logger.Fatalf("Failed to create service token: %v", err)
+                }</span>
+                <span class="cov0" title="0">return</span>
+        }
+
+        <span class="cov0" title="0">if *listTokens </span><span class="cov0" title="0">{
+                if err := usermgmt.ListServiceTokens(pool); err != nil </span><span class="cov0" title="0">{
+                        logger.Fatalf("Failed to list service tokens: %v", err)
+                }</span>
+                <span class="cov0" title="0">return</span>
+        }
+
+        <span class="cov0" title="0">if *deleteToken != "" </span><span class="cov0" title="0">{
+                if err := usermgmt.DeleteServiceToken(pool, *deleteToken, true); err != nil </span><span class="cov0" title="0">{
+                        logger.Fatalf("Failed to delete service token: %v", err)
+                }</span>
+                <span class="cov0" title="0">return</span>
+        }
+}
+</pre>
+		
+		<pre class="file" id="file4" style="display: none">/*-------------------------------------------------------------------------
+ *
+ * pgEdge AI Workbench
+ *
+ * Copyright (c) 2025, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-------------------------------------------------------------------------
+ */
+
+package mcp
+
+import (
+        "context"
+        "encoding/json"
+        "fmt"
+        "time"
+
+        "github.com/jackc/pgx/v5/pgxpool"
+        "github.com/pgEdge/ai-workbench/server/src/logger"
+        "github.com/pgEdge/ai-workbench/server/src/usermgmt"
+)
+
+// Handler processes MCP requests
+type Handler struct {
+        serverName    string
+        serverVersion string
+        initialized   bool
+        dbPool        *pgxpool.Pool
+        userInfo      *UserInfo
+}
+
+// NewHandler creates a new MCP handler
+func NewHandler(serverName, serverVersion string, dbPool *pgxpool.Pool) *Handler <span class="cov8" title="1">{
+        return &amp;Handler{
+                serverName:    serverName,
+                serverVersion: serverVersion,
+                initialized:   false,
+                dbPool:        dbPool,
+        }
+}</span>
+
+// HandleRequest processes an MCP request and returns a response
+func (h *Handler) HandleRequest(data []byte, bearerToken string) (*Response,
+        error) <span class="cov8" title="1">{
+        var req Request
+        if err := json.Unmarshal(data, &amp;req); err != nil </span><span class="cov8" title="1">{
+                logger.Errorf("Failed to unmarshal request: %v", err)
+                return NewErrorResponse(nil, ParseError, "Parse error", err.Error()),
+                        nil
+        }</span>
+
+        <span class="cov8" title="1">logger.Infof("Handling MCP request: method=%s, id=%v", req.Method,
+                req.ID)
+
+        // Validate JSON-RPC version
+        if req.JSONRPC != JSONRPCVersion </span><span class="cov8" title="1">{
+                return NewErrorResponse(req.ID, InvalidRequest,
+                        "Invalid JSON-RPC version", nil), nil
+        }</span>
+
+        // Check authentication for protected methods
+        // Methods that don't require authentication:
+        // - initialize, ping (protocol/health check methods)
+        // For tools/call, we'll check if it's authenticate_user specifically
+        // Skip authentication if dbPool is nil (for unit tests)
+        <span class="cov8" title="1">requiresAuth := true
+        if h.dbPool == nil </span><span class="cov8" title="1">{
+                // No database pool, skip authentication (unit test mode)
+                requiresAuth = false
+        }</span> else<span class="cov0" title="0"> {
+                switch req.Method </span>{
+                case "initialize", "ping":<span class="cov0" title="0">
+                        requiresAuth = false</span>
+                case "tools/call":<span class="cov0" title="0">
+                        // Need to check if it's the authenticate_user tool
+                        var params struct {
+                                Name string `json:"name"`
+                        }
+                        if err := json.Unmarshal(req.Params, &amp;params); err == nil </span><span class="cov0" title="0">{
+                                if params.Name == "authenticate_user" </span><span class="cov0" title="0">{
+                                        requiresAuth = false
+                                }</span>
+                        }
+                }
+        }
+
+        <span class="cov8" title="1">var userInfo *UserInfo
+        if requiresAuth </span><span class="cov0" title="0">{
+                // Validate bearer token
+                var err error
+                userInfo, err = h.validateToken(bearerToken)
+                if err != nil </span><span class="cov0" title="0">{
+                        logger.Errorf("Token validation failed: %v", err)
+                        return NewErrorResponse(req.ID, InternalError,
+                                "Authentication failed", nil), nil
+                }</span>
+                <span class="cov0" title="0">if userInfo == nil || !userInfo.IsAuthenticated </span><span class="cov0" title="0">{
+                        logger.Errorf("Unauthenticated request for method: %s", req.Method)
+                        return NewErrorResponse(req.ID, InvalidRequest,
+                                "Authentication required", nil), nil
+                }</span>
+        }
+
+        // Store userInfo in handler for access by tool handlers
+        <span class="cov8" title="1">h.userInfo = userInfo
+
+        // Route to appropriate handler based on method
+        switch req.Method </span>{
+        case "initialize":<span class="cov8" title="1">
+                return h.handleInitialize(req)</span>
+        case "ping":<span class="cov8" title="1">
+                return h.handlePing(req)</span>
+        case "resources/list":<span class="cov8" title="1">
+                return h.handleListResources(req)</span>
+        case "resources/read":<span class="cov8" title="1">
+                return h.handleReadResource(req)</span>
+        case "tools/list":<span class="cov8" title="1">
+                return h.handleListTools(req)</span>
+        case "tools/call":<span class="cov8" title="1">
+                return h.handleCallTool(req)</span>
+        case "prompts/list":<span class="cov8" title="1">
+                return h.handleListPrompts(req)</span>
+        default:<span class="cov8" title="1">
+                logger.Errorf("Method not found: %s", req.Method)
+                return NewErrorResponse(req.ID, MethodNotFound, "Method not found",
+                        nil), nil</span>
+        }
+}
+
+// handleInitialize processes the initialize request
+func (h *Handler) handleInitialize(req Request) (*Response, error) <span class="cov8" title="1">{
+        var params InitializeParams
+        if err := json.Unmarshal(req.Params, &amp;params); err != nil </span><span class="cov0" title="0">{
+                logger.Errorf("Failed to unmarshal initialize params: %v", err)
+                return NewErrorResponse(req.ID, InvalidParams, "Invalid parameters",
+                        err.Error()), nil
+        }</span>
+
+        <span class="cov8" title="1">logger.Infof("Initialize request from client: %s v%s",
+                params.ClientInfo.Name, params.ClientInfo.Version)
+
+        // Mark as initialized
+        h.initialized = true
+
+        // Build response with server capabilities (empty for now, no tools/resources)
+        result := InitializeResult{
+                ProtocolVersion: "2024-11-05", // MCP protocol version
+                Capabilities:    make(map[string]interface{}),
+                ServerInfo: ServerInfo{
+                        Name:    h.serverName,
+                        Version: h.serverVersion,
+                },
+        }
+
+        logger.Info("Server initialized successfully")
+        return NewResponse(req.ID, result), nil</span>
+}
+
+// handlePing processes the ping request
+func (h *Handler) handlePing(req Request) (*Response, error) <span class="cov8" title="1">{
+        result := map[string]interface{}{
+                "status": "ok",
+        }
+        return NewResponse(req.ID, result), nil
+}</span>
+
+// handleListResources processes the resources/list request
+func (h *Handler) handleListResources(req Request) (*Response, error) <span class="cov8" title="1">{
+        resources := []map[string]interface{}{
+                {
+                        "uri":         "ai-workbench://users",
+                        "name":        "User Accounts",
+                        "description": "List of all user accounts in the system",
+                        "mimeType":    "application/json",
+                },
+                {
+                        "uri":         "ai-workbench://service-tokens",
+                        "name":        "Service Tokens",
+                        "description": "List of all service tokens in the system",
+                        "mimeType":    "application/json",
+                },
+        }
+
+        result := map[string]interface{}{
+                "resources": resources,
+        }
+        logger.Info("Listed resources")
+        return NewResponse(req.ID, result), nil
+}</span>
+
+// handleReadResource processes the resources/read request
+func (h *Handler) handleReadResource(req Request) (*Response, error) <span class="cov8" title="1">{
+        var params struct {
+                URI string `json:"uri"`
+        }
+        if err := json.Unmarshal(req.Params, &amp;params); err != nil </span><span class="cov8" title="1">{
+                logger.Errorf("Failed to unmarshal resource read params: %v", err)
+                return NewErrorResponse(req.ID, InvalidParams, "Invalid parameters",
+                        err.Error()), nil
+        }</span>
+
+        <span class="cov8" title="1">ctx := context.Background()
+        var contents []map[string]interface{}
+
+        switch params.URI </span>{
+        case "ai-workbench://users":<span class="cov0" title="0">
+                // Fetch user accounts from database
+                rows, err := h.dbPool.Query(ctx, `
+                        SELECT username, email, full_name, password_expiry, is_superuser,
+                               created_at, updated_at
+                        FROM user_accounts
+                        ORDER BY username
+                `)
+                if err != nil </span><span class="cov0" title="0">{
+                        logger.Errorf("Failed to query user accounts: %v", err)
+                        return NewErrorResponse(req.ID, InternalError,
+                                "Failed to query user accounts", err.Error()), nil
+                }</span>
+                <span class="cov0" title="0">defer rows.Close()
+
+                for rows.Next() </span><span class="cov0" title="0">{
+                        var username, email, fullName string
+                        var passwordExpiry, createdAt, updatedAt interface{}
+                        var isSuperuser bool
+
+                        if err := rows.Scan(&amp;username, &amp;email, &amp;fullName, &amp;passwordExpiry,
+                                &amp;isSuperuser, &amp;createdAt, &amp;updatedAt); err != nil </span><span class="cov0" title="0">{
+                                logger.Errorf("Failed to scan user account: %v", err)
+                                continue</span>
+                        }
+
+                        <span class="cov0" title="0">contents = append(contents, map[string]interface{}{
+                                "uri":      fmt.Sprintf("ai-workbench://users/%s", username),
+                                "mimeType": "application/json",
+                                "text": fmt.Sprintf(`{"username": %q, "email": %q, "fullName": %q, "isSuperuser": %t, "passwordExpiry": %v, "createdAt": %v, "updatedAt": %v}`,
+                                        username, email, fullName, isSuperuser, passwordExpiry, createdAt, updatedAt),
+                        })</span>
+                }
+
+        case "ai-workbench://service-tokens":<span class="cov0" title="0">
+                // Fetch service tokens from database
+                rows, err := h.dbPool.Query(ctx, `
+                        SELECT name, is_superuser, note, expires_at, created_at, updated_at
+                        FROM service_tokens
+                        ORDER BY name
+                `)
+                if err != nil </span><span class="cov0" title="0">{
+                        logger.Errorf("Failed to query service tokens: %v", err)
+                        return NewErrorResponse(req.ID, InternalError,
+                                "Failed to query service tokens", err.Error()), nil
+                }</span>
+                <span class="cov0" title="0">defer rows.Close()
+
+                for rows.Next() </span><span class="cov0" title="0">{
+                        var name string
+                        var isSuperuser bool
+                        var note, expiresAt, createdAt, updatedAt interface{}
+
+                        if err := rows.Scan(&amp;name, &amp;isSuperuser, &amp;note, &amp;expiresAt,
+                                &amp;createdAt, &amp;updatedAt); err != nil </span><span class="cov0" title="0">{
+                                logger.Errorf("Failed to scan service token: %v", err)
+                                continue</span>
+                        }
+
+                        <span class="cov0" title="0">contents = append(contents, map[string]interface{}{
+                                "uri":      fmt.Sprintf("ai-workbench://service-tokens/%s", name),
+                                "mimeType": "application/json",
+                                "text": fmt.Sprintf(`{"name": %q, "isSuperuser": %t, "note": %v, "expiresAt": %v, "createdAt": %v, "updatedAt": %v}`,
+                                        name, isSuperuser, note, expiresAt, createdAt, updatedAt),
+                        })</span>
+                }
+
+        default:<span class="cov8" title="1">
+                return NewErrorResponse(req.ID, InvalidParams, "Unknown resource URI",
+                        nil), nil</span>
+        }
+
+        <span class="cov0" title="0">result := map[string]interface{}{
+                "contents": contents,
+        }
+        logger.Infof("Read resource: %s (%d items)", params.URI, len(contents))
+        return NewResponse(req.ID, result), nil</span>
+}
+
+// handleListTools processes the tools/list request
+func (h *Handler) handleListTools(req Request) (*Response, error) <span class="cov8" title="1">{
+        tools := []map[string]interface{}{
+                {
+                        "name":        "authenticate_user",
+                        "description": "Authenticate a user and obtain a session token",
+                        "inputSchema": map[string]interface{}{
+                                "type": "object",
+                                "properties": map[string]interface{}{
+                                        "username": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Username to authenticate",
+                                        },
+                                        "password": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Password for authentication",
+                                        },
+                                },
+                                "required": []string{"username", "password"},
+                        },
+                },
+                {
+                        "name":        "create_user",
+                        "description": "Create a new user account",
+                        "inputSchema": map[string]interface{}{
+                                "type": "object",
+                                "properties": map[string]interface{}{
+                                        "username": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Username for the new user",
+                                        },
+                                        "email": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Email address for the new user",
+                                        },
+                                        "fullName": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Full name of the user",
+                                        },
+                                        "password": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Password for the new user",
+                                        },
+                                        "isSuperuser": map[string]interface{}{
+                                                "type":        "boolean",
+                                                "description": "Whether the user should have superuser privileges",
+                                                "default":     false,
+                                        },
+                                        "passwordExpiry": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Password expiry date (YYYY-MM-DD format, optional)",
+                                        },
+                                },
+                                "required": []string{"username", "email", "fullName", "password"},
+                        },
+                },
+                {
+                        "name":        "update_user",
+                        "description": "Update an existing user account",
+                        "inputSchema": map[string]interface{}{
+                                "type": "object",
+                                "properties": map[string]interface{}{
+                                        "username": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Username of the user to update",
+                                        },
+                                        "email": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "New email address (optional)",
+                                        },
+                                        "fullName": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "New full name (optional)",
+                                        },
+                                        "password": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "New password (optional)",
+                                        },
+                                        "isSuperuser": map[string]interface{}{
+                                                "type":        "boolean",
+                                                "description": "Update superuser status (optional)",
+                                        },
+                                        "passwordExpiry": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "New password expiry date (YYYY-MM-DD format, optional)",
+                                        },
+                                        "clearPasswordExpiry": map[string]interface{}{
+                                                "type":        "boolean",
+                                                "description": "Clear password expiry (optional)",
+                                                "default":     false,
+                                        },
+                                },
+                                "required": []string{"username"},
+                        },
+                },
+                {
+                        "name":        "delete_user",
+                        "description": "Delete a user account",
+                        "inputSchema": map[string]interface{}{
+                                "type": "object",
+                                "properties": map[string]interface{}{
+                                        "username": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Username of the user to delete",
+                                        },
+                                },
+                                "required": []string{"username"},
+                        },
+                },
+                {
+                        "name":        "create_service_token",
+                        "description": "Create a new service token",
+                        "inputSchema": map[string]interface{}{
+                                "type": "object",
+                                "properties": map[string]interface{}{
+                                        "name": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Name for the service token",
+                                        },
+                                        "isSuperuser": map[string]interface{}{
+                                                "type":        "boolean",
+                                                "description": "Whether the token should have superuser privileges",
+                                                "default":     false,
+                                        },
+                                        "note": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Optional note about the token",
+                                        },
+                                        "expiresAt": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Expiry date (YYYY-MM-DD format, optional)",
+                                        },
+                                },
+                                "required": []string{"name"},
+                        },
+                },
+                {
+                        "name":        "update_service_token",
+                        "description": "Update an existing service token",
+                        "inputSchema": map[string]interface{}{
+                                "type": "object",
+                                "properties": map[string]interface{}{
+                                        "name": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Name of the service token to update",
+                                        },
+                                        "isSuperuser": map[string]interface{}{
+                                                "type":        "boolean",
+                                                "description": "Update superuser status (optional)",
+                                        },
+                                        "note": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Update note (optional)",
+                                        },
+                                        "expiresAt": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "New expiry date (YYYY-MM-DD format, optional)",
+                                        },
+                                        "clearNote": map[string]interface{}{
+                                                "type":        "boolean",
+                                                "description": "Clear the note (optional)",
+                                                "default":     false,
+                                        },
+                                        "clearExpiresAt": map[string]interface{}{
+                                                "type":        "boolean",
+                                                "description": "Clear expiry date (optional)",
+                                                "default":     false,
+                                        },
+                                },
+                                "required": []string{"name"},
+                        },
+                },
+                {
+                        "name":        "delete_service_token",
+                        "description": "Delete a service token",
+                        "inputSchema": map[string]interface{}{
+                                "type": "object",
+                                "properties": map[string]interface{}{
+                                        "name": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Name of the service token to delete",
+                                        },
+                                },
+                                "required": []string{"name"},
+                        },
+                },
+        }
+
+        result := map[string]interface{}{
+                "tools": tools,
+        }
+        logger.Info("Listed tools")
+        return NewResponse(req.ID, result), nil
+}</span>
+
+// handleListPrompts processes the prompts/list request
+func (h *Handler) handleListPrompts(req Request) (*Response, error) <span class="cov8" title="1">{
+        // Return empty list for now - prompts will be added later
+        result := map[string]interface{}{
+                "prompts": []interface{}{},
+        }
+        logger.Info("Listed prompts")
+        return NewResponse(req.ID, result), nil
+}</span>
+
+// IsInitialized returns whether the handler has been initialized
+func (h *Handler) IsInitialized() bool <span class="cov0" title="0">{
+        return h.initialized
+}</span>
+
+// handleCallTool processes the tools/call request
+func (h *Handler) handleCallTool(req Request) (*Response, error) <span class="cov8" title="1">{
+        var params struct {
+                Name      string                 `json:"name"`
+                Arguments map[string]interface{} `json:"arguments"`
+        }
+        if err := json.Unmarshal(req.Params, &amp;params); err != nil </span><span class="cov8" title="1">{
+                logger.Errorf("Failed to unmarshal tool call params: %v", err)
+                return NewErrorResponse(req.ID, InvalidParams, "Invalid parameters",
+                        err.Error()), nil
+        }</span>
+
+        <span class="cov8" title="1">logger.Infof("Calling tool: %s", params.Name)
+
+        // Route to appropriate tool handler
+        var result interface{}
+        var err error
+
+        switch params.Name </span>{
+        case "authenticate_user":<span class="cov0" title="0">
+                result, err = h.handleAuthenticateUser(params.Arguments)</span>
+        case "create_user":<span class="cov0" title="0">
+                result, err = h.handleCreateUser(params.Arguments)</span>
+        case "update_user":<span class="cov0" title="0">
+                result, err = h.handleUpdateUser(params.Arguments)</span>
+        case "delete_user":<span class="cov0" title="0">
+                result, err = h.handleDeleteUser(params.Arguments)</span>
+        case "create_service_token":<span class="cov0" title="0">
+                result, err = h.handleCreateServiceToken(params.Arguments)</span>
+        case "update_service_token":<span class="cov0" title="0">
+                result, err = h.handleUpdateServiceToken(params.Arguments)</span>
+        case "delete_service_token":<span class="cov0" title="0">
+                result, err = h.handleDeleteServiceToken(params.Arguments)</span>
+        default:<span class="cov8" title="1">
+                logger.Errorf("Unknown tool: %s", params.Name)
+                return NewErrorResponse(req.ID, MethodNotFound, "Tool not found",
+                        nil), nil</span>
+        }
+
+        <span class="cov0" title="0">if err != nil </span><span class="cov0" title="0">{
+                logger.Errorf("Tool execution failed: %v", err)
+                return NewErrorResponse(req.ID, InternalError, "Tool execution failed",
+                        err.Error()), nil
+        }</span>
+
+        <span class="cov0" title="0">logger.Infof("Tool %s executed successfully", params.Name)
+        return NewResponse(req.ID, result), nil</span>
+}
+
+// handleCreateUser executes the create_user tool
+func (h *Handler) handleCreateUser(args map[string]interface{}) (interface{},
+        error) <span class="cov8" title="1">{
+        if h.userInfo == nil || !h.userInfo.IsSuperuser </span><span class="cov8" title="1">{
+                return nil, fmt.Errorf("permission denied: superuser privileges required")
+        }</span>
+
+        <span class="cov0" title="0">username, _ := args["username"].(string)   //nolint:errcheck // Optional argument, empty string is acceptable default
+        email, _ := args["email"].(string)         //nolint:errcheck // Optional argument, empty string is acceptable default
+        fullName, _ := args["fullName"].(string)   //nolint:errcheck // Optional argument, empty string is acceptable default
+        password, _ := args["password"].(string)   //nolint:errcheck // Optional argument, empty string is acceptable default
+        isSuperuser, _ := args["isSuperuser"].(bool) //nolint:errcheck // Optional argument, false is acceptable default
+
+        var passwordExpiry *time.Time
+        if expiryStr, ok := args["passwordExpiry"].(string); ok &amp;&amp; expiryStr != "" </span><span class="cov0" title="0">{
+                expiry, err := time.Parse("2006-01-02", expiryStr)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("invalid password expiry date format: %w",
+                                err)
+                }</span>
+                <span class="cov0" title="0">passwordExpiry = &amp;expiry</span>
+        }
+
+        <span class="cov0" title="0">message, err := usermgmt.CreateUserNonInteractive(h.dbPool, username, email,
+                fullName, password, isSuperuser, passwordExpiry)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        <span class="cov0" title="0">return map[string]interface{}{
+                "content": []map[string]interface{}{
+                        {
+                                "type": "text",
+                                "text": message,
+                        },
+                },
+        }, nil</span>
+}
+
+// handleUpdateUser executes the update_user tool
+func (h *Handler) handleUpdateUser(args map[string]interface{}) (interface{},
+        error) <span class="cov8" title="1">{
+        if h.userInfo == nil || !h.userInfo.IsSuperuser </span><span class="cov8" title="1">{
+                return nil, fmt.Errorf("permission denied: superuser privileges required")
+        }</span>
+
+        <span class="cov0" title="0">username, _ := args["username"].(string)
+
+        var email, fullName, password *string
+        var isSuperuser *bool
+        var passwordExpiry *time.Time
+        clearPasswordExpiry := false
+
+        if val, ok := args["email"].(string); ok </span><span class="cov0" title="0">{
+                email = &amp;val
+        }</span>
+        <span class="cov0" title="0">if val, ok := args["fullName"].(string); ok </span><span class="cov0" title="0">{
+                fullName = &amp;val
+        }</span>
+        <span class="cov0" title="0">if val, ok := args["password"].(string); ok </span><span class="cov0" title="0">{
+                password = &amp;val
+        }</span>
+        <span class="cov0" title="0">if val, ok := args["isSuperuser"].(bool); ok </span><span class="cov0" title="0">{
+                isSuperuser = &amp;val
+        }</span>
+        <span class="cov0" title="0">if val, ok := args["clearPasswordExpiry"].(bool); ok </span><span class="cov0" title="0">{
+                clearPasswordExpiry = val
+        }</span>
+        <span class="cov0" title="0">if expiryStr, ok := args["passwordExpiry"].(string); ok &amp;&amp; expiryStr != "" </span><span class="cov0" title="0">{
+                expiry, err := time.Parse("2006-01-02", expiryStr)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("invalid password expiry date format: %w",
+                                err)
+                }</span>
+                <span class="cov0" title="0">passwordExpiry = &amp;expiry</span>
+        }
+
+        <span class="cov0" title="0">message, err := usermgmt.UpdateUserNonInteractive(h.dbPool, username, email,
+                fullName, password, isSuperuser, passwordExpiry, clearPasswordExpiry)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        <span class="cov0" title="0">return map[string]interface{}{
+                "content": []map[string]interface{}{
+                        {
+                                "type": "text",
+                                "text": message,
+                        },
+                },
+        }, nil</span>
+}
+
+// handleDeleteUser executes the delete_user tool
+func (h *Handler) handleDeleteUser(args map[string]interface{}) (interface{},
+        error) <span class="cov8" title="1">{
+        if h.userInfo == nil || !h.userInfo.IsSuperuser </span><span class="cov8" title="1">{
+                return nil, fmt.Errorf("permission denied: superuser privileges required")
+        }</span>
+
+        <span class="cov0" title="0">username, _ := args["username"].(string)
+
+        message, err := usermgmt.DeleteUserNonInteractive(h.dbPool, username)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        <span class="cov0" title="0">return map[string]interface{}{
+                "content": []map[string]interface{}{
+                        {
+                                "type": "text",
+                                "text": message,
+                        },
+                },
+        }, nil</span>
+}
+
+// handleCreateServiceToken executes the create_service_token tool
+func (h *Handler) handleCreateServiceToken(args map[string]interface{}) (interface{},
+        error) <span class="cov8" title="1">{
+        if h.userInfo == nil || !h.userInfo.IsSuperuser </span><span class="cov8" title="1">{
+                return nil, fmt.Errorf("permission denied: superuser privileges required")
+        }</span>
+
+        <span class="cov0" title="0">name, _ := args["name"].(string)
+        isSuperuser, _ := args["isSuperuser"].(bool)
+
+        var note *string
+        var expiresAt *time.Time
+
+        if val, ok := args["note"].(string); ok &amp;&amp; val != "" </span><span class="cov0" title="0">{
+                note = &amp;val
+        }</span>
+        <span class="cov0" title="0">if expiryStr, ok := args["expiresAt"].(string); ok &amp;&amp; expiryStr != "" </span><span class="cov0" title="0">{
+                expiry, err := time.Parse("2006-01-02", expiryStr)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("invalid expiry date format: %w", err)
+                }</span>
+                <span class="cov0" title="0">expiresAt = &amp;expiry</span>
+        }
+
+        <span class="cov0" title="0">message, token, err := usermgmt.CreateServiceTokenNonInteractive(h.dbPool,
+                name, isSuperuser, note, expiresAt)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        <span class="cov0" title="0">fullMessage := fmt.Sprintf("%s\nToken: %s\nIMPORTANT: Save this token "+
+                "now. You won't be able to see it again.", message, token)
+
+        return map[string]interface{}{
+                "content": []map[string]interface{}{
+                        {
+                                "type": "text",
+                                "text": fullMessage,
+                        },
+                },
+        }, nil</span>
+}
+
+// handleUpdateServiceToken executes the update_service_token tool
+func (h *Handler) handleUpdateServiceToken(args map[string]interface{}) (interface{},
+        error) <span class="cov8" title="1">{
+        if h.userInfo == nil || !h.userInfo.IsSuperuser </span><span class="cov8" title="1">{
+                return nil, fmt.Errorf("permission denied: superuser privileges required")
+        }</span>
+
+        <span class="cov0" title="0">name, _ := args["name"].(string)
+
+        var isSuperuser *bool
+        var note *string
+        var expiresAt *time.Time
+        clearNote := false
+        clearExpiresAt := false
+
+        if val, ok := args["isSuperuser"].(bool); ok </span><span class="cov0" title="0">{
+                isSuperuser = &amp;val
+        }</span>
+        <span class="cov0" title="0">if val, ok := args["note"].(string); ok </span><span class="cov0" title="0">{
+                note = &amp;val
+        }</span>
+        <span class="cov0" title="0">if val, ok := args["clearNote"].(bool); ok </span><span class="cov0" title="0">{
+                clearNote = val
+        }</span>
+        <span class="cov0" title="0">if val, ok := args["clearExpiresAt"].(bool); ok </span><span class="cov0" title="0">{
+                clearExpiresAt = val
+        }</span>
+        <span class="cov0" title="0">if expiryStr, ok := args["expiresAt"].(string); ok &amp;&amp; expiryStr != "" </span><span class="cov0" title="0">{
+                expiry, err := time.Parse("2006-01-02", expiryStr)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("invalid expiry date format: %w", err)
+                }</span>
+                <span class="cov0" title="0">expiresAt = &amp;expiry</span>
+        }
+
+        <span class="cov0" title="0">message, err := usermgmt.UpdateServiceTokenNonInteractive(h.dbPool, name,
+                isSuperuser, note, expiresAt, clearNote, clearExpiresAt)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        <span class="cov0" title="0">return map[string]interface{}{
+                "content": []map[string]interface{}{
+                        {
+                                "type": "text",
+                                "text": message,
+                        },
+                },
+        }, nil</span>
+}
+
+// handleDeleteServiceToken executes the delete_service_token tool
+func (h *Handler) handleDeleteServiceToken(args map[string]interface{}) (interface{},
+        error) <span class="cov8" title="1">{
+        if h.userInfo == nil || !h.userInfo.IsSuperuser </span><span class="cov8" title="1">{
+                return nil, fmt.Errorf("permission denied: superuser privileges required")
+        }</span>
+
+        <span class="cov0" title="0">name, _ := args["name"].(string)
+
+        message, err := usermgmt.DeleteServiceTokenNonInteractive(h.dbPool, name)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        <span class="cov0" title="0">return map[string]interface{}{
+                "content": []map[string]interface{}{
+                        {
+                                "type": "text",
+                                "text": message,
+                        },
+                },
+        }, nil</span>
+}
+
+// UserInfo contains information about an authenticated user or service token
+type UserInfo struct {
+        IsAuthenticated bool
+        IsSuperuser     bool
+        Username        string // Empty for service tokens
+        IsServiceToken  bool
+}
+
+// validateToken validates a bearer token against service_tokens and user_sessions
+func (h *Handler) validateToken(token string) (*UserInfo, error) <span class="cov0" title="0">{
+        if token == "" </span><span class="cov0" title="0">{
+                return nil, nil
+        }</span>
+
+        <span class="cov0" title="0">ctx := context.Background()
+
+        // First, check service_tokens table
+        tokenHash := usermgmt.HashPassword(token)
+        var expiresAt interface{}
+        var isSuperuser bool
+        err := h.dbPool.QueryRow(ctx, `
+                SELECT expires_at, is_superuser
+                FROM service_tokens
+                WHERE token_hash = $1
+        `, tokenHash).Scan(&amp;expiresAt, &amp;isSuperuser)
+
+        if err == nil </span><span class="cov0" title="0">{
+                // Service token found, check if expired
+                if expiresAt != nil </span><span class="cov0" title="0">{
+                        if expiry, ok := expiresAt.(time.Time); ok </span><span class="cov0" title="0">{
+                                if time.Now().After(expiry) </span><span class="cov0" title="0">{
+                                        logger.Infof("Service token expired")
+                                        return nil, nil
+                                }</span>
+                        }
+                }
+                <span class="cov0" title="0">logger.Infof("Valid service token (superuser: %t)", isSuperuser)
+                return &amp;UserInfo{
+                        IsAuthenticated: true,
+                        IsSuperuser:     isSuperuser,
+                        Username:        "",
+                        IsServiceToken:  true,
+                }, nil</span>
+        }
+
+        // Service token not found, check user_sessions table
+        <span class="cov0" title="0">var username string
+        err = h.dbPool.QueryRow(ctx, `
+                SELECT us.username, us.expires_at, ua.is_superuser
+                FROM user_sessions us
+                JOIN user_accounts ua ON us.username = ua.username
+                WHERE us.session_token = $1
+        `, token).Scan(&amp;username, &amp;expiresAt, &amp;isSuperuser)
+
+        if err != nil </span><span class="cov0" title="0">{
+                // Token not found in either table
+                return nil, nil
+        }</span>
+
+        // Session found, check if expired
+        <span class="cov0" title="0">if expiry, ok := expiresAt.(time.Time); ok </span><span class="cov0" title="0">{
+                if time.Now().After(expiry) </span><span class="cov0" title="0">{
+                        logger.Infof("Session token expired for user '%s'", username)
+                        return nil, nil
+                }</span>
+        }
+
+        // Update last_used_at timestamp
+        <span class="cov0" title="0">_, err = h.dbPool.Exec(ctx, `
+                UPDATE user_sessions
+                SET last_used_at = $1
+                WHERE session_token = $2
+        `, time.Now(), token)
+        if err != nil </span><span class="cov0" title="0">{
+                logger.Errorf("Failed to update session last_used_at: %v", err)
+                // Don't fail authentication just because we couldn't update timestamp
+        }</span>
+
+        <span class="cov0" title="0">logger.Infof("Valid session token for user '%s' (superuser: %t)", username,
+                isSuperuser)
+        return &amp;UserInfo{
+                IsAuthenticated: true,
+                IsSuperuser:     isSuperuser,
+                Username:        username,
+                IsServiceToken:  false,
+        }, nil</span>
+}
+
+// handleAuthenticateUser executes the authenticate_user tool
+func (h *Handler) handleAuthenticateUser(args map[string]interface{}) (interface{},
+        error) <span class="cov0" title="0">{
+        username, _ := args["username"].(string)
+        password, _ := args["password"].(string)
+
+        ctx := context.Background()
+
+        // Query user account
+        var passwordHash string
+        var passwordExpiry interface{}
+        err := h.dbPool.QueryRow(ctx, `
+                SELECT password_hash, password_expiry
+                FROM user_accounts
+                WHERE username = $1
+        `, username).Scan(&amp;passwordHash, &amp;passwordExpiry)
+
+        if err != nil </span><span class="cov0" title="0">{
+                // User not found or other error
+                logger.Errorf("Authentication failed for user '%s': %v", username, err)
+                return nil, fmt.Errorf("authentication failed: invalid username or password")
+        }</span>
+
+        // Verify password
+        <span class="cov0" title="0">if usermgmt.HashPassword(password) != passwordHash </span><span class="cov0" title="0">{
+                logger.Errorf("Authentication failed for user '%s': invalid password",
+                        username)
+                return nil, fmt.Errorf("authentication failed: invalid username or password")
+        }</span>
+
+        // Check if password has expired
+        <span class="cov0" title="0">if passwordExpiry != nil </span><span class="cov0" title="0">{
+                if expiry, ok := passwordExpiry.(time.Time); ok </span><span class="cov0" title="0">{
+                        if time.Now().After(expiry) </span><span class="cov0" title="0">{
+                                logger.Errorf("Authentication failed for user '%s': password expired",
+                                        username)
+                                return nil, fmt.Errorf("authentication failed: password has expired")
+                        }</span>
+                }
+        }
+
+        // Generate session token
+        <span class="cov0" title="0">sessionToken, err := usermgmt.GenerateToken()
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to generate session token: %w", err)
+        }</span>
+
+        // Calculate expiration time (24 hours from now)
+        <span class="cov0" title="0">expiresAt := time.Now().Add(24 * time.Hour)
+
+        // Insert into user_sessions table
+        _, err = h.dbPool.Exec(ctx, `
+                INSERT INTO user_sessions (session_token, username, expires_at)
+                VALUES ($1, $2, $3)
+        `, sessionToken, username, expiresAt)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to create session: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">logger.Infof("User '%s' authenticated successfully", username)
+
+        // Return session token
+        return map[string]interface{}{
+                "content": []map[string]interface{}{
+                        {
+                                "type": "text",
+                                "text": fmt.Sprintf("Authentication successful. Session token: %s\nExpires at: %s",
+                                        sessionToken, expiresAt.Format(time.RFC3339)),
+                        },
+                },
+        }, nil</span>
+}
+
+// FormatResponse formats a response as JSON
+func FormatResponse(resp *Response) ([]byte, error) <span class="cov8" title="1">{
+        data, err := json.Marshal(resp)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to marshal response: %w", err)
+        }</span>
+        <span class="cov8" title="1">return data, nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file5" style="display: none">/*-------------------------------------------------------------------------
+ *
+ * pgEdge AI Workbench
+ *
+ * Copyright (c) 2025, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-------------------------------------------------------------------------
+ */
+
+// Package mcp implements the Model Context Protocol for the MCP server
+package mcp
+
+import (
+        "encoding/json"
+)
+
+// JSONRPCVersion is the JSON-RPC version used by MCP
+const JSONRPCVersion = "2.0"
+
+// Request represents an MCP JSON-RPC request
+type Request struct {
+        JSONRPC string          `json:"jsonrpc"`
+        ID      interface{}     `json:"id,omitempty"`
+        Method  string          `json:"method"`
+        Params  json.RawMessage `json:"params,omitempty"`
+}
+
+// Response represents an MCP JSON-RPC response
+type Response struct {
+        JSONRPC string      `json:"jsonrpc"`
+        ID      interface{} `json:"id,omitempty"`
+        Result  interface{} `json:"result,omitempty"`
+        Error   *Error      `json:"error,omitempty"`
+}
+
+// Error represents an MCP JSON-RPC error
+type Error struct {
+        Code    int         `json:"code"`
+        Message string      `json:"message"`
+        Data    interface{} `json:"data,omitempty"`
+}
+
+// Error codes as defined by JSON-RPC 2.0 specification
+const (
+        ParseError     = -32700 // Invalid JSON was received
+        InvalidRequest = -32600 // The JSON sent is not a valid Request object
+        MethodNotFound = -32601 // The method does not exist or is not available
+        InvalidParams  = -32602 // Invalid method parameter(s)
+        InternalError  = -32603 // Internal JSON-RPC error
+)
+
+// NewRequest creates a new MCP request
+func NewRequest(method string, params interface{}) (*Request, error) <span class="cov8" title="1">{
+        var paramsJSON json.RawMessage
+        if params != nil </span><span class="cov8" title="1">{
+                data, err := json.Marshal(params)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, err
+                }</span>
+                <span class="cov8" title="1">paramsJSON = data</span>
+        }
+
+        <span class="cov8" title="1">return &amp;Request{
+                JSONRPC: JSONRPCVersion,
+                Method:  method,
+                Params:  paramsJSON,
+        }, nil</span>
+}
+
+// NewResponse creates a new MCP success response
+func NewResponse(id interface{}, result interface{}) *Response <span class="cov8" title="1">{
+        return &amp;Response{
+                JSONRPC: JSONRPCVersion,
+                ID:      id,
+                Result:  result,
+        }
+}</span>
+
+// NewErrorResponse creates a new MCP error response
+func NewErrorResponse(id interface{}, code int, message string,
+        data interface{}) *Response <span class="cov8" title="1">{
+        return &amp;Response{
+                JSONRPC: JSONRPCVersion,
+                ID:      id,
+                Error: &amp;Error{
+                        Code:    code,
+                        Message: message,
+                        Data:    data,
+                },
+        }
+}</span>
+
+// ServerInfo represents information about the MCP server
+type ServerInfo struct {
+        Name    string `json:"name"`
+        Version string `json:"version"`
+}
+
+// InitializeParams represents the parameters for the initialize method
+type InitializeParams struct {
+        ProtocolVersion string                 `json:"protocolVersion"`
+        Capabilities    map[string]interface{} `json:"capabilities"`
+        ClientInfo      ClientInfo             `json:"clientInfo"`
+}
+
+// ClientInfo represents information about the MCP client
+type ClientInfo struct {
+        Name    string `json:"name"`
+        Version string `json:"version"`
+}
+
+// InitializeResult represents the result of the initialize method
+type InitializeResult struct {
+        ProtocolVersion string                 `json:"protocolVersion"`
+        Capabilities    map[string]interface{} `json:"capabilities"`
+        ServerInfo      ServerInfo             `json:"serverInfo"`
+}
+</pre>
+		
+		<pre class="file" id="file6" style="display: none">/*-------------------------------------------------------------------------
+ *
+ * pgEdge AI Workbench
+ *
+ * Copyright (c) 2025, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-------------------------------------------------------------------------
+ */
+
+// Package server implements the HTTP/HTTPS server with SSE support
+package server
+
+import (
+        "bufio"
+        "context"
+        "fmt"
+        "io"
+        "net/http"
+        "time"
+
+        "github.com/pgEdge/ai-workbench/server/src/config"
+        "github.com/pgEdge/ai-workbench/server/src/logger"
+        "github.com/pgEdge/ai-workbench/server/src/mcp"
+)
+
+// Server represents the MCP HTTP/HTTPS server
+type Server struct {
+        config  *config.Config
+        handler *mcp.Handler
+        server  *http.Server
+}
+
+// New creates a new server instance
+func New(cfg *config.Config, mcpHandler *mcp.Handler) *Server <span class="cov0" title="0">{
+        return &amp;Server{
+                config:  cfg,
+                handler: mcpHandler,
+        }
+}</span>
+
+// Start starts the HTTP or HTTPS server
+func (s *Server) Start() error <span class="cov0" title="0">{
+        mux := http.NewServeMux()
+        mux.HandleFunc("/sse", s.handleSSE)
+        mux.HandleFunc("/mcp", s.handleMCP)
+        mux.HandleFunc("/health", s.handleHealth)
+
+        addr := fmt.Sprintf(":%d", s.config.GetPort())
+        s.server = &amp;http.Server{
+                Addr:              addr,
+                Handler:           mux,
+                ReadHeaderTimeout: 10 * time.Second,
+                ReadTimeout:       30 * time.Second,
+                WriteTimeout:      30 * time.Second,
+                IdleTimeout:       120 * time.Second,
+        }
+
+        if s.config.GetTLS() </span><span class="cov0" title="0">{
+                logger.Startupf("Starting HTTPS server on port %d", s.config.GetPort())
+                if err := s.server.ListenAndServeTLS(s.config.GetTLSCert(),
+                        s.config.GetTLSKey()); err != nil &amp;&amp; err != http.ErrServerClosed </span><span class="cov0" title="0">{
+                        return fmt.Errorf("HTTPS server error: %w", err)
+                }</span>
+        } else<span class="cov0" title="0"> {
+                logger.Startupf("Starting HTTP server on port %d", s.config.GetPort())
+                if err := s.server.ListenAndServe(); err != nil &amp;&amp;
+                        err != http.ErrServerClosed </span><span class="cov0" title="0">{
+                        return fmt.Errorf("HTTP server error: %w", err)
+                }</span>
+        }
+
+        <span class="cov0" title="0">return nil</span>
+}
+
+// Shutdown gracefully shuts down the server
+func (s *Server) Shutdown(ctx context.Context) error <span class="cov0" title="0">{
+        logger.Info("Shutting down server...")
+        if s.server != nil </span><span class="cov0" title="0">{
+                return s.server.Shutdown(ctx)
+        }</span>
+        <span class="cov0" title="0">return nil</span>
+}
+
+// extractBearerToken extracts the bearer token from the Authorization header
+func extractBearerToken(r *http.Request) string <span class="cov0" title="0">{
+        authHeader := r.Header.Get("Authorization")
+        if authHeader == "" </span><span class="cov0" title="0">{
+                return ""
+        }</span>
+
+        // Check if it starts with "Bearer "
+        <span class="cov0" title="0">const bearerPrefix = "Bearer "
+        if len(authHeader) &gt; len(bearerPrefix) &amp;&amp; authHeader[:len(bearerPrefix)] == bearerPrefix </span><span class="cov0" title="0">{
+                return authHeader[len(bearerPrefix):]
+        }</span>
+
+        <span class="cov0" title="0">return ""</span>
+}
+
+// handleSSE handles Server-Sent Events connections for MCP
+func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) <span class="cov0" title="0">{
+        logger.Infof("New SSE connection from %s", r.RemoteAddr)
+
+        // Extract bearer token from Authorization header
+        bearerToken := extractBearerToken(r)
+
+        // Set headers for SSE
+        w.Header().Set("Content-Type", "text/event-stream")
+        w.Header().Set("Cache-Control", "no-cache")
+        w.Header().Set("Connection", "keep-alive")
+        w.Header().Set("Access-Control-Allow-Origin", "*")
+
+        // Get flusher for sending data
+        flusher, ok := w.(http.Flusher)
+        if !ok </span><span class="cov0" title="0">{
+                logger.Error("SSE not supported on this connection")
+                http.Error(w, "SSE not supported", http.StatusInternalServerError)
+                return
+        }</span>
+
+        // Send initial connection success message
+        <span class="cov0" title="0">if _, err := fmt.Fprintf(w, "event: connected\ndata: {\"status\":\"connected\"}\n\n"); err != nil </span><span class="cov0" title="0">{
+                logger.Errorf("Failed to write connection event: %v", err)
+                return
+        }</span>
+        <span class="cov0" title="0">flusher.Flush()
+
+        // Create a context that will be canceled when the client disconnects
+        ctx := r.Context()
+
+        // Read requests from the client
+        reader := bufio.NewReader(r.Body)
+        for </span><span class="cov0" title="0">{
+                select </span>{
+                case &lt;-ctx.Done():<span class="cov0" title="0">
+                        logger.Infof("SSE connection closed for %s", r.RemoteAddr)
+                        return</span>
+                default:<span class="cov0" title="0">
+                        // Set read deadline
+                        // Note: We can't set deadline on r.Body directly in HTTP/2
+                        // This is a simplified implementation
+
+                        // Read a line (JSON-RPC request)
+                        line, err := reader.ReadBytes('\n')
+                        if err != nil </span><span class="cov0" title="0">{
+                                if err == io.EOF </span><span class="cov0" title="0">{
+                                        logger.Infof("Client closed connection: %s", r.RemoteAddr)
+                                        return
+                                }</span>
+                                <span class="cov0" title="0">logger.Errorf("Error reading from client: %v", err)
+                                return</span>
+                        }
+
+                        // Process the request
+                        <span class="cov0" title="0">resp, err := s.handler.HandleRequest(line, bearerToken)
+                        if err != nil </span><span class="cov0" title="0">{
+                                logger.Errorf("Error handling request: %v", err)
+                                continue</span>
+                        }
+
+                        // Format response
+                        <span class="cov0" title="0">respData, err := mcp.FormatResponse(resp)
+                        if err != nil </span><span class="cov0" title="0">{
+                                logger.Errorf("Error formatting response: %v", err)
+                                continue</span>
+                        }
+
+                        // Send response via SSE
+                        <span class="cov0" title="0">if _, err := fmt.Fprintf(w, "event: message\ndata: %s\n\n", respData); err != nil </span><span class="cov0" title="0">{
+                                logger.Errorf("Failed to write message event: %v", err)
+                                return
+                        }</span>
+                        <span class="cov0" title="0">flusher.Flush()
+
+                        logger.Infof("Sent response to %s", r.RemoteAddr)</span>
+                }
+        }
+}
+
+// handleMCP handles JSON-RPC POST requests for one-off MCP calls
+func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) <span class="cov0" title="0">{
+        // Only accept POST requests
+        if r.Method != http.MethodPost </span><span class="cov0" title="0">{
+                http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+                return
+        }</span>
+
+        // Extract bearer token from Authorization header
+        <span class="cov0" title="0">bearerToken := extractBearerToken(r)
+
+        // Read request body
+        body, err := io.ReadAll(r.Body)
+        if err != nil </span><span class="cov0" title="0">{
+                logger.Errorf("Error reading request body: %v", err)
+                http.Error(w, "Failed to read request", http.StatusBadRequest)
+                return
+        }</span>
+        <span class="cov0" title="0">defer func() </span><span class="cov0" title="0">{
+                if err := r.Body.Close(); err != nil </span><span class="cov0" title="0">{
+                        logger.Errorf("Failed to close request body: %v", err)
+                }</span>
+        }()
+
+        <span class="cov0" title="0">logger.Infof("Received MCP request from %s: %s", r.RemoteAddr, string(body))
+
+        // Process the request
+        resp, err := s.handler.HandleRequest(body, bearerToken)
+        if err != nil </span><span class="cov0" title="0">{
+                logger.Errorf("Error handling MCP request: %v", err)
+                http.Error(w, fmt.Sprintf("Request failed: %v", err), http.StatusInternalServerError)
+                return
+        }</span>
+
+        // Format response
+        <span class="cov0" title="0">respData, err := mcp.FormatResponse(resp)
+        if err != nil </span><span class="cov0" title="0">{
+                logger.Errorf("Error formatting response: %v", err)
+                http.Error(w, "Failed to format response", http.StatusInternalServerError)
+                return
+        }</span>
+
+        // Send JSON response
+        <span class="cov0" title="0">w.Header().Set("Content-Type", "application/json")
+        w.WriteHeader(http.StatusOK)
+        if _, err := w.Write([]byte(respData)); err != nil </span><span class="cov0" title="0">{
+                logger.Errorf("Failed to write response: %v", err)
+                return
+        }</span>
+
+        <span class="cov0" title="0">logger.Infof("Sent MCP response to %s", r.RemoteAddr)</span>
+}
+
+// handleHealth handles health check requests
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) <span class="cov0" title="0">{
+        w.Header().Set("Content-Type", "application/json")
+        w.WriteHeader(http.StatusOK)
+        if _, err := fmt.Fprintf(w, "{\"status\":\"ok\",\"initialized\":%t}\n",
+                s.handler.IsInitialized()); err != nil </span><span class="cov0" title="0">{
+                logger.Errorf("Failed to write health response: %v", err)
+        }</span>
+}
+</pre>
+		
+		<pre class="file" id="file7" style="display: none">/*-------------------------------------------------------------------------
+ *
+ * pgEdge AI Workbench
+ *
+ * Copyright (c) 2025, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-------------------------------------------------------------------------
+ */
+
+// Package usermgmt provides user account and service token management
+package usermgmt
+
+import (
+    "bufio"
+    "context"
+    "crypto/rand"
+    "crypto/sha256"
+    "database/sql"
+    "encoding/base64"
+    "fmt"
+    "os"
+    "strings"
+    "time"
+
+    "github.com/jackc/pgx/v5/pgxpool"
+    "golang.org/x/term"
+)
+
+// UserAccount represents a user account
+type UserAccount struct {
+    ID             int
+    Username       string
+    Email          string
+    FullName       string
+    PasswordHash   string
+    PasswordExpiry sql.NullTime
+    IsSuperuser    bool
+    CreatedAt      time.Time
+    UpdatedAt      time.Time
+}
+
+// ServiceToken represents a service token
+type ServiceToken struct {
+    ID          int
+    Name        string
+    TokenHash   string
+    IsSuperuser bool
+    Note        sql.NullString
+    ExpiresAt   sql.NullTime
+    CreatedAt   time.Time
+    UpdatedAt   time.Time
+}
+
+// HashPassword creates a SHA256 hash of a password
+func HashPassword(password string) string <span class="cov0" title="0">{
+    hash := sha256.Sum256([]byte(password))
+    return fmt.Sprintf("%x", hash)
+}</span>
+
+// GenerateToken generates a random token
+func GenerateToken() (string, error) <span class="cov0" title="0">{
+    bytes := make([]byte, 32)
+    if _, err := rand.Read(bytes); err != nil </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("failed to generate token: %w", err)
+    }</span>
+    <span class="cov0" title="0">return base64.URLEncoding.EncodeToString(bytes), nil</span>
+}
+
+// ReadPassword reads a password from stdin without echo
+func ReadPassword(prompt string) (string, error) <span class="cov0" title="0">{
+    fmt.Print(prompt)
+    password, err := term.ReadPassword(int(os.Stdin.Fd()))
+    fmt.Println() // Print newline after password input
+    if err != nil </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("failed to read password: %w", err)
+    }</span>
+    <span class="cov0" title="0">return string(password), nil</span>
+}
+
+// ReadInput reads a line of input from stdin
+func ReadInput(prompt string) (string, error) <span class="cov0" title="0">{
+    fmt.Print(prompt)
+    reader := bufio.NewReader(os.Stdin)
+    input, err := reader.ReadString('\n')
+    if err != nil </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("failed to read input: %w", err)
+    }</span>
+    <span class="cov0" title="0">return strings.TrimSpace(input), nil</span>
+}
+
+// CreateUser creates a new user account
+func CreateUser(pool *pgxpool.Pool, username string, interactive bool) error <span class="cov0" title="0">{
+    ctx := context.Background()
+
+    // Check if user already exists
+    var exists bool
+    err := pool.QueryRow(ctx,
+        "SELECT EXISTS(SELECT 1 FROM user_accounts WHERE username = $1)",
+        username).Scan(&amp;exists)
+    if err != nil </span><span class="cov0" title="0">{
+        return fmt.Errorf("failed to check if user exists: %w", err)
+    }</span>
+    <span class="cov0" title="0">if exists </span><span class="cov0" title="0">{
+        return fmt.Errorf("user '%s' already exists", username)
+    }</span>
+
+    <span class="cov0" title="0">var email, fullName, password string
+    var isSuperuser bool
+    var passwordExpiry sql.NullTime
+
+    if interactive </span><span class="cov0" title="0">{
+        // Prompt for email
+        email, err = ReadInput("Email: ")
+        if err != nil </span><span class="cov0" title="0">{
+            return err
+        }</span>
+        <span class="cov0" title="0">if email == "" </span><span class="cov0" title="0">{
+            return fmt.Errorf("email is required")
+        }</span>
+
+        // Prompt for full name
+        <span class="cov0" title="0">fullName, err = ReadInput("Full name: ")
+        if err != nil </span><span class="cov0" title="0">{
+            return err
+        }</span>
+        <span class="cov0" title="0">if fullName == "" </span><span class="cov0" title="0">{
+            return fmt.Errorf("full name is required")
+        }</span>
+
+        // Prompt for password
+        <span class="cov0" title="0">password, err = ReadPassword("Password: ")
+        if err != nil </span><span class="cov0" title="0">{
+            return err
+        }</span>
+        <span class="cov0" title="0">if password == "" </span><span class="cov0" title="0">{
+            return fmt.Errorf("password is required")
+        }</span>
+
+        // Confirm password
+        <span class="cov0" title="0">confirmPassword, err := ReadPassword("Confirm password: ")
+        if err != nil </span><span class="cov0" title="0">{
+            return err
+        }</span>
+        <span class="cov0" title="0">if password != confirmPassword </span><span class="cov0" title="0">{
+            return fmt.Errorf("passwords do not match")
+        }</span>
+
+        // Prompt for superuser status
+        <span class="cov0" title="0">superuserInput, err := ReadInput("Superuser? (y/N): ")
+        if err != nil </span><span class="cov0" title="0">{
+            return err
+        }</span>
+        <span class="cov0" title="0">isSuperuser = strings.ToLower(superuserInput) == "y" ||
+            strings.ToLower(superuserInput) == "yes"
+
+        // Prompt for password expiry (optional)
+        expiryInput, err := ReadInput(
+            "Password expiry (YYYY-MM-DD, leave blank for no expiry): ")
+        if err != nil </span><span class="cov0" title="0">{
+            return err
+        }</span>
+        <span class="cov0" title="0">if expiryInput != "" </span><span class="cov0" title="0">{
+            expiry, err := time.Parse("2006-01-02", expiryInput)
+            if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("invalid date format: %w", err)
+            }</span>
+            <span class="cov0" title="0">passwordExpiry = sql.NullTime{Time: expiry, Valid: true}</span>
+        }
+    } else<span class="cov0" title="0"> {
+        return fmt.Errorf("non-interactive mode not yet implemented")
+    }</span>
+
+    // Hash the password
+    <span class="cov0" title="0">passwordHash := HashPassword(password)
+
+    // Insert the user
+    _, err = pool.Exec(ctx, `
+        INSERT INTO user_accounts
+            (username, email, full_name, password_hash, password_expiry,
+             is_superuser)
+        VALUES ($1, $2, $3, $4, $5, $6)
+    `, username, email, fullName, passwordHash, passwordExpiry, isSuperuser)
+    if err != nil </span><span class="cov0" title="0">{
+        return fmt.Errorf("failed to create user: %w", err)
+    }</span>
+
+    <span class="cov0" title="0">fmt.Printf("User '%s' created successfully\n", username)
+    return nil</span>
+}
+
+// ListUsers lists all user accounts
+func ListUsers(pool *pgxpool.Pool) error <span class="cov0" title="0">{
+    ctx := context.Background()
+
+    rows, err := pool.Query(ctx, `
+        SELECT username, email, full_name, password_expiry, is_superuser,
+               created_at
+        FROM user_accounts
+        ORDER BY username
+    `)
+    if err != nil </span><span class="cov0" title="0">{
+        return fmt.Errorf("failed to list users: %w", err)
+    }</span>
+    <span class="cov0" title="0">defer rows.Close()
+
+    fmt.Printf("%-20s %-30s %-25s %-15s %-10s %-12s\n",
+        "Username", "Email", "Full Name", "Password Expiry", "Superuser",
+        "Created")
+    fmt.Println(strings.Repeat("-", 120))
+
+    count := 0
+    for rows.Next() </span><span class="cov0" title="0">{
+        var username, email, fullName string
+        var passwordExpiry sql.NullTime
+        var isSuperuser bool
+        var createdAt time.Time
+
+        if err := rows.Scan(&amp;username, &amp;email, &amp;fullName, &amp;passwordExpiry,
+            &amp;isSuperuser, &amp;createdAt); err != nil </span><span class="cov0" title="0">{
+            return fmt.Errorf("failed to scan user: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">superuserStr := "No"
+        if isSuperuser </span><span class="cov0" title="0">{
+            superuserStr = "Yes"
+        }</span>
+
+        <span class="cov0" title="0">expiryStr := "Never"
+        if passwordExpiry.Valid </span><span class="cov0" title="0">{
+            expiryStr = passwordExpiry.Time.Format("2006-01-02")
+        }</span>
+
+        <span class="cov0" title="0">fmt.Printf("%-20s %-30s %-25s %-15s %-10s %-12s\n",
+            username, email, fullName, expiryStr, superuserStr,
+            createdAt.Format("2006-01-02"))
+        count++</span>
+    }
+
+    <span class="cov0" title="0">if err := rows.Err(); err != nil </span><span class="cov0" title="0">{
+        return fmt.Errorf("error iterating users: %w", err)
+    }</span>
+
+    <span class="cov0" title="0">fmt.Printf("\nTotal: %d user(s)\n", count)
+    return nil</span>
+}
+
+// DeleteUser deletes a user account
+func DeleteUser(pool *pgxpool.Pool, username string, confirm bool) error <span class="cov0" title="0">{
+    ctx := context.Background()
+
+    // Check if user exists
+    var exists bool
+    err := pool.QueryRow(ctx,
+        "SELECT EXISTS(SELECT 1 FROM user_accounts WHERE username = $1)",
+        username).Scan(&amp;exists)
+    if err != nil </span><span class="cov0" title="0">{
+        return fmt.Errorf("failed to check if user exists: %w", err)
+    }</span>
+    <span class="cov0" title="0">if !exists </span><span class="cov0" title="0">{
+        return fmt.Errorf("user '%s' does not exist", username)
+    }</span>
+
+    <span class="cov0" title="0">if confirm </span><span class="cov0" title="0">{
+        input, err := ReadInput(fmt.Sprintf(
+            "Are you sure you want to delete user '%s'? (yes/no): ", username))
+        if err != nil </span><span class="cov0" title="0">{
+            return err
+        }</span>
+        <span class="cov0" title="0">if strings.ToLower(input) != "yes" </span><span class="cov0" title="0">{
+            fmt.Println("Delete canceled")
+            return nil
+        }</span>
+    }
+
+    // Delete the user
+    <span class="cov0" title="0">_, err = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username = $1",
+        username)
+    if err != nil </span><span class="cov0" title="0">{
+        return fmt.Errorf("failed to delete user: %w", err)
+    }</span>
+
+    <span class="cov0" title="0">fmt.Printf("User '%s' deleted successfully\n", username)
+    return nil</span>
+}
+
+// CreateServiceToken creates a new service token
+func CreateServiceToken(pool *pgxpool.Pool, name string, interactive bool) error <span class="cov0" title="0">{
+    ctx := context.Background()
+
+    // Check if token already exists
+    var exists bool
+    err := pool.QueryRow(ctx,
+        "SELECT EXISTS(SELECT 1 FROM service_tokens WHERE name = $1)",
+        name).Scan(&amp;exists)
+    if err != nil </span><span class="cov0" title="0">{
+        return fmt.Errorf("failed to check if token exists: %w", err)
+    }</span>
+    <span class="cov0" title="0">if exists </span><span class="cov0" title="0">{
+        return fmt.Errorf("service token '%s' already exists", name)
+    }</span>
+
+    <span class="cov0" title="0">var isSuperuser bool
+    var note sql.NullString
+    var expiresAt sql.NullTime
+
+    if interactive </span><span class="cov0" title="0">{
+        // Prompt for superuser status
+        superuserInput, err := ReadInput("Superuser? (y/N): ")
+        if err != nil </span><span class="cov0" title="0">{
+            return err
+        }</span>
+        <span class="cov0" title="0">isSuperuser = strings.ToLower(superuserInput) == "y" ||
+            strings.ToLower(superuserInput) == "yes"
+
+        // Prompt for note
+        noteInput, err := ReadInput("Note (optional): ")
+        if err != nil </span><span class="cov0" title="0">{
+            return err
+        }</span>
+        <span class="cov0" title="0">if noteInput != "" </span><span class="cov0" title="0">{
+            note = sql.NullString{String: noteInput, Valid: true}
+        }</span>
+
+        // Prompt for expiry (optional)
+        <span class="cov0" title="0">expiryInput, err := ReadInput(
+            "Expiry date (YYYY-MM-DD, leave blank for no expiry): ")
+        if err != nil </span><span class="cov0" title="0">{
+            return err
+        }</span>
+        <span class="cov0" title="0">if expiryInput != "" </span><span class="cov0" title="0">{
+            expiry, err := time.Parse("2006-01-02", expiryInput)
+            if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("invalid date format: %w", err)
+            }</span>
+            <span class="cov0" title="0">expiresAt = sql.NullTime{Time: expiry, Valid: true}</span>
+        }
+    } else<span class="cov0" title="0"> {
+        return fmt.Errorf("non-interactive mode not yet implemented")
+    }</span>
+
+    // Generate token
+    <span class="cov0" title="0">token, err := GenerateToken()
+    if err != nil </span><span class="cov0" title="0">{
+        return err
+    }</span>
+
+    // Hash the token
+    <span class="cov0" title="0">tokenHash := HashPassword(token)
+
+    // Insert the service token
+    _, err = pool.Exec(ctx, `
+        INSERT INTO service_tokens
+            (name, token_hash, is_superuser, note, expires_at)
+        VALUES ($1, $2, $3, $4, $5)
+    `, name, tokenHash, isSuperuser, note, expiresAt)
+    if err != nil </span><span class="cov0" title="0">{
+        return fmt.Errorf("failed to create service token: %w", err)
+    }</span>
+
+    <span class="cov0" title="0">fmt.Printf("Service token '%s' created successfully\n", name)
+    fmt.Printf("Token: %s\n", token)
+    fmt.Println("IMPORTANT: Save this token now. You won't be able to see it again.")
+    return nil</span>
+}
+
+// ListServiceTokens lists all service tokens
+func ListServiceTokens(pool *pgxpool.Pool) error <span class="cov0" title="0">{
+    ctx := context.Background()
+
+    rows, err := pool.Query(ctx, `
+        SELECT name, is_superuser, note, expires_at, created_at
+        FROM service_tokens
+        ORDER BY name
+    `)
+    if err != nil </span><span class="cov0" title="0">{
+        return fmt.Errorf("failed to list service tokens: %w", err)
+    }</span>
+    <span class="cov0" title="0">defer rows.Close()
+
+    fmt.Printf("%-30s %-10s %-35s %-15s %-12s\n",
+        "Name", "Superuser", "Note", "Expires", "Created")
+    fmt.Println(strings.Repeat("-", 110))
+
+    count := 0
+    for rows.Next() </span><span class="cov0" title="0">{
+        var name string
+        var isSuperuser bool
+        var note sql.NullString
+        var expiresAt sql.NullTime
+        var createdAt time.Time
+
+        if err := rows.Scan(&amp;name, &amp;isSuperuser, &amp;note, &amp;expiresAt,
+            &amp;createdAt); err != nil </span><span class="cov0" title="0">{
+            return fmt.Errorf("failed to scan service token: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">superuserStr := "No"
+        if isSuperuser </span><span class="cov0" title="0">{
+            superuserStr = "Yes"
+        }</span>
+
+        <span class="cov0" title="0">noteStr := "-"
+        if note.Valid </span><span class="cov0" title="0">{
+            noteStr = note.String
+            if len(noteStr) &gt; 35 </span><span class="cov0" title="0">{
+                noteStr = noteStr[:32] + "..."
+            }</span>
+        }
+
+        <span class="cov0" title="0">expiresStr := "Never"
+        if expiresAt.Valid </span><span class="cov0" title="0">{
+            expiresStr = expiresAt.Time.Format("2006-01-02")
+        }</span>
+
+        <span class="cov0" title="0">fmt.Printf("%-30s %-10s %-35s %-15s %-12s\n",
+            name, superuserStr, noteStr, expiresStr,
+            createdAt.Format("2006-01-02"))
+        count++</span>
+    }
+
+    <span class="cov0" title="0">if err := rows.Err(); err != nil </span><span class="cov0" title="0">{
+        return fmt.Errorf("error iterating service tokens: %w", err)
+    }</span>
+
+    <span class="cov0" title="0">fmt.Printf("\nTotal: %d service token(s)\n", count)
+    return nil</span>
+}
+
+// DeleteServiceToken deletes a service token
+func DeleteServiceToken(pool *pgxpool.Pool, name string, confirm bool) error <span class="cov0" title="0">{
+    ctx := context.Background()
+
+    // Check if token exists
+    var exists bool
+    err := pool.QueryRow(ctx,
+        "SELECT EXISTS(SELECT 1 FROM service_tokens WHERE name = $1)",
+        name).Scan(&amp;exists)
+    if err != nil </span><span class="cov0" title="0">{
+        return fmt.Errorf("failed to check if token exists: %w", err)
+    }</span>
+    <span class="cov0" title="0">if !exists </span><span class="cov0" title="0">{
+        return fmt.Errorf("service token '%s' does not exist", name)
+    }</span>
+
+    <span class="cov0" title="0">if confirm </span><span class="cov0" title="0">{
+        input, err := ReadInput(fmt.Sprintf(
+            "Are you sure you want to delete service token '%s'? (yes/no): ",
+            name))
+        if err != nil </span><span class="cov0" title="0">{
+            return err
+        }</span>
+        <span class="cov0" title="0">if strings.ToLower(input) != "yes" </span><span class="cov0" title="0">{
+            fmt.Println("Delete canceled")
+            return nil
+        }</span>
+    }
+
+    // Delete the service token
+    <span class="cov0" title="0">_, err = pool.Exec(ctx, "DELETE FROM service_tokens WHERE name = $1", name)
+    if err != nil </span><span class="cov0" title="0">{
+        return fmt.Errorf("failed to delete service token: %w", err)
+    }</span>
+
+    <span class="cov0" title="0">fmt.Printf("Service token '%s' deleted successfully\n", name)
+    return nil</span>
+}
+
+// CreateUserNonInteractive creates a new user account (non-interactive for MCP)
+func CreateUserNonInteractive(pool *pgxpool.Pool, username, email, fullName,
+    password string, isSuperuser bool,
+    passwordExpiry *time.Time) (string, error) <span class="cov0" title="0">{
+    ctx := context.Background()
+
+    // Check if user already exists
+    var exists bool
+    err := pool.QueryRow(ctx,
+        "SELECT EXISTS(SELECT 1 FROM user_accounts WHERE username = $1)",
+        username).Scan(&amp;exists)
+    if err != nil </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("failed to check if user exists: %w", err)
+    }</span>
+    <span class="cov0" title="0">if exists </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("user '%s' already exists", username)
+    }</span>
+
+    // Validate required fields
+    <span class="cov0" title="0">if email == "" </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("email is required")
+    }</span>
+    <span class="cov0" title="0">if fullName == "" </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("full name is required")
+    }</span>
+    <span class="cov0" title="0">if password == "" </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("password is required")
+    }</span>
+
+    // Hash the password
+    <span class="cov0" title="0">passwordHash := HashPassword(password)
+
+    // Prepare password expiry
+    var pwdExpiry sql.NullTime
+    if passwordExpiry != nil </span><span class="cov0" title="0">{
+        pwdExpiry = sql.NullTime{Time: *passwordExpiry, Valid: true}
+    }</span>
+
+    // Insert the user
+    <span class="cov0" title="0">_, err = pool.Exec(ctx, `
+        INSERT INTO user_accounts
+            (username, email, full_name, password_hash, password_expiry,
+             is_superuser)
+        VALUES ($1, $2, $3, $4, $5, $6)
+    `, username, email, fullName, passwordHash, pwdExpiry, isSuperuser)
+    if err != nil </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("failed to create user: %w", err)
+    }</span>
+
+    <span class="cov0" title="0">return fmt.Sprintf("User '%s' created successfully", username), nil</span>
+}
+
+// UpdateUserNonInteractive updates a user account (non-interactive for MCP)
+func UpdateUserNonInteractive(pool *pgxpool.Pool, username string,
+    email, fullName, password *string, isSuperuser *bool,
+    passwordExpiry *time.Time, clearPasswordExpiry bool) (string, error) <span class="cov0" title="0">{
+    ctx := context.Background()
+
+    // Check if user exists
+    var exists bool
+    err := pool.QueryRow(ctx,
+        "SELECT EXISTS(SELECT 1 FROM user_accounts WHERE username = $1)",
+        username).Scan(&amp;exists)
+    if err != nil </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("failed to check if user exists: %w", err)
+    }</span>
+    <span class="cov0" title="0">if !exists </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("user '%s' does not exist", username)
+    }</span>
+
+    // Build dynamic update query
+    <span class="cov0" title="0">updates := []string{}
+    args := []interface{}{}
+    argCount := 1
+
+    if email != nil </span><span class="cov0" title="0">{
+        updates = append(updates, fmt.Sprintf("email = $%d", argCount))
+        args = append(args, *email)
+        argCount++
+    }</span>
+
+    <span class="cov0" title="0">if fullName != nil </span><span class="cov0" title="0">{
+        updates = append(updates, fmt.Sprintf("full_name = $%d", argCount))
+        args = append(args, *fullName)
+        argCount++
+    }</span>
+
+    <span class="cov0" title="0">if password != nil </span><span class="cov0" title="0">{
+        passwordHash := HashPassword(*password)
+        updates = append(updates, fmt.Sprintf("password_hash = $%d", argCount))
+        args = append(args, passwordHash)
+        argCount++
+    }</span>
+
+    <span class="cov0" title="0">if isSuperuser != nil </span><span class="cov0" title="0">{
+        updates = append(updates, fmt.Sprintf("is_superuser = $%d", argCount))
+        args = append(args, *isSuperuser)
+        argCount++
+    }</span>
+
+    <span class="cov0" title="0">if clearPasswordExpiry </span><span class="cov0" title="0">{
+        updates = append(updates, "password_expiry = NULL")
+    }</span> else<span class="cov0" title="0"> if passwordExpiry != nil </span><span class="cov0" title="0">{
+        updates = append(updates, fmt.Sprintf("password_expiry = $%d",
+            argCount))
+        args = append(args, *passwordExpiry)
+        argCount++
+    }</span>
+
+    <span class="cov0" title="0">if len(updates) == 0 </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("no fields to update")
+    }</span>
+
+    // Always update the updated_at field
+    <span class="cov0" title="0">updates = append(updates, fmt.Sprintf("updated_at = $%d", argCount))
+    args = append(args, time.Now())
+    argCount++
+
+    // Add username as the last argument for WHERE clause
+    args = append(args, username)
+
+    query := fmt.Sprintf("UPDATE user_accounts SET %s WHERE username = $%d",
+        strings.Join(updates, ", "), argCount)
+
+    _, err = pool.Exec(ctx, query, args...)
+    if err != nil </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("failed to update user: %w", err)
+    }</span>
+
+    <span class="cov0" title="0">return fmt.Sprintf("User '%s' updated successfully", username), nil</span>
+}
+
+// DeleteUserNonInteractive deletes a user account (non-interactive for MCP)
+func DeleteUserNonInteractive(pool *pgxpool.Pool, username string) (string,
+    error) <span class="cov0" title="0">{
+    ctx := context.Background()
+
+    // Check if user exists
+    var exists bool
+    err := pool.QueryRow(ctx,
+        "SELECT EXISTS(SELECT 1 FROM user_accounts WHERE username = $1)",
+        username).Scan(&amp;exists)
+    if err != nil </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("failed to check if user exists: %w", err)
+    }</span>
+    <span class="cov0" title="0">if !exists </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("user '%s' does not exist", username)
+    }</span>
+
+    // Delete the user
+    <span class="cov0" title="0">_, err = pool.Exec(ctx, "DELETE FROM user_accounts WHERE username = $1",
+        username)
+    if err != nil </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("failed to delete user: %w", err)
+    }</span>
+
+    <span class="cov0" title="0">return fmt.Sprintf("User '%s' deleted successfully", username), nil</span>
+}
+
+// CreateServiceTokenNonInteractive creates a new service token
+// (non-interactive for MCP)
+func CreateServiceTokenNonInteractive(pool *pgxpool.Pool, name string,
+    isSuperuser bool, note *string, expiresAt *time.Time) (string, string,
+    error) <span class="cov0" title="0">{
+    ctx := context.Background()
+
+    // Check if token already exists
+    var exists bool
+    err := pool.QueryRow(ctx,
+        "SELECT EXISTS(SELECT 1 FROM service_tokens WHERE name = $1)",
+        name).Scan(&amp;exists)
+    if err != nil </span><span class="cov0" title="0">{
+        return "", "", fmt.Errorf("failed to check if token exists: %w", err)
+    }</span>
+    <span class="cov0" title="0">if exists </span><span class="cov0" title="0">{
+        return "", "", fmt.Errorf("service token '%s' already exists", name)
+    }</span>
+
+    // Prepare optional fields
+    <span class="cov0" title="0">var noteVal sql.NullString
+    if note != nil </span><span class="cov0" title="0">{
+        noteVal = sql.NullString{String: *note, Valid: true}
+    }</span>
+
+    <span class="cov0" title="0">var expiresAtVal sql.NullTime
+    if expiresAt != nil </span><span class="cov0" title="0">{
+        expiresAtVal = sql.NullTime{Time: *expiresAt, Valid: true}
+    }</span>
+
+    // Generate token
+    <span class="cov0" title="0">token, err := GenerateToken()
+    if err != nil </span><span class="cov0" title="0">{
+        return "", "", err
+    }</span>
+
+    // Hash the token
+    <span class="cov0" title="0">tokenHash := HashPassword(token)
+
+    // Insert the service token
+    _, err = pool.Exec(ctx, `
+        INSERT INTO service_tokens
+            (name, token_hash, is_superuser, note, expires_at)
+        VALUES ($1, $2, $3, $4, $5)
+    `, name, tokenHash, isSuperuser, noteVal, expiresAtVal)
+    if err != nil </span><span class="cov0" title="0">{
+        return "", "", fmt.Errorf("failed to create service token: %w", err)
+    }</span>
+
+    <span class="cov0" title="0">message := fmt.Sprintf("Service token '%s' created successfully", name)
+    return message, token, nil</span>
+}
+
+// UpdateServiceTokenNonInteractive updates a service token
+// (non-interactive for MCP)
+func UpdateServiceTokenNonInteractive(pool *pgxpool.Pool, name string,
+    isSuperuser *bool, note *string, expiresAt *time.Time,
+    clearNote, clearExpiresAt bool) (string, error) <span class="cov0" title="0">{
+    ctx := context.Background()
+
+    // Check if token exists
+    var exists bool
+    err := pool.QueryRow(ctx,
+        "SELECT EXISTS(SELECT 1 FROM service_tokens WHERE name = $1)",
+        name).Scan(&amp;exists)
+    if err != nil </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("failed to check if token exists: %w", err)
+    }</span>
+    <span class="cov0" title="0">if !exists </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("service token '%s' does not exist", name)
+    }</span>
+
+    // Build dynamic update query
+    <span class="cov0" title="0">updates := []string{}
+    args := []interface{}{}
+    argCount := 1
+
+    if isSuperuser != nil </span><span class="cov0" title="0">{
+        updates = append(updates, fmt.Sprintf("is_superuser = $%d", argCount))
+        args = append(args, *isSuperuser)
+        argCount++
+    }</span>
+
+    <span class="cov0" title="0">if clearNote </span><span class="cov0" title="0">{
+        updates = append(updates, "note = NULL")
+    }</span> else<span class="cov0" title="0"> if note != nil </span><span class="cov0" title="0">{
+        updates = append(updates, fmt.Sprintf("note = $%d", argCount))
+        args = append(args, *note)
+        argCount++
+    }</span>
+
+    <span class="cov0" title="0">if clearExpiresAt </span><span class="cov0" title="0">{
+        updates = append(updates, "expires_at = NULL")
+    }</span> else<span class="cov0" title="0"> if expiresAt != nil </span><span class="cov0" title="0">{
+        updates = append(updates, fmt.Sprintf("expires_at = $%d", argCount))
+        args = append(args, *expiresAt)
+        argCount++
+    }</span>
+
+    <span class="cov0" title="0">if len(updates) == 0 </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("no fields to update")
+    }</span>
+
+    // Always update the updated_at field
+    <span class="cov0" title="0">updates = append(updates, fmt.Sprintf("updated_at = $%d", argCount))
+    args = append(args, time.Now())
+    argCount++
+
+    // Add name as the last argument for WHERE clause
+    args = append(args, name)
+
+    query := fmt.Sprintf("UPDATE service_tokens SET %s WHERE name = $%d",
+        strings.Join(updates, ", "), argCount)
+
+    _, err = pool.Exec(ctx, query, args...)
+    if err != nil </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("failed to update service token: %w", err)
+    }</span>
+
+    <span class="cov0" title="0">return fmt.Sprintf("Service token '%s' updated successfully", name), nil</span>
+}
+
+// DeleteServiceTokenNonInteractive deletes a service token
+// (non-interactive for MCP)
+func DeleteServiceTokenNonInteractive(pool *pgxpool.Pool, name string) (string,
+    error) <span class="cov0" title="0">{
+    ctx := context.Background()
+
+    // Check if token exists
+    var exists bool
+    err := pool.QueryRow(ctx,
+        "SELECT EXISTS(SELECT 1 FROM service_tokens WHERE name = $1)",
+        name).Scan(&amp;exists)
+    if err != nil </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("failed to check if token exists: %w", err)
+    }</span>
+    <span class="cov0" title="0">if !exists </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("service token '%s' does not exist", name)
+    }</span>
+
+    // Delete the service token
+    <span class="cov0" title="0">_, err = pool.Exec(ctx, "DELETE FROM service_tokens WHERE name = $1", name)
+    if err != nil </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("failed to delete service token: %w", err)
+    }</span>
+
+    <span class="cov0" title="0">return fmt.Sprintf("Service token '%s' deleted successfully", name), nil</span>
+}
+</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>

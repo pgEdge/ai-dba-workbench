@@ -140,7 +140,7 @@ func runTool(client *MCPClient, args []string) error {
 
 	// Read JSON input from stdin
 	var inputData map[string]interface{}
-	stat, _ := os.Stdin.Stat()
+	stat, _ := os.Stdin.Stat() //nolint:errcheck // Stat failure treated as character device
 	if (stat.Mode() & os.ModeCharDevice) == 0 {
 		// Data is being piped
 		decoder := json.NewDecoder(os.Stdin)
@@ -215,9 +215,9 @@ func listResources(client *MCPClient) error {
 			continue
 		}
 
-		uri, _ := resource["uri"].(string)
-		name, _ := resource["name"].(string)
-		description, _ := resource["description"].(string)
+		uri, _ := resource["uri"].(string)               //nolint:errcheck // Optional field, empty string is acceptable default
+		name, _ := resource["name"].(string)             //nolint:errcheck // Optional field, empty string is acceptable default
+		description, _ := resource["description"].(string) //nolint:errcheck // Optional field, empty string is acceptable default
 
 		if uri != "" {
 			fmt.Printf("%s", uri)

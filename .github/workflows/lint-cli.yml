@@ -29,7 +29,7 @@ jobs:
 
     - name: Install golangci-lint
       run: |
-        go install github.com/golangci/golangci-lint/cmd/golangci-lint@v2.6.0
+        go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 
     - name: Run linter
       run: |

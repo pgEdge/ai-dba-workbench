@@ -669,8 +669,8 @@ func TestToolInputSchemaValidation(t *testing.T) {
 	if updateUserTool == nil {
 		t.Fatal("update_user tool not found")
 	}
-	schema = updateUserTool["inputSchema"].(map[string]interface{})
-	required = schema["required"].([]string)
+	schema = updateUserTool["inputSchema"].(map[string]interface{}) //nolint:errcheck // Test code, type assertion checked in test logic
+	required = schema["required"].([]string) //nolint:errcheck // Test code, type assertion checked in test logic
 	expectedRequired = []string{"username"}
 	if !stringSlicesEqual(required, expectedRequired) {
 		t.Errorf("update_user required fields = %v, want %v",
@@ -682,8 +682,8 @@ func TestToolInputSchemaValidation(t *testing.T) {
 	if deleteUserTool == nil {
 		t.Fatal("delete_user tool not found")
 	}
-	schema = deleteUserTool["inputSchema"].(map[string]interface{})
-	required = schema["required"].([]string)
+	schema = deleteUserTool["inputSchema"].(map[string]interface{}) //nolint:errcheck // Test code, type assertion checked in test logic
+	required = schema["required"].([]string) //nolint:errcheck // Test code, type assertion checked in test logic
 	expectedRequired = []string{"username"}
 	if !stringSlicesEqual(required, expectedRequired) {
 		t.Errorf("delete_user required fields = %v, want %v",
@@ -695,8 +695,8 @@ func TestToolInputSchemaValidation(t *testing.T) {
 	if createTokenTool == nil {
 		t.Fatal("create_service_token tool not found")
 	}
-	schema = createTokenTool["inputSchema"].(map[string]interface{})
-	required = schema["required"].([]string)
+	schema = createTokenTool["inputSchema"].(map[string]interface{}) //nolint:errcheck // Test code, type assertion checked in test logic
+	required = schema["required"].([]string) //nolint:errcheck // Test code, type assertion checked in test logic
 	expectedRequired = []string{"name"}
 	if !stringSlicesEqual(required, expectedRequired) {
 		t.Errorf("create_service_token required fields = %v, want %v",
@@ -708,8 +708,8 @@ func TestToolInputSchemaValidation(t *testing.T) {
 	if updateTokenTool == nil {
 		t.Fatal("update_service_token tool not found")
 	}
-	schema = updateTokenTool["inputSchema"].(map[string]interface{})
-	required = schema["required"].([]string)
+	schema = updateTokenTool["inputSchema"].(map[string]interface{}) //nolint:errcheck // Test code, type assertion checked in test logic
+	required = schema["required"].([]string) //nolint:errcheck // Test code, type assertion checked in test logic
 	expectedRequired = []string{"name"}
 	if !stringSlicesEqual(required, expectedRequired) {
 		t.Errorf("update_service_token required fields = %v, want %v",
@@ -721,8 +721,8 @@ func TestToolInputSchemaValidation(t *testing.T) {
 	if deleteTokenTool == nil {
 		t.Fatal("delete_service_token tool not found")
 	}
-	schema = deleteTokenTool["inputSchema"].(map[string]interface{})
-	required = schema["required"].([]string)
+	schema = deleteTokenTool["inputSchema"].(map[string]interface{}) //nolint:errcheck // Test code, type assertion checked in test logic
+	required = schema["required"].([]string) //nolint:errcheck // Test code, type assertion checked in test logic
 	expectedRequired = []string{"name"}
 	if !stringSlicesEqual(required, expectedRequired) {
 		t.Errorf("delete_service_token required fields = %v, want %v",

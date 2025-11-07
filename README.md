@@ -40,6 +40,80 @@ directory:
 - **[Server Documentation](docs/server/index.md)** - MCP server and protocol
 - **[CLI Documentation](docs/cli/index.md)** - Command-line interface
 
+## Building
+
+The project uses Makefiles for building and testing. All components can be
+built from the top-level directory:
+
+```bash
+# Build all components
+make all
+
+# Build individual components
+cd collector && make build
+cd server && make build
+cd cli && make build
+```
+
+## Testing
+
+The project includes comprehensive unit tests for each component and
+integration tests that exercise the entire system.
+
+### Run All Tests
+
+```bash
+# Run all sub-project tests
+make test
+
+# Run all sub-project tests with coverage
+make coverage
+
+# Run all sub-project tests with linting
+make lint
+
+# Run integration tests
+make test-integration
+
+# Run everything (all sub-project test-all + integration tests)
+make test-all
+```
+
+### Run Tests for Individual Components
+
+```bash
+cd collector && make test
+cd server && make test
+cd cli && make test
+```
+
+### Environment Variables for Testing
+
+- `TEST_AI_WORKBENCH_SERVER` - PostgreSQL connection string for test database
+  (default: `postgres://postgres@localhost:5432/postgres`)
+- `TEST_AI_WORKBENCH_KEEP_DB=1` - Keep test database after tests complete
+- `SKIP_INTEGRATION_TESTS=1` - Skip integration tests
+
+See [Integration Tests README](tests/README.md) for detailed information about
+the integration test suite.
+
+### Available Make Targets
+
+Each sub-project and the top-level Makefile support these targets:
+
+- `all` - Build the project (default)
+- `test` - Run tests
+- `coverage` - Run tests with coverage report
+- `lint` - Run linter
+- `test-all` - Run tests, coverage, and linter
+- `clean` - Remove build artifacts
+- `killall` - Kill any running processes
+- `help` - Show available targets
+
+Top-level only targets:
+
+- `test-integration` - Run integration tests
+
 ## Getting Started
 
 For information on getting started with each component, please refer to:

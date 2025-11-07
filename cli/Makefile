@@ -7,7 +7,7 @@
 #
 #-------------------------------------------------------------------------
 
-.PHONY: all build test lint clean vet fmt help
+.PHONY: all build test lint clean vet fmt help killall test-all
 
 # Default target
 all: build
@@ -60,6 +60,15 @@ deps:
 check: fmt vet test lint
 	@echo "All checks passed!"
 
+# Run all tests (test, coverage, lint)
+test-all: test coverage lint
+	@echo "All tests passed!"
+
+# Kill all running CLI processes
+killall:
+	@pkill -9 ai-cli 2>/dev/null || true
+	@pkill -9 -f "go run.*cli" 2>/dev/null || true
+
 # Help target
 help:
 	@echo "Available targets:"
@@ -70,7 +79,9 @@ help:
 	@echo "  vet       - Run go vet"
 	@echo "  fmt       - Format code with gofmt"
 	@echo "  coverage  - Generate test coverage report"
+	@echo "  test-all  - Run test, coverage, and lint"
 	@echo "  clean     - Remove build artifacts"
 	@echo "  deps      - Install/update dependencies"
 	@echo "  check     - Run all checks (fmt, vet, test, lint)"
+	@echo "  killall   - Kill any running CLI processes"
 	@echo "  help      - Show this help message"

@@ -341,7 +341,8 @@ func TestHandleListResources(t *testing.T) {
 	foundTokens := false
 	for _, res := range resources {
 		uri, _ := res["uri"].(string)
-		if uri == "ai-workbench://users" {
+		switch uri {
+		case "ai-workbench://users":
 			foundUsers = true
 			if res["name"] != "User Accounts" {
 				t.Errorf("Users resource name = %v, want User Accounts",
@@ -351,7 +352,7 @@ func TestHandleListResources(t *testing.T) {
 				t.Errorf("Users resource mimeType = %v, want "+
 					"application/json", res["mimeType"])
 			}
-		} else if uri == "ai-workbench://service-tokens" {
+		case "ai-workbench://service-tokens":
 			foundTokens = true
 			if res["name"] != "Service Tokens" {
 				t.Errorf("Tokens resource name = %v, want Service Tokens",

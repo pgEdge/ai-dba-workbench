@@ -91,8 +91,8 @@ func teardownTestDatabase() {
 	}
 
 	// Check if we should keep the test database
-	if keep := os.Getenv("TEST_DB_KEEP"); keep == "1" || keep == "true" {
-		fmt.Printf("Keeping test database: %s (TEST_DB_KEEP is set)\n", testDBName)
+	if keep := os.Getenv("TEST_AI_WORKBENCH_KEEP_DB"); keep == "1" || keep == "true" {
+		fmt.Printf("Keeping test database: %s (TEST_AI_WORKBENCH_KEEP_DB is set)\n", testDBName)
 		return
 	}
 
@@ -119,7 +119,7 @@ func teardownTestDatabase() {
 // getAdminConnectionString returns the connection string for the admin database (postgres)
 func getAdminConnectionString() string {
 	// Check for postgres:// URL format first
-	if testURL := os.Getenv("TEST_DB_URL"); testURL != "" {
+	if testURL := os.Getenv("TEST_AI_WORKBENCH_SERVER"); testURL != "" {
 		return replaceDatabase(testURL, "postgres")
 	}
 
@@ -184,7 +184,7 @@ func getTestConnection(t *testing.T) (*pgxpool.Pool, *pgxpool.Conn) {
 
 	// Get base connection string
 	var baseConnStr string
-	if testURL := os.Getenv("TEST_DB_URL"); testURL != "" {
+	if testURL := os.Getenv("TEST_AI_WORKBENCH_SERVER"); testURL != "" {
 		baseConnStr = testURL
 	} else if testConnStr := os.Getenv("TEST_DB_CONN"); testConnStr != "" {
 		baseConnStr = testConnStr
@@ -947,7 +947,7 @@ func TestAuthenticationIndexes(t *testing.T) {
 
 // TestZZZ_FullSchemaForInspection creates the full schema and leaves it in
 // place for inspection. This test runs last (due to ZZZ prefix) and does not
-// clean up, allowing users to inspect the schema when TEST_DB_KEEP=1 is set.
+// clean up, allowing users to inspect the schema when TEST_AI_WORKBENCH_KEEP_DB=1 is set.
 func TestZZZ_FullSchemaForInspection(t *testing.T) {
 	ctx := context.Background()
 	pool, conn := getTestConnection(t)
@@ -992,9 +992,9 @@ func TestZZZ_FullSchemaForInspection(t *testing.T) {
 	}
 
 	// Log message about schema inspection
-	if keep := os.Getenv("TEST_DB_KEEP"); keep == "1" || keep == "true" {
+	if keep := os.Getenv("TEST_AI_WORKBENCH_KEEP_DB"); keep == "1" || keep == "true" {
 		t.Logf("Full schema created in test database: %s", testDBName)
-		t.Logf("Database will be kept for inspection (TEST_DB_KEEP is set)")
+		t.Logf("Database will be kept for inspection (TEST_AI_WORKBENCH_KEEP_DB is set)")
 		t.Logf("To inspect: psql -d %s", testDBName)
 		t.Logf("To clean up manually: DROP DATABASE %s", testDBName)
 	}

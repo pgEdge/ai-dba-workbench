@@ -188,49 +188,84 @@ ai-workbench/
 
 ### Building from Source
 
-Each component has its own build process:
-
-**Collector:**
+The project uses Makefiles for building and testing. You can build all
+components from the top-level directory:
 
 ```bash
-cd collector/src
-go mod tidy
-go build -o collector
+# Build all components
+make all
+
+# Build individual components
+cd collector && make build
+cd server && make build
+cd cli && make build
 ```
 
-**Server:**
+Or build directly with Go:
 
 ```bash
-cd server/src
-go mod tidy
-go build -o mcp-server
-```
+# Collector
+cd collector/src && go build -o ../collector
 
-**CLI:**
+# Server
+cd server/src && go build -o ../mcp-server
 
-```bash
-cd cli/src
-go mod tidy
-go build -o ai-cli
+# CLI
+cd cli/src && go build -o ../ai-cli
 ```
 
 ### Running Tests
 
-All components include comprehensive test suites:
+The project includes comprehensive unit tests for each component and integration
+tests that exercise the entire system.
+
+#### Using Make (Recommended)
+
+```bash
+# Run all sub-project tests
+make test
+
+# Run tests with coverage reports
+make coverage
+
+# Run linting
+make lint
+
+# Run everything (tests, coverage, and linting)
+make test-all
+
+# Run integration tests
+make test-integration
+```
+
+#### Using Go Directly
 
 ```bash
 # Collector tests
-cd collector/src
-go test -v ./...
+cd collector/src && go test -v ./...
 
 # Server tests
-cd server/src
-go test -v ./...
+cd server/src && go test -v ./...
 
 # CLI tests
-cd cli/src
-go test -v ./...
+cd cli/src && go test -v ./...
+
+# Integration tests
+cd tests && go test -v ./...
 ```
+
+#### Test Environment Variables
+
+- `TEST_AI_WORKBENCH_SERVER`: PostgreSQL connection string for test database
+  (default: `postgres://postgres@localhost:5432/postgres`)
+- `TEST_AI_WORKBENCH_KEEP_DB=1`: Keep test database after tests complete for
+  inspection
+- `SKIP_DB_TESTS=1`: Skip database tests in collector
+- `SKIP_INTEGRATION_TESTS=1`: Skip integration tests
+
+See the [Integration Tests README](../tests/README.md) for detailed information
+about the integration test suite, and [Collector Testing Guide](collector/testing.md)
+for collector-specific testing details.
 
 ### Code Style
 

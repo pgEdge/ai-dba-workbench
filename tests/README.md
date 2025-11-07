@@ -46,11 +46,36 @@ make coverage
 
 This generates an HTML coverage report at `coverage.html`.
 
+### Run Linter
+
+```bash
+make lint
+```
+
+Runs golangci-lint on the integration test code.
+
+### Run All Tests (Test + Coverage + Lint)
+
+```bash
+make test-all
+```
+
+Runs the complete test suite including tests, coverage, and linting.
+
 ### Run Specific Test
 
 ```bash
 make run-test TEST=TestUserCRUD
 ```
+
+### Kill Running Services
+
+```bash
+make killall
+```
+
+Kills any running MCP server or collector processes that might interfere with
+tests.
 
 ## Test Structure
 
@@ -115,11 +140,12 @@ Tests is_superuser flag enforcement:
 
 ## Environment Variables
 
-- `TEST_DB_URL`: PostgreSQL connection string for test database server
+- `TEST_AI_WORKBENCH_SERVER`: PostgreSQL connection string for test database
+  server
   - Default: `postgres://postgres@localhost:5432/postgres`
   - Example: `postgres://user:password@hostname:5432/postgres`
 
-- `TEST_DB_KEEP`: Keep test database after tests complete
+- `TEST_AI_WORKBENCH_KEEP_DB`: Keep test database after tests complete
   - Default: Not set (databases are cleaned up)
   - Set to `1` to keep database for inspection
 
@@ -138,7 +164,7 @@ make test
 ### Keep test database for inspection
 
 ```bash
-TEST_DB_KEEP=1 make test
+TEST_AI_WORKBENCH_KEEP_DB=1 make test
 ```
 
 The test database name will be printed during test execution.
@@ -146,7 +172,7 @@ The test database name will be printed during test execution.
 ### Use custom PostgreSQL server
 
 ```bash
-TEST_DB_URL=postgres://myuser:mypass@dbhost:5432/postgres make test
+TEST_AI_WORKBENCH_SERVER=postgres://myuser:mypass@dbhost:5432/postgres make test
 ```
 
 ### Run only password expiry tests
@@ -166,7 +192,7 @@ make coverage
 ### Database Management (testutil/database.go)
 
 - `NewTestDatabase()`: Creates a new test database with unique name
-- `Close()`: Cleans up test database (unless TEST_DB_KEEP=1)
+- `Close()`: Cleans up test database (unless TEST_AI_WORKBENCH_KEEP_DB=1)
 - `GetPool()`: Returns connection pool for test database
 
 ### Service Management (testutil/services.go)
@@ -203,7 +229,7 @@ These logs are useful for debugging test failures.
 Ensure PostgreSQL is running and accessible. Check your connection string:
 
 ```bash
-TEST_DB_URL=postgres://postgres@localhost:5432/postgres make test
+TEST_AI_WORKBENCH_SERVER=postgres://postgres@localhost:5432/postgres make test
 ```
 
 ### Tests fail with "binary not found"
@@ -217,7 +243,13 @@ make build-deps
 ### Tests hang or timeout
 
 Check the service logs in the `logs/` directory for errors. You may need to
-manually clean up orphaned processes:
+clean up orphaned processes:
+
+```bash
+make killall
+```
+
+Or manually:
 
 ```bash
 pkill -f collector

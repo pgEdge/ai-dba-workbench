@@ -16,7 +16,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -327,10 +326,6 @@ func getToolExample() string {
     "config_key": "setting_name",
     "config_value": "new_value"
 }`
-}
-
-func readAllStdin() ([]byte, error) {
-	return io.ReadAll(os.Stdin)
 }
 
 // needsAuth determines if a command requires authentication

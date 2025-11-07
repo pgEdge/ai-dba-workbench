@@ -114,8 +114,17 @@ make lint
 # Run tests
 make test
 
-# Run everything (recommended before committing)
+# Run tests with coverage
+make coverage
+
+# Run tests, coverage, and linting
+make test-all
+
+# Run everything (fmt, vet, test, lint - recommended before committing)
 make check
+
+# Kill any running collector processes
+make killall
 ```
 
 ### Using Go Directly
@@ -452,7 +461,7 @@ go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 Check environment variables:
 
 ```bash
-export TEST_DB_URL="postgres://user:pass@localhost/postgres"
+export TEST_AI_WORKBENCH_SERVER="postgres://user:pass@localhost/postgres"
 go test ./...
 ```
 

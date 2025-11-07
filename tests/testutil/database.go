@@ -35,13 +35,13 @@ func NewTestDatabase() (*TestDatabase, error) {
     dbName := fmt.Sprintf("ai_workbench_test_%d", time.Now().Unix())
 
     // Get admin connection string from environment or use default
-    adminConnStr := os.Getenv("TEST_DB_URL")
+    adminConnStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
     if adminConnStr == "" {
         adminConnStr = "postgres://postgres@localhost:5432/postgres"
     }
 
     // Check if we should keep the database after tests
-    keepDB := os.Getenv("TEST_DB_KEEP") == "1"
+    keepDB := os.Getenv("TEST_AI_WORKBENCH_KEEP_DB") == "1"
 
     ctx := context.Background()
 

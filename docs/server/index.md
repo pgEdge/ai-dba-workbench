@@ -275,6 +275,18 @@ Response:
 
 ### Building
 
+#### Using Make
+
+```bash
+# Build the MCP server
+make build
+
+# Or build all targets
+make all
+```
+
+#### Using Go Directly
+
 ```bash
 cd src
 go mod tidy
@@ -283,18 +295,41 @@ go build -o mcp-server
 
 ### Testing
 
+#### Using Make (Recommended)
+
+```bash
+# Run all tests
+make test
+
+# Run tests with coverage
+make coverage
+
+# Run linting
+make lint
+
+# Run tests, coverage, and linting
+make test-all
+
+# Run everything (fmt, vet, test, lint)
+make check
+```
+
+#### Using Go Directly
+
 Run all tests:
 
 ```bash
+cd src
 go test -v ./...
 ```
 
 Run tests for a specific package:
 
 ```bash
-go test -v ./src/mcp
-go test -v ./src/config
-go test -v ./src/logger
+cd src
+go test -v ./mcp
+go test -v ./config
+go test -v ./logger
 ```
 
 ### Code Style

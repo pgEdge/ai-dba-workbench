@@ -7,7 +7,7 @@
 #
 #-------------------------------------------------------------------------
 
-.PHONY: all test clean build-deps logs help
+.PHONY: all test clean build-deps logs help lint test-all killall
 
 # Default target
 all: test
@@ -53,6 +53,21 @@ clean:
 logs:
 	@mkdir -p logs config
 
+# Run linting on test code
+lint:
+	@echo "Running linter on integration tests..."
+	@golangci-lint run ./...
+
+# Run all tests (test, coverage, lint)
+test-all: test coverage lint
+	@echo "All integration tests passed!"
+
+# Kill all running processes that might interfere with tests
+killall:
+	@echo "Killing any running services..."
+	@pkill -f "mcp-server.*18080" 2>/dev/null || true
+	@pkill -f "collector.*test" 2>/dev/null || true
+
 # Show help
 help:
 	@echo "pgEdge AI Workbench Integration Tests"
@@ -60,18 +75,21 @@ help:
 	@echo "Usage:"
 	@echo "  make test         - Run all integration tests"
 	@echo "  make coverage     - Run tests with coverage report"
+	@echo "  make lint         - Run linter on test code"
+	@echo "  make test-all     - Run test, coverage, and lint"
 	@echo "  make run-test     - Run specific test (e.g., make run-test TEST=TestUserCRUD)"
 	@echo "  make build-deps   - Build all required binaries (collector, server, CLI)"
 	@echo "  make clean        - Clean up test artifacts"
+	@echo "  make killall      - Kill any running test services"
 	@echo "  make help         - Show this help message"
 	@echo ""
 	@echo "Environment variables:"
-	@echo "  TEST_DB_URL            - PostgreSQL connection string (default: postgres://postgres@localhost:5432/postgres)"
-	@echo "  TEST_DB_KEEP=1         - Keep test database after tests complete"
-	@echo "  SKIP_INTEGRATION_TESTS=1 - Skip integration tests"
+	@echo "  TEST_AI_WORKBENCH_SERVER  - PostgreSQL connection string (default: postgres://postgres@localhost:5432/postgres)"
+	@echo "  TEST_AI_WORKBENCH_KEEP_DB=1 - Keep test database after tests complete"
+	@echo "  SKIP_INTEGRATION_TESTS=1    - Skip integration tests"
 	@echo ""
 	@echo "Examples:"
-	@echo "  make test                                    # Run all tests with default settings"
-	@echo "  TEST_DB_KEEP=1 make test                     # Run tests and keep test database"
-	@echo "  TEST_DB_URL=postgres://user:pass@host/db make test  # Use custom database"
-	@echo "  make run-test TEST=TestUserCRUD              # Run only TestUserCRUD test"
+	@echo "  make test                                                          # Run all tests with default settings"
+	@echo "  TEST_AI_WORKBENCH_KEEP_DB=1 make test                              # Run tests and keep test database"
+	@echo "  TEST_AI_WORKBENCH_SERVER=postgres://user:pass@host/db make test   # Use custom database"
+	@echo "  make run-test TEST=TestUserCRUD                                    # Run only TestUserCRUD test"

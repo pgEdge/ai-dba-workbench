@@ -219,6 +219,18 @@ Run tests:
 make test
 ```
 
+Run tests with coverage:
+
+```bash
+make coverage
+```
+
+Run tests, coverage, and linting:
+
+```bash
+make test-all
+```
+
 ### Code Formatting
 
 Format code:
@@ -245,7 +257,7 @@ make lint
 
 ### Pre-commit Checks
 
-Run all checks:
+Run all checks (fmt, vet, test, lint):
 
 ```bash
 make check

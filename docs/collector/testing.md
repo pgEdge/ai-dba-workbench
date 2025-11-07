@@ -63,24 +63,24 @@ go tool cover -html=coverage.out
 
 Tests automatically create a temporary database:
 
-1. Connect to PostgreSQL using TEST_DB_URL or default
+1. Connect to PostgreSQL using TEST_AI_WORKBENCH_SERVER or default
 2. Create database with timestamp: `ai_workbench_test_YYYYMMDD_HHMMSS_NNNNNN`
 3. Run all tests against that database
 4. Drop the database when tests complete
 
 ### Environment Variables
 
-**TEST_DB_URL**: PostgreSQL connection URL
+**TEST_AI_WORKBENCH_SERVER**: PostgreSQL connection URL
 
 ```bash
-export TEST_DB_URL="postgres://user:pass@localhost:5432/postgres"
+export TEST_AI_WORKBENCH_SERVER="postgres://user:pass@localhost:5432/postgres"
 go test ./...
 ```
 
-**TEST_DB_KEEP**: Keep test database after tests
+**TEST_AI_WORKBENCH_KEEP_DB**: Keep test database after tests
 
 ```bash
-export TEST_DB_KEEP=1
+export TEST_AI_WORKBENCH_KEEP_DB=1
 go test ./...
 # Database will remain for inspection
 ```
@@ -480,8 +480,8 @@ func TestDebug(t *testing.T) {
 ### Inspect Test Database
 
 ```bash
-# Run tests with TEST_DB_KEEP
-TEST_DB_KEEP=1 go test ./...
+# Run tests with TEST_AI_WORKBENCH_KEEP_DB
+TEST_AI_WORKBENCH_KEEP_DB=1 go test ./...
 
 # Connect to test database
 psql ai_workbench_test_20251105_120000_123456
@@ -533,7 +533,7 @@ go test -bench=BenchmarkEncryption ./database/
 
 ### Database Tests Fail
 
-- Verify TEST_DB_URL is correct
+- Verify TEST_AI_WORKBENCH_SERVER is correct
 - Check PostgreSQL is running
 - Ensure user has CREATE DATABASE permission
 - Try with SKIP_DB_TESTS=1 to isolate

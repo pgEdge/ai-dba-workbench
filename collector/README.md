@@ -144,9 +144,10 @@ Tests automatically create a temporary test database with a timestamp in the
 name, run all tests against it, and then drop the database when complete. Use
 environment variables to customize test behavior:
 
-- `TEST_DB_URL`: Specify a custom PostgreSQL server (e.g.,
+- `TEST_AI_WORKBENCH_SERVER`: Specify a custom PostgreSQL server (e.g.,
   `postgres://user:pass@host:5432/postgres`)
-- `TEST_DB_KEEP=1`: Keep the test database after tests complete for inspection
+- `TEST_AI_WORKBENCH_KEEP_DB=1`: Keep the test database after tests complete
+  for inspection
 - `SKIP_DB_TESTS=1`: Skip all database tests
 
 See [docs/index.md](docs/index.md) for more details on testing.

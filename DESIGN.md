@@ -134,6 +134,43 @@ tokens to be created.
 Tool APIs will be provided to allow those with superuser permissions to add,
 edit, update, and delete both user and service tokens.
 
+To enable user permissions management, support for user groups will be 
+included. Superusers will be able to define a hierarchy of user groups with
+names of their choice. Users and groups will be able to be added as members
+of one or more other groups and will be given any privileges assigned to the
+groups that they are direct members of, as well of those of which they have 
+indirect membership. For example, given the group hierarchy below (where the
+top level groups are shown first):
+
+Group 1 -> Group 2 -> Group 3 -> User
+Group 4 -> User
+
+The User would gain all privileges assigned to all 4 groups.
+
+Two types of privileges will be employed:
+
+- A group may be assigned read or read/write access to any shared connection.
+    A shared connection with no groups linked to it will be accessible to all 
+    users, whilst a connection with one or more groups assigned to it, will 
+    only be accessible to users that are members of one or more of those 
+    groups or their child groups. In this context, access to a connection 
+    means direct access to the server AND access to information from that 
+    server that is stored in the datastore.
+
+- Each MCP resource, tool and prompt, except those used to login, will have
+    an identifier that can be assigned to a group. Unless that identifier is
+    present in a group in which the user is either a direct or indirect member,
+    the user will be denied access by that resource, tool, or prompt.
+
+Superusers (users with is_superuser set to true) will have unrestricted 
+access, regardless of group membership or other privileges. 
+
+Both service tokens and user tokens will be able to be limited in scope, to 
+any subset of the connections or tools, resources, and prompts that the owning
+users has access to (everything, in the case of superusers). Tokens without 
+any connections or tools, resources, or prompts assigned, will have access to
+everything the owner can access.
+
 ### Monitored Server Connections
 
 Tool APIs will be provided to create connections to monitored servers. These
@@ -259,12 +296,6 @@ clean - Call the 'clean' target for all sub-projects, and clean the
 killall - Call the 'killall' target for all sub-projects.
 
 ### Future Enhancements
-
-Role Based Access Controls may be added to limit access to specific Tools and
-Resources to members of a hierarchical set of roles, in which a user or service
-token can only access Tools and Resources to which a role of which they are a
-member of has access. Roles may be members of other roles, and thus inherit 
-their access.
 
 Support for running multiple collectors may be added to provide high 
 availability and/or load balancing.

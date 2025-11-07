@@ -158,6 +158,10 @@ func (c *MCPClient) makeRequest(method string, params interface{}) (interface{},
 
 	// Check for MCP error
 	if mcpResp.Error != nil {
+		// Include data field if present, as it contains the actual error details
+		if mcpResp.Error.Data != nil {
+			return nil, fmt.Errorf("MCP error %d: %s - %v", mcpResp.Error.Code, mcpResp.Error.Message, mcpResp.Error.Data)
+		}
 		return nil, fmt.Errorf("MCP error %d: %s", mcpResp.Error.Code, mcpResp.Error.Message)
 	}
 

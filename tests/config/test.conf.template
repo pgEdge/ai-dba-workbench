@@ -1,0 +1,18 @@
+#-------------------------------------------------------------------------
+#
+# pgEdge AI Workbench Test Configuration
+#
+# Copyright (c) 2025, pgEdge, Inc.
+# This software is released under The PostgreSQL License
+#
+#-------------------------------------------------------------------------
+
+# Datastore connection settings (will be replaced with test database)
+pg_host = localhost
+pg_database = TEST_DATABASE_NAME
+pg_username = postgres
+pg_port = 5432
+pg_sslmode = prefer
+
+# Server secret for encryption
+server_secret = test-secret-for-integration-tests

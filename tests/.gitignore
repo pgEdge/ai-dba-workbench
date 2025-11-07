@@ -1,0 +1,8 @@
+# Test artifacts
+logs/
+config/test-*.conf
+coverage.out
+coverage.html
+
+# Go test cache
+*.test

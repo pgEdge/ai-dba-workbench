@@ -46,6 +46,7 @@ clean:
 	@echo "Cleaning up test artifacts..."
 	@rm -f coverage.out coverage.html
 	@rm -f config/test-*.conf
+	@rm -f config/test-*.pwd
 	@rm -f logs/*.log
 	@go clean -testcache
 

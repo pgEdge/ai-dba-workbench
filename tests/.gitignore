@@ -1,6 +1,7 @@
 # Test artifacts
 logs/
 config/test-*.conf
+config/test-*.pwd
 coverage.out
 coverage.html
 

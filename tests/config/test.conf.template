@@ -11,6 +11,7 @@
 pg_host = localhost
 pg_database = TEST_DATABASE_NAME
 pg_username = postgres
+pg_password_file = TEST_PASSWORD_FILE
 pg_port = 5432
 pg_sslmode = prefer
 

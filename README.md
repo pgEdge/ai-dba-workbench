@@ -1,8 +1,16 @@
 # pgEdge AI Workbench
 
 [![Build Collector](https://github.com/pgEdge/ai-workbench/actions/workflows/build-collector.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/build-collector.yml)
+[![Test Collector](https://github.com/pgEdge/ai-workbench/actions/workflows/test-collector.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/test-collector.yml)
+[![Lint Collector](https://github.com/pgEdge/ai-workbench/actions/workflows/lint-collector.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/lint-collector.yml)
+
 [![Build Server](https://github.com/pgEdge/ai-workbench/actions/workflows/build-server.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/build-server.yml)
+[![Test Server](https://github.com/pgEdge/ai-workbench/actions/workflows/test-server.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/test-server.yml)
+[![Lint Server](https://github.com/pgEdge/ai-workbench/actions/workflows/lint-server.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/lint-server.yml)
+
 [![Build CLI](https://github.com/pgEdge/ai-workbench/actions/workflows/build-cli.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/build-cli.yml)
+[![Test CLI](https://github.com/pgEdge/ai-workbench/actions/workflows/test-cli.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/test-cli.yml)
+[![Lint CLI](https://github.com/pgEdge/ai-workbench/actions/workflows/lint-cli.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/lint-cli.yml)
 
 The pgEdge AI Workbench is a unified environment for interacting with pgEdge's
 distributed and non-distributed PostgreSQL systems through artificial

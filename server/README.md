@@ -1,6 +1,8 @@
 # pgEdge AI Workbench MCP Server
 
 [![Build Server](https://github.com/pgEdge/ai-workbench/actions/workflows/build-server.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/build-server.yml)
+[![Test Server](https://github.com/pgEdge/ai-workbench/actions/workflows/test-server.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/test-server.yml)
+[![Lint Server](https://github.com/pgEdge/ai-workbench/actions/workflows/lint-server.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/lint-server.yml)
 
 The pgEdge AI Workbench MCP Server implements the Model Context Protocol,
 enabling AI assistants to interact with PostgreSQL databases through

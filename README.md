@@ -12,6 +12,8 @@
 [![Test CLI](https://github.com/pgEdge/ai-workbench/actions/workflows/test-cli.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/test-cli.yml)
 [![Lint CLI](https://github.com/pgEdge/ai-workbench/actions/workflows/lint-cli.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/lint-cli.yml)
 
+[![Integration Tests](https://github.com/pgEdge/ai-workbench/actions/workflows/test-integration.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/test-integration.yml)
+
 The pgEdge AI Workbench is a unified environment for interacting with pgEdge's
 distributed and non-distributed PostgreSQL systems through artificial
 intelligence and traditional methods. It combines a Model Context Protocol

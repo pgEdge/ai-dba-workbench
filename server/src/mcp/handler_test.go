@@ -340,7 +340,7 @@ func TestHandleListResources(t *testing.T) {
 	foundUsers := false
 	foundTokens := false
 	for _, res := range resources {
-		uri, _ := res["uri"].(string)
+		uri, _ := res["uri"].(string) //nolint:errcheck // Test code, type assertion checked in test logic
 		switch uri {
 		case "ai-workbench://users":
 			foundUsers = true
@@ -483,7 +483,7 @@ func TestHandleListTools(t *testing.T) {
 	// Verify each tool is present and has required fields
 	foundTools := make(map[string]bool)
 	for _, tool := range tools {
-		name, _ := tool["name"].(string)
+		name, _ := tool["name"].(string) //nolint:errcheck // Test code, type assertion checked in test logic
 		foundTools[name] = true
 
 		// Verify tool has required fields
@@ -648,7 +648,7 @@ func TestToolInputSchemaValidation(t *testing.T) {
 		t.Fatalf("HandleRequest failed: %v", err)
 	}
 
-	result := resp.Result.(map[string]interface{})
+	result := resp.Result.(map[string]interface{}) //nolint:errcheck // Test code, type assertion checked in test logic
 	tools := result["tools"].([]map[string]interface{})
 
 	// Test create_user schema

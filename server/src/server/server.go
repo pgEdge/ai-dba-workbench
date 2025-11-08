@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/pgEdge/ai-workbench/server/src/config"
-	"github.com/pgEdge/ai-workbench/server/src/logger"
+	"github.com/pgedge/ai-workbench/pkg/logger"
 	"github.com/pgEdge/ai-workbench/server/src/mcp"
 )
 

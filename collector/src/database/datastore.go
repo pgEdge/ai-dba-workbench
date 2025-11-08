@@ -13,7 +13,7 @@ package database
 import (
 	"context"
 	"fmt"
-	"github.com/pgedge/ai-workbench/collector/src/logger"
+	"github.com/pgedge/ai-workbench/pkg/logger"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"

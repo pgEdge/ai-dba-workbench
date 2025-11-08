@@ -13,7 +13,7 @@ package scheduler
 
 import (
 	"github.com/pgedge/ai-workbench/collector/src/database"
-	"github.com/pgedge/ai-workbench/collector/src/logger"
+	"github.com/pgedge/ai-workbench/pkg/logger"
 	"github.com/pgedge/ai-workbench/collector/src/probes"
 
 	"context"

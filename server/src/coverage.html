@@ -59,17 +59,27 @@
 				
 				<option value="file1">github.com/pgEdge/ai-workbench/server/src/database/database.go (0.0%)</option>
 				
-				<option value="file2">github.com/pgEdge/ai-workbench/server/src/logger/logger.go (85.7%)</option>
+				<option value="file2">github.com/pgEdge/ai-workbench/server/src/groupmgmt/groupmgmt.go (0.0%)</option>
 				
 				<option value="file3">github.com/pgEdge/ai-workbench/server/src/main.go (0.0%)</option>
 				
-				<option value="file4">github.com/pgEdge/ai-workbench/server/src/mcp/handler.go (22.9%)</option>
+				<option value="file4">github.com/pgEdge/ai-workbench/server/src/mcp/handler.go (9.7%)</option>
 				
-				<option value="file5">github.com/pgEdge/ai-workbench/server/src/mcp/protocol.go (88.9%)</option>
+				<option value="file5">github.com/pgEdge/ai-workbench/server/src/mcp/middleware/args.go (0.0%)</option>
 				
-				<option value="file6">github.com/pgEdge/ai-workbench/server/src/server/server.go (0.0%)</option>
+				<option value="file6">github.com/pgEdge/ai-workbench/server/src/mcp/middleware/auth.go (0.0%)</option>
 				
-				<option value="file7">github.com/pgEdge/ai-workbench/server/src/usermgmt/usermgmt.go (0.0%)</option>
+				<option value="file7">github.com/pgEdge/ai-workbench/server/src/mcp/middleware/response.go (0.0%)</option>
+				
+				<option value="file8">github.com/pgEdge/ai-workbench/server/src/mcp/protocol.go (88.9%)</option>
+				
+				<option value="file9">github.com/pgEdge/ai-workbench/server/src/privileges/privileges.go (0.0%)</option>
+				
+				<option value="file10">github.com/pgEdge/ai-workbench/server/src/privileges/seed.go (14.3%)</option>
+				
+				<option value="file11">github.com/pgEdge/ai-workbench/server/src/server/server.go (0.0%)</option>
+				
+				<option value="file12">github.com/pgEdge/ai-workbench/server/src/usermgmt/usermgmt.go (0.0%)</option>
 				
 				</select>
 			</div>
@@ -434,88 +444,737 @@ func Connect(cfg *config.Config) (*pgxpool.Pool, error) <span class="cov0" title
 }
 </pre>
 		
-		<pre class="file" id="file2" style="display: none">/*-------------------------------------------------------------------------
+		<pre class="file" id="file2" style="display: none">/*-----------------------------------------------------------
  *
  * pgEdge AI Workbench
  *
  * Copyright (c) 2025, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
- *-------------------------------------------------------------------------
+ *-----------------------------------------------------------
  */
 
-// Package logger provides a simple logging interface with verbosity control
-package logger
+package groupmgmt
 
 import (
-        "log"
-        "os"
+        "context"
+        "fmt"
+
+        "github.com/jackc/pgx/v5/pgxpool"
+        "github.com/pgEdge/ai-workbench/server/src/privileges"
 )
 
-var (
-        verbose = false
-)
+// CreateUserGroup creates a new user group
+func CreateUserGroup(ctx context.Context, pool *pgxpool.Pool, name, description string) (int, error) <span class="cov0" title="0">{
+        var groupID int
+        err := pool.QueryRow(ctx, `
+                INSERT INTO user_groups (name, description)
+                VALUES ($1, $2)
+                RETURNING id
+        `, name, description).Scan(&amp;groupID)
 
-// SetVerbose enables or disables verbose logging
-func SetVerbose(v bool) <span class="cov8" title="1">{
-        verbose = v
-}</span>
-
-// IsVerbose returns whether verbose logging is enabled
-func IsVerbose() bool <span class="cov8" title="1">{
-        return verbose
-}</span>
-
-// Error logs error messages (always shown)
-func Error(v ...interface{}) <span class="cov8" title="1">{
-        log.Print(v...)
-}</span>
-
-// Errorf logs formatted error messages (always shown)
-func Errorf(format string, v ...interface{}) <span class="cov8" title="1">{
-        log.Printf(format, v...)
-}</span>
-
-// Fatal logs a message and exits (always shown)
-func Fatal(v ...interface{}) <span class="cov0" title="0">{
-        log.Fatal(v...)
-}</span>
-
-// Fatalf logs a formatted message and exits (always shown)
-func Fatalf(format string, v ...interface{}) <span class="cov0" title="0">{
-        log.Fatalf(format, v...)
-}</span>
-
-// Info logs informational messages (only shown in verbose mode)
-func Info(v ...interface{}) <span class="cov8" title="1">{
-        if verbose </span><span class="cov8" title="1">{
-                log.Print(v...)
+        if err != nil </span><span class="cov0" title="0">{
+                return 0, fmt.Errorf("failed to create user group: %w", err)
         }</span>
+
+        <span class="cov0" title="0">return groupID, nil</span>
 }
 
-// Infof logs formatted informational messages (only shown in verbose mode)
-func Infof(format string, v ...interface{}) <span class="cov8" title="1">{
-        if verbose </span><span class="cov8" title="1">{
-                log.Printf(format, v...)
+// UpdateUserGroup updates an existing user group
+func UpdateUserGroup(ctx context.Context, pool *pgxpool.Pool, groupID int, name, description string) error <span class="cov0" title="0">{
+        result, err := pool.Exec(ctx, `
+                UPDATE user_groups
+                SET name = $1, description = $2, updated_at = CURRENT_TIMESTAMP
+                WHERE id = $3
+        `, name, description, groupID)
+
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to update user group: %w", err)
         }</span>
+
+        <span class="cov0" title="0">if result.RowsAffected() == 0 </span><span class="cov0" title="0">{
+                return fmt.Errorf("user group not found")
+        }</span>
+
+        <span class="cov0" title="0">return nil</span>
 }
 
-// Startup logs startup messages (always shown)
-func Startup(v ...interface{}) <span class="cov8" title="1">{
-        log.Print(v...)
-}</span>
+// DeleteUserGroup deletes a user group
+func DeleteUserGroup(ctx context.Context, pool *pgxpool.Pool, groupID int) error <span class="cov0" title="0">{
+        result, err := pool.Exec(ctx, `
+                DELETE FROM user_groups
+                WHERE id = $1
+        `, groupID)
 
-// Startupf logs formatted startup messages (always shown)
-func Startupf(format string, v ...interface{}) <span class="cov8" title="1">{
-        log.Printf(format, v...)
-}</span>
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to delete user group: %w", err)
+        }</span>
 
-// Init initializes the logger
-func Init() <span class="cov8" title="1">{
-        // Set log output to stdout and configure format
-        log.SetOutput(os.Stdout)
-        log.SetFlags(log.Ldate | log.Ltime)
-}</span>
+        <span class="cov0" title="0">if result.RowsAffected() == 0 </span><span class="cov0" title="0">{
+                return fmt.Errorf("user group not found")
+        }</span>
+
+        <span class="cov0" title="0">return nil</span>
+}
+
+// ListUserGroups returns all user groups
+func ListUserGroups(ctx context.Context, pool *pgxpool.Pool) ([]map[string]interface{}, error) <span class="cov0" title="0">{
+        rows, err := pool.Query(ctx, `
+                SELECT id, name, description, created_at, updated_at
+                FROM user_groups
+                ORDER BY name
+        `)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to query user groups: %w", err)
+        }</span>
+        <span class="cov0" title="0">defer rows.Close()
+
+        groups := make([]map[string]interface{}, 0)
+        for rows.Next() </span><span class="cov0" title="0">{
+                var id int
+                var name, description string
+                var createdAt, updatedAt string
+
+                err := rows.Scan(&amp;id, &amp;name, &amp;description, &amp;createdAt, &amp;updatedAt)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to scan user group: %w", err)
+                }</span>
+
+                <span class="cov0" title="0">groups = append(groups, map[string]interface{}{
+                        "id":          id,
+                        "name":        name,
+                        "description": description,
+                        "created_at":  createdAt,
+                        "updated_at":  updatedAt,
+                })</span>
+        }
+
+        <span class="cov0" title="0">if err := rows.Err(); err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("error iterating user groups: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">return groups, nil</span>
+}
+
+// AddGroupMember adds a user or group as a member of a parent group
+func AddGroupMember(ctx context.Context, pool *pgxpool.Pool, parentGroupID int, memberUserID *int, memberGroupID *int) error <span class="cov0" title="0">{
+        // Validate that exactly one of memberUserID or memberGroupID is provided
+        if (memberUserID == nil &amp;&amp; memberGroupID == nil) || (memberUserID != nil &amp;&amp; memberGroupID != nil) </span><span class="cov0" title="0">{
+                return fmt.Errorf("must specify either memberUserID or memberGroupID, not both")
+        }</span>
+
+        // If adding a group as a member, validate hierarchy
+        <span class="cov0" title="0">if memberGroupID != nil </span><span class="cov0" title="0">{
+                err := privileges.ValidateGroupHierarchy(ctx, pool, parentGroupID, *memberGroupID)
+                if err != nil </span><span class="cov0" title="0">{
+                        return fmt.Errorf("invalid group hierarchy: %w", err)
+                }</span>
+        }
+
+        // Insert membership
+        <span class="cov0" title="0">_, err := pool.Exec(ctx, `
+                INSERT INTO group_memberships (parent_group_id, member_user_id, member_group_id)
+                VALUES ($1, $2, $3)
+        `, parentGroupID, memberUserID, memberGroupID)
+
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to add group member: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">return nil</span>
+}
+
+// RemoveGroupMember removes a user or group from a parent group
+func RemoveGroupMember(ctx context.Context, pool *pgxpool.Pool, parentGroupID int, memberUserID *int, memberGroupID *int) error <span class="cov0" title="0">{
+        // Validate that exactly one of memberUserID or memberGroupID is provided
+        if (memberUserID == nil &amp;&amp; memberGroupID == nil) || (memberUserID != nil &amp;&amp; memberGroupID != nil) </span><span class="cov0" title="0">{
+                return fmt.Errorf("must specify either memberUserID or memberGroupID, not both")
+        }</span>
+
+        // Remove membership
+        <span class="cov0" title="0">var result interface{ RowsAffected() int64 }
+        var err error
+
+        if memberUserID != nil </span><span class="cov0" title="0">{
+                result, err = pool.Exec(ctx, `
+                        DELETE FROM group_memberships
+                        WHERE parent_group_id = $1 AND member_user_id = $2
+                `, parentGroupID, *memberUserID)
+        }</span> else<span class="cov0" title="0"> {
+                result, err = pool.Exec(ctx, `
+                        DELETE FROM group_memberships
+                        WHERE parent_group_id = $1 AND member_group_id = $2
+                `, parentGroupID, *memberGroupID)
+        }</span>
+
+        <span class="cov0" title="0">if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to remove group member: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">if result.RowsAffected() == 0 </span><span class="cov0" title="0">{
+                return fmt.Errorf("membership not found")
+        }</span>
+
+        <span class="cov0" title="0">return nil</span>
+}
+
+// ListGroupMembers returns all members (users and groups) of a group
+func ListGroupMembers(ctx context.Context, pool *pgxpool.Pool, groupID int) ([]map[string]interface{}, error) <span class="cov0" title="0">{
+        rows, err := pool.Query(ctx, `
+                SELECT
+                        gm.id,
+                        gm.member_user_id,
+                        gm.member_group_id,
+                        gm.created_at,
+                        COALESCE(u.username, '') as username,
+                        COALESCE(g.name, '') as group_name
+                FROM group_memberships gm
+                LEFT JOIN user_accounts u ON gm.member_user_id = u.id
+                LEFT JOIN user_groups g ON gm.member_group_id = g.id
+                WHERE gm.parent_group_id = $1
+                ORDER BY COALESCE(u.username, g.name)
+        `, groupID)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to query group members: %w", err)
+        }</span>
+        <span class="cov0" title="0">defer rows.Close()
+
+        members := make([]map[string]interface{}, 0)
+        for rows.Next() </span><span class="cov0" title="0">{
+                var id int
+                var memberUserID, memberGroupID *int
+                var createdAt, username, groupName string
+
+                err := rows.Scan(&amp;id, &amp;memberUserID, &amp;memberGroupID, &amp;createdAt, &amp;username, &amp;groupName)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to scan group member: %w", err)
+                }</span>
+
+                <span class="cov0" title="0">member := map[string]interface{}{
+                        "id":         id,
+                        "created_at": createdAt,
+                }
+
+                if memberUserID != nil </span><span class="cov0" title="0">{
+                        member["type"] = "user"
+                        member["user_id"] = *memberUserID
+                        member["username"] = username
+                }</span> else<span class="cov0" title="0"> if memberGroupID != nil </span><span class="cov0" title="0">{
+                        member["type"] = "group"
+                        member["group_id"] = *memberGroupID
+                        member["group_name"] = groupName
+                }</span>
+
+                <span class="cov0" title="0">members = append(members, member)</span>
+        }
+
+        <span class="cov0" title="0">if err := rows.Err(); err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("error iterating group members: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">return members, nil</span>
+}
+
+// ListUserGroupMemberships returns all groups that a user belongs to (direct and indirect)
+func ListUserGroupMemberships(ctx context.Context, pool *pgxpool.Pool, userID int) ([]map[string]interface{}, error) <span class="cov0" title="0">{
+        // Get all groups (direct and indirect)
+        groupIDs, err := privileges.GetUserGroups(ctx, pool, userID)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to get user groups: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">if len(groupIDs) == 0 </span><span class="cov0" title="0">{
+                return []map[string]interface{}{}, nil
+        }</span>
+
+        // Get group details
+        <span class="cov0" title="0">rows, err := pool.Query(ctx, `
+                SELECT id, name, description
+                FROM user_groups
+                WHERE id = ANY($1)
+                ORDER BY name
+        `, groupIDs)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to query group details: %w", err)
+        }</span>
+        <span class="cov0" title="0">defer rows.Close()
+
+        groups := make([]map[string]interface{}, 0)
+        for rows.Next() </span><span class="cov0" title="0">{
+                var id int
+                var name, description string
+
+                err := rows.Scan(&amp;id, &amp;name, &amp;description)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to scan group: %w", err)
+                }</span>
+
+                <span class="cov0" title="0">groups = append(groups, map[string]interface{}{
+                        "id":          id,
+                        "name":        name,
+                        "description": description,
+                })</span>
+        }
+
+        <span class="cov0" title="0">if err := rows.Err(); err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("error iterating groups: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">return groups, nil</span>
+}
+
+// GrantConnectionPrivilege grants a group access to a connection at the specified level
+func GrantConnectionPrivilege(ctx context.Context, pool *pgxpool.Pool, groupID int, connectionID int, accessLevel string) error <span class="cov0" title="0">{
+        // Validate access level
+        if accessLevel != "read" &amp;&amp; accessLevel != "read_write" </span><span class="cov0" title="0">{
+                return fmt.Errorf("invalid access level: must be 'read' or 'read_write'")
+        }</span>
+
+        // Insert or update privilege
+        <span class="cov0" title="0">_, err := pool.Exec(ctx, `
+                INSERT INTO connection_privileges (group_id, connection_id, access_level)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (group_id, connection_id)
+                DO UPDATE SET access_level = EXCLUDED.access_level
+        `, groupID, connectionID, accessLevel)
+
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to grant connection privilege: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">return nil</span>
+}
+
+// RevokeConnectionPrivilege revokes a group's access to a connection
+func RevokeConnectionPrivilege(ctx context.Context, pool *pgxpool.Pool, groupID int, connectionID int) error <span class="cov0" title="0">{
+        result, err := pool.Exec(ctx, `
+                DELETE FROM connection_privileges
+                WHERE group_id = $1 AND connection_id = $2
+        `, groupID, connectionID)
+
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to revoke connection privilege: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">if result.RowsAffected() == 0 </span><span class="cov0" title="0">{
+                return fmt.Errorf("privilege not found")
+        }</span>
+
+        <span class="cov0" title="0">return nil</span>
+}
+
+// ListConnectionPrivileges returns all group privileges for a connection
+func ListConnectionPrivileges(ctx context.Context, pool *pgxpool.Pool, connectionID int) ([]map[string]interface{}, error) <span class="cov0" title="0">{
+        rows, err := pool.Query(ctx, `
+                SELECT
+                        cp.id,
+                        cp.group_id,
+                        cp.access_level,
+                        cp.created_at,
+                        ug.name as group_name,
+                        ug.description as group_description
+                FROM connection_privileges cp
+                INNER JOIN user_groups ug ON cp.group_id = ug.id
+                WHERE cp.connection_id = $1
+                ORDER BY ug.name
+        `, connectionID)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to query connection privileges: %w", err)
+        }</span>
+        <span class="cov0" title="0">defer rows.Close()
+
+        privileges := make([]map[string]interface{}, 0)
+        for rows.Next() </span><span class="cov0" title="0">{
+                var id, groupID int
+                var accessLevel, createdAt, groupName, groupDescription string
+
+                err := rows.Scan(&amp;id, &amp;groupID, &amp;accessLevel, &amp;createdAt, &amp;groupName, &amp;groupDescription)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to scan connection privilege: %w", err)
+                }</span>
+
+                <span class="cov0" title="0">privileges = append(privileges, map[string]interface{}{
+                        "id":                  id,
+                        "group_id":            groupID,
+                        "group_name":          groupName,
+                        "group_description":   groupDescription,
+                        "access_level":        accessLevel,
+                        "created_at":          createdAt,
+                })</span>
+        }
+
+        <span class="cov0" title="0">if err := rows.Err(); err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("error iterating connection privileges: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">return privileges, nil</span>
+}
+
+// ListMCPPrivilegeIdentifiers returns all registered MCP privilege identifiers
+func ListMCPPrivilegeIdentifiers(ctx context.Context, pool *pgxpool.Pool) ([]map[string]interface{}, error) <span class="cov0" title="0">{
+        rows, err := pool.Query(ctx, `
+                SELECT id, identifier, item_type, description, created_at
+                FROM mcp_privilege_identifiers
+                ORDER BY item_type, identifier
+        `)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to query privilege identifiers: %w", err)
+        }</span>
+        <span class="cov0" title="0">defer rows.Close()
+
+        identifiers := make([]map[string]interface{}, 0)
+        for rows.Next() </span><span class="cov0" title="0">{
+                var id int
+                var identifier, itemType, description, createdAt string
+
+                err := rows.Scan(&amp;id, &amp;identifier, &amp;itemType, &amp;description, &amp;createdAt)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to scan privilege identifier: %w", err)
+                }</span>
+
+                <span class="cov0" title="0">identifiers = append(identifiers, map[string]interface{}{
+                        "id":          id,
+                        "identifier":  identifier,
+                        "item_type":   itemType,
+                        "description": description,
+                        "created_at":  createdAt,
+                })</span>
+        }
+
+        <span class="cov0" title="0">if err := rows.Err(); err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("error iterating privilege identifiers: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">return identifiers, nil</span>
+}
+
+// GrantMCPPrivilege grants a group access to an MCP item
+func GrantMCPPrivilege(ctx context.Context, pool *pgxpool.Pool, groupID int, privilegeIdentifier string) error <span class="cov0" title="0">{
+        // First, ensure the privilege identifier exists
+        var privilegeID int
+        err := pool.QueryRow(ctx, `
+                SELECT id FROM mcp_privilege_identifiers WHERE identifier = $1
+        `, privilegeIdentifier).Scan(&amp;privilegeID)
+
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("privilege identifier not found: %w", err)
+        }</span>
+
+        // Grant the privilege
+        <span class="cov0" title="0">_, err = pool.Exec(ctx, `
+                INSERT INTO group_mcp_privileges (group_id, privilege_identifier_id)
+                VALUES ($1, $2)
+                ON CONFLICT (group_id, privilege_identifier_id) DO NOTHING
+        `, groupID, privilegeID)
+
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to grant MCP privilege: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">return nil</span>
+}
+
+// RevokeMCPPrivilege revokes a group's access to an MCP item
+func RevokeMCPPrivilege(ctx context.Context, pool *pgxpool.Pool, groupID int, privilegeIdentifier string) error <span class="cov0" title="0">{
+        // First, get the privilege identifier ID
+        var privilegeID int
+        err := pool.QueryRow(ctx, `
+                SELECT id FROM mcp_privilege_identifiers WHERE identifier = $1
+        `, privilegeIdentifier).Scan(&amp;privilegeID)
+
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("privilege identifier not found: %w", err)
+        }</span>
+
+        // Revoke the privilege
+        <span class="cov0" title="0">result, err := pool.Exec(ctx, `
+                DELETE FROM group_mcp_privileges
+                WHERE group_id = $1 AND privilege_identifier_id = $2
+        `, groupID, privilegeID)
+
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to revoke MCP privilege: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">if result.RowsAffected() == 0 </span><span class="cov0" title="0">{
+                return fmt.Errorf("privilege not found")
+        }</span>
+
+        <span class="cov0" title="0">return nil</span>
+}
+
+// ListGroupMCPPrivileges returns all MCP privileges for a group
+func ListGroupMCPPrivileges(ctx context.Context, pool *pgxpool.Pool, groupID int) ([]map[string]interface{}, error) <span class="cov0" title="0">{
+        rows, err := pool.Query(ctx, `
+                SELECT
+                        gmp.id,
+                        gmp.created_at,
+                        mpi.id as privilege_id,
+                        mpi.identifier,
+                        mpi.item_type,
+                        mpi.description
+                FROM group_mcp_privileges gmp
+                INNER JOIN mcp_privilege_identifiers mpi ON gmp.privilege_identifier_id = mpi.id
+                WHERE gmp.group_id = $1
+                ORDER BY mpi.item_type, mpi.identifier
+        `, groupID)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to query group MCP privileges: %w", err)
+        }</span>
+        <span class="cov0" title="0">defer rows.Close()
+
+        privileges := make([]map[string]interface{}, 0)
+        for rows.Next() </span><span class="cov0" title="0">{
+                var id, privilegeID int
+                var createdAt, identifier, itemType, description string
+
+                err := rows.Scan(&amp;id, &amp;createdAt, &amp;privilegeID, &amp;identifier, &amp;itemType, &amp;description)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to scan MCP privilege: %w", err)
+                }</span>
+
+                <span class="cov0" title="0">privileges = append(privileges, map[string]interface{}{
+                        "id":          id,
+                        "privilege_id": privilegeID,
+                        "identifier":  identifier,
+                        "item_type":   itemType,
+                        "description": description,
+                        "created_at":  createdAt,
+                })</span>
+        }
+
+        <span class="cov0" title="0">if err := rows.Err(); err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("error iterating MCP privileges: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">return privileges, nil</span>
+}
+
+// SetTokenConnectionScope limits a token to specific connections
+func SetTokenConnectionScope(ctx context.Context, pool *pgxpool.Pool, tokenID int, tokenType string, connectionIDs []int) error <span class="cov0" title="0">{
+        // Validate token type
+        if tokenType != "user" &amp;&amp; tokenType != "service" </span><span class="cov0" title="0">{
+                return fmt.Errorf("invalid token type: must be 'user' or 'service'")
+        }</span>
+
+        // Start a transaction
+        <span class="cov0" title="0">tx, err := pool.Begin(ctx)
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to begin transaction: %w", err)
+        }</span>
+        <span class="cov0" title="0">defer func() </span><span class="cov0" title="0">{ _ = tx.Rollback(ctx) }</span>() //nolint:errcheck // Rollback error not relevant after commit
+
+        // Clear existing scope
+        <span class="cov0" title="0">_, err = tx.Exec(ctx, `
+                DELETE FROM token_connection_scope
+                WHERE token_id = $1 AND token_type = $2
+        `, tokenID, tokenType)
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to clear existing connection scope: %w", err)
+        }</span>
+
+        // Insert new scope entries
+        <span class="cov0" title="0">for _, connectionID := range connectionIDs </span><span class="cov0" title="0">{
+                _, err = tx.Exec(ctx, `
+                        INSERT INTO token_connection_scope (token_id, token_type, connection_id)
+                        VALUES ($1, $2, $3)
+                `, tokenID, tokenType, connectionID)
+                if err != nil </span><span class="cov0" title="0">{
+                        return fmt.Errorf("failed to add connection to scope: %w", err)
+                }</span>
+        }
+
+        // Commit transaction
+        <span class="cov0" title="0">if err := tx.Commit(ctx); err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to commit transaction: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">return nil</span>
+}
+
+// SetTokenMCPScope limits a token to specific MCP items
+func SetTokenMCPScope(ctx context.Context, pool *pgxpool.Pool, tokenID int, tokenType string, privilegeIdentifiers []string) error <span class="cov0" title="0">{
+        // Validate token type
+        if tokenType != "user" &amp;&amp; tokenType != "service" </span><span class="cov0" title="0">{
+                return fmt.Errorf("invalid token type: must be 'user' or 'service'")
+        }</span>
+
+        // Start a transaction
+        <span class="cov0" title="0">tx, err := pool.Begin(ctx)
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to begin transaction: %w", err)
+        }</span>
+        <span class="cov0" title="0">defer func() </span><span class="cov0" title="0">{ _ = tx.Rollback(ctx) }</span>() //nolint:errcheck // Rollback error not relevant after commit
+
+        // Clear existing scope
+        <span class="cov0" title="0">_, err = tx.Exec(ctx, `
+                DELETE FROM token_mcp_scope
+                WHERE token_id = $1 AND token_type = $2
+        `, tokenID, tokenType)
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to clear existing MCP scope: %w", err)
+        }</span>
+
+        // Insert new scope entries
+        <span class="cov0" title="0">for _, identifier := range privilegeIdentifiers </span><span class="cov0" title="0">{
+                // Get the privilege identifier ID
+                var privilegeID int
+                err = tx.QueryRow(ctx, `
+                        SELECT id FROM mcp_privilege_identifiers WHERE identifier = $1
+                `, identifier).Scan(&amp;privilegeID)
+                if err != nil </span><span class="cov0" title="0">{
+                        return fmt.Errorf("privilege identifier '%s' not found: %w", identifier, err)
+                }</span>
+
+                <span class="cov0" title="0">_, err = tx.Exec(ctx, `
+                        INSERT INTO token_mcp_scope (token_id, token_type, privilege_identifier_id)
+                        VALUES ($1, $2, $3)
+                `, tokenID, tokenType, privilegeID)
+                if err != nil </span><span class="cov0" title="0">{
+                        return fmt.Errorf("failed to add privilege to scope: %w", err)
+                }</span>
+        }
+
+        // Commit transaction
+        <span class="cov0" title="0">if err := tx.Commit(ctx); err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to commit transaction: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">return nil</span>
+}
+
+// GetTokenScope returns the scope restrictions for a token
+func GetTokenScope(ctx context.Context, pool *pgxpool.Pool, tokenID int, tokenType string) (map[string]interface{}, error) <span class="cov0" title="0">{
+        // Validate token type
+        if tokenType != "user" &amp;&amp; tokenType != "service" </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("invalid token type: must be 'user' or 'service'")
+        }</span>
+
+        <span class="cov0" title="0">result := map[string]interface{}{
+                "token_id":   tokenID,
+                "token_type": tokenType,
+                "connections": []map[string]interface{}{},
+                "mcp_items":   []map[string]interface{}{},
+        }
+
+        // Get connection scope
+        connRows, err := pool.Query(ctx, `
+                SELECT
+                        tcs.id,
+                        tcs.connection_id,
+                        c.connection_name,
+                        tcs.created_at
+                FROM token_connection_scope tcs
+                INNER JOIN connections c ON tcs.connection_id = c.id
+                WHERE tcs.token_id = $1 AND tcs.token_type = $2
+                ORDER BY c.connection_name
+        `, tokenID, tokenType)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to query connection scope: %w", err)
+        }</span>
+        <span class="cov0" title="0">defer connRows.Close()
+
+        connections := make([]map[string]interface{}, 0)
+        for connRows.Next() </span><span class="cov0" title="0">{
+                var id, connectionID int
+                var connectionName, createdAt string
+
+                err := connRows.Scan(&amp;id, &amp;connectionID, &amp;connectionName, &amp;createdAt)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to scan connection scope: %w", err)
+                }</span>
+
+                <span class="cov0" title="0">connections = append(connections, map[string]interface{}{
+                        "id":              id,
+                        "connection_id":   connectionID,
+                        "connection_name": connectionName,
+                        "created_at":      createdAt,
+                })</span>
+        }
+        <span class="cov0" title="0">result["connections"] = connections
+
+        // Get MCP scope
+        mcpRows, err := pool.Query(ctx, `
+                SELECT
+                        tms.id,
+                        mpi.id as privilege_id,
+                        mpi.identifier,
+                        mpi.item_type,
+                        mpi.description,
+                        tms.created_at
+                FROM token_mcp_scope tms
+                INNER JOIN mcp_privilege_identifiers mpi ON tms.privilege_identifier_id = mpi.id
+                WHERE tms.token_id = $1 AND tms.token_type = $2
+                ORDER BY mpi.item_type, mpi.identifier
+        `, tokenID, tokenType)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to query MCP scope: %w", err)
+        }</span>
+        <span class="cov0" title="0">defer mcpRows.Close()
+
+        mcpItems := make([]map[string]interface{}, 0)
+        for mcpRows.Next() </span><span class="cov0" title="0">{
+                var id, privilegeID int
+                var identifier, itemType, description, createdAt string
+
+                err := mcpRows.Scan(&amp;id, &amp;privilegeID, &amp;identifier, &amp;itemType, &amp;description, &amp;createdAt)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to scan MCP scope: %w", err)
+                }</span>
+
+                <span class="cov0" title="0">mcpItems = append(mcpItems, map[string]interface{}{
+                        "id":           id,
+                        "privilege_id": privilegeID,
+                        "identifier":   identifier,
+                        "item_type":    itemType,
+                        "description":  description,
+                        "created_at":   createdAt,
+                })</span>
+        }
+        <span class="cov0" title="0">result["mcp_items"] = mcpItems
+
+        return result, nil</span>
+}
+
+// ClearTokenScope removes all scope restrictions for a token
+func ClearTokenScope(ctx context.Context, pool *pgxpool.Pool, tokenID int, tokenType string) error <span class="cov0" title="0">{
+        // Validate token type
+        if tokenType != "user" &amp;&amp; tokenType != "service" </span><span class="cov0" title="0">{
+                return fmt.Errorf("invalid token type: must be 'user' or 'service'")
+        }</span>
+
+        // Start a transaction
+        <span class="cov0" title="0">tx, err := pool.Begin(ctx)
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to begin transaction: %w", err)
+        }</span>
+        <span class="cov0" title="0">defer func() </span><span class="cov0" title="0">{ _ = tx.Rollback(ctx) }</span>() //nolint:errcheck // Rollback error not relevant after commit
+
+        // Clear connection scope
+        <span class="cov0" title="0">_, err = tx.Exec(ctx, `
+                DELETE FROM token_connection_scope
+                WHERE token_id = $1 AND token_type = $2
+        `, tokenID, tokenType)
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to clear connection scope: %w", err)
+        }</span>
+
+        // Clear MCP scope
+        <span class="cov0" title="0">_, err = tx.Exec(ctx, `
+                DELETE FROM token_mcp_scope
+                WHERE token_id = $1 AND token_type = $2
+        `, tokenID, tokenType)
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to clear MCP scope: %w", err)
+        }</span>
+
+        // Commit transaction
+        <span class="cov0" title="0">if err := tx.Commit(ctx); err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to commit transaction: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">return nil</span>
+}
 </pre>
 		
 		<pre class="file" id="file3" style="display: none">/*-------------------------------------------------------------------------
@@ -543,8 +1202,9 @@ import (
 
         "github.com/pgEdge/ai-workbench/server/src/config"
         "github.com/pgEdge/ai-workbench/server/src/database"
-        "github.com/pgEdge/ai-workbench/server/src/logger"
+        "github.com/pgedge/ai-workbench/pkg/logger"
         "github.com/pgEdge/ai-workbench/server/src/mcp"
+        "github.com/pgEdge/ai-workbench/server/src/privileges"
         "github.com/pgEdge/ai-workbench/server/src/server"
         "github.com/pgEdge/ai-workbench/server/src/usermgmt"
 )
@@ -639,8 +1299,17 @@ func main() <span class="cov0" title="0">{
         <span class="cov0" title="0">defer dbPool.Close()
         logger.Info("Database connection established")
 
+        // Seed MCP privilege identifiers
+        ctx := context.Background()
+        if err := privileges.SeedMCPPrivileges(ctx, dbPool); err != nil </span><span class="cov0" title="0">{
+                logger.Errorf("Warning: Failed to seed MCP privilege identifiers: %v", err)
+                // Continue anyway - this is not a fatal error
+        }</span> else<span class="cov0" title="0"> {
+                logger.Info("MCP privilege identifiers seeded successfully")
+        }</span>
+
         // Create MCP handler
-        mcpHandler := mcp.NewHandler(serverName, serverVersion, dbPool, cfg)
+        <span class="cov0" title="0">mcpHandler := mcp.NewHandler(serverName, serverVersion, dbPool, cfg)
 
         // Create server
         srv := server.New(cfg, mcpHandler)
@@ -838,7 +1507,9 @@ import (
 
         "github.com/jackc/pgx/v5/pgxpool"
         "github.com/pgEdge/ai-workbench/server/src/config"
-        "github.com/pgEdge/ai-workbench/server/src/logger"
+        "github.com/pgEdge/ai-workbench/server/src/groupmgmt"
+        "github.com/pgedge/ai-workbench/pkg/logger"
+        "github.com/pgEdge/ai-workbench/server/src/privileges"
         "github.com/pgEdge/ai-workbench/server/src/usermgmt"
 )
 
@@ -1350,6 +2021,345 @@ func (h *Handler) handleListTools(req Request) (*Response, error) <span class="c
                                 "required": []string{"username", "tokenId"},
                         },
                 },
+                {
+                        "name":        "create_user_group",
+                        "description": "Create a new user group for organizing users and permissions",
+                        "inputSchema": map[string]interface{}{
+                                "type": "object",
+                                "properties": map[string]interface{}{
+                                        "name": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Unique name for the group",
+                                        },
+                                        "description": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Optional description of the group's purpose",
+                                        },
+                                },
+                                "required": []string{"name"},
+                        },
+                },
+                {
+                        "name":        "update_user_group",
+                        "description": "Update an existing user group",
+                        "inputSchema": map[string]interface{}{
+                                "type": "object",
+                                "properties": map[string]interface{}{
+                                        "groupId": map[string]interface{}{
+                                                "type":        "integer",
+                                                "description": "ID of the group to update",
+                                        },
+                                        "name": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "New name for the group",
+                                        },
+                                        "description": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "New description for the group",
+                                        },
+                                },
+                                "required": []string{"groupId", "name"},
+                        },
+                },
+                {
+                        "name":        "delete_user_group",
+                        "description": "Delete a user group (also removes all memberships and privileges)",
+                        "inputSchema": map[string]interface{}{
+                                "type": "object",
+                                "properties": map[string]interface{}{
+                                        "groupId": map[string]interface{}{
+                                                "type":        "integer",
+                                                "description": "ID of the group to delete",
+                                        },
+                                },
+                                "required": []string{"groupId"},
+                        },
+                },
+                {
+                        "name":        "list_user_groups",
+                        "description": "List all user groups in the system",
+                        "inputSchema": map[string]interface{}{
+                                "type":       "object",
+                                "properties": map[string]interface{}{},
+                                "required":   []string{},
+                        },
+                },
+                {
+                        "name":        "add_group_member",
+                        "description": "Add a user or nested group as a member of a parent group",
+                        "inputSchema": map[string]interface{}{
+                                "type": "object",
+                                "properties": map[string]interface{}{
+                                        "parentGroupId": map[string]interface{}{
+                                                "type":        "integer",
+                                                "description": "ID of the parent group",
+                                        },
+                                        "memberUserId": map[string]interface{}{
+                                                "type":        "integer",
+                                                "description": "ID of the user to add (specify either memberUserId or memberGroupId)",
+                                        },
+                                        "memberGroupId": map[string]interface{}{
+                                                "type":        "integer",
+                                                "description": "ID of the group to add (specify either memberUserId or memberGroupId)",
+                                        },
+                                },
+                                "required": []string{"parentGroupId"},
+                        },
+                },
+                {
+                        "name":        "remove_group_member",
+                        "description": "Remove a user or nested group from a parent group",
+                        "inputSchema": map[string]interface{}{
+                                "type": "object",
+                                "properties": map[string]interface{}{
+                                        "parentGroupId": map[string]interface{}{
+                                                "type":        "integer",
+                                                "description": "ID of the parent group",
+                                        },
+                                        "memberUserId": map[string]interface{}{
+                                                "type":        "integer",
+                                                "description": "ID of the user to remove (specify either memberUserId or memberGroupId)",
+                                        },
+                                        "memberGroupId": map[string]interface{}{
+                                                "type":        "integer",
+                                                "description": "ID of the group to remove (specify either memberUserId or memberGroupId)",
+                                        },
+                                },
+                                "required": []string{"parentGroupId"},
+                        },
+                },
+                {
+                        "name":        "list_group_members",
+                        "description": "List all members (users and nested groups) of a group",
+                        "inputSchema": map[string]interface{}{
+                                "type": "object",
+                                "properties": map[string]interface{}{
+                                        "groupId": map[string]interface{}{
+                                                "type":        "integer",
+                                                "description": "ID of the group",
+                                        },
+                                },
+                                "required": []string{"groupId"},
+                        },
+                },
+                {
+                        "name":        "list_user_group_memberships",
+                        "description": "List all groups a user belongs to (direct and indirect membership)",
+                        "inputSchema": map[string]interface{}{
+                                "type": "object",
+                                "properties": map[string]interface{}{
+                                        "username": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Username to look up",
+                                        },
+                                },
+                                "required": []string{"username"},
+                        },
+                },
+                {
+                        "name":        "grant_connection_privilege",
+                        "description": "Grant a group access to a connection at a specified level (read or read_write)",
+                        "inputSchema": map[string]interface{}{
+                                "type": "object",
+                                "properties": map[string]interface{}{
+                                        "groupId": map[string]interface{}{
+                                                "type":        "number",
+                                                "description": "ID of the group to grant access to",
+                                        },
+                                        "connectionId": map[string]interface{}{
+                                                "type":        "number",
+                                                "description": "ID of the connection",
+                                        },
+                                        "accessLevel": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Access level: 'read' or 'read_write'",
+                                                "enum":        []string{"read", "read_write"},
+                                        },
+                                },
+                                "required": []string{"groupId", "connectionId", "accessLevel"},
+                        },
+                },
+                {
+                        "name":        "revoke_connection_privilege",
+                        "description": "Revoke a group's access to a connection",
+                        "inputSchema": map[string]interface{}{
+                                "type": "object",
+                                "properties": map[string]interface{}{
+                                        "groupId": map[string]interface{}{
+                                                "type":        "number",
+                                                "description": "ID of the group",
+                                        },
+                                        "connectionId": map[string]interface{}{
+                                                "type":        "number",
+                                                "description": "ID of the connection",
+                                        },
+                                },
+                                "required": []string{"groupId", "connectionId"},
+                        },
+                },
+                {
+                        "name":        "list_connection_privileges",
+                        "description": "List all group privileges for a connection",
+                        "inputSchema": map[string]interface{}{
+                                "type": "object",
+                                "properties": map[string]interface{}{
+                                        "connectionId": map[string]interface{}{
+                                                "type":        "number",
+                                                "description": "ID of the connection",
+                                        },
+                                },
+                                "required": []string{"connectionId"},
+                        },
+                },
+                {
+                        "name":        "list_mcp_privilege_identifiers",
+                        "description": "List all registered MCP privilege identifiers (tools, resources, prompts)",
+                        "inputSchema": map[string]interface{}{
+                                "type":       "object",
+                                "properties": map[string]interface{}{},
+                                "required":   []string{},
+                        },
+                },
+                {
+                        "name":        "grant_mcp_privilege",
+                        "description": "Grant a group access to an MCP tool, resource, or prompt",
+                        "inputSchema": map[string]interface{}{
+                                "type": "object",
+                                "properties": map[string]interface{}{
+                                        "groupId": map[string]interface{}{
+                                                "type":        "number",
+                                                "description": "ID of the group",
+                                        },
+                                        "privilegeIdentifier": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Identifier of the MCP item (e.g., 'create_user', 'list_connections')",
+                                        },
+                                },
+                                "required": []string{"groupId", "privilegeIdentifier"},
+                        },
+                },
+                {
+                        "name":        "revoke_mcp_privilege",
+                        "description": "Revoke a group's access to an MCP tool, resource, or prompt",
+                        "inputSchema": map[string]interface{}{
+                                "type": "object",
+                                "properties": map[string]interface{}{
+                                        "groupId": map[string]interface{}{
+                                                "type":        "number",
+                                                "description": "ID of the group",
+                                        },
+                                        "privilegeIdentifier": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Identifier of the MCP item",
+                                        },
+                                },
+                                "required": []string{"groupId", "privilegeIdentifier"},
+                        },
+                },
+                {
+                        "name":        "list_group_mcp_privileges",
+                        "description": "List all MCP privileges granted to a group",
+                        "inputSchema": map[string]interface{}{
+                                "type": "object",
+                                "properties": map[string]interface{}{
+                                        "groupId": map[string]interface{}{
+                                                "type":        "number",
+                                                "description": "ID of the group",
+                                        },
+                                },
+                                "required": []string{"groupId"},
+                        },
+                },
+                {
+                        "name":        "set_token_connection_scope",
+                        "description": "Limit a token's access to specific connections",
+                        "inputSchema": map[string]interface{}{
+                                "type": "object",
+                                "properties": map[string]interface{}{
+                                        "tokenId": map[string]interface{}{
+                                                "type":        "number",
+                                                "description": "ID of the token",
+                                        },
+                                        "tokenType": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Type of token: 'user' or 'service'",
+                                                "enum":        []string{"user", "service"},
+                                        },
+                                        "connectionIds": map[string]interface{}{
+                                                "type":        "array",
+                                                "description": "Array of connection IDs to limit access to",
+                                                "items": map[string]interface{}{
+                                                        "type": "number",
+                                                },
+                                        },
+                                },
+                                "required": []string{"tokenId", "tokenType", "connectionIds"},
+                        },
+                },
+                {
+                        "name":        "set_token_mcp_scope",
+                        "description": "Limit a token's access to specific MCP tools, resources, or prompts",
+                        "inputSchema": map[string]interface{}{
+                                "type": "object",
+                                "properties": map[string]interface{}{
+                                        "tokenId": map[string]interface{}{
+                                                "type":        "number",
+                                                "description": "ID of the token",
+                                        },
+                                        "tokenType": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Type of token: 'user' or 'service'",
+                                                "enum":        []string{"user", "service"},
+                                        },
+                                        "privilegeIdentifiers": map[string]interface{}{
+                                                "type":        "array",
+                                                "description": "Array of MCP privilege identifiers",
+                                                "items": map[string]interface{}{
+                                                        "type": "string",
+                                                },
+                                        },
+                                },
+                                "required": []string{"tokenId", "tokenType", "privilegeIdentifiers"},
+                        },
+                },
+                {
+                        "name":        "get_token_scope",
+                        "description": "Get the scope restrictions for a token",
+                        "inputSchema": map[string]interface{}{
+                                "type": "object",
+                                "properties": map[string]interface{}{
+                                        "tokenId": map[string]interface{}{
+                                                "type":        "number",
+                                                "description": "ID of the token",
+                                        },
+                                        "tokenType": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Type of token: 'user' or 'service'",
+                                                "enum":        []string{"user", "service"},
+                                        },
+                                },
+                                "required": []string{"tokenId", "tokenType"},
+                        },
+                },
+                {
+                        "name":        "clear_token_scope",
+                        "description": "Remove all scope restrictions for a token",
+                        "inputSchema": map[string]interface{}{
+                                "type": "object",
+                                "properties": map[string]interface{}{
+                                        "tokenId": map[string]interface{}{
+                                                "type":        "number",
+                                                "description": "ID of the token",
+                                        },
+                                        "tokenType": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Type of token: 'user' or 'service'",
+                                                "enum":        []string{"user", "service"},
+                                        },
+                                },
+                                "required": []string{"tokenId", "tokenType"},
+                        },
+                },
         }
 
         result := map[string]interface{}{
@@ -1413,6 +2423,44 @@ func (h *Handler) handleCallTool(req Request) (*Response, error) <span class="co
                 result, err = h.handleListUserTokens(params.Arguments)</span>
         case "delete_user_token":<span class="cov0" title="0">
                 result, err = h.handleDeleteUserToken(params.Arguments)</span>
+        case "create_user_group":<span class="cov0" title="0">
+                result, err = h.handleCreateUserGroup(params.Arguments)</span>
+        case "update_user_group":<span class="cov0" title="0">
+                result, err = h.handleUpdateUserGroup(params.Arguments)</span>
+        case "delete_user_group":<span class="cov0" title="0">
+                result, err = h.handleDeleteUserGroup(params.Arguments)</span>
+        case "list_user_groups":<span class="cov0" title="0">
+                result, err = h.handleListUserGroups(params.Arguments)</span>
+        case "add_group_member":<span class="cov0" title="0">
+                result, err = h.handleAddGroupMember(params.Arguments)</span>
+        case "remove_group_member":<span class="cov0" title="0">
+                result, err = h.handleRemoveGroupMember(params.Arguments)</span>
+        case "list_group_members":<span class="cov0" title="0">
+                result, err = h.handleListGroupMembers(params.Arguments)</span>
+        case "list_user_group_memberships":<span class="cov0" title="0">
+                result, err = h.handleListUserGroupMemberships(params.Arguments)</span>
+        case "grant_connection_privilege":<span class="cov0" title="0">
+                result, err = h.handleGrantConnectionPrivilege(params.Arguments)</span>
+        case "revoke_connection_privilege":<span class="cov0" title="0">
+                result, err = h.handleRevokeConnectionPrivilege(params.Arguments)</span>
+        case "list_connection_privileges":<span class="cov0" title="0">
+                result, err = h.handleListConnectionPrivileges(params.Arguments)</span>
+        case "list_mcp_privilege_identifiers":<span class="cov0" title="0">
+                result, err = h.handleListMCPPrivilegeIdentifiers(params.Arguments)</span>
+        case "grant_mcp_privilege":<span class="cov0" title="0">
+                result, err = h.handleGrantMCPPrivilege(params.Arguments)</span>
+        case "revoke_mcp_privilege":<span class="cov0" title="0">
+                result, err = h.handleRevokeMCPPrivilege(params.Arguments)</span>
+        case "list_group_mcp_privileges":<span class="cov0" title="0">
+                result, err = h.handleListGroupMCPPrivileges(params.Arguments)</span>
+        case "set_token_connection_scope":<span class="cov0" title="0">
+                result, err = h.handleSetTokenConnectionScope(params.Arguments)</span>
+        case "set_token_mcp_scope":<span class="cov0" title="0">
+                result, err = h.handleSetTokenMCPScope(params.Arguments)</span>
+        case "get_token_scope":<span class="cov0" title="0">
+                result, err = h.handleGetTokenScope(params.Arguments)</span>
+        case "clear_token_scope":<span class="cov0" title="0">
+                result, err = h.handleClearTokenScope(params.Arguments)</span>
         default:<span class="cov8" title="1">
                 logger.Errorf("Unknown tool: %s", params.Name)
                 return NewErrorResponse(req.ID, MethodNotFound, "Tool not found",
@@ -1432,9 +2480,43 @@ func (h *Handler) handleCallTool(req Request) (*Response, error) <span class="co
 // handleCreateUser executes the create_user tool
 func (h *Handler) handleCreateUser(args map[string]interface{}) (interface{},
         error) <span class="cov8" title="1">{
-        if h.userInfo == nil || !h.userInfo.IsSuperuser </span><span class="cov8" title="1">{
+        // Check authentication
+        if h.userInfo == nil || !h.userInfo.IsAuthenticated </span><span class="cov8" title="1">{
                 return nil, fmt.Errorf("permission denied: superuser privileges required")
         }</span>
+
+        // Superusers bypass all privilege checks
+        <span class="cov8" title="1">if !h.userInfo.IsSuperuser </span><span class="cov8" title="1">{
+                // If no database pool (test mode), require superuser
+                if h.dbPool == nil </span><span class="cov8" title="1">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // Service tokens must be superusers for this operation
+                <span class="cov0" title="0">if h.userInfo.IsServiceToken </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // For non-superuser users, check privileges via group membership
+                <span class="cov0" title="0">ctx := context.Background()
+
+                // Get user ID from username
+                var userID int
+                err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+                        h.userInfo.Username).Scan(&amp;userID)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to get user ID: %w", err)
+                }</span>
+
+                // Check if user has privilege to create users
+                <span class="cov0" title="0">canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "create_user")
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to check privileges: %w", err)
+                }</span>
+                <span class="cov0" title="0">if !canAccess </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: insufficient privileges")
+                }</span>
+        }
 
         <span class="cov0" title="0">username, _ := args["username"].(string)   //nolint:errcheck // Optional argument, empty string is acceptable default
         email, _ := args["email"].(string)         //nolint:errcheck // Optional argument, empty string is acceptable default
@@ -1471,9 +2553,43 @@ func (h *Handler) handleCreateUser(args map[string]interface{}) (interface{},
 // handleUpdateUser executes the update_user tool
 func (h *Handler) handleUpdateUser(args map[string]interface{}) (interface{},
         error) <span class="cov8" title="1">{
-        if h.userInfo == nil || !h.userInfo.IsSuperuser </span><span class="cov8" title="1">{
+        // Check authentication
+        if h.userInfo == nil || !h.userInfo.IsAuthenticated </span><span class="cov8" title="1">{
                 return nil, fmt.Errorf("permission denied: superuser privileges required")
         }</span>
+
+        // Superusers bypass all privilege checks
+        <span class="cov8" title="1">if !h.userInfo.IsSuperuser </span><span class="cov8" title="1">{
+                // If no database pool (test mode), require superuser
+                if h.dbPool == nil </span><span class="cov8" title="1">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // Service tokens must be superusers for this operation
+                <span class="cov0" title="0">if h.userInfo.IsServiceToken </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // For non-superuser users, check privileges via group membership
+                <span class="cov0" title="0">ctx := context.Background()
+
+                // Get user ID from username
+                var userID int
+                err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+                        h.userInfo.Username).Scan(&amp;userID)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to get user ID: %w", err)
+                }</span>
+
+                // Check if user has privilege to update users
+                <span class="cov0" title="0">canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "update_user")
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to check privileges: %w", err)
+                }</span>
+                <span class="cov0" title="0">if !canAccess </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: insufficient privileges")
+                }</span>
+        }
 
         <span class="cov0" title="0">username, _ := args["username"].(string) //nolint:errcheck // Required argument, empty string handled by validation
 
@@ -1525,9 +2641,43 @@ func (h *Handler) handleUpdateUser(args map[string]interface{}) (interface{},
 // handleDeleteUser executes the delete_user tool
 func (h *Handler) handleDeleteUser(args map[string]interface{}) (interface{},
         error) <span class="cov8" title="1">{
-        if h.userInfo == nil || !h.userInfo.IsSuperuser </span><span class="cov8" title="1">{
+        // Check authentication
+        if h.userInfo == nil || !h.userInfo.IsAuthenticated </span><span class="cov8" title="1">{
                 return nil, fmt.Errorf("permission denied: superuser privileges required")
         }</span>
+
+        // Superusers bypass all privilege checks
+        <span class="cov8" title="1">if !h.userInfo.IsSuperuser </span><span class="cov8" title="1">{
+                // If no database pool (test mode), require superuser
+                if h.dbPool == nil </span><span class="cov8" title="1">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // Service tokens must be superusers for this operation
+                <span class="cov0" title="0">if h.userInfo.IsServiceToken </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // For non-superuser users, check privileges via group membership
+                <span class="cov0" title="0">ctx := context.Background()
+
+                // Get user ID from username
+                var userID int
+                err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+                        h.userInfo.Username).Scan(&amp;userID)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to get user ID: %w", err)
+                }</span>
+
+                // Check if user has privilege to delete users
+                <span class="cov0" title="0">canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "delete_user")
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to check privileges: %w", err)
+                }</span>
+                <span class="cov0" title="0">if !canAccess </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: insufficient privileges")
+                }</span>
+        }
 
         <span class="cov0" title="0">username, _ := args["username"].(string) //nolint:errcheck // Required argument, empty string handled by validation
 
@@ -1549,9 +2699,43 @@ func (h *Handler) handleDeleteUser(args map[string]interface{}) (interface{},
 // handleCreateServiceToken executes the create_service_token tool
 func (h *Handler) handleCreateServiceToken(args map[string]interface{}) (interface{},
         error) <span class="cov8" title="1">{
-        if h.userInfo == nil || !h.userInfo.IsSuperuser </span><span class="cov8" title="1">{
+        // Check authentication
+        if h.userInfo == nil || !h.userInfo.IsAuthenticated </span><span class="cov8" title="1">{
                 return nil, fmt.Errorf("permission denied: superuser privileges required")
         }</span>
+
+        // Superusers bypass all privilege checks
+        <span class="cov8" title="1">if !h.userInfo.IsSuperuser </span><span class="cov8" title="1">{
+                // If no database pool (test mode), require superuser
+                if h.dbPool == nil </span><span class="cov8" title="1">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // Service tokens must be superusers for this operation
+                <span class="cov0" title="0">if h.userInfo.IsServiceToken </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // For non-superuser users, check privileges via group membership
+                <span class="cov0" title="0">ctx := context.Background()
+
+                // Get user ID from username
+                var userID int
+                err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+                        h.userInfo.Username).Scan(&amp;userID)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to get user ID: %w", err)
+                }</span>
+
+                // Check if user has privilege to create service tokens
+                <span class="cov0" title="0">canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "create_service_token")
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to check privileges: %w", err)
+                }</span>
+                <span class="cov0" title="0">if !canAccess </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: insufficient privileges")
+                }</span>
+        }
 
         <span class="cov0" title="0">name, _ := args["name"].(string)           //nolint:errcheck // Required argument, empty string handled by validation
         isSuperuser, _ := args["isSuperuser"].(bool) //nolint:errcheck // Optional argument, false is acceptable default
@@ -1592,9 +2776,43 @@ func (h *Handler) handleCreateServiceToken(args map[string]interface{}) (interfa
 // handleUpdateServiceToken executes the update_service_token tool
 func (h *Handler) handleUpdateServiceToken(args map[string]interface{}) (interface{},
         error) <span class="cov8" title="1">{
-        if h.userInfo == nil || !h.userInfo.IsSuperuser </span><span class="cov8" title="1">{
+        // Check authentication
+        if h.userInfo == nil || !h.userInfo.IsAuthenticated </span><span class="cov8" title="1">{
                 return nil, fmt.Errorf("permission denied: superuser privileges required")
         }</span>
+
+        // Superusers bypass all privilege checks
+        <span class="cov8" title="1">if !h.userInfo.IsSuperuser </span><span class="cov8" title="1">{
+                // If no database pool (test mode), require superuser
+                if h.dbPool == nil </span><span class="cov8" title="1">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // Service tokens must be superusers for this operation
+                <span class="cov0" title="0">if h.userInfo.IsServiceToken </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // For non-superuser users, check privileges via group membership
+                <span class="cov0" title="0">ctx := context.Background()
+
+                // Get user ID from username
+                var userID int
+                err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+                        h.userInfo.Username).Scan(&amp;userID)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to get user ID: %w", err)
+                }</span>
+
+                // Check if user has privilege to update service tokens
+                <span class="cov0" title="0">canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "update_service_token")
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to check privileges: %w", err)
+                }</span>
+                <span class="cov0" title="0">if !canAccess </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: insufficient privileges")
+                }</span>
+        }
 
         <span class="cov0" title="0">name, _ := args["name"].(string) //nolint:errcheck // Required argument, empty string handled by validation
 
@@ -1643,9 +2861,43 @@ func (h *Handler) handleUpdateServiceToken(args map[string]interface{}) (interfa
 // handleDeleteServiceToken executes the delete_service_token tool
 func (h *Handler) handleDeleteServiceToken(args map[string]interface{}) (interface{},
         error) <span class="cov8" title="1">{
-        if h.userInfo == nil || !h.userInfo.IsSuperuser </span><span class="cov8" title="1">{
+        // Check authentication
+        if h.userInfo == nil || !h.userInfo.IsAuthenticated </span><span class="cov8" title="1">{
                 return nil, fmt.Errorf("permission denied: superuser privileges required")
         }</span>
+
+        // Superusers bypass all privilege checks
+        <span class="cov8" title="1">if !h.userInfo.IsSuperuser </span><span class="cov8" title="1">{
+                // If no database pool (test mode), require superuser
+                if h.dbPool == nil </span><span class="cov8" title="1">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // Service tokens must be superusers for this operation
+                <span class="cov0" title="0">if h.userInfo.IsServiceToken </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // For non-superuser users, check privileges via group membership
+                <span class="cov0" title="0">ctx := context.Background()
+
+                // Get user ID from username
+                var userID int
+                err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+                        h.userInfo.Username).Scan(&amp;userID)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to get user ID: %w", err)
+                }</span>
+
+                // Check if user has privilege to delete service tokens
+                <span class="cov0" title="0">canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "delete_service_token")
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to check privileges: %w", err)
+                }</span>
+                <span class="cov0" title="0">if !canAccess </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: insufficient privileges")
+                }</span>
+        }
 
         <span class="cov0" title="0">name, _ := args["name"].(string) //nolint:errcheck // Required argument, empty string handled by validation
 
@@ -1681,6 +2933,11 @@ func (h *Handler) handleCreateUserToken(args map[string]interface{}) (interface{
         // Check authorization: users can only create tokens for themselves unless they're superuser
         <span class="cov0" title="0">if h.userInfo.Username != username &amp;&amp; !h.userInfo.IsSuperuser </span><span class="cov0" title="0">{
                 return nil, fmt.Errorf("permission denied: can only create tokens for your own account")
+        }</span>
+
+        // If no database pool (test mode), cannot proceed
+        <span class="cov0" title="0">if h.dbPool == nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("database connection required")
         }</span>
 
         <span class="cov0" title="0">var name *string
@@ -1733,6 +2990,11 @@ func (h *Handler) handleListUserTokens(args map[string]interface{}) (interface{}
                 return nil, fmt.Errorf("permission denied: can only list your own tokens")
         }</span>
 
+        // If no database pool (test mode), cannot proceed
+        <span class="cov0" title="0">if h.dbPool == nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("database connection required")
+        }</span>
+
         <span class="cov0" title="0">tokens, err := usermgmt.ListUserTokens(h.dbPool, username)
         if err != nil </span><span class="cov0" title="0">{
                 return nil, err
@@ -1772,6 +3034,11 @@ func (h *Handler) handleDeleteUserToken(args map[string]interface{}) (interface{
         // Check authorization: users can only delete their own tokens unless they're superuser
         <span class="cov0" title="0">if h.userInfo.Username != username &amp;&amp; !h.userInfo.IsSuperuser </span><span class="cov0" title="0">{
                 return nil, fmt.Errorf("permission denied: can only delete your own tokens")
+        }</span>
+
+        // If no database pool (test mode), cannot proceed
+        <span class="cov0" title="0">if h.dbPool == nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("database connection required")
         }</span>
 
         <span class="cov0" title="0">message, err := usermgmt.DeleteUserTokenNonInteractive(h.dbPool, username,
@@ -1979,6 +3246,1247 @@ func (h *Handler) handleAuthenticateUser(args map[string]interface{}) (interface
         }, nil</span>
 }
 
+// handleCreateUserGroup executes the create_user_group tool
+func (h *Handler) handleCreateUserGroup(args map[string]interface{}) (interface{}, error) <span class="cov0" title="0">{
+        // Check authentication
+        if h.userInfo == nil || !h.userInfo.IsAuthenticated </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("permission denied: superuser privileges required")
+        }</span>
+
+        // Superusers bypass all privilege checks
+        <span class="cov0" title="0">if !h.userInfo.IsSuperuser </span><span class="cov0" title="0">{
+                // If no database pool (test mode), require superuser
+                if h.dbPool == nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // Service tokens must be superusers for this operation
+                <span class="cov0" title="0">if h.userInfo.IsServiceToken </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // For non-superuser users, check privileges via group membership
+                <span class="cov0" title="0">ctx := context.Background()
+
+                // Get user ID from username
+                var userID int
+                err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+                        h.userInfo.Username).Scan(&amp;userID)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to get user ID: %w", err)
+                }</span>
+
+                // Check if user has privilege to create user groups
+                <span class="cov0" title="0">canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "create_user_group")
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to check privileges: %w", err)
+                }</span>
+                <span class="cov0" title="0">if !canAccess </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: insufficient privileges")
+                }</span>
+        }
+
+        <span class="cov0" title="0">name, _ := args["name"].(string)               //nolint:errcheck // Optional argument, empty string is acceptable default
+        description, _ := args["description"].(string) //nolint:errcheck // Optional argument, empty string is acceptable default
+
+        ctx := context.Background()
+        groupID, err := groupmgmt.CreateUserGroup(ctx, h.dbPool, name, description)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        <span class="cov0" title="0">return map[string]interface{}{
+                "content": []map[string]interface{}{
+                        {
+                                "type": "text",
+                                "text": fmt.Sprintf("User group '%s' created successfully with ID: %d", name, groupID),
+                        },
+                },
+        }, nil</span>
+}
+
+// handleUpdateUserGroup executes the update_user_group tool
+func (h *Handler) handleUpdateUserGroup(args map[string]interface{}) (interface{}, error) <span class="cov0" title="0">{
+        // Check authentication
+        if h.userInfo == nil || !h.userInfo.IsAuthenticated </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("permission denied: superuser privileges required")
+        }</span>
+
+        // Superusers bypass all privilege checks
+        <span class="cov0" title="0">if !h.userInfo.IsSuperuser </span><span class="cov0" title="0">{
+                // If no database pool (test mode), require superuser
+                if h.dbPool == nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // Service tokens must be superusers for this operation
+                <span class="cov0" title="0">if h.userInfo.IsServiceToken </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // For non-superuser users, check privileges via group membership
+                <span class="cov0" title="0">ctx := context.Background()
+
+                // Get user ID from username
+                var userID int
+                err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+                        h.userInfo.Username).Scan(&amp;userID)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to get user ID: %w", err)
+                }</span>
+
+                // Check if user has privilege to update user groups
+                <span class="cov0" title="0">canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "update_user_group")
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to check privileges: %w", err)
+                }</span>
+                <span class="cov0" title="0">if !canAccess </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: insufficient privileges")
+                }</span>
+        }
+
+        <span class="cov0" title="0">groupIDFloat, ok := args["groupId"].(float64)
+        if !ok </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("invalid groupId parameter")
+        }</span>
+        <span class="cov0" title="0">groupID := int(groupIDFloat)
+
+        name, _ := args["name"].(string)               //nolint:errcheck // Optional argument, empty string is acceptable default
+        description, _ := args["description"].(string) //nolint:errcheck // Optional argument, empty string is acceptable default
+
+        ctx := context.Background()
+        err := groupmgmt.UpdateUserGroup(ctx, h.dbPool, groupID, name, description)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        <span class="cov0" title="0">return map[string]interface{}{
+                "content": []map[string]interface{}{
+                        {
+                                "type": "text",
+                                "text": fmt.Sprintf("User group %d updated successfully", groupID),
+                        },
+                },
+        }, nil</span>
+}
+
+// handleDeleteUserGroup executes the delete_user_group tool
+func (h *Handler) handleDeleteUserGroup(args map[string]interface{}) (interface{}, error) <span class="cov0" title="0">{
+        // Check authentication
+        if h.userInfo == nil || !h.userInfo.IsAuthenticated </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("permission denied: superuser privileges required")
+        }</span>
+
+        // Superusers bypass all privilege checks
+        <span class="cov0" title="0">if !h.userInfo.IsSuperuser </span><span class="cov0" title="0">{
+                // If no database pool (test mode), require superuser
+                if h.dbPool == nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // Service tokens must be superusers for this operation
+                <span class="cov0" title="0">if h.userInfo.IsServiceToken </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // For non-superuser users, check privileges via group membership
+                <span class="cov0" title="0">ctx := context.Background()
+
+                // Get user ID from username
+                var userID int
+                err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+                        h.userInfo.Username).Scan(&amp;userID)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to get user ID: %w", err)
+                }</span>
+
+                // Check if user has privilege to delete user groups
+                <span class="cov0" title="0">canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "delete_user_group")
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to check privileges: %w", err)
+                }</span>
+                <span class="cov0" title="0">if !canAccess </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: insufficient privileges")
+                }</span>
+        }
+
+        <span class="cov0" title="0">groupIDFloat, ok := args["groupId"].(float64)
+        if !ok </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("invalid groupId parameter")
+        }</span>
+        <span class="cov0" title="0">groupID := int(groupIDFloat)
+
+        ctx := context.Background()
+        err := groupmgmt.DeleteUserGroup(ctx, h.dbPool, groupID)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        <span class="cov0" title="0">return map[string]interface{}{
+                "content": []map[string]interface{}{
+                        {
+                                "type": "text",
+                                "text": fmt.Sprintf("User group %d deleted successfully", groupID),
+                        },
+                },
+        }, nil</span>
+}
+
+// handleListUserGroups executes the list_user_groups tool
+func (h *Handler) handleListUserGroups(args map[string]interface{}) (interface{}, error) <span class="cov0" title="0">{
+        // Check authentication
+        if h.userInfo == nil || !h.userInfo.IsAuthenticated </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("permission denied: superuser privileges required")
+        }</span>
+
+        // Superusers bypass all privilege checks
+        <span class="cov0" title="0">if !h.userInfo.IsSuperuser </span><span class="cov0" title="0">{
+                // If no database pool (test mode), require superuser
+                if h.dbPool == nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // Service tokens must be superusers for this operation
+                <span class="cov0" title="0">if h.userInfo.IsServiceToken </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // For non-superuser users, check privileges via group membership
+                <span class="cov0" title="0">ctx := context.Background()
+
+                // Get user ID from username
+                var userID int
+                err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+                        h.userInfo.Username).Scan(&amp;userID)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to get user ID: %w", err)
+                }</span>
+
+                // Check if user has privilege to list user groups
+                <span class="cov0" title="0">canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "list_user_groups")
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to check privileges: %w", err)
+                }</span>
+                <span class="cov0" title="0">if !canAccess </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: insufficient privileges")
+                }</span>
+        }
+
+        <span class="cov0" title="0">ctx := context.Background()
+        groups, err := groupmgmt.ListUserGroups(ctx, h.dbPool)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        // Format groups as JSON string
+        <span class="cov0" title="0">groupsJSON, err := json.Marshal(groups)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to marshal groups: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">return map[string]interface{}{
+                "content": []map[string]interface{}{
+                        {
+                                "type": "text",
+                                "text": fmt.Sprintf("User groups:\n%s", string(groupsJSON)),
+                        },
+                },
+        }, nil</span>
+}
+
+// handleAddGroupMember executes the add_group_member tool
+func (h *Handler) handleAddGroupMember(args map[string]interface{}) (interface{}, error) <span class="cov0" title="0">{
+        // Check authentication
+        if h.userInfo == nil || !h.userInfo.IsAuthenticated </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("permission denied: superuser privileges required")
+        }</span>
+
+        // Superusers bypass all privilege checks
+        <span class="cov0" title="0">if !h.userInfo.IsSuperuser </span><span class="cov0" title="0">{
+                // If no database pool (test mode), require superuser
+                if h.dbPool == nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // Service tokens must be superusers for this operation
+                <span class="cov0" title="0">if h.userInfo.IsServiceToken </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // For non-superuser users, check privileges via group membership
+                <span class="cov0" title="0">ctx := context.Background()
+
+                // Get user ID from username
+                var userID int
+                err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+                        h.userInfo.Username).Scan(&amp;userID)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to get user ID: %w", err)
+                }</span>
+
+                // Check if user has privilege to add group members
+                <span class="cov0" title="0">canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "add_group_member")
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to check privileges: %w", err)
+                }</span>
+                <span class="cov0" title="0">if !canAccess </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: insufficient privileges")
+                }</span>
+        }
+
+        <span class="cov0" title="0">parentGroupIDFloat, ok := args["parentGroupId"].(float64)
+        if !ok </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("invalid parentGroupId parameter")
+        }</span>
+        <span class="cov0" title="0">parentGroupID := int(parentGroupIDFloat)
+
+        var memberUserID *int
+        var memberGroupID *int
+
+        if userIDFloat, ok := args["memberUserId"].(float64); ok </span><span class="cov0" title="0">{
+                uid := int(userIDFloat)
+                memberUserID = &amp;uid
+        }</span>
+
+        <span class="cov0" title="0">if groupIDFloat, ok := args["memberGroupId"].(float64); ok </span><span class="cov0" title="0">{
+                gid := int(groupIDFloat)
+                memberGroupID = &amp;gid
+        }</span>
+
+        <span class="cov0" title="0">ctx := context.Background()
+        err := groupmgmt.AddGroupMember(ctx, h.dbPool, parentGroupID, memberUserID, memberGroupID)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        <span class="cov0" title="0">memberType := "user"
+        memberID := 0
+        if memberUserID != nil </span><span class="cov0" title="0">{
+                memberID = *memberUserID
+        }</span> else<span class="cov0" title="0"> {
+                memberType = "group"
+                memberID = *memberGroupID
+        }</span>
+
+        <span class="cov0" title="0">return map[string]interface{}{
+                "content": []map[string]interface{}{
+                        {
+                                "type": "text",
+                                "text": fmt.Sprintf("Added %s %d as member of group %d", memberType, memberID, parentGroupID),
+                        },
+                },
+        }, nil</span>
+}
+
+// handleRemoveGroupMember executes the remove_group_member tool
+func (h *Handler) handleRemoveGroupMember(args map[string]interface{}) (interface{}, error) <span class="cov0" title="0">{
+        // Check authentication
+        if h.userInfo == nil || !h.userInfo.IsAuthenticated </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("permission denied: superuser privileges required")
+        }</span>
+
+        // Superusers bypass all privilege checks
+        <span class="cov0" title="0">if !h.userInfo.IsSuperuser </span><span class="cov0" title="0">{
+                // If no database pool (test mode), require superuser
+                if h.dbPool == nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // Service tokens must be superusers for this operation
+                <span class="cov0" title="0">if h.userInfo.IsServiceToken </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // For non-superuser users, check privileges via group membership
+                <span class="cov0" title="0">ctx := context.Background()
+
+                // Get user ID from username
+                var userID int
+                err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+                        h.userInfo.Username).Scan(&amp;userID)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to get user ID: %w", err)
+                }</span>
+
+                // Check if user has privilege to remove group members
+                <span class="cov0" title="0">canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "remove_group_member")
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to check privileges: %w", err)
+                }</span>
+                <span class="cov0" title="0">if !canAccess </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: insufficient privileges")
+                }</span>
+        }
+
+        <span class="cov0" title="0">parentGroupIDFloat, ok := args["parentGroupId"].(float64)
+        if !ok </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("invalid parentGroupId parameter")
+        }</span>
+        <span class="cov0" title="0">parentGroupID := int(parentGroupIDFloat)
+
+        var memberUserID *int
+        var memberGroupID *int
+
+        if userIDFloat, ok := args["memberUserId"].(float64); ok </span><span class="cov0" title="0">{
+                uid := int(userIDFloat)
+                memberUserID = &amp;uid
+        }</span>
+
+        <span class="cov0" title="0">if groupIDFloat, ok := args["memberGroupId"].(float64); ok </span><span class="cov0" title="0">{
+                gid := int(groupIDFloat)
+                memberGroupID = &amp;gid
+        }</span>
+
+        <span class="cov0" title="0">ctx := context.Background()
+        err := groupmgmt.RemoveGroupMember(ctx, h.dbPool, parentGroupID, memberUserID, memberGroupID)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        <span class="cov0" title="0">memberType := "user"
+        memberID := 0
+        if memberUserID != nil </span><span class="cov0" title="0">{
+                memberID = *memberUserID
+        }</span> else<span class="cov0" title="0"> {
+                memberType = "group"
+                memberID = *memberGroupID
+        }</span>
+
+        <span class="cov0" title="0">return map[string]interface{}{
+                "content": []map[string]interface{}{
+                        {
+                                "type": "text",
+                                "text": fmt.Sprintf("Removed %s %d from group %d", memberType, memberID, parentGroupID),
+                        },
+                },
+        }, nil</span>
+}
+
+// handleListGroupMembers executes the list_group_members tool
+func (h *Handler) handleListGroupMembers(args map[string]interface{}) (interface{}, error) <span class="cov0" title="0">{
+        // Check authentication
+        if h.userInfo == nil || !h.userInfo.IsAuthenticated </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("permission denied: superuser privileges required")
+        }</span>
+
+        // Superusers bypass all privilege checks
+        <span class="cov0" title="0">if !h.userInfo.IsSuperuser </span><span class="cov0" title="0">{
+                // If no database pool (test mode), require superuser
+                if h.dbPool == nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // Service tokens must be superusers for this operation
+                <span class="cov0" title="0">if h.userInfo.IsServiceToken </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // For non-superuser users, check privileges via group membership
+                <span class="cov0" title="0">ctx := context.Background()
+
+                // Get user ID from username
+                var userID int
+                err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+                        h.userInfo.Username).Scan(&amp;userID)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to get user ID: %w", err)
+                }</span>
+
+                // Check if user has privilege to list group members
+                <span class="cov0" title="0">canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "list_group_members")
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to check privileges: %w", err)
+                }</span>
+                <span class="cov0" title="0">if !canAccess </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: insufficient privileges")
+                }</span>
+        }
+
+        <span class="cov0" title="0">groupIDFloat, ok := args["groupId"].(float64)
+        if !ok </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("invalid groupId parameter")
+        }</span>
+        <span class="cov0" title="0">groupID := int(groupIDFloat)
+
+        ctx := context.Background()
+        members, err := groupmgmt.ListGroupMembers(ctx, h.dbPool, groupID)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        // Format members as JSON string
+        <span class="cov0" title="0">membersJSON, err := json.Marshal(members)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to marshal members: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">return map[string]interface{}{
+                "content": []map[string]interface{}{
+                        {
+                                "type": "text",
+                                "text": fmt.Sprintf("Members of group %d:\n%s", groupID, string(membersJSON)),
+                        },
+                },
+        }, nil</span>
+}
+
+// handleListUserGroupMemberships executes the list_user_group_memberships tool
+func (h *Handler) handleListUserGroupMemberships(args map[string]interface{}) (interface{}, error) <span class="cov0" title="0">{
+        // Check authentication
+        if h.userInfo == nil || !h.userInfo.IsAuthenticated </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("permission denied: superuser privileges required")
+        }</span>
+
+        // Superusers bypass all privilege checks
+        <span class="cov0" title="0">if !h.userInfo.IsSuperuser </span><span class="cov0" title="0">{
+                // If no database pool (test mode), require superuser
+                if h.dbPool == nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // Service tokens must be superusers for this operation
+                <span class="cov0" title="0">if h.userInfo.IsServiceToken </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // For non-superuser users, check privileges via group membership
+                <span class="cov0" title="0">ctx := context.Background()
+
+                // Get user ID from username
+                var userID int
+                err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+                        h.userInfo.Username).Scan(&amp;userID)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to get user ID: %w", err)
+                }</span>
+
+                // Check if user has privilege to list user group memberships
+                <span class="cov0" title="0">canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "list_user_group_memberships")
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to check privileges: %w", err)
+                }</span>
+                <span class="cov0" title="0">if !canAccess </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: insufficient privileges")
+                }</span>
+        }
+
+        <span class="cov0" title="0">username, ok := args["username"].(string)
+        if !ok </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("invalid username parameter")
+        }</span>
+
+        // Get user ID from username
+        <span class="cov0" title="0">ctx := context.Background()
+        var userID int
+        err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1", username).Scan(&amp;userID)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("user not found: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">groups, err := groupmgmt.ListUserGroupMemberships(ctx, h.dbPool, userID)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        // Format groups as JSON string
+        <span class="cov0" title="0">groupsJSON, err := json.Marshal(groups)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to marshal groups: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">return map[string]interface{}{
+                "content": []map[string]interface{}{
+                        {
+                                "type": "text",
+                                "text": fmt.Sprintf("Groups for user '%s' (direct and indirect):\n%s", username, string(groupsJSON)),
+                        },
+                },
+        }, nil</span>
+}
+
+// handleGrantConnectionPrivilege executes the grant_connection_privilege tool
+func (h *Handler) handleGrantConnectionPrivilege(args map[string]interface{}) (interface{}, error) <span class="cov0" title="0">{
+        // Check authentication
+        if h.userInfo == nil || !h.userInfo.IsAuthenticated </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("permission denied: superuser privileges required")
+        }</span>
+
+        // Superusers bypass all privilege checks
+        <span class="cov0" title="0">if !h.userInfo.IsSuperuser </span><span class="cov0" title="0">{
+                // If no database pool (test mode), require superuser
+                if h.dbPool == nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // Service tokens must be superusers for this operation
+                <span class="cov0" title="0">if h.userInfo.IsServiceToken </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // For non-superuser users, check privileges via group membership
+                <span class="cov0" title="0">ctx := context.Background()
+
+                // Get user ID from username
+                var userID int
+                err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+                        h.userInfo.Username).Scan(&amp;userID)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to get user ID: %w", err)
+                }</span>
+
+                // Check if user has privilege to grant connection privileges
+                <span class="cov0" title="0">canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "grant_connection_privilege")
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to check privileges: %w", err)
+                }</span>
+                <span class="cov0" title="0">if !canAccess </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: insufficient privileges")
+                }</span>
+        }
+
+        <span class="cov0" title="0">groupID := int(args["groupId"].(float64))       //nolint:errcheck // Type assertion, JSON numbers are float64
+        connectionID := int(args["connectionId"].(float64)) //nolint:errcheck // Type assertion
+        accessLevel, _ := args["accessLevel"].(string)  //nolint:errcheck // Optional argument
+
+        ctx := context.Background()
+        err := groupmgmt.GrantConnectionPrivilege(ctx, h.dbPool, groupID, connectionID, accessLevel)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        <span class="cov0" title="0">return map[string]interface{}{
+                "content": []map[string]interface{}{
+                        {
+                                "type": "text",
+                                "text": fmt.Sprintf("Connection privilege granted: group %d can access connection %d with level '%s'", groupID, connectionID, accessLevel),
+                        },
+                },
+        }, nil</span>
+}
+
+// handleRevokeConnectionPrivilege executes the revoke_connection_privilege tool
+func (h *Handler) handleRevokeConnectionPrivilege(args map[string]interface{}) (interface{}, error) <span class="cov0" title="0">{
+        // Check authentication
+        if h.userInfo == nil || !h.userInfo.IsAuthenticated </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("permission denied: superuser privileges required")
+        }</span>
+
+        // Superusers bypass all privilege checks
+        <span class="cov0" title="0">if !h.userInfo.IsSuperuser </span><span class="cov0" title="0">{
+                // If no database pool (test mode), require superuser
+                if h.dbPool == nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // Service tokens must be superusers for this operation
+                <span class="cov0" title="0">if h.userInfo.IsServiceToken </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // For non-superuser users, check privileges via group membership
+                <span class="cov0" title="0">ctx := context.Background()
+
+                // Get user ID from username
+                var userID int
+                err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+                        h.userInfo.Username).Scan(&amp;userID)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to get user ID: %w", err)
+                }</span>
+
+                // Check if user has privilege to revoke connection privileges
+                <span class="cov0" title="0">canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "revoke_connection_privilege")
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to check privileges: %w", err)
+                }</span>
+                <span class="cov0" title="0">if !canAccess </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: insufficient privileges")
+                }</span>
+        }
+
+        <span class="cov0" title="0">groupID := int(args["groupId"].(float64))       //nolint:errcheck // Type assertion
+        connectionID := int(args["connectionId"].(float64)) //nolint:errcheck // Type assertion
+
+        ctx := context.Background()
+        err := groupmgmt.RevokeConnectionPrivilege(ctx, h.dbPool, groupID, connectionID)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        <span class="cov0" title="0">return map[string]interface{}{
+                "content": []map[string]interface{}{
+                        {
+                                "type": "text",
+                                "text": fmt.Sprintf("Connection privilege revoked: group %d no longer has access to connection %d", groupID, connectionID),
+                        },
+                },
+        }, nil</span>
+}
+
+// handleListConnectionPrivileges executes the list_connection_privileges tool
+func (h *Handler) handleListConnectionPrivileges(args map[string]interface{}) (interface{}, error) <span class="cov0" title="0">{
+        // Check authentication
+        if h.userInfo == nil || !h.userInfo.IsAuthenticated </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("permission denied: superuser privileges required")
+        }</span>
+
+        // Superusers bypass all privilege checks
+        <span class="cov0" title="0">if !h.userInfo.IsSuperuser </span><span class="cov0" title="0">{
+                // If no database pool (test mode), require superuser
+                if h.dbPool == nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // Service tokens must be superusers for this operation
+                <span class="cov0" title="0">if h.userInfo.IsServiceToken </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // For non-superuser users, check privileges via group membership
+                <span class="cov0" title="0">ctx := context.Background()
+
+                // Get user ID from username
+                var userID int
+                err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+                        h.userInfo.Username).Scan(&amp;userID)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to get user ID: %w", err)
+                }</span>
+
+                // Check if user has privilege to list connection privileges
+                <span class="cov0" title="0">canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "list_connection_privileges")
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to check privileges: %w", err)
+                }</span>
+                <span class="cov0" title="0">if !canAccess </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: insufficient privileges")
+                }</span>
+        }
+
+        <span class="cov0" title="0">connectionID := int(args["connectionId"].(float64)) //nolint:errcheck // Type assertion
+
+        ctx := context.Background()
+        privileges, err := groupmgmt.ListConnectionPrivileges(ctx, h.dbPool, connectionID)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        // Format privileges as JSON string
+        <span class="cov0" title="0">privilegesJSON, err := json.Marshal(privileges)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to marshal privileges: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">return map[string]interface{}{
+                "content": []map[string]interface{}{
+                        {
+                                "type": "text",
+                                "text": fmt.Sprintf("Connection privileges for connection %d:\n%s", connectionID, string(privilegesJSON)),
+                        },
+                },
+        }, nil</span>
+}
+
+// handleListMCPPrivilegeIdentifiers executes the list_mcp_privilege_identifiers tool
+func (h *Handler) handleListMCPPrivilegeIdentifiers(args map[string]interface{}) (interface{}, error) <span class="cov0" title="0">{
+        // Check authentication
+        if h.userInfo == nil || !h.userInfo.IsAuthenticated </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("permission denied: superuser privileges required")
+        }</span>
+
+        // Superusers bypass all privilege checks
+        <span class="cov0" title="0">if !h.userInfo.IsSuperuser </span><span class="cov0" title="0">{
+                // If no database pool (test mode), require superuser
+                if h.dbPool == nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // Service tokens must be superusers for this operation
+                <span class="cov0" title="0">if h.userInfo.IsServiceToken </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // For non-superuser users, check privileges via group membership
+                <span class="cov0" title="0">ctx := context.Background()
+
+                // Get user ID from username
+                var userID int
+                err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+                        h.userInfo.Username).Scan(&amp;userID)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to get user ID: %w", err)
+                }</span>
+
+                // Check if user has privilege to list MCP privilege identifiers
+                <span class="cov0" title="0">canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "list_mcp_privilege_identifiers")
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to check privileges: %w", err)
+                }</span>
+                <span class="cov0" title="0">if !canAccess </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: insufficient privileges")
+                }</span>
+        }
+
+        <span class="cov0" title="0">ctx := context.Background()
+        identifiers, err := groupmgmt.ListMCPPrivilegeIdentifiers(ctx, h.dbPool)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        // Format identifiers as JSON string
+        <span class="cov0" title="0">identifiersJSON, err := json.Marshal(identifiers)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to marshal identifiers: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">return map[string]interface{}{
+                "content": []map[string]interface{}{
+                        {
+                                "type": "text",
+                                "text": fmt.Sprintf("MCP privilege identifiers:\n%s", string(identifiersJSON)),
+                        },
+                },
+        }, nil</span>
+}
+
+// handleGrantMCPPrivilege executes the grant_mcp_privilege tool
+func (h *Handler) handleGrantMCPPrivilege(args map[string]interface{}) (interface{}, error) <span class="cov0" title="0">{
+        // Check authentication
+        if h.userInfo == nil || !h.userInfo.IsAuthenticated </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("permission denied: superuser privileges required")
+        }</span>
+
+        // Superusers bypass all privilege checks
+        <span class="cov0" title="0">if !h.userInfo.IsSuperuser </span><span class="cov0" title="0">{
+                // If no database pool (test mode), require superuser
+                if h.dbPool == nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // Service tokens must be superusers for this operation
+                <span class="cov0" title="0">if h.userInfo.IsServiceToken </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // For non-superuser users, check privileges via group membership
+                <span class="cov0" title="0">ctx := context.Background()
+
+                // Get user ID from username
+                var userID int
+                err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+                        h.userInfo.Username).Scan(&amp;userID)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to get user ID: %w", err)
+                }</span>
+
+                // Check if user has privilege to grant MCP privileges
+                <span class="cov0" title="0">canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "grant_mcp_privilege")
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to check privileges: %w", err)
+                }</span>
+                <span class="cov0" title="0">if !canAccess </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: insufficient privileges")
+                }</span>
+        }
+
+        <span class="cov0" title="0">groupID := int(args["groupId"].(float64))            //nolint:errcheck // Type assertion
+        privilegeIdentifier, _ := args["privilegeIdentifier"].(string) //nolint:errcheck // Type assertion
+
+        ctx := context.Background()
+        err := groupmgmt.GrantMCPPrivilege(ctx, h.dbPool, groupID, privilegeIdentifier)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        <span class="cov0" title="0">return map[string]interface{}{
+                "content": []map[string]interface{}{
+                        {
+                                "type": "text",
+                                "text": fmt.Sprintf("MCP privilege granted: group %d can now access '%s'", groupID, privilegeIdentifier),
+                        },
+                },
+        }, nil</span>
+}
+
+// handleRevokeMCPPrivilege executes the revoke_mcp_privilege tool
+func (h *Handler) handleRevokeMCPPrivilege(args map[string]interface{}) (interface{}, error) <span class="cov0" title="0">{
+        // Check authentication
+        if h.userInfo == nil || !h.userInfo.IsAuthenticated </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("permission denied: superuser privileges required")
+        }</span>
+
+        // Superusers bypass all privilege checks
+        <span class="cov0" title="0">if !h.userInfo.IsSuperuser </span><span class="cov0" title="0">{
+                // If no database pool (test mode), require superuser
+                if h.dbPool == nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // Service tokens must be superusers for this operation
+                <span class="cov0" title="0">if h.userInfo.IsServiceToken </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // For non-superuser users, check privileges via group membership
+                <span class="cov0" title="0">ctx := context.Background()
+
+                // Get user ID from username
+                var userID int
+                err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+                        h.userInfo.Username).Scan(&amp;userID)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to get user ID: %w", err)
+                }</span>
+
+                // Check if user has privilege to revoke MCP privileges
+                <span class="cov0" title="0">canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "revoke_mcp_privilege")
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to check privileges: %w", err)
+                }</span>
+                <span class="cov0" title="0">if !canAccess </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: insufficient privileges")
+                }</span>
+        }
+
+        <span class="cov0" title="0">groupID := int(args["groupId"].(float64))            //nolint:errcheck // Type assertion
+        privilegeIdentifier, _ := args["privilegeIdentifier"].(string) //nolint:errcheck // Type assertion
+
+        ctx := context.Background()
+        err := groupmgmt.RevokeMCPPrivilege(ctx, h.dbPool, groupID, privilegeIdentifier)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        <span class="cov0" title="0">return map[string]interface{}{
+                "content": []map[string]interface{}{
+                        {
+                                "type": "text",
+                                "text": fmt.Sprintf("MCP privilege revoked: group %d no longer has access to '%s'", groupID, privilegeIdentifier),
+                        },
+                },
+        }, nil</span>
+}
+
+// handleListGroupMCPPrivileges executes the list_group_mcp_privileges tool
+func (h *Handler) handleListGroupMCPPrivileges(args map[string]interface{}) (interface{}, error) <span class="cov0" title="0">{
+        // Check authentication
+        if h.userInfo == nil || !h.userInfo.IsAuthenticated </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("permission denied: superuser privileges required")
+        }</span>
+
+        // Superusers bypass all privilege checks
+        <span class="cov0" title="0">if !h.userInfo.IsSuperuser </span><span class="cov0" title="0">{
+                // If no database pool (test mode), require superuser
+                if h.dbPool == nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // Service tokens must be superusers for this operation
+                <span class="cov0" title="0">if h.userInfo.IsServiceToken </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // For non-superuser users, check privileges via group membership
+                <span class="cov0" title="0">ctx := context.Background()
+
+                // Get user ID from username
+                var userID int
+                err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+                        h.userInfo.Username).Scan(&amp;userID)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to get user ID: %w", err)
+                }</span>
+
+                // Check if user has privilege to list group MCP privileges
+                <span class="cov0" title="0">canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "list_group_mcp_privileges")
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to check privileges: %w", err)
+                }</span>
+                <span class="cov0" title="0">if !canAccess </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: insufficient privileges")
+                }</span>
+        }
+
+        <span class="cov0" title="0">groupID := int(args["groupId"].(float64)) //nolint:errcheck // Type assertion
+
+        ctx := context.Background()
+        privileges, err := groupmgmt.ListGroupMCPPrivileges(ctx, h.dbPool, groupID)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        // Format privileges as JSON string
+        <span class="cov0" title="0">privilegesJSON, err := json.Marshal(privileges)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to marshal privileges: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">return map[string]interface{}{
+                "content": []map[string]interface{}{
+                        {
+                                "type": "text",
+                                "text": fmt.Sprintf("MCP privileges for group %d:\n%s", groupID, string(privilegesJSON)),
+                        },
+                },
+        }, nil</span>
+}
+
+// handleSetTokenConnectionScope executes the set_token_connection_scope tool
+func (h *Handler) handleSetTokenConnectionScope(args map[string]interface{}) (interface{}, error) <span class="cov0" title="0">{
+        // Check authentication
+        if h.userInfo == nil || !h.userInfo.IsAuthenticated </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("permission denied: superuser privileges required")
+        }</span>
+
+        // Superusers bypass all privilege checks
+        <span class="cov0" title="0">if !h.userInfo.IsSuperuser </span><span class="cov0" title="0">{
+                // If no database pool (test mode), require superuser
+                if h.dbPool == nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // Service tokens must be superusers for this operation
+                <span class="cov0" title="0">if h.userInfo.IsServiceToken </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // For non-superuser users, check privileges via group membership
+                <span class="cov0" title="0">ctx := context.Background()
+
+                // Get user ID from username
+                var userID int
+                err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+                        h.userInfo.Username).Scan(&amp;userID)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to get user ID: %w", err)
+                }</span>
+
+                // Check if user has privilege to set token connection scope
+                <span class="cov0" title="0">canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "set_token_connection_scope")
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to check privileges: %w", err)
+                }</span>
+                <span class="cov0" title="0">if !canAccess </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: insufficient privileges")
+                }</span>
+        }
+
+        <span class="cov0" title="0">tokenID := int(args["tokenId"].(float64))      //nolint:errcheck // Type assertion
+        tokenType, _ := args["tokenType"].(string)     //nolint:errcheck // Type assertion
+        connectionIDsRaw, _ := args["connectionIds"].([]interface{}) //nolint:errcheck // Type assertion
+
+        // Convert []interface{} to []int
+        connectionIDs := make([]int, len(connectionIDsRaw))
+        for i, v := range connectionIDsRaw </span><span class="cov0" title="0">{
+                connectionIDs[i] = int(v.(float64)) //nolint:errcheck // Type assertion
+        }</span>
+
+        <span class="cov0" title="0">ctx := context.Background()
+        err := groupmgmt.SetTokenConnectionScope(ctx, h.dbPool, tokenID, tokenType, connectionIDs)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        <span class="cov0" title="0">return map[string]interface{}{
+                "content": []map[string]interface{}{
+                        {
+                                "type": "text",
+                                "text": fmt.Sprintf("Token connection scope set: %s token %d is now limited to %d connection(s)", tokenType, tokenID, len(connectionIDs)),
+                        },
+                },
+        }, nil</span>
+}
+
+// handleSetTokenMCPScope executes the set_token_mcp_scope tool
+func (h *Handler) handleSetTokenMCPScope(args map[string]interface{}) (interface{}, error) <span class="cov0" title="0">{
+        // Check authentication
+        if h.userInfo == nil || !h.userInfo.IsAuthenticated </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("permission denied: superuser privileges required")
+        }</span>
+
+        // Superusers bypass all privilege checks
+        <span class="cov0" title="0">if !h.userInfo.IsSuperuser </span><span class="cov0" title="0">{
+                // If no database pool (test mode), require superuser
+                if h.dbPool == nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // Service tokens must be superusers for this operation
+                <span class="cov0" title="0">if h.userInfo.IsServiceToken </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // For non-superuser users, check privileges via group membership
+                <span class="cov0" title="0">ctx := context.Background()
+
+                // Get user ID from username
+                var userID int
+                err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+                        h.userInfo.Username).Scan(&amp;userID)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to get user ID: %w", err)
+                }</span>
+
+                // Check if user has privilege to set token MCP scope
+                <span class="cov0" title="0">canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "set_token_mcp_scope")
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to check privileges: %w", err)
+                }</span>
+                <span class="cov0" title="0">if !canAccess </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: insufficient privileges")
+                }</span>
+        }
+
+        <span class="cov0" title="0">tokenID := int(args["tokenId"].(float64))      //nolint:errcheck // Type assertion
+        tokenType, _ := args["tokenType"].(string)     //nolint:errcheck // Type assertion
+        privilegeIdentifiersRaw, _ := args["privilegeIdentifiers"].([]interface{}) //nolint:errcheck // Type assertion
+
+        // Convert []interface{} to []string
+        privilegeIdentifiers := make([]string, len(privilegeIdentifiersRaw))
+        for i, v := range privilegeIdentifiersRaw </span><span class="cov0" title="0">{
+                privilegeIdentifiers[i], _ = v.(string) //nolint:errcheck // Type assertion
+        }</span>
+
+        <span class="cov0" title="0">ctx := context.Background()
+        err := groupmgmt.SetTokenMCPScope(ctx, h.dbPool, tokenID, tokenType, privilegeIdentifiers)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        <span class="cov0" title="0">return map[string]interface{}{
+                "content": []map[string]interface{}{
+                        {
+                                "type": "text",
+                                "text": fmt.Sprintf("Token MCP scope set: %s token %d is now limited to %d MCP item(s)", tokenType, tokenID, len(privilegeIdentifiers)),
+                        },
+                },
+        }, nil</span>
+}
+
+// handleGetTokenScope executes the get_token_scope tool
+func (h *Handler) handleGetTokenScope(args map[string]interface{}) (interface{}, error) <span class="cov0" title="0">{
+        // Check authentication
+        if h.userInfo == nil || !h.userInfo.IsAuthenticated </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("permission denied: superuser privileges required")
+        }</span>
+
+        // Superusers bypass all privilege checks
+        <span class="cov0" title="0">if !h.userInfo.IsSuperuser </span><span class="cov0" title="0">{
+                // If no database pool (test mode), require superuser
+                if h.dbPool == nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // Service tokens must be superusers for this operation
+                <span class="cov0" title="0">if h.userInfo.IsServiceToken </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // For non-superuser users, check privileges via group membership
+                <span class="cov0" title="0">ctx := context.Background()
+
+                // Get user ID from username
+                var userID int
+                err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+                        h.userInfo.Username).Scan(&amp;userID)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to get user ID: %w", err)
+                }</span>
+
+                // Check if user has privilege to get token scope
+                <span class="cov0" title="0">canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "get_token_scope")
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to check privileges: %w", err)
+                }</span>
+                <span class="cov0" title="0">if !canAccess </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: insufficient privileges")
+                }</span>
+        }
+
+        <span class="cov0" title="0">tokenID := int(args["tokenId"].(float64))  //nolint:errcheck // Type assertion
+        tokenType, _ := args["tokenType"].(string) //nolint:errcheck // Type assertion
+
+        ctx := context.Background()
+        scope, err := groupmgmt.GetTokenScope(ctx, h.dbPool, tokenID, tokenType)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        // Format scope as JSON string
+        <span class="cov0" title="0">scopeJSON, err := json.Marshal(scope)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to marshal scope: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">return map[string]interface{}{
+                "content": []map[string]interface{}{
+                        {
+                                "type": "text",
+                                "text": fmt.Sprintf("Scope for %s token %d:\n%s", tokenType, tokenID, string(scopeJSON)),
+                        },
+                },
+        }, nil</span>
+}
+
+// handleClearTokenScope executes the clear_token_scope tool
+func (h *Handler) handleClearTokenScope(args map[string]interface{}) (interface{}, error) <span class="cov0" title="0">{
+        // Check authentication
+        if h.userInfo == nil || !h.userInfo.IsAuthenticated </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("permission denied: superuser privileges required")
+        }</span>
+
+        // Superusers bypass all privilege checks
+        <span class="cov0" title="0">if !h.userInfo.IsSuperuser </span><span class="cov0" title="0">{
+                // If no database pool (test mode), require superuser
+                if h.dbPool == nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // Service tokens must be superusers for this operation
+                <span class="cov0" title="0">if h.userInfo.IsServiceToken </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // For non-superuser users, check privileges via group membership
+                <span class="cov0" title="0">ctx := context.Background()
+
+                // Get user ID from username
+                var userID int
+                err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+                        h.userInfo.Username).Scan(&amp;userID)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to get user ID: %w", err)
+                }</span>
+
+                // Check if user has privilege to clear token scope
+                <span class="cov0" title="0">canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "clear_token_scope")
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to check privileges: %w", err)
+                }</span>
+                <span class="cov0" title="0">if !canAccess </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: insufficient privileges")
+                }</span>
+        }
+
+        <span class="cov0" title="0">tokenID := int(args["tokenId"].(float64))  //nolint:errcheck // Type assertion
+        tokenType, _ := args["tokenType"].(string) //nolint:errcheck // Type assertion
+
+        ctx := context.Background()
+        err := groupmgmt.ClearTokenScope(ctx, h.dbPool, tokenID, tokenType)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        <span class="cov0" title="0">return map[string]interface{}{
+                "content": []map[string]interface{}{
+                        {
+                                "type": "text",
+                                "text": fmt.Sprintf("All scope restrictions cleared for %s token %d", tokenType, tokenID),
+                        },
+                },
+        }, nil</span>
+}
+
 // FormatResponse formats a response as JSON
 func FormatResponse(resp *Response) ([]byte, error) <span class="cov8" title="1">{
         data, err := json.Marshal(resp)
@@ -1990,6 +4498,267 @@ func FormatResponse(resp *Response) ([]byte, error) <span class="cov8" title="1"
 </pre>
 		
 		<pre class="file" id="file5" style="display: none">/*-------------------------------------------------------------------------
+ *
+ * pgEdge AI Workbench
+ *
+ * Copyright (c) 2025, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-------------------------------------------------------------------------
+ */
+
+package middleware
+
+import (
+    "fmt"
+    "time"
+)
+
+// ArgParser provides type-safe argument extraction from MCP tool arguments
+type ArgParser struct {
+    args map[string]interface{}
+}
+
+// NewArgParser creates a new argument parser
+func NewArgParser(args map[string]interface{}) *ArgParser <span class="cov0" title="0">{
+    return &amp;ArgParser{args: args}
+}</span>
+
+// GetString extracts a string argument
+func (p *ArgParser) GetString(key string) string <span class="cov0" title="0">{
+    if v, ok := p.args[key].(string); ok </span><span class="cov0" title="0">{
+        return v
+    }</span>
+    <span class="cov0" title="0">return ""</span>
+}
+
+// GetStringPtr extracts a string pointer argument (nil if empty or missing)
+func (p *ArgParser) GetStringPtr(key string) *string <span class="cov0" title="0">{
+    if val, ok := p.args[key].(string); ok &amp;&amp; val != "" </span><span class="cov0" title="0">{
+        return &amp;val
+    }</span>
+    <span class="cov0" title="0">return nil</span>
+}
+
+// GetBool extracts a boolean argument
+func (p *ArgParser) GetBool(key string) bool <span class="cov0" title="0">{
+    if v, ok := p.args[key].(bool); ok </span><span class="cov0" title="0">{
+        return v
+    }</span>
+    <span class="cov0" title="0">return false</span>
+}
+
+// GetInt extracts an integer argument (from JSON float64)
+func (p *ArgParser) GetInt(key string) int <span class="cov0" title="0">{
+    if val, ok := p.args[key].(float64); ok </span><span class="cov0" title="0">{
+        return int(val)
+    }</span>
+    <span class="cov0" title="0">return 0</span>
+}
+
+// GetDate extracts a date argument in YYYY-MM-DD format
+func (p *ArgParser) GetDate(key string) (*time.Time, error) <span class="cov0" title="0">{
+    if str, ok := p.args[key].(string); ok &amp;&amp; str != "" </span><span class="cov0" title="0">{
+        t, err := time.Parse("2006-01-02", str)
+        if err != nil </span><span class="cov0" title="0">{
+            return nil, fmt.Errorf("invalid date format for %s: %w", key, err)
+        }</span>
+        <span class="cov0" title="0">return &amp;t, nil</span>
+    }
+    <span class="cov0" title="0">return nil, nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file6" style="display: none">/*-------------------------------------------------------------------------
+ *
+ * pgEdge AI Workbench
+ *
+ * Copyright (c) 2025, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-------------------------------------------------------------------------
+ */
+
+package middleware
+
+import (
+    "context"
+    "fmt"
+
+    "github.com/jackc/pgx/v5/pgxpool"
+    "github.com/pgEdge/ai-workbench/server/src/privileges"
+)
+
+// UserInfo holds authentication information for a request
+type UserInfo struct {
+    Username       string
+    IsAuthenticated bool
+    IsSuperuser    bool
+    IsServiceToken bool
+}
+
+// AuthChecker provides authentication and authorization checking
+type AuthChecker struct {
+    dbPool   *pgxpool.Pool
+    userInfo *UserInfo
+    userID   int // Cached user ID
+}
+
+// NewAuthChecker creates a new authentication checker
+func NewAuthChecker(dbPool *pgxpool.Pool, userInfo *UserInfo) *AuthChecker <span class="cov0" title="0">{
+    return &amp;AuthChecker{
+        dbPool:   dbPool,
+        userInfo: userInfo,
+    }
+}</span>
+
+// RequireAuthentication checks if the user is authenticated
+func (ac *AuthChecker) RequireAuthentication() error <span class="cov0" title="0">{
+    if ac.userInfo == nil || !ac.userInfo.IsAuthenticated </span><span class="cov0" title="0">{
+        return ErrAuthenticationRequired
+    }</span>
+    <span class="cov0" title="0">return nil</span>
+}
+
+// RequireDatabase checks if a database connection is available
+func (ac *AuthChecker) RequireDatabase() error <span class="cov0" title="0">{
+    if ac.dbPool == nil </span><span class="cov0" title="0">{
+        return ErrDatabaseRequired
+    }</span>
+    <span class="cov0" title="0">return nil</span>
+}
+
+// RequireSuperuser checks if the user is a superuser
+func (ac *AuthChecker) RequireSuperuser() error <span class="cov0" title="0">{
+    if err := ac.RequireAuthentication(); err != nil </span><span class="cov0" title="0">{
+        return err
+    }</span>
+    <span class="cov0" title="0">if !ac.userInfo.IsSuperuser </span><span class="cov0" title="0">{
+        return ErrSuperuserRequired
+    }</span>
+    <span class="cov0" title="0">return nil</span>
+}
+
+// RequireSuperuserOrPrivilege checks if the user is a superuser or has the specified privilege
+func (ac *AuthChecker) RequireSuperuserOrPrivilege(ctx context.Context, privilegeID string) error <span class="cov0" title="0">{
+    if err := ac.RequireAuthentication(); err != nil </span><span class="cov0" title="0">{
+        return err
+    }</span>
+
+    // Superusers bypass all privilege checks
+    <span class="cov0" title="0">if ac.userInfo.IsSuperuser </span><span class="cov0" title="0">{
+        return nil
+    }</span>
+
+    <span class="cov0" title="0">if err := ac.RequireDatabase(); err != nil </span><span class="cov0" title="0">{
+        return err
+    }</span>
+
+    // Service tokens must be superusers for privileged operations
+    <span class="cov0" title="0">if ac.userInfo.IsServiceToken </span><span class="cov0" title="0">{
+        return ErrSuperuserRequired
+    }</span>
+
+    // Get user ID (cached)
+    <span class="cov0" title="0">userID, err := ac.GetUserID(ctx)
+    if err != nil </span><span class="cov0" title="0">{
+        return err
+    }</span>
+
+    // Check privilege via group membership
+    <span class="cov0" title="0">canAccess, err := privileges.CanAccessMCPItem(ctx, ac.dbPool, userID, privilegeID)
+    if err != nil </span><span class="cov0" title="0">{
+        return fmt.Errorf("failed to check privileges: %w", err)
+    }</span>
+    <span class="cov0" title="0">if !canAccess </span><span class="cov0" title="0">{
+        return ErrInsufficientPrivileges
+    }</span>
+
+    <span class="cov0" title="0">return nil</span>
+}
+
+// RequireOwnerOrSuperuser checks if the user is the owner of a resource or a superuser
+func (ac *AuthChecker) RequireOwnerOrSuperuser(username string) error <span class="cov0" title="0">{
+    if err := ac.RequireAuthentication(); err != nil </span><span class="cov0" title="0">{
+        return err
+    }</span>
+
+    <span class="cov0" title="0">if ac.userInfo.IsSuperuser </span><span class="cov0" title="0">{
+        return nil
+    }</span>
+
+    <span class="cov0" title="0">if ac.userInfo.Username != username </span><span class="cov0" title="0">{
+        return fmt.Errorf("permission denied: can only access your own resources")
+    }</span>
+
+    <span class="cov0" title="0">return nil</span>
+}
+
+// GetUserID returns the user ID (cached for performance)
+func (ac *AuthChecker) GetUserID(ctx context.Context) (int, error) <span class="cov0" title="0">{
+    // Return cached ID if available
+    if ac.userID != 0 </span><span class="cov0" title="0">{
+        return ac.userID, nil
+    }</span>
+
+    <span class="cov0" title="0">if ac.dbPool == nil </span><span class="cov0" title="0">{
+        return 0, ErrDatabaseRequired
+    }</span>
+
+    // Query and cache user ID
+    <span class="cov0" title="0">err := ac.dbPool.QueryRow(ctx,
+        "SELECT id FROM user_accounts WHERE username = $1",
+        ac.userInfo.Username).Scan(&amp;ac.userID)
+    if err != nil </span><span class="cov0" title="0">{
+        return 0, fmt.Errorf("failed to get user ID: %w", err)
+    }</span>
+
+    <span class="cov0" title="0">return ac.userID, nil</span>
+}
+
+// UserInfo returns the current user information
+func (ac *AuthChecker) UserInfo() *UserInfo <span class="cov0" title="0">{
+    return ac.userInfo
+}</span>
+</pre>
+		
+		<pre class="file" id="file7" style="display: none">/*-------------------------------------------------------------------------
+ *
+ * pgEdge AI Workbench
+ *
+ * Copyright (c) 2025, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-------------------------------------------------------------------------
+ */
+
+package middleware
+
+import "encoding/json"
+
+// TextResponse creates a standard MCP text response
+func TextResponse(message string) interface{} <span class="cov0" title="0">{
+    return map[string]interface{}{
+        "content": []map[string]interface{}{
+            {
+                "type": "text",
+                "text": message,
+            },
+        },
+    }
+}</span>
+
+// JSONResponse creates a JSON-formatted MCP text response
+func JSONResponse(data interface{}) interface{} <span class="cov0" title="0">{
+    jsonData, err := json.MarshalIndent(data, "", "  ")
+    if err != nil </span><span class="cov0" title="0">{
+        return TextResponse("Error formatting response: " + err.Error())
+    }</span>
+    <span class="cov0" title="0">return TextResponse(string(jsonData))</span>
+}
+</pre>
+		
+		<pre class="file" id="file8" style="display: none">/*-------------------------------------------------------------------------
  *
  * pgEdge AI Workbench
  *
@@ -2109,7 +4878,497 @@ type InitializeResult struct {
 }
 </pre>
 		
-		<pre class="file" id="file6" style="display: none">/*-------------------------------------------------------------------------
+		<pre class="file" id="file9" style="display: none">/*-----------------------------------------------------------
+ *
+ * pgEdge AI Workbench
+ *
+ * Copyright (c) 2025, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-----------------------------------------------------------
+ */
+
+package privileges
+
+import (
+        "context"
+        "fmt"
+
+        "github.com/jackc/pgx/v5/pgxpool"
+)
+
+// AccessLevel represents the level of access requested for a connection
+type AccessLevel string
+
+const (
+        AccessLevelRead      AccessLevel = "read"
+        AccessLevelReadWrite AccessLevel = "read_write"
+)
+
+// GetUserGroups recursively resolves all groups that a user belongs to
+// (both directly and through nested group membership).
+// Returns a slice of group IDs.
+func GetUserGroups(ctx context.Context, pool *pgxpool.Pool, userID int) ([]int, error) <span class="cov0" title="0">{
+        groupIDs := make([]int, 0)
+        visited := make(map[int]bool)
+
+        // Use recursive CTE to find all groups the user belongs to
+        query := `
+                WITH RECURSIVE user_groups_recursive AS (
+                        -- Base case: direct group memberships for this user
+                        SELECT parent_group_id as group_id
+                        FROM group_memberships
+                        WHERE member_user_id = $1
+
+                        UNION
+
+                        -- Recursive case: groups that contain groups we're already in
+                        SELECT gm.parent_group_id
+                        FROM group_memberships gm
+                        INNER JOIN user_groups_recursive ugr ON gm.member_group_id = ugr.group_id
+                )
+                SELECT DISTINCT group_id
+                FROM user_groups_recursive
+                ORDER BY group_id;
+        `
+
+        rows, err := pool.Query(ctx, query, userID)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to query user groups: %w", err)
+        }</span>
+        <span class="cov0" title="0">defer rows.Close()
+
+        for rows.Next() </span><span class="cov0" title="0">{
+                var groupID int
+                if err := rows.Scan(&amp;groupID); err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to scan group ID: %w", err)
+                }</span>
+                <span class="cov0" title="0">if !visited[groupID] </span><span class="cov0" title="0">{
+                        groupIDs = append(groupIDs, groupID)
+                        visited[groupID] = true
+                }</span>
+        }
+
+        <span class="cov0" title="0">if err := rows.Err(); err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("error iterating user groups: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">return groupIDs, nil</span>
+}
+
+// CanAccessConnection checks if a user can access a connection at the requested level.
+// Returns true if:
+// - User is a superuser, OR
+// - Connection is shared with no groups assigned (accessible to all), OR
+// - Connection has groups assigned AND user is in one of those groups with sufficient access level
+func CanAccessConnection(ctx context.Context, pool *pgxpool.Pool, userID int, connectionID int, requestedLevel AccessLevel) (bool, error) <span class="cov0" title="0">{
+        // Check if user is superuser
+        var isSuperuser bool
+        err := pool.QueryRow(ctx, "SELECT is_superuser FROM user_accounts WHERE id = $1", userID).Scan(&amp;isSuperuser)
+        if err != nil </span><span class="cov0" title="0">{
+                return false, fmt.Errorf("failed to check superuser status: %w", err)
+        }</span>
+        <span class="cov0" title="0">if isSuperuser </span><span class="cov0" title="0">{
+                return true, nil
+        }</span>
+
+        // Check if connection is shared
+        <span class="cov0" title="0">var isShared bool
+        err = pool.QueryRow(ctx, "SELECT is_shared FROM connections WHERE id = $1", connectionID).Scan(&amp;isShared)
+        if err != nil </span><span class="cov0" title="0">{
+                return false, fmt.Errorf("failed to check connection shared status: %w", err)
+        }</span>
+
+        // If not shared, check if it's owned by the user
+        <span class="cov0" title="0">if !isShared </span><span class="cov0" title="0">{
+                var ownerUsername *string
+                err = pool.QueryRow(ctx, "SELECT owner_username FROM connections WHERE id = $1", connectionID).Scan(&amp;ownerUsername)
+                if err != nil </span><span class="cov0" title="0">{
+                        return false, fmt.Errorf("failed to check connection owner: %w", err)
+                }</span>
+
+                // Get user's username
+                <span class="cov0" title="0">var username string
+                err = pool.QueryRow(ctx, "SELECT username FROM user_accounts WHERE id = $1", userID).Scan(&amp;username)
+                if err != nil </span><span class="cov0" title="0">{
+                        return false, fmt.Errorf("failed to get username: %w", err)
+                }</span>
+
+                <span class="cov0" title="0">if ownerUsername != nil &amp;&amp; *ownerUsername == username </span><span class="cov0" title="0">{
+                        return true, nil
+                }</span>
+
+                // Not shared and not owned by user
+                <span class="cov0" title="0">return false, nil</span>
+        }
+
+        // For shared connections, check if any groups are assigned to it
+        <span class="cov0" title="0">var groupCount int
+        err = pool.QueryRow(ctx, "SELECT COUNT(*) FROM connection_privileges WHERE connection_id = $1", connectionID).Scan(&amp;groupCount)
+        if err != nil </span><span class="cov0" title="0">{
+                return false, fmt.Errorf("failed to count connection privileges: %w", err)
+        }</span>
+
+        // If no groups assigned to this shared connection, default to deny for security
+        <span class="cov0" title="0">if groupCount == 0 </span><span class="cov0" title="0">{
+                return false, nil
+        }</span>
+
+        // Get all groups the user belongs to
+        <span class="cov0" title="0">userGroups, err := GetUserGroups(ctx, pool, userID)
+        if err != nil </span><span class="cov0" title="0">{
+                return false, fmt.Errorf("failed to get user groups: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">if len(userGroups) == 0 </span><span class="cov0" title="0">{
+                // User is not in any groups and connection has restricted access
+                return false, nil
+        }</span>
+
+        // Check if any of the user's groups have access to this connection
+        // Build a query to check if any of the user's groups have the required access level
+        <span class="cov0" title="0">query := `
+                SELECT COUNT(*)
+                FROM connection_privileges
+                WHERE connection_id = $1
+                  AND group_id = ANY($2)
+                  AND (
+                          access_level = 'read_write'
+                          OR ($3 = 'read' AND access_level = 'read')
+                  )
+        `
+
+        var matchCount int
+        err = pool.QueryRow(ctx, query, connectionID, userGroups, requestedLevel).Scan(&amp;matchCount)
+        if err != nil </span><span class="cov0" title="0">{
+                return false, fmt.Errorf("failed to check connection privileges: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">return matchCount &gt; 0, nil</span>
+}
+
+// CanAccessMCPItem checks if a user can access an MCP tool, resource, or prompt.
+// Returns true if:
+// - User is a superuser, OR
+// - No groups have been assigned this privilege (accessible to all), OR
+// - User is in a group that has been granted this privilege
+func CanAccessMCPItem(ctx context.Context, pool *pgxpool.Pool, userID int, itemIdentifier string) (bool, error) <span class="cov0" title="0">{
+        // Check if user is superuser
+        var isSuperuser bool
+        err := pool.QueryRow(ctx, "SELECT is_superuser FROM user_accounts WHERE id = $1", userID).Scan(&amp;isSuperuser)
+        if err != nil </span><span class="cov0" title="0">{
+                return false, fmt.Errorf("failed to check superuser status: %w", err)
+        }</span>
+        <span class="cov0" title="0">if isSuperuser </span><span class="cov0" title="0">{
+                return true, nil
+        }</span>
+
+        // Check if the privilege identifier exists
+        <span class="cov0" title="0">var privilegeID int
+        err = pool.QueryRow(ctx, "SELECT id FROM mcp_privilege_identifiers WHERE identifier = $1", itemIdentifier).Scan(&amp;privilegeID)
+        if err != nil </span><span class="cov0" title="0">{
+                // If privilege identifier doesn't exist, deny access by default
+                return false, fmt.Errorf("privilege identifier not found: %s", itemIdentifier)
+        }</span>
+
+        // Check if any groups have been assigned this privilege
+        <span class="cov0" title="0">var groupCount int
+        err = pool.QueryRow(ctx, "SELECT COUNT(*) FROM group_mcp_privileges WHERE privilege_identifier_id = $1", privilegeID).Scan(&amp;groupCount)
+        if err != nil </span><span class="cov0" title="0">{
+                return false, fmt.Errorf("failed to count MCP privileges: %w", err)
+        }</span>
+
+        // If no groups assigned to this privilege, default to deny for security
+        // This ensures that administrative operations require explicit privilege grants
+        <span class="cov0" title="0">if groupCount == 0 </span><span class="cov0" title="0">{
+                return false, nil
+        }</span>
+
+        // Get all groups the user belongs to
+        <span class="cov0" title="0">userGroups, err := GetUserGroups(ctx, pool, userID)
+        if err != nil </span><span class="cov0" title="0">{
+                return false, fmt.Errorf("failed to get user groups: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">if len(userGroups) == 0 </span><span class="cov0" title="0">{
+                // User is not in any groups and privilege has restricted access
+                return false, nil
+        }</span>
+
+        // Check if any of the user's groups have this privilege
+        <span class="cov0" title="0">query := `
+                SELECT COUNT(*)
+                FROM group_mcp_privileges
+                WHERE privilege_identifier_id = $1
+                  AND group_id = ANY($2)
+        `
+
+        var matchCount int
+        err = pool.QueryRow(ctx, query, privilegeID, userGroups).Scan(&amp;matchCount)
+        if err != nil </span><span class="cov0" title="0">{
+                return false, fmt.Errorf("failed to check MCP privileges: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">return matchCount &gt; 0, nil</span>
+}
+
+// ValidateGroupHierarchy checks if adding a group as a member would create a circular reference.
+// Returns nil if valid, error if circular reference detected.
+func ValidateGroupHierarchy(ctx context.Context, pool *pgxpool.Pool, parentGroupID int, memberGroupID int) error <span class="cov0" title="0">{
+        // A group cannot be a member of itself
+        if parentGroupID == memberGroupID </span><span class="cov0" title="0">{
+                return fmt.Errorf("a group cannot be a member of itself")
+        }</span>
+
+        // Check if adding this membership would create a cycle
+        // Use recursive CTE to find all ancestor groups of the parent
+        <span class="cov0" title="0">query := `
+                WITH RECURSIVE ancestor_groups AS (
+                        -- Base case: the group we want to add as a parent
+                        SELECT $1::INTEGER as group_id
+
+                        UNION
+
+                        -- Recursive case: find groups that contain this group
+                        SELECT gm.parent_group_id
+                        FROM group_memberships gm
+                        INNER JOIN ancestor_groups ag ON gm.member_group_id = ag.group_id
+                )
+                SELECT COUNT(*)
+                FROM ancestor_groups
+                WHERE group_id = $2;
+        `
+
+        var matchCount int
+        err := pool.QueryRow(ctx, query, parentGroupID, memberGroupID).Scan(&amp;matchCount)
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to validate group hierarchy: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">if matchCount &gt; 0 </span><span class="cov0" title="0">{
+                return fmt.Errorf("adding this membership would create a circular reference")
+        }</span>
+
+        <span class="cov0" title="0">return nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file10" style="display: none">/*-----------------------------------------------------------
+ *
+ * pgEdge AI Workbench
+ *
+ * Copyright (c) 2025, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-----------------------------------------------------------
+ */
+
+package privileges
+
+import (
+    "context"
+    "fmt"
+
+    "github.com/jackc/pgx/v5/pgxpool"
+)
+
+// MCPPrivilege represents an MCP privilege identifier
+type MCPPrivilege struct {
+    Identifier  string
+    ItemType    string
+    Description string
+}
+
+// GetDefaultMCPPrivileges returns the list of all MCP tools that should be
+// registered in the privilege system
+func GetDefaultMCPPrivileges() []MCPPrivilege <span class="cov8" title="1">{
+    return []MCPPrivilege{
+        // User Management Tools
+        {
+            Identifier:  "authenticate_user",
+            ItemType:    "tool",
+            Description: "Authenticate a user and obtain a session token",
+        },
+        {
+            Identifier:  "create_user",
+            ItemType:    "tool",
+            Description: "Create a new user account",
+        },
+        {
+            Identifier:  "update_user",
+            ItemType:    "tool",
+            Description: "Update an existing user account",
+        },
+        {
+            Identifier:  "delete_user",
+            ItemType:    "tool",
+            Description: "Delete a user account",
+        },
+
+        // Service Token Management Tools
+        {
+            Identifier:  "create_service_token",
+            ItemType:    "tool",
+            Description: "Create a service token for programmatic access",
+        },
+        {
+            Identifier:  "update_service_token",
+            ItemType:    "tool",
+            Description: "Update a service token",
+        },
+        {
+            Identifier:  "delete_service_token",
+            ItemType:    "tool",
+            Description: "Delete a service token",
+        },
+
+        // User Token Management Tools
+        {
+            Identifier:  "create_user_token",
+            ItemType:    "tool",
+            Description: "Create a user token for personal access",
+        },
+        {
+            Identifier:  "list_user_tokens",
+            ItemType:    "tool",
+            Description: "List all tokens for a user",
+        },
+        {
+            Identifier:  "delete_user_token",
+            ItemType:    "tool",
+            Description: "Delete a user token",
+        },
+
+        // Group Management Tools
+        {
+            Identifier:  "create_user_group",
+            ItemType:    "tool",
+            Description: "Create a new user group",
+        },
+        {
+            Identifier:  "update_user_group",
+            ItemType:    "tool",
+            Description: "Update an existing user group",
+        },
+        {
+            Identifier:  "delete_user_group",
+            ItemType:    "tool",
+            Description: "Delete a user group",
+        },
+        {
+            Identifier:  "list_user_groups",
+            ItemType:    "tool",
+            Description: "List all user groups",
+        },
+        {
+            Identifier:  "add_group_member",
+            ItemType:    "tool",
+            Description: "Add a user or group as a member of a group",
+        },
+        {
+            Identifier:  "remove_group_member",
+            ItemType:    "tool",
+            Description: "Remove a member from a group",
+        },
+        {
+            Identifier:  "list_group_members",
+            ItemType:    "tool",
+            Description: "List all members of a group",
+        },
+        {
+            Identifier:  "list_user_group_memberships",
+            ItemType:    "tool",
+            Description: "List all groups a user belongs to",
+        },
+
+        // Connection Privilege Management Tools
+        {
+            Identifier:  "grant_connection_privilege",
+            ItemType:    "tool",
+            Description: "Grant a group access to a connection",
+        },
+        {
+            Identifier:  "revoke_connection_privilege",
+            ItemType:    "tool",
+            Description: "Revoke a group's access to a connection",
+        },
+        {
+            Identifier:  "list_connection_privileges",
+            ItemType:    "tool",
+            Description: "List all group privileges for a connection",
+        },
+
+        // MCP Privilege Management Tools
+        {
+            Identifier:  "list_mcp_privilege_identifiers",
+            ItemType:    "tool",
+            Description: "List all registered MCP privilege identifiers",
+        },
+        {
+            Identifier:  "grant_mcp_privilege",
+            ItemType:    "tool",
+            Description: "Grant a group access to an MCP tool, resource, or prompt",
+        },
+        {
+            Identifier:  "revoke_mcp_privilege",
+            ItemType:    "tool",
+            Description: "Revoke a group's access to an MCP item",
+        },
+        {
+            Identifier:  "list_group_mcp_privileges",
+            ItemType:    "tool",
+            Description: "List all MCP privileges granted to a group",
+        },
+
+        // Token Scope Management Tools
+        {
+            Identifier:  "set_token_connection_scope",
+            ItemType:    "tool",
+            Description: "Limit a token's access to specific connections",
+        },
+        {
+            Identifier:  "set_token_mcp_scope",
+            ItemType:    "tool",
+            Description: "Limit a token's access to specific MCP items",
+        },
+        {
+            Identifier:  "get_token_scope",
+            ItemType:    "tool",
+            Description: "Get the scope restrictions for a token",
+        },
+        {
+            Identifier:  "clear_token_scope",
+            ItemType:    "tool",
+            Description: "Remove all scope restrictions for a token",
+        },
+    }
+}</span>
+
+// SeedMCPPrivileges seeds the mcp_privilege_identifiers table with all
+// registered MCP tools. This is idempotent and can be called multiple times.
+func SeedMCPPrivileges(ctx context.Context, pool *pgxpool.Pool) error <span class="cov0" title="0">{
+    privileges := GetDefaultMCPPrivileges()
+
+    for _, priv := range privileges </span><span class="cov0" title="0">{
+        // Use ON CONFLICT to make this idempotent
+        _, err := pool.Exec(ctx, `
+            INSERT INTO mcp_privilege_identifiers (identifier, item_type, description)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (identifier) DO UPDATE
+            SET item_type = EXCLUDED.item_type,
+                description = EXCLUDED.description
+        `, priv.Identifier, priv.ItemType, priv.Description)
+
+        if err != nil </span><span class="cov0" title="0">{
+            return fmt.Errorf("failed to seed privilege identifier '%s': %w", priv.Identifier, err)
+        }</span>
+    }
+
+    <span class="cov0" title="0">return nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file11" style="display: none">/*-------------------------------------------------------------------------
  *
  * pgEdge AI Workbench
  *
@@ -2131,7 +5390,7 @@ import (
         "time"
 
         "github.com/pgEdge/ai-workbench/server/src/config"
-        "github.com/pgEdge/ai-workbench/server/src/logger"
+        "github.com/pgedge/ai-workbench/pkg/logger"
         "github.com/pgEdge/ai-workbench/server/src/mcp"
 )
 
@@ -2353,7 +5612,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) <span clas
 }
 </pre>
 		
-		<pre class="file" id="file7" style="display: none">/*-------------------------------------------------------------------------
+		<pre class="file" id="file12" style="display: none">/*-------------------------------------------------------------------------
  *
  * pgEdge AI Workbench
  *

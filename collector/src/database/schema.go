@@ -14,7 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/pgedge/ai-workbench/collector/src/logger"
+	"github.com/pgedge/ai-workbench/pkg/logger"
 	"sort"
 	"time"
 

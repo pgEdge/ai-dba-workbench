@@ -4,6 +4,7 @@ go 1.24.0
 
 require (
 	github.com/jackc/pgx/v5 v5.7.6
+	github.com/pgedge/ai-workbench/pkg v0.0.0
 	golang.org/x/term v0.36.0
 )
 
@@ -16,3 +17,5 @@ require (
 	golang.org/x/sys v0.37.0 // indirect
 	golang.org/x/text v0.24.0 // indirect
 )
+
+replace github.com/pgedge/ai-workbench/pkg => ../pkg

@@ -15,7 +15,7 @@ import (
 	"github.com/pgedge/ai-workbench/collector/src/probes"
 
 	"context"
-	"github.com/pgedge/ai-workbench/collector/src/logger"
+	"github.com/pgedge/ai-workbench/pkg/logger"
 	"sync"
 	"time"
 

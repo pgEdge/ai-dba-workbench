@@ -18,8 +18,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgEdge/ai-workbench/server/src/config"
+	"github.com/pgEdge/ai-workbench/server/src/crypto"
 	"github.com/pgEdge/ai-workbench/server/src/groupmgmt"
 	"github.com/pgedge/ai-workbench/pkg/logger"
 	"github.com/pgEdge/ai-workbench/server/src/privileges"
@@ -229,6 +231,12 @@ func (h *Handler) handleListResources(req Request) (*Response, error) {
 			"description": "List of privileges for a database connection (replace {connectionId} with actual connection ID)",
 			"mimeType":    "application/json",
 		},
+		{
+			"uri":         "ai-workbench://connections",
+			"name":        "Database Connections",
+			"description": "List of all database connections in the system",
+			"mimeType":    "application/json",
+		},
 	}
 
 	result := map[string]interface{}{
@@ -363,6 +371,104 @@ func (h *Handler) handleReadResource(req Request) (*Response, error) {
 				"uri":      fmt.Sprintf("ai-workbench://mcp-privileges/%v", privID),
 				"mimeType": "application/json",
 				"text":     string(identifierJSON),
+			})
+		}
+
+	case "ai-workbench://connections":
+		// List all database connections
+		// Only show connections owned by the current user/token, unless they're a superuser
+		var rows pgx.Rows
+		var err error
+		if h.userInfo == nil || !h.userInfo.IsAuthenticated {
+			return NewErrorResponse(req.ID, InternalError,
+				"Authentication required", nil), nil
+		}
+
+		if h.userInfo.IsSuperuser {
+			// Superusers can see all connections
+			rows, err = h.dbPool.Query(ctx, `
+				SELECT id, owner_username, owner_token, is_shared, is_monitored,
+				       name, host, hostaddr, port, database_name, username,
+				       sslmode, created_at, updated_at
+				FROM connections
+				ORDER BY name
+			`)
+		} else if h.userInfo.IsServiceToken {
+			// Service tokens see their own connections
+			rows, err = h.dbPool.Query(ctx, `
+				SELECT id, owner_username, owner_token, is_shared, is_monitored,
+				       name, host, hostaddr, port, database_name, username,
+				       sslmode, created_at, updated_at
+				FROM connections
+				WHERE owner_token = $1
+				ORDER BY name
+			`, h.userInfo.Username)
+		} else {
+			// Regular users see their own connections
+			rows, err = h.dbPool.Query(ctx, `
+				SELECT id, owner_username, owner_token, is_shared, is_monitored,
+				       name, host, hostaddr, port, database_name, username,
+				       sslmode, created_at, updated_at
+				FROM connections
+				WHERE owner_username = $1
+				ORDER BY name
+			`, h.userInfo.Username)
+		}
+
+		if err != nil {
+			logger.Errorf("Failed to query connections: %v", err)
+			return NewErrorResponse(req.ID, InternalError,
+				"Failed to query connections", err.Error()), nil
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var id int
+			var ownerUsername, ownerToken, hostaddr, sslmode interface{}
+			var isShared, isMonitored bool
+			var name, host string
+			var port int
+			var databaseName, username string
+			var createdAt, updatedAt time.Time
+
+			if err := rows.Scan(&id, &ownerUsername, &ownerToken, &isShared,
+				&isMonitored, &name, &host, &hostaddr, &port, &databaseName,
+				&username, &sslmode, &createdAt, &updatedAt); err != nil {
+				logger.Errorf("Failed to scan connection: %v", err)
+				continue
+			}
+
+			connData := map[string]interface{}{
+				"id":           id,
+				"isShared":     isShared,
+				"isMonitored":  isMonitored,
+				"name":         name,
+				"host":         host,
+				"hostaddr":     hostaddr,
+				"port":         port,
+				"databaseName": databaseName,
+				"username":     username,
+				"sslmode":      sslmode,
+				"createdAt":    createdAt,
+				"updatedAt":    updatedAt,
+			}
+
+			// Only include ownership info for superusers
+			if h.userInfo.IsSuperuser {
+				connData["ownerUsername"] = ownerUsername
+				connData["ownerToken"] = ownerToken
+			}
+
+			connJSON, err := json.Marshal(connData)
+			if err != nil {
+				logger.Errorf("Failed to marshal connection: %v", err)
+				continue
+			}
+
+			contents = append(contents, map[string]interface{}{
+				"uri":      fmt.Sprintf("ai-workbench://connections/%d", id),
+				"mimeType": "application/json",
+				"text":     string(connJSON),
 			})
 		}
 
@@ -1035,6 +1141,153 @@ func (h *Handler) handleListTools(req Request) (*Response, error) {
 				"required": []string{"tokenId", "tokenType"},
 			},
 		},
+		{
+			"name":        "create_connection",
+			"description": "Create a new database connection",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name": map[string]interface{}{
+						"type":        "string",
+						"description": "User-friendly name for the connection",
+					},
+					"host": map[string]interface{}{
+						"type":        "string",
+						"description": "Hostname or IP address of the PostgreSQL server",
+					},
+					"port": map[string]interface{}{
+						"type":        "number",
+						"description": "Port number for PostgreSQL connection (default 5432)",
+						"default":     5432,
+					},
+					"databaseName": map[string]interface{}{
+						"type":        "string",
+						"description": "Database to connect to",
+					},
+					"username": map[string]interface{}{
+						"type":        "string",
+						"description": "Username for connection",
+					},
+					"password": map[string]interface{}{
+						"type":        "string",
+						"description": "Password for connection",
+					},
+					"isShared": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Whether the connection is shared among users or private",
+						"default":     false,
+					},
+					"isMonitored": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Whether this connection should be actively monitored",
+						"default":     false,
+					},
+					"hostaddr": map[string]interface{}{
+						"type":        "string",
+						"description": "IP address to bypass DNS lookup (optional)",
+					},
+					"sslmode": map[string]interface{}{
+						"type":        "string",
+						"description": "SSL mode for connection (optional)",
+						"enum":        []string{"disable", "allow", "prefer", "require", "verify-ca", "verify-full"},
+					},
+					"sslcert": map[string]interface{}{
+						"type":        "string",
+						"description": "SSL certificate (optional)",
+					},
+					"sslkey": map[string]interface{}{
+						"type":        "string",
+						"description": "SSL key (optional)",
+					},
+					"sslrootcert": map[string]interface{}{
+						"type":        "string",
+						"description": "SSL root certificate (optional)",
+					},
+				},
+				"required": []string{"name", "host", "databaseName", "username", "password"},
+			},
+		},
+		{
+			"name":        "update_connection",
+			"description": "Update an existing database connection",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"id": map[string]interface{}{
+						"type":        "number",
+						"description": "ID of the connection to update",
+					},
+					"name": map[string]interface{}{
+						"type":        "string",
+						"description": "New name for the connection (optional)",
+					},
+					"host": map[string]interface{}{
+						"type":        "string",
+						"description": "New hostname or IP address (optional)",
+					},
+					"port": map[string]interface{}{
+						"type":        "number",
+						"description": "New port number (optional)",
+					},
+					"databaseName": map[string]interface{}{
+						"type":        "string",
+						"description": "New database name (optional)",
+					},
+					"username": map[string]interface{}{
+						"type":        "string",
+						"description": "New username (optional)",
+					},
+					"password": map[string]interface{}{
+						"type":        "string",
+						"description": "New password (optional)",
+					},
+					"isShared": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Update shared status (optional)",
+					},
+					"isMonitored": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Update monitoring status (optional)",
+					},
+					"hostaddr": map[string]interface{}{
+						"type":        "string",
+						"description": "New IP address (optional)",
+					},
+					"sslmode": map[string]interface{}{
+						"type":        "string",
+						"description": "New SSL mode (optional)",
+						"enum":        []string{"disable", "allow", "prefer", "require", "verify-ca", "verify-full"},
+					},
+					"sslcert": map[string]interface{}{
+						"type":        "string",
+						"description": "New SSL certificate (optional)",
+					},
+					"sslkey": map[string]interface{}{
+						"type":        "string",
+						"description": "New SSL key (optional)",
+					},
+					"sslrootcert": map[string]interface{}{
+						"type":        "string",
+						"description": "New SSL root certificate (optional)",
+					},
+				},
+				"required": []string{"id"},
+			},
+		},
+		{
+			"name":        "delete_connection",
+			"description": "Delete a database connection",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"id": map[string]interface{}{
+						"type":        "number",
+						"description": "ID of the connection to delete",
+					},
+				},
+				"required": []string{"id"},
+			},
+		},
 	}
 
 	result := map[string]interface{}{
@@ -1122,6 +1375,12 @@ func (h *Handler) handleCallTool(req Request) (*Response, error) {
 		result, err = h.handleGetTokenScope(params.Arguments)
 	case "clear_token_scope":
 		result, err = h.handleClearTokenScope(params.Arguments)
+	case "create_connection":
+		result, err = h.handleCreateConnection(params.Arguments)
+	case "update_connection":
+		result, err = h.handleUpdateConnection(params.Arguments)
+	case "delete_connection":
+		result, err = h.handleDeleteConnection(params.Arguments)
 	default:
 		logger.Errorf("Unknown tool: %s", params.Name)
 		return NewErrorResponse(req.ID, MethodNotFound, "Tool not found",
@@ -1680,7 +1939,7 @@ func (h *Handler) handleDeleteUserToken(args map[string]interface{}) (interface{
 type UserInfo struct {
 	IsAuthenticated bool
 	IsSuperuser     bool
-	Username        string // Empty for service tokens
+	Username        string // User username or service token name
 	IsServiceToken  bool
 }
 
@@ -1696,11 +1955,12 @@ func (h *Handler) validateToken(token string) (*UserInfo, error) {
 	tokenHash := usermgmt.HashPassword(token)
 	var expiresAt interface{}
 	var isSuperuser bool
+	var tokenName string
 	err := h.dbPool.QueryRow(ctx, `
-		SELECT expires_at, is_superuser
+		SELECT name, expires_at, is_superuser
 		FROM service_tokens
 		WHERE token_hash = $1
-	`, tokenHash).Scan(&expiresAt, &isSuperuser)
+	`, tokenHash).Scan(&tokenName, &expiresAt, &isSuperuser)
 
 	if err == nil {
 		// Service token found, check if expired
@@ -1712,11 +1972,11 @@ func (h *Handler) validateToken(token string) (*UserInfo, error) {
 				}
 			}
 		}
-		logger.Infof("Valid service token (superuser: %t)", isSuperuser)
+		logger.Infof("Valid service token '%s' (superuser: %t)", tokenName, isSuperuser)
 		return &UserInfo{
 			IsAuthenticated: true,
 			IsSuperuser:     isSuperuser,
-			Username:        "",
+			Username:        tokenName,
 			IsServiceToken:  true,
 		}, nil
 	}
@@ -2708,6 +2968,356 @@ func (h *Handler) handleClearTokenScope(args map[string]interface{}) (interface{
 			{
 				"type": "text",
 				"text": fmt.Sprintf("All scope restrictions cleared for %s token %d", tokenType, tokenID),
+			},
+		},
+	}, nil
+}
+
+// handleCreateConnection executes the create_connection tool
+func (h *Handler) handleCreateConnection(args map[string]interface{}) (interface{}, error) {
+	// Check authentication
+	if h.userInfo == nil || !h.userInfo.IsAuthenticated {
+		return nil, fmt.Errorf("authentication required")
+	}
+
+	// Superusers bypass all privilege checks
+	if !h.userInfo.IsSuperuser {
+		// If no database pool (test mode), require superuser
+		if h.dbPool == nil {
+			return nil, fmt.Errorf("permission denied: superuser privileges required")
+		}
+
+		// Service tokens must be superusers for this operation
+		if h.userInfo.IsServiceToken {
+			return nil, fmt.Errorf("permission denied: superuser privileges required")
+		}
+
+		// For non-superuser users, check privileges via group membership
+		ctx := context.Background()
+
+		// Get user ID from username
+		var userID int
+		err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+			h.userInfo.Username).Scan(&userID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get user ID: %w", err)
+		}
+
+		// Check if user has privilege to create connections
+		canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "create_connection")
+		if err != nil {
+			return nil, fmt.Errorf("failed to check privileges: %w", err)
+		}
+		if !canAccess {
+			return nil, fmt.Errorf("permission denied: insufficient privileges")
+		}
+	}
+
+	// Extract parameters
+	name, _ := args["name"].(string)                     //nolint:errcheck
+	host, _ := args["host"].(string)                     //nolint:errcheck
+	databaseName, _ := args["databaseName"].(string)     //nolint:errcheck
+	username, _ := args["username"].(string)             //nolint:errcheck
+	password, _ := args["password"].(string)             //nolint:errcheck
+	port := 5432                                          // default
+	if portFloat, ok := args["port"].(float64); ok {
+		port = int(portFloat)
+	}
+	isShared, _ := args["isShared"].(bool)               //nolint:errcheck
+	isMonitored, _ := args["isMonitored"].(bool)         //nolint:errcheck
+	hostaddr, _ := args["hostaddr"].(string)             //nolint:errcheck
+	sslmode, _ := args["sslmode"].(string)               //nolint:errcheck
+	sslcert, _ := args["sslcert"].(string)               //nolint:errcheck
+	sslkey, _ := args["sslkey"].(string)                 //nolint:errcheck
+	sslrootcert, _ := args["sslrootcert"].(string)       //nolint:errcheck
+
+	// Encrypt the password
+	encryptedPassword, err := crypto.EncryptPassword(password, h.config.GetServerSecret(), username)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encrypt password: %w", err)
+	}
+
+	// Determine ownership
+	var ownerUsername, ownerToken interface{}
+	if h.userInfo.IsServiceToken {
+		ownerToken = h.userInfo.Username
+		ownerUsername = nil
+	} else {
+		ownerUsername = h.userInfo.Username
+		ownerToken = nil
+	}
+
+	// Insert into database
+	ctx := context.Background()
+	var connectionID int
+	err = h.dbPool.QueryRow(ctx, `
+		INSERT INTO connections (
+			owner_username, owner_token, is_shared, is_monitored,
+			name, host, hostaddr, port, database_name, username,
+			password_encrypted, sslmode, sslcert, sslkey, sslrootcert
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+		RETURNING id
+	`, ownerUsername, ownerToken, isShared, isMonitored, name, host, hostaddr,
+		port, databaseName, username, encryptedPassword, sslmode, sslcert, sslkey, sslrootcert).Scan(&connectionID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create connection: %w", err)
+	}
+
+	return map[string]interface{}{
+		"content": []map[string]interface{}{
+			{
+				"type": "text",
+				"text": fmt.Sprintf("Connection '%s' created successfully with ID %d", name, connectionID),
+			},
+		},
+	}, nil
+}
+
+// handleUpdateConnection executes the update_connection tool
+func (h *Handler) handleUpdateConnection(args map[string]interface{}) (interface{}, error) {
+	// Check authentication
+	if h.userInfo == nil || !h.userInfo.IsAuthenticated {
+		return nil, fmt.Errorf("authentication required")
+	}
+
+	// Get connection ID
+	connectionID := int(args["id"].(float64)) //nolint:errcheck
+
+	// Check ownership and permissions
+	ctx := context.Background()
+	var ownerUsername, ownerToken interface{}
+	err := h.dbPool.QueryRow(ctx, `
+		SELECT owner_username, owner_token
+		FROM connections
+		WHERE id = $1
+	`, connectionID).Scan(&ownerUsername, &ownerToken)
+	if err != nil {
+		return nil, fmt.Errorf("connection not found: %w", err)
+	}
+
+	// Check authorization
+	if !h.userInfo.IsSuperuser {
+		if h.userInfo.IsServiceToken {
+			tokenStr, ok := ownerToken.(string)
+			if ownerToken == nil || !ok || tokenStr != h.userInfo.Username {
+				return nil, fmt.Errorf("permission denied: can only update own connections")
+			}
+		} else {
+			usernameStr, ok := ownerUsername.(string)
+			if ownerUsername == nil || !ok || usernameStr != h.userInfo.Username {
+				return nil, fmt.Errorf("permission denied: can only update own connections")
+			}
+
+			// Check privilege for non-superuser users
+			var userID int
+			err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+				h.userInfo.Username).Scan(&userID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get user ID: %w", err)
+			}
+
+			canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "update_connection")
+			if err != nil {
+				return nil, fmt.Errorf("failed to check privileges: %w", err)
+			}
+			if !canAccess {
+				return nil, fmt.Errorf("permission denied: insufficient privileges")
+			}
+		}
+	}
+
+	// Build update query dynamically based on provided fields
+	updates := []string{}
+	values := []interface{}{}
+	paramIdx := 1
+
+	if name, ok := args["name"].(string); ok {
+		updates = append(updates, fmt.Sprintf("name = $%d", paramIdx))
+		values = append(values, name)
+		paramIdx++
+	}
+
+	if host, ok := args["host"].(string); ok {
+		updates = append(updates, fmt.Sprintf("host = $%d", paramIdx))
+		values = append(values, host)
+		paramIdx++
+	}
+
+	if hostaddr, ok := args["hostaddr"].(string); ok {
+		updates = append(updates, fmt.Sprintf("hostaddr = $%d", paramIdx))
+		values = append(values, hostaddr)
+		paramIdx++
+	}
+
+	if portFloat, ok := args["port"].(float64); ok {
+		updates = append(updates, fmt.Sprintf("port = $%d", paramIdx))
+		values = append(values, int(portFloat))
+		paramIdx++
+	}
+
+	if databaseName, ok := args["databaseName"].(string); ok {
+		updates = append(updates, fmt.Sprintf("database_name = $%d", paramIdx))
+		values = append(values, databaseName)
+		paramIdx++
+	}
+
+	if username, ok := args["username"].(string); ok {
+		updates = append(updates, fmt.Sprintf("username = $%d", paramIdx))
+		values = append(values, username)
+		paramIdx++
+	}
+
+	if password, ok := args["password"].(string); ok {
+		// Get current username for encryption
+		var currentUsername string
+		err := h.dbPool.QueryRow(ctx, "SELECT username FROM connections WHERE id = $1", connectionID).Scan(&currentUsername)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get connection username: %w", err)
+		}
+
+		encryptedPassword, err := crypto.EncryptPassword(password, h.config.GetServerSecret(), currentUsername)
+		if err != nil {
+			return nil, fmt.Errorf("failed to encrypt password: %w", err)
+		}
+		updates = append(updates, fmt.Sprintf("password_encrypted = $%d", paramIdx))
+		values = append(values, encryptedPassword)
+		paramIdx++
+	}
+
+	if isShared, ok := args["isShared"].(bool); ok {
+		updates = append(updates, fmt.Sprintf("is_shared = $%d", paramIdx))
+		values = append(values, isShared)
+		paramIdx++
+	}
+
+	if isMonitored, ok := args["isMonitored"].(bool); ok {
+		updates = append(updates, fmt.Sprintf("is_monitored = $%d", paramIdx))
+		values = append(values, isMonitored)
+		paramIdx++
+	}
+
+	if sslmode, ok := args["sslmode"].(string); ok {
+		updates = append(updates, fmt.Sprintf("sslmode = $%d", paramIdx))
+		values = append(values, sslmode)
+		paramIdx++
+	}
+
+	if sslcert, ok := args["sslcert"].(string); ok {
+		updates = append(updates, fmt.Sprintf("sslcert = $%d", paramIdx))
+		values = append(values, sslcert)
+		paramIdx++
+	}
+
+	if sslkey, ok := args["sslkey"].(string); ok {
+		updates = append(updates, fmt.Sprintf("sslkey = $%d", paramIdx))
+		values = append(values, sslkey)
+		paramIdx++
+	}
+
+	if sslrootcert, ok := args["sslrootcert"].(string); ok {
+		updates = append(updates, fmt.Sprintf("sslrootcert = $%d", paramIdx))
+		values = append(values, sslrootcert)
+		paramIdx++
+	}
+
+	if len(updates) == 0 {
+		return nil, fmt.Errorf("no fields to update")
+	}
+
+	// Add updated_at
+	updates = append(updates, fmt.Sprintf("updated_at = $%d", paramIdx))
+	values = append(values, time.Now())
+	paramIdx++
+
+	// Add connection ID to values
+	values = append(values, connectionID)
+
+	query := fmt.Sprintf(`
+		UPDATE connections
+		SET %s
+		WHERE id = $%d
+	`, strings.Join(updates, ", "), paramIdx)
+
+	_, err = h.dbPool.Exec(ctx, query, values...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update connection: %w", err)
+	}
+
+	return map[string]interface{}{
+		"content": []map[string]interface{}{
+			{
+				"type": "text",
+				"text": fmt.Sprintf("Connection %d updated successfully", connectionID),
+			},
+		},
+	}, nil
+}
+
+// handleDeleteConnection executes the delete_connection tool
+func (h *Handler) handleDeleteConnection(args map[string]interface{}) (interface{}, error) {
+	// Check authentication
+	if h.userInfo == nil || !h.userInfo.IsAuthenticated {
+		return nil, fmt.Errorf("authentication required")
+	}
+
+	// Get connection ID
+	connectionID := int(args["id"].(float64)) //nolint:errcheck
+
+	// Check ownership and permissions
+	ctx := context.Background()
+	var ownerUsername, ownerToken interface{}
+	var connectionName string
+	err := h.dbPool.QueryRow(ctx, `
+		SELECT owner_username, owner_token, name
+		FROM connections
+		WHERE id = $1
+	`, connectionID).Scan(&ownerUsername, &ownerToken, &connectionName)
+	if err != nil {
+		return nil, fmt.Errorf("connection not found: %w", err)
+	}
+
+	// Check authorization
+	if !h.userInfo.IsSuperuser {
+		if h.userInfo.IsServiceToken {
+			tokenStr, ok := ownerToken.(string)
+			if ownerToken == nil || !ok || tokenStr != h.userInfo.Username {
+				return nil, fmt.Errorf("permission denied: can only delete own connections")
+			}
+		} else {
+			usernameStr, ok := ownerUsername.(string)
+			if ownerUsername == nil || !ok || usernameStr != h.userInfo.Username {
+				return nil, fmt.Errorf("permission denied: can only delete own connections")
+			}
+
+			// Check privilege for non-superuser users
+			var userID int
+			err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+				h.userInfo.Username).Scan(&userID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get user ID: %w", err)
+			}
+
+			canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "delete_connection")
+			if err != nil {
+				return nil, fmt.Errorf("failed to check privileges: %w", err)
+			}
+			if !canAccess {
+				return nil, fmt.Errorf("permission denied: insufficient privileges")
+			}
+		}
+	}
+
+	// Delete the connection
+	_, err = h.dbPool.Exec(ctx, "DELETE FROM connections WHERE id = $1", connectionID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to delete connection: %w", err)
+	}
+
+	return map[string]interface{}{
+		"content": []map[string]interface{}{
+			{
+				"type": "text",
+				"text": fmt.Sprintf("Connection '%s' (ID %d) deleted successfully", connectionName, connectionID),
 			},
 		},
 	}, nil

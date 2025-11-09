@@ -544,6 +544,297 @@ Response:
 }
 ```
 
+## Connection Management Tools
+
+The MCP server provides tools for managing database connections. Regular users
+can manage their own connections if they have the appropriate MCP privileges
+granted via group membership. Service tokens must have superuser privileges to
+create connections.
+
+### create_connection
+
+Creates a new database connection with encrypted password storage. **Service
+tokens require superuser privileges. Regular users need MCP privilege via group
+membership.**
+
+#### Input Schema
+
+```json
+{
+    "type": "object",
+    "properties": {
+        "name": {
+            "type": "string",
+            "description": "User-friendly name for the connection"
+        },
+        "host": {
+            "type": "string",
+            "description": "Hostname or IP address of the PostgreSQL server"
+        },
+        "port": {
+            "type": "number",
+            "description": "Port number for PostgreSQL connection",
+            "default": 5432
+        },
+        "databaseName": {
+            "type": "string",
+            "description": "Name of the database to connect to"
+        },
+        "username": {
+            "type": "string",
+            "description": "Database username for authentication"
+        },
+        "password": {
+            "type": "string",
+            "description": "Database password (will be encrypted)"
+        },
+        "hostaddr": {
+            "type": "string",
+            "description": "Numeric IP address (optional)"
+        },
+        "sslmode": {
+            "type": "string",
+            "description": "SSL mode (disable, allow, prefer, require, verify-ca, verify-full)",
+            "default": "prefer"
+        },
+        "sslcert": {
+            "type": "string",
+            "description": "Path to client SSL certificate (optional)"
+        },
+        "sslkey": {
+            "type": "string",
+            "description": "Path to client SSL key (optional)"
+        },
+        "sslrootcert": {
+            "type": "string",
+            "description": "Path to root certificate (optional)"
+        },
+        "isShared": {
+            "type": "boolean",
+            "description": "Whether this connection is shared",
+            "default": false
+        },
+        "isMonitored": {
+            "type": "boolean",
+            "description": "Whether this connection should be monitored",
+            "default": true
+        }
+    },
+    "required": ["name", "host", "databaseName", "username", "password"]
+}
+```
+
+#### Example Usage
+
+Request:
+
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 7,
+    "method": "tools/call",
+    "params": {
+        "name": "create_connection",
+        "arguments": {
+            "name": "Production Database",
+            "host": "prod.example.com",
+            "port": 5432,
+            "databaseName": "myapp",
+            "username": "dbuser",
+            "password": "SecureDBPass123!",
+            "sslmode": "require",
+            "isMonitored": true
+        }
+    }
+}
+```
+
+Response:
+
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 7,
+    "result": {
+        "content": [
+            {
+                "type": "text",
+                "text": "Connection 'Production Database' created successfully with ID: 42"
+            }
+        ]
+    }
+}
+```
+
+**Security Note**: Passwords are encrypted using AES-256-GCM before storage,
+with encryption keys derived from the server secret and connection username.
+
+### update_connection
+
+Updates an existing database connection. **Users can only update their own
+connections unless they are superusers.**
+
+Supports partial updates - only the fields provided will be changed.
+
+#### Input Schema
+
+```json
+{
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "number",
+            "description": "Connection ID to update"
+        },
+        "name": {
+            "type": "string",
+            "description": "New name (optional)"
+        },
+        "host": {
+            "type": "string",
+            "description": "New host (optional)"
+        },
+        "port": {
+            "type": "number",
+            "description": "New port (optional)"
+        },
+        "databaseName": {
+            "type": "string",
+            "description": "New database name (optional)"
+        },
+        "username": {
+            "type": "string",
+            "description": "New database username (optional)"
+        },
+        "password": {
+            "type": "string",
+            "description": "New password (optional, will be re-encrypted)"
+        },
+        "hostaddr": {
+            "type": "string",
+            "description": "New hostaddr (optional)"
+        },
+        "sslmode": {
+            "type": "string",
+            "description": "New SSL mode (optional)"
+        },
+        "sslcert": {
+            "type": "string",
+            "description": "New SSL certificate path (optional)"
+        },
+        "sslkey": {
+            "type": "string",
+            "description": "New SSL key path (optional)"
+        },
+        "sslrootcert": {
+            "type": "string",
+            "description": "New SSL root cert path (optional)"
+        },
+        "isShared": {
+            "type": "boolean",
+            "description": "Update shared status (optional)"
+        },
+        "isMonitored": {
+            "type": "boolean",
+            "description": "Update monitoring status (optional)"
+        }
+    },
+    "required": ["id"]
+}
+```
+
+#### Example Usage
+
+Request:
+
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 8,
+    "method": "tools/call",
+    "params": {
+        "name": "update_connection",
+        "arguments": {
+            "id": 42,
+            "sslmode": "verify-full",
+            "isMonitored": false
+        }
+    }
+}
+```
+
+Response:
+
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 8,
+    "result": {
+        "content": [
+            {
+                "type": "text",
+                "text": "Connection with ID 42 updated successfully"
+            }
+        ]
+    }
+}
+```
+
+### delete_connection
+
+Deletes a database connection. **Users can only delete their own connections
+unless they are superusers.**
+
+#### Input Schema
+
+```json
+{
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "number",
+            "description": "Connection ID to delete"
+        }
+    },
+    "required": ["id"]
+}
+```
+
+#### Example Usage
+
+Request:
+
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 9,
+    "method": "tools/call",
+    "params": {
+        "name": "delete_connection",
+        "arguments": {
+            "id": 42
+        }
+    }
+}
+```
+
+Response:
+
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 9,
+    "result": {
+        "content": [
+            {
+                "type": "text",
+                "text": "Connection with ID 42 deleted successfully"
+            }
+        ]
+    }
+}
+```
+
 ## Error Handling
 
 Tools return standard JSON-RPC error responses when operations fail:

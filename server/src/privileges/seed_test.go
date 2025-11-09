@@ -18,8 +18,8 @@ import (
 func TestGetDefaultMCPPrivileges(t *testing.T) {
     privileges := GetDefaultMCPPrivileges()
 
-    // Should have 29 MCP tools registered
-    expectedCount := 29
+    // Should have 32 MCP tools registered
+    expectedCount := 32
     if len(privileges) != expectedCount {
         t.Errorf("Expected %d privileges, got %d", expectedCount, len(privileges))
     }
@@ -85,7 +85,7 @@ func TestSeedMCPPrivileges_Idempotent(t *testing.T) {
         t.Fatalf("Failed to query privilege count: %v", err)
     }
 
-    expectedCount := 29
+    expectedCount := 32
     if count != expectedCount {
         t.Errorf("Expected %d privileges in database, got %d", expectedCount, count)
     }

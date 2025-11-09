@@ -332,9 +332,9 @@ func TestHandleListResources(t *testing.T) {
 		t.Fatalf("resources is not an array, got %T", result["resources"])
 	}
 
-	// Should have 9 resources (users, service-tokens, groups, mcp-privileges, and 5 parameterized resources)
-	if len(resources) != 9 {
-		t.Errorf("Expected 9 resources, got %d", len(resources))
+	// Should have 10 resources (users, service-tokens, groups, mcp-privileges, connections, and 5 parameterized resources)
+	if len(resources) != 10 {
+		t.Errorf("Expected 10 resources, got %d", len(resources))
 	}
 
 	// Verify users resource
@@ -465,7 +465,7 @@ func TestHandleListTools(t *testing.T) {
 		t.Fatalf("tools is not an array, got %T", result["tools"])
 	}
 
-	// Should have 22 tools (list_ tools converted to resources)
+	// Should have 25 tools (list_ tools converted to resources)
 	expectedTools := []string{
 		"authenticate_user",
 		"create_user",
@@ -489,6 +489,9 @@ func TestHandleListTools(t *testing.T) {
 		"set_token_mcp_scope",
 		"get_token_scope",
 		"clear_token_scope",
+		"create_connection",
+		"update_connection",
+		"delete_connection",
 	}
 
 	if len(tools) != len(expectedTools) {

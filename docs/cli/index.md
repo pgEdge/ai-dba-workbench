@@ -9,7 +9,8 @@
 
 The pgEdge AI Workbench CLI (`ai-cli`) is a command-line interface tool for
 interacting with the MCP (Model Context Protocol) server. It provides a simple
-way to call MCP tools, read resources, and test server connectivity.
+way to call MCP tools, read resources, test server connectivity, and interact
+with LLMs that have access to MCP capabilities.
 
 ## Architecture
 
@@ -37,6 +38,17 @@ The MCP client implements:
 - Request/response serialization
 - Error handling for HTTP and MCP protocol errors
 - Automatic request ID management
+- Bearer token authentication
+
+#### 3. LLM Integration ([llm.go](../../cli/src/llm.go))
+
+The LLM integration provides:
+
+- Support for Anthropic Claude and Ollama providers
+- Conversation history management for interactive mode
+- Automatic resource data fetching for context
+- Tool and resource schema passing to LLMs
+- Visual feedback with animated spinner during processing
 
 ### Protocol
 
@@ -157,6 +169,104 @@ data like user lists, service tokens, and other information.
 
 **Note:** Use `read-resource` for viewing/listing data, and `run-tool` for
 actions (create, update, delete).
+
+### list-resources
+
+Lists all available MCP resources from the server.
+
+**Usage:**
+
+```bash
+./ai-cli list-resources
+```
+
+**Example Output:**
+
+```
+ai-workbench://users (User Accounts) - List of all user accounts
+ai-workbench://service-tokens (Service Tokens) - List of all service tokens
+ai-workbench://connections (Database Connections) - List of database connections
+ai-workbench://groups (User Groups) - List of all user groups
+...
+```
+
+### list-tools
+
+Lists all available MCP tools from the server.
+
+**Usage:**
+
+```bash
+./ai-cli list-tools
+```
+
+**Example Output:**
+
+```
+authenticate_user - Authenticate a user and obtain a session token
+create_user - Create a new user account
+create_connection - Create a new database connection
+update_connection - Update an existing database connection
+delete_connection - Delete a database connection
+...
+```
+
+### list-prompts
+
+Lists all available MCP prompts from the server.
+
+**Usage:**
+
+```bash
+./ai-cli list-prompts
+```
+
+### ask-llm
+
+Interacts with an LLM (Large Language Model) that has access to all MCP tools,
+resources, and prompts. The LLM can help understand the system, query data, and
+suggest actions.
+
+**Usage:**
+
+```bash
+./ai-cli ask-llm [query]
+```
+
+**Features:**
+
+- **Interactive Mode**: If no query is provided, enters conversation mode
+- **Conversation History**: Maintains context across multiple turns
+- **Visual Feedback**: Animated spinner displays while waiting for responses
+- **Resource Context**: LLM has access to actual data from static resources
+- **Multiple Providers**: Supports Anthropic Claude (preferred) and Ollama
+
+**Environment Variables:**
+
+- `ANTHROPIC_API_KEY` - API key for Anthropic Claude (if set, used as default)
+- `ANTHROPIC_MODEL` - Model to use (default: `claude-sonnet-4-5`)
+- `OLLAMA_URL` - Ollama server URL (default: `http://localhost:11434`)
+- `OLLAMA_MODEL` - Ollama model to use (default: `llama2`)
+
+**Examples:**
+
+```bash
+# Single question mode
+./ai-cli ask-llm "List all database connections"
+
+# Interactive mode - have a conversation
+./ai-cli ask-llm
+# You: What users are in the system?
+# ⠋ Thinking...
+# [LLM responds]
+# You: Tell me more about the first user
+# ⠋ Thinking...
+# [LLM responds with context from previous answer]
+# Ctrl+C to exit
+
+# Ask about specific capabilities
+./ai-cli ask-llm "What tools are available for managing database connections?"
+```
 
 ### ping
 
@@ -339,7 +449,9 @@ func (c *MCPClient) NewMethod(params map[string]interface{}) (interface{}, error
 
 ## Dependencies
 
-The CLI uses only Go standard library packages:
+The CLI uses both Go standard library packages and external dependencies:
+
+### Standard Library
 
 - `flag` - Command-line flag parsing
 - `encoding/json` - JSON serialization
@@ -348,8 +460,20 @@ The CLI uses only Go standard library packages:
 - `os` - Operating system interface
 - `fmt` - Formatted I/O
 - `bytes` - Byte buffer utilities
+- `context` - Context handling for cancellation
+- `sync` - Synchronization primitives for spinner
+- `time` - Time operations for spinner animation
+- `syscall` - System calls for terminal operations
 
-No external dependencies are required.
+### External Packages
+
+- `golang.org/x/term` - Terminal operations for password input
+- `github.com/anthropics/anthropic-sdk-go` - Anthropic Claude API (optional)
+- `github.com/ollama/ollama` - Ollama API client (optional)
+
+**Note**: External packages are only required if using the `ask-llm` command.
+Basic CLI functionality (run-tool, read-resource, ping, list commands) works
+without external dependencies.
 
 ## Configuration
 
@@ -412,18 +536,30 @@ Error: MCP error -32601: Method not found
 
 **Solution:** Check the tool name and ensure it's supported by the MCP server.
 
-## Future Enhancements
+## Features
+
+### Implemented
+
+- ✅ **LLM Integration** - Interactive conversations with AI assistants
+- ✅ **Visual Feedback** - Animated spinner for LLM operations
+- ✅ **Authentication** - Bearer token support with automatic credential
+  prompting
+- ✅ **Connection Management** - Full CRUD operations for database connections
+- ✅ **Resource Listing** - Browse available resources, tools, and prompts
+- ✅ **Interactive Mode** - Conversational interface with LLMs
+
+### Future Enhancements
 
 Potential improvements for future versions:
 
-1. **Interactive Mode** - Prompt for inputs when not provided
-2. **Configuration File** - Support for configuration file (~/.ai-cli.yaml)
-3. **Output Formats** - Support for YAML, table, and raw output formats
-4. **Command History** - Save and recall previous commands
-5. **Shell Completion** - Bash/Zsh completion scripts
-6. **Verbose Mode** - Debug logging for troubleshooting
-7. **Batch Mode** - Execute multiple commands from a file
-8. **Authentication** - Support for API keys or tokens
+1. **Configuration File** - Support for configuration file (~/.ai-cli.yaml)
+2. **Output Formats** - Support for YAML, table, and raw output formats
+3. **Command History** - Save and recall previous commands
+4. **Shell Completion** - Bash/Zsh completion scripts
+5. **Verbose Mode** - Debug logging for troubleshooting
+6. **Batch Mode** - Execute multiple commands from a file
+7. **Tool Execution in LLM Mode** - Allow LLMs to directly execute tools
+8. **Connection Testing** - Validate database connection parameters
 
 ## License
 

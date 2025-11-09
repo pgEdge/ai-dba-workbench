@@ -186,6 +186,23 @@ func GetDefaultMCPPrivileges() []MCPPrivilege {
             ItemType:    "tool",
             Description: "Remove all scope restrictions for a token",
         },
+
+        // Connection Management Tools
+        {
+            Identifier:  "create_connection",
+            ItemType:    "tool",
+            Description: "Create a new database connection",
+        },
+        {
+            Identifier:  "update_connection",
+            ItemType:    "tool",
+            Description: "Update an existing database connection",
+        },
+        {
+            Identifier:  "delete_connection",
+            ItemType:    "tool",
+            Description: "Delete a database connection",
+        },
     }
 }
 

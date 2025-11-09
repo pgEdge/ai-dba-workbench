@@ -117,6 +117,72 @@ Each service token entry contains:
 **Note**: The actual token value is never exposed through resources. It is
 only shown once when the token is created.
 
+### Database Connections Resource
+
+- **URI**: `ai-workbench://connections`
+- **Description**: List of all database connections in the system
+- **MIME Type**: `application/json`
+
+#### Listing Database Connections
+
+Request:
+
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 3,
+    "method": "resources/read",
+    "params": {
+        "uri": "ai-workbench://connections"
+    }
+}
+```
+
+Response:
+
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 3,
+    "result": {
+        "contents": [
+            {
+                "uri": "ai-workbench://connections/42",
+                "mimeType": "application/json",
+                "text": "{\"id\": 42, \"ownerUsername\": \"admin\", \"ownerToken\": null, \"isShared\": false, \"isMonitored\": true, \"name\": \"Production Database\", \"host\": \"prod.example.com\", \"hostaddr\": null, \"port\": 5432, \"databaseName\": \"myapp\", \"username\": \"dbuser\", \"sslmode\": \"require\", \"createdAt\": \"2025-01-15T10:30:00Z\", \"updatedAt\": \"2025-01-15T10:30:00Z\"}"
+            }
+        ]
+    }
+}
+```
+
+#### Database Connection Data Fields
+
+Each connection entry contains:
+
+- `id` (number) - Unique connection ID
+- `ownerUsername` (string or null) - Username of the owner (null if owned by a
+  service token)
+- `ownerToken` (string or null) - Service token name of the owner (null if
+  owned by a user)
+- `isShared` (boolean) - Whether the connection is shared
+- `isMonitored` (boolean) - Whether the connection is being monitored
+- `name` (string) - User-friendly name for the connection
+- `host` (string) - PostgreSQL server hostname or IP
+- `hostaddr` (string or null) - Numeric IP address (optional)
+- `port` (number) - PostgreSQL server port
+- `databaseName` (string) - Name of the database
+- `username` (string) - Database username for authentication
+- `sslmode` (string) - SSL connection mode
+- `createdAt` (timestamp) - When the connection was created
+- `updatedAt` (timestamp) - When the connection was last updated
+
+**Security Notes**:
+- Passwords are never exposed through resources
+- Non-superusers only see connections they own (via `ownerUsername` or
+  `ownerToken`)
+- Superusers can see all connections
+
 ### User Groups Resource
 
 - **URI**: `ai-workbench://groups`
@@ -214,6 +280,12 @@ Response:
                 "mimeType": "application/json"
             },
             {
+                "uri": "ai-workbench://connections",
+                "name": "Database Connections",
+                "description": "List of all database connections in the system",
+                "mimeType": "application/json"
+            },
+            {
                 "uri": "ai-workbench://groups",
                 "name": "User Groups",
                 "description": "List of all user groups in the system",
@@ -273,6 +345,7 @@ Resources are useful for:
 
 - Browsing available user accounts and their properties
 - Inspecting service token configurations
+- Viewing database connections and their configurations
 - Viewing user groups and their hierarchies
 - Checking user token assignments and group memberships
 - Reviewing connection access privileges for groups

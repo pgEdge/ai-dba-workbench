@@ -57,29 +57,31 @@
 				
 				<option value="file0">github.com/pgEdge/ai-workbench/server/src/config/config.go (79.8%)</option>
 				
-				<option value="file1">github.com/pgEdge/ai-workbench/server/src/database/database.go (0.0%)</option>
+				<option value="file1">github.com/pgEdge/ai-workbench/server/src/crypto/crypto.go (0.0%)</option>
 				
-				<option value="file2">github.com/pgEdge/ai-workbench/server/src/groupmgmt/groupmgmt.go (0.0%)</option>
+				<option value="file2">github.com/pgEdge/ai-workbench/server/src/database/database.go (0.0%)</option>
 				
-				<option value="file3">github.com/pgEdge/ai-workbench/server/src/main.go (0.0%)</option>
+				<option value="file3">github.com/pgEdge/ai-workbench/server/src/groupmgmt/groupmgmt.go (0.0%)</option>
 				
-				<option value="file4">github.com/pgEdge/ai-workbench/server/src/mcp/handler.go (11.1%)</option>
+				<option value="file4">github.com/pgEdge/ai-workbench/server/src/main.go (0.0%)</option>
 				
-				<option value="file5">github.com/pgEdge/ai-workbench/server/src/mcp/middleware/args.go (0.0%)</option>
+				<option value="file5">github.com/pgEdge/ai-workbench/server/src/mcp/handler.go (9.0%)</option>
 				
-				<option value="file6">github.com/pgEdge/ai-workbench/server/src/mcp/middleware/auth.go (0.0%)</option>
+				<option value="file6">github.com/pgEdge/ai-workbench/server/src/mcp/middleware/args.go (0.0%)</option>
 				
-				<option value="file7">github.com/pgEdge/ai-workbench/server/src/mcp/middleware/response.go (0.0%)</option>
+				<option value="file7">github.com/pgEdge/ai-workbench/server/src/mcp/middleware/auth.go (0.0%)</option>
 				
-				<option value="file8">github.com/pgEdge/ai-workbench/server/src/mcp/protocol.go (88.9%)</option>
+				<option value="file8">github.com/pgEdge/ai-workbench/server/src/mcp/middleware/response.go (0.0%)</option>
 				
-				<option value="file9">github.com/pgEdge/ai-workbench/server/src/privileges/privileges.go (0.0%)</option>
+				<option value="file9">github.com/pgEdge/ai-workbench/server/src/mcp/protocol.go (88.9%)</option>
 				
-				<option value="file10">github.com/pgEdge/ai-workbench/server/src/privileges/seed.go (14.3%)</option>
+				<option value="file10">github.com/pgEdge/ai-workbench/server/src/privileges/privileges.go (0.0%)</option>
 				
-				<option value="file11">github.com/pgEdge/ai-workbench/server/src/server/server.go (0.0%)</option>
+				<option value="file11">github.com/pgEdge/ai-workbench/server/src/privileges/seed.go (14.3%)</option>
 				
-				<option value="file12">github.com/pgEdge/ai-workbench/server/src/usermgmt/usermgmt.go (0.0%)</option>
+				<option value="file12">github.com/pgEdge/ai-workbench/server/src/server/server.go (0.0%)</option>
+				
+				<option value="file13">github.com/pgEdge/ai-workbench/server/src/usermgmt/usermgmt.go (0.0%)</option>
 				
 				</select>
 			</div>
@@ -379,6 +381,117 @@ func (c *Config) GetMaxUserTokenLifetimeDays() int <span class="cov0" title="0">
  *-------------------------------------------------------------------------
  */
 
+package crypto
+
+import (
+    "crypto/aes"
+    "crypto/cipher"
+    "crypto/rand"
+    "crypto/sha256"
+    "encoding/base64"
+    "fmt"
+    "io"
+)
+
+// deriveKey derives a 32-byte AES key from the server secret and optional salt
+func deriveKey(serverSecret string, salt string) []byte <span class="cov0" title="0">{
+    // Combine server secret with salt
+    combined := serverSecret + salt
+    hash := sha256.Sum256([]byte(combined))
+    return hash[:]
+}</span>
+
+// EncryptPassword encrypts a password using AES-256-GCM
+// The key is derived from the server secret and username
+func EncryptPassword(password string, serverSecret string, username string) (string, error) <span class="cov0" title="0">{
+    if serverSecret == "" </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("server secret is required for encryption")
+    }</span>
+
+    // Derive key from server secret and username
+    <span class="cov0" title="0">key := deriveKey(serverSecret, username)
+
+    // Create cipher block
+    block, err := aes.NewCipher(key)
+    if err != nil </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("failed to create cipher: %w", err)
+    }</span>
+
+    // Create GCM mode
+    <span class="cov0" title="0">gcm, err := cipher.NewGCM(block)
+    if err != nil </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("failed to create GCM: %w", err)
+    }</span>
+
+    // Generate nonce
+    <span class="cov0" title="0">nonce := make([]byte, gcm.NonceSize())
+    if _, err := io.ReadFull(rand.Reader, nonce); err != nil </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("failed to generate nonce: %w", err)
+    }</span>
+
+    // Encrypt the password
+    <span class="cov0" title="0">ciphertext := gcm.Seal(nonce, nonce, []byte(password), nil)
+
+    // Encode to base64 for storage
+    return base64.StdEncoding.EncodeToString(ciphertext), nil</span>
+}
+
+// DecryptPassword decrypts a password using AES-256-GCM
+// The key is derived from the server secret and username
+func DecryptPassword(encryptedPassword string, serverSecret string, username string) (string, error) <span class="cov0" title="0">{
+    if serverSecret == "" </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("server secret is required for decryption")
+    }</span>
+
+    // Derive key from server secret and username
+    <span class="cov0" title="0">key := deriveKey(serverSecret, username)
+
+    // Decode from base64
+    ciphertext, err := base64.StdEncoding.DecodeString(encryptedPassword)
+    if err != nil </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("failed to decode base64: %w", err)
+    }</span>
+
+    // Create cipher block
+    <span class="cov0" title="0">block, err := aes.NewCipher(key)
+    if err != nil </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("failed to create cipher: %w", err)
+    }</span>
+
+    // Create GCM mode
+    <span class="cov0" title="0">gcm, err := cipher.NewGCM(block)
+    if err != nil </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("failed to create GCM: %w", err)
+    }</span>
+
+    // Extract nonce
+    <span class="cov0" title="0">nonceSize := gcm.NonceSize()
+    if len(ciphertext) &lt; nonceSize </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("ciphertext too short")
+    }</span>
+
+    <span class="cov0" title="0">nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
+
+    // Decrypt
+    plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+    if err != nil </span><span class="cov0" title="0">{
+        return "", fmt.Errorf("failed to decrypt: %w", err)
+    }</span>
+
+    <span class="cov0" title="0">return string(plaintext), nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file2" style="display: none">/*-------------------------------------------------------------------------
+ *
+ * pgEdge AI Workbench
+ *
+ * Copyright (c) 2025, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-------------------------------------------------------------------------
+ */
+
 // Package database provides database connection management for the MCP server
 package database
 
@@ -444,7 +557,7 @@ func Connect(cfg *config.Config) (*pgxpool.Pool, error) <span class="cov0" title
 }
 </pre>
 		
-		<pre class="file" id="file2" style="display: none">/*-----------------------------------------------------------
+		<pre class="file" id="file3" style="display: none">/*-----------------------------------------------------------
  *
  * pgEdge AI Workbench
  *
@@ -1177,7 +1290,7 @@ func ClearTokenScope(ctx context.Context, pool *pgxpool.Pool, tokenID int, token
 }
 </pre>
 		
-		<pre class="file" id="file3" style="display: none">/*-------------------------------------------------------------------------
+		<pre class="file" id="file4" style="display: none">/*-------------------------------------------------------------------------
  *
  * pgEdge AI Workbench
  *
@@ -1487,7 +1600,7 @@ func handleUserManagement(cfg *config.Config) <span class="cov0" title="0">{
 }
 </pre>
 		
-		<pre class="file" id="file4" style="display: none">/*-------------------------------------------------------------------------
+		<pre class="file" id="file5" style="display: none">/*-------------------------------------------------------------------------
  *
  * pgEdge AI Workbench
  *
@@ -1507,8 +1620,10 @@ import (
         "strings"
         "time"
 
+        "github.com/jackc/pgx/v5"
         "github.com/jackc/pgx/v5/pgxpool"
         "github.com/pgEdge/ai-workbench/server/src/config"
+        "github.com/pgEdge/ai-workbench/server/src/crypto"
         "github.com/pgEdge/ai-workbench/server/src/groupmgmt"
         "github.com/pgedge/ai-workbench/pkg/logger"
         "github.com/pgEdge/ai-workbench/server/src/privileges"
@@ -1718,6 +1833,12 @@ func (h *Handler) handleListResources(req Request) (*Response, error) <span clas
                         "description": "List of privileges for a database connection (replace {connectionId} with actual connection ID)",
                         "mimeType":    "application/json",
                 },
+                {
+                        "uri":         "ai-workbench://connections",
+                        "name":        "Database Connections",
+                        "description": "List of all database connections in the system",
+                        "mimeType":    "application/json",
+                },
         }
 
         result := map[string]interface{}{
@@ -1852,6 +1973,104 @@ func (h *Handler) handleReadResource(req Request) (*Response, error) <span class
                                 "uri":      fmt.Sprintf("ai-workbench://mcp-privileges/%v", privID),
                                 "mimeType": "application/json",
                                 "text":     string(identifierJSON),
+                        })</span>
+                }
+
+        case "ai-workbench://connections":<span class="cov0" title="0">
+                // List all database connections
+                // Only show connections owned by the current user/token, unless they're a superuser
+                var rows pgx.Rows
+                var err error
+                if h.userInfo == nil || !h.userInfo.IsAuthenticated </span><span class="cov0" title="0">{
+                        return NewErrorResponse(req.ID, InternalError,
+                                "Authentication required", nil), nil
+                }</span>
+
+                <span class="cov0" title="0">if h.userInfo.IsSuperuser </span><span class="cov0" title="0">{
+                        // Superusers can see all connections
+                        rows, err = h.dbPool.Query(ctx, `
+                                SELECT id, owner_username, owner_token, is_shared, is_monitored,
+                                       name, host, hostaddr, port, database_name, username,
+                                       sslmode, created_at, updated_at
+                                FROM connections
+                                ORDER BY name
+                        `)
+                }</span> else<span class="cov0" title="0"> if h.userInfo.IsServiceToken </span><span class="cov0" title="0">{
+                        // Service tokens see their own connections
+                        rows, err = h.dbPool.Query(ctx, `
+                                SELECT id, owner_username, owner_token, is_shared, is_monitored,
+                                       name, host, hostaddr, port, database_name, username,
+                                       sslmode, created_at, updated_at
+                                FROM connections
+                                WHERE owner_token = $1
+                                ORDER BY name
+                        `, h.userInfo.Username)
+                }</span> else<span class="cov0" title="0"> {
+                        // Regular users see their own connections
+                        rows, err = h.dbPool.Query(ctx, `
+                                SELECT id, owner_username, owner_token, is_shared, is_monitored,
+                                       name, host, hostaddr, port, database_name, username,
+                                       sslmode, created_at, updated_at
+                                FROM connections
+                                WHERE owner_username = $1
+                                ORDER BY name
+                        `, h.userInfo.Username)
+                }</span>
+
+                <span class="cov0" title="0">if err != nil </span><span class="cov0" title="0">{
+                        logger.Errorf("Failed to query connections: %v", err)
+                        return NewErrorResponse(req.ID, InternalError,
+                                "Failed to query connections", err.Error()), nil
+                }</span>
+                <span class="cov0" title="0">defer rows.Close()
+
+                for rows.Next() </span><span class="cov0" title="0">{
+                        var id int
+                        var ownerUsername, ownerToken, hostaddr, sslmode interface{}
+                        var isShared, isMonitored bool
+                        var name, host string
+                        var port int
+                        var databaseName, username string
+                        var createdAt, updatedAt time.Time
+
+                        if err := rows.Scan(&amp;id, &amp;ownerUsername, &amp;ownerToken, &amp;isShared,
+                                &amp;isMonitored, &amp;name, &amp;host, &amp;hostaddr, &amp;port, &amp;databaseName,
+                                &amp;username, &amp;sslmode, &amp;createdAt, &amp;updatedAt); err != nil </span><span class="cov0" title="0">{
+                                logger.Errorf("Failed to scan connection: %v", err)
+                                continue</span>
+                        }
+
+                        <span class="cov0" title="0">connData := map[string]interface{}{
+                                "id":           id,
+                                "isShared":     isShared,
+                                "isMonitored":  isMonitored,
+                                "name":         name,
+                                "host":         host,
+                                "hostaddr":     hostaddr,
+                                "port":         port,
+                                "databaseName": databaseName,
+                                "username":     username,
+                                "sslmode":      sslmode,
+                                "createdAt":    createdAt,
+                                "updatedAt":    updatedAt,
+                        }
+
+                        // Only include ownership info for superusers
+                        if h.userInfo.IsSuperuser </span><span class="cov0" title="0">{
+                                connData["ownerUsername"] = ownerUsername
+                                connData["ownerToken"] = ownerToken
+                        }</span>
+
+                        <span class="cov0" title="0">connJSON, err := json.Marshal(connData)
+                        if err != nil </span><span class="cov0" title="0">{
+                                logger.Errorf("Failed to marshal connection: %v", err)
+                                continue</span>
+                        }
+
+                        <span class="cov0" title="0">contents = append(contents, map[string]interface{}{
+                                "uri":      fmt.Sprintf("ai-workbench://connections/%d", id),
+                                "mimeType": "application/json",
+                                "text":     string(connJSON),
                         })</span>
                 }
 
@@ -2524,6 +2743,153 @@ func (h *Handler) handleListTools(req Request) (*Response, error) <span class="c
                                 "required": []string{"tokenId", "tokenType"},
                         },
                 },
+                {
+                        "name":        "create_connection",
+                        "description": "Create a new database connection",
+                        "inputSchema": map[string]interface{}{
+                                "type": "object",
+                                "properties": map[string]interface{}{
+                                        "name": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "User-friendly name for the connection",
+                                        },
+                                        "host": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Hostname or IP address of the PostgreSQL server",
+                                        },
+                                        "port": map[string]interface{}{
+                                                "type":        "number",
+                                                "description": "Port number for PostgreSQL connection (default 5432)",
+                                                "default":     5432,
+                                        },
+                                        "databaseName": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Database to connect to",
+                                        },
+                                        "username": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Username for connection",
+                                        },
+                                        "password": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "Password for connection",
+                                        },
+                                        "isShared": map[string]interface{}{
+                                                "type":        "boolean",
+                                                "description": "Whether the connection is shared among users or private",
+                                                "default":     false,
+                                        },
+                                        "isMonitored": map[string]interface{}{
+                                                "type":        "boolean",
+                                                "description": "Whether this connection should be actively monitored",
+                                                "default":     false,
+                                        },
+                                        "hostaddr": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "IP address to bypass DNS lookup (optional)",
+                                        },
+                                        "sslmode": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "SSL mode for connection (optional)",
+                                                "enum":        []string{"disable", "allow", "prefer", "require", "verify-ca", "verify-full"},
+                                        },
+                                        "sslcert": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "SSL certificate (optional)",
+                                        },
+                                        "sslkey": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "SSL key (optional)",
+                                        },
+                                        "sslrootcert": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "SSL root certificate (optional)",
+                                        },
+                                },
+                                "required": []string{"name", "host", "databaseName", "username", "password"},
+                        },
+                },
+                {
+                        "name":        "update_connection",
+                        "description": "Update an existing database connection",
+                        "inputSchema": map[string]interface{}{
+                                "type": "object",
+                                "properties": map[string]interface{}{
+                                        "id": map[string]interface{}{
+                                                "type":        "number",
+                                                "description": "ID of the connection to update",
+                                        },
+                                        "name": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "New name for the connection (optional)",
+                                        },
+                                        "host": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "New hostname or IP address (optional)",
+                                        },
+                                        "port": map[string]interface{}{
+                                                "type":        "number",
+                                                "description": "New port number (optional)",
+                                        },
+                                        "databaseName": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "New database name (optional)",
+                                        },
+                                        "username": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "New username (optional)",
+                                        },
+                                        "password": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "New password (optional)",
+                                        },
+                                        "isShared": map[string]interface{}{
+                                                "type":        "boolean",
+                                                "description": "Update shared status (optional)",
+                                        },
+                                        "isMonitored": map[string]interface{}{
+                                                "type":        "boolean",
+                                                "description": "Update monitoring status (optional)",
+                                        },
+                                        "hostaddr": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "New IP address (optional)",
+                                        },
+                                        "sslmode": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "New SSL mode (optional)",
+                                                "enum":        []string{"disable", "allow", "prefer", "require", "verify-ca", "verify-full"},
+                                        },
+                                        "sslcert": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "New SSL certificate (optional)",
+                                        },
+                                        "sslkey": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "New SSL key (optional)",
+                                        },
+                                        "sslrootcert": map[string]interface{}{
+                                                "type":        "string",
+                                                "description": "New SSL root certificate (optional)",
+                                        },
+                                },
+                                "required": []string{"id"},
+                        },
+                },
+                {
+                        "name":        "delete_connection",
+                        "description": "Delete a database connection",
+                        "inputSchema": map[string]interface{}{
+                                "type": "object",
+                                "properties": map[string]interface{}{
+                                        "id": map[string]interface{}{
+                                                "type":        "number",
+                                                "description": "ID of the connection to delete",
+                                        },
+                                },
+                                "required": []string{"id"},
+                        },
+                },
         }
 
         result := map[string]interface{}{
@@ -2611,6 +2977,12 @@ func (h *Handler) handleCallTool(req Request) (*Response, error) <span class="co
                 result, err = h.handleGetTokenScope(params.Arguments)</span>
         case "clear_token_scope":<span class="cov0" title="0">
                 result, err = h.handleClearTokenScope(params.Arguments)</span>
+        case "create_connection":<span class="cov0" title="0">
+                result, err = h.handleCreateConnection(params.Arguments)</span>
+        case "update_connection":<span class="cov0" title="0">
+                result, err = h.handleUpdateConnection(params.Arguments)</span>
+        case "delete_connection":<span class="cov0" title="0">
+                result, err = h.handleDeleteConnection(params.Arguments)</span>
         default:<span class="cov8" title="1">
                 logger.Errorf("Unknown tool: %s", params.Name)
                 return NewErrorResponse(req.ID, MethodNotFound, "Tool not found",
@@ -3169,7 +3541,7 @@ func (h *Handler) handleDeleteUserToken(args map[string]interface{}) (interface{
 type UserInfo struct {
         IsAuthenticated bool
         IsSuperuser     bool
-        Username        string // Empty for service tokens
+        Username        string // User username or service token name
         IsServiceToken  bool
 }
 
@@ -3185,11 +3557,12 @@ func (h *Handler) validateToken(token string) (*UserInfo, error) <span class="co
         tokenHash := usermgmt.HashPassword(token)
         var expiresAt interface{}
         var isSuperuser bool
+        var tokenName string
         err := h.dbPool.QueryRow(ctx, `
-                SELECT expires_at, is_superuser
+                SELECT name, expires_at, is_superuser
                 FROM service_tokens
                 WHERE token_hash = $1
-        `, tokenHash).Scan(&amp;expiresAt, &amp;isSuperuser)
+        `, tokenHash).Scan(&amp;tokenName, &amp;expiresAt, &amp;isSuperuser)
 
         if err == nil </span><span class="cov0" title="0">{
                 // Service token found, check if expired
@@ -3201,11 +3574,11 @@ func (h *Handler) validateToken(token string) (*UserInfo, error) <span class="co
                                 }</span>
                         }
                 }
-                <span class="cov0" title="0">logger.Infof("Valid service token (superuser: %t)", isSuperuser)
+                <span class="cov0" title="0">logger.Infof("Valid service token '%s' (superuser: %t)", tokenName, isSuperuser)
                 return &amp;UserInfo{
                         IsAuthenticated: true,
                         IsSuperuser:     isSuperuser,
-                        Username:        "",
+                        Username:        tokenName,
                         IsServiceToken:  true,
                 }, nil</span>
         }
@@ -4202,6 +4575,356 @@ func (h *Handler) handleClearTokenScope(args map[string]interface{}) (interface{
         }, nil</span>
 }
 
+// handleCreateConnection executes the create_connection tool
+func (h *Handler) handleCreateConnection(args map[string]interface{}) (interface{}, error) <span class="cov0" title="0">{
+        // Check authentication
+        if h.userInfo == nil || !h.userInfo.IsAuthenticated </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("authentication required")
+        }</span>
+
+        // Superusers bypass all privilege checks
+        <span class="cov0" title="0">if !h.userInfo.IsSuperuser </span><span class="cov0" title="0">{
+                // If no database pool (test mode), require superuser
+                if h.dbPool == nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // Service tokens must be superusers for this operation
+                <span class="cov0" title="0">if h.userInfo.IsServiceToken </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: superuser privileges required")
+                }</span>
+
+                // For non-superuser users, check privileges via group membership
+                <span class="cov0" title="0">ctx := context.Background()
+
+                // Get user ID from username
+                var userID int
+                err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+                        h.userInfo.Username).Scan(&amp;userID)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to get user ID: %w", err)
+                }</span>
+
+                // Check if user has privilege to create connections
+                <span class="cov0" title="0">canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "create_connection")
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to check privileges: %w", err)
+                }</span>
+                <span class="cov0" title="0">if !canAccess </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("permission denied: insufficient privileges")
+                }</span>
+        }
+
+        // Extract parameters
+        <span class="cov0" title="0">name, _ := args["name"].(string)                     //nolint:errcheck
+        host, _ := args["host"].(string)                     //nolint:errcheck
+        databaseName, _ := args["databaseName"].(string)     //nolint:errcheck
+        username, _ := args["username"].(string)             //nolint:errcheck
+        password, _ := args["password"].(string)             //nolint:errcheck
+        port := 5432                                          // default
+        if portFloat, ok := args["port"].(float64); ok </span><span class="cov0" title="0">{
+                port = int(portFloat)
+        }</span>
+        <span class="cov0" title="0">isShared, _ := args["isShared"].(bool)               //nolint:errcheck
+        isMonitored, _ := args["isMonitored"].(bool)         //nolint:errcheck
+        hostaddr, _ := args["hostaddr"].(string)             //nolint:errcheck
+        sslmode, _ := args["sslmode"].(string)               //nolint:errcheck
+        sslcert, _ := args["sslcert"].(string)               //nolint:errcheck
+        sslkey, _ := args["sslkey"].(string)                 //nolint:errcheck
+        sslrootcert, _ := args["sslrootcert"].(string)       //nolint:errcheck
+
+        // Encrypt the password
+        encryptedPassword, err := crypto.EncryptPassword(password, h.config.GetServerSecret(), username)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to encrypt password: %w", err)
+        }</span>
+
+        // Determine ownership
+        <span class="cov0" title="0">var ownerUsername, ownerToken interface{}
+        if h.userInfo.IsServiceToken </span><span class="cov0" title="0">{
+                ownerToken = h.userInfo.Username
+                ownerUsername = nil
+        }</span> else<span class="cov0" title="0"> {
+                ownerUsername = h.userInfo.Username
+                ownerToken = nil
+        }</span>
+
+        // Insert into database
+        <span class="cov0" title="0">ctx := context.Background()
+        var connectionID int
+        err = h.dbPool.QueryRow(ctx, `
+                INSERT INTO connections (
+                        owner_username, owner_token, is_shared, is_monitored,
+                        name, host, hostaddr, port, database_name, username,
+                        password_encrypted, sslmode, sslcert, sslkey, sslrootcert
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                RETURNING id
+        `, ownerUsername, ownerToken, isShared, isMonitored, name, host, hostaddr,
+                port, databaseName, username, encryptedPassword, sslmode, sslcert, sslkey, sslrootcert).Scan(&amp;connectionID)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to create connection: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">return map[string]interface{}{
+                "content": []map[string]interface{}{
+                        {
+                                "type": "text",
+                                "text": fmt.Sprintf("Connection '%s' created successfully with ID %d", name, connectionID),
+                        },
+                },
+        }, nil</span>
+}
+
+// handleUpdateConnection executes the update_connection tool
+func (h *Handler) handleUpdateConnection(args map[string]interface{}) (interface{}, error) <span class="cov0" title="0">{
+        // Check authentication
+        if h.userInfo == nil || !h.userInfo.IsAuthenticated </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("authentication required")
+        }</span>
+
+        // Get connection ID
+        <span class="cov0" title="0">connectionID := int(args["id"].(float64)) //nolint:errcheck
+
+        // Check ownership and permissions
+        ctx := context.Background()
+        var ownerUsername, ownerToken interface{}
+        err := h.dbPool.QueryRow(ctx, `
+                SELECT owner_username, owner_token
+                FROM connections
+                WHERE id = $1
+        `, connectionID).Scan(&amp;ownerUsername, &amp;ownerToken)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("connection not found: %w", err)
+        }</span>
+
+        // Check authorization
+        <span class="cov0" title="0">if !h.userInfo.IsSuperuser </span><span class="cov0" title="0">{
+                if h.userInfo.IsServiceToken </span><span class="cov0" title="0">{
+                        tokenStr, ok := ownerToken.(string)
+                        if ownerToken == nil || !ok || tokenStr != h.userInfo.Username </span><span class="cov0" title="0">{
+                                return nil, fmt.Errorf("permission denied: can only update own connections")
+                        }</span>
+                } else<span class="cov0" title="0"> {
+                        usernameStr, ok := ownerUsername.(string)
+                        if ownerUsername == nil || !ok || usernameStr != h.userInfo.Username </span><span class="cov0" title="0">{
+                                return nil, fmt.Errorf("permission denied: can only update own connections")
+                        }</span>
+
+                        // Check privilege for non-superuser users
+                        <span class="cov0" title="0">var userID int
+                        err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+                                h.userInfo.Username).Scan(&amp;userID)
+                        if err != nil </span><span class="cov0" title="0">{
+                                return nil, fmt.Errorf("failed to get user ID: %w", err)
+                        }</span>
+
+                        <span class="cov0" title="0">canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "update_connection")
+                        if err != nil </span><span class="cov0" title="0">{
+                                return nil, fmt.Errorf("failed to check privileges: %w", err)
+                        }</span>
+                        <span class="cov0" title="0">if !canAccess </span><span class="cov0" title="0">{
+                                return nil, fmt.Errorf("permission denied: insufficient privileges")
+                        }</span>
+                }
+        }
+
+        // Build update query dynamically based on provided fields
+        <span class="cov0" title="0">updates := []string{}
+        values := []interface{}{}
+        paramIdx := 1
+
+        if name, ok := args["name"].(string); ok </span><span class="cov0" title="0">{
+                updates = append(updates, fmt.Sprintf("name = $%d", paramIdx))
+                values = append(values, name)
+                paramIdx++
+        }</span>
+
+        <span class="cov0" title="0">if host, ok := args["host"].(string); ok </span><span class="cov0" title="0">{
+                updates = append(updates, fmt.Sprintf("host = $%d", paramIdx))
+                values = append(values, host)
+                paramIdx++
+        }</span>
+
+        <span class="cov0" title="0">if hostaddr, ok := args["hostaddr"].(string); ok </span><span class="cov0" title="0">{
+                updates = append(updates, fmt.Sprintf("hostaddr = $%d", paramIdx))
+                values = append(values, hostaddr)
+                paramIdx++
+        }</span>
+
+        <span class="cov0" title="0">if portFloat, ok := args["port"].(float64); ok </span><span class="cov0" title="0">{
+                updates = append(updates, fmt.Sprintf("port = $%d", paramIdx))
+                values = append(values, int(portFloat))
+                paramIdx++
+        }</span>
+
+        <span class="cov0" title="0">if databaseName, ok := args["databaseName"].(string); ok </span><span class="cov0" title="0">{
+                updates = append(updates, fmt.Sprintf("database_name = $%d", paramIdx))
+                values = append(values, databaseName)
+                paramIdx++
+        }</span>
+
+        <span class="cov0" title="0">if username, ok := args["username"].(string); ok </span><span class="cov0" title="0">{
+                updates = append(updates, fmt.Sprintf("username = $%d", paramIdx))
+                values = append(values, username)
+                paramIdx++
+        }</span>
+
+        <span class="cov0" title="0">if password, ok := args["password"].(string); ok </span><span class="cov0" title="0">{
+                // Get current username for encryption
+                var currentUsername string
+                err := h.dbPool.QueryRow(ctx, "SELECT username FROM connections WHERE id = $1", connectionID).Scan(&amp;currentUsername)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to get connection username: %w", err)
+                }</span>
+
+                <span class="cov0" title="0">encryptedPassword, err := crypto.EncryptPassword(password, h.config.GetServerSecret(), currentUsername)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to encrypt password: %w", err)
+                }</span>
+                <span class="cov0" title="0">updates = append(updates, fmt.Sprintf("password_encrypted = $%d", paramIdx))
+                values = append(values, encryptedPassword)
+                paramIdx++</span>
+        }
+
+        <span class="cov0" title="0">if isShared, ok := args["isShared"].(bool); ok </span><span class="cov0" title="0">{
+                updates = append(updates, fmt.Sprintf("is_shared = $%d", paramIdx))
+                values = append(values, isShared)
+                paramIdx++
+        }</span>
+
+        <span class="cov0" title="0">if isMonitored, ok := args["isMonitored"].(bool); ok </span><span class="cov0" title="0">{
+                updates = append(updates, fmt.Sprintf("is_monitored = $%d", paramIdx))
+                values = append(values, isMonitored)
+                paramIdx++
+        }</span>
+
+        <span class="cov0" title="0">if sslmode, ok := args["sslmode"].(string); ok </span><span class="cov0" title="0">{
+                updates = append(updates, fmt.Sprintf("sslmode = $%d", paramIdx))
+                values = append(values, sslmode)
+                paramIdx++
+        }</span>
+
+        <span class="cov0" title="0">if sslcert, ok := args["sslcert"].(string); ok </span><span class="cov0" title="0">{
+                updates = append(updates, fmt.Sprintf("sslcert = $%d", paramIdx))
+                values = append(values, sslcert)
+                paramIdx++
+        }</span>
+
+        <span class="cov0" title="0">if sslkey, ok := args["sslkey"].(string); ok </span><span class="cov0" title="0">{
+                updates = append(updates, fmt.Sprintf("sslkey = $%d", paramIdx))
+                values = append(values, sslkey)
+                paramIdx++
+        }</span>
+
+        <span class="cov0" title="0">if sslrootcert, ok := args["sslrootcert"].(string); ok </span><span class="cov0" title="0">{
+                updates = append(updates, fmt.Sprintf("sslrootcert = $%d", paramIdx))
+                values = append(values, sslrootcert)
+                paramIdx++
+        }</span>
+
+        <span class="cov0" title="0">if len(updates) == 0 </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("no fields to update")
+        }</span>
+
+        // Add updated_at
+        <span class="cov0" title="0">updates = append(updates, fmt.Sprintf("updated_at = $%d", paramIdx))
+        values = append(values, time.Now())
+        paramIdx++
+
+        // Add connection ID to values
+        values = append(values, connectionID)
+
+        query := fmt.Sprintf(`
+                UPDATE connections
+                SET %s
+                WHERE id = $%d
+        `, strings.Join(updates, ", "), paramIdx)
+
+        _, err = h.dbPool.Exec(ctx, query, values...)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to update connection: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">return map[string]interface{}{
+                "content": []map[string]interface{}{
+                        {
+                                "type": "text",
+                                "text": fmt.Sprintf("Connection %d updated successfully", connectionID),
+                        },
+                },
+        }, nil</span>
+}
+
+// handleDeleteConnection executes the delete_connection tool
+func (h *Handler) handleDeleteConnection(args map[string]interface{}) (interface{}, error) <span class="cov0" title="0">{
+        // Check authentication
+        if h.userInfo == nil || !h.userInfo.IsAuthenticated </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("authentication required")
+        }</span>
+
+        // Get connection ID
+        <span class="cov0" title="0">connectionID := int(args["id"].(float64)) //nolint:errcheck
+
+        // Check ownership and permissions
+        ctx := context.Background()
+        var ownerUsername, ownerToken interface{}
+        var connectionName string
+        err := h.dbPool.QueryRow(ctx, `
+                SELECT owner_username, owner_token, name
+                FROM connections
+                WHERE id = $1
+        `, connectionID).Scan(&amp;ownerUsername, &amp;ownerToken, &amp;connectionName)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("connection not found: %w", err)
+        }</span>
+
+        // Check authorization
+        <span class="cov0" title="0">if !h.userInfo.IsSuperuser </span><span class="cov0" title="0">{
+                if h.userInfo.IsServiceToken </span><span class="cov0" title="0">{
+                        tokenStr, ok := ownerToken.(string)
+                        if ownerToken == nil || !ok || tokenStr != h.userInfo.Username </span><span class="cov0" title="0">{
+                                return nil, fmt.Errorf("permission denied: can only delete own connections")
+                        }</span>
+                } else<span class="cov0" title="0"> {
+                        usernameStr, ok := ownerUsername.(string)
+                        if ownerUsername == nil || !ok || usernameStr != h.userInfo.Username </span><span class="cov0" title="0">{
+                                return nil, fmt.Errorf("permission denied: can only delete own connections")
+                        }</span>
+
+                        // Check privilege for non-superuser users
+                        <span class="cov0" title="0">var userID int
+                        err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+                                h.userInfo.Username).Scan(&amp;userID)
+                        if err != nil </span><span class="cov0" title="0">{
+                                return nil, fmt.Errorf("failed to get user ID: %w", err)
+                        }</span>
+
+                        <span class="cov0" title="0">canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "delete_connection")
+                        if err != nil </span><span class="cov0" title="0">{
+                                return nil, fmt.Errorf("failed to check privileges: %w", err)
+                        }</span>
+                        <span class="cov0" title="0">if !canAccess </span><span class="cov0" title="0">{
+                                return nil, fmt.Errorf("permission denied: insufficient privileges")
+                        }</span>
+                }
+        }
+
+        // Delete the connection
+        <span class="cov0" title="0">_, err = h.dbPool.Exec(ctx, "DELETE FROM connections WHERE id = $1", connectionID)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to delete connection: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">return map[string]interface{}{
+                "content": []map[string]interface{}{
+                        {
+                                "type": "text",
+                                "text": fmt.Sprintf("Connection '%s' (ID %d) deleted successfully", connectionName, connectionID),
+                        },
+                },
+        }, nil</span>
+}
+
 // FormatResponse formats a response as JSON
 func FormatResponse(resp *Response) ([]byte, error) <span class="cov8" title="1">{
         data, err := json.Marshal(resp)
@@ -4212,7 +4935,7 @@ func FormatResponse(resp *Response) ([]byte, error) <span class="cov8" title="1"
 }
 </pre>
 		
-		<pre class="file" id="file5" style="display: none">/*-------------------------------------------------------------------------
+		<pre class="file" id="file6" style="display: none">/*-------------------------------------------------------------------------
  *
  * pgEdge AI Workbench
  *
@@ -4284,7 +5007,7 @@ func (p *ArgParser) GetDate(key string) (*time.Time, error) <span class="cov0" t
 }
 </pre>
 		
-		<pre class="file" id="file6" style="display: none">/*-------------------------------------------------------------------------
+		<pre class="file" id="file7" style="display: none">/*-------------------------------------------------------------------------
  *
  * pgEdge AI Workbench
  *
@@ -4437,7 +5160,7 @@ func (ac *AuthChecker) UserInfo() *UserInfo <span class="cov0" title="0">{
 }</span>
 </pre>
 		
-		<pre class="file" id="file7" style="display: none">/*-------------------------------------------------------------------------
+		<pre class="file" id="file8" style="display: none">/*-------------------------------------------------------------------------
  *
  * pgEdge AI Workbench
  *
@@ -4473,7 +5196,7 @@ func JSONResponse(data interface{}) interface{} <span class="cov0" title="0">{
 }
 </pre>
 		
-		<pre class="file" id="file8" style="display: none">/*-------------------------------------------------------------------------
+		<pre class="file" id="file9" style="display: none">/*-------------------------------------------------------------------------
  *
  * pgEdge AI Workbench
  *
@@ -4593,7 +5316,7 @@ type InitializeResult struct {
 }
 </pre>
 		
-		<pre class="file" id="file9" style="display: none">/*-----------------------------------------------------------
+		<pre class="file" id="file10" style="display: none">/*-----------------------------------------------------------
  *
  * pgEdge AI Workbench
  *
@@ -4868,7 +5591,7 @@ func ValidateGroupHierarchy(ctx context.Context, pool *pgxpool.Pool, parentGroup
 }
 </pre>
 		
-		<pre class="file" id="file10" style="display: none">/*-----------------------------------------------------------
+		<pre class="file" id="file11" style="display: none">/*-----------------------------------------------------------
  *
  * pgEdge AI Workbench
  *
@@ -5056,6 +5779,23 @@ func GetDefaultMCPPrivileges() []MCPPrivilege <span class="cov8" title="1">{
             ItemType:    "tool",
             Description: "Remove all scope restrictions for a token",
         },
+
+        // Connection Management Tools
+        {
+            Identifier:  "create_connection",
+            ItemType:    "tool",
+            Description: "Create a new database connection",
+        },
+        {
+            Identifier:  "update_connection",
+            ItemType:    "tool",
+            Description: "Update an existing database connection",
+        },
+        {
+            Identifier:  "delete_connection",
+            ItemType:    "tool",
+            Description: "Delete a database connection",
+        },
     }
 }</span>
 
@@ -5083,7 +5823,7 @@ func SeedMCPPrivileges(ctx context.Context, pool *pgxpool.Pool) error <span clas
 }
 </pre>
 		
-		<pre class="file" id="file11" style="display: none">/*-------------------------------------------------------------------------
+		<pre class="file" id="file12" style="display: none">/*-------------------------------------------------------------------------
  *
  * pgEdge AI Workbench
  *
@@ -5327,7 +6067,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) <span clas
 }
 </pre>
 		
-		<pre class="file" id="file12" style="display: none">/*-------------------------------------------------------------------------
+		<pre class="file" id="file13" style="display: none">/*-------------------------------------------------------------------------
  *
  * pgEdge AI Workbench
  *

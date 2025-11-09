@@ -13,13 +13,16 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 
 	"golang.org/x/term"
 )
@@ -85,6 +88,8 @@ func main() {
 		err = listTools(client)
 	case "list-prompts":
 		err = listPrompts(client)
+	case "ask-llm":
+		err = askLLM(client, commandArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "Error: unknown command: %s\n\n", command)
 		printUsage()
@@ -115,6 +120,8 @@ Commands:
     list-resources               List available resources
     list-tools                   List available tools
     list-prompts                 List available prompts
+    ask-llm [query]              Ask an LLM using MCP tools and resources
+                                 (Interactive mode if no query provided)
 
 Examples:
     # Ping the server
@@ -132,8 +139,20 @@ Examples:
     # List available tools
     ai-cli list-tools
 
+    # Ask an LLM (requires ANTHROPIC_API_KEY or Ollama)
+    ai-cli ask-llm "List all users in the system"
+
+    # Interactive LLM conversation mode
+    ai-cli ask-llm
+
     # Use a different server
     ai-cli -server http://example.com:9000 ping
+
+Environment Variables:
+    ANTHROPIC_API_KEY    API key for Anthropic Claude (preferred if set)
+    ANTHROPIC_MODEL      Model to use (default: claude-sonnet-4-5)
+    OLLAMA_URL           Ollama server URL (default: http://localhost:11434)
+    OLLAMA_MODEL         Ollama model to use (default: llama2)
 
 For more information, see the documentation at docs/index.md
 `)
@@ -335,6 +354,59 @@ func getToolExample() string {
 }`
 }
 
+// spinner displays a rotating cursor animation while waiting
+type spinner struct {
+	message string
+	frames  []string
+	active  bool
+	mu      sync.Mutex
+	done    chan bool
+}
+
+// newSpinner creates a new spinner with the given message
+func newSpinner(message string) *spinner {
+	return &spinner{
+		message: message,
+		frames:  []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"},
+		done:    make(chan bool),
+	}
+}
+
+// start begins the spinner animation
+func (s *spinner) start() {
+	s.mu.Lock()
+	s.active = true
+	s.mu.Unlock()
+
+	go func() {
+		frameIndex := 0
+		for {
+			select {
+			case <-s.done:
+				// Clear the spinner line
+				fmt.Fprintf(os.Stderr, "\r%s\r", strings.Repeat(" ", len(s.message)+10))
+				return
+			default:
+				s.mu.Lock()
+				if s.active {
+					fmt.Fprintf(os.Stderr, "\r%s %s", s.frames[frameIndex], s.message)
+					frameIndex = (frameIndex + 1) % len(s.frames)
+				}
+				s.mu.Unlock()
+				time.Sleep(80 * time.Millisecond)
+			}
+		}
+	}()
+}
+
+// stop stops the spinner animation
+func (s *spinner) stop() {
+	s.mu.Lock()
+	s.active = false
+	s.mu.Unlock()
+	s.done <- true
+}
+
 // needsAuth determines if a command requires authentication
 func needsAuth(command string) bool {
 	// These commands do not require authentication
@@ -458,4 +530,165 @@ func authenticateUser(client *MCPClient, username, password string) (string, err
 	}
 
 	return "", fmt.Errorf("session token not found in response")
+}
+
+// askLLM sends a query to an LLM with access to MCP tools and resources
+func askLLM(client *MCPClient, args []string) error {
+	// Create LLM configuration
+	llmConfig := NewLLMConfig()
+
+	// Create LLM client
+	llmClient, err := NewLLMClient(llmConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create LLM client: %w\n\nMake sure you have either:\n- ANTHROPIC_API_KEY environment variable set, or\n- Ollama running at %s", err, llmConfig.OllamaURL)
+	}
+
+	fmt.Fprintf(os.Stderr, "Using %s LLM...\n\n", llmConfig.Provider)
+
+	// Get available tools from MCP server
+	toolsResult, err := client.ListTools()
+	if err != nil {
+		return fmt.Errorf("failed to list tools: %w", err)
+	}
+
+	// Parse tools
+	var tools []Tool
+	if toolsMap, ok := toolsResult.(map[string]interface{}); ok {
+		if toolsList, ok := toolsMap["tools"].([]interface{}); ok {
+			for _, t := range toolsList {
+				if toolMap, ok := t.(map[string]interface{}); ok {
+					name, _ := toolMap["name"].(string)                           //nolint:errcheck // Type assertion, optional field
+					description, _ := toolMap["description"].(string)             //nolint:errcheck // Type assertion, optional field
+					inputSchema, _ := toolMap["inputSchema"].(map[string]interface{}) //nolint:errcheck // Type assertion, optional field
+
+					if name != "" {
+						tools = append(tools, Tool{
+							Name:        name,
+							Description: description,
+							InputSchema: inputSchema,
+						})
+					}
+				}
+			}
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "Loaded %d MCP tools\n\n", len(tools))
+
+	// Get available resources from MCP server
+	resourcesResult, err := client.ListResources()
+	if err != nil {
+		return fmt.Errorf("failed to list resources: %w", err)
+	}
+
+	// Parse resources
+	var resources []Resource
+	if resourcesMap, ok := resourcesResult.(map[string]interface{}); ok {
+		if resourcesList, ok := resourcesMap["resources"].([]interface{}); ok {
+			for _, r := range resourcesList {
+				if resourceMap, ok := r.(map[string]interface{}); ok {
+					uri, _ := resourceMap["uri"].(string)               //nolint:errcheck // Type assertion, optional field
+					name, _ := resourceMap["name"].(string)             //nolint:errcheck // Type assertion, optional field
+					description, _ := resourceMap["description"].(string) //nolint:errcheck // Type assertion, optional field
+					mimeType, _ := resourceMap["mimeType"].(string)     //nolint:errcheck // Type assertion, optional field
+
+					if uri != "" {
+						resource := Resource{
+							URI:         uri,
+							Name:        name,
+							Description: description,
+							MimeType:    mimeType,
+						}
+
+						// Fetch data for static resources (no parameters in URI)
+						if !strings.Contains(uri, "{") {
+							resourceData, err := client.ReadResource(uri)
+							if err == nil {
+								resource.Data = resourceData
+							}
+						}
+
+						resources = append(resources, resource)
+					}
+				}
+			}
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "Loaded %d MCP resources\n\n", len(resources))
+
+	// Initialize conversation history
+	var messages []Message
+	ctx := context.Background()
+	reader := bufio.NewReader(os.Stdin)
+
+	// Check if initial query was provided
+	var initialQuery string
+	if len(args) > 0 {
+		initialQuery = strings.Join(args, " ")
+	}
+
+	// If no initial query, enter interactive mode immediately
+	if initialQuery == "" {
+		fmt.Fprintf(os.Stderr, "Entering interactive mode. Press Ctrl+C to exit.\n\n")
+	}
+
+	// Interactive conversation loop
+	for {
+		var query string
+
+		// Get the query (from args or prompt)
+		if initialQuery != "" {
+			query = initialQuery
+			initialQuery = "" // Clear after first use
+		} else {
+			fmt.Fprint(os.Stderr, "You: ")
+			input, err := reader.ReadString('\n')
+			if err != nil {
+				// Ctrl+C or EOF
+				fmt.Fprintln(os.Stderr)
+				return nil
+			}
+			query = strings.TrimSpace(input)
+			if query == "" {
+				continue
+			}
+		}
+
+		// Add user message to history
+		messages = append(messages, Message{
+			Role:    "user",
+			Content: query,
+		})
+
+		// Start spinner while waiting for LLM
+		spin := newSpinner("Thinking...")
+		spin.start()
+
+		// Send to LLM
+		response, err := llmClient.Chat(ctx, messages, tools, resources)
+
+		// Stop spinner
+		spin.stop()
+
+		if err != nil {
+			return fmt.Errorf("failed to chat with LLM: %w", err)
+		}
+
+		// Add assistant response to history
+		messages = append(messages, Message{
+			Role:    "assistant",
+			Content: response,
+		})
+
+		// Print response
+		fmt.Println()
+		fmt.Println(response)
+		fmt.Println()
+
+		// Show prompt hint for interactive mode
+		if len(args) == 0 || len(messages) > 2 {
+			fmt.Fprintf(os.Stderr, "(Press Ctrl+C to exit)\n\n")
+		}
+	}
 }

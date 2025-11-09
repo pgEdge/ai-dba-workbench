@@ -75,6 +75,11 @@
     * Ensure coverage can be checked, using the standard test suites utilising
         locally installable tools.
 
+    * DO NOT skip DB tests when testing new changes.
+
+    * ALWAYS test new changes with "make test-all" in the top level project 
+        directory before completing a task.
+
 ## Security
 
     * Always ensure isolation is maintained between user sessions.

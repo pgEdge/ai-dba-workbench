@@ -424,11 +424,7 @@ func (h *Handler) handleReadResource(req Request) (*Response, error) {
 			}
 
 			for _, group := range groups {
-				groupJSON, err := json.Marshal(group)
-				if err != nil {
-					logger.Errorf("Failed to marshal group: %v", err)
-					continue
-				}
+				groupJSON, _ := json.Marshal(group)
 				groupID := group["group_id"]
 				contents = append(contents, map[string]interface{}{
 					"uri":      fmt.Sprintf("ai-workbench://groups/%v", groupID),
@@ -454,11 +450,7 @@ func (h *Handler) handleReadResource(req Request) (*Response, error) {
 			}
 
 			for _, member := range members {
-				memberJSON, err := json.Marshal(member)
-				if err != nil {
-					logger.Errorf("Failed to marshal member: %v", err)
-					continue
-				}
+				memberJSON, _ := json.Marshal(member)
 				username := member["username"]
 				contents = append(contents, map[string]interface{}{
 					"uri":      fmt.Sprintf("ai-workbench://users/%v", username),
@@ -484,11 +476,7 @@ func (h *Handler) handleReadResource(req Request) (*Response, error) {
 			}
 
 			for _, priv := range privileges {
-				privJSON, err := json.Marshal(priv)
-				if err != nil {
-					logger.Errorf("Failed to marshal privilege: %v", err)
-					continue
-				}
+				privJSON, _ := json.Marshal(priv)
 				identifier := priv["identifier"]
 				contents = append(contents, map[string]interface{}{
 					"uri":      fmt.Sprintf("ai-workbench://mcp-privileges/%v", identifier),
@@ -514,11 +502,7 @@ func (h *Handler) handleReadResource(req Request) (*Response, error) {
 			}
 
 			for _, priv := range privileges {
-				privJSON, err := json.Marshal(priv)
-				if err != nil {
-					logger.Errorf("Failed to marshal connection privilege: %v", err)
-					continue
-				}
+				privJSON, _ := json.Marshal(priv)
 				privGroupID := priv["group_id"]
 				contents = append(contents, map[string]interface{}{
 					"uri":      fmt.Sprintf("ai-workbench://connections/%d/privileges/%v", connectionID, privGroupID),
@@ -2219,6 +2203,147 @@ func (h *Handler) handleRemoveGroupMember(args map[string]interface{}) (interfac
 	}, nil
 }
 
+// handleListGroupMembers executes the list_group_members tool
+func (h *Handler) handleListGroupMembers(args map[string]interface{}) (interface{}, error) {
+	// Check authentication
+	if h.userInfo == nil || !h.userInfo.IsAuthenticated {
+		return nil, fmt.Errorf("permission denied: superuser privileges required")
+	}
+
+	// Superusers bypass all privilege checks
+	if !h.userInfo.IsSuperuser {
+		// If no database pool (test mode), require superuser
+		if h.dbPool == nil {
+			return nil, fmt.Errorf("permission denied: superuser privileges required")
+		}
+
+		// Service tokens must be superusers for this operation
+		if h.userInfo.IsServiceToken {
+			return nil, fmt.Errorf("permission denied: superuser privileges required")
+		}
+
+		// For non-superuser users, check privileges via group membership
+		ctx := context.Background()
+
+		// Get user ID from username
+		var userID int
+		err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+			h.userInfo.Username).Scan(&userID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get user ID: %w", err)
+		}
+
+		// Check if user has privilege to list group members
+		canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "list_group_members")
+		if err != nil {
+			return nil, fmt.Errorf("failed to check privileges: %w", err)
+		}
+		if !canAccess {
+			return nil, fmt.Errorf("permission denied: insufficient privileges")
+		}
+	}
+
+	groupIDFloat, ok := args["groupId"].(float64)
+	if !ok {
+		return nil, fmt.Errorf("invalid groupId parameter")
+	}
+	groupID := int(groupIDFloat)
+
+	ctx := context.Background()
+	members, err := groupmgmt.ListGroupMembers(ctx, h.dbPool, groupID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Format members as JSON string
+	membersJSON, err := json.Marshal(members)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal members: %w", err)
+	}
+
+	return map[string]interface{}{
+		"content": []map[string]interface{}{
+			{
+				"type": "text",
+				"text": fmt.Sprintf("Members of group %d:\n%s", groupID, string(membersJSON)),
+			},
+		},
+	}, nil
+}
+
+// handleListUserGroupMemberships executes the list_user_group_memberships tool
+func (h *Handler) handleListUserGroupMemberships(args map[string]interface{}) (interface{}, error) {
+	// Check authentication
+	if h.userInfo == nil || !h.userInfo.IsAuthenticated {
+		return nil, fmt.Errorf("permission denied: superuser privileges required")
+	}
+
+	// Superusers bypass all privilege checks
+	if !h.userInfo.IsSuperuser {
+		// If no database pool (test mode), require superuser
+		if h.dbPool == nil {
+			return nil, fmt.Errorf("permission denied: superuser privileges required")
+		}
+
+		// Service tokens must be superusers for this operation
+		if h.userInfo.IsServiceToken {
+			return nil, fmt.Errorf("permission denied: superuser privileges required")
+		}
+
+		// For non-superuser users, check privileges via group membership
+		ctx := context.Background()
+
+		// Get user ID from username
+		var userID int
+		err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+			h.userInfo.Username).Scan(&userID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get user ID: %w", err)
+		}
+
+		// Check if user has privilege to list user group memberships
+		canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "list_user_group_memberships")
+		if err != nil {
+			return nil, fmt.Errorf("failed to check privileges: %w", err)
+		}
+		if !canAccess {
+			return nil, fmt.Errorf("permission denied: insufficient privileges")
+		}
+	}
+
+	username, ok := args["username"].(string)
+	if !ok {
+		return nil, fmt.Errorf("invalid username parameter")
+	}
+
+	// Get user ID from username
+	ctx := context.Background()
+	var userID int
+	err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1", username).Scan(&userID)
+	if err != nil {
+		return nil, fmt.Errorf("user not found: %w", err)
+	}
+
+	groups, err := groupmgmt.ListUserGroupMemberships(ctx, h.dbPool, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Format groups as JSON string
+	groupsJSON, err := json.Marshal(groups)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal groups: %w", err)
+	}
+
+	return map[string]interface{}{
+		"content": []map[string]interface{}{
+			{
+				"type": "text",
+				"text": fmt.Sprintf("Groups for user '%s' (direct and indirect):\n%s", username, string(groupsJSON)),
+			},
+		},
+	}, nil
+}
 
 // handleGrantConnectionPrivilege executes the grant_connection_privilege tool
 func (h *Handler) handleGrantConnectionPrivilege(args map[string]interface{}) (interface{}, error) {
@@ -2339,6 +2464,132 @@ func (h *Handler) handleRevokeConnectionPrivilege(args map[string]interface{}) (
 	}, nil
 }
 
+// handleListConnectionPrivileges executes the list_connection_privileges tool
+func (h *Handler) handleListConnectionPrivileges(args map[string]interface{}) (interface{}, error) {
+	// Check authentication
+	if h.userInfo == nil || !h.userInfo.IsAuthenticated {
+		return nil, fmt.Errorf("permission denied: superuser privileges required")
+	}
+
+	// Superusers bypass all privilege checks
+	if !h.userInfo.IsSuperuser {
+		// If no database pool (test mode), require superuser
+		if h.dbPool == nil {
+			return nil, fmt.Errorf("permission denied: superuser privileges required")
+		}
+
+		// Service tokens must be superusers for this operation
+		if h.userInfo.IsServiceToken {
+			return nil, fmt.Errorf("permission denied: superuser privileges required")
+		}
+
+		// For non-superuser users, check privileges via group membership
+		ctx := context.Background()
+
+		// Get user ID from username
+		var userID int
+		err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+			h.userInfo.Username).Scan(&userID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get user ID: %w", err)
+		}
+
+		// Check if user has privilege to list connection privileges
+		canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "list_connection_privileges")
+		if err != nil {
+			return nil, fmt.Errorf("failed to check privileges: %w", err)
+		}
+		if !canAccess {
+			return nil, fmt.Errorf("permission denied: insufficient privileges")
+		}
+	}
+
+	connectionID := int(args["connectionId"].(float64)) //nolint:errcheck // Type assertion
+
+	ctx := context.Background()
+	privileges, err := groupmgmt.ListConnectionPrivileges(ctx, h.dbPool, connectionID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Format privileges as JSON string
+	privilegesJSON, err := json.Marshal(privileges)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal privileges: %w", err)
+	}
+
+	return map[string]interface{}{
+		"content": []map[string]interface{}{
+			{
+				"type": "text",
+				"text": fmt.Sprintf("Connection privileges for connection %d:\n%s", connectionID, string(privilegesJSON)),
+			},
+		},
+	}, nil
+}
+
+// handleListMCPPrivilegeIdentifiers executes the list_mcp_privilege_identifiers tool
+func (h *Handler) handleListMCPPrivilegeIdentifiers(args map[string]interface{}) (interface{}, error) {
+	// Check authentication
+	if h.userInfo == nil || !h.userInfo.IsAuthenticated {
+		return nil, fmt.Errorf("permission denied: superuser privileges required")
+	}
+
+	// Superusers bypass all privilege checks
+	if !h.userInfo.IsSuperuser {
+		// If no database pool (test mode), require superuser
+		if h.dbPool == nil {
+			return nil, fmt.Errorf("permission denied: superuser privileges required")
+		}
+
+		// Service tokens must be superusers for this operation
+		if h.userInfo.IsServiceToken {
+			return nil, fmt.Errorf("permission denied: superuser privileges required")
+		}
+
+		// For non-superuser users, check privileges via group membership
+		ctx := context.Background()
+
+		// Get user ID from username
+		var userID int
+		err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+			h.userInfo.Username).Scan(&userID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get user ID: %w", err)
+		}
+
+		// Check if user has privilege to list MCP privilege identifiers
+		canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "list_mcp_privilege_identifiers")
+		if err != nil {
+			return nil, fmt.Errorf("failed to check privileges: %w", err)
+		}
+		if !canAccess {
+			return nil, fmt.Errorf("permission denied: insufficient privileges")
+		}
+	}
+
+	ctx := context.Background()
+	identifiers, err := groupmgmt.ListMCPPrivilegeIdentifiers(ctx, h.dbPool)
+	if err != nil {
+		return nil, err
+	}
+
+	// Format identifiers as JSON string
+	identifiersJSON, err := json.Marshal(identifiers)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal identifiers: %w", err)
+	}
+
+	return map[string]interface{}{
+		"content": []map[string]interface{}{
+			{
+				"type": "text",
+				"text": fmt.Sprintf("MCP privilege identifiers:\n%s", string(identifiersJSON)),
+			},
+		},
+	}, nil
+}
+
 // handleGrantMCPPrivilege executes the grant_mcp_privilege tool
 func (h *Handler) handleGrantMCPPrivilege(args map[string]interface{}) (interface{}, error) {
 	// Check authentication
@@ -2452,6 +2703,70 @@ func (h *Handler) handleRevokeMCPPrivilege(args map[string]interface{}) (interfa
 			{
 				"type": "text",
 				"text": fmt.Sprintf("MCP privilege revoked: group %d no longer has access to '%s'", groupID, privilegeIdentifier),
+			},
+		},
+	}, nil
+}
+
+// handleListGroupMCPPrivileges executes the list_group_mcp_privileges tool
+func (h *Handler) handleListGroupMCPPrivileges(args map[string]interface{}) (interface{}, error) {
+	// Check authentication
+	if h.userInfo == nil || !h.userInfo.IsAuthenticated {
+		return nil, fmt.Errorf("permission denied: superuser privileges required")
+	}
+
+	// Superusers bypass all privilege checks
+	if !h.userInfo.IsSuperuser {
+		// If no database pool (test mode), require superuser
+		if h.dbPool == nil {
+			return nil, fmt.Errorf("permission denied: superuser privileges required")
+		}
+
+		// Service tokens must be superusers for this operation
+		if h.userInfo.IsServiceToken {
+			return nil, fmt.Errorf("permission denied: superuser privileges required")
+		}
+
+		// For non-superuser users, check privileges via group membership
+		ctx := context.Background()
+
+		// Get user ID from username
+		var userID int
+		err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+			h.userInfo.Username).Scan(&userID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get user ID: %w", err)
+		}
+
+		// Check if user has privilege to list group MCP privileges
+		canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "list_group_mcp_privileges")
+		if err != nil {
+			return nil, fmt.Errorf("failed to check privileges: %w", err)
+		}
+		if !canAccess {
+			return nil, fmt.Errorf("permission denied: insufficient privileges")
+		}
+	}
+
+	groupID := int(args["groupId"].(float64)) //nolint:errcheck // Type assertion
+
+	ctx := context.Background()
+	privileges, err := groupmgmt.ListGroupMCPPrivileges(ctx, h.dbPool, groupID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Format privileges as JSON string
+	privilegesJSON, err := json.Marshal(privileges)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal privileges: %w", err)
+	}
+
+	return map[string]interface{}{
+		"content": []map[string]interface{}{
+			{
+				"type": "text",
+				"text": fmt.Sprintf("MCP privileges for group %d:\n%s", groupID, string(privilegesJSON)),
 			},
 		},
 	}, nil

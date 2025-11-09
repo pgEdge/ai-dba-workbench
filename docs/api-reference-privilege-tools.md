@@ -1,7 +1,12 @@
 # API Reference: Privilege Management Tools
 
-This document provides a complete reference for all 29 MCP tools related to
+This document provides a complete reference for all 22 MCP tools related to
 user, token, group, and privilege management in the pgEdge AI Workbench.
+
+**Note:** List-oriented operations (like listing groups, group members, user
+tokens, etc.) are now available as MCP Resources rather than tools. See
+[MCP Resources documentation](server/mcp-resources.md) for details on using
+resources for read-only data access.
 
 ## Table of Contents
 
@@ -471,66 +476,10 @@ it cannot be retrieved later.
 
 ### list_user_tokens
 
-List all user tokens for a specific user.
+**This operation has been converted to an MCP Resource.**
 
-**Authorization:** Requires superuser privileges or group membership granting
-`list_user_tokens` privilege
-
-**Input Schema:**
-
-```json
-{
-  "user_id": "integer (required)"
-}
-```
-
-**Example Request:**
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 9,
-  "method": "tools/call",
-  "params": {
-    "name": "list_user_tokens",
-    "arguments": {
-      "user_id": 5
-    }
-  }
-}
-```
-
-**Example Response:**
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 9,
-  "result": {
-    "user_id": 5,
-    "username": "alice",
-    "tokens": [
-      {
-        "token_id": 15,
-        "token_name": "alice-dev-token",
-        "created_at": "2025-01-15T10:30:00Z",
-        "last_used_at": "2025-01-20T14:22:00Z"
-      },
-      {
-        "token_id": 16,
-        "token_name": "alice-mobile-token",
-        "created_at": "2025-01-16T09:15:00Z",
-        "last_used_at": null
-      }
-    ]
-  }
-}
-```
-
-**Errors:**
-
-- "permission denied: insufficient privileges" - User lacks required privileges
-- "user not found" - User ID does not exist
+Use the resource URI `ai-workbench://users/{username}/tokens` to list user
+tokens. See [MCP Resources documentation](server/mcp-resources.md) for details.
 
 ---
 
@@ -754,63 +703,10 @@ associated with this group.
 
 ### list_user_groups
 
-List all user groups in the system.
+**This operation has been converted to an MCP Resource.**
 
-**Authorization:** Requires superuser privileges or group membership granting
-`list_user_groups` privilege
-
-**Input Schema:**
-
-None (no arguments required)
-
-**Example Request:**
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 14,
-  "method": "tools/call",
-  "params": {
-    "name": "list_user_groups"
-  }
-}
-```
-
-**Example Response:**
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 14,
-  "result": {
-    "total_count": 3,
-    "groups": [
-      {
-        "group_id": 1,
-        "name": "developers",
-        "description": "Development team members",
-        "created_at": "2025-01-15T10:30:00Z"
-      },
-      {
-        "group_id": 2,
-        "name": "operations",
-        "description": "Operations team",
-        "created_at": "2025-01-15T11:00:00Z"
-      },
-      {
-        "group_id": 3,
-        "name": "dba-team",
-        "description": "Database administrators",
-        "created_at": "2025-01-15T12:00:00Z"
-      }
-    ]
-  }
-}
-```
-
-**Errors:**
-
-- "permission denied: insufficient privileges" - User lacks required privileges
+Use the resource URI `ai-workbench://groups` to list user groups. See
+[MCP Resources documentation](server/mcp-resources.md) for details.
 
 ---
 
@@ -952,143 +848,20 @@ provided.
 
 ### list_group_members
 
-List all direct members (users and groups) of a group.
+**This operation has been converted to an MCP Resource.**
 
-**Authorization:** Requires superuser privileges or group membership granting
-`list_group_members` privilege
-
-**Input Schema:**
-
-```json
-{
-  "group_id": "integer (required)"
-}
-```
-
-**Example Request:**
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 18,
-  "method": "tools/call",
-  "params": {
-    "name": "list_group_members",
-    "arguments": {
-      "group_id": 1
-    }
-  }
-}
-```
-
-**Example Response:**
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 18,
-  "result": {
-    "group_id": 1,
-    "group_name": "developers",
-    "members": [
-      {
-        "member_type": "user",
-        "user_id": 5,
-        "username": "alice",
-        "added_at": "2025-01-15T10:30:00Z"
-      },
-      {
-        "member_type": "user",
-        "user_id": 6,
-        "username": "bob",
-        "added_at": "2025-01-15T11:00:00Z"
-      },
-      {
-        "member_type": "group",
-        "group_id": 2,
-        "group_name": "frontend-team",
-        "added_at": "2025-01-15T12:00:00Z"
-      }
-    ]
-  }
-}
-```
-
-**Errors:**
-
-- "permission denied: insufficient privileges" - User lacks required privileges
-- "group not found" - Group ID does not exist
+Use the resource URI `ai-workbench://groups/{groupId}/members` to list group
+members. See [MCP Resources documentation](server/mcp-resources.md) for details.
 
 ---
 
 ### list_user_group_memberships
 
-List all groups a user belongs to (direct and indirect through hierarchy).
+**This operation has been converted to an MCP Resource.**
 
-**Authorization:** Requires superuser privileges or group membership granting
-`list_user_group_memberships` privilege
-
-**Input Schema:**
-
-```json
-{
-  "user_id": "integer (required)"
-}
-```
-
-**Example Request:**
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 19,
-  "method": "tools/call",
-  "params": {
-    "name": "list_user_group_memberships",
-    "arguments": {
-      "user_id": 5
-    }
-  }
-}
-```
-
-**Example Response:**
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 19,
-  "result": {
-    "user_id": 5,
-    "username": "alice",
-    "groups": [
-      {
-        "group_id": 2,
-        "group_name": "frontend-team",
-        "description": "Frontend developers",
-        "membership_type": "direct"
-      },
-      {
-        "group_id": 1,
-        "group_name": "developers",
-        "description": "Development team members",
-        "membership_type": "indirect"
-      },
-      {
-        "group_id": 3,
-        "group_name": "all-staff",
-        "description": "All company staff",
-        "membership_type": "indirect"
-      }
-    ]
-  }
-}
-```
-
-**Errors:**
-
-- "permission denied: insufficient privileges" - User lacks required privileges
-- "user not found" - User ID does not exist
+Use the resource URI `ai-workbench://users/{username}/groups` to list user
+group memberships. See [MCP Resources documentation](server/mcp-resources.md)
+for details.
 
 ---
 
@@ -1212,66 +985,11 @@ Revoke a group's access to a database connection.
 
 ### list_connection_privileges
 
-List all groups that have access to a specific connection.
+**This operation has been converted to an MCP Resource.**
 
-**Authorization:** Requires superuser privileges or group membership granting
-`list_connection_privileges` privilege
-
-**Input Schema:**
-
-```json
-{
-  "connection_id": "integer (required)"
-}
-```
-
-**Example Request:**
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 22,
-  "method": "tools/call",
-  "params": {
-    "name": "list_connection_privileges",
-    "arguments": {
-      "connection_id": 5
-    }
-  }
-}
-```
-
-**Example Response:**
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 22,
-  "result": {
-    "connection_id": 5,
-    "connection_name": "production-db",
-    "privileges": [
-      {
-        "group_id": 1,
-        "group_name": "developers",
-        "access_level": "read",
-        "granted_at": "2025-01-15T10:30:00Z"
-      },
-      {
-        "group_id": 3,
-        "group_name": "dba-team",
-        "access_level": "read_write",
-        "granted_at": "2025-01-15T12:00:00Z"
-      }
-    ]
-  }
-}
-```
-
-**Errors:**
-
-- "permission denied: insufficient privileges" - User lacks required privileges
-- "connection not found" - Connection ID does not exist
+Use the resource URI `ai-workbench://connections/{connectionId}/privileges` to
+list connection privileges. See [MCP Resources documentation](server/mcp-resources.md)
+for details.
 
 ---
 
@@ -1279,60 +997,10 @@ List all groups that have access to a specific connection.
 
 ### list_mcp_privilege_identifiers
 
-List all registered MCP privilege identifiers (tools, resources, prompts).
+**This operation has been converted to an MCP Resource.**
 
-**Authorization:** Requires superuser privileges or group membership granting
-`list_mcp_privilege_identifiers` privilege
-
-**Input Schema:**
-
-None (no arguments required)
-
-**Example Request:**
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 23,
-  "method": "tools/call",
-  "params": {
-    "name": "list_mcp_privilege_identifiers"
-  }
-}
-```
-
-**Example Response:**
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 23,
-  "result": {
-    "total_count": 29,
-    "identifiers": [
-      {
-        "id": 1,
-        "identifier": "create_user",
-        "item_type": "tool",
-        "description": "Create a new user account",
-        "registered_at": "2025-01-15T08:00:00Z"
-      },
-      {
-        "id": 2,
-        "identifier": "delete_user",
-        "item_type": "tool",
-        "description": "Delete a user account",
-        "registered_at": "2025-01-15T08:00:00Z"
-      }
-      // ... 27 more items
-    ]
-  }
-}
-```
-
-**Errors:**
-
-- "permission denied: insufficient privileges" - User lacks required privileges
+Use the resource URI `ai-workbench://mcp-privileges` to list MCP privilege
+identifiers. See [MCP Resources documentation](server/mcp-resources.md) for details.
 
 ---
 
@@ -1448,68 +1116,11 @@ Revoke a group's access to an MCP item.
 
 ### list_group_mcp_privileges
 
-List all MCP privileges assigned to a group.
+**This operation has been converted to an MCP Resource.**
 
-**Authorization:** Requires superuser privileges or group membership granting
-`list_group_mcp_privileges` privilege
-
-**Input Schema:**
-
-```json
-{
-  "group_id": "integer (required)"
-}
-```
-
-**Example Request:**
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 26,
-  "method": "tools/call",
-  "params": {
-    "name": "list_group_mcp_privileges",
-    "arguments": {
-      "group_id": 1
-    }
-  }
-}
-```
-
-**Example Response:**
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 26,
-  "result": {
-    "group_id": 1,
-    "group_name": "developers",
-    "privileges": [
-      {
-        "privilege_id": 1,
-        "identifier": "create_user",
-        "item_type": "tool",
-        "description": "Create a new user account",
-        "granted_at": "2025-01-15T10:30:00Z"
-      },
-      {
-        "privilege_id": 5,
-        "identifier": "list_user_groups",
-        "item_type": "tool",
-        "description": "List all user groups",
-        "granted_at": "2025-01-15T11:00:00Z"
-      }
-    ]
-  }
-}
-```
-
-**Errors:**
-
-- "permission denied: insufficient privileges" - User lacks required privileges
-- "group not found" - Group ID does not exist
+Use the resource URI `ai-workbench://groups/{groupId}/mcp-privileges` to list
+group MCP privileges. See [MCP Resources documentation](server/mcp-resources.md)
+for details.
 
 ---
 

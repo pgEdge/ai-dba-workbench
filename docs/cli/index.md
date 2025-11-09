@@ -88,27 +88,35 @@ The CLI communicates with the MCP server using JSON-RPC 2.0 over HTTP.
 
 ### run-tool
 
-Executes an MCP tool with JSON arguments from stdin.
+Executes an MCP tool with optional JSON arguments from stdin.
 
 **Usage:**
 
 ```bash
+# With JSON input
 cat input.json | ./ai-cli run-tool <tool-name>
+
+# Without JSON input (uses empty object {})
+./ai-cli run-tool <tool-name>
 ```
 
 **Flow:**
 
 1. Parse command-line arguments to get tool name
 2. Check if stdin has piped data
-3. If no data, show example and exit with error
-4. Parse JSON from stdin
+3. If no data, use empty JSON object `{}`
+4. If data present, parse JSON from stdin
 5. Call MCP server with `tools/call` method
 6. Output pretty-printed result
 
-**Example:**
+**Examples:**
 
 ```bash
-cat config.json | ./ai-cli run-tool set_config
+# With arguments (creating a user)
+echo '{"username": "alice", "email": "alice@example.com", "fullName": "Alice Smith", "password": "secret"}' | ./ai-cli run-tool create_user
+
+# Without arguments (sends empty object {})
+./ai-cli run-tool some_tool
 ```
 
 where `config.json` contains:
@@ -122,7 +130,8 @@ where `config.json` contains:
 
 ### read-resource
 
-Reads an MCP resource by its URI.
+Reads an MCP resource by its URI. Resources provide read-only access to system
+data like user lists, service tokens, and other information.
 
 **Usage:**
 
@@ -136,11 +145,18 @@ Reads an MCP resource by its URI.
 2. Call MCP server with `resources/read` method
 3. Output pretty-printed result
 
-**Example:**
+**Examples:**
 
 ```bash
-./ai-cli read-resource system://stats
+# List all users
+./ai-cli read-resource ai-workbench://users
+
+# List all service tokens
+./ai-cli read-resource ai-workbench://service-tokens
 ```
+
+**Note:** Use `read-resource` for viewing/listing data, and `run-tool` for
+actions (create, update, delete).
 
 ### ping
 

@@ -332,9 +332,9 @@ func TestHandleListResources(t *testing.T) {
 		t.Fatalf("resources is not an array, got %T", result["resources"])
 	}
 
-	// Should have 2 resources: users and service-tokens
-	if len(resources) != 2 {
-		t.Errorf("Expected 2 resources, got %d", len(resources))
+	// Should have 9 resources (users, service-tokens, groups, mcp-privileges, and 5 parameterized resources)
+	if len(resources) != 9 {
+		t.Errorf("Expected 9 resources, got %d", len(resources))
 	}
 
 	// Verify users resource
@@ -465,7 +465,7 @@ func TestHandleListTools(t *testing.T) {
 		t.Fatalf("tools is not an array, got %T", result["tools"])
 	}
 
-	// Should have 29 tools (10 existing + 8 group management + 11 privilege/scope management)
+	// Should have 22 tools (list_ tools converted to resources)
 	expectedTools := []string{
 		"authenticate_user",
 		"create_user",
@@ -475,23 +475,16 @@ func TestHandleListTools(t *testing.T) {
 		"update_service_token",
 		"delete_service_token",
 		"create_user_token",
-		"list_user_tokens",
 		"delete_user_token",
 		"create_user_group",
 		"update_user_group",
 		"delete_user_group",
-		"list_user_groups",
 		"add_group_member",
 		"remove_group_member",
-		"list_group_members",
-		"list_user_group_memberships",
 		"grant_connection_privilege",
 		"revoke_connection_privilege",
-		"list_connection_privileges",
-		"list_mcp_privilege_identifiers",
 		"grant_mcp_privilege",
 		"revoke_mcp_privilege",
-		"list_group_mcp_privileges",
 		"set_token_connection_scope",
 		"set_token_mcp_scope",
 		"get_token_scope",
@@ -945,8 +938,6 @@ func (h *Handler) callToolByName(name string, args map[string]interface{}) (
 		return h.handleDeleteServiceToken(args)
 	case "create_user_token":
 		return h.handleCreateUserToken(args)
-	case "list_user_tokens":
-		return h.handleListUserTokens(args)
 	case "delete_user_token":
 		return h.handleDeleteUserToken(args)
 	default:
@@ -1046,46 +1037,7 @@ func TestUserTokenToolsAuthorization(t *testing.T) {
 		}
 	})
 
-	t.Run("ListUserTokens_SelfAccess", func(t *testing.T) {
-		handler := NewHandler("TestServer", "1.0.0", nil, nil)
-		handler.userInfo = &UserInfo{
-			IsAuthenticated: true,
-			IsSuperuser:     false,
-			Username:        "testuser",
-			IsServiceToken:  false,
-		}
-
-		args := map[string]interface{}{
-			"username": "testuser",
-		}
-
-		_, err := handler.handleListUserTokens(args)
-		if err != nil && err.Error() == "permission denied: can only list your own tokens" {
-			t.Error("User should be able to list their own tokens")
-		}
-	})
-
-	t.Run("ListUserTokens_OtherUserDenied", func(t *testing.T) {
-		handler := NewHandler("TestServer", "1.0.0", nil, nil)
-		handler.userInfo = &UserInfo{
-			IsAuthenticated: true,
-			IsSuperuser:     false,
-			Username:        "testuser",
-			IsServiceToken:  false,
-		}
-
-		args := map[string]interface{}{
-			"username": "otheruser",
-		}
-
-		_, err := handler.handleListUserTokens(args)
-		if err == nil {
-			t.Error("Expected permission denied error")
-		}
-		if err.Error() != "permission denied: can only list your own tokens" {
-			t.Errorf("Expected permission denied, got: %v", err)
-		}
-	})
+	// Note: ListUserTokens tests removed - list_user_tokens tool converted to resource ai-workbench://users/{username}/tokens
 
 	t.Run("DeleteUserToken_SelfAccess", func(t *testing.T) {
 		handler := NewHandler("TestServer", "1.0.0", nil, nil)
@@ -1160,10 +1112,9 @@ func TestHandleListTools_IncludesUserTokenTools(t *testing.T) {
 		t.Fatalf("Tools is not an array")
 	}
 
-	// Check that user token tools are present
+	// Check that user token tools are present (list_user_tokens converted to resource)
 	expectedTools := map[string]bool{
 		"create_user_token": false,
-		"list_user_tokens":  false,
 		"delete_user_token": false,
 	}
 

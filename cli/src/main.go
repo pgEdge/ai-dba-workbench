@@ -109,7 +109,7 @@ Options:
     -version         Show version information
 
 Commands:
-    run-tool <tool-name>         Run an MCP tool
+    run-tool <tool-name>         Run an MCP tool (with optional JSON input)
     read-resource <resource-uri> Read an MCP resource
     ping                         Ping the server
     list-resources               List available resources
@@ -123,8 +123,11 @@ Examples:
     # Run a tool with JSON input from stdin
     echo '{"key": "value"}' | ai-cli run-tool set_config
 
-    # Read a resource
-    ai-cli read-resource system://stats
+    # Run a tool without input (uses empty JSON object)
+    ai-cli run-tool some_tool
+
+    # Read a resource (for listing/viewing data)
+    ai-cli read-resource ai-workbench://users
 
     # List available tools
     ai-cli list-tools
@@ -154,10 +157,8 @@ func runTool(client *MCPClient, args []string) error {
 			return fmt.Errorf("failed to parse JSON input: %w", err)
 		}
 	} else {
-		// No piped data, show example
-		fmt.Fprintf(os.Stderr, "No input provided. Example JSON input:\n%s\n\n", getToolExample())
-		fmt.Fprintf(os.Stderr, "Usage: echo '{\"key\": \"value\"}' | ai-cli run-tool %s\n", toolName)
-		return fmt.Errorf("no input provided")
+		// No piped data, use empty JSON object
+		inputData = make(map[string]interface{})
 	}
 
 	// Call the tool

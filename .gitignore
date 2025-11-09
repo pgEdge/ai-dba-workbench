@@ -15,6 +15,7 @@ server/mcp-server
 *.test
 *.out
 coverage.txt
+coverage.html
 *.coverprofile
 
 # Go workspace file

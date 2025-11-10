@@ -34,6 +34,13 @@ password.txt
 *~
 .DS_Store
 
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.save
+
 # Temporary files
 *.log
 *.tmp

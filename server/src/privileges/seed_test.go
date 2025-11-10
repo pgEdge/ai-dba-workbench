@@ -18,8 +18,8 @@ import (
 func TestGetDefaultMCPPrivileges(t *testing.T) {
     privileges := GetDefaultMCPPrivileges()
 
-    // Should have 32 MCP tools registered
-    expectedCount := 32
+    // Should have 37 MCP tools registered (33 + 4 new session/datastore tools)
+    expectedCount := 37
     if len(privileges) != expectedCount {
         t.Errorf("Expected %d privileges, got %d", expectedCount, len(privileges))
     }
@@ -47,6 +47,10 @@ func TestGetDefaultMCPPrivileges(t *testing.T) {
         "create_user_group",
         "grant_connection_privilege",
         "set_token_connection_scope",
+        "set_database_context",
+        "get_database_context",
+        "clear_database_context",
+        "query_datastore",
     }
 
     found := make(map[string]bool)
@@ -85,7 +89,7 @@ func TestSeedMCPPrivileges_Idempotent(t *testing.T) {
         t.Fatalf("Failed to query privilege count: %v", err)
     }
 
-    expectedCount := 32
+    expectedCount := 37
     if count != expectedCount {
         t.Errorf("Expected %d privileges in database, got %d", expectedCount, count)
     }

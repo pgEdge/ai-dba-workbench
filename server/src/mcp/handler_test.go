@@ -332,9 +332,9 @@ func TestHandleListResources(t *testing.T) {
 		t.Fatalf("resources is not an array, got %T", result["resources"])
 	}
 
-	// Should have 10 resources (users, service-tokens, groups, mcp-privileges, connections, and 5 parameterized resources)
-	if len(resources) != 10 {
-		t.Errorf("Expected 10 resources, got %d", len(resources))
+	// Should have 11 resources (users, service-tokens, groups, mcp-privileges, connections, session/context, and 5 parameterized resources)
+	if len(resources) != 11 {
+		t.Errorf("Expected 11 resources, got %d", len(resources))
 	}
 
 	// Verify users resource
@@ -465,7 +465,7 @@ func TestHandleListTools(t *testing.T) {
 		t.Fatalf("tools is not an array, got %T", result["tools"])
 	}
 
-	// Should have 25 tools (list_ tools converted to resources)
+	// Should have 31 tools (list_ tools converted to resources, plus 4 new session/datastore tools, plus read_resource)
 	expectedTools := []string{
 		"authenticate_user",
 		"create_user",
@@ -492,6 +492,12 @@ func TestHandleListTools(t *testing.T) {
 		"create_connection",
 		"update_connection",
 		"delete_connection",
+		"execute_query",
+		"set_database_context",
+		"get_database_context",
+		"clear_database_context",
+		"query_datastore",
+		"read_resource",
 	}
 
 	if len(tools) != len(expectedTools) {
@@ -1136,4 +1142,140 @@ func TestHandleListTools_IncludesUserTokenTools(t *testing.T) {
 			t.Errorf("Expected tool '%s' not found in tools list", toolName)
 		}
 	}
+}
+
+// TestReadResourceTool tests the read_resource tool
+func TestReadResourceTool(t *testing.T) {
+	t.Run("ReadResource_Unauthenticated", func(t *testing.T) {
+		handler := NewHandler("TestServer", "1.0.0", nil, nil)
+		handler.userInfo = nil
+
+		args := map[string]interface{}{
+			"uri": "ai-workbench://connections",
+		}
+
+		_, err := handler.handleReadResourceTool(args)
+		if err == nil {
+			t.Error("Expected authentication required error")
+		}
+		if err.Error() != "authentication required" {
+			t.Errorf("Expected authentication required, got: %v", err)
+		}
+	})
+
+	t.Run("ReadResource_MissingURI", func(t *testing.T) {
+		handler := NewHandler("TestServer", "1.0.0", nil, nil)
+		handler.userInfo = &UserInfo{
+			IsAuthenticated: true,
+			Username:        "testuser",
+		}
+
+		args := map[string]interface{}{}
+
+		_, err := handler.handleReadResourceTool(args)
+		if err == nil {
+			t.Error("Expected error for missing URI")
+		}
+		if err.Error() != "uri is required and must be a non-empty string" {
+			t.Errorf("Expected uri required error, got: %v", err)
+		}
+	})
+
+	t.Run("ReadResource_EmptyURI", func(t *testing.T) {
+		handler := NewHandler("TestServer", "1.0.0", nil, nil)
+		handler.userInfo = &UserInfo{
+			IsAuthenticated: true,
+			Username:        "testuser",
+		}
+
+		args := map[string]interface{}{
+			"uri": "",
+		}
+
+		_, err := handler.handleReadResourceTool(args)
+		if err == nil {
+			t.Error("Expected error for empty URI")
+		}
+		if err.Error() != "uri is required and must be a non-empty string" {
+			t.Errorf("Expected uri required error, got: %v", err)
+		}
+	})
+
+	t.Run("ReadResource_InvalidURI", func(t *testing.T) {
+		handler := NewHandler("TestServer", "1.0.0", nil, nil)
+		handler.userInfo = &UserInfo{
+			IsAuthenticated: true,
+			Username:        "testuser",
+		}
+
+		args := map[string]interface{}{
+			"uri": "ai-workbench://nonexistent",
+		}
+
+		// This will fail because the resource doesn't exist
+		_, err := handler.handleReadResourceTool(args)
+		if err == nil {
+			t.Error("Expected error for invalid URI")
+		}
+		// The error message will contain "unsupported resource URI"
+	})
+
+	t.Run("ReadResource_ListInToolsList", func(t *testing.T) {
+		handler := NewHandler("TestServer", "1.0.0", nil, nil)
+
+		reqData := []byte(`{
+            "jsonrpc": "2.0",
+            "id": "test-list-tools",
+            "method": "tools/list"
+        }`)
+
+		resp, err := handler.HandleRequest(reqData, "")
+		if err != nil {
+			t.Fatalf("HandleRequest failed: %v", err)
+		}
+
+		if resp.Error != nil {
+			t.Fatalf("Expected no error, got: %v", resp.Error)
+		}
+
+		result, ok := resp.Result.(map[string]interface{})
+		if !ok {
+			t.Fatalf("Result is not a map")
+		}
+
+		tools, ok := result["tools"].([]map[string]interface{})
+		if !ok {
+			t.Fatalf("Tools is not an array")
+		}
+
+		// Check that read_resource tool is present
+		found := false
+		for _, tool := range tools {
+			name, ok := tool["name"].(string)
+			if !ok {
+				continue
+			}
+			if name == "read_resource" {
+				found = true
+				// Verify it has a description
+				desc, hasDesc := tool["description"].(string)
+				if !hasDesc || desc == "" {
+					t.Error("read_resource tool missing description")
+				}
+				// Verify it has an input schema
+				_, hasSchema := tool["inputSchema"].(map[string]interface{})
+				if !hasSchema {
+					t.Error("read_resource tool missing inputSchema")
+				}
+				// Note: We don't verify the detailed schema structure here
+				// as the schema is tested elsewhere and serialization
+				// details may vary
+				break
+			}
+		}
+
+		if !found {
+			t.Error("read_resource tool not found in tools list")
+		}
+	})
 }

@@ -203,6 +203,35 @@ func GetDefaultMCPPrivileges() []MCPPrivilege {
             ItemType:    "tool",
             Description: "Delete a database connection",
         },
+        {
+            Identifier:  "execute_query",
+            ItemType:    "tool",
+            Description: "Execute SQL queries on database connections in read-only mode",
+        },
+
+        // Session Context Management Tools
+        {
+            Identifier:  "set_database_context",
+            ItemType:    "tool",
+            Description: "Set the current database context for the session",
+        },
+        {
+            Identifier:  "get_database_context",
+            ItemType:    "tool",
+            Description: "Get the current database context for the session",
+        },
+        {
+            Identifier:  "clear_database_context",
+            ItemType:    "tool",
+            Description: "Clear the current database context for the session",
+        },
+
+        // Datastore Query Tool
+        {
+            Identifier:  "query_datastore",
+            ItemType:    "tool",
+            Description: "Query the datastore containing historical metrics and performance data",
+        },
     }
 }
 

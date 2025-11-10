@@ -45,10 +45,13 @@ The MCP client implements:
 The LLM integration provides:
 
 - Support for Anthropic Claude and Ollama providers
+- **Agentic tool execution** - LLMs can call MCP tools and receive results
+  (both Anthropic Claude and Ollama)
 - Conversation history management for interactive mode
 - Automatic resource data fetching for context
 - Tool and resource schema passing to LLMs
 - Visual feedback with animated spinner during processing
+- Multi-turn tool execution loop (up to 10 iterations)
 
 ### Protocol
 
@@ -243,10 +246,37 @@ suggest actions.
 
 **Environment Variables:**
 
-- `ANTHROPIC_API_KEY` - API key for Anthropic Claude (if set, used as default)
-- `ANTHROPIC_MODEL` - Model to use (default: `claude-sonnet-4-5`)
-- `OLLAMA_URL` - Ollama server URL (default: `http://localhost:11434`)
-- `OLLAMA_MODEL` - Ollama model to use (default: `llama2`)
+Primary (AI_CLI_* prefix):
+- `AI_CLI_ANTHROPIC_API_KEY` - API key for Anthropic Claude
+- `AI_CLI_ANTHROPIC_MODEL` - Model to use (default: `claude-sonnet-4-5`)
+- `AI_CLI_OLLAMA_URL` - Ollama server URL (default: `http://localhost:11434`)
+- `AI_CLI_OLLAMA_MODEL` - Ollama model to use (default: `gpt-oss:20b`)
+
+Legacy (fallback):
+- `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `OLLAMA_URL`, `OLLAMA_MODEL`
+
+**Note:** For agentic tool execution with Ollama, use models with reliable
+function calling support such as `gpt-oss:20b`, `llama3.1`, `llama3.2`,
+`mistral`, or `mixtral`. qwen models (qwen3-coder, qwen2.5-coder) do not work
+reliably with Ollama's function calling implementation. Older models like
+`llama2` will receive tool descriptions but cannot execute them.
+
+**Output Formatting:**
+
+The CLI provides consistent, human-readable output regardless of the LLM
+provider:
+
+- **Automatic JSON Detection**: The CLI automatically detects when Ollama
+  returns JSON-formatted responses and converts them to readable tables
+- **Query Result Tables**: Database query results are formatted as ASCII tables
+  with column headers and proper alignment
+- **Consistent Experience**: Both Anthropic Claude and Ollama produce
+  similarly-formatted output, ensuring a uniform user experience
+- **Embedded JSON Handling**: JSON embedded within text responses is extracted,
+  formatted, and displayed alongside the surrounding text
+
+This formatting ensures that tool execution results (like database queries) are
+presented clearly regardless of which LLM provider you use.
 
 **Examples:**
 
@@ -287,6 +317,272 @@ Tests connectivity to the MCP server.
 
 ```bash
 ./ai-cli --server http://myserver:8080 ping
+```
+
+## LLM Configuration Commands
+
+The CLI provides commands to manage LLM provider and model preferences. Settings
+are stored in `~/.ai-workbench-cli.json`.
+
+### set-llm
+
+Sets the preferred LLM provider. The CLI will validate that the provider is
+properly configured before allowing the switch.
+
+**Usage:**
+
+```bash
+./ai-cli set-llm <provider>
+```
+
+**Parameters:**
+
+- `provider` - Either `anthropic` or `ollama`
+
+**Examples:**
+
+```bash
+# Switch to Ollama (always available)
+./ai-cli set-llm ollama
+
+# Switch to Anthropic (requires API key)
+export AI_CLI_ANTHROPIC_API_KEY="your-key-here"
+./ai-cli set-llm anthropic
+```
+
+**Validation:**
+
+- For `anthropic`: Checks that Anthropic API key is configured (via `AI_CLI_ANTHROPIC_API_KEY`, config file, or legacy `ANTHROPIC_API_KEY`)
+- For `ollama`: No validation (assumes Ollama is available at configured URL)
+
+### show-llm
+
+Displays the current LLM provider and related configuration.
+
+**Usage:**
+
+```bash
+./ai-cli show-llm
+```
+
+**Example Output:**
+
+```
+LLM Provider: ollama
+Model: llama3.1
+URL: http://localhost:11434
+```
+
+Or for Anthropic:
+
+```
+LLM Provider: anthropic
+Model: claude-sonnet-4-5
+API Key: configured
+```
+
+### set-model
+
+Sets the model name for the current LLM provider. The CLI tracks separate model
+preferences for Anthropic and Ollama.
+
+**Usage:**
+
+```bash
+./ai-cli set-model <model-name>
+```
+
+**Parameters:**
+
+- `model-name` - Model name appropriate for the current provider
+
+**Examples:**
+
+```bash
+# For Ollama (after setting provider to ollama)
+./ai-cli set-model gpt-oss:20b
+./ai-cli set-model llama3.1
+./ai-cli set-model mistral
+
+# For Anthropic (after setting provider to anthropic)
+./ai-cli set-model claude-sonnet-4-5
+./ai-cli set-model claude-opus-4
+```
+
+**Note:** The CLI does not validate model names - it's your responsibility to
+ensure the model exists and is available.
+
+### show-model
+
+Displays the model name for the current LLM provider.
+
+**Usage:**
+
+```bash
+./ai-cli show-model
+```
+
+**Example Output:**
+
+```
+Current LLM Provider: ollama
+Ollama Model: llama3.1 (configured)
+```
+
+Or if using defaults:
+
+```
+Current LLM Provider: anthropic
+Anthropic Model: claude-sonnet-4-5 (default)
+```
+
+### Configuration File
+
+The CLI stores user preferences in `~/.ai-workbench-cli.json`:
+
+```json
+{
+    "server_url": "http://localhost:8080",
+    "preferred_llm": "ollama",
+    "anthropic_api_key": "sk-ant-...",
+    "anthropic_model": "claude-opus-4",
+    "ollama_url": "http://localhost:11434",
+    "ollama_model": "llama3.1"
+}
+```
+
+**Fields:**
+
+- `server_url` - AI Workbench MCP server URL
+- `preferred_llm` - User's preferred LLM provider (`anthropic` or `ollama`). If
+  empty, auto-detects based on API key availability.
+- `anthropic_api_key` - Anthropic API key (stored in plain text with 0600
+  permissions)
+- `anthropic_model` - Model name for Anthropic Claude
+- `ollama_url` - Ollama server URL
+- `ollama_model` - Model name for Ollama
+
+**Configuration Priority:**
+
+Settings are applied in this priority order (highest to lowest):
+
+1. Command-line flags (e.g., `--server`)
+2. `AI_CLI_*` environment variables
+3. Configuration file settings
+4. Legacy environment variables (`ANTHROPIC_*`, `OLLAMA_*`)
+5. Built-in defaults
+
+### Environment Variables
+
+**AI_CLI_* Variables (Override config file):**
+
+- `AI_CLI_SERVER_URL` - AI Workbench MCP server URL
+- `AI_CLI_ANTHROPIC_API_KEY` - Anthropic API key
+- `AI_CLI_ANTHROPIC_MODEL` - Anthropic model name
+- `AI_CLI_OLLAMA_URL` - Ollama server URL
+- `AI_CLI_OLLAMA_MODEL` - Ollama model name
+
+**Legacy Variables (Fallback):**
+
+- `ANTHROPIC_API_KEY` - Anthropic API key (used if `AI_CLI_ANTHROPIC_API_KEY`
+  and config file not set)
+- `ANTHROPIC_MODEL` - Anthropic model (used if `AI_CLI_ANTHROPIC_MODEL` and
+  config file not set)
+- `OLLAMA_URL` - Ollama URL (used if `AI_CLI_OLLAMA_URL` and config file not
+  set)
+- `OLLAMA_MODEL` - Ollama model (used if `AI_CLI_OLLAMA_MODEL` and config file
+  not set)
+
+### Additional Configuration Commands
+
+#### set-server
+
+Sets the AI Workbench MCP server URL in the config file.
+
+**Usage:**
+
+```bash
+./ai-cli set-server <url>
+```
+
+**Example:**
+
+```bash
+./ai-cli set-server http://myserver:8080
+```
+
+#### set-anthropic-key
+
+Sets the Anthropic API key in the config file.
+
+**Usage:**
+
+```bash
+./ai-cli set-anthropic-key <api-key>
+```
+
+**Example:**
+
+```bash
+./ai-cli set-anthropic-key sk-ant-api03-xxx
+```
+
+**Security Note:** The API key is stored in plain text in
+`~/.ai-workbench-cli.json` with 0600 file permissions. For better security,
+consider using the `AI_CLI_ANTHROPIC_API_KEY` environment variable instead.
+
+#### set-ollama-url
+
+Sets the Ollama server URL in the config file.
+
+**Usage:**
+
+```bash
+./ai-cli set-ollama-url <url>
+```
+
+**Example:**
+
+```bash
+./ai-cli set-ollama-url http://ollama.local:11434
+```
+
+#### show-config
+
+Displays all configuration settings and their sources.
+
+**Usage:**
+
+```bash
+./ai-cli show-config
+```
+
+**Example Output:**
+
+```
+Configuration File: ~/.ai-workbench-cli.json
+
+Server Settings:
+  Server URL: http://localhost:8080 (configured)
+  Server URL Override: http://prod:8080 (AI_CLI_SERVER_URL env var)
+
+LLM Provider:
+  Provider: ollama (configured)
+
+Anthropic Settings:
+  API Key: configured (config file)
+  Model: claude-opus-4 (configured)
+
+Ollama Settings:
+  URL: http://localhost:11434 (configured)
+  Model: llama3.1 (configured)
+
+Priority Order:
+  1. Command-line flags (highest)
+  2. AI_CLI_* environment variables
+  3. Configuration file settings
+  4. Legacy environment variables (ANTHROPIC_*, OLLAMA_*)
+  5. Built-in defaults (lowest)
 ```
 
 ## Error Handling
@@ -541,12 +837,15 @@ Error: MCP error -32601: Method not found
 ### Implemented
 
 - ✅ **LLM Integration** - Interactive conversations with AI assistants
-- ✅ **Visual Feedback** - Animated spinner for LLM operations
+- ✅ **Agentic Tool Execution** - LLMs can directly execute MCP tools
+  (Anthropic Claude and Ollama)
+- ✅ **Visual Feedback** - Animated spinner with PostgreSQL-themed animations
 - ✅ **Authentication** - Bearer token support with automatic credential
   prompting
 - ✅ **Connection Management** - Full CRUD operations for database connections
 - ✅ **Resource Listing** - Browse available resources, tools, and prompts
 - ✅ **Interactive Mode** - Conversational interface with LLMs
+- ✅ **Color-coded Output** - Blue for user input, red for system notices
 
 ### Future Enhancements
 
@@ -558,8 +857,7 @@ Potential improvements for future versions:
 4. **Shell Completion** - Bash/Zsh completion scripts
 5. **Verbose Mode** - Debug logging for troubleshooting
 6. **Batch Mode** - Execute multiple commands from a file
-7. **Tool Execution in LLM Mode** - Allow LLMs to directly execute tools
-8. **Connection Testing** - Validate database connection parameters
+7. **Connection Testing** - Validate database connection parameters
 
 ## License
 

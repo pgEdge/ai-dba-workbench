@@ -29,11 +29,54 @@ import (
 
 const (
 	version = "0.1.0"
+
+	// ANSI color codes
+	colorReset  = "\033[0m"
+	colorRed    = "\033[31m"
+	colorBlue   = "\033[34m"
 )
+
+// colorize wraps text in ANSI color codes
+func colorize(color, text string) string {
+	return color + text + colorReset
+}
+
+// red returns text in red (for notices/warnings)
+func red(text string) string {
+	return colorize(colorRed, text)
+}
+
+// blue returns text in blue (for user input)
+func blue(text string) string {
+	return colorize(colorBlue, text)
+}
+
+// getEffectiveServerURL determines the effective server URL based on priority
+// Priority: --server flag > AI_CLI_SERVER_URL env > config file > default
+func getEffectiveServerURL(flagValue string) string {
+	// Command-line flag has highest priority
+	if flagValue != "" {
+		return flagValue
+	}
+
+	// Check AI_CLI_SERVER_URL environment variable
+	if envURL := os.Getenv("AI_CLI_SERVER_URL"); envURL != "" {
+		return envURL
+	}
+
+	// Check config file
+	config, err := loadCLIConfig()
+	if err == nil && config.ServerURL != "" {
+		return config.ServerURL
+	}
+
+	// Default
+	return "http://localhost:8080"
+}
 
 func main() {
 	// Define command-line flags
-	serverURL := flag.String("server", "http://localhost:8080", "MCP server URL")
+	serverURLFlag := flag.String("server", "", "MCP server URL")
 	token := flag.String("token", "", "Bearer token for authentication")
 	showVersion := flag.Bool("version", false, "Show version information")
 	flag.Parse()
@@ -46,8 +89,24 @@ func main() {
 	// Get command and arguments
 	args := flag.Args()
 	if len(args) < 1 {
-		printUsage()
-		os.Exit(1)
+		// Enter shell mode when no arguments provided
+		serverURL := getEffectiveServerURL(*serverURLFlag)
+		client := NewMCPClient(serverURL)
+
+		// Try to handle authentication, but allow shell mode to continue if it fails
+		// (some shell commands don't need auth)
+		if *token != "" || needsAuthForShellMode() {
+			if err := handleAuthentication(client, *token); err != nil {
+				fmt.Fprint(os.Stderr, red(fmt.Sprintf("Warning: Authentication failed: %v\n", err)))
+				fmt.Fprint(os.Stderr, red("Some commands may not work without authentication.\n\n"))
+			}
+		}
+
+		if err := runShellMode(client); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		return
 	}
 
 	command := args[0]
@@ -56,8 +115,12 @@ func main() {
 		commandArgs = args[1:]
 	}
 
+	// Determine effective server URL
+	// Priority: --server flag > AI_CLI_SERVER_URL env > config file > default
+	serverURL := getEffectiveServerURL(*serverURLFlag)
+
 	// Create MCP client
-	client := NewMCPClient(*serverURL)
+	client := NewMCPClient(serverURL)
 
 	// Handle authentication for commands that need it
 	// Special case: skip authentication for authenticate_user tool
@@ -90,6 +153,22 @@ func main() {
 		err = listPrompts(client)
 	case "ask-llm":
 		err = askLLM(client, commandArgs)
+	case "set-llm":
+		err = setLLM(commandArgs)
+	case "show-llm":
+		err = showLLM()
+	case "set-model":
+		err = setModel(commandArgs)
+	case "show-model":
+		err = showModel()
+	case "set-server":
+		err = setServerURL(commandArgs)
+	case "set-anthropic-key":
+		err = setAnthropicKey(commandArgs)
+	case "set-ollama-url":
+		err = setOllamaURL(commandArgs)
+	case "show-config":
+		err = showConfig()
 	default:
 		fmt.Fprintf(os.Stderr, "Error: unknown command: %s\n\n", command)
 		printUsage()
@@ -107,11 +186,22 @@ func printUsage() {
 
 Usage:
     ai-cli [options] <command> [arguments]
+    ai-cli [options]                        (Enter interactive shell mode)
 
 Options:
     -server <url>    MCP server URL (default: http://localhost:8080)
     -token <token>   Bearer token for authentication
     -version         Show version information
+
+Environment Variables (AI_CLI_* override config file):
+    AI_CLI_SERVER_URL           MCP server URL
+    AI_CLI_ANTHROPIC_API_KEY    Anthropic API key
+    AI_CLI_ANTHROPIC_MODEL      Anthropic model name
+    AI_CLI_OLLAMA_URL           Ollama server URL
+    AI_CLI_OLLAMA_MODEL         Ollama model name
+
+Configuration File:
+    ~/.ai-workbench-cli.json    Stores server URL, API keys, and preferences
 
 Commands:
     run-tool <tool-name>         Run an MCP tool (with optional JSON input)
@@ -122,6 +212,16 @@ Commands:
     list-prompts                 List available prompts
     ask-llm [query]              Ask an LLM using MCP tools and resources
                                  (Interactive mode if no query provided)
+
+Configuration Commands:
+    set-server <url>             Set AI Workbench MCP server URL
+    set-llm <provider>           Set LLM provider (anthropic or ollama)
+    show-llm                     Show current LLM provider
+    set-model <model-name>       Set model name for current LLM provider
+    show-model                   Show model name for current LLM provider
+    set-anthropic-key <key>      Set Anthropic API key
+    set-ollama-url <url>         Set Ollama server URL
+    show-config                  Show all configuration settings
 
 Examples:
     # Ping the server
@@ -139,7 +239,7 @@ Examples:
     # List available tools
     ai-cli list-tools
 
-    # Ask an LLM (requires ANTHROPIC_API_KEY or Ollama)
+    # Ask an LLM (requires AI_CLI_ANTHROPIC_API_KEY or Ollama)
     ai-cli ask-llm "List all users in the system"
 
     # Interactive LLM conversation mode
@@ -147,12 +247,6 @@ Examples:
 
     # Use a different server
     ai-cli -server http://example.com:9000 ping
-
-Environment Variables:
-    ANTHROPIC_API_KEY    API key for Anthropic Claude (preferred if set)
-    ANTHROPIC_MODEL      Model to use (default: claude-sonnet-4-5)
-    OLLAMA_URL           Ollama server URL (default: http://localhost:11434)
-    OLLAMA_MODEL         Ollama model to use (default: llama2)
 
 For more information, see the documentation at docs/index.md
 `)
@@ -356,19 +450,41 @@ func getToolExample() string {
 
 // spinner displays a rotating cursor animation while waiting
 type spinner struct {
-	message string
-	frames  []string
-	active  bool
-	mu      sync.Mutex
-	done    chan bool
+	words      []string
+	frames     []string
+	active     bool
+	mu         sync.Mutex
+	done       chan bool
+	maxWordLen int
 }
 
-// newSpinner creates a new spinner with the given message
-func newSpinner(message string) *spinner {
+// newSpinner creates a new spinner with fun PostgreSQL-themed words
+func newSpinner() *spinner {
+	words := []string{
+		"Postgressing",
+		"Sloniking",
+		"Herding",
+		"Mahouting",
+		"SELECTing",
+		"Aggregating",
+		"Elephanting",
+		"Querying",
+		"Schemaing",
+	}
+
+	// Find the longest word for clearing
+	maxLen := 0
+	for _, word := range words {
+		if len(word) > maxLen {
+			maxLen = len(word)
+		}
+	}
+
 	return &spinner{
-		message: message,
-		frames:  []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"},
-		done:    make(chan bool),
+		words:      words,
+		frames:     []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"},
+		done:       make(chan bool),
+		maxWordLen: maxLen,
 	}
 }
 
@@ -380,17 +496,31 @@ func (s *spinner) start() {
 
 	go func() {
 		frameIndex := 0
+		wordIndex := 0
+		frameCount := 0
+		framesPerWord := 25 // Change word every ~2 seconds (25 frames * 80ms)
+
 		for {
 			select {
 			case <-s.done:
-				// Clear the spinner line
-				fmt.Fprintf(os.Stderr, "\r%s\r", strings.Repeat(" ", len(s.message)+10))
+				// Clear the spinner line with enough space for longest word
+				fmt.Fprintf(os.Stderr, "\r%s\r", strings.Repeat(" ", s.maxWordLen+10))
 				return
 			default:
 				s.mu.Lock()
 				if s.active {
-					fmt.Fprintf(os.Stderr, "\r%s %s", s.frames[frameIndex], s.message)
+					currentWord := s.words[wordIndex]
+					fmt.Fprintf(os.Stderr, "\r\033[31m%s %s...\033[0m", s.frames[frameIndex], currentWord)
 					frameIndex = (frameIndex + 1) % len(s.frames)
+					frameCount++
+
+					// Change word every ~2 seconds
+					if frameCount >= framesPerWord {
+						frameCount = 0
+						wordIndex = (wordIndex + 1) % len(s.words)
+						// Clear the line before changing word
+						fmt.Fprintf(os.Stderr, "\r%s\r", strings.Repeat(" ", s.maxWordLen+10))
+					}
 				}
 				s.mu.Unlock()
 				time.Sleep(80 * time.Millisecond)
@@ -411,9 +541,30 @@ func (s *spinner) stop() {
 func needsAuth(command string) bool {
 	// These commands do not require authentication
 	exemptCommands := map[string]bool{
-		"ping": true,
+		"ping":               true,
+		"set-llm":            true,
+		"show-llm":           true,
+		"set-model":          true,
+		"show-model":         true,
+		"set-server":         true,
+		"set-anthropic-key":  true,
+		"set-ollama-url":     true,
+		"show-config":        true,
 	}
 	return !exemptCommands[command]
+}
+
+// needsAuthForShellMode checks if we should attempt authentication for shell mode
+func needsAuthForShellMode() bool {
+	// Check if there's a saved token
+	homeDir, err := os.UserHomeDir()
+	if err == nil {
+		tokenFile := filepath.Join(homeDir, ".pgedge-ai-workbench-token")
+		if _, err := os.Stat(tokenFile); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // handleAuthentication handles the authentication flow
@@ -534,16 +685,25 @@ func authenticateUser(client *MCPClient, username, password string) (string, err
 
 // askLLM sends a query to an LLM with access to MCP tools and resources
 func askLLM(client *MCPClient, args []string) error {
+	// Load CLI configuration
+	cliConfig, err := loadCLIConfig()
+	if err != nil {
+		return fmt.Errorf("failed to load CLI config: %w", err)
+	}
+
 	// Create LLM configuration
 	llmConfig := NewLLMConfig()
+
+	// Apply CLI config preferences
+	applyConfigToLLMConfig(cliConfig, llmConfig)
 
 	// Create LLM client
 	llmClient, err := NewLLMClient(llmConfig)
 	if err != nil {
-		return fmt.Errorf("failed to create LLM client: %w\n\nMake sure you have either:\n- ANTHROPIC_API_KEY environment variable set, or\n- Ollama running at %s", err, llmConfig.OllamaURL)
+		return fmt.Errorf("failed to create LLM client: %w\n\nMake sure you have either:\n- AI_CLI_ANTHROPIC_API_KEY environment variable set, or\n- Ollama running at %s", err, llmConfig.OllamaURL)
 	}
 
-	fmt.Fprintf(os.Stderr, "Using %s LLM...\n\n", llmConfig.Provider)
+	fmt.Fprintf(os.Stderr, red("Using %s LLM with model %s...\n\n"), llmConfig.Provider, getLLMModelName(llmConfig))
 
 	// Get available tools from MCP server
 	toolsResult, err := client.ListTools()
@@ -573,7 +733,6 @@ func askLLM(client *MCPClient, args []string) error {
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "Loaded %d MCP tools\n\n", len(tools))
 
 	// Get available resources from MCP server
 	resourcesResult, err := client.ListResources()
@@ -593,21 +752,14 @@ func askLLM(client *MCPClient, args []string) error {
 					mimeType, _ := resourceMap["mimeType"].(string)     //nolint:errcheck // Type assertion, optional field
 
 					if uri != "" {
+						// Only send resource metadata - don't fetch data upfront
+						// The LLM can use read_resource tool to fetch data when needed
 						resource := Resource{
 							URI:         uri,
 							Name:        name,
 							Description: description,
 							MimeType:    mimeType,
 						}
-
-						// Fetch data for static resources (no parameters in URI)
-						if !strings.Contains(uri, "{") {
-							resourceData, err := client.ReadResource(uri)
-							if err == nil {
-								resource.Data = resourceData
-							}
-						}
-
 						resources = append(resources, resource)
 					}
 				}
@@ -615,7 +767,6 @@ func askLLM(client *MCPClient, args []string) error {
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "Loaded %d MCP resources\n\n", len(resources))
 
 	// Initialize conversation history
 	var messages []Message
@@ -630,7 +781,7 @@ func askLLM(client *MCPClient, args []string) error {
 
 	// If no initial query, enter interactive mode immediately
 	if initialQuery == "" {
-		fmt.Fprintf(os.Stderr, "Entering interactive mode. Press Ctrl+C to exit.\n\n")
+		fmt.Fprint(os.Stderr, red("Entering interactive mode. Press Ctrl+C to exit.\n\n"))
 	}
 
 	// Interactive conversation loop
@@ -642,7 +793,7 @@ func askLLM(client *MCPClient, args []string) error {
 			query = initialQuery
 			initialQuery = "" // Clear after first use
 		} else {
-			fmt.Fprint(os.Stderr, "You: ")
+			fmt.Fprint(os.Stderr, blue("You: "))
 			input, err := reader.ReadString('\n')
 			if err != nil {
 				// Ctrl+C or EOF
@@ -662,17 +813,22 @@ func askLLM(client *MCPClient, args []string) error {
 		})
 
 		// Start spinner while waiting for LLM
-		spin := newSpinner("Thinking...")
+		spin := newSpinner()
 		spin.start()
 
-		// Send to LLM
-		response, err := llmClient.Chat(ctx, messages, tools, resources)
+		// Send to LLM (with MCP client for tool execution)
+		response, err := llmClient.Chat(ctx, messages, tools, resources, client)
 
 		// Stop spinner
 		spin.stop()
 
 		if err != nil {
 			return fmt.Errorf("failed to chat with LLM: %w", err)
+		}
+
+		// Check if response is empty
+		if response == "" {
+			fmt.Fprint(os.Stderr, red("Warning: LLM returned empty response\n"))
 		}
 
 		// Add assistant response to history
@@ -688,7 +844,488 @@ func askLLM(client *MCPClient, args []string) error {
 
 		// Show prompt hint for interactive mode
 		if len(args) == 0 || len(messages) > 2 {
-			fmt.Fprintf(os.Stderr, "(Press Ctrl+C to exit)\n\n")
+			fmt.Fprint(os.Stderr, red("(Press Ctrl+C to exit)\n\n"))
 		}
 	}
+}
+
+// getLLMModelName returns the model name for the current LLM provider
+func getLLMModelName(config *LLMConfig) string {
+	if config.Provider == "anthropic" {
+		return config.AnthropicModel
+	}
+	return config.OllamaModel
+}
+
+// askLLMInteractiveWithReadline is the interactive LLM conversation mode with readline support
+func askLLMInteractiveWithReadline(client *MCPClient, rl interface{}) error {
+	// Load CLI configuration
+	cliConfig, err := loadCLIConfig()
+	if err != nil {
+		return fmt.Errorf("failed to load CLI config: %w", err)
+	}
+
+	// Create LLM configuration
+	llmConfig := NewLLMConfig()
+
+	// Apply CLI config preferences
+	applyConfigToLLMConfig(cliConfig, llmConfig)
+
+	// Create LLM client
+	llmClient, err := NewLLMClient(llmConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create LLM client: %w\n\nMake sure you have either:\n- AI_CLI_ANTHROPIC_API_KEY environment variable set, or\n- Ollama running at %s", err, llmConfig.OllamaURL)
+	}
+
+	fmt.Fprintf(os.Stderr, red("Using %s LLM with model %s...\n\n"), llmConfig.Provider, getLLMModelName(llmConfig))
+
+	// Get available tools from MCP server
+	toolsResult, err := client.ListTools()
+	if err != nil {
+		return fmt.Errorf("failed to list tools: %w", err)
+	}
+
+	// Parse tools
+	var tools []Tool
+	if toolsMap, ok := toolsResult.(map[string]interface{}); ok {
+		if toolsList, ok := toolsMap["tools"].([]interface{}); ok {
+			for _, t := range toolsList {
+				if toolMap, ok := t.(map[string]interface{}); ok {
+					name, _ := toolMap["name"].(string)                           //nolint:errcheck // Type assertion, optional field
+					description, _ := toolMap["description"].(string)             //nolint:errcheck // Type assertion, optional field
+					inputSchema, _ := toolMap["inputSchema"].(map[string]interface{}) //nolint:errcheck // Type assertion, optional field
+
+					if name != "" {
+						tools = append(tools, Tool{
+							Name:        name,
+							Description: description,
+							InputSchema: inputSchema,
+						})
+					}
+				}
+			}
+		}
+	}
+
+
+	// Get available resources from MCP server
+	resourcesResult, err := client.ListResources()
+	if err != nil {
+		return fmt.Errorf("failed to list resources: %w", err)
+	}
+
+	// Parse resources
+	var resources []Resource
+	if resourcesMap, ok := resourcesResult.(map[string]interface{}); ok {
+		if resourcesList, ok := resourcesMap["resources"].([]interface{}); ok {
+			for _, r := range resourcesList {
+				if resourceMap, ok := r.(map[string]interface{}); ok {
+					uri, _ := resourceMap["uri"].(string)               //nolint:errcheck // Type assertion, optional field
+					name, _ := resourceMap["name"].(string)             //nolint:errcheck // Type assertion, optional field
+					description, _ := resourceMap["description"].(string) //nolint:errcheck // Type assertion, optional field
+					mimeType, _ := resourceMap["mimeType"].(string)     //nolint:errcheck // Type assertion, optional field
+
+					if uri != "" {
+						// Only send resource metadata - don't fetch data upfront
+						// The LLM can use read_resource tool to fetch data when needed
+						resource := Resource{
+							URI:         uri,
+							Name:        name,
+							Description: description,
+							MimeType:    mimeType,
+						}
+						resources = append(resources, resource)
+					}
+				}
+			}
+		}
+	}
+
+
+	// Initialize conversation history
+	var messages []Message
+	ctx := context.Background()
+
+	// Type assert rl to readline interface
+	type readlineInterface interface {
+		Readline() (string, error)
+	}
+	readline, ok := rl.(readlineInterface)
+	if !ok {
+		return fmt.Errorf("invalid readline instance")
+	}
+
+	// Interactive conversation loop
+	for {
+		// Get query from readline
+		query, err := readline.Readline()
+		if err != nil {
+			// Ctrl+C or EOF
+			fmt.Fprintln(os.Stderr)
+			return nil
+		}
+
+		query = strings.TrimSpace(query)
+		if query == "" {
+			continue
+		}
+
+		// Add user message to history
+		messages = append(messages, Message{
+			Role:    "user",
+			Content: query,
+		})
+
+		// Start spinner while waiting for LLM
+		spin := newSpinner()
+		spin.start()
+
+		// Send to LLM (with MCP client for tool execution)
+		response, err := llmClient.Chat(ctx, messages, tools, resources, client)
+
+		// Stop spinner
+		spin.stop()
+
+		if err != nil {
+			fmt.Fprintf(os.Stderr, red("Error: %v\n"), err)
+			continue
+		}
+
+		// Check if response is empty
+		if response == "" {
+			fmt.Fprint(os.Stderr, red("Warning: LLM returned empty response\n"))
+			continue
+		}
+
+		// Add assistant response to history
+		messages = append(messages, Message{
+			Role:    "assistant",
+			Content: response,
+		})
+
+		// Print response
+		fmt.Println()
+		fmt.Println(response)
+		fmt.Println()
+	}
+}
+
+// setLLM sets the preferred LLM provider
+func setLLM(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: set-llm <provider>\n\nAvailable providers: anthropic, ollama")
+	}
+
+	provider := strings.ToLower(args[0])
+
+	// Validate provider
+	if provider != "anthropic" && provider != "ollama" {
+		return fmt.Errorf("invalid provider: %s\n\nAvailable providers: anthropic, ollama", args[0])
+	}
+
+	// Check if the provider is configured
+	llmConfig := NewLLMConfig()
+
+	// Load config to check what's available
+	config, err := loadCLIConfig()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+	applyConfigToLLMConfig(config, llmConfig)
+
+	if provider == "anthropic" {
+		if llmConfig.AnthropicKey == "" {
+			return fmt.Errorf("Anthropic API key is required. Set it using:\n  - AI_CLI_ANTHROPIC_API_KEY environment variable\n  - Config file: ./ai-cli set-anthropic-key <key>")
+		}
+	}
+	// Ollama doesn't require configuration, it just needs to be running
+
+	// Update provider
+	config.PreferredLLM = provider
+
+	// Save config
+	if err := saveCLIConfig(config); err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+
+	fmt.Printf("LLM provider set to: %s\n", provider)
+	if provider == "anthropic" {
+		fmt.Printf("Model: %s (use 'set-model' to change)\n", llmConfig.AnthropicModel)
+	} else {
+		fmt.Printf("Model: %s (use 'set-model' to change)\n", llmConfig.OllamaModel)
+		fmt.Printf("URL: %s\n", llmConfig.OllamaURL)
+		fmt.Printf("\nNote: For agentic tool execution, use models that support function calling\n")
+		fmt.Printf("(e.g., llama3.1, llama3.2, mistral, mixtral, qwen2.5)\n")
+	}
+
+	return nil
+}
+
+// showLLM displays the current LLM provider
+func showLLM() error {
+	// Load current config
+	config, err := loadCLIConfig()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	// Get effective LLM config
+	llmConfig := NewLLMConfig()
+	applyConfigToLLMConfig(config, llmConfig)
+
+	if config.PreferredLLM == "" {
+		fmt.Printf("LLM Provider: %s (auto-detected)\n", llmConfig.Provider)
+	} else {
+		fmt.Printf("LLM Provider: %s\n", llmConfig.Provider)
+	}
+
+	if llmConfig.Provider == "anthropic" {
+		fmt.Printf("Model: %s\n", llmConfig.AnthropicModel)
+		if llmConfig.AnthropicKey != "" {
+			fmt.Printf("API Key: configured\n")
+		} else {
+			fmt.Printf("API Key: not configured\n")
+		}
+	} else {
+		fmt.Printf("Model: %s\n", llmConfig.OllamaModel)
+		fmt.Printf("URL: %s\n", llmConfig.OllamaURL)
+	}
+
+	return nil
+}
+
+// setModel sets the model name for the current LLM provider
+func setModel(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: set-model <model-name>")
+	}
+
+	modelName := args[0]
+
+	// Load current config
+	config, err := loadCLIConfig()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	// Get effective LLM config to determine current provider
+	llmConfig := NewLLMConfig()
+	applyConfigToLLMConfig(config, llmConfig)
+
+	// Update the appropriate model
+	if llmConfig.Provider == "anthropic" {
+		config.AnthropicModel = modelName
+		fmt.Printf("Anthropic model set to: %s\n", modelName)
+	} else {
+		config.OllamaModel = modelName
+		fmt.Printf("Ollama model set to: %s\n", modelName)
+		fmt.Printf("\nNote: For agentic tool execution, use models that support function calling\n")
+		fmt.Printf("(e.g., llama3.1, llama3.2, mistral, mixtral, qwen2.5)\n")
+	}
+
+	// Save config
+	if err := saveCLIConfig(config); err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+
+	return nil
+}
+
+// showModel displays the model name for the current LLM provider
+func showModel() error {
+	// Load current config
+	config, err := loadCLIConfig()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	// Get effective LLM config
+	llmConfig := NewLLMConfig()
+	applyConfigToLLMConfig(config, llmConfig)
+
+	fmt.Printf("Current LLM Provider: %s\n", llmConfig.Provider)
+
+	if llmConfig.Provider == "anthropic" {
+		if config.AnthropicModel != "" {
+			fmt.Printf("Anthropic Model: %s (configured)\n", llmConfig.AnthropicModel)
+		} else {
+			fmt.Printf("Anthropic Model: %s (default)\n", llmConfig.AnthropicModel)
+		}
+	} else {
+		if config.OllamaModel != "" {
+			fmt.Printf("Ollama Model: %s (configured)\n", llmConfig.OllamaModel)
+		} else {
+			fmt.Printf("Ollama Model: %s (default)\n", llmConfig.OllamaModel)
+		}
+	}
+
+	return nil
+}
+
+// setServerURL sets the AI Workbench MCP server URL in the config file
+func setServerURL(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: set-server <url>")
+	}
+
+	serverURL := args[0]
+
+	// Load current config
+	config, err := loadCLIConfig()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	// Update server URL
+	config.ServerURL = serverURL
+
+	// Save config
+	if err := saveCLIConfig(config); err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+
+	fmt.Printf("AI Workbench MCP server URL set to: %s\n", serverURL)
+	fmt.Printf("\nNote: This can be overridden with --server flag or AI_CLI_SERVER_URL environment variable\n")
+
+	return nil
+}
+
+// setAnthropicKey sets the Anthropic API key in the config file
+func setAnthropicKey(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: set-anthropic-key <api-key>")
+	}
+
+	apiKey := args[0]
+
+	// Load current config
+	config, err := loadCLIConfig()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	// Update API key
+	config.AnthropicAPIKey = apiKey
+
+	// Save config
+	if err := saveCLIConfig(config); err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+
+	fmt.Printf("Anthropic API key saved to config file\n")
+	fmt.Printf("\nNote: This can be overridden with AI_CLI_ANTHROPIC_API_KEY environment variable\n")
+	fmt.Printf("Warning: The API key is stored in plain text in ~/.ai-workbench-cli.json (0600 permissions)\n")
+
+	return nil
+}
+
+// setOllamaURL sets the Ollama server URL in the config file
+func setOllamaURL(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: set-ollama-url <url>")
+	}
+
+	ollamaURL := args[0]
+
+	// Load current config
+	config, err := loadCLIConfig()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	// Update Ollama URL
+	config.OllamaURL = ollamaURL
+
+	// Save config
+	if err := saveCLIConfig(config); err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+
+	fmt.Printf("Ollama server URL set to: %s\n", ollamaURL)
+	fmt.Printf("\nNote: This can be overridden with AI_CLI_OLLAMA_URL environment variable\n")
+
+	return nil
+}
+
+// showConfig displays all configuration settings
+func showConfig() error {
+	// Load current config
+	config, err := loadCLIConfig()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	// Get effective LLM config
+	llmConfig := NewLLMConfig()
+	applyConfigToLLMConfig(config, llmConfig)
+
+	fmt.Printf("Configuration File: ~/.ai-workbench-cli.json\n\n")
+
+	// Server settings
+	fmt.Printf("Server Settings:\n")
+	effectiveServerURL := getEffectiveServerURL("")
+	if config.ServerURL != "" {
+		fmt.Printf("  Server URL: %s (configured)\n", config.ServerURL)
+	} else {
+		fmt.Printf("  Server URL: %s (default)\n", effectiveServerURL)
+	}
+	if os.Getenv("AI_CLI_SERVER_URL") != "" {
+		fmt.Printf("  Server URL Override: %s (AI_CLI_SERVER_URL env var)\n", os.Getenv("AI_CLI_SERVER_URL"))
+	}
+	fmt.Println()
+
+	// LLM provider
+	fmt.Printf("LLM Provider:\n")
+	if config.PreferredLLM != "" {
+		fmt.Printf("  Provider: %s (configured)\n", config.PreferredLLM)
+	} else {
+		fmt.Printf("  Provider: %s (auto-detected)\n", llmConfig.Provider)
+	}
+	fmt.Println()
+
+	// Anthropic settings
+	fmt.Printf("Anthropic Settings:\n")
+	if os.Getenv("AI_CLI_ANTHROPIC_API_KEY") != "" {
+		fmt.Printf("  API Key: configured (AI_CLI_ANTHROPIC_API_KEY env var)\n")
+	} else if config.AnthropicAPIKey != "" {
+		fmt.Printf("  API Key: configured (config file)\n")
+	} else {
+		fmt.Printf("  API Key: not configured\n")
+	}
+
+	if os.Getenv("AI_CLI_ANTHROPIC_MODEL") != "" {
+		fmt.Printf("  Model: %s (AI_CLI_ANTHROPIC_MODEL env var)\n", llmConfig.AnthropicModel)
+	} else if config.AnthropicModel != "" {
+		fmt.Printf("  Model: %s (configured)\n", llmConfig.AnthropicModel)
+	} else {
+		fmt.Printf("  Model: %s (default)\n", llmConfig.AnthropicModel)
+	}
+	fmt.Println()
+
+	// Ollama settings
+	fmt.Printf("Ollama Settings:\n")
+	if os.Getenv("AI_CLI_OLLAMA_URL") != "" {
+		fmt.Printf("  URL: %s (AI_CLI_OLLAMA_URL env var)\n", llmConfig.OllamaURL)
+	} else if config.OllamaURL != "" {
+		fmt.Printf("  URL: %s (configured)\n", llmConfig.OllamaURL)
+	} else {
+		fmt.Printf("  URL: %s (default)\n", llmConfig.OllamaURL)
+	}
+
+	if os.Getenv("AI_CLI_OLLAMA_MODEL") != "" {
+		fmt.Printf("  Model: %s (AI_CLI_OLLAMA_MODEL env var)\n", llmConfig.OllamaModel)
+	} else if config.OllamaModel != "" {
+		fmt.Printf("  Model: %s (configured)\n", llmConfig.OllamaModel)
+	} else {
+		fmt.Printf("  Model: %s (default)\n", llmConfig.OllamaModel)
+	}
+	fmt.Println()
+
+	fmt.Printf("Priority Order:\n")
+	fmt.Printf("  1. Command-line flags (highest)\n")
+	fmt.Printf("  2. AI_CLI_* environment variables\n")
+	fmt.Printf("  3. Configuration file settings\n")
+	fmt.Printf("  4. Built-in defaults (lowest)\n")
+
+	return nil
 }

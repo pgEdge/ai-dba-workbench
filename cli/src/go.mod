@@ -6,6 +6,7 @@ require golang.org/x/term v0.36.0
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.17.0 // indirect
+	github.com/chzyer/readline v1.5.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/ollama/ollama v0.12.10 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect

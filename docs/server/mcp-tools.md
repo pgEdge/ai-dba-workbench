@@ -835,6 +835,431 @@ Response:
 }
 ```
 
+## Query Execution Tool
+
+### execute_query
+
+Executes SQL queries on database connections in read-only mode. This powerful
+tool enables AI assistants to query both real-time statistics from individual
+databases and historical metrics from the datastore.
+
+**Security:** Queries always run in read-only transaction mode (`BEGIN READ
+ONLY`) to prevent data modification. Query timeout is set to 30 seconds.
+
+**Access Control:**
+- Users can query connections they own
+- Users can query connections where they have connection-level read privileges
+- Users with `execute_query` MCP privilege can query any connection they have
+  access to
+- **Special case:** All authenticated users can query connection ID 0 (the
+  datastore)
+- Superusers can query any connection
+
+---
+
+### ⚠️ CRITICAL: Connection Selection Rules
+
+**Connection ID 0 = DATASTORE ONLY (historical metrics ONLY)**
+**Connection ID 1+ = ACTUAL DATABASES on PostgreSQL servers**
+
+**When querying actual database content:**
+
+❌ **WRONG:** User asks "show tables in pgaweb database" → DO NOT USE
+`connectionId: 0`
+✅ **RIGHT:** User asks "show tables in pgaweb database" → USE `connectionId:
+(find kielbasa server), databaseName: "pgaweb"`
+
+❌ **WRONG:** User asks "what's in the users table" → DO NOT USE `connectionId:
+0`
+✅ **RIGHT:** User asks "what's in the users table" → USE `connectionId:
+(actual server), databaseName: (actual database)`
+
+❌ **WRONG:** User asks "describe schema in mydb" → DO NOT USE `connectionId:
+0`
+✅ **RIGHT:** User asks "describe schema in mydb" → USE `connectionId: (actual
+server), databaseName: "mydb"`
+
+✅ **ONLY use connectionId: 0 for:** "show historical metrics", "performance
+trends", "analyze metrics over time"
+
+**Mandatory Steps:**
+1. Find the server connection (read connections resource)
+2. Get the connection ID for that server (e.g., kielbasa = ID 3)
+3. Set `connectionId` to that ID (NOT 0)
+4. Set `databaseName` parameter to the database mentioned (e.g., "pgaweb")
+5. Execute the query immediately
+
+---
+
+**Database Selection:**
+
+By default, queries execute on the database configured for the connection.
+However, you can optionally specify a different `databaseName` parameter to
+connect to ANY database on the same PostgreSQL server (subject to PostgreSQL's
+authentication rules in pg_hba.conf). This is extremely useful for:
+
+- Querying system databases like `postgres` for server-wide statistics (e.g.,
+  `SELECT * FROM pg_stat_database` to see all databases)
+- Switching between multiple application databases on the same server
+- Checking template databases (template0, template1) or other databases
+- **MOST IMPORTANTLY:** Querying a specific database when the connection is
+  configured for a different default database
+
+**Important:** For connection ID 0 (datastore), the `databaseName` parameter is
+ignored and always uses the datastore database.
+
+#### Understanding the Datastore
+
+Connection ID **0** is special - it represents the datastore that contains
+historical performance metrics collected from all monitored PostgreSQL servers.
+The datastore's `metrics` schema provides time-series data for trend analysis
+and historical comparisons.
+
+**Key metrics tables:**
+
+- `metrics.pg_stat_database` - Database-level statistics over time
+- `metrics.pg_stat_bgwriter` - Background writer metrics
+- `metrics.pg_stat_all_tables` - Per-table statistics history
+- `metrics.pg_stat_all_indexes` - Index usage and efficiency
+- `metrics.pg_stat_statements` - Query performance history
+- `metrics.pg_stat_replication` - Replication lag history
+- `metrics.pg_settings` - Configuration changes over time
+
+Each metrics table includes:
+- `collected_at` - When the metric was collected
+- `connection_name` - Which database/server it came from
+- Original PostgreSQL statistic columns
+
+#### Combining Real-Time and Historical Data
+
+For comprehensive analysis, query both sources:
+
+1. **Real-time queries** (on individual connections) - Get current state
+2. **Historical queries** (on datastore, connection 0) - Analyze trends
+
+**Example workflow:**
+
+```sql
+-- Step 1: Query datastore for historical trend
+SELECT collected_at, numbackends, xact_commit
+FROM metrics.pg_stat_database
+WHERE connection_name = 'production' AND collected_at > NOW() - INTERVAL '7 days'
+ORDER BY collected_at;
+
+-- Step 2: Query real-time data on actual connection
+SELECT numbackends, xact_commit
+FROM pg_stat_database
+WHERE datname = current_database();
+
+-- Step 3: Compare and identify anomalies
+```
+
+#### Input Schema
+
+```json
+{
+    "type": "object",
+    "properties": {
+        "connectionId": {
+            "type": "number",
+            "description": "Connection ID (use 0 for datastore with historical metrics)"
+        },
+        "query": {
+            "type": "string",
+            "description": "SQL query to execute (runs in read-only mode)"
+        },
+        "databaseName": {
+            "type": "string",
+            "description": "Optional: specific database name to connect to on the server (overrides connection's default database). Ignored for connection ID 0."
+        },
+        "maxRows": {
+            "type": "number",
+            "description": "Maximum rows to return (default: 1000, max: 10000)",
+            "default": 1000
+        }
+    },
+    "required": ["connectionId", "query"]
+}
+```
+
+#### Example Usage
+
+**Query historical metrics from datastore:**
+
+Request:
+
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 10,
+    "method": "tools/call",
+    "params": {
+        "name": "execute_query",
+        "arguments": {
+            "connectionId": 0,
+            "query": "SELECT connection_name, AVG(numbackends) as avg_connections, MAX(numbackends) as max_connections FROM metrics.pg_stat_database WHERE collected_at > NOW() - INTERVAL '24 hours' GROUP BY connection_name",
+            "maxRows": 100
+        }
+    }
+}
+```
+
+Response:
+
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 10,
+    "result": {
+        "content": [
+            {
+                "type": "text",
+                "text": "Query executed successfully on connection 'datastore' (ID: 0)\n\nColumns: [connection_name, avg_connections, max_connections]\nRows returned: 3\n\nResults:\n{\n  \"columns\": [\"connection_name\", \"avg_connections\", \"max_connections\"],\n  \"rows\": [\n    [\"production\", 45.2, 78],\n    [\"staging\", 12.5, 23],\n    [\"development\", 5.1, 12]\n  ],\n  \"rowCount\": 3,\n  \"truncated\": false\n}"
+            }
+        ]
+    }
+}
+```
+
+**Query real-time statistics from a database:**
+
+Request:
+
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 11,
+    "method": "tools/call",
+    "params": {
+        "name": "execute_query",
+        "arguments": {
+            "connectionId": 42,
+            "query": "SELECT datname, numbackends, xact_commit, xact_rollback, blks_read, blks_hit FROM pg_stat_database WHERE datname = current_database()"
+        }
+    }
+}
+```
+
+Response:
+
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 11,
+    "result": {
+        "content": [
+            {
+                "type": "text",
+                "text": "Query executed successfully on connection 'Production Database' (ID: 42), database 'myapp'\n\nColumns: [datname, numbackends, xact_commit, xact_rollback, blks_read, blks_hit]\nRows returned: 1\n\nResults:\n{\n  \"columns\": [\"datname\", \"numbackends\", \"xact_commit\", \"xact_rollback\", \"blks_read\", \"blks_hit\"],\n  \"rows\": [\n    [\"myapp\", 52, 1234567, 234, 45678, 9876543]\n  ],\n  \"rowCount\": 1,\n  \"truncated\": false\n}"
+            }
+        ]
+    }
+}
+```
+
+**Query server-wide statistics using a different database:**
+
+This example shows querying the `postgres` system database to get statistics
+for ALL databases on the server:
+
+Request:
+
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 12,
+    "method": "tools/call",
+    "params": {
+        "name": "execute_query",
+        "arguments": {
+            "connectionId": 42,
+            "databaseName": "postgres",
+            "query": "SELECT datname, numbackends, xact_commit, blks_hit::float / NULLIF(blks_hit + blks_read, 0) * 100 as cache_hit_pct FROM pg_stat_database WHERE datname NOT IN ('template0', 'template1') ORDER BY xact_commit DESC"
+        }
+    }
+}
+```
+
+Response:
+
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 12,
+    "result": {
+        "content": [
+            {
+                "type": "text",
+                "text": "Query executed successfully on connection 'Production Database' (ID: 42), database 'postgres'\n\nColumns: [datname, numbackends, xact_commit, cache_hit_pct]\nRows returned: 3\n\nResults:\n{\n  \"columns\": [\"datname\", \"numbackends\", \"xact_commit\", \"cache_hit_pct\"],\n  \"rows\": [\n    [\"myapp\", 52, 1234567, 98.5],\n    [\"analytics\", 12, 456789, 97.2],\n    [\"postgres\", 3, 12345, 99.1]\n  ],\n  \"rowCount\": 3,\n  \"truncated\": false\n}"
+            }
+        ]
+    }
+}
+```
+
+**Use Case:** This is particularly useful when you need cluster-wide information
+that's only available from the `postgres` database, even if your connection is
+configured for a specific application database.
+
+#### Common Analysis Patterns
+
+**1. Performance Degradation Detection:**
+
+```sql
+-- Datastore: Historical cache hit ratio trend
+SELECT DATE(collected_at),
+       AVG(blks_hit::float / NULLIF(blks_hit + blks_read, 0)) * 100 as cache_hit_pct
+FROM metrics.pg_stat_database
+WHERE connection_name = 'production'
+GROUP BY DATE(collected_at)
+ORDER BY DATE(collected_at);
+
+-- Real-time: Current cache hit ratio
+SELECT blks_hit::float / NULLIF(blks_hit + blks_read, 0) * 100 as cache_hit_pct
+FROM pg_stat_database WHERE datname = current_database();
+```
+
+**2. Table Growth Analysis:**
+
+```sql
+-- Datastore: Insertion rate over time
+SELECT collected_at, n_tup_ins, n_tup_upd
+FROM metrics.pg_stat_all_tables
+WHERE connection_name = 'production' AND relname = 'orders'
+ORDER BY collected_at;
+
+-- Real-time: Current table statistics
+SELECT n_live_tup, n_dead_tup, last_vacuum, last_autovacuum
+FROM pg_stat_user_tables WHERE relname = 'orders';
+```
+
+**3. Query Performance Monitoring:**
+
+```sql
+-- Datastore: Historical query performance
+SELECT query, AVG(mean_exec_time) as avg_time, MAX(mean_exec_time) as max_time
+FROM metrics.pg_stat_statements
+WHERE connection_name = 'production'
+GROUP BY query
+ORDER BY avg_time DESC LIMIT 10;
+
+-- Real-time: Current slow queries
+SELECT query, mean_exec_time, calls
+FROM pg_stat_statements
+ORDER BY mean_exec_time DESC LIMIT 10;
+```
+
+**4. Replication Health:**
+
+```sql
+-- Datastore: Replication lag history
+SELECT collected_at, application_name,
+       EXTRACT(epoch FROM replay_lag) as replay_lag_seconds
+FROM metrics.pg_stat_replication
+WHERE connection_name = 'production'
+ORDER BY collected_at;
+
+-- Real-time: Current replication status
+SELECT application_name, state,
+       pg_wal_lsn_diff(sent_lsn, replay_lsn) as lag_bytes,
+       replay_lag
+FROM pg_stat_replication;
+```
+
+## Resource Access Tools
+
+### read_resource
+
+Reads data from MCP resources. This tool enables AI assistants to fetch actual
+data from resources like the connections list, user accounts, service tokens,
+and other system information.
+
+**Common Use Case:** Before executing queries on a database, use this tool to
+read the `ai-workbench://connections` resource to discover available connections
+and their IDs. This prevents trial-and-error attempts with connection IDs.
+
+**Access Control:**
+- All authenticated users can read resources they have access to
+- Resource access follows the same authorization rules as the underlying data
+- Superusers can read all resources
+
+#### Input Schema
+
+```json
+{
+    "type": "object",
+    "properties": {
+        "uri": {
+            "type": "string",
+            "description": "The resource URI to read (e.g., 'ai-workbench://connections' to list all available database connections)"
+        }
+    },
+    "required": ["uri"]
+}
+```
+
+#### Available Resources
+
+Common resources that can be read with this tool:
+
+- `ai-workbench://connections` - List of all database connections with their IDs,
+  names, hosts, and other metadata
+- `ai-workbench://users` - List of user accounts
+- `ai-workbench://service-tokens` - List of service tokens
+- `ai-workbench://groups` - List of user groups
+- `ai-workbench://mcp-privileges` - List of MCP privilege identifiers
+- `ai-workbench://session/context` - Current session database context
+
+For a complete list, use the `resources/list` MCP method.
+
+#### Example Usage
+
+**Discovering available database connections:**
+
+Request:
+
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 13,
+    "method": "tools/call",
+    "params": {
+        "name": "read_resource",
+        "arguments": {
+            "uri": "ai-workbench://connections"
+        }
+    }
+}
+```
+
+Response:
+
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 13,
+    "result": {
+        "content": [
+            {
+                "type": "text",
+                "text": "{\"id\":2,\"isShared\":false,\"isMonitored\":true,\"name\":\"holly.conx.page\",\"host\":\"holly.conx.page\",\"hostaddr\":null,\"port\":5432,\"databaseName\":\"postgres\",\"username\":\"postgres\",\"sslmode\":\"prefer\",\"createdAt\":\"2025-01-10T10:30:00Z\",\"updatedAt\":\"2025-01-10T10:30:00Z\"}\n\n{\"id\":3,\"isShared\":false,\"isMonitored\":true,\"name\":\"kielbasa\",\"host\":\"kielbasa.local\",\"hostaddr\":null,\"port\":5432,\"databaseName\":\"postgres\",\"username\":\"dbuser\",\"sslmode\":\"require\",\"createdAt\":\"2025-01-05T14:20:00Z\",\"updatedAt\":\"2025-01-05T14:20:00Z\"}"
+            }
+        ]
+    }
+}
+```
+
+**Typical Workflow:**
+
+1. User asks: "List tables in the pgaweb database on holly"
+2. AI calls `read_resource` with `uri: "ai-workbench://connections"` to discover
+   connection named "holly.conx.page" has ID 2
+3. AI calls `set_database_context` with `connectionId: 2` and
+   `databaseName: "pgaweb"`
+4. AI calls `execute_query` to list the tables
+
+This approach eliminates guessing connection IDs and prevents unnecessary errors.
+
 ## Error Handling
 
 Tools return standard JSON-RPC error responses when operations fail:

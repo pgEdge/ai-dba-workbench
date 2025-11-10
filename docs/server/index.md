@@ -1,392 +1,336 @@
 # pgEdge AI Workbench MCP Server Documentation
 
-Welcome to the pgEdge AI Workbench MCP Server documentation.
-
 ## Overview
 
-The MCP Server implements the Model Context Protocol (MCP), a standardized
-interface for AI assistants to interact with external systems. This server
-provides secure access to PostgreSQL databases and enables AI-powered
-database operations.
+The pgEdge AI Workbench MCP Server is a Go-based implementation of the Model
+Context Protocol (MCP), enabling AI assistants to interact with PostgreSQL
+databases through a standardized, secure interface.
 
-## Quick Links
+## Key Features
 
-- [Main Documentation](../index.md) - Return to main documentation index
-- [README](../../server/README.md) - Getting started guide
-- [Architecture](#architecture) - Server architecture and components
-- [Configuration](#configuration) - Configuration reference
-- [User Token Management](user-tokens.md) - Managing user-owned API tokens
-- [Protocol](#protocol) - MCP protocol details
-- [Development](#development) - Development guide
+- **Model Context Protocol**: Full implementation of MCP specification
+- **Session Management**: User-specific session contexts for database access
+- **Multi-Connection Support**: Manage and query multiple PostgreSQL servers
+- **Role-Based Access Control**: Fine-grained privilege system for users and
+  groups
+- **Historical Metrics**: Dedicated datastore for performance trend analysis
+- **Secure by Default**: TLS/SSL support, read-only queries, encrypted
+  credentials
 
 ## Architecture
 
-The MCP server is organized into several packages:
+The MCP server consists of several key components:
 
-### Package Structure
+### Core Components
+
+- **MCP Handler**: Processes JSON-RPC 2.0 requests over Server-Sent Events
+- **Session Manager**: Maintains per-user database contexts
+- **Connection Manager**: Manages encrypted PostgreSQL connection credentials
+- **Privilege System**: Enforces RBAC for all operations
+- **User Management**: User accounts, service tokens, and user tokens
+
+### Data Flow
 
 ```
-server/
-├── src/
-│   ├── main.go           # Application entry point
-│   ├── config/           # Configuration handling
-│   │   ├── config.go     # Configuration struct and methods
-│   │   └── config_test.go
-│   ├── logger/           # Logging functionality
-│   │   ├── logger.go     # Logger implementation
-│   │   └── logger_test.go
-│   ├── mcp/              # MCP protocol implementation
-│   │   ├── protocol.go   # MCP data structures
-│   │   ├── protocol_test.go
-│   │   ├── handler.go    # Request handler
-│   │   └── handler_test.go
-│   └── server/           # HTTP/HTTPS server
-│       └── server.go     # Server implementation
-└── docs/
-    └── index.md          # This file
+AI Assistant → HTTP/SSE → MCP Handler → Session Context
+                                      ↓
+                                Connection Manager → PostgreSQL Server(s)
+                                      ↓
+                                Datastore (Metrics)
 ```
 
-### Components
+## Documentation
 
-#### Main Application
+### Getting Started
 
-The [main.go](../../server/src/main.go) file serves as the application entry
-point and handles:
+- [Server README](../../server/README.md) - Installation, configuration, and
+  basic usage
+- [Session Context System](session-context.md) - Working database contexts and
+  datastore access
 
-- Command-line flag parsing
-- Configuration loading and validation
-- Server initialization
-- Signal handling for graceful shutdown
-- Lifecycle management
+### Features
 
-#### Configuration Package
+- **Session Context System**: See [session-context.md](session-context.md)
+  - Setting and using database contexts
+  - New MCP tools: `set_database_context`, `get_database_context`,
+    `clear_database_context`
+  - Datastore queries with `query_datastore`
+  - Modified `execute_query` behavior
 
-The [config](../../server/src/config/) package provides configuration
-management:
+### MCP Tools
 
-- Loading from configuration files
-- Command-line flag overrides
-- Validation of all settings
-- Secure handling of credentials
+The server provides 30+ MCP tools organized by function:
 
-#### Logger Package
+#### User Management
 
-The [logger](../../server/src/logger/) package provides structured logging
-with:
+- `authenticate_user` - Authenticate and obtain session token
+- `create_user` - Create new user accounts
+- `update_user` - Modify user account details
+- `delete_user` - Remove user accounts
 
-- Verbose mode support
-- Different log levels (Error, Info, Startup, Fatal)
-- Standard output formatting
-- Thread-safe operations
+#### Token Management
 
-#### MCP Package
+- `create_service_token` - Create service tokens for automation
+- `update_service_token` - Modify service token settings
+- `delete_service_token` - Remove service tokens
+- `create_user_token` - Create personal access tokens
+- `list_user_tokens` - List user's tokens
+- `delete_user_token` - Remove user tokens
 
-The [mcp](../../server/src/mcp/) package implements the Model Context Protocol:
+#### Group Management
 
-- JSON-RPC 2.0 request/response structures
-- Protocol error codes
-- Request handlers for MCP methods
-- Session state management
+- `create_user_group` - Create user groups
+- `update_user_group` - Modify group settings
+- `delete_user_group` - Remove groups
+- `list_user_groups` - List all groups
+- `add_group_member` - Add users/groups to groups
+- `remove_group_member` - Remove members from groups
+- `list_group_members` - List group members
+- `list_user_group_memberships` - List user's group memberships
 
-#### Server Package
+#### Privilege Management
 
-The [server](../../server/src/server/) package implements the HTTP/HTTPS
-server:
+- `grant_connection_privilege` - Grant connection access to groups
+- `revoke_connection_privilege` - Revoke connection access
+- `list_connection_privileges` - List connection privileges
+- `list_mcp_privilege_identifiers` - List available MCP privileges
+- `grant_mcp_privilege` - Grant MCP tool/resource access
+- `revoke_mcp_privilege` - Revoke MCP access
+- `list_group_mcp_privileges` - List group's MCP privileges
 
-- Server-Sent Events (SSE) support
-- TLS/SSL configuration
-- Health check endpoint
-- Connection management
-- Graceful shutdown
+#### Token Scoping
+
+- `set_token_connection_scope` - Limit token to specific connections
+- `set_token_mcp_scope` - Limit token to specific MCP items
+- `get_token_scope` - View token scope restrictions
+- `clear_token_scope` - Remove token scope restrictions
+
+#### Database Operations
+
+- `create_connection` - Add new PostgreSQL connection
+- `update_connection` - Modify connection settings
+- `delete_connection` - Remove connection
+- `execute_query` - Run SQL queries (read-only, uses session context)
+
+#### Session Context
+
+- `set_database_context` - Set working database for session
+- `get_database_context` - View current database context
+- `clear_database_context` - Clear session context
+
+#### Datastore
+
+- `query_datastore` - Query historical metrics data
+
+### MCP Resources
+
+The server provides read-only resources accessible to AI assistants:
+
+- `ai-workbench://connections/list` - List of available database connections
+- `ai-workbench://connections/{id}` - Details of a specific connection
+- `ai-workbench://tables/{connectionId}` - Tables in a database
+- `ai-workbench://tables/{connectionId}/{tableName}/schema` - Table schema
+- `ai-workbench://current-user/info` - Current user information
+- `ai-workbench://current-user/groups` - User's group memberships
+- `ai-workbench://current-user/privileges` - User's effective privileges
+- `ai-workbench://groups/list` - All user groups
+- `ai-workbench://groups/{id}/members` - Group members
+- `ai-workbench://current-user/token-scope` - Token scope restrictions
+- `ai-workbench://session/context` - Current session database context
+
+## Security Model
+
+### Authentication
+
+- **User Accounts**: Username/password authentication
+- **Service Tokens**: Long-lived tokens for automation (no expiration)
+- **User Tokens**: Personal access tokens with optional expiration
+
+### Authorization
+
+The server implements a comprehensive RBAC system:
+
+- **Superusers**: Full administrative access
+- **User Groups**: Hierarchical group membership with inheritance
+- **Connection Privileges**: Per-connection access levels (read/write/admin)
+- **MCP Privileges**: Per-tool/resource access control
+- **Token Scoping**: Optional limitation of token permissions
+
+### Data Protection
+
+- **Encrypted Credentials**: Database passwords encrypted with AES-256-GCM
+- **Read-Only Queries**: All queries execute in `BEGIN READ ONLY` mode
+- **TLS/SSL**: Optional HTTPS with certificate chain support
+- **Session Isolation**: Complete isolation between user sessions
 
 ## Configuration
 
-### Configuration File Format
+See [Server README Configuration
+Section](../../server/README.md#configuration) for details on:
 
-The server uses a simple key-value configuration file format:
-
-```
-# Comments start with #
-key = value
-
-# Quoted values for strings with spaces
-description = "My Server"
-
-# Unquoted values for simple strings and numbers
-port = 8080
-tls = false
-```
-
-### Available Settings
-
-#### Server Settings
-
-- `port` (int) - HTTP/HTTPS server port (default: 8080)
-- `tls` (bool) - Enable TLS/SSL (default: false)
-- `tls_cert` (string) - Path to TLS certificate file
-- `tls_key` (string) - Path to TLS key file
-- `tls_chain` (string) - Path to TLS certificate chain file
-
-#### Database Settings
-
-- `pg_host` (string) - PostgreSQL server hostname
-- `pg_hostaddr` (string) - PostgreSQL server IP address
-- `pg_database` (string) - PostgreSQL database name
-- `pg_username` (string) - PostgreSQL username
-- `pg_password_file` (string) - Path to password file
-- `pg_port` (int) - PostgreSQL port (default: 5432)
-- `pg_sslmode` (string) - PostgreSQL SSL mode (default: "prefer")
-- `pg_sslcert` (string) - PostgreSQL client certificate
-- `pg_sslkey` (string) - PostgreSQL client key
-- `pg_sslrootcert` (string) - PostgreSQL root certificate
-
-#### Security Settings
-
-- `server_secret` (string) - Server secret for encryption (REQUIRED)
-
-#### User Token Settings
-
-- `max_user_token_lifetime_days` (int) - Maximum lifetime for user tokens in
-    days (default: 90). Set to 0 to allow indefinite lifetime tokens. See
-    [User Token Management](user-tokens.md) for details.
-
-### Configuration Precedence
-
-Settings are applied in the following order (later sources override earlier):
-
-1. Default values
-2. Configuration file settings
-3. Command-line flags
-
-## Protocol
-
-### JSON-RPC 2.0
-
-All MCP communication uses JSON-RPC 2.0 over Server-Sent Events.
-
-#### Request Format
-
-```json
-{
-    "jsonrpc": "2.0",
-    "id": <request-id>,
-    "method": "<method-name>",
-    "params": <parameters>
-}
-```
-
-#### Response Format
-
-Success response:
-
-```json
-{
-    "jsonrpc": "2.0",
-    "id": <request-id>,
-    "result": <result-data>
-}
-```
-
-Error response:
-
-```json
-{
-    "jsonrpc": "2.0",
-    "id": <request-id>,
-    "error": {
-        "code": <error-code>,
-        "message": "<error-message>",
-        "data": <optional-error-data>
-    }
-}
-```
-
-### Error Codes
-
-Standard JSON-RPC 2.0 error codes:
-
-- `-32700` - Parse error (invalid JSON)
-- `-32600` - Invalid request
-- `-32601` - Method not found
-- `-32602` - Invalid parameters
-- `-32603` - Internal error
-
-### MCP Methods
-
-#### initialize
-
-Initializes an MCP session.
-
-Request:
-
-```json
-{
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "initialize",
-    "params": {
-        "protocolVersion": "2024-11-05",
-        "capabilities": {},
-        "clientInfo": {
-            "name": "ClientName",
-            "version": "1.0.0"
-        }
-    }
-}
-```
-
-Response:
-
-```json
-{
-    "jsonrpc": "2.0",
-    "id": 1,
-    "result": {
-        "protocolVersion": "2024-11-05",
-        "capabilities": {},
-        "serverInfo": {
-            "name": "pgEdge AI Workbench MCP Server",
-            "version": "0.1.0"
-        }
-    }
-}
-```
-
-#### ping
-
-Health check method.
-
-Request:
-
-```json
-{
-    "jsonrpc": "2.0",
-    "id": 2,
-    "method": "ping"
-}
-```
-
-Response:
-
-```json
-{
-    "jsonrpc": "2.0",
-    "id": 2,
-    "result": {
-        "status": "ok"
-    }
-}
-```
+- Configuration file format
+- Command-line flags
+- TLS/SSL setup
+- Database connection settings
+- Server secret (encryption key)
 
 ## Development
 
-### Prerequisites
-
-Before developing, install the required tools:
-
-```bash
-# Install golangci-lint for linting
-go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-```
-
-Ensure `$(go env GOPATH)/bin` is in your PATH:
-
-```bash
-# Add to your ~/.bashrc, ~/.zshrc, or ~/.zprofile
-export PATH="$PATH:$(go env GOPATH)/bin"
-```
-
 ### Building
 
-#### Using Make
-
 ```bash
-# Build the MCP server
-make build
-
-# Or build all targets
-make all
-```
-
-#### Using Go Directly
-
-```bash
-cd src
+cd server/src
 go mod tidy
 go build -o mcp-server
 ```
 
 ### Testing
 
-#### Using Make (Recommended)
-
 ```bash
-# Run all tests
+# All tests
 make test
 
-# Run tests with coverage
-make coverage
+# Skip database integration tests
+SKIP_DB_TESTS=1 make test
 
-# Run linting
+# Specific package
+go test -v ./src/mcp
+go test -v ./src/session
+go test -v ./src/privileges
+```
+
+### Code Coverage
+
+```bash
+SKIP_DB_TESTS=1 make coverage
+```
+
+### Linting
+
+```bash
 make lint
-
-# Run tests, coverage, and linting
-make test-all
-
-# Run everything (fmt, vet, test, lint)
-make check
 ```
 
-#### Using Go Directly
+## API Reference
 
-Run all tests:
+### Protocol
 
-```bash
-cd src
-go test -v ./...
-```
+The server implements JSON-RPC 2.0 over Server-Sent Events (SSE).
 
-Run tests for a specific package:
+**Endpoint**: `/sse`
 
-```bash
-cd src
-go test -v ./mcp
-go test -v ./config
-go test -v ./logger
-```
+**Request Format**:
 
-### Code Style
-
-The project follows standard Go conventions:
-
-- Use `gofmt` for formatting
-- Use `go vet` for static analysis
-- Four-space indentation
-- Comprehensive unit tests
-
-### Adding New MCP Methods
-
-To add a new MCP method:
-
-1. Add method handler in
-   [src/mcp/handler.go](../../server/src/mcp/handler.go):
-
-```go
-func (h *Handler) handleNewMethod(req Request) (*Response, error) {
-    // Parse parameters
-    // Perform operation
-    // Return response
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/call",
+    "params": {
+        "name": "execute_query",
+        "arguments": {
+            "query": "SELECT version()"
+        }
+    }
 }
 ```
 
-2. Add method routing in `HandleRequest`:
+**Response Format**:
 
-```go
-case "newMethod":
-    return h.handleNewMethod(req)
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "result": {
+        "content": [
+            {
+                "type": "text",
+                "text": "Query results..."
+            }
+        ]
+    }
+}
 ```
 
-3. Add tests in [src/mcp/handler_test.go](../../server/src/mcp/handler_test.go)
+**Error Format**:
+
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "error": {
+        "code": -32600,
+        "message": "Invalid request",
+        "data": "Additional error details"
+    }
+}
+```
+
+### Health Check
+
+**Endpoint**: `/health`
+
+**Response**:
+
+```json
+{
+    "status": "ok",
+    "initialized": true
+}
+```
+
+## Troubleshooting
+
+### Common Issues
+
+#### Server Won't Start
+
+- **Check configuration**: Verify `server.conf` is valid
+- **Database connection**: Ensure PostgreSQL is accessible
+- **Server secret**: Must be configured for encryption
+- **Port conflicts**: Ensure port is not already in use
+
+#### Authentication Failures
+
+- **Password incorrect**: Verify credentials
+- **User not found**: Check user exists with correct username
+- **Token expired**: User tokens may have expiration dates
+
+#### Permission Denied
+
+- **Missing privileges**: Check user's group memberships and granted
+  privileges
+- **Token scope**: Verify token isn't scoped to exclude the resource
+- **Connection access**: Ensure user has access to the connection
+
+#### Session Context Issues
+
+See [Session Context Troubleshooting](session-context.md#troubleshooting)
+
+### Debug Mode
+
+Run with verbose logging:
+
+```bash
+./mcp-server -v
+```
+
+This displays:
+
+- Request/response details
+- Connection operations
+- Privilege checks
+- Internal operations
+
+## Contributing
+
+See the main project [CONTRIBUTING.md](../../CONTRIBUTING.md) (if available)
+for guidelines on:
+
+- Code style
+- Testing requirements
+- Pull request process
+- Security reporting
 
 ## License
 

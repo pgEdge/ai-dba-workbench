@@ -25,6 +25,7 @@ import (
 	"github.com/pgEdge/ai-workbench/server/src/groupmgmt"
 	"github.com/pgedge/ai-workbench/pkg/logger"
 	"github.com/pgEdge/ai-workbench/server/src/privileges"
+	"github.com/pgEdge/ai-workbench/server/src/session"
 	"github.com/pgEdge/ai-workbench/server/src/usermgmt"
 )
 
@@ -235,6 +236,12 @@ func (h *Handler) handleListResources(req Request) (*Response, error) {
 			"uri":         "ai-workbench://connections",
 			"name":        "Database Connections",
 			"description": "List of all database connections in the system",
+			"mimeType":    "application/json",
+		},
+		{
+			"uri":         "ai-workbench://session/context",
+			"name":        "Session Database Context",
+			"description": "Current database context for your session (if set)",
 			"mimeType":    "application/json",
 		},
 	}
@@ -469,6 +476,31 @@ func (h *Handler) handleReadResource(req Request) (*Response, error) {
 				"uri":      fmt.Sprintf("ai-workbench://connections/%d", id),
 				"mimeType": "application/json",
 				"text":     string(connJSON),
+			})
+		}
+
+	case "ai-workbench://session/context":
+		// Return the current session database context
+		if h.userInfo == nil || !h.userInfo.IsAuthenticated {
+			return NewErrorResponse(req.ID, InternalError,
+				"Authentication required", nil), nil
+		}
+
+		// Import the session package
+		ctx := session.GetContext(h.userInfo.Username)
+		if ctx == nil {
+			contents = append(contents, map[string]interface{}{
+				"uri":      "ai-workbench://session/context",
+				"mimeType": "application/json",
+				"text":     `{"hasContext": false, "message": "No database context set. Use set_database_context to establish a working database."}`,
+			})
+		} else {
+			contextJSON := fmt.Sprintf(`{"hasContext": true, "connectionId": %d, "databaseName": %q}`,
+				ctx.ConnectionID, ctx.DatabaseName)
+			contents = append(contents, map[string]interface{}{
+				"uri":      "ai-workbench://session/context",
+				"mimeType": "application/json",
+				"text":     contextJSON,
 			})
 		}
 
@@ -1288,6 +1320,102 @@ func (h *Handler) handleListTools(req Request) (*Response, error) {
 				"required": []string{"id"},
 			},
 		},
+		{
+			"name": "execute_query",
+			"description": `Execute SQL queries on database connections in read-only mode. If no connectionId is provided, uses the session context (set via set_database_context). Cannot access datastore (connection ID 0) - use query_datastore for historical metrics.`,
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"connectionId": map[string]interface{}{
+						"type":        "number",
+						"description": "Optional: Connection ID to execute the query on. If not provided, uses the session context set by set_database_context. Cannot be 0 (use query_datastore for historical metrics).",
+					},
+					"query": map[string]interface{}{
+						"type":        "string",
+						"description": "SQL query to execute (will run in read-only transaction mode)",
+					},
+					"databaseName": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional: specific database name to connect to on the server (overrides connection's default database or session context database).",
+					},
+					"maxRows": map[string]interface{}{
+						"type":        "number",
+						"description": "Maximum number of rows to return (default: 1000, max: 10000)",
+						"default":     1000,
+					},
+				},
+				"required": []string{"query"},
+			},
+		},
+		{
+			"name": "set_database_context",
+			"description": `Set the working database for this session. Subsequent execute_query calls will use this connection and database by default.`,
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"connectionId": map[string]interface{}{
+						"type":        "number",
+						"description": "Connection ID to use as the current database context (must be a connection you have access to, cannot be 0 for datastore)",
+					},
+					"databaseName": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional: specific database name to use on this server (overrides connection's default database)",
+					},
+				},
+				"required": []string{"connectionId"},
+			},
+		},
+		{
+			"name": "get_database_context",
+			"description": `Get the current working database context for this session.`,
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+				"required":   []string{},
+			},
+		},
+		{
+			"name": "clear_database_context",
+			"description": `Clear the working database context for this session.`,
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+				"required":   []string{},
+			},
+		},
+		{
+			"name": "query_datastore",
+			"description": `Query historical performance metrics collected from monitored PostgreSQL servers. The datastore contains time-series data in the 'metrics' schema for trend analysis. Use execute_query for live database queries.`,
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"query": map[string]interface{}{
+						"type":        "string",
+						"description": "SQL query to execute on the datastore (will run in read-only transaction mode)",
+					},
+					"maxRows": map[string]interface{}{
+						"type":        "number",
+						"description": "Maximum number of rows to return (default: 1000, max: 10000)",
+						"default":     1000,
+					},
+				},
+				"required": []string{"query"},
+			},
+		},
+		{
+			"name": "read_resource",
+			"description": `Read data from an MCP resource. Use this to fetch actual data from resources like ai-workbench://connections (list of database connections), ai-workbench://users (user accounts), etc. Call this tool to discover what connections are available before trying to connect to them.`,
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"uri": map[string]interface{}{
+						"type":        "string",
+						"description": "The resource URI to read (e.g., 'ai-workbench://connections' to list all available database connections)",
+					},
+				},
+				"required": []string{"uri"},
+			},
+		},
 	}
 
 	result := map[string]interface{}{
@@ -1381,6 +1509,18 @@ func (h *Handler) handleCallTool(req Request) (*Response, error) {
 		result, err = h.handleUpdateConnection(params.Arguments)
 	case "delete_connection":
 		result, err = h.handleDeleteConnection(params.Arguments)
+	case "execute_query":
+		result, err = h.handleExecuteQuery(params.Arguments)
+	case "set_database_context":
+		result, err = h.handleSetDatabaseContext(params.Arguments)
+	case "get_database_context":
+		result, err = h.handleGetDatabaseContext(params.Arguments)
+	case "clear_database_context":
+		result, err = h.handleClearDatabaseContext(params.Arguments)
+	case "query_datastore":
+		result, err = h.handleQueryDatastore(params.Arguments)
+	case "read_resource":
+		result, err = h.handleReadResourceTool(params.Arguments)
 	default:
 		logger.Errorf("Unknown tool: %s", params.Name)
 		return NewErrorResponse(req.ID, MethodNotFound, "Tool not found",
@@ -3321,6 +3461,666 @@ func (h *Handler) handleDeleteConnection(args map[string]interface{}) (interface
 			},
 		},
 	}, nil
+}
+
+// handleExecuteQuery executes a SQL query on a database connection in read-only mode
+func (h *Handler) handleExecuteQuery(args map[string]interface{}) (interface{}, error) {
+	// Check authentication
+	if h.userInfo == nil || !h.userInfo.IsAuthenticated {
+		return nil, fmt.Errorf("authentication required")
+	}
+
+	// Extract query (required)
+	query, ok := args["query"].(string)
+	if !ok || query == "" {
+		return nil, fmt.Errorf("query is required and must be a non-empty string")
+	}
+
+	// Extract optional connectionId - if not provided, use session context
+	var connectionID int
+	var useSessionContext bool
+	if connIDFloat, ok := args["connectionId"].(float64); ok {
+		connectionID = int(connIDFloat)
+		// Block access to datastore (connection ID 0)
+		if connectionID == 0 {
+			return nil, fmt.Errorf("cannot use connection ID 0 (datastore) with execute_query. Use query_datastore tool for historical metrics instead")
+		}
+	} else {
+		// No connectionId provided, use session context
+		useSessionContext = true
+		dbCtx := session.GetContext(h.userInfo.Username)
+		if dbCtx == nil {
+			return nil, fmt.Errorf("no database context set. Either provide connectionId parameter or use set_database_context first")
+		}
+		connectionID = dbCtx.ConnectionID
+	}
+
+	// Extract optional database name override
+	var overrideDBName string
+	if dbName, ok := args["databaseName"].(string); ok {
+		overrideDBName = dbName
+	} else if useSessionContext {
+		// If using session context and no explicit override, use context's database name
+		dbCtx := session.GetContext(h.userInfo.Username)
+		if dbCtx != nil {
+			overrideDBName = dbCtx.DatabaseName
+		}
+	}
+
+	// Default and validate maxRows
+	maxRows := 1000
+	if mr, ok := args["maxRows"].(float64); ok {
+		maxRows = int(mr)
+	}
+	if maxRows < 1 {
+		maxRows = 1
+	}
+	if maxRows > 10000 {
+		maxRows = 10000
+	}
+
+	ctx := context.Background()
+	var connString string
+	var connectionName string
+	var targetDBName string
+
+	// Get connection details from database
+	var ownerUsername, ownerToken interface{}
+	var host, hostaddr, databaseName, username, passwordEncrypted, sslmode interface{}
+	var port int
+
+	err := h.dbPool.QueryRow(ctx, `
+		SELECT owner_username, owner_token, name, host, hostaddr, port,
+			   database_name, username, password_encrypted, sslmode
+		FROM connections
+		WHERE id = $1
+	`, connectionID).Scan(&ownerUsername, &ownerToken, &connectionName,
+		&host, &hostaddr, &port, &databaseName, &username, &passwordEncrypted, &sslmode)
+	if err != nil {
+		return nil, fmt.Errorf("connection not found: %w", err)
+	}
+
+	// Check authorization (unless superuser)
+	if !h.userInfo.IsSuperuser {
+		canAccess := false
+
+		if h.userInfo.IsServiceToken {
+			// Service token - check if they own this connection
+			tokenStr, ok := ownerToken.(string)
+			canAccess = ownerToken != nil && ok && tokenStr == h.userInfo.Username
+		} else {
+			// Regular user - check if they own this connection OR have privilege via group
+			usernameStr, ok := ownerUsername.(string)
+			if ownerUsername != nil && ok && usernameStr == h.userInfo.Username {
+				canAccess = true
+			}
+
+			// If not owned, check for privilege
+			if !canAccess {
+				var userID int
+				err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+					h.userInfo.Username).Scan(&userID)
+				if err == nil {
+					// Check if user has execute_query privilege
+					// Ignore error - if privilege check fails, treat as no access
+					hasPrivilege, _ := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "execute_query") //nolint:errcheck
+					if hasPrivilege {
+						canAccess = true
+					}
+
+					// Also check if they have connection-level privileges
+					if !canAccess {
+						hasConnAccess, _ := privileges.CanAccessConnection(ctx, h.dbPool, userID, //nolint:errcheck
+							connectionID, privileges.AccessLevelRead)
+						if hasConnAccess {
+							canAccess = true
+						}
+					}
+				}
+			}
+		}
+
+		if !canAccess {
+			return nil, fmt.Errorf("permission denied: no access to this connection")
+		}
+	}
+
+	// Decrypt password using owner username (matches how it was encrypted)
+	usernameStr, _ := username.(string)          //nolint:errcheck
+	passwordEnc, _ := passwordEncrypted.(string) //nolint:errcheck
+
+	var password string
+
+	// If password is empty/null, use empty string (e.g., trust auth)
+	if passwordEnc == "" {
+		password = ""
+	} else {
+		// Check if we have an owner username for decryption
+		if ownerUsername != nil {
+			ownerUsernameStr, _ := ownerUsername.(string) //nolint:errcheck
+			if ownerUsernameStr != "" {
+				// Decrypt using owner username
+				var err error
+				password, err = crypto.DecryptPassword(passwordEnc, h.config.GetServerSecret(), ownerUsernameStr)
+				if err != nil {
+					return nil, fmt.Errorf("failed to decrypt password: %w", err)
+				}
+			} else {
+				// No owner username - use password as-is (legacy/backward compatibility)
+				password = passwordEnc
+			}
+		} else {
+			// No owner username - use password as-is (legacy/backward compatibility)
+			password = passwordEnc
+		}
+	}
+
+	// Build connection string
+	hostStr, _ := host.(string)         //nolint:errcheck
+	dbStr, _ := databaseName.(string) //nolint:errcheck
+
+	// Use override database name if provided, otherwise use connection's default
+	if overrideDBName != "" {
+		targetDBName = overrideDBName
+	} else {
+		targetDBName = dbStr
+	}
+
+	sslmodeStr := "prefer"
+	if ssl, ok := sslmode.(string); ok {
+		sslmodeStr = ssl
+	}
+
+	connString = fmt.Sprintf("host=%s port=%d dbname=%s user=%s password=%s sslmode=%s",
+		hostStr, port, targetDBName, usernameStr, password, sslmodeStr)
+
+	if hostadr, ok := hostaddr.(string); ok && hostadr != "" {
+		connString += fmt.Sprintf(" hostaddr=%s", hostadr)
+	}
+
+	// Connect to the target database
+	conn, err := pgx.Connect(ctx, connString)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+	defer conn.Close(ctx)
+
+	// Set query timeout (30 seconds)
+	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	// Begin read-only transaction
+	tx, err := conn.Begin(timeoutCtx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback(timeoutCtx) //nolint:errcheck // Ignore error - read-only transaction
+	}()
+
+	// Set transaction to read-only
+	_, err = tx.Exec(timeoutCtx, "SET TRANSACTION READ ONLY")
+	if err != nil {
+		return nil, fmt.Errorf("failed to set read-only mode: %w", err)
+	}
+
+	// Execute the query
+	rows, err := tx.Query(timeoutCtx, query)
+	if err != nil {
+		return nil, fmt.Errorf("query execution failed: %w", err)
+	}
+	defer rows.Close()
+
+	// Get column descriptions
+	fieldDescriptions := rows.FieldDescriptions()
+	columns := make([]string, len(fieldDescriptions))
+	for i, fd := range fieldDescriptions {
+		columns[i] = string(fd.Name)
+	}
+
+	// Collect rows
+	var resultRows [][]interface{}
+	rowCount := 0
+	for rows.Next() {
+		if rowCount >= maxRows {
+			break
+		}
+
+		values, err := rows.Values()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read row: %w", err)
+		}
+
+		// Convert byte arrays to strings for JSON serialization
+		for i, val := range values {
+			if b, ok := val.([]byte); ok {
+				values[i] = string(b)
+			}
+		}
+
+		resultRows = append(resultRows, values)
+		rowCount++
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error reading rows: %w", err)
+	}
+
+	// Commit the read-only transaction (doesn't change anything but releases locks)
+	if err := tx.Commit(timeoutCtx); err != nil {
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	// Format the response
+	truncated := rowCount >= maxRows && rows.Next()
+
+	response := fmt.Sprintf("Query executed successfully on connection '%s' (ID: %d)", connectionName, connectionID)
+	if targetDBName != "" {
+		response += fmt.Sprintf(", database '%s'", targetDBName)
+	}
+	response += "\n\n"
+	response += fmt.Sprintf("Columns: %v\n", columns)
+	response += fmt.Sprintf("Rows returned: %d", rowCount)
+	if truncated {
+		response += fmt.Sprintf(" (truncated at maxRows limit of %d)", maxRows)
+	}
+	response += "\n\nResults:\n"
+
+	// Convert to JSON for display
+	resultJSON, err := json.MarshalIndent(map[string]interface{}{
+		"columns": columns,
+		"rows":    resultRows,
+		"rowCount": rowCount,
+		"truncated": truncated,
+	}, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("failed to format results: %w", err)
+	}
+
+	response += string(resultJSON)
+
+	return map[string]interface{}{
+		"content": []map[string]interface{}{
+			{
+				"type": "text",
+				"text": response,
+			},
+		},
+	}, nil
+}
+
+// handleSetDatabaseContext sets the current database context for the user's session
+func (h *Handler) handleSetDatabaseContext(args map[string]interface{}) (interface{}, error) {
+	// Check authentication
+	if h.userInfo == nil || !h.userInfo.IsAuthenticated {
+		return nil, fmt.Errorf("authentication required")
+	}
+
+	ctx := context.Background()
+
+	// Get user ID from username (skip privilege check for service tokens - they always have access)
+	var userID int
+	if !h.userInfo.IsServiceToken {
+		err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+			h.userInfo.Username).Scan(&userID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get user ID: %w", err)
+		}
+
+		// Check MCP privilege
+		//nolint:errcheck // Treating failure as "no access" is the correct security behavior
+		hasAccess, _ := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "set_database_context")
+		if !hasAccess {
+			return nil, fmt.Errorf("access denied: you do not have permission to use set_database_context")
+		}
+	}
+
+	// Extract connection ID
+	connectionIDFloat, ok := args["connectionId"].(float64)
+	if !ok {
+		return nil, fmt.Errorf("connectionId is required and must be a number")
+	}
+	connectionID := int(connectionIDFloat)
+
+	// Prevent setting context to datastore (connection ID 0)
+	if connectionID == 0 {
+		return nil, fmt.Errorf("cannot set database context to datastore (connection ID 0). Use query_datastore tool for historical metrics")
+	}
+
+	// Extract optional database name
+	databaseName := ""
+	if dbName, ok := args["databaseName"].(string); ok {
+		databaseName = dbName
+	}
+
+	// Verify user has access to this connection (only for non-service tokens)
+	if !h.userInfo.IsServiceToken {
+		//nolint:errcheck // Treating failure as "no access" is the correct security behavior
+		canAccess, _ := privileges.CanAccessConnection(ctx, h.dbPool, userID, connectionID, privileges.AccessLevelRead)
+		if !canAccess {
+			return nil, fmt.Errorf("access denied: you do not have permission to access connection ID %d", connectionID)
+		}
+	}
+
+	// Set the context
+	if err := session.SetContext(h.userInfo.Username, connectionID, databaseName); err != nil {
+		return nil, fmt.Errorf("failed to set database context: %w", err)
+	}
+
+	logger.Infof("User %s set database context to connection %d, database %q", h.userInfo.Username, connectionID, databaseName)
+
+	message := fmt.Sprintf("Database context set to connection ID %d", connectionID)
+	if databaseName != "" {
+		message += fmt.Sprintf(", database: %s", databaseName)
+	}
+
+	return map[string]interface{}{
+		"content": []map[string]interface{}{
+			{
+				"type": "text",
+				"text": message + "\n\nAll subsequent execute_query calls will use this context by default until changed or cleared.",
+			},
+		},
+	}, nil
+}
+
+// handleGetDatabaseContext retrieves the current database context for the user's session
+func (h *Handler) handleGetDatabaseContext(args map[string]interface{}) (interface{}, error) {
+	// Check authentication
+	if h.userInfo == nil || !h.userInfo.IsAuthenticated {
+		return nil, fmt.Errorf("authentication required")
+	}
+
+	ctx := context.Background()
+
+	// Get user ID from username (skip privilege check for service tokens - they always have access)
+	if !h.userInfo.IsServiceToken {
+		var userID int
+		err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+			h.userInfo.Username).Scan(&userID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get user ID: %w", err)
+		}
+
+		// Check MCP privilege
+		//nolint:errcheck // Treating failure as "no access" is the correct security behavior
+		hasAccess, _ := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "get_database_context")
+		if !hasAccess {
+			return nil, fmt.Errorf("access denied: you do not have permission to use get_database_context")
+		}
+	}
+
+	// Get the context
+	dbCtx := session.GetContext(h.userInfo.Username)
+	if dbCtx == nil {
+		return map[string]interface{}{
+			"content": []map[string]interface{}{
+				{
+					"type": "text",
+					"text": "No database context is currently set.\n\nUse set_database_context to establish a working database before executing queries.",
+				},
+			},
+		}, nil
+	}
+
+	message := fmt.Sprintf("Current database context:\n- Connection ID: %d\n", dbCtx.ConnectionID)
+	if dbCtx.DatabaseName != "" {
+		message += fmt.Sprintf("- Database Name: %s\n", dbCtx.DatabaseName)
+	} else {
+		message += "- Database Name: (using connection default)\n"
+	}
+	message += "\nAll execute_query calls without explicit connectionId will use this context."
+
+	return map[string]interface{}{
+		"content": []map[string]interface{}{
+			{
+				"type": "text",
+				"text": message,
+			},
+		},
+	}, nil
+}
+
+// handleClearDatabaseContext clears the current database context for the user's session
+func (h *Handler) handleClearDatabaseContext(args map[string]interface{}) (interface{}, error) {
+	// Check authentication
+	if h.userInfo == nil || !h.userInfo.IsAuthenticated {
+		return nil, fmt.Errorf("authentication required")
+	}
+
+	ctx := context.Background()
+
+	// Get user ID from username (skip privilege check for service tokens - they always have access)
+	if !h.userInfo.IsServiceToken {
+		var userID int
+		err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+			h.userInfo.Username).Scan(&userID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get user ID: %w", err)
+		}
+
+		// Check MCP privilege
+		//nolint:errcheck // Treating failure as "no access" is the correct security behavior
+		hasAccess, _ := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "clear_database_context")
+		if !hasAccess {
+			return nil, fmt.Errorf("access denied: you do not have permission to use clear_database_context")
+		}
+	}
+
+	// Clear the context
+	session.ClearContext(h.userInfo.Username)
+
+	logger.Infof("User %s cleared database context", h.userInfo.Username)
+
+	return map[string]interface{}{
+		"content": []map[string]interface{}{
+			{
+				"type": "text",
+				"text": "Database context cleared.\n\nYou must now explicitly specify connectionId and databaseName for execute_query calls.",
+			},
+		},
+	}, nil
+}
+
+// handleQueryDatastore executes a query on the datastore containing historical metrics
+func (h *Handler) handleQueryDatastore(args map[string]interface{}) (interface{}, error) {
+	// Check authentication
+	if h.userInfo == nil || !h.userInfo.IsAuthenticated {
+		return nil, fmt.Errorf("authentication required")
+	}
+
+	ctx := context.Background()
+
+	// Get user ID from username (skip privilege check for service tokens - they always have access)
+	if !h.userInfo.IsServiceToken {
+		var userID int
+		err := h.dbPool.QueryRow(ctx, "SELECT id FROM user_accounts WHERE username = $1",
+			h.userInfo.Username).Scan(&userID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get user ID: %w", err)
+		}
+
+		// Check MCP privilege
+		//nolint:errcheck // Treating failure as "no access" is the correct security behavior
+		hasAccess, _ := privileges.CanAccessMCPItem(ctx, h.dbPool, userID, "query_datastore")
+		if !hasAccess {
+			return nil, fmt.Errorf("access denied: you do not have permission to use query_datastore")
+		}
+	}
+
+	// Extract query
+	query, ok := args["query"].(string)
+	if !ok || query == "" {
+		return nil, fmt.Errorf("query is required and must be a non-empty string")
+	}
+
+	// Extract max rows (optional, default 1000, max 10000)
+	maxRows := 1000
+	if maxRowsFloat, ok := args["maxRows"].(float64); ok {
+		maxRows = int(maxRowsFloat)
+		if maxRows > 10000 {
+			maxRows = 10000
+		}
+		if maxRows < 1 {
+			maxRows = 1
+		}
+	}
+
+	logger.Infof("User %s querying datastore with max rows %d", h.userInfo.Username, maxRows)
+
+	// Execute query on the datastore (which is h.dbPool)
+	// Start a read-only transaction
+	tx, err := h.dbPool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() {
+		//nolint:errcheck // Rollback errors in defer are not critical
+		tx.Rollback(ctx)
+	}()
+
+	// Set transaction to read-only
+	if _, err := tx.Exec(ctx, "BEGIN READ ONLY"); err != nil {
+		return nil, fmt.Errorf("failed to set read-only mode: %w", err)
+	}
+
+	// Execute the query
+	rows, err := tx.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("query execution failed: %w", err)
+	}
+	defer rows.Close()
+
+	// Get column descriptions
+	fieldDescriptions := rows.FieldDescriptions()
+	columns := make([]string, len(fieldDescriptions))
+	for i, fd := range fieldDescriptions {
+		columns[i] = string(fd.Name)
+	}
+
+	// Fetch rows
+	var resultRows [][]interface{}
+	rowCount := 0
+	truncated := false
+
+	for rows.Next() {
+		if rowCount >= maxRows {
+			truncated = true
+			break
+		}
+
+		values, err := rows.Values()
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan row: %w", err)
+		}
+
+		resultRows = append(resultRows, values)
+		rowCount++
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating rows: %w", err)
+	}
+
+	// Format response
+	response := "Datastore Query Results\n"
+	response += "======================\n\n"
+	response += fmt.Sprintf("Query: %s\n\n", query)
+
+	if truncated {
+		response += fmt.Sprintf("⚠️  Results truncated to %d rows (use maxRows parameter to adjust)\n\n", maxRows)
+	}
+
+	// Format as JSON
+	resultJSON, err := json.MarshalIndent(map[string]interface{}{
+		"columns":   columns,
+		"rows":      resultRows,
+		"rowCount":  rowCount,
+		"truncated": truncated,
+	}, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("failed to format results: %w", err)
+	}
+
+	response += string(resultJSON)
+
+	return map[string]interface{}{
+		"content": []map[string]interface{}{
+			{
+				"type": "text",
+				"text": response,
+			},
+		},
+	}, nil
+}
+
+// handleReadResourceTool executes the read_resource tool
+func (h *Handler) handleReadResourceTool(args map[string]interface{}) (interface{}, error) {
+	// Check authentication
+	if h.userInfo == nil || !h.userInfo.IsAuthenticated {
+		return nil, fmt.Errorf("authentication required")
+	}
+
+	// Extract URI
+	uri, ok := args["uri"].(string)
+	if !ok || uri == "" {
+		return nil, fmt.Errorf("uri is required and must be a non-empty string")
+	}
+
+	// Create a fake Request for handleReadResource
+	paramsBytes, err := json.Marshal(map[string]interface{}{
+		"uri": uri,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal params: %w", err)
+	}
+
+	req := Request{
+		JSONRPC: JSONRPCVersion,
+		Method:  "resources/read",
+		Params:  paramsBytes,
+		ID:      "tool-read-resource",
+	}
+
+	// Call handleReadResource
+	resp, err := h.handleReadResource(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read resource: %w", err)
+	}
+
+	// Check for error in response
+	if resp.Error != nil {
+		return nil, fmt.Errorf("resource read failed: %s", resp.Error.Message)
+	}
+
+	// Extract contents from the response
+	if resultMap, ok := resp.Result.(map[string]interface{}); ok {
+		if contents, ok := resultMap["contents"].([]map[string]interface{}); ok {
+			// Format the contents as a readable text response
+			var textParts []string
+			for _, content := range contents {
+				if text, ok := content["text"].(string); ok {
+					textParts = append(textParts, text)
+				}
+			}
+
+			responseText := strings.Join(textParts, "\n\n")
+			if responseText == "" {
+				responseText = fmt.Sprintf("Resource %s contains no data", uri)
+			}
+
+			return map[string]interface{}{
+				"content": []map[string]interface{}{
+					{
+						"type": "text",
+						"text": responseText,
+					},
+				},
+			}, nil
+		}
+	}
+
+	return nil, fmt.Errorf("unexpected response format from handleReadResource")
 }
 
 // FormatResponse formats a response as JSON

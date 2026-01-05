@@ -99,10 +99,7 @@ func (rc *ReloadableConfig) Reload() error {
 func (rc *ReloadableConfig) logRestartRequiredSettings(newConfig *Config) {
 	old := rc.config
 
-	// HTTP mode changes require restart
-	if old.HTTP.Enabled != newConfig.HTTP.Enabled {
-		fmt.Fprintf(os.Stderr, "  WARNING: http.enabled changed - requires restart\n")
-	}
+	// HTTP changes require restart
 	if old.HTTP.Address != newConfig.HTTP.Address {
 		fmt.Fprintf(os.Stderr, "  WARNING: http.address changed - requires restart\n")
 	}

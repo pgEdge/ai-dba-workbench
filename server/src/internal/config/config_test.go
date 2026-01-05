@@ -20,10 +20,6 @@ func TestDefaultConfig(t *testing.T) {
 	cfg := defaultConfig()
 
 	// Test HTTP defaults
-	if cfg.HTTP.Enabled {
-		t.Error("Expected HTTP to be disabled by default")
-	}
-
 	if cfg.HTTP.Address != ":8080" {
 		t.Errorf("Expected default address ':8080', got %s", cfg.HTTP.Address)
 	}
@@ -228,27 +224,15 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "valid config",
 			config: &Config{
-				HTTP: HTTPConfig{Enabled: false},
+				HTTP: HTTPConfig{Address: ":8080"},
 			},
 			expectError: false,
-		},
-		{
-			name: "TLS without HTTP",
-			config: &Config{
-				HTTP: HTTPConfig{
-					Enabled: false,
-					TLS:     TLSConfig{Enabled: true},
-				},
-			},
-			expectError: true,
-			errorMsg:    "TLS requires HTTP mode",
 		},
 		{
 			name: "TLS without cert file",
 			config: &Config{
 				HTTP: HTTPConfig{
-					Enabled: true,
-					TLS:     TLSConfig{Enabled: true, KeyFile: "key.pem"},
+					TLS: TLSConfig{Enabled: true, KeyFile: "key.pem"},
 				},
 			},
 			expectError: true,
@@ -258,8 +242,7 @@ func TestValidateConfig(t *testing.T) {
 			name: "TLS without key file",
 			config: &Config{
 				HTTP: HTTPConfig{
-					Enabled: true,
-					TLS:     TLSConfig{Enabled: true, CertFile: "cert.pem"},
+					TLS: TLSConfig{Enabled: true, CertFile: "cert.pem"},
 				},
 			},
 			expectError: true,
@@ -269,8 +252,7 @@ func TestValidateConfig(t *testing.T) {
 			name: "HTTP auth without token file",
 			config: &Config{
 				HTTP: HTTPConfig{
-					Enabled: true,
-					Auth:    AuthConfig{Enabled: true, TokenFile: ""},
+					Auth: AuthConfig{Enabled: true, TokenFile: ""},
 				},
 			},
 			expectError: true,
@@ -279,7 +261,7 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "database without user",
 			config: &Config{
-				HTTP: HTTPConfig{Enabled: false},
+				HTTP: HTTPConfig{Address: ":8080"},
 				Database: &DatabaseConfig{
 					Host: "localhost",
 					User: "",
@@ -383,7 +365,6 @@ func TestSaveConfig(t *testing.T) {
 
 	cfg := &Config{
 		HTTP: HTTPConfig{
-			Enabled: true,
 			Address: ":9090",
 		},
 		Database: &DatabaseConfig{
@@ -442,9 +423,6 @@ database:
 	}
 
 	// Verify loaded values
-	if !cfg.HTTP.Enabled {
-		t.Error("expected HTTP to be enabled")
-	}
 	if cfg.HTTP.Address != ":9000" {
 		t.Errorf("expected address ':9000', got %q", cfg.HTTP.Address)
 	}
@@ -465,7 +443,8 @@ func TestLoadConfigNonExistentFile(t *testing.T) {
 	}
 
 	// Test with ConfigFileSet=false (should use defaults)
-	flags = CLIFlags{ConfigFileSet: false}
+	// Disable auth to avoid token file validation error
+	flags = CLIFlags{ConfigFileSet: false, AuthEnabledSet: true, AuthEnabled: false}
 	cfg, err := LoadConfig("/nonexistent/config.yaml", flags)
 	if err != nil {
 		t.Errorf("unexpected error for non-existent config file with ConfigFileSet=false: %v", err)
@@ -500,7 +479,6 @@ func TestMergeConfig(t *testing.T) {
 	dest := defaultConfig()
 	src := &Config{
 		HTTP: HTTPConfig{
-			Enabled: true,
 			Address: ":9090",
 		},
 		Database: &DatabaseConfig{
@@ -513,9 +491,6 @@ func TestMergeConfig(t *testing.T) {
 
 	mergeConfig(dest, src)
 
-	if !dest.HTTP.Enabled {
-		t.Error("expected HTTP.Enabled to be merged")
-	}
 	if dest.HTTP.Address != ":9090" {
 		t.Errorf("expected address ':9090', got %q", dest.HTTP.Address)
 	}
@@ -530,19 +505,14 @@ func TestMergeConfig(t *testing.T) {
 func TestApplyCLIFlags(t *testing.T) {
 	cfg := defaultConfig()
 	flags := CLIFlags{
-		HTTPEnabledSet: true,
-		HTTPEnabled:    true,
-		HTTPAddrSet:    true,
-		HTTPAddr:       ":7070",
-		DBUserSet:      true,
-		DBUser:         "cliuser",
+		HTTPAddrSet: true,
+		HTTPAddr:    ":7070",
+		DBUserSet:   true,
+		DBUser:      "cliuser",
 	}
 
 	applyCLIFlags(cfg, flags)
 
-	if !cfg.HTTP.Enabled {
-		t.Error("expected HTTP.Enabled to be set from CLI")
-	}
 	if cfg.HTTP.Address != ":7070" {
 		t.Errorf("expected address ':7070', got %q", cfg.HTTP.Address)
 	}
@@ -552,68 +522,5 @@ func TestApplyCLIFlags(t *testing.T) {
 	}
 	if cfg.Database.User != "cliuser" {
 		t.Errorf("expected user 'cliuser', got %q", cfg.Database.User)
-	}
-}
-
-func TestSetStringFromEnv(t *testing.T) {
-	os.Setenv("TEST_STRING_VAR", "test_value")
-	defer os.Unsetenv("TEST_STRING_VAR")
-
-	var dest string
-	setStringFromEnv(&dest, "TEST_STRING_VAR")
-
-	if dest != "test_value" {
-		t.Errorf("expected 'test_value', got %q", dest)
-	}
-
-	// Test with non-existent var
-	dest = "original"
-	setStringFromEnv(&dest, "NONEXISTENT_VAR")
-	if dest != "original" {
-		t.Errorf("expected 'original' (unchanged), got %q", dest)
-	}
-}
-
-func TestSetBoolFromEnv(t *testing.T) {
-	tests := []struct {
-		envValue string
-		expected bool
-	}{
-		{"true", true},
-		{"1", true},
-		{"yes", true},
-		{"false", false},
-		{"0", false},
-		{"no", false},
-	}
-
-	for _, tt := range tests {
-		os.Setenv("TEST_BOOL_VAR", tt.envValue)
-		var dest bool
-		setBoolFromEnv(&dest, "TEST_BOOL_VAR")
-		if dest != tt.expected {
-			t.Errorf("setBoolFromEnv with %q: expected %v, got %v", tt.envValue, tt.expected, dest)
-		}
-	}
-	os.Unsetenv("TEST_BOOL_VAR")
-}
-
-func TestSetIntFromEnv(t *testing.T) {
-	os.Setenv("TEST_INT_VAR", "42")
-	defer os.Unsetenv("TEST_INT_VAR")
-
-	var dest int
-	setIntFromEnv(&dest, "TEST_INT_VAR")
-
-	if dest != 42 {
-		t.Errorf("expected 42, got %d", dest)
-	}
-
-	// Test with invalid value
-	os.Setenv("TEST_INT_VAR", "not_a_number")
-	dest = 0
-	setIntFromEnv(&dest, "TEST_INT_VAR")
-	if dest != 0 {
-		t.Errorf("expected 0 for invalid int, got %d", dest)
 	}
 }

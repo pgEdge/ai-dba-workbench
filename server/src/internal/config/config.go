@@ -134,7 +134,6 @@ func (c *PromptsConfig) IsPromptEnabled(promptName string) bool {
 
 // HTTPConfig holds HTTP/HTTPS server settings
 type HTTPConfig struct {
-	Enabled bool       `yaml:"enabled"`
 	Address string     `yaml:"address"`
 	TLS     TLSConfig  `yaml:"tls"`
 	Auth    AuthConfig `yaml:"auth"`
@@ -260,8 +259,8 @@ func LoadConfig(configPath string, cliFlags CLIFlags) (*Config, error) {
 		}
 	}
 
-	// Override with environment variables
-	applyEnvironmentVariables(cfg)
+	// Load API keys from files if specified
+	loadAPIKeysFromFiles(cfg)
 
 	// Override with command line flags (highest priority)
 	applyCLIFlags(cfg, cliFlags)
@@ -280,8 +279,6 @@ type CLIFlags struct {
 	ConfigFile    string
 
 	// HTTP flags
-	HTTPEnabled    bool
-	HTTPEnabledSet bool
 	HTTPAddr       string
 	HTTPAddrSet    bool
 
@@ -326,7 +323,6 @@ type CLIFlags struct {
 func defaultConfig() *Config {
 	return &Config{
 		HTTP: HTTPConfig{
-			Enabled: false,
 			Address: ":8080",
 			TLS: TLSConfig{
 				Enabled:   false,
@@ -391,9 +387,6 @@ func loadConfigFile(path string) (*Config, error) {
 // mergeConfig merges source config into dest, only overriding non-zero values
 func mergeConfig(dest, src *Config) {
 	// HTTP
-	if src.HTTP.Enabled {
-		dest.HTTP.Enabled = src.HTTP.Enabled
-	}
 	if src.HTTP.Address != "" {
 		dest.HTTP.Address = src.HTTP.Address
 	}
@@ -577,212 +570,48 @@ func mergeConfig(dest, src *Config) {
 	}
 }
 
-// setStringFromEnv sets a string config value from an environment variable if it exists
-func setStringFromEnv(dest *string, key string) {
-	if val := os.Getenv(key); val != "" {
-		*dest = val
-	}
-}
-
-// setStringFromEnvWithFallback sets a string config value from an environment variable,
-// checking multiple environment variable names in priority order
-func setStringFromEnvWithFallback(dest *string, keys ...string) {
-	for _, key := range keys {
-		if val := os.Getenv(key); val != "" {
-			*dest = val
-			return
-		}
-	}
-}
-
-// setBoolFromEnv sets a boolean config value from an environment variable if it exists
-// Accepts "true", "1", or "yes" as true values
-func setBoolFromEnv(dest *bool, key string) {
-	if val := os.Getenv(key); val != "" {
-		*dest = val == "true" || val == "1" || val == "yes"
-	}
-}
-
-// setIntFromEnv sets an integer config value from an environment variable if it exists
-func setIntFromEnv(dest *int, key string) {
-	if val := os.Getenv(key); val != "" {
-		var intVal int
-		_, err := fmt.Sscanf(val, "%d", &intVal)
-		if err == nil {
-			*dest = intVal
-		}
-	}
-}
-
-// applyEnvironmentVariables overrides config with environment variables if they exist
-// All environment variables use the PGEDGE_ prefix to avoid collisions
-func applyEnvironmentVariables(cfg *Config) {
-	// HTTP
-	setBoolFromEnv(&cfg.HTTP.Enabled, "PGEDGE_HTTP_ENABLED")
-	setStringFromEnv(&cfg.HTTP.Address, "PGEDGE_HTTP_ADDRESS")
-
-	// TLS
-	setBoolFromEnv(&cfg.HTTP.TLS.Enabled, "PGEDGE_TLS_ENABLED")
-	setStringFromEnv(&cfg.HTTP.TLS.CertFile, "PGEDGE_TLS_CERT_FILE")
-	setStringFromEnv(&cfg.HTTP.TLS.KeyFile, "PGEDGE_TLS_KEY_FILE")
-	setStringFromEnv(&cfg.HTTP.TLS.ChainFile, "PGEDGE_TLS_CHAIN_FILE")
-
-	// Auth
-	setBoolFromEnv(&cfg.HTTP.Auth.Enabled, "PGEDGE_AUTH_ENABLED")
-	setStringFromEnv(&cfg.HTTP.Auth.TokenFile, "PGEDGE_AUTH_TOKEN_FILE")
-	setStringFromEnv(&cfg.HTTP.Auth.UserFile, "PGEDGE_AUTH_USER_FILE")
-	setIntFromEnv(&cfg.HTTP.Auth.MaxFailedAttemptsBeforeLockout, "PGEDGE_AUTH_MAX_FAILED_ATTEMPTS_BEFORE_LOCKOUT")
-	setIntFromEnv(&cfg.HTTP.Auth.RateLimitWindowMinutes, "PGEDGE_AUTH_RATE_LIMIT_WINDOW_MINUTES")
-	setIntFromEnv(&cfg.HTTP.Auth.RateLimitMaxAttempts, "PGEDGE_AUTH_RATE_LIMIT_MAX_ATTEMPTS")
-
-	// Database environment variables
-	// If no database configured yet, create a default one from env vars
-	if cfg.Database == nil {
-		// Check if any database env vars are set
-		if os.Getenv("PGEDGE_DB_USER") != "" || os.Getenv("PGUSER") != "" {
-			cfg.Database = &DatabaseConfig{
-				Host:                "localhost",
-				Port:                5432,
-				Database:            "postgres",
-				SSLMode:             "prefer",
-				PoolMaxConns:        4,
-				PoolMinConns:        0,
-				PoolMaxConnIdleTime: "30m",
-			}
-		}
-	}
-
-	// Apply env vars to database if it exists
-	if cfg.Database != nil {
-		setStringFromEnv(&cfg.Database.Host, "PGEDGE_DB_HOST")
-		setIntFromEnv(&cfg.Database.Port, "PGEDGE_DB_PORT")
-		setStringFromEnv(&cfg.Database.Database, "PGEDGE_DB_NAME")
-		setStringFromEnv(&cfg.Database.User, "PGEDGE_DB_USER")
-		setStringFromEnv(&cfg.Database.Password, "PGEDGE_DB_PASSWORD")
-		setStringFromEnv(&cfg.Database.SSLMode, "PGEDGE_DB_SSLMODE")
-
-		// Also support standard PostgreSQL environment variables for convenience
-		if cfg.Database.Host == "localhost" {
-			setStringFromEnv(&cfg.Database.Host, "PGHOST")
-		}
-		if cfg.Database.Port == 5432 {
-			setIntFromEnv(&cfg.Database.Port, "PGPORT")
-		}
-		if cfg.Database.Database == "postgres" {
-			setStringFromEnv(&cfg.Database.Database, "PGDATABASE")
-		}
-		if cfg.Database.User == "" {
-			setStringFromEnv(&cfg.Database.User, "PGUSER")
-		}
-		if cfg.Database.Password == "" {
-			setStringFromEnv(&cfg.Database.Password, "PGPASSWORD")
-		}
-		if cfg.Database.SSLMode == "prefer" {
-			setStringFromEnv(&cfg.Database.SSLMode, "PGSSLMODE")
-		}
-	}
-
-	// Embedding
-	setBoolFromEnv(&cfg.Embedding.Enabled, "PGEDGE_EMBEDDING_ENABLED")
-	setStringFromEnv(&cfg.Embedding.Provider, "PGEDGE_EMBEDDING_PROVIDER")
-	setStringFromEnv(&cfg.Embedding.Model, "PGEDGE_EMBEDDING_MODEL")
-	// API key loading priority: env vars > api_key_file > direct config value
-	// 1. Try environment variables first (PGEDGE_ prefixed, then standard)
-	setStringFromEnvWithFallback(&cfg.Embedding.VoyageAPIKey, "PGEDGE_VOYAGE_API_KEY", "VOYAGE_API_KEY")
-	setStringFromEnvWithFallback(&cfg.Embedding.OpenAIAPIKey, "PGEDGE_OPENAI_API_KEY", "OPENAI_API_KEY")
-	// 2. If env vars not set and api_key_file is specified, load from file
+// loadAPIKeysFromFiles loads API keys from files if specified in config
+func loadAPIKeysFromFiles(cfg *Config) {
+	// Embedding API keys
 	if cfg.Embedding.VoyageAPIKey == "" && cfg.Embedding.VoyageAPIKeyFile != "" {
 		if key, err := readAPIKeyFromFile(cfg.Embedding.VoyageAPIKeyFile); err == nil && key != "" {
 			cfg.Embedding.VoyageAPIKey = key
 		}
-		// Note: errors are silently ignored - file may not exist and that's ok
 	}
 	if cfg.Embedding.OpenAIAPIKey == "" && cfg.Embedding.OpenAIAPIKeyFile != "" {
 		if key, err := readAPIKeyFromFile(cfg.Embedding.OpenAIAPIKeyFile); err == nil && key != "" {
 			cfg.Embedding.OpenAIAPIKey = key
 		}
-		// Note: errors are silently ignored - file may not exist and that's ok
 	}
-	// 3. Direct config value (if set) is already in cfg.Embedding.VoyageAPIKey/OpenAIAPIKey from mergeConfig
-	setStringFromEnv(&cfg.Embedding.OllamaURL, "PGEDGE_OLLAMA_URL")
 
-	// LLM
-	setBoolFromEnv(&cfg.LLM.Enabled, "PGEDGE_LLM_ENABLED")
-	setStringFromEnv(&cfg.LLM.Provider, "PGEDGE_LLM_PROVIDER")
-	setStringFromEnv(&cfg.LLM.Model, "PGEDGE_LLM_MODEL")
-	// API key loading priority: env vars > api_key_file > direct config value
-	// 1. Try environment variables first (PGEDGE_ prefixed, then standard)
-	setStringFromEnvWithFallback(&cfg.LLM.AnthropicAPIKey, "PGEDGE_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY")
-	setStringFromEnvWithFallback(&cfg.LLM.OpenAIAPIKey, "PGEDGE_OPENAI_API_KEY", "OPENAI_API_KEY")
-	// 2. If env vars not set and api_key_file is specified, load from file
+	// LLM API keys
 	if cfg.LLM.AnthropicAPIKey == "" && cfg.LLM.AnthropicAPIKeyFile != "" {
 		if key, err := readAPIKeyFromFile(cfg.LLM.AnthropicAPIKeyFile); err == nil && key != "" {
 			cfg.LLM.AnthropicAPIKey = key
 		}
-		// Note: errors are silently ignored - file may not exist and that's ok
 	}
 	if cfg.LLM.OpenAIAPIKey == "" && cfg.LLM.OpenAIAPIKeyFile != "" {
 		if key, err := readAPIKeyFromFile(cfg.LLM.OpenAIAPIKeyFile); err == nil && key != "" {
 			cfg.LLM.OpenAIAPIKey = key
 		}
-		// Note: errors are silently ignored - file may not exist and that's ok
-	}
-	// 3. Direct config value (if set) is already in cfg.LLM.AnthropicAPIKey/OpenAIAPIKey from mergeConfig
-	setStringFromEnv(&cfg.LLM.OllamaURL, "PGEDGE_OLLAMA_URL")
-	setIntFromEnv(&cfg.LLM.MaxTokens, "PGEDGE_LLM_MAX_TOKENS")
-	// Temperature is a float, but we'll handle it specially
-	if val := os.Getenv("PGEDGE_LLM_TEMPERATURE"); val != "" {
-		var floatVal float64
-		_, err := fmt.Sscanf(val, "%f", &floatVal)
-		if err == nil {
-			cfg.LLM.Temperature = floatVal
-		}
 	}
 
-	// Knowledgebase
-	setBoolFromEnv(&cfg.Knowledgebase.Enabled, "PGEDGE_KB_ENABLED")
-	setStringFromEnv(&cfg.Knowledgebase.DatabasePath, "PGEDGE_KB_DATABASE_PATH")
-	setStringFromEnv(&cfg.Knowledgebase.EmbeddingProvider, "PGEDGE_KB_EMBEDDING_PROVIDER")
-	setStringFromEnv(&cfg.Knowledgebase.EmbeddingModel, "PGEDGE_KB_EMBEDDING_MODEL")
-	// API key loading priority: env vars > api_key_file > direct config value
-	// 1. Try environment variables first (PGEDGE_ prefixed, then standard)
-	setStringFromEnvWithFallback(&cfg.Knowledgebase.EmbeddingVoyageAPIKey, "PGEDGE_KB_VOYAGE_API_KEY", "VOYAGE_API_KEY")
-	setStringFromEnvWithFallback(&cfg.Knowledgebase.EmbeddingOpenAIAPIKey, "PGEDGE_KB_OPENAI_API_KEY", "OPENAI_API_KEY")
-	// 2. If env vars not set and api_key_file is specified, load from file
+	// Knowledgebase API keys
 	if cfg.Knowledgebase.EmbeddingVoyageAPIKey == "" && cfg.Knowledgebase.EmbeddingVoyageAPIKeyFile != "" {
 		if key, err := readAPIKeyFromFile(cfg.Knowledgebase.EmbeddingVoyageAPIKeyFile); err == nil && key != "" {
 			cfg.Knowledgebase.EmbeddingVoyageAPIKey = key
 		}
-		// Note: errors are silently ignored - file may not exist and that's ok
 	}
 	if cfg.Knowledgebase.EmbeddingOpenAIAPIKey == "" && cfg.Knowledgebase.EmbeddingOpenAIAPIKeyFile != "" {
 		if key, err := readAPIKeyFromFile(cfg.Knowledgebase.EmbeddingOpenAIAPIKeyFile); err == nil && key != "" {
 			cfg.Knowledgebase.EmbeddingOpenAIAPIKey = key
 		}
-		// Note: errors are silently ignored - file may not exist and that's ok
 	}
-	// 3. Direct config value (if set) is already in cfg.Knowledgebase.EmbeddingVoyageAPIKey/EmbeddingOpenAIAPIKey from mergeConfig
-	setStringFromEnv(&cfg.Knowledgebase.EmbeddingOllamaURL, "PGEDGE_KB_OLLAMA_URL")
-
-	// Secret file
-	setStringFromEnv(&cfg.SecretFile, "PGEDGE_SECRET_FILE")
-
-	// Custom definitions path
-	setStringFromEnv(&cfg.CustomDefinitionsPath, "PGEDGE_CUSTOM_DEFINITIONS_PATH")
-
-	// Data directory
-	setStringFromEnv(&cfg.DataDir, "PGEDGE_DATA_DIR")
-
-	// Note: Builtins (tools, resources, prompts) are only configurable via
-	// config file, not environment variables
 }
 
 // applyCLIFlags overrides config with CLI flags if they were explicitly set
 func applyCLIFlags(cfg *Config, flags CLIFlags) {
 	// HTTP
-	if flags.HTTPEnabledSet {
-		cfg.HTTP.Enabled = flags.HTTPEnabled
-	}
 	if flags.HTTPAddrSet {
 		cfg.HTTP.Address = flags.HTTPAddr
 	}
@@ -855,11 +684,6 @@ func applyCLIFlags(cfg *Config, flags CLIFlags) {
 
 // validateConfig checks if the configuration is valid
 func validateConfig(cfg *Config) error {
-	// TLS requires HTTP to be enabled
-	if cfg.HTTP.TLS.Enabled && !cfg.HTTP.Enabled {
-		return fmt.Errorf("TLS requires HTTP mode to be enabled")
-	}
-
 	// If HTTPS is enabled, cert and key are required
 	if cfg.HTTP.TLS.Enabled {
 		if cfg.HTTP.TLS.CertFile == "" {
@@ -870,8 +694,8 @@ func validateConfig(cfg *Config) error {
 		}
 	}
 
-	// If HTTP is enabled and auth is enabled, token file is required
-	if cfg.HTTP.Enabled && cfg.HTTP.Auth.Enabled {
+	// If auth is enabled, token file is required
+	if cfg.HTTP.Auth.Enabled {
 		if cfg.HTTP.Auth.TokenFile == "" {
 			return fmt.Errorf("authentication token file is required when HTTP auth is enabled (use -no-auth to disable)")
 		}

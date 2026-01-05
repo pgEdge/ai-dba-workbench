@@ -195,10 +195,8 @@ func main() {
 	}
 
 	// Track which flags were explicitly set
-	// HTTP mode is always enabled, auth is always required
+	// Auth is always required
 	cliFlags := config.CLIFlags{
-		HTTPEnabledSet: true,
-		HTTPEnabled:    true,
 		AuthEnabledSet: true,
 		AuthEnabled:    true,
 	}
@@ -269,8 +267,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Set default token file path if not specified and HTTP is enabled
-	if cfg.HTTP.Enabled && cfg.HTTP.Auth.TokenFile == "" {
+	// Set default token file path if not specified
+	if cfg.HTTP.Auth.TokenFile == "" {
 		cfg.HTTP.Auth.TokenFile = auth.GetDefaultTokenPath(execPath)
 	}
 
@@ -292,11 +290,11 @@ func main() {
 		}
 	}
 
-	// Load token store if HTTP auth is enabled
+	// Load token store if auth is enabled
 	var tokenStore *auth.TokenStore
 	var userStore *auth.UserStore
 	userFilePathForTools := ""
-	if cfg.HTTP.Enabled && cfg.HTTP.Auth.Enabled {
+	if cfg.HTTP.Auth.Enabled {
 		if _, err := os.Stat(cfg.HTTP.Auth.TokenFile); os.IsNotExist(err) {
 			fmt.Fprintf(os.Stderr, "ERROR: Token file not found: %s\n", cfg.HTTP.Auth.TokenFile)
 			fmt.Fprintf(os.Stderr, "Create tokens with: %s -add-token\n", os.Args[0])
@@ -350,9 +348,9 @@ func main() {
 		}
 	}
 
-	// Create rate limiter for authentication if HTTP auth is enabled
+	// Create rate limiter for authentication if auth is enabled
 	var rateLimiter *auth.RateLimiter
-	if cfg.HTTP.Enabled && cfg.HTTP.Auth.Enabled {
+	if cfg.HTTP.Auth.Enabled {
 		rateLimiter = auth.NewRateLimiter(cfg.HTTP.Auth.RateLimitWindowMinutes, cfg.HTTP.Auth.RateLimitMaxAttempts)
 		fmt.Fprintf(os.Stderr, "Rate limiting enabled: %d attempts per %d minutes per IP\n",
 			cfg.HTTP.Auth.RateLimitMaxAttempts, cfg.HTTP.Auth.RateLimitWindowMinutes)
@@ -421,7 +419,7 @@ func main() {
 	server.SetPromptProvider(promptRegistry)
 
 	// Start periodic cleanup of expired tokens if auth is enabled
-	if cfg.HTTP.Enabled && cfg.HTTP.Auth.Enabled {
+	if cfg.HTTP.Auth.Enabled {
 		// Clean up expired tokens on startup (no connections exist yet)
 		if removed, _ := tokenStore.CleanupExpiredTokens(); removed > 0 {
 			fmt.Fprintf(os.Stderr, "Removed %d expired token(s)\n", removed)
@@ -493,214 +491,211 @@ func main() {
 		}
 	}
 
-	if cfg.HTTP.Enabled {
-		// HTTP/HTTPS mode
-		// Create HTTP server configuration
-		httpConfig := &mcp.HTTPConfig{
-			Addr:        cfg.HTTP.Address,
-			TLSEnable:   cfg.HTTP.TLS.Enabled,
-			CertFile:    cfg.HTTP.TLS.CertFile,
-			KeyFile:     cfg.HTTP.TLS.KeyFile,
-			ChainFile:   cfg.HTTP.TLS.ChainFile,
-			AuthEnabled: cfg.HTTP.Auth.Enabled,
-			TokenStore:  tokenStore,
-			UserStore:   userStore,
-			Debug:       *debug,
-		}
+	// Create HTTP server configuration
+	httpConfig := &mcp.HTTPConfig{
+		Addr:        cfg.HTTP.Address,
+		TLSEnable:   cfg.HTTP.TLS.Enabled,
+		CertFile:    cfg.HTTP.TLS.CertFile,
+		KeyFile:     cfg.HTTP.TLS.KeyFile,
+		ChainFile:   cfg.HTTP.TLS.ChainFile,
+		AuthEnabled: cfg.HTTP.Auth.Enabled,
+		TokenStore:  tokenStore,
+		UserStore:   userStore,
+		Debug:       *debug,
+	}
 
-		// Setup additional HTTP handlers
-		httpConfig.SetupHandlers = func(mux *http.ServeMux) error {
-			// Helper to wrap handlers with authentication
-			authWrapper := func(handler http.HandlerFunc) http.HandlerFunc {
-				return func(w http.ResponseWriter, r *http.Request) {
-					// Extract token from Authorization header
-					authHeader := r.Header.Get("Authorization")
-					if authHeader == "" {
-						http.Error(w, "Missing Authorization header",
-							http.StatusUnauthorized)
-						return
-					}
-
-					// Extract Bearer token
-					token := strings.TrimPrefix(authHeader, "Bearer ")
-					if token == authHeader {
-						http.Error(w, "Invalid Authorization header format",
-							http.StatusUnauthorized)
-						return
-					}
-
-					// Try API token first, then session token
-					if _, err := tokenStore.ValidateToken(token); err != nil {
-						// Try session token if user auth is enabled
-						if userStore != nil {
-							if _, err := userStore.ValidateSessionToken(token); err != nil {
-								http.Error(w, "Invalid or expired token",
-									http.StatusUnauthorized)
-								return
-							}
-						} else {
-							http.Error(w, "Invalid or expired token",
-								http.StatusUnauthorized)
-							return
-						}
-					}
-
-					// Token valid, proceed with handler
-					handler(w, r)
-				}
-			}
-
-			// Chat history compaction endpoint
-			mux.HandleFunc("/api/chat/compact",
-				authWrapper(compactor.HandleCompact))
-
-			// User info endpoint - returns auth status (no error if not logged in)
-			mux.HandleFunc("/api/user/info", func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-
-				// Extract session token from Authorization header
+	// Setup additional HTTP handlers
+	httpConfig.SetupHandlers = func(mux *http.ServeMux) error {
+		// Helper to wrap handlers with authentication
+		authWrapper := func(handler http.HandlerFunc) http.HandlerFunc {
+			return func(w http.ResponseWriter, r *http.Request) {
+				// Extract token from Authorization header
 				authHeader := r.Header.Get("Authorization")
 				if authHeader == "" {
-					//nolint:errcheck // Encoding a simple map should never fail
-					json.NewEncoder(w).Encode(map[string]interface{}{
-						"authenticated": false,
-					})
+					http.Error(w, "Missing Authorization header",
+						http.StatusUnauthorized)
 					return
 				}
 
 				// Extract Bearer token
 				token := strings.TrimPrefix(authHeader, "Bearer ")
 				if token == authHeader {
-					//nolint:errcheck // Encoding a simple map should never fail
-					json.NewEncoder(w).Encode(map[string]interface{}{
-						"authenticated": false,
-						"error":         "Invalid Authorization header format",
-					})
+					http.Error(w, "Invalid Authorization header format",
+						http.StatusUnauthorized)
 					return
 				}
 
-				// Validate session token and get username
-				username, err := userStore.ValidateSessionToken(token)
-				if err != nil {
-					//nolint:errcheck // Encoding a simple map should never fail
-					json.NewEncoder(w).Encode(map[string]interface{}{
-						"authenticated": false,
-						"error":         "Invalid or expired session",
-					})
-					return
+				// Try API token first, then session token
+				if _, err := tokenStore.ValidateToken(token); err != nil {
+					// Try session token if user auth is enabled
+					if userStore != nil {
+						if _, err := userStore.ValidateSessionToken(token); err != nil {
+							http.Error(w, "Invalid or expired token",
+								http.StatusUnauthorized)
+							return
+						}
+					} else {
+						http.Error(w, "Invalid or expired token",
+							http.StatusUnauthorized)
+						return
+					}
 				}
 
-				// Return user info as JSON
+				// Token valid, proceed with handler
+				handler(w, r)
+			}
+		}
+
+		// Chat history compaction endpoint
+		mux.HandleFunc("/api/chat/compact",
+			authWrapper(compactor.HandleCompact))
+
+		// User info endpoint - returns auth status (no error if not logged in)
+		mux.HandleFunc("/api/user/info", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+
+			// Extract session token from Authorization header
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" {
 				//nolint:errcheck // Encoding a simple map should never fail
 				json.NewEncoder(w).Encode(map[string]interface{}{
-					"authenticated": true,
-					"username":      username,
+					"authenticated": false,
 				})
+				return
+			}
+
+			// Extract Bearer token
+			token := strings.TrimPrefix(authHeader, "Bearer ")
+			if token == authHeader {
+				//nolint:errcheck // Encoding a simple map should never fail
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"authenticated": false,
+					"error":         "Invalid Authorization header format",
+				})
+				return
+			}
+
+			// Validate session token and get username
+			username, err := userStore.ValidateSessionToken(token)
+			if err != nil {
+				//nolint:errcheck // Encoding a simple map should never fail
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"authenticated": false,
+					"error":         "Invalid or expired session",
+				})
+				return
+			}
+
+			// Return user info as JSON
+			//nolint:errcheck // Encoding a simple map should never fail
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"authenticated": true,
+				"username":      username,
 			})
-
-			// Add LLM proxy handlers if enabled
-			if cfg.LLM.Enabled {
-				// Create LLM proxy configuration
-				llmConfig := &llmproxy.Config{
-					Provider:        cfg.LLM.Provider,
-					Model:           cfg.LLM.Model,
-					AnthropicAPIKey: cfg.LLM.AnthropicAPIKey,
-					OpenAIAPIKey:    cfg.LLM.OpenAIAPIKey,
-					OllamaURL:       cfg.LLM.OllamaURL,
-					MaxTokens:       cfg.LLM.MaxTokens,
-					Temperature:     cfg.LLM.Temperature,
-				}
-
-				// Provider/model listing don't require auth (needed for login page)
-				mux.HandleFunc("/api/llm/providers",
-					func(w http.ResponseWriter, r *http.Request) {
-						llmproxy.HandleProviders(w, r, llmConfig)
-					})
-				mux.HandleFunc("/api/llm/models",
-					func(w http.ResponseWriter, r *http.Request) {
-						llmproxy.HandleModels(w, r, llmConfig)
-					})
-				// Chat endpoint requires auth (makes actual LLM API calls)
-				mux.HandleFunc("/api/llm/chat",
-					authWrapper(func(w http.ResponseWriter, r *http.Request) {
-						llmproxy.HandleChat(w, r, llmConfig)
-					}))
-			}
-
-			// Conversation history endpoints (only if store is available)
-			if convStore != nil && userStore != nil {
-				convHandler := conversations.NewHandler(convStore, userStore)
-				convHandler.RegisterRoutes(mux, authWrapper)
-				fmt.Fprintf(os.Stderr, "Conversation history: ENABLED\n")
-			}
-
-			return nil
-		}
-
-		if cfg.HTTP.TLS.Enabled {
-			fmt.Fprintf(os.Stderr, "Starting MCP server in HTTPS mode on %s\n", cfg.HTTP.Address)
-			fmt.Fprintf(os.Stderr, "Certificate: %s\n", cfg.HTTP.TLS.CertFile)
-			fmt.Fprintf(os.Stderr, "Key: %s\n", cfg.HTTP.TLS.KeyFile)
-			if cfg.HTTP.TLS.ChainFile != "" {
-				fmt.Fprintf(os.Stderr, "Chain: %s\n", cfg.HTTP.TLS.ChainFile)
-			}
-		} else {
-			fmt.Fprintf(os.Stderr, "Starting MCP server in HTTP mode on %s\n", cfg.HTTP.Address)
-		}
-
-		if cfg.LLM.Enabled {
-			fmt.Fprintf(os.Stderr, "LLM Proxy: ENABLED (provider: %s, model: %s)\n", cfg.LLM.Provider, cfg.LLM.Model)
-		} else {
-			fmt.Fprintf(os.Stderr, "LLM Proxy: DISABLED\n")
-		}
-
-		if cfg.Knowledgebase.Enabled {
-			apiKeyStatus := "not set"
-			if cfg.Knowledgebase.EmbeddingVoyageAPIKey != "" {
-				apiKeyStatus = "loaded"
-			} else if cfg.Knowledgebase.EmbeddingOpenAIAPIKey != "" {
-				apiKeyStatus = "loaded"
-			}
-			fmt.Fprintf(os.Stderr, "Knowledgebase: ENABLED (provider: %s, model: %s, API key: %s)\n",
-				cfg.Knowledgebase.EmbeddingProvider, cfg.Knowledgebase.EmbeddingModel, apiKeyStatus)
-		} else {
-			fmt.Fprintf(os.Stderr, "Knowledgebase: DISABLED\n")
-		}
-
-		if *debug {
-			fmt.Fprintf(os.Stderr, "Debug logging: ENABLED\n")
-		}
-
-		// Set up SIGHUP handler for configuration reload (HTTP mode only)
-		cliFlags := config.CLIFlags{
-			DBHost:     *dbHost,
-			DBPort:     *dbPort,
-			DBName:     *dbName,
-			DBUser:     *dbUser,
-			DBPassword: *dbPassword,
-			DBSSLMode:  *dbSSLMode,
-		}
-		reloadableCfg := config.NewReloadableConfig(cfg, configPath, cliFlags)
-
-		// Register callback to update client manager when database config changes
-		reloadableCfg.OnReload(func(newCfg *config.Config) {
-			clientManager.UpdateDatabaseConfig(newCfg.Database)
 		})
 
-		// Start SIGHUP listener
-		sighup := make(chan os.Signal, 1)
-		signal.Notify(sighup, syscall.SIGHUP)
-		go func() {
-			for range sighup {
-				fmt.Fprintf(os.Stderr, "Received SIGHUP, reloading configuration...\n")
-				if err := reloadableCfg.Reload(); err != nil {
-					fmt.Fprintf(os.Stderr, "ERROR: Failed to reload config: %v\n", err)
-				}
+		// Add LLM proxy handlers if enabled
+		if cfg.LLM.Enabled {
+			// Create LLM proxy configuration
+			llmConfig := &llmproxy.Config{
+				Provider:        cfg.LLM.Provider,
+				Model:           cfg.LLM.Model,
+				AnthropicAPIKey: cfg.LLM.AnthropicAPIKey,
+				OpenAIAPIKey:    cfg.LLM.OpenAIAPIKey,
+				OllamaURL:       cfg.LLM.OllamaURL,
+				MaxTokens:       cfg.LLM.MaxTokens,
+				Temperature:     cfg.LLM.Temperature,
 			}
-		}()
 
-		err = server.RunHTTP(httpConfig)
+			// Provider/model listing don't require auth (needed for login page)
+			mux.HandleFunc("/api/llm/providers",
+				func(w http.ResponseWriter, r *http.Request) {
+					llmproxy.HandleProviders(w, r, llmConfig)
+				})
+			mux.HandleFunc("/api/llm/models",
+				func(w http.ResponseWriter, r *http.Request) {
+					llmproxy.HandleModels(w, r, llmConfig)
+				})
+			// Chat endpoint requires auth (makes actual LLM API calls)
+			mux.HandleFunc("/api/llm/chat",
+				authWrapper(func(w http.ResponseWriter, r *http.Request) {
+					llmproxy.HandleChat(w, r, llmConfig)
+				}))
+		}
+
+		// Conversation history endpoints (only if store is available)
+		if convStore != nil && userStore != nil {
+			convHandler := conversations.NewHandler(convStore, userStore)
+			convHandler.RegisterRoutes(mux, authWrapper)
+			fmt.Fprintf(os.Stderr, "Conversation history: ENABLED\n")
+		}
+
+		return nil
 	}
+
+	if cfg.HTTP.TLS.Enabled {
+		fmt.Fprintf(os.Stderr, "Starting MCP server in HTTPS mode on %s\n", cfg.HTTP.Address)
+		fmt.Fprintf(os.Stderr, "Certificate: %s\n", cfg.HTTP.TLS.CertFile)
+		fmt.Fprintf(os.Stderr, "Key: %s\n", cfg.HTTP.TLS.KeyFile)
+		if cfg.HTTP.TLS.ChainFile != "" {
+			fmt.Fprintf(os.Stderr, "Chain: %s\n", cfg.HTTP.TLS.ChainFile)
+		}
+	} else {
+		fmt.Fprintf(os.Stderr, "Starting MCP server in HTTP mode on %s\n", cfg.HTTP.Address)
+	}
+
+	if cfg.LLM.Enabled {
+		fmt.Fprintf(os.Stderr, "LLM Proxy: ENABLED (provider: %s, model: %s)\n", cfg.LLM.Provider, cfg.LLM.Model)
+	} else {
+		fmt.Fprintf(os.Stderr, "LLM Proxy: DISABLED\n")
+	}
+
+	if cfg.Knowledgebase.Enabled {
+		apiKeyStatus := "not set"
+		if cfg.Knowledgebase.EmbeddingVoyageAPIKey != "" {
+			apiKeyStatus = "loaded"
+		} else if cfg.Knowledgebase.EmbeddingOpenAIAPIKey != "" {
+			apiKeyStatus = "loaded"
+		}
+		fmt.Fprintf(os.Stderr, "Knowledgebase: ENABLED (provider: %s, model: %s, API key: %s)\n",
+			cfg.Knowledgebase.EmbeddingProvider, cfg.Knowledgebase.EmbeddingModel, apiKeyStatus)
+	} else {
+		fmt.Fprintf(os.Stderr, "Knowledgebase: DISABLED\n")
+	}
+
+	if *debug {
+		fmt.Fprintf(os.Stderr, "Debug logging: ENABLED\n")
+	}
+
+	// Set up SIGHUP handler for configuration reload
+	cliFlags = config.CLIFlags{
+		DBHost:     *dbHost,
+		DBPort:     *dbPort,
+		DBName:     *dbName,
+		DBUser:     *dbUser,
+		DBPassword: *dbPassword,
+		DBSSLMode:  *dbSSLMode,
+	}
+	reloadableCfg := config.NewReloadableConfig(cfg, configPath, cliFlags)
+
+	// Register callback to update client manager when database config changes
+	reloadableCfg.OnReload(func(newCfg *config.Config) {
+		clientManager.UpdateDatabaseConfig(newCfg.Database)
+	})
+
+	// Start SIGHUP listener
+	sighup := make(chan os.Signal, 1)
+	signal.Notify(sighup, syscall.SIGHUP)
+	go func() {
+		for range sighup {
+			fmt.Fprintf(os.Stderr, "Received SIGHUP, reloading configuration...\n")
+			if err := reloadableCfg.Reload(); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: Failed to reload config: %v\n", err)
+			}
+		}
+	}()
+
+	err = server.RunHTTP(httpConfig)
 
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)

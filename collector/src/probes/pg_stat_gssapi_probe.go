@@ -46,15 +46,33 @@ func (p *PgStatGSSAPIProbe) IsDatabaseScoped() bool {
 	return false
 }
 
-// GetQuery returns the SQL query to execute
+// GetQuery returns the SQL query to execute (default for PG16+)
 func (p *PgStatGSSAPIProbe) GetQuery() string {
+	return p.GetQueryForVersion(16)
+}
+
+// GetQueryForVersion returns the appropriate SQL query for the given PostgreSQL version
+func (p *PgStatGSSAPIProbe) GetQueryForVersion(pgVersion int) string {
+	if pgVersion >= 16 {
+		// PG16+ has credentials_delegated column
+		return `
+            SELECT
+                pid,
+                gss_authenticated,
+                principal,
+                encrypted,
+                credentials_delegated
+            FROM pg_stat_gssapi
+        `
+	}
+	// PG12-15: credentials_delegated doesn't exist, return NULL
 	return `
         SELECT
             pid,
             gss_authenticated,
             principal,
             encrypted,
-            credentials_delegated
+            NULL::boolean AS credentials_delegated
         FROM pg_stat_gssapi
     `
 }
@@ -79,7 +97,7 @@ func (p *PgStatGSSAPIProbe) checkViewAvailable(ctx context.Context, conn *pgxpoo
 }
 
 // Execute runs the probe against a monitored connection
-func (p *PgStatGSSAPIProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn) ([]map[string]interface{}, error) {
+func (p *PgStatGSSAPIProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
 	// Check if view is available (PG 12+)
 	available, err := p.checkViewAvailable(ctx, monitoredConn)
 	if err != nil {
@@ -91,7 +109,9 @@ func (p *PgStatGSSAPIProbe) Execute(ctx context.Context, connectionName string, 
 		return []map[string]interface{}{}, nil
 	}
 
-	rows, err := monitoredConn.Query(ctx, p.GetQuery())
+	// Use version-specific query
+	query := p.GetQueryForVersion(pgVersion)
+	rows, err := monitoredConn.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute query: %w", err)
 	}

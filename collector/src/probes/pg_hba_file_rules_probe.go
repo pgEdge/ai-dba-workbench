@@ -51,11 +51,36 @@ func (p *PgHbaFileRulesProbe) IsDatabaseScoped() bool {
 	return false
 }
 
-// GetQuery returns the SQL query to execute
+// GetQuery returns the SQL query to execute (default for PG16+)
 func (p *PgHbaFileRulesProbe) GetQuery() string {
+	return p.GetQueryForVersion(16)
+}
+
+// GetQueryForVersion returns the appropriate SQL query for the given PostgreSQL version
+func (p *PgHbaFileRulesProbe) GetQueryForVersion(pgVersion int) string {
+	if pgVersion >= 16 {
+		// PG16+ has rule_number column
+		return `
+            SELECT
+                rule_number,
+                file_name,
+                line_number,
+                type,
+                database,
+                user_name,
+                address,
+                netmask,
+                auth_method,
+                options,
+                error
+            FROM pg_hba_file_rules
+            ORDER BY rule_number
+        `
+	}
+	// PG14-15: rule_number doesn't exist, use line_number as rule_number
 	return `
         SELECT
-            rule_number,
+            line_number AS rule_number,
             file_name,
             line_number,
             type,
@@ -67,13 +92,14 @@ func (p *PgHbaFileRulesProbe) GetQuery() string {
             options,
             error
         FROM pg_hba_file_rules
-        ORDER BY rule_number
+        ORDER BY line_number
     `
 }
 
 // Execute runs the probe against a monitored connection
-func (p *PgHbaFileRulesProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn) ([]map[string]interface{}, error) {
-	rows, err := monitoredConn.Query(ctx, p.GetQuery())
+func (p *PgHbaFileRulesProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
+	query := p.GetQueryForVersion(pgVersion)
+	rows, err := monitoredConn.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute query: %w", err)
 	}

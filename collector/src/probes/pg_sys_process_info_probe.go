@@ -61,7 +61,7 @@ func (p *PgSysProcessInfoProbe) GetQuery() string {
 }
 
 // Execute runs the probe against a monitored connection
-func (p *PgSysProcessInfoProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn) ([]map[string]interface{}, error) {
+func (p *PgSysProcessInfoProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
 	// Check if system_stats extension is installed
 	exists, err := CheckExtensionExists(ctx, connectionName, monitoredConn, "system_stats")
 	if err != nil {

@@ -400,6 +400,13 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 		return allMetrics, databases
 	}
 
+	// Detect and cache PostgreSQL version
+	pgVersion, err := ps.poolManager.DetectAndCacheVersion(ctx, conn.ID, monitoredDB)
+	if err != nil {
+		logger.Debugf("Warning: failed to detect PostgreSQL version for %s: %v", conn.Name, err)
+		pgVersion = 0 // Use 0 to indicate unknown version
+	}
+
 	// Query pg_database to get list of databases
 	databases, err = ps.getDatabaseList(ctx, monitoredDB)
 	if err != nil {
@@ -420,9 +427,9 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 	// Execute probe on the default/first database using the connection we already have
 	if len(databases) > 0 {
 		defaultDB := databases[0]
-		metrics, err := probe.Execute(ctx, conn.Name, monitoredDB)
+		metrics, err := probe.Execute(ctx, conn.Name, monitoredDB, pgVersion)
 		if err != nil {
-			logger.Errorf("Error executing probe %s on default database %s/%s: %v",
+			logger.Debugf("Error executing probe %s on default database %s/%s: %v",
 				config.Name, conn.Name, defaultDB, err)
 		} else if len(metrics) > 0 {
 			// Add database name to metrics
@@ -460,13 +467,13 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 		}
 
 		// Execute probe
-		metrics, err := probe.Execute(ctx, conn.Name, db)
+		metrics, err := probe.Execute(ctx, conn.Name, db, pgVersion)
 
 		// Return the connection immediately
 		ps.poolManager.ReturnConnection(conn.ID, db)
 
 		if err != nil {
-			logger.Errorf("Error executing probe %s on database %s/%s: %v",
+			logger.Debugf("Error executing probe %s on database %s/%s: %v",
 				config.Name, conn.Name, dbName, err)
 			continue // Skip this database but continue with others
 		}
@@ -539,8 +546,15 @@ func (ps *ProbeScheduler) executeProbeForServerWide(ctx context.Context, probe p
 		return metrics
 	}
 
+	// Detect and cache PostgreSQL version
+	pgVersion, err := ps.poolManager.DetectAndCacheVersion(ctx, conn.ID, monitoredDB)
+	if err != nil {
+		logger.Debugf("Warning: failed to detect PostgreSQL version for %s: %v", conn.Name, err)
+		pgVersion = 0 // Use 0 to indicate unknown version
+	}
+
 	// Execute probe
-	metrics, err = probe.Execute(ctx, conn.Name, monitoredDB)
+	metrics, err = probe.Execute(ctx, conn.Name, monitoredDB, pgVersion)
 
 	// Return the connection immediately
 	ps.poolManager.ReturnConnection(conn.ID, monitoredDB)
@@ -551,7 +565,7 @@ func (ps *ProbeScheduler) executeProbeForServerWide(ctx context.Context, probe p
 			logger.Errorf("Error executing probe %s on connection %s: query execution timed out after %d seconds",
 				config.Name, conn.Name, ps.config.GetMonitoredPoolMaxWaitSeconds())
 		} else {
-			logger.Errorf("Error executing probe %s on connection %s: %v",
+			logger.Debugf("Error executing probe %s on connection %s: %v",
 				config.Name, conn.Name, err)
 		}
 		return nil

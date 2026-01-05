@@ -47,8 +47,30 @@ func (p *PgStatWalProbe) IsDatabaseScoped() bool {
 	return false
 }
 
-// GetQuery returns the SQL query to execute
+// GetQuery returns the SQL query to execute (default for PG14-17)
 func (p *PgStatWalProbe) GetQuery() string {
+	return p.GetQueryForVersion(14)
+}
+
+// GetQueryForVersion returns the appropriate SQL query for the given PostgreSQL version
+func (p *PgStatWalProbe) GetQueryForVersion(pgVersion int) string {
+	if pgVersion >= 18 {
+		// PG18: wal_write column was removed
+		return `
+            SELECT
+                wal_records,
+                wal_fpi,
+                wal_bytes,
+                wal_buffers_full,
+                NULL::bigint AS wal_write,
+                wal_sync,
+                wal_write_time,
+                wal_sync_time,
+                stats_reset
+            FROM pg_stat_wal
+        `
+	}
+	// PG14-17: wal_write column exists
 	return `
         SELECT
             wal_records,
@@ -65,7 +87,7 @@ func (p *PgStatWalProbe) GetQuery() string {
 }
 
 // Execute runs the probe against a monitored connection
-func (p *PgStatWalProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn) ([]map[string]interface{}, error) {
+func (p *PgStatWalProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
 	// First check if the view exists (PG 14+)
 	var exists bool
 	err := monitoredConn.QueryRow(ctx, `
@@ -83,7 +105,8 @@ func (p *PgStatWalProbe) Execute(ctx context.Context, connectionName string, mon
 		return nil, nil // View doesn't exist, return empty result
 	}
 
-	rows, err := monitoredConn.Query(ctx, p.GetQuery())
+	query := p.GetQueryForVersion(pgVersion)
+	rows, err := monitoredConn.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute query: %w", err)
 	}

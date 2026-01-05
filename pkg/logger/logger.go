@@ -64,6 +64,22 @@ func Infof(format string, v ...interface{}) {
 	}
 }
 
+// Debug logs debug messages (only shown in verbose mode)
+// Use for detailed diagnostic information that is typically not needed
+func Debug(v ...interface{}) {
+	if verbose {
+		log.Print(v...)
+	}
+}
+
+// Debugf logs formatted debug messages (only shown in verbose mode)
+// Use for detailed diagnostic information that is typically not needed
+func Debugf(format string, v ...interface{}) {
+	if verbose {
+		log.Printf(format, v...)
+	}
+}
+
 // Startup logs startup messages (always shown)
 func Startup(v ...interface{}) {
 	log.Print(v...)

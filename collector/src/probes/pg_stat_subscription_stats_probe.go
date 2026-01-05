@@ -79,7 +79,7 @@ func (p *PgStatSubscriptionStatsProbe) checkViewAvailable(ctx context.Context, c
 }
 
 // Execute runs the probe against a monitored connection
-func (p *PgStatSubscriptionStatsProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn) ([]map[string]interface{}, error) {
+func (p *PgStatSubscriptionStatsProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
 	// Check if view is available (PG 15+)
 	available, err := p.checkViewAvailable(ctx, monitoredConn)
 	if err != nil {

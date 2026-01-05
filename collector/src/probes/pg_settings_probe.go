@@ -78,7 +78,7 @@ func (p *PgSettingsProbe) GetQuery() string {
 }
 
 // Execute runs the probe against a monitored connection
-func (p *PgSettingsProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn) ([]map[string]interface{}, error) {
+func (p *PgSettingsProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
 	rows, err := monitoredConn.Query(ctx, p.GetQuery())
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute query: %w", err)

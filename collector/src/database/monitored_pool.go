@@ -24,6 +24,7 @@ import (
 type MonitoredConnectionPoolManager struct {
 	pools          map[int]*pgxpool.Pool
 	semaphores     map[int]chan struct{} // Per-connection semaphores for limiting concurrent connections
+	versions       map[int]int           // Per-connection PostgreSQL major version cache
 	maxConnections int                   // Maximum concurrent connections per monitored server
 	maxIdleSeconds int                   // Maximum idle time (seconds) before closing idle connections
 	mu             sync.RWMutex
@@ -34,9 +35,53 @@ func NewMonitoredConnectionPoolManager(maxConnectionsPerServer int, maxIdleSecon
 	return &MonitoredConnectionPoolManager{
 		pools:          make(map[int]*pgxpool.Pool),
 		semaphores:     make(map[int]chan struct{}),
+		versions:       make(map[int]int),
 		maxConnections: maxConnectionsPerServer,
 		maxIdleSeconds: maxIdleSeconds,
 	}
+}
+
+// GetVersion returns the cached PostgreSQL major version for a connection
+// Returns 0 if version is not cached
+func (m *MonitoredConnectionPoolManager) GetVersion(connectionID int) int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.versions[connectionID]
+}
+
+// SetVersion caches the PostgreSQL major version for a connection
+func (m *MonitoredConnectionPoolManager) SetVersion(connectionID int, majorVersion int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.versions[connectionID] = majorVersion
+}
+
+// DetectAndCacheVersion detects the PostgreSQL major version and caches it
+// Returns the major version number (e.g., 14, 15, 16, 17, 18)
+func (m *MonitoredConnectionPoolManager) DetectAndCacheVersion(ctx context.Context, connectionID int, conn *pgxpool.Conn) (int, error) {
+	// Check if we already have the version cached
+	m.mu.RLock()
+	version, exists := m.versions[connectionID]
+	m.mu.RUnlock()
+
+	if exists && version > 0 {
+		return version, nil
+	}
+
+	// Query the server version
+	var serverVersion int
+	err := conn.QueryRow(ctx, "SELECT current_setting('server_version_num')::int / 10000").Scan(&serverVersion)
+	if err != nil {
+		return 0, fmt.Errorf("failed to detect PostgreSQL version: %w", err)
+	}
+
+	// Cache the version
+	m.mu.Lock()
+	m.versions[connectionID] = serverVersion
+	m.mu.Unlock()
+
+	logger.Debugf("Detected PostgreSQL version %d for connection %d", serverVersion, connectionID)
+	return serverVersion, nil
 }
 
 // getSemaphore gets or creates a semaphore for a connection ID

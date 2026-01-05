@@ -3,8 +3,11 @@
 
 # Binaries
 collector/collector
+collector/collector-*
 cli/ai-cli
+cli/ai-cli-*
 server/mcp-server
+server/mcp-server-*
 *.exe
 *.exe~
 *.dll

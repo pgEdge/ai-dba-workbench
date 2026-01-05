@@ -85,7 +85,7 @@ func (p *PgStatRecoveryPrefetchProbe) checkViewAvailable(ctx context.Context, co
 }
 
 // Execute runs the probe against a monitored connection
-func (p *PgStatRecoveryPrefetchProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn) ([]map[string]interface{}, error) {
+func (p *PgStatRecoveryPrefetchProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
 	// Check if view is available
 	available, err := p.checkViewAvailable(ctx, monitoredConn)
 	if err != nil {

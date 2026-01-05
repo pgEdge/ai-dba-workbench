@@ -46,8 +46,31 @@ func (p *PgStatAllIndexesProbe) IsDatabaseScoped() bool {
 	return true
 }
 
-// GetQuery returns the SQL query to execute
+// GetQuery returns the SQL query to execute (default for PG16+)
 func (p *PgStatAllIndexesProbe) GetQuery() string {
+	return p.GetQueryForVersion(16)
+}
+
+// GetQueryForVersion returns the appropriate SQL query for the given PostgreSQL version
+func (p *PgStatAllIndexesProbe) GetQueryForVersion(pgVersion int) string {
+	if pgVersion >= 16 {
+		// PG16+ has last_idx_scan column
+		return `
+            SELECT
+                relid,
+                indexrelid,
+                schemaname,
+                relname,
+                indexrelname,
+                idx_scan,
+                last_idx_scan,
+                idx_tup_read,
+                idx_tup_fetch
+            FROM pg_stat_all_indexes
+            ORDER BY schemaname, relname, indexrelname
+        `
+	}
+	// PG14-15: last_idx_scan doesn't exist, return NULL
 	return `
         SELECT
             relid,
@@ -56,7 +79,7 @@ func (p *PgStatAllIndexesProbe) GetQuery() string {
             relname,
             indexrelname,
             idx_scan,
-            last_idx_scan,
+            NULL::timestamptz AS last_idx_scan,
             idx_tup_read,
             idx_tup_fetch
         FROM pg_stat_all_indexes
@@ -65,8 +88,9 @@ func (p *PgStatAllIndexesProbe) GetQuery() string {
 }
 
 // Execute runs the probe against a monitored connection
-func (p *PgStatAllIndexesProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn) ([]map[string]interface{}, error) {
-	rows, err := monitoredConn.Query(ctx, p.GetQuery())
+func (p *PgStatAllIndexesProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
+	query := p.GetQueryForVersion(pgVersion)
+	rows, err := monitoredConn.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute query: %w", err)
 	}

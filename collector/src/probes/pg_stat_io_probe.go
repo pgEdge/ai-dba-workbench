@@ -47,8 +47,39 @@ func (p *PgStatIOProbe) IsDatabaseScoped() bool {
 	return false
 }
 
-// GetQuery returns the SQL query to execute
+// GetQuery returns the SQL query to execute (default for PG16-17)
 func (p *PgStatIOProbe) GetQuery() string {
+	return p.GetQueryForVersion(16)
+}
+
+// GetQueryForVersion returns the appropriate SQL query for the given PostgreSQL version
+func (p *PgStatIOProbe) GetQueryForVersion(pgVersion int) string {
+	if pgVersion >= 18 {
+		// PG18: op_bytes column was removed
+		return `
+            SELECT
+                backend_type,
+                object,
+                context,
+                reads,
+                read_time,
+                writes,
+                write_time,
+                writebacks,
+                writeback_time,
+                extends,
+                extend_time,
+                NULL::bigint AS op_bytes,
+                hits,
+                evictions,
+                reuses,
+                fsyncs,
+                fsync_time,
+                stats_reset
+            FROM pg_stat_io
+        `
+	}
+	// PG16-17: op_bytes column exists
 	return `
         SELECT
             backend_type,
@@ -74,7 +105,7 @@ func (p *PgStatIOProbe) GetQuery() string {
 }
 
 // Execute runs the probe against a monitored connection
-func (p *PgStatIOProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn) ([]map[string]interface{}, error) {
+func (p *PgStatIOProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
 	// First check if the view exists (PG 16+)
 	var exists bool
 	err := monitoredConn.QueryRow(ctx, `
@@ -92,7 +123,8 @@ func (p *PgStatIOProbe) Execute(ctx context.Context, connectionName string, moni
 		return nil, nil // View doesn't exist, return empty result
 	}
 
-	rows, err := monitoredConn.Query(ctx, p.GetQuery())
+	query := p.GetQueryForVersion(pgVersion)
+	rows, err := monitoredConn.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute query: %w", err)
 	}

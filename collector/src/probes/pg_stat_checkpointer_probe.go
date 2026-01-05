@@ -65,7 +65,7 @@ func (p *PgStatCheckpointerProbe) GetQuery() string {
 }
 
 // Execute runs the probe against a monitored connection
-func (p *PgStatCheckpointerProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn) ([]map[string]interface{}, error) {
+func (p *PgStatCheckpointerProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
 	// First check if the view exists (PG 17+)
 	var exists bool
 	err := monitoredConn.QueryRow(ctx, `

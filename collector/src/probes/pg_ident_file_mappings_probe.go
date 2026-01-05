@@ -51,11 +51,32 @@ func (p *PgIdentFileMappingsProbe) IsDatabaseScoped() bool {
 	return false
 }
 
-// GetQuery returns the SQL query to execute
+// GetQuery returns the SQL query to execute (default for PG16+)
 func (p *PgIdentFileMappingsProbe) GetQuery() string {
+	return p.GetQueryForVersion(16)
+}
+
+// GetQueryForVersion returns the appropriate SQL query for the given PostgreSQL version
+func (p *PgIdentFileMappingsProbe) GetQueryForVersion(pgVersion int) string {
+	if pgVersion >= 16 {
+		// PG16+ has map_number column
+		return `
+            SELECT
+                map_number,
+                file_name,
+                line_number,
+                map_name,
+                sys_name,
+                pg_username,
+                error
+            FROM pg_ident_file_mappings
+            ORDER BY map_number
+        `
+	}
+	// PG15: map_number doesn't exist, use line_number as map_number
 	return `
         SELECT
-            map_number,
+            line_number AS map_number,
             file_name,
             line_number,
             map_name,
@@ -63,13 +84,44 @@ func (p *PgIdentFileMappingsProbe) GetQuery() string {
             pg_username,
             error
         FROM pg_ident_file_mappings
-        ORDER BY map_number
+        ORDER BY line_number
     `
 }
 
+// checkViewAvailable checks if pg_ident_file_mappings view exists (PG 15+)
+func (p *PgIdentFileMappingsProbe) checkViewAvailable(ctx context.Context, conn *pgxpool.Conn) (bool, error) {
+	var exists bool
+	err := conn.QueryRow(ctx, `
+        SELECT EXISTS(
+            SELECT 1
+            FROM pg_views
+            WHERE schemaname = 'pg_catalog'
+            AND viewname = 'pg_ident_file_mappings'
+        )
+    `).Scan(&exists)
+
+	if err != nil {
+		return false, fmt.Errorf("failed to check for pg_ident_file_mappings view: %w", err)
+	}
+
+	return exists, nil
+}
+
 // Execute runs the probe against a monitored connection
-func (p *PgIdentFileMappingsProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn) ([]map[string]interface{}, error) {
-	rows, err := monitoredConn.Query(ctx, p.GetQuery())
+func (p *PgIdentFileMappingsProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
+	// Check if view exists (PG15+)
+	available, err := p.checkViewAvailable(ctx, monitoredConn)
+	if err != nil {
+		return nil, err
+	}
+
+	if !available {
+		// View not available (PG14 and earlier), return empty metrics
+		return []map[string]interface{}{}, nil
+	}
+
+	query := p.GetQueryForVersion(pgVersion)
+	rows, err := monitoredConn.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute query: %w", err)
 	}

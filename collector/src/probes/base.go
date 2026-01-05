@@ -44,7 +44,8 @@ type MetricsProbe interface {
 	GetQuery() string
 
 	// Execute runs the probe against a monitored connection and returns metrics
-	Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn) ([]map[string]interface{}, error)
+	// pgVersion is the PostgreSQL major version (e.g., 14, 15, 16, 17, 18)
+	Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error)
 
 	// Store stores the collected metrics in the datastore using COPY protocol
 	Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]interface{}) error

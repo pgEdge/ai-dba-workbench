@@ -46,8 +46,30 @@ func (p *PgStatDatabaseConflictsProbe) IsDatabaseScoped() bool {
 	return true
 }
 
-// GetQuery returns the SQL query to execute
+// GetQuery returns the SQL query to execute (default for PG16+)
 func (p *PgStatDatabaseConflictsProbe) GetQuery() string {
+	return p.GetQueryForVersion(16)
+}
+
+// GetQueryForVersion returns the appropriate SQL query for the given PostgreSQL version
+func (p *PgStatDatabaseConflictsProbe) GetQueryForVersion(pgVersion int) string {
+	if pgVersion >= 16 {
+		// PG16+ has confl_active_logicalslot column
+		return `
+            SELECT
+                datid,
+                datname,
+                confl_tablespace,
+                confl_lock,
+                confl_snapshot,
+                confl_bufferpin,
+                confl_deadlock,
+                confl_active_logicalslot
+            FROM pg_stat_database_conflicts
+            WHERE datname = current_database()
+        `
+	}
+	// PG14-15: confl_active_logicalslot doesn't exist, return NULL
 	return `
         SELECT
             datid,
@@ -57,15 +79,16 @@ func (p *PgStatDatabaseConflictsProbe) GetQuery() string {
             confl_snapshot,
             confl_bufferpin,
             confl_deadlock,
-            confl_active_logicalslot
+            NULL::bigint AS confl_active_logicalslot
         FROM pg_stat_database_conflicts
         WHERE datname = current_database()
     `
 }
 
 // Execute runs the probe against a monitored connection
-func (p *PgStatDatabaseConflictsProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn) ([]map[string]interface{}, error) {
-	rows, err := monitoredConn.Query(ctx, p.GetQuery())
+func (p *PgStatDatabaseConflictsProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
+	query := p.GetQueryForVersion(pgVersion)
+	rows, err := monitoredConn.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute query: %w", err)
 	}

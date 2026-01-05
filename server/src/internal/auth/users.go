@@ -11,6 +11,7 @@
 package auth
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
@@ -85,6 +86,14 @@ func LoadUserStore(path string) (*UserStore, error) {
 	}
 
 	var store UserStore
+
+	// Handle empty files gracefully - return empty store
+	if len(bytes.TrimSpace(data)) == 0 {
+		store.Users = make(map[string]*User)
+		store.path = path
+		return &store, nil
+	}
+
 	if err := yaml.Unmarshal(data, &store); err != nil {
 		return nil, fmt.Errorf("failed to parse user file: %w", err)
 	}
@@ -110,12 +119,18 @@ func (s *UserStore) Reload() error {
 	}
 
 	var newStore UserStore
-	if err := yaml.Unmarshal(data, &newStore); err != nil {
-		return fmt.Errorf("failed to parse user file: %w", err)
-	}
 
-	if newStore.Users == nil {
+	// Handle empty files gracefully
+	if len(bytes.TrimSpace(data)) == 0 {
 		newStore.Users = make(map[string]*User)
+	} else {
+		if err := yaml.Unmarshal(data, &newStore); err != nil {
+			return fmt.Errorf("failed to parse user file: %w", err)
+		}
+
+		if newStore.Users == nil {
+			newStore.Users = make(map[string]*User)
+		}
 	}
 
 	// Update the store with new data (with write lock)

@@ -11,6 +11,7 @@
 package auth
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -68,6 +69,14 @@ func LoadTokenStore(path string) (*TokenStore, error) {
 	}
 
 	var store TokenStore
+
+	// Handle empty files gracefully - return empty store
+	if len(bytes.TrimSpace(data)) == 0 {
+		store.Tokens = make(map[string]*Token)
+		store.path = path
+		return &store, nil
+	}
+
 	if err := yaml.Unmarshal(data, &store); err != nil {
 		return nil, fmt.Errorf("failed to parse token file: %w", err)
 	}
@@ -93,12 +102,18 @@ func (s *TokenStore) Reload() error {
 	}
 
 	var newStore TokenStore
-	if err := yaml.Unmarshal(data, &newStore); err != nil {
-		return fmt.Errorf("failed to parse token file: %w", err)
-	}
 
-	if newStore.Tokens == nil {
+	// Handle empty files gracefully
+	if len(bytes.TrimSpace(data)) == 0 {
 		newStore.Tokens = make(map[string]*Token)
+	} else {
+		if err := yaml.Unmarshal(data, &newStore); err != nil {
+			return fmt.Errorf("failed to parse token file: %w", err)
+		}
+
+		if newStore.Tokens == nil {
+			newStore.Tokens = make(map[string]*Token)
+		}
 	}
 
 	// Update the store with new data (with write lock)

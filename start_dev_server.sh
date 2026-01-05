@@ -60,10 +60,10 @@ echo ""
 # Build the server
 echo -e "${GREEN}Building server...${NC}"
 cd "${SERVER_DIR}"
-go build -o "${BIN_DIR}/ai-dba-server" .
+go build -o "${BIN_DIR}/ai-dba-server" ./cmd/mcp-server
 
 # Run the server
 echo -e "${GREEN}Starting server...${NC}"
 echo ""
 
-exec "${BIN_DIR}/ai-dba-server" --config="${CONFIG_FILE}" --http
+exec "${BIN_DIR}/ai-dba-server" --config="${CONFIG_FILE}"

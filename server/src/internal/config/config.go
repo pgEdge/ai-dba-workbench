@@ -199,9 +199,9 @@ type EmbeddingConfig struct {
 	Enabled          bool   `yaml:"enabled"`             // Whether embedding generation is enabled (default: false)
 	Provider         string `yaml:"provider"`            // "voyage", "openai", or "ollama"
 	Model            string `yaml:"model"`               // Provider-specific model name
-	VoyageAPIKey     string `yaml:"voyage_api_key"`      // API key for Voyage AI (direct - discouraged, use api_key_file or env var)
+	VoyageAPIKey     string `yaml:"-"`                   // API key for Voyage AI (loaded from file, not config)
 	VoyageAPIKeyFile string `yaml:"voyage_api_key_file"` // Path to file containing Voyage API key
-	OpenAIAPIKey     string `yaml:"openai_api_key"`      // API key for OpenAI (direct - discouraged, use api_key_file or env var)
+	OpenAIAPIKey     string `yaml:"-"`                   // API key for OpenAI (loaded from file, not config)
 	OpenAIAPIKeyFile string `yaml:"openai_api_key_file"` // Path to file containing OpenAI API key
 	OllamaURL        string `yaml:"ollama_url"`          // URL for Ollama service (default: http://localhost:11434)
 }
@@ -211,9 +211,9 @@ type LLMConfig struct {
 	Enabled             bool    `yaml:"enabled"`                // Whether LLM proxy is enabled (default: false)
 	Provider            string  `yaml:"provider"`               // "anthropic", "openai", or "ollama"
 	Model               string  `yaml:"model"`                  // Provider-specific model name
-	AnthropicAPIKey     string  `yaml:"anthropic_api_key"`      // API key for Anthropic (direct - discouraged, use api_key_file or env var instead)
+	AnthropicAPIKey     string  `yaml:"-"`                      // API key for Anthropic (loaded from file, not config)
 	AnthropicAPIKeyFile string  `yaml:"anthropic_api_key_file"` // Path to file containing Anthropic API key
-	OpenAIAPIKey        string  `yaml:"openai_api_key"`         // API key for OpenAI (direct - discouraged, use api_key_file or env var instead)
+	OpenAIAPIKey        string  `yaml:"-"`                      // API key for OpenAI (loaded from file, not config)
 	OpenAIAPIKeyFile    string  `yaml:"openai_api_key_file"`    // Path to file containing OpenAI API key
 	OllamaURL           string  `yaml:"ollama_url"`             // URL for Ollama service (default: http://localhost:11434)
 	MaxTokens           int     `yaml:"max_tokens"`             // Maximum tokens for LLM response (default: 4096)
@@ -228,9 +228,9 @@ type KnowledgebaseConfig struct {
 	// Embedding provider configuration for KB similarity search (independent of generate_embeddings tool)
 	EmbeddingProvider         string `yaml:"embedding_provider"`            // "voyage", "openai", or "ollama"
 	EmbeddingModel            string `yaml:"embedding_model"`               // Provider-specific model name
-	EmbeddingVoyageAPIKey     string `yaml:"embedding_voyage_api_key"`      // API key for Voyage AI
+	EmbeddingVoyageAPIKey     string `yaml:"-"`                             // API key for Voyage AI (loaded from file, not config)
 	EmbeddingVoyageAPIKeyFile string `yaml:"embedding_voyage_api_key_file"` // Path to file containing Voyage API key
-	EmbeddingOpenAIAPIKey     string `yaml:"embedding_openai_api_key"`      // API key for OpenAI
+	EmbeddingOpenAIAPIKey     string `yaml:"-"`                             // API key for OpenAI (loaded from file, not config)
 	EmbeddingOpenAIAPIKeyFile string `yaml:"embedding_openai_api_key_file"` // Path to file containing OpenAI API key
 	EmbeddingOllamaURL        string `yaml:"embedding_ollama_url"`          // URL for Ollama service (default: http://localhost:11434)
 }
@@ -694,16 +694,16 @@ func validateConfig(cfg *Config) error {
 		}
 	}
 
-	// If auth is enabled, token file is required
+	// If auth is enabled, at least one authentication source must be configured
 	if cfg.HTTP.Auth.Enabled {
-		if cfg.HTTP.Auth.TokenFile == "" {
-			return fmt.Errorf("authentication token file is required when HTTP auth is enabled (use -no-auth to disable)")
+		if cfg.HTTP.Auth.TokenFile == "" && cfg.HTTP.Auth.UserFile == "" {
+			return fmt.Errorf("authentication requires either token_file or user_file to be configured (or set auth.enabled: false in config)")
 		}
 	}
 
 	// Database configuration validation
 	if cfg.Database != nil && cfg.Database.User == "" {
-		return fmt.Errorf("database user is required (set via -db-user, PGEDGE_DB_USER, PGUSER env var, or config file)")
+		return fmt.Errorf("database user is required (set via -db-user flag or config file)")
 	}
 
 	return nil

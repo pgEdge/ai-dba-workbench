@@ -267,6 +267,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Resolve relative paths for auth files relative to config file directory
+	if configPathForLoad != "" {
+		configDir := filepath.Dir(configPathForLoad)
+		if cfg.HTTP.Auth.TokenFile != "" && !filepath.IsAbs(cfg.HTTP.Auth.TokenFile) {
+			cfg.HTTP.Auth.TokenFile = filepath.Join(configDir, cfg.HTTP.Auth.TokenFile)
+		}
+		if cfg.HTTP.Auth.UserFile != "" && !filepath.IsAbs(cfg.HTTP.Auth.UserFile) {
+			cfg.HTTP.Auth.UserFile = filepath.Join(configDir, cfg.HTTP.Auth.UserFile)
+		}
+	}
+
 	// Set default token file path if not specified
 	if cfg.HTTP.Auth.TokenFile == "" {
 		cfg.HTTP.Auth.TokenFile = auth.GetDefaultTokenPath(execPath)
@@ -290,60 +301,60 @@ func main() {
 		}
 	}
 
-	// Load token store if auth is enabled
+	// Load token and user stores if auth is enabled
 	var tokenStore *auth.TokenStore
 	var userStore *auth.UserStore
 	userFilePathForTools := ""
 	if cfg.HTTP.Auth.Enabled {
-		if _, err := os.Stat(cfg.HTTP.Auth.TokenFile); os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "ERROR: Token file not found: %s\n", cfg.HTTP.Auth.TokenFile)
-			fmt.Fprintf(os.Stderr, "Create tokens with: %s -add-token\n", os.Args[0])
-			os.Exit(1)
-		}
-
-		tokenStore, err = auth.LoadTokenStore(cfg.HTTP.Auth.TokenFile)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: Failed to load token file: %v\n", err)
-			os.Exit(1)
-		}
-
-		fmt.Fprintf(os.Stderr, "Loaded %d API token(s) from %s\n", len(tokenStore.Tokens), cfg.HTTP.Auth.TokenFile)
-
-		// Start watching the token file for changes
-		if err := tokenStore.StartWatching(); err != nil {
-			fmt.Fprintf(os.Stderr, "WARNING: Failed to start watching token file: %v\n", err)
-			fmt.Fprintf(os.Stderr, "         Token changes will require server restart\n")
-		} else {
-			fmt.Fprintf(os.Stderr, "Watching %s for changes\n", cfg.HTTP.Auth.TokenFile)
-		}
-
-		// Load user store for user authentication
-		// Use config value if set (from config file, env var, or CLI flag), otherwise use default
-		if cfg.HTTP.Auth.UserFile != "" {
-			userFilePathForTools = cfg.HTTP.Auth.UserFile
-		} else {
-			userFilePathForTools = auth.GetDefaultUserPath(execPath)
-		}
-
-		if _, err := os.Stat(userFilePathForTools); os.IsNotExist(err) {
-			// User file doesn't exist - create empty store
-			// Users can be added via CLI commands
-			userStore = auth.InitializeUserStore()
-			fmt.Fprintf(os.Stderr, "User file not found, initialized empty user store\n")
-		} else {
-			userStore, err = auth.LoadUserStore(userFilePathForTools)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "ERROR: Failed to load user file: %v\n", err)
+		// Load token store if token_file is configured
+		if cfg.HTTP.Auth.TokenFile != "" {
+			if _, err := os.Stat(cfg.HTTP.Auth.TokenFile); os.IsNotExist(err) {
+				fmt.Fprintf(os.Stderr, "ERROR: Token file not found: %s\n", cfg.HTTP.Auth.TokenFile)
+				fmt.Fprintf(os.Stderr, "Create tokens with: %s -add-token\n", os.Args[0])
 				os.Exit(1)
 			}
-			fmt.Fprintf(os.Stderr, "Loaded %d user(s) from %s\n", len(userStore.Users), userFilePathForTools)
 
-			// Start watching the user file for changes
-			if err := userStore.StartWatching(); err != nil {
-				fmt.Fprintf(os.Stderr, "WARNING: Failed to start watching user file: %v\n", err)
-				fmt.Fprintf(os.Stderr, "         User changes will require server restart\n")
+			tokenStore, err = auth.LoadTokenStore(cfg.HTTP.Auth.TokenFile)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: Failed to load token file: %v\n", err)
+				os.Exit(1)
+			}
+
+			fmt.Fprintf(os.Stderr, "Loaded %d API token(s) from %s\n", len(tokenStore.Tokens), cfg.HTTP.Auth.TokenFile)
+
+			// Start watching the token file for changes
+			if err := tokenStore.StartWatching(); err != nil {
+				fmt.Fprintf(os.Stderr, "WARNING: Failed to start watching token file: %v\n", err)
+				fmt.Fprintf(os.Stderr, "         Token changes will require server restart\n")
 			} else {
-				fmt.Fprintf(os.Stderr, "Watching %s for changes\n", userFilePathForTools)
+				fmt.Fprintf(os.Stderr, "Watching %s for changes\n", cfg.HTTP.Auth.TokenFile)
+			}
+		}
+
+		// Load user store if user_file is configured
+		if cfg.HTTP.Auth.UserFile != "" {
+			userFilePathForTools = cfg.HTTP.Auth.UserFile
+
+			if _, err := os.Stat(userFilePathForTools); os.IsNotExist(err) {
+				// User file doesn't exist - create empty store
+				// Users can be added via CLI commands
+				userStore = auth.InitializeUserStore()
+				fmt.Fprintf(os.Stderr, "User file not found, initialized empty user store\n")
+			} else {
+				userStore, err = auth.LoadUserStore(userFilePathForTools)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "ERROR: Failed to load user file: %v\n", err)
+					os.Exit(1)
+				}
+				fmt.Fprintf(os.Stderr, "Loaded %d user(s) from %s\n", len(userStore.Users), userFilePathForTools)
+
+				// Start watching the user file for changes
+				if err := userStore.StartWatching(); err != nil {
+					fmt.Fprintf(os.Stderr, "WARNING: Failed to start watching user file: %v\n", err)
+					fmt.Fprintf(os.Stderr, "         User changes will require server restart\n")
+				} else {
+					fmt.Fprintf(os.Stderr, "Watching %s for changes\n", userFilePathForTools)
+				}
 			}
 		}
 	}

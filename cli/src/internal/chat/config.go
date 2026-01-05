@@ -47,9 +47,9 @@ type MCPConfig struct {
 type LLMConfig struct {
 	Provider            string  `yaml:"provider"`               // anthropic, openai, or ollama
 	Model               string  `yaml:"model"`                  // Model to use
-	AnthropicAPIKey     string  `yaml:"anthropic_api_key"`      // API key for Anthropic (direct - discouraged, use api_key_file or env var)
+	AnthropicAPIKey     string  `yaml:"-"`                      // API key for Anthropic (loaded from file, not config)
 	AnthropicAPIKeyFile string  `yaml:"anthropic_api_key_file"` // Path to file containing Anthropic API key
-	OpenAIAPIKey        string  `yaml:"openai_api_key"`         // API key for OpenAI (direct - discouraged, use api_key_file or env var)
+	OpenAIAPIKey        string  `yaml:"-"`                      // API key for OpenAI (loaded from file, not config)
 	OpenAIAPIKeyFile    string  `yaml:"openai_api_key_file"`    // Path to file containing OpenAI API key
 	OllamaURL           string  `yaml:"ollama_url"`             // Ollama server URL
 	MaxTokens           int     `yaml:"max_tokens"`             // Max tokens for response
@@ -173,14 +173,14 @@ func (c *Config) Validate() error {
 	// Validate LLM configuration based on provider
 	if c.LLM.Provider == "anthropic" {
 		if c.LLM.AnthropicAPIKey == "" {
-			return fmt.Errorf("anthropic_api_key or anthropic_api_key_file config is required for Anthropic")
+			return fmt.Errorf("anthropic_api_key_file is required for Anthropic (file should contain your API key)")
 		}
 		if c.LLM.Model == "" {
 			c.LLM.Model = "claude-sonnet-4-5-20250929"
 		}
 	} else if c.LLM.Provider == "openai" {
 		if c.LLM.OpenAIAPIKey == "" {
-			return fmt.Errorf("openai_api_key or openai_api_key_file config is required for OpenAI")
+			return fmt.Errorf("openai_api_key_file is required for OpenAI (file should contain your API key)")
 		}
 		if c.LLM.Model == "" {
 			c.LLM.Model = "gpt-4o"

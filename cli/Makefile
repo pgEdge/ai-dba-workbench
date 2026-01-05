@@ -1,26 +1,37 @@
 #-------------------------------------------------------------------------
 #
-# pgEdge AI Workbench CLI Makefile
+# pgEdge AI DBA Workbench CLI Makefile
 #
-# Copyright (c) 2025, pgEdge, Inc.
+# Copyright (c) 2025 - 2026, pgEdge, Inc.
 # This software is released under The PostgreSQL License
 #
 #-------------------------------------------------------------------------
 
 .PHONY: all build test lint clean vet fmt help killall test-all
 
+# Binary output directory (can be overridden by parent Makefile)
+BIN_DIR ?= .
+
+# Binary name
+BINARY := ai-dba-cli
+
+# Get absolute path to output directory
+ABS_BIN_DIR := $(abspath $(BIN_DIR))
+
 # Default target
 all: build
 
 # Build the CLI binary
 build:
-	@echo "Building CLI..."
-	cd src && go build -o ../ai-cli
+	@echo "Building ai-dba-cli..."
+	@mkdir -p $(ABS_BIN_DIR)
+	cd src && go build -o $(ABS_BIN_DIR)/$(BINARY) ./cmd/ai-cli
 
 # Run tests
-test:
+test: killall
 	@echo "Running tests..."
 	cd src && go test -v ./...
+	@$(MAKE) --no-print-directory killall
 
 # Run linting
 lint:
@@ -47,7 +58,7 @@ coverage:
 # Clean build artifacts
 clean:
 	@echo "Cleaning..."
-	rm -f ai-cli
+	rm -f $(ABS_BIN_DIR)/$(BINARY)
 	rm -f src/coverage.out src/coverage.html
 
 # Install dependencies
@@ -63,11 +74,6 @@ check: fmt vet test lint
 # Run all tests (test, coverage, lint)
 test-all: test coverage lint
 	@echo "All tests passed!"
-
-# Kill all running CLI processes
-killall:
-	@pkill -9 ai-cli 2>/dev/null || true
-	@pkill -9 -f "go run.*cli" 2>/dev/null || true
 
 # Help target
 help:
@@ -85,3 +91,10 @@ help:
 	@echo "  check     - Run all checks (fmt, vet, test, lint)"
 	@echo "  killall   - Kill any running CLI processes"
 	@echo "  help      - Show this help message"
+	@echo ""
+	@echo "Binary is built to: $(ABS_BIN_DIR)/$(BINARY)"
+
+# Kill all running CLI processes
+killall:
+	@pkill -9 ai-dba-cli 2>/dev/null || true
+	@pkill -9 -f "go run.*ai-cli" 2>/dev/null || true

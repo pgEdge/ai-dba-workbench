@@ -1,26 +1,36 @@
 #-------------------------------------------------------------------------
 #
-# pgEdge AI Workbench MCP Server Makefile
+# pgEdge AI DBA Workbench MCP Server Makefile
 #
-# Copyright (c) 2025, pgEdge, Inc.
+# Copyright (c) 2025 - 2026, pgEdge, Inc.
 # This software is released under The PostgreSQL License
 #
 #-------------------------------------------------------------------------
 
 .PHONY: all build test lint clean vet fmt help killall test-all
 
+# Binary output directory (can be overridden by parent Makefile)
+BIN_DIR ?= .
+
+# Binary name
+BINARY := ai-dba-server
+
+# Get absolute path to output directory
+ABS_BIN_DIR := $(abspath $(BIN_DIR))
+
 # Default target
 all: build
 
-# Build the MCP server binary
+# Build the server binary
 build:
-	@echo "Building MCP server..."
-	cd src && go build -o ../mcp-server
+	@echo "Building ai-dba-server..."
+	@mkdir -p $(ABS_BIN_DIR)
+	cd src && go build -o $(ABS_BIN_DIR)/$(BINARY) ./cmd/mcp-server
 
 # Run tests
 test: killall
 	@echo "Running tests..."
-	cd src && SKIP_DB_TESTS=1 go test -v ./...
+	cd src && go test -v ./...
 	@$(MAKE) --no-print-directory killall
 
 # Run linting
@@ -41,14 +51,14 @@ fmt:
 # Run tests with coverage
 coverage:
 	@echo "Running tests with coverage..."
-	cd src && SKIP_DB_TESTS=1 go test -coverprofile=coverage.out ./...
+	cd src && go test -coverprofile=coverage.out ./...
 	cd src && go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated: src/coverage.html"
 
 # Clean build artifacts
 clean:
 	@echo "Cleaning..."
-	rm -f mcp-server
+	rm -f $(ABS_BIN_DIR)/$(BINARY)
 	rm -f src/coverage.out src/coverage.html
 
 # Install dependencies
@@ -68,8 +78,8 @@ test-all: test coverage lint
 # Help target
 help:
 	@echo "Available targets:"
-	@echo "  all       - Build the MCP server binary (default)"
-	@echo "  build     - Build the MCP server binary"
+	@echo "  all       - Build the server binary (default)"
+	@echo "  build     - Build the server binary"
 	@echo "  test      - Run tests"
 	@echo "  lint      - Run golangci-lint"
 	@echo "  vet       - Run go vet"
@@ -79,10 +89,12 @@ help:
 	@echo "  clean     - Remove build artifacts"
 	@echo "  deps      - Install/update dependencies"
 	@echo "  check     - Run all checks (fmt, vet, test, lint)"
-	@echo "  killall   - Kill any running MCP server processes"
+	@echo "  killall   - Kill any running server processes"
 	@echo "  help      - Show this help message"
+	@echo ""
+	@echo "Binary is built to: $(ABS_BIN_DIR)/$(BINARY)"
 
-# Kill all running MCP server processes
+# Kill all running server processes
 killall:
-	@pkill -9 mcp-server 2>/dev/null || true
-	@pkill -9 -f "go run.*server" 2>/dev/null || true
+	@pkill -9 ai-dba-server 2>/dev/null || true
+	@pkill -9 -f "go run.*mcp-server" 2>/dev/null || true

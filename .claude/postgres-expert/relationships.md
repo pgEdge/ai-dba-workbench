@@ -1,7 +1,7 @@
 # Entity Relationships and Database Design
 
 This document provides detailed documentation of the entity relationships,
-foreign keys, and referential integrity rules in the pgEdge AI Workbench
+foreign keys, and referential integrity rules in the pgEdge AI DBA Workbench
 database.
 
 ## Entity Relationship Overview

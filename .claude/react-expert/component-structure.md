@@ -1,8 +1,8 @@
 /*-----------------------------------------------------------
  *
- * pgEdge AI Workbench
+ * pgEdge AI DBA Workbench
  *
- * Copyright (c) 2025, pgEdge, Inc.
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
  *-----------------------------------------------------------
@@ -11,7 +11,7 @@
 # Component Structure and Organization
 
 This document outlines component architecture patterns, organization
-strategies, and best practices for the pgEdge AI Workbench React frontend.
+strategies, and best practices for the pgEdge AI DBA Workbench React frontend.
 
 ## Component Categories
 
@@ -335,9 +335,9 @@ Each component should follow this structure:
 ```typescript
 /*-----------------------------------------------------------
  *
- * pgEdge AI Workbench
+ * pgEdge AI DBA Workbench
  *
- * Copyright (c) 2025, pgEdge, Inc.
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
  *-----------------------------------------------------------

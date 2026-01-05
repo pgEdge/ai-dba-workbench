@@ -1,10 +1,10 @@
-# pgEdge AI Workbench Collector
+# pgEdge AI DBA Workbench Collector
 
 [![Build Collector](https://github.com/pgEdge/ai-workbench/actions/workflows/build-collector.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/build-collector.yml)
 [![Test Collector](https://github.com/pgEdge/ai-workbench/actions/workflows/test-collector.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/test-collector.yml)
 [![Lint Collector](https://github.com/pgEdge/ai-workbench/actions/workflows/lint-collector.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/lint-collector.yml)
 
-The pgEdge AI Workbench Collector is a monitoring service that collects
+The pgEdge AI DBA Workbench Collector is a monitoring service that collects
 metrics from PostgreSQL servers and stores them in a centralized datastore
 for analysis by the AI Workbench system.
 

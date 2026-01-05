@@ -1,20 +1,10 @@
-# pgEdge AI Workbench
+# pgEdge AI DBA Workbench
 
 [![Build Collector](https://github.com/pgEdge/ai-workbench/actions/workflows/build-collector.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/build-collector.yml)
 [![Test Collector](https://github.com/pgEdge/ai-workbench/actions/workflows/test-collector.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/test-collector.yml)
 [![Lint Collector](https://github.com/pgEdge/ai-workbench/actions/workflows/lint-collector.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/lint-collector.yml)
 
-[![Build Server](https://github.com/pgEdge/ai-workbench/actions/workflows/build-server.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/build-server.yml)
-[![Test Server](https://github.com/pgEdge/ai-workbench/actions/workflows/test-server.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/test-server.yml)
-[![Lint Server](https://github.com/pgEdge/ai-workbench/actions/workflows/lint-server.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/lint-server.yml)
-
-[![Build CLI](https://github.com/pgEdge/ai-workbench/actions/workflows/build-cli.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/build-cli.yml)
-[![Test CLI](https://github.com/pgEdge/ai-workbench/actions/workflows/test-cli.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/test-cli.yml)
-[![Lint CLI](https://github.com/pgEdge/ai-workbench/actions/workflows/lint-cli.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/lint-cli.yml)
-
-[![Integration Tests](https://github.com/pgEdge/ai-workbench/actions/workflows/test-integration.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/test-integration.yml)
-
-The pgEdge AI Workbench is a unified environment for interacting with pgEdge's
+The pgEdge AI DBA Workbench is a unified environment for interacting with pgEdge's
 distributed and non-distributed PostgreSQL systems through artificial
 intelligence and traditional methods. It combines a Model Context Protocol
 (MCP) Server with a web-based user interface and data collector, enabling users
@@ -31,15 +21,15 @@ intelligence and traditional methods. It combines a Model Context Protocol
 
 ## Components
 
-The pgEdge AI Workbench consists of three main components:
+The pgEdge AI DBA Workbench consists of three main components:
 
 - **[Collector](collector/README.md)** - A monitoring service that collects
   metrics from PostgreSQL servers and stores them in a centralized datastore
   for analysis
 - **[Server](server/README.md)** - An MCP server that provides tools and
   resources for interacting with PostgreSQL systems
-- **[CLI](cli/README.md)** - A command-line interface for interacting with
-  the MCP server
+- **CLI** - A command-line interface for interacting with the MCP server
+  (coming soon)
 - **Client** - A web-based user interface for interacting with the AI
   Workbench (coming soon)
 
@@ -51,8 +41,6 @@ directory:
 - **[Documentation Index](docs/index.md)** - Main documentation entry point
 - **[Collector Documentation](docs/collector/index.md)** - Data collection
   and monitoring
-- **[Server Documentation](docs/server/index.md)** - MCP server and protocol
-- **[CLI Documentation](docs/cli/index.md)** - Command-line interface
 
 ## Building
 
@@ -65,14 +53,11 @@ make all
 
 # Build individual components
 cd collector && make build
-cd server && make build
-cd cli && make build
 ```
 
 ## Testing
 
-The project includes comprehensive unit tests for each component and
-integration tests that exercise the entire system.
+The project includes comprehensive unit tests for each component.
 
 ### Run All Tests
 
@@ -86,10 +71,7 @@ make coverage
 # Run all sub-project tests with linting
 make lint
 
-# Run integration tests
-make test-integration
-
-# Run everything (all sub-project test-all + integration tests)
+# Run everything (all sub-project test-all)
 make test-all
 ```
 
@@ -97,8 +79,6 @@ make test-all
 
 ```bash
 cd collector && make test
-cd server && make test
-cd cli && make test
 ```
 
 ### Environment Variables for Testing
@@ -106,10 +86,6 @@ cd cli && make test
 - `TEST_AI_WORKBENCH_SERVER` - PostgreSQL connection string for test database
   (default: `postgres://postgres@localhost:5432/postgres`)
 - `TEST_AI_WORKBENCH_KEEP_DB=1` - Keep test database after tests complete
-- `SKIP_INTEGRATION_TESTS=1` - Skip integration tests
-
-See [Integration Tests README](tests/README.md) for detailed information about
-the integration test suite.
 
 ### Available Make Targets
 
@@ -124,14 +100,8 @@ Each sub-project and the top-level Makefile support these targets:
 - `killall` - Kill any running processes
 - `help` - Show available targets
 
-Top-level only targets:
-
-- `test-integration` - Run integration tests
-
 ## Getting Started
 
 For information on getting started with each component, please refer to:
 
 - [Collector Quick Start](docs/collector/quickstart.md) - Set up monitoring
-- [Server README](server/README.md) - Deploy the MCP server
-- [CLI README](cli/README.md) - Use the command-line interface

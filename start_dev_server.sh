@@ -1,18 +1,24 @@
 #!/bin/bash
 #-------------------------------------------------------------------------
 #
-# pgEdge AI Workbench MCP Server - Development Server Startup Script
+# pgEdge AI DBA Workbench Server - Development Startup Script
 #
-# Copyright (c) 2025, pgEdge, Inc.
+# Copyright (c) 2025 - 2026, pgEdge, Inc.
 # This software is released under The PostgreSQL License
 #
 #-------------------------------------------------------------------------
+#
+# This script builds and starts the MCP server in development mode.
+# It copies the example config to bin/ if no config exists there.
+#
 
 set -e
 
 # Get the directory where this script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-CONFIG_FILE="${SCRIPT_DIR}/configs/dev.conf"
+BIN_DIR="${SCRIPT_DIR}/bin"
+CONFIG_FILE="${BIN_DIR}/ai-dba-server.yaml"
+EXAMPLE_CONFIG="${SCRIPT_DIR}/examples/ai-dba-server.yaml"
 SERVER_DIR="${SCRIPT_DIR}/server/src"
 
 # Colors for output
@@ -21,14 +27,8 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-echo -e "${GREEN}Starting pgEdge AI Workbench MCP Server (Development)${NC}"
+echo -e "${GREEN}pgEdge AI DBA Workbench Server - Development Mode${NC}"
 echo "=========================================="
-
-# Check if config file exists
-if [ ! -f "${CONFIG_FILE}" ]; then
-    echo -e "${RED}Error: Configuration file not found: ${CONFIG_FILE}${NC}"
-    exit 1
-fi
 
 # Check if server source directory exists
 if [ ! -d "${SERVER_DIR}" ]; then
@@ -36,18 +36,34 @@ if [ ! -d "${SERVER_DIR}" ]; then
     exit 1
 fi
 
+# Create bin directory if it doesn't exist
+mkdir -p "${BIN_DIR}"
+
+# Copy example config if no config exists
+if [ ! -f "${CONFIG_FILE}" ]; then
+    if [ -f "${EXAMPLE_CONFIG}" ]; then
+        echo -e "${YELLOW}No config found, copying example config to ${CONFIG_FILE}${NC}"
+        cp "${EXAMPLE_CONFIG}" "${CONFIG_FILE}"
+        echo -e "${YELLOW}Please edit ${CONFIG_FILE} with your settings${NC}"
+    else
+        echo -e "${RED}Error: Example config not found: ${EXAMPLE_CONFIG}${NC}"
+        exit 1
+    fi
+fi
+
 # Display configuration
 echo -e "${YELLOW}Configuration:${NC}"
 echo "  Config file: ${CONFIG_FILE}"
-echo "  Server dir: ${SERVER_DIR}"
+echo "  Bin dir: ${BIN_DIR}"
 echo ""
 
-# Change to server directory
+# Build the server
+echo -e "${GREEN}Building server...${NC}"
 cd "${SERVER_DIR}"
+go build -o "${BIN_DIR}/ai-dba-server" .
 
-# Build and run the server
-echo -e "${GREEN}Building and starting MCP server...${NC}"
+# Run the server
+echo -e "${GREEN}Starting server...${NC}"
 echo ""
 
-# Run with the config file
-exec go run . -v --config="${CONFIG_FILE}"
+exec "${BIN_DIR}/ai-dba-server" --config="${CONFIG_FILE}" --http

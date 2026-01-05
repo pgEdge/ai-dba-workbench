@@ -1,8 +1,8 @@
 /*-------------------------------------------------------------------------
  *
- * pgEdge AI Workbench
+ * pgEdge AI DBA Workbench
  *
- * Copyright (c) 2025, pgEdge, Inc.
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
  *-------------------------------------------------------------------------
@@ -140,7 +140,7 @@ func (ds *Datastore) buildConnectionString() string {
 	}
 
 	// Set application name to identify datastore connections
-	params["application_name"] = "pgEdge AI Workbench - Metric Storage"
+	params["application_name"] = "pgEdge AI DBA Workbench - Metric Storage"
 
 	return buildPostgresConnectionString(params)
 }

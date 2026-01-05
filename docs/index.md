@@ -1,13 +1,13 @@
-# pgEdge AI Workbench Documentation
+# pgEdge AI DBA Workbench Documentation
 
-Welcome to the pgEdge AI Workbench documentation. The AI Workbench is a
+Welcome to the pgEdge AI DBA Workbench documentation. The AI Workbench is a
 unified environment for interacting with pgEdge's distributed and
 non-distributed PostgreSQL systems through artificial intelligence and
 traditional methods.
 
 ## Overview
 
-The pgEdge AI Workbench combines a Model Context Protocol (MCP) Server with a
+The pgEdge AI DBA Workbench combines a Model Context Protocol (MCP) Server with a
 web-based user interface and data collector, enabling users to query, analyze,
 and manage distributed clusters using natural language and intelligent
 automation. The Workbench exposes pgEdge tools and data sources — such as
@@ -23,7 +23,7 @@ intelligent workflow creation across the pgEdge ecosystem.
 
 ## Architecture
 
-The AI Workbench is composed of three main components that work together:
+The AI Workbench is composed of several components that work together:
 
 ### Data Collection Layer
 
@@ -37,47 +37,26 @@ and collects metrics into a centralized datastore. It provides:
 
 ### Intelligence Layer
 
-The [MCP Server](server/index.md) implements the Model Context Protocol,
-providing AI assistants with standardized access to PostgreSQL systems. It
-offers:
-
-- JSON-RPC 2.0 over Server-Sent Events
-- User and service token management
-- Secure database access and operations
-- Extensible tools and resources framework
+The MCP Server implements the Model Context Protocol, providing AI assistants
+with standardized access to PostgreSQL systems. (Coming soon)
 
 ### Interaction Layer
 
-The [CLI](cli/index.md) provides command-line access to the MCP server for
-testing, automation, and integration. It includes:
-
-- Tool execution with JSON input
-- Resource reading and listing
-- Server connectivity testing
-- Clean, simple interface for scripting
+The CLI provides command-line access to the MCP server for testing, automation,
+and integration. (Coming soon)
 
 ## Getting Started
 
 ### Quick Start
 
-Each component can be deployed and operated independently:
+Start with the Collector to set up monitoring for your PostgreSQL servers:
 
-1. **Start with the Collector** - Set up monitoring for your PostgreSQL
-   servers
-   - [Collector Quick Start Guide](collector/quickstart.md)
-   - [Collector Configuration](collector/configuration.md)
-
-2. **Deploy the MCP Server** - Enable AI-powered database interactions
-   - [Server README](../server/README.md)
-   - [Server Configuration](server/index.md#configuration)
-
-3. **Use the CLI** - Test and interact with the MCP server
-   - [CLI README](../cli/README.md)
-   - [CLI Commands](cli/index.md#commands)
+- [Collector Quick Start Guide](collector/quickstart.md)
+- [Collector Configuration](collector/configuration.md)
 
 ### System Requirements
 
-- PostgreSQL 12 or higher
+- PostgreSQL 14 or higher
 - Go 1.23 or higher (for building from source)
 - Network connectivity between components
 - Appropriate database credentials and permissions
@@ -98,37 +77,6 @@ Key topics:
 - [Architecture](collector/architecture.md) - Detailed design
 - [Probes](collector/probes.md) - How data collection works
 - [Development](collector/development.md) - Contributing guide
-
-### Server Documentation
-
-The MCP Server provides AI assistants with access to PostgreSQL systems.
-
-**[Go to Server Documentation →](server/index.md)**
-
-Key topics:
-
-- [Architecture](server/index.md#architecture) - Server components
-- [Configuration](server/index.md#configuration) - Setup options
-- [Protocol](server/index.md#protocol) - MCP protocol details
-- [Authentication](authentication.md) - User and service token management
-- [MCP Resources](server/mcp-resources.md) - Available resources
-- [MCP Tools](server/mcp-tools.md) - Available tools
-- [Development](server/index.md#development) - Development guide
-
-### CLI Documentation
-
-The CLI provides command-line access to the MCP server.
-
-**[Go to CLI Documentation →](cli/index.md)**
-
-Key topics:
-
-- [Architecture](cli/index.md#architecture) - CLI components
-- [Commands](cli/index.md#commands) - Available commands
-- [Authentication](authentication.md#cli-authentication) - Token and credential
-  management
-- [Error Handling](cli/index.md#error-handling) - Error messages
-- [Development](cli/index.md#development) - Building and testing
 
 ## Common Configuration
 
@@ -153,9 +101,6 @@ The system uses several security mechanisms:
 - **SSL/TLS**: Full support for encrypted connections
 - **Authentication**: User and service token management
 - **Isolation**: Session and connection isolation
-
-For detailed authentication configuration and best practices, see the
-[Authentication Guide](authentication.md).
 
 See component-specific documentation for additional security configuration.
 
@@ -183,21 +128,10 @@ export PATH="$PATH:$(go env GOPATH)/bin"
 ai-workbench/
 ├── collector/          # Data collector service
 │   ├── src/           # Source code
-│   ├── docs/          # Original documentation
-│   └── README.md      # Component readme
-├── server/            # MCP server
-│   ├── src/           # Source code
-│   ├── docs/          # Original documentation
-│   └── README.md      # Component readme
-├── cli/               # Command-line interface
-│   ├── src/           # Source code
-│   ├── docs/          # Original documentation
 │   └── README.md      # Component readme
 ├── docs/              # Unified documentation (this directory)
-│   ├── collector/     # Collector docs
-│   ├── server/        # Server docs
-│   └── cli/           # CLI docs
-├── configs/           # Sample configurations
+│   └── collector/     # Collector docs
+├── examples/          # Example configurations
 ├── DESIGN.md          # Overall system design
 └── README.md          # Project readme
 ```
@@ -213,8 +147,6 @@ make all
 
 # Build individual components
 cd collector && make build
-cd server && make build
-cd cli && make build
 ```
 
 Or build directly with Go:
@@ -222,18 +154,11 @@ Or build directly with Go:
 ```bash
 # Collector
 cd collector/src && go build -o ../collector
-
-# Server
-cd server/src && go build -o ../mcp-server
-
-# CLI
-cd cli/src && go build -o ../ai-cli
 ```
 
 ### Running Tests
 
-The project includes comprehensive unit tests for each component and integration
-tests that exercise the entire system.
+The project includes comprehensive unit tests for each component.
 
 #### Using Make (Recommended)
 
@@ -249,9 +174,6 @@ make lint
 
 # Run everything (tests, coverage, and linting)
 make test-all
-
-# Run integration tests
-make test-integration
 ```
 
 #### Using Go Directly
@@ -259,15 +181,6 @@ make test-integration
 ```bash
 # Collector tests
 cd collector/src && go test -v ./...
-
-# Server tests
-cd server/src && go test -v ./...
-
-# CLI tests
-cd cli/src && go test -v ./...
-
-# Integration tests
-cd tests && go test -v ./...
 ```
 
 #### Test Environment Variables
@@ -277,11 +190,9 @@ cd tests && go test -v ./...
 - `TEST_AI_WORKBENCH_KEEP_DB=1`: Keep test database after tests complete for
   inspection
 - `SKIP_DB_TESTS=1`: Skip database tests in collector
-- `SKIP_INTEGRATION_TESTS=1`: Skip integration tests
 
-See the [Integration Tests README](../tests/README.md) for detailed information
-about the integration test suite, and [Collector Testing Guide](collector/testing.md)
-for collector-specific testing details.
+See the [Collector Testing Guide](collector/testing.md) for collector-specific
+testing details.
 
 ### Code Style
 
@@ -293,7 +204,8 @@ The project follows Go conventions:
 - Comprehensive unit tests
 - Code coverage reporting
 
-See [CLAUDE.md](../CLAUDE.md) for detailed coding standards.
+See [CLAUDE.md](https://github.com/pgEdge/ai-workbench/blob/main/CLAUDE.md)
+for detailed coding standards.
 
 ## Integration Examples
 
@@ -306,24 +218,6 @@ See [CLAUDE.md](../CLAUDE.md) for detailed coding standards.
 
 See [Collector Quick Start](collector/quickstart.md) for detailed steps.
 
-### AI Assistant Integration
-
-1. Deploy and configure the MCP server
-2. Connect to the datastore with collected metrics
-3. Configure MCP tools and resources
-4. Connect your AI assistant to the server
-
-See [Server Documentation](server/index.md) for detailed configuration.
-
-### Automation and Scripting
-
-1. Use the CLI to test MCP server connectivity
-2. Create scripts to call tools programmatically
-3. Parse JSON output for automation workflows
-4. Integrate with existing monitoring systems
-
-See [CLI Commands](cli/index.md#commands) for examples.
-
 ## Troubleshooting
 
 ### Common Issues
@@ -335,40 +229,31 @@ See [CLI Commands](cli/index.md#commands) for examples.
 - Ensure PostgreSQL user has required permissions
 - Review collector logs for specific errors
 
-**MCP server not responding:**
-
-- Verify server is running on expected port
-- Check TLS configuration if using HTTPS
-- Ensure database connectivity
-- Review server logs for initialization errors
-
-**CLI connection failures:**
-
-- Verify server URL is correct
-- Check network connectivity to server
-- Ensure server is initialized (use `/health` endpoint)
-- Validate JSON input format for tool calls
-
 ### Getting Help
 
 - Check component-specific documentation
-- Review sample configuration files in `/configs`
+- Review example configuration files in `/examples`
 - Examine test files for usage examples
-- Consult [DESIGN.md](../DESIGN.md) for architecture details
+- Consult [DESIGN.md](https://github.com/pgEdge/ai-workbench/blob/main/DESIGN.md)
+  for architecture details
 
 ## Version Information
 
-This documentation corresponds to version 0.1.0 of the pgEdge AI Workbench.
+This documentation corresponds to version 0.1.0 of the pgEdge AI DBA Workbench.
 
 ## License
 
-Copyright (c) 2025, pgEdge, Inc.
+Copyright (c) 2025 - 2026, pgEdge, Inc.
 
 This software is released under The PostgreSQL License.
 
 ## Additional Resources
 
-- [Project README](../README.md) - Quick overview
-- [Design Document](../DESIGN.md) - System architecture
-- [Sample Configurations](../configs/) - Example configs
-- [Standing Instructions](../CLAUDE.md) - Development guidelines
+- [Project README](https://github.com/pgEdge/ai-workbench/blob/main/README.md) -
+  Quick overview
+- [Design Document](https://github.com/pgEdge/ai-workbench/blob/main/DESIGN.md) -
+  System architecture
+- [Example Configurations](https://github.com/pgEdge/ai-workbench/tree/main/examples) -
+  Example configs
+- [Standing Instructions](https://github.com/pgEdge/ai-workbench/blob/main/CLAUDE.md) -
+  Development guidelines

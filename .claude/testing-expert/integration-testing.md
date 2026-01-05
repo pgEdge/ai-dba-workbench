@@ -1,4 +1,4 @@
-# Integration Testing - pgEdge AI Workbench
+# Integration Testing - pgEdge AI DBA Workbench
 
 This document describes the integration testing structure and approach for the AI Workbench project.
 

@@ -1,8 +1,8 @@
 /*-----------------------------------------------------------
  *
- * pgEdge AI Workbench
+ * pgEdge AI DBA Workbench
  *
- * Copyright (c) 2025, pgEdge, Inc.
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
  *-----------------------------------------------------------
@@ -11,7 +11,7 @@
 # Material-UI Usage Patterns and Customizations
 
 This document provides comprehensive guidance on using Material-UI (MUI) in
-the pgEdge AI Workbench frontend, including theming, component patterns, and
+the pgEdge AI DBA Workbench frontend, including theming, component patterns, and
 customization strategies.
 
 ## Theme Configuration
@@ -311,7 +311,7 @@ export const AppLayout: React.FC = () => {
                         <MenuIcon />
                     </IconButton>
                     <Typography variant="h6" noWrap component="div">
-                        pgEdge AI Workbench
+                        pgEdge AI DBA Workbench
                     </Typography>
                 </Toolbar>
             </AppBar>

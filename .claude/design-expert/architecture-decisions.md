@@ -1,4 +1,4 @@
-# Architecture Decisions: pgEdge AI Workbench
+# Architecture Decisions: pgEdge AI DBA Workbench
 
 This document records major architectural decisions and their rationales.
 

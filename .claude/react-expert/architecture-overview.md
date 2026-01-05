@@ -1,8 +1,8 @@
 /*-----------------------------------------------------------
  *
- * pgEdge AI Workbench
+ * pgEdge AI DBA Workbench
  *
- * Copyright (c) 2025, pgEdge, Inc.
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
  *-----------------------------------------------------------
@@ -11,7 +11,7 @@
 # React Frontend Architecture Overview
 
 This document provides a comprehensive overview of the recommended architecture
-for the pgEdge AI Workbench React frontend client application.
+for the pgEdge AI DBA Workbench React frontend client application.
 
 ## Technology Stack
 

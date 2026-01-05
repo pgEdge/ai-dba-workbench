@@ -1,4 +1,4 @@
-# Testing Overview - pgEdge AI Workbench
+# Testing Overview - pgEdge AI DBA Workbench
 
 This document provides a high-level overview of the testing strategy across the AI Workbench project.
 

@@ -1,8 +1,8 @@
 /*-----------------------------------------------------------
  *
- * pgEdge AI Workbench
+ * pgEdge AI DBA Workbench
  *
- * Copyright (c) 2025, pgEdge, Inc.
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
  *-----------------------------------------------------------
@@ -10,7 +10,7 @@
 
 # API Integration Patterns
 
-This document outlines how the pgEdge AI Workbench React client communicates
+This document outlines how the pgEdge AI DBA Workbench React client communicates
 with the backend MCP server, including authentication, error handling, and
 real-time updates via Server-Sent Events (SSE).
 

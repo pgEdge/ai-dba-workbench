@@ -1,6 +1,6 @@
 # Testing MCP Components
 
-This document describes the testing strategy and best practices for the pgEdge AI Workbench MCP server.
+This document describes the testing strategy and best practices for the pgEdge AI DBA Workbench MCP server.
 
 ## Testing Philosophy
 

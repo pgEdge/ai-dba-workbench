@@ -1,8 +1,8 @@
 /*-------------------------------------------------------------------------
  *
- * pgEdge AI Workbench
+ * pgEdge AI DBA Workbench
  *
- * Copyright (c) 2025, pgEdge, Inc.
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
  *-------------------------------------------------------------------------
@@ -19,38 +19,39 @@ import (
 func TestNewConfig(t *testing.T) {
 	config := NewConfig()
 
-	if config.PgHost != "localhost" {
-		t.Errorf("Expected default PgHost to be 'localhost', got '%s'", config.PgHost)
+	if config.Datastore.Host != "localhost" {
+		t.Errorf("Expected default Datastore.Host to be 'localhost', got '%s'", config.Datastore.Host)
 	}
 
-	if config.PgPort != 5432 {
-		t.Errorf("Expected default PgPort to be 5432, got %d", config.PgPort)
+	if config.Datastore.Port != 5432 {
+		t.Errorf("Expected default Datastore.Port to be 5432, got %d", config.Datastore.Port)
 	}
 
-	if config.PgDatabase != "ai_workbench" {
-		t.Errorf("Expected default PgDatabase to be 'ai_workbench', got '%s'", config.PgDatabase)
+	if config.Datastore.Database != "ai_workbench" {
+		t.Errorf("Expected default Datastore.Database to be 'ai_workbench', got '%s'", config.Datastore.Database)
 	}
 
-	if config.DatastorePoolMaxWaitSeconds != 60 {
-		t.Errorf("Expected default DatastorePoolMaxWaitSeconds to be 60, got %d", config.DatastorePoolMaxWaitSeconds)
+	if config.Pool.DatastoreMaxWaitSeconds != 60 {
+		t.Errorf("Expected default Pool.DatastoreMaxWaitSeconds to be 60, got %d", config.Pool.DatastoreMaxWaitSeconds)
 	}
 
-	if config.MonitoredPoolMaxWaitSeconds != 60 {
-		t.Errorf("Expected default MonitoredPoolMaxWaitSeconds to be 60, got %d", config.MonitoredPoolMaxWaitSeconds)
+	if config.Pool.MonitoredMaxWaitSeconds != 60 {
+		t.Errorf("Expected default Pool.MonitoredMaxWaitSeconds to be 60, got %d", config.Pool.MonitoredMaxWaitSeconds)
 	}
 }
 
 func TestConfigLoadFromFile(t *testing.T) {
-	// Create a temporary config file
+	// Create a temporary config file in YAML format
 	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "test.conf")
+	configPath := filepath.Join(tmpDir, "test.yaml")
 
 	configContent := `# Test configuration
-pg_host = testhost
-pg_port = 5433
-pg_database = testdb
-pg_username = testuser
-server_secret = "test-secret"
+datastore:
+  host: testhost
+  port: 5433
+  database: testdb
+  username: testuser
+server_secret: "test-secret"
 `
 
 	if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
@@ -62,20 +63,20 @@ server_secret = "test-secret"
 		t.Fatalf("Failed to load config from file: %v", err)
 	}
 
-	if config.PgHost != "testhost" {
-		t.Errorf("Expected PgHost to be 'testhost', got '%s'", config.PgHost)
+	if config.Datastore.Host != "testhost" {
+		t.Errorf("Expected Datastore.Host to be 'testhost', got '%s'", config.Datastore.Host)
 	}
 
-	if config.PgPort != 5433 {
-		t.Errorf("Expected PgPort to be 5433, got %d", config.PgPort)
+	if config.Datastore.Port != 5433 {
+		t.Errorf("Expected Datastore.Port to be 5433, got %d", config.Datastore.Port)
 	}
 
-	if config.PgDatabase != "testdb" {
-		t.Errorf("Expected PgDatabase to be 'testdb', got '%s'", config.PgDatabase)
+	if config.Datastore.Database != "testdb" {
+		t.Errorf("Expected Datastore.Database to be 'testdb', got '%s'", config.Datastore.Database)
 	}
 
-	if config.PgUsername != "testuser" {
-		t.Errorf("Expected PgUsername to be 'testuser', got '%s'", config.PgUsername)
+	if config.Datastore.Username != "testuser" {
+		t.Errorf("Expected Datastore.Username to be 'testuser', got '%s'", config.Datastore.Username)
 	}
 
 	if config.ServerSecret != "test-secret" {
@@ -92,99 +93,127 @@ func TestConfigValidate(t *testing.T) {
 		{
 			name: "valid config",
 			config: &Config{
-				PgHost:                      "localhost",
-				PgDatabase:                  "testdb",
-				PgUsername:                  "testuser",
-				PgPort:                      5432,
-				DatastorePoolMaxConnections: 10,
-				DatastorePoolMaxIdleSeconds: 60,
-				DatastorePoolMaxWaitSeconds: 60,
-				MonitoredPoolMaxConnections: 5,
-				MonitoredPoolMaxWaitSeconds: 60,
+				Datastore: DatastoreConfig{
+					Host:     "localhost",
+					Database: "testdb",
+					Username: "testuser",
+					Port:     5432,
+				},
+				Pool: PoolConfig{
+					DatastoreMaxConnections: 10,
+					DatastoreMaxIdleSeconds: 60,
+					DatastoreMaxWaitSeconds: 60,
+					MonitoredMaxConnections: 5,
+					MonitoredMaxWaitSeconds: 60,
+				},
 			},
 			wantErr: false,
 		},
 		{
 			name: "missing host",
 			config: &Config{
-				PgHost:     "",
-				PgDatabase: "testdb",
-				PgUsername: "testuser",
-				PgPort:     5432,
+				Datastore: DatastoreConfig{
+					Host:     "",
+					Database: "testdb",
+					Username: "testuser",
+					Port:     5432,
+				},
 			},
 			wantErr: true,
 		},
 		{
 			name: "missing database",
 			config: &Config{
-				PgHost:     "localhost",
-				PgDatabase: "",
-				PgUsername: "testuser",
-				PgPort:     5432,
+				Datastore: DatastoreConfig{
+					Host:     "localhost",
+					Database: "",
+					Username: "testuser",
+					Port:     5432,
+				},
 			},
 			wantErr: true,
 		},
 		{
 			name: "invalid port",
 			config: &Config{
-				PgHost:                      "localhost",
-				PgDatabase:                  "testdb",
-				PgUsername:                  "testuser",
-				PgPort:                      -1,
-				DatastorePoolMaxConnections: 10,
+				Datastore: DatastoreConfig{
+					Host:     "localhost",
+					Database: "testdb",
+					Username: "testuser",
+					Port:     -1,
+				},
+				Pool: PoolConfig{
+					DatastoreMaxConnections: 10,
+				},
 			},
 			wantErr: true,
 		},
 		{
 			name: "invalid pool_max_connections",
 			config: &Config{
-				PgHost:                      "localhost",
-				PgDatabase:                  "testdb",
-				PgUsername:                  "testuser",
-				PgPort:                      5432,
-				DatastorePoolMaxConnections: 0,
+				Datastore: DatastoreConfig{
+					Host:     "localhost",
+					Database: "testdb",
+					Username: "testuser",
+					Port:     5432,
+				},
+				Pool: PoolConfig{
+					DatastoreMaxConnections: 0,
+				},
 			},
 			wantErr: true,
 		},
 		{
 			name: "invalid pool_max_idle_seconds",
 			config: &Config{
-				PgHost:                      "localhost",
-				PgDatabase:                  "testdb",
-				PgUsername:                  "testuser",
-				PgPort:                      5432,
-				DatastorePoolMaxConnections: 10,
-				DatastorePoolMaxIdleSeconds: -1,
+				Datastore: DatastoreConfig{
+					Host:     "localhost",
+					Database: "testdb",
+					Username: "testuser",
+					Port:     5432,
+				},
+				Pool: PoolConfig{
+					DatastoreMaxConnections: 10,
+					DatastoreMaxIdleSeconds: -1,
+				},
 			},
 			wantErr: true,
 		},
 		{
 			name: "invalid datastore_pool_max_wait_seconds",
 			config: &Config{
-				PgHost:                      "localhost",
-				PgDatabase:                  "testdb",
-				PgUsername:                  "testuser",
-				PgPort:                      5432,
-				DatastorePoolMaxConnections: 10,
-				DatastorePoolMaxIdleSeconds: 60,
-				DatastorePoolMaxWaitSeconds: 0,
-				MonitoredPoolMaxConnections: 5,
-				MonitoredPoolMaxWaitSeconds: 60,
+				Datastore: DatastoreConfig{
+					Host:     "localhost",
+					Database: "testdb",
+					Username: "testuser",
+					Port:     5432,
+				},
+				Pool: PoolConfig{
+					DatastoreMaxConnections: 10,
+					DatastoreMaxIdleSeconds: 60,
+					DatastoreMaxWaitSeconds: 0,
+					MonitoredMaxConnections: 5,
+					MonitoredMaxWaitSeconds: 60,
+				},
 			},
 			wantErr: true,
 		},
 		{
 			name: "invalid monitored_pool_max_wait_seconds",
 			config: &Config{
-				PgHost:                      "localhost",
-				PgDatabase:                  "testdb",
-				PgUsername:                  "testuser",
-				PgPort:                      5432,
-				DatastorePoolMaxConnections: 10,
-				DatastorePoolMaxIdleSeconds: 60,
-				DatastorePoolMaxWaitSeconds: 60,
-				MonitoredPoolMaxConnections: 5,
-				MonitoredPoolMaxWaitSeconds: -1,
+				Datastore: DatastoreConfig{
+					Host:     "localhost",
+					Database: "testdb",
+					Username: "testuser",
+					Port:     5432,
+				},
+				Pool: PoolConfig{
+					DatastoreMaxConnections: 10,
+					DatastoreMaxIdleSeconds: 60,
+					DatastoreMaxWaitSeconds: 60,
+					MonitoredMaxConnections: 5,
+					MonitoredMaxWaitSeconds: -1,
+				},
 			},
 			wantErr: true,
 		},
@@ -216,5 +245,130 @@ func TestReadPasswordFile(t *testing.T) {
 
 	if password != testPassword {
 		t.Errorf("Expected password to be '%s', got '%s'", testPassword, password)
+	}
+}
+
+func TestGetDefaultConfigPath(t *testing.T) {
+	// Test that it returns a path ending in ai-dba-collector.yaml
+	binaryPath := "/usr/local/bin/ai-dba-collector"
+	configPath := GetDefaultConfigPath(binaryPath)
+
+	// Since /etc/pgedge/ai-dba-collector.yaml likely doesn't exist,
+	// it should fall back to the binary directory
+	expected := "/usr/local/bin/ai-dba-collector.yaml"
+	if configPath != expected {
+		t.Errorf("Expected config path '%s', got '%s'", expected, configPath)
+	}
+}
+
+func TestConfigApplyEnvironment(t *testing.T) {
+	// Save original env vars
+	origHost := os.Getenv("PGEDGE_DB_HOST")
+	origPort := os.Getenv("PGEDGE_DB_PORT")
+	origSecret := os.Getenv("PGEDGE_SERVER_SECRET")
+
+	// Set test env vars
+	os.Setenv("PGEDGE_DB_HOST", "envhost")
+	os.Setenv("PGEDGE_DB_PORT", "5555")
+	os.Setenv("PGEDGE_SERVER_SECRET", "env-secret")
+
+	defer func() {
+		// Restore original env vars
+		if origHost == "" {
+			os.Unsetenv("PGEDGE_DB_HOST")
+		} else {
+			os.Setenv("PGEDGE_DB_HOST", origHost)
+		}
+		if origPort == "" {
+			os.Unsetenv("PGEDGE_DB_PORT")
+		} else {
+			os.Setenv("PGEDGE_DB_PORT", origPort)
+		}
+		if origSecret == "" {
+			os.Unsetenv("PGEDGE_SERVER_SECRET")
+		} else {
+			os.Setenv("PGEDGE_SERVER_SECRET", origSecret)
+		}
+	}()
+
+	config := NewConfig()
+	config.ApplyEnvironment()
+
+	if config.Datastore.Host != "envhost" {
+		t.Errorf("Expected Datastore.Host to be 'envhost', got '%s'", config.Datastore.Host)
+	}
+
+	if config.Datastore.Port != 5555 {
+		t.Errorf("Expected Datastore.Port to be 5555, got %d", config.Datastore.Port)
+	}
+
+	if config.ServerSecret != "env-secret" {
+		t.Errorf("Expected ServerSecret to be 'env-secret', got '%s'", config.ServerSecret)
+	}
+}
+
+func TestConfigGetters(t *testing.T) {
+	config := &Config{
+		Datastore: DatastoreConfig{
+			Host:        "testhost",
+			HostAddr:    "192.168.1.1",
+			Database:    "testdb",
+			Username:    "testuser",
+			Password:    "testpass",
+			Port:        5433,
+			SSLMode:     "require",
+			SSLCert:     "/path/to/cert",
+			SSLKey:      "/path/to/key",
+			SSLRootCert: "/path/to/root",
+		},
+		Pool: PoolConfig{
+			DatastoreMaxConnections: 20,
+			DatastoreMaxIdleSeconds: 120,
+			DatastoreMaxWaitSeconds: 30,
+			MonitoredMaxWaitSeconds: 45,
+		},
+	}
+
+	if config.GetPgHost() != "testhost" {
+		t.Errorf("GetPgHost() = %s, want testhost", config.GetPgHost())
+	}
+	if config.GetPgHostAddr() != "192.168.1.1" {
+		t.Errorf("GetPgHostAddr() = %s, want 192.168.1.1", config.GetPgHostAddr())
+	}
+	if config.GetPgDatabase() != "testdb" {
+		t.Errorf("GetPgDatabase() = %s, want testdb", config.GetPgDatabase())
+	}
+	if config.GetPgUsername() != "testuser" {
+		t.Errorf("GetPgUsername() = %s, want testuser", config.GetPgUsername())
+	}
+	if config.GetPgPassword() != "testpass" {
+		t.Errorf("GetPgPassword() = %s, want testpass", config.GetPgPassword())
+	}
+	if config.GetPgPort() != 5433 {
+		t.Errorf("GetPgPort() = %d, want 5433", config.GetPgPort())
+	}
+	if config.GetPgSSLMode() != "require" {
+		t.Errorf("GetPgSSLMode() = %s, want require", config.GetPgSSLMode())
+	}
+	if config.GetPgSSLCert() != "/path/to/cert" {
+		t.Errorf("GetPgSSLCert() = %s, want /path/to/cert", config.GetPgSSLCert())
+	}
+	if config.GetPgSSLKey() != "/path/to/key" {
+		t.Errorf("GetPgSSLKey() = %s, want /path/to/key", config.GetPgSSLKey())
+	}
+	if config.GetPgSSLRootCert() != "/path/to/root" {
+		t.Errorf("GetPgSSLRootCert() = %s, want /path/to/root", config.GetPgSSLRootCert())
+	}
+	if config.GetDatastorePoolMaxConnections() != 20 {
+		t.Errorf("GetDatastorePoolMaxConnections() = %d, want 20", config.GetDatastorePoolMaxConnections())
+	}
+	if config.GetDatastorePoolMaxIdleSeconds() != 120 {
+		t.Errorf("GetDatastorePoolMaxIdleSeconds() = %d, want 120", config.GetDatastorePoolMaxIdleSeconds())
+	}
+	if config.GetDatastorePoolMaxWaitSeconds() != 30 {
+		t.Errorf("GetDatastorePoolMaxWaitSeconds() = %d, want 30", config.GetDatastorePoolMaxWaitSeconds())
+	}
+	if config.GetMonitoredPoolMaxWaitSeconds() != 45 {
+		t.Errorf("GetMonitoredPoolMaxWaitSeconds() = %d, want 45", config.GetMonitoredPoolMaxWaitSeconds())
 	}
 }

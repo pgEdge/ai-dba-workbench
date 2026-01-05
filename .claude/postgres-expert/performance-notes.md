@@ -1,7 +1,7 @@
 # Performance Notes and Optimization Guide
 
 This document covers indexing strategies, performance tuning, and operational
-best practices for the pgEdge AI Workbench metadata database.
+best practices for the pgEdge AI DBA Workbench metadata database.
 
 ## Database Workload Characteristics
 

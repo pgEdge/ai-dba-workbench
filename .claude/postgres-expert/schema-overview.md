@@ -1,8 +1,8 @@
-# pgEdge AI Workbench Database Schema Overview
+# pgEdge AI DBA Workbench Database Schema Overview
 
 ## Architecture Summary
 
-The pgEdge AI Workbench uses a PostgreSQL database for its metadata storage,
+The pgEdge AI DBA Workbench uses a PostgreSQL database for its metadata storage,
 following a migration-based schema management approach. All migrations are
 embedded in the compiled binary (`collector/src/database/schema.go`), making
 deployment simple and ensuring schema consistency.

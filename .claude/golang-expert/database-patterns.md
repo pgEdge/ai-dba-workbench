@@ -1,8 +1,8 @@
 /*-----------------------------------------------------------
  *
- * pgEdge AI Workbench - Database Connection and Access Patterns
+ * pgEdge AI DBA Workbench - Database Connection and Access Patterns
  *
- * Copyright (c) 2025, pgEdge, Inc.
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
  *-----------------------------------------------------------
@@ -11,7 +11,7 @@
 # Database Connection and Access Patterns
 
 This document describes the database connection pooling, access patterns, and
-best practices used in the pgEdge AI Workbench Go backend.
+best practices used in the pgEdge AI DBA Workbench Go backend.
 
 ## Connection Pooling with pgx/v5
 
@@ -347,7 +347,7 @@ func GetConnectionString(cfg *config.Config) string {
         connStr += fmt.Sprintf(" sslrootcert=%s", cfg.GetPgSSLRootCert())
     }
 
-    connStr += " application_name='pgEdge AI Workbench - MCP Server'"
+    connStr += " application_name='pgEdge AI DBA Workbench - MCP Server'"
 
     return connStr
 }
@@ -399,7 +399,7 @@ func buildMonitoredConnectionString(
     }
 
     params["application_name"] = fmt.Sprintf(
-        "pgEdge AI Workbench - Collector [%s]", conn.Name)
+        "pgEdge AI DBA Workbench - Collector [%s]", conn.Name)
 
     return buildPostgresConnectionString(params), nil
 }

@@ -1,6 +1,6 @@
 # PostgreSQL Database Expert Documentation
 
-This directory contains comprehensive documentation of the pgEdge AI Workbench
+This directory contains comprehensive documentation of the pgEdge AI DBA Workbench
 PostgreSQL database implementation. This documentation is designed to enable
 expert-level guidance on future database development, optimization, and
 troubleshooting.
@@ -449,7 +449,7 @@ When making changes to the database schema:
 
 ## License
 
-This documentation is part of the pgEdge AI Workbench project.
+This documentation is part of the pgEdge AI DBA Workbench project.
 
-Copyright (c) 2025, pgEdge, Inc.
+Copyright (c) 2025 - 2026, pgEdge, Inc.
 This documentation is released under The PostgreSQL License.

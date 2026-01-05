@@ -1,0 +1,266 @@
+#-------------------------------------------------------------------------
+#
+# pgEdge AI DBA Workbench Collector - Example Configuration
+#
+# Copyright (c) 2025 - 2026, pgEdge, Inc.
+# This software is released under The PostgreSQL License
+#
+#-------------------------------------------------------------------------
+#
+# This is an example configuration file for the pgEdge AI DBA Workbench
+# Collector. Copy this file and customize it for your environment.
+#
+# Configuration options can be set here or overridden via command line flags.
+# Command line flags take precedence over configuration file settings.
+#
+# YAML format: key: value (note the colon, not equals sign)
+#
+#=========================================================================
+# DATASTORE CONNECTION SETTINGS
+#=========================================================================
+#
+# IMPORTANT: These settings configure the connection to the AI Workbench's
+# PostgreSQL datastore database. This is NOT the connection information
+# for the PostgreSQL servers you want to monitor.
+#
+# The datastore is a PostgreSQL database used by AI Workbench to store:
+# - Monitoring data collected from your PostgreSQL servers
+# - Connection information for monitored servers
+# - User accounts and authentication tokens
+# - Probe configurations and other system data
+#
+# Connection information for the PostgreSQL servers you want to MONITOR is
+# configured separately through the MCP server API or directly in the
+# datastore's connections table.
+#
+
+datastore:
+  # Hostname or IP address of the AI Workbench datastore PostgreSQL server
+  # Default: localhost
+  # Command-line: -pg-host
+  # Environment: PGEDGE_DB_HOST or PGHOST
+  host: localhost
+
+  # IP address of the datastore server (optional)
+  # If set, bypasses DNS resolution and connects directly to this address
+  # The host value is still used for SSL certificate verification
+  # Default: none
+  # Command-line: -pg-hostaddr
+  # Environment: PGEDGE_DB_HOSTADDR
+  # hostaddr: 127.0.0.1
+
+  # Database name in the AI Workbench datastore
+  # Default: ai_workbench
+  # Command-line: -pg-database
+  # Environment: PGEDGE_DB_NAME or PGDATABASE
+  database: ai_workbench
+
+  # Username for connecting to the AI Workbench datastore
+  # Default: postgres
+  # Command-line: -pg-username
+  # Environment: PGEDGE_DB_USER or PGUSER
+  username: postgres
+
+  # Path to file containing the password for the AI Workbench datastore
+  # The file should contain only the password with no extra whitespace
+  # Default: none (will attempt to use .pgpass if not specified)
+  # Command-line: -pg-password-file
+  # Environment: PGEDGE_DB_PASSWORD_FILE
+  #
+  # Example: Create a password file with restricted permissions:
+  #   echo "your-password" > /etc/ai-workbench/password.txt
+  #   chmod 600 /etc/ai-workbench/password.txt
+  #
+  # password_file: /etc/ai-workbench/password.txt
+
+  # Port on which the AI Workbench datastore is listening
+  # Default: 5432
+  # Range: 1-65535
+  # Command-line: -pg-port
+  # Environment: PGEDGE_DB_PORT or PGPORT
+  port: 5432
+
+  # SSL mode for the AI Workbench datastore connection
+  # Options:
+  #   disable     - No SSL (not recommended for production)
+  #   allow       - Try non-SSL first, then SSL
+  #   prefer      - Try SSL first, then non-SSL (default)
+  #   require     - Require SSL, don't verify certificate
+  #   verify-ca   - Require SSL, verify certificate against CA
+  #   verify-full - Require SSL, verify certificate and hostname
+  # Default: prefer
+  # Command-line: -pg-sslmode
+  # Environment: PGEDGE_DB_SSLMODE or PGSSLMODE
+  sslmode: prefer
+
+  # Path to client SSL certificate file (for client certificate authentication)
+  # Required when using verify-ca or verify-full SSL modes with client certs
+  # Default: none
+  # Command-line: -pg-sslcert
+  # Environment: PGEDGE_DB_SSLCERT or PGSSLCERT
+  # sslcert: /etc/ai-workbench/client-cert.pem
+
+  # Path to client SSL private key file
+  # Required when sslcert is specified
+  # Default: none
+  # Command-line: -pg-sslkey
+  # Environment: PGEDGE_DB_SSLKEY or PGSSLKEY
+  # sslkey: /etc/ai-workbench/client-key.pem
+
+  # Path to root SSL certificate file (Certificate Authority)
+  # Required when using verify-ca or verify-full SSL modes
+  # Default: none
+  # Command-line: -pg-sslrootcert
+  # Environment: PGEDGE_DB_SSLROOTCERT or PGSSLROOTCERT
+  # sslrootcert: /etc/ai-workbench/ca-cert.pem
+
+#=========================================================================
+# CONNECTION POOL SETTINGS
+#=========================================================================
+#
+# The collector maintains two types of connection pools:
+#
+# 1. DATASTORE POOL: Connections to the AI Workbench datastore database
+#    where collected metrics are stored. A single shared pool.
+#
+# 2. MONITORED POOLS: Connections to each monitored PostgreSQL server.
+#    Each monitored server gets its own independent pool with the
+#    specified limits (so 10 servers with limit 5 = 50 max connections).
+#
+
+pool:
+  #-------------------------------------------------------------------------
+  # Datastore Connection Pool
+  #-------------------------------------------------------------------------
+
+  # Maximum number of concurrent connections to the datastore
+  # This limits the total number of open connections at any time
+  # Higher values allow more concurrent probe storage operations
+  # Default: 25
+  # Recommendation: (number of probes * concurrent monitored servers) / 2
+  # Environment: PGEDGE_POOL_DATASTORE_MAX_CONNECTIONS
+  datastore_max_connections: 25
+
+  # Maximum idle time for datastore connections in seconds
+  # Connections that have been idle (returned to the pool but not reused)
+  # for longer than this duration will be automatically closed
+  # Set to 0 to disable automatic cleanup of idle connections
+  # Default: 300 (5 minutes)
+  # Environment: PGEDGE_POOL_DATASTORE_MAX_IDLE_SECONDS
+  datastore_max_idle_seconds: 300
+
+  # Maximum time (seconds) to wait for an available datastore connection
+  # Probe storage operations will fail if timeout is exceeded
+  # Default: 60
+  # Environment: PGEDGE_POOL_DATASTORE_MAX_WAIT_SECONDS
+  datastore_max_wait_seconds: 60
+
+  #-------------------------------------------------------------------------
+  # Monitored Server Connection Pools
+  #-------------------------------------------------------------------------
+
+  # Maximum concurrent connections PER monitored database server
+  # This is per-server, not total. For example:
+  #   10 servers with limit 5 = 50 max connections total
+  # Higher values allow more concurrent probe execution per server
+  # Default: 5
+  # Recommendation: Start with 5, increase if you see timeout errors
+  # Environment: PGEDGE_POOL_MONITORED_MAX_CONNECTIONS
+  monitored_max_connections: 5
+
+  # Maximum idle time for monitored connections in seconds
+  # Connections that have been idle for longer than this will be closed
+  # Default: 300 (5 minutes)
+  # Environment: PGEDGE_POOL_MONITORED_MAX_IDLE_SECONDS
+  monitored_max_idle_seconds: 300
+
+  # Maximum time (seconds) to wait for an available monitored connection
+  # Probe execution will fail if timeout is exceeded
+  # Default: 60
+  # Environment: PGEDGE_POOL_MONITORED_MAX_WAIT_SECONDS
+  monitored_max_wait_seconds: 60
+
+#=========================================================================
+# SECURITY SETTINGS
+#=========================================================================
+
+# Server secret for encryption (REQUIRED)
+#
+# This secret is used to encrypt sensitive data such as passwords for
+# monitored database connections stored in the datastore.
+#
+# IMPORTANT SECURITY NOTES:
+# - Generate a strong random string (at least 32 characters recommended)
+# - Keep this secret secure and do not share it
+# - If this secret is lost or changed, all encrypted passwords in the
+#   datastore will become unreadable and must be re-entered
+# - Use different secrets for different environments (dev, staging, prod)
+#
+# Generate a secure secret:
+#   openssl rand -base64 32
+#
+# Environment: PGEDGE_SERVER_SECRET
+#
+# WARNING: The default value below is NOT SECURE - change it immediately!
+server_secret: CHANGE-ME-TO-A-RANDOM-SECRET-STRING
+
+#=========================================================================
+# EXAMPLE CONFIGURATIONS
+#=========================================================================
+#
+# Below are example configurations for common deployment scenarios.
+# Uncomment and modify the relevant section for your environment.
+#
+
+#-------------------------------------------------------------------------
+# Development Configuration (local development, no SSL)
+#-------------------------------------------------------------------------
+# datastore:
+#   host: localhost
+#   database: ai_workbench
+#   port: 5432
+#   sslmode: disable
+# pool:
+#   datastore_max_connections: 10
+#   monitored_max_connections: 3
+# server_secret: dev-secret-change-in-production
+
+#-------------------------------------------------------------------------
+# Production Configuration (SSL with certificate verification)
+#-------------------------------------------------------------------------
+# datastore:
+#   host: datastore.internal.example.com
+#   database: ai_workbench_prod
+#   username: collector
+#   password_file: /var/secrets/ai-workbench/db-password.txt
+#   port: 5432
+#   sslmode: verify-full
+#   sslcert: /etc/ai-workbench/certs/client-cert.pem
+#   sslkey: /etc/ai-workbench/certs/client-key.pem
+#   sslrootcert: /etc/ai-workbench/certs/ca-cert.pem
+# pool:
+#   datastore_max_connections: 100
+#   datastore_max_idle_seconds: 300
+#   datastore_max_wait_seconds: 60
+#   monitored_max_connections: 10
+#   monitored_max_idle_seconds: 300
+#   monitored_max_wait_seconds: 120
+# server_secret: your-production-secret-here
+
+#-------------------------------------------------------------------------
+# High-Volume Configuration (monitoring many servers)
+#-------------------------------------------------------------------------
+# datastore:
+#   host: metrics-db.internal.example.com
+#   database: ai_workbench
+#   username: collector
+#   password_file: /etc/ai-workbench/password.txt
+#   sslmode: require
+# pool:
+#   datastore_max_connections: 200
+#   datastore_max_idle_seconds: 600
+#   datastore_max_wait_seconds: 90
+#   monitored_max_connections: 15
+#   monitored_max_idle_seconds: 600
+#   monitored_max_wait_seconds: 90
+# server_secret: high-volume-secret-here

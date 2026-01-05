@@ -1,4 +1,4 @@
-# Coverage and Code Quality - pgEdge AI Workbench
+# Coverage and Code Quality - pgEdge AI DBA Workbench
 
 This document describes code coverage measurement and quality checks for the AI Workbench project.
 

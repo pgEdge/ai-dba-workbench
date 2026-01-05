@@ -1,8 +1,8 @@
 /*-------------------------------------------------------------------------
  *
- * pgEdge AI Workbench
+ * pgEdge AI DBA Workbench
  *
- * Copyright (c) 2025, pgEdge, Inc.
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
  *-------------------------------------------------------------------------
@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 )
 
@@ -52,7 +51,7 @@ func main() {
 	logger.Init()
 	logger.SetVerbose(*verbose)
 
-	logger.Startupf("pgEdge AI Workbench Collector v%s starting...", Version)
+	logger.Startupf("pgEdge AI DBA Workbench Collector v%s starting...", Version)
 
 	// Load configuration
 	config, err := loadConfiguration()
@@ -73,8 +72,8 @@ func main() {
 
 	// Initialize monitored connection pool manager
 	logger.Infof("Creating monitored pool manager with max %d connections per server, idle timeout %ds",
-		config.MonitoredPoolMaxConnections, config.MonitoredPoolMaxIdleSeconds)
-	poolManager := database.NewMonitoredConnectionPoolManager(config.MonitoredPoolMaxConnections, config.MonitoredPoolMaxIdleSeconds)
+		config.Pool.MonitoredMaxConnections, config.Pool.MonitoredMaxIdleSeconds)
+	poolManager := database.NewMonitoredConnectionPoolManager(config.Pool.MonitoredMaxConnections, config.Pool.MonitoredMaxIdleSeconds)
 
 	// Initialize probe scheduler
 	probeScheduler := scheduler.NewProbeScheduler(ds, poolManager, config, config.ServerSecret)
@@ -118,7 +117,8 @@ func main() {
 	logger.Startup("Collector stopped")
 }
 
-// loadConfiguration loads configuration from file and command line
+// loadConfiguration loads configuration from file, environment, and command line
+// Priority (highest to lowest): CLI flags > environment variables > config file > defaults
 func loadConfiguration() (*Config, error) {
 	config := NewConfig()
 
@@ -127,12 +127,12 @@ func loadConfiguration() (*Config, error) {
 	explicitConfigPath := (configPath != "")
 
 	if configPath == "" {
-		// Default to executable directory
+		// Use default search path: /etc/pgedge/ first, then binary directory
 		exe, err := os.Executable()
 		if err != nil {
 			return nil, fmt.Errorf("failed to get executable path: %w", err)
 		}
-		configPath = filepath.Join(filepath.Dir(exe), "ai-workbench.conf")
+		configPath = GetDefaultConfigPath(exe)
 	}
 
 	// Load config file if it exists
@@ -150,8 +150,16 @@ func loadConfiguration() (*Config, error) {
 		logger.Infof("Configuration file not found: %s, using defaults", configPath)
 	}
 
-	// Override with command line flags
+	// Override with environment variables
+	config.ApplyEnvironment()
+
+	// Override with command line flags (highest priority)
 	config.ApplyFlags()
+
+	// Load password from file if specified
+	if err := config.LoadPassword(); err != nil {
+		return nil, err
+	}
 
 	return config, nil
 }

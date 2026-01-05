@@ -1,8 +1,8 @@
 /*-----------------------------------------------------------
  *
- * pgEdge AI Workbench - Testing Strategy
+ * pgEdge AI DBA Workbench - Testing Strategy
  *
- * Copyright (c) 2025, pgEdge, Inc.
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
  *-----------------------------------------------------------
@@ -11,7 +11,7 @@
 # Testing Strategy
 
 This document describes the testing approach, patterns, and best practices for
-the pgEdge AI Workbench Go backend.
+the pgEdge AI DBA Workbench Go backend.
 
 ## Testing Philosophy
 

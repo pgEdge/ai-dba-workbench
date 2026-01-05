@@ -1,8 +1,8 @@
 /*-----------------------------------------------------------
  *
- * pgEdge AI Workbench - Authentication and Authorization
+ * pgEdge AI DBA Workbench - Authentication and Authorization
  *
- * Copyright (c) 2025, pgEdge, Inc.
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
  *-----------------------------------------------------------
@@ -11,7 +11,7 @@
 # Authentication and Authorization Flow
 
 This document describes the authentication and authorization mechanisms
-implemented in the pgEdge AI Workbench server.
+implemented in the pgEdge AI DBA Workbench server.
 
 ## Authentication
 

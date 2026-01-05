@@ -1,8 +1,8 @@
 /*-----------------------------------------------------------
  *
- * pgEdge AI Workbench - Go Backend Architecture Overview
+ * pgEdge AI DBA Workbench - Go Backend Architecture Overview
  *
- * Copyright (c) 2025, pgEdge, Inc.
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
  *-----------------------------------------------------------
@@ -11,7 +11,7 @@
 # Go Backend Architecture Overview
 
 This document provides a comprehensive overview of the Go backend architecture
-for the pgEdge AI Workbench project, covering both the MCP server and collector
+for the pgEdge AI DBA Workbench project, covering both the MCP server and collector
 components.
 
 ## Project Structure

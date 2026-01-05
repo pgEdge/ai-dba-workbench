@@ -1,11 +1,11 @@
-# Design Philosophy: pgEdge AI Workbench
+# Design Philosophy: pgEdge AI DBA Workbench
 
 This document captures the core design philosophy, goals, and principles that
-guide the pgEdge AI Workbench architecture.
+guide the pgEdge AI DBA Workbench architecture.
 
 ## Primary Mission
 
-The pgEdge AI Workbench exists to enable intelligent monitoring, management,
+The pgEdge AI DBA Workbench exists to enable intelligent monitoring, management,
 and interaction with pgEdge Enterprise Postgres deployments through AI
 assistants. The system bridges the gap between database administration and AI
 reasoning by exposing PostgreSQL operational data, configuration, and

@@ -1,8 +1,8 @@
 /*-----------------------------------------------------------
  *
- * pgEdge AI Workbench - Go Code Conventions
+ * pgEdge AI DBA Workbench - Go Code Conventions
  *
- * Copyright (c) 2025, pgEdge, Inc.
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
  *-----------------------------------------------------------
@@ -11,7 +11,7 @@
 # Go Code Conventions and Best Practices
 
 This document describes the Go coding conventions, patterns, and best practices
-used in the pgEdge AI Workbench project.
+used in the pgEdge AI DBA Workbench project.
 
 ## General Principles
 
@@ -220,9 +220,9 @@ type MetricsProbe interface {
 ```go
 /*-------------------------------------------------------------------------
  *
- * pgEdge AI Workbench
+ * pgEdge AI DBA Workbench
  *
- * Copyright (c) 2025, pgEdge, Inc.
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
  *-------------------------------------------------------------------------
@@ -580,9 +580,9 @@ func (c *Cache) Set(key string, value interface{}) {
 ```go
 /*-------------------------------------------------------------------------
  *
- * pgEdge AI Workbench
+ * pgEdge AI DBA Workbench
  *
- * Copyright (c) 2025, pgEdge, Inc.
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
  *-------------------------------------------------------------------------

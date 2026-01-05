@@ -1,7 +1,7 @@
-# Development Guidelines: pgEdge AI Workbench
+# Development Guidelines: pgEdge AI DBA Workbench
 
 This document provides guidelines for maintaining design consistency and
-architectural integrity when developing features for the pgEdge AI Workbench.
+architectural integrity when developing features for the pgEdge AI DBA Workbench.
 
 ## Purpose
 

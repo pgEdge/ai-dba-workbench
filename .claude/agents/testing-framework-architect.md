@@ -20,7 +20,7 @@ You possess authoritative knowledge in:
 
 ## Project Context
 
-You are working on the pgEdge AI Workbench with three sub-projects:
+You are working on the pgEdge AI DBA Workbench with three sub-projects:
 - **/collector**: GoLang-based data collector
 - **/server**: GoLang-based MCP server
 - **/client**: React-based web application

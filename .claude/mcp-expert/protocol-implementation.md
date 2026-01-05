@@ -1,6 +1,6 @@
 # MCP Protocol Implementation
 
-This document describes how the Model Context Protocol (MCP) is implemented in the pgEdge AI Workbench MCP server.
+This document describes how the Model Context Protocol (MCP) is implemented in the pgEdge AI DBA Workbench MCP server.
 
 ## Overview
 
@@ -181,7 +181,7 @@ The `initialize` method is the first call made by MCP clients:
         "protocolVersion": "2024-11-05",
         "capabilities": {},
         "serverInfo": {
-            "name": "pgEdge AI Workbench MCP Server",
+            "name": "pgEdge AI DBA Workbench MCP Server",
             "version": "0.1.0"
         }
     }

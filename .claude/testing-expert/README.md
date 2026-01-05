@@ -1,6 +1,6 @@
 # Testing Expert Knowledge Base
 
-This directory contains comprehensive documentation about testing infrastructure, patterns, and best practices for the pgEdge AI Workbench project.
+This directory contains comprehensive documentation about testing infrastructure, patterns, and best practices for the pgEdge AI DBA Workbench project.
 
 ## Purpose
 

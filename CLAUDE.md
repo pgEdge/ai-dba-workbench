@@ -5,13 +5,13 @@
 
 ## Project Structure
 
-* The pgEdge AI Workbench data collector is implemented in the /collector 
+* The pgEdge AI DBA Workbench data collector is implemented in the /collector 
     directory.
 
-* The pgEdge AI Workbench web client application is implemented in the /client 
+* The pgEdge AI DBA Workbench web client application is implemented in the /client 
     directory.
 
-* The pgEdge AI Workbench MCP server is implemented in the /server directory.
+* The pgEdge AI DBA Workbench MCP server is implemented in the /server directory.
 
 * All three sub projects should follow the following base structure.
 
@@ -113,9 +113,9 @@
 
         > /*-----------------------------------------------------------
         >  *
-        >  * pgEdge AI Workbench
+        >  * pgEdge AI DBA Workbench
         >  *
-        >  * Copyright (c) 2025, pgEdge, Inc.
+        >  * Copyright (c) 2025 - 2026, pgEdge, Inc.
         >  * This software is released under The PostgreSQL License
         >  *
         >  *-----------------------------------------------------------

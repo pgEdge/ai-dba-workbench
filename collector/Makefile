@@ -1,21 +1,31 @@
 #-------------------------------------------------------------------------
 #
-# pgEdge AI Workbench Collector Makefile
+# pgEdge AI DBA Workbench Collector Makefile
 #
-# Copyright (c) 2025, pgEdge, Inc.
+# Copyright (c) 2025 - 2026, pgEdge, Inc.
 # This software is released under The PostgreSQL License
 #
 #-------------------------------------------------------------------------
 
 .PHONY: all build test lint clean vet fmt help killall test-all
 
+# Binary output directory (can be overridden by parent Makefile)
+BIN_DIR ?= .
+
+# Binary name
+BINARY := ai-dba-collector
+
+# Get absolute path to output directory
+ABS_BIN_DIR := $(abspath $(BIN_DIR))
+
 # Default target
 all: build
 
 # Build the collector binary
 build:
-	@echo "Building collector..."
-	cd src && go build -o ../collector
+	@echo "Building ai-dba-collector..."
+	@mkdir -p $(ABS_BIN_DIR)
+	cd src && go build -o $(ABS_BIN_DIR)/$(BINARY) .
 
 # Run tests
 test: killall
@@ -48,7 +58,7 @@ coverage:
 # Clean build artifacts
 clean:
 	@echo "Cleaning..."
-	rm -f collector
+	rm -f $(ABS_BIN_DIR)/$(BINARY)
 	rm -f src/coverage.out src/coverage.html
 
 # Install dependencies
@@ -81,8 +91,10 @@ help:
 	@echo "  check     - Run all checks (fmt, vet, test, lint)"
 	@echo "  killall   - Kill any running collector processes"
 	@echo "  help      - Show this help message"
+	@echo ""
+	@echo "Binary is built to: $(ABS_BIN_DIR)/$(BINARY)"
 
 # Kill all running collector processes
 killall:
-	@pkill -9 collector 2>/dev/null || true
+	@pkill -9 ai-dba-collector 2>/dev/null || true
 	@pkill -9 -f "go run.*collector" 2>/dev/null || true

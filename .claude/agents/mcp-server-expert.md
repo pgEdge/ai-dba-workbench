@@ -36,7 +36,7 @@ When providing guidance, you will:
    - Testing approaches
    - Common pitfalls and how to avoid them
 
-3. **Follow Project Standards**: When working within the pgEdge AI Workbench context:
+3. **Follow Project Standards**: When working within the pgEdge AI DBA Workbench context:
    - Adhere to the four-space indentation standard
    - Recommend isolation between user sessions
    - Emphasize defensive security practices

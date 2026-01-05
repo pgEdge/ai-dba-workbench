@@ -1,26 +1,33 @@
 # Configuration Guide
 
-This guide explains how to configure the pgEdge AI Workbench Collector for
+This guide explains how to configure the pgEdge AI DBA Workbench Collector for
 your environment.
 
 ## Configuration Sources
 
-The Collector supports configuration through two sources:
+The Collector supports configuration through three sources:
 
-1. **Configuration File**: A simple key-value file
-2. **Command-Line Flags**: Override config file settings
+1. **Configuration File**: A YAML file with hierarchical settings
+2. **Environment Variables**: Override config file settings
+3. **Command-Line Flags**: Override both config file and environment settings
 
-Command-line flags take precedence over configuration file settings.
+Priority (highest to lowest): Command-line flags > Environment variables >
+Config file > Defaults.
 
 ## Configuration File
 
 ### File Location
 
-By default, the Collector looks for `ai-workbench.conf` in the same directory
-as the executable. You can specify a different location:
+By default, the Collector searches for its configuration file in these
+locations (in order):
+
+1. `/etc/pgedge/ai-dba-collector.yaml` (system-wide)
+2. `ai-dba-collector.yaml` in the same directory as the executable
+
+You can specify a different location:
 
 ```bash
-./collector -config /path/to/custom-config.conf
+./ai-dba-collector -config /path/to/custom-config.yaml
 ```
 
 If no config file is specified and the default file doesn't exist, the
@@ -28,85 +35,95 @@ Collector will use built-in defaults.
 
 ### File Format
 
-The configuration file uses a simple key-value format:
+The configuration file uses YAML format with nested sections:
 
-```ini
+```yaml
 # Comments start with #
-key = value
-another_key = "quoted value"
 
-# Values can be unquoted
-pg_host = localhost
+# Top-level settings
+server_secret: your-secret-here
 
-# Or quoted (useful for values with spaces)
-pg_host = "db.example.com"
+# Nested sections
+datastore:
+  host: localhost
+  port: 5432
+  database: ai_workbench
+
+pool:
+  datastore_max_connections: 25
+  monitored_max_connections: 5
 ```
 
 **Rules:**
 
 - Lines starting with `#` are comments
-- Format: `key = value`
-- Whitespace around `=` is trimmed
-- Quoted values (`"value"`) have quotes removed
+- Nested values use indentation (2 spaces recommended)
+- String values can be quoted or unquoted
 - Empty lines are ignored
 
 ### Sample Configuration
 
-See the complete sample configuration file:
-[ai-workbench.conf.sample](../../configs/ai-workbench.conf.sample)
+See the complete example configuration file:
+[ai-dba-collector.yaml](https://github.com/pgEdge/ai-workbench/blob/main/examples/ai-dba-collector.yaml)
 
 ## Configuration Options
 
 ### Datastore Connection Settings
 
 These settings configure the connection to the Collector's datastore
-(PostgreSQL database).
+(PostgreSQL database). All datastore settings are under the `datastore:`
+section.
 
-#### pg_host
+#### datastore.host
 
 PostgreSQL server hostname or IP address.
 
 - **Type**: string
 - **Default**: `localhost`
-- **Example**: `pg_host = prod-db.example.com`
+- **Example**: `host: prod-db.example.com`
 - **Command-line**: `-pg-host`
+- **Environment**: `PGEDGE_DB_HOST` or `PGHOST`
 
-#### pg_hostaddr
+#### datastore.hostaddr
 
 PostgreSQL server IP address (optional, bypasses DNS lookup).
 
 - **Type**: string
 - **Default**: none
-- **Example**: `pg_hostaddr = 192.168.1.100`
+- **Example**: `hostaddr: 192.168.1.100`
 - **Command-line**: `-pg-hostaddr`
-- **Note**: If set, used instead of `pg_host` for connection
+- **Environment**: `PGEDGE_DB_HOSTADDR`
+- **Note**: If set, used instead of `host` for connection
 
-#### pg_database
+#### datastore.database
 
 Database name for the Collector's datastore.
 
 - **Type**: string
 - **Default**: `ai_workbench`
-- **Example**: `pg_database = metrics_db`
+- **Example**: `database: metrics_db`
 - **Command-line**: `-pg-database`
+- **Environment**: `PGEDGE_DB_NAME` or `PGDATABASE`
 
-#### pg_username
+#### datastore.username
 
 Username for datastore connection.
 
 - **Type**: string
 - **Default**: `postgres`
-- **Example**: `pg_username = collector`
+- **Example**: `username: collector`
 - **Command-line**: `-pg-username`
+- **Environment**: `PGEDGE_DB_USER` or `PGUSER`
 
-#### pg_password_file
+#### datastore.password_file
 
 Path to file containing the datastore password.
 
 - **Type**: string (file path)
 - **Default**: none
-- **Example**: `pg_password_file = /etc/ai-workbench/password.txt`
+- **Example**: `password_file: /etc/ai-workbench/password.txt`
 - **Command-line**: `-pg-password-file`
+- **Environment**: `PGEDGE_DB_PASSWORD_FILE`
 - **Note**: File should contain only the password, no extra whitespace
 
 **Example password file:**
@@ -117,17 +134,18 @@ echo "my-secure-password" > /etc/ai-workbench/password.txt
 chmod 600 /etc/ai-workbench/password.txt
 ```
 
-#### pg_port
+#### datastore.port
 
 PostgreSQL server port number.
 
 - **Type**: integer
 - **Default**: `5432`
 - **Range**: 1-65535
-- **Example**: `pg_port = 5433`
+- **Example**: `port: 5433`
 - **Command-line**: `-pg-port`
+- **Environment**: `PGEDGE_DB_PORT` or `PGPORT`
 
-#### pg_sslmode
+#### datastore.sslmode
 
 SSL/TLS mode for datastore connection.
 
@@ -135,8 +153,9 @@ SSL/TLS mode for datastore connection.
 - **Default**: `prefer`
 - **Options**: `disable`, `allow`, `prefer`, `require`, `verify-ca`,
   `verify-full`
-- **Example**: `pg_sslmode = require`
+- **Example**: `sslmode: require`
 - **Command-line**: `-pg-sslmode`
+- **Environment**: `PGEDGE_DB_SSLMODE` or `PGSSLMODE`
 
 **SSL Modes:**
 
@@ -147,93 +166,102 @@ SSL/TLS mode for datastore connection.
 - `verify-ca`: Require SSL, verify certificate against CA
 - `verify-full`: Require SSL, verify certificate and hostname
 
-#### pg_sslcert
+#### datastore.sslcert
 
 Path to client SSL certificate file.
 
 - **Type**: string (file path)
 - **Default**: none
-- **Example**: `pg_sslcert = /etc/ai-workbench/client-cert.pem`
+- **Example**: `sslcert: /etc/ai-workbench/client-cert.pem`
 - **Command-line**: `-pg-sslcert`
-- **Note**: Used with `pg_sslmode = verify-ca` or `verify-full`
+- **Environment**: `PGEDGE_DB_SSLCERT` or `PGSSLCERT`
+- **Note**: Used with `sslmode: verify-ca` or `verify-full`
 
-#### pg_sslkey
+#### datastore.sslkey
 
 Path to client SSL private key file.
 
 - **Type**: string (file path)
 - **Default**: none
-- **Example**: `pg_sslkey = /etc/ai-workbench/client-key.pem`
+- **Example**: `sslkey: /etc/ai-workbench/client-key.pem`
 - **Command-line**: `-pg-sslkey`
+- **Environment**: `PGEDGE_DB_SSLKEY` or `PGSSLKEY`
 - **Note**: Used with client certificates
 
-#### pg_sslrootcert
+#### datastore.sslrootcert
 
 Path to root CA certificate file.
 
 - **Type**: string (file path)
 - **Default**: none
-- **Example**: `pg_sslrootcert = /etc/ai-workbench/ca-cert.pem`
+- **Example**: `sslrootcert: /etc/ai-workbench/ca-cert.pem`
 - **Command-line**: `-pg-sslrootcert`
+- **Environment**: `PGEDGE_DB_SSLROOTCERT` or `PGSSLROOTCERT`
 - **Note**: Used to verify server certificate
 
 ### Connection Pool Settings
 
 These settings control connection pool behavior for both the datastore and
-monitored connections.
+monitored connections. All pool settings are under the `pool:` section.
 
-#### datastore_pool_max_connections
+#### pool.datastore_max_connections
 
 Maximum number of concurrent connections to the datastore.
 
 - **Type**: integer
 - **Default**: `25`
-- **Example**: `datastore_pool_max_connections = 50`
+- **Example**: `datastore_max_connections: 50`
+- **Environment**: `PGEDGE_POOL_DATASTORE_MAX_CONNECTIONS`
 - **Note**: Higher values allow more concurrent probe storage operations
 
-#### datastore_pool_max_idle_seconds
+#### pool.datastore_max_idle_seconds
 
 Maximum idle time (seconds) before closing idle datastore connections.
 
 - **Type**: integer
 - **Default**: `300` (5 minutes)
-- **Example**: `datastore_pool_max_idle_seconds = 600`
+- **Example**: `datastore_max_idle_seconds: 600`
+- **Environment**: `PGEDGE_POOL_DATASTORE_MAX_IDLE_SECONDS`
 - **Note**: Set to 0 to disable idle connection cleanup
 
-#### datastore_pool_max_wait_seconds
+#### pool.datastore_max_wait_seconds
 
 Maximum time (seconds) to wait for an available datastore connection.
 
 - **Type**: integer
 - **Default**: `60`
-- **Example**: `datastore_pool_max_wait_seconds = 120`
+- **Example**: `datastore_max_wait_seconds: 120`
+- **Environment**: `PGEDGE_POOL_DATASTORE_MAX_WAIT_SECONDS`
 - **Note**: Probe storage operations will fail if timeout is exceeded
 
-#### monitored_pool_max_connections
+#### pool.monitored_max_connections
 
 Maximum concurrent connections PER monitored database server.
 
 - **Type**: integer
 - **Default**: `5`
-- **Example**: `monitored_pool_max_connections = 10`
+- **Example**: `monitored_max_connections: 10`
+- **Environment**: `PGEDGE_POOL_MONITORED_MAX_CONNECTIONS`
 - **Note**: This is per-server, not total. 10 servers with limit 5 = 50 max
   connections
 
-#### monitored_pool_max_idle_seconds
+#### pool.monitored_max_idle_seconds
 
 Maximum idle time (seconds) before closing idle monitored connections.
 
 - **Type**: integer
 - **Default**: `300` (5 minutes)
-- **Example**: `monitored_pool_max_idle_seconds = 600`
+- **Example**: `monitored_max_idle_seconds: 600`
+- **Environment**: `PGEDGE_POOL_MONITORED_MAX_IDLE_SECONDS`
 
-#### monitored_pool_max_wait_seconds
+#### pool.monitored_max_wait_seconds
 
 Maximum time (seconds) to wait for an available monitored connection.
 
 - **Type**: integer
 - **Default**: `60`
-- **Example**: `monitored_pool_max_wait_seconds = 120`
+- **Example**: `monitored_max_wait_seconds: 120`
+- **Environment**: `PGEDGE_POOL_MONITORED_MAX_WAIT_SECONDS`
 - **Note**: Probe execution will fail if timeout is exceeded
 
 ### Security Settings
@@ -244,7 +272,8 @@ Per-installation secret for encryption (REQUIRED).
 
 - **Type**: string
 - **Default**: none
-- **Example**: `server_secret = randomly-generated-secret-string`
+- **Example**: `server_secret: randomly-generated-secret-string`
+- **Environment**: `PGEDGE_SERVER_SECRET`
 - **Note**: Used to encrypt/decrypt passwords for monitored connections
 - **Important**: Keep this secret secure. If lost, passwords must be re-entered
 
@@ -259,8 +288,8 @@ openssl rand -base64 32
 All datastore connection options can be specified as command-line flags:
 
 ```bash
-./collector \
-    -config /path/to/config.conf \
+./ai-dba-collector \
+    -config /path/to/config.yaml \
     -pg-host localhost \
     -pg-database ai_workbench \
     -pg-username collector \
@@ -270,99 +299,105 @@ All datastore connection options can be specified as command-line flags:
 ```
 
 **Note**: Connection pool and security settings can only be configured in the
-configuration file.
+configuration file or via environment variables.
 
 ## Configuration Examples
 
 ### Minimal Configuration
 
-```ini
+```yaml
 # Minimal working configuration
-pg_host = localhost
-pg_database = ai_workbench
-pg_username = collector
-pg_password_file = /etc/ai-workbench/password.txt
-server_secret = your-random-secret-here
+datastore:
+  host: localhost
+  database: ai_workbench
+  username: collector
+  password_file: /etc/ai-workbench/password.txt
+
+server_secret: your-random-secret-here
 ```
 
 ### Production Configuration
 
-```ini
+```yaml
 # Production configuration with SSL and tuned pools
 
 # Datastore connection
-pg_host = datastore.internal.example.com
-pg_database = ai_workbench_prod
-pg_username = collector_prod
-pg_password_file = /var/secrets/ai-workbench/db-password.txt
-pg_port = 5432
-pg_sslmode = verify-full
-pg_sslcert = /etc/ai-workbench/certs/client-cert.pem
-pg_sslkey = /etc/ai-workbench/certs/client-key.pem
-pg_sslrootcert = /etc/ai-workbench/certs/ca-cert.pem
+datastore:
+  host: datastore.internal.example.com
+  database: ai_workbench_prod
+  username: collector_prod
+  password_file: /var/secrets/ai-workbench/db-password.txt
+  port: 5432
+  sslmode: verify-full
+  sslcert: /etc/ai-workbench/certs/client-cert.pem
+  sslkey: /etc/ai-workbench/certs/client-key.pem
+  sslrootcert: /etc/ai-workbench/certs/ca-cert.pem
 
 # Connection pools (tuned for 50 monitored servers)
-datastore_pool_max_connections = 100
-datastore_pool_max_idle_seconds = 300
-datastore_pool_max_wait_seconds = 60
-monitored_pool_max_connections = 10
-monitored_pool_max_idle_seconds = 300
-monitored_pool_max_wait_seconds = 120
+pool:
+  datastore_max_connections: 100
+  datastore_max_idle_seconds: 300
+  datastore_max_wait_seconds: 60
+  monitored_max_connections: 10
+  monitored_max_idle_seconds: 300
+  monitored_max_wait_seconds: 120
 
 # Security
-server_secret = production-secret-from-secure-storage
+server_secret: production-secret-from-secure-storage
 ```
 
 ### Development Configuration
 
-```ini
+```yaml
 # Development configuration with minimal security
 
-pg_host = localhost
-pg_database = ai_workbench_dev
-pg_username = postgres
-pg_password_file = ~/.pgpass
-pg_port = 5432
-pg_sslmode = disable
+datastore:
+  host: localhost
+  database: ai_workbench_dev
+  username: postgres
+  port: 5432
+  sslmode: disable
 
 # Smaller pools for development
-datastore_pool_max_connections = 10
-monitored_pool_max_connections = 3
+pool:
+  datastore_max_connections: 10
+  monitored_max_connections: 3
 
 # Development secret (DO NOT USE IN PRODUCTION)
-server_secret = dev-secret-not-for-production
+server_secret: dev-secret-not-for-production
 ```
 
 ### High-Volume Configuration
 
-```ini
+```yaml
 # Configuration for monitoring many servers with high frequency
 
 # Datastore on dedicated server
-pg_host = metrics-db.internal.example.com
-pg_database = ai_workbench
-pg_username = collector
-pg_password_file = /etc/ai-workbench/password.txt
-pg_sslmode = require
+datastore:
+  host: metrics-db.internal.example.com
+  database: ai_workbench
+  username: collector
+  password_file: /etc/ai-workbench/password.txt
+  sslmode: require
 
 # Large connection pools for high concurrency
-datastore_pool_max_connections = 200
-monitored_pool_max_connections = 15
-datastore_pool_max_wait_seconds = 90
-monitored_pool_max_wait_seconds = 90
+pool:
+  datastore_max_connections: 200
+  monitored_max_connections: 15
+  datastore_max_wait_seconds: 90
+  monitored_max_wait_seconds: 90
+  # Longer idle timeout to keep connections warm
+  datastore_max_idle_seconds: 600
+  monitored_max_idle_seconds: 600
 
-# Longer idle timeout to keep connections warm
-datastore_pool_max_idle_seconds = 600
-monitored_pool_max_idle_seconds = 600
-
-server_secret = high-volume-secret
+server_secret: high-volume-secret
 ```
 
 ## Tuning Guidelines
 
 ### Datastore Pool Size
 
-Choose `datastore_pool_max_connections` based on:
+Choose `datastore_max_connections` based on:
 
 - **Number of probes**: Each probe may need a connection to store metrics
 - **Collection frequency**: More frequent collections need more connections
@@ -374,7 +409,7 @@ Choose `datastore_pool_max_connections` based on:
 
 ### Monitored Pool Size
 
-Choose `monitored_pool_max_connections` based on:
+Choose `monitored_max_connections` based on:
 
 - **Probe concurrency**: How many probes might run simultaneously
 - **Monitored server capacity**: Don't overwhelm monitored servers
@@ -384,7 +419,7 @@ Choose `monitored_pool_max_connections` based on:
 
 ### Idle Timeout
 
-Choose `*_pool_max_idle_seconds` based on:
+Choose `*_max_idle_seconds` based on:
 
 - **Connection cost**: Longer timeout if connections are expensive to create
 - **Resource constraints**: Shorter timeout if resources are limited
@@ -394,7 +429,7 @@ Choose `*_pool_max_idle_seconds` based on:
 
 ### Wait Timeout
 
-Choose `*_pool_max_wait_seconds` based on:
+Choose `*_max_wait_seconds` based on:
 
 - **Expected wait time**: How long is acceptable to wait
 - **Failure strategy**: Shorter timeout fails faster
@@ -412,10 +447,9 @@ Choose `*_pool_max_wait_seconds` based on:
 
 ### "Failed to parse configuration"
 
-- Check for syntax errors in the config file
-- Ensure key=value format is correct
-- Remove any special characters from values
-- Quote values containing spaces
+- Check for YAML syntax errors (indentation, colons)
+- Ensure nested keys are properly indented
+- Validate YAML syntax using an online validator
 
 ### "Invalid configuration"
 
@@ -425,14 +459,14 @@ Choose `*_pool_max_wait_seconds` based on:
 
 ### "Too many connections"
 
-- Reduce `datastore_pool_max_connections`
-- Reduce `monitored_pool_max_connections`
+- Reduce `datastore_max_connections`
+- Reduce `monitored_max_connections`
 - Check monitored servers' max_connections setting
 - Verify other clients aren't consuming connections
 
 ### "Connection timeout"
 
-- Increase `*_pool_max_wait_seconds`
+- Increase `*_max_wait_seconds`
 - Increase pool sizes
 - Check network connectivity
 - Verify database servers are responsive
@@ -444,7 +478,7 @@ Choose `*_pool_max_wait_seconds` based on:
 1. **File Permissions**: Set restrictive permissions on config files
 
    ```bash
-   chmod 600 /etc/ai-workbench/collector.conf
+   chmod 600 /etc/pgedge/ai-dba-collector.yaml
    chmod 600 /etc/ai-workbench/password.txt
    ```
 
@@ -462,11 +496,12 @@ Choose `*_pool_max_wait_seconds` based on:
 
 For production, always use SSL:
 
-```ini
-pg_sslmode = verify-full
-pg_sslcert = /path/to/client-cert.pem
-pg_sslkey = /path/to/client-key.pem
-pg_sslrootcert = /path/to/ca-cert.pem
+```yaml
+datastore:
+  sslmode: verify-full
+  sslcert: /path/to/client-cert.pem
+  sslkey: /path/to/client-key.pem
+  sslrootcert: /path/to/ca-cert.pem
 ```
 
 Generate certificates using your organization's PKI or:

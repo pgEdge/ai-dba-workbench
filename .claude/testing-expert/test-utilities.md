@@ -1,4 +1,4 @@
-# Test Utilities Reference - pgEdge AI Workbench
+# Test Utilities Reference - pgEdge AI DBA Workbench
 
 This document provides detailed information about available test utilities and how to use them.
 

@@ -54,21 +54,23 @@ GRANT ALL PRIVILEGES ON DATABASE ai_workbench_dev TO collector_dev;
 
 ### 5. Create Development Config
 
-Copy and edit the sample config:
+Copy and edit the example config:
 
 ```bash
-cp ../configs/ai-workbench.conf.sample ai-workbench-dev.conf
+cp ../examples/ai-dba-collector.yaml ai-dba-collector-dev.yaml
 ```
 
 Edit with your settings:
 
-```ini
-pg_host = localhost
-pg_database = ai_workbench_dev
-pg_username = collector_dev
-pg_password_file = dev-password.txt
-pg_sslmode = disable
-server_secret = dev-secret-not-for-production
+```yaml
+datastore:
+  host: localhost
+  database: ai_workbench_dev
+  username: collector_dev
+  password_file: dev-password.txt
+  sslmode: disable
+
+server_secret: dev-secret-not-for-production
 ```
 
 ## Project Structure
@@ -142,7 +144,7 @@ go build -o collector
 ### Development Mode
 
 ```bash
-./collector -config ai-workbench-dev.conf
+./ai-dba-collector -config ai-dba-collector-dev.yaml
 ```
 
 ### With Verbose Logging
@@ -150,7 +152,7 @@ go build -o collector
 The collector uses Go's standard log package. To see all output:
 
 ```bash
-./collector -config ai-workbench-dev.conf 2>&1 | tee collector.log
+./ai-dba-collector -config ai-dba-collector-dev.yaml 2>&1 | tee collector.log
 ```
 
 ## Testing
@@ -319,7 +321,7 @@ Debug the collector:
 
 ```bash
 cd src
-dlv debug -- -config ../ai-workbench-dev.conf
+dlv debug -- -config ../ai-dba-collector-dev.yaml
 ```
 
 Set breakpoints and run:
@@ -492,8 +494,10 @@ go mod verify
 
 ### Project Resources
 
-- [DESIGN.md](../../DESIGN.md) - Overall system design
-- [CLAUDE.md](../../CLAUDE.md) - Project guidelines
+- [DESIGN.md](https://github.com/pgEdge/ai-workbench/blob/main/DESIGN.md) -
+  Overall system design
+- [CLAUDE.md](https://github.com/pgEdge/ai-workbench/blob/main/CLAUDE.md) -
+  Project guidelines
 - [Testing Guide](testing.md) - Detailed testing information
 
 ## See Also

@@ -1,4 +1,4 @@
-# pgEdge AI Workbench Design
+# pgEdge AI DBA Workbench Design
 
 > This document provides architectural context for Claude Code when working on
 > this project. It supplements the instructions in CLAUDE.md.

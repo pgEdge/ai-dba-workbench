@@ -1,6 +1,6 @@
 # MCP Authentication and Authorization
 
-This document describes the authentication and authorization mechanisms in the pgEdge AI Workbench MCP server.
+This document describes the authentication and authorization mechanisms in the pgEdge AI DBA Workbench MCP server.
 
 ## Overview
 

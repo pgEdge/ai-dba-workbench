@@ -13,7 +13,7 @@ All migrations are embedded directly in the compiled binary via
 
 ## Deployment
 
-When deploying the pgEdge AI Workbench, you only need to ship the compiled
+When deploying the pgEdge AI DBA Workbench, you only need to ship the compiled
 binary. No SQL files need to be included in the distribution package.
 
 The collector binary contains all migration SQL embedded within it and will

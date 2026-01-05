@@ -1,0 +1,451 @@
+#-------------------------------------------------------------------------
+#
+# pgEdge AI DBA Workbench Server - Example Configuration
+#
+# Copyright (c) 2025 - 2026, pgEdge, Inc.
+# This software is released under The PostgreSQL License
+#
+#-------------------------------------------------------------------------
+#
+# This is an example configuration file for the pgEdge AI DBA Workbench
+# MCP (Model Context Protocol) Server. Copy this file and customize it
+# for your environment.
+#
+# Default config file search paths (in order):
+#   1. Explicitly specified via --config flag
+#   2. /etc/pgedge/pgedge-postgres-mcp.yaml (system-wide)
+#   3. ./pgedge-postgres-mcp.yaml (binary directory)
+#
+# Configuration priority (highest to lowest):
+#   1. Command line flags
+#   2. Environment variables
+#   3. Configuration file
+#   4. Built-in defaults
+#
+#=========================================================================
+# HTTP SERVER CONFIGURATION
+#=========================================================================
+#
+# The MCP server exposes an HTTP/HTTPS API for clients to connect to.
+#
+http:
+  # Enable HTTP server mode
+  # Default: false
+  # Environment variable: PGEDGE_HTTP_ENABLED
+  enabled: true
+
+  # Address to listen on (host:port or :port for all interfaces)
+  # Default: :8080
+  # Environment variable: PGEDGE_HTTP_ADDRESS
+  address: ":8080"
+
+  #-----------------------------------------------------------------------
+  # TLS/HTTPS Configuration
+  #-----------------------------------------------------------------------
+  tls:
+    # Enable TLS/HTTPS
+    # Default: false
+    # Environment variable: PGEDGE_TLS_ENABLED
+    enabled: false
+
+    # Path to TLS certificate file
+    # Required when tls.enabled is true
+    # Environment variable: PGEDGE_TLS_CERT_FILE
+    # cert_file: "/etc/ai-workbench/certs/server-cert.pem"
+
+    # Path to TLS private key file
+    # Required when tls.enabled is true
+    # Environment variable: PGEDGE_TLS_KEY_FILE
+    # key_file: "/etc/ai-workbench/certs/server-key.pem"
+
+    # Path to TLS certificate chain file (optional)
+    # Environment variable: PGEDGE_TLS_CHAIN_FILE
+    # chain_file: "/etc/ai-workbench/certs/chain.pem"
+
+  #-----------------------------------------------------------------------
+  # Authentication Configuration
+  #-----------------------------------------------------------------------
+  auth:
+    # Enable authentication (strongly recommended for production)
+    # Default: true
+    # Environment variable: PGEDGE_AUTH_ENABLED
+    enabled: true
+
+    # Path to token configuration file
+    # Contains pre-generated API tokens for service accounts
+    # Environment variable: PGEDGE_AUTH_TOKEN_FILE
+    # token_file: "/etc/ai-workbench/tokens.yaml"
+
+    # Path to user configuration file
+    # Contains user accounts for interactive authentication
+    # Environment variable: PGEDGE_AUTH_USER_FILE
+    # user_file: "/etc/ai-workbench/users.yaml"
+
+    # Account lockout after N failed login attempts (0 = disabled)
+    # Default: 0 (disabled)
+    # Environment variable: PGEDGE_AUTH_MAX_FAILED_ATTEMPTS_BEFORE_LOCKOUT
+    max_failed_attempts_before_lockout: 0
+
+    # Rate limiting time window in minutes
+    # Default: 15
+    # Environment variable: PGEDGE_AUTH_RATE_LIMIT_WINDOW_MINUTES
+    rate_limit_window_minutes: 15
+
+    # Maximum failed attempts per IP in the time window
+    # Default: 10
+    # Environment variable: PGEDGE_AUTH_RATE_LIMIT_MAX_ATTEMPTS
+    rate_limit_max_attempts: 10
+
+#=========================================================================
+# DATABASE CONNECTION
+#=========================================================================
+#
+# The server connects to the AI Workbench datastore (PostgreSQL database)
+# which stores user accounts, tokens, connections, and collected metrics.
+#
+database:
+  # Database host
+  # Default: localhost
+  # Environment variables: PGEDGE_DB_HOST, PGHOST
+  host: "localhost"
+
+  # Database port
+  # Default: 5432
+  # Environment variables: PGEDGE_DB_PORT, PGPORT
+  port: 5432
+
+  # Database name
+  # Default: postgres
+  # Environment variables: PGEDGE_DB_NAME, PGDATABASE
+  database: "ai_workbench"
+
+  # Database user
+  # Required - there is no default
+  # Environment variables: PGEDGE_DB_USER, PGUSER
+  user: "postgres"
+
+  # Database password
+  # If not set, will use .pgpass file automatically
+  # Environment variables: PGEDGE_DB_PASSWORD, PGPASSWORD
+  # password: ""
+
+  # SSL mode: disable, require, verify-ca, verify-full
+  # Default: prefer
+  # Environment variables: PGEDGE_DB_SSLMODE, PGSSLMODE
+  sslmode: "prefer"
+
+  #-----------------------------------------------------------------------
+  # Connection Pool Settings
+  #-----------------------------------------------------------------------
+
+  # Maximum number of connections in the pool
+  # Default: 4
+  pool_max_conns: 4
+
+  # Minimum number of connections in the pool
+  # Default: 0
+  pool_min_conns: 0
+
+  # Maximum time a connection can be idle before being closed
+  # Default: 30m
+  pool_max_conn_idle_time: "30m"
+
+#=========================================================================
+# EMBEDDING GENERATION
+#=========================================================================
+#
+# The server can generate text embeddings for vector similarity search.
+# This is optional and disabled by default.
+#
+embedding:
+  # Enable embedding generation
+  # Default: false
+  # Environment variable: PGEDGE_EMBEDDING_ENABLED
+  enabled: false
+
+  # Embedding provider: "voyage", "openai", or "ollama"
+  # Default: ollama
+  # Environment variable: PGEDGE_EMBEDDING_PROVIDER
+  provider: "ollama"
+
+  # Embedding model name
+  # Default depends on provider:
+  #   - voyage: voyage-3
+  #   - openai: text-embedding-3-small
+  #   - ollama: nomic-embed-text
+  # Environment variable: PGEDGE_EMBEDDING_MODEL
+  model: "nomic-embed-text"
+
+  #-----------------------------------------------------------------------
+  # Voyage AI Configuration
+  #-----------------------------------------------------------------------
+
+  # Voyage AI API key
+  # Environment variables: PGEDGE_VOYAGE_API_KEY, VOYAGE_API_KEY
+  # voyage_api_key: ""
+
+  # Path to file containing Voyage API key
+  # voyage_api_key_file: "~/.voyage-api-key"
+
+  #-----------------------------------------------------------------------
+  # OpenAI Configuration
+  #-----------------------------------------------------------------------
+
+  # OpenAI API key for embeddings
+  # Environment variables: PGEDGE_OPENAI_API_KEY, OPENAI_API_KEY
+  # openai_api_key: ""
+
+  # Path to file containing OpenAI API key
+  # openai_api_key_file: "~/.openai-api-key"
+
+  #-----------------------------------------------------------------------
+  # Ollama Configuration
+  #-----------------------------------------------------------------------
+
+  # Ollama service URL
+  # Default: http://localhost:11434
+  # Environment variable: PGEDGE_OLLAMA_URL
+  ollama_url: "http://localhost:11434"
+
+#=========================================================================
+# LLM CONFIGURATION (Web Client Chat Proxy)
+#=========================================================================
+#
+# The server can proxy LLM requests for web clients that don't have
+# direct access to LLM APIs. This is optional and disabled by default.
+#
+llm:
+  # Enable LLM proxy
+  # Default: false
+  # Environment variable: PGEDGE_LLM_ENABLED
+  enabled: false
+
+  # LLM provider: "anthropic", "openai", or "ollama"
+  # Default: anthropic
+  # Environment variable: PGEDGE_LLM_PROVIDER
+  provider: "anthropic"
+
+  # Model name
+  # Default: claude-sonnet-4-5
+  # Environment variable: PGEDGE_LLM_MODEL
+  model: "claude-sonnet-4-5"
+
+  #-----------------------------------------------------------------------
+  # Anthropic Configuration
+  #-----------------------------------------------------------------------
+
+  # Anthropic API key
+  # Environment variables: PGEDGE_ANTHROPIC_API_KEY, ANTHROPIC_API_KEY
+  # anthropic_api_key: ""
+
+  # Path to file containing Anthropic API key
+  # anthropic_api_key_file: "~/.anthropic-api-key"
+
+  #-----------------------------------------------------------------------
+  # OpenAI Configuration
+  #-----------------------------------------------------------------------
+
+  # OpenAI API key
+  # Environment variables: PGEDGE_OPENAI_API_KEY, OPENAI_API_KEY
+  # openai_api_key: ""
+
+  # Path to file containing OpenAI API key
+  # openai_api_key_file: "~/.openai-api-key"
+
+  #-----------------------------------------------------------------------
+  # Ollama Configuration
+  #-----------------------------------------------------------------------
+
+  # Ollama service URL
+  # Default: http://localhost:11434
+  # Environment variable: PGEDGE_OLLAMA_URL
+  ollama_url: "http://localhost:11434"
+
+  #-----------------------------------------------------------------------
+  # Generation Parameters
+  #-----------------------------------------------------------------------
+
+  # Maximum tokens for LLM response
+  # Default: 4096
+  # Environment variable: PGEDGE_LLM_MAX_TOKENS
+  max_tokens: 4096
+
+  # Temperature for sampling
+  # Default: 0.7
+  # Environment variable: PGEDGE_LLM_TEMPERATURE
+  temperature: 0.7
+
+#=========================================================================
+# KNOWLEDGEBASE CONFIGURATION
+#=========================================================================
+#
+# The server can search a pre-built knowledgebase for relevant information.
+# This is optional and disabled by default.
+#
+knowledgebase:
+  # Enable knowledgebase search
+  # Default: false
+  # Environment variable: PGEDGE_KB_ENABLED
+  enabled: false
+
+  # Path to SQLite knowledgebase database
+  # Required if knowledgebase is enabled
+  # Environment variable: PGEDGE_KB_DATABASE_PATH
+  # database_path: "/var/lib/ai-workbench/knowledgebase.db"
+
+  #-----------------------------------------------------------------------
+  # Knowledgebase Embedding Configuration
+  # (separate from the generate_embedding tool)
+  #-----------------------------------------------------------------------
+
+  # Embedding provider for knowledgebase similarity search
+  # Default: ollama
+  # Environment variable: PGEDGE_KB_EMBEDDING_PROVIDER
+  embedding_provider: "ollama"
+
+  # Embedding model for knowledgebase
+  # Default: nomic-embed-text
+  # Environment variable: PGEDGE_KB_EMBEDDING_MODEL
+  embedding_model: "nomic-embed-text"
+
+  # Ollama URL for knowledgebase embeddings
+  # Default: http://localhost:11434
+  # Environment variable: PGEDGE_KB_OLLAMA_URL
+  embedding_ollama_url: "http://localhost:11434"
+
+  # Voyage API key for knowledgebase embeddings
+  # Environment variable: PGEDGE_KB_VOYAGE_API_KEY
+  # embedding_voyage_api_key: ""
+
+  # OpenAI API key for knowledgebase embeddings
+  # Environment variable: PGEDGE_KB_OPENAI_API_KEY
+  # embedding_openai_api_key: ""
+
+#=========================================================================
+# BUILT-IN TOOLS, RESOURCES, AND PROMPTS
+#=========================================================================
+#
+# Control which built-in MCP features are enabled. All are enabled by
+# default. Set to false to disable specific tools, resources, or prompts.
+#
+builtins:
+  tools:
+    # Execute arbitrary SQL queries
+    query_database: true
+
+    # Get detailed schema information (tables, columns, indexes, etc.)
+    get_schema_info: true
+
+    # Vector similarity search
+    similarity_search: true
+
+    # Execute EXPLAIN/EXPLAIN ANALYZE queries
+    execute_explain: true
+
+    # Generate text embeddings
+    generate_embedding: true
+
+    # Search the knowledgebase
+    search_knowledgebase: true
+
+    # Count rows in tables
+    count_rows: true
+
+  resources:
+    # Expose PostgreSQL system information
+    system_info: true
+
+  prompts:
+    # Database exploration prompt
+    explore_database: true
+
+    # Semantic search setup prompt
+    setup_semantic_search: true
+
+    # Query performance diagnosis prompt
+    diagnose_query_issue: true
+
+    # Schema design prompt
+    design_schema: true
+
+#=========================================================================
+# PATHS AND DATA DIRECTORIES
+#=========================================================================
+
+# Path to server secret file (for encryption)
+# Default: /etc/pgedge/pgedge-postgres-mcp.secret or ./pgedge-postgres-mcp.secret
+# Environment variable: PGEDGE_SECRET_FILE
+# secret_file: "/etc/ai-workbench/server.secret"
+
+# Path to custom definitions file (user-defined prompts and resources)
+# Environment variable: PGEDGE_CUSTOM_DEFINITIONS_PATH
+# custom_definitions_path: "/etc/ai-workbench/custom-definitions.yaml"
+
+# Data directory for conversation history and other persistent data
+# Environment variable: PGEDGE_DATA_DIR
+# data_dir: "/var/lib/ai-workbench/data"
+
+#=========================================================================
+# EXAMPLE CONFIGURATIONS
+#=========================================================================
+#
+# Below are example configurations for common deployment scenarios.
+#
+
+#-------------------------------------------------------------------------
+# Development Configuration (local development, no TLS, no auth)
+#-------------------------------------------------------------------------
+# http:
+#   enabled: true
+#   address: ":8080"
+#   tls:
+#     enabled: false
+#   auth:
+#     enabled: false
+# database:
+#   host: "localhost"
+#   port: 5432
+#   database: "ai_workbench"
+#   user: "postgres"
+#   sslmode: "disable"
+# embedding:
+#   enabled: true
+#   provider: "ollama"
+#   model: "nomic-embed-text"
+# llm:
+#   enabled: false
+
+#-------------------------------------------------------------------------
+# Production Configuration (TLS, authentication, secure settings)
+#-------------------------------------------------------------------------
+# http:
+#   enabled: true
+#   address: ":8443"
+#   tls:
+#     enabled: true
+#     cert_file: "/etc/ai-workbench/certs/server-cert.pem"
+#     key_file: "/etc/ai-workbench/certs/server-key.pem"
+#   auth:
+#     enabled: true
+#     token_file: "/etc/ai-workbench/tokens.yaml"
+#     user_file: "/etc/ai-workbench/users.yaml"
+#     max_failed_attempts_before_lockout: 5
+# database:
+#   host: "db.internal.example.com"
+#   port: 5432
+#   database: "ai_workbench_prod"
+#   user: "mcp_server"
+#   sslmode: "verify-full"
+#   pool_max_conns: 10
+# embedding:
+#   enabled: true
+#   provider: "voyage"
+#   model: "voyage-3"
+#   voyage_api_key_file: "/etc/ai-workbench/voyage-api-key"
+# llm:
+#   enabled: true
+#   provider: "anthropic"
+#   model: "claude-sonnet-4-5"
+#   anthropic_api_key_file: "/etc/ai-workbench/anthropic-api-key"
+# secret_file: "/etc/ai-workbench/server.secret"
+# data_dir: "/var/lib/ai-workbench/data"

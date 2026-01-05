@@ -1,11 +1,11 @@
-# Component Responsibilities: pgEdge AI Workbench
+# Component Responsibilities: pgEdge AI DBA Workbench
 
 This document defines the clear boundaries and responsibilities for each
-component in the pgEdge AI Workbench architecture.
+component in the pgEdge AI DBA Workbench architecture.
 
 ## Architecture Overview
 
-The pgEdge AI Workbench consists of four main components:
+The pgEdge AI DBA Workbench consists of four main components:
 
 1. **Collector**: Metrics collection and storage
 2. **Server**: MCP protocol server

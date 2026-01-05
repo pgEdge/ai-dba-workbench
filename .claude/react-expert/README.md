@@ -1,8 +1,8 @@
 /*-----------------------------------------------------------
  *
- * pgEdge AI Workbench
+ * pgEdge AI DBA Workbench
  *
- * Copyright (c) 2025, pgEdge, Inc.
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
  *-----------------------------------------------------------
@@ -363,6 +363,6 @@ All frontend code must:
 
 ---
 
-This documentation is maintained as part of the pgEdge AI Workbench project.
+This documentation is maintained as part of the pgEdge AI DBA Workbench project.
 For questions or suggestions, please refer to the main project documentation
 or open an issue.

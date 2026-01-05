@@ -1,7 +1,7 @@
 # Quick Start Guide
 
-This guide will help you get the pgEdge AI Workbench Collector up and running
-quickly.
+This guide will help you get the pgEdge AI DBA Workbench Collector up and
+running quickly.
 
 ## Prerequisites
 
@@ -28,10 +28,10 @@ Before you begin, ensure you have:
    ```bash
    cd src
    go mod tidy
-   go build -o collector
+   go build -o ai-dba-collector
    ```
 
-3. The `collector` binary will be created in the `src` directory.
+3. The `ai-dba-collector` binary will be created in the `src` directory.
 
 ### Option 2: Download Pre-built Binary
 
@@ -53,26 +53,27 @@ The Collector will automatically create the necessary schema when it starts.
 
 ### Step 2: Create a Configuration File
 
-Copy the sample configuration file:
+Copy the example configuration file:
 
 ```bash
-cp ../configs/ai-workbench.conf.sample ai-workbench.conf
+cp ../examples/ai-dba-collector.yaml ai-dba-collector.yaml
 ```
 
-Edit `ai-workbench.conf` with your settings:
+Edit `ai-dba-collector.yaml` with your settings:
 
-```ini
+```yaml
 # Datastore connection settings
-pg_host = localhost
-pg_database = ai_workbench
-pg_username = collector
-pg_password_file = /path/to/password.txt
-pg_port = 5432
-pg_sslmode = prefer
+datastore:
+  host: localhost
+  database: ai_workbench
+  username: collector
+  password_file: /path/to/password.txt
+  port: 5432
+  sslmode: prefer
 
 # Server secret for encryption (REQUIRED)
 # Generate a strong random string for production
-server_secret = CHANGE-ME-TO-A-RANDOM-SECRET-STRING
+server_secret: CHANGE-ME-TO-A-RANDOM-SECRET-STRING
 ```
 
 ### Step 3: Create Password File
@@ -84,8 +85,7 @@ echo "your-secure-password" > ~/.ai-workbench-password
 chmod 600 ~/.ai-workbench-password
 ```
 
-Update the `pg_password_file` setting in your configuration to point to this
-file.
+Update the `password_file` setting in your configuration to point to this file.
 
 ### Step 4: Generate a Server Secret
 
@@ -99,8 +99,8 @@ openssl rand -base64 32
 
 Add this to your configuration file:
 
-```ini
-server_secret = <generated-secret-here>
+```yaml
+server_secret: <generated-secret-here>
 ```
 
 **Important**: Keep this secret secure and never share it. If you lose it,
@@ -111,14 +111,14 @@ you will need to re-enter passwords for all monitored connections.
 Start the Collector:
 
 ```bash
-./collector -config ./ai-workbench.conf
+./ai-dba-collector -config ./ai-dba-collector.yaml
 ```
 
 You should see output similar to:
 
 ```
-2025/11/05 10:00:00 pgEdge AI Workbench Collector v0.1.0 starting...
-2025/11/05 10:00:00 Configuration loaded from: ./ai-workbench.conf
+2025/11/05 10:00:00 pgEdge AI DBA Workbench Collector v0.1.0 starting...
+2025/11/05 10:00:00 Configuration loaded from: ./ai-dba-collector.yaml
 2025/11/05 10:00:00 Initializing database schema...
 2025/11/05 10:00:00 Database schema initialized
 2025/11/05 10:00:00 Datastore connection established
@@ -184,7 +184,7 @@ The Collector will log probe executions and any errors. Watch the logs to
 ensure probes are running:
 
 ```bash
-./collector -config ./ai-workbench.conf 2>&1 | tee collector.log
+./ai-dba-collector -config ./ai-dba-collector.yaml 2>&1 | tee collector.log
 ```
 
 ### Check Metrics Tables
@@ -290,14 +290,14 @@ Create `/etc/systemd/system/ai-workbench-collector.service`:
 
 ```ini
 [Unit]
-Description=pgEdge AI Workbench Collector
+Description=pgEdge AI DBA Workbench Collector
 After=network.target postgresql.service
 
 [Service]
 Type=simple
 User=collector
 WorkingDirectory=/opt/ai-workbench/collector
-ExecStart=/opt/ai-workbench/collector/collector -config /etc/ai-workbench/collector.conf
+ExecStart=/opt/ai-workbench/collector/ai-dba-collector -config /etc/pgedge/ai-dba-collector.yaml
 Restart=on-failure
 RestartSec=10
 
@@ -328,9 +328,9 @@ Create `~/Library/LaunchAgents/com.pgedge.ai-workbench-collector.plist`:
     <string>com.pgedge.ai-workbench-collector</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/opt/ai-workbench/collector/collector</string>
+        <string>/opt/ai-workbench/collector/ai-dba-collector</string>
         <string>-config</string>
-        <string>/etc/ai-workbench/collector.conf</string>
+        <string>/etc/pgedge/ai-dba-collector.yaml</string>
     </array>
     <key>RunAtLoad</key>
     <true/>

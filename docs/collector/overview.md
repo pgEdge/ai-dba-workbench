@@ -1,6 +1,6 @@
 # Collector Overview
 
-The pgEdge AI Workbench Collector is a standalone monitoring service written
+The pgEdge AI DBA Workbench Collector is a standalone monitoring service written
 in Go that continuously collects PostgreSQL metrics and stores them in a
 centralized datastore. It is designed to monitor multiple PostgreSQL servers
 simultaneously, collecting comprehensive statistics through a flexible probe

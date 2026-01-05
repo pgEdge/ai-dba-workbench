@@ -1,6 +1,6 @@
 # MCP Expert Documentation
 
-This directory contains comprehensive documentation about the Model Context Protocol (MCP) implementation in the pgEdge AI Workbench project.
+This directory contains comprehensive documentation about the Model Context Protocol (MCP) implementation in the pgEdge AI DBA Workbench project.
 
 ## Purpose
 

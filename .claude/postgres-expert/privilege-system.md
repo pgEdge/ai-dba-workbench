@@ -5,7 +5,7 @@ This document provides detailed documentation of the Role-Based Access Control
 
 ## System Overview
 
-The pgEdge AI Workbench implements a sophisticated multi-tier privilege system:
+The pgEdge AI DBA Workbench implements a sophisticated multi-tier privilege system:
 
 1. **Superuser Flag** - Bypass mechanism (backward compatible)
 2. **Group-Based RBAC** - Fine-grained privilege management

@@ -1,8 +1,8 @@
 /*-----------------------------------------------------------
  *
- * pgEdge AI Workbench - MCP Protocol Implementation
+ * pgEdge AI DBA Workbench - MCP Protocol Implementation
  *
- * Copyright (c) 2025, pgEdge, Inc.
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
  *-----------------------------------------------------------
@@ -11,7 +11,7 @@
 # MCP Protocol Implementation
 
 This document details the Model Context Protocol (MCP) implementation in the
-pgEdge AI Workbench server.
+pgEdge AI DBA Workbench server.
 
 ## Overview
 

@@ -1,7 +1,7 @@
-# Security Model: pgEdge AI Workbench
+# Security Model: pgEdge AI DBA Workbench
 
 This document describes the security design, threat model, and secure coding
-practices for the pgEdge AI Workbench.
+practices for the pgEdge AI DBA Workbench.
 
 ## Security Goals
 

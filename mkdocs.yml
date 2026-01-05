@@ -1,0 +1,88 @@
+site_name: pgEdge AI DBA Workbench
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+plugins:
+  - search
+  - macros:
+      j2_variable_start_string: "<<"
+      j2_variable_end_string: ">>"
+      j2_comment_start_string: "<#"
+      j2_comment_end_string: "#>"
+
+theme:
+  name: material
+  custom_dir: docs/overrides
+  favicon: img/favicon.ico
+
+  logo_dark_mode: 'img/logo-dark.png'
+  logo_light_mode: 'img/logo-light.png'
+
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.prune
+    - navigation.top
+    - toc.follow
+
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: white
+      accent: cyan
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: cyan
+      toggle:
+        icon: material/brightness-4
+        name: Switch to system preference
+
+extra:
+  generator: false
+
+copyright: Copyright &copy; 2025 - 2026 pgEdge, Inc
+repo_url: https://github.com/pgEdge/ai-workbench
+
+nav:
+  - Home: index.md
+  - Collector:
+      - Overview: collector/index.md
+      - Getting Started:
+          - Quick Start: collector/quickstart.md
+          - Configuration: collector/configuration.md
+          - Configuration Reference: collector/config-reference.md
+      - Architecture:
+          - System Overview: collector/overview.md
+          - System Architecture: collector/architecture.md
+          - Scheduler: collector/scheduler.md
+      - Database:
+          - Schema Design: collector/schema.md
+          - Schema Management: collector/schema-management.md
+      - Probes:
+          - How Probes Work: collector/probes.md
+          - Probe Reference: collector/probe-reference.md
+          - pg_settings Usage: collector/pg-settings-usage.md
+      - Development:
+          - Development Guide: collector/development.md
+          - Testing: collector/testing.md
+          - Adding Probes: collector/adding-probes.md
+  - Changelog: changelog.md
+  - Licence: LICENCE.md

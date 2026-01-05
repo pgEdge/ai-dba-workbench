@@ -1,8 +1,8 @@
 /*-----------------------------------------------------------
  *
- * pgEdge AI Workbench
+ * pgEdge AI DBA Workbench
  *
- * Copyright (c) 2025, pgEdge, Inc.
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
  *-----------------------------------------------------------
@@ -10,7 +10,7 @@
 
 # State Management Patterns and Practices
 
-This document outlines state management strategies for the pgEdge AI Workbench
+This document outlines state management strategies for the pgEdge AI DBA Workbench
 React frontend, covering different types of state and when to use each
 approach.
 

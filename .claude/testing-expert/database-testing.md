@@ -1,4 +1,4 @@
-# Database Testing - pgEdge AI Workbench
+# Database Testing - pgEdge AI DBA Workbench
 
 This document describes how to test database-dependent code in the AI Workbench project.
 

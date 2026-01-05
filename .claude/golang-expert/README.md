@@ -1,8 +1,8 @@
 /*-----------------------------------------------------------
  *
- * pgEdge AI Workbench - Go Backend Expert Documentation
+ * pgEdge AI DBA Workbench - Go Backend Expert Documentation
  *
- * Copyright (c) 2025, pgEdge, Inc.
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
  *-----------------------------------------------------------
@@ -11,7 +11,7 @@
 # Go Backend Expert Documentation
 
 This directory contains comprehensive documentation about the Go backend
-architecture, patterns, and best practices for the pgEdge AI Workbench project.
+architecture, patterns, and best practices for the pgEdge AI DBA Workbench project.
 
 ## Purpose
 

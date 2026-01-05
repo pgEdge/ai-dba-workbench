@@ -64,32 +64,31 @@ type UIConfig struct {
 	Debug                 bool `yaml:"debug"`                   // Display debug messages (e.g., LLM token usage)
 }
 
-// LoadConfig loads configuration from file, environment variables, and defaults
+// LoadConfig loads configuration from file and defaults
 func LoadConfig(configPath string) (*Config, error) {
+	homeDir, _ := os.UserHomeDir()
 	cfg := &Config{
 		MCP: MCPConfig{
-			URL:      os.Getenv("PGEDGE_MCP_URL"),
-			AuthMode: getEnvOrDefault("PGEDGE_MCP_AUTH_MODE", "user"),
+			URL:      "",
+			AuthMode: "user",
 			Token:    "", // Will be loaded separately
-			Username: os.Getenv("PGEDGE_MCP_USERNAME"),
-			Password: os.Getenv("PGEDGE_MCP_PASSWORD"),
+			Username: "",
+			Password: "",
 			TLS:      false,
 		},
 		LLM: LLMConfig{
-			Provider:        getEnvOrDefault("PGEDGE_LLM_PROVIDER", "anthropic"),
-			Model:           getEnvOrDefault("PGEDGE_LLM_MODEL", "claude-sonnet-4-5-20250929"),
-			AnthropicAPIKey: getEnvWithFallback("PGEDGE_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY"),
-			OpenAIAPIKey:    getEnvWithFallback("PGEDGE_OPENAI_API_KEY", "OPENAI_API_KEY"),
-			OllamaURL:       getEnvOrDefault("PGEDGE_OLLAMA_URL", "http://localhost:11434"),
-			MaxTokens:       4096,
-			Temperature:     0.7,
+			Provider:    "anthropic",
+			Model:       "claude-sonnet-4-5-20250929",
+			OllamaURL:   "http://localhost:11434",
+			MaxTokens:   4096,
+			Temperature: 0.7,
 		},
 		UI: UIConfig{
-			NoColor:               os.Getenv("NO_COLOR") != "",
+			NoColor:               false,
 			DisplayStatusMessages: true, // Default to showing status messages
 			RenderMarkdown:        true, // Default to rendering markdown
 		},
-		HistoryFile: filepath.Join(os.Getenv("HOME"), ".ai-dba-cli-history"),
+		HistoryFile: filepath.Join(homeDir, ".ai-dba-cli-history"),
 	}
 
 	// Load from config file if provided
@@ -101,7 +100,7 @@ func LoadConfig(configPath string) (*Config, error) {
 		// Try default locations
 		defaultPaths := []string{
 			"/etc/pgedge/ai-dba-cli.yaml",
-			filepath.Join(os.Getenv("HOME"), ".ai-dba-cli.yaml"),
+			filepath.Join(homeDir, ".ai-dba-cli.yaml"),
 			".ai-dba-cli.yaml",
 		}
 		for _, path := range defaultPaths {
@@ -113,24 +112,19 @@ func LoadConfig(configPath string) (*Config, error) {
 		}
 	}
 
-	// API key loading priority: env vars > api_key_file > direct config value
-	// Environment variables were already loaded above, now check for API key files
-	// 1. If env vars not set and api_key_file is specified, load from file
+	// Load API keys from files if specified
 	if cfg.LLM.AnthropicAPIKey == "" && cfg.LLM.AnthropicAPIKeyFile != "" {
 		if key, err := readAPIKeyFromFile(cfg.LLM.AnthropicAPIKeyFile); err == nil && key != "" {
 			cfg.LLM.AnthropicAPIKey = key
 		}
-		// Note: errors are silently ignored - file may not exist and that's ok
 	}
 	if cfg.LLM.OpenAIAPIKey == "" && cfg.LLM.OpenAIAPIKeyFile != "" {
 		if key, err := readAPIKeyFromFile(cfg.LLM.OpenAIAPIKeyFile); err == nil && key != "" {
 			cfg.LLM.OpenAIAPIKey = key
 		}
-		// Note: errors are silently ignored - file may not exist and that's ok
 	}
-	// 2. Direct config value (if set) is already in cfg.LLM.AnthropicAPIKey/OpenAIAPIKey from loadConfigFile
 
-	// Load authentication token with priority
+	// Load authentication token from file
 	cfg.MCP.Token = loadAuthToken()
 
 	return cfg, nil
@@ -146,21 +140,14 @@ func loadConfigFile(path string, cfg *Config) error {
 	return yaml.Unmarshal(data, cfg)
 }
 
-// loadAuthToken loads the authentication token with priority:
-// 1. Environment variable PGEDGE_MCP_TOKEN
-// 2. File ~/.pgedge-pg-mcp-cli-token
-// 3. Returns empty string if not found (will prompt if needed)
+// loadAuthToken loads the authentication token from file
+// Returns empty string if not found (will prompt if needed)
 func loadAuthToken() string {
-	// Priority 1: Environment variable
-	if token := os.Getenv("PGEDGE_MCP_TOKEN"); token != "" {
-		return token
-	}
-
-	// Priority 2: Token file
-	tokenPath := filepath.Join(os.Getenv("HOME"), ".ai-dba-cli-token")
+	homeDir, _ := os.UserHomeDir()
+	tokenPath := filepath.Join(homeDir, ".ai-dba-cli-token")
 	if data, err := os.ReadFile(tokenPath); err == nil {
 		// Trim whitespace and newlines
-		return string(data)
+		return strings.TrimSpace(string(data))
 	}
 
 	return ""
@@ -186,14 +173,14 @@ func (c *Config) Validate() error {
 	// Validate LLM configuration based on provider
 	if c.LLM.Provider == "anthropic" {
 		if c.LLM.AnthropicAPIKey == "" {
-			return fmt.Errorf("PGEDGE_ANTHROPIC_API_KEY environment variable or anthropic_api_key config is required for Anthropic")
+			return fmt.Errorf("anthropic_api_key or anthropic_api_key_file config is required for Anthropic")
 		}
 		if c.LLM.Model == "" {
 			c.LLM.Model = "claude-sonnet-4-5-20250929"
 		}
 	} else if c.LLM.Provider == "openai" {
 		if c.LLM.OpenAIAPIKey == "" {
-			return fmt.Errorf("PGEDGE_OPENAI_API_KEY environment variable or openai_api_key config is required for OpenAI")
+			return fmt.Errorf("openai_api_key or openai_api_key_file config is required for OpenAI")
 		}
 		if c.LLM.Model == "" {
 			c.LLM.Model = "gpt-4o"
@@ -239,24 +226,6 @@ func (c *Config) GetConfiguredProviders() []string {
 		providers = append(providers, "ollama")
 	}
 	return providers
-}
-
-// getEnvOrDefault returns the environment variable value or default
-func getEnvOrDefault(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
-}
-
-// getEnvWithFallback checks multiple environment variable names in priority order
-func getEnvWithFallback(keys ...string) string {
-	for _, key := range keys {
-		if value := os.Getenv(key); value != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 // readAPIKeyFromFile reads an API key from a file

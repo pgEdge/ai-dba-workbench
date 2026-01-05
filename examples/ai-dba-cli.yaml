@@ -19,9 +19,8 @@
 #
 # Configuration priority (highest to lowest):
 #   1. Command line flags
-#   2. Environment variables
-#   3. Configuration file
-#   4. Built-in defaults
+#   2. Configuration file
+#   3. Built-in defaults
 #
 #=========================================================================
 # MCP SERVER CONNECTION
@@ -33,29 +32,24 @@
 mcp:
   # URL of the MCP server
   # Required - there is no default
-  # Environment variable: PGEDGE_MCP_URL
   url: "http://localhost:8080"
 
   # Authentication mode: "token" or "user"
   # - token: Use a pre-generated API token for authentication
   # - user: Use username/password authentication (prompts if not configured)
   # Default: user
-  # Environment variable: PGEDGE_MCP_AUTH_MODE
   auth_mode: "user"
 
   # API token for token-based authentication
-  # Can also be stored in ~/.pgedge-pg-mcp-cli-token file
-  # Environment variable: PGEDGE_MCP_TOKEN
+  # Can also be stored in ~/.ai-dba-cli-token file
   # token: "your-api-token-here"
 
   # Username for user-based authentication
   # If not set, will prompt interactively
-  # Environment variable: PGEDGE_MCP_USERNAME
   # username: "admin"
 
   # Password for user-based authentication
   # If not set, will prompt interactively
-  # Environment variable: PGEDGE_MCP_PASSWORD
   # password: ""
 
   # Enable TLS/HTTPS for MCP server connection
@@ -74,7 +68,6 @@ mcp:
 llm:
   # LLM provider to use: "anthropic", "openai", or "ollama"
   # Default: anthropic
-  # Environment variable: PGEDGE_LLM_PROVIDER
   provider: "anthropic"
 
   # Model name to use
@@ -82,7 +75,6 @@ llm:
   #   - anthropic: claude-sonnet-4-5-20250929
   #   - openai: gpt-4o
   #   - ollama: qwen3-coder:latest
-  # Environment variable: PGEDGE_LLM_MODEL
   model: "claude-sonnet-4-5-20250929"
 
   #-----------------------------------------------------------------------
@@ -90,9 +82,8 @@ llm:
   #-----------------------------------------------------------------------
 
   # Anthropic API key
-  # SECURITY: It's recommended to use anthropic_api_key_file or the
-  # environment variable instead of storing the key directly in config
-  # Environment variables: PGEDGE_ANTHROPIC_API_KEY, ANTHROPIC_API_KEY
+  # SECURITY: It's recommended to use anthropic_api_key_file instead of
+  # storing the key directly in config
   # anthropic_api_key: "sk-ant-..."
 
   # Path to file containing Anthropic API key
@@ -104,9 +95,8 @@ llm:
   #-----------------------------------------------------------------------
 
   # OpenAI API key
-  # SECURITY: It's recommended to use openai_api_key_file or the
-  # environment variable instead of storing the key directly in config
-  # Environment variables: PGEDGE_OPENAI_API_KEY, OPENAI_API_KEY
+  # SECURITY: It's recommended to use openai_api_key_file instead of
+  # storing the key directly in config
   # openai_api_key: "sk-..."
 
   # Path to file containing OpenAI API key
@@ -118,7 +108,6 @@ llm:
 
   # URL of the Ollama service
   # Default: http://localhost:11434
-  # Environment variable: PGEDGE_OLLAMA_URL
   ollama_url: "http://localhost:11434"
 
   #-----------------------------------------------------------------------
@@ -143,7 +132,6 @@ ui:
   # Disable colored output
   # Useful for terminals that don't support ANSI colors or for piping output
   # Default: false (colors enabled)
-  # Environment variable: NO_COLOR (set to any value to disable)
   no_color: false
 
   # Display status messages during execution

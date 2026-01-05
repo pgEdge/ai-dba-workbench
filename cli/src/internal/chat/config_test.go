@@ -17,10 +17,6 @@ import (
 )
 
 func TestLoadConfig_Defaults(t *testing.T) {
-	// Clear environment variables that might interfere
-	os.Unsetenv("PGEDGE_LLM_PROVIDER")
-	os.Unsetenv("ANTHROPIC_API_KEY")
-
 	// Load config with no file
 	cfg, err := LoadConfig("")
 	if err != nil {
@@ -38,37 +34,6 @@ func TestLoadConfig_Defaults(t *testing.T) {
 
 	if cfg.LLM.Temperature != 0.7 {
 		t.Errorf("Expected Temperature 0.7, got %f", cfg.LLM.Temperature)
-	}
-}
-
-func TestLoadConfig_Environment(t *testing.T) {
-	// Set environment variables
-	os.Setenv("PGEDGE_MCP_URL", "http://localhost:8080")
-	os.Setenv("PGEDGE_LLM_PROVIDER", "ollama")
-	os.Setenv("PGEDGE_LLM_MODEL", "llama3")
-	defer func() {
-		os.Unsetenv("PGEDGE_MCP_URL")
-		os.Unsetenv("PGEDGE_LLM_PROVIDER")
-		os.Unsetenv("PGEDGE_LLM_MODEL")
-	}()
-
-	// Load config
-	cfg, err := LoadConfig("")
-	if err != nil {
-		t.Fatalf("LoadConfig failed: %v", err)
-	}
-
-	// Check environment overrides
-	if cfg.MCP.URL != "http://localhost:8080" {
-		t.Errorf("Expected MCP URL 'http://localhost:8080', got '%s'", cfg.MCP.URL)
-	}
-
-	if cfg.LLM.Provider != "ollama" {
-		t.Errorf("Expected LLM provider 'ollama', got '%s'", cfg.LLM.Provider)
-	}
-
-	if cfg.LLM.Model != "llama3" {
-		t.Errorf("Expected LLM model 'llama3', got '%s'", cfg.LLM.Model)
 	}
 }
 

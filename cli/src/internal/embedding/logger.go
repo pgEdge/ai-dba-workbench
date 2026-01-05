@@ -41,27 +41,10 @@ type Logger struct {
 var globalLogger *Logger
 
 func init() {
-	// Initialize logger with level from environment variable
-	// Default is LogLevelNone (no logging) when unset or set to "none"
-	levelStr := strings.ToLower(strings.TrimSpace(os.Getenv("PGEDGE_LLM_LOG_LEVEL")))
-
-	var level LogLevel
-	switch levelStr {
-	case "none", "": // Explicitly handle "none" and empty string
-		level = LogLevelNone
-	case "info":
-		level = LogLevelInfo
-	case "debug":
-		level = LogLevelDebug
-	case "trace":
-		level = LogLevelTrace
-	default:
-		// Invalid value, default to LogLevelNone
-		level = LogLevelNone
-	}
-
+	// Initialize logger with default level (no logging)
+	// Use SetLogLevel() to enable logging programmatically
 	globalLogger = &Logger{
-		level:  level,
+		level:  LogLevelNone,
 		logger: log.New(os.Stderr, "[LLM] ", log.LstdFlags),
 	}
 }

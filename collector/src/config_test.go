@@ -261,52 +261,6 @@ func TestGetDefaultConfigPath(t *testing.T) {
 	}
 }
 
-func TestConfigApplyEnvironment(t *testing.T) {
-	// Save original env vars
-	origHost := os.Getenv("PGEDGE_DB_HOST")
-	origPort := os.Getenv("PGEDGE_DB_PORT")
-	origSecret := os.Getenv("PGEDGE_SERVER_SECRET")
-
-	// Set test env vars
-	os.Setenv("PGEDGE_DB_HOST", "envhost")
-	os.Setenv("PGEDGE_DB_PORT", "5555")
-	os.Setenv("PGEDGE_SERVER_SECRET", "env-secret")
-
-	defer func() {
-		// Restore original env vars
-		if origHost == "" {
-			os.Unsetenv("PGEDGE_DB_HOST")
-		} else {
-			os.Setenv("PGEDGE_DB_HOST", origHost)
-		}
-		if origPort == "" {
-			os.Unsetenv("PGEDGE_DB_PORT")
-		} else {
-			os.Setenv("PGEDGE_DB_PORT", origPort)
-		}
-		if origSecret == "" {
-			os.Unsetenv("PGEDGE_SERVER_SECRET")
-		} else {
-			os.Setenv("PGEDGE_SERVER_SECRET", origSecret)
-		}
-	}()
-
-	config := NewConfig()
-	config.ApplyEnvironment()
-
-	if config.Datastore.Host != "envhost" {
-		t.Errorf("Expected Datastore.Host to be 'envhost', got '%s'", config.Datastore.Host)
-	}
-
-	if config.Datastore.Port != 5555 {
-		t.Errorf("Expected Datastore.Port to be 5555, got %d", config.Datastore.Port)
-	}
-
-	if config.ServerSecret != "env-secret" {
-		t.Errorf("Expected ServerSecret to be 'env-secret', got '%s'", config.ServerSecret)
-	}
-}
-
 func TestConfigGetters(t *testing.T) {
 	config := &Config{
 		Datastore: DatastoreConfig{

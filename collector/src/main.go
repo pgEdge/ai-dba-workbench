@@ -150,9 +150,6 @@ func loadConfiguration() (*Config, error) {
 		logger.Infof("Configuration file not found: %s, using defaults", configPath)
 	}
 
-	// Override with environment variables
-	config.ApplyEnvironment()
-
 	// Override with command line flags (highest priority)
 	config.ApplyFlags()
 

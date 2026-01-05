@@ -95,33 +95,6 @@ func (c *Config) LoadFromFile(filename string) error {
 	return nil
 }
 
-// ApplyEnvironment applies environment variables to override config values
-func (c *Config) ApplyEnvironment() {
-	// Datastore settings
-	setStringFromEnv(&c.Datastore.Host, "PGEDGE_DB_HOST", "PGHOST")
-	setStringFromEnv(&c.Datastore.HostAddr, "PGEDGE_DB_HOSTADDR")
-	setStringFromEnv(&c.Datastore.Database, "PGEDGE_DB_NAME", "PGDATABASE")
-	setStringFromEnv(&c.Datastore.Username, "PGEDGE_DB_USER", "PGUSER")
-	setStringFromEnv(&c.Datastore.Password, "PGEDGE_DB_PASSWORD", "PGPASSWORD")
-	setStringFromEnv(&c.Datastore.PasswordFile, "PGEDGE_DB_PASSWORD_FILE")
-	setIntFromEnv(&c.Datastore.Port, "PGEDGE_DB_PORT", "PGPORT")
-	setStringFromEnv(&c.Datastore.SSLMode, "PGEDGE_DB_SSLMODE", "PGSSLMODE")
-	setStringFromEnv(&c.Datastore.SSLCert, "PGEDGE_DB_SSLCERT", "PGSSLCERT")
-	setStringFromEnv(&c.Datastore.SSLKey, "PGEDGE_DB_SSLKEY", "PGSSLKEY")
-	setStringFromEnv(&c.Datastore.SSLRootCert, "PGEDGE_DB_SSLROOTCERT", "PGSSLROOTCERT")
-
-	// Pool settings
-	setIntFromEnv(&c.Pool.DatastoreMaxConnections, "PGEDGE_POOL_DATASTORE_MAX_CONNECTIONS")
-	setIntFromEnv(&c.Pool.DatastoreMaxIdleSeconds, "PGEDGE_POOL_DATASTORE_MAX_IDLE_SECONDS")
-	setIntFromEnv(&c.Pool.DatastoreMaxWaitSeconds, "PGEDGE_POOL_DATASTORE_MAX_WAIT_SECONDS")
-	setIntFromEnv(&c.Pool.MonitoredMaxConnections, "PGEDGE_POOL_MONITORED_MAX_CONNECTIONS")
-	setIntFromEnv(&c.Pool.MonitoredMaxIdleSeconds, "PGEDGE_POOL_MONITORED_MAX_IDLE_SECONDS")
-	setIntFromEnv(&c.Pool.MonitoredMaxWaitSeconds, "PGEDGE_POOL_MONITORED_MAX_WAIT_SECONDS")
-
-	// Server secret
-	setStringFromEnv(&c.ServerSecret, "PGEDGE_SERVER_SECRET")
-}
-
 // ApplyFlags applies command line flags to override config values
 func (c *Config) ApplyFlags() {
 	if *pgHost != "" {
@@ -256,28 +229,3 @@ func GetDefaultConfigPath(binaryPath string) string {
 	return filepath.Join(dir, "ai-dba-collector.yaml")
 }
 
-// Helper functions for environment variable loading
-
-// setStringFromEnv sets a string from environment variables (checks multiple keys in order)
-func setStringFromEnv(dest *string, keys ...string) {
-	for _, key := range keys {
-		if val := os.Getenv(key); val != "" {
-			*dest = val
-			return
-		}
-	}
-}
-
-// setIntFromEnv sets an integer from environment variables (checks multiple keys in order)
-func setIntFromEnv(dest *int, keys ...string) {
-	for _, key := range keys {
-		if val := os.Getenv(key); val != "" {
-			var intVal int
-			_, err := fmt.Sscanf(val, "%d", &intVal)
-			if err == nil {
-				*dest = intVal
-				return
-			}
-		}
-	}
-}

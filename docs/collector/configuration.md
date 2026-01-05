@@ -5,14 +5,12 @@ your environment.
 
 ## Configuration Sources
 
-The Collector supports configuration through three sources:
+The Collector supports configuration through two sources:
 
 1. **Configuration File**: A YAML file with hierarchical settings
-2. **Environment Variables**: Override config file settings
-3. **Command-Line Flags**: Override both config file and environment settings
+2. **Command-Line Flags**: Override config file settings
 
-Priority (highest to lowest): Command-line flags > Environment variables >
-Config file > Defaults.
+Priority (highest to lowest): Command-line flags > Config file > Defaults.
 
 ## Configuration File
 
@@ -82,7 +80,6 @@ PostgreSQL server hostname or IP address.
 - **Default**: `localhost`
 - **Example**: `host: prod-db.example.com`
 - **Command-line**: `-pg-host`
-- **Environment**: `PGEDGE_DB_HOST` or `PGHOST`
 
 #### datastore.hostaddr
 
@@ -92,7 +89,6 @@ PostgreSQL server IP address (optional, bypasses DNS lookup).
 - **Default**: none
 - **Example**: `hostaddr: 192.168.1.100`
 - **Command-line**: `-pg-hostaddr`
-- **Environment**: `PGEDGE_DB_HOSTADDR`
 - **Note**: If set, used instead of `host` for connection
 
 #### datastore.database
@@ -103,7 +99,6 @@ Database name for the Collector's datastore.
 - **Default**: `ai_workbench`
 - **Example**: `database: metrics_db`
 - **Command-line**: `-pg-database`
-- **Environment**: `PGEDGE_DB_NAME` or `PGDATABASE`
 
 #### datastore.username
 
@@ -113,7 +108,6 @@ Username for datastore connection.
 - **Default**: `postgres`
 - **Example**: `username: collector`
 - **Command-line**: `-pg-username`
-- **Environment**: `PGEDGE_DB_USER` or `PGUSER`
 
 #### datastore.password_file
 
@@ -123,7 +117,6 @@ Path to file containing the datastore password.
 - **Default**: none
 - **Example**: `password_file: /etc/ai-workbench/password.txt`
 - **Command-line**: `-pg-password-file`
-- **Environment**: `PGEDGE_DB_PASSWORD_FILE`
 - **Note**: File should contain only the password, no extra whitespace
 
 **Example password file:**
@@ -143,7 +136,6 @@ PostgreSQL server port number.
 - **Range**: 1-65535
 - **Example**: `port: 5433`
 - **Command-line**: `-pg-port`
-- **Environment**: `PGEDGE_DB_PORT` or `PGPORT`
 
 #### datastore.sslmode
 
@@ -155,7 +147,6 @@ SSL/TLS mode for datastore connection.
   `verify-full`
 - **Example**: `sslmode: require`
 - **Command-line**: `-pg-sslmode`
-- **Environment**: `PGEDGE_DB_SSLMODE` or `PGSSLMODE`
 
 **SSL Modes:**
 
@@ -174,7 +165,6 @@ Path to client SSL certificate file.
 - **Default**: none
 - **Example**: `sslcert: /etc/ai-workbench/client-cert.pem`
 - **Command-line**: `-pg-sslcert`
-- **Environment**: `PGEDGE_DB_SSLCERT` or `PGSSLCERT`
 - **Note**: Used with `sslmode: verify-ca` or `verify-full`
 
 #### datastore.sslkey
@@ -185,7 +175,6 @@ Path to client SSL private key file.
 - **Default**: none
 - **Example**: `sslkey: /etc/ai-workbench/client-key.pem`
 - **Command-line**: `-pg-sslkey`
-- **Environment**: `PGEDGE_DB_SSLKEY` or `PGSSLKEY`
 - **Note**: Used with client certificates
 
 #### datastore.sslrootcert
@@ -196,7 +185,6 @@ Path to root CA certificate file.
 - **Default**: none
 - **Example**: `sslrootcert: /etc/ai-workbench/ca-cert.pem`
 - **Command-line**: `-pg-sslrootcert`
-- **Environment**: `PGEDGE_DB_SSLROOTCERT` or `PGSSLROOTCERT`
 - **Note**: Used to verify server certificate
 
 ### Connection Pool Settings
@@ -211,7 +199,6 @@ Maximum number of concurrent connections to the datastore.
 - **Type**: integer
 - **Default**: `25`
 - **Example**: `datastore_max_connections: 50`
-- **Environment**: `PGEDGE_POOL_DATASTORE_MAX_CONNECTIONS`
 - **Note**: Higher values allow more concurrent probe storage operations
 
 #### pool.datastore_max_idle_seconds
@@ -221,7 +208,6 @@ Maximum idle time (seconds) before closing idle datastore connections.
 - **Type**: integer
 - **Default**: `300` (5 minutes)
 - **Example**: `datastore_max_idle_seconds: 600`
-- **Environment**: `PGEDGE_POOL_DATASTORE_MAX_IDLE_SECONDS`
 - **Note**: Set to 0 to disable idle connection cleanup
 
 #### pool.datastore_max_wait_seconds
@@ -231,7 +217,6 @@ Maximum time (seconds) to wait for an available datastore connection.
 - **Type**: integer
 - **Default**: `60`
 - **Example**: `datastore_max_wait_seconds: 120`
-- **Environment**: `PGEDGE_POOL_DATASTORE_MAX_WAIT_SECONDS`
 - **Note**: Probe storage operations will fail if timeout is exceeded
 
 #### pool.monitored_max_connections
@@ -241,7 +226,6 @@ Maximum concurrent connections PER monitored database server.
 - **Type**: integer
 - **Default**: `5`
 - **Example**: `monitored_max_connections: 10`
-- **Environment**: `PGEDGE_POOL_MONITORED_MAX_CONNECTIONS`
 - **Note**: This is per-server, not total. 10 servers with limit 5 = 50 max
   connections
 
@@ -252,7 +236,6 @@ Maximum idle time (seconds) before closing idle monitored connections.
 - **Type**: integer
 - **Default**: `300` (5 minutes)
 - **Example**: `monitored_max_idle_seconds: 600`
-- **Environment**: `PGEDGE_POOL_MONITORED_MAX_IDLE_SECONDS`
 
 #### pool.monitored_max_wait_seconds
 
@@ -261,7 +244,6 @@ Maximum time (seconds) to wait for an available monitored connection.
 - **Type**: integer
 - **Default**: `60`
 - **Example**: `monitored_max_wait_seconds: 120`
-- **Environment**: `PGEDGE_POOL_MONITORED_MAX_WAIT_SECONDS`
 - **Note**: Probe execution will fail if timeout is exceeded
 
 ### Security Settings
@@ -273,7 +255,6 @@ Per-installation secret for encryption (REQUIRED).
 - **Type**: string
 - **Default**: none
 - **Example**: `server_secret: randomly-generated-secret-string`
-- **Environment**: `PGEDGE_SERVER_SECRET`
 - **Note**: Used to encrypt/decrypt passwords for monitored connections
 - **Important**: Keep this secret secure. If lost, passwords must be re-entered
 
@@ -299,7 +280,7 @@ All datastore connection options can be specified as command-line flags:
 ```
 
 **Note**: Connection pool and security settings can only be configured in the
-configuration file or via environment variables.
+configuration file.
 
 ## Configuration Examples
 

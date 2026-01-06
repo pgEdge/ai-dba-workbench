@@ -25,8 +25,8 @@ The server searches for configuration in the following order:
 
 ### Example Configuration
 
-A complete example configuration file is available at
-[`examples/ai-dba-server.yaml`](../../examples/ai-dba-server.yaml).
+A complete example configuration file is available at `examples/ai-dba-server.yaml`
+in the project root directory.
 
 ```yaml
 #=========================================================================

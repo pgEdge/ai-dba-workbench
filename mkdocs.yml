@@ -84,5 +84,13 @@ nav:
           - Development Guide: collector/development.md
           - Testing: collector/testing.md
           - Adding Probes: collector/adding-probes.md
+      - Design:
+          - Node Role Probe: collector/node-role-probe-design.md
+  - Server:
+      - Overview: server/index.md
+      - Authentication: server/authentication.md
+      - Configuration: server/configuration.md
+  - CLI:
+      - Overview: cli/index.md
   - Changelog: changelog.md
   - Licence: LICENCE.md

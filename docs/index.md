@@ -37,13 +37,26 @@ and collects metrics into a centralized datastore. It provides:
 
 ### Intelligence Layer
 
-The MCP Server implements the Model Context Protocol, providing AI assistants
-with standardized access to PostgreSQL systems. (Coming soon)
+The [MCP Server](server/index.md) implements the Model Context Protocol,
+providing AI assistants with standardized access to PostgreSQL systems. It
+provides:
+
+- HTTP/HTTPS transport with JSON-RPC 2.0
+- SQLite-based authentication with users and tokens
+- Database tools for queries, schema introspection, and analysis
+- LLM proxy support for Anthropic, OpenAI, and Ollama
+- Conversation history management
 
 ### Interaction Layer
 
-The CLI provides command-line access to the MCP server for testing, automation,
-and integration. (Coming soon)
+The [CLI](cli/index.md) (Natural Language Agent) provides an interactive
+command-line interface for chatting with your PostgreSQL database using natural
+language. It provides:
+
+- Multiple LLM provider support (Anthropic, OpenAI, Ollama)
+- Username/password and service token authentication
+- Runtime configuration with slash commands
+- Conversation history and prompt caching
 
 ## Getting Started
 
@@ -77,6 +90,28 @@ Key topics:
 - [Architecture](collector/architecture.md) - Detailed design
 - [Probes](collector/probes.md) - How data collection works
 - [Development](collector/development.md) - Contributing guide
+
+### Server Documentation
+
+The MCP Server provides AI assistants with access to PostgreSQL systems.
+
+**[Go to Server Documentation →](server/index.md)**
+
+Key topics:
+
+- [Overview](server/index.md) - Architecture and features
+- [Authentication](server/authentication.md) - Users, tokens, and security
+- [Configuration](server/configuration.md) - Setup and options
+
+### CLI Documentation
+
+The CLI provides natural language access to PostgreSQL databases.
+
+**[Go to CLI Documentation →](cli/index.md)**
+
+Key topics:
+
+- [Overview](cli/index.md) - Features and usage
 
 ## Common Configuration
 
@@ -129,8 +164,16 @@ ai-workbench/
 ├── collector/          # Data collector service
 │   ├── src/           # Source code
 │   └── README.md      # Component readme
+├── server/            # MCP server
+│   ├── src/           # Source code
+│   └── README.md      # Component readme
+├── cli/               # Natural language agent CLI
+│   ├── src/           # Source code
+│   └── README.md      # Component readme
 ├── docs/              # Unified documentation (this directory)
-│   └── collector/     # Collector docs
+│   ├── collector/     # Collector docs
+│   ├── server/        # Server docs
+│   └── cli/           # CLI docs
 ├── examples/          # Example configurations
 ├── DESIGN.md          # Overall system design
 └── README.md          # Project readme

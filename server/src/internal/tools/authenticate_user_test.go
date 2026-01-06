@@ -1,11 +1,11 @@
-/*-------------------------------------------------------------------------
+/*-----------------------------------------------------------
  *
- * pgEdge Natural Language Agent
+ * pgEdge AI DBA Workbench
  *
- * Portions copyright (c) 2025 - 2026, pgEdge, Inc.
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
- *-------------------------------------------------------------------------
+ *-----------------------------------------------------------
  */
 
 package tools
@@ -13,14 +13,38 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
 
+// createTestAuthStore creates a temporary auth store for testing
+func createTestAuthStore(t *testing.T) (*auth.AuthStore, func()) {
+	t.Helper()
+
+	tmpDir, err := os.MkdirTemp("", "auth-tool-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+
+	store, err := auth.NewAuthStore(tmpDir, 0, 0)
+	if err != nil {
+		os.RemoveAll(tmpDir)
+		t.Fatalf("Failed to create auth store: %v", err)
+	}
+
+	cleanup := func() {
+		store.Close()
+		os.RemoveAll(tmpDir)
+	}
+
+	return store, cleanup
+}
+
 func TestAuthenticateUserTool_Definition(t *testing.T) {
-	tool := AuthenticateUserTool(nil, nil, 5)
+	tool := AuthenticateUserTool(nil, nil)
 
 	if tool.Definition.Name != "authenticate_user" {
 		t.Errorf("expected name 'authenticate_user', got %q", tool.Definition.Name)
@@ -48,9 +72,9 @@ func TestAuthenticateUserTool_Definition(t *testing.T) {
 	}
 }
 
-func TestAuthenticateUserTool_MissingUserStore(t *testing.T) {
-	// Create tool without user store
-	tool := AuthenticateUserTool(nil, nil, 5)
+func TestAuthenticateUserTool_MissingAuthStore(t *testing.T) {
+	// Create tool without auth store
+	tool := AuthenticateUserTool(nil, nil)
 
 	args := map[string]interface{}{
 		"username": "testuser",
@@ -59,7 +83,7 @@ func TestAuthenticateUserTool_MissingUserStore(t *testing.T) {
 
 	_, err := tool.Handler(args)
 	if err == nil {
-		t.Error("expected error when user store is nil")
+		t.Error("expected error when auth store is nil")
 	}
 
 	if !strings.Contains(err.Error(), "not configured") {
@@ -68,8 +92,10 @@ func TestAuthenticateUserTool_MissingUserStore(t *testing.T) {
 }
 
 func TestAuthenticateUserTool_MissingUsername(t *testing.T) {
-	userStore := auth.InitializeUserStore()
-	tool := AuthenticateUserTool(userStore, nil, 5)
+	authStore, cleanup := createTestAuthStore(t)
+	defer cleanup()
+
+	tool := AuthenticateUserTool(authStore, nil)
 
 	args := map[string]interface{}{
 		"password": "testpass",
@@ -86,8 +112,10 @@ func TestAuthenticateUserTool_MissingUsername(t *testing.T) {
 }
 
 func TestAuthenticateUserTool_MissingPassword(t *testing.T) {
-	userStore := auth.InitializeUserStore()
-	tool := AuthenticateUserTool(userStore, nil, 5)
+	authStore, cleanup := createTestAuthStore(t)
+	defer cleanup()
+
+	tool := AuthenticateUserTool(authStore, nil)
 
 	args := map[string]interface{}{
 		"username": "testuser",
@@ -104,8 +132,10 @@ func TestAuthenticateUserTool_MissingPassword(t *testing.T) {
 }
 
 func TestAuthenticateUserTool_EmptyUsername(t *testing.T) {
-	userStore := auth.InitializeUserStore()
-	tool := AuthenticateUserTool(userStore, nil, 5)
+	authStore, cleanup := createTestAuthStore(t)
+	defer cleanup()
+
+	tool := AuthenticateUserTool(authStore, nil)
 
 	args := map[string]interface{}{
 		"username": "",
@@ -123,8 +153,10 @@ func TestAuthenticateUserTool_EmptyUsername(t *testing.T) {
 }
 
 func TestAuthenticateUserTool_EmptyPassword(t *testing.T) {
-	userStore := auth.InitializeUserStore()
-	tool := AuthenticateUserTool(userStore, nil, 5)
+	authStore, cleanup := createTestAuthStore(t)
+	defer cleanup()
+
+	tool := AuthenticateUserTool(authStore, nil)
 
 	args := map[string]interface{}{
 		"username": "testuser",
@@ -142,8 +174,10 @@ func TestAuthenticateUserTool_EmptyPassword(t *testing.T) {
 }
 
 func TestAuthenticateUserTool_InvalidUsernameType(t *testing.T) {
-	userStore := auth.InitializeUserStore()
-	tool := AuthenticateUserTool(userStore, nil, 5)
+	authStore, cleanup := createTestAuthStore(t)
+	defer cleanup()
+
+	tool := AuthenticateUserTool(authStore, nil)
 
 	args := map[string]interface{}{
 		"username": 123, // Invalid type
@@ -157,8 +191,10 @@ func TestAuthenticateUserTool_InvalidUsernameType(t *testing.T) {
 }
 
 func TestAuthenticateUserTool_InvalidPasswordType(t *testing.T) {
-	userStore := auth.InitializeUserStore()
-	tool := AuthenticateUserTool(userStore, nil, 5)
+	authStore, cleanup := createTestAuthStore(t)
+	defer cleanup()
+
+	tool := AuthenticateUserTool(authStore, nil)
 
 	args := map[string]interface{}{
 		"username": "testuser",
@@ -172,14 +208,16 @@ func TestAuthenticateUserTool_InvalidPasswordType(t *testing.T) {
 }
 
 func TestAuthenticateUserTool_AuthenticationFailed(t *testing.T) {
-	userStore := auth.InitializeUserStore()
+	authStore, cleanup := createTestAuthStore(t)
+	defer cleanup()
+
 	// Add a user with known password
-	err := userStore.AddUser("testuser", "correctpassword", "test user")
+	err := authStore.CreateUser("testuser", "correctpassword", "test user")
 	if err != nil {
 		t.Fatalf("failed to add user: %v", err)
 	}
 
-	tool := AuthenticateUserTool(userStore, nil, 5)
+	tool := AuthenticateUserTool(authStore, nil)
 
 	args := map[string]interface{}{
 		"username": "testuser",
@@ -197,14 +235,16 @@ func TestAuthenticateUserTool_AuthenticationFailed(t *testing.T) {
 }
 
 func TestAuthenticateUserTool_Success(t *testing.T) {
-	userStore := auth.InitializeUserStore()
+	authStore, cleanup := createTestAuthStore(t)
+	defer cleanup()
+
 	// Add a user with known password
-	err := userStore.AddUser("testuser", "correctpassword", "test user")
+	err := authStore.CreateUser("testuser", "correctpassword", "test user")
 	if err != nil {
 		t.Fatalf("failed to add user: %v", err)
 	}
 
-	tool := AuthenticateUserTool(userStore, nil, 5)
+	tool := AuthenticateUserTool(authStore, nil)
 
 	args := map[string]interface{}{
 		"username": "testuser",
@@ -244,16 +284,19 @@ func TestAuthenticateUserTool_Success(t *testing.T) {
 }
 
 func TestAuthenticateUserTool_WithRateLimiter(t *testing.T) {
-	userStore := auth.InitializeUserStore()
+	authStore, cleanup := createTestAuthStore(t)
+	defer cleanup()
+
 	rateLimiter := auth.NewRateLimiter(5, 60) // 5 attempts per 60 seconds
+	defer rateLimiter.Stop()
 
 	// Add a user
-	err := userStore.AddUser("testuser", "correctpassword", "test user")
+	err := authStore.CreateUser("testuser", "correctpassword", "test user")
 	if err != nil {
 		t.Fatalf("failed to add user: %v", err)
 	}
 
-	tool := AuthenticateUserTool(userStore, rateLimiter, 5)
+	tool := AuthenticateUserTool(authStore, rateLimiter)
 
 	// Create context with IP address
 	ctx := context.WithValue(context.Background(), auth.IPAddressContextKey, "192.168.1.1")
@@ -276,8 +319,10 @@ func TestAuthenticateUserTool_WithRateLimiter(t *testing.T) {
 }
 
 func TestAuthenticateUserTool_NonexistentUser(t *testing.T) {
-	userStore := auth.InitializeUserStore()
-	tool := AuthenticateUserTool(userStore, nil, 5)
+	authStore, cleanup := createTestAuthStore(t)
+	defer cleanup()
+
+	tool := AuthenticateUserTool(authStore, nil)
 
 	args := map[string]interface{}{
 		"username": "nonexistent",

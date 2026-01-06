@@ -55,22 +55,29 @@ http:
   #-----------------------------------------------------------------------
   # Authentication Configuration
   #-----------------------------------------------------------------------
+  #
+  # Authentication data (users, tokens, sessions) is stored in a SQLite
+  # database within the data_dir directory. Use the CLI commands to manage
+  # users and service tokens:
+  #
+  #   ai-dba-server add-user [--username USER] [--password PASS]
+  #   ai-dba-server list-users
+  #   ai-dba-server add-token [--annotation NOTE] [--expires DURATION]
+  #   ai-dba-server list-tokens
+  #
   auth:
     # Enable authentication (strongly recommended for production)
     # Default: true
     enabled: true
 
-    # Path to token configuration file
-    # Contains pre-generated API tokens for service accounts
-    # token_file: "/etc/ai-workbench/tokens.yaml"
-
-    # Path to user configuration file
-    # Contains user accounts for interactive authentication
-    # user_file: "/etc/ai-workbench/users.yaml"
-
     # Account lockout after N failed login attempts (0 = disabled)
     # Default: 0 (disabled)
     max_failed_attempts_before_lockout: 0
+
+    # Maximum days for user-created tokens (0 = unlimited)
+    # This limits how long users can set their personal tokens to live
+    # Default: 0 (unlimited)
+    max_user_token_days: 0
 
     # Rate limiting time window in minutes
     # Default: 15
@@ -379,9 +386,8 @@ builtins:
 #     key_file: "/etc/ai-workbench/certs/server-key.pem"
 #   auth:
 #     enabled: true
-#     token_file: "/etc/ai-workbench/tokens.yaml"
-#     user_file: "/etc/ai-workbench/users.yaml"
 #     max_failed_attempts_before_lockout: 5
+#     max_user_token_days: 90
 # database:
 #   host: "db.internal.example.com"
 #   port: 5432

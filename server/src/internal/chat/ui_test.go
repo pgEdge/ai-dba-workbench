@@ -1,6 +1,6 @@
 /*-------------------------------------------------------------------------
 *
- * pgEdge Natural Language Agent
+ * pgEdge AI DBA Workbench
 *
 * Portions copyright (c) 2025 - 2026, pgEdge, Inc.
 * This software is released under The PostgreSQL License
@@ -80,8 +80,8 @@ func TestUI_PrintWelcome(t *testing.T) {
 	output := buf.String()
 
 	// Check for key elements in welcome message
-	if !strings.Contains(output, "pgEdge Natural Language Agent") {
-		t.Error("Welcome message should contain 'pgEdge Natural Language Agent'")
+	if !strings.Contains(output, "pgEdge AI DBA Workbench") {
+		t.Error("Welcome message should contain 'pgEdge AI DBA Workbench'")
 	}
 
 	if !strings.Contains(output, "quit") {

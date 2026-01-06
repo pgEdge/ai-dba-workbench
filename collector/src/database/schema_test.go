@@ -223,10 +223,6 @@ func cleanupTestSchema(t *testing.T, pool *pgxpool.Pool) {
 	ctx := context.Background()
 
 	tables := []string{
-		"user_sessions",
-		"user_tokens",
-		"service_tokens",
-		"user_accounts",
 		"connections",
 		"schema_version",
 	}
@@ -251,7 +247,8 @@ func TestNewSchemaManager(t *testing.T) {
 	}
 
 	// Verify migrations are registered in order
-	expectedVersions := []int{1, 2, 3, 4, 5, 6}
+	// Note: Migrations 2, 5, and 6 were removed (auth moved to SQLite)
+	expectedVersions := []int{1, 3, 4}
 	if len(sm.migrations) != len(expectedVersions) {
 		t.Fatalf("Expected %d migrations, got %d", len(expectedVersions), len(sm.migrations))
 	}
@@ -410,12 +407,20 @@ func TestGetCurrentVersion(t *testing.T) {
 	}
 
 	// Test when schema_version table exists
+	// The version should be the highest migration version (4), not the count of migrations
 	version, err = sm.getCurrentVersion(conn)
 	if err != nil {
 		t.Fatalf("Failed to get current version: %v", err)
 	}
-	if version != len(sm.migrations) {
-		t.Errorf("Expected version %d, got %d", len(sm.migrations), version)
+	// Get the highest version from migrations
+	highestVersion := 0
+	for _, m := range sm.migrations {
+		if m.Version > highestVersion {
+			highestVersion = m.Version
+		}
+	}
+	if version != highestVersion {
+		t.Errorf("Expected version %d, got %d", highestVersion, version)
 	}
 
 	// Clean up
@@ -490,42 +495,34 @@ func TestMonitoredConnectionsConstraints(t *testing.T) {
 		t.Fatalf("Failed to migrate: %v", err)
 	}
 
-	// Test port constraint
+	// Test port constraint - port must be > 0
 	_, err := pool.Exec(ctx, `
         INSERT INTO connections
         (name, host, port, database_name, username, owner_username)
-        VALUES ('test', 'localhost', 0, 'testdb', 'testuser', 'token')
+        VALUES ('test', 'localhost', 0, 'testdb', 'testuser', 'testowner')
     `)
 	if err == nil {
 		t.Error("Expected error for invalid port, got nil")
 	}
 
+	// Test port constraint - port must be <= 65535
 	_, err = pool.Exec(ctx, `
         INSERT INTO connections
         (name, host, port, database_name, username, owner_username)
-        VALUES ('test', 'localhost', 70000, 'testdb', 'testuser', 'token')
+        VALUES ('test', 'localhost', 70000, 'testdb', 'testuser', 'testowner')
     `)
 	if err == nil {
 		t.Error("Expected error for invalid port, got nil")
 	}
 
-	// Test owner_username constraint for non-shared connections
+	// Test chk_owner constraint - must have either owner_username or owner_token
 	_, err = pool.Exec(ctx, `
         INSERT INTO connections
         (name, host, port, database_name, username, is_shared)
         VALUES ('test', 'localhost', 5432, 'testdb', 'testuser', FALSE)
     `)
 	if err == nil {
-		t.Error("Expected error for missing owner_username on non-shared connection")
-	}
-
-	// Create a test user account for the valid insertion test
-	_, err = pool.Exec(ctx, `
-        INSERT INTO user_accounts (username, email, full_name, password_hash)
-        VALUES ('testowner', 'testowner@example.com', 'Test Owner', 'hash123')
-    `)
-	if err != nil {
-		t.Fatalf("Failed to create test user: %v", err)
+		t.Error("Expected error for missing owner_username/owner_token on connection")
 	}
 
 	// Test valid insertion with owner_username
@@ -536,6 +533,16 @@ func TestMonitoredConnectionsConstraints(t *testing.T) {
     `)
 	if err != nil {
 		t.Errorf("Failed to insert valid connection with owner_username: %v", err)
+	}
+
+	// Test valid insertion with owner_token
+	_, err = pool.Exec(ctx, `
+        INSERT INTO connections
+        (name, host, port, database_name, username, owner_token)
+        VALUES ('test2', 'localhost', 5432, 'testdb', 'testuser', 'service-token-123')
+    `)
+	if err != nil {
+		t.Errorf("Failed to insert valid connection with owner_token: %v", err)
 	}
 
 	// Clean up
@@ -585,375 +592,6 @@ func TestIndexesCreated(t *testing.T) {
 	// Clean up
 	cleanupTestSchema(t, pool)
 }
-func TestUserAccountsTable(t *testing.T) {
-	ctx := context.Background()
-	pool, conn := getTestConnection(t)
-	if pool == nil {
-		return
-	}
-	defer pool.Close()
-	defer conn.Release()
-
-	// Clean up and migrate
-	cleanupTestSchema(t, pool)
-	sm := NewSchemaManager()
-	if err := sm.Migrate(conn); err != nil {
-		t.Fatalf("Failed to migrate: %v", err)
-	}
-
-	// Verify table exists
-	var count int
-	err := pool.QueryRow(ctx, `
-        SELECT COUNT(*)
-        FROM information_schema.tables
-        WHERE table_name = 'user_accounts'
-    `).Scan(&count)
-	if err != nil {
-		t.Fatalf("Failed to check for user_accounts table: %v", err)
-	}
-	if count != 1 {
-		t.Fatal("user_accounts table was not created")
-	}
-
-	// Test unique constraint on username
-	_, err = pool.Exec(ctx, `
-        INSERT INTO user_accounts (username, email, full_name, password_hash)
-        VALUES ('testuser', 'test@example.com', 'Test User', 'hash123')
-    `)
-	if err != nil {
-		t.Errorf("Failed to insert first user: %v", err)
-	}
-
-	_, err = pool.Exec(ctx, `
-        INSERT INTO user_accounts (username, email, full_name, password_hash)
-        VALUES ('testuser', 'test2@example.com', 'Test User 2', 'hash456')
-    `)
-	if err == nil {
-		t.Error("Expected error for duplicate username, got nil")
-	}
-
-	// Test empty username constraint
-	_, err = pool.Exec(ctx, `
-        INSERT INTO user_accounts (username, email, full_name, password_hash)
-        VALUES ('', 'test3@example.com', 'Test User 3', 'hash789')
-    `)
-	if err == nil {
-		t.Error("Expected error for empty username, got nil")
-	}
-
-	// Test empty email constraint
-	_, err = pool.Exec(ctx, `
-        INSERT INTO user_accounts (username, email, full_name, password_hash)
-        VALUES ('testuser2', '', 'Test User 2', 'hash789')
-    `)
-	if err == nil {
-		t.Error("Expected error for empty email, got nil")
-	}
-
-	// Test empty password_hash constraint
-	_, err = pool.Exec(ctx, `
-        INSERT INTO user_accounts (username, email, full_name, password_hash)
-        VALUES ('testuser2', 'test2@example.com', 'Test User 2', '')
-    `)
-	if err == nil {
-		t.Error("Expected error for empty password_hash, got nil")
-	}
-
-	// Clean up
-	cleanupTestSchema(t, pool)
-}
-
-func TestUserTokensTable(t *testing.T) {
-	ctx := context.Background()
-	pool, conn := getTestConnection(t)
-	if pool == nil {
-		return
-	}
-	defer pool.Close()
-	defer conn.Release()
-
-	// Clean up and migrate
-	cleanupTestSchema(t, pool)
-	sm := NewSchemaManager()
-	if err := sm.Migrate(conn); err != nil {
-		t.Fatalf("Failed to migrate: %v", err)
-	}
-
-	// Verify table exists
-	var count int
-	err := pool.QueryRow(ctx, `
-        SELECT COUNT(*)
-        FROM information_schema.tables
-        WHERE table_name = 'user_tokens'
-    `).Scan(&count)
-	if err != nil {
-		t.Fatalf("Failed to check for user_tokens table: %v", err)
-	}
-	if count != 1 {
-		t.Fatal("user_tokens table was not created")
-	}
-
-	// Create a test user first
-	var userID int
-	err = pool.QueryRow(ctx, `
-        INSERT INTO user_accounts (username, email, full_name, password_hash)
-        VALUES ('testuser', 'test@example.com', 'Test User', 'hash123')
-        RETURNING id
-    `).Scan(&userID)
-	if err != nil {
-		t.Fatalf("Failed to create test user: %v", err)
-	}
-
-	// Test foreign key constraint
-	_, err = pool.Exec(ctx, `
-        INSERT INTO user_tokens (user_id, token_hash, expires_at)
-        VALUES (99999, 'token123', NOW() + INTERVAL '24 hours')
-    `)
-	if err == nil {
-		t.Error("Expected error for invalid user_id foreign key, got nil")
-	}
-
-	// Test valid token insertion
-	_, err = pool.Exec(ctx, `
-        INSERT INTO user_tokens (user_id, token_hash, expires_at)
-        VALUES ($1, 'token123', NOW() + INTERVAL '24 hours')
-    `, userID)
-	if err != nil {
-		t.Errorf("Failed to insert valid token: %v", err)
-	}
-
-	// Test unique constraint on token_hash
-	_, err = pool.Exec(ctx, `
-        INSERT INTO user_tokens (user_id, token_hash, expires_at)
-        VALUES ($1, 'token123', NOW() + INTERVAL '24 hours')
-    `, userID)
-	if err == nil {
-		t.Error("Expected error for duplicate token_hash, got nil")
-	}
-
-	// Test empty token_hash constraint
-	_, err = pool.Exec(ctx, `
-        INSERT INTO user_tokens (user_id, token_hash, expires_at)
-        VALUES ($1, '', NOW() + INTERVAL '24 hours')
-    `, userID)
-	if err == nil {
-		t.Error("Expected error for empty token_hash, got nil")
-	}
-
-	// Test expires_at can be in the past (constraint removed in Migration 5)
-	_, err = pool.Exec(ctx, `
-        INSERT INTO user_tokens (user_id, token_hash, expires_at)
-        VALUES ($1, 'token456', NOW() - INTERVAL '1 hour')
-    `, userID)
-	if err != nil {
-		t.Errorf("Should allow expires_at in the past, got error: %v", err)
-	}
-
-	// Test expires_at can be NULL (for indefinite lifetime)
-	_, err = pool.Exec(ctx, `
-        INSERT INTO user_tokens (user_id, token_hash, expires_at)
-        VALUES ($1, 'token789', NULL)
-    `, userID)
-	if err != nil {
-		t.Errorf("Should allow NULL expires_at, got error: %v", err)
-	}
-
-	// Test cascade delete
-	_, err = pool.Exec(ctx, `DELETE FROM user_accounts WHERE id = $1`, userID)
-	if err != nil {
-		t.Errorf("Failed to delete user: %v", err)
-	}
-
-	err = pool.QueryRow(ctx, `
-        SELECT COUNT(*) FROM user_tokens WHERE user_id = $1
-    `, userID).Scan(&count)
-	if err != nil {
-		t.Errorf("Failed to count tokens: %v", err)
-	}
-	if count != 0 {
-		t.Error("Expected cascade delete to remove tokens")
-	}
-
-	// Clean up
-	cleanupTestSchema(t, pool)
-}
-
-func TestServiceTokensTable(t *testing.T) {
-	ctx := context.Background()
-	pool, conn := getTestConnection(t)
-	if pool == nil {
-		return
-	}
-	defer pool.Close()
-	defer conn.Release()
-
-	// Clean up and migrate
-	cleanupTestSchema(t, pool)
-	sm := NewSchemaManager()
-	if err := sm.Migrate(conn); err != nil {
-		t.Fatalf("Failed to migrate: %v", err)
-	}
-
-	// Verify table exists
-	var count int
-	err := pool.QueryRow(ctx, `
-        SELECT COUNT(*)
-        FROM information_schema.tables
-        WHERE table_name = 'service_tokens'
-    `).Scan(&count)
-	if err != nil {
-		t.Fatalf("Failed to check for service_tokens table: %v", err)
-	}
-	if count != 1 {
-		t.Fatal("service_tokens table was not created")
-	}
-
-	// Test valid token insertion
-	_, err = pool.Exec(ctx, `
-        INSERT INTO service_tokens (name, token_hash, note)
-        VALUES ('service1', 'stoken123', 'Test service token')
-    `)
-	if err != nil {
-		t.Errorf("Failed to insert valid service token: %v", err)
-	}
-
-	// Test unique constraint on name
-	_, err = pool.Exec(ctx, `
-        INSERT INTO service_tokens (name, token_hash, note)
-        VALUES ('service1', 'stoken456', 'Another test token')
-    `)
-	if err == nil {
-		t.Error("Expected error for duplicate service name, got nil")
-	}
-
-	// Test unique constraint on token_hash
-	_, err = pool.Exec(ctx, `
-        INSERT INTO service_tokens (name, token_hash, note)
-        VALUES ('service2', 'stoken123', 'Another test token')
-    `)
-	if err == nil {
-		t.Error("Expected error for duplicate token_hash, got nil")
-	}
-
-	// Test empty name constraint
-	_, err = pool.Exec(ctx, `
-        INSERT INTO service_tokens (name, token_hash, note)
-        VALUES ('', 'stoken789', 'Test token')
-    `)
-	if err == nil {
-		t.Error("Expected error for empty name, got nil")
-	}
-
-	// Test empty token_hash constraint
-	_, err = pool.Exec(ctx, `
-        INSERT INTO service_tokens (name, token_hash, note)
-        VALUES ('service2', '', 'Test token')
-    `)
-	if err == nil {
-		t.Error("Expected error for empty token_hash, got nil")
-	}
-
-	// Test nullable expires_at (service tokens can be permanent)
-	_, err = pool.Exec(ctx, `
-        INSERT INTO service_tokens (name, token_hash, expires_at, note)
-        VALUES ('service2', 'stoken456', NULL, 'Permanent token')
-    `)
-	if err != nil {
-		t.Errorf("Failed to insert service token with null expires_at: %v", err)
-	}
-
-	// Clean up
-	cleanupTestSchema(t, pool)
-}
-
-func TestAuthenticationIndexes(t *testing.T) {
-	ctx := context.Background()
-	pool, conn := getTestConnection(t)
-	if pool == nil {
-		return
-	}
-	defer pool.Close()
-	defer conn.Release()
-
-	// Clean up and migrate
-	cleanupTestSchema(t, pool)
-	sm := NewSchemaManager()
-	if err := sm.Migrate(conn); err != nil {
-		t.Fatalf("Failed to migrate: %v", err)
-	}
-
-	// Check for indexes on user_accounts
-	expectedIndexes := []string{
-		"idx_user_accounts_username",
-		"idx_user_accounts_email",
-	}
-
-	for _, indexName := range expectedIndexes {
-		var count int
-		err := pool.QueryRow(ctx, `
-            SELECT COUNT(*)
-            FROM pg_indexes
-            WHERE tablename = 'user_accounts'
-            AND indexname = $1
-        `, indexName).Scan(&count)
-		if err != nil {
-			t.Fatalf("Failed to check for index %s: %v", indexName, err)
-		}
-		if count != 1 {
-			t.Errorf("Index %s not found", indexName)
-		}
-	}
-
-	// Check for indexes on user_tokens
-	expectedIndexes = []string{
-		"idx_user_tokens_user_id",
-		"idx_user_tokens_token_hash",
-		"idx_user_tokens_expires_at",
-	}
-
-	for _, indexName := range expectedIndexes {
-		var count int
-		err := pool.QueryRow(ctx, `
-            SELECT COUNT(*)
-            FROM pg_indexes
-            WHERE tablename = 'user_tokens'
-            AND indexname = $1
-        `, indexName).Scan(&count)
-		if err != nil {
-			t.Fatalf("Failed to check for index %s: %v", indexName, err)
-		}
-		if count != 1 {
-			t.Errorf("Index %s not found", indexName)
-		}
-	}
-
-	// Check for indexes on service_tokens
-	expectedIndexes = []string{
-		"idx_service_tokens_name",
-		"idx_service_tokens_token_hash",
-		"idx_service_tokens_expires_at",
-	}
-
-	for _, indexName := range expectedIndexes {
-		var count int
-		err := pool.QueryRow(ctx, `
-            SELECT COUNT(*)
-            FROM pg_indexes
-            WHERE tablename = 'service_tokens'
-            AND indexname = $1
-        `, indexName).Scan(&count)
-		if err != nil {
-			t.Fatalf("Failed to check for index %s: %v", indexName, err)
-		}
-		if count != 1 {
-			t.Errorf("Index %s not found", indexName)
-		}
-	}
-
-	// Clean up
-	cleanupTestSchema(t, pool)
-}
-
 // TestZZZ_FullSchemaForInspection creates the full schema and leaves it in
 // place for inspection. This test runs last (due to ZZZ prefix) and does not
 // clean up, allowing users to inspect the schema when TEST_AI_WORKBENCH_KEEP_DB=1 is set.
@@ -976,12 +614,10 @@ func TestZZZ_FullSchemaForInspection(t *testing.T) {
 	}
 
 	// Verify all tables exist
+	// Note: user_accounts, user_tokens, service_tokens moved to SQLite auth store
 	expectedTables := []string{
 		"schema_version",
 		"connections",
-		"user_accounts",
-		"user_tokens",
-		"service_tokens",
 		"probe_configs",
 	}
 

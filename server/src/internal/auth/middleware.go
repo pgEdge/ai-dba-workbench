@@ -1,6 +1,6 @@
 /*-------------------------------------------------------------------------
  *
- * pgEdge Natural Language Agent
+ * pgEdge AI DBA Workbench
  *
  * Portions copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
@@ -107,11 +107,12 @@ func ExtractIPAddress(r *http.Request) string {
 }
 
 // AuthMiddleware creates an HTTP middleware that validates API tokens and session tokens
-func AuthMiddleware(tokenStore *TokenStore, userStore *UserStore, enabled bool) func(http.Handler) http.Handler {
+// Uses the new AuthStore for all authentication
+func AuthMiddleware(authStore *AuthStore, enabled bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Skip authentication if disabled
-			if !enabled {
+			// Skip authentication if disabled or no auth store
+			if !enabled || authStore == nil {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -145,11 +146,11 @@ func AuthMiddleware(tokenStore *TokenStore, userStore *UserStore, enabled bool) 
 
 			token := parts[1]
 
-			// Try to validate as API token first
-			validAPIToken, err := tokenStore.ValidateToken(token)
-			if err == nil && validAPIToken {
+			// Try to validate as API token (service token or user token) first
+			storedToken, err := authStore.ValidateToken(token)
+			if err == nil && storedToken != nil {
 				// Valid API token - use token hash for connection isolation
-				tokenHash := HashToken(token)
+				tokenHash := GetTokenHashByRawToken(token)
 				ctx := context.WithValue(r.Context(), TokenHashContextKey, tokenHash)
 				ctx = context.WithValue(ctx, IsAPITokenContextKey, true)
 				r = r.WithContext(ctx)
@@ -157,19 +158,17 @@ func AuthMiddleware(tokenStore *TokenStore, userStore *UserStore, enabled bool) 
 				return
 			}
 
-			// Try to validate as session token if userStore is available
-			if userStore != nil {
-				username, err := userStore.ValidateSessionToken(token)
-				if err == nil && username != "" {
-					// Valid session token - use token hash for connection isolation
-					tokenHash := HashToken(token)
-					ctx := context.WithValue(r.Context(), TokenHashContextKey, tokenHash)
-					ctx = context.WithValue(ctx, UsernameContextKey, username)
-					ctx = context.WithValue(ctx, IsAPITokenContextKey, false)
-					r = r.WithContext(ctx)
-					next.ServeHTTP(w, r)
-					return
-				}
+			// Try to validate as session token
+			username, err := authStore.ValidateSessionToken(token)
+			if err == nil && username != "" {
+				// Valid session token - use token hash for connection isolation
+				tokenHash := GetTokenHashByRawToken(token)
+				ctx := context.WithValue(r.Context(), TokenHashContextKey, tokenHash)
+				ctx = context.WithValue(ctx, UsernameContextKey, username)
+				ctx = context.WithValue(ctx, IsAPITokenContextKey, false)
+				r = r.WithContext(ctx)
+				next.ServeHTTP(w, r)
+				return
 			}
 
 			// Neither API token nor session token is valid

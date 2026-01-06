@@ -30,7 +30,7 @@ func TestNewContextAwareProvider(t *testing.T) {
 	cfg := &config.Config{}
 	resourceReg := resources.NewContextAwareRegistry(clientManager, true, cfg)
 
-	provider := NewContextAwareProvider(clientManager, resourceReg, true, fallbackClient, cfg, nil, "", nil, 0)
+	provider := NewContextAwareProvider(clientManager, resourceReg, true, fallbackClient, cfg, nil, nil)
 
 	if provider == nil {
 		t.Fatal("Expected non-nil provider")
@@ -58,7 +58,7 @@ func TestContextAwareProvider_List(t *testing.T) {
 	cfg := &config.Config{}
 	resourceReg := resources.NewContextAwareRegistry(clientManager, false, cfg)
 
-	provider := NewContextAwareProvider(clientManager, resourceReg, false, fallbackClient, cfg, nil, "", nil, 0)
+	provider := NewContextAwareProvider(clientManager, resourceReg, false, fallbackClient, cfg, nil, nil)
 
 	// Register tools
 	err := provider.RegisterTools(context.TODO())
@@ -110,7 +110,7 @@ func TestContextAwareProvider_Execute_NoAuth(t *testing.T) {
 	resourceReg := resources.NewContextAwareRegistry(clientManager, false, cfg)
 
 	// Auth disabled - should use fallback client
-	provider := NewContextAwareProvider(clientManager, resourceReg, false, fallbackClient, cfg, nil, "", nil, 0)
+	provider := NewContextAwareProvider(clientManager, resourceReg, false, fallbackClient, cfg, nil, nil)
 
 	// Context without token hash
 	ctx := context.Background()
@@ -140,7 +140,7 @@ func TestContextAwareProvider_Execute_WithAuth(t *testing.T) {
 	resourceReg := resources.NewContextAwareRegistry(clientManager, true, cfg)
 
 	// Auth enabled - should require token hash
-	provider := NewContextAwareProvider(clientManager, resourceReg, true, fallbackClient, cfg, nil, "", nil, 0)
+	provider := NewContextAwareProvider(clientManager, resourceReg, true, fallbackClient, cfg, nil, nil)
 
 	t.Run("missing token hash returns error", func(t *testing.T) {
 		// Context without token hash
@@ -226,7 +226,7 @@ func TestContextAwareProvider_Execute_InvalidTool(t *testing.T) {
 	resourceReg := resources.NewContextAwareRegistry(clientManager, false, cfg)
 
 	// Auth disabled for simplicity
-	provider := NewContextAwareProvider(clientManager, resourceReg, false, fallbackClient, cfg, nil, "", nil, 0)
+	provider := NewContextAwareProvider(clientManager, resourceReg, false, fallbackClient, cfg, nil, nil)
 
 	ctx := context.Background()
 
@@ -262,7 +262,7 @@ func TestContextAwareProvider_RegisterTools_WithContext(t *testing.T) {
 	cfg := &config.Config{}
 	resourceReg := resources.NewContextAwareRegistry(clientManager, true, cfg)
 
-	provider := NewContextAwareProvider(clientManager, resourceReg, true, fallbackClient, cfg, nil, "", nil, 0)
+	provider := NewContextAwareProvider(clientManager, resourceReg, true, fallbackClient, cfg, nil, nil)
 
 	// Register with context containing token hash
 	ctx := context.WithValue(context.Background(), auth.TokenHashContextKey, "registration-token")

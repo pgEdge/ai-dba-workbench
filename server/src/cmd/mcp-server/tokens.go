@@ -21,29 +21,13 @@ import (
 )
 
 // addTokenCommand handles the add-token command
-func addTokenCommand(tokenFile, annotation string, expiresIn time.Duration) error {
-	// Load or create token store
-	var store *auth.TokenStore
-	var err error
-
-	if _, err := os.Stat(tokenFile); os.IsNotExist(err) {
-		store = auth.InitializeTokenStore()
-		fmt.Fprintf(os.Stderr, "Creating new token file: %s\n", tokenFile)
-	} else {
-		store, err = auth.LoadTokenStore(tokenFile)
-		if err != nil {
-			return fmt.Errorf("failed to load token file: %w", err)
-		}
-	}
-
-	// Generate token
-	token, err := auth.GenerateToken()
+func addTokenCommand(dataDir, annotation string, expiresIn time.Duration) error {
+	// Open auth store
+	store, err := auth.NewAuthStore(dataDir, 0, 0)
 	if err != nil {
-		return fmt.Errorf("failed to generate token: %w", err)
+		return fmt.Errorf("failed to open auth store: %w", err)
 	}
-
-	// Hash token
-	hash := auth.HashToken(token)
+	defer store.Close()
 
 	reader := bufio.NewReader(os.Stdin)
 
@@ -78,26 +62,19 @@ func addTokenCommand(tokenFile, annotation string, expiresIn time.Duration) erro
 		}
 	}
 
-	// Generate unique ID
-	tokenID := fmt.Sprintf("token-%d", time.Now().Unix())
-
-	// Add token to store (empty database = uses configured single database)
-	if err := store.AddToken(tokenID, hash, annotation, expiresAt, ""); err != nil {
-		return fmt.Errorf("failed to add token: %w", err)
-	}
-
-	// Save token store
-	if err := auth.SaveTokenStore(tokenFile, store); err != nil {
-		return fmt.Errorf("failed to save token file: %w", err)
+	// Create service token (empty database = uses configured single database)
+	rawToken, storedToken, err := store.CreateServiceToken(annotation, expiresAt, "")
+	if err != nil {
+		return fmt.Errorf("failed to create token: %w", err)
 	}
 
 	// Display results
 	fmt.Println("\n" + strings.Repeat("=", 70))
 	fmt.Println("Token created successfully!")
 	fmt.Println(strings.Repeat("=", 70))
-	fmt.Printf("\nToken: %s\n", token)
-	fmt.Printf("Hash:  %s\n", hash[:16]+"...")
-	fmt.Printf("ID:    %s\n", tokenID)
+	fmt.Printf("\nToken: %s\n", rawToken)
+	fmt.Printf("Hash:  %s...\n", storedToken.TokenHash[:16])
+	fmt.Printf("ID:    %d\n", storedToken.ID)
 	if annotation != "" {
 		fmt.Printf("Note:  %s\n", annotation)
 	}
@@ -115,26 +92,17 @@ func addTokenCommand(tokenFile, annotation string, expiresIn time.Duration) erro
 }
 
 // removeTokenCommand handles the remove-token command
-func removeTokenCommand(tokenFile, identifier string) error {
-	// Load token store
-	store, err := auth.LoadTokenStore(tokenFile)
+func removeTokenCommand(dataDir, identifier string) error {
+	// Open auth store
+	store, err := auth.NewAuthStore(dataDir, 0, 0)
 	if err != nil {
-		return fmt.Errorf("failed to load token file: %w", err)
+		return fmt.Errorf("failed to open auth store: %w", err)
 	}
+	defer store.Close()
 
 	// Remove token
-	removed, err := store.RemoveToken(identifier)
-	if err != nil {
+	if err := store.DeleteServiceToken(identifier); err != nil {
 		return fmt.Errorf("failed to remove token: %w", err)
-	}
-
-	if !removed {
-		return fmt.Errorf("token not found: %s", identifier)
-	}
-
-	// Save token store
-	if err := auth.SaveTokenStore(tokenFile, store); err != nil {
-		return fmt.Errorf("failed to save token file: %w", err)
 	}
 
 	fmt.Printf("Token removed successfully: %s\n", identifier)
@@ -142,27 +110,33 @@ func removeTokenCommand(tokenFile, identifier string) error {
 }
 
 // listTokensCommand handles the list-tokens command
-func listTokensCommand(tokenFile string) error {
-	// Load token store
-	store, err := auth.LoadTokenStore(tokenFile)
+func listTokensCommand(dataDir string) error {
+	// Open auth store
+	store, err := auth.NewAuthStore(dataDir, 0, 0)
 	if err != nil {
-		return fmt.Errorf("failed to load token file: %w", err)
+		return fmt.Errorf("failed to open auth store: %w", err)
+	}
+	defer store.Close()
+
+	tokens, err := store.ListServiceTokens()
+	if err != nil {
+		return fmt.Errorf("failed to list tokens: %w", err)
 	}
 
-	tokens := store.ListTokens()
 	if len(tokens) == 0 {
-		fmt.Println("No tokens found.")
+		fmt.Println("No service tokens found.")
 		return nil
 	}
 
-	fmt.Println("\nAPI Tokens:")
-	fmt.Println(strings.Repeat("=", 80))
-	fmt.Printf("%-20s %-14s %-18s %-10s %s\n", "ID", "Hash Prefix", "Expires", "Status", "Annotation")
-	fmt.Println(strings.Repeat("-", 80))
+	fmt.Println("\nService Tokens:")
+	fmt.Println(strings.Repeat("=", 90))
+	fmt.Printf("%-6s %-18s %-20s %-10s %s\n", "ID", "Hash Prefix", "Expires", "Status", "Annotation")
+	fmt.Println(strings.Repeat("-", 90))
 
+	now := time.Now()
 	for _, token := range tokens {
 		status := "Active"
-		if token.Expired {
+		if token.ExpiresAt != nil && token.ExpiresAt.Before(now) {
 			status = "EXPIRED"
 		}
 
@@ -172,18 +146,23 @@ func listTokensCommand(tokenFile string) error {
 		}
 
 		annotation := token.Annotation
-		if len(annotation) > 20 {
-			annotation = annotation[:17] + "..."
+		if len(annotation) > 25 {
+			annotation = annotation[:22] + "..."
 		}
 
-		fmt.Printf("%-20s %-14s %-18s %-10s %s\n",
+		hashPrefix := token.TokenHash
+		if len(hashPrefix) > 16 {
+			hashPrefix = hashPrefix[:16]
+		}
+
+		fmt.Printf("%-6d %-18s %-20s %-10s %s\n",
 			token.ID,
-			token.HashPrefix,
+			hashPrefix,
 			expiryStr,
 			status,
 			annotation)
 	}
-	fmt.Println(strings.Repeat("=", 80) + "\n")
+	fmt.Println(strings.Repeat("=", 90) + "\n")
 
 	return nil
 }

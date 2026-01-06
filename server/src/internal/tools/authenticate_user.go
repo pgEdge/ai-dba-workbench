@@ -1,6 +1,6 @@
 /*-------------------------------------------------------------------------
  *
- * pgEdge Natural Language Agent
+ * pgEdge AI DBA Workbench
  *
  * Portions copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
@@ -21,7 +21,7 @@ import (
 
 // AuthenticateUserTool creates a tool for user authentication
 // This tool is NOT advertised to the LLM - it's only for direct client calls
-func AuthenticateUserTool(userStore *auth.UserStore, rateLimiter *auth.RateLimiter, maxFailedAttempts int) Tool {
+func AuthenticateUserTool(authStore *auth.AuthStore, rateLimiter *auth.RateLimiter) Tool {
 	return Tool{
 		Definition: mcp.Tool{
 			Name:        "authenticate_user",
@@ -73,8 +73,8 @@ func AuthenticateUserTool(userStore *auth.UserStore, rateLimiter *auth.RateLimit
 				return mcp.ToolResponse{}, fmt.Errorf("password must be a non-empty string")
 			}
 
-			// Check if user store is available
-			if userStore == nil {
+			// Check if auth store is available
+			if authStore == nil {
 				return mcp.ToolResponse{}, fmt.Errorf("user authentication is not configured")
 			}
 
@@ -89,7 +89,7 @@ func AuthenticateUserTool(userStore *auth.UserStore, rateLimiter *auth.RateLimit
 			}
 
 			// Authenticate user
-			token, expiration, err := userStore.AuthenticateUser(username, password, maxFailedAttempts)
+			token, expiration, err := authStore.AuthenticateUser(username, password)
 			if err != nil {
 				// Record failed attempt for rate limiting
 				if rateLimiter != nil && ipAddress != "" {

@@ -77,7 +77,7 @@ func (ui *UI) colorize(color, text string) string {
 func (ui *UI) PrintWelcome(clientVersion, serverVersion string) {
 	elephant := fmt.Sprintf(`
           _
-   ______/ \-.   _           pgEdge Natural Language Agent
+   ______/ \-.   _           pgEdge AI DBA Workbench
 .-/     (    o\_//           CLI: v%s  Server: v%s
  |  ___  \_/\---'            Type /quit to leave, /help for commands
  |_||  |_||

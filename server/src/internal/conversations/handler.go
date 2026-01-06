@@ -1,6 +1,6 @@
 /*-------------------------------------------------------------------------
  *
- * pgEdge Natural Language Agent
+ * pgEdge AI DBA Workbench
  *
  * Portions copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
@@ -23,14 +23,14 @@ import (
 // Handler handles conversation API requests
 type Handler struct {
 	store     *Store
-	userStore *auth.UserStore
+	authStore *auth.AuthStore
 }
 
 // NewHandler creates a new conversation handler
-func NewHandler(store *Store, userStore *auth.UserStore) *Handler {
+func NewHandler(store *Store, authStore *auth.AuthStore) *Handler {
 	return &Handler{
 		store:     store,
-		userStore: userStore,
+		authStore: authStore,
 	}
 }
 
@@ -46,7 +46,7 @@ func (h *Handler) extractUsername(r *http.Request) (string, error) {
 		return "", fmt.Errorf("invalid Authorization header format")
 	}
 
-	username, err := h.userStore.ValidateSessionToken(token)
+	username, err := h.authStore.ValidateSessionToken(token)
 	if err != nil {
 		return "", fmt.Errorf("invalid or expired session")
 	}

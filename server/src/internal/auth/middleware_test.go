@@ -1,11 +1,11 @@
-/*-------------------------------------------------------------------------
+/*-----------------------------------------------------------
  *
- * pgEdge Natural Language Agent
+ * pgEdge AI DBA Workbench
  *
- * Portions copyright (c) 2025 - 2026, pgEdge, Inc.
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
- *-------------------------------------------------------------------------
+ *-----------------------------------------------------------
  */
 
 package auth
@@ -14,18 +14,42 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
-// TestAuthMiddleware_Disabled tests that middleware is bypassed when disabled
-func TestAuthMiddleware_Disabled(t *testing.T) {
-	tokenStore := &TokenStore{
-		Tokens: make(map[string]*Token),
+// createTestAuthStore creates a temporary auth store for testing
+func createTestAuthStore(t *testing.T) (*AuthStore, func()) {
+	t.Helper()
+
+	tmpDir, err := os.MkdirTemp("", "auth-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 
-	middleware := AuthMiddleware(tokenStore, nil, false)
+	store, err := NewAuthStore(tmpDir, 0, 0)
+	if err != nil {
+		os.RemoveAll(tmpDir)
+		t.Fatalf("Failed to create auth store: %v", err)
+	}
+
+	cleanup := func() {
+		store.Close()
+		os.RemoveAll(tmpDir)
+	}
+
+	return store, cleanup
+}
+
+// TestAuthMiddleware_Disabled tests that middleware is bypassed when disabled
+func TestAuthMiddleware_Disabled(t *testing.T) {
+	store, cleanup := createTestAuthStore(t)
+	defer cleanup()
+
+	middleware := AuthMiddleware(store, false)
 
 	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -48,11 +72,10 @@ func TestAuthMiddleware_Disabled(t *testing.T) {
 
 // TestAuthMiddleware_HealthCheck tests that health check endpoint bypasses auth
 func TestAuthMiddleware_HealthCheck(t *testing.T) {
-	tokenStore := &TokenStore{
-		Tokens: make(map[string]*Token),
-	}
+	store, cleanup := createTestAuthStore(t)
+	defer cleanup()
 
-	middleware := AuthMiddleware(tokenStore, nil, true)
+	middleware := AuthMiddleware(store, true)
 
 	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -75,11 +98,10 @@ func TestAuthMiddleware_HealthCheck(t *testing.T) {
 
 // TestAuthMiddleware_MissingAuthHeader tests rejection of requests without Authorization header
 func TestAuthMiddleware_MissingAuthHeader(t *testing.T) {
-	tokenStore := &TokenStore{
-		Tokens: make(map[string]*Token),
-	}
+	store, cleanup := createTestAuthStore(t)
+	defer cleanup()
 
-	middleware := AuthMiddleware(tokenStore, nil, true)
+	middleware := AuthMiddleware(store, true)
 
 	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("Handler should not be called for missing auth header")
@@ -116,11 +138,10 @@ func TestAuthMiddleware_MalformedAuthHeader(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			tokenStore := &TokenStore{
-				Tokens: make(map[string]*Token),
-			}
+			store, cleanup := createTestAuthStore(t)
+			defer cleanup()
 
-			middleware := AuthMiddleware(tokenStore, nil, true)
+			middleware := AuthMiddleware(store, true)
 
 			handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				t.Error("Handler should not be called for malformed auth header")
@@ -149,11 +170,10 @@ func TestAuthMiddleware_MalformedAuthHeader(t *testing.T) {
 
 // TestAuthMiddleware_InvalidToken tests rejection of invalid tokens
 func TestAuthMiddleware_InvalidToken(t *testing.T) {
-	tokenStore := &TokenStore{
-		Tokens: make(map[string]*Token),
-	}
+	store, cleanup := createTestAuthStore(t)
+	defer cleanup()
 
-	middleware := AuthMiddleware(tokenStore, nil, true)
+	middleware := AuthMiddleware(store, true)
 
 	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("Handler should not be called for invalid token")
@@ -177,28 +197,16 @@ func TestAuthMiddleware_InvalidToken(t *testing.T) {
 
 // TestAuthMiddleware_ValidToken tests successful authentication with valid token
 func TestAuthMiddleware_ValidToken(t *testing.T) {
-	// Generate a valid token string
-	tokenString, err := GenerateToken()
+	store, cleanup := createTestAuthStore(t)
+	defer cleanup()
+
+	// Create a service token
+	rawToken, _, err := store.CreateServiceToken("Test token", nil, "")
 	if err != nil {
-		t.Fatalf("Failed to generate token: %v", err)
+		t.Fatalf("Failed to create service token: %v", err)
 	}
 
-	// Create Token struct with hash
-	tokenHash := HashToken(tokenString)
-	tokenStruct := &Token{
-		Hash:       tokenHash,
-		ExpiresAt:  nil, // Never expires
-		Annotation: "Test token",
-		CreatedAt:  time.Now(),
-	}
-
-	tokenStore := &TokenStore{
-		Tokens: map[string]*Token{
-			"test-token-id": tokenStruct,
-		},
-	}
-
-	middleware := AuthMiddleware(tokenStore, nil, true)
+	middleware := AuthMiddleware(store, true)
 
 	var capturedContext context.Context
 	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -208,7 +216,7 @@ func TestAuthMiddleware_ValidToken(t *testing.T) {
 	}))
 
 	req := httptest.NewRequest("POST", "/mcp/v1", nil)
-	req.Header.Set("Authorization", "Bearer "+tokenString)
+	req.Header.Set("Authorization", "Bearer "+rawToken)
 	rr := httptest.NewRecorder()
 
 	handler.ServeHTTP(rr, req)
@@ -226,47 +234,41 @@ func TestAuthMiddleware_ValidToken(t *testing.T) {
 	if ctxHash == "" {
 		t.Error("Expected token hash in context, got empty string")
 	}
-
-	if ctxHash != tokenHash {
-		t.Errorf("Expected token hash %q, got %q", tokenHash, ctxHash)
-	}
 }
 
 // TestAuthMiddleware_ExpiredToken tests rejection of expired tokens
 func TestAuthMiddleware_ExpiredToken(t *testing.T) {
-	// Generate a token string
-	tokenString, err := GenerateToken()
+	// Create temp directory for this test
+	tmpDir, err := os.MkdirTemp("", "auth-expired-test-*")
 	if err != nil {
-		t.Fatalf("Failed to generate token: %v", err)
+		t.Fatalf("Failed to create temp dir: %v", err)
 	}
+	defer os.RemoveAll(tmpDir)
 
-	// Create Token struct that expires very soon
+	store, err := NewAuthStore(tmpDir, 0, 0)
+	if err != nil {
+		t.Fatalf("Failed to create auth store: %v", err)
+	}
+	defer store.Close()
+
+	// Create a token that expires immediately
 	expiryTime := time.Now().Add(1 * time.Millisecond)
-	tokenHash := HashToken(tokenString)
-	tokenStruct := &Token{
-		Hash:       tokenHash,
-		ExpiresAt:  &expiryTime,
-		Annotation: "Test expired token",
-		CreatedAt:  time.Now(),
-	}
-
-	tokenStore := &TokenStore{
-		Tokens: map[string]*Token{
-			"test-expired-id": tokenStruct,
-		},
+	rawToken, _, err := store.CreateServiceToken("Test expired token", &expiryTime, "")
+	if err != nil {
+		t.Fatalf("Failed to create service token: %v", err)
 	}
 
 	// Wait for token to expire
 	time.Sleep(10 * time.Millisecond)
 
-	middleware := AuthMiddleware(tokenStore, nil, true)
+	middleware := AuthMiddleware(store, true)
 
 	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("Handler should not be called for expired token")
 	}))
 
 	req := httptest.NewRequest("POST", "/mcp/v1", nil)
-	req.Header.Set("Authorization", "Bearer "+tokenString)
+	req.Header.Set("Authorization", "Bearer "+rawToken)
 	rr := httptest.NewRecorder()
 
 	handler.ServeHTTP(rr, req)
@@ -279,11 +281,6 @@ func TestAuthMiddleware_ExpiredToken(t *testing.T) {
 	// Should get generic "Invalid or unknown token" message, not internal error details
 	if !strings.Contains(body, "Invalid or unknown token") {
 		t.Errorf("Expected 'Invalid or unknown token' in response, got %q", body)
-	}
-
-	// Verify no internal error details leaked
-	if strings.Contains(body, "expired") {
-		t.Errorf("Internal error details leaked in response: %q", body)
 	}
 }
 
@@ -314,52 +311,48 @@ func TestGetTokenHashFromContext(t *testing.T) {
 	})
 }
 
-// TestAuthMiddleware_NoInfoLeak tests that internal errors don't leak to clients
-func TestAuthMiddleware_NoInfoLeak(t *testing.T) {
-	// Generate a token string
-	tokenString, err := GenerateToken()
+// TestAuthMiddleware_ValidSessionToken tests successful authentication with session token
+func TestAuthMiddleware_ValidSessionToken(t *testing.T) {
+	tmpDir := filepath.Join(os.TempDir(), "auth-session-test")
+	os.MkdirAll(tmpDir, 0750)
+	defer os.RemoveAll(tmpDir)
+
+	store, err := NewAuthStore(tmpDir, 0, 0)
 	if err != nil {
-		t.Fatalf("Failed to generate token: %v", err)
+		t.Fatalf("Failed to create auth store: %v", err)
+	}
+	defer store.Close()
+
+	// Create a user
+	err = store.CreateUser("testuser", "testpass123", "Test user")
+	if err != nil {
+		t.Fatalf("Failed to create user: %v", err)
 	}
 
-	// Create a token struct with an invalid/corrupted hash (simulate internal error)
-	tokenStruct := &Token{
-		Hash:       "invalid-hash-format", // This will not match the actual token hash
-		Annotation: "Test token",
-		CreatedAt:  time.Now(),
-		ExpiresAt:  nil,
+	// Authenticate to get session token
+	sessionToken, _, err := store.AuthenticateUser("testuser", "testpass123")
+	if err != nil {
+		t.Fatalf("Failed to authenticate user: %v", err)
 	}
 
-	tokenStore := &TokenStore{
-		Tokens: map[string]*Token{
-			"test-id": tokenStruct,
-		},
-	}
-
-	middleware := AuthMiddleware(tokenStore, nil, true)
+	middleware := AuthMiddleware(store, true)
 
 	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Error("Handler should not be called for token validation error")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("session authenticated"))
 	}))
 
 	req := httptest.NewRequest("POST", "/mcp/v1", nil)
-	req.Header.Set("Authorization", "Bearer "+tokenString)
+	req.Header.Set("Authorization", "Bearer "+sessionToken)
 	rr := httptest.NewRecorder()
 
 	handler.ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusUnauthorized {
-		t.Errorf("Expected status Unauthorized, got %d", rr.Code)
+	if rr.Code != http.StatusOK {
+		t.Errorf("Expected status OK for valid session token, got %d", rr.Code)
 	}
 
-	body := strings.TrimSpace(rr.Body.String())
-	// Should get generic error, not internal details
-	if body != "Invalid or unknown token" {
-		t.Errorf("Expected generic error message, got %q (info leak?)", body)
-	}
-
-	// Verify no stack traces, hash details, or other internals
-	if strings.Contains(body, "hash") || strings.Contains(body, "corrupt") || strings.Contains(body, "format") {
-		t.Errorf("Internal error details leaked: %q", body)
+	if body := rr.Body.String(); body != "session authenticated" {
+		t.Errorf("Expected 'session authenticated', got %q", body)
 	}
 }

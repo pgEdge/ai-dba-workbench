@@ -26,16 +26,14 @@ import (
 // ContextAwareProvider wraps a tool registry and provides per-token database clients
 // This ensures connection isolation in HTTP/HTTPS mode with authentication
 type ContextAwareProvider struct {
-	baseRegistry      *Registry // Registry for tool definitions (List operation)
-	clientManager     *database.ClientManager
-	resourceReg       *resources.ContextAwareRegistry
-	authEnabled       bool
-	fallbackClient    *database.Client   // Used when auth is disabled
-	cfg               *config.Config     // Server configuration (for embedding settings)
-	userStore         *auth.UserStore    // User store for authentication
-	userFilePath      string             // Path to user file for persisting updates
-	rateLimiter       *auth.RateLimiter  // Rate limiter for authentication attempts
-	maxFailedAttempts int                // Maximum failed attempts before account lockout
+	baseRegistry   *Registry // Registry for tool definitions (List operation)
+	clientManager  *database.ClientManager
+	resourceReg    *resources.ContextAwareRegistry
+	authEnabled    bool
+	fallbackClient *database.Client  // Used when auth is disabled
+	cfg            *config.Config    // Server configuration (for embedding settings)
+	authStore      *auth.AuthStore   // Auth store for users and tokens
+	rateLimiter    *auth.RateLimiter // Rate limiter for authentication attempts
 
 	// Cache of registries per client to avoid re-creating tools on every Execute()
 	mu               sync.RWMutex
@@ -84,20 +82,18 @@ func (p *ContextAwareProvider) registerDatabaseTools(registry *Registry, client 
 }
 
 // NewContextAwareProvider creates a new context-aware tool provider
-func NewContextAwareProvider(clientManager *database.ClientManager, resourceReg *resources.ContextAwareRegistry, authEnabled bool, fallbackClient *database.Client, cfg *config.Config, userStore *auth.UserStore, userFilePath string, rateLimiter *auth.RateLimiter, maxFailedAttempts int) *ContextAwareProvider {
+func NewContextAwareProvider(clientManager *database.ClientManager, resourceReg *resources.ContextAwareRegistry, authEnabled bool, fallbackClient *database.Client, cfg *config.Config, authStore *auth.AuthStore, rateLimiter *auth.RateLimiter) *ContextAwareProvider {
 	provider := &ContextAwareProvider{
-		baseRegistry:      NewRegistry(),
-		clientManager:     clientManager,
-		resourceReg:       resourceReg,
-		authEnabled:       authEnabled,
-		fallbackClient:    fallbackClient,
-		cfg:               cfg,
-		userStore:         userStore,
-		userFilePath:      userFilePath,
-		rateLimiter:       rateLimiter,
-		maxFailedAttempts: maxFailedAttempts,
-		clientRegistries:  make(map[*database.Client]*Registry),
-		hiddenRegistry:    NewRegistry(),
+		baseRegistry:     NewRegistry(),
+		clientManager:    clientManager,
+		resourceReg:      resourceReg,
+		authEnabled:      authEnabled,
+		fallbackClient:   fallbackClient,
+		cfg:              cfg,
+		authStore:        authStore,
+		rateLimiter:      rateLimiter,
+		clientRegistries: make(map[*database.Client]*Registry),
+		hiddenRegistry:   NewRegistry(),
 	}
 
 	// Register ALL tools in base registry so they're always visible in tools/list
@@ -107,8 +103,8 @@ func NewContextAwareProvider(clientManager *database.ClientManager, resourceReg 
 	provider.registerDatabaseTools(provider.baseRegistry, nil) // nil client for base registry
 
 	// Register hidden tools (not advertised to LLM but available for execution)
-	if userStore != nil {
-		provider.hiddenRegistry.Register("authenticate_user", AuthenticateUserTool(userStore, rateLimiter, maxFailedAttempts))
+	if authStore != nil {
+		provider.hiddenRegistry.Register("authenticate_user", AuthenticateUserTool(authStore, rateLimiter))
 	}
 
 	return provider
@@ -205,15 +201,8 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 	if p.hiddenRegistry != nil {
 		if _, exists := p.hiddenRegistry.Get(name); exists {
 			// Tool found in hidden registry - execute it without auth validation
-			response, err := p.hiddenRegistry.Execute(ctx, name, args)
-			// After authentication, save the updated user store to persist last login time
-			if name == "authenticate_user" && err == nil && p.userStore != nil && p.userFilePath != "" {
-				if saveErr := auth.SaveUserStore(p.userFilePath, p.userStore); saveErr != nil {
-					// Log error but don't fail the authentication
-					fmt.Fprintf(os.Stderr, "Warning: failed to save user store: %v\n", saveErr)
-				}
-			}
-			return response, err
+			// Note: AuthStore uses SQLite which persists automatically
+			return p.hiddenRegistry.Execute(ctx, name, args)
 		}
 	}
 

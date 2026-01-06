@@ -1,11 +1,11 @@
-/*-------------------------------------------------------------------------
+/*-----------------------------------------------------------
  *
- * pgEdge Natural Language Agent
+ * pgEdge AI DBA Workbench
  *
- * Portions copyright (c) 2025 - 2026, pgEdge, Inc.
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
- *-------------------------------------------------------------------------
+ *-----------------------------------------------------------
  */
 
 package main
@@ -23,20 +23,13 @@ import (
 )
 
 // addUserCommand handles the add-user command
-func addUserCommand(userFile, username, password, annotation string) error {
-	// Load or create user store
-	var store *auth.UserStore
-
-	if _, err := os.Stat(userFile); os.IsNotExist(err) {
-		store = auth.InitializeUserStore()
-		fmt.Fprintf(os.Stderr, "Creating new user file: %s\n", userFile)
-	} else {
-		var err error
-		store, err = auth.LoadUserStore(userFile)
-		if err != nil {
-			return fmt.Errorf("failed to load user file: %w", err)
-		}
+func addUserCommand(dataDir, username, password, annotation string) error {
+	// Open auth store
+	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	if err != nil {
+		return fmt.Errorf("failed to open auth store: %w", err)
 	}
+	defer store.Close()
 
 	// Prompt for username if not provided
 	if username == "" {
@@ -87,13 +80,8 @@ func addUserCommand(userFile, username, password, annotation string) error {
 	}
 
 	// Add user to store
-	if err := store.AddUser(username, password, annotation); err != nil {
+	if err := store.CreateUser(username, password, annotation); err != nil {
 		return fmt.Errorf("failed to add user: %w", err)
-	}
-
-	// Save user store
-	if err := auth.SaveUserStore(userFile, store); err != nil {
-		return fmt.Errorf("failed to save user file: %w", err)
 	}
 
 	// Display results
@@ -111,12 +99,13 @@ func addUserCommand(userFile, username, password, annotation string) error {
 }
 
 // updateUserCommand handles the update-user command
-func updateUserCommand(userFile, username, newPassword, newAnnotation string) error {
-	// Load user store
-	store, err := auth.LoadUserStore(userFile)
+func updateUserCommand(dataDir, username, newPassword, newAnnotation string) error {
+	// Open auth store
+	store, err := auth.NewAuthStore(dataDir, 0, 0)
 	if err != nil {
-		return fmt.Errorf("failed to load user file: %w", err)
+		return fmt.Errorf("failed to open auth store: %w", err)
 	}
+	defer store.Close()
 
 	// Prompt for username if not provided
 	if username == "" {
@@ -128,6 +117,15 @@ func updateUserCommand(userFile, username, newPassword, newAnnotation string) er
 		if username == "" {
 			return fmt.Errorf("username is required")
 		}
+	}
+
+	// Check user exists
+	user, err := store.GetUser(username)
+	if err != nil {
+		return fmt.Errorf("failed to get user: %w", err)
+	}
+	if user == nil {
+		return fmt.Errorf("user '%s' not found", username)
 	}
 
 	// If neither password nor annotation provided, prompt for what to update
@@ -183,22 +181,18 @@ func updateUserCommand(userFile, username, newPassword, newAnnotation string) er
 		return fmt.Errorf("failed to update user: %w", err)
 	}
 
-	// Save user store
-	if err := auth.SaveUserStore(userFile, store); err != nil {
-		return fmt.Errorf("failed to save user file: %w", err)
-	}
-
 	fmt.Printf("User '%s' updated successfully\n", username)
 	return nil
 }
 
 // deleteUserCommand handles the delete-user command
-func deleteUserCommand(userFile, username string) error {
-	// Load user store
-	store, err := auth.LoadUserStore(userFile)
+func deleteUserCommand(dataDir, username string) error {
+	// Open auth store
+	store, err := auth.NewAuthStore(dataDir, 0, 0)
 	if err != nil {
-		return fmt.Errorf("failed to load user file: %w", err)
+		return fmt.Errorf("failed to open auth store: %w", err)
 	}
+	defer store.Close()
 
 	// Prompt for username if not provided
 	if username == "" {
@@ -224,13 +218,8 @@ func deleteUserCommand(userFile, username string) error {
 	}
 
 	// Remove user
-	if err := store.RemoveUser(username); err != nil {
+	if err := store.DeleteUser(username); err != nil {
 		return fmt.Errorf("failed to delete user: %w", err)
-	}
-
-	// Save user store
-	if err := auth.SaveUserStore(userFile, store); err != nil {
-		return fmt.Errorf("failed to save user file: %w", err)
 	}
 
 	fmt.Printf("User '%s' deleted successfully\n", username)
@@ -238,14 +227,19 @@ func deleteUserCommand(userFile, username string) error {
 }
 
 // listUsersCommand handles the list-users command
-func listUsersCommand(userFile string) error {
-	// Load user store
-	store, err := auth.LoadUserStore(userFile)
+func listUsersCommand(dataDir string) error {
+	// Open auth store
+	store, err := auth.NewAuthStore(dataDir, 0, 0)
 	if err != nil {
-		return fmt.Errorf("failed to load user file: %w", err)
+		return fmt.Errorf("failed to open auth store: %w", err)
+	}
+	defer store.Close()
+
+	users, err := store.ListUsers()
+	if err != nil {
+		return fmt.Errorf("failed to list users: %w", err)
 	}
 
-	users := store.ListUsers()
 	if len(users) == 0 {
 		fmt.Println("No users found.")
 		return nil
@@ -259,7 +253,11 @@ func listUsersCommand(userFile string) error {
 	for _, user := range users {
 		status := "Enabled"
 		if !user.Enabled {
-			status = "DISABLED"
+			status := "DISABLED"
+			if user.FailedAttempts > 0 {
+				status = fmt.Sprintf("DISABLED (%d fails)", user.FailedAttempts)
+			}
+			_ = status
 		}
 
 		lastLogin := "Never"
@@ -274,11 +272,16 @@ func listUsersCommand(userFile string) error {
 			annotation = annotation[:17] + "..."
 		}
 
+		statusDisplay := status
+		if !user.Enabled {
+			statusDisplay = "DISABLED"
+		}
+
 		fmt.Printf("%-20s %-25s %-20s %-10s %s\n",
 			user.Username,
 			created,
 			lastLogin,
-			status,
+			statusDisplay,
 			annotation)
 	}
 	fmt.Println(strings.Repeat("=", 90) + "\n")
@@ -287,12 +290,13 @@ func listUsersCommand(userFile string) error {
 }
 
 // enableUserCommand handles the enable-user command
-func enableUserCommand(userFile, username string) error {
-	// Load user store
-	store, err := auth.LoadUserStore(userFile)
+func enableUserCommand(dataDir, username string) error {
+	// Open auth store
+	store, err := auth.NewAuthStore(dataDir, 0, 0)
 	if err != nil {
-		return fmt.Errorf("failed to load user file: %w", err)
+		return fmt.Errorf("failed to open auth store: %w", err)
 	}
+	defer store.Close()
 
 	// Prompt for username if not provided
 	if username == "" {
@@ -306,27 +310,28 @@ func enableUserCommand(userFile, username string) error {
 		}
 	}
 
-	// Enable user
+	// Enable user (also resets failed attempts)
 	if err := store.EnableUser(username); err != nil {
 		return fmt.Errorf("failed to enable user: %w", err)
 	}
 
-	// Save user store
-	if err := auth.SaveUserStore(userFile, store); err != nil {
-		return fmt.Errorf("failed to save user file: %w", err)
+	// Reset failed attempts
+	if err := store.ResetFailedAttempts(username); err != nil {
+		return fmt.Errorf("failed to reset failed attempts: %w", err)
 	}
 
-	fmt.Printf("User '%s' enabled successfully\n", username)
+	fmt.Printf("User '%s' enabled successfully (failed attempts reset)\n", username)
 	return nil
 }
 
 // disableUserCommand handles the disable-user command
-func disableUserCommand(userFile, username string) error {
-	// Load user store
-	store, err := auth.LoadUserStore(userFile)
+func disableUserCommand(dataDir, username string) error {
+	// Open auth store
+	store, err := auth.NewAuthStore(dataDir, 0, 0)
 	if err != nil {
-		return fmt.Errorf("failed to load user file: %w", err)
+		return fmt.Errorf("failed to open auth store: %w", err)
 	}
+	defer store.Close()
 
 	// Prompt for username if not provided
 	if username == "" {
@@ -343,11 +348,6 @@ func disableUserCommand(userFile, username string) error {
 	// Disable user
 	if err := store.DisableUser(username); err != nil {
 		return fmt.Errorf("failed to disable user: %w", err)
-	}
-
-	// Save user store
-	if err := auth.SaveUserStore(userFile, store); err != nil {
-		return fmt.Errorf("failed to save user file: %w", err)
 	}
 
 	fmt.Printf("User '%s' disabled successfully\n", username)

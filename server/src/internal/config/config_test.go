@@ -249,16 +249,6 @@ func TestValidateConfig(t *testing.T) {
 			errorMsg:    "key file is required",
 		},
 		{
-			name: "HTTP auth without any auth source",
-			config: &Config{
-				HTTP: HTTPConfig{
-					Auth: AuthConfig{Enabled: true, TokenFile: "", UserFile: ""},
-				},
-			},
-			expectError: true,
-			errorMsg:    "authentication requires either token_file or user_file",
-		},
-		{
 			name: "database without user",
 			config: &Config{
 				HTTP: HTTPConfig{Address: ":8080"},

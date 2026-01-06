@@ -1,11 +1,11 @@
-/*-------------------------------------------------------------------------
+/*-----------------------------------------------------------
  *
- * pgEdge Natural Language Agent
+ * pgEdge AI DBA Workbench
  *
- * Portions copyright (c) 2025 - 2026, pgEdge, Inc.
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
- *-------------------------------------------------------------------------
+ *-----------------------------------------------------------
  */
 
 package conversations
@@ -21,7 +21,7 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
 
-// setupTestHandler creates a test handler with a store and user store
+// setupTestHandler creates a test handler with a store and auth store
 func setupTestHandler(t *testing.T) (*Handler, func(), string) {
 	tempDir, err := os.MkdirTemp("", "conversations_test")
 	if err != nil {
@@ -35,28 +35,36 @@ func setupTestHandler(t *testing.T) (*Handler, func(), string) {
 		t.Fatalf("Failed to create store: %v", err)
 	}
 
-	// Initialize user store (no arguments)
-	userStore := auth.InitializeUserStore()
+	// Initialize auth store (SQLite-based)
+	authStore, err := auth.NewAuthStore(tempDir, 0, 0)
+	if err != nil {
+		store.Close()
+		os.RemoveAll(tempDir)
+		t.Fatalf("Failed to create auth store: %v", err)
+	}
 
 	// Add a test user
-	err = userStore.AddUser("testuser", "password123", "Test User")
+	err = authStore.CreateUser("testuser", "password123", "Test User")
 	if err != nil {
+		authStore.Close()
 		store.Close()
 		os.RemoveAll(tempDir)
 		t.Fatalf("Failed to add test user: %v", err)
 	}
 
 	// Authenticate to get a session token
-	sessionToken, _, err := userStore.AuthenticateUser("testuser", "password123", 0)
+	sessionToken, _, err := authStore.AuthenticateUser("testuser", "password123")
 	if err != nil {
+		authStore.Close()
 		store.Close()
 		os.RemoveAll(tempDir)
 		t.Fatalf("Failed to authenticate user: %v", err)
 	}
 
-	handler := NewHandler(store, userStore)
+	handler := NewHandler(store, authStore)
 
 	cleanup := func() {
+		authStore.Close()
 		store.Close()
 		os.RemoveAll(tempDir)
 	}
@@ -74,8 +82,8 @@ func TestNewHandler(t *testing.T) {
 	if handler.store == nil {
 		t.Error("Expected non-nil store")
 	}
-	if handler.userStore == nil {
-		t.Error("Expected non-nil userStore")
+	if handler.authStore == nil {
+		t.Error("Expected non-nil authStore")
 	}
 }
 

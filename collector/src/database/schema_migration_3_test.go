@@ -49,10 +49,8 @@ func TestMigration3_PgSettings(t *testing.T) {
 	_, err = conn.Exec(ctx, `
 		DROP SCHEMA IF EXISTS metrics CASCADE;
 		DROP TABLE IF EXISTS schema_version CASCADE;
-		DROP TABLE IF EXISTS user_sessions CASCADE;
 		DROP TABLE IF EXISTS probe_configs CASCADE;
 		DROP TABLE IF EXISTS connections CASCADE;
-		DROP TABLE IF EXISTS user_accounts CASCADE;
 	`)
 	if err != nil {
 		t.Fatalf("Failed to drop existing tables: %v", err)

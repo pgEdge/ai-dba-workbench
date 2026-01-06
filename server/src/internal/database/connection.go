@@ -110,7 +110,7 @@ func (c *Client) ConnectTo(connStr string) error {
 	}
 
 	// Add application_name to connection string if not already present
-	enhancedConnStr, err := addApplicationName(connStr, "pgEdge Natural Language Agent")
+	enhancedConnStr, err := addApplicationName(connStr, "pgEdge AI DBA Workbench")
 	if err != nil {
 		return fmt.Errorf("unable to enhance connection string: %w", err)
 	}

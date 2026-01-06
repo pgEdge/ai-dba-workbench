@@ -58,7 +58,7 @@ func main() {
 	keyFile := flag.String("key", "", "Path to TLS key file")
 	chainFile := flag.String("chain", "", "Path to TLS certificate chain file (optional)")
 	debug := flag.Bool("debug", false, "Enable debug logging (logs HTTP requests/responses)")
-	tokenFilePath := flag.String("token-file", "", "Path to API token file")
+	dataDir := flag.String("data-dir", "", "Data directory for auth database and conversations")
 
 	// Database connection flags
 	dbHost := flag.String("db-host", "", "Database host")
@@ -69,14 +69,13 @@ func main() {
 	dbSSLMode := flag.String("db-sslmode", "", "Database SSL mode (disable, require, verify-ca, verify-full)")
 
 	// Token management commands
-	addTokenCmd := flag.Bool("add-token", false, "Add a new API token")
-	removeTokenCmd := flag.String("remove-token", "", "Remove an API token by ID or hash prefix")
-	listTokensCmd := flag.Bool("list-tokens", false, "List all API tokens")
+	addTokenCmd := flag.Bool("add-token", false, "Add a new service token")
+	removeTokenCmd := flag.String("remove-token", "", "Remove a service token by ID or hash prefix")
+	listTokensCmd := flag.Bool("list-tokens", false, "List all service tokens")
 	tokenNote := flag.String("token-note", "", "Annotation for the new token (used with -add-token)")
 	tokenExpiry := flag.String("token-expiry", "", "Token expiry duration: '30d', '1y', '2w', '12h', 'never' (used with -add-token)")
 
 	// User management commands
-	userFilePath := flag.String("user-file", "", "Path to user file")
 	addUserCmd := flag.Bool("add-user", false, "Add a new user")
 	updateUserCmd := flag.Bool("update-user", false, "Update an existing user")
 	deleteUserCmd := flag.Bool("delete-user", false, "Delete a user")
@@ -89,14 +88,14 @@ func main() {
 
 	flag.Parse()
 
+	// Determine data directory for auth database
+	resolvedDataDir := *dataDir
+	if resolvedDataDir == "" {
+		resolvedDataDir = filepath.Join(filepath.Dir(execPath), "data")
+	}
+
 	// Handle token management commands
 	if *addTokenCmd || *removeTokenCmd != "" || *listTokensCmd {
-		defaultTokenPath := auth.GetDefaultTokenPath(execPath)
-		tokenFile := *tokenFilePath
-		if tokenFile == "" {
-			tokenFile = defaultTokenPath
-		}
-
 		if *addTokenCmd {
 			var expiry time.Duration
 			switch {
@@ -113,7 +112,7 @@ func main() {
 				expiry = -1 // Never expires
 			}
 
-			if err := addTokenCommand(tokenFile, *tokenNote, expiry); err != nil {
+			if err := addTokenCommand(resolvedDataDir, *tokenNote, expiry); err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 				os.Exit(1)
 			}
@@ -121,7 +120,7 @@ func main() {
 		}
 
 		if *removeTokenCmd != "" {
-			if err := removeTokenCommand(tokenFile, *removeTokenCmd); err != nil {
+			if err := removeTokenCommand(resolvedDataDir, *removeTokenCmd); err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 				os.Exit(1)
 			}
@@ -129,7 +128,7 @@ func main() {
 		}
 
 		if *listTokensCmd {
-			if err := listTokensCommand(tokenFile); err != nil {
+			if err := listTokensCommand(resolvedDataDir); err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 				os.Exit(1)
 			}
@@ -139,14 +138,8 @@ func main() {
 
 	// Handle user management commands
 	if *addUserCmd || *updateUserCmd || *deleteUserCmd || *listUsersCmd || *enableUserCmd || *disableUserCmd {
-		defaultUserPath := auth.GetDefaultUserPath(execPath)
-		userFile := *userFilePath
-		if userFile == "" {
-			userFile = defaultUserPath
-		}
-
 		if *addUserCmd {
-			if err := addUserCommand(userFile, *username, *userPassword, *userNote); err != nil {
+			if err := addUserCommand(resolvedDataDir, *username, *userPassword, *userNote); err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 				os.Exit(1)
 			}
@@ -154,7 +147,7 @@ func main() {
 		}
 
 		if *updateUserCmd {
-			if err := updateUserCommand(userFile, *username, *userPassword, *userNote); err != nil {
+			if err := updateUserCommand(resolvedDataDir, *username, *userPassword, *userNote); err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 				os.Exit(1)
 			}
@@ -162,7 +155,7 @@ func main() {
 		}
 
 		if *deleteUserCmd {
-			if err := deleteUserCommand(userFile, *username); err != nil {
+			if err := deleteUserCommand(resolvedDataDir, *username); err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 				os.Exit(1)
 			}
@@ -170,7 +163,7 @@ func main() {
 		}
 
 		if *listUsersCmd {
-			if err := listUsersCommand(userFile); err != nil {
+			if err := listUsersCommand(resolvedDataDir); err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 				os.Exit(1)
 			}
@@ -178,7 +171,7 @@ func main() {
 		}
 
 		if *enableUserCmd {
-			if err := enableUserCommand(userFile, *username); err != nil {
+			if err := enableUserCommand(resolvedDataDir, *username); err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 				os.Exit(1)
 			}
@@ -186,7 +179,7 @@ func main() {
 		}
 
 		if *disableUserCmd {
-			if err := disableUserCommand(userFile, *username); err != nil {
+			if err := disableUserCommand(resolvedDataDir, *username); err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 				os.Exit(1)
 			}
@@ -220,12 +213,6 @@ func main() {
 		case "chain":
 			cliFlags.TLSChainSet = true
 			cliFlags.TLSChainFile = *chainFile
-		case "token-file":
-			cliFlags.AuthTokenSet = true
-			cliFlags.AuthTokenFile = *tokenFilePath
-		case "user-file":
-			cliFlags.AuthUserSet = true
-			cliFlags.AuthUserFile = *userFilePath
 		case "db-host":
 			cliFlags.DBHostSet = true
 			cliFlags.DBHost = *dbHost
@@ -267,22 +254,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Resolve relative paths for auth files relative to config file directory
-	if configPathForLoad != "" {
-		configDir := filepath.Dir(configPathForLoad)
-		if cfg.HTTP.Auth.TokenFile != "" && !filepath.IsAbs(cfg.HTTP.Auth.TokenFile) {
-			cfg.HTTP.Auth.TokenFile = filepath.Join(configDir, cfg.HTTP.Auth.TokenFile)
-		}
-		if cfg.HTTP.Auth.UserFile != "" && !filepath.IsAbs(cfg.HTTP.Auth.UserFile) {
-			cfg.HTTP.Auth.UserFile = filepath.Join(configDir, cfg.HTTP.Auth.UserFile)
-		}
-	}
-
-	// Set default token file path if not specified
-	if cfg.HTTP.Auth.TokenFile == "" {
-		cfg.HTTP.Auth.TokenFile = auth.GetDefaultTokenPath(execPath)
-	}
-
 	// Verify TLS files exist if HTTPS is enabled
 	if cfg.HTTP.TLS.Enabled {
 		if _, err := os.Stat(cfg.HTTP.TLS.CertFile); err != nil {
@@ -301,61 +272,36 @@ func main() {
 		}
 	}
 
-	// Load token and user stores if auth is enabled
-	var tokenStore *auth.TokenStore
-	var userStore *auth.UserStore
-	userFilePathForTools := ""
+	// Initialize auth store if auth is enabled
+	var authStore *auth.AuthStore
 	if cfg.HTTP.Auth.Enabled {
-		// Load token store if token_file is configured
-		if cfg.HTTP.Auth.TokenFile != "" {
-			if _, err := os.Stat(cfg.HTTP.Auth.TokenFile); os.IsNotExist(err) {
-				fmt.Fprintf(os.Stderr, "ERROR: Token file not found: %s\n", cfg.HTTP.Auth.TokenFile)
-				fmt.Fprintf(os.Stderr, "Create tokens with: %s -add-token\n", os.Args[0])
-				os.Exit(1)
-			}
-
-			tokenStore, err = auth.LoadTokenStore(cfg.HTTP.Auth.TokenFile)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "ERROR: Failed to load token file: %v\n", err)
-				os.Exit(1)
-			}
-
-			fmt.Fprintf(os.Stderr, "Loaded %d API token(s) from %s\n", len(tokenStore.Tokens), cfg.HTTP.Auth.TokenFile)
-
-			// Start watching the token file for changes
-			if err := tokenStore.StartWatching(); err != nil {
-				fmt.Fprintf(os.Stderr, "WARNING: Failed to start watching token file: %v\n", err)
-				fmt.Fprintf(os.Stderr, "         Token changes will require server restart\n")
-			} else {
-				fmt.Fprintf(os.Stderr, "Watching %s for changes\n", cfg.HTTP.Auth.TokenFile)
-			}
+		// Create data directory if it doesn't exist
+		if err := os.MkdirAll(resolvedDataDir, 0750); err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: Failed to create data directory: %v\n", err)
+			os.Exit(1)
 		}
 
-		// Load user store if user_file is configured
-		if cfg.HTTP.Auth.UserFile != "" {
-			userFilePathForTools = cfg.HTTP.Auth.UserFile
+		// Initialize auth store (SQLite database)
+		authStore, err = auth.NewAuthStore(
+			resolvedDataDir,
+			cfg.HTTP.Auth.MaxUserTokenDays,
+			cfg.HTTP.Auth.MaxFailedAttemptsBeforeLockout,
+		)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: Failed to initialize auth store: %v\n", err)
+			os.Exit(1)
+		}
+		defer authStore.Close()
 
-			if _, err := os.Stat(userFilePathForTools); os.IsNotExist(err) {
-				// User file doesn't exist - create empty store
-				// Users can be added via CLI commands
-				userStore = auth.InitializeUserStore()
-				fmt.Fprintf(os.Stderr, "User file not found, initialized empty user store\n")
-			} else {
-				userStore, err = auth.LoadUserStore(userFilePathForTools)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "ERROR: Failed to load user file: %v\n", err)
-					os.Exit(1)
-				}
-				fmt.Fprintf(os.Stderr, "Loaded %d user(s) from %s\n", len(userStore.Users), userFilePathForTools)
+		// Get counts for logging
+		userCount, tokenCount := authStore.GetCounts()
+		fmt.Fprintf(os.Stderr, "Auth store: %s/auth.db (%d user(s), %d token(s))\n",
+			resolvedDataDir, userCount, tokenCount)
 
-				// Start watching the user file for changes
-				if err := userStore.StartWatching(); err != nil {
-					fmt.Fprintf(os.Stderr, "WARNING: Failed to start watching user file: %v\n", err)
-					fmt.Fprintf(os.Stderr, "         User changes will require server restart\n")
-				} else {
-					fmt.Fprintf(os.Stderr, "Watching %s for changes\n", userFilePathForTools)
-				}
-			}
+		if tokenCount == 0 && userCount == 0 {
+			fmt.Fprintf(os.Stderr, "Note: No users or tokens configured. Create with:\n")
+			fmt.Fprintf(os.Stderr, "  %s -add-user -username <name>\n", os.Args[0])
+			fmt.Fprintf(os.Stderr, "  %s -add-token\n", os.Args[0])
 		}
 	}
 
@@ -403,7 +349,7 @@ func main() {
 	contextAwareResourceProvider := resources.NewContextAwareRegistry(clientManager, authEnabled, cfg)
 
 	// Context-aware tool provider
-	contextAwareToolProvider := tools.NewContextAwareProvider(clientManager, contextAwareResourceProvider, authEnabled, fallbackClient, cfg, userStore, userFilePathForTools, rateLimiter, cfg.HTTP.Auth.MaxFailedAttemptsBeforeLockout)
+	contextAwareToolProvider := tools.NewContextAwareProvider(clientManager, contextAwareResourceProvider, authEnabled, fallbackClient, cfg, authStore, rateLimiter)
 	if err := contextAwareToolProvider.RegisterTools(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: Failed to register tools: %v\n", err)
 		os.Exit(1)
@@ -430,14 +376,10 @@ func main() {
 	server.SetPromptProvider(promptRegistry)
 
 	// Start periodic cleanup of expired tokens if auth is enabled
-	if cfg.HTTP.Auth.Enabled {
+	if cfg.HTTP.Auth.Enabled && authStore != nil {
 		// Clean up expired tokens on startup (no connections exist yet)
-		if removed, _ := tokenStore.CleanupExpiredTokens(); removed > 0 {
+		if removed, _ := authStore.CleanupExpiredTokens(); removed > 0 {
 			fmt.Fprintf(os.Stderr, "Removed %d expired token(s)\n", removed)
-			// Save the cleaned store
-			if err := auth.SaveTokenStore(cfg.HTTP.Auth.TokenFile, tokenStore); err != nil {
-				fmt.Fprintf(os.Stderr, "WARNING: Failed to save cleaned token file: %v\n", err)
-			}
 		}
 
 		// Start periodic cleanup goroutine
@@ -449,7 +391,7 @@ func main() {
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
-					if removed, hashes := tokenStore.CleanupExpiredTokens(); removed > 0 {
+					if removed, hashes := authStore.CleanupExpiredTokens(); removed > 0 {
 						fmt.Fprintf(os.Stderr, "Removed %d expired token(s)\n", removed)
 
 						// Create a timeout context for cleanup operations to prevent indefinite blocking
@@ -472,11 +414,6 @@ func main() {
 
 						// Cancel context after cleanup is done
 						cancel()
-
-						// Save the cleaned store
-						if err := auth.SaveTokenStore(cfg.HTTP.Auth.TokenFile, tokenStore); err != nil {
-							fmt.Fprintf(os.Stderr, "WARNING: Failed to save cleaned token file: %v\n", err)
-						}
 					}
 				}
 			}
@@ -485,19 +422,14 @@ func main() {
 
 	// Initialize conversation store
 	var convStore *conversations.Store
-	if userStore != nil {
-		// Use configured data directory, or default to a directory next to the executable
-		dataDir := cfg.DataDir
-		if dataDir == "" {
-			dataDir = filepath.Join(filepath.Dir(execPath), "data")
-		}
+	if authStore != nil {
 		var err error
-		convStore, err = conversations.NewStore(dataDir)
+		convStore, err = conversations.NewStore(resolvedDataDir)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "WARNING: Failed to initialize conversation store: %v\n", err)
 			fmt.Fprintf(os.Stderr, "         Conversation history will not be available\n")
 		} else {
-			fmt.Fprintf(os.Stderr, "Conversation store: %s/conversations.db\n", dataDir)
+			fmt.Fprintf(os.Stderr, "Conversation store: %s/conversations.db\n", resolvedDataDir)
 			defer convStore.Close()
 		}
 	}
@@ -510,8 +442,7 @@ func main() {
 		KeyFile:     cfg.HTTP.TLS.KeyFile,
 		ChainFile:   cfg.HTTP.TLS.ChainFile,
 		AuthEnabled: cfg.HTTP.Auth.Enabled,
-		TokenStore:  tokenStore,
-		UserStore:   userStore,
+		AuthStore:   authStore,
 		Debug:       *debug,
 	}
 
@@ -536,16 +467,10 @@ func main() {
 					return
 				}
 
-				// Try API token first, then session token
-				if _, err := tokenStore.ValidateToken(token); err != nil {
-					// Try session token if user auth is enabled
-					if userStore != nil {
-						if _, err := userStore.ValidateSessionToken(token); err != nil {
-							http.Error(w, "Invalid or expired token",
-								http.StatusUnauthorized)
-							return
-						}
-					} else {
+				// Try API/service token first, then session token
+				if _, err := authStore.ValidateToken(token); err != nil {
+					// Try session token
+					if _, err := authStore.ValidateSessionToken(token); err != nil {
 						http.Error(w, "Invalid or expired token",
 							http.StatusUnauthorized)
 						return
@@ -587,7 +512,7 @@ func main() {
 			}
 
 			// Validate session token and get username
-			username, err := userStore.ValidateSessionToken(token)
+			username, err := authStore.ValidateSessionToken(token)
 			if err != nil {
 				//nolint:errcheck // Encoding a simple map should never fail
 				json.NewEncoder(w).Encode(map[string]interface{}{
@@ -635,8 +560,8 @@ func main() {
 		}
 
 		// Conversation history endpoints (only if store is available)
-		if convStore != nil && userStore != nil {
-			convHandler := conversations.NewHandler(convStore, userStore)
+		if convStore != nil && authStore != nil {
+			convHandler := conversations.NewHandler(convStore, authStore)
 			convHandler.RegisterRoutes(mux, authWrapper)
 			fmt.Fprintf(os.Stderr, "Conversation history: ENABLED\n")
 		}
@@ -719,13 +644,5 @@ func main() {
 		if err := clientManager.CloseAll(); err != nil {
 			fmt.Fprintf(os.Stderr, "WARNING: Error closing database connections: %v\n", err)
 		}
-	}
-
-	// Stop file watchers
-	if tokenStore != nil {
-		tokenStore.StopWatching()
-	}
-	if userStore != nil {
-		userStore.StopWatching()
 	}
 }

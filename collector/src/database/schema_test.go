@@ -247,8 +247,8 @@ func TestNewSchemaManager(t *testing.T) {
 	}
 
 	// Verify migrations are registered in order
-	// Note: Migrations 2, 5, and 6 were removed (auth moved to SQLite)
-	expectedVersions := []int{1, 3, 4}
+	// Note: Migrations 2 and 6 were removed (auth moved to SQLite)
+	expectedVersions := []int{1, 3, 4, 5}
 	if len(sm.migrations) != len(expectedVersions) {
 		t.Fatalf("Expected %d migrations, got %d", len(expectedVersions), len(sm.migrations))
 	}

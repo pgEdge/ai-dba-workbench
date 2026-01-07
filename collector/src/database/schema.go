@@ -1563,7 +1563,207 @@ func (sm *SchemaManager) registerMigrations() {
 		},
 	})
 
-	// Migration 5: Reserved (previously user_tokens enhancements - moved to SQLite auth store)
+	// Migration 5: Add pg_server_info and pg_node_role probes for cluster topology tracking
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     5,
+		Description: "Add pg_server_info and pg_node_role probes for cluster topology tracking",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Create pg_server_info metrics table
+			_, err := conn.Exec(ctx, `
+			CREATE TABLE IF NOT EXISTS metrics.pg_server_info (
+				connection_id INTEGER NOT NULL,
+
+				-- Server Identification
+				server_version TEXT,
+				server_version_num INTEGER,
+				system_identifier BIGINT,
+				cluster_name TEXT,
+				data_directory TEXT,
+
+				-- Configuration
+				max_connections INTEGER,
+				max_wal_senders INTEGER,
+				max_replication_slots INTEGER,
+
+				-- Extensions (for role detection)
+				installed_extensions TEXT[],
+
+				collected_at TIMESTAMP NOT NULL,
+				PRIMARY KEY (connection_id, collected_at)
+			) PARTITION BY RANGE (collected_at);
+
+			COMMENT ON TABLE metrics.pg_server_info IS
+				'Server identification and configuration - only stores snapshots when changes detected';
+			COMMENT ON COLUMN metrics.pg_server_info.connection_id IS
+				'ID of the monitored connection from connections table';
+			COMMENT ON COLUMN metrics.pg_server_info.server_version IS
+				'PostgreSQL server version string (e.g., "17.2")';
+			COMMENT ON COLUMN metrics.pg_server_info.server_version_num IS
+				'PostgreSQL server version as integer (e.g., 170200)';
+			COMMENT ON COLUMN metrics.pg_server_info.system_identifier IS
+				'Unique system identifier from pg_control';
+			COMMENT ON COLUMN metrics.pg_server_info.cluster_name IS
+				'Cluster name from postgresql.conf';
+			COMMENT ON COLUMN metrics.pg_server_info.data_directory IS
+				'Path to the data directory (PGDATA)';
+			COMMENT ON COLUMN metrics.pg_server_info.max_connections IS
+				'Maximum number of concurrent connections';
+			COMMENT ON COLUMN metrics.pg_server_info.max_wal_senders IS
+				'Maximum number of WAL sender processes';
+			COMMENT ON COLUMN metrics.pg_server_info.max_replication_slots IS
+				'Maximum number of replication slots';
+			COMMENT ON COLUMN metrics.pg_server_info.installed_extensions IS
+				'Array of installed extension names';
+			COMMENT ON COLUMN metrics.pg_server_info.collected_at IS
+				'Timestamp when the metrics were collected';
+
+			ALTER TABLE metrics.pg_server_info
+				ADD CONSTRAINT fk_pg_server_info_connection_id
+				FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to create pg_server_info table: %w", err)
+			}
+
+			// Create pg_node_role metrics table
+			_, err = conn.Exec(ctx, `
+			CREATE TABLE IF NOT EXISTS metrics.pg_node_role (
+				connection_id INTEGER NOT NULL,
+
+				-- Fundamental Status
+				is_in_recovery BOOLEAN NOT NULL,
+				timeline_id INTEGER,
+
+				-- Binary Replication Status
+				has_binary_standbys BOOLEAN NOT NULL DEFAULT FALSE,
+				binary_standby_count INTEGER DEFAULT 0,
+				is_streaming_standby BOOLEAN NOT NULL DEFAULT FALSE,
+				upstream_host TEXT,
+				upstream_port INTEGER,
+				received_lsn TEXT,
+				replayed_lsn TEXT,
+
+				-- Logical Replication Status
+				publication_count INTEGER DEFAULT 0,
+				subscription_count INTEGER DEFAULT 0,
+				active_subscription_count INTEGER DEFAULT 0,
+
+				-- Spock Status
+				has_spock BOOLEAN NOT NULL DEFAULT FALSE,
+				spock_node_id BIGINT,
+				spock_node_name TEXT,
+				spock_subscription_count INTEGER DEFAULT 0,
+
+				-- BDR Status (future)
+				has_bdr BOOLEAN NOT NULL DEFAULT FALSE,
+				bdr_node_id TEXT,
+				bdr_node_name TEXT,
+				bdr_node_group TEXT,
+				bdr_node_state TEXT,
+
+				-- Computed Primary Role
+				primary_role TEXT NOT NULL,
+
+				-- Role Flags (non-exclusive capabilities)
+				role_flags TEXT[] NOT NULL DEFAULT '{}',
+
+				-- Extended Information (JSON for flexibility)
+				role_details JSONB,
+
+				collected_at TIMESTAMP NOT NULL,
+				PRIMARY KEY (connection_id, collected_at)
+			) PARTITION BY RANGE (collected_at);
+
+			COMMENT ON TABLE metrics.pg_node_role IS
+				'Node role detection for cluster topology analysis';
+			COMMENT ON COLUMN metrics.pg_node_role.connection_id IS
+				'ID of the monitored connection from connections table';
+			COMMENT ON COLUMN metrics.pg_node_role.is_in_recovery IS
+				'Whether the server is in recovery mode (standby)';
+			COMMENT ON COLUMN metrics.pg_node_role.timeline_id IS
+				'Current timeline ID from pg_control';
+			COMMENT ON COLUMN metrics.pg_node_role.has_binary_standbys IS
+				'Whether this server has physical replication standbys';
+			COMMENT ON COLUMN metrics.pg_node_role.binary_standby_count IS
+				'Number of connected physical replication standbys';
+			COMMENT ON COLUMN metrics.pg_node_role.is_streaming_standby IS
+				'Whether this server is a streaming replication standby';
+			COMMENT ON COLUMN metrics.pg_node_role.upstream_host IS
+				'For standbys: hostname of the upstream primary';
+			COMMENT ON COLUMN metrics.pg_node_role.upstream_port IS
+				'For standbys: port of the upstream primary';
+			COMMENT ON COLUMN metrics.pg_node_role.received_lsn IS
+				'For standbys: last received WAL location';
+			COMMENT ON COLUMN metrics.pg_node_role.replayed_lsn IS
+				'For standbys: last replayed WAL location';
+			COMMENT ON COLUMN metrics.pg_node_role.publication_count IS
+				'Number of logical replication publications';
+			COMMENT ON COLUMN metrics.pg_node_role.subscription_count IS
+				'Number of logical replication subscriptions';
+			COMMENT ON COLUMN metrics.pg_node_role.active_subscription_count IS
+				'Number of active logical replication subscriptions';
+			COMMENT ON COLUMN metrics.pg_node_role.has_spock IS
+				'Whether Spock extension is installed';
+			COMMENT ON COLUMN metrics.pg_node_role.spock_node_id IS
+				'Spock node ID if participating in Spock cluster';
+			COMMENT ON COLUMN metrics.pg_node_role.spock_node_name IS
+				'Spock node name if participating in Spock cluster';
+			COMMENT ON COLUMN metrics.pg_node_role.spock_subscription_count IS
+				'Number of active Spock subscriptions';
+			COMMENT ON COLUMN metrics.pg_node_role.has_bdr IS
+				'Whether BDR extension is installed (future)';
+			COMMENT ON COLUMN metrics.pg_node_role.bdr_node_id IS
+				'BDR node ID if participating in BDR cluster';
+			COMMENT ON COLUMN metrics.pg_node_role.bdr_node_name IS
+				'BDR node name if participating in BDR cluster';
+			COMMENT ON COLUMN metrics.pg_node_role.bdr_node_group IS
+				'BDR node group name';
+			COMMENT ON COLUMN metrics.pg_node_role.bdr_node_state IS
+				'BDR node state';
+			COMMENT ON COLUMN metrics.pg_node_role.primary_role IS
+				'Computed primary role: standalone, binary_primary, binary_standby, spock_node, etc.';
+			COMMENT ON COLUMN metrics.pg_node_role.role_flags IS
+				'Array of non-exclusive role flags (e.g., binary_primary, logical_publisher)';
+			COMMENT ON COLUMN metrics.pg_node_role.role_details IS
+				'Additional role-specific details in JSON format';
+			COMMENT ON COLUMN metrics.pg_node_role.collected_at IS
+				'Timestamp when the metrics were collected';
+
+			ALTER TABLE metrics.pg_node_role
+				ADD CONSTRAINT fk_pg_node_role_connection_id
+				FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
+
+			CREATE INDEX IF NOT EXISTS idx_pg_node_role_primary_role
+				ON metrics.pg_node_role(connection_id, primary_role, collected_at DESC);
+			CREATE INDEX IF NOT EXISTS idx_pg_node_role_collected_at
+				ON metrics.pg_node_role(collected_at DESC);
+
+			COMMENT ON INDEX metrics.idx_pg_node_role_primary_role IS
+				'Index for filtering nodes by role';
+			COMMENT ON INDEX metrics.idx_pg_node_role_collected_at IS
+				'Index for efficiently querying metrics by time range';
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to create pg_node_role table: %w", err)
+			}
+
+			// Insert probe configurations
+			_, err = conn.Exec(ctx, `
+			INSERT INTO probe_configs (connection_id, is_enabled, name, description, collection_interval_seconds, retention_days)
+			VALUES
+				(NULL, TRUE, 'pg_server_info', 'Server identification and configuration (change-tracked)', 3600, 365),
+				(NULL, TRUE, 'pg_node_role', 'Node role detection for cluster topology', 300, 30)
+			ON CONFLICT (COALESCE(connection_id, 0), name) DO NOTHING;
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to insert probe configurations: %w", err)
+			}
+
+			return nil
+		},
+	})
 
 	// Migration 6: Reserved (previously user groups and privileges - moved to SQLite auth store)
 }

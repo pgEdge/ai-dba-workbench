@@ -131,11 +131,11 @@ func DropExpiredPartitions(ctx context.Context, conn *pgxpool.Conn, tableName st
 	// Calculate the cutoff timestamp
 	cutoff := time.Now().AddDate(0, 0, -retentionDays)
 
-	// For change-tracked probes (pg_settings, pg_hba_file_rules, pg_ident_file_mappings),
+	// For change-tracked probes (pg_settings, pg_hba_file_rules, pg_ident_file_mappings, pg_server_info),
 	// find the most recent partition with data for each connection
 	// These partitions must never be dropped, regardless of age
 	protectedPartitions := make(map[string]bool)
-	if tableName == "pg_settings" || tableName == "pg_hba_file_rules" || tableName == "pg_ident_file_mappings" {
+	if tableName == "pg_settings" || tableName == "pg_hba_file_rules" || tableName == "pg_ident_file_mappings" || tableName == "pg_server_info" {
 		// #nosec G201 - table name is from probe definition
 		protQuery := fmt.Sprintf(`
 			SELECT DISTINCT
@@ -440,30 +440,32 @@ func getDefaultInterval(probeName string) int {
 	// These constants need to be imported from the main package
 	// For now, we'll use a map to avoid circular dependencies
 	defaultIntervals := map[string]int{
-		"pg_stat_replication":        30,  // IntervalReplication
-		"pg_stat_wal_receiver":       30,  // IntervalWALReceiver
-		"pg_stat_activity":           60,  // IntervalActivity
-		"pg_stat_database":           300, // IntervalDatabase
-		"pg_stat_all_tables":         300, // IntervalTables
-		"pg_stat_all_indexes":        300, // IntervalIndexes
-		"pg_statio_all_tables":       300, // IntervalTables
-		"pg_statio_all_indexes":      300, // IntervalIndexes
-		"pg_statio_all_sequences":    300, // IntervalDefault
-		"pg_stat_user_functions":     300, // IntervalFunctions
-		"pg_stat_statements":         300, // IntervalDefault
-		"pg_stat_archiver":           600, // IntervalArchiver
-		"pg_stat_bgwriter":           600, // IntervalBgwriter
-		"pg_stat_checkpointer":       600, // IntervalCheckpointer
-		"pg_stat_wal":                600, // IntervalWAL
-		"pg_stat_slru":               600, // IntervalSLRU
-		"pg_stat_io":                 900, // IntervalIO
-		"pg_stat_subscription":       300, // IntervalSubscription
-		"pg_stat_subscription_stats": 300, // IntervalDefault
-		"pg_stat_replication_slots":  300, // IntervalReplicationSlots
-		"pg_stat_recovery_prefetch":  600, // IntervalRecoveryPrefetch
-		"pg_stat_database_conflicts": 300, // IntervalDefault
-		"pg_stat_ssl":                300, // IntervalDefault
-		"pg_stat_gssapi":             300, // IntervalDefault
+		"pg_stat_replication":        30,   // IntervalReplication
+		"pg_stat_wal_receiver":       30,   // IntervalWALReceiver
+		"pg_stat_activity":           60,   // IntervalActivity
+		"pg_stat_database":           300,  // IntervalDatabase
+		"pg_stat_all_tables":         300,  // IntervalTables
+		"pg_stat_all_indexes":        300,  // IntervalIndexes
+		"pg_statio_all_tables":       300,  // IntervalTables
+		"pg_statio_all_indexes":      300,  // IntervalIndexes
+		"pg_statio_all_sequences":    300,  // IntervalDefault
+		"pg_stat_user_functions":     300,  // IntervalFunctions
+		"pg_stat_statements":         300,  // IntervalDefault
+		"pg_stat_archiver":           600,  // IntervalArchiver
+		"pg_stat_bgwriter":           600,  // IntervalBgwriter
+		"pg_stat_checkpointer":       600,  // IntervalCheckpointer
+		"pg_stat_wal":                600,  // IntervalWAL
+		"pg_stat_slru":               600,  // IntervalSLRU
+		"pg_stat_io":                 900,  // IntervalIO
+		"pg_stat_subscription":       300,  // IntervalSubscription
+		"pg_stat_subscription_stats": 300,  // IntervalDefault
+		"pg_stat_replication_slots":  300,  // IntervalReplicationSlots
+		"pg_stat_recovery_prefetch":  600,  // IntervalRecoveryPrefetch
+		"pg_stat_database_conflicts": 300,  // IntervalDefault
+		"pg_stat_ssl":                300,  // IntervalDefault
+		"pg_stat_gssapi":             300,  // IntervalDefault
+		"pg_server_info":             3600, // IntervalServerInfo (hourly, change-tracked)
+		"pg_node_role":               300,  // IntervalNodeRole (every 5 minutes)
 	}
 
 	if interval, ok := defaultIntervals[probeName]; ok {

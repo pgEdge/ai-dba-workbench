@@ -20,6 +20,8 @@ the AI Workbench system.
 - [Schema Management](schema-management.md) - Migration system
 - [Probes System](probes.md) - How probes work
 - [Scheduler](scheduler.md) - Probe scheduling and execution
+- [Node Role Probe Design](node-role-probe-design.md) - Cluster topology
+    detection
 
 ### Development
 
@@ -48,8 +50,9 @@ The Collector provides:
 
 - **Multi-Server Monitoring**: Monitor multiple PostgreSQL servers
   simultaneously with independent connection pools
-- **27 Built-in Probes**: Comprehensive coverage of PostgreSQL system views
-  and statistics, including configuration and authentication change tracking
+- **29 Built-in Probes**: Comprehensive coverage of PostgreSQL system views
+  and statistics, including configuration tracking, authentication monitoring,
+  and cluster topology detection
 - **Flexible Scheduling**: Configurable collection intervals per probe
 - **Automated Data Management**: Weekly partitioning and retention-based
   garbage collection

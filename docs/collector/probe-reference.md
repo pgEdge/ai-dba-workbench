@@ -4,7 +4,7 @@ Complete reference for all built-in probes in the Collector.
 
 ## Probe Categories
 
-- **Server-Scoped**: Collect server-wide statistics (15 probes)
+- **Server-Scoped**: Collect server-wide statistics (17 probes)
 - **Database-Scoped**: Collect per-database statistics (9 probes)
 
 ## Server-Scoped Probes
@@ -280,6 +280,69 @@ tracking of user mapping changes for audit and compliance purposes.
 
 **Columns Collected**: map_number, file_name, line_number, map_name, sys_name,
 pg_username, error
+
+### pg_server_info
+
+Monitors PostgreSQL server identification and configuration with change
+detection. This probe only stores data when server configuration changes,
+making it ideal for tracking server upgrades and configuration changes.
+
+- **Source**: Various system functions and pg_extension
+- **Default Interval**: 3600 seconds (1 hour)
+- **Default Retention**: 365 days (1 year)
+- **Key Metrics**: Server version, system identifier, replication settings,
+    installed extensions
+- **Use Cases**: Server inventory tracking, upgrade verification, extension
+    monitoring, capacity planning
+- **Special Behavior**: Uses SHA256 hash comparison to detect changes. Data is
+    only stored when configuration differs from the most recent snapshot. The
+    garbage collector ensures the most recent snapshot for each server is never
+    deleted, regardless of age.
+
+**Columns Collected**: server_version, server_version_num, system_identifier,
+cluster_name, data_directory, max_connections, max_wal_senders,
+max_replication_slots, installed_extensions
+
+### pg_node_role
+
+Detects and tracks PostgreSQL node roles within various cluster topologies.
+This probe identifies how each node participates in replication configurations
+including binary replication, logical replication, Spock multi-master, and BDR.
+
+- **Source**: Multiple system views and extension catalogs
+- **Default Interval**: 300 seconds (5 minutes)
+- **Default Retention**: 30 days
+- **Key Metrics**: Primary role, role flags, replication status, standby info
+- **Use Cases**: Cluster topology monitoring, failover detection, replication
+    health tracking, Spock/BDR node status
+
+**Primary Roles Detected**:
+
+- `standalone` - No replication configured
+- `binary_primary` - Source for physical replication
+- `binary_standby` - Physical replication target
+- `binary_cascading` - Standby that is also a primary
+- `logical_publisher` - Native logical replication source
+- `logical_subscriber` - Native logical replication target
+- `logical_bidirectional` - Both publisher and subscriber
+- `spock_node` - Active Spock multi-master node
+- `spock_standby` - Binary standby of Spock node
+- `bdr_node` - Active BDR data node (future)
+- `bdr_standby` - Binary standby of BDR node (future)
+
+**Role Flags**: Non-exclusive capability flags that indicate all replication
+capabilities (e.g., a node can be both `binary_primary` and `logical_publisher`
+simultaneously).
+
+**Columns Collected**: is_in_recovery, timeline_id, has_binary_standbys,
+binary_standby_count, is_streaming_standby, upstream_host, upstream_port,
+received_lsn, replayed_lsn, publication_count, subscription_count,
+active_subscription_count, has_spock, spock_node_id, spock_node_name,
+spock_subscription_count, has_bdr, bdr_node_id, bdr_node_name, bdr_node_group,
+bdr_node_state, primary_role, role_flags, role_details
+
+**See Also**: [Node Role Probe Design](node-role-probe-design.md) for detailed
+architecture and detection algorithms.
 
 ## Database-Scoped Probes
 

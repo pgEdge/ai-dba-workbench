@@ -16,12 +16,14 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/config"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
 	"github.com/pgedge/ai-workbench/server/internal/resources"
+	"github.com/pgedge/ai-workbench/server/internal/tracing"
 )
 
 // ContextAwareProvider wraps a tool registry and provides per-token database clients
@@ -236,20 +238,55 @@ func (p *ContextAwareProvider) getOrCreateRegistryForClient(client *database.Cli
 // Execute runs a tool by name with the given arguments and context
 // Uses cached per-client registries to avoid re-creating tools on every request
 func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args map[string]interface{}) (mcp.ToolResponse, error) {
+	startTime := time.Now()
+	tokenHash := auth.GetTokenHashFromContext(ctx)
+	requestID := mcp.GetRequestIDFromContext(ctx)
+	sessionID := tokenHash // Use token hash as session ID
+
+	// Log tool call if tracing is enabled
+	if tracing.IsEnabled() {
+		tracing.LogToolCall(sessionID, tokenHash, requestID, name, args)
+	}
+
+	// Helper to log result and return
+	logAndReturn := func(response mcp.ToolResponse, err error) (mcp.ToolResponse, error) {
+		if tracing.IsEnabled() {
+			duration := time.Since(startTime)
+			var result interface{}
+			if len(response.Content) > 0 {
+				// Extract text content for logging
+				texts := make([]string, 0, len(response.Content))
+				for _, c := range response.Content {
+					if c.Text != "" {
+						texts = append(texts, c.Text)
+					}
+				}
+				if len(texts) == 1 {
+					result = texts[0]
+				} else if len(texts) > 1 {
+					result = texts
+				}
+			}
+			tracing.LogToolResult(sessionID, tokenHash, requestID, name, result, err, duration)
+		}
+		return response, err
+	}
+
 	// Check if this is a hidden tool (like authenticate_user)
 	// Hidden tools don't require authentication and are not advertised to LLM
 	if p.hiddenRegistry != nil {
 		if _, exists := p.hiddenRegistry.Get(name); exists {
 			// Tool found in hidden registry - execute it without auth validation
 			// Note: AuthStore uses SQLite which persists automatically
-			return p.hiddenRegistry.Execute(ctx, name, args)
+			response, err := p.hiddenRegistry.Execute(ctx, name, args)
+			return logAndReturn(response, err)
 		}
 	}
 
 	// Check if this tool is enabled in the builtins configuration
 	// read_resource is always enabled as it's used to list resources
 	if name != "read_resource" && !p.cfg.Builtins.Tools.IsToolEnabled(name) {
-		return mcp.ToolResponse{
+		return logAndReturn(mcp.ToolResponse{
 			Content: []mcp.ContentItem{
 				{
 					Type: "text",
@@ -257,14 +294,13 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 				},
 			},
 			IsError: true,
-		}, nil
+		}, nil)
 	}
 
 	// If authentication is enabled, validate token for ALL non-hidden tools
 	if p.authEnabled {
-		tokenHash := auth.GetTokenHashFromContext(ctx)
 		if tokenHash == "" {
-			return mcp.ToolResponse{}, fmt.Errorf("no authentication token found in request context")
+			return logAndReturn(mcp.ToolResponse{}, fmt.Errorf("no authentication token found in request context"))
 		}
 	}
 
@@ -282,7 +318,6 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 		// For query_metrics, inject the default connection_id from session if not provided
 		if name == "query_metrics" {
 			if _, hasConnID := args["connection_id"]; !hasConnID && p.authStore != nil {
-				tokenHash := auth.GetTokenHashFromContext(ctx)
 				if tokenHash != "" {
 					session, err := p.authStore.GetConnectionSession(tokenHash)
 					if err == nil && session != nil {
@@ -293,7 +328,8 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 			}
 		}
 		// Execute from base registry (no per-token database client needed)
-		return p.baseRegistry.Execute(ctx, name, args)
+		response, err := p.baseRegistry.Execute(ctx, name, args)
+		return logAndReturn(response, err)
 	}
 
 	// Get the appropriate database client for this request
@@ -313,7 +349,7 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 		fmt.Fprintf(os.Stderr, "ERROR: Failed to get database client for tool '%s': %v\n", name, err)
 
 		// Show the root cause to the client for actionable feedback
-		return mcp.ToolResponse{
+		return logAndReturn(mcp.ToolResponse{
 			Content: []mcp.ContentItem{
 				{
 					Type: "text",
@@ -321,7 +357,7 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 				},
 			},
 			IsError: true,
-		}, nil // Don't return error, just error response
+		}, nil) // Don't return error, just error response
 	}
 
 	// Get the cached registry for this client (or create if first use)
@@ -329,7 +365,8 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 	registry := p.getOrCreateRegistryForClient(dbClient)
 
 	// Execute the tool using the client-specific registry
-	return registry.Execute(ctx, name, args)
+	response, err := registry.Execute(ctx, name, args)
+	return logAndReturn(response, err)
 }
 
 // getClient returns the appropriate database client based on authentication state

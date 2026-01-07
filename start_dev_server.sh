@@ -20,6 +20,7 @@ BIN_DIR="${SCRIPT_DIR}/bin"
 CONFIG_FILE="${BIN_DIR}/ai-dba-server.yaml"
 EXAMPLE_CONFIG="${SCRIPT_DIR}/examples/ai-dba-server.yaml"
 SERVER_DIR="${SCRIPT_DIR}/server/src"
+TRACE_FILE="${BIN_DIR}/mcp-trace.jsonl"
 
 # Colors for output
 RED='\033[0;31m'
@@ -54,6 +55,7 @@ fi
 # Display configuration
 echo -e "${YELLOW}Configuration:${NC}"
 echo "  Config file: ${CONFIG_FILE}"
+echo "  Trace file: ${TRACE_FILE}"
 echo "  Bin dir: ${BIN_DIR}"
 echo ""
 
@@ -86,4 +88,4 @@ fi
 echo -e "${GREEN}Starting server...${NC}"
 echo ""
 
-exec "${BIN_DIR}/ai-dba-server" --config="${CONFIG_FILE}"
+exec "${BIN_DIR}/ai-dba-server" --config="${CONFIG_FILE}" --trace-file="${TRACE_FILE}"

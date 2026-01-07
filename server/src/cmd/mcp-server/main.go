@@ -34,6 +34,7 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/prompts"
 	"github.com/pgedge/ai-workbench/server/internal/resources"
 	"github.com/pgedge/ai-workbench/server/internal/tools"
+	"github.com/pgedge/ai-workbench/server/internal/tracing"
 )
 
 const (
@@ -60,6 +61,7 @@ func main() {
 	chainFile := flag.String("chain", "", "Path to TLS certificate chain file (optional)")
 	debug := flag.Bool("debug", false, "Enable debug logging (logs HTTP requests/responses)")
 	dataDir := flag.String("data-dir", "", "Data directory for auth database and conversations")
+	traceFile := flag.String("trace-file", "", "Path to trace file for logging MCP requests/responses")
 
 	// Database connection flags
 	dbHost := flag.String("db-host", "", "Database host")
@@ -232,6 +234,9 @@ func main() {
 		case "db-sslmode":
 			cliFlags.DBSSLSet = true
 			cliFlags.DBSSLMode = *dbSSLMode
+		case "trace-file":
+			cliFlags.TraceFileSet = true
+			cliFlags.TraceFile = *traceFile
 		}
 	})
 
@@ -253,6 +258,16 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Initialize tracing if configured
+	if cfg.TraceFile != "" {
+		if err := tracing.Initialize(cfg.TraceFile); err != nil {
+			fmt.Fprintf(os.Stderr, "WARNING: Failed to initialize tracing: %v\n", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "Tracing: ENABLED (file: %s)\n", cfg.TraceFile)
+			defer tracing.Close()
+		}
 	}
 
 	// Verify TLS files exist if HTTPS is enabled
@@ -514,7 +529,12 @@ func main() {
 					}
 				}
 
-				// Token valid, proceed with handler
+				// Token valid - add token hash to context for tracing and isolation
+				tokenHash := auth.GetTokenHashByRawToken(token)
+				ctx := context.WithValue(r.Context(), auth.TokenHashContextKey, tokenHash)
+				r = r.WithContext(ctx)
+
+				// Proceed with handler
 				handler(w, r)
 			}
 		}

@@ -11,13 +11,15 @@
 package llmproxy
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 
+	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/chat"
+	"github.com/pgedge/ai-workbench/server/internal/tracing"
 )
 
 // Config holds LLM configuration from the server config
@@ -208,6 +210,14 @@ func HandleChat(w http.ResponseWriter, r *http.Request, config *Config) {
 		return
 	}
 
+	startTime := time.Now()
+
+	// Get tracing context from request
+	ctx := r.Context()
+	tokenHash := auth.GetTokenHashFromContext(ctx)
+	sessionID := tokenHash // Use token hash as session ID
+	requestID := tracing.GenerateRequestID()
+
 	// Ensure request body is closed
 	defer func() {
 		if err := r.Body.Close(); err != nil {
@@ -220,6 +230,16 @@ func HandleChat(w http.ResponseWriter, r *http.Request, config *Config) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
+	}
+
+	// Log user prompts if tracing is enabled
+	if tracing.IsEnabled() {
+		// Extract user messages for logging
+		for _, msg := range req.Messages {
+			if msg.Role == "user" {
+				tracing.LogUserPrompt(sessionID, tokenHash, requestID, msg.Content)
+			}
+		}
 	}
 
 	// Use provided provider/model or defaults
@@ -271,11 +291,19 @@ func HandleChat(w http.ResponseWriter, r *http.Request, config *Config) {
 
 	// Call LLM - pass tools as []interface{} to avoid import cycle
 	// The chat client will access tool fields which are structurally identical to mcp.Tool
-	ctx := context.Background()
 	llmResponse, err := client.Chat(ctx, chatMessages, req.Tools)
 	if err != nil {
+		if tracing.IsEnabled() {
+			tracing.LogError(sessionID, tokenHash, requestID, "llm_chat", err)
+		}
 		http.Error(w, fmt.Sprintf("LLM error: %v", err), http.StatusInternalServerError)
 		return
+	}
+
+	// Log LLM response if tracing is enabled
+	if tracing.IsEnabled() {
+		duration := time.Since(startTime)
+		tracing.LogLLMResponse(sessionID, tokenHash, requestID, llmResponse.Content, duration)
 	}
 
 	// Return response

@@ -47,6 +47,9 @@ type Config struct {
 
 	// Data directory path (for conversation history, etc.)
 	DataDir string `yaml:"data_dir"`
+
+	// Trace file path (for MCP request/response tracing)
+	TraceFile string `yaml:"trace_file"`
 }
 
 // BuiltinsConfig holds configuration for enabling/disabling built-in tools, resources, and prompts
@@ -327,6 +330,10 @@ type CLIFlags struct {
 	// Secret file flags
 	SecretFile    string
 	SecretFileSet bool
+
+	// Trace file flags
+	TraceFile    string
+	TraceFileSet bool
 }
 
 // defaultConfig returns configuration with hard-coded defaults
@@ -540,6 +547,11 @@ func mergeConfig(dest, src *Config) {
 		dest.DataDir = src.DataDir
 	}
 
+	// Trace file
+	if src.TraceFile != "" {
+		dest.TraceFile = src.TraceFile
+	}
+
 	// Builtins - merge individual settings (pointer fields preserve explicit false values)
 	// Tools
 	if src.Builtins.Tools.QueryDatabase != nil {
@@ -694,6 +706,11 @@ func applyCLIFlags(cfg *Config, flags CLIFlags) {
 	// Secret file
 	if flags.SecretFileSet {
 		cfg.SecretFile = flags.SecretFile
+	}
+
+	// Trace file
+	if flags.TraceFileSet {
+		cfg.TraceFile = flags.TraceFile
 	}
 }
 

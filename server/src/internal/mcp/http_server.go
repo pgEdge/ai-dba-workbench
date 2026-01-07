@@ -18,9 +18,25 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
+	"github.com/pgedge/ai-workbench/server/internal/tracing"
 )
+
+// contextKey is a type for context keys to avoid collisions
+type contextKey string
+
+// requestIDContextKey is used to store the request ID in context for tracing
+const requestIDContextKey contextKey = "request_id"
+
+// GetRequestIDFromContext extracts the request ID from context
+func GetRequestIDFromContext(ctx context.Context) string {
+	if id, ok := ctx.Value(requestIDContextKey).(string); ok {
+		return id
+	}
+	return ""
+}
 
 // HTTPConfig holds configuration for HTTP/HTTPS server mode
 type HTTPConfig struct {
@@ -113,6 +129,8 @@ func (s *Server) loadTLSConfig(config *HTTPConfig) (*tls.Config, error) {
 
 // handleHTTPRequest handles HTTP requests and translates them to JSON-RPC
 func (s *Server) handleHTTPRequest(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
+
 	// Only accept POST requests
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -122,6 +140,11 @@ func (s *Server) handleHTTPRequest(w http.ResponseWriter, r *http.Request) {
 	// Extract IP address and add to context
 	ipAddress := auth.ExtractIPAddress(r)
 	ctx := context.WithValue(r.Context(), auth.IPAddressContextKey, ipAddress)
+
+	// Generate request ID and session ID for tracing
+	requestID := tracing.GenerateRequestID()
+	tokenHash := auth.GetTokenHashFromContext(ctx)
+	sessionID := tokenHash // Use token hash as session ID for correlation
 
 	// Read request body
 	body, err := io.ReadAll(r.Body)
@@ -142,6 +165,15 @@ func (s *Server) handleHTTPRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Trace incoming request
+	if tracing.IsEnabled() {
+		var params interface{}
+		if req.Params != nil {
+			params = req.Params
+		}
+		tracing.LogHTTPRequest(sessionID, tokenHash, requestID, r.Method, "/mcp/v1 "+req.Method, params)
+	}
+
 	// Debug logging: log incoming request
 	if s.debug {
 		fmt.Fprintf(os.Stderr, "[DEBUG] Incoming request: method=%s id=%v ip=%s\n", req.Method, req.ID, ipAddress)
@@ -152,6 +184,9 @@ func (s *Server) handleHTTPRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Store request ID in context for use by tool/resource handlers
+	ctx = context.WithValue(ctx, requestIDContextKey, requestID)
+
 	// Handle the request and capture the response (pass context with IP address)
 	response := s.handleRequestHTTP(ctx, req)
 
@@ -160,6 +195,20 @@ func (s *Server) handleHTTPRequest(w http.ResponseWriter, r *http.Request) {
 		if responseJSON, err := json.Marshal(response); err == nil {
 			fmt.Fprintf(os.Stderr, "[DEBUG] Outgoing response: %s\n", string(responseJSON))
 		}
+	}
+
+	// Trace outgoing response
+	if tracing.IsEnabled() {
+		duration := time.Since(startTime)
+		var result interface{}
+		if response.Error != nil {
+			result = map[string]interface{}{
+				"error": response.Error,
+			}
+		} else {
+			result = response.Result
+		}
+		tracing.LogHTTPResponse(sessionID, tokenHash, requestID, r.Method, "/mcp/v1 "+req.Method, http.StatusOK, result, duration)
 	}
 
 	// Send response

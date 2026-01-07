@@ -13,11 +13,13 @@ package resources
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/config"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
+	"github.com/pgedge/ai-workbench/server/internal/tracing"
 )
 
 // ContextAwareHandler is a function that reads a resource with context and database client
@@ -80,12 +82,46 @@ func (r *ContextAwareRegistry) List() []mcp.Resource {
 
 // Read retrieves a resource by URI with the appropriate database client
 func (r *ContextAwareRegistry) Read(ctx context.Context, uri string) (mcp.ResourceContent, error) {
+	startTime := time.Now()
+	tokenHash := auth.GetTokenHashFromContext(ctx)
+	requestID := mcp.GetRequestIDFromContext(ctx)
+	sessionID := tokenHash // Use token hash as session ID
+
+	// Log resource read if tracing is enabled
+	if tracing.IsEnabled() {
+		tracing.LogResourceRead(sessionID, tokenHash, requestID, uri)
+	}
+
+	// Helper to log result and return
+	logAndReturn := func(content mcp.ResourceContent, err error) (mcp.ResourceContent, error) {
+		if tracing.IsEnabled() {
+			duration := time.Since(startTime)
+			var result interface{}
+			if len(content.Contents) > 0 {
+				// Extract text content for logging
+				texts := make([]string, 0, len(content.Contents))
+				for _, c := range content.Contents {
+					if c.Text != "" {
+						texts = append(texts, c.Text)
+					}
+				}
+				if len(texts) == 1 {
+					result = texts[0]
+				} else if len(texts) > 1 {
+					result = texts
+				}
+			}
+			tracing.LogResourceResult(sessionID, tokenHash, requestID, uri, result, err, duration)
+		}
+		return content, err
+	}
+
 	// Check if this is a custom resource first
 	if customRes, exists := r.customResources[uri]; exists {
 		// Get database client for custom resource
 		dbClient, err := r.getClient(ctx)
 		if err != nil {
-			return mcp.ResourceContent{
+			return logAndReturn(mcp.ResourceContent{
 				URI: uri,
 				Contents: []mcp.ContentItem{
 					{
@@ -93,9 +129,10 @@ func (r *ContextAwareRegistry) Read(ctx context.Context, uri string) (mcp.Resour
 						Text: fmt.Sprintf("Error: %v", err),
 					},
 				},
-			}, nil
+			}, nil)
 		}
-		return customRes.handler(ctx, dbClient)
+		content, err := customRes.handler(ctx, dbClient)
+		return logAndReturn(content, err)
 	}
 
 	// Check if URI is a known resource before trying to get client
@@ -104,7 +141,7 @@ func (r *ContextAwareRegistry) Read(ctx context.Context, uri string) (mcp.Resour
 	case URISystemInfo, URIConnectionInfo:
 		// Valid URI, continue to process
 	default:
-		return mcp.ResourceContent{
+		return logAndReturn(mcp.ResourceContent{
 			URI: uri,
 			Contents: []mcp.ContentItem{
 				{
@@ -112,12 +149,12 @@ func (r *ContextAwareRegistry) Read(ctx context.Context, uri string) (mcp.Resour
 					Text: "Resource not found: " + uri,
 				},
 			},
-		}, nil
+		}, nil)
 	}
 
 	// Check if the built-in resource is enabled
 	if !r.cfg.Builtins.Resources.IsResourceEnabled(uri) {
-		return mcp.ResourceContent{
+		return logAndReturn(mcp.ResourceContent{
 			URI: uri,
 			Contents: []mcp.ContentItem{
 				{
@@ -125,18 +162,19 @@ func (r *ContextAwareRegistry) Read(ctx context.Context, uri string) (mcp.Resour
 					Text: fmt.Sprintf("Resource '%s' is not available", uri),
 				},
 			},
-		}, nil
+		}, nil)
 	}
 
 	// Handle connection_info resource specially - it doesn't query a database
 	if uri == URIConnectionInfo {
-		return r.readConnectionInfo(ctx)
+		content, err := r.readConnectionInfo(ctx)
+		return logAndReturn(content, err)
 	}
 
 	// Get the appropriate database client for built-in resources that need it
 	dbClient, err := r.getClient(ctx)
 	if err != nil {
-		return mcp.ResourceContent{
+		return logAndReturn(mcp.ResourceContent{
 			URI: uri,
 			Contents: []mcp.ContentItem{
 				{
@@ -144,13 +182,14 @@ func (r *ContextAwareRegistry) Read(ctx context.Context, uri string) (mcp.Resour
 					Text: fmt.Sprintf("Error: %v", err),
 				},
 			},
-		}, nil
+		}, nil)
 	}
 
 	// Create resource handler with the correct client
 	// Note: At this point URI has already been validated as a known resource
 	resource := PGSystemInfoResource(dbClient)
-	return resource.Handler()
+	content, err := resource.Handler()
+	return logAndReturn(content, err)
 }
 
 // readConnectionInfo returns the current connection context without querying a database

@@ -453,7 +453,7 @@ The CLI stores user preferences in `~/.ai-workbench-cli.json`:
 
 **Fields:**
 
-- `server_url` - AI Workbench MCP server URL
+- `server_url` - AI DBA Workbench MCP server URL
 - `preferred_llm` - User's preferred LLM provider (`anthropic` or `ollama`). If
   empty, auto-detects based on API key availability.
 - `anthropic_api_key` - Anthropic API key (stored in plain text with 0600
@@ -476,7 +476,7 @@ Settings are applied in this priority order (highest to lowest):
 
 **AI_CLI_* Variables (Override config file):**
 
-- `AI_CLI_SERVER_URL` - AI Workbench MCP server URL
+- `AI_CLI_SERVER_URL` - AI DBA Workbench MCP server URL
 - `AI_CLI_ANTHROPIC_API_KEY` - Anthropic API key
 - `AI_CLI_ANTHROPIC_MODEL` - Anthropic model name
 - `AI_CLI_OLLAMA_URL` - Ollama server URL
@@ -497,7 +497,7 @@ Settings are applied in this priority order (highest to lowest):
 
 #### set-server
 
-Sets the AI Workbench MCP server URL in the config file.
+Sets the AI DBA Workbench MCP server URL in the config file.
 
 **Usage:**
 

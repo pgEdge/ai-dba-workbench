@@ -1,10 +1,10 @@
 # Testing Overview - pgEdge AI DBA Workbench
 
-This document provides a high-level overview of the testing strategy across the AI Workbench project.
+This document provides a high-level overview of the testing strategy across the AI DBA Workbench project.
 
 ## Project Structure
 
-The AI Workbench consists of three sub-projects:
+The AI DBA Workbench consists of three sub-projects:
 
 - **/collector**: GoLang-based data collector
 - **/server**: GoLang-based MCP server

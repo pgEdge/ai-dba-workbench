@@ -4,7 +4,7 @@ This document provides detailed information about available test utilities and h
 
 ## Overview
 
-Test utilities are located in `/tests/testutil/` and provide common functionality for integration testing across the AI Workbench components.
+Test utilities are located in `/tests/testutil/` and provide common functionality for integration testing across the AI DBA Workbench components.
 
 ## Module Structure
 

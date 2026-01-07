@@ -319,7 +319,7 @@ Here's an example configuration file with all available options:
 
 #### Server Settings
 
-- **`server_url`** (string, optional): The AI Workbench MCP server URL
+- **`server_url`** (string, optional): The AI DBA Workbench MCP server URL
   - Default: `http://localhost:8080`
   - Example: `"http://myserver:8080"`
   - Can be overridden by: `--server` flag or `AI_CLI_SERVER_URL` environment

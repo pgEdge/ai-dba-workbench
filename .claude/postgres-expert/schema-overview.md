@@ -9,7 +9,7 @@ deployment simple and ensuring schema consistency.
 
 ## Database Purpose
 
-This database serves as the **metadata store** for the AI Workbench system. It
+This database serves as the **metadata store** for the AI DBA Workbench system. It
 tracks:
 
 - User authentication and authorization (RBAC)

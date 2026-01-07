@@ -1,10 +1,10 @@
 # Database Testing - pgEdge AI DBA Workbench
 
-This document describes how to test database-dependent code in the AI Workbench project.
+This document describes how to test database-dependent code in the AI DBA Workbench project.
 
 ## Overview
 
-Database testing in the AI Workbench involves:
+Database testing in the AI DBA Workbench involves:
 - Creating temporary test databases
 - Running schema migrations
 - Testing queries and data operations

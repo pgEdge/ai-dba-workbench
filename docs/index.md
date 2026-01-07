@@ -1,6 +1,6 @@
 # pgEdge AI DBA Workbench Documentation
 
-Welcome to the pgEdge AI DBA Workbench documentation. The AI Workbench is a
+Welcome to the pgEdge AI DBA Workbench documentation. The AI DBA Workbench is a
 unified environment for interacting with pgEdge's distributed and
 non-distributed PostgreSQL systems through artificial intelligence and
 traditional methods.
@@ -23,7 +23,7 @@ intelligent workflow creation across the pgEdge ecosystem.
 
 ## Architecture
 
-The AI Workbench is composed of several components that work together:
+The AI DBA Workbench is composed of several components that work together:
 
 ### Data Collection Layer
 

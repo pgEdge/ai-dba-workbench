@@ -19,11 +19,11 @@
 # DATASTORE CONNECTION SETTINGS
 #=========================================================================
 #
-# IMPORTANT: These settings configure the connection to the AI Workbench's
+# IMPORTANT: These settings configure the connection to the AI DBA Workbench's
 # PostgreSQL datastore database. This is NOT the connection information
 # for the PostgreSQL servers you want to monitor.
 #
-# The datastore is a PostgreSQL database used by AI Workbench to store:
+# The datastore is a PostgreSQL database used by AI DBA Workbench to store:
 # - Monitoring data collected from your PostgreSQL servers
 # - Connection information for monitored servers
 # - User accounts and authentication tokens
@@ -35,7 +35,7 @@
 #
 
 datastore:
-  # Hostname or IP address of the AI Workbench datastore PostgreSQL server
+  # Hostname or IP address of the AI DBA Workbench datastore PostgreSQL server
   # Default: localhost
   # Command-line: -pg-host
   host: localhost
@@ -47,17 +47,17 @@ datastore:
   # Command-line: -pg-hostaddr
   # hostaddr: 127.0.0.1
 
-  # Database name in the AI Workbench datastore
+  # Database name in the AI DBA Workbench datastore
   # Default: ai_workbench
   # Command-line: -pg-database
   database: ai_workbench
 
-  # Username for connecting to the AI Workbench datastore
+  # Username for connecting to the AI DBA Workbench datastore
   # Default: postgres
   # Command-line: -pg-username
   username: postgres
 
-  # Path to file containing the password for the AI Workbench datastore
+  # Path to file containing the password for the AI DBA Workbench datastore
   # The file should contain only the password with no extra whitespace
   # Default: none (will attempt to use .pgpass if not specified)
   # Command-line: -pg-password-file
@@ -68,13 +68,13 @@ datastore:
   #
   # password_file: /etc/ai-workbench/password.txt
 
-  # Port on which the AI Workbench datastore is listening
+  # Port on which the AI DBA Workbench datastore is listening
   # Default: 5432
   # Range: 1-65535
   # Command-line: -pg-port
   port: 5432
 
-  # SSL mode for the AI Workbench datastore connection
+  # SSL mode for the AI DBA Workbench datastore connection
   # Options:
   #   disable     - No SSL (not recommended for production)
   #   allow       - Try non-SSL first, then SSL
@@ -110,7 +110,7 @@ datastore:
 #
 # The collector maintains two types of connection pools:
 #
-# 1. DATASTORE POOL: Connections to the AI Workbench datastore database
+# 1. DATASTORE POOL: Connections to the AI DBA Workbench datastore database
 #    where collected metrics are stored. A single shared pool.
 #
 # 2. MONITORED POOLS: Connections to each monitored PostgreSQL server.

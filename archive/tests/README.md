@@ -1,6 +1,6 @@
 # pgEdge AI DBA Workbench Integration Tests
 
-This directory contains integration tests that exercise all AI Workbench
+This directory contains integration tests that exercise all AI DBA Workbench
 components working together: the collector, MCP server, and CLI.
 
 ## Overview
@@ -18,7 +18,7 @@ The integration tests:
 
 - Go 1.23 or later
 - PostgreSQL 12 or later (running and accessible)
-- All AI Workbench components built (collector, server, CLI)
+- All AI DBA Workbench components built (collector, server, CLI)
 
 ## Getting Started
 

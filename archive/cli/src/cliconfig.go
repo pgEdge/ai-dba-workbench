@@ -19,7 +19,7 @@ import (
 
 // CLIConfig stores user preferences for the CLI
 type CLIConfig struct {
-	// AI Workbench MCP server URL
+	// AI DBA Workbench MCP server URL
 	ServerURL string `json:"server_url,omitempty"`
 
 	// Preferred LLM provider: "anthropic" or "ollama"

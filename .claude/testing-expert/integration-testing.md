@@ -1,10 +1,10 @@
 # Integration Testing - pgEdge AI DBA Workbench
 
-This document describes the integration testing structure and approach for the AI Workbench project.
+This document describes the integration testing structure and approach for the AI DBA Workbench project.
 
 ## Overview
 
-Integration tests verify that multiple components work together correctly. The AI Workbench has two levels of integration testing:
+Integration tests verify that multiple components work together correctly. The AI DBA Workbench has two levels of integration testing:
 
 1. **Sub-Project Integration Tests**: Tests within a sub-project (e.g., database + schema manager in collector)
 2. **Cross-Component Integration Tests**: Tests across collector, server, and CLI (in `/tests/`)

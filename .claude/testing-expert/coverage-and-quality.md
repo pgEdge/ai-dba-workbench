@@ -1,12 +1,12 @@
 # Coverage and Code Quality - pgEdge AI DBA Workbench
 
-This document describes code coverage measurement and quality checks for the AI Workbench project.
+This document describes code coverage measurement and quality checks for the AI DBA Workbench project.
 
 ## Code Coverage
 
 ### Overview
 
-Code coverage measures which parts of the codebase are exercised by tests. The AI Workbench uses Go's built-in coverage tools for GoLang projects and Jest for React projects.
+Code coverage measures which parts of the codebase are exercised by tests. The AI DBA Workbench uses Go's built-in coverage tools for GoLang projects and Jest for React projects.
 
 ### Coverage Goals
 

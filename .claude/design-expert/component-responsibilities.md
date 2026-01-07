@@ -618,7 +618,7 @@ ai-workbench-cli create-service-token --name backup_automation
 
 **Technology**: React, Node.js, MUI
 
-**Purpose**: Web-based user interface for interacting with AI Workbench.
+**Purpose**: Web-based user interface for interacting with AI DBA Workbench.
 
 ### Planned Responsibilities
 

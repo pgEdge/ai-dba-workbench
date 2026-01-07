@@ -91,7 +91,7 @@ http:
 # DATABASE CONNECTION
 #=========================================================================
 #
-# The server connects to the AI Workbench datastore (PostgreSQL database)
+# The server connects to the AI DBA Workbench datastore (PostgreSQL database)
 # which stores user accounts, tokens, connections, and collected metrics.
 #
 database:

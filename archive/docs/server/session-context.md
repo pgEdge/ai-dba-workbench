@@ -1,6 +1,6 @@
 # Session Context System
 
-The AI Workbench MCP server provides a session context system that allows
+The AI DBA Workbench MCP server provides a session context system that allows
 users to set a "working database" for their session, similar to how a database
 CLI maintains a current connection.
 

@@ -1,6 +1,6 @@
 # Unit Testing Patterns - pgEdge AI DBA Workbench
 
-This document covers unit testing patterns and best practices for the AI Workbench project.
+This document covers unit testing patterns and best practices for the AI DBA Workbench project.
 
 ## Unit Test Principles
 

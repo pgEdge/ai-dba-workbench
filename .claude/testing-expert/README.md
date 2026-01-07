@@ -277,4 +277,4 @@ These documents should be updated when:
 
 ---
 
-**Note**: This knowledge base is for the Testing Framework Architect agent and serves as a comprehensive reference for all testing-related guidance in the AI Workbench project.
+**Note**: This knowledge base is for the Testing Framework Architect agent and serves as a comprehensive reference for all testing-related guidance in the AI DBA Workbench project.

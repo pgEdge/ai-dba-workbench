@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-// Package main is the entry point for the AI Workbench CLI
+// Package main is the entry point for the AI DBA Workbench CLI
 package main
 
 import (
@@ -31,9 +31,9 @@ const (
 	version = "0.1.0"
 
 	// ANSI color codes
-	colorReset  = "\033[0m"
-	colorRed    = "\033[31m"
-	colorBlue   = "\033[34m"
+	colorReset = "\033[0m"
+	colorRed   = "\033[31m"
+	colorBlue  = "\033[34m"
 )
 
 // colorize wraps text in ANSI color codes
@@ -82,7 +82,7 @@ func main() {
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Printf("AI Workbench CLI v%s\n", version)
+		fmt.Printf("AI DBA Workbench CLI v%s\n", version)
 		os.Exit(0)
 	}
 
@@ -182,7 +182,7 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Fprintf(os.Stderr, `AI Workbench CLI - MCP Server Interaction Tool
+	fmt.Fprintf(os.Stderr, `AI DBA Workbench CLI - MCP Server Interaction Tool
 
 Usage:
     ai-cli [options] <command> [arguments]
@@ -214,7 +214,7 @@ Commands:
                                  (Interactive mode if no query provided)
 
 Configuration Commands:
-    set-server <url>             Set AI Workbench MCP server URL
+    set-server <url>             Set AI DBA Workbench MCP server URL
     set-llm <provider>           Set LLM provider (anthropic or ollama)
     show-llm                     Show current LLM provider
     set-model <model-name>       Set model name for current LLM provider
@@ -335,8 +335,8 @@ func listResources(client *MCPClient) error {
 			continue
 		}
 
-		uri, _ := resource["uri"].(string)               //nolint:errcheck // Optional field, empty string is acceptable default
-		name, _ := resource["name"].(string)             //nolint:errcheck // Optional field, empty string is acceptable default
+		uri, _ := resource["uri"].(string)                 //nolint:errcheck // Optional field, empty string is acceptable default
+		name, _ := resource["name"].(string)               //nolint:errcheck // Optional field, empty string is acceptable default
 		description, _ := resource["description"].(string) //nolint:errcheck // Optional field, empty string is acceptable default
 
 		if uri != "" {
@@ -541,15 +541,15 @@ func (s *spinner) stop() {
 func needsAuth(command string) bool {
 	// These commands do not require authentication
 	exemptCommands := map[string]bool{
-		"ping":               true,
-		"set-llm":            true,
-		"show-llm":           true,
-		"set-model":          true,
-		"show-model":         true,
-		"set-server":         true,
-		"set-anthropic-key":  true,
-		"set-ollama-url":     true,
-		"show-config":        true,
+		"ping":              true,
+		"set-llm":           true,
+		"show-llm":          true,
+		"set-model":         true,
+		"show-model":        true,
+		"set-server":        true,
+		"set-anthropic-key": true,
+		"set-ollama-url":    true,
+		"show-config":       true,
 	}
 	return !exemptCommands[command]
 }
@@ -717,8 +717,8 @@ func askLLM(client *MCPClient, args []string) error {
 		if toolsList, ok := toolsMap["tools"].([]interface{}); ok {
 			for _, t := range toolsList {
 				if toolMap, ok := t.(map[string]interface{}); ok {
-					name, _ := toolMap["name"].(string)                           //nolint:errcheck // Type assertion, optional field
-					description, _ := toolMap["description"].(string)             //nolint:errcheck // Type assertion, optional field
+					name, _ := toolMap["name"].(string)                               //nolint:errcheck // Type assertion, optional field
+					description, _ := toolMap["description"].(string)                 //nolint:errcheck // Type assertion, optional field
 					inputSchema, _ := toolMap["inputSchema"].(map[string]interface{}) //nolint:errcheck // Type assertion, optional field
 
 					if name != "" {
@@ -733,7 +733,6 @@ func askLLM(client *MCPClient, args []string) error {
 		}
 	}
 
-
 	// Get available resources from MCP server
 	resourcesResult, err := client.ListResources()
 	if err != nil {
@@ -746,10 +745,10 @@ func askLLM(client *MCPClient, args []string) error {
 		if resourcesList, ok := resourcesMap["resources"].([]interface{}); ok {
 			for _, r := range resourcesList {
 				if resourceMap, ok := r.(map[string]interface{}); ok {
-					uri, _ := resourceMap["uri"].(string)               //nolint:errcheck // Type assertion, optional field
-					name, _ := resourceMap["name"].(string)             //nolint:errcheck // Type assertion, optional field
+					uri, _ := resourceMap["uri"].(string)                 //nolint:errcheck // Type assertion, optional field
+					name, _ := resourceMap["name"].(string)               //nolint:errcheck // Type assertion, optional field
 					description, _ := resourceMap["description"].(string) //nolint:errcheck // Type assertion, optional field
-					mimeType, _ := resourceMap["mimeType"].(string)     //nolint:errcheck // Type assertion, optional field
+					mimeType, _ := resourceMap["mimeType"].(string)       //nolint:errcheck // Type assertion, optional field
 
 					if uri != "" {
 						// Only send resource metadata - don't fetch data upfront
@@ -766,7 +765,6 @@ func askLLM(client *MCPClient, args []string) error {
 			}
 		}
 	}
-
 
 	// Initialize conversation history
 	var messages []Message
@@ -891,8 +889,8 @@ func askLLMInteractiveWithReadline(client *MCPClient, rl interface{}) error {
 		if toolsList, ok := toolsMap["tools"].([]interface{}); ok {
 			for _, t := range toolsList {
 				if toolMap, ok := t.(map[string]interface{}); ok {
-					name, _ := toolMap["name"].(string)                           //nolint:errcheck // Type assertion, optional field
-					description, _ := toolMap["description"].(string)             //nolint:errcheck // Type assertion, optional field
+					name, _ := toolMap["name"].(string)                               //nolint:errcheck // Type assertion, optional field
+					description, _ := toolMap["description"].(string)                 //nolint:errcheck // Type assertion, optional field
 					inputSchema, _ := toolMap["inputSchema"].(map[string]interface{}) //nolint:errcheck // Type assertion, optional field
 
 					if name != "" {
@@ -907,7 +905,6 @@ func askLLMInteractiveWithReadline(client *MCPClient, rl interface{}) error {
 		}
 	}
 
-
 	// Get available resources from MCP server
 	resourcesResult, err := client.ListResources()
 	if err != nil {
@@ -920,10 +917,10 @@ func askLLMInteractiveWithReadline(client *MCPClient, rl interface{}) error {
 		if resourcesList, ok := resourcesMap["resources"].([]interface{}); ok {
 			for _, r := range resourcesList {
 				if resourceMap, ok := r.(map[string]interface{}); ok {
-					uri, _ := resourceMap["uri"].(string)               //nolint:errcheck // Type assertion, optional field
-					name, _ := resourceMap["name"].(string)             //nolint:errcheck // Type assertion, optional field
+					uri, _ := resourceMap["uri"].(string)                 //nolint:errcheck // Type assertion, optional field
+					name, _ := resourceMap["name"].(string)               //nolint:errcheck // Type assertion, optional field
 					description, _ := resourceMap["description"].(string) //nolint:errcheck // Type assertion, optional field
-					mimeType, _ := resourceMap["mimeType"].(string)     //nolint:errcheck // Type assertion, optional field
+					mimeType, _ := resourceMap["mimeType"].(string)       //nolint:errcheck // Type assertion, optional field
 
 					if uri != "" {
 						// Only send resource metadata - don't fetch data upfront
@@ -940,7 +937,6 @@ func askLLMInteractiveWithReadline(client *MCPClient, rl interface{}) error {
 			}
 		}
 	}
-
 
 	// Initialize conversation history
 	var messages []Message
@@ -1162,7 +1158,7 @@ func showModel() error {
 	return nil
 }
 
-// setServerURL sets the AI Workbench MCP server URL in the config file
+// setServerURL sets the AI DBA Workbench MCP server URL in the config file
 func setServerURL(args []string) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: set-server <url>")
@@ -1184,7 +1180,7 @@ func setServerURL(args []string) error {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 
-	fmt.Printf("AI Workbench MCP server URL set to: %s\n", serverURL)
+	fmt.Printf("AI DBA Workbench MCP server URL set to: %s\n", serverURL)
 	fmt.Printf("\nNote: This can be overridden with --server flag or AI_CLI_SERVER_URL environment variable\n")
 
 	return nil

@@ -3,7 +3,7 @@
 Welcome to the pgEdge AI DBA Workbench Collector documentation. The Collector is
 a standalone monitoring service that continuously collects metrics from
 PostgreSQL servers and stores them in a centralized datastore for analysis by
-the AI Workbench system.
+the AI DBA Workbench system.
 
 ## Table of Contents
 

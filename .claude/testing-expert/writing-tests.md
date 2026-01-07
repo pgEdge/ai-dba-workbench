@@ -1,6 +1,6 @@
 # Writing Tests - Practical Guide
 
-This document provides practical, step-by-step guidance for writing tests for new features in the AI Workbench project.
+This document provides practical, step-by-step guidance for writing tests for new features in the AI DBA Workbench project.
 
 ## Quick Start Checklist
 

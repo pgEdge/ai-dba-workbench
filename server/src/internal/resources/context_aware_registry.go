@@ -30,6 +30,8 @@ type ContextAwareRegistry struct {
 	authEnabled     bool
 	customResources map[string]customResource
 	cfg             *config.Config
+	authStore       *auth.AuthStore     // Auth store for connection sessions
+	datastore       *database.Datastore // Datastore for monitored connection info
 }
 
 // customResource represents a user-defined resource
@@ -39,12 +41,14 @@ type customResource struct {
 }
 
 // NewContextAwareRegistry creates a new context-aware resource registry
-func NewContextAwareRegistry(clientManager *database.ClientManager, authEnabled bool, cfg *config.Config) *ContextAwareRegistry {
+func NewContextAwareRegistry(clientManager *database.ClientManager, authEnabled bool, cfg *config.Config, authStore *auth.AuthStore, datastore *database.Datastore) *ContextAwareRegistry {
 	return &ContextAwareRegistry{
 		clientManager:   clientManager,
 		authEnabled:     authEnabled,
 		customResources: make(map[string]customResource),
 		cfg:             cfg,
+		authStore:       authStore,
+		datastore:       datastore,
 	}
 }
 
@@ -157,7 +161,48 @@ func (r *ContextAwareRegistry) getClient(ctx context.Context) (*database.Client,
 		return nil, fmt.Errorf("no authentication token found in request context")
 	}
 
-	// Get or create client for this token
+	// Check if there's a selected connection in the session
+	if r.authStore != nil && r.datastore != nil {
+		session, err := r.authStore.GetConnectionSession(tokenHash)
+		if err != nil {
+			// Log warning but continue to fallback
+			fmt.Printf("WARNING: Failed to get connection session: %v\n", err)
+		}
+
+		if session != nil {
+			// Get connection info from datastore
+			conn, password, err := r.datastore.GetConnectionWithPassword(ctx, session.ConnectionID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get connection info: %w", err)
+			}
+
+			// Build connection string with optional database override
+			var databaseOverride string
+			if session.DatabaseName != nil {
+				databaseOverride = *session.DatabaseName
+			}
+			connStr := r.datastore.BuildConnectionString(conn, password, databaseOverride)
+
+			// Get or create client using the connection string
+			// Use a unique key combining token hash and connection ID
+			clientKey := fmt.Sprintf("%s:conn:%d", tokenHash, session.ConnectionID)
+			if session.DatabaseName != nil {
+				clientKey = fmt.Sprintf("%s:db:%s", clientKey, *session.DatabaseName)
+			}
+
+			client, err := r.clientManager.GetOrCreateClientWithConnString(clientKey, connStr)
+			if err != nil {
+				return nil, fmt.Errorf("failed to connect to selected database: %w", err)
+			}
+
+			return client, nil
+		}
+
+		// No connection selected - return helpful error
+		return nil, fmt.Errorf("no database connection selected. Please select a database connection using your client interface (CLI or web client)")
+	}
+
+	// Fallback: Get or create client for this token using default config
 	client, err := r.clientManager.GetOrCreateClient(tokenHash, true)
 	if err != nil {
 		return nil, fmt.Errorf("no database connection configured for this token: %w", err)

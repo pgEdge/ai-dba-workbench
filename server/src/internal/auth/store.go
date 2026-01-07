@@ -35,7 +35,7 @@ const (
     TokenTypeUser    = "user"    // User-created tokens
 
     // Schema version for migrations
-    schemaVersion = 1
+    schemaVersion = 2
 )
 
 // AuthStore manages users and tokens in SQLite
@@ -53,6 +53,14 @@ type SessionInfo struct {
     Username  string
     ExpiresAt time.Time
 }
+
+// ConnectionSession represents a selected database connection for a token
+type ConnectionSession struct {
+    TokenHash    string  // The token hash this session belongs to
+    ConnectionID int     // The selected connection ID from the datastore
+    DatabaseName *string // The selected database name (nil = use connection default)
+}
+
 
 // StoredUser represents a user in the database
 type StoredUser struct {
@@ -109,6 +117,14 @@ func NewAuthStore(dataDir string, maxUserTokenDays, maxFailedAttempts int) (*Aut
 
 // initSchema creates the database tables if they don't exist
 func (s *AuthStore) initSchema() error {
+    // Check current schema version
+    var currentVersion int
+    err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&currentVersion)
+    if err != nil && err != sql.ErrNoRows {
+        // Table might not exist yet, that's fine
+        currentVersion = 0
+    }
+
     schema := `
     -- Schema version tracking
     CREATE TABLE IF NOT EXISTS schema_version (
@@ -144,9 +160,28 @@ func (s *AuthStore) initSchema() error {
     CREATE INDEX IF NOT EXISTS idx_tokens_type ON tokens(token_type);
     `
 
-    _, err := s.db.Exec(schema)
+    _, err = s.db.Exec(schema)
     if err != nil {
         return fmt.Errorf("failed to create schema: %w", err)
+    }
+
+    // Apply migrations for schema version 2
+    if currentVersion < 2 {
+        migrationV2 := `
+        -- Connection sessions table (tracks selected database connection per token)
+        CREATE TABLE IF NOT EXISTS connection_sessions (
+            token_hash TEXT PRIMARY KEY NOT NULL,
+            connection_id INTEGER NOT NULL,
+            database_name TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_conn_sessions_hash ON connection_sessions(token_hash);
+        `
+        _, err = s.db.Exec(migrationV2)
+        if err != nil {
+            return fmt.Errorf("failed to apply schema migration v2: %w", err)
+        }
     }
 
     // Set schema version
@@ -787,4 +822,79 @@ func (s *AuthStore) ServiceTokenCount() int {
 // GetCounts returns the number of users and tokens
 func (s *AuthStore) GetCounts() (int, int) {
     return s.UserCount(), s.TokenCount()
+}
+
+// =============================================================================
+// Connection Session Management
+// =============================================================================
+
+// SetConnectionSession sets the selected database connection for a token
+func (s *AuthStore) SetConnectionSession(tokenHash string, connectionID int, databaseName *string) error {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+
+    _, err := s.db.Exec(`
+        INSERT INTO connection_sessions (token_hash, connection_id, database_name, updated_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(token_hash) DO UPDATE SET
+            connection_id = excluded.connection_id,
+            database_name = excluded.database_name,
+            updated_at = CURRENT_TIMESTAMP
+    `, tokenHash, connectionID, databaseName)
+
+    if err != nil {
+        return fmt.Errorf("failed to set connection session: %w", err)
+    }
+
+    return nil
+}
+
+// GetConnectionSession returns the selected database connection for a token
+func (s *AuthStore) GetConnectionSession(tokenHash string) (*ConnectionSession, error) {
+    s.mu.RLock()
+    defer s.mu.RUnlock()
+
+    var session ConnectionSession
+    session.TokenHash = tokenHash
+
+    err := s.db.QueryRow(`
+        SELECT connection_id, database_name
+        FROM connection_sessions
+        WHERE token_hash = ?
+    `, tokenHash).Scan(&session.ConnectionID, &session.DatabaseName)
+
+    if err == sql.ErrNoRows {
+        return nil, nil // No session set
+    }
+    if err != nil {
+        return nil, fmt.Errorf("failed to get connection session: %w", err)
+    }
+
+    return &session, nil
+}
+
+// ClearConnectionSession clears the selected database connection for a token
+func (s *AuthStore) ClearConnectionSession(tokenHash string) error {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+
+    _, err := s.db.Exec("DELETE FROM connection_sessions WHERE token_hash = ?", tokenHash)
+    if err != nil {
+        return fmt.Errorf("failed to clear connection session: %w", err)
+    }
+
+    return nil
+}
+
+// ClearAllConnectionSessions clears all connection sessions (for cleanup)
+func (s *AuthStore) ClearAllConnectionSessions() error {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+
+    _, err := s.db.Exec("DELETE FROM connection_sessions")
+    if err != nil {
+        return fmt.Errorf("failed to clear all connection sessions: %w", err)
+    }
+
+    return nil
 }

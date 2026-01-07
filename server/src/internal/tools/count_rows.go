@@ -27,6 +27,13 @@ func CountRowsTool(dbClient *database.Client) Tool {
 			Name: "count_rows",
 			Description: `Get the row count of a table with optional filtering.
 
+<database_context>
+This tool operates on the CURRENTLY SELECTED monitored database connection.
+If no database is selected, ask the user to select a database connection
+before proceeding. The user can select a connection using their client
+interface (CLI or web client).
+</database_context>
+
 <usecase>
 Use count_rows to efficiently determine data volume:
 - Check total row count before querying large tables

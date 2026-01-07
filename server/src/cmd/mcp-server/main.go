@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/pgedge/ai-workbench/server/internal/api"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/compactor"
 	"github.com/pgedge/ai-workbench/server/internal/config"
@@ -326,6 +327,42 @@ func main() {
 		defer rateLimiter.Stop()
 	}
 
+	// Load server secret for password decryption (required for monitored connections)
+	var serverSecret string
+	secretPath := cfg.SecretFile
+	if secretPath == "" {
+		secretPath = config.GetDefaultSecretPath(execPath)
+	}
+	secretData, err := os.ReadFile(secretPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: Failed to read secret file '%s': %v\n", secretPath, err)
+		fmt.Fprintf(os.Stderr, "       The secret file must match the collector's secret for password decryption\n")
+		os.Exit(1)
+	}
+	serverSecret = strings.TrimSpace(string(secretData))
+	if serverSecret == "" {
+		fmt.Fprintf(os.Stderr, "ERROR: Secret file '%s' is empty\n", secretPath)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stderr, "Server secret: loaded from %s\n", secretPath)
+
+	// Initialize datastore connection for accessing monitored database info
+	var datastore *database.Datastore
+	if cfg.Database != nil && cfg.Database.User != "" {
+		var err error
+		datastore, err = database.NewDatastore(cfg.Database, serverSecret)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: Failed to connect to datastore: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "Datastore: connected to %s@%s:%d/%s\n",
+			cfg.Database.User, cfg.Database.Host, cfg.Database.Port, cfg.Database.Database)
+		defer datastore.Close()
+	} else {
+		fmt.Fprintf(os.Stderr, "ERROR: Database configuration is required\n")
+		os.Exit(1)
+	}
+
 	// Initialize client manager for database connections with single database configuration
 	clientManager := database.NewClientManager(cfg.Database)
 
@@ -346,10 +383,10 @@ func main() {
 	}
 
 	// Context-aware resource provider
-	contextAwareResourceProvider := resources.NewContextAwareRegistry(clientManager, authEnabled, cfg)
+	contextAwareResourceProvider := resources.NewContextAwareRegistry(clientManager, authEnabled, cfg, authStore, datastore)
 
 	// Context-aware tool provider
-	contextAwareToolProvider := tools.NewContextAwareProvider(clientManager, contextAwareResourceProvider, authEnabled, fallbackClient, cfg, authStore, rateLimiter)
+	contextAwareToolProvider := tools.NewContextAwareProvider(clientManager, contextAwareResourceProvider, authEnabled, fallbackClient, cfg, authStore, rateLimiter, datastore)
 	if err := contextAwareToolProvider.RegisterTools(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: Failed to register tools: %v\n", err)
 		os.Exit(1)
@@ -564,6 +601,15 @@ func main() {
 			convHandler := conversations.NewHandler(convStore, authStore)
 			convHandler.RegisterRoutes(mux, authWrapper)
 			fmt.Fprintf(os.Stderr, "Conversation history: ENABLED\n")
+		}
+
+		// Connection management endpoints (for selecting monitored database connections)
+		connHandler := api.NewConnectionHandler(datastore, authStore)
+		connHandler.RegisterRoutes(mux, authWrapper)
+		if datastore != nil {
+			fmt.Fprintf(os.Stderr, "Connection management: ENABLED\n")
+		} else {
+			fmt.Fprintf(os.Stderr, "Connection management: DISABLED (datastore not configured)\n")
 		}
 
 		return nil

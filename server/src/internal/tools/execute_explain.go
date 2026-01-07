@@ -28,6 +28,13 @@ func ExecuteExplainTool(dbClient *database.Client) Tool {
 			Name: "execute_explain",
 			Description: `Execute EXPLAIN ANALYZE on a query to diagnose performance.
 
+<database_context>
+This tool operates on the CURRENTLY SELECTED monitored database connection.
+If no database is selected, ask the user to select a database connection
+before proceeding. The user can select a connection using their client
+interface (CLI or web client).
+</database_context>
+
 <usecase>
 Use when:
 - Query runs slowly and you need to understand why

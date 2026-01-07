@@ -32,6 +32,13 @@ func SimilaritySearchTool(dbClient *database.Client, cfg *config.Config) Tool {
 
 Semantic search for NATURAL LANGUAGE and CONCEPT-BASED queries.
 
+<database_context>
+This tool operates on the CURRENTLY SELECTED monitored database connection.
+If no database is selected, ask the user to select a database connection
+before proceeding. The user can select a connection using their client
+interface (CLI or web client).
+</database_context>
+
 <critical_usage_note>
 MANDATORY RULE: When a user asks about content that you know EXISTS in the database (e.g., "tell me about X", "what is Y", "describe Z", "summarize A", "what are the capabilities of X"), you MUST ALWAYS use this tool FIRST to retrieve the current information from the database.
 

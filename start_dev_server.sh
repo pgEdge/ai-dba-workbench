@@ -57,10 +57,30 @@ echo "  Config file: ${CONFIG_FILE}"
 echo "  Bin dir: ${BIN_DIR}"
 echo ""
 
-# Build the server
-echo -e "${GREEN}Building server...${NC}"
-cd "${SERVER_DIR}"
-go build -o "${BIN_DIR}/ai-dba-server" ./cmd/mcp-server
+# Check if rebuild is needed
+SERVER_BINARY="${BIN_DIR}/ai-dba-server"
+NEEDS_REBUILD=false
+
+if [ ! -f "${SERVER_BINARY}" ]; then
+    NEEDS_REBUILD=true
+    echo -e "${YELLOW}Server binary not found, building...${NC}"
+else
+    # Check if any Go source files are newer than the binary
+    NEWEST_SOURCE=$(find "${SCRIPT_DIR}/server/src" -name "*.go" -newer "${SERVER_BINARY}" 2>/dev/null | head -1)
+    if [ -n "${NEWEST_SOURCE}" ]; then
+        NEEDS_REBUILD=true
+        echo -e "${YELLOW}Source files changed, rebuilding...${NC}"
+    fi
+fi
+
+# Build the server if needed
+if [ "${NEEDS_REBUILD}" = true ]; then
+    echo -e "${GREEN}Building server...${NC}"
+    cd "${SERVER_DIR}"
+    go build -o "${SERVER_BINARY}" ./cmd/mcp-server
+else
+    echo -e "${GREEN}Server binary is up to date${NC}"
+fi
 
 # Run the server
 echo -e "${GREEN}Starting server...${NC}"

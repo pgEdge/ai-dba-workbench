@@ -27,6 +27,13 @@ func QueryDatabaseTool(dbClient *database.Client) Tool {
 			Name: "query_database",
 			Description: `Execute SQL queries for STRUCTURED, EXACT data retrieval.
 
+<database_context>
+This tool operates on the CURRENTLY SELECTED monitored database connection.
+If no database is selected, ask the user to select a database connection
+before proceeding. The user can select a connection using their client
+interface (CLI or web client).
+</database_context>
+
 <usecase>
 Use query_database when you need:
 - Exact matches by ID, status, date ranges, or specific column values

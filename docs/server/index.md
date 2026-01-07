@@ -84,6 +84,11 @@ The binary is created at `bin/ai-dba-server`.
 - [Configuration Guide](configuration.md) - Server configuration options,
   environment variables, and examples
 
+### Connection Management
+
+- [Connection Management](connections.md) - Managing database connections from
+  the datastore
+
 ## Architecture
 
 The MCP server is built with the following components:

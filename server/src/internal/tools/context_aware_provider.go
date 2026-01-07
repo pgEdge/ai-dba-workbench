@@ -12,6 +12,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -30,10 +31,11 @@ type ContextAwareProvider struct {
 	clientManager  *database.ClientManager
 	resourceReg    *resources.ContextAwareRegistry
 	authEnabled    bool
-	fallbackClient *database.Client  // Used when auth is disabled
-	cfg            *config.Config    // Server configuration (for embedding settings)
-	authStore      *auth.AuthStore   // Auth store for users and tokens
-	rateLimiter    *auth.RateLimiter // Rate limiter for authentication attempts
+	fallbackClient *database.Client    // Used when auth is disabled
+	cfg            *config.Config      // Server configuration (for embedding settings)
+	authStore      *auth.AuthStore     // Auth store for users and tokens
+	rateLimiter    *auth.RateLimiter   // Rate limiter for authentication attempts
+	datastore      *database.Datastore // Datastore for monitored connection info
 
 	// Cache of registries per client to avoid re-creating tools on every Execute()
 	mu               sync.RWMutex
@@ -82,7 +84,7 @@ func (p *ContextAwareProvider) registerDatabaseTools(registry *Registry, client 
 }
 
 // NewContextAwareProvider creates a new context-aware tool provider
-func NewContextAwareProvider(clientManager *database.ClientManager, resourceReg *resources.ContextAwareRegistry, authEnabled bool, fallbackClient *database.Client, cfg *config.Config, authStore *auth.AuthStore, rateLimiter *auth.RateLimiter) *ContextAwareProvider {
+func NewContextAwareProvider(clientManager *database.ClientManager, resourceReg *resources.ContextAwareRegistry, authEnabled bool, fallbackClient *database.Client, cfg *config.Config, authStore *auth.AuthStore, rateLimiter *auth.RateLimiter, datastore *database.Datastore) *ContextAwareProvider {
 	provider := &ContextAwareProvider{
 		baseRegistry:     NewRegistry(),
 		clientManager:    clientManager,
@@ -92,6 +94,7 @@ func NewContextAwareProvider(clientManager *database.ClientManager, resourceReg 
 		cfg:              cfg,
 		authStore:        authStore,
 		rateLimiter:      rateLimiter,
+		datastore:        datastore,
 		clientRegistries: make(map[*database.Client]*Registry),
 		hiddenRegistry:   NewRegistry(),
 	}
@@ -242,13 +245,25 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 	// Get the appropriate database client for this request
 	dbClient, err := p.getClient(ctx)
 	if err != nil {
-		// Log the error for debugging
+		// Extract the root cause error for cleaner display
+		rootErr := err
+		for {
+			if unwrapped := errors.Unwrap(rootErr); unwrapped != nil {
+				rootErr = unwrapped
+			} else {
+				break
+			}
+		}
+
+		// Log the full error chain for debugging
 		fmt.Fprintf(os.Stderr, "ERROR: Failed to get database client for tool '%s': %v\n", name, err)
+
+		// Show the root cause to the client for actionable feedback
 		return mcp.ToolResponse{
 			Content: []mcp.ContentItem{
 				{
 					Type: "text",
-					Text: fmt.Sprintf("Failed to get database client: %v\nPlease ensure database connection is configured via environment variables or config file.", err),
+					Text: fmt.Sprintf("Database connection error: %v", rootErr),
 				},
 			},
 			IsError: true,
@@ -280,7 +295,47 @@ func (p *ContextAwareProvider) getClient(ctx context.Context) (*database.Client,
 		return nil, fmt.Errorf("no authentication token found in request context")
 	}
 
-	// Get or create client for this token
+	// Check if there's a selected connection in the session
+	if p.authStore != nil && p.datastore != nil {
+		session, err := p.authStore.GetConnectionSession(tokenHash)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "WARNING: Failed to get connection session: %v\n", err)
+		}
+
+		if session != nil {
+			// Get connection info from datastore
+			conn, password, err := p.datastore.GetConnectionWithPassword(ctx, session.ConnectionID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get connection info: %w", err)
+			}
+
+			// Build connection string with optional database override
+			var databaseOverride string
+			if session.DatabaseName != nil {
+				databaseOverride = *session.DatabaseName
+			}
+			connStr := p.datastore.BuildConnectionString(conn, password, databaseOverride)
+
+			// Get or create client using the connection string
+			// Use a unique key combining token hash and connection ID
+			clientKey := fmt.Sprintf("%s:conn:%d", tokenHash, session.ConnectionID)
+			if session.DatabaseName != nil {
+				clientKey = fmt.Sprintf("%s:db:%s", clientKey, *session.DatabaseName)
+			}
+
+			client, err := p.clientManager.GetOrCreateClientWithConnString(clientKey, connStr)
+			if err != nil {
+				return nil, fmt.Errorf("failed to connect to selected database: %w", err)
+			}
+
+			return client, nil
+		}
+
+		// No connection selected - return helpful error
+		return nil, fmt.Errorf("no database connection selected. Please select a database connection using your client interface (CLI or web client)")
+	}
+
+	// Fallback: Get or create client for this token using default config
 	client, err := p.clientManager.GetOrCreateClient(tokenHash, true)
 	if err != nil {
 		return nil, fmt.Errorf("no database connection configured for this token: %w", err)

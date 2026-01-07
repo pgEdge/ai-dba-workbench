@@ -90,6 +90,7 @@ nav:
       - Overview: server/index.md
       - Authentication: server/authentication.md
       - Configuration: server/configuration.md
+      - Connections: server/connections.md
   - CLI:
       - Overview: cli/index.md
   - Changelog: changelog.md

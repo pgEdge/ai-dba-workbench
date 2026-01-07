@@ -25,6 +25,13 @@ func GetSchemaInfoTool(dbClient *database.Client) Tool {
 			Name: "get_schema_info",
 			Description: `PRIMARY TOOL for discovering database structure and available tables.
 
+<database_context>
+This tool operates on the CURRENTLY SELECTED monitored database connection.
+If no database is selected, ask the user to select a database connection
+before proceeding. The user can select a connection using their client
+interface (CLI or web client).
+</database_context>
+
 <usecase>
 Use get_schema_info when you need to:
 - Discover what tables exist in the database

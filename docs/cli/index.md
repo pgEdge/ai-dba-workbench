@@ -145,6 +145,11 @@ configured with an expiry).
 | `/set llm-model <name>` | Change model |
 | `/show settings` | Show current settings |
 | `/list models` | List available models |
+| `/list connections` | List database connections |
+| `/list databases` | List databases on current connection |
+| `/connect` | Show current database connection |
+| `/connect <id> [database]` | Connect to database by ID |
+| `/disconnect` | Disconnect from database |
 | `/history` | List conversations |
 | `/history load <id>` | Load conversation |
 | `/save` | Save conversation |

@@ -240,3 +240,55 @@ func (cm *ClientManager) GetOrCreateClient(key string, autoConnect bool) (*Clien
 	cm.clients[key] = client
 	return client, nil
 }
+
+// GetOrCreateClientWithConnString returns a database client for the given key
+// Creates a client using the provided connection string if one doesn't exist
+func (cm *ClientManager) GetOrCreateClientWithConnString(key string, connStr string) (*Client, error) {
+	if key == "" {
+		return nil, fmt.Errorf("key is required")
+	}
+	if connStr == "" {
+		return nil, fmt.Errorf("connection string is required")
+	}
+
+	// Try to get existing client (read lock)
+	cm.mu.RLock()
+	if client, exists := cm.clients[key]; exists {
+		// Check if it's connected to the same connection string
+		if client.GetDefaultConnection() == connStr {
+			cm.mu.RUnlock()
+			return client, nil
+		}
+		// Different connection string - need to replace the client
+		cm.mu.RUnlock()
+	} else {
+		cm.mu.RUnlock()
+	}
+
+	// Create new client (write lock)
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+
+	// Close existing client if it exists and has different connection
+	if existingClient, exists := cm.clients[key]; exists {
+		if existingClient.GetDefaultConnection() == connStr {
+			return existingClient, nil
+		}
+		existingClient.Close()
+		delete(cm.clients, key)
+	}
+
+	// Create and initialize new client with connection string
+	client := NewClientWithConnectionString(connStr, cm.dbConfig)
+	if err := client.Connect(); err != nil {
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	if err := client.LoadMetadata(); err != nil {
+		client.Close()
+		return nil, fmt.Errorf("failed to load metadata: %w", err)
+	}
+
+	cm.clients[key] = client
+	return client, nil
+}

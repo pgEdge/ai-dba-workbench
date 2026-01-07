@@ -178,6 +178,12 @@ func (c *Client) HandleSlashCommand(ctx context.Context, cmd *SlashCommand) bool
 	case "list":
 		return c.handleListCommand(ctx, cmd.Args)
 
+	case "connect":
+		return c.handleConnectCommand(ctx, cmd.Args)
+
+	case "disconnect":
+		return c.handleDisconnectCommand(ctx)
+
 	case "prompt":
 		return c.handlePromptCommand(ctx, cmd.Args)
 
@@ -206,6 +212,13 @@ Commands:
   /resources                           List available MCP resources
   /prompts                             List available MCP prompts
   /quit, /exit                         Exit the chat client
+
+Database Connections:
+  /list connections                    List available database connections
+  /list databases                      List databases on current connection
+  /connect                             Show current database connection
+  /connect <id> [database]             Connect to database (by connection ID)
+  /disconnect                          Disconnect from current database
 
 Settings:
   /set color <on|off>                  Enable or disable colored output
@@ -243,6 +256,9 @@ Conversation History:
 
 	help += `
 Examples:
+  /list connections                     List available database connections
+  /connect 1                            Connect to connection ID 1
+  /connect 1 mydb                       Connect to 'mydb' database on connection 1
   /set llm-provider openai
   /set llm-model gpt-4-turbo
   /list models
@@ -609,7 +625,7 @@ func (c *Client) printAllSettings() {
 func (c *Client) handleListCommand(ctx context.Context, args []string) bool {
 	if len(args) < 1 {
 		c.ui.PrintError("Usage: /list <what>")
-		c.ui.PrintSystemMessage("Available: models")
+		c.ui.PrintSystemMessage("Available: models, connections, databases")
 		return true
 	}
 
@@ -619,9 +635,15 @@ func (c *Client) handleListCommand(ctx context.Context, args []string) bool {
 	case "models":
 		return c.listModels(ctx)
 
+	case "connections":
+		return c.listConnections(ctx)
+
+	case "databases":
+		return c.listDatabases(ctx)
+
 	default:
 		c.ui.PrintError(fmt.Sprintf("Unknown list target: %s", what))
-		c.ui.PrintSystemMessage("Available: models")
+		c.ui.PrintSystemMessage("Available: models, connections, databases")
 	}
 
 	return true
@@ -987,5 +1009,175 @@ func (c *Client) handleSaveConversation(ctx context.Context) bool {
 
 	c.currentConversationID = conv.ID
 	c.ui.PrintSystemMessage(fmt.Sprintf("Conversation saved: %s (ID: %s)", conv.Title, conv.ID))
+	return true
+}
+
+// =============================================================================
+// Connection Management Commands
+// =============================================================================
+
+// listConnections lists available database connections
+func (c *Client) listConnections(ctx context.Context) bool {
+	if c.mcp == nil {
+		c.ui.PrintError("MCP client not available")
+		return true
+	}
+
+	connections, err := c.mcp.ListConnections(ctx)
+	if err != nil {
+		c.ui.PrintError(fmt.Sprintf("Failed to list connections: %v", err))
+		return true
+	}
+
+	if len(connections) == 0 {
+		c.ui.PrintSystemMessage("No database connections available")
+		return true
+	}
+
+	// Get current connection to mark it
+	current, _ := c.mcp.GetCurrentConnection(ctx)
+
+	c.ui.PrintSystemMessage(fmt.Sprintf("Available connections (%d):", len(connections)))
+	fmt.Println()
+
+	for _, conn := range connections {
+		marker := "  "
+		if current != nil && current.ConnectionID == conn.ID {
+			marker = "* "
+		}
+
+		monitored := ""
+		if conn.IsMonitored {
+			monitored = " [monitored]"
+		}
+
+		fmt.Printf("%s%d: %s%s\n", marker, conn.ID, conn.Name, monitored)
+		fmt.Printf("     Host: %s:%d, Database: %s\n", conn.Host, conn.Port, conn.DatabaseName)
+	}
+
+	fmt.Println()
+	c.ui.PrintSystemMessage("Use '/connect <id>' to select a connection")
+	return true
+}
+
+// listDatabases lists databases on the currently selected connection
+func (c *Client) listDatabases(ctx context.Context) bool {
+	if c.mcp == nil {
+		c.ui.PrintError("MCP client not available")
+		return true
+	}
+
+	// Get current connection
+	current, err := c.mcp.GetCurrentConnection(ctx)
+	if err != nil {
+		c.ui.PrintError(fmt.Sprintf("Failed to get current connection: %v", err))
+		return true
+	}
+
+	if current == nil {
+		c.ui.PrintError("No connection selected. Use '/list connections' to see available connections, then '/connect <id>' to select one.")
+		return true
+	}
+
+	databases, err := c.mcp.ListDatabases(ctx, current.ConnectionID)
+	if err != nil {
+		c.ui.PrintError(fmt.Sprintf("Failed to list databases: %v", err))
+		return true
+	}
+
+	if len(databases) == 0 {
+		c.ui.PrintSystemMessage("No databases found on this connection")
+		return true
+	}
+
+	c.ui.PrintSystemMessage(fmt.Sprintf("Databases on %s (%d):", current.Name, len(databases)))
+	fmt.Println()
+
+	for _, db := range databases {
+		marker := "  "
+		if current.DatabaseName != nil && *current.DatabaseName == db.Name {
+			marker = "* "
+		}
+		fmt.Printf("%s%s (owner: %s, size: %s, encoding: %s)\n",
+			marker, db.Name, db.Owner, db.Size, db.Encoding)
+	}
+
+	fmt.Println()
+	c.ui.PrintSystemMessage("Use '/connect <connection-id> <database-name>' to select a specific database")
+	return true
+}
+
+// handleConnectCommand handles /connect commands
+func (c *Client) handleConnectCommand(ctx context.Context, args []string) bool {
+	if c.mcp == nil {
+		c.ui.PrintError("MCP client not available")
+		return true
+	}
+
+	if len(args) < 1 {
+		// Show current connection
+		current, err := c.mcp.GetCurrentConnection(ctx)
+		if err != nil {
+			c.ui.PrintError(fmt.Sprintf("Failed to get current connection: %v", err))
+			return true
+		}
+
+		if current == nil {
+			c.ui.PrintSystemMessage("No database connection selected")
+			c.ui.PrintSystemMessage("Usage: /connect <connection-id> [database-name]")
+			c.ui.PrintSystemMessage("Use '/list connections' to see available connections")
+		} else {
+			dbName := current.DatabaseName
+			if dbName == nil {
+				defaultDb := "(default)"
+				dbName = &defaultDb
+			}
+			c.ui.PrintSystemMessage(fmt.Sprintf("Current connection: %s (%s:%d)", current.Name, current.Host, current.Port))
+			c.ui.PrintSystemMessage(fmt.Sprintf("Database: %s", *dbName))
+		}
+		return true
+	}
+
+	// Parse connection ID
+	var connectionID int
+	if _, err := fmt.Sscanf(args[0], "%d", &connectionID); err != nil {
+		c.ui.PrintError(fmt.Sprintf("Invalid connection ID: %s", args[0]))
+		return true
+	}
+
+	// Optional database name
+	var databaseName *string
+	if len(args) > 1 {
+		databaseName = &args[1]
+	}
+
+	// Set the connection
+	result, err := c.mcp.SetCurrentConnection(ctx, connectionID, databaseName)
+	if err != nil {
+		c.ui.PrintError(fmt.Sprintf("Failed to select connection: %v", err))
+		return true
+	}
+
+	dbMsg := ""
+	if result.DatabaseName != nil {
+		dbMsg = fmt.Sprintf(", database: %s", *result.DatabaseName)
+	}
+	c.ui.PrintSystemMessage(fmt.Sprintf("Connected to: %s (%s:%d%s)", result.Name, result.Host, result.Port, dbMsg))
+	return true
+}
+
+// handleDisconnectCommand handles /disconnect command
+func (c *Client) handleDisconnectCommand(ctx context.Context) bool {
+	if c.mcp == nil {
+		c.ui.PrintError("MCP client not available")
+		return true
+	}
+
+	if err := c.mcp.ClearCurrentConnection(ctx); err != nil {
+		c.ui.PrintError(fmt.Sprintf("Failed to disconnect: %v", err))
+		return true
+	}
+
+	c.ui.PrintSystemMessage("Disconnected from database")
 	return true
 }

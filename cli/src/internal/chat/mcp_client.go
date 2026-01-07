@@ -51,8 +51,50 @@ type MCPClient interface {
 	// GetPrompt executes a prompt with the given arguments
 	GetPrompt(ctx context.Context, name string, args map[string]string) (mcp.PromptResult, error)
 
+	// ListConnections returns available database connections from the datastore
+	ListConnections(ctx context.Context) ([]ConnectionListItem, error)
+
+	// ListDatabases returns databases on a specific connection
+	ListDatabases(ctx context.Context, connectionID int) ([]DatabaseInfo, error)
+
+	// GetCurrentConnection returns the currently selected connection
+	GetCurrentConnection(ctx context.Context) (*CurrentConnection, error)
+
+	// SetCurrentConnection selects a connection and optionally a database
+	SetCurrentConnection(ctx context.Context, connectionID int, databaseName *string) (*CurrentConnection, error)
+
+	// ClearCurrentConnection clears the current connection selection
+	ClearCurrentConnection(ctx context.Context) error
+
 	// Close cleans up resources
 	Close() error
+}
+
+// ConnectionListItem represents a connection in the list
+type ConnectionListItem struct {
+	ID           int    `json:"id"`
+	Name         string `json:"name"`
+	Host         string `json:"host"`
+	Port         int    `json:"port"`
+	DatabaseName string `json:"database_name"`
+	IsMonitored  bool   `json:"is_monitored"`
+}
+
+// DatabaseInfo represents a database on a connection
+type DatabaseInfo struct {
+	Name     string `json:"name"`
+	Owner    string `json:"owner"`
+	Encoding string `json:"encoding"`
+	Size     string `json:"size"`
+}
+
+// CurrentConnection represents the currently selected connection
+type CurrentConnection struct {
+	ConnectionID int     `json:"connection_id"`
+	DatabaseName *string `json:"database_name,omitempty"`
+	Host         string  `json:"host"`
+	Port         int     `json:"port"`
+	Name         string  `json:"name"`
 }
 
 // httpClient implements MCPClient for HTTP communication
@@ -231,4 +273,122 @@ func (c *httpClient) sendRequest(ctx context.Context, method string, params inte
 	}
 
 	return nil
+}
+
+// getBaseURL extracts the base URL from the MCP endpoint URL
+func (c *httpClient) getBaseURL() string {
+	// The MCP URL is typically like "http://localhost:8080/mcp/v1"
+	// We need "http://localhost:8080" for REST API calls
+	url := c.url
+	// Remove /mcp/v1 suffix if present
+	if len(url) > 7 && url[len(url)-7:] == "/mcp/v1" {
+		url = url[:len(url)-7]
+	} else if len(url) > 4 && url[len(url)-4:] == "/mcp" {
+		// Also handle /mcp suffix for backwards compatibility
+		url = url[:len(url)-4]
+	}
+	return url
+}
+
+// sendRESTRequest sends a REST API request (not JSON-RPC)
+func (c *httpClient) sendRESTRequest(ctx context.Context, method, path string, body interface{}, result interface{}) error {
+	baseURL := c.getBaseURL()
+	fullURL := baseURL + path
+
+	var reqBody io.Reader
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return fmt.Errorf("failed to marshal request body: %w", err)
+		}
+		reqBody = bytes.NewBuffer(data)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, method, fullURL, reqBody)
+	if err != nil {
+		return fmt.Errorf("failed to create HTTP request: %w", err)
+	}
+
+	if body != nil {
+		httpReq.Header.Set("Content-Type", "application/json")
+	}
+	if c.token != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+c.token)
+	}
+
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("failed to send HTTP request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Handle 204 No Content
+	if resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
+
+	// Handle 404 Not Found specially for GetCurrentConnection
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("not found")
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("HTTP error %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	if result != nil {
+		if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+			return fmt.Errorf("failed to decode response: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (c *httpClient) ListConnections(ctx context.Context) ([]ConnectionListItem, error) {
+	var result []ConnectionListItem
+	if err := c.sendRESTRequest(ctx, "GET", "/api/connections", nil, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (c *httpClient) ListDatabases(ctx context.Context, connectionID int) ([]DatabaseInfo, error) {
+	var result []DatabaseInfo
+	path := fmt.Sprintf("/api/connections/%d/databases", connectionID)
+	if err := c.sendRESTRequest(ctx, "GET", path, nil, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (c *httpClient) GetCurrentConnection(ctx context.Context) (*CurrentConnection, error) {
+	var result CurrentConnection
+	if err := c.sendRESTRequest(ctx, "GET", "/api/connections/current", nil, &result); err != nil {
+		if err.Error() == "not found" {
+			return nil, nil // No connection selected
+		}
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (c *httpClient) SetCurrentConnection(ctx context.Context, connectionID int, databaseName *string) (*CurrentConnection, error) {
+	body := map[string]interface{}{
+		"connection_id": connectionID,
+	}
+	if databaseName != nil {
+		body["database_name"] = *databaseName
+	}
+
+	var result CurrentConnection
+	if err := c.sendRESTRequest(ctx, "POST", "/api/connections/current", body, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (c *httpClient) ClearCurrentConnection(ctx context.Context) error {
+	return c.sendRESTRequest(ctx, "DELETE", "/api/connections/current", nil, nil)
 }

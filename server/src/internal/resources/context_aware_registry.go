@@ -66,6 +66,10 @@ func (r *ContextAwareRegistry) List() []mcp.Resource {
 		})
 	}
 
+	if r.cfg.Builtins.Resources.IsResourceEnabled(URIConnectionInfo) {
+		resources = append(resources, ConnectionInfoResourceDefinition())
+	}
+
 	// Add custom resources
 	for _, customRes := range r.customResources {
 		resources = append(resources, customRes.definition)
@@ -97,7 +101,7 @@ func (r *ContextAwareRegistry) Read(ctx context.Context, uri string) (mcp.Resour
 	// Check if URI is a known resource before trying to get client
 	// This ensures unknown URIs return "Resource not found" instead of connection errors
 	switch uri {
-	case URISystemInfo:
+	case URISystemInfo, URIConnectionInfo:
 		// Valid URI, continue to process
 	default:
 		return mcp.ResourceContent{
@@ -112,7 +116,7 @@ func (r *ContextAwareRegistry) Read(ctx context.Context, uri string) (mcp.Resour
 	}
 
 	// Check if the built-in resource is enabled
-	if uri == URISystemInfo && !r.cfg.Builtins.Resources.IsResourceEnabled(uri) {
+	if !r.cfg.Builtins.Resources.IsResourceEnabled(uri) {
 		return mcp.ResourceContent{
 			URI: uri,
 			Contents: []mcp.ContentItem{
@@ -124,7 +128,12 @@ func (r *ContextAwareRegistry) Read(ctx context.Context, uri string) (mcp.Resour
 		}, nil
 	}
 
-	// Get the appropriate database client for built-in resources
+	// Handle connection_info resource specially - it doesn't query a database
+	if uri == URIConnectionInfo {
+		return r.readConnectionInfo(ctx)
+	}
+
+	// Get the appropriate database client for built-in resources that need it
 	dbClient, err := r.getClient(ctx)
 	if err != nil {
 		return mcp.ResourceContent{
@@ -142,6 +151,80 @@ func (r *ContextAwareRegistry) Read(ctx context.Context, uri string) (mcp.Resour
 	// Note: At this point URI has already been validated as a known resource
 	resource := PGSystemInfoResource(dbClient)
 	return resource.Handler()
+}
+
+// readConnectionInfo returns the current connection context without querying a database
+func (r *ContextAwareRegistry) readConnectionInfo(ctx context.Context) (mcp.ResourceContent, error) {
+	// If auth is disabled, we're using default connection from config
+	if !r.authEnabled {
+		// In no-auth mode, connection is determined by server config
+		info := &ConnectionInfo{
+			Connected: true,
+			Message:   "Using default database connection (authentication disabled)",
+		}
+		return BuildConnectionInfoResponse(info)
+	}
+
+	// Get token hash from context
+	tokenHash := auth.GetTokenHashFromContext(ctx)
+	if tokenHash == "" {
+		info := NewNoConnectionInfo()
+		info.Message = "No authentication token found in request context"
+		return BuildConnectionInfoResponse(info)
+	}
+
+	// Check if authStore and datastore are available
+	if r.authStore == nil || r.datastore == nil {
+		info := &ConnectionInfo{
+			Connected: false,
+			Message:   "Connection management not available (datastore not configured)",
+		}
+		return BuildConnectionInfoResponse(info)
+	}
+
+	// Get the connection session for this token
+	session, err := r.authStore.GetConnectionSession(tokenHash)
+	if err != nil {
+		info := &ConnectionInfo{
+			Connected: false,
+			Message:   fmt.Sprintf("Error retrieving connection session: %v", err),
+		}
+		return BuildConnectionInfoResponse(info)
+	}
+
+	if session == nil {
+		// No connection selected
+		return BuildConnectionInfoResponse(NewNoConnectionInfo())
+	}
+
+	// Get connection details from datastore
+	conn, _, err := r.datastore.GetConnectionWithPassword(ctx, session.ConnectionID)
+	if err != nil {
+		info := &ConnectionInfo{
+			Connected: false,
+			Message:   fmt.Sprintf("Error retrieving connection details: %v", err),
+		}
+		return BuildConnectionInfoResponse(info)
+	}
+
+	// Determine the actual database name (session override or connection default)
+	databaseName := conn.DatabaseName
+	if session.DatabaseName != nil {
+		databaseName = *session.DatabaseName
+	}
+
+	// Build the connection info
+	info := NewConnectionInfo(
+		conn.ID,
+		conn.Name,
+		conn.Host,
+		conn.Port,
+		databaseName,
+		conn.Username,
+		conn.IsMonitored,
+	)
+
+	return BuildConnectionInfoResponse(info)
 }
 
 // getClient returns the appropriate database client based on authentication state

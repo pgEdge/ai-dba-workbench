@@ -64,6 +64,35 @@ func (p *ContextAwareProvider) registerStatelessTools(registry *Registry) {
 	}
 }
 
+// registerDatastoreTools registers tools that query the datastore (metrics database)
+func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
+	// Datastore tools use the shared datastore pool, not per-token connections
+	if p.datastore != nil {
+		// Register metrics tools if datastore is configured
+		datastorePool := p.datastore.GetPool()
+		if p.cfg.Builtins.Tools.IsToolEnabled("list_probes") {
+			registry.Register("list_probes", ListProbesTool(datastorePool))
+		}
+		if p.cfg.Builtins.Tools.IsToolEnabled("describe_probe") {
+			registry.Register("describe_probe", DescribeProbeTool(datastorePool))
+		}
+		if p.cfg.Builtins.Tools.IsToolEnabled("query_metrics") {
+			registry.Register("query_metrics", QueryMetricsTool(datastorePool))
+		}
+	} else {
+		// Register tools with nil pool - they'll return helpful errors
+		if p.cfg.Builtins.Tools.IsToolEnabled("list_probes") {
+			registry.Register("list_probes", ListProbesTool(nil))
+		}
+		if p.cfg.Builtins.Tools.IsToolEnabled("describe_probe") {
+			registry.Register("describe_probe", DescribeProbeTool(nil))
+		}
+		if p.cfg.Builtins.Tools.IsToolEnabled("query_metrics") {
+			registry.Register("query_metrics", QueryMetricsTool(nil))
+		}
+	}
+}
+
 // registerDatabaseTools registers all database-dependent tools
 func (p *ContextAwareProvider) registerDatabaseTools(registry *Registry, client *database.Client) {
 	if p.cfg.Builtins.Tools.IsToolEnabled("query_database") {
@@ -103,6 +132,7 @@ func NewContextAwareProvider(clientManager *database.ClientManager, resourceReg 
 	// Database-dependent tools will fail gracefully in Execute() if no connection exists
 	// This provides better UX - users can discover all tools even before connecting
 	provider.registerStatelessTools(provider.baseRegistry)
+	provider.registerDatastoreTools(provider.baseRegistry)
 	provider.registerDatabaseTools(provider.baseRegistry, nil) // nil client for base registry
 
 	// Register hidden tools (not advertised to LLM but available for execution)
@@ -188,6 +218,7 @@ func (p *ContextAwareProvider) getOrCreateRegistryForClient(client *database.Cli
 
 	// Register all tools using helper methods to avoid duplication
 	p.registerStatelessTools(registry)
+	p.registerDatastoreTools(registry)
 	p.registerDatabaseTools(registry, client)
 
 	// Cache for future use
@@ -231,14 +262,17 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 		}
 	}
 
-	// Check if this is a stateless tool that doesn't require a database client
+	// Check if this is a stateless tool that doesn't require a per-token database client
 	statelessTools := map[string]bool{
 		"read_resource":      true, // Resource access tool
 		"generate_embedding": true, // Embedding generation doesn't need database
+		"list_probes":        true, // Datastore tool - uses shared datastore pool
+		"describe_probe":     true, // Datastore tool - uses shared datastore pool
+		"query_metrics":      true, // Datastore tool - uses shared datastore pool
 	}
 
 	if statelessTools[name] {
-		// Execute from base registry (no database client needed)
+		// Execute from base registry (no per-token database client needed)
 		return p.baseRegistry.Execute(ctx, name, args)
 	}
 

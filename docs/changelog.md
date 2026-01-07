@@ -17,6 +17,16 @@ and this project adheres to
   `/connect`, `/disconnect`)
 - Session-based connection selection persisted in SQLite auth database
 - Documentation for connection management in `docs/server/connections.md`
+- New `pg://connection_info` resource that returns the currently selected
+  database connection details without querying the database
+- Unified CI workflows for collector, server, CLI, and documentation
+- Datastore metrics tools for querying collected metrics:
+  - `list_probes`: List available metrics probes in the datastore
+  - `describe_probe`: Get column details for a specific metrics probe
+  - `query_metrics`: Query historical metrics with time-based aggregation
+- Enhanced LLM system prompts with PostgreSQL DBA expertise and two-tier
+  database architecture guidance
+- Documentation for metrics tools in `docs/server/metrics.md`
 
 ### Changed
 

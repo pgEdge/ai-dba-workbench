@@ -67,12 +67,16 @@ type ToolsConfig struct {
 	GenerateEmbedding   *bool `yaml:"generate_embedding"`   // Generate text embeddings (default: true)
 	SearchKnowledgebase *bool `yaml:"search_knowledgebase"` // Search knowledgebase (default: true)
 	CountRows           *bool `yaml:"count_rows"`           // Count table rows (default: true)
+	ListProbes          *bool `yaml:"list_probes"`          // List available metrics probes (default: true)
+	DescribeProbe       *bool `yaml:"describe_probe"`       // Describe metrics in a probe (default: true)
+	QueryMetrics        *bool `yaml:"query_metrics"`        // Query collected metrics (default: true)
 }
 
 // ResourcesConfig holds configuration for enabling/disabling built-in resources
 // All resources are enabled by default
 type ResourcesConfig struct {
-	SystemInfo *bool `yaml:"system_info"` // pg://system_info (default: true)
+	SystemInfo     *bool `yaml:"system_info"`     // pg://system_info (default: true)
+	ConnectionInfo *bool `yaml:"connection_info"` // pg://connection_info (default: true)
 }
 
 // PromptsConfig holds configuration for enabling/disabling built-in prompts
@@ -101,6 +105,12 @@ func (c *ToolsConfig) IsToolEnabled(toolName string) bool {
 		return c.SearchKnowledgebase == nil || *c.SearchKnowledgebase
 	case "count_rows":
 		return c.CountRows == nil || *c.CountRows
+	case "list_probes":
+		return c.ListProbes == nil || *c.ListProbes
+	case "describe_probe":
+		return c.DescribeProbe == nil || *c.DescribeProbe
+	case "query_metrics":
+		return c.QueryMetrics == nil || *c.QueryMetrics
 	default:
 		return true // Unknown tools are enabled by default
 	}
@@ -111,6 +121,8 @@ func (c *ResourcesConfig) IsResourceEnabled(resourceURI string) bool {
 	switch resourceURI {
 	case "pg://system_info":
 		return c.SystemInfo == nil || *c.SystemInfo
+	case "pg://connection_info":
+		return c.ConnectionInfo == nil || *c.ConnectionInfo
 	default:
 		return true // Unknown resources are enabled by default
 	}
@@ -544,6 +556,18 @@ func mergeConfig(dest, src *Config) {
 	}
 	if src.Builtins.Tools.SearchKnowledgebase != nil {
 		dest.Builtins.Tools.SearchKnowledgebase = src.Builtins.Tools.SearchKnowledgebase
+	}
+	if src.Builtins.Tools.CountRows != nil {
+		dest.Builtins.Tools.CountRows = src.Builtins.Tools.CountRows
+	}
+	if src.Builtins.Tools.ListProbes != nil {
+		dest.Builtins.Tools.ListProbes = src.Builtins.Tools.ListProbes
+	}
+	if src.Builtins.Tools.DescribeProbe != nil {
+		dest.Builtins.Tools.DescribeProbe = src.Builtins.Tools.DescribeProbe
+	}
+	if src.Builtins.Tools.QueryMetrics != nil {
+		dest.Builtins.Tools.QueryMetrics = src.Builtins.Tools.QueryMetrics
 	}
 	// Resources
 	if src.Builtins.Resources.SystemInfo != nil {

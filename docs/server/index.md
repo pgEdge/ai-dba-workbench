@@ -152,21 +152,45 @@ The MCP server is built with the following components:
 
 The MCP server exposes these built-in tools:
 
+### Monitored Database Tools
+
+These tools operate on the currently selected monitored database connection:
+
 | Tool | Description |
 |------|-------------|
 | `query_database` | Execute SQL queries (read-only by default) |
 | `get_schema_info` | Get table and column information |
 | `execute_explain` | Run EXPLAIN/EXPLAIN ANALYZE on queries |
 | `similarity_search` | Vector similarity search (requires pgvector) |
+| `count_rows` | Count rows in tables |
+
+### Datastore Tools
+
+These tools query the metrics datastore for historical data collected by the
+collector:
+
+| Tool | Description |
+|------|-------------|
+| `list_probes` | List available metrics probes in the datastore |
+| `describe_probe` | Get column details for a specific metrics probe |
+| `query_metrics` | Query historical metrics with time-based aggregation |
+
+See [Metrics Tools](metrics.md) for detailed documentation on querying
+collected metrics.
+
+### Utility Tools
+
+| Tool | Description |
+|------|-------------|
 | `generate_embedding` | Generate text embeddings |
 | `search_knowledgebase` | Search documentation knowledgebase |
-| `count_rows` | Count rows in tables |
 
 ## Available Resources
 
 | Resource | Description |
 |----------|-------------|
-| `pg://system_info` | PostgreSQL server information |
+| `pg://system_info` | PostgreSQL server information (version, platform) |
+| `pg://connection_info` | Current database connection details |
 
 ## Available Prompts
 

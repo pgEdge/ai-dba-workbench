@@ -15,4 +15,7 @@ package resources
 const (
 	// System Information Resources
 	URISystemInfo = "pg://system_info"
+
+	// Connection Information Resources
+	URIConnectionInfo = "pg://connection_info"
 )

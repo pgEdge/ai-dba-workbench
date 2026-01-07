@@ -28,8 +28,12 @@ type Config struct {
 	// Connection pool settings
 	Pool PoolConfig `yaml:"pool"`
 
-	// Server secret for encryption
-	ServerSecret string `yaml:"server_secret"`
+	// Path to file containing server secret for encryption
+	// Default search paths: /etc/pgedge/ai-dba-collector.secret, ./ai-dba-collector.secret
+	SecretFile string `yaml:"secret_file"`
+
+	// Loaded server secret (not from YAML, loaded from SecretFile)
+	serverSecret string
 }
 
 // DatastoreConfig holds PostgreSQL connection settings for the datastore
@@ -145,6 +149,71 @@ func (c *Config) LoadPassword() error {
 	}
 
 	return nil
+}
+
+// LoadSecret loads the server secret from the secret file
+// Search order: explicit SecretFile config > /etc/pgedge/ > binary directory
+func (c *Config) LoadSecret(binaryPath string) error {
+	// If secret file is explicitly specified, use it
+	if c.SecretFile != "" {
+		secret, err := readSecretFile(c.SecretFile)
+		if err != nil {
+			return fmt.Errorf("failed to read secret file: %w", err)
+		}
+		c.serverSecret = secret
+		return nil
+	}
+
+	// Search default paths
+	searchPaths := []string{
+		"/etc/pgedge/ai-dba-collector.secret",
+	}
+
+	// Add binary directory path
+	if binaryPath != "" {
+		dir := filepath.Dir(binaryPath)
+		searchPaths = append(searchPaths, filepath.Join(dir, "ai-dba-collector.secret"))
+	}
+
+	// Also check current directory
+	searchPaths = append(searchPaths, "./ai-dba-collector.secret")
+
+	for _, path := range searchPaths {
+		if _, err := os.Stat(path); err == nil {
+			secret, err := readSecretFile(path)
+			if err != nil {
+				return fmt.Errorf("failed to read secret file %s: %w", path, err)
+			}
+			c.serverSecret = secret
+			return nil
+		}
+	}
+
+	return fmt.Errorf("server secret file not found. Create a secret file at one of: %v", searchPaths)
+}
+
+// readSecretFile reads a secret from a file
+func readSecretFile(filename string) (string, error) {
+	// Expand tilde to home directory
+	if filename != "" && filename[0] == '~' {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("failed to get home directory: %w", err)
+		}
+		filename = filepath.Join(homeDir, filename[1:])
+	}
+
+	content, err := os.ReadFile(filename) // #nosec G304 - Secret file path is provided by administrator
+	if err != nil {
+		return "", err
+	}
+	// Trim whitespace and newlines
+	return strings.TrimSpace(string(content)), nil
+}
+
+// GetServerSecret returns the loaded server secret
+func (c *Config) GetServerSecret() string {
+	return c.serverSecret
 }
 
 // readPasswordFile reads a password from a file

@@ -38,8 +38,8 @@ The configuration file uses YAML format with nested sections:
 ```yaml
 # Comments start with #
 
-# Top-level settings
-server_secret: your-secret-here
+# Top-level settings (optional - secret file has default search paths)
+# secret_file: /etc/pgedge/ai-dba-collector.secret
 
 # Nested sections
 datastore:
@@ -248,20 +248,25 @@ Maximum time (seconds) to wait for an available monitored connection.
 
 ### Security Settings
 
-#### server_secret
+#### secret_file
 
-Per-installation secret for encryption (REQUIRED).
+Path to file containing per-installation secret for encryption.
 
-- **Type**: string
-- **Default**: none
-- **Example**: `server_secret: randomly-generated-secret-string`
+- **Type**: string (file path)
+- **Default**: Searches in order:
+    1. `/etc/pgedge/ai-dba-collector.secret`
+    2. `<binary-directory>/ai-dba-collector.secret`
+    3. `./ai-dba-collector.secret`
+- **Example**: `secret_file: /etc/pgedge/ai-dba-collector.secret`
 - **Note**: Used to encrypt/decrypt passwords for monitored connections
-- **Important**: Keep this secret secure. If lost, passwords must be re-entered
+- **Important**: Keep this file secure (chmod 600). If lost, passwords must be
+  re-entered
 
-**Generate a secure secret:**
+**Generate a secure secret file:**
 
 ```bash
-openssl rand -base64 32
+openssl rand -base64 32 > /etc/pgedge/ai-dba-collector.secret
+chmod 600 /etc/pgedge/ai-dba-collector.secret
 ```
 
 ## Command-Line Flags
@@ -294,7 +299,8 @@ datastore:
   username: collector
   password_file: /etc/ai-workbench/password.txt
 
-server_secret: your-random-secret-here
+# secret_file uses default search paths
+# Ensure ai-dba-collector.secret exists in one of the search locations
 ```
 
 ### Production Configuration
@@ -324,7 +330,7 @@ pool:
   monitored_max_wait_seconds: 120
 
 # Security
-server_secret: production-secret-from-secure-storage
+secret_file: /var/secrets/ai-workbench/collector.secret
 ```
 
 ### Development Configuration
@@ -344,8 +350,8 @@ pool:
   datastore_max_connections: 10
   monitored_max_connections: 3
 
-# Development secret (DO NOT USE IN PRODUCTION)
-server_secret: dev-secret-not-for-production
+# Development secret file (DO NOT USE IN PRODUCTION)
+secret_file: ./ai-dba-collector.secret
 ```
 
 ### High-Volume Configuration
@@ -371,7 +377,7 @@ pool:
   datastore_max_idle_seconds: 600
   monitored_max_idle_seconds: 600
 
-server_secret: high-volume-secret
+secret_file: /etc/pgedge/ai-dba-collector.secret
 ```
 
 ## Tuning Guidelines
@@ -434,7 +440,7 @@ Choose `*_max_wait_seconds` based on:
 
 ### "Invalid configuration"
 
-- Ensure required fields are set (server_secret)
+- Ensure required fields are set and secret file exists
 - Verify port numbers are in range (1-65535)
 - Check pool sizes are positive numbers
 

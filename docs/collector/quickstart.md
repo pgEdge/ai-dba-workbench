@@ -71,9 +71,8 @@ datastore:
   port: 5432
   sslmode: prefer
 
-# Server secret for encryption (REQUIRED)
-# Generate a strong random string for production
-server_secret: CHANGE-ME-TO-A-RANDOM-SECRET-STRING
+# Path to server secret file (optional if using default paths)
+# secret_file: /etc/pgedge/ai-dba-collector.secret
 ```
 
 ### Step 3: Create Password File
@@ -87,24 +86,26 @@ chmod 600 ~/.ai-workbench-password
 
 Update the `password_file` setting in your configuration to point to this file.
 
-### Step 4: Generate a Server Secret
+### Step 4: Create a Server Secret File
 
 The server secret is used to encrypt passwords for monitored connections.
-Generate a strong random secret:
+Generate a strong random secret and save it to a file:
 
 ```bash
-# Generate a 32-byte random secret in base64
-openssl rand -base64 32
+# Generate a 32-byte random secret and save to file
+openssl rand -base64 32 > ./ai-dba-collector.secret
+chmod 600 ./ai-dba-collector.secret
 ```
 
-Add this to your configuration file:
+The collector searches for the secret file in these locations (in order):
 
-```yaml
-server_secret: <generated-secret-here>
-```
+1. Path specified in `secret_file` config option
+2. `/etc/pgedge/ai-dba-collector.secret`
+3. `<binary-directory>/ai-dba-collector.secret`
+4. `./ai-dba-collector.secret`
 
-**Important**: Keep this secret secure and never share it. If you lose it,
-you will need to re-enter passwords for all monitored connections.
+**Important**: Keep this secret file secure and never share it. If you lose
+it, you will need to re-enter passwords for all monitored connections.
 
 ## Running the Collector
 

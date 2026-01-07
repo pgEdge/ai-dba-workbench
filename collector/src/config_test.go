@@ -44,6 +44,13 @@ func TestConfigLoadFromFile(t *testing.T) {
 	// Create a temporary config file in YAML format
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "test.yaml")
+	secretPath := filepath.Join(tmpDir, "test.secret")
+
+	// Create secret file
+	testSecret := "test-secret-from-file"
+	if err := os.WriteFile(secretPath, []byte(testSecret+"\n"), 0600); err != nil {
+		t.Fatalf("Failed to write test secret file: %v", err)
+	}
 
 	configContent := `# Test configuration
 datastore:
@@ -51,7 +58,7 @@ datastore:
   port: 5433
   database: testdb
   username: testuser
-server_secret: "test-secret"
+secret_file: "` + secretPath + `"
 `
 
 	if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
@@ -79,8 +86,8 @@ server_secret: "test-secret"
 		t.Errorf("Expected Datastore.Username to be 'testuser', got '%s'", config.Datastore.Username)
 	}
 
-	if config.ServerSecret != "test-secret" {
-		t.Errorf("Expected ServerSecret to be 'test-secret', got '%s'", config.ServerSecret)
+	if config.SecretFile != secretPath {
+		t.Errorf("Expected SecretFile to be '%s', got '%s'", secretPath, config.SecretFile)
 	}
 }
 
@@ -324,5 +331,113 @@ func TestConfigGetters(t *testing.T) {
 	}
 	if config.GetMonitoredPoolMaxWaitSeconds() != 45 {
 		t.Errorf("GetMonitoredPoolMaxWaitSeconds() = %d, want 45", config.GetMonitoredPoolMaxWaitSeconds())
+	}
+}
+
+func TestReadSecretFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	secretFile := filepath.Join(tmpDir, "secret.txt")
+
+	testSecret := "test-secret-value-123"
+	if err := os.WriteFile(secretFile, []byte(testSecret+"\n"), 0600); err != nil {
+		t.Fatalf("Failed to write test secret file: %v", err)
+	}
+
+	secret, err := readSecretFile(secretFile)
+	if err != nil {
+		t.Fatalf("readSecretFile() error = %v", err)
+	}
+
+	if secret != testSecret {
+		t.Errorf("Expected secret to be '%s', got '%s'", testSecret, secret)
+	}
+}
+
+func TestReadSecretFile_NotFound(t *testing.T) {
+	_, err := readSecretFile("/nonexistent/path/to/secret.txt")
+	if err == nil {
+		t.Error("Expected error when reading non-existent secret file")
+	}
+}
+
+func TestLoadSecret_ExplicitPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	secretFile := filepath.Join(tmpDir, "explicit.secret")
+
+	testSecret := "explicit-secret-value"
+	if err := os.WriteFile(secretFile, []byte(testSecret), 0600); err != nil {
+		t.Fatalf("Failed to write test secret file: %v", err)
+	}
+
+	config := NewConfig()
+	config.SecretFile = secretFile
+
+	if err := config.LoadSecret(""); err != nil {
+		t.Fatalf("LoadSecret() error = %v", err)
+	}
+
+	if config.GetServerSecret() != testSecret {
+		t.Errorf("Expected secret to be '%s', got '%s'", testSecret, config.GetServerSecret())
+	}
+}
+
+func TestLoadSecret_DefaultPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	binaryPath := filepath.Join(tmpDir, "ai-dba-collector")
+	secretFile := filepath.Join(tmpDir, "ai-dba-collector.secret")
+
+	testSecret := "default-path-secret"
+	if err := os.WriteFile(secretFile, []byte(testSecret), 0600); err != nil {
+		t.Fatalf("Failed to write test secret file: %v", err)
+	}
+
+	config := NewConfig()
+	// Don't set SecretFile - let it search default paths
+
+	if err := config.LoadSecret(binaryPath); err != nil {
+		t.Fatalf("LoadSecret() error = %v", err)
+	}
+
+	if config.GetServerSecret() != testSecret {
+		t.Errorf("Expected secret to be '%s', got '%s'", testSecret, config.GetServerSecret())
+	}
+}
+
+func TestLoadSecret_NotFound(t *testing.T) {
+	tmpDir := t.TempDir()
+	binaryPath := filepath.Join(tmpDir, "ai-dba-collector")
+	// Don't create any secret file
+
+	config := NewConfig()
+
+	err := config.LoadSecret(binaryPath)
+	if err == nil {
+		t.Error("Expected error when no secret file is found")
+	}
+}
+
+func TestGetServerSecret(t *testing.T) {
+	config := NewConfig()
+
+	// Initially should be empty
+	if config.GetServerSecret() != "" {
+		t.Errorf("Expected initial secret to be empty, got '%s'", config.GetServerSecret())
+	}
+
+	// Set via LoadSecret
+	tmpDir := t.TempDir()
+	secretFile := filepath.Join(tmpDir, "test.secret")
+	testSecret := "getter-test-secret"
+	if err := os.WriteFile(secretFile, []byte(testSecret), 0600); err != nil {
+		t.Fatalf("Failed to write test secret file: %v", err)
+	}
+
+	config.SecretFile = secretFile
+	if err := config.LoadSecret(""); err != nil {
+		t.Fatalf("LoadSecret() error = %v", err)
+	}
+
+	if config.GetServerSecret() != testSecret {
+		t.Errorf("Expected secret to be '%s', got '%s'", testSecret, config.GetServerSecret())
 	}
 }

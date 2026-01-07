@@ -70,7 +70,14 @@ datastore:
   password_file: dev-password.txt
   sslmode: disable
 
-server_secret: dev-secret-not-for-production
+secret_file: ./ai-dba-collector.secret
+```
+
+Create a development secret file:
+
+```bash
+openssl rand -base64 32 > ./ai-dba-collector.secret
+chmod 600 ./ai-dba-collector.secret
 ```
 
 ## Project Structure

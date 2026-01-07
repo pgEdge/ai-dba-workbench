@@ -168,7 +168,7 @@ pool:
 # SECURITY SETTINGS
 #=========================================================================
 
-# Server secret for encryption (REQUIRED)
+# Path to file containing server secret for encryption (REQUIRED)
 #
 # This secret is used to encrypt sensitive data such as passwords for
 # monitored database connections stored in the datastore.
@@ -179,12 +179,18 @@ pool:
 # - If this secret is lost or changed, all encrypted passwords in the
 #   datastore will become unreadable and must be re-entered
 # - Use different secrets for different environments (dev, staging, prod)
+# - The secret file should have restricted permissions (chmod 600)
 #
-# Generate a secure secret:
-#   openssl rand -base64 32
+# Generate a secure secret file:
+#   openssl rand -base64 32 > /etc/pgedge/ai-dba-collector.secret
+#   chmod 600 /etc/pgedge/ai-dba-collector.secret
 #
-# WARNING: The default value below is NOT SECURE - change it immediately!
-server_secret: CHANGE-ME-TO-A-RANDOM-SECRET-STRING
+# Default search paths (if not specified):
+#   1. /etc/pgedge/ai-dba-collector.secret
+#   2. <binary-directory>/ai-dba-collector.secret
+#   3. ./ai-dba-collector.secret
+#
+# secret_file: /etc/pgedge/ai-dba-collector.secret
 
 #=========================================================================
 # EXAMPLE CONFIGURATIONS
@@ -205,7 +211,7 @@ server_secret: CHANGE-ME-TO-A-RANDOM-SECRET-STRING
 # pool:
 #   datastore_max_connections: 10
 #   monitored_max_connections: 3
-# server_secret: dev-secret-change-in-production
+# secret_file: ./ai-dba-collector.secret
 
 #-------------------------------------------------------------------------
 # Production Configuration (SSL with certificate verification)
@@ -227,7 +233,7 @@ server_secret: CHANGE-ME-TO-A-RANDOM-SECRET-STRING
 #   monitored_max_connections: 10
 #   monitored_max_idle_seconds: 300
 #   monitored_max_wait_seconds: 120
-# server_secret: your-production-secret-here
+# secret_file: /var/secrets/ai-workbench/collector.secret
 
 #-------------------------------------------------------------------------
 # High-Volume Configuration (monitoring many servers)
@@ -245,4 +251,4 @@ server_secret: CHANGE-ME-TO-A-RANDOM-SECRET-STRING
 #   monitored_max_connections: 15
 #   monitored_max_idle_seconds: 600
 #   monitored_max_wait_seconds: 90
-# server_secret: high-volume-secret-here
+# secret_file: /etc/ai-workbench/collector.secret

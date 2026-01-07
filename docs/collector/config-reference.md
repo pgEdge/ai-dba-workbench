@@ -203,17 +203,21 @@ Maximum wait time (seconds) for an available monitored connection.
 
 ## Security Options
 
-### server_secret
+### secret_file
 
-Per-installation secret for password encryption.
+Path to file containing the per-installation secret for password encryption.
 
-- **Type**: string
-- **Default**: none
-- **Required**: Yes
+- **Type**: string (file path)
+- **Default**: Searches in order:
+    1. `/etc/pgedge/ai-dba-collector.secret`
+    2. `<binary-directory>/ai-dba-collector.secret`
+    3. `./ai-dba-collector.secret`
+- **Required**: Yes (secret file must exist in one of the search paths)
 - **Command-line**: Not available
-- **Example**: `server_secret = randomly-generated-secret-string`
-- **Security**: Keep this secret secure. If lost, passwords must be re-entered
-- **Generation**: `openssl rand -base64 32`
+- **Example**: `secret_file: /etc/pgedge/ai-dba-collector.secret`
+- **Security**: Keep this file secure (chmod 600). If lost, passwords must be
+  re-entered
+- **Generation**: `openssl rand -base64 32 > /path/to/secret.file`
 
 ## Configuration Validation
 
@@ -224,7 +228,7 @@ The Collector validates configuration at startup:
 - `pg_host` - Must be set
 - `pg_database` - Must be set
 - `pg_username` - Must be set
-- `server_secret` - Must be set
+- Secret file - Must exist in one of the search paths
 
 **Range Validation:**
 
@@ -264,7 +268,7 @@ pg_host = localhost
 pg_database = ai_workbench
 pg_username = collector
 pg_password_file = /etc/ai-workbench/password.txt
-server_secret = your-secret-here
+# secret_file defaults to searching standard paths
 ```
 
 ### Production
@@ -290,7 +294,7 @@ monitored_pool_max_idle_seconds = 300
 monitored_pool_max_wait_seconds = 120
 
 # Security
-server_secret = production-secret-from-secure-storage
+secret_file = /var/secrets/ai-workbench/collector.secret
 ```
 
 ### Development
@@ -303,7 +307,7 @@ pg_password_file = dev-password.txt
 pg_sslmode = disable
 datastore_pool_max_connections = 10
 monitored_pool_max_connections = 3
-server_secret = dev-secret-not-for-production
+secret_file = ./ai-dba-collector.secret
 ```
 
 ## See Also

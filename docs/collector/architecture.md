@@ -517,6 +517,8 @@ main goroutine
 
 **Algorithm**: AES-256-GCM
 
+The server secret is loaded from a file (see `secret_file` configuration option).
+
 **Key Derivation**:
 ```
 key = SHA256(server_secret + username)

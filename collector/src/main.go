@@ -76,7 +76,7 @@ func main() {
 	poolManager := database.NewMonitoredConnectionPoolManager(config.Pool.MonitoredMaxConnections, config.Pool.MonitoredMaxIdleSeconds)
 
 	// Initialize probe scheduler
-	probeScheduler := scheduler.NewProbeScheduler(ds, poolManager, config, config.ServerSecret)
+	probeScheduler := scheduler.NewProbeScheduler(ds, poolManager, config, config.GetServerSecret())
 	if err := probeScheduler.Start(ctx); err != nil {
 		logger.Fatalf("Failed to start probe scheduler: %v", err)
 	}
@@ -155,6 +155,15 @@ func loadConfiguration() (*Config, error) {
 
 	// Load password from file if specified
 	if err := config.LoadPassword(); err != nil {
+		return nil, err
+	}
+
+	// Load server secret from file
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get executable path for secret search: %w", err)
+	}
+	if err := config.LoadSecret(exe); err != nil {
 		return nil, err
 	}
 

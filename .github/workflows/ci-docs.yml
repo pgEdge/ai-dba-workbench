@@ -1,0 +1,56 @@
+name: CI - Documentation
+
+on:
+    push:
+        branches: [ main, master ]
+        paths:
+            - 'docs/**'
+            - 'mkdocs.yml'
+            - 'requirements.txt'
+            - '.github/workflows/ci-docs.yml'
+    pull_request:
+        branches: [ main, master ]
+        paths:
+            - 'docs/**'
+            - 'mkdocs.yml'
+            - 'requirements.txt'
+            - '.github/workflows/ci-docs.yml'
+    workflow_dispatch:
+
+concurrency:
+    group: '${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}'
+    cancel-in-progress: true
+
+jobs:
+    docs:
+        name: Documentation
+        runs-on: ubuntu-22.04
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Set up Python
+              uses: actions/setup-python@v5
+              with:
+                  python-version: '3.11'
+                  cache: 'pip'
+
+            - name: Create virtual environment
+              run: |
+                  python3 -m venv venv
+                  source venv/bin/activate
+                  pip install -r requirements.txt
+
+            - name: Build documentation
+              run: |
+                  source venv/bin/activate
+                  mkdocs build -v
+
+            - name: Upload documentation artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  if-no-files-found: error
+                  name: ai-workbench-docs-site
+                  path: site
+                  retention-days: 7

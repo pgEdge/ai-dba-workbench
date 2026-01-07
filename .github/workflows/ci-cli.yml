@@ -1,0 +1,111 @@
+name: CI - CLI
+
+on:
+    push:
+        branches: [ main, master ]
+        paths:
+            - 'cli/**'
+            - '.github/workflows/ci-cli.yml'
+    pull_request:
+        branches: [ main, master ]
+        paths:
+            - 'cli/**'
+            - '.github/workflows/ci-cli.yml'
+
+jobs:
+    cli:
+        name: CLI (Go ${{ matrix.go-version }})
+        runs-on: ubuntu-latest
+        strategy:
+            matrix:
+                go-version: ['1.23', '1.24']
+            fail-fast: false
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Set up Go ${{ matrix.go-version }}
+              uses: actions/setup-go@v5
+              with:
+                  go-version: ${{ matrix.go-version }}
+                  cache: false
+
+            - name: Cache Go modules
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/go/pkg/mod
+                      ~/.cache/go-build
+                  key: ${{ runner.os }}-go-${{ matrix.go-version }}-cli-${{ hashFiles('cli/go.sum') }}
+                  restore-keys: |
+                      ${{ runner.os }}-go-${{ matrix.go-version }}-cli-
+
+            - name: Verify dependencies
+              working-directory: cli
+              run: go mod verify
+
+            - name: Download dependencies
+              working-directory: cli
+              run: go mod download
+
+            - name: Lint CLI code
+              if: matrix.go-version == '1.24'
+              working-directory: cli
+              run: |
+                  go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+                  echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+                  make lint
+
+            - name: Run go vet
+              if: matrix.go-version == '1.24'
+              working-directory: cli
+              run: go vet ./...
+
+            - name: Check formatting
+              if: matrix.go-version == '1.24'
+              working-directory: cli
+              run: |
+                  gofmt -l ./src > /tmp/gofmt.out
+                  if [ -s /tmp/gofmt.out ]; then
+                    echo "The following files are not formatted:"
+                    cat /tmp/gofmt.out
+                    exit 1
+                  fi
+
+            - name: Build CLI
+              working-directory: cli
+              run: make build
+
+            - name: Verify binary
+              run: |
+                  ls -lh cli/ai-cli
+                  file cli/ai-cli
+
+            - name: Run tests with coverage
+              working-directory: cli
+              run: make coverage
+
+            - name: Generate coverage report
+              if: matrix.go-version == '1.24'
+              working-directory: cli
+              run: |
+                  go tool cover -func=src/coverage.out
+
+            - name: Upload build artifact
+              if: matrix.go-version == '1.24'
+              uses: actions/upload-artifact@v4
+              with:
+                  name: ai-cli-linux-amd64
+                  path: cli/ai-cli
+                  retention-days: 7
+
+            - name: Upload coverage artifact
+              if: matrix.go-version == '1.24'
+              uses: actions/upload-artifact@v4
+              with:
+                  name: cli-coverage
+                  path: |
+                      cli/src/coverage.html
+                      cli/src/coverage.out
+                  retention-days: 7

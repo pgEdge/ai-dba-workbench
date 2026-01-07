@@ -1,8 +1,9 @@
 # pgEdge AI DBA Workbench
 
-[![Build Collector](https://github.com/pgEdge/ai-workbench/actions/workflows/build-collector.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/build-collector.yml)
-[![Test Collector](https://github.com/pgEdge/ai-workbench/actions/workflows/test-collector.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/test-collector.yml)
-[![Lint Collector](https://github.com/pgEdge/ai-workbench/actions/workflows/lint-collector.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/lint-collector.yml)
+[![CI - Collector](https://github.com/pgEdge/ai-workbench/actions/workflows/ci-collector.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/ci-collector.yml)
+[![CI - Server](https://github.com/pgEdge/ai-workbench/actions/workflows/ci-server.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/ci-server.yml)
+[![CI - CLI](https://github.com/pgEdge/ai-workbench/actions/workflows/ci-cli.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/ci-cli.yml)
+[![CI - Docs](https://github.com/pgEdge/ai-workbench/actions/workflows/ci-docs.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/ci-docs.yml)
 
 The pgEdge AI DBA Workbench is a unified environment for interacting with pgEdge's
 distributed and non-distributed PostgreSQL systems through artificial

@@ -1,0 +1,135 @@
+name: CI - Server
+
+on:
+    push:
+        branches: [ main, master ]
+        paths:
+            - 'server/**'
+            - '.github/workflows/ci-server.yml'
+    pull_request:
+        branches: [ main, master ]
+        paths:
+            - 'server/**'
+            - '.github/workflows/ci-server.yml'
+
+jobs:
+    server:
+        name: Server (Go ${{ matrix.go-version }}, PG ${{ matrix.postgres-version }})
+        runs-on: ubuntu-latest
+        strategy:
+            matrix:
+                go-version: ['1.23', '1.24']
+                postgres-version: ['14', '15', '16', '17']
+            fail-fast: false
+
+        services:
+            postgres:
+                image: postgres:${{ matrix.postgres-version }}
+                env:
+                    POSTGRES_PASSWORD: postgres
+                    POSTGRES_DB: postgres
+                options: >-
+                    --health-cmd pg_isready
+                    --health-interval 10s
+                    --health-timeout 5s
+                    --health-retries 5
+                ports:
+                    - 5432:5432
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Set up Go ${{ matrix.go-version }}
+              uses: actions/setup-go@v5
+              with:
+                  go-version: ${{ matrix.go-version }}
+                  cache: false
+
+            - name: Cache Go modules
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/go/pkg/mod
+                      ~/.cache/go-build
+                  key: ${{ runner.os }}-go-${{ matrix.go-version }}-server-${{ hashFiles('server/go.sum') }}
+                  restore-keys: |
+                      ${{ runner.os }}-go-${{ matrix.go-version }}-server-
+
+            - name: Verify dependencies
+              working-directory: server
+              run: go mod verify
+
+            - name: Download dependencies
+              working-directory: server
+              run: go mod download
+
+            - name: Lint server code
+              if: matrix.go-version == '1.24' && matrix.postgres-version == '17'
+              working-directory: server
+              run: |
+                  go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+                  echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+                  make lint
+
+            - name: Run go vet
+              if: matrix.go-version == '1.24' && matrix.postgres-version == '17'
+              working-directory: server
+              run: go vet ./...
+
+            - name: Check formatting
+              if: matrix.go-version == '1.24' && matrix.postgres-version == '17'
+              working-directory: server
+              run: |
+                  gofmt -l ./src > /tmp/gofmt.out
+                  if [ -s /tmp/gofmt.out ]; then
+                    echo "The following files are not formatted:"
+                    cat /tmp/gofmt.out
+                    exit 1
+                  fi
+
+            - name: Build server
+              working-directory: server
+              run: make build
+
+            - name: Verify binary
+              run: |
+                  ls -lh server/mcp-server
+                  file server/mcp-server
+
+            - name: Wait for PostgreSQL
+              run: |
+                  until pg_isready -h localhost -p 5432 -U postgres; do
+                    echo "Waiting for PostgreSQL..."
+                    sleep 2
+                  done
+
+            - name: Run tests with coverage
+              working-directory: server
+              env:
+                  TEST_AI_WORKBENCH_SERVER: postgres://postgres:postgres@localhost:5432/postgres
+              run: make coverage
+
+            - name: Generate coverage report
+              if: matrix.go-version == '1.24' && matrix.postgres-version == '17'
+              working-directory: server
+              run: |
+                  go tool cover -func=src/coverage.out
+
+            - name: Upload build artifact
+              if: matrix.go-version == '1.24' && matrix.postgres-version == '17'
+              uses: actions/upload-artifact@v4
+              with:
+                  name: mcp-server-linux-amd64
+                  path: server/mcp-server
+                  retention-days: 7
+
+            - name: Upload coverage artifact
+              if: matrix.go-version == '1.24' && matrix.postgres-version == '17'
+              uses: actions/upload-artifact@v4
+              with:
+                  name: server-coverage
+                  path: |
+                      server/src/coverage.html
+                      server/src/coverage.out
+                  retention-days: 7

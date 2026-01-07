@@ -79,6 +79,9 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 		if p.cfg.Builtins.Tools.IsToolEnabled("query_metrics") {
 			registry.Register("query_metrics", QueryMetricsTool(datastorePool))
 		}
+		if p.cfg.Builtins.Tools.IsToolEnabled("list_connections") {
+			registry.Register("list_connections", ListConnectionsTool(datastorePool))
+		}
 	} else {
 		// Register tools with nil pool - they'll return helpful errors
 		if p.cfg.Builtins.Tools.IsToolEnabled("list_probes") {
@@ -89,6 +92,9 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("query_metrics") {
 			registry.Register("query_metrics", QueryMetricsTool(nil))
+		}
+		if p.cfg.Builtins.Tools.IsToolEnabled("list_connections") {
+			registry.Register("list_connections", ListConnectionsTool(nil))
 		}
 	}
 }
@@ -269,9 +275,23 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 		"list_probes":        true, // Datastore tool - uses shared datastore pool
 		"describe_probe":     true, // Datastore tool - uses shared datastore pool
 		"query_metrics":      true, // Datastore tool - uses shared datastore pool
+		"list_connections":   true, // Datastore tool - uses shared datastore pool
 	}
 
 	if statelessTools[name] {
+		// For query_metrics, inject the default connection_id from session if not provided
+		if name == "query_metrics" {
+			if _, hasConnID := args["connection_id"]; !hasConnID && p.authStore != nil {
+				tokenHash := auth.GetTokenHashFromContext(ctx)
+				if tokenHash != "" {
+					session, err := p.authStore.GetConnectionSession(tokenHash)
+					if err == nil && session != nil {
+						// Inject the session's connection ID as the default
+						args["connection_id"] = float64(session.ConnectionID)
+					}
+				}
+			}
+		}
 		// Execute from base registry (no per-token database client needed)
 		return p.baseRegistry.Execute(ctx, name, args)
 	}

@@ -39,15 +39,23 @@ func ConnectionInfoResourceDefinition() mcp.Resource {
 <usecase>
 Use this resource to:
 - Check which database connection is currently active
+- Get the connection_id for use with datastore tools (query_metrics, etc.)
 - Verify you're connected to the expected server before running queries
 - Get connection details to communicate to the user
 - Determine if a connection needs to be selected
 </usecase>
 
+<important>
+Reading this resource does NOT connect to the monitored database - it only retrieves
+metadata about the currently selected connection from the session state. Use this
+to get the connection_id when you need to query the datastore for metrics about
+"the current database" without actually connecting to it.
+</important>
+
 <provided_info>
 Returns JSON with:
 - connected: Boolean indicating if a connection is selected
-- connection_id: Numeric ID of the connection in the datastore
+- connection_id: Numeric ID - use this with query_metrics connection_id parameter
 - connection_name: User-friendly name for the connection
 - host: PostgreSQL server hostname
 - port: PostgreSQL server port number
@@ -62,11 +70,16 @@ If no connection is selected, the response will indicate this with:
 - connected: false
 - message: Instructions for selecting a connection
 
+CRITICAL: When connected: false, you MUST ask the user which connection to use.
+DO NOT arbitrarily pick connections. Ask: "You don't have a database selected.
+Which connection would you like me to analyze?" and wait for their response.
+
 Guide the user to select a connection using their client interface
 (CLI: /connect command, Web: connection selector).
 </when_not_connected>
 
 <examples>
+- User asks "analyze my database" → read this resource to get connection_id, then use query_metrics
 - Before running any database query, check this resource
 - When a tool returns "no database connection selected", read this resource
 - To help users understand which database they're querying

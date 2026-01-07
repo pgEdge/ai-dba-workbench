@@ -82,6 +82,7 @@ func TestContextAwareProvider_List(t *testing.T) {
 			"list_probes",
 			"describe_probe",
 			"query_metrics",
+			"list_connections",
 		}
 
 		if len(tools) != len(expectedTools) {

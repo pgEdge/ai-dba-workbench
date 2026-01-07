@@ -33,6 +33,21 @@ collector from monitored PostgreSQL servers. Data is aggregated into time bucket
 for efficient analysis and visualization.
 </database_context>
 
+<important_behavior>
+ALWAYS check pg://connection_info first to find the current connection.
+
+If a connection IS selected (connected: true):
+- Omit connection_id to use the current connection automatically
+- "My database" or "the database" means the currently selected connection
+
+If NO connection is selected (connected: false):
+- DO NOT arbitrarily pick connections to analyze
+- ASK the user which connection they want: "You don't have a database selected. Which would you like me to analyze?"
+- Only proceed after the user specifies which connection(s) to query
+
+NEVER silently query multiple connections without explicit user consent.
+</important_behavior>
+
 <usecase>
 Use this tool to:
 - Analyze performance trends over time (CPU, memory, I/O, queries)
@@ -44,7 +59,8 @@ Use this tool to:
 
 <parameters>
 - probe_name: (required) Name of the probe (from list_probes)
-- connection_id: (required) ID of the monitored connection
+- connection_id: ID of the monitored connection. OMIT this parameter to use the currently
+  selected connection. Only specify explicitly for cross-connection analysis.
 - time_start: Start of time range (ISO 8601 format or relative: "1h", "24h", "7d")
 - time_end: End of time range (ISO 8601 or "now", default: now)
 - buckets: Number of time buckets for aggregation (default: 150)
@@ -62,9 +78,9 @@ Returns TSV data with:
 </output>
 
 <examples>
-- query_metrics(probe_name="pg_stat_database", connection_id=1, time_start="24h")
-- query_metrics(probe_name="pg_stat_statements", connection_id=1, time_start="1h", metrics="total_exec_time,calls")
-- query_metrics(probe_name="pg_sys_cpu_info", connection_id=1, time_start="7d", buckets=100)
+- query_metrics(probe_name="pg_stat_database", time_start="24h") - uses current connection
+- query_metrics(probe_name="pg_stat_statements", time_start="1h", metrics="total_exec_time,calls")
+- query_metrics(probe_name="pg_sys_cpu_info", connection_id=5, time_start="7d") - specific connection
 </examples>
 
 <rate_limit_awareness>
@@ -82,7 +98,7 @@ To manage response sizes:
 					},
 					"connection_id": map[string]interface{}{
 						"type":        "integer",
-						"description": "ID of the monitored connection to query metrics for",
+						"description": "ID of the monitored connection to query metrics for. If not specified, uses the currently selected connection.",
 					},
 					"time_start": map[string]interface{}{
 						"type":        "string",
@@ -124,7 +140,7 @@ To manage response sizes:
 						"enum":        []string{"avg", "sum", "min", "max", "last"},
 					},
 				},
-				Required: []string{"probe_name", "connection_id"},
+				Required: []string{"probe_name"},
 			},
 		},
 		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
@@ -144,7 +160,7 @@ To manage response sizes:
 
 			connectionID, err := parseIntArg(args, "connection_id")
 			if err != nil {
-				return mcp.NewToolError("Missing or invalid 'connection_id' parameter: " + err.Error())
+				return mcp.NewToolError("Missing or invalid 'connection_id' parameter. If you haven't selected a database connection, use list_connections to find available connection IDs, then specify connection_id explicitly.")
 			}
 
 			// Parse time range

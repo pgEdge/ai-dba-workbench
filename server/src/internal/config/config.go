@@ -70,6 +70,7 @@ type ToolsConfig struct {
 	ListProbes          *bool `yaml:"list_probes"`          // List available metrics probes (default: true)
 	DescribeProbe       *bool `yaml:"describe_probe"`       // Describe metrics in a probe (default: true)
 	QueryMetrics        *bool `yaml:"query_metrics"`        // Query collected metrics (default: true)
+	ListConnections     *bool `yaml:"list_connections"`     // List available connections (default: true)
 }
 
 // ResourcesConfig holds configuration for enabling/disabling built-in resources
@@ -111,6 +112,8 @@ func (c *ToolsConfig) IsToolEnabled(toolName string) bool {
 		return c.DescribeProbe == nil || *c.DescribeProbe
 	case "query_metrics":
 		return c.QueryMetrics == nil || *c.QueryMetrics
+	case "list_connections":
+		return c.ListConnections == nil || *c.ListConnections
 	default:
 		return true // Unknown tools are enabled by default
 	}

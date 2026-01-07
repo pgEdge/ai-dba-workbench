@@ -11,121 +11,120 @@
 package auth
 
 import (
-    "crypto/rand"
-    "crypto/sha256"
-    "database/sql"
-    "encoding/base64"
-    "encoding/hex"
-    "fmt"
-    "os"
-    "path/filepath"
-    "sync"
-    "time"
+	"crypto/rand"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/base64"
+	"encoding/hex"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
 
-    _ "github.com/mattn/go-sqlite3"
-    "golang.org/x/crypto/bcrypt"
+	_ "github.com/mattn/go-sqlite3"
+	"golang.org/x/crypto/bcrypt"
 )
 
 const (
-    // DefaultSessionExpiry is the default duration for session tokens
-    DefaultSessionExpiry = 24 * time.Hour
+	// DefaultSessionExpiry is the default duration for session tokens
+	DefaultSessionExpiry = 24 * time.Hour
 
-    // Token types
-    TokenTypeService = "service" // Admin-created service tokens
-    TokenTypeUser    = "user"    // User-created tokens
+	// Token types
+	TokenTypeService = "service" // Admin-created service tokens
+	TokenTypeUser    = "user"    // User-created tokens
 
-    // Schema version for migrations
-    schemaVersion = 2
+	// Schema version for migrations
+	schemaVersion = 2
 )
 
 // AuthStore manages users and tokens in SQLite
 type AuthStore struct {
-    db                *sql.DB
-    mu                sync.RWMutex
-    path              string
-    maxUserTokenDays  int        // Maximum lifetime for user-created tokens (0 = unlimited)
-    maxFailedAttempts int        // Max failed login attempts before lockout (0 = disabled)
-    sessions          sync.Map   // In-memory session store: token -> SessionInfo
+	db                *sql.DB
+	mu                sync.RWMutex
+	path              string
+	maxUserTokenDays  int      // Maximum lifetime for user-created tokens (0 = unlimited)
+	maxFailedAttempts int      // Max failed login attempts before lockout (0 = disabled)
+	sessions          sync.Map // In-memory session store: token -> SessionInfo
 }
 
 // SessionInfo holds session information (in-memory only)
 type SessionInfo struct {
-    Username  string
-    ExpiresAt time.Time
+	Username  string
+	ExpiresAt time.Time
 }
 
 // ConnectionSession represents a selected database connection for a token
 type ConnectionSession struct {
-    TokenHash    string  // The token hash this session belongs to
-    ConnectionID int     // The selected connection ID from the datastore
-    DatabaseName *string // The selected database name (nil = use connection default)
+	TokenHash    string  // The token hash this session belongs to
+	ConnectionID int     // The selected connection ID from the datastore
+	DatabaseName *string // The selected database name (nil = use connection default)
 }
-
 
 // StoredUser represents a user in the database
 type StoredUser struct {
-    ID             int64
-    Username       string
-    PasswordHash   string
-    CreatedAt      time.Time
-    LastLogin      *time.Time
-    Enabled        bool
-    Annotation     string
-    FailedAttempts int
+	ID             int64
+	Username       string
+	PasswordHash   string
+	CreatedAt      time.Time
+	LastLogin      *time.Time
+	Enabled        bool
+	Annotation     string
+	FailedAttempts int
 }
 
 // StoredToken represents a token in the database
 type StoredToken struct {
-    ID         int64
-    TokenHash  string     // SHA256 hash of the actual token
-    TokenType  string     // "service" or "user"
-    OwnerID    *int64     // NULL for service tokens, user ID for user tokens
-    ExpiresAt  *time.Time // NULL for never expires
-    Annotation string
-    CreatedAt  time.Time
-    Database   string // Bound database name (empty = first configured database)
+	ID         int64
+	TokenHash  string     // SHA256 hash of the actual token
+	TokenType  string     // "service" or "user"
+	OwnerID    *int64     // NULL for service tokens, user ID for user tokens
+	ExpiresAt  *time.Time // NULL for never expires
+	Annotation string
+	CreatedAt  time.Time
+	Database   string // Bound database name (empty = first configured database)
 }
 
 // NewAuthStore creates a new SQLite-based auth store
 func NewAuthStore(dataDir string, maxUserTokenDays, maxFailedAttempts int) (*AuthStore, error) {
-    // Create data directory if it doesn't exist
-    if err := os.MkdirAll(dataDir, 0700); err != nil {
-        return nil, fmt.Errorf("failed to create data directory: %w", err)
-    }
+	// Create data directory if it doesn't exist
+	if err := os.MkdirAll(dataDir, 0700); err != nil {
+		return nil, fmt.Errorf("failed to create data directory: %w", err)
+	}
 
-    dbPath := filepath.Join(dataDir, "auth.db")
-    db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
-    if err != nil {
-        return nil, fmt.Errorf("failed to open auth database: %w", err)
-    }
+	dbPath := filepath.Join(dataDir, "auth.db")
+	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		return nil, fmt.Errorf("failed to open auth database: %w", err)
+	}
 
-    store := &AuthStore{
-        db:                db,
-        path:              dbPath,
-        maxUserTokenDays:  maxUserTokenDays,
-        maxFailedAttempts: maxFailedAttempts,
-    }
+	store := &AuthStore{
+		db:                db,
+		path:              dbPath,
+		maxUserTokenDays:  maxUserTokenDays,
+		maxFailedAttempts: maxFailedAttempts,
+	}
 
-    // Initialize schema
-    if err := store.initSchema(); err != nil {
-        db.Close()
-        return nil, fmt.Errorf("failed to initialize schema: %w", err)
-    }
+	// Initialize schema
+	if err := store.initSchema(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to initialize schema: %w", err)
+	}
 
-    return store, nil
+	return store, nil
 }
 
 // initSchema creates the database tables if they don't exist
 func (s *AuthStore) initSchema() error {
-    // Check current schema version
-    var currentVersion int
-    err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&currentVersion)
-    if err != nil && err != sql.ErrNoRows {
-        // Table might not exist yet, that's fine
-        currentVersion = 0
-    }
+	// Check current schema version
+	var currentVersion int
+	err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&currentVersion)
+	if err != nil && err != sql.ErrNoRows {
+		// Table might not exist yet, that's fine
+		currentVersion = 0
+	}
 
-    schema := `
+	schema := `
     -- Schema version tracking
     CREATE TABLE IF NOT EXISTS schema_version (
         version INTEGER PRIMARY KEY
@@ -160,14 +159,14 @@ func (s *AuthStore) initSchema() error {
     CREATE INDEX IF NOT EXISTS idx_tokens_type ON tokens(token_type);
     `
 
-    _, err = s.db.Exec(schema)
-    if err != nil {
-        return fmt.Errorf("failed to create schema: %w", err)
-    }
+	_, err = s.db.Exec(schema)
+	if err != nil {
+		return fmt.Errorf("failed to create schema: %w", err)
+	}
 
-    // Apply migrations for schema version 2
-    if currentVersion < 2 {
-        migrationV2 := `
+	// Apply migrations for schema version 2
+	if currentVersion < 2 {
+		migrationV2 := `
         -- Connection sessions table (tracks selected database connection per token)
         CREATE TABLE IF NOT EXISTS connection_sessions (
             token_hash TEXT PRIMARY KEY NOT NULL,
@@ -178,20 +177,20 @@ func (s *AuthStore) initSchema() error {
         );
         CREATE INDEX IF NOT EXISTS idx_conn_sessions_hash ON connection_sessions(token_hash);
         `
-        _, err = s.db.Exec(migrationV2)
-        if err != nil {
-            return fmt.Errorf("failed to apply schema migration v2: %w", err)
-        }
-    }
+		_, err = s.db.Exec(migrationV2)
+		if err != nil {
+			return fmt.Errorf("failed to apply schema migration v2: %w", err)
+		}
+	}
 
-    // Set schema version
-    _, err = s.db.Exec("INSERT OR REPLACE INTO schema_version (version) VALUES (?)", schemaVersion)
-    return err
+	// Set schema version
+	_, err = s.db.Exec("INSERT OR REPLACE INTO schema_version (version) VALUES (?)", schemaVersion)
+	return err
 }
 
 // Close closes the database connection
 func (s *AuthStore) Close() error {
-    return s.db.Close()
+	return s.db.Close()
 }
 
 // =============================================================================
@@ -200,171 +199,171 @@ func (s *AuthStore) Close() error {
 
 // CreateUser creates a new user
 func (s *AuthStore) CreateUser(username, password, annotation string) error {
-    s.mu.Lock()
-    defer s.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-    hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
-    if err != nil {
-        return fmt.Errorf("failed to hash password: %w", err)
-    }
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
 
-    _, err = s.db.Exec(
-        "INSERT INTO users (username, password_hash, annotation) VALUES (?, ?, ?)",
-        username, string(hash), annotation,
-    )
-    if err != nil {
-        return fmt.Errorf("failed to create user: %w", err)
-    }
+	_, err = s.db.Exec(
+		"INSERT INTO users (username, password_hash, annotation) VALUES (?, ?, ?)",
+		username, string(hash), annotation,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create user: %w", err)
+	}
 
-    return nil
+	return nil
 }
 
 // GetUser retrieves a user by username
 func (s *AuthStore) GetUser(username string) (*StoredUser, error) {
-    s.mu.RLock()
-    defer s.mu.RUnlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
-    var user StoredUser
-    err := s.db.QueryRow(
-        `SELECT id, username, password_hash, created_at, last_login, enabled, annotation, failed_attempts
+	var user StoredUser
+	err := s.db.QueryRow(
+		`SELECT id, username, password_hash, created_at, last_login, enabled, annotation, failed_attempts
          FROM users WHERE username = ?`,
-        username,
-    ).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.CreatedAt,
-        &user.LastLogin, &user.Enabled, &user.Annotation, &user.FailedAttempts)
+		username,
+	).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.CreatedAt,
+		&user.LastLogin, &user.Enabled, &user.Annotation, &user.FailedAttempts)
 
-    if err == sql.ErrNoRows {
-        return nil, nil
-    }
-    if err != nil {
-        return nil, fmt.Errorf("failed to get user: %w", err)
-    }
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user: %w", err)
+	}
 
-    return &user, nil
+	return &user, nil
 }
 
 // UpdateUser updates a user's password and/or annotation
 func (s *AuthStore) UpdateUser(username, newPassword, newAnnotation string) error {
-    s.mu.Lock()
-    defer s.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-    if newPassword != "" {
-        hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), 12)
-        if err != nil {
-            return fmt.Errorf("failed to hash password: %w", err)
-        }
-        _, err = s.db.Exec("UPDATE users SET password_hash = ? WHERE username = ?", string(hash), username)
-        if err != nil {
-            return fmt.Errorf("failed to update password: %w", err)
-        }
-    }
+	if newPassword != "" {
+		hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), 12)
+		if err != nil {
+			return fmt.Errorf("failed to hash password: %w", err)
+		}
+		_, err = s.db.Exec("UPDATE users SET password_hash = ? WHERE username = ?", string(hash), username)
+		if err != nil {
+			return fmt.Errorf("failed to update password: %w", err)
+		}
+	}
 
-    if newAnnotation != "" {
-        _, err := s.db.Exec("UPDATE users SET annotation = ? WHERE username = ?", newAnnotation, username)
-        if err != nil {
-            return fmt.Errorf("failed to update annotation: %w", err)
-        }
-    }
+	if newAnnotation != "" {
+		_, err := s.db.Exec("UPDATE users SET annotation = ? WHERE username = ?", newAnnotation, username)
+		if err != nil {
+			return fmt.Errorf("failed to update annotation: %w", err)
+		}
+	}
 
-    return nil
+	return nil
 }
 
 // DeleteUser removes a user
 func (s *AuthStore) DeleteUser(username string) error {
-    s.mu.Lock()
-    defer s.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-    result, err := s.db.Exec("DELETE FROM users WHERE username = ?", username)
-    if err != nil {
-        return fmt.Errorf("failed to delete user: %w", err)
-    }
+	result, err := s.db.Exec("DELETE FROM users WHERE username = ?", username)
+	if err != nil {
+		return fmt.Errorf("failed to delete user: %w", err)
+	}
 
-    rows, err := result.RowsAffected()
-    if err != nil {
-        return fmt.Errorf("failed to get rows affected: %w", err)
-    }
-    if rows == 0 {
-        return fmt.Errorf("user '%s' not found", username)
-    }
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("user '%s' not found", username)
+	}
 
-    return nil
+	return nil
 }
 
 // EnableUser enables a user account
 func (s *AuthStore) EnableUser(username string) error {
-    s.mu.Lock()
-    defer s.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-    result, err := s.db.Exec("UPDATE users SET enabled = TRUE WHERE username = ?", username)
-    if err != nil {
-        return fmt.Errorf("failed to enable user: %w", err)
-    }
+	result, err := s.db.Exec("UPDATE users SET enabled = TRUE WHERE username = ?", username)
+	if err != nil {
+		return fmt.Errorf("failed to enable user: %w", err)
+	}
 
-    rows, err := result.RowsAffected()
-    if err != nil {
-        return fmt.Errorf("failed to get rows affected: %w", err)
-    }
-    if rows == 0 {
-        return fmt.Errorf("user '%s' not found", username)
-    }
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("user '%s' not found", username)
+	}
 
-    return nil
+	return nil
 }
 
 // DisableUser disables a user account
 func (s *AuthStore) DisableUser(username string) error {
-    s.mu.Lock()
-    defer s.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-    result, err := s.db.Exec("UPDATE users SET enabled = FALSE WHERE username = ?", username)
-    if err != nil {
-        return fmt.Errorf("failed to disable user: %w", err)
-    }
+	result, err := s.db.Exec("UPDATE users SET enabled = FALSE WHERE username = ?", username)
+	if err != nil {
+		return fmt.Errorf("failed to disable user: %w", err)
+	}
 
-    rows, err := result.RowsAffected()
-    if err != nil {
-        return fmt.Errorf("failed to get rows affected: %w", err)
-    }
-    if rows == 0 {
-        return fmt.Errorf("user '%s' not found", username)
-    }
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("user '%s' not found", username)
+	}
 
-    return nil
+	return nil
 }
 
 // ListUsers returns all users
 func (s *AuthStore) ListUsers() ([]*StoredUser, error) {
-    s.mu.RLock()
-    defer s.mu.RUnlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
-    rows, err := s.db.Query(
-        `SELECT id, username, password_hash, created_at, last_login, enabled, annotation, failed_attempts
+	rows, err := s.db.Query(
+		`SELECT id, username, password_hash, created_at, last_login, enabled, annotation, failed_attempts
          FROM users ORDER BY username`,
-    )
-    if err != nil {
-        return nil, fmt.Errorf("failed to list users: %w", err)
-    }
-    defer rows.Close()
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list users: %w", err)
+	}
+	defer rows.Close()
 
-    var users []*StoredUser
-    for rows.Next() {
-        var user StoredUser
-        if err := rows.Scan(&user.ID, &user.Username, &user.PasswordHash, &user.CreatedAt,
-            &user.LastLogin, &user.Enabled, &user.Annotation, &user.FailedAttempts); err != nil {
-            return nil, fmt.Errorf("failed to scan user: %w", err)
-        }
-        users = append(users, &user)
-    }
+	var users []*StoredUser
+	for rows.Next() {
+		var user StoredUser
+		if err := rows.Scan(&user.ID, &user.Username, &user.PasswordHash, &user.CreatedAt,
+			&user.LastLogin, &user.Enabled, &user.Annotation, &user.FailedAttempts); err != nil {
+			return nil, fmt.Errorf("failed to scan user: %w", err)
+		}
+		users = append(users, &user)
+	}
 
-    return users, nil
+	return users, nil
 }
 
 // ResetFailedAttempts resets the failed login attempts counter
 func (s *AuthStore) ResetFailedAttempts(username string) error {
-    s.mu.Lock()
-    defer s.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-    _, err := s.db.Exec("UPDATE users SET failed_attempts = 0 WHERE username = ?", username)
-    return err
+	_, err := s.db.Exec("UPDATE users SET failed_attempts = 0 WHERE username = ?", username)
+	return err
 }
 
 // =============================================================================
@@ -373,99 +372,99 @@ func (s *AuthStore) ResetFailedAttempts(username string) error {
 
 // AuthenticateUser verifies credentials and returns a session token
 func (s *AuthStore) AuthenticateUser(username, password string) (string, time.Time, error) {
-    s.mu.Lock()
-    defer s.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-    var user StoredUser
-    err := s.db.QueryRow(
-        `SELECT id, username, password_hash, enabled, failed_attempts FROM users WHERE username = ?`,
-        username,
-    ).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.Enabled, &user.FailedAttempts)
+	var user StoredUser
+	err := s.db.QueryRow(
+		`SELECT id, username, password_hash, enabled, failed_attempts FROM users WHERE username = ?`,
+		username,
+	).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.Enabled, &user.FailedAttempts)
 
-    if err == sql.ErrNoRows {
-        return "", time.Time{}, fmt.Errorf("invalid username or password")
-    }
-    if err != nil {
-        return "", time.Time{}, fmt.Errorf("authentication error: %w", err)
-    }
+	if err == sql.ErrNoRows {
+		return "", time.Time{}, fmt.Errorf("invalid username or password")
+	}
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("authentication error: %w", err)
+	}
 
-    if !user.Enabled {
-        return "", time.Time{}, fmt.Errorf("user account is disabled")
-    }
+	if !user.Enabled {
+		return "", time.Time{}, fmt.Errorf("user account is disabled")
+	}
 
-    // Verify password
-    if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
-        // Increment failed attempts (non-critical, best effort)
-        user.FailedAttempts++
-        //nolint:errcheck // Best effort update, authentication already failed
-        s.db.Exec("UPDATE users SET failed_attempts = ? WHERE id = ?", user.FailedAttempts, user.ID)
+	// Verify password
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+		// Increment failed attempts (non-critical, best effort)
+		user.FailedAttempts++
+		//nolint:errcheck // Best effort update, authentication already failed
+		s.db.Exec("UPDATE users SET failed_attempts = ? WHERE id = ?", user.FailedAttempts, user.ID)
 
-        // Lock account if threshold reached
-        if s.maxFailedAttempts > 0 && user.FailedAttempts >= s.maxFailedAttempts {
-            //nolint:errcheck // Best effort update, authentication already failed
-            s.db.Exec("UPDATE users SET enabled = FALSE WHERE id = ?", user.ID)
-        }
+		// Lock account if threshold reached
+		if s.maxFailedAttempts > 0 && user.FailedAttempts >= s.maxFailedAttempts {
+			//nolint:errcheck // Best effort update, authentication already failed
+			s.db.Exec("UPDATE users SET enabled = FALSE WHERE id = ?", user.ID)
+		}
 
-        return "", time.Time{}, fmt.Errorf("invalid username or password")
-    }
+		return "", time.Time{}, fmt.Errorf("invalid username or password")
+	}
 
-    // Generate session token
-    tokenBytes := make([]byte, 32)
-    if _, err := rand.Read(tokenBytes); err != nil {
-        return "", time.Time{}, fmt.Errorf("failed to generate session token: %w", err)
-    }
-    token := base64.URLEncoding.EncodeToString(tokenBytes)
+	// Generate session token
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return "", time.Time{}, fmt.Errorf("failed to generate session token: %w", err)
+	}
+	token := base64.URLEncoding.EncodeToString(tokenBytes)
 
-    // Set expiration
-    expiration := time.Now().Add(DefaultSessionExpiry)
+	// Set expiration
+	expiration := time.Now().Add(DefaultSessionExpiry)
 
-    // Store session in memory
-    s.sessions.Store(token, &SessionInfo{
-        Username:  username,
-        ExpiresAt: expiration,
-    })
+	// Store session in memory
+	s.sessions.Store(token, &SessionInfo{
+		Username:  username,
+		ExpiresAt: expiration,
+	})
 
-    // Update last login and reset failed attempts (best effort, non-critical)
-    now := time.Now()
-    //nolint:errcheck // Best effort update, login already succeeded
-    s.db.Exec("UPDATE users SET last_login = ?, failed_attempts = 0 WHERE id = ?", now, user.ID)
+	// Update last login and reset failed attempts (best effort, non-critical)
+	now := time.Now()
+	//nolint:errcheck // Best effort update, login already succeeded
+	s.db.Exec("UPDATE users SET last_login = ?, failed_attempts = 0 WHERE id = ?", now, user.ID)
 
-    return token, expiration, nil
+	return token, expiration, nil
 }
 
 // ValidateSessionToken checks if a session token is valid
 func (s *AuthStore) ValidateSessionToken(token string) (string, error) {
-    value, ok := s.sessions.Load(token)
-    if !ok {
-        return "", fmt.Errorf("invalid session token")
-    }
+	value, ok := s.sessions.Load(token)
+	if !ok {
+		return "", fmt.Errorf("invalid session token")
+	}
 
-    session, ok := value.(*SessionInfo)
-    if !ok {
-        return "", fmt.Errorf("invalid session data")
-    }
-    if session.ExpiresAt.Before(time.Now()) {
-        s.sessions.Delete(token)
-        return "", fmt.Errorf("session has expired")
-    }
+	session, ok := value.(*SessionInfo)
+	if !ok {
+		return "", fmt.Errorf("invalid session data")
+	}
+	if session.ExpiresAt.Before(time.Now()) {
+		s.sessions.Delete(token)
+		return "", fmt.Errorf("session has expired")
+	}
 
-    // Verify user is still enabled
-    user, err := s.GetUser(session.Username)
-    if err != nil || user == nil {
-        s.sessions.Delete(token)
-        return "", fmt.Errorf("user not found")
-    }
-    if !user.Enabled {
-        s.sessions.Delete(token)
-        return "", fmt.Errorf("user account is disabled")
-    }
+	// Verify user is still enabled
+	user, err := s.GetUser(session.Username)
+	if err != nil || user == nil {
+		s.sessions.Delete(token)
+		return "", fmt.Errorf("user not found")
+	}
+	if !user.Enabled {
+		s.sessions.Delete(token)
+		return "", fmt.Errorf("user account is disabled")
+	}
 
-    return session.Username, nil
+	return session.Username, nil
 }
 
 // InvalidateSession removes a session token
 func (s *AuthStore) InvalidateSession(token string) {
-    s.sessions.Delete(token)
+	s.sessions.Delete(token)
 }
 
 // =============================================================================
@@ -475,43 +474,43 @@ func (s *AuthStore) InvalidateSession(token string) {
 // CreateServiceToken creates a new service token
 // Returns the raw token (only shown once) and the stored token info
 func (s *AuthStore) CreateServiceToken(annotation string, expiry *time.Time, database string) (string, *StoredToken, error) {
-    s.mu.Lock()
-    defer s.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-    // Generate random token
-    tokenBytes := make([]byte, 32)
-    if _, err := rand.Read(tokenBytes); err != nil {
-        return "", nil, fmt.Errorf("failed to generate token: %w", err)
-    }
-    rawToken := base64.URLEncoding.EncodeToString(tokenBytes)
+	// Generate random token
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return "", nil, fmt.Errorf("failed to generate token: %w", err)
+	}
+	rawToken := base64.URLEncoding.EncodeToString(tokenBytes)
 
-    // Hash the token for storage
-    hash := sha256.Sum256([]byte(rawToken))
-    tokenHash := hex.EncodeToString(hash[:])
+	// Hash the token for storage
+	hash := sha256.Sum256([]byte(rawToken))
+	tokenHash := hex.EncodeToString(hash[:])
 
-    // Insert into database
-    result, err := s.db.Exec(
-        `INSERT INTO tokens (token_hash, token_type, expires_at, annotation, database)
+	// Insert into database
+	result, err := s.db.Exec(
+		`INSERT INTO tokens (token_hash, token_type, expires_at, annotation, database)
          VALUES (?, ?, ?, ?, ?)`,
-        tokenHash, TokenTypeService, expiry, annotation, database,
-    )
-    if err != nil {
-        return "", nil, fmt.Errorf("failed to create token: %w", err)
-    }
+		tokenHash, TokenTypeService, expiry, annotation, database,
+	)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to create token: %w", err)
+	}
 
-    //nolint:errcheck // SQLite always supports LastInsertId
-    id, _ := result.LastInsertId()
-    token := &StoredToken{
-        ID:         id,
-        TokenHash:  tokenHash,
-        TokenType:  TokenTypeService,
-        ExpiresAt:  expiry,
-        Annotation: annotation,
-        CreatedAt:  time.Now(),
-        Database:   database,
-    }
+	//nolint:errcheck // SQLite always supports LastInsertId
+	id, _ := result.LastInsertId()
+	token := &StoredToken{
+		ID:         id,
+		TokenHash:  tokenHash,
+		TokenType:  TokenTypeService,
+		ExpiresAt:  expiry,
+		Annotation: annotation,
+		CreatedAt:  time.Now(),
+		Database:   database,
+	}
 
-    return rawToken, token, nil
+	return rawToken, token, nil
 }
 
 // =============================================================================
@@ -521,116 +520,116 @@ func (s *AuthStore) CreateServiceToken(annotation string, expiry *time.Time, dat
 // CreateUserToken creates a new user token
 // Returns the raw token (only shown once) and the stored token info
 func (s *AuthStore) CreateUserToken(username, annotation string, requestedDays int) (string, *StoredToken, error) {
-    s.mu.Lock()
-    defer s.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-    // Get user ID
-    var userID int64
-    err := s.db.QueryRow("SELECT id FROM users WHERE username = ?", username).Scan(&userID)
-    if err == sql.ErrNoRows {
-        return "", nil, fmt.Errorf("user '%s' not found", username)
-    }
-    if err != nil {
-        return "", nil, fmt.Errorf("failed to get user: %w", err)
-    }
+	// Get user ID
+	var userID int64
+	err := s.db.QueryRow("SELECT id FROM users WHERE username = ?", username).Scan(&userID)
+	if err == sql.ErrNoRows {
+		return "", nil, fmt.Errorf("user '%s' not found", username)
+	}
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to get user: %w", err)
+	}
 
-    // Calculate expiry
-    var expiry *time.Time
-    if s.maxUserTokenDays > 0 {
-        // Apply max limit
-        days := requestedDays
-        if days <= 0 || days > s.maxUserTokenDays {
-            days = s.maxUserTokenDays
-        }
-        exp := time.Now().AddDate(0, 0, days)
-        expiry = &exp
-    } else if requestedDays > 0 {
-        // No max limit, use requested days
-        exp := time.Now().AddDate(0, 0, requestedDays)
-        expiry = &exp
-    }
-    // else: no expiry (unlimited)
+	// Calculate expiry
+	var expiry *time.Time
+	if s.maxUserTokenDays > 0 {
+		// Apply max limit
+		days := requestedDays
+		if days <= 0 || days > s.maxUserTokenDays {
+			days = s.maxUserTokenDays
+		}
+		exp := time.Now().AddDate(0, 0, days)
+		expiry = &exp
+	} else if requestedDays > 0 {
+		// No max limit, use requested days
+		exp := time.Now().AddDate(0, 0, requestedDays)
+		expiry = &exp
+	}
+	// else: no expiry (unlimited)
 
-    // Generate random token
-    tokenBytes := make([]byte, 32)
-    if _, err := rand.Read(tokenBytes); err != nil {
-        return "", nil, fmt.Errorf("failed to generate token: %w", err)
-    }
-    rawToken := base64.URLEncoding.EncodeToString(tokenBytes)
+	// Generate random token
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return "", nil, fmt.Errorf("failed to generate token: %w", err)
+	}
+	rawToken := base64.URLEncoding.EncodeToString(tokenBytes)
 
-    // Hash the token for storage
-    hash := sha256.Sum256([]byte(rawToken))
-    tokenHash := hex.EncodeToString(hash[:])
+	// Hash the token for storage
+	hash := sha256.Sum256([]byte(rawToken))
+	tokenHash := hex.EncodeToString(hash[:])
 
-    // Insert into database
-    result, err := s.db.Exec(
-        `INSERT INTO tokens (token_hash, token_type, owner_id, expires_at, annotation)
+	// Insert into database
+	result, err := s.db.Exec(
+		`INSERT INTO tokens (token_hash, token_type, owner_id, expires_at, annotation)
          VALUES (?, ?, ?, ?, ?)`,
-        tokenHash, TokenTypeUser, userID, expiry, annotation,
-    )
-    if err != nil {
-        return "", nil, fmt.Errorf("failed to create token: %w", err)
-    }
+		tokenHash, TokenTypeUser, userID, expiry, annotation,
+	)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to create token: %w", err)
+	}
 
-    //nolint:errcheck // SQLite always supports LastInsertId
-    id, _ := result.LastInsertId()
-    token := &StoredToken{
-        ID:         id,
-        TokenHash:  tokenHash,
-        TokenType:  TokenTypeUser,
-        OwnerID:    &userID,
-        ExpiresAt:  expiry,
-        Annotation: annotation,
-        CreatedAt:  time.Now(),
-    }
+	//nolint:errcheck // SQLite always supports LastInsertId
+	id, _ := result.LastInsertId()
+	token := &StoredToken{
+		ID:         id,
+		TokenHash:  tokenHash,
+		TokenType:  TokenTypeUser,
+		OwnerID:    &userID,
+		ExpiresAt:  expiry,
+		Annotation: annotation,
+		CreatedAt:  time.Now(),
+	}
 
-    return rawToken, token, nil
+	return rawToken, token, nil
 }
 
 // ListUserTokens lists all tokens owned by a user
 func (s *AuthStore) ListUserTokens(username string) ([]*StoredToken, error) {
-    s.mu.RLock()
-    defer s.mu.RUnlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
-    rows, err := s.db.Query(
-        `SELECT t.id, t.token_hash, t.token_type, t.owner_id, t.expires_at, t.annotation, t.created_at, t.database
+	rows, err := s.db.Query(
+		`SELECT t.id, t.token_hash, t.token_type, t.owner_id, t.expires_at, t.annotation, t.created_at, t.database
          FROM tokens t
          JOIN users u ON t.owner_id = u.id
          WHERE u.username = ? AND t.token_type = ?
          ORDER BY t.created_at DESC`,
-        username, TokenTypeUser,
-    )
-    if err != nil {
-        return nil, fmt.Errorf("failed to list user tokens: %w", err)
-    }
-    defer rows.Close()
+		username, TokenTypeUser,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list user tokens: %w", err)
+	}
+	defer rows.Close()
 
-    return s.scanTokens(rows)
+	return s.scanTokens(rows)
 }
 
 // DeleteUserToken deletes a user token (only if owned by the user)
 func (s *AuthStore) DeleteUserToken(username string, tokenID int64) error {
-    s.mu.Lock()
-    defer s.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-    result, err := s.db.Exec(
-        `DELETE FROM tokens
+	result, err := s.db.Exec(
+		`DELETE FROM tokens
          WHERE id = ? AND token_type = ? AND owner_id = (SELECT id FROM users WHERE username = ?)`,
-        tokenID, TokenTypeUser, username,
-    )
-    if err != nil {
-        return fmt.Errorf("failed to delete token: %w", err)
-    }
+		tokenID, TokenTypeUser, username,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to delete token: %w", err)
+	}
 
-    rows, err := result.RowsAffected()
-    if err != nil {
-        return fmt.Errorf("failed to get rows affected: %w", err)
-    }
-    if rows == 0 {
-        return fmt.Errorf("token not found or not owned by user")
-    }
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("token not found or not owned by user")
+	}
 
-    return nil
+	return nil
 }
 
 // =============================================================================
@@ -640,43 +639,43 @@ func (s *AuthStore) DeleteUserToken(username string, tokenID int64) error {
 // ValidateToken checks if a token (service or user) is valid
 // Returns the token info if valid
 func (s *AuthStore) ValidateToken(rawToken string) (*StoredToken, error) {
-    s.mu.RLock()
-    defer s.mu.RUnlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
-    // Hash the provided token
-    hash := sha256.Sum256([]byte(rawToken))
-    tokenHash := hex.EncodeToString(hash[:])
+	// Hash the provided token
+	hash := sha256.Sum256([]byte(rawToken))
+	tokenHash := hex.EncodeToString(hash[:])
 
-    var token StoredToken
-    err := s.db.QueryRow(
-        `SELECT id, token_hash, token_type, owner_id, expires_at, annotation, created_at, database
+	var token StoredToken
+	err := s.db.QueryRow(
+		`SELECT id, token_hash, token_type, owner_id, expires_at, annotation, created_at, database
          FROM tokens WHERE token_hash = ?`,
-        tokenHash,
-    ).Scan(&token.ID, &token.TokenHash, &token.TokenType, &token.OwnerID,
-        &token.ExpiresAt, &token.Annotation, &token.CreatedAt, &token.Database)
+		tokenHash,
+	).Scan(&token.ID, &token.TokenHash, &token.TokenType, &token.OwnerID,
+		&token.ExpiresAt, &token.Annotation, &token.CreatedAt, &token.Database)
 
-    if err == sql.ErrNoRows {
-        return nil, fmt.Errorf("invalid token")
-    }
-    if err != nil {
-        return nil, fmt.Errorf("token validation error: %w", err)
-    }
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("invalid token")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("token validation error: %w", err)
+	}
 
-    // Check expiration
-    if token.ExpiresAt != nil && token.ExpiresAt.Before(time.Now()) {
-        return nil, fmt.Errorf("token has expired")
-    }
+	// Check expiration
+	if token.ExpiresAt != nil && token.ExpiresAt.Before(time.Now()) {
+		return nil, fmt.Errorf("token has expired")
+	}
 
-    // For user tokens, verify the owning user is still enabled
-    if token.TokenType == TokenTypeUser && token.OwnerID != nil {
-        var enabled bool
-        err := s.db.QueryRow("SELECT enabled FROM users WHERE id = ?", *token.OwnerID).Scan(&enabled)
-        if err != nil || !enabled {
-            return nil, fmt.Errorf("token owner is disabled")
-        }
-    }
+	// For user tokens, verify the owning user is still enabled
+	if token.TokenType == TokenTypeUser && token.OwnerID != nil {
+		var enabled bool
+		err := s.db.QueryRow("SELECT enabled FROM users WHERE id = ?", *token.OwnerID).Scan(&enabled)
+		if err != nil || !enabled {
+			return nil, fmt.Errorf("token owner is disabled")
+		}
+	}
 
-    return &token, nil
+	return &token, nil
 }
 
 // =============================================================================
@@ -685,143 +684,143 @@ func (s *AuthStore) ValidateToken(rawToken string) (*StoredToken, error) {
 
 // ListServiceTokens lists all service tokens
 func (s *AuthStore) ListServiceTokens() ([]*StoredToken, error) {
-    s.mu.RLock()
-    defer s.mu.RUnlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
-    rows, err := s.db.Query(
-        `SELECT id, token_hash, token_type, owner_id, expires_at, annotation, created_at, database
+	rows, err := s.db.Query(
+		`SELECT id, token_hash, token_type, owner_id, expires_at, annotation, created_at, database
          FROM tokens WHERE token_type = ?
          ORDER BY created_at DESC`,
-        TokenTypeService,
-    )
-    if err != nil {
-        return nil, fmt.Errorf("failed to list service tokens: %w", err)
-    }
-    defer rows.Close()
+		TokenTypeService,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list service tokens: %w", err)
+	}
+	defer rows.Close()
 
-    return s.scanTokens(rows)
+	return s.scanTokens(rows)
 }
 
 // DeleteServiceToken deletes a service token by ID or hash prefix
 func (s *AuthStore) DeleteServiceToken(identifier string) error {
-    s.mu.Lock()
-    defer s.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-    // Try by ID first
-    result, err := s.db.Exec(
-        "DELETE FROM tokens WHERE id = ? AND token_type = ?",
-        identifier, TokenTypeService,
-    )
-    if err == nil {
-        //nolint:errcheck // RowsAffected error non-critical, we try hash prefix next
-        if rows, _ := result.RowsAffected(); rows > 0 {
-            return nil
-        }
-    }
+	// Try by ID first
+	result, err := s.db.Exec(
+		"DELETE FROM tokens WHERE id = ? AND token_type = ?",
+		identifier, TokenTypeService,
+	)
+	if err == nil {
+		//nolint:errcheck // RowsAffected error non-critical, we try hash prefix next
+		if rows, _ := result.RowsAffected(); rows > 0 {
+			return nil
+		}
+	}
 
-    // Try by hash prefix
-    if len(identifier) >= 8 {
-        result, err = s.db.Exec(
-            "DELETE FROM tokens WHERE token_hash LIKE ? AND token_type = ?",
-            identifier+"%", TokenTypeService,
-        )
-        if err != nil {
-            return fmt.Errorf("failed to delete token: %w", err)
-        }
-        //nolint:errcheck // RowsAffected error non-critical for conditional check
-        if rows, _ := result.RowsAffected(); rows > 0 {
-            return nil
-        }
-    }
+	// Try by hash prefix
+	if len(identifier) >= 8 {
+		result, err = s.db.Exec(
+			"DELETE FROM tokens WHERE token_hash LIKE ? AND token_type = ?",
+			identifier+"%", TokenTypeService,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to delete token: %w", err)
+		}
+		//nolint:errcheck // RowsAffected error non-critical for conditional check
+		if rows, _ := result.RowsAffected(); rows > 0 {
+			return nil
+		}
+	}
 
-    return fmt.Errorf("token not found")
+	return fmt.Errorf("token not found")
 }
 
 // CleanupExpiredTokens removes all expired tokens
 // Returns the number of tokens removed and their hashes
 func (s *AuthStore) CleanupExpiredTokens() (int, []string) {
-    s.mu.Lock()
-    defer s.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-    // Get hashes of expired tokens before deletion (for connection cleanup)
-    rows, err := s.db.Query(
-        "SELECT token_hash FROM tokens WHERE expires_at IS NOT NULL AND expires_at < ?",
-        time.Now(),
-    )
-    if err != nil {
-        return 0, nil
-    }
+	// Get hashes of expired tokens before deletion (for connection cleanup)
+	rows, err := s.db.Query(
+		"SELECT token_hash FROM tokens WHERE expires_at IS NOT NULL AND expires_at < ?",
+		time.Now(),
+	)
+	if err != nil {
+		return 0, nil
+	}
 
-    var hashes []string
-    for rows.Next() {
-        var hash string
-        if err := rows.Scan(&hash); err == nil {
-            hashes = append(hashes, hash)
-        }
-    }
-    rows.Close()
+	var hashes []string
+	for rows.Next() {
+		var hash string
+		if err := rows.Scan(&hash); err == nil {
+			hashes = append(hashes, hash)
+		}
+	}
+	rows.Close()
 
-    // Delete expired tokens
-    result, err := s.db.Exec(
-        "DELETE FROM tokens WHERE expires_at IS NOT NULL AND expires_at < ?",
-        time.Now(),
-    )
-    if err != nil {
-        return 0, nil
-    }
+	// Delete expired tokens
+	result, err := s.db.Exec(
+		"DELETE FROM tokens WHERE expires_at IS NOT NULL AND expires_at < ?",
+		time.Now(),
+	)
+	if err != nil {
+		return 0, nil
+	}
 
-    //nolint:errcheck // RowsAffected error non-critical for cleanup count
-    count, _ := result.RowsAffected()
-    return int(count), hashes
+	//nolint:errcheck // RowsAffected error non-critical for cleanup count
+	count, _ := result.RowsAffected()
+	return int(count), hashes
 }
 
 // scanTokens is a helper to scan token rows
 func (s *AuthStore) scanTokens(rows *sql.Rows) ([]*StoredToken, error) {
-    var tokens []*StoredToken
-    for rows.Next() {
-        var token StoredToken
-        if err := rows.Scan(&token.ID, &token.TokenHash, &token.TokenType, &token.OwnerID,
-            &token.ExpiresAt, &token.Annotation, &token.CreatedAt, &token.Database); err != nil {
-            return nil, fmt.Errorf("failed to scan token: %w", err)
-        }
-        tokens = append(tokens, &token)
-    }
-    return tokens, nil
+	var tokens []*StoredToken
+	for rows.Next() {
+		var token StoredToken
+		if err := rows.Scan(&token.ID, &token.TokenHash, &token.TokenType, &token.OwnerID,
+			&token.ExpiresAt, &token.Annotation, &token.CreatedAt, &token.Database); err != nil {
+			return nil, fmt.Errorf("failed to scan token: %w", err)
+		}
+		tokens = append(tokens, &token)
+	}
+	return tokens, nil
 }
 
 // GetTokenHashByRawToken returns the hash for a raw token (for connection lookup)
 func GetTokenHashByRawToken(rawToken string) string {
-    hash := sha256.Sum256([]byte(rawToken))
-    return hex.EncodeToString(hash[:])
+	hash := sha256.Sum256([]byte(rawToken))
+	return hex.EncodeToString(hash[:])
 }
 
 // UserCount returns the number of users in the store
 func (s *AuthStore) UserCount() int {
-    var count int
-    //nolint:errcheck // Returns 0 on error, which is acceptable
-    s.db.QueryRow("SELECT COUNT(*) FROM users").Scan(&count)
-    return count
+	var count int
+	//nolint:errcheck // Returns 0 on error, which is acceptable
+	s.db.QueryRow("SELECT COUNT(*) FROM users").Scan(&count)
+	return count
 }
 
 // TokenCount returns the number of tokens in the store
 func (s *AuthStore) TokenCount() int {
-    var count int
-    //nolint:errcheck // Returns 0 on error, which is acceptable
-    s.db.QueryRow("SELECT COUNT(*) FROM tokens").Scan(&count)
-    return count
+	var count int
+	//nolint:errcheck // Returns 0 on error, which is acceptable
+	s.db.QueryRow("SELECT COUNT(*) FROM tokens").Scan(&count)
+	return count
 }
 
 // ServiceTokenCount returns the number of service tokens
 func (s *AuthStore) ServiceTokenCount() int {
-    var count int
-    //nolint:errcheck // Returns 0 on error, which is acceptable
-    s.db.QueryRow("SELECT COUNT(*) FROM tokens WHERE token_type = ?", TokenTypeService).Scan(&count)
-    return count
+	var count int
+	//nolint:errcheck // Returns 0 on error, which is acceptable
+	s.db.QueryRow("SELECT COUNT(*) FROM tokens WHERE token_type = ?", TokenTypeService).Scan(&count)
+	return count
 }
 
 // GetCounts returns the number of users and tokens
 func (s *AuthStore) GetCounts() (int, int) {
-    return s.UserCount(), s.TokenCount()
+	return s.UserCount(), s.TokenCount()
 }
 
 // =============================================================================
@@ -830,10 +829,10 @@ func (s *AuthStore) GetCounts() (int, int) {
 
 // SetConnectionSession sets the selected database connection for a token
 func (s *AuthStore) SetConnectionSession(tokenHash string, connectionID int, databaseName *string) error {
-    s.mu.Lock()
-    defer s.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-    _, err := s.db.Exec(`
+	_, err := s.db.Exec(`
         INSERT INTO connection_sessions (token_hash, connection_id, database_name, updated_at)
         VALUES (?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(token_hash) DO UPDATE SET
@@ -842,59 +841,59 @@ func (s *AuthStore) SetConnectionSession(tokenHash string, connectionID int, dat
             updated_at = CURRENT_TIMESTAMP
     `, tokenHash, connectionID, databaseName)
 
-    if err != nil {
-        return fmt.Errorf("failed to set connection session: %w", err)
-    }
+	if err != nil {
+		return fmt.Errorf("failed to set connection session: %w", err)
+	}
 
-    return nil
+	return nil
 }
 
 // GetConnectionSession returns the selected database connection for a token
 func (s *AuthStore) GetConnectionSession(tokenHash string) (*ConnectionSession, error) {
-    s.mu.RLock()
-    defer s.mu.RUnlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
-    var session ConnectionSession
-    session.TokenHash = tokenHash
+	var session ConnectionSession
+	session.TokenHash = tokenHash
 
-    err := s.db.QueryRow(`
+	err := s.db.QueryRow(`
         SELECT connection_id, database_name
         FROM connection_sessions
         WHERE token_hash = ?
     `, tokenHash).Scan(&session.ConnectionID, &session.DatabaseName)
 
-    if err == sql.ErrNoRows {
-        return nil, nil // No session set
-    }
-    if err != nil {
-        return nil, fmt.Errorf("failed to get connection session: %w", err)
-    }
+	if err == sql.ErrNoRows {
+		return nil, nil // No session set
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get connection session: %w", err)
+	}
 
-    return &session, nil
+	return &session, nil
 }
 
 // ClearConnectionSession clears the selected database connection for a token
 func (s *AuthStore) ClearConnectionSession(tokenHash string) error {
-    s.mu.Lock()
-    defer s.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-    _, err := s.db.Exec("DELETE FROM connection_sessions WHERE token_hash = ?", tokenHash)
-    if err != nil {
-        return fmt.Errorf("failed to clear connection session: %w", err)
-    }
+	_, err := s.db.Exec("DELETE FROM connection_sessions WHERE token_hash = ?", tokenHash)
+	if err != nil {
+		return fmt.Errorf("failed to clear connection session: %w", err)
+	}
 
-    return nil
+	return nil
 }
 
 // ClearAllConnectionSessions clears all connection sessions (for cleanup)
 func (s *AuthStore) ClearAllConnectionSessions() error {
-    s.mu.Lock()
-    defer s.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-    _, err := s.db.Exec("DELETE FROM connection_sessions")
-    if err != nil {
-        return fmt.Errorf("failed to clear all connection sessions: %w", err)
-    }
+	_, err := s.db.Exec("DELETE FROM connection_sessions")
+	if err != nil {
+		return fmt.Errorf("failed to clear all connection sessions: %w", err)
+	}
 
-    return nil
+	return nil
 }

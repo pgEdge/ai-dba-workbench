@@ -183,14 +183,13 @@ func (r *ContextAwareRegistry) getClient(ctx context.Context) (*database.Client,
 			}
 			connStr := r.datastore.BuildConnectionString(conn, password, databaseOverride)
 
-			// Get or create client using the connection string
-			// Use a unique key combining token hash and connection ID
-			clientKey := fmt.Sprintf("%s:conn:%d", tokenHash, session.ConnectionID)
-			if session.DatabaseName != nil {
-				clientKey = fmt.Sprintf("%s:db:%s", clientKey, *session.DatabaseName)
+			// Get or create client using the session helper
+			sessionInfo := &database.SessionInfo{
+				TokenHash:    tokenHash,
+				ConnectionID: session.ConnectionID,
+				DatabaseName: session.DatabaseName,
 			}
-
-			client, err := r.clientManager.GetOrCreateClientWithConnString(clientKey, connStr)
+			client, err := r.clientManager.GetClientForSession(sessionInfo, connStr)
 			if err != nil {
 				return nil, fmt.Errorf("failed to connect to selected database: %w", err)
 			}

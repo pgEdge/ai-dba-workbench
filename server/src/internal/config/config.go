@@ -278,8 +278,8 @@ type CLIFlags struct {
 	ConfigFile    string
 
 	// HTTP flags
-	HTTPAddr       string
-	HTTPAddrSet    bool
+	HTTPAddr    string
+	HTTPAddrSet bool
 
 	// TLS flags
 	TLSEnabled    bool

@@ -22,8 +22,8 @@ import (
 // Each authenticated token gets its own database connection
 type ClientManager struct {
 	mu       sync.RWMutex
-	clients  map[string]*Client      // tokenHash -> client
-	dbConfig *config.DatabaseConfig  // single database configuration
+	clients  map[string]*Client     // tokenHash -> client
+	dbConfig *config.DatabaseConfig // single database configuration
 }
 
 // NewClientManager creates a new client manager with database configuration
@@ -239,6 +239,32 @@ func (cm *ClientManager) GetOrCreateClient(key string, autoConnect bool) (*Clien
 
 	cm.clients[key] = client
 	return client, nil
+}
+
+// SessionInfo contains the information needed to create a client for a session
+type SessionInfo struct {
+	TokenHash    string
+	ConnectionID int
+	DatabaseName *string
+}
+
+// GetClientForSession returns a database client for a connection session
+// This is a helper that builds the appropriate client key and connection string
+func (cm *ClientManager) GetClientForSession(session *SessionInfo, connStr string) (*Client, error) {
+	if session == nil {
+		return nil, fmt.Errorf("session info is required")
+	}
+	if connStr == "" {
+		return nil, fmt.Errorf("connection string is required")
+	}
+
+	// Build unique key combining token hash and connection ID
+	clientKey := fmt.Sprintf("%s:conn:%d", session.TokenHash, session.ConnectionID)
+	if session.DatabaseName != nil {
+		clientKey = fmt.Sprintf("%s:db:%s", clientKey, *session.DatabaseName)
+	}
+
+	return cm.GetOrCreateClientWithConnString(clientKey, connStr)
 }
 
 // GetOrCreateClientWithConnString returns a database client for the given key

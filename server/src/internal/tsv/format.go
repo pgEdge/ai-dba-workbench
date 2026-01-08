@@ -47,6 +47,77 @@ func FormatValue(v interface{}) string {
 		s = fmt.Sprintf("%v", val)
 	case pgtype.Numeric:
 		s = formatNumeric(val)
+	// Integer types
+	case pgtype.Int2:
+		if !val.Valid {
+			return ""
+		}
+		s = fmt.Sprintf("%d", val.Int16)
+	case pgtype.Int4:
+		if !val.Valid {
+			return ""
+		}
+		s = fmt.Sprintf("%d", val.Int32)
+	case pgtype.Int8:
+		if !val.Valid {
+			return ""
+		}
+		s = fmt.Sprintf("%d", val.Int64)
+	// Float types
+	case pgtype.Float4:
+		if !val.Valid {
+			return ""
+		}
+		s = fmt.Sprintf("%v", val.Float32)
+	case pgtype.Float8:
+		if !val.Valid {
+			return ""
+		}
+		s = fmt.Sprintf("%v", val.Float64)
+	// Text and Bool types
+	case pgtype.Text:
+		if !val.Valid {
+			return ""
+		}
+		s = val.String
+	case pgtype.Bool:
+		if !val.Valid {
+			return ""
+		}
+		if val.Bool {
+			s = "true"
+		} else {
+			s = "false"
+		}
+	// Date/time types
+	case pgtype.Timestamp:
+		if !val.Valid {
+			return ""
+		}
+		s = val.Time.Format(time.RFC3339)
+	case pgtype.Timestamptz:
+		if !val.Valid {
+			return ""
+		}
+		s = val.Time.Format(time.RFC3339)
+	case pgtype.Date:
+		if !val.Valid {
+			return ""
+		}
+		s = val.Time.Format("2006-01-02")
+	case pgtype.Interval:
+		if !val.Valid {
+			return ""
+		}
+		s = formatInterval(val)
+	case pgtype.UUID:
+		if !val.Valid {
+			return ""
+		}
+		s = formatUUID(val.Bytes)
+	case [16]byte:
+		// Raw UUID bytes
+		s = formatUUID(val)
 	case []interface{}, map[string]interface{}:
 		// Complex types (arrays, JSON objects) - serialize to JSON
 		jsonBytes, err := json.Marshal(val)
@@ -157,4 +228,70 @@ func formatNumeric(n pgtype.Numeric) string {
 		return fmt.Sprintf("%d", int64(f64))
 	}
 	return fmt.Sprintf("%.6g", f64)
+}
+
+// formatInterval converts a pgtype.Interval to a human-readable string
+func formatInterval(i pgtype.Interval) string {
+	var parts []string
+
+	// Handle months (converted to years and months)
+	if i.Months != 0 {
+		years := i.Months / 12
+		months := i.Months % 12
+		if years != 0 {
+			if years == 1 {
+				parts = append(parts, "1 year")
+			} else {
+				parts = append(parts, fmt.Sprintf("%d years", years))
+			}
+		}
+		if months != 0 {
+			if months == 1 {
+				parts = append(parts, "1 mon")
+			} else {
+				parts = append(parts, fmt.Sprintf("%d mons", months))
+			}
+		}
+	}
+
+	// Handle days
+	if i.Days != 0 {
+		if i.Days == 1 {
+			parts = append(parts, "1 day")
+		} else {
+			parts = append(parts, fmt.Sprintf("%d days", i.Days))
+		}
+	}
+
+	// Handle microseconds (converted to hours, minutes, seconds)
+	if i.Microseconds != 0 {
+		totalSeconds := i.Microseconds / 1000000
+		microsRemainder := i.Microseconds % 1000000
+
+		hours := totalSeconds / 3600
+		minutes := (totalSeconds % 3600) / 60
+		seconds := totalSeconds % 60
+
+		if hours != 0 || minutes != 0 || seconds != 0 || microsRemainder != 0 {
+			if microsRemainder != 0 {
+				// Include fractional seconds
+				parts = append(parts, fmt.Sprintf("%02d:%02d:%02d.%06d",
+					hours, minutes, seconds, microsRemainder))
+			} else {
+				parts = append(parts, fmt.Sprintf("%02d:%02d:%02d", hours, minutes, seconds))
+			}
+		}
+	}
+
+	if len(parts) == 0 {
+		return "00:00:00"
+	}
+
+	return strings.Join(parts, " ")
+}
+
+// formatUUID formats a UUID byte array as a standard UUID string
+func formatUUID(b [16]byte) string {
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }

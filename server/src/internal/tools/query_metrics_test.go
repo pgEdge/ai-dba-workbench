@@ -387,3 +387,246 @@ func TestFormatMetricValue_Numeric(t *testing.T) {
 		t.Errorf("formatMetricValue(pgtype.Numeric) = %q, want %q", result, "42")
 	}
 }
+
+func TestFormatMetricValue_PgTypes(t *testing.T) {
+	testTime := time.Date(2024, 1, 15, 10, 30, 45, 0, time.UTC)
+
+	tests := []struct {
+		name     string
+		input    interface{}
+		expected string
+	}{
+		// Integer types
+		{
+			name:     "pgtype.Int2 valid",
+			input:    pgtype.Int2{Valid: true, Int16: 123},
+			expected: "123",
+		},
+		{
+			name:     "pgtype.Int2 invalid",
+			input:    pgtype.Int2{Valid: false},
+			expected: "",
+		},
+		{
+			name:     "pgtype.Int4 valid",
+			input:    pgtype.Int4{Valid: true, Int32: 456789},
+			expected: "456789",
+		},
+		{
+			name:     "pgtype.Int4 invalid",
+			input:    pgtype.Int4{Valid: false},
+			expected: "",
+		},
+		{
+			name:     "pgtype.Int8 valid",
+			input:    pgtype.Int8{Valid: true, Int64: 9223372036854775807},
+			expected: "9223372036854775807",
+		},
+		{
+			name:     "pgtype.Int8 invalid",
+			input:    pgtype.Int8{Valid: false},
+			expected: "",
+		},
+		// Float types
+		{
+			name:     "pgtype.Float4 valid",
+			input:    pgtype.Float4{Valid: true, Float32: 3.14},
+			expected: "3.14",
+		},
+		{
+			name:     "pgtype.Float4 invalid",
+			input:    pgtype.Float4{Valid: false},
+			expected: "",
+		},
+		{
+			name:     "pgtype.Float8 valid",
+			input:    pgtype.Float8{Valid: true, Float64: 3.14159265359},
+			expected: "3.14159265359",
+		},
+		{
+			name:     "pgtype.Float8 invalid",
+			input:    pgtype.Float8{Valid: false},
+			expected: "",
+		},
+		// Text type
+		{
+			name:     "pgtype.Text valid",
+			input:    pgtype.Text{Valid: true, String: "hello world"},
+			expected: "hello world",
+		},
+		{
+			name:     "pgtype.Text invalid",
+			input:    pgtype.Text{Valid: false},
+			expected: "",
+		},
+		// Bool type
+		{
+			name:     "pgtype.Bool true",
+			input:    pgtype.Bool{Valid: true, Bool: true},
+			expected: "true",
+		},
+		{
+			name:     "pgtype.Bool false",
+			input:    pgtype.Bool{Valid: true, Bool: false},
+			expected: "false",
+		},
+		{
+			name:     "pgtype.Bool invalid",
+			input:    pgtype.Bool{Valid: false},
+			expected: "",
+		},
+		// Timestamp types
+		{
+			name:     "pgtype.Timestamp valid",
+			input:    pgtype.Timestamp{Valid: true, Time: testTime},
+			expected: "2024-01-15T10:30:45Z",
+		},
+		{
+			name:     "pgtype.Timestamp invalid",
+			input:    pgtype.Timestamp{Valid: false},
+			expected: "",
+		},
+		{
+			name:     "pgtype.Timestamptz valid",
+			input:    pgtype.Timestamptz{Valid: true, Time: testTime},
+			expected: "2024-01-15T10:30:45Z",
+		},
+		{
+			name:     "pgtype.Timestamptz invalid",
+			input:    pgtype.Timestamptz{Valid: false},
+			expected: "",
+		},
+		{
+			name:     "pgtype.Date valid",
+			input:    pgtype.Date{Valid: true, Time: testTime},
+			expected: "2024-01-15",
+		},
+		{
+			name:     "pgtype.Date invalid",
+			input:    pgtype.Date{Valid: false},
+			expected: "",
+		},
+		// Interval type
+		{
+			name:     "pgtype.Interval valid",
+			input:    pgtype.Interval{Valid: true, Days: 5, Microseconds: 3600000000},
+			expected: "5 days 01:00:00",
+		},
+		{
+			name:     "pgtype.Interval invalid",
+			input:    pgtype.Interval{Valid: false},
+			expected: "",
+		},
+		// UUID type
+		{
+			name:     "pgtype.UUID valid",
+			input:    pgtype.UUID{Valid: true, Bytes: [16]byte{0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0}},
+			expected: "12345678-9abc-def0-1234-56789abcdef0",
+		},
+		{
+			name:     "pgtype.UUID invalid",
+			input:    pgtype.UUID{Valid: false},
+			expected: "",
+		},
+		{
+			name:     "raw UUID bytes",
+			input:    [16]byte{0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0},
+			expected: "12345678-9abc-def0-1234-56789abcdef0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := formatMetricValue(tt.input)
+			if result != tt.expected {
+				t.Errorf("formatMetricValue(%v) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestFormatInterval(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    pgtype.Interval
+		expected string
+	}{
+		{
+			name:     "zero interval",
+			input:    pgtype.Interval{Valid: true},
+			expected: "00:00:00",
+		},
+		{
+			name:     "1 hour",
+			input:    pgtype.Interval{Valid: true, Microseconds: 3600000000},
+			expected: "01:00:00",
+		},
+		{
+			name:     "1 day",
+			input:    pgtype.Interval{Valid: true, Days: 1},
+			expected: "1 day",
+		},
+		{
+			name:     "5 days",
+			input:    pgtype.Interval{Valid: true, Days: 5},
+			expected: "5 days",
+		},
+		{
+			name:     "1 month",
+			input:    pgtype.Interval{Valid: true, Months: 1},
+			expected: "1 mon",
+		},
+		{
+			name:     "1 year",
+			input:    pgtype.Interval{Valid: true, Months: 12},
+			expected: "1 year",
+		},
+		{
+			name:     "complex interval",
+			input:    pgtype.Interval{Valid: true, Months: 14, Days: 3, Microseconds: 3661000000},
+			expected: "1 year 2 mons 3 days 01:01:01",
+		},
+		{
+			name:     "with fractional seconds",
+			input:    pgtype.Interval{Valid: true, Microseconds: 1500000},
+			expected: "00:00:01.500000",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := formatInterval(tt.input)
+			if result != tt.expected {
+				t.Errorf("formatInterval() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestFormatUUID(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    [16]byte
+		expected string
+	}{
+		{
+			name:     "standard UUID",
+			input:    [16]byte{0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0},
+			expected: "12345678-9abc-def0-1234-56789abcdef0",
+		},
+		{
+			name:     "all zeros",
+			input:    [16]byte{},
+			expected: "00000000-0000-0000-0000-000000000000",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := formatUUID(tt.input)
+			if result != tt.expected {
+				t.Errorf("formatUUID() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}

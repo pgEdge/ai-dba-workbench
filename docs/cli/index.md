@@ -133,27 +133,67 @@ configured with an expiry).
 | `help` | Show available commands |
 | `quit` / `exit` | Exit the CLI |
 | `clear` | Clear the screen |
-| `tools` | List MCP tools |
-| `resources` | List MCP resources |
 
 ### Slash Commands
 
+**Navigation:**
+
 | Command | Description |
 |---------|-------------|
-| `/help` | Slash command help |
-| `/set llm-provider <name>` | Switch LLM |
-| `/set llm-model <name>` | Change model |
-| `/show settings` | Show current settings |
-| `/list models` | List available models |
-| `/list connections` | List database connections |
-| `/list databases` | List databases on current connection |
-| `/connect` | Show current database connection |
-| `/connect <id> [database]` | Connect to database by ID |
-| `/disconnect` | Disconnect from database |
-| `/history` | List conversations |
-| `/history load <id>` | Load conversation |
-| `/save` | Save conversation |
-| `/new` | New conversation |
+| `/help` | Show slash command help |
+| `/clear` | Clear the screen |
+| `/quit`, `/exit` | Exit the CLI |
+
+**LLM Settings:**
+
+| Command | Description |
+|---------|-------------|
+| `/list providers` | List available LLM providers |
+| `/list models` | List available models for current provider |
+| `/set provider <name>` | Set LLM provider (anthropic, openai, ollama) |
+| `/set model <name>` | Set LLM model |
+| `/show provider` | Show current LLM provider |
+| `/show model` | Show current LLM model |
+
+**Database Connections:**
+
+| Command | Description |
+|---------|-------------|
+| `/list connections` | List available database connections |
+| `/list databases` | List databases on selected connection |
+| `/set connection <id>` | Select a database connection |
+| `/set connection none` | Clear the current connection |
+| `/show connection` | Show current connection |
+
+**MCP Resources:**
+
+| Command | Description |
+|---------|-------------|
+| `/list tools` | List available MCP tools |
+| `/list resources` | List available MCP resources |
+| `/list prompts` | List available MCP prompts |
+| `/prompt <name> [args]` | Execute an MCP prompt |
+
+**Display Settings:**
+
+| Command | Description |
+|---------|-------------|
+| `/set color on\|off` | Enable/disable colored output |
+| `/set markdown on\|off` | Enable/disable markdown rendering |
+| `/set status-messages on\|off` | Enable/disable status messages |
+| `/set debug on\|off` | Enable/disable debug messages |
+| `/show settings` | Show all current settings |
+
+**Conversation History:**
+
+| Command | Description |
+|---------|-------------|
+| `/history list` | List saved conversations |
+| `/history show <id>` | Show a saved conversation |
+| `/history continue <id>` | Continue a saved conversation |
+| `/history delete <id>` | Delete a saved conversation |
+| `/new` | Start a new conversation |
+| `/save [name]` | Save current conversation |
 
 ### Keyboard Shortcuts
 
@@ -246,9 +286,9 @@ System: Loaded conversation
 
 ```
           _
-   ______/ \-.   _           pgEdge AI CLI
-.-/     (    o\_//           Type 'quit' to exit, 'help' for commands
- |  ___  \_/\---'
+   ______/ \-.   _           pgEdge AI DBA Workbench
+.-/     (    o\_//           CLI: v1.0.0-alpha1  Server: v1.0.0-alpha1
+ |  ___  \_/\---'            Type /quit to leave, /help for commands
  |_||  |_||
 
 System: Connected to MCP server at http://localhost:8080

@@ -341,9 +341,9 @@ func TestClient_HandleSlashCommand_Tools(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	handled := client.HandleSlashCommand(ctx, &SlashCommand{Command: "tools"})
+	handled := client.HandleSlashCommand(ctx, &SlashCommand{Command: "list", Args: []string{"tools"}})
 	if !handled {
-		t.Error("Expected tools command to be handled")
+		t.Error("Expected list tools command to be handled")
 	}
 }
 
@@ -382,10 +382,10 @@ func TestClient_HandleSlashCommand_Resources(t *testing.T) {
 		t.Fatalf("Initialize failed: %v", err)
 	}
 
-	// Handle resources command
-	handled := client.HandleSlashCommand(ctx, &SlashCommand{Command: "resources"})
+	// Handle list resources command
+	handled := client.HandleSlashCommand(ctx, &SlashCommand{Command: "list", Args: []string{"resources"}})
 	if !handled {
-		t.Error("Expected resources command to be handled")
+		t.Error("Expected list resources command to be handled")
 	}
 }
 

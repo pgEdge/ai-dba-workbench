@@ -36,9 +36,9 @@ func TestParseSlashCommand(t *testing.T) {
 		},
 		{
 			name:         "show command with arg",
-			input:        "/show llm-provider",
+			input:        "/show provider",
 			expectedCmd:  "show",
-			expectedArgs: []string{"llm-provider"},
+			expectedArgs: []string{"provider"},
 		},
 		{
 			name:         "list command with arg",

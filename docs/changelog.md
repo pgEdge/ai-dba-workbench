@@ -14,7 +14,7 @@ and this project adheres to
 - Connection management REST APIs for selecting database connections
   (`/api/connections`, `/api/connections/current`)
 - CLI slash commands for connection management (`/list connections`,
-  `/connect`, `/disconnect`)
+  `/set connection`, `/show connection`)
 - Session-based connection selection persisted in SQLite auth database
 - Documentation for connection management in `docs/server/connections.md`
 - New `pg://connection_info` resource that returns the currently selected
@@ -30,6 +30,15 @@ and this project adheres to
 
 ### Changed
 
+- CLI commands refactored for consistency:
+  - Removed `llm-` prefix: `/set provider`, `/show provider` (was `llm-provider`)
+  - Removed `llm-` prefix: `/set model`, `/show model` (was `llm-model`)
+  - Moved `/tools`, `/resources`, `/prompts` to `/list tools`, `/list resources`,
+    `/list prompts`
+  - Added `/list providers` to list available LLM providers
+  - Replaced `/connect` and `/disconnect` with `/set connection <id>`
+    (use `/set connection none` to disconnect)
+  - Reorganized help output into logical groups
 - Resources (like `pg://system_info`) now use the selected monitored
   database connection instead of the datastore
 - Error messages from database connections now show the root cause error

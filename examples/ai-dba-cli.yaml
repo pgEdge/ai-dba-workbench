@@ -120,8 +120,8 @@ ui:
 
 # Path to chat history file
 # Used to persist conversation history between sessions
-# Default: ~/.ai-dba-cli-history
-# history_file: "~/.ai-dba-cli-history"
+# Default: ~/.ai-dba-workbench-cli-history
+# history_file: "~/.ai-dba-workbench-cli-history"
 
 #=========================================================================
 # EXAMPLE CONFIGURATIONS

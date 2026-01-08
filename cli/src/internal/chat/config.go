@@ -83,7 +83,7 @@ func LoadConfig(configPath string) (*Config, error) {
 			DisplayStatusMessages: true, // Default to showing status messages
 			RenderMarkdown:        true, // Default to rendering markdown
 		},
-		HistoryFile: filepath.Join(homeDir, ".ai-dba-cli-history"),
+		HistoryFile: filepath.Join(homeDir, ".ai-dba-workbench-cli-history"),
 	}
 
 	// Load from config file if provided

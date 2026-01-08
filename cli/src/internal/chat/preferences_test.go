@@ -19,6 +19,11 @@ import (
 func TestGetDefaultPreferences(t *testing.T) {
 	prefs := getDefaultPreferences()
 
+	// Check version
+	if prefs.Version != CurrentPreferencesVersion {
+		t.Errorf("Expected Version to be %d, got %d", CurrentPreferencesVersion, prefs.Version)
+	}
+
 	// Check UI defaults
 	if !prefs.UI.DisplayStatusMessages {
 		t.Error("Expected DisplayStatusMessages to be true by default")
@@ -257,6 +262,7 @@ func TestSaveAndLoadPreferences(t *testing.T) {
 
 	// Create preferences to save
 	prefs := &Preferences{
+		Version: CurrentPreferencesVersion,
 		UI: UIPreferences{
 			DisplayStatusMessages: false,
 			RenderMarkdown:        false,
@@ -279,7 +285,7 @@ func TestSaveAndLoadPreferences(t *testing.T) {
 	}
 
 	// Verify file was created
-	prefsPath := filepath.Join(tmpDir, ".pgedge-nla-cli-prefs")
+	prefsPath := filepath.Join(tmpDir, ".ai-dba-workbench-cli-prefs")
 	if _, err := os.Stat(prefsPath); os.IsNotExist(err) {
 		t.Fatal("Preferences file was not created")
 	}
@@ -324,7 +330,7 @@ func TestLoadPreferences_InvalidYAML(t *testing.T) {
 	os.Setenv("HOME", tmpDir)
 
 	// Create invalid YAML file
-	prefsPath := filepath.Join(tmpDir, ".pgedge-nla-cli-prefs")
+	prefsPath := filepath.Join(tmpDir, ".ai-dba-workbench-cli-prefs")
 	if err := os.WriteFile(prefsPath, []byte("invalid: yaml: content: ["), 0600); err != nil {
 		t.Fatalf("Failed to write invalid YAML: %v", err)
 	}
@@ -345,8 +351,65 @@ func TestGetPreferencesPath(t *testing.T) {
 	os.Setenv("HOME", "/test/home")
 
 	path := GetPreferencesPath()
-	expected := "/test/home/.pgedge-nla-cli-prefs"
+	expected := "/test/home/.ai-dba-workbench-cli-prefs"
 	if path != expected {
 		t.Errorf("GetPreferencesPath() = %q, want %q", path, expected)
+	}
+}
+
+func TestLoadPreferences_V1Migration(t *testing.T) {
+	// Save original HOME and restore after test
+	originalHome := os.Getenv("HOME")
+	defer os.Setenv("HOME", originalHome)
+
+	// Set HOME to temp directory
+	tmpDir := t.TempDir()
+	os.Setenv("HOME", tmpDir)
+
+	// Create a v1 preferences file (no version field, no color field)
+	v1PrefsYAML := `ui:
+  display_status_messages: true
+  render_markdown: true
+  debug: false
+provider_models:
+  anthropic: claude-3-opus
+last_provider: anthropic
+`
+	prefsPath := filepath.Join(tmpDir, ".ai-dba-workbench-cli-prefs")
+	if err := os.WriteFile(prefsPath, []byte(v1PrefsYAML), 0600); err != nil {
+		t.Fatalf("Failed to write v1 preferences file: %v", err)
+	}
+
+	// Load preferences (should trigger migration)
+	prefs, err := LoadPreferences()
+	if err != nil {
+		t.Fatalf("LoadPreferences failed: %v", err)
+	}
+
+	// Verify migration occurred
+	if prefs.Version != CurrentPreferencesVersion {
+		t.Errorf("Expected Version to be %d after migration, got %d", CurrentPreferencesVersion, prefs.Version)
+	}
+
+	// Verify Color was set to default (true) during migration
+	if !prefs.UI.Color {
+		t.Error("Expected Color to be true after v1 migration")
+	}
+
+	// Verify other fields were preserved
+	if !prefs.UI.DisplayStatusMessages {
+		t.Error("Expected DisplayStatusMessages to remain true")
+	}
+	if !prefs.UI.RenderMarkdown {
+		t.Error("Expected RenderMarkdown to remain true")
+	}
+	if prefs.UI.Debug {
+		t.Error("Expected Debug to remain false")
+	}
+	if prefs.LastProvider != "anthropic" {
+		t.Errorf("Expected LastProvider to remain 'anthropic', got %q", prefs.LastProvider)
+	}
+	if prefs.ProviderModels["anthropic"] != "claude-3-opus" {
+		t.Errorf("Expected anthropic model to remain 'claude-3-opus', got %q", prefs.ProviderModels["anthropic"])
 	}
 }

@@ -18,8 +18,15 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// CurrentPreferencesVersion is the current preferences file format version
+// Version history:
+// - 1: Initial version (no version field in file)
+// - 2: Added version field, fixed Color default (was missing in v1 files)
+const CurrentPreferencesVersion = 2
+
 // Preferences holds user preferences that persist across sessions
 type Preferences struct {
+	Version         int               `yaml:"version,omitempty"` // File format version for migrations
 	UI              UIPreferences     `yaml:"ui"`
 	ProviderModels  map[string]string `yaml:"provider_models"`
 	LastProvider    string            `yaml:"last_provider"`
@@ -36,7 +43,7 @@ type UIPreferences struct {
 
 // GetPreferencesPath returns the path to the user preferences file
 func GetPreferencesPath() string {
-	return filepath.Join(os.Getenv("HOME"), ".pgedge-nla-cli-prefs")
+	return filepath.Join(os.Getenv("HOME"), ".ai-dba-workbench-cli-prefs")
 }
 
 // LoadPreferences loads user preferences from the preferences file
@@ -95,6 +102,7 @@ func SavePreferences(prefs *Preferences) error {
 // getDefaultPreferences returns default preferences
 func getDefaultPreferences() *Preferences {
 	return &Preferences{
+		Version: CurrentPreferencesVersion,
 		UI: UIPreferences{
 			DisplayStatusMessages: true,
 			RenderMarkdown:        true,
@@ -113,6 +121,13 @@ func getDefaultPreferences() *Preferences {
 // sanitizePreferences validates and fixes corrupted preference data
 // Only validates structure, not model validity (done at runtime in initializeLLM)
 func sanitizePreferences(prefs *Preferences) *Preferences {
+	defaults := getDefaultPreferences()
+
+	// Migrate older preference file versions
+	if prefs.Version < CurrentPreferencesVersion {
+		prefs = migratePreferences(prefs, defaults)
+	}
+
 	// Ensure provider_models map exists
 	if prefs.ProviderModels == nil {
 		prefs.ProviderModels = make(map[string]string)
@@ -126,13 +141,30 @@ func sanitizePreferences(prefs *Preferences) *Preferences {
 	}
 	if !validProviders[prefs.LastProvider] {
 		// Invalid provider - use default
-		defaults := getDefaultPreferences()
 		prefs.LastProvider = defaults.LastProvider
 	}
 
 	// Don't validate models here - that requires API access
 	// Model validation happens at runtime in initializeLLM()
 
+	return prefs
+}
+
+// migratePreferences handles migration from older preference file versions
+func migratePreferences(prefs *Preferences, defaults *Preferences) *Preferences {
+	// v1 -> v2: Fix Color field default (was missing in v1 files, defaulting to false)
+	// In v1 files, Color was not present, so it defaults to false (Go zero value)
+	// We want it to default to true for new users who haven't explicitly disabled it
+	if prefs.Version < 2 {
+		// Only set Color to default if the entire UI struct appears to be from v1
+		// (i.e., Color is false which could be the zero value from missing field)
+		// We can't distinguish "explicitly set to false" from "missing", so we
+		// apply the default. Users who explicitly disabled color will need to
+		// disable it again after this migration.
+		prefs.UI.Color = defaults.UI.Color
+	}
+
+	prefs.Version = CurrentPreferencesVersion
 	return prefs
 }
 

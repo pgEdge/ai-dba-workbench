@@ -435,10 +435,11 @@ func (c *Client) handleSetLLMProvider(provider string) bool {
 		return true
 	}
 
-	// Save current model for current provider before switching
-	if c.config.LLM.Provider != "" && c.config.LLM.Model != "" {
-		c.preferences.SetModelForProvider(c.config.LLM.Provider, c.config.LLM.Model)
-	}
+	// NOTE: Do NOT save c.config.LLM.Model to preferences here!
+	// c.config.LLM.Model may be a runtime fallback that differs from the user's
+	// saved preference (e.g., if the API didn't return their preferred model).
+	// The model preference is already stored in c.preferences.ProviderModels
+	// and will be preserved across provider switches.
 
 	// Update config to new provider
 	c.config.LLM.Provider = provider

@@ -89,27 +89,27 @@ func TestPgHbaFileRulesProbe_ComputeMetricsHash(t *testing.T) {
 	// Test with identical metrics
 	metrics1 := []map[string]interface{}{
 		{
-			"rule_number":  1,
+			"rule_number": 1,
 			"auth_method": "trust",
-			"database":     []string{"all"},
+			"database":    []string{"all"},
 		},
 		{
-			"rule_number":  2,
+			"rule_number": 2,
 			"auth_method": "md5",
-			"database":     []string{"postgres"},
+			"database":    []string{"postgres"},
 		},
 	}
 
 	metrics2 := []map[string]interface{}{
 		{
-			"rule_number":  1,
+			"rule_number": 1,
 			"auth_method": "trust",
-			"database":     []string{"all"},
+			"database":    []string{"all"},
 		},
 		{
-			"rule_number":  2,
+			"rule_number": 2,
 			"auth_method": "md5",
-			"database":     []string{"postgres"},
+			"database":    []string{"postgres"},
 		},
 	}
 
@@ -130,14 +130,14 @@ func TestPgHbaFileRulesProbe_ComputeMetricsHash(t *testing.T) {
 	// Test with different metrics
 	metrics3 := []map[string]interface{}{
 		{
-			"rule_number":  1,
+			"rule_number": 1,
 			"auth_method": "scram-sha-256", // Different value
-			"database":     []string{"all"},
+			"database":    []string{"all"},
 		},
 		{
-			"rule_number":  2,
+			"rule_number": 2,
 			"auth_method": "md5",
-			"database":     []string{"postgres"},
+			"database":    []string{"postgres"},
 		},
 	}
 

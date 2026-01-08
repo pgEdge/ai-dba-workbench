@@ -592,6 +592,7 @@ func TestIndexesCreated(t *testing.T) {
 	// Clean up
 	cleanupTestSchema(t, pool)
 }
+
 // TestZZZ_FullSchemaForInspection creates the full schema and leaves it in
 // place for inspection. This test runs last (due to ZZZ prefix) and does not
 // clean up, allowing users to inspect the schema when TEST_AI_WORKBENCH_KEEP_DB=1 is set.

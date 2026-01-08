@@ -84,7 +84,7 @@ func (sm *SchemaManager) registerMigrations() {
 				return fmt.Errorf("failed to create schema_version table: %w", err)
 			}
 
-				// Create connections table
+			// Create connections table
 			_, err = conn.Exec(ctx, `
 			CREATE TABLE IF NOT EXISTS connections (
 				id SERIAL PRIMARY KEY,

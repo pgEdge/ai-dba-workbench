@@ -88,9 +88,9 @@ jobs:
 
             - name: Generate coverage report
               if: matrix.go-version == '1.24'
-              working-directory: cli
+              working-directory: cli/src
               run: |
-                  go tool cover -func=src/coverage.out
+                  go tool cover -func=coverage.out
 
             - name: Upload build artifact
               if: matrix.go-version == '1.24'

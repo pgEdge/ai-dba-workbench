@@ -54,12 +54,12 @@ type DatastoreConfig struct {
 // PoolConfig holds connection pool settings
 type PoolConfig struct {
 	// Datastore pool settings
-	DatastoreMaxConnections int `yaml:"datastore_max_connections"` // Max connections in the datastore pool
+	DatastoreMaxConnections int `yaml:"datastore_max_connections"`  // Max connections in the datastore pool
 	DatastoreMaxIdleSeconds int `yaml:"datastore_max_idle_seconds"` // Max idle time before closing connections
 	DatastoreMaxWaitSeconds int `yaml:"datastore_max_wait_seconds"` // Max wait time to acquire a connection
 
 	// Monitored server pool settings (per-server)
-	MonitoredMaxConnections int `yaml:"monitored_max_connections"` // Max connections PER monitored server
+	MonitoredMaxConnections int `yaml:"monitored_max_connections"`  // Max connections PER monitored server
 	MonitoredMaxIdleSeconds int `yaml:"monitored_max_idle_seconds"` // Max idle time before closing connections
 	MonitoredMaxWaitSeconds int `yaml:"monitored_max_wait_seconds"` // Max wait time to acquire a connection
 }
@@ -297,4 +297,3 @@ func GetDefaultConfigPath(binaryPath string) string {
 	dir := filepath.Dir(binaryPath)
 	return filepath.Join(dir, "ai-dba-collector.yaml")
 }
-

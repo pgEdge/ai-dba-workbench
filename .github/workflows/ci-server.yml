@@ -112,9 +112,9 @@ jobs:
 
             - name: Generate coverage report
               if: matrix.go-version == '1.24' && matrix.postgres-version == '17'
-              working-directory: server
+              working-directory: server/src
               run: |
-                  go tool cover -func=src/coverage.out
+                  go tool cover -func=coverage.out
 
             - name: Upload build artifact
               if: matrix.go-version == '1.24' && matrix.postgres-version == '17'

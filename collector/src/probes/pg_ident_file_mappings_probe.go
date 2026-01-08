@@ -19,8 +19,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/pgedge/ai-workbench/pkg/logger"
 	"github.com/pgedge/ai-workbench/collector/src/utils"
+	"github.com/pgedge/ai-workbench/pkg/logger"
 )
 
 // PgIdentFileMappingsProbe collects metrics from pg_ident_file_mappings view

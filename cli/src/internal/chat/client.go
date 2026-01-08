@@ -40,6 +40,8 @@ type Client struct {
 	preferences           *Preferences
 	conversations         *ConversationsClient
 	currentConversationID string
+	mcpURL                string // MCP server URL (with /mcp/v1 suffix)
+	authToken             string // Authentication token for MCP and LLM proxy
 }
 
 // NewClient creates a new chat client
@@ -250,6 +252,10 @@ func (c *Client) connectToMCP(ctx context.Context) error {
 	// Initialize conversations client with authentication
 	c.conversations = NewConversationsClient(url, token)
 
+	// Store URL and token for LLM proxy
+	c.mcpURL = url
+	c.authToken = token
+
 	return nil
 }
 
@@ -321,27 +327,19 @@ func (c *Client) authenticateUser(ctx context.Context, username, password string
 	return authResult.SessionToken, nil
 }
 
-// initializeLLM creates the LLM client with model validation and auto-selection
+// initializeLLM creates the LLM client using the server's LLM proxy
 func (c *Client) initializeLLM() error {
 	provider := c.config.LLM.Provider
 
-	// Create a temporary client to query available models
-	var tempClient LLMClient
-	switch provider {
-	case "anthropic":
-		tempClient = NewAnthropicClient(
-			c.config.LLM.AnthropicAPIKey, "", 0, 0, false)
-	case "openai":
-		tempClient = NewOpenAIClient(
-			c.config.LLM.OpenAIAPIKey, "", 0, 0, false)
-	case "ollama":
-		tempClient = NewOllamaClient(
-			c.config.LLM.OllamaURL, "", false)
-	default:
+	// Validate provider
+	if provider != "anthropic" && provider != "openai" && provider != "ollama" {
 		return fmt.Errorf("unsupported LLM provider: %s", provider)
 	}
 
-	// Get available models from the provider
+	// Create a temporary proxy client to query available models
+	tempClient := NewProxyClient(c.mcpURL, c.authToken, provider, "", false)
+
+	// Get available models from the server's LLM proxy
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -379,31 +377,14 @@ func (c *Client) initializeLLM() error {
 		}
 	}
 
-	// Create the actual LLM client with the selected model
-	switch provider {
-	case "anthropic":
-		c.llm = NewAnthropicClient(
-			c.config.LLM.AnthropicAPIKey,
-			c.config.LLM.Model,
-			c.config.LLM.MaxTokens,
-			c.config.LLM.Temperature,
-			c.config.UI.Debug,
-		)
-	case "openai":
-		c.llm = NewOpenAIClient(
-			c.config.LLM.OpenAIAPIKey,
-			c.config.LLM.Model,
-			c.config.LLM.MaxTokens,
-			c.config.LLM.Temperature,
-			c.config.UI.Debug,
-		)
-	case "ollama":
-		c.llm = NewOllamaClient(
-			c.config.LLM.OllamaURL,
-			c.config.LLM.Model,
-			c.config.UI.Debug,
-		)
-	}
+	// Create the LLM proxy client with the selected model
+	c.llm = NewProxyClient(
+		c.mcpURL,
+		c.authToken,
+		provider,
+		c.config.LLM.Model,
+		c.config.UI.Debug,
+	)
 
 	return nil
 }

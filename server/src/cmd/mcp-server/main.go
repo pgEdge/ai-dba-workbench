@@ -587,34 +587,32 @@ func main() {
 			})
 		})
 
-		// Add LLM proxy handlers if enabled
-		if cfg.LLM.Enabled {
-			// Create LLM proxy configuration
-			llmConfig := &llmproxy.Config{
-				Provider:        cfg.LLM.Provider,
-				Model:           cfg.LLM.Model,
-				AnthropicAPIKey: cfg.LLM.AnthropicAPIKey,
-				OpenAIAPIKey:    cfg.LLM.OpenAIAPIKey,
-				OllamaURL:       cfg.LLM.OllamaURL,
-				MaxTokens:       cfg.LLM.MaxTokens,
-				Temperature:     cfg.LLM.Temperature,
-			}
-
-			// Provider/model listing don't require auth (needed for login page)
-			mux.HandleFunc("/api/llm/providers",
-				func(w http.ResponseWriter, r *http.Request) {
-					llmproxy.HandleProviders(w, r, llmConfig)
-				})
-			mux.HandleFunc("/api/llm/models",
-				func(w http.ResponseWriter, r *http.Request) {
-					llmproxy.HandleModels(w, r, llmConfig)
-				})
-			// Chat endpoint requires auth (makes actual LLM API calls)
-			mux.HandleFunc("/api/llm/chat",
-				authWrapper(func(w http.ResponseWriter, r *http.Request) {
-					llmproxy.HandleChat(w, r, llmConfig)
-				}))
+		// Add LLM proxy handlers (always enabled)
+		// Create LLM proxy configuration
+		llmConfig := &llmproxy.Config{
+			Provider:        cfg.LLM.Provider,
+			Model:           cfg.LLM.Model,
+			AnthropicAPIKey: cfg.LLM.AnthropicAPIKey,
+			OpenAIAPIKey:    cfg.LLM.OpenAIAPIKey,
+			OllamaURL:       cfg.LLM.OllamaURL,
+			MaxTokens:       cfg.LLM.MaxTokens,
+			Temperature:     cfg.LLM.Temperature,
 		}
+
+		// Provider/model listing don't require auth (needed for login page)
+		mux.HandleFunc("/api/llm/providers",
+			func(w http.ResponseWriter, r *http.Request) {
+				llmproxy.HandleProviders(w, r, llmConfig)
+			})
+		mux.HandleFunc("/api/llm/models",
+			func(w http.ResponseWriter, r *http.Request) {
+				llmproxy.HandleModels(w, r, llmConfig)
+			})
+		// Chat endpoint requires auth (makes actual LLM API calls)
+		mux.HandleFunc("/api/llm/chat",
+			authWrapper(func(w http.ResponseWriter, r *http.Request) {
+				llmproxy.HandleChat(w, r, llmConfig)
+			}))
 
 		// Conversation history endpoints (only if store is available)
 		if convStore != nil && authStore != nil {
@@ -646,11 +644,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Starting MCP server in HTTP mode on %s\n", cfg.HTTP.Address)
 	}
 
-	if cfg.LLM.Enabled {
-		fmt.Fprintf(os.Stderr, "LLM Proxy: ENABLED (provider: %s, model: %s)\n", cfg.LLM.Provider, cfg.LLM.Model)
-	} else {
-		fmt.Fprintf(os.Stderr, "LLM Proxy: DISABLED\n")
-	}
+	fmt.Fprintf(os.Stderr, "LLM Proxy: ENABLED (provider: %s, model: %s)\n", cfg.LLM.Provider, cfg.LLM.Model)
 
 	if cfg.Knowledgebase.Enabled {
 		apiKeyStatus := "not set"

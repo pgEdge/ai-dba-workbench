@@ -289,8 +289,7 @@ func TestHasToolResults(t *testing.T) {
 	// Create a client for testing
 	cfg := &Config{
 		LLM: LLMConfig{
-			Provider:  "ollama",
-			OllamaURL: "http://localhost:11434",
+			Provider: "ollama",
 		},
 		UI: UIConfig{
 			NoColor: true,
@@ -374,8 +373,7 @@ func TestAdjustStartForToolPairs(t *testing.T) {
 	// Create a client for testing
 	cfg := &Config{
 		LLM: LLMConfig{
-			Provider:  "ollama",
-			OllamaURL: "http://localhost:11434",
+			Provider: "ollama",
 		},
 		UI: UIConfig{
 			NoColor: true,
@@ -440,8 +438,7 @@ func TestLocalCompactMessages(t *testing.T) {
 	// Create a client for testing
 	cfg := &Config{
 		LLM: LLMConfig{
-			Provider:  "ollama",
-			OllamaURL: "http://localhost:11434",
+			Provider: "ollama",
 		},
 		UI: UIConfig{
 			NoColor: true,

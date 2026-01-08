@@ -44,16 +44,12 @@ type MCPConfig struct {
 }
 
 // LLMConfig holds LLM provider configuration
+// Note: API keys are now configured on the server, not the CLI
 type LLMConfig struct {
-	Provider            string  `yaml:"provider"`               // anthropic, openai, or ollama
-	Model               string  `yaml:"model"`                  // Model to use
-	AnthropicAPIKey     string  `yaml:"-"`                      // API key for Anthropic (loaded from file, not config)
-	AnthropicAPIKeyFile string  `yaml:"anthropic_api_key_file"` // Path to file containing Anthropic API key
-	OpenAIAPIKey        string  `yaml:"-"`                      // API key for OpenAI (loaded from file, not config)
-	OpenAIAPIKeyFile    string  `yaml:"openai_api_key_file"`    // Path to file containing OpenAI API key
-	OllamaURL           string  `yaml:"ollama_url"`             // Ollama server URL
-	MaxTokens           int     `yaml:"max_tokens"`             // Max tokens for response
-	Temperature         float64 `yaml:"temperature"`            // Temperature for sampling
+	Provider    string  `yaml:"provider"`    // anthropic, openai, or ollama
+	Model       string  `yaml:"model"`       // Model to use (optional, server has defaults)
+	MaxTokens   int     `yaml:"max_tokens"`  // Max tokens for response
+	Temperature float64 `yaml:"temperature"` // Temperature for sampling
 }
 
 // UIConfig holds UI configuration
@@ -79,7 +75,6 @@ func LoadConfig(configPath string) (*Config, error) {
 		LLM: LLMConfig{
 			Provider:    "anthropic",
 			Model:       "claude-sonnet-4-5-20250929",
-			OllamaURL:   "http://localhost:11434",
 			MaxTokens:   4096,
 			Temperature: 0.7,
 		},
@@ -109,18 +104,6 @@ func LoadConfig(configPath string) (*Config, error) {
 					break
 				}
 			}
-		}
-	}
-
-	// Load API keys from files if specified
-	if cfg.LLM.AnthropicAPIKey == "" && cfg.LLM.AnthropicAPIKeyFile != "" {
-		if key, err := readAPIKeyFromFile(cfg.LLM.AnthropicAPIKeyFile); err == nil && key != "" {
-			cfg.LLM.AnthropicAPIKey = key
-		}
-	}
-	if cfg.LLM.OpenAIAPIKey == "" && cfg.LLM.OpenAIAPIKeyFile != "" {
-		if key, err := readAPIKeyFromFile(cfg.LLM.OpenAIAPIKeyFile); err == nil && key != "" {
-			cfg.LLM.OpenAIAPIKey = key
 		}
 	}
 
@@ -170,26 +153,14 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("invalid llm-provider: %s (must be anthropic, openai, or ollama)", c.LLM.Provider)
 	}
 
-	// Validate LLM configuration based on provider
-	if c.LLM.Provider == "anthropic" {
-		if c.LLM.AnthropicAPIKey == "" {
-			return fmt.Errorf("anthropic_api_key_file is required for Anthropic (file should contain your API key)")
-		}
-		if c.LLM.Model == "" {
+	// Set default model if not specified
+	if c.LLM.Model == "" {
+		switch c.LLM.Provider {
+		case "anthropic":
 			c.LLM.Model = "claude-sonnet-4-5-20250929"
-		}
-	} else if c.LLM.Provider == "openai" {
-		if c.LLM.OpenAIAPIKey == "" {
-			return fmt.Errorf("openai_api_key_file is required for OpenAI (file should contain your API key)")
-		}
-		if c.LLM.Model == "" {
+		case "openai":
 			c.LLM.Model = "gpt-4o"
-		}
-	} else {
-		if c.LLM.OllamaURL == "" {
-			c.LLM.OllamaURL = "http://localhost:11434"
-		}
-		if c.LLM.Model == "" {
+		case "ollama":
 			c.LLM.Model = "qwen3-coder:latest"
 		}
 	}
@@ -197,65 +168,20 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// IsProviderConfigured returns true if the provider has the required configuration
+// IsProviderConfigured returns true if the provider is supported
+// Note: API keys are now configured on the server, not the CLI
 func (c *Config) IsProviderConfigured(provider string) bool {
 	switch provider {
-	case "anthropic":
-		return c.LLM.AnthropicAPIKey != ""
-	case "openai":
-		return c.LLM.OpenAIAPIKey != ""
-	case "ollama":
-		// Ollama is configured if URL is set (defaults to localhost)
-		return c.LLM.OllamaURL != ""
+	case "anthropic", "openai", "ollama":
+		return true
 	default:
 		return false
 	}
 }
 
-// GetConfiguredProviders returns a list of providers that are configured
+// GetConfiguredProviders returns a list of supported providers
 // in priority order: anthropic, openai, ollama
+// Note: Actual API key configuration is now done on the server
 func (c *Config) GetConfiguredProviders() []string {
-	providers := []string{}
-	if c.IsProviderConfigured("anthropic") {
-		providers = append(providers, "anthropic")
-	}
-	if c.IsProviderConfigured("openai") {
-		providers = append(providers, "openai")
-	}
-	if c.IsProviderConfigured("ollama") {
-		providers = append(providers, "ollama")
-	}
-	return providers
-}
-
-// readAPIKeyFromFile reads an API key from a file
-// Returns the key with whitespace trimmed, or empty string if file doesn't exist or is empty
-func readAPIKeyFromFile(filePath string) (string, error) {
-	if filePath == "" {
-		return "", nil
-	}
-
-	// Expand tilde to home directory
-	if filePath != "" && filePath[0] == '~' {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("failed to get home directory: %w", err)
-		}
-		filePath = filepath.Join(homeDir, filePath[1:])
-	}
-
-	// Check if file exists
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		return "", nil // File doesn't exist, return empty (not an error)
-	}
-
-	// Read file contents
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return "", fmt.Errorf("failed to read API key file %s: %w", filePath, err)
-	}
-
-	// Return trimmed contents (remove whitespace/newlines)
-	key := strings.TrimSpace(string(data))
-	return key, nil
+	return []string{"anthropic", "openai", "ollama"}
 }

@@ -13,9 +13,9 @@
 #
 # Default config file search paths (in order):
 #   1. Explicitly specified via --config flag
-#   2. .pgedge-nla-cli.yaml (current directory)
-#   3. ~/.pgedge-nla-cli.yaml (home directory)
-#   4. /etc/pgedge/pgedge-nla-cli.yaml (system-wide)
+#   2. .ai-dba-cli.yaml (current directory)
+#   3. ~/.ai-dba-cli.yaml (home directory)
+#   4. /etc/pgedge/ai-dba-cli.yaml (system-wide)
 #
 # Configuration priority (highest to lowest):
 #   1. Command line flags
@@ -27,7 +27,7 @@
 #=========================================================================
 #
 # The CLI connects to an MCP (Model Context Protocol) server which provides
-# access to PostgreSQL database tools and resources.
+# access to PostgreSQL database tools, resources, and the LLM proxy.
 #
 mcp:
   # URL of the MCP server
@@ -62,57 +62,21 @@ mcp:
 #=========================================================================
 #
 # The CLI uses an LLM to interpret natural language queries and generate
-# responses. You can use Anthropic's Claude, OpenAI's GPT, or local models
-# via Ollama.
+# responses. LLM API calls are made through the MCP server's LLM proxy,
+# so API keys are configured on the server, not the CLI.
 #
 llm:
   # LLM provider to use: "anthropic", "openai", or "ollama"
+  # The server must have the corresponding API key configured
   # Default: anthropic
   provider: "anthropic"
 
-  # Model name to use
+  # Model name to use (optional - server has defaults per provider)
   # Default depends on provider:
   #   - anthropic: claude-sonnet-4-5-20250929
   #   - openai: gpt-4o
   #   - ollama: qwen3-coder:latest
   model: "claude-sonnet-4-5-20250929"
-
-  #-----------------------------------------------------------------------
-  # Anthropic Configuration (if using provider: "anthropic")
-  #-----------------------------------------------------------------------
-
-  # Anthropic API key
-  # SECURITY: It's recommended to use anthropic_api_key_file instead of
-  # storing the key directly in config
-  # anthropic_api_key: "sk-ant-..."
-
-  # Path to file containing Anthropic API key
-  # The file should contain only the API key with no extra whitespace
-  # anthropic_api_key_file: "~/.anthropic-api-key"
-
-  #-----------------------------------------------------------------------
-  # OpenAI Configuration (if using provider: "openai")
-  #-----------------------------------------------------------------------
-
-  # OpenAI API key
-  # SECURITY: It's recommended to use openai_api_key_file instead of
-  # storing the key directly in config
-  # openai_api_key: "sk-..."
-
-  # Path to file containing OpenAI API key
-  # openai_api_key_file: "~/.openai-api-key"
-
-  #-----------------------------------------------------------------------
-  # Ollama Configuration (if using provider: "ollama")
-  #-----------------------------------------------------------------------
-
-  # URL of the Ollama service
-  # Default: http://localhost:11434
-  ollama_url: "http://localhost:11434"
-
-  #-----------------------------------------------------------------------
-  # Generation Parameters
-  #-----------------------------------------------------------------------
 
   # Maximum tokens for LLM response
   # Default: 4096
@@ -156,8 +120,8 @@ ui:
 
 # Path to chat history file
 # Used to persist conversation history between sessions
-# Default: ~/.pgedge-nla-cli-history
-# history_file: "~/.pgedge-nla-cli-history"
+# Default: ~/.ai-dba-cli-history
+# history_file: "~/.ai-dba-cli-history"
 
 #=========================================================================
 # EXAMPLE CONFIGURATIONS
@@ -167,7 +131,7 @@ ui:
 #
 
 #-------------------------------------------------------------------------
-# Development with Local Ollama (no API key needed)
+# Development with Local Ollama
 #-------------------------------------------------------------------------
 # mcp:
 #   url: "http://localhost:8080"
@@ -175,7 +139,6 @@ ui:
 # llm:
 #   provider: "ollama"
 #   model: "qwen3-coder:latest"
-#   ollama_url: "http://localhost:11434"
 # ui:
 #   no_color: false
 #   display_status_messages: true
@@ -191,7 +154,6 @@ ui:
 # llm:
 #   provider: "anthropic"
 #   model: "claude-sonnet-4-5-20250929"
-#   anthropic_api_key_file: "~/.anthropic-api-key"
 # ui:
 #   no_color: false
 #   display_status_messages: true

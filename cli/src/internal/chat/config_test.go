@@ -117,8 +117,7 @@ func TestValidate_MissingURL(t *testing.T) {
 			// URL is missing
 		},
 		LLM: LLMConfig{
-			Provider:        "anthropic",
-			AnthropicAPIKey: "test-key",
+			Provider: "anthropic",
 		},
 	}
 
@@ -142,18 +141,5 @@ func TestValidate_InvalidProvider(t *testing.T) {
 	}
 }
 
-func TestValidate_MissingAPIKey(t *testing.T) {
-	cfg := &Config{
-		MCP: MCPConfig{
-			URL: "http://localhost:8080",
-		},
-		LLM: LLMConfig{
-			Provider: "anthropic",
-			// APIKey is missing
-		},
-	}
-
-	if err := cfg.Validate(); err == nil {
-		t.Error("Expected validation error for missing API key for Anthropic")
-	}
-}
+// Note: TestValidate_MissingAPIKey was removed because API keys are now
+// configured on the server, not the CLI

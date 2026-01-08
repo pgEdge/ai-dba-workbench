@@ -160,9 +160,8 @@ func TestClient_ConnectToMCP_HTTPMode(t *testing.T) {
 			Token: "test-token",
 		},
 		LLM: LLMConfig{
-			Provider:        "anthropic",
-			AnthropicAPIKey: "test-key",
-			Model:           "claude-test",
+			Provider: "anthropic",
+			Model:    "claude-test",
 		},
 		UI: UIConfig{
 			NoColor: true,
@@ -196,11 +195,10 @@ func TestClient_InitializeLLM_Anthropic(t *testing.T) {
 			URL: "http://localhost:8080",
 		},
 		LLM: LLMConfig{
-			Provider:        "anthropic",
-			AnthropicAPIKey: "test-key",
-			Model:           "claude-test",
-			MaxTokens:       4096,
-			Temperature:     0.7,
+			Provider:    "anthropic",
+			Model:       "claude-test",
+			MaxTokens:   4096,
+			Temperature: 0.7,
 		},
 		UI: UIConfig{
 			NoColor: true,
@@ -229,7 +227,6 @@ func TestClient_InitializeLLM_Ollama(t *testing.T) {
 		LLM: LLMConfig{
 			Provider:    "ollama",
 			Model:       "llama3",
-			OllamaURL:   "http://localhost:11434",
 			MaxTokens:   4096,
 			Temperature: 0.7,
 		},
@@ -279,8 +276,7 @@ func TestClient_InitializeLLM_InvalidProvider(t *testing.T) {
 func TestClient_HandleSlashCommand_Help(t *testing.T) {
 	cfg := &Config{
 		LLM: LLMConfig{
-			Provider:  "ollama",
-			OllamaURL: "http://localhost:11434",
+			Provider: "ollama",
 		},
 		UI: UIConfig{
 			NoColor: true,
@@ -302,8 +298,7 @@ func TestClient_HandleSlashCommand_Help(t *testing.T) {
 func TestClient_HandleSlashCommand_Clear(t *testing.T) {
 	cfg := &Config{
 		LLM: LLMConfig{
-			Provider:  "ollama",
-			OllamaURL: "http://localhost:11434",
+			Provider: "ollama",
 		},
 		UI: UIConfig{
 			NoColor: true,
@@ -325,8 +320,7 @@ func TestClient_HandleSlashCommand_Clear(t *testing.T) {
 func TestClient_HandleSlashCommand_Tools(t *testing.T) {
 	cfg := &Config{
 		LLM: LLMConfig{
-			Provider:  "ollama",
-			OllamaURL: "http://localhost:11434",
+			Provider: "ollama",
 		},
 		UI: UIConfig{
 			NoColor: true,
@@ -364,8 +358,7 @@ func TestClient_HandleSlashCommand_Resources(t *testing.T) {
 			Token: "test-token",
 		},
 		LLM: LLMConfig{
-			Provider:  "ollama",
-			OllamaURL: "http://localhost:11434",
+			Provider: "ollama",
 		},
 		UI: UIConfig{
 			NoColor: true,
@@ -399,8 +392,7 @@ func TestClient_HandleSlashCommand_Resources(t *testing.T) {
 func TestClient_HandleSlashCommand_Unknown(t *testing.T) {
 	cfg := &Config{
 		LLM: LLMConfig{
-			Provider:  "ollama",
-			OllamaURL: "http://localhost:11434",
+			Provider: "ollama",
 		},
 		UI: UIConfig{
 			NoColor: true,
@@ -430,9 +422,8 @@ func TestClient_ProcessQuery_SimpleResponse(t *testing.T) {
 			Token: "test-token",
 		},
 		LLM: LLMConfig{
-			Provider:        "anthropic",
-			AnthropicAPIKey: "test-key",
-			Model:           "claude-test",
+			Provider: "anthropic",
+			Model:    "claude-test",
 		},
 		UI: UIConfig{
 			NoColor: true,
@@ -511,9 +502,8 @@ func TestClient_ProcessQuery_WithToolUse(t *testing.T) {
 			Token: "test-token",
 		},
 		LLM: LLMConfig{
-			Provider:        "anthropic",
-			AnthropicAPIKey: "test-key",
-			Model:           "claude-test",
+			Provider: "anthropic",
+			Model:    "claude-test",
 		},
 		UI: UIConfig{
 			NoColor: true,
@@ -596,9 +586,8 @@ func TestClient_ProcessQuery_MaxIterations(t *testing.T) {
 			Token: "test-token",
 		},
 		LLM: LLMConfig{
-			Provider:        "anthropic",
-			AnthropicAPIKey: "test-key",
-			Model:           "claude-test",
+			Provider: "anthropic",
+			Model:    "claude-test",
 		},
 		UI: UIConfig{
 			NoColor: true,
@@ -670,9 +659,8 @@ func TestClient_ProcessQuery_ContextCancellation(t *testing.T) {
 			Token: "test-token",
 		},
 		LLM: LLMConfig{
-			Provider:        "anthropic",
-			AnthropicAPIKey: "test-key",
-			Model:           "claude-test",
+			Provider: "anthropic",
+			Model:    "claude-test",
 		},
 		UI: UIConfig{
 			NoColor: true,
@@ -858,9 +846,8 @@ func TestClient_ProcessQuery_ToolListRefreshAfterManageConnections(t *testing.T)
 			Token: "test-token",
 		},
 		LLM: LLMConfig{
-			Provider:        "anthropic",
-			AnthropicAPIKey: "test-key",
-			Model:           "claude-test",
+			Provider: "anthropic",
+			Model:    "claude-test",
 		},
 		UI: UIConfig{
 			NoColor: true,
@@ -990,8 +977,7 @@ func TestClient_ConnectToMCP_URLFormatting(t *testing.T) {
 					TLS:   tt.useTLS,
 				},
 				LLM: LLMConfig{
-					Provider:  "ollama",
-					OllamaURL: "http://localhost:11434",
+					Provider: "ollama",
 				},
 				UI: UIConfig{
 					NoColor: true,

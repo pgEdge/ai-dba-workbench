@@ -224,8 +224,8 @@ type EmbeddingConfig struct {
 }
 
 // LLMConfig holds LLM configuration for web client chat proxy
+// LLM proxy is always enabled - API keys must be configured for the chosen provider
 type LLMConfig struct {
-	Enabled             bool    `yaml:"enabled"`                // Whether LLM proxy is enabled (default: false)
 	Provider            string  `yaml:"provider"`               // "anthropic", "openai", or "ollama"
 	Model               string  `yaml:"model"`                  // Provider-specific model name
 	AnthropicAPIKey     string  `yaml:"-"`                      // API key for Anthropic (loaded from file, not config)
@@ -364,7 +364,6 @@ func defaultConfig() *Config {
 			OllamaURL:    "http://localhost:11434", // Default Ollama URL
 		},
 		LLM: LLMConfig{
-			Enabled:         false,                    // Disabled by default (opt-in)
 			Provider:        "anthropic",              // Default provider
 			Model:           "claude-sonnet-4-5",      // Default Anthropic model
 			AnthropicAPIKey: "",                       // Must be provided if using Anthropic
@@ -471,36 +470,33 @@ func mergeConfig(dest, src *Config) {
 		}
 	}
 
-	// LLM - merge if any LLM fields are set
-	if src.LLM.Provider != "" || src.LLM.Enabled {
-		dest.LLM.Enabled = src.LLM.Enabled
-		if src.LLM.Provider != "" {
-			dest.LLM.Provider = src.LLM.Provider
-		}
-		if src.LLM.Model != "" {
-			dest.LLM.Model = src.LLM.Model
-		}
-		if src.LLM.AnthropicAPIKey != "" {
-			dest.LLM.AnthropicAPIKey = src.LLM.AnthropicAPIKey
-		}
-		if src.LLM.AnthropicAPIKeyFile != "" {
-			dest.LLM.AnthropicAPIKeyFile = src.LLM.AnthropicAPIKeyFile
-		}
-		if src.LLM.OpenAIAPIKey != "" {
-			dest.LLM.OpenAIAPIKey = src.LLM.OpenAIAPIKey
-		}
-		if src.LLM.OpenAIAPIKeyFile != "" {
-			dest.LLM.OpenAIAPIKeyFile = src.LLM.OpenAIAPIKeyFile
-		}
-		if src.LLM.OllamaURL != "" {
-			dest.LLM.OllamaURL = src.LLM.OllamaURL
-		}
-		if src.LLM.MaxTokens != 0 {
-			dest.LLM.MaxTokens = src.LLM.MaxTokens
-		}
-		if src.LLM.Temperature != 0 {
-			dest.LLM.Temperature = src.LLM.Temperature
-		}
+	// LLM - merge LLM fields (LLM proxy is always enabled)
+	if src.LLM.Provider != "" {
+		dest.LLM.Provider = src.LLM.Provider
+	}
+	if src.LLM.Model != "" {
+		dest.LLM.Model = src.LLM.Model
+	}
+	if src.LLM.AnthropicAPIKey != "" {
+		dest.LLM.AnthropicAPIKey = src.LLM.AnthropicAPIKey
+	}
+	if src.LLM.AnthropicAPIKeyFile != "" {
+		dest.LLM.AnthropicAPIKeyFile = src.LLM.AnthropicAPIKeyFile
+	}
+	if src.LLM.OpenAIAPIKey != "" {
+		dest.LLM.OpenAIAPIKey = src.LLM.OpenAIAPIKey
+	}
+	if src.LLM.OpenAIAPIKeyFile != "" {
+		dest.LLM.OpenAIAPIKeyFile = src.LLM.OpenAIAPIKeyFile
+	}
+	if src.LLM.OllamaURL != "" {
+		dest.LLM.OllamaURL = src.LLM.OllamaURL
+	}
+	if src.LLM.MaxTokens != 0 {
+		dest.LLM.MaxTokens = src.LLM.MaxTokens
+	}
+	if src.LLM.Temperature != 0 {
+		dest.LLM.Temperature = src.LLM.Temperature
 	}
 
 	// Knowledgebase - merge if any KB fields are set

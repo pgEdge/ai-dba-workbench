@@ -40,10 +40,7 @@ func TestDefaultConfig(t *testing.T) {
 		t.Errorf("Expected default embedding provider 'ollama', got %s", cfg.Embedding.Provider)
 	}
 
-	// Test LLM defaults
-	if cfg.LLM.Enabled {
-		t.Error("Expected LLM to be disabled by default")
-	}
+	// Test LLM defaults (LLM proxy is always enabled, no Enabled field)
 	if cfg.LLM.MaxTokens != 4096 {
 		t.Errorf("Expected default max tokens 4096, got %d", cfg.LLM.MaxTokens)
 	}

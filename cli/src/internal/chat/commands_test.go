@@ -127,8 +127,7 @@ func TestHandleSetStatusMessages(t *testing.T) {
 			// Create a test client with minimal config
 			cfg := &Config{
 				LLM: LLMConfig{
-					Provider:  "ollama",
-					OllamaURL: "http://localhost:11434",
+					Provider: "ollama",
 				},
 				UI: UIConfig{
 					NoColor:               false,
@@ -178,8 +177,7 @@ func TestHandleSetColor(t *testing.T) {
 			// Create a test client with minimal config
 			cfg := &Config{
 				LLM: LLMConfig{
-					Provider:  "ollama",
-					OllamaURL: "http://localhost:11434",
+					Provider: "ollama",
 				},
 				UI: UIConfig{
 					NoColor: !tt.expectedNoColor, // Start with opposite value to verify change
@@ -217,8 +215,7 @@ func TestHandleSetColorInvalidValue(t *testing.T) {
 	// Create a test client
 	cfg := &Config{
 		LLM: LLMConfig{
-			Provider:  "ollama",
-			OllamaURL: "http://localhost:11434",
+			Provider: "ollama",
 		},
 		UI: UIConfig{
 			NoColor: false, // Start with colors enabled
@@ -260,11 +257,8 @@ func TestHandleSetLLMProvider(t *testing.T) {
 			// Create a test client with all providers configured
 			cfg := &Config{
 				LLM: LLMConfig{
-					Provider:        "anthropic",
-					Model:           "claude-sonnet-4-5-20250929",
-					AnthropicAPIKey: "test-key",
-					OpenAIAPIKey:    "test-key",
-					OllamaURL:       "http://localhost:11434",
+					Provider: "anthropic",
+					Model:    "claude-sonnet-4-5-20250929",
 				},
 				UI: UIConfig{
 					NoColor: false,
@@ -304,9 +298,8 @@ func TestHandleSetLLMModel(t *testing.T) {
 	// Create a test client
 	cfg := &Config{
 		LLM: LLMConfig{
-			Provider:        "anthropic",
-			Model:           "claude-sonnet-4-5-20250929",
-			AnthropicAPIKey: "test-key",
+			Provider: "anthropic",
+			Model:    "claude-sonnet-4-5-20250929",
 		},
 		UI: UIConfig{
 			NoColor: false,

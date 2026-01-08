@@ -190,14 +190,11 @@ embedding:
 # LLM CONFIGURATION (Web Client Chat Proxy)
 #=========================================================================
 #
-# The server can proxy LLM requests for web clients that don't have
-# direct access to LLM APIs. This is optional and disabled by default.
+# The server proxies LLM requests for web clients and CLI tools that
+# don't have direct access to LLM APIs. API keys must be configured
+# for the chosen provider.
 #
 llm:
-  # Enable LLM proxy
-  # Default: false
-  enabled: false
-
   # LLM provider: "anthropic", "openai", or "ollama"
   # Default: anthropic
   provider: "anthropic"
@@ -373,7 +370,8 @@ builtins:
 #   provider: "ollama"
 #   model: "nomic-embed-text"
 # llm:
-#   enabled: false
+#   provider: "ollama"
+#   model: "qwen3-coder:latest"
 
 #-------------------------------------------------------------------------
 # Production Configuration (TLS, authentication, secure settings)
@@ -401,7 +399,6 @@ builtins:
 #   model: "voyage-3"
 #   voyage_api_key_file: "/etc/ai-workbench/voyage-api-key"
 # llm:
-#   enabled: true
 #   provider: "anthropic"
 #   model: "claude-sonnet-4-5"
 #   anthropic_api_key_file: "/etc/ai-workbench/anthropic-api-key"

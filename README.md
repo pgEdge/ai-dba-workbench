@@ -29,8 +29,8 @@ The pgEdge AI DBA Workbench consists of three main components:
   for analysis
 - **[Server](server/README.md)** - An MCP server that provides tools and
   resources for interacting with PostgreSQL systems
-- **CLI** - A command-line interface for interacting with the MCP server
-  (coming soon)
+- **[CLI](cli/README.md)** - A command-line interface for interacting with
+  the MCP server
 - **Client** - A web-based user interface for interacting with the AI
   Workbench (coming soon)
 
@@ -40,6 +40,8 @@ Comprehensive documentation is available in the [docs](docs/index.md)
 directory:
 
 - **[Documentation Index](docs/index.md)** - Main documentation entry point
+- **[CLI Documentation](docs/cli/index.md)** - Command-line interface usage
+  and configuration
 - **[Collector Documentation](docs/collector/index.md)** - Data collection
   and monitoring
 
@@ -105,4 +107,5 @@ Each sub-project and the top-level Makefile support these targets:
 
 For information on getting started with each component, please refer to:
 
+- [CLI Quick Start](docs/cli/index.md) - Get started with the CLI
 - [Collector Quick Start](docs/collector/quickstart.md) - Set up monitoring

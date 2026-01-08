@@ -13,8 +13,11 @@ package tsv
 import (
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // FormatValue converts a value to a TSV-safe string.
@@ -42,6 +45,8 @@ func FormatValue(v interface{}) string {
 		s = fmt.Sprintf("%d", val)
 	case float32, float64:
 		s = fmt.Sprintf("%v", val)
+	case pgtype.Numeric:
+		s = formatNumeric(val)
 	case []interface{}, map[string]interface{}:
 		// Complex types (arrays, JSON objects) - serialize to JSON
 		jsonBytes, err := json.Marshal(val)
@@ -97,4 +102,59 @@ func BuildRow(values ...string) string {
 		escaped[i] = FormatValue(v)
 	}
 	return strings.Join(escaped, "\t")
+}
+
+// formatNumeric converts a pgtype.Numeric to a human-readable string
+func formatNumeric(n pgtype.Numeric) string {
+	if !n.Valid {
+		return ""
+	}
+
+	// Handle special cases
+	if n.NaN {
+		return "NaN"
+	}
+	if n.InfinityModifier == pgtype.Infinity {
+		return "Infinity"
+	}
+	if n.InfinityModifier == pgtype.NegativeInfinity {
+		return "-Infinity"
+	}
+
+	// Convert to big.Float for accurate representation
+	if n.Int == nil {
+		return "0"
+	}
+
+	// Create a big.Float from the integer part
+	f := new(big.Float).SetInt(n.Int)
+
+	// Apply the exponent (n.Exp is the number of decimal places, negative means right of decimal)
+	if n.Exp != 0 {
+		// Calculate 10^|Exp|
+		absExp := n.Exp
+		if absExp < 0 {
+			absExp = -absExp
+		}
+		exp := big.NewInt(10)
+		exp.Exp(exp, big.NewInt(int64(absExp)), nil)
+		expFloat := new(big.Float).SetInt(exp)
+
+		if n.Exp > 0 {
+			// Positive exponent: multiply by 10^Exp
+			f.Mul(f, expFloat)
+		} else {
+			// Negative exponent: divide by 10^|Exp|
+			f.Quo(f, expFloat)
+		}
+	}
+
+	// Convert to float64 for formatting
+	f64, _ := f.Float64()
+
+	// Format without unnecessary trailing zeros
+	if f64 == float64(int64(f64)) {
+		return fmt.Sprintf("%d", int64(f64))
+	}
+	return fmt.Sprintf("%.6g", f64)
 }

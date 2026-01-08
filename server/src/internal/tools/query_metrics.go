@@ -13,9 +13,11 @@ package tools
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
 )
@@ -548,7 +550,67 @@ func formatMetricValue(v interface{}) string {
 		return fmt.Sprintf("%d", val)
 	case int:
 		return fmt.Sprintf("%d", val)
+	case pgtype.Numeric:
+		// Handle PostgreSQL numeric type
+		return formatNumeric(val)
 	default:
 		return fmt.Sprintf("%v", val)
 	}
+}
+
+// formatNumeric converts a pgtype.Numeric to a human-readable string
+func formatNumeric(n pgtype.Numeric) string {
+	if !n.Valid {
+		return ""
+	}
+
+	// Handle special cases
+	if n.NaN {
+		return "NaN"
+	}
+	if n.InfinityModifier == pgtype.Infinity {
+		return "Infinity"
+	}
+	if n.InfinityModifier == pgtype.NegativeInfinity {
+		return "-Infinity"
+	}
+
+	// Convert to big.Float for accurate representation
+	if n.Int == nil {
+		return "0"
+	}
+
+	// Create a big.Float from the integer part
+	f := new(big.Float).SetInt(n.Int)
+
+	// Apply the exponent
+	// n.Exp represents decimal places: positive = shift left, negative = shift right
+	// Value = Int * 10^Exp
+	if n.Exp != 0 {
+		// Calculate 10^|Exp|
+		absExp := n.Exp
+		if absExp < 0 {
+			absExp = -absExp
+		}
+		exp := big.NewInt(10)
+		exp.Exp(exp, big.NewInt(int64(absExp)), nil)
+		expFloat := new(big.Float).SetInt(exp)
+
+		if n.Exp > 0 {
+			// Positive exponent: multiply
+			f.Mul(f, expFloat)
+		} else {
+			// Negative exponent: divide
+			f.Quo(f, expFloat)
+		}
+	}
+
+	// Convert to float64 for formatting
+	f64, _ := f.Float64()
+
+	// Format without unnecessary trailing zeros
+	if f64 == float64(int64(f64)) {
+		return fmt.Sprintf("%d", int64(f64))
+	}
+	return fmt.Sprintf("%.6g", f64)
 }

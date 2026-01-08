@@ -11,8 +11,11 @@
 package tools
 
 import (
+	"math/big"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestQueryMetrics_NilPool(t *testing.T) {
@@ -300,5 +303,87 @@ func TestFormatMetricValue(t *testing.T) {
 				t.Errorf("formatMetricValue(%v) = %q, want %q", tt.input, result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestFormatNumeric(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    pgtype.Numeric
+		expected string
+	}{
+		{
+			name:     "invalid numeric",
+			input:    pgtype.Numeric{Valid: false},
+			expected: "",
+		},
+		{
+			name:     "NaN",
+			input:    pgtype.Numeric{Valid: true, NaN: true},
+			expected: "NaN",
+		},
+		{
+			name:     "positive infinity",
+			input:    pgtype.Numeric{Valid: true, InfinityModifier: pgtype.Infinity},
+			expected: "Infinity",
+		},
+		{
+			name:     "negative infinity",
+			input:    pgtype.Numeric{Valid: true, InfinityModifier: pgtype.NegativeInfinity},
+			expected: "-Infinity",
+		},
+		{
+			name:     "nil Int",
+			input:    pgtype.Numeric{Valid: true, Int: nil, Exp: 0},
+			expected: "0",
+		},
+		{
+			name:     "whole number 6",
+			input:    pgtype.Numeric{Valid: true, Int: big.NewInt(6), Exp: 0},
+			expected: "6",
+		},
+		{
+			name:     "whole number 42",
+			input:    pgtype.Numeric{Valid: true, Int: big.NewInt(42), Exp: 0},
+			expected: "42",
+		},
+		{
+			name:     "decimal 3.14 (Int=314, Exp=-2)",
+			input:    pgtype.Numeric{Valid: true, Int: big.NewInt(314), Exp: -2},
+			expected: "3.14",
+		},
+		{
+			name:     "large number with positive exp",
+			input:    pgtype.Numeric{Valid: true, Int: big.NewInt(5), Exp: 3},
+			expected: "5000",
+		},
+		{
+			name:     "numeric from trace (60000000000000000, -16) = 6",
+			input:    pgtype.Numeric{Valid: true, Int: big.NewInt(60000000000000000), Exp: -16},
+			expected: "6",
+		},
+		{
+			name:     "numeric 60517241379310345 exp -16 = ~6.05",
+			input:    pgtype.Numeric{Valid: true, Int: big.NewInt(60517241379310345), Exp: -16},
+			expected: "6.05172",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := formatNumeric(tt.input)
+			if result != tt.expected {
+				t.Errorf("formatNumeric() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestFormatMetricValue_Numeric(t *testing.T) {
+	// Test that pgtype.Numeric values are properly handled by formatMetricValue
+	numeric := pgtype.Numeric{Valid: true, Int: big.NewInt(42), Exp: 0}
+	result := formatMetricValue(numeric)
+	if result != "42" {
+		t.Errorf("formatMetricValue(pgtype.Numeric) = %q, want %q", result, "42")
 	}
 }

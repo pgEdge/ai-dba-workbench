@@ -79,8 +79,8 @@ jobs:
 
             - name: Verify binary
               run: |
-                  ls -lh cli/ai-cli
-                  file cli/ai-cli
+                  ls -lh cli/ai-dba-cli
+                  file cli/ai-dba-cli
 
             - name: Run tests with coverage
               working-directory: cli
@@ -96,8 +96,8 @@ jobs:
               if: matrix.go-version == '1.24'
               uses: actions/upload-artifact@v4
               with:
-                  name: ai-cli-linux-amd64
-                  path: cli/ai-cli
+                  name: ai-dba-cli-linux-amd64
+                  path: cli/ai-dba-cli
                   retention-days: 7
 
             - name: Upload coverage artifact

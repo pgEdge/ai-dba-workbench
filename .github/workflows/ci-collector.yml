@@ -94,8 +94,8 @@ jobs:
 
             - name: Verify binary
               run: |
-                  ls -lh collector/collector
-                  file collector/collector
+                  ls -lh collector/ai-dba-collector
+                  file collector/ai-dba-collector
 
             - name: Wait for PostgreSQL
               run: |
@@ -120,8 +120,8 @@ jobs:
               if: matrix.go-version == '1.24' && matrix.postgres-version == '17'
               uses: actions/upload-artifact@v4
               with:
-                  name: collector-linux-amd64
-                  path: collector/collector
+                  name: ai-dba-collector-linux-amd64
+                  path: collector/ai-dba-collector
                   retention-days: 7
 
             - name: Upload coverage artifact

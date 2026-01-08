@@ -316,18 +316,9 @@ builtins:
     # Expose PostgreSQL system information
     system_info: true
 
-  prompts:
-    # Database exploration prompt
-    explore_database: true
-
-    # Semantic search setup prompt
-    setup_semantic_search: true
-
-    # Query performance diagnosis prompt
-    diagnose_query_issue: true
-
-    # Schema design prompt
-    design_schema: true
+  # prompts:
+    # No built-in prompts currently registered
+    # Future prompts can be configured here
 
 #=========================================================================
 # PATHS AND DATA DIRECTORIES

@@ -411,20 +411,9 @@ func main() {
 	server := mcp.NewServer(contextAwareToolProvider)
 	server.SetResourceProvider(contextAwareResourceProvider)
 
-	// Register prompts (only enabled ones)
+	// Register prompts (infrastructure in place for future prompts)
 	promptRegistry := prompts.NewRegistry()
-	if cfg.Builtins.Prompts.IsPromptEnabled("explore-database") {
-		promptRegistry.Register("explore-database", prompts.ExploreDatabase())
-	}
-	if cfg.Builtins.Prompts.IsPromptEnabled("setup-semantic-search") {
-		promptRegistry.Register("setup-semantic-search", prompts.SetupSemanticSearch())
-	}
-	if cfg.Builtins.Prompts.IsPromptEnabled("diagnose-query-issue") {
-		promptRegistry.Register("diagnose-query-issue", prompts.DiagnoseQueryIssue())
-	}
-	if cfg.Builtins.Prompts.IsPromptEnabled("design-schema") {
-		promptRegistry.Register("design-schema", prompts.DesignSchema())
-	}
+	// No built-in prompts currently registered - add new prompts here as needed
 	server.SetPromptProvider(promptRegistry)
 
 	// Start periodic cleanup of expired tokens if auth is enabled

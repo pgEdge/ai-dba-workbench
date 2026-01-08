@@ -13,7 +13,34 @@ package prompts
 import (
 	"strings"
 	"testing"
+
+	"github.com/pgedge/ai-workbench/server/internal/mcp"
 )
+
+// createTestPrompt creates a simple test prompt for testing the registry
+func createTestPrompt(name, description string) Prompt {
+	return Prompt{
+		Definition: mcp.Prompt{
+			Name:        name,
+			Description: description,
+			Arguments:   []mcp.PromptArgument{},
+		},
+		Handler: func(args map[string]string) mcp.PromptResult {
+			return mcp.PromptResult{
+				Description: "Test result for " + name,
+				Messages: []mcp.PromptMessage{
+					{
+						Role: "user",
+						Content: mcp.ContentItem{
+							Type: "text",
+							Text: "Test message for " + name,
+						},
+					},
+				},
+			}
+		},
+	}
+}
 
 func TestNewRegistry(t *testing.T) {
 	registry := NewRegistry()
@@ -31,20 +58,20 @@ func TestRegisterAndGet(t *testing.T) {
 	registry := NewRegistry()
 
 	// Create a test prompt
-	testPrompt := SetupSemanticSearch()
+	testPrompt := createTestPrompt("test-prompt", "A test prompt")
 
 	// Register it
-	registry.Register("setup-semantic-search", testPrompt)
+	registry.Register("test-prompt", testPrompt)
 
 	// Retrieve it
-	prompt, found := registry.Get("setup-semantic-search")
+	prompt, found := registry.Get("test-prompt")
 
 	if !found {
 		t.Fatal("Expected to find registered prompt")
 	}
 
-	if prompt.Definition.Name != "setup-semantic-search" {
-		t.Errorf("Expected prompt name 'setup-semantic-search', got %q", prompt.Definition.Name)
+	if prompt.Definition.Name != "test-prompt" {
+		t.Errorf("Expected prompt name 'test-prompt', got %q", prompt.Definition.Name)
 	}
 }
 
@@ -62,16 +89,15 @@ func TestList(t *testing.T) {
 	registry := NewRegistry()
 
 	// Register multiple prompts
-	registry.Register("setup-semantic-search", SetupSemanticSearch())
-	registry.Register("explore-database", ExploreDatabase())
-	registry.Register("diagnose-query-issue", DiagnoseQueryIssue())
-	registry.Register("design-schema", DesignSchema())
+	registry.Register("prompt-1", createTestPrompt("prompt-1", "First prompt"))
+	registry.Register("prompt-2", createTestPrompt("prompt-2", "Second prompt"))
+	registry.Register("prompt-3", createTestPrompt("prompt-3", "Third prompt"))
 
 	// List all prompts
 	prompts := registry.List()
 
-	if len(prompts) != 4 {
-		t.Errorf("Expected 4 prompts, got %d", len(prompts))
+	if len(prompts) != 3 {
+		t.Errorf("Expected 3 prompts, got %d", len(prompts))
 	}
 
 	// Verify all prompts have required fields
@@ -87,13 +113,11 @@ func TestList(t *testing.T) {
 
 func TestExecute(t *testing.T) {
 	registry := NewRegistry()
-	registry.Register("setup-semantic-search", SetupSemanticSearch())
+	registry.Register("test-prompt", createTestPrompt("test-prompt", "A test prompt"))
 
-	args := map[string]string{
-		"query_text": "What is PostgreSQL?",
-	}
+	args := map[string]string{}
 
-	result, err := registry.Execute("setup-semantic-search", args)
+	result, err := registry.Execute("test-prompt", args)
 
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
@@ -112,7 +136,7 @@ func TestExecuteNonExistent(t *testing.T) {
 	registry := NewRegistry()
 
 	// Register a prompt so we can verify it appears in the error message
-	registry.Register("test-prompt", SetupSemanticSearch())
+	registry.Register("test-prompt", createTestPrompt("test-prompt", "A test prompt"))
 
 	args := map[string]string{}
 	_, err := registry.Execute("non-existent", args)
@@ -134,82 +158,77 @@ func TestExecuteNonExistent(t *testing.T) {
 	}
 }
 
-func TestSetupSemanticSearchPrompt(t *testing.T) {
-	prompt := SetupSemanticSearch()
+func TestEmptyRegistry(t *testing.T) {
+	registry := NewRegistry()
 
-	// Verify prompt structure
-	if prompt.Definition.Name != "setup-semantic-search" {
-		t.Errorf("Expected name 'setup-semantic-search', got %q", prompt.Definition.Name)
+	// List should return empty slice
+	prompts := registry.List()
+	if len(prompts) != 0 {
+		t.Errorf("Expected 0 prompts in empty registry, got %d", len(prompts))
 	}
 
-	if prompt.Definition.Description == "" {
-		t.Error("Description should not be empty")
+	// Execute should return error
+	_, err := registry.Execute("any-prompt", map[string]string{})
+	if err == nil {
+		t.Error("Expected error when executing prompt on empty registry")
+	}
+}
+
+func TestPromptWithArguments(t *testing.T) {
+	registry := NewRegistry()
+
+	// Create a prompt with arguments
+	promptWithArgs := Prompt{
+		Definition: mcp.Prompt{
+			Name:        "prompt-with-args",
+			Description: "A prompt that accepts arguments",
+			Arguments: []mcp.PromptArgument{
+				{
+					Name:        "query",
+					Description: "The query text",
+					Required:    true,
+				},
+				{
+					Name:        "optional_param",
+					Description: "An optional parameter",
+					Required:    false,
+				},
+			},
+		},
+		Handler: func(args map[string]string) mcp.PromptResult {
+			query := args["query"]
+			if query == "" {
+				query = "default query"
+			}
+			return mcp.PromptResult{
+				Description: "Result with query: " + query,
+				Messages: []mcp.PromptMessage{
+					{
+						Role: "user",
+						Content: mcp.ContentItem{
+							Type: "text",
+							Text: "Processing query: " + query,
+						},
+					},
+				},
+			}
+		},
 	}
 
-	// Verify arguments
-	if len(prompt.Definition.Arguments) != 1 {
-		t.Errorf("Expected 1 argument, got %d", len(prompt.Definition.Arguments))
-	}
+	registry.Register("prompt-with-args", promptWithArgs)
 
-	// Check query_text argument
-	if prompt.Definition.Arguments[0].Name != "query_text" {
-		t.Errorf("Expected argument name 'query_text', got %q",
-			prompt.Definition.Arguments[0].Name)
-	}
-	if !prompt.Definition.Arguments[0].Required {
-		t.Error("query_text should be required")
-	}
-
-	// Test handler execution
+	// Test with arguments
 	args := map[string]string{
-		"query_text": "What is PostgreSQL?",
+		"query": "test query",
 	}
-	result := prompt.Handler(args)
+	result, err := registry.Execute("prompt-with-args", args)
 
-	if result.Description == "" {
-		t.Error("Result description should not be empty")
-	}
-
-	if len(result.Messages) == 0 {
-		t.Error("Result should have at least one message")
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
 	}
 
-	if result.Messages[0].Role != "user" {
-		t.Errorf("Expected first message role 'user', got %q", result.Messages[0].Role)
-	}
-
-	if result.Messages[0].Content.Type != "text" {
-		t.Errorf("Expected content type 'text', got %q", result.Messages[0].Content.Type)
-	}
-
-	if result.Messages[0].Content.Text == "" {
-		t.Error("Message text should not be empty")
-	}
-}
-
-func TestExploreDatabasePrompt(t *testing.T) {
-	prompt := ExploreDatabase()
-
-	// Verify prompt structure
-	if prompt.Definition.Name != "explore-database" {
-		t.Errorf("Expected name 'explore-database', got %q", prompt.Definition.Name)
-	}
-
-	if prompt.Definition.Description == "" {
-		t.Error("Description should not be empty")
-	}
-
-	// Verify no arguments required
-	if len(prompt.Definition.Arguments) != 0 {
-		t.Errorf("Expected 0 arguments, got %d", len(prompt.Definition.Arguments))
-	}
-
-	// Test handler execution
-	args := map[string]string{}
-	result := prompt.Handler(args)
-
-	if result.Description == "" {
-		t.Error("Result description should not be empty")
+	if !strings.Contains(result.Description, "test query") {
+		t.Errorf("Expected result to contain 'test query', got: %s", result.Description)
 	}
 
 	if len(result.Messages) == 0 {
@@ -218,239 +237,5 @@ func TestExploreDatabasePrompt(t *testing.T) {
 
 	if result.Messages[0].Role != "user" {
 		t.Errorf("Expected first message role 'user', got %q", result.Messages[0].Role)
-	}
-
-	if result.Messages[0].Content.Text == "" {
-		t.Error("Message text should not be empty")
-	}
-}
-
-func TestDiagnoseQueryIssuePrompt(t *testing.T) {
-	prompt := DiagnoseQueryIssue()
-
-	// Verify prompt structure
-	if prompt.Definition.Name != "diagnose-query-issue" {
-		t.Errorf("Expected name 'diagnose-query-issue', got %q", prompt.Definition.Name)
-	}
-
-	if prompt.Definition.Description == "" {
-		t.Error("Description should not be empty")
-	}
-
-	// Verify arguments
-	if len(prompt.Definition.Arguments) != 1 {
-		t.Errorf("Expected 1 argument, got %d", len(prompt.Definition.Arguments))
-	}
-
-	// Check issue_description argument
-	if prompt.Definition.Arguments[0].Name != "issue_description" {
-		t.Errorf("Expected argument name 'issue_description', got %q",
-			prompt.Definition.Arguments[0].Name)
-	}
-
-	if prompt.Definition.Arguments[0].Required {
-		t.Error("issue_description should be optional")
-	}
-
-	// Test handler execution with argument
-	argsWithDesc := map[string]string{
-		"issue_description": "table not found",
-	}
-	result := prompt.Handler(argsWithDesc)
-
-	if result.Description == "" {
-		t.Error("Result description should not be empty")
-	}
-
-	if len(result.Messages) == 0 {
-		t.Error("Result should have at least one message")
-	}
-
-	if result.Messages[0].Content.Text == "" {
-		t.Error("Message text should not be empty")
-	}
-
-	// Test handler execution without argument
-	argsEmpty := map[string]string{}
-	resultNoArg := prompt.Handler(argsEmpty)
-
-	if resultNoArg.Description == "" {
-		t.Error("Result description should not be empty even without argument")
-	}
-
-	if len(resultNoArg.Messages) == 0 {
-		t.Error("Result should have at least one message even without argument")
-	}
-}
-
-func TestDesignSchemaPrompt(t *testing.T) {
-	prompt := DesignSchema()
-
-	// Verify prompt structure
-	if prompt.Definition.Name != "design-schema" {
-		t.Errorf("Expected name 'design-schema', got %q", prompt.Definition.Name)
-	}
-
-	if prompt.Definition.Description == "" {
-		t.Error("Description should not be empty")
-	}
-
-	// Verify arguments
-	if len(prompt.Definition.Arguments) != 3 {
-		t.Errorf("Expected 3 arguments, got %d", len(prompt.Definition.Arguments))
-	}
-
-	// Check requirements argument
-	var hasRequirements bool
-	var hasUseCase bool
-	var hasFullFeatured bool
-	for _, arg := range prompt.Definition.Arguments {
-		if arg.Name == "requirements" {
-			hasRequirements = true
-			if !arg.Required {
-				t.Error("requirements should be required")
-			}
-		}
-		if arg.Name == "use_case" {
-			hasUseCase = true
-			if arg.Required {
-				t.Error("use_case should be optional")
-			}
-		}
-		if arg.Name == "full_featured" {
-			hasFullFeatured = true
-			if arg.Required {
-				t.Error("full_featured should be optional")
-			}
-		}
-	}
-
-	if !hasRequirements {
-		t.Error("Missing requirements argument")
-	}
-	if !hasUseCase {
-		t.Error("Missing use_case argument")
-	}
-	if !hasFullFeatured {
-		t.Error("Missing full_featured argument")
-	}
-
-	// Test handler execution with argument
-	argsWithReqs := map[string]string{
-		"requirements": "User management system with roles and permissions",
-		"use_case":     "oltp",
-	}
-	result := prompt.Handler(argsWithReqs)
-
-	if result.Description == "" {
-		t.Error("Result description should not be empty")
-	}
-
-	if len(result.Messages) == 0 {
-		t.Error("Result should have at least one message")
-	}
-
-	if result.Messages[0].Role != "user" {
-		t.Errorf("Expected first message role 'user', got %q", result.Messages[0].Role)
-	}
-
-	if result.Messages[0].Content.Text == "" {
-		t.Error("Message text should not be empty")
-	}
-
-	// Test handler execution with minimal arguments
-	argsMinimal := map[string]string{
-		"requirements": "E-commerce product catalog",
-	}
-	resultMinimal := prompt.Handler(argsMinimal)
-
-	if resultMinimal.Description == "" {
-		t.Error("Result description should not be empty with minimal args")
-	}
-
-	if len(resultMinimal.Messages) == 0 {
-		t.Error("Result should have at least one message with minimal args")
-	}
-
-	// Test handler execution without arguments (should use defaults)
-	argsEmpty := map[string]string{}
-	resultEmpty := prompt.Handler(argsEmpty)
-
-	if len(resultEmpty.Messages) == 0 {
-		t.Error("Handler should return messages even with empty args")
-	}
-
-	// Test full_featured=false (default) includes minimal mode guidance
-	argsMinimalMode := map[string]string{
-		"requirements": "Simple product catalog",
-	}
-	resultMinimalMode := prompt.Handler(argsMinimalMode)
-	minimalText := resultMinimalMode.Messages[0].Content.Text
-	if !strings.Contains(minimalText, "MINIMAL DESIGN MODE") {
-		t.Error("Default mode should include MINIMAL DESIGN MODE guidance")
-	}
-	if strings.Contains(minimalText, "COMPREHENSIVE DESIGN MODE") {
-		t.Error("Default mode should not include COMPREHENSIVE DESIGN MODE guidance")
-	}
-	// Verify strict column guidance is present
-	if !strings.Contains(minimalText, "Do NOT add created_at, updated_at") {
-		t.Error("Minimal mode should warn against timestamp fields")
-	}
-	if !strings.Contains(minimalText, "Do NOT duplicate relationship data") {
-		t.Error("Minimal mode should warn against duplicate relationships")
-	}
-
-	// Test full_featured=true includes comprehensive mode guidance
-	argsFullMode := map[string]string{
-		"requirements":  "Complex e-commerce system",
-		"full_featured": "true",
-	}
-	resultFullMode := prompt.Handler(argsFullMode)
-	fullText := resultFullMode.Messages[0].Content.Text
-	if !strings.Contains(fullText, "COMPREHENSIVE DESIGN MODE") {
-		t.Error("full_featured=true should include COMPREHENSIVE DESIGN MODE guidance")
-	}
-	if strings.Contains(fullText, "MINIMAL DESIGN MODE") {
-		t.Error("full_featured=true should not include MINIMAL DESIGN MODE guidance")
-	}
-}
-
-func TestPromptArgumentVariations(t *testing.T) {
-	prompt := SetupSemanticSearch()
-
-	// Test with empty query_text
-	argsEmpty := map[string]string{
-		"query_text": "",
-	}
-	resultEmpty := prompt.Handler(argsEmpty)
-
-	if len(resultEmpty.Messages) == 0 {
-		t.Error("Handler should return messages even with empty query_text")
-	}
-
-	// Test with partial arguments
-	argsPartial := map[string]string{
-		"query_text": "test query",
-	}
-	resultPartial := prompt.Handler(argsPartial)
-
-	if len(resultPartial.Messages) == 0 {
-		t.Error("Handler should return messages with partial args")
-	}
-
-	// Test with all arguments (only query_text for this prompt)
-	argsFull := map[string]string{
-		"query_text": "test query",
-	}
-	resultFull := prompt.Handler(argsFull)
-
-	if len(resultFull.Messages) == 0 {
-		t.Error("Handler should return messages with full args")
-	}
-
-	// Verify prompt text is generated
-	textFull := resultFull.Messages[0].Content.Text
-	if len(textFull) == 0 {
-		t.Error("Expected prompt text to be generated")
 	}
 }

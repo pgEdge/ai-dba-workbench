@@ -84,12 +84,9 @@ type ResourcesConfig struct {
 }
 
 // PromptsConfig holds configuration for enabling/disabling built-in prompts
-// All prompts are enabled by default
+// Currently no built-in prompts are registered; this struct is kept for future use
 type PromptsConfig struct {
-	ExploreDatabase     *bool `yaml:"explore_database"`      // explore-database prompt (default: true)
-	SetupSemanticSearch *bool `yaml:"setup_semantic_search"` // setup-semantic-search prompt (default: true)
-	DiagnoseQueryIssue  *bool `yaml:"diagnose_query_issue"`  // diagnose-query-issue prompt (default: true)
-	DesignSchema        *bool `yaml:"design_schema"`         // design-schema prompt (default: true)
+	// Future prompt configuration fields can be added here
 }
 
 // IsToolEnabled returns true if the specified tool is enabled (defaults to true if not set)
@@ -135,19 +132,10 @@ func (c *ResourcesConfig) IsResourceEnabled(resourceURI string) bool {
 }
 
 // IsPromptEnabled returns true if the specified prompt is enabled (defaults to true if not set)
+// Currently no built-in prompts are registered; this method is kept for future use
 func (c *PromptsConfig) IsPromptEnabled(promptName string) bool {
-	switch promptName {
-	case "explore-database":
-		return c.ExploreDatabase == nil || *c.ExploreDatabase
-	case "setup-semantic-search":
-		return c.SetupSemanticSearch == nil || *c.SetupSemanticSearch
-	case "diagnose-query-issue":
-		return c.DiagnoseQueryIssue == nil || *c.DiagnoseQueryIssue
-	case "design-schema":
-		return c.DesignSchema == nil || *c.DesignSchema
-	default:
-		return true // Unknown prompts are enabled by default
-	}
+	// All prompts are enabled by default
+	return true
 }
 
 // HTTPConfig holds HTTP/HTTPS server settings
@@ -584,19 +572,10 @@ func mergeConfig(dest, src *Config) {
 	if src.Builtins.Resources.SystemInfo != nil {
 		dest.Builtins.Resources.SystemInfo = src.Builtins.Resources.SystemInfo
 	}
-	// Prompts
-	if src.Builtins.Prompts.ExploreDatabase != nil {
-		dest.Builtins.Prompts.ExploreDatabase = src.Builtins.Prompts.ExploreDatabase
+	if src.Builtins.Resources.ConnectionInfo != nil {
+		dest.Builtins.Resources.ConnectionInfo = src.Builtins.Resources.ConnectionInfo
 	}
-	if src.Builtins.Prompts.SetupSemanticSearch != nil {
-		dest.Builtins.Prompts.SetupSemanticSearch = src.Builtins.Prompts.SetupSemanticSearch
-	}
-	if src.Builtins.Prompts.DiagnoseQueryIssue != nil {
-		dest.Builtins.Prompts.DiagnoseQueryIssue = src.Builtins.Prompts.DiagnoseQueryIssue
-	}
-	if src.Builtins.Prompts.DesignSchema != nil {
-		dest.Builtins.Prompts.DesignSchema = src.Builtins.Prompts.DesignSchema
-	}
+	// Prompts - no built-in prompts currently, merge logic can be added here for future prompts
 }
 
 // loadAPIKeysFromFiles loads API keys from files if specified in config

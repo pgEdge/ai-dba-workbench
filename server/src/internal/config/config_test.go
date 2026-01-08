@@ -183,22 +183,17 @@ func TestResourcesConfig_IsResourceEnabled(t *testing.T) {
 }
 
 func TestPromptsConfig_IsPromptEnabled(t *testing.T) {
-	falseVal := false
-	trueVal := true
-
+	// PromptsConfig currently has no built-in prompts; this test verifies
+	// the infrastructure returns true for any prompt (future prompts will be enabled by default)
 	tests := []struct {
 		name       string
 		config     PromptsConfig
 		promptName string
 		expected   bool
 	}{
-		{"nil value returns true", PromptsConfig{}, "explore-database", true},
-		{"explicit true", PromptsConfig{ExploreDatabase: &trueVal}, "explore-database", true},
-		{"explicit false", PromptsConfig{ExploreDatabase: &falseVal}, "explore-database", false},
+		{"any prompt returns true", PromptsConfig{}, "any-prompt", true},
 		{"unknown prompt returns true", PromptsConfig{}, "unknown-prompt", true},
-		{"setup-semantic-search nil", PromptsConfig{}, "setup-semantic-search", true},
-		{"diagnose-query-issue nil", PromptsConfig{}, "diagnose-query-issue", true},
-		{"design-schema nil", PromptsConfig{}, "design-schema", true},
+		{"future prompt returns true", PromptsConfig{}, "future-prompt", true},
 	}
 
 	for _, tt := range tests {

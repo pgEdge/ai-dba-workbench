@@ -38,6 +38,7 @@ type ContextAwareProvider struct {
 	authStore      *auth.AuthStore     // Auth store for users and tokens
 	rateLimiter    *auth.RateLimiter   // Rate limiter for authentication attempts
 	datastore      *database.Datastore // Datastore for monitored connection info
+	rbacChecker    *auth.RBACChecker   // RBAC checker for privilege-based access control
 
 	// Cache of registries per client to avoid re-creating tools on every Execute()
 	mu               sync.RWMutex
@@ -132,6 +133,7 @@ func NewContextAwareProvider(clientManager *database.ClientManager, resourceReg 
 		authStore:        authStore,
 		rateLimiter:      rateLimiter,
 		datastore:        datastore,
+		rbacChecker:      auth.NewRBACChecker(authStore, authEnabled),
 		clientRegistries: make(map[*database.Client]*Registry),
 		hiddenRegistry:   NewRegistry(),
 	}
@@ -192,8 +194,30 @@ func (p *ContextAwareProvider) RegisterTools(ctx context.Context) error {
 
 // List returns all registered tool definitions
 // Hidden tools (like authenticate_user) are not included as they're in a separate registry
+// Note: This returns ALL tools without RBAC filtering. Use ListForContext for filtered results.
 func (p *ContextAwareProvider) List() []mcp.Tool {
 	return p.baseRegistry.List()
+}
+
+// ListForContext returns tool definitions filtered by the user's RBAC privileges
+// This is the RBAC-aware version of List() that should be used in authenticated contexts
+func (p *ContextAwareProvider) ListForContext(ctx context.Context) []mcp.Tool {
+	allTools := p.baseRegistry.List()
+
+	// If auth is disabled or user is superuser, return all tools
+	if p.rbacChecker.IsSuperuser(ctx) {
+		return allTools
+	}
+
+	// Filter tools based on user's privileges
+	var filtered []mcp.Tool
+	for _, tool := range allTools {
+		if p.rbacChecker.CanAccessMCPItem(ctx, tool.Name) {
+			filtered = append(filtered, tool)
+		}
+	}
+
+	return filtered
 }
 
 // getOrCreateRegistryForClient returns a cached registry for the given client
@@ -302,6 +326,20 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 		if tokenHash == "" {
 			return logAndReturn(mcp.ToolResponse{}, fmt.Errorf("no authentication token found in request context"))
 		}
+	}
+
+	// RBAC check: verify user has access to this tool
+	// This check applies even for tools that are enabled in config
+	if !p.rbacChecker.CanAccessMCPItem(ctx, name) {
+		return logAndReturn(mcp.ToolResponse{
+			Content: []mcp.ContentItem{
+				{
+					Type: "text",
+					Text: fmt.Sprintf("Access denied: you do not have permission to use tool '%s'", name),
+				},
+			},
+			IsError: true,
+		}, nil)
 	}
 
 	// Check if this is a stateless tool that doesn't require a per-token database client

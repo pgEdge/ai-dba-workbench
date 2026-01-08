@@ -21,7 +21,7 @@ import (
 )
 
 // addTokenCommand handles the add-token command
-func addTokenCommand(dataDir, annotation string, expiresIn time.Duration) error {
+func addTokenCommand(dataDir, annotation string, expiresIn time.Duration, isSuperuser bool) error {
 	// Open auth store
 	store, err := auth.NewAuthStore(dataDir, 0, 0)
 	if err != nil {
@@ -63,7 +63,7 @@ func addTokenCommand(dataDir, annotation string, expiresIn time.Duration) error 
 	}
 
 	// Create service token (empty database = uses configured single database)
-	rawToken, storedToken, err := store.CreateServiceToken(annotation, expiresAt, "")
+	rawToken, storedToken, err := store.CreateServiceToken(annotation, expiresAt, "", isSuperuser)
 	if err != nil {
 		return fmt.Errorf("failed to create token: %w", err)
 	}
@@ -77,6 +77,9 @@ func addTokenCommand(dataDir, annotation string, expiresIn time.Duration) error 
 	fmt.Printf("ID:    %d\n", storedToken.ID)
 	if annotation != "" {
 		fmt.Printf("Note:  %s\n", annotation)
+	}
+	if isSuperuser {
+		fmt.Println("Superuser: Yes (bypasses all privilege checks)")
 	}
 	if expiresAt != nil {
 		fmt.Printf("Expires: %s\n", expiresAt.Format(time.RFC3339))
@@ -129,9 +132,9 @@ func listTokensCommand(dataDir string) error {
 	}
 
 	fmt.Println("\nService Tokens:")
-	fmt.Println(strings.Repeat("=", 90))
-	fmt.Printf("%-6s %-18s %-20s %-10s %s\n", "ID", "Hash Prefix", "Expires", "Status", "Annotation")
-	fmt.Println(strings.Repeat("-", 90))
+	fmt.Println(strings.Repeat("=", 100))
+	fmt.Printf("%-6s %-18s %-20s %-10s %-10s %s\n", "ID", "Hash Prefix", "Expires", "Status", "Superuser", "Annotation")
+	fmt.Println(strings.Repeat("-", 100))
 
 	now := time.Now()
 	for _, token := range tokens {
@@ -145,9 +148,14 @@ func listTokensCommand(dataDir string) error {
 			expiryStr = token.ExpiresAt.Format("2006-01-02 15:04")
 		}
 
+		superuserStr := "No"
+		if token.IsSuperuser {
+			superuserStr = "Yes"
+		}
+
 		annotation := token.Annotation
-		if len(annotation) > 25 {
-			annotation = annotation[:22] + "..."
+		if len(annotation) > 20 {
+			annotation = annotation[:17] + "..."
 		}
 
 		hashPrefix := token.TokenHash
@@ -155,14 +163,15 @@ func listTokensCommand(dataDir string) error {
 			hashPrefix = hashPrefix[:16]
 		}
 
-		fmt.Printf("%-6d %-18s %-20s %-10s %s\n",
+		fmt.Printf("%-6d %-18s %-20s %-10s %-10s %s\n",
 			token.ID,
 			hashPrefix,
 			expiryStr,
 			status,
+			superuserStr,
 			annotation)
 	}
-	fmt.Println(strings.Repeat("=", 90) + "\n")
+	fmt.Println(strings.Repeat("=", 100) + "\n")
 
 	return nil
 }

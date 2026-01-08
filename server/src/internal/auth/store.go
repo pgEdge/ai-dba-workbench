@@ -35,7 +35,7 @@ const (
 	TokenTypeUser    = "user"    // User-created tokens
 
 	// Schema version for migrations
-	schemaVersion = 2
+	schemaVersion = 3
 )
 
 // AuthStore manages users and tokens in SQLite
@@ -71,18 +71,20 @@ type StoredUser struct {
 	Enabled        bool
 	Annotation     string
 	FailedAttempts int
+	IsSuperuser    bool
 }
 
 // StoredToken represents a token in the database
 type StoredToken struct {
-	ID         int64
-	TokenHash  string     // SHA256 hash of the actual token
-	TokenType  string     // "service" or "user"
-	OwnerID    *int64     // NULL for service tokens, user ID for user tokens
-	ExpiresAt  *time.Time // NULL for never expires
-	Annotation string
-	CreatedAt  time.Time
-	Database   string // Bound database name (empty = first configured database)
+	ID          int64
+	TokenHash   string     // SHA256 hash of the actual token
+	TokenType   string     // "service" or "user"
+	OwnerID     *int64     // NULL for service tokens, user ID for user tokens
+	ExpiresAt   *time.Time // NULL for never expires
+	Annotation  string
+	CreatedAt   time.Time
+	Database    string // Bound database name (empty = first configured database)
+	IsSuperuser bool   // Superuser status (bypasses all privilege checks)
 }
 
 // NewAuthStore creates a new SQLite-based auth store
@@ -183,6 +185,112 @@ func (s *AuthStore) initSchema() error {
 		}
 	}
 
+	// Apply migrations for schema version 3 (RBAC)
+	if currentVersion < 3 {
+		migrationV3 := `
+        -- Hierarchical user groups
+        CREATE TABLE IF NOT EXISTS user_groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            description TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_groups_name ON user_groups(name);
+
+        -- Group memberships (users and nested groups)
+        CREATE TABLE IF NOT EXISTS group_memberships (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            parent_group_id INTEGER NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
+            member_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            member_group_id INTEGER REFERENCES user_groups(id) ON DELETE CASCADE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(parent_group_id, member_user_id),
+            UNIQUE(parent_group_id, member_group_id),
+            CHECK (
+                (member_user_id IS NOT NULL AND member_group_id IS NULL) OR
+                (member_user_id IS NULL AND member_group_id IS NOT NULL)
+            ),
+            CHECK (parent_group_id != member_group_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_group_memberships_parent ON group_memberships(parent_group_id);
+        CREATE INDEX IF NOT EXISTS idx_group_memberships_user ON group_memberships(member_user_id);
+        CREATE INDEX IF NOT EXISTS idx_group_memberships_group ON group_memberships(member_group_id);
+
+        -- MCP privilege identifiers (tools, resources, prompts)
+        CREATE TABLE IF NOT EXISTS mcp_privilege_identifiers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            identifier TEXT UNIQUE NOT NULL,
+            item_type TEXT NOT NULL CHECK (item_type IN ('tool', 'resource', 'prompt')),
+            description TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_mcp_privileges_identifier ON mcp_privilege_identifiers(identifier);
+        CREATE INDEX IF NOT EXISTS idx_mcp_privileges_type ON mcp_privilege_identifiers(item_type);
+
+        -- Group-to-MCP privilege mappings
+        CREATE TABLE IF NOT EXISTS group_mcp_privileges (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
+            privilege_identifier_id INTEGER NOT NULL
+                REFERENCES mcp_privilege_identifiers(id) ON DELETE CASCADE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(group_id, privilege_identifier_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_group_mcp_privs_group ON group_mcp_privileges(group_id);
+        CREATE INDEX IF NOT EXISTS idx_group_mcp_privs_priv ON group_mcp_privileges(privilege_identifier_id);
+
+        -- Group-to-connection privilege mappings
+        CREATE TABLE IF NOT EXISTS connection_privileges (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
+            connection_id INTEGER NOT NULL,
+            access_level TEXT NOT NULL DEFAULT 'read'
+                CHECK (access_level IN ('read', 'read_write')),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(group_id, connection_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_conn_privs_group ON connection_privileges(group_id);
+        CREATE INDEX IF NOT EXISTS idx_conn_privs_conn ON connection_privileges(connection_id);
+
+        -- Token-to-connection scope restrictions
+        CREATE TABLE IF NOT EXISTS token_connection_scope (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token_id INTEGER NOT NULL REFERENCES tokens(id) ON DELETE CASCADE,
+            connection_id INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(token_id, connection_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_token_conn_scope_token ON token_connection_scope(token_id);
+
+        -- Token-to-MCP privilege scope restrictions
+        CREATE TABLE IF NOT EXISTS token_mcp_scope (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token_id INTEGER NOT NULL REFERENCES tokens(id) ON DELETE CASCADE,
+            privilege_identifier_id INTEGER NOT NULL
+                REFERENCES mcp_privilege_identifiers(id) ON DELETE CASCADE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(token_id, privilege_identifier_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_token_mcp_scope_token ON token_mcp_scope(token_id);
+        `
+		// Execute each statement separately for SQLite (ALTER TABLE doesn't combine well)
+		statements := []string{
+			"ALTER TABLE users ADD COLUMN is_superuser BOOLEAN DEFAULT FALSE",
+			"ALTER TABLE tokens ADD COLUMN is_superuser BOOLEAN DEFAULT FALSE",
+		}
+		for _, stmt := range statements {
+			// Ignore errors for ALTER TABLE as column may already exist
+			//nolint:errcheck // Intentionally ignoring error - column may already exist
+			s.db.Exec(stmt)
+		}
+
+		// Execute the rest of the migration
+		_, err = s.db.Exec(migrationV3)
+		if err != nil {
+			return fmt.Errorf("failed to apply schema migration v3: %w", err)
+		}
+	}
+
 	// Set schema version
 	_, err = s.db.Exec("INSERT OR REPLACE INTO schema_version (version) VALUES (?)", schemaVersion)
 	return err
@@ -225,17 +333,40 @@ func (s *AuthStore) GetUser(username string) (*StoredUser, error) {
 
 	var user StoredUser
 	err := s.db.QueryRow(
-		`SELECT id, username, password_hash, created_at, last_login, enabled, annotation, failed_attempts
+		`SELECT id, username, password_hash, created_at, last_login, enabled, annotation, failed_attempts, is_superuser
          FROM users WHERE username = ?`,
 		username,
 	).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.CreatedAt,
-		&user.LastLogin, &user.Enabled, &user.Annotation, &user.FailedAttempts)
+		&user.LastLogin, &user.Enabled, &user.Annotation, &user.FailedAttempts, &user.IsSuperuser)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user: %w", err)
+	}
+
+	return &user, nil
+}
+
+// GetUserByID retrieves a user by their ID
+func (s *AuthStore) GetUserByID(id int64) (*StoredUser, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var user StoredUser
+	err := s.db.QueryRow(
+		`SELECT id, username, password_hash, created_at, last_login, enabled, annotation, failed_attempts, is_superuser
+         FROM users WHERE id = ?`,
+		id,
+	).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.CreatedAt,
+		&user.LastLogin, &user.Enabled, &user.Annotation, &user.FailedAttempts, &user.IsSuperuser)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user by ID: %w", err)
 	}
 
 	return &user, nil
@@ -336,7 +467,7 @@ func (s *AuthStore) ListUsers() ([]*StoredUser, error) {
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.Query(
-		`SELECT id, username, password_hash, created_at, last_login, enabled, annotation, failed_attempts
+		`SELECT id, username, password_hash, created_at, last_login, enabled, annotation, failed_attempts, is_superuser
          FROM users ORDER BY username`,
 	)
 	if err != nil {
@@ -348,7 +479,7 @@ func (s *AuthStore) ListUsers() ([]*StoredUser, error) {
 	for rows.Next() {
 		var user StoredUser
 		if err := rows.Scan(&user.ID, &user.Username, &user.PasswordHash, &user.CreatedAt,
-			&user.LastLogin, &user.Enabled, &user.Annotation, &user.FailedAttempts); err != nil {
+			&user.LastLogin, &user.Enabled, &user.Annotation, &user.FailedAttempts, &user.IsSuperuser); err != nil {
 			return nil, fmt.Errorf("failed to scan user: %w", err)
 		}
 		users = append(users, &user)
@@ -473,7 +604,7 @@ func (s *AuthStore) InvalidateSession(token string) {
 
 // CreateServiceToken creates a new service token
 // Returns the raw token (only shown once) and the stored token info
-func (s *AuthStore) CreateServiceToken(annotation string, expiry *time.Time, database string) (string, *StoredToken, error) {
+func (s *AuthStore) CreateServiceToken(annotation string, expiry *time.Time, database string, isSuperuser bool) (string, *StoredToken, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -490,9 +621,9 @@ func (s *AuthStore) CreateServiceToken(annotation string, expiry *time.Time, dat
 
 	// Insert into database
 	result, err := s.db.Exec(
-		`INSERT INTO tokens (token_hash, token_type, expires_at, annotation, database)
-         VALUES (?, ?, ?, ?, ?)`,
-		tokenHash, TokenTypeService, expiry, annotation, database,
+		`INSERT INTO tokens (token_hash, token_type, expires_at, annotation, database, is_superuser)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+		tokenHash, TokenTypeService, expiry, annotation, database, isSuperuser,
 	)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to create token: %w", err)
@@ -501,13 +632,14 @@ func (s *AuthStore) CreateServiceToken(annotation string, expiry *time.Time, dat
 	//nolint:errcheck // SQLite always supports LastInsertId
 	id, _ := result.LastInsertId()
 	token := &StoredToken{
-		ID:         id,
-		TokenHash:  tokenHash,
-		TokenType:  TokenTypeService,
-		ExpiresAt:  expiry,
-		Annotation: annotation,
-		CreatedAt:  time.Now(),
-		Database:   database,
+		ID:          id,
+		TokenHash:   tokenHash,
+		TokenType:   TokenTypeService,
+		ExpiresAt:   expiry,
+		Annotation:  annotation,
+		CreatedAt:   time.Now(),
+		Database:    database,
+		IsSuperuser: isSuperuser,
 	}
 
 	return rawToken, token, nil
@@ -592,7 +724,7 @@ func (s *AuthStore) ListUserTokens(username string) ([]*StoredToken, error) {
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.Query(
-		`SELECT t.id, t.token_hash, t.token_type, t.owner_id, t.expires_at, t.annotation, t.created_at, t.database
+		`SELECT t.id, t.token_hash, t.token_type, t.owner_id, t.expires_at, t.annotation, t.created_at, t.database, t.is_superuser
          FROM tokens t
          JOIN users u ON t.owner_id = u.id
          WHERE u.username = ? AND t.token_type = ?
@@ -648,11 +780,11 @@ func (s *AuthStore) ValidateToken(rawToken string) (*StoredToken, error) {
 
 	var token StoredToken
 	err := s.db.QueryRow(
-		`SELECT id, token_hash, token_type, owner_id, expires_at, annotation, created_at, database
+		`SELECT id, token_hash, token_type, owner_id, expires_at, annotation, created_at, database, is_superuser
          FROM tokens WHERE token_hash = ?`,
 		tokenHash,
 	).Scan(&token.ID, &token.TokenHash, &token.TokenType, &token.OwnerID,
-		&token.ExpiresAt, &token.Annotation, &token.CreatedAt, &token.Database)
+		&token.ExpiresAt, &token.Annotation, &token.CreatedAt, &token.Database, &token.IsSuperuser)
 
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("invalid token")
@@ -688,7 +820,7 @@ func (s *AuthStore) ListServiceTokens() ([]*StoredToken, error) {
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.Query(
-		`SELECT id, token_hash, token_type, owner_id, expires_at, annotation, created_at, database
+		`SELECT id, token_hash, token_type, owner_id, expires_at, annotation, created_at, database, is_superuser
          FROM tokens WHERE token_type = ?
          ORDER BY created_at DESC`,
 		TokenTypeService,
@@ -780,7 +912,7 @@ func (s *AuthStore) scanTokens(rows *sql.Rows) ([]*StoredToken, error) {
 	for rows.Next() {
 		var token StoredToken
 		if err := rows.Scan(&token.ID, &token.TokenHash, &token.TokenType, &token.OwnerID,
-			&token.ExpiresAt, &token.Annotation, &token.CreatedAt, &token.Database); err != nil {
+			&token.ExpiresAt, &token.Annotation, &token.CreatedAt, &token.Database, &token.IsSuperuser); err != nil {
 			return nil, fmt.Errorf("failed to scan token: %w", err)
 		}
 		tokens = append(tokens, &token)

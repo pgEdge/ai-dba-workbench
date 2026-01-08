@@ -34,6 +34,7 @@ type ContextAwareRegistry struct {
 	cfg             *config.Config
 	authStore       *auth.AuthStore     // Auth store for connection sessions
 	datastore       *database.Datastore // Datastore for monitored connection info
+	rbacChecker     *auth.RBACChecker   // RBAC checker for privilege-based access control
 }
 
 // customResource represents a user-defined resource
@@ -51,10 +52,12 @@ func NewContextAwareRegistry(clientManager *database.ClientManager, authEnabled 
 		cfg:             cfg,
 		authStore:       authStore,
 		datastore:       datastore,
+		rbacChecker:     auth.NewRBACChecker(authStore, authEnabled),
 	}
 }
 
 // List returns all available resource definitions
+// Note: This returns ALL resources without RBAC filtering. Use ListForContext for filtered results.
 func (r *ContextAwareRegistry) List() []mcp.Resource {
 	// Start with static built-in resources (only include enabled ones)
 	resources := []mcp.Resource{}
@@ -78,6 +81,27 @@ func (r *ContextAwareRegistry) List() []mcp.Resource {
 	}
 
 	return resources
+}
+
+// ListForContext returns resource definitions filtered by the user's RBAC privileges
+// This is the RBAC-aware version of List() that should be used in authenticated contexts
+func (r *ContextAwareRegistry) ListForContext(ctx context.Context) []mcp.Resource {
+	allResources := r.List()
+
+	// If auth is disabled or user is superuser, return all resources
+	if r.rbacChecker.IsSuperuser(ctx) {
+		return allResources
+	}
+
+	// Filter resources based on user's privileges
+	var filtered []mcp.Resource
+	for _, resource := range allResources {
+		if r.rbacChecker.CanAccessMCPItem(ctx, resource.URI) {
+			filtered = append(filtered, resource)
+		}
+	}
+
+	return filtered
 }
 
 // Read retrieves a resource by URI with the appropriate database client
@@ -114,6 +138,19 @@ func (r *ContextAwareRegistry) Read(ctx context.Context, uri string) (mcp.Resour
 			tracing.LogResourceResult(sessionID, tokenHash, requestID, uri, result, err, duration)
 		}
 		return content, err
+	}
+
+	// RBAC check: verify user has access to this resource
+	if !r.rbacChecker.CanAccessMCPItem(ctx, uri) {
+		return logAndReturn(mcp.ResourceContent{
+			URI: uri,
+			Contents: []mcp.ContentItem{
+				{
+					Type: "text",
+					Text: fmt.Sprintf("Access denied: you do not have permission to read resource '%s'", uri),
+				},
+			},
+		}, nil)
 	}
 
 	// Check if this is a custom resource first

@@ -35,6 +35,15 @@ const (
 	// IsAPITokenContextKey is the context key for indicating if auth was via API token
 	IsAPITokenContextKey contextKey = "is_api_token"
 
+	// UserIDContextKey is the context key for storing the user ID (for RBAC)
+	UserIDContextKey contextKey = "user_id"
+
+	// TokenIDContextKey is the context key for storing the token ID (for scoping)
+	TokenIDContextKey contextKey = "token_id"
+
+	// IsSuperuserContextKey is the context key for storing superuser status
+	IsSuperuserContextKey contextKey = "is_superuser"
+
 	// HealthCheckPath is the path for the health check endpoint (bypasses authentication)
 	HealthCheckPath = "/health"
 
@@ -74,6 +83,33 @@ func GetUsernameFromContext(ctx context.Context) string {
 func IsAPITokenFromContext(ctx context.Context) bool {
 	if isAPIToken, ok := ctx.Value(IsAPITokenContextKey).(bool); ok {
 		return isAPIToken
+	}
+	return false
+}
+
+// GetUserIDFromContext retrieves the user ID from the request context
+// Returns 0 if no user ID is found (e.g., API token or unauthenticated request)
+func GetUserIDFromContext(ctx context.Context) int64 {
+	if userID, ok := ctx.Value(UserIDContextKey).(int64); ok {
+		return userID
+	}
+	return 0
+}
+
+// GetTokenIDFromContext retrieves the token ID from the request context
+// Returns 0 if no token ID is found (e.g., session-based auth)
+func GetTokenIDFromContext(ctx context.Context) int64 {
+	if tokenID, ok := ctx.Value(TokenIDContextKey).(int64); ok {
+		return tokenID
+	}
+	return 0
+}
+
+// IsSuperuserFromContext checks if the authenticated user/token has superuser privileges
+// Returns false if not set (e.g., unauthenticated request or non-superuser)
+func IsSuperuserFromContext(ctx context.Context) bool {
+	if isSuperuser, ok := ctx.Value(IsSuperuserContextKey).(bool); ok {
+		return isSuperuser
 	}
 	return false
 }
@@ -153,6 +189,19 @@ func AuthMiddleware(authStore *AuthStore, enabled bool) func(http.Handler) http.
 				tokenHash := GetTokenHashByRawToken(token)
 				ctx := context.WithValue(r.Context(), TokenHashContextKey, tokenHash)
 				ctx = context.WithValue(ctx, IsAPITokenContextKey, true)
+				ctx = context.WithValue(ctx, TokenIDContextKey, storedToken.ID)
+				ctx = context.WithValue(ctx, IsSuperuserContextKey, storedToken.IsSuperuser)
+
+				// If token is owned by a user, add the user ID for group-based privileges
+				if storedToken.OwnerID != nil {
+					ctx = context.WithValue(ctx, UserIDContextKey, *storedToken.OwnerID)
+					// Look up user to check if they are superuser
+					user, userErr := authStore.GetUserByID(*storedToken.OwnerID)
+					if userErr == nil && user != nil && user.IsSuperuser {
+						ctx = context.WithValue(ctx, IsSuperuserContextKey, true)
+					}
+				}
+
 				r = r.WithContext(ctx)
 				next.ServeHTTP(w, r)
 				return
@@ -166,6 +215,14 @@ func AuthMiddleware(authStore *AuthStore, enabled bool) func(http.Handler) http.
 				ctx := context.WithValue(r.Context(), TokenHashContextKey, tokenHash)
 				ctx = context.WithValue(ctx, UsernameContextKey, username)
 				ctx = context.WithValue(ctx, IsAPITokenContextKey, false)
+
+				// Get user ID and superuser status for RBAC
+				user, userErr := authStore.GetUser(username)
+				if userErr == nil && user != nil {
+					ctx = context.WithValue(ctx, UserIDContextKey, user.ID)
+					ctx = context.WithValue(ctx, IsSuperuserContextKey, user.IsSuperuser)
+				}
+
 				r = r.WithContext(ctx)
 				next.ServeHTTP(w, r)
 				return

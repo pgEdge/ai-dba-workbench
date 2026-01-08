@@ -77,6 +77,7 @@ func main() {
 	listTokensCmd := flag.Bool("list-tokens", false, "List all service tokens")
 	tokenNote := flag.String("token-note", "", "Annotation for the new token (used with -add-token)")
 	tokenExpiry := flag.String("token-expiry", "", "Token expiry duration: '30d', '1y', '2w', '12h', 'never' (used with -add-token)")
+	tokenSuperuser := flag.Bool("superuser", false, "Grant superuser privileges to the token (bypasses all access checks)")
 
 	// User management commands
 	addUserCmd := flag.Bool("add-user", false, "Add a new user")
@@ -88,6 +89,40 @@ func main() {
 	username := flag.String("username", "", "Username for user management commands")
 	userPassword := flag.String("password", "", "Password for user management commands (prompted if not provided)")
 	userNote := flag.String("user-note", "", "Annotation for the new user (used with -add-user)")
+
+	// Group management commands
+	addGroupCmd := flag.Bool("add-group", false, "Add a new RBAC group")
+	deleteGroupCmd := flag.Bool("delete-group", false, "Delete an RBAC group")
+	listGroupsCmd := flag.Bool("list-groups", false, "List all RBAC groups")
+	addMemberCmd := flag.Bool("add-member", false, "Add a user or group to a group")
+	removeMemberCmd := flag.Bool("remove-member", false, "Remove a user or group from a group")
+	groupName := flag.String("group", "", "Group name for group management commands")
+	memberGroup := flag.String("member-group", "", "Member group name (for nested group membership)")
+	setSuperuserCmd := flag.Bool("set-superuser", false, "Set superuser status for a user")
+	unsetSuperuserCmd := flag.Bool("unset-superuser", false, "Remove superuser status from a user")
+
+	// Privilege management commands
+	grantPrivilegeCmd := flag.Bool("grant-privilege", false, "Grant an MCP privilege to a group")
+	revokePrivilegeCmd := flag.Bool("revoke-privilege", false, "Revoke an MCP privilege from a group")
+	grantConnectionCmd := flag.Bool("grant-connection", false, "Grant connection access to a group")
+	revokeConnectionCmd := flag.Bool("revoke-connection", false, "Revoke connection access from a group")
+	listPrivilegesCmd := flag.Bool("list-privileges", false, "List all registered MCP privileges")
+	showGroupPrivilegesCmd := flag.Bool("show-group-privileges", false, "Show privileges for a specific group")
+	registerPrivilegeCmd := flag.Bool("register-privilege", false, "Register a new MCP privilege identifier")
+	privilegeIdentifier := flag.String("privilege", "", "MCP privilege identifier")
+	privilegeType := flag.String("privilege-type", "", "MCP privilege type (tool, resource, prompt)")
+	privilegeDescription := flag.String("privilege-description", "", "Description for the privilege")
+	connectionID := flag.Int("connection", 0, "Connection ID for connection privileges")
+	accessLevel := flag.String("access-level", "read", "Access level for connection privileges (read, read_write)")
+
+	// Token scope commands
+	scopeTokenConnCmd := flag.Bool("scope-token-connections", false, "Set connection scope for a token")
+	scopeTokenToolsCmd := flag.Bool("scope-token-tools", false, "Set MCP tool scope for a token")
+	clearTokenScopeCmd := flag.Bool("clear-token-scope", false, "Clear all scope restrictions from a token")
+	showTokenScopeCmd := flag.Bool("show-token-scope", false, "Show current scope for a token")
+	tokenID := flag.Int64("token-id", 0, "Token ID for token scope commands")
+	scopeConnections := flag.String("scope-connections", "", "Comma-separated list of connection IDs")
+	scopeTools := flag.String("scope-tools", "", "Comma-separated list of tool names")
 
 	flag.Parse()
 
@@ -115,7 +150,7 @@ func main() {
 				expiry = -1 // Never expires
 			}
 
-			if err := addTokenCommand(resolvedDataDir, *tokenNote, expiry); err != nil {
+			if err := addTokenCommand(resolvedDataDir, *tokenNote, expiry, *tokenSuperuser); err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 				os.Exit(1)
 			}
@@ -183,6 +218,159 @@ func main() {
 
 		if *disableUserCmd {
 			if err := disableUserCommand(resolvedDataDir, *username); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+	}
+
+	// Handle group management commands
+	if *addGroupCmd || *deleteGroupCmd || *listGroupsCmd || *addMemberCmd || *removeMemberCmd || *setSuperuserCmd || *unsetSuperuserCmd {
+		if *addGroupCmd {
+			if err := addGroupCommand(resolvedDataDir, *groupName, ""); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+
+		if *deleteGroupCmd {
+			if err := deleteGroupCommand(resolvedDataDir, *groupName); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+
+		if *listGroupsCmd {
+			if err := listGroupsCommand(resolvedDataDir); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+
+		if *addMemberCmd {
+			if err := addMemberCommand(resolvedDataDir, *groupName, *username, *memberGroup); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+
+		if *removeMemberCmd {
+			if err := removeMemberCommand(resolvedDataDir, *groupName, *username, *memberGroup); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+
+		if *setSuperuserCmd {
+			if err := setSuperuserCommand(resolvedDataDir, *username, true); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+
+		if *unsetSuperuserCmd {
+			if err := setSuperuserCommand(resolvedDataDir, *username, false); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+	}
+
+	// Handle privilege management commands
+	if *grantPrivilegeCmd || *revokePrivilegeCmd || *grantConnectionCmd || *revokeConnectionCmd || *listPrivilegesCmd || *showGroupPrivilegesCmd || *registerPrivilegeCmd {
+		if *grantPrivilegeCmd {
+			if err := grantMCPPrivilegeCommand(resolvedDataDir, *groupName, *privilegeIdentifier); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+
+		if *revokePrivilegeCmd {
+			if err := revokeMCPPrivilegeCommand(resolvedDataDir, *groupName, *privilegeIdentifier); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+
+		if *grantConnectionCmd {
+			if err := grantConnectionPrivilegeCommand(resolvedDataDir, *groupName, *connectionID, *accessLevel); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+
+		if *revokeConnectionCmd {
+			if err := revokeConnectionPrivilegeCommand(resolvedDataDir, *groupName, *connectionID); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+
+		if *listPrivilegesCmd {
+			if err := listPrivilegesCommand(resolvedDataDir); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+
+		if *showGroupPrivilegesCmd {
+			if err := showGroupPrivilegesCommand(resolvedDataDir, *groupName); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+
+		if *registerPrivilegeCmd {
+			if err := registerPrivilegeCommand(resolvedDataDir, *privilegeIdentifier, *privilegeType, *privilegeDescription); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+	}
+
+	// Handle token scope commands
+	if *scopeTokenConnCmd || *scopeTokenToolsCmd || *clearTokenScopeCmd || *showTokenScopeCmd {
+		if *scopeTokenConnCmd {
+			if err := scopeTokenConnectionsCommand(resolvedDataDir, *tokenID, *scopeConnections); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+
+		if *scopeTokenToolsCmd {
+			if err := scopeTokenToolsCommand(resolvedDataDir, *tokenID, *scopeTools); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+
+		if *clearTokenScopeCmd {
+			if err := clearTokenScopeCommand(resolvedDataDir, *tokenID); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+
+		if *showTokenScopeCmd {
+			if err := showTokenScopeCommand(resolvedDataDir, *tokenID); err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 				os.Exit(1)
 			}
@@ -319,6 +507,9 @@ func main() {
 			fmt.Fprintf(os.Stderr, "  %s -add-user -username <name>\n", os.Args[0])
 			fmt.Fprintf(os.Stderr, "  %s -add-token\n", os.Args[0])
 		}
+
+		// Register MCP privilege identifiers for RBAC
+		registerMCPPrivileges(authStore)
 	}
 
 	// Create rate limiter for authentication if auth is enabled

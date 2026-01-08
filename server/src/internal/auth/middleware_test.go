@@ -201,7 +201,7 @@ func TestAuthMiddleware_ValidToken(t *testing.T) {
 	defer cleanup()
 
 	// Create a service token
-	rawToken, _, err := store.CreateServiceToken("Test token", nil, "")
+	rawToken, _, err := store.CreateServiceToken("Test token", nil, "", false)
 	if err != nil {
 		t.Fatalf("Failed to create service token: %v", err)
 	}
@@ -253,7 +253,7 @@ func TestAuthMiddleware_ExpiredToken(t *testing.T) {
 
 	// Create a token that expires immediately
 	expiryTime := time.Now().Add(1 * time.Millisecond)
-	rawToken, _, err := store.CreateServiceToken("Test expired token", &expiryTime, "")
+	rawToken, _, err := store.CreateServiceToken("Test expired token", &expiryTime, "", false)
 	if err != nil {
 		t.Fatalf("Failed to create service token: %v", err)
 	}

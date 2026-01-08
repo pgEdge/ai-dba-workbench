@@ -52,16 +52,16 @@ jobs:
                   path: |
                       ~/go/pkg/mod
                       ~/.cache/go-build
-                  key: ${{ runner.os }}-go-${{ matrix.go-version }}-server-${{ hashFiles('server/go.sum') }}
+                  key: ${{ runner.os }}-go-${{ matrix.go-version }}-server-${{ hashFiles('server/src/go.sum') }}
                   restore-keys: |
                       ${{ runner.os }}-go-${{ matrix.go-version }}-server-
 
             - name: Verify dependencies
-              working-directory: server
+              working-directory: server/src
               run: go mod verify
 
             - name: Download dependencies
-              working-directory: server
+              working-directory: server/src
               run: go mod download
 
             - name: Lint server code
@@ -74,7 +74,7 @@ jobs:
 
             - name: Run go vet
               if: matrix.go-version == '1.24' && matrix.postgres-version == '17'
-              working-directory: server
+              working-directory: server/src
               run: go vet ./...
 
             - name: Check formatting

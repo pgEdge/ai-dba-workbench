@@ -203,7 +203,13 @@ func (d *Datastore) GetConnectionWithPassword(ctx context.Context, id int) (*Mon
 		if d.serverSecret == "" {
 			return nil, "", fmt.Errorf("server secret is required to decrypt password")
 		}
-		password, err = DecryptPassword(conn.PasswordEncrypted.String, d.serverSecret, conn.Username)
+		// Use owner_username as salt if present (matches collector encryption),
+		// otherwise fall back to connection username
+		salt := conn.Username
+		if conn.OwnerUsername.Valid && conn.OwnerUsername.String != "" {
+			salt = conn.OwnerUsername.String
+		}
+		password, err = DecryptPassword(conn.PasswordEncrypted.String, d.serverSecret, salt)
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to decrypt password: %w", err)
 		}

@@ -26,6 +26,15 @@ Your role is to:
 
 Always provide complete documentation text that the main agent can use directly.
 
+## Knowledge Base
+
+**Before writing documentation, consult your knowledge base at `/.claude/documentation-writer/`:**
+- `style-guide.md` - Complete style requirements from CLAUDE.md
+- `templates.md` - Standard templates for different document types
+- `examples.md` - Good documentation examples and anti-patterns
+
+**Knowledge Base Updates**: If you discover new documentation patterns, templates, or important style practices not documented in the knowledge base, include a "Knowledge Base Update Suggestions" section in your response. Describe the specific additions or updates needed so the main agent can update the documentation.
+
 ## Documentation Standards (from CLAUDE.md)
 
 ### Writing Style

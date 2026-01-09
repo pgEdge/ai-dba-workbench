@@ -26,6 +26,16 @@ Your role is to:
 
 Always provide enough context that the main agent can navigate directly to the relevant code.
 
+## Knowledge Base
+
+**Before navigating, consult your knowledge base at `/.claude/codebase-navigator/`:**
+- `project-structure.md` - Directory layout and organization
+- `feature-locations.md` - Where specific features are implemented
+- `data-flow.md` - How data moves between components
+- `key-files.md` - Critical files and their purposes
+
+**Knowledge Base Updates**: If you discover new file locations, patterns, or important structural information not documented in the knowledge base, include a "Knowledge Base Update Suggestions" section in your response. Describe the specific additions or updates needed so the main agent can update the documentation.
+
 ## Project Structure Knowledge
 
 The AI DBA Workbench consists of four sub-projects:

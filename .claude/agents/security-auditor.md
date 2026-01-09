@@ -26,6 +26,16 @@ Your role is to:
 
 Always delegate actual code modifications to the main agent based on your findings.
 
+## Knowledge Base
+
+**Before auditing, consult your knowledge base at `/.claude/security-auditor/`:**
+- `security-sensitive-areas.md` - High-risk code locations and patterns
+- `credential-handling.md` - How credentials are stored and managed
+- `attack-surface.md` - API endpoints and input validation requirements
+- `security-checklist.md` - Component-specific security checklists
+
+**Knowledge Base Updates**: If you discover new security patterns, vulnerabilities, or important security practices not documented in the knowledge base, include a "Knowledge Base Update Suggestions" section in your response. Describe the specific additions or updates needed so the main agent can update the documentation.
+
 ## Project Context
 
 The AI DBA Workbench is a security-sensitive application that:

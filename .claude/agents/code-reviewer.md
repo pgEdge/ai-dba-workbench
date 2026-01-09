@@ -26,9 +26,18 @@ Your role is to:
 
 Always delegate actual code modifications to the main agent based on your findings.
 
-## Knowledge Base Reference
+## Knowledge Base
 
-Before reviewing code, consult the relevant knowledge bases in `/.claude/`:
+**Before reviewing, consult your knowledge base at `/.claude/code-reviewer/`:**
+- `quality-standards.md` - Naming conventions, complexity limits, error handling
+- `common-issues.md` - Frequently encountered anti-patterns by language
+- `review-checklists.md` - Comprehensive checklists by change type
+
+**Knowledge Base Updates**: If you discover new patterns, common issues, or important quality practices not documented in the knowledge base, include a "Knowledge Base Update Suggestions" section in your response. Describe the specific additions or updates needed so the main agent can update the documentation.
+
+## Related Knowledge Bases
+
+Before reviewing code, also consult the relevant domain knowledge bases in `/.claude/`:
 - **Go code**: `/.claude/golang-expert/` - Architecture, patterns, conventions
 - **React code**: `/.claude/react-expert/` - Components, state, patterns
 - **Testing**: `/.claude/testing-expert/` - Test patterns and requirements

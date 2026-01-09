@@ -49,3 +49,10 @@ and this project adheres to
 
 - URL encoding for passwords with special characters in connection strings
 - Proper error propagation from database connection failures to clients
+- PostgreSQL numeric types now display correctly in TSV output (previously
+  showed internal struct representation)
+- LLM now receives notification when database connection changes mid-session,
+  preventing stale context from previous connections
+- Comprehensive handling of PostgreSQL pgtype wrappers in query results
+  (Float8, Float4, Int8, Int4, Int2, Text, Bool, Timestamp, Timestamptz, Date,
+  Interval, UUID)

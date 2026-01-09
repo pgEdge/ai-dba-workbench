@@ -98,7 +98,7 @@ Always provide complete documentation text that the main agent can use directly.
 - Issues link: "To report an issue with the software, visit:"
 - Developer link: "We welcome your project contributions; for more information, see docs/developers.md."
 - Online docs link: "For more information, visit [docs.pgedge.com](https://docs.pgedge.com)"
-- License: "This project is licensed under the [PostgreSQL License](LICENCE.md)."
+- License: "This project is licensed under the [PostgreSQL License](LICENSE.md)."
 
 ### File Organization
 

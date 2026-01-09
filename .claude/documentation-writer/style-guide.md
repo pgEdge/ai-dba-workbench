@@ -401,7 +401,7 @@ Include at the end of each README:
 
    ```markdown
    This project is licensed under the
-   [PostgreSQL License](LICENCE.md).
+   [PostgreSQL License](LICENSE.md).
    ```
 
 ## Additional Requirements

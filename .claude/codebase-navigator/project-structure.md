@@ -137,7 +137,7 @@ docs/
 ├── server/               # Server documentation
 ├── client/               # Client documentation
 ├── cli/                  # CLI documentation
-└── LICENCE.md            # Project license
+└── LICENSE.md            # Project license
 ```
 
 ## Configuration Files

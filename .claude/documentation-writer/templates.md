@@ -104,7 +104,7 @@ We welcome your project contributions; for more information, see
 
 For more information, visit [docs.pgedge.com](https://docs.pgedge.com)
 
-This project is licensed under the [PostgreSQL License](LICENCE.md).
+This project is licensed under the [PostgreSQL License](LICENSE.md).
 ```
 
 ## API Documentation Template

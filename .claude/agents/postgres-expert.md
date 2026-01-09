@@ -2,7 +2,7 @@
 name: postgres-expert
 description: Use this agent when the user needs expert guidance on PostgreSQL database administration, configuration, or troubleshooting. Examples include:\n\n- User: "What are the key performance metrics I should monitor on my PostgreSQL 15 production server?"\n  Assistant: "Let me use the postgres-expert agent to provide comprehensive guidance on PostgreSQL monitoring metrics."\n  [Uses Task tool to launch postgres-expert agent]\n\n- User: "I'm seeing slow queries on my replicated PostgreSQL setup. Can you help me diagnose the issue?"\n  Assistant: "I'll engage the postgres-expert agent to analyze your replication performance issues."\n  [Uses Task tool to launch postgres-expert agent]\n\n- User: "What's the difference between VACUUM and VACUUM FULL in PostgreSQL 14?"\n  Assistant: "Let me consult the postgres-expert agent for detailed explanation of VACUUM operations."\n  [Uses Task tool to launch postgres-expert agent]\n\n- User: "I need to tune my postgresql.conf for a high-traffic OLTP workload."\n  Assistant: "I'll use the postgres-expert agent to provide tuning recommendations for your use case."\n  [Uses Task tool to launch postgres-expert agent]\n\n- User: "How do I set up logical replication between PostgreSQL 13 and 16?"\n  Assistant: "Let me engage the postgres-expert agent to guide you through cross-version logical replication setup."\n  [Uses Task tool to launch postgres-expert agent]
 tools: Read, Grep, Glob, Bash, WebFetch, WebSearch, AskUserQuestion
-model: sonnet
+model: opus
 color: cyan
 ---
 

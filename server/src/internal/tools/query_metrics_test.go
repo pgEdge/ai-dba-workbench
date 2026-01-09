@@ -2,7 +2,7 @@
  *
  * pgEdge AI DBA Workbench
  *
- * Copyright (c) 2025 - 2026, pgEdge, Inc.
+ * Portions copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
  *-----------------------------------------------------------
@@ -306,78 +306,7 @@ func TestFormatMetricValue(t *testing.T) {
 	}
 }
 
-func TestFormatNumeric(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    pgtype.Numeric
-		expected string
-	}{
-		{
-			name:     "invalid numeric",
-			input:    pgtype.Numeric{Valid: false},
-			expected: "",
-		},
-		{
-			name:     "NaN",
-			input:    pgtype.Numeric{Valid: true, NaN: true},
-			expected: "NaN",
-		},
-		{
-			name:     "positive infinity",
-			input:    pgtype.Numeric{Valid: true, InfinityModifier: pgtype.Infinity},
-			expected: "Infinity",
-		},
-		{
-			name:     "negative infinity",
-			input:    pgtype.Numeric{Valid: true, InfinityModifier: pgtype.NegativeInfinity},
-			expected: "-Infinity",
-		},
-		{
-			name:     "nil Int",
-			input:    pgtype.Numeric{Valid: true, Int: nil, Exp: 0},
-			expected: "0",
-		},
-		{
-			name:     "whole number 6",
-			input:    pgtype.Numeric{Valid: true, Int: big.NewInt(6), Exp: 0},
-			expected: "6",
-		},
-		{
-			name:     "whole number 42",
-			input:    pgtype.Numeric{Valid: true, Int: big.NewInt(42), Exp: 0},
-			expected: "42",
-		},
-		{
-			name:     "decimal 3.14 (Int=314, Exp=-2)",
-			input:    pgtype.Numeric{Valid: true, Int: big.NewInt(314), Exp: -2},
-			expected: "3.14",
-		},
-		{
-			name:     "large number with positive exp",
-			input:    pgtype.Numeric{Valid: true, Int: big.NewInt(5), Exp: 3},
-			expected: "5000",
-		},
-		{
-			name:     "numeric from trace (60000000000000000, -16) = 6",
-			input:    pgtype.Numeric{Valid: true, Int: big.NewInt(60000000000000000), Exp: -16},
-			expected: "6",
-		},
-		{
-			name:     "numeric 60517241379310345 exp -16 = ~6.05",
-			input:    pgtype.Numeric{Valid: true, Int: big.NewInt(60517241379310345), Exp: -16},
-			expected: "6.05172",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := formatNumeric(tt.input)
-			if result != tt.expected {
-				t.Errorf("formatNumeric() = %q, want %q", result, tt.expected)
-			}
-		})
-	}
-}
+// Note: formatNumeric is now tested in the tsv package (tsv/format_test.go)
 
 func TestFormatMetricValue_Numeric(t *testing.T) {
 	// Test that pgtype.Numeric values are properly handled by formatMetricValue
@@ -545,88 +474,4 @@ func TestFormatMetricValue_PgTypes(t *testing.T) {
 	}
 }
 
-func TestFormatInterval(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    pgtype.Interval
-		expected string
-	}{
-		{
-			name:     "zero interval",
-			input:    pgtype.Interval{Valid: true},
-			expected: "00:00:00",
-		},
-		{
-			name:     "1 hour",
-			input:    pgtype.Interval{Valid: true, Microseconds: 3600000000},
-			expected: "01:00:00",
-		},
-		{
-			name:     "1 day",
-			input:    pgtype.Interval{Valid: true, Days: 1},
-			expected: "1 day",
-		},
-		{
-			name:     "5 days",
-			input:    pgtype.Interval{Valid: true, Days: 5},
-			expected: "5 days",
-		},
-		{
-			name:     "1 month",
-			input:    pgtype.Interval{Valid: true, Months: 1},
-			expected: "1 mon",
-		},
-		{
-			name:     "1 year",
-			input:    pgtype.Interval{Valid: true, Months: 12},
-			expected: "1 year",
-		},
-		{
-			name:     "complex interval",
-			input:    pgtype.Interval{Valid: true, Months: 14, Days: 3, Microseconds: 3661000000},
-			expected: "1 year 2 mons 3 days 01:01:01",
-		},
-		{
-			name:     "with fractional seconds",
-			input:    pgtype.Interval{Valid: true, Microseconds: 1500000},
-			expected: "00:00:01.500000",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := formatInterval(tt.input)
-			if result != tt.expected {
-				t.Errorf("formatInterval() = %q, want %q", result, tt.expected)
-			}
-		})
-	}
-}
-
-func TestFormatUUID(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    [16]byte
-		expected string
-	}{
-		{
-			name:     "standard UUID",
-			input:    [16]byte{0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0},
-			expected: "12345678-9abc-def0-1234-56789abcdef0",
-		},
-		{
-			name:     "all zeros",
-			input:    [16]byte{},
-			expected: "00000000-0000-0000-0000-000000000000",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := formatUUID(tt.input)
-			if result != tt.expected {
-				t.Errorf("formatUUID() = %q, want %q", result, tt.expected)
-			}
-		})
-	}
-}
+// Note: formatInterval and formatUUID are now tested in the tsv package (tsv/format_test.go)

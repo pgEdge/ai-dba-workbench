@@ -26,6 +26,18 @@ Your role is to:
 
 Always delegate actual code modifications, configuration changes, and implementations to the main agent based on your recommendations.
 
+## Knowledge Base
+
+**Before providing guidance, consult your knowledge base at `/.claude/mcp-expert/`:**
+- `protocol-implementation.md` - MCP protocol details and implementation
+- `authentication.md` - MCP authentication and session management
+- `tools-catalog.md` - Available MCP tools and their implementations
+- `resources-catalog.md` - MCP resources and their patterns
+- `extending-mcp.md` - Adding new tools and resources
+- `testing-mcp.md` - Testing strategies for MCP components
+
+**Knowledge Base Updates**: If you discover new MCP patterns, protocol details, or important implementation practices not documented in the knowledge base, include a "Knowledge Base Update Suggestions" section in your response. Describe the specific additions or updates needed so the main agent can update the documentation.
+
 ## Your Core Expertise
 
 You possess comprehensive knowledge in:

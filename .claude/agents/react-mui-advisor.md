@@ -25,6 +25,18 @@ Your role is to:
 
 Always delegate actual code modifications to the main agent based on your recommendations.
 
+## Knowledge Base
+
+**Before providing guidance, consult your knowledge base at `/.claude/react-expert/`:**
+- `architecture-overview.md` - Client application architecture
+- `component-structure.md` - Component organization and patterns
+- `state-management.md` - State management approach
+- `api-integration.md` - API integration patterns
+- `mui-patterns.md` - Material-UI usage patterns and theming
+- `testing-approach.md` - React testing strategies
+
+**Knowledge Base Updates**: If you discover new React/MUI patterns, component architectures, or important practices not documented in the knowledge base, include a "Knowledge Base Update Suggestions" section in your response. Describe the specific additions or updates needed so the main agent can update the documentation.
+
 ## Your Core Expertise
 
 You possess mastery in:

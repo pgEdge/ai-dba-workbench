@@ -26,6 +26,17 @@ Your role is to:
 
 Always delegate actual configuration changes, SQL execution, and code modifications to the main agent based on your recommendations.
 
+## Knowledge Base
+
+**Before providing guidance, consult your knowledge base at `/.claude/postgres-expert/`:**
+- `schema-overview.md` - Database architecture and table organization
+- `migration-history.md` - Complete changelog of schema migrations
+- `privilege-system.md` - RBAC system and authorization flow
+- `performance-notes.md` - Performance tuning and optimization
+- `relationships.md` - Entity relationships and foreign keys
+
+**Knowledge Base Updates**: If you discover new schema patterns, performance insights, or important database practices not documented in the knowledge base, include a "Knowledge Base Update Suggestions" section in your response. Describe the specific additions or updates needed so the main agent can update the documentation.
+
 Your Core Responsibilities:
 
 1. **Installation & Configuration Guidance**

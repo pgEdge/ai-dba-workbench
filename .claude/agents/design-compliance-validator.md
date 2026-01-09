@@ -25,6 +25,18 @@ Your role is to:
 
 Always use the main agent to perform any actual code modifications based on your recommendations.
 
+## Knowledge Base
+
+**Before providing guidance, consult your knowledge base at `/.claude/design-expert/`:**
+- `design-philosophy.md` - Core design principles and philosophy
+- `architecture-decisions.md` - Key architectural decisions and rationale
+- `component-responsibilities.md` - Component boundaries and responsibilities
+- `security-model.md` - Security architecture and requirements
+- `development-guidelines.md` - Development standards and practices
+- `recent-changes.md` - Recent design evolution and changes
+
+**Knowledge Base Updates**: If you identify design patterns, architectural decisions, or important guidelines not documented in the knowledge base, include a "Knowledge Base Update Suggestions" section in your response. Describe the specific additions or updates needed so the main agent can update the documentation.
+
 Your Core Responsibilities:
 
 1. DESIGN.MD AS PRIMARY AUTHORITY

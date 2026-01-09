@@ -26,6 +26,19 @@ Your role is to:
 
 Always delegate actual test implementation, modifications, and execution to the main agent based on your recommendations.
 
+## Knowledge Base
+
+**Before providing guidance, consult your knowledge base at `/.claude/testing-expert/`:**
+- `testing-overview.md` - High-level testing strategy and organization
+- `unit-testing.md` - Unit test patterns for Go and React
+- `integration-testing.md` - Integration test structure and utilities
+- `database-testing.md` - Database test patterns and lifecycle
+- `test-utilities.md` - Available test helpers and utilities
+- `coverage-and-quality.md` - Coverage goals and quality checks
+- `writing-tests.md` - Step-by-step test writing guide
+
+**Knowledge Base Updates**: If you discover new testing patterns, utilities, or important practices not documented in the knowledge base, include a "Knowledge Base Update Suggestions" section in your response. Describe the specific additions or updates needed so the main agent can update the documentation.
+
 ## Core Expertise
 
 You possess authoritative knowledge in:

@@ -1222,6 +1222,15 @@ func (c *Client) handleSetConnection(ctx context.Context, args []string) bool {
 			return true
 		}
 		c.ui.PrintSystemMessage("Connection cleared")
+
+		// Inject a notification into the conversation history
+		c.messages = append(c.messages, Message{
+			Role: "user",
+			Content: "[SYSTEM NOTICE: The database connection has been cleared. " +
+				"No database is currently connected. " +
+				"Any previous database-related information is no longer relevant.]",
+		})
+
 		return true
 	}
 
@@ -1246,9 +1255,26 @@ func (c *Client) handleSetConnection(ctx context.Context, args []string) bool {
 	}
 
 	dbMsg := ""
+	dbName := "default database"
 	if result.DatabaseName != nil {
 		dbMsg = fmt.Sprintf(", database: %s", *result.DatabaseName)
+		dbName = *result.DatabaseName
 	}
 	c.ui.PrintSystemMessage(fmt.Sprintf("Connected to: %s (%s:%d%s)", result.Name, result.Host, result.Port, dbMsg))
+
+	// Inject a notification into the conversation history so the LLM knows the connection changed
+	// This ensures the LLM doesn't continue referencing stale database context
+	connectionNotice := fmt.Sprintf(
+		"[SYSTEM NOTICE: The database connection has been changed. "+
+			"You are now connected to server '%s' (%s:%d), database '%s'. "+
+			"Any previous information about database schema, tables, or query results from other connections is no longer relevant. "+
+			"Please use the current connection for all future queries.]",
+		result.Name, result.Host, result.Port, dbName)
+
+	c.messages = append(c.messages, Message{
+		Role:    "user",
+		Content: connectionNotice,
+	})
+
 	return true
 }

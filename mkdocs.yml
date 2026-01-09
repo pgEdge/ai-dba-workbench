@@ -94,4 +94,4 @@ nav:
   - CLI:
       - Overview: cli/index.md
   - Changelog: changelog.md
-  - Licence: LICENCE.md
+  - License: LICENSE.md

@@ -50,7 +50,7 @@ All sub-projects should follow the following base structure:
 
 - Wrap all markdown files at 79 characters or less.
 
-- `LICENCE.md` should live in the `/docs` folder and in the root of the repo.
+- `LICENSE.md` should live in the `/docs` folder and in the root of the repo.
 
 ### Writing Style
 
@@ -167,7 +167,7 @@ At the end of each README:
   [docs.pgedge.com](https://docs.pgedge.com)"
 
 - Last thing in the file, include the sentence: "This project is licensed
-  under the [PostgreSQL License](LICENCE.md)."
+  under the [PostgreSQL License](LICENSE.md)."
 
 ### Additional Documentation Requirements
 

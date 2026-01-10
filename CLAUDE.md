@@ -1,259 +1,274 @@
 # Claude Standing Instructions
 
-> This document provides standing instructions for Claude Code when working on
-> this project. It supplements the design in DESIGN.md.
+> Standing instructions for Claude Code when working on this project.
+> This document supplements the architectural design in DESIGN.md.
 
 ## Project Structure
 
-The pgEdge AI DBA Workbench consists of the following sub-projects:
+The pgEdge AI DBA Workbench consists of four sub-projects:
 
-- The data collector is implemented in the `/collector` directory.
+- `/collector` - Data collector (Go).
 
-- The web client application is implemented in the `/client` directory.
+- `/client` - Web client application (React/TypeScript).
 
-- The MCP server is implemented in the `/server` directory.
+- `/server` - MCP server (Go).
 
-- The command-line interface is implemented in the `/cli` directory.
+- `/cli` - Command-line interface (Go).
 
-All sub-projects should follow the following base structure:
+Each sub-project follows this base structure:
 
-- Comprehensive documentation files should be created in markdown format
-  under the `/docs` directory, for each sub-project (e.g. `/docs/collector`,
-  `/docs/cli`, `/docs/client`, and `/docs/server`), with a top level index
-  in `/docs`.
+- `/src` - Source code.
 
-- Documentation files in the `/docs` directory should always use lower case
+- `/tests` - Unit and integration tests (unless language convention places
+  tests alongside source files).
+
+- `/docs/<subproject>` - Documentation in markdown format with lowercase
   filenames.
 
-- Unit and integration tests should be created under the `/tests` subdirectory
-  of each project (e.g. `/client/tests`, `/collector/tests`, and
-  `/server/tests`), except where the language convention is to include unit
-  tests in the same directory as the code they are testing.
+## Key Files
 
-- Source code should be created under the `/src` subdirectory of each project
-  (e.g. `/client/src`, `/collector/src`, and `/server/src`).
+Reference these files for project context:
+
+- `DESIGN.md` - Architecture and design philosophy.
+
+- `docs/changelog.md` - Notable changes by release.
+
+- `mkdocs.yml` - Documentation site navigation.
+
+- `Makefile` - Build and test commands.
+
+## Sub-Agents
+
+Specialized sub-agents in `/.claude/agents/` handle complex domain tasks.
+Most sub-agents research and recommend; they do not edit code directly.
+The documentation-writer is the exception and writes documentation files.
+
+Use the appropriate sub-agent for these domains:
+
+- **postgres-expert** - PostgreSQL administration, tuning, troubleshooting.
+
+- **spock-expert** - pgEdge Spock replication, Snowflake, Lolor extensions.
+
+- **golang-expert-advisor** - Go architecture, best practices, code review.
+
+- **react-mui-advisor** - React/MUI component design, frontend patterns.
+
+- **mcp-server-expert** - MCP protocol, tool implementation, debugging.
+
+- **testing-framework-architect** - Test strategies for Go and React.
+
+- **security-auditor** - Security review, vulnerability detection, OWASP.
+
+- **code-reviewer** - Code quality, bug detection, anti-patterns.
+
+- **codebase-navigator** - Finding code, tracing data flow, structure.
+
+- **documentation-writer** - Documentation following project style guide.
+
+- **design-compliance-validator** - Ensuring changes align with DESIGN.md.
+
+Each sub-agent has a knowledge base in `/.claude/<agent-name>/` containing
+domain-specific patterns and project conventions.
+
+## Task Workflow
+
+Follow this workflow for implementation tasks:
+
+1. Read relevant code before proposing changes.
+
+2. Use sub-agents for complex domain questions.
+
+3. Run `make test-all` before marking implementation complete.
+
+4. Review security implications for auth, input handling, or query changes.
+
+5. Update `docs/changelog.md` for user-facing changes.
 
 ## Documentation
 
 ### General Guidelines
 
-- A `README.md` file in the sub-project top level directory should provide a
-  very high level overview of the sub-project; it should include basic getting
-  started information for developers and users.
+- Place a `README.md` in each sub-project directory with a high-level
+  overview and getting started information.
 
-- The documentation for each sub-project should have an `index.md` file acting
-  as the entry point for the reader; this should be linked from the
-  `README.md` file for the sub-project.
+- Create an `index.md` as the entry point for each sub-project's docs;
+  link to this file from the sub-project README.
 
-- The top-level `README.md` file should link to the `README.md` file for each
-  sub-project.
+- Link the top-level `README.md` to each sub-project README.
 
 - Wrap all markdown files at 79 characters or less.
 
-- `LICENSE.md` should live in the `/docs` folder and in the root of the repo.
+- Place `LICENSE.md` in both `/docs` and the repository root.
 
 ### Writing Style
 
-- Write in active voice.
+- Use active voice.
 
-- Use full and grammatically correct sentences that are between 7 and 20 words
-  long.
+- Write grammatically correct sentences between 7 and 20 words.
 
-- Use a semicolon to link similar ideas or manage sentences that are getting
-  over-long.
+- Use semicolons to link related ideas or manage long sentences.
 
-- Use articles (a, an, and the) when appropriate.
+- Use articles (a, an, the) appropriately.
 
-- Do not refer to an object as "it" unless the object "it" refers to is in the
-  same sentence; this avoids ambiguity.
+- Avoid ambiguous pronoun references; only use "it" when the referent is
+  in the same sentence.
 
 ### Document Structure
 
-- Each file should have one first level heading, and multiple second level
-  headings; use third and fourth level headings for prominent content only.
+- Use one first-level heading per file with multiple second-level headings.
 
-- Each heading should have an introductory sentence or paragraph that explains
-  the feature shown/discussed in the following section.
+- Limit third and fourth-level headings to prominent content only.
 
-- If the page has a `Features` or `Overview` section following the
-  introductory paragraph, it should not start with a heading; instead use a
-  sentence in the form: "The MCP Server includes the following features:",
-  followed by a bulleted list of the features.
+- Include an introductory sentence or paragraph after each heading.
+
+- For Features or Overview sections, use the format: "The MCP Server
+  includes the following features:" followed by a bulleted list.
 
 ### Lists
 
-- Always leave a blank line before the first item in any list or sub-list
-  (a sub-list may be code or indented bullets under a bullet item); this
-  ensures the lists render properly in tools such as mkdocs.
+- Leave a blank line before the first item in any list or sub-list.
 
-- Each entry in a bulleted list should be a complete sentence with articles.
+- Write each bullet as a complete sentence with articles.
 
-- Do not use bold font for bullet items.
+- Do not bold bullet items.
 
-- Do not use a numbered list unless the steps in the list need to be performed
-  in order.
+- Use numbered lists only for sequential steps.
 
 ### Code Snippets
 
-- If a section contains code or a code snippet, there should be an explanatory
-  sentence before the code in the form: "In the following example, the
-  `command_name` command uses a column named `my_column` to accomplish
-  description-of-what-the-code-does."
+- Precede code with an explanatory sentence: "In the following example,
+  the `command_name` command uses..."
 
-- Use backticks around a single command or line of code: `SELECT * FROM code;`
+- Use backticks for inline code: `SELECT * FROM table;`
 
-- Use block quotes around multi-line code samples and include the code type in
-  the format tag:
+- Use fenced code blocks with language tags for multi-line code:
 
   ```sql
   SELECT * FROM code;
-  SELECT * FROM code;
   ```
 
-- `stdio`, `stdin`, `stdout`, and `stderr` should be in backticks.
+- Format `stdio`, `stdin`, `stdout`, and `stderr` in backticks.
 
-- Capitalise command keywords; lowercase variables.
+- Capitalise SQL keywords; use lowercase for variables.
 
 ### Links and References
 
-- Links to files outside of `/docs` should link to the copy on GitHub.
+- Link files outside `/docs` to their GitHub location.
 
-- Include links to third-party software installation/documentation pages in
-  the Prerequisites section.
+- Include third-party installation/documentation links in Prerequisites.
 
-- Include links to our GitHub repo when we refer to cloning the repo, or
-  working on the project.
+- Link to the GitHub repo when referencing cloning or project work.
 
-- Do not create links to github.io.
+- Do not link to github.io.
 
 ### README.md Files
 
-At the top of each README file:
+At the top of each README:
 
-- Include GitHub Action badges for important actions in use by the repository.
+- GitHub Action badges for repository actions.
 
-- Include test deployment links (if used for the project).
+- Test deployment links (if applicable).
 
-- Include a Table of Contents that mimics the nav section of the `mkdocs.yaml`
-  file.
+- Table of Contents mirroring the `mkdocs.yml` nav section.
 
-- After the TOC include a link to the online docs, hosted at docs.pgedge.com.
+- Link to online docs at docs.pgedge.com.
 
-README files should contain:
+README body content:
 
-- The steps required to get started with the project.
+- Getting started steps.
 
-- The commands to satisfy prerequisites, commands to build/install the
-  binary/project, and notes about the minimal configuration changes required
-  to deploy.
+- Prerequisites with commands and third-party links.
 
-- The prerequisites section should link to download/documentation links for
-  third-party software when possible.
+- Build/install commands and minimal configuration notes.
 
-- In the deployment section, include links to the Installation, Configuration,
-  and Usage pages in the `/docs` folder.
+- Deployment section linking to Installation, Configuration, and Usage
+  pages in `/docs`.
 
 At the end of each README:
 
-- Include a link to the Issues page for the project: "To report an issue with
-  the software, visit:"
+- Issues link: "To report an issue with the software, visit:"
 
-- Include a section/link for Developers/Project contributors that links to
-  developer documentation if available (and if developer documentation is not
-  available, link to the GH site): "We welcome your project contributions;
-  for more information, see docs/developers.md."
+- Developer link: "We welcome your project contributions; for more
+  information, see docs/developers.md."
 
-- Include a link to the online documentation at: "For more information, visit
+- Online docs link: "For more information, visit
   [docs.pgedge.com](https://docs.pgedge.com)"
 
-- Last thing in the file, include the sentence: "This project is licensed
-  under the [PostgreSQL License](LICENSE.md)."
+- License (final line): "This project is licensed under the
+  [PostgreSQL License](LICENSE.md)."
 
 ### Additional Documentation Requirements
 
-- Ensure all sample output matches what would actually be output.
+- Match all sample output to actual output.
 
-- Ensure all command line options are documented.
+- Document all command-line options.
 
-- Ensure all configuration examples for all configuration files contain well
-  commented examples of all options.
+- Include well-commented examples for all configuration options.
 
-- Ensure documentation on command line options, configuration options,
-  environment variables, and other user-facing controls ALWAYS match the code.
+- Keep documentation synchronized with code for CLI options, configuration,
+  and environment variables.
 
-- Ensure `changelog.md` has been updated to include notable changes made since
-  the last release.
+- Update `changelog.md` with notable changes since the last release.
 
 ## Tests
 
-- Unit and integration tests should be provided for each sub-project.
+- Provide unit and integration tests for each sub-project.
 
-- Tests should all be executable using `go test` or `npm test`, as appropriate
-  for the specific sub-project.
+- Execute tests with `go test` or `npm test` as appropriate.
 
-- All code functions and features should have automated tests to the extent
-  possible, using mocking where required.
+- Write automated tests for all functions and features; use mocking where
+  needed.
 
-- All tests should be run following any changes being made; take care not to
-  miss any error messages or warnings due to output redirection or truncation.
+- Run all tests after any changes; check for errors and warnings that may
+  be hidden by output redirection or truncation.
 
-- Temporary files created during test execution must be cleaned up when the
-  test run completes, except where they contain useful debugging information
-  (for example, log files).
+- Clean up temporary test files on completion; retain log files for
+  debugging.
 
-- Existing tests should never be modified unless the functionality they are
-  exercising has been changed, or to fix bugs or refactor code.
+- Modify existing tests only when the tested functionality changes or to
+  fix bugs.
 
-- Ensure linting tests are included, and run under the standard test suites
-  utilising locally installable tools.
+- Include linting in standard test suites using locally installable tools.
 
-- Ensure coverage can be checked, using the standard test suites utilising
-  locally installable tools.
+- Enable coverage checking in standard test suites.
 
-- Ensure `gofmt` has been run on all Go files.
+- Run `gofmt` on all Go files.
 
-- Ensure ALL test suites are run by `make test`.
+- Ensure `make test` runs all test suites.
 
-- DO NOT skip DB tests when testing new changes.
+- Do not skip database tests when testing changes.
 
-- ALWAYS test new changes with `make test-all` in the top level project
-  directory before completing a task.
+- Run `make test-all` in the top-level directory before completing a task.
 
 ## Security
 
-- Always ensure isolation is maintained between user sessions.
+- Maintain isolation between user sessions.
 
-- Always ensure that database connections are only accessible to the users or
-  tokens that own them.
+- Restrict database connections to their owning users or tokens.
 
-- Protect against injection attacks of any kind, at both the client and
-  server; the only exception is in an MCP Tool allowing arbitrary SQL queries
-  to be executed.
+- Protect against injection attacks at client and server; the exception is
+  MCP tools that execute arbitrary SQL queries.
 
-- Always follow industry best practices for defensive secure coding.
+- Follow industry best practices for defensive secure coding.
 
-- Always review any changes for security implications and report any potential
-  issues found.
+- Review all changes for security implications; report potential issues.
 
 ## Code Style
 
-- Always use four spaces for indentation.
+- Use four spaces for indentation.
 
-- Always ensure the code is written in a way that is readable, extensible, and
-  is appropriately modularised.
+- Write readable, extensible, and appropriately modularised code.
 
-- Always ensure code duplication is minimised, refactoring where needed.
+- Minimise code duplication; refactor as needed.
 
-- Always ensure ALL code follows best practices for the language used.
+- Follow language-specific best practices.
 
-- Perform searches for unused code and remove any found.
+- Remove unused code.
 
-- When creating database migrations, always use `COMMENT ON` to describe the
-  objects created.
+- Use `COMMENT ON` to describe objects in database migrations.
 
-- Include the following copyright notice at the top of every source file (but
-  not configuration files); adjust the comment style and project name as
-  appropriate for the language:
+- Include this copyright notice at the top of every source file (not
+  configuration files); adjust comment style for the language:
 
   ```
   /*-------------------------------------------------------------------------

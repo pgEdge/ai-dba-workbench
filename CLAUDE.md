@@ -40,7 +40,8 @@ Reference these files for project context:
 ## Sub-Agents
 
 Specialized sub-agents in `/.claude/agents/` handle complex domain tasks.
-Sub-agents research and recommend; they do not edit files directly.
+Most sub-agents research and recommend; they do not edit code directly.
+The documentation-writer is the exception and writes documentation files.
 
 Use the appropriate sub-agent for these domains:
 

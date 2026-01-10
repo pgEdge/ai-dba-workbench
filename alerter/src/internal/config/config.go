@@ -1,0 +1,370 @@
+/*-------------------------------------------------------------------------
+ *
+ * pgEdge AI DBA Workbench
+ *
+ * Portions copyright (c) 2025 - 2026, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-------------------------------------------------------------------------
+ */
+
+// Package config handles configuration for the alerter service.
+package config
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+)
+
+// Config holds all configuration options for the alerter
+type Config struct {
+	// Datastore connection settings
+	Datastore DatastoreConfig `yaml:"datastore"`
+
+	// Connection pool settings
+	Pool PoolConfig `yaml:"pool"`
+
+	// Threshold engine settings
+	Threshold ThresholdConfig `yaml:"threshold"`
+
+	// Anomaly detection settings
+	Anomaly AnomalyConfig `yaml:"anomaly"`
+
+	// Baseline calculation settings
+	Baselines BaselineConfig `yaml:"baselines"`
+
+	// Correlation settings
+	Correlation CorrelationConfig `yaml:"correlation"`
+
+	// LLM provider settings
+	LLM LLMConfig `yaml:"llm"`
+}
+
+// DatastoreConfig holds PostgreSQL connection settings for the datastore
+type DatastoreConfig struct {
+	Host         string `yaml:"host"`
+	HostAddr     string `yaml:"hostaddr"`
+	Database     string `yaml:"database"`
+	Username     string `yaml:"username"`
+	Password     string `yaml:"password"`
+	PasswordFile string `yaml:"password_file"`
+	Port         int    `yaml:"port"`
+	SSLMode      string `yaml:"sslmode"`
+	SSLCert      string `yaml:"sslcert"`
+	SSLKey       string `yaml:"sslkey"`
+	SSLRootCert  string `yaml:"sslrootcert"`
+}
+
+// PoolConfig holds connection pool settings
+type PoolConfig struct {
+	MaxConnections int `yaml:"max_connections"`
+	MaxIdleSeconds int `yaml:"max_idle_seconds"`
+}
+
+// ThresholdConfig holds threshold engine settings
+type ThresholdConfig struct {
+	EvaluationIntervalSeconds int `yaml:"evaluation_interval_seconds"`
+}
+
+// AnomalyConfig holds anomaly detection settings
+type AnomalyConfig struct {
+	Enabled bool         `yaml:"enabled"`
+	Tier1   Tier1Config  `yaml:"tier1"`
+	Tier2   Tier2Config  `yaml:"tier2"`
+	Tier3   Tier3Config  `yaml:"tier3"`
+}
+
+// Tier1Config holds Tier 1 statistical detection settings
+type Tier1Config struct {
+	Enabled                   bool    `yaml:"enabled"`
+	DefaultSensitivity        float64 `yaml:"default_sensitivity"`
+	EvaluationIntervalSeconds int     `yaml:"evaluation_interval_seconds"`
+}
+
+// Tier2Config holds Tier 2 embedding similarity settings
+type Tier2Config struct {
+	Enabled              bool    `yaml:"enabled"`
+	SuppressionThreshold float64 `yaml:"suppression_threshold"`
+	SimilarityThreshold  float64 `yaml:"similarity_threshold"`
+}
+
+// Tier3Config holds Tier 3 LLM classification settings
+type Tier3Config struct {
+	Enabled        bool `yaml:"enabled"`
+	TimeoutSeconds int  `yaml:"timeout_seconds"`
+}
+
+// BaselineConfig holds baseline calculation settings
+type BaselineConfig struct {
+	RefreshIntervalSeconds int `yaml:"refresh_interval_seconds"`
+}
+
+// CorrelationConfig holds correlation detection settings
+type CorrelationConfig struct {
+	WindowSeconds int `yaml:"window_seconds"`
+}
+
+// LLMConfig holds LLM provider settings
+type LLMConfig struct {
+	EmbeddingProvider string          `yaml:"embedding_provider"`
+	ReasoningProvider string          `yaml:"reasoning_provider"`
+	Ollama            OllamaConfig    `yaml:"ollama"`
+	OpenAI            OpenAIConfig    `yaml:"openai"`
+	Anthropic         AnthropicConfig `yaml:"anthropic"`
+	Voyage            VoyageConfig    `yaml:"voyage"`
+}
+
+// OllamaConfig holds Ollama provider settings
+type OllamaConfig struct {
+	BaseURL        string `yaml:"base_url"`
+	EmbeddingModel string `yaml:"embedding_model"`
+	ReasoningModel string `yaml:"reasoning_model"`
+}
+
+// OpenAIConfig holds OpenAI provider settings
+type OpenAIConfig struct {
+	APIKeyFile     string `yaml:"api_key_file"`
+	EmbeddingModel string `yaml:"embedding_model"`
+	ReasoningModel string `yaml:"reasoning_model"`
+	apiKey         string
+}
+
+// AnthropicConfig holds Anthropic provider settings
+type AnthropicConfig struct {
+	APIKeyFile     string `yaml:"api_key_file"`
+	ReasoningModel string `yaml:"reasoning_model"`
+	apiKey         string
+}
+
+// VoyageConfig holds Voyage provider settings
+type VoyageConfig struct {
+	APIKeyFile     string `yaml:"api_key_file"`
+	EmbeddingModel string `yaml:"embedding_model"`
+	apiKey         string
+}
+
+// NewConfig creates a new Config with default values
+func NewConfig() *Config {
+	return &Config{
+		Datastore: DatastoreConfig{
+			Host:     "localhost",
+			Database: "ai_workbench",
+			Username: "postgres",
+			Port:     5432,
+			SSLMode:  "prefer",
+		},
+		Pool: PoolConfig{
+			MaxConnections: 10,
+			MaxIdleSeconds: 300,
+		},
+		Threshold: ThresholdConfig{
+			EvaluationIntervalSeconds: 60,
+		},
+		Anomaly: AnomalyConfig{
+			Enabled: true,
+			Tier1: Tier1Config{
+				Enabled:                   true,
+				DefaultSensitivity:        3.0,
+				EvaluationIntervalSeconds: 60,
+			},
+			Tier2: Tier2Config{
+				Enabled:              true,
+				SuppressionThreshold: 0.85,
+				SimilarityThreshold:  0.3,
+			},
+			Tier3: Tier3Config{
+				Enabled:        true,
+				TimeoutSeconds: 30,
+			},
+		},
+		Baselines: BaselineConfig{
+			RefreshIntervalSeconds: 3600,
+		},
+		Correlation: CorrelationConfig{
+			WindowSeconds: 120,
+		},
+		LLM: LLMConfig{
+			EmbeddingProvider: "ollama",
+			ReasoningProvider: "ollama",
+			Ollama: OllamaConfig{
+				BaseURL:        "http://localhost:11434",
+				EmbeddingModel: "nomic-embed-text",
+				ReasoningModel: "qwen2.5:7b-instruct",
+			},
+			OpenAI: OpenAIConfig{
+				EmbeddingModel: "text-embedding-3-small",
+				ReasoningModel: "gpt-4o-mini",
+			},
+			Anthropic: AnthropicConfig{
+				ReasoningModel: "claude-3-5-haiku-20241022",
+			},
+			Voyage: VoyageConfig{
+				EmbeddingModel: "voyage-3-lite",
+			},
+		},
+	}
+}
+
+// LoadFromFile loads configuration from a YAML file
+func (c *Config) LoadFromFile(filename string) error {
+	data, err := os.ReadFile(filename) // #nosec G304 - Config file path is provided by administrator
+	if err != nil {
+		return fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	if err := yaml.Unmarshal(data, c); err != nil {
+		return fmt.Errorf("failed to parse YAML config: %w", err)
+	}
+
+	return nil
+}
+
+// LoadFromEnv applies environment variable overrides
+func (c *Config) LoadFromEnv() {
+	if v := os.Getenv("AI_DBA_PG_HOST"); v != "" {
+		c.Datastore.Host = v
+	}
+	if v := os.Getenv("AI_DBA_PG_HOSTADDR"); v != "" {
+		c.Datastore.HostAddr = v
+	}
+	if v := os.Getenv("AI_DBA_PG_DATABASE"); v != "" {
+		c.Datastore.Database = v
+	}
+	if v := os.Getenv("AI_DBA_PG_USERNAME"); v != "" {
+		c.Datastore.Username = v
+	}
+	if v := os.Getenv("AI_DBA_PG_PASSWORD"); v != "" {
+		c.Datastore.Password = v
+	}
+	if v := os.Getenv("AI_DBA_PG_SSLMODE"); v != "" {
+		c.Datastore.SSLMode = v
+	}
+	if v := os.Getenv("AI_DBA_PG_SSLCERT"); v != "" {
+		c.Datastore.SSLCert = v
+	}
+	if v := os.Getenv("AI_DBA_PG_SSLKEY"); v != "" {
+		c.Datastore.SSLKey = v
+	}
+	if v := os.Getenv("AI_DBA_PG_SSLROOTCERT"); v != "" {
+		c.Datastore.SSLRootCert = v
+	}
+}
+
+// LoadPassword loads the password from password file if specified
+func (c *Config) LoadPassword() error {
+	if c.Datastore.Password != "" {
+		return nil
+	}
+
+	if c.Datastore.PasswordFile != "" {
+		password, err := readSecretFile(c.Datastore.PasswordFile)
+		if err != nil {
+			return fmt.Errorf("failed to read password file: %w", err)
+		}
+		c.Datastore.Password = password
+	}
+
+	return nil
+}
+
+// LoadAPIKeys loads API keys from their respective files
+func (c *Config) LoadAPIKeys() error {
+	if c.LLM.OpenAI.APIKeyFile != "" {
+		key, err := readSecretFile(c.LLM.OpenAI.APIKeyFile)
+		if err != nil {
+			return fmt.Errorf("failed to read OpenAI API key: %w", err)
+		}
+		c.LLM.OpenAI.apiKey = key
+	}
+
+	if c.LLM.Anthropic.APIKeyFile != "" {
+		key, err := readSecretFile(c.LLM.Anthropic.APIKeyFile)
+		if err != nil {
+			return fmt.Errorf("failed to read Anthropic API key: %w", err)
+		}
+		c.LLM.Anthropic.apiKey = key
+	}
+
+	if c.LLM.Voyage.APIKeyFile != "" {
+		key, err := readSecretFile(c.LLM.Voyage.APIKeyFile)
+		if err != nil {
+			return fmt.Errorf("failed to read Voyage API key: %w", err)
+		}
+		c.LLM.Voyage.apiKey = key
+	}
+
+	return nil
+}
+
+// GetOpenAIAPIKey returns the loaded OpenAI API key
+func (c *Config) GetOpenAIAPIKey() string {
+	return c.LLM.OpenAI.apiKey
+}
+
+// GetAnthropicAPIKey returns the loaded Anthropic API key
+func (c *Config) GetAnthropicAPIKey() string {
+	return c.LLM.Anthropic.apiKey
+}
+
+// GetVoyageAPIKey returns the loaded Voyage API key
+func (c *Config) GetVoyageAPIKey() string {
+	return c.LLM.Voyage.apiKey
+}
+
+// readSecretFile reads a secret from a file
+func readSecretFile(filename string) (string, error) {
+	if filename != "" && filename[0] == '~' {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("failed to get home directory: %w", err)
+		}
+		filename = filepath.Join(homeDir, filename[1:])
+	}
+
+	content, err := os.ReadFile(filename) // #nosec G304 - Secret file path is provided by administrator
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(content)), nil
+}
+
+// Validate checks if the configuration is valid
+func (c *Config) Validate() error {
+	if c.Datastore.Host == "" {
+		return fmt.Errorf("datastore.host is required")
+	}
+	if c.Datastore.Database == "" {
+		return fmt.Errorf("datastore.database is required")
+	}
+	if c.Datastore.Username == "" {
+		return fmt.Errorf("datastore.username is required")
+	}
+	if c.Datastore.Port <= 0 || c.Datastore.Port > 65535 {
+		return fmt.Errorf("datastore.port must be between 1 and 65535")
+	}
+	if c.Pool.MaxConnections <= 0 {
+		return fmt.Errorf("pool.max_connections must be greater than 0")
+	}
+	return nil
+}
+
+// GetDefaultConfigPath returns the default config file path
+func GetDefaultConfigPath(binaryPath string) string {
+	systemPath := "/etc/pgedge/ai-dba-alerter.yaml"
+	if _, err := os.Stat(systemPath); err == nil {
+		return systemPath
+	}
+
+	dir := filepath.Dir(binaryPath)
+	return filepath.Join(dir, "ai-dba-alerter.yaml")
+}
+
+// ConfigFileExists checks if a config file exists at the given path
+func ConfigFileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}

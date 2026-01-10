@@ -86,6 +86,8 @@ nav:
           - Adding Probes: collector/adding-probes.md
       - Design:
           - Node Role Probe: collector/node-role-probe-design.md
+  - Alerter:
+      - Overview: alerter/index.md
   - Server:
       - Overview: server/index.md
       - Authentication: server/authentication.md

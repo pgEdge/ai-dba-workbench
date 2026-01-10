@@ -31,7 +31,7 @@ Reference these files for project context:
 
 - `DESIGN.md` - Architecture and design philosophy.
 
-- `CHANGELOG.md` - Notable changes by release.
+- `docs/changelog.md` - Notable changes by release.
 
 - `mkdocs.yml` - Documentation site navigation.
 
@@ -82,7 +82,7 @@ Follow this workflow for implementation tasks:
 
 4. Review security implications for auth, input handling, or query changes.
 
-5. Update `CHANGELOG.md` for user-facing changes.
+5. Update `docs/changelog.md` for user-facing changes.
 
 ## Documentation
 

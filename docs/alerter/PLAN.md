@@ -5,8 +5,9 @@
 
 ## Overview
 
-The alerter component provides continuous monitoring of collected metrics with
-two complementary alert detection mechanisms:
+The alerter is a **standalone service** (`ai-dba-alerter`) that provides
+continuous monitoring of collected metrics with two complementary detection
+mechanisms:
 
 1. **Traditional threshold-based alerts** - deterministic rules for common
    conditions (server down, disk space low, replication lag, etc.)
@@ -14,110 +15,153 @@ two complementary alert detection mechanisms:
 2. **AI-powered anomaly detection** - tiered statistical and LLM-based
    detection for complex patterns that threshold rules cannot capture
 
-Both mechanisms share common infrastructure for alert storage, acknowledgment,
-blackout periods, and notification (future).
+The alerter exposes a **REST API** for management operations with **RBAC**
+permission checks. It is designed as a separate binary to enable independent
+scaling and deployment flexibility.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           Collector Binary                               │
-│  ┌─────────────────────────────────────────────────────────────────┐    │
-│  │                    Existing Probe Scheduler                      │    │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │    │
-│  │  │   Probe 1   │  │   Probe 2   │  │   Probe N   │   ...        │    │
-│  │  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘              │    │
-│  └─────────┼────────────────┼────────────────┼─────────────────────┘    │
-│            │                │                │                           │
-│            └────────────────┴────────────────┘                           │
-│                             │ metrics                                    │
-│                             ▼                                            │
-│  ┌─────────────────────────────────────────────────────────────────┐    │
-│  │                      Alert Processor                             │    │
-│  │  ┌─────────────────────┐  ┌─────────────────────────────────┐   │    │
-│  │  │  Threshold Engine   │  │      Anomaly Detection          │   │    │
-│  │  │  (deterministic)    │  │  ┌───────────────────────────┐  │   │    │
-│  │  │                     │  │  │ Tier 1: Statistical       │  │   │    │
-│  │  │  - Server health    │  │  │ (z-score, EWMA)          │  │   │    │
-│  │  │  - Disk space       │  │  └────────────┬──────────────┘  │   │    │
-│  │  │  - Replication lag  │  │               │ candidates      │   │    │
-│  │  │  - Connection count │  │  ┌────────────▼──────────────┐  │   │    │
-│  │  │  - Lock waits       │  │  │ Tier 2: Embedding/RAG     │  │   │    │
-│  │  │  - ...              │  │  │ (pgvector similarity)     │  │   │    │
-│  │  └──────────┬──────────┘  │  └────────────┬──────────────┘  │   │    │
-│  │             │             │               │ suspicious      │   │    │
-│  │             │             │  ┌────────────▼──────────────┐  │   │    │
-│  │             │             │  │ Tier 3: LLM Classification│  │   │    │
-│  │             │             │  │ (Ollama/OpenAI/Anthropic) │  │   │    │
-│  │             │             │  └────────────┬──────────────┘  │   │    │
-│  │             │             └───────────────┼─────────────────┘   │    │
-│  │             │                             │                     │    │
-│  │             └──────────────┬──────────────┘                     │    │
-│  │                            │ alerts                             │    │
-│  │             ┌──────────────▼──────────────┐                     │    │
-│  │             │   Blackout Filter           │                     │    │
-│  │             │   (check active blackouts)  │                     │    │
-│  │             └──────────────┬──────────────┘                     │    │
-│  │                            │                                    │    │
-│  │             ┌──────────────▼──────────────┐                     │    │
-│  │             │   Alert State Manager       │                     │    │
-│  │             │   (create, update, clear)   │                     │    │
-│  │             └─────────────────────────────┘                     │    │
-│  └─────────────────────────────────────────────────────────────────┘    │
-└───────────────────────────────────────┬─────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────┐
+│                         Alerter Binary (ai-dba-alerter)                    │
+│                                                                            │
+│  ┌──────────────────────────────────────────────────────────────────────┐ │
+│  │                           REST API Layer                              │ │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────────┐   │ │
+│  │  │ /api/alerts  │  │/api/blackouts│  │ /api/alert-rules         │   │ │
+│  │  │              │  │              │  │ /api/metric-definitions  │   │ │
+│  │  └──────────────┘  └──────────────┘  └──────────────────────────┘   │ │
+│  │                         │                                            │ │
+│  │  ┌──────────────────────▼────────────────────────────────────────┐  │ │
+│  │  │              RBAC Authorization (via auth.db)                  │  │ │
+│  │  └────────────────────────────────────────────────────────────────┘  │ │
+│  └──────────────────────────────────────────────────────────────────────┘ │
+│                                                                            │
+│  ┌──────────────────────────────────────────────────────────────────────┐ │
+│  │                        Alert Processing Engine                        │ │
+│  │  ┌─────────────────────┐  ┌─────────────────────────────────────┐   │ │
+│  │  │  Threshold Engine   │  │       Anomaly Detection             │   │ │
+│  │  │  (deterministic)    │  │  ┌───────────────────────────────┐  │   │ │
+│  │  │                     │  │  │ Tier 1: Statistical           │  │   │ │
+│  │  │  - Server health    │  │  │ (z-score, EWMA)              │  │   │ │
+│  │  │  - Disk space       │  │  └────────────┬──────────────────┘  │   │ │
+│  │  │  - Replication lag  │  │               │ candidates          │   │ │
+│  │  │  - Connection count │  │  ┌────────────▼──────────────────┐  │   │ │
+│  │  │  - Lock waits       │  │  │ Tier 2: Embedding/RAG         │  │   │ │
+│  │  │  - ...              │  │  │ (pgvector similarity)         │  │   │ │
+│  │  └──────────┬──────────┘  │  └────────────┬──────────────────┘  │   │ │
+│  │             │             │               │ suspicious          │   │ │
+│  │             │             │  ┌────────────▼──────────────────┐  │   │ │
+│  │             │             │  │ Tier 3: LLM Classification    │  │   │ │
+│  │             │             │  │ (Ollama/OpenAI/Anthropic)     │  │   │ │
+│  │             │             │  │ (alert on timeout, log fail)  │  │   │ │
+│  │             │             │  └────────────┬──────────────────┘  │   │ │
+│  │             │             └───────────────┼─────────────────────┘   │ │
+│  │             │                             │                         │ │
+│  │             └──────────────┬──────────────┘                         │ │
+│  │                            │ alerts                                 │ │
+│  │             ┌──────────────▼──────────────┐                         │ │
+│  │             │   Blackout Filter           │                         │ │
+│  │             │   (check active blackouts)  │                         │ │
+│  │             └──────────────┬──────────────┘                         │ │
+│  │                            │                                        │ │
+│  │             ┌──────────────▼──────────────┐                         │ │
+│  │             │   Alert State Manager       │                         │ │
+│  │             │   (create, update, clear)   │                         │ │
+│  │             └─────────────────────────────┘                         │ │
+│  └──────────────────────────────────────────────────────────────────────┘ │
+└───────────────────────────────────────┬───────────────────────────────────┘
                                         │
                                         ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         PostgreSQL Datastore                             │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────┐  │
-│  │ metrics.*       │  │ alert_rules     │  │ alerts                  │  │
-│  │ (existing)      │  │ alert_thresholds│  │ alert_acknowledgments   │  │
-│  └─────────────────┘  │ metric_baselines│  │ blackouts               │  │
-│                       │ metric_defs     │  │ blackout_schedules      │  │
-│                       │ anomaly_cands   │  └─────────────────────────┘  │
-│                       └─────────────────┘                               │
-└─────────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────┐
+│                          PostgreSQL Datastore                              │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────┐   │
+│  │ metrics.*       │  │ alert_rules     │  │ alerts                  │   │
+│  │ (from collector)│  │ alert_thresholds│  │ alert_acknowledgments   │   │
+│  └─────────────────┘  │ metric_baselines│  │ blackouts               │   │
+│                       │ metric_defs     │  │ blackout_schedules      │   │
+│                       │ anomaly_cands   │  │ alerter_settings        │   │
+│                       └─────────────────┘  └─────────────────────────┘   │
+└───────────────────────────────────────────────────────────────────────────┘
+                                        │
+                                        ▼
+┌───────────────────────────────────────────────────────────────────────────┐
+│                           SQLite Auth Store                                │
+│                    (shared with server: data/auth.db)                      │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────┐   │
+│  │ users           │  │ groups          │  │ mcp_privileges          │   │
+│  │ tokens          │  │ group_members   │  │ group_privileges        │   │
+│  └─────────────────┘  └─────────────────┘  └─────────────────────────┘   │
+└───────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Component Location
+## Project Structure
 
-The alerter will be implemented as a new package within the collector:
+The alerter is a new sub-project following existing patterns:
 
 ```
-collector/src/
-├── alerter/
-│   ├── alerter.go           # Main alert processor orchestration
-│   ├── threshold/
-│   │   ├── engine.go        # Threshold evaluation engine
-│   │   ├── rules.go         # Built-in rule definitions
-│   │   └── evaluator.go     # Rule evaluation logic
-│   ├── anomaly/
-│   │   ├── detector.go      # Anomaly detection orchestrator
-│   │   ├── tier1.go         # Statistical detection
-│   │   ├── tier2.go         # Embedding similarity
-│   │   ├── tier3.go         # LLM classification
-│   │   ├── correlation.go   # Multi-metric correlation
-│   │   └── coldstart.go     # Cold start handling
-│   ├── blackout/
-│   │   ├── manager.go       # Blackout period management
-│   │   └── scheduler.go     # Scheduled blackout handling
-│   └── state/
-│       ├── manager.go       # Alert lifecycle management
-│       └── types.go         # Alert state types
-├── llm/
-│   ├── provider.go          # Provider interface
-│   ├── factory.go           # Provider factory
-│   ├── embedding.go         # Embedding normalization
-│   ├── ollama/
-│   │   └── client.go
-│   ├── anthropic/
-│   │   └── client.go
-│   ├── openai/
-│   │   └── client.go
-│   └── voyage/
-│       └── client.go
-└── database/
-    └── schema.go            # Add new migrations (7+)
+alerter/
+├── src/
+│   ├── cmd/
+│   │   └── ai-dba-alerter/
+│   │       └── main.go           # Entry point
+│   ├── internal/
+│   │   ├── api/
+│   │   │   ├── server.go         # HTTP server setup
+│   │   │   ├── middleware.go     # Auth, logging, CORS
+│   │   │   ├── alerts.go         # Alert CRUD endpoints
+│   │   │   ├── blackouts.go      # Blackout endpoints
+│   │   │   ├── rules.go          # Alert rule endpoints
+│   │   │   └── metrics.go        # Metric definition endpoints
+│   │   ├── auth/
+│   │   │   └── rbac.go           # RBAC integration (uses server's auth.db)
+│   │   ├── config/
+│   │   │   └── config.go         # Configuration handling
+│   │   ├── database/
+│   │   │   ├── datastore.go      # Datastore connection
+│   │   │   ├── schema.go         # Migrations
+│   │   │   └── types.go          # Data types
+│   │   ├── engine/
+│   │   │   ├── engine.go         # Main processing loop
+│   │   │   ├── threshold/
+│   │   │   │   ├── engine.go     # Threshold evaluation
+│   │   │   │   ├── rules.go      # Built-in rule definitions
+│   │   │   │   └── evaluator.go  # Rule evaluation logic
+│   │   │   ├── anomaly/
+│   │   │   │   ├── detector.go   # Anomaly detection orchestrator
+│   │   │   │   ├── tier1.go      # Statistical detection
+│   │   │   │   ├── tier2.go      # Embedding similarity
+│   │   │   │   ├── tier3.go      # LLM classification
+│   │   │   │   ├── correlation.go# Multi-metric correlation
+│   │   │   │   └── coldstart.go  # Cold start handling
+│   │   │   ├── blackout/
+│   │   │   │   ├── manager.go    # Blackout period management
+│   │   │   │   └── scheduler.go  # Scheduled blackout handling
+│   │   │   └── state/
+│   │   │       ├── manager.go    # Alert lifecycle management
+│   │   │       └── types.go      # Alert state types
+│   │   └── llm/
+│   │       ├── provider.go       # Provider interface
+│   │       ├── factory.go        # Provider factory
+│   │       ├── embedding.go      # Embedding normalization
+│   │       ├── ollama/
+│   │       │   └── client.go
+│   │       ├── anthropic/
+│   │       │   └── client.go
+│   │       ├── openai/
+│   │       │   └── client.go
+│   │       └── voyage/
+│   │           └── client.go
+│   └── go.mod
+├── tests/
+│   └── ...
+├── docs/
+│   └── alerter/
+│       ├── index.md
+│       ├── configuration.md
+│       ├── api-reference.md
+│       └── alert-rules.md
+└── README.md
 ```
 
 ## Database Schema
@@ -125,6 +169,23 @@ collector/src/
 ### Migration 7: Core Alert Tables
 
 ```sql
+-- Alerter settings (global configuration stored in DB)
+CREATE TABLE alerter_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    description TEXT,
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+COMMENT ON TABLE alerter_settings IS
+    'Global alerter configuration settings';
+
+-- Insert default settings
+INSERT INTO alerter_settings (key, value, description) VALUES
+    ('alert_retention_days', '90', 'Days to retain cleared/acknowledged alerts'),
+    ('correlation_window_seconds', '120', 'Time window for grouping correlated anomalies'),
+    ('llm_timeout_seconds', '30', 'Timeout for LLM classification requests');
+
 -- Alert definitions for threshold-based alerts
 CREATE TABLE alert_rules (
     id SERIAL PRIMARY KEY,
@@ -209,6 +270,11 @@ CREATE TABLE alerts (
     current_value DOUBLE PRECISION,
     threshold_value DOUBLE PRECISION,
     details JSONB DEFAULT '{}',   -- Additional context (z-score, LLM explanation)
+
+    -- LLM processing status (for anomaly alerts)
+    llm_processed BOOLEAN DEFAULT false,
+    llm_failed BOOLEAN DEFAULT false,
+    llm_failure_reason TEXT,
 
     -- Timestamps
     first_triggered_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -437,6 +503,8 @@ CREATE TABLE anomaly_candidates (
 
     -- Tier 3 processing
     tier3_result JSONB,           -- LLM classification result
+    tier3_failed BOOLEAN DEFAULT false,
+    tier3_failure_reason TEXT,
 
     -- Correlation
     correlation_group_id UUID,
@@ -455,7 +523,7 @@ COMMENT ON TABLE anomaly_candidates IS
 CREATE INDEX idx_candidates_connection ON anomaly_candidates(connection_id);
 CREATE INDEX idx_candidates_detected ON anomaly_candidates(detected_at);
 CREATE INDEX idx_candidates_unprocessed ON anomaly_candidates(id)
-    WHERE tier3_result IS NULL AND NOT suppressed;
+    WHERE tier3_result IS NULL AND NOT suppressed AND NOT tier3_failed;
 
 -- Correlation groups
 CREATE TABLE correlation_groups (
@@ -523,7 +591,7 @@ INSERT INTO alert_rules (
 ('connection_count_high',
  'Active connection count approaching max_connections',
  'capacity', 'warning', 'pg_stat_activity', 'pid',
- 'gt', 0.8, 60, NULL, 'count', true),  -- threshold is % of max_connections
+ 'gt', 0.8, 60, NULL, 'count', true),
 
 ('connection_count_critical',
  'Active connection count at or near max_connections',
@@ -539,17 +607,17 @@ INSERT INTO alert_rules (
 ('long_running_queries',
  'Queries running longer than threshold',
  'performance', 'warning', 'pg_stat_activity', 'query_start',
- 'lt', 3600, 0, ARRAY['pid', 'query'], NULL, true),  -- > 1 hour
+ 'lt', 3600, 0, ARRAY['pid', 'query'], NULL, true),
 
 ('lock_waits',
  'Queries waiting for locks longer than threshold',
  'performance', 'warning', 'pg_stat_activity', 'wait_event_type',
- 'eq', NULL, 300, ARRAY['pid'], NULL, true),  -- Wait type = Lock for > 5 min
+ 'eq', NULL, 300, ARRAY['pid'], NULL, true),
 
 ('high_cpu_usage',
  'CPU usage exceeds threshold',
  'performance', 'warning', 'pg_sys_cpu_usage_info', 'idle_percent',
- 'lt', 20.0, 60, NULL, 'avg', true),  -- < 20% idle = > 80% busy
+ 'lt', 20.0, 60, NULL, 'avg', true),
 
 ('high_memory_usage',
  'Memory usage exceeds threshold',
@@ -559,39 +627,39 @@ INSERT INTO alert_rules (
 ('checkpoint_frequency_high',
  'Checkpoints occurring more frequently than expected',
  'performance', 'info', 'pg_stat_bgwriter', 'checkpoints_req',
- 'gt', 10, 3600, NULL, 'count', true),  -- > 10 requested checkpoints/hour
+ 'gt', 10, 3600, NULL, 'count', true),
 
 ('temp_file_usage_high',
  'Temporary file usage is high (work_mem may need tuning)',
  'performance', 'warning', 'pg_stat_database', 'temp_bytes',
- 'gt', 1073741824, 3600, ARRAY['database_name'], 'sum', true),  -- > 1GB/hour
+ 'gt', 1073741824, 3600, ARRAY['database_name'], 'sum', true),
 
 -- Replication alerts
 ('replication_lag_high',
  'Replication lag exceeds threshold',
  'replication', 'warning', 'pg_stat_replication', 'replay_lag',
- 'gt', 60, 0, ARRAY['application_name', 'client_addr'], NULL, true),  -- > 60 seconds
+ 'gt', 60, 0, ARRAY['application_name', 'client_addr'], NULL, true),
 
 ('replication_lag_critical',
  'Replication lag is critically high',
  'replication', 'critical', 'pg_stat_replication', 'replay_lag',
- 'gt', 300, 0, ARRAY['application_name', 'client_addr'], NULL, true),  -- > 5 minutes
+ 'gt', 300, 0, ARRAY['application_name', 'client_addr'], NULL, true),
 
 ('replication_slot_inactive',
  'Replication slot is inactive',
  'replication', 'warning', 'pg_replication_slots', 'active',
- 'eq', 0, 300, ARRAY['slot_name'], NULL, true),  -- inactive > 5 min
+ 'eq', 0, 300, ARRAY['slot_name'], NULL, true),
 
 ('wal_receiver_disconnected',
  'Standby WAL receiver is disconnected',
  'replication', 'critical', 'pg_stat_wal_receiver', 'status',
- 'neq', NULL, 60, NULL, NULL, true),  -- status != streaming
+ 'neq', NULL, 60, NULL, NULL, true),
 
 -- Security alerts
 ('superuser_connections',
  'Superuser connection count exceeds threshold',
  'security', 'info', 'pg_stat_activity', 'usename',
- 'gt', 5, 0, NULL, 'count', true),  -- Filter where usesysid = 10
+ 'gt', 5, 0, NULL, 'count', true),
 
 ('failed_authentication_spike',
  'Spike in failed authentication attempts',
@@ -607,7 +675,7 @@ INSERT INTO alert_rules (
 ('transaction_id_wraparound',
  'Database approaching transaction ID wraparound',
  'maintenance', 'critical', 'pg_database', 'age_datfrozenxid',
- 'gt', 1500000000, 0, ARRAY['datname'], NULL, true),  -- 75% of 2B
+ 'gt', 1500000000, 0, ARRAY['datname'], NULL, true),
 
 ('wal_archive_failing',
  'WAL archiving is failing',
@@ -620,9 +688,219 @@ INSERT INTO alert_rules (
  'gt', 1000, 86400, ARRAY['database_name', 'schemaname', 'relname'], NULL, true);
 ```
 
+## REST API Endpoints
+
+All endpoints require authentication via Bearer token and respect RBAC
+permissions. Users can only access alerts for connections they have permission
+to view.
+
+### Alerts
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/alerts` | List alerts (query params: status, severity, connection_id, limit, offset) |
+| GET | `/api/alerts/{id}` | Get alert details including acknowledgments |
+| POST | `/api/alerts/{id}/acknowledge` | Acknowledge alert with reason |
+| DELETE | `/api/alerts/{id}` | Delete alert (superuser only) |
+
+### Alert Rules
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/alert-rules` | List all alert rules |
+| GET | `/api/alert-rules/{id}` | Get rule details with thresholds |
+| PUT | `/api/alert-rules/{id}` | Update rule (enable/disable, defaults) |
+| POST | `/api/alert-rules` | Create custom rule |
+| DELETE | `/api/alert-rules/{id}` | Delete custom rule (not built-in) |
+
+### Alert Thresholds (per-connection overrides)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/alert-thresholds` | List thresholds (query: rule_id, connection_id) |
+| POST | `/api/alert-thresholds` | Create threshold override |
+| PUT | `/api/alert-thresholds/{id}` | Update threshold |
+| DELETE | `/api/alert-thresholds/{id}` | Delete threshold override |
+
+### Blackouts
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/blackouts` | List blackouts (query: active, connection_id) |
+| POST | `/api/blackouts` | Create manual blackout |
+| PUT | `/api/blackouts/{id}/end` | End active blackout |
+| DELETE | `/api/blackouts/{id}` | Delete blackout record |
+
+### Blackout Schedules
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/blackout-schedules` | List schedules |
+| POST | `/api/blackout-schedules` | Create schedule |
+| PUT | `/api/blackout-schedules/{id}` | Update schedule |
+| DELETE | `/api/blackout-schedules/{id}` | Delete schedule |
+
+### Metric Definitions (anomaly detection config)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/metric-definitions` | List metric definitions |
+| PUT | `/api/metric-definitions/{id}` | Update definition |
+
+### Settings
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/settings` | Get alerter settings |
+| PUT | `/api/settings` | Update settings (superuser only) |
+
+## Configuration
+
+### Configuration File
+
+`/etc/pgedge/ai-dba-alerter.yaml` (or `./ai-dba-alerter.yaml`)
+
+```yaml
+# Datastore connection (same as collector/server)
+datastore:
+  host: localhost
+  hostaddr: ""
+  database: ai_workbench
+  username: postgres
+  password_file: /etc/pgedge/ai-dba.password
+  port: 5432
+  sslmode: prefer
+  sslcert: ""
+  sslkey: ""
+  sslrootcert: ""
+
+# Connection pool settings
+pool:
+  max_connections: 10
+  max_idle_seconds: 300
+
+# HTTP server settings
+http:
+  addr: localhost:8001
+  tls: false
+  cert: ""
+  key: ""
+  chain: ""
+
+# Auth settings (shared with server)
+auth:
+  data_dir: /var/lib/pgedge/ai-dba/data  # Location of auth.db
+
+# Server secret for decrypting connection passwords
+secret_file: /etc/pgedge/ai-dba-collector.secret
+
+# Threshold engine settings
+threshold:
+  evaluation_interval_seconds: 60
+
+# Anomaly detection settings
+anomaly:
+  enabled: true
+  tier1:
+    enabled: true
+    default_sensitivity: 3.0
+    evaluation_interval_seconds: 60
+  tier2:
+    enabled: true
+    suppression_threshold: 0.85
+    similarity_threshold: 0.3
+  tier3:
+    enabled: true
+    timeout_seconds: 30           # Alert after this timeout
+
+# Baseline calculation
+baselines:
+  refresh_interval_seconds: 3600
+
+# Correlation settings
+correlation:
+  window_seconds: 120             # Configurable, default 2 minutes
+
+# LLM providers
+llm:
+  embedding_provider: ollama
+  reasoning_provider: ollama
+
+  ollama:
+    base_url: http://localhost:11434
+    embedding_model: nomic-embed-text
+    reasoning_model: qwen2.5:7b-instruct
+
+  openai:
+    api_key_file: /etc/pgedge/openai.key
+    embedding_model: text-embedding-3-small
+    reasoning_model: gpt-4o-mini
+
+  anthropic:
+    api_key_file: /etc/pgedge/anthropic.key
+    reasoning_model: claude-3-5-haiku-20241022
+
+  voyage:
+    api_key_file: /etc/pgedge/voyage.key
+    embedding_model: voyage-3-lite
+```
+
+### Command Line Options
+
+Following the same pattern as collector and server:
+
+```
+Usage: ai-dba-alerter [options]
+
+Options:
+  -config string
+        Path to configuration file (default: auto-detect)
+  -addr string
+        HTTP server address (overrides config)
+  -tls
+        Enable TLS/HTTPS
+  -cert string
+        Path to TLS certificate file
+  -key string
+        Path to TLS key file
+  -chain string
+        Path to TLS certificate chain file
+  -data-dir string
+        Data directory for auth database
+  -db-host string
+        Database host (overrides config)
+  -db-port int
+        Database port (overrides config)
+  -db-name string
+        Database name (overrides config)
+  -db-user string
+        Database user (overrides config)
+  -db-password string
+        Database password (overrides config)
+  -db-sslmode string
+        Database SSL mode (overrides config)
+  -debug
+        Enable debug logging
+```
+
+### Environment Variables
+
+```
+AI_DBA_PG_HOST
+AI_DBA_PG_HOSTADDR
+AI_DBA_PG_DATABASE
+AI_DBA_PG_USERNAME
+AI_DBA_PG_PASSWORD
+AI_DBA_PG_PORT
+AI_DBA_PG_SSLMODE
+AI_DBA_PG_SSLCERT
+AI_DBA_PG_SSLKEY
+AI_DBA_PG_SSLROOTCERT
+```
+
 ## Traditional Threshold Alert Rules
 
-The following built-in alert rules will be provided:
+The following 22 built-in alert rules will be provided:
 
 ### Availability
 
@@ -681,55 +959,43 @@ The following built-in alert rules will be provided:
 
 ### Phase 1: Core Infrastructure
 
-**Goal**: Database schema and basic alert state management.
+**Goal**: Separate binary, database schema, REST API skeleton, basic RBAC.
 
-1. Create database migrations 7-10
-2. Implement alert state manager (`alerter/state/`)
-   - Create, update, clear alerts
-   - Handle alert lifecycle
-   - Manage acknowledgments
-3. Implement blackout manager (`alerter/blackout/`)
-   - Check if connection/database is in blackout
-   - Create/end manual blackouts
-   - Process scheduled blackouts
-4. Basic MCP tools for alert management
-   - `list_alerts` - List active/historical alerts
-   - `acknowledge_alert` - Acknowledge with reason
-   - `list_blackouts` - List active blackouts
-   - `create_blackout` - Start manual blackout
-   - `end_blackout` - End manual blackout
+1. Create alerter sub-project structure
+2. Implement configuration handling (following collector/server patterns)
+3. Create database migrations 7-10
+4. Implement RBAC integration (use server's auth.db)
+5. Implement HTTP server with authentication middleware
+6. Implement alert state manager
+7. Implement blackout manager
+8. Create REST API endpoints (CRUD operations)
 
 **Deliverables**:
 
+- Standalone `ai-dba-alerter` binary
 - Database schema in place
-- Alert state can be created/updated/cleared
-- Blackouts can be created and checked
-- Basic MCP tools working
+- REST API working with RBAC
+- Manual blackouts working
 
 ### Phase 2: Threshold Engine
 
 **Goal**: Deterministic threshold-based alerting.
 
-1. Implement threshold engine (`alerter/threshold/`)
+1. Implement threshold engine
    - Rule evaluation logic
    - Threshold override resolution
    - Duration tracking for sustained conditions
-2. Integrate with probe scheduler
-   - Post-collection hook for alert processing
-   - Efficient metric querying
-3. Alert rule management tools
-   - `list_alert_rules` - List available rules
-   - `get_alert_rule` - Get rule details
-   - `update_alert_threshold` - Set per-connection thresholds
-   - `enable_alert_rule` - Enable/disable rules
+2. Implement metric querying from datastore
+3. Implement alert lifecycle (trigger, update, clear)
 4. Seed built-in alert rules
+5. Add garbage collection for old alerts (retention configurable, default 90d)
 
 **Deliverables**:
 
 - Threshold alerts firing and clearing
 - Per-connection threshold overrides working
-- All built-in rules available
-- Users can enable/disable and tune thresholds
+- All 22 built-in rules available
+- Alert retention working
 
 ### Phase 3: Anomaly Detection - Tier 1
 
@@ -739,17 +1005,15 @@ The following built-in alert rules will be provided:
    - Calculate rolling statistics per metric
    - Time-aware baselines (hour/day)
    - Baseline refresh scheduling
-2. Implement Tier 1 detector (`alerter/anomaly/tier1.go`)
+2. Implement Tier 1 detector
    - Z-score calculation
    - EWMA for trend detection
    - Candidate generation
-3. Cold start handling (`alerter/anomaly/coldstart.go`)
+3. Implement cold start handling
    - Grace period strategy
    - Bootstrap from similar servers
    - Alert anyway strategy
-4. Metric definition management
-   - Configure sensitivity per metric
-   - Enable/disable anomaly detection
+4. Add metric definition management endpoints
 
 **Deliverables**:
 
@@ -762,43 +1026,41 @@ The following built-in alert rules will be provided:
 
 **Goal**: LLM provider abstraction layer.
 
-1. Implement provider interfaces (`llm/provider.go`)
+1. Implement provider interfaces
    - Embedding provider interface
    - Reasoning provider interface
 2. Implement providers
-   - Ollama (`llm/ollama/`)
-   - Anthropic (`llm/anthropic/`)
-   - OpenAI (`llm/openai/`)
-   - Voyage (`llm/voyage/`)
-3. Embedding normalization
-   - Dimension normalization to 1536
-   - L2 normalization
-4. Provider factory and configuration
-5. Add LLM configuration to collector config
+   - Ollama
+   - Anthropic
+   - OpenAI
+   - Voyage
+3. Implement embedding normalization (to 1536 dimensions)
+4. Implement provider factory and configuration
+5. Add timeout handling with fallback to alert
 
 **Deliverables**:
 
 - All four providers working
 - Embeddings can be generated
 - Classifications can be requested
-- Provider selection via configuration
+- Timeout results in alert with `llm_failed=true`
 
 ### Phase 5: Anomaly Detection - Tiers 2 & 3
 
 **Goal**: AI-powered anomaly classification.
 
-1. Install pgvector extension requirement
-2. Implement Tier 2 (`alerter/anomaly/tier2.go`)
+1. Verify pgvector extension available
+2. Implement Tier 2
    - Generate embeddings for candidates
    - Similarity search against past alerts
    - Calculate suppression score
    - Auto-suppress high-confidence matches
-3. Implement Tier 3 (`alerter/anomaly/tier3.go`)
+3. Implement Tier 3
    - Build context prompt
    - Include similar past alerts (RAG)
    - Get LLM classification
-   - Parse structured response
-4. Implement correlation detection (`alerter/anomaly/correlation.go`)
+   - Handle timeout (alert anyway, mark `llm_failed`)
+4. Implement correlation detection
    - Same-server correlation
    - Same-metric correlation
    - Cascade detection
@@ -809,23 +1071,20 @@ The following built-in alert rules will be provided:
 - Full tiered detection pipeline working
 - Past acknowledgments influence future alerts
 - Correlated anomalies grouped
-- LLM provides explanations and severity
+- LLM failures tracked but alerts still fire
 
 ### Phase 6: Scheduled Blackouts & Polish
 
 **Goal**: Complete blackout scheduling and refinements.
 
-1. Implement blackout scheduler (`alerter/blackout/scheduler.go`)
+1. Implement blackout scheduler
    - Parse cron expressions
    - Handle recurring schedules
    - Auto-create blackout instances
-2. MCP tools for scheduled blackouts
-   - `create_blackout_schedule` - Create recurring schedule
-   - `update_blackout_schedule` - Modify schedule
-   - `delete_blackout_schedule` - Remove schedule
-   - `list_blackout_schedules` - List schedules
+2. Implement SIGHUP config reload
 3. Documentation
    - Alerter configuration guide
+   - API reference
    - Alert rule reference
    - Anomaly detection tuning guide
 4. Testing
@@ -836,96 +1095,10 @@ The following built-in alert rules will be provided:
 **Deliverables**:
 
 - Scheduled maintenance windows working
+- Config reload on SIGHUP
 - Full documentation
 - Comprehensive test coverage
 - Production-ready alerter
-
-## Configuration
-
-### Collector Configuration Additions
-
-```yaml
-alerter:
-  enabled: true
-
-  # Threshold engine
-  threshold:
-    evaluation_interval_seconds: 60
-
-  # Anomaly detection
-  anomaly:
-    enabled: true
-    tier1:
-      enabled: true
-      default_sensitivity: 3.0      # Z-score threshold
-      evaluation_interval_seconds: 60
-    tier2:
-      enabled: true
-      suppression_threshold: 0.85   # Auto-suppress above this
-      similarity_threshold: 0.3     # Distance for "similar"
-    tier3:
-      enabled: true
-
-  # Baseline calculation
-  baselines:
-    refresh_interval_seconds: 3600  # Hourly refresh
-
-  # LLM providers (for anomaly detection)
-  llm:
-    embedding_provider: ollama      # ollama, openai, voyage
-    reasoning_provider: ollama      # ollama, openai, anthropic
-
-    ollama:
-      base_url: http://localhost:11434
-      embedding_model: nomic-embed-text
-      reasoning_model: qwen2.5:7b-instruct
-
-    openai:
-      api_key_file: /etc/pgedge/openai.key
-      embedding_model: text-embedding-3-small
-      reasoning_model: gpt-4o-mini
-
-    anthropic:
-      api_key_file: /etc/pgedge/anthropic.key
-      reasoning_model: claude-3-5-haiku-20241022
-
-    voyage:
-      api_key_file: /etc/pgedge/voyage.key
-      embedding_model: voyage-3-lite
-```
-
-## MCP Tools Summary
-
-### Alert Management
-
-| Tool | Description |
-|------|-------------|
-| `list_alerts` | List alerts with filtering (status, severity, connection) |
-| `get_alert` | Get alert details including acknowledgments |
-| `acknowledge_alert` | Acknowledge with reason and options |
-| `list_alert_rules` | List available alert rules |
-| `get_alert_rule` | Get rule details and thresholds |
-| `update_alert_threshold` | Set threshold for connection/database |
-| `enable_alert_rule` | Enable or disable alert rule |
-
-### Blackout Management
-
-| Tool | Description |
-|------|-------------|
-| `list_blackouts` | List active and historical blackouts |
-| `create_blackout` | Start manual blackout period |
-| `end_blackout` | End active blackout |
-| `list_blackout_schedules` | List scheduled blackouts |
-| `create_blackout_schedule` | Create recurring schedule |
-| `update_blackout_schedule` | Modify schedule |
-| `delete_blackout_schedule` | Remove schedule |
-
-### Anomaly Configuration
-
-| Tool | Description |
-|------|-------------|
-| `list_metric_definitions` | List anomaly detection configs |
-| `update_metric_definition` | Configure anomaly detection for metric |
 
 ## Dependencies
 
@@ -933,22 +1106,24 @@ alerter:
 
 - **pgvector** - For embedding similarity search in Tier 2
   - Must be installed on the datastore database
-  - Will be checked during migration
+  - Will be checked during migration 9
 
 ### Go Dependencies
 
 ```
+github.com/jackc/pgx/v5          # PostgreSQL driver (existing)
 github.com/pgvector/pgvector-go  # pgvector support
-github.com/robfig/cron/v3        # Cron expression parsing (for schedules)
+github.com/robfig/cron/v3        # Cron expression parsing
+gopkg.in/yaml.v3                 # YAML config (existing)
 ```
 
 ## Security Considerations
 
 1. **Alert access control** - Alerts inherit connection ownership; users see
-   only alerts for connections they can access
+   only alerts for connections they have permission to access
 
 2. **Blackout permissions** - Only connection owners (or superusers) can
-   create blackouts for shared connections
+   create blackouts for connections
 
 3. **LLM API keys** - Store in files with restricted permissions, never in
    config or database
@@ -959,6 +1134,9 @@ github.com/robfig/cron/v3        # Cron expression parsing (for schedules)
 5. **No metric data to LLM** - Raw metric values are not sent to external
    LLMs; only aggregated context and patterns
 
+6. **Shared auth store** - Uses the same auth.db as the server for consistent
+   RBAC enforcement
+
 ## Testing Strategy
 
 ### Unit Tests
@@ -968,6 +1146,7 @@ github.com/robfig/cron/v3        # Cron expression parsing (for schedules)
 - Blackout period checking
 - Schedule parsing
 - Provider API mocking
+- RBAC permission checking
 
 ### Integration Tests
 
@@ -976,55 +1155,28 @@ github.com/robfig/cron/v3        # Cron expression parsing (for schedules)
 - Blackout filtering
 - Baseline calculation
 - Embedding storage and search
+- REST API endpoints
 
 ### End-to-End Tests
 
 - Full alert pipeline from metric to alert
 - Anomaly detection tiers
 - Scheduled blackout creation
-- MCP tool functionality
+- LLM timeout handling
 
-## Estimated Effort
+## Decisions Made
 
-| Phase | Components | Complexity |
-|-------|-----------|------------|
-| Phase 1 | Schema, state manager, blackout manager, basic tools | Medium |
-| Phase 2 | Threshold engine, rule evaluation, seeding | Medium |
-| Phase 3 | Baselines, Tier 1 detection, cold start | Medium |
-| Phase 4 | LLM providers (4), factory, config | Medium-High |
-| Phase 5 | Tiers 2 & 3, correlation, pgvector | High |
-| Phase 6 | Scheduled blackouts, docs, testing | Medium |
+Based on review feedback:
 
-## Questions for Review
-
-1. **Alert retention**: How long should cleared/acknowledged alerts be kept?
-   Suggest: Configurable, default 90 days.
-
-2. **Notification priority**: Should we stub out notification interfaces now
-   even though implementation is future? Suggest: Yes, for cleaner design.
-
-3. **Multi-tenancy**: Should alert rules be per-user or global only?
-   Suggest: Global rules with per-connection threshold overrides.
-
-4. **pgvector requirement**: Is requiring pgvector on the datastore acceptable?
-   Alternative: Optional feature, disabled without pgvector.
-
-5. **LLM fallback**: If LLM is unavailable, should Tier 2 matches auto-alert
-   or queue for later? Suggest: Queue with timeout, then alert anyway.
-
-6. **Correlation window**: Is 2 minutes appropriate for grouping correlated
-   anomalies? Suggest: Make configurable.
-
-## Next Steps
-
-Upon approval of this plan:
-
-1. Create feature branch
-2. Implement Phase 1 (schema and core infrastructure)
-3. Review and iterate
-4. Continue through phases
+1. **Alert retention**: 90 days default, configurable via `alerter_settings`
+2. **pgvector**: Required for anomaly detection Tier 2
+3. **Multi-tenancy**: Global rules with per-connection threshold overrides
+4. **LLM fallback**: Alert after timeout; track that LLM failed via
+   `llm_failed` and `llm_failure_reason` columns
+5. **Correlation window**: Configurable via `alerter_settings`, default 120s
 
 ---
 
-*Document version: 1.0*
+*Document version: 2.0*
 *Created: 2026-01-10*
+*Updated: 2026-01-10 - Separate binary, REST API, RBAC*

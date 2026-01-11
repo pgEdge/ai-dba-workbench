@@ -256,37 +256,46 @@ func (e *Engine) evaluateThresholds(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		e.evaluateRule(ctx, rule)
+		e.evaluateRuleForAllConnections(ctx, rule)
 	}
 }
 
-// evaluateRule evaluates a single alert rule
-func (e *Engine) evaluateRule(ctx context.Context, rule *database.AlertRule) {
-	// Check if there's a blackout active for this rule
-	if e.isBlackoutActive(ctx, rule) {
-		e.debug_log("Skipping rule %s: blackout active", rule.Name)
-		return
-	}
-
-	// Get current metric value from the latest collection
-	value, connectionID, dbName, err := e.datastore.GetLatestMetricValue(ctx, rule.MetricName)
+// evaluateRuleForAllConnections evaluates a rule across all connections with data
+func (e *Engine) evaluateRuleForAllConnections(ctx context.Context, rule *database.AlertRule) {
+	// Get all metric values for this rule's metric
+	values, err := e.datastore.GetLatestMetricValues(ctx, rule.MetricName)
 	if err != nil {
 		e.debug_log("No data for metric %s: %v", rule.MetricName, err)
 		return
 	}
 
-	// Get the effective threshold (global or per-connection override)
-	threshold, operator, severity, enabled := e.datastore.GetEffectiveThreshold(ctx, rule.ID, connectionID, dbName)
-	if !enabled {
-		e.debug_log("Rule %s disabled for connection %d", rule.Name, connectionID)
-		return
-	}
+	for _, mv := range values {
+		if ctx.Err() != nil {
+			return
+		}
 
-	// Check if threshold is violated
-	violated := e.checkThreshold(value, operator, threshold)
+		// Check if there's a blackout active for this connection
+		connID := mv.ConnectionID
+		if active, _ := e.datastore.IsBlackoutActive(ctx, &connID, mv.DatabaseName); active {
+			e.debug_log("Skipping rule %s for connection %d: blackout active", rule.Name, connID)
+			continue
+		}
 
-	if violated {
-		e.triggerThresholdAlert(ctx, rule, value, threshold, operator, severity, connectionID, dbName)
+		// Get the effective threshold (global or per-connection override)
+		threshold, operator, severity, enabled := e.datastore.GetEffectiveThreshold(
+			ctx, rule.ID, mv.ConnectionID, mv.DatabaseName)
+		if !enabled {
+			e.debug_log("Rule %s disabled for connection %d", rule.Name, mv.ConnectionID)
+			continue
+		}
+
+		// Check if threshold is violated
+		violated := e.checkThreshold(mv.Value, operator, threshold)
+
+		if violated {
+			e.triggerThresholdAlert(ctx, rule, mv.Value, threshold, operator,
+				severity, mv.ConnectionID, mv.DatabaseName)
+		}
 	}
 }
 
@@ -358,28 +367,338 @@ func (e *Engine) isBlackoutActive(ctx context.Context, rule *database.AlertRule)
 // calculateBaselines recalculates metric baselines for anomaly detection
 func (e *Engine) calculateBaselines(ctx context.Context) {
 	e.debug_log("Calculating baselines...")
-	// TODO: Implement baseline calculation
-	// - Get all metric definitions with anomaly_enabled
-	// - For each connection/database, calculate statistics
-	// - Update metric_baselines table
+
+	// Get all active connections
+	connections, err := e.datastore.GetActiveConnections(ctx)
+	if err != nil {
+		e.log("ERROR: Failed to get active connections: %v", err)
+		return
+	}
+
+	// Get all enabled alert rules to determine which metrics need baselines
+	rules, err := e.datastore.GetEnabledAlertRules(ctx)
+	if err != nil {
+		e.log("ERROR: Failed to get alert rules: %v", err)
+		return
+	}
+
+	// For each connection and metric, calculate baselines
+	for _, connID := range connections {
+		if ctx.Err() != nil {
+			return
+		}
+
+		for _, rule := range rules {
+			// Get metric values and calculate statistics
+			values, err := e.datastore.GetLatestMetricValues(ctx, rule.MetricName)
+			if err != nil {
+				continue
+			}
+
+			// Find values for this connection
+			var connValues []float64
+			for _, v := range values {
+				if v.ConnectionID == connID {
+					connValues = append(connValues, v.Value)
+				}
+			}
+
+			if len(connValues) == 0 {
+				continue
+			}
+
+			// Calculate mean and standard deviation
+			mean, stddev := calculateStats(connValues)
+
+			// Upsert the baseline
+			baseline := &database.MetricBaseline{
+				ConnectionID:   connID,
+				MetricName:     rule.MetricName,
+				PeriodType:     "all",
+				Mean:           mean,
+				StdDev:         stddev,
+				Min:            minValue(connValues),
+				Max:            maxValue(connValues),
+				SampleCount:    int64(len(connValues)),
+				LastCalculated: time.Now(),
+			}
+
+			if err := e.datastore.UpsertMetricBaseline(ctx, baseline); err != nil {
+				e.debug_log("Failed to upsert baseline for %s on connection %d: %v",
+					rule.MetricName, connID, err)
+			}
+		}
+	}
 }
 
 // detectAnomalies runs the tiered anomaly detection
 func (e *Engine) detectAnomalies(ctx context.Context) {
 	e.debug_log("Running anomaly detection...")
-	// TODO: Implement tiered anomaly detection
-	// - Tier 1: Statistical z-score detection
-	// - Tier 2: Embedding similarity (if enabled)
-	// - Tier 3: LLM classification (if enabled)
+
+	if !e.config.Anomaly.Tier1.Enabled {
+		return
+	}
+
+	// Get all active connections
+	connections, err := e.datastore.GetActiveConnections(ctx)
+	if err != nil {
+		e.log("ERROR: Failed to get active connections: %v", err)
+		return
+	}
+
+	// Get all enabled alert rules
+	rules, err := e.datastore.GetEnabledAlertRules(ctx)
+	if err != nil {
+		e.log("ERROR: Failed to get alert rules: %v", err)
+		return
+	}
+
+	sensitivity := e.config.Anomaly.Tier1.DefaultSensitivity
+
+	// For each connection and metric, check for anomalies
+	for _, connID := range connections {
+		if ctx.Err() != nil {
+			return
+		}
+
+		for _, rule := range rules {
+			// Get current metric value
+			values, err := e.datastore.GetLatestMetricValues(ctx, rule.MetricName)
+			if err != nil {
+				continue
+			}
+
+			// Find value for this connection
+			var currentValue *database.MetricValue
+			for i := range values {
+				if values[i].ConnectionID == connID {
+					currentValue = &values[i]
+					break
+				}
+			}
+			if currentValue == nil {
+				continue
+			}
+
+			// Get baseline for this metric/connection
+			baselines, err := e.datastore.GetMetricBaselines(ctx, connID, rule.MetricName)
+			if err != nil || len(baselines) == 0 {
+				continue
+			}
+
+			baseline := baselines[0]
+			if baseline.StdDev == 0 {
+				continue
+			}
+
+			// Calculate z-score
+			zScore := (currentValue.Value - baseline.Mean) / baseline.StdDev
+
+			// Check if z-score exceeds threshold
+			if zScore > sensitivity || zScore < -sensitivity {
+				e.debug_log("Tier 1 anomaly detected: %s on connection %d (z-score: %.2f)",
+					rule.MetricName, connID, zScore)
+
+				// Create anomaly candidate for further processing
+				candidate := &database.AnomalyCandidate{
+					ConnectionID: connID,
+					MetricName:   rule.MetricName,
+					MetricValue:  currentValue.Value,
+					ZScore:       zScore,
+					DetectedAt:   time.Now(),
+					Context:      fmt.Sprintf("Baseline: mean=%.2f, stddev=%.2f", baseline.Mean, baseline.StdDev),
+					Tier1Pass:    true,
+				}
+
+				if err := e.datastore.CreateAnomalyCandidate(ctx, candidate); err != nil {
+					e.log("ERROR: Failed to create anomaly candidate: %v", err)
+				}
+			}
+		}
+	}
+
+	// Process tier 2 and tier 3 if enabled
+	if e.config.Anomaly.Tier2.Enabled || e.config.Anomaly.Tier3.Enabled {
+		e.processTier2And3(ctx)
+	}
 }
 
-// checkScheduledBlackouts activates scheduled blackouts
+// processTier2And3 processes anomaly candidates through tier 2 and tier 3
+func (e *Engine) processTier2And3(ctx context.Context) {
+	candidates, err := e.datastore.GetUnprocessedAnomalyCandidates(ctx, 100)
+	if err != nil {
+		e.log("ERROR: Failed to get anomaly candidates: %v", err)
+		return
+	}
+
+	for _, candidate := range candidates {
+		if ctx.Err() != nil {
+			return
+		}
+
+		// Tier 2: Embedding similarity (placeholder - requires pgvector setup)
+		if e.config.Anomaly.Tier2.Enabled {
+			// In a full implementation, this would:
+			// 1. Generate embedding for the current context
+			// 2. Search for similar historical anomalies using pgvector
+			// 3. Set tier2_pass based on similarity score
+			tier2Pass := true // Placeholder
+			candidate.Tier2Pass = &tier2Pass
+		}
+
+		// Tier 3: LLM classification (placeholder - requires LLM integration)
+		if e.config.Anomaly.Tier3.Enabled && (candidate.Tier2Pass == nil || *candidate.Tier2Pass) {
+			// In a full implementation, this would:
+			// 1. Send context to LLM for classification
+			// 2. Parse response for anomaly determination
+			// 3. Set tier3_pass based on LLM response
+			tier3Pass := true // Placeholder
+			candidate.Tier3Pass = &tier3Pass
+			result := "LLM classification pending"
+			candidate.Tier3Result = &result
+		}
+
+		// Mark as processed
+		now := time.Now()
+		candidate.ProcessedAt = &now
+		decision := "anomaly"
+		candidate.FinalDecision = &decision
+
+		if err := e.datastore.UpdateAnomalyCandidate(ctx, candidate); err != nil {
+			e.log("ERROR: Failed to update anomaly candidate: %v", err)
+		}
+	}
+}
+
+// checkScheduledBlackouts activates scheduled blackouts based on cron expressions
 func (e *Engine) checkScheduledBlackouts(ctx context.Context) {
 	e.debug_log("Checking scheduled blackouts...")
-	// TODO: Implement scheduled blackout activation
-	// - Get all enabled schedules
-	// - Check if current time matches cron expression
-	// - Create blackout entries as needed
+
+	// Get all enabled blackout schedules
+	schedules, err := e.datastore.GetEnabledBlackoutSchedules(ctx)
+	if err != nil {
+		e.log("ERROR: Failed to get blackout schedules: %v", err)
+		return
+	}
+
+	now := time.Now()
+
+	for _, schedule := range schedules {
+		if ctx.Err() != nil {
+			return
+		}
+
+		// Check if current time matches the cron expression
+		// This is a simplified check - a full implementation would use a cron parser
+		if e.cronMatches(schedule.CronExpression, now, schedule.Timezone) {
+			// Check if there's already an active blackout for this schedule
+			connID := schedule.ConnectionID
+			active, _ := e.datastore.IsBlackoutActive(ctx, connID, schedule.DatabaseName)
+			if active {
+				continue
+			}
+
+			// Create a new blackout entry
+			endTime := now.Add(time.Duration(schedule.DurationMinutes) * time.Minute)
+			blackout := &database.Blackout{
+				ConnectionID: schedule.ConnectionID,
+				DatabaseName: schedule.DatabaseName,
+				Reason:       fmt.Sprintf("Scheduled: %s", schedule.Name),
+				StartTime:    now,
+				EndTime:      endTime,
+				CreatedBy:    "scheduler",
+				CreatedAt:    now,
+			}
+
+			if err := e.datastore.CreateBlackout(ctx, blackout); err != nil {
+				e.log("ERROR: Failed to create blackout: %v", err)
+			} else {
+				e.log("Created scheduled blackout: %s (until %s)", schedule.Name, endTime.Format(time.RFC3339))
+			}
+		}
+	}
+}
+
+// cronMatches checks if the current time matches a cron expression
+// This is a simplified implementation - a full version would use a cron library
+func (e *Engine) cronMatches(cronExpr string, now time.Time, timezone string) bool {
+	// Parse timezone
+	loc, err := time.LoadLocation(timezone)
+	if err != nil {
+		loc = time.UTC
+	}
+	localNow := now.In(loc)
+
+	// Parse cron expression (minute hour day-of-month month day-of-week)
+	// This is a basic implementation that only checks minute and hour for simplicity
+	var minute, hour int
+	_, err = fmt.Sscanf(cronExpr, "%d %d", &minute, &hour)
+	if err != nil {
+		return false
+	}
+
+	return localNow.Minute() == minute && localNow.Hour() == hour
+}
+
+// calculateStats calculates mean and standard deviation for a slice of values
+func calculateStats(values []float64) (mean, stddev float64) {
+	if len(values) == 0 {
+		return 0, 0
+	}
+
+	// Calculate mean
+	var sum float64
+	for _, v := range values {
+		sum += v
+	}
+	mean = sum / float64(len(values))
+
+	// Calculate standard deviation
+	var variance float64
+	for _, v := range values {
+		diff := v - mean
+		variance += diff * diff
+	}
+	variance /= float64(len(values))
+	stddev = variance // sqrt would be applied here, but for simplicity we use variance
+
+	// Apply sqrt for proper stddev
+	if variance > 0 {
+		stddev = 1.0
+		for i := 0; i < 10; i++ {
+			stddev = (stddev + variance/stddev) / 2 // Newton's method approximation
+		}
+	}
+
+	return mean, stddev
+}
+
+// minValue returns the minimum value in a slice
+func minValue(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	min := values[0]
+	for _, v := range values[1:] {
+		if v < min {
+			min = v
+		}
+	}
+	return min
+}
+
+// maxValue returns the maximum value in a slice
+func maxValue(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	max := values[0]
+	for _, v := range values[1:] {
+		if v > max {
+			max = v
+		}
+	}
+	return max
 }
 
 // cleanResolvedAlerts clears alerts where the condition has resolved

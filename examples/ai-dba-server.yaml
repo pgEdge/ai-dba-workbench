@@ -53,6 +53,19 @@ http:
     # chain_file: "/etc/ai-workbench/certs/chain.pem"
 
   #-----------------------------------------------------------------------
+  # Trusted Reverse Proxies
+  #-----------------------------------------------------------------------
+  #
+  # When behind a reverse proxy (nginx, HAProxy, etc.), configure trusted
+  # proxy CIDR ranges to correctly extract client IP addresses from
+  # X-Forwarded-For headers. Leave empty when not behind a proxy.
+  #
+  # trusted_proxies:
+  #   - "10.0.0.0/8"
+  #   - "172.16.0.0/12"
+  #   - "192.168.0.0/16"
+
+  #-----------------------------------------------------------------------
   # Authentication Configuration
   #-----------------------------------------------------------------------
   #
@@ -291,34 +304,28 @@ knowledgebase:
 #
 builtins:
   tools:
-    # Execute arbitrary SQL queries
+    # Database tools (operate on selected monitored connection)
     query_database: true
-
-    # Get detailed schema information (tables, columns, indexes, etc.)
     get_schema_info: true
-
-    # Vector similarity search
     similarity_search: true
-
-    # Execute EXPLAIN/EXPLAIN ANALYZE queries
     execute_explain: true
-
-    # Generate text embeddings
-    generate_embedding: true
-
-    # Search the knowledgebase
-    search_knowledgebase: true
-
-    # Count rows in tables
     count_rows: true
 
-  resources:
-    # Expose PostgreSQL system information
-    system_info: true
+    # Datastore/metrics tools (query collected historical metrics)
+    list_probes: true
+    describe_probe: true
+    query_metrics: true
+    list_connections: true
 
-  # prompts:
-    # No built-in prompts currently registered
-    # Future prompts can be configured here
+    # Utility tools
+    generate_embedding: true
+    search_knowledgebase: true
+
+  resources:
+    # PostgreSQL system information
+    system_info: true
+    # Current connection information
+    connection_info: true
 
 #=========================================================================
 # PATHS AND DATA DIRECTORIES
@@ -333,6 +340,9 @@ builtins:
 
 # Data directory for conversation history and other persistent data
 # data_dir: "/var/lib/ai-workbench/data"
+
+# Trace file for logging MCP requests and responses (for debugging)
+# trace_file: "/var/log/ai-workbench/mcp-trace.log"
 
 #=========================================================================
 # EXAMPLE CONFIGURATIONS

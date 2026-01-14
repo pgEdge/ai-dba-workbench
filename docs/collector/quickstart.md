@@ -247,16 +247,39 @@ Monitored Connections" above.
 - Check PostgreSQL version (must be 12 or later)
 - Review the error message for specific issues
 
+## Upgrading
+
+### PBKDF2 Migration
+
+Recent versions upgraded the key derivation algorithm from simple SHA256 to
+PBKDF2 with 100,000 iterations. This change provides stronger protection
+against brute-force attacks but is a breaking change.
+
+After upgrading to the new version, encrypted passwords for monitored
+connections will no longer decrypt correctly. You must re-enter passwords for
+all monitored connections. Use the MCP server API or update the `connections`
+table directly by setting the `password_encrypted` column to `NULL` and then
+re-entering the passwords.
+
+The following query identifies affected connections:
+
+```sql
+SELECT id, name, host, database_name
+FROM connections
+WHERE password_encrypted IS NOT NULL;
+```
+
 ## Next Steps
 
-Now that you have the Collector running:
+Now that you have the Collector running, follow these steps:
 
-1. [Configure additional settings](configuration.md) to optimize performance
-2. Learn about [the probe system](probes.md) to understand data collection
-3. Review [available probes](probe-reference.md) to see what's being
-   collected
-4. Explore [the architecture](architecture.md) to understand how it works
-5. Set up the MCP server to enable API access and user management
+1. [Configure additional settings](configuration.md) to optimize performance.
+2. Learn about [the probe system](probes.md) to understand data collection.
+3. Review [available probes](probe-reference.md) to see what the Collector
+   gathers.
+4. Explore [the architecture](architecture.md) to understand the system
+   design.
+5. Set up the MCP server to enable API access and user management.
 
 ## Stopping the Collector
 

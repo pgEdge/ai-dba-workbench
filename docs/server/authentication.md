@@ -141,6 +141,12 @@ You'll be prompted for:
 ./bin/ai-dba-server -add-token \
   -token-note "CI/CD Pipeline" \
   -token-expiry "never"
+
+# Superuser token (bypasses all access checks)
+./bin/ai-dba-server -add-token \
+  -token-note "Admin Token" \
+  -token-expiry "30d" \
+  -superuser
 ```
 
 **Output**:

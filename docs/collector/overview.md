@@ -129,12 +129,14 @@ The Collector uses two types of connection pools:
 
 ### Password Encryption
 
-All passwords for monitored connections are encrypted:
+All passwords for monitored connections are encrypted using industry-standard
+algorithms.
 
-- Uses AES-256-GCM encryption
-- Key derived from server secret and username
-- Encrypted passwords stored in the datastore
-- Decrypted only when establishing connections
+- The system uses AES-256-GCM encryption for password protection.
+- Encryption keys are derived using PBKDF2 with SHA256 and 100,000 iterations.
+- The key derivation combines the server secret with the username as salt.
+- Encrypted passwords are stored in the datastore's `connections` table.
+- The Collector decrypts passwords only when establishing connections.
 
 ## Component Architecture
 

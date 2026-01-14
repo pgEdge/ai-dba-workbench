@@ -78,6 +78,10 @@ complete example configuration.
 - `-db-sslmode string` - Database SSL mode (disable, require, verify-ca,
   verify-full)
 
+**Tracing Options:**
+
+- `-trace-file string` - Path to trace file for logging MCP requests/responses
+
 ### Authentication Storage
 
 Authentication data is stored in a SQLite database (`auth.db`) within the data
@@ -138,6 +142,69 @@ The auth store contains:
 - `2w` - 2 weeks
 - `12h` - 12 hours
 - `never` - Token never expires
+
+### Group Management
+
+```bash
+# Add a new RBAC group
+./bin/ai-dba-server -add-group -group developers
+
+# List all groups
+./bin/ai-dba-server -list-groups
+
+# Add a user to a group
+./bin/ai-dba-server -add-member -username alice -group developers
+
+# Remove a user from a group
+./bin/ai-dba-server -remove-member -username alice -group developers
+
+# Delete a group
+./bin/ai-dba-server -delete-group -group developers
+
+# Set superuser status for a user
+./bin/ai-dba-server -set-superuser -username admin
+
+# Remove superuser status from a user
+./bin/ai-dba-server -unset-superuser -username admin
+```
+
+### Privilege Management
+
+```bash
+# List all registered MCP privileges
+./bin/ai-dba-server -list-privileges
+
+# Grant a privilege to a group
+./bin/ai-dba-server -grant-privilege -group developers -privilege query_database
+
+# Revoke a privilege from a group
+./bin/ai-dba-server -revoke-privilege -group developers -privilege query_database
+
+# Grant connection access to a group
+./bin/ai-dba-server -grant-connection -group developers -connection 1 \
+  -access-level read_write
+
+# Show privileges for a group
+./bin/ai-dba-server -show-group-privileges -group developers
+```
+
+### Token Scope Management
+
+```bash
+# Show current scope for a token
+./bin/ai-dba-server -show-token-scope -token-id 1
+
+# Restrict token to specific connections
+./bin/ai-dba-server -scope-token-connections -token-id 1 \
+  -scope-connections "1,2,3"
+
+# Restrict token to specific tools
+./bin/ai-dba-server -scope-token-tools -token-id 1 \
+  -scope-tools "query_database,get_schema_info"
+
+# Clear all scope restrictions from a token
+./bin/ai-dba-server -clear-token-scope -token-id 1
+```
 
 ### Security Features
 

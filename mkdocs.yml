@@ -93,6 +93,7 @@ nav:
       - Authentication: server/authentication.md
       - Configuration: server/configuration.md
       - Connections: server/connections.md
+      - Metrics: server/metrics.md
   - CLI:
       - Overview: cli/index.md
   - Changelog: changelog.md

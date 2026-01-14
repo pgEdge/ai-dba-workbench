@@ -1,25 +1,26 @@
 # pgEdge AI DBA Workbench CLI
 
-The AI CLI (Natural Language Agent) is a production-ready, full-featured native
-Go implementation that provides an interactive command-line interface for
-chatting with your PostgreSQL database using natural language.
+The AI CLI (Natural Language Agent) is a production-ready command-line
+interface for interacting with PostgreSQL databases using natural language.
 
 ## Features
 
-- **Multiple LLM Providers**: Support for Anthropic Claude, OpenAI, and Ollama
-- **HTTP Mode**: Connect to an MCP server via HTTP with authentication
-- **Multiple Auth Methods**: Service token or username/password authentication
-- **Runtime Configuration**: Switch LLM providers and models via slash commands
-- **Prompt Caching**: Automatic Anthropic prompt caching (up to 90% savings)
-- **Agentic Tool Execution**: Automatically executes database tools based on LLM
-  decisions
-- **PostgreSQL-Themed UI**: Colorful output with elephant-themed animations
-- **Flexible Configuration**: Configure via YAML file, environment variables, or
-  command-line flags
-- **Built-in Commands**: Help, list tools, list resources, clear screen
-- **Slash Commands**: Claude Code-style commands for settings and configuration
-- **Conversation History**: Maintains context across multiple queries
-- **Persistent History**: Command history saved across sessions
+The CLI provides the following capabilities:
+
+- The application supports multiple LLM providers including Anthropic, OpenAI,
+  and Ollama.
+- Users can connect to an MCP server via HTTP with token or user
+  authentication.
+- The CLI enables runtime configuration changes via slash commands.
+- Anthropic prompt caching provides up to 90% cost savings on repeated queries.
+- The agentic tool execution system automatically runs database tools based on
+  LLM decisions.
+- A PostgreSQL-themed UI displays colorful output with elephant animations.
+- Configuration supports YAML files, environment variables, and command-line
+  flags.
+- Built-in slash commands provide access to tools, resources, and settings.
+- The system maintains conversation context across multiple queries.
+- Command history persists across sessions for convenient recall.
 
 ## Building
 
@@ -38,35 +39,16 @@ The binary is created at `bin/ai-cli`.
 
 ## Quick Start
 
-1. **Build the CLI**:
+1. Build the CLI:
 
    ```bash
    make build
    ```
 
-2. **Set up LLM provider** (at least one):
+2. Ensure the MCP server is running and has LLM API keys configured. The
+   server manages API keys for Anthropic, OpenAI, or Ollama connections.
 
-   For Anthropic:
-
-   ```bash
-   export ANTHROPIC_API_KEY="your-api-key"
-   # Or create file: echo "your-api-key" > ~/.anthropic-api-key
-   ```
-
-   For OpenAI:
-
-   ```bash
-   export OPENAI_API_KEY="your-api-key"
-   ```
-
-   For Ollama:
-
-   ```bash
-   # Make sure Ollama is running: ollama serve
-   # Pull a model: ollama pull llama3
-   ```
-
-3. **Connect to MCP server**:
+3. Connect to the MCP server:
 
    ```bash
    # With service token
@@ -80,45 +62,44 @@ The binary is created at `bin/ai-cli`.
 
 ### Command Line Flags
 
+The CLI accepts the following command-line flags:
+
 | Flag | Description |
 |------|-------------|
-| `-config string` | Path to configuration file |
+| `-config` | Path to configuration file |
 | `-version` | Show version and exit |
-| `-mcp-url string` | MCP server URL |
-| `-mcp-token string` | MCP server authentication token |
-| `-mcp-username string` | MCP server username |
-| `-mcp-password string` | MCP server password |
-| `-llm-provider string` | LLM provider: anthropic, openai, or ollama |
-| `-llm-model string` | LLM model to use |
-| `-anthropic-api-key string` | API key for Anthropic |
-| `-openai-api-key string` | API key for OpenAI |
-| `-ollama-url string` | Ollama server URL |
+| `-mcp-url` | MCP server URL (required) |
+| `-mcp-token` | MCP server authentication token (for token mode) |
+| `-mcp-username` | MCP server username (for user mode) |
+| `-mcp-password` | MCP server password (for user mode) |
+| `-llm-provider` | LLM provider: anthropic, openai, or ollama |
+| `-llm-model` | LLM model to use |
 | `-no-color` | Disable colored output |
+
+Note that API keys are configured on the MCP server, not the CLI.
 
 ### Configuration File
 
-Create a configuration file at one of these locations:
+The CLI searches for configuration files in the following locations:
 
-- `./.ai-cli.yaml` (current directory)
-- `~/.ai-cli.yaml` (home directory)
-- `/etc/pgedge/ai-cli.yaml` (system-wide)
+- `./.ai-dba-cli.yaml` (current directory)
+- `~/.ai-dba-cli.yaml` (home directory)
+- `/etc/pgedge/ai-dba-cli.yaml` (system-wide)
 
-Example configuration:
+The following example shows the available configuration options:
 
 ```yaml
 mcp:
   url: http://localhost:8080
+  auth_mode: user  # "token" or "user"
   # token: your-token-here
-  # Or use username/password:
   # username: admin
   # password: will-prompt-if-not-set
+  tls: false
 
 llm:
   provider: anthropic
-  model: claude-sonnet-4-20250514
-  # API keys (priority: env vars > key files > config values)
-  anthropic_api_key_file: ~/.anthropic-api-key
-  openai_api_key_file: ~/.openai-api-key
+  model: claude-sonnet-4-5-20250929
   max_tokens: 4096
   temperature: 0.7
 
@@ -126,9 +107,15 @@ ui:
   no_color: false
   display_status_messages: true
   render_markdown: true
+  debug: false
 ```
 
+For a complete configuration example with comments, see
+[examples/ai-dba-cli.yaml](../examples/ai-dba-cli.yaml).
+
 ### Environment Variables
+
+The following environment variables configure CLI behavior:
 
 | Variable | Description |
 |----------|-------------|
@@ -136,40 +123,48 @@ ui:
 | `PGEDGE_MCP_TOKEN` | Authentication token |
 | `PGEDGE_MCP_USERNAME` | Username for authentication |
 | `PGEDGE_MCP_PASSWORD` | Password for authentication |
-| `PGEDGE_LLM_PROVIDER` | LLM provider |
+| `PGEDGE_LLM_PROVIDER` | LLM provider (anthropic, openai, ollama) |
 | `PGEDGE_LLM_MODEL` | LLM model name |
-| `PGEDGE_ANTHROPIC_API_KEY` | Anthropic API key |
-| `ANTHROPIC_API_KEY` | Anthropic API key (fallback) |
-| `PGEDGE_OPENAI_API_KEY` | OpenAI API key |
-| `OPENAI_API_KEY` | OpenAI API key (fallback) |
-| `PGEDGE_OLLAMA_URL` | Ollama server URL |
 | `NO_COLOR` | Disable colored output |
+
+Note that LLM API keys are configured on the MCP server.
 
 ## Interactive Commands
 
-Once the CLI is running, you can use these commands:
+The CLI supports the following basic commands:
 
-- `help` - Show available commands
-- `quit` or `exit` - Exit the CLI (also Ctrl+C or Ctrl+D)
-- `clear` - Clear the screen
-- `tools` - List available MCP tools
-- `resources` - List available MCP resources
+- The `help` command shows available commands.
+- The `quit` or `exit` command exits the CLI.
+- The `clear` command clears the screen.
 
 ### Slash Commands
+
+Slash commands provide access to settings and configuration.
 
 | Command | Description |
 |---------|-------------|
 | `/help` | Show help for slash commands |
-| `/set llm-provider <provider>` | Switch LLM provider |
-| `/set llm-model <model>` | Change LLM model |
+| `/list providers` | List available LLM providers |
+| `/list models` | List available models for current provider |
+| `/list connections` | List available database connections |
+| `/list tools` | List available MCP tools |
+| `/list resources` | List available MCP resources |
+| `/set provider <name>` | Switch LLM provider |
+| `/set model <name>` | Change LLM model |
+| `/set connection <id>` | Select a database connection |
 | `/set status-messages <on\|off>` | Toggle status messages |
 | `/set markdown <on\|off>` | Toggle markdown rendering |
 | `/set color <on\|off>` | Toggle colored output |
-| `/show settings` | Display current settings |
-| `/list models` | List available models from provider |
-| `/history` | List saved conversations |
-| `/history load <id>` | Load a saved conversation |
-| `/save` | Save current conversation |
+| `/set debug <on\|off>` | Toggle debug messages |
+| `/show provider` | Show current LLM provider |
+| `/show model` | Show current LLM model |
+| `/show connection` | Show current database connection |
+| `/show settings` | Display all current settings |
+| `/history list` | List saved conversations |
+| `/history show <id>` | Show a saved conversation |
+| `/history continue <id>` | Continue a saved conversation |
+| `/history delete <id>` | Delete a saved conversation |
+| `/save [name]` | Save current conversation |
 | `/new` | Start a new conversation |
 
 ### Keyboard Shortcuts
@@ -209,12 +204,26 @@ Authenticate with username and password:
 ## Prompt Caching (Anthropic)
 
 When using Anthropic Claude, the CLI automatically uses prompt caching to
-reduce costs and improve response times:
+reduce costs and improve response times.
 
-- Tool definitions are cached after the first request
-- Cached input tokens cost ~90% less than regular input tokens
-- Cache entries expire after 5 minutes of inactivity
+The caching system provides the following benefits:
+
+- Tool definitions are cached after the first request.
+- Cached input tokens cost approximately 90% less than regular input tokens.
+- Cache entries expire after 5 minutes of inactivity.
 
 ## Documentation
 
 See the [CLI Documentation](../docs/cli/index.md) for detailed information.
+
+---
+
+To report an issue with the software, visit:
+[GitHub Issues](https://github.com/pgEdge/ai-dba-workbench/issues)
+
+We welcome your project contributions; for more information, see
+[docs/developers.md](../docs/developers.md).
+
+For more information, visit [docs.pgedge.com](https://docs.pgedge.com)
+
+This project is licensed under the [PostgreSQL License](../LICENSE.md).

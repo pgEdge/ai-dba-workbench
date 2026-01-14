@@ -11,6 +11,12 @@ and this project adheres to
 
 ### Added
 
+- Shared embedding package in `pkg/embedding` for reusable components.
+- Documentation for the embedding package with provider details and usage
+  examples.
+- HTTP security headers middleware for enhanced server protection.
+- Alerter engine for monitoring metrics with threshold and anomaly detection.
+- Comprehensive test coverage for the alerter engine.
 - Connection management REST APIs for selecting database connections
   (`/api/connections`, `/api/connections/current`)
 - CLI slash commands for connection management (`/list connections`,
@@ -27,9 +33,16 @@ and this project adheres to
 - Enhanced LLM system prompts with PostgreSQL DBA expertise and two-tier
   database architecture guidance
 - Documentation for metrics tools in `docs/server/metrics.md`
+- Alerter configuration reference documentation with all options, environment
+  variables, and command-line flags in `docs/alerter/configuration.md`
+- Cron expression documentation for blackout schedule configuration in
+  `docs/alerter/cron-expressions.md`
 
 ### Changed
 
+- Server `main.go` refactored for improved code organization.
+- Context propagation added to MCP tools for better request handling.
+- Full 5-field cron parser implementation replaces the limited parser.
 - CLI commands refactored for consistency:
   - Removed `llm-` prefix: `/set provider`, `/show provider` (was `llm-provider`)
   - Removed `llm-` prefix: `/set model`, `/show model` (was `llm-model`)
@@ -47,6 +60,13 @@ and this project adheres to
 
 ### Fixed
 
+- SQL identifier validation prevents injection attacks via table and column
+  names.
+- X-Forwarded-For IP spoofing vulnerability addressed with trusted proxy
+  configuration.
+- PBKDF2 key derivation replaces weak SHA256 hashing for improved security.
+- Alerter standard deviation calculation corrected with proper `math.Sqrt`
+  usage.
 - URL encoding for passwords with special characters in connection strings
 - Proper error propagation from database connection failures to clients
 - PostgreSQL numeric types now display correctly in TSV output (previously
@@ -56,3 +76,10 @@ and this project adheres to
 - Comprehensive handling of PostgreSQL pgtype wrappers in query results
   (Float8, Float4, Int8, Int4, Int2, Text, Bool, Timestamp, Timestamptz, Date,
   Interval, UUID)
+
+### Breaking Changes
+
+- PBKDF2 key derivation is incompatible with the previous SHA256
+  implementation. Existing encrypted passwords for monitored connections will
+  no longer decrypt correctly after upgrading. You must re-enter passwords for
+  all monitored connections after upgrading to this version.

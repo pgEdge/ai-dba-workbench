@@ -22,6 +22,8 @@ all:
 	@cd server && $(MAKE) all BIN_DIR=../$(BIN_DIR)
 	@echo "Building cli..."
 	@cd cli && $(MAKE) all BIN_DIR=../$(BIN_DIR)
+	@echo "Building alerter..."
+	@cd alerter && $(MAKE) all BIN_DIR=../$(BIN_DIR)
 	@echo "All sub-projects built successfully!"
 	@echo "Binaries available in $(BIN_DIR)/"
 
@@ -34,6 +36,8 @@ test:
 	@cd server && $(MAKE) test
 	@echo "Testing cli..."
 	@cd cli && $(MAKE) test
+	@echo "Testing alerter..."
+	@cd alerter && $(MAKE) test
 	@echo "All sub-project tests passed!"
 
 # Run coverage for all sub-projects
@@ -45,6 +49,8 @@ coverage:
 	@cd server && $(MAKE) coverage
 	@echo "Running coverage for cli..."
 	@cd cli && $(MAKE) coverage
+	@echo "Running coverage for alerter..."
+	@cd alerter && $(MAKE) coverage
 	@echo "Coverage reports generated for all sub-projects!"
 
 # Run linting for all sub-projects
@@ -56,6 +62,8 @@ lint:
 	@cd server && $(MAKE) lint
 	@echo "Linting cli..."
 	@cd cli && $(MAKE) lint
+	@echo "Linting alerter..."
+	@cd alerter && $(MAKE) lint
 	@echo "Linting completed for all sub-projects!"
 
 # Run all tests (sub-project test-all)
@@ -67,6 +75,8 @@ test-all:
 	@cd server && $(MAKE) test-all
 	@echo "Running all tests for cli..."
 	@cd cli && $(MAKE) test-all
+	@echo "Running all tests for alerter..."
+	@cd alerter && $(MAKE) test-all
 	@echo "All tests passed!"
 
 # Clean all sub-projects
@@ -78,6 +88,8 @@ clean:
 	@cd server && $(MAKE) clean BIN_DIR=../$(BIN_DIR)
 	@echo "Cleaning cli..."
 	@cd cli && $(MAKE) clean BIN_DIR=../$(BIN_DIR)
+	@echo "Cleaning alerter..."
+	@cd alerter && $(MAKE) clean BIN_DIR=../$(BIN_DIR)
 	@echo "Removing bin directory..."
 	@rm -rf $(BIN_DIR)
 	@echo "All sub-projects cleaned!"
@@ -91,6 +103,8 @@ killall:
 	@cd server && $(MAKE) killall
 	@echo "Killing cli processes..."
 	@cd cli && $(MAKE) killall
+	@echo "Killing alerter processes..."
+	@cd alerter && $(MAKE) killall
 	@echo "All processes killed!"
 
 # Show help
@@ -111,6 +125,7 @@ help:
 	@echo "  collector        - PostgreSQL metrics collector"
 	@echo "  server           - MCP server"
 	@echo "  cli              - AI CLI client"
+	@echo "  alerter          - Alert monitoring service"
 	@echo ""
 	@echo "Binaries are built to the bin/ directory."
 	@echo ""

@@ -223,8 +223,29 @@ func cleanupTestSchema(t *testing.T, pool *pgxpool.Pool) {
 	ctx := context.Background()
 
 	tables := []string{
+		// Alerter tables (migrations 7-10)
+		"anomaly_candidates",
+		"correlation_groups",
+		"metric_baselines",
+		"metric_definitions",
+		"blackout_schedules",
+		"blackouts",
+		"alert_acknowledgments",
+		"alerts",
+		"alert_thresholds",
+		"alert_rules",
+		"probe_availability",
+		"alerter_settings",
+		// Core tables (migrations 1-5)
+		"probe_configs",
 		"connections",
 		"schema_version",
+	}
+
+	// Drop metrics schema first
+	_, err := pool.Exec(ctx, "DROP SCHEMA IF EXISTS metrics CASCADE")
+	if err != nil {
+		t.Logf("Warning: failed to drop metrics schema: %v", err)
 	}
 
 	for _, table := range tables {
@@ -248,7 +269,8 @@ func TestNewSchemaManager(t *testing.T) {
 
 	// Verify migrations are registered in order
 	// Note: Migrations 2 and 6 were removed (auth moved to SQLite)
-	expectedVersions := []int{1, 3, 4, 5}
+	// Migrations 7-10 add alerter tables
+	expectedVersions := []int{1, 3, 4, 5, 7, 8, 9, 10}
 	if len(sm.migrations) != len(expectedVersions) {
 		t.Fatalf("Expected %d migrations, got %d", len(expectedVersions), len(sm.migrations))
 	}
@@ -620,6 +642,19 @@ func TestZZZ_FullSchemaForInspection(t *testing.T) {
 		"schema_version",
 		"connections",
 		"probe_configs",
+		// Alerter tables (migrations 7-10)
+		"alerter_settings",
+		"probe_availability",
+		"alert_rules",
+		"alert_thresholds",
+		"alerts",
+		"alert_acknowledgments",
+		"blackouts",
+		"blackout_schedules",
+		"metric_definitions",
+		"metric_baselines",
+		"correlation_groups",
+		"anomaly_candidates",
 	}
 
 	for _, tableName := range expectedTables {

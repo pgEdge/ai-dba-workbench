@@ -22,7 +22,7 @@ intelligence and traditional methods. It combines a Model Context Protocol
 
 ## Components
 
-The pgEdge AI DBA Workbench consists of three main components:
+The pgEdge AI DBA Workbench consists of four main components:
 
 - **[Collector](collector/README.md)** - A monitoring service that collects
   metrics from PostgreSQL servers and stores them in a centralized datastore
@@ -31,6 +31,9 @@ The pgEdge AI DBA Workbench consists of three main components:
   resources for interacting with PostgreSQL systems
 - **[CLI](cli/README.md)** - A command-line interface for interacting with
   the MCP server
+- **[Alerter](alerter/README.md)** - A background monitoring service that
+  evaluates collected metrics against thresholds and AI-powered anomaly
+  detection to generate alerts
 - **Client** - A web-based user interface for interacting with the AI
   Workbench (coming soon)
 
@@ -44,6 +47,8 @@ directory:
   and configuration
 - **[Collector Documentation](docs/collector/index.md)** - Data collection
   and monitoring
+- **[Alerter Documentation](docs/alerter/index.md)** - Alert generation and
+  anomaly detection
 
 ## Building
 

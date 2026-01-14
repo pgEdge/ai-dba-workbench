@@ -1766,6 +1766,535 @@ func (sm *SchemaManager) registerMigrations() {
 	})
 
 	// Migration 6: Reserved (previously user groups and privileges - moved to SQLite auth store)
+
+	// Migration 7: Alerter core tables - settings, probe availability, rules, thresholds, alerts
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     7,
+		Description: "Add alerter core tables for threshold-based alerts",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Create alerter_settings table
+			_, err := conn.Exec(ctx, `
+			CREATE TABLE IF NOT EXISTS alerter_settings (
+				id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+				retention_days INTEGER NOT NULL DEFAULT 90,
+				default_anomaly_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+				default_anomaly_sensitivity REAL NOT NULL DEFAULT 3.0,
+				baseline_refresh_interval_mins INTEGER NOT NULL DEFAULT 60,
+				correlation_window_seconds INTEGER NOT NULL DEFAULT 120,
+				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+			);
+
+			COMMENT ON TABLE alerter_settings IS
+				'Global settings for the alerter service (singleton table)';
+			COMMENT ON COLUMN alerter_settings.retention_days IS
+				'Number of days to retain cleared/acknowledged alerts';
+			COMMENT ON COLUMN alerter_settings.default_anomaly_enabled IS
+				'Whether anomaly detection is enabled by default for new connections';
+			COMMENT ON COLUMN alerter_settings.default_anomaly_sensitivity IS
+				'Default z-score threshold for anomaly detection (higher = less sensitive)';
+			COMMENT ON COLUMN alerter_settings.baseline_refresh_interval_mins IS
+				'How often to recalculate metric baselines in minutes';
+			COMMENT ON COLUMN alerter_settings.correlation_window_seconds IS
+				'Time window for correlating related anomalies';
+
+			-- Insert default settings
+			INSERT INTO alerter_settings (id) VALUES (1) ON CONFLICT DO NOTHING;
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to create alerter_settings table: %w", err)
+			}
+
+			// Create probe_availability table
+			_, err = conn.Exec(ctx, `
+			CREATE TABLE IF NOT EXISTS probe_availability (
+				id BIGSERIAL PRIMARY KEY,
+				connection_id INTEGER NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+				database_name TEXT,
+				probe_name TEXT NOT NULL,
+				extension_name TEXT,
+				is_available BOOLEAN NOT NULL DEFAULT FALSE,
+				last_checked TIMESTAMP,
+				last_collected TIMESTAMP,
+				unavailable_reason TEXT,
+				UNIQUE(connection_id, database_name, probe_name)
+			);
+
+			COMMENT ON TABLE probe_availability IS
+				'Tracks which probes have collected data for each connection/database';
+			COMMENT ON COLUMN probe_availability.extension_name IS
+				'Required extension for this probe (e.g., system_stats, pg_stat_statements)';
+			COMMENT ON COLUMN probe_availability.is_available IS
+				'Whether the probe has successfully collected data';
+			COMMENT ON COLUMN probe_availability.unavailable_reason IS
+				'Reason why the probe is unavailable (e.g., extension not installed)';
+
+			CREATE INDEX IF NOT EXISTS idx_probe_availability_connection
+				ON probe_availability(connection_id);
+			CREATE INDEX IF NOT EXISTS idx_probe_availability_probe
+				ON probe_availability(probe_name);
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to create probe_availability table: %w", err)
+			}
+
+			// Create alert_rules table
+			_, err = conn.Exec(ctx, `
+			CREATE TABLE IF NOT EXISTS alert_rules (
+				id BIGSERIAL PRIMARY KEY,
+				name TEXT NOT NULL UNIQUE,
+				description TEXT NOT NULL,
+				category TEXT NOT NULL,
+				metric_name TEXT NOT NULL,
+				default_operator TEXT NOT NULL CHECK (default_operator IN ('>', '>=', '<', '<=', '==', '!=')),
+				default_threshold REAL NOT NULL,
+				default_severity TEXT NOT NULL CHECK (default_severity IN ('info', 'warning', 'critical')),
+				default_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+				required_extension TEXT,
+				is_built_in BOOLEAN NOT NULL DEFAULT FALSE,
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+			);
+
+			COMMENT ON TABLE alert_rules IS
+				'Threshold-based alert rules for monitored metrics';
+			COMMENT ON COLUMN alert_rules.category IS
+				'Category grouping for the rule (e.g., performance, storage, replication)';
+			COMMENT ON COLUMN alert_rules.metric_name IS
+				'Name of the metric to monitor';
+			COMMENT ON COLUMN alert_rules.required_extension IS
+				'Extension required for this metric (e.g., system_stats, pg_stat_statements)';
+			COMMENT ON COLUMN alert_rules.is_built_in IS
+				'Whether this is a built-in rule (cannot be deleted)';
+
+			CREATE INDEX IF NOT EXISTS idx_alert_rules_category ON alert_rules(category);
+			CREATE INDEX IF NOT EXISTS idx_alert_rules_metric ON alert_rules(metric_name);
+			CREATE INDEX IF NOT EXISTS idx_alert_rules_enabled ON alert_rules(default_enabled) WHERE default_enabled = TRUE;
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to create alert_rules table: %w", err)
+			}
+
+			// Create alert_thresholds table (per-connection overrides)
+			_, err = conn.Exec(ctx, `
+			CREATE TABLE IF NOT EXISTS alert_thresholds (
+				id BIGSERIAL PRIMARY KEY,
+				rule_id BIGINT NOT NULL REFERENCES alert_rules(id) ON DELETE CASCADE,
+				connection_id INTEGER REFERENCES connections(id) ON DELETE CASCADE,
+				database_name TEXT,
+				operator TEXT NOT NULL CHECK (operator IN ('>', '>=', '<', '<=', '==', '!=')),
+				threshold REAL NOT NULL,
+				severity TEXT NOT NULL CHECK (severity IN ('info', 'warning', 'critical')),
+				enabled BOOLEAN NOT NULL DEFAULT TRUE,
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				UNIQUE(rule_id, connection_id, database_name)
+			);
+
+			COMMENT ON TABLE alert_thresholds IS
+				'Per-connection threshold overrides for alert rules';
+			COMMENT ON COLUMN alert_thresholds.connection_id IS
+				'Connection ID for override (NULL means global default)';
+			COMMENT ON COLUMN alert_thresholds.database_name IS
+				'Database name for override (NULL means all databases)';
+
+			CREATE INDEX IF NOT EXISTS idx_alert_thresholds_rule ON alert_thresholds(rule_id);
+			CREATE INDEX IF NOT EXISTS idx_alert_thresholds_connection ON alert_thresholds(connection_id);
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to create alert_thresholds table: %w", err)
+			}
+
+			// Create alerts table
+			_, err = conn.Exec(ctx, `
+			CREATE TABLE IF NOT EXISTS alerts (
+				id BIGSERIAL PRIMARY KEY,
+				alert_type TEXT NOT NULL CHECK (alert_type IN ('threshold', 'anomaly')),
+				rule_id BIGINT REFERENCES alert_rules(id) ON DELETE SET NULL,
+				connection_id INTEGER NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+				database_name TEXT,
+				probe_name TEXT,
+				metric_name TEXT,
+				metric_value REAL,
+				threshold_value REAL,
+				operator TEXT,
+				severity TEXT NOT NULL CHECK (severity IN ('info', 'warning', 'critical')),
+				title TEXT NOT NULL,
+				description TEXT NOT NULL,
+				correlation_id TEXT,
+				status TEXT NOT NULL CHECK (status IN ('active', 'cleared', 'acknowledged')),
+				triggered_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				cleared_at TIMESTAMP,
+				anomaly_score REAL,
+				anomaly_details JSONB
+			);
+
+			COMMENT ON TABLE alerts IS
+				'Active and historical alerts from threshold and anomaly detection';
+			COMMENT ON COLUMN alerts.alert_type IS
+				'Type of alert: threshold (rule-based) or anomaly (AI-detected)';
+			COMMENT ON COLUMN alerts.correlation_id IS
+				'ID linking related anomalies within a correlation window';
+			COMMENT ON COLUMN alerts.status IS
+				'Current status: active, cleared (auto-resolved), or acknowledged (user action)';
+			COMMENT ON COLUMN alerts.anomaly_score IS
+				'For anomaly alerts: the z-score or similarity score';
+			COMMENT ON COLUMN alerts.anomaly_details IS
+				'For anomaly alerts: additional detection details (tier results, context)';
+
+			CREATE INDEX IF NOT EXISTS idx_alerts_status ON alerts(status);
+			CREATE INDEX IF NOT EXISTS idx_alerts_connection ON alerts(connection_id);
+			CREATE INDEX IF NOT EXISTS idx_alerts_triggered ON alerts(triggered_at DESC);
+			CREATE INDEX IF NOT EXISTS idx_alerts_active ON alerts(connection_id, status) WHERE status = 'active';
+			CREATE INDEX IF NOT EXISTS idx_alerts_correlation ON alerts(correlation_id) WHERE correlation_id IS NOT NULL;
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to create alerts table: %w", err)
+			}
+
+			// Create alert_acknowledgments table
+			_, err = conn.Exec(ctx, `
+			CREATE TABLE IF NOT EXISTS alert_acknowledgments (
+				id BIGSERIAL PRIMARY KEY,
+				alert_id BIGINT NOT NULL REFERENCES alerts(id) ON DELETE CASCADE,
+				acknowledged_by TEXT NOT NULL,
+				acknowledged_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				acknowledge_type TEXT NOT NULL CHECK (acknowledge_type IN ('acknowledge', 'dismiss', 'false_positive')),
+				message TEXT NOT NULL DEFAULT '',
+				false_positive BOOLEAN NOT NULL DEFAULT FALSE
+			);
+
+			COMMENT ON TABLE alert_acknowledgments IS
+				'User acknowledgments of alerts for learning and audit trail';
+			COMMENT ON COLUMN alert_acknowledgments.acknowledge_type IS
+				'Type: acknowledge (noted), dismiss (ignore), false_positive (learning feedback)';
+			COMMENT ON COLUMN alert_acknowledgments.false_positive IS
+				'If true, this acknowledgment marks the alert as a false positive for ML learning';
+
+			CREATE INDEX IF NOT EXISTS idx_alert_acknowledgments_alert ON alert_acknowledgments(alert_id);
+			CREATE INDEX IF NOT EXISTS idx_alert_acknowledgments_user ON alert_acknowledgments(acknowledged_by);
+			CREATE INDEX IF NOT EXISTS idx_alert_acknowledgments_false_positive ON alert_acknowledgments(false_positive) WHERE false_positive = TRUE;
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to create alert_acknowledgments table: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 8: Blackout tables for maintenance windows
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     8,
+		Description: "Add blackout tables for maintenance windows",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Create blackouts table (manual blackouts)
+			_, err := conn.Exec(ctx, `
+			CREATE TABLE IF NOT EXISTS blackouts (
+				id BIGSERIAL PRIMARY KEY,
+				connection_id INTEGER REFERENCES connections(id) ON DELETE CASCADE,
+				database_name TEXT,
+				reason TEXT NOT NULL,
+				start_time TIMESTAMP NOT NULL,
+				end_time TIMESTAMP NOT NULL,
+				created_by TEXT NOT NULL,
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				CHECK (end_time > start_time)
+			);
+
+			COMMENT ON TABLE blackouts IS
+				'Manual blackout periods during which alerts are suppressed';
+			COMMENT ON COLUMN blackouts.connection_id IS
+				'Connection ID (NULL means global blackout for all connections)';
+			COMMENT ON COLUMN blackouts.database_name IS
+				'Database name (NULL means all databases on the connection)';
+
+			CREATE INDEX IF NOT EXISTS idx_blackouts_active
+				ON blackouts(start_time, end_time);
+			CREATE INDEX IF NOT EXISTS idx_blackouts_connection
+				ON blackouts(connection_id);
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to create blackouts table: %w", err)
+			}
+
+			// Create blackout_schedules table (recurring blackouts)
+			_, err = conn.Exec(ctx, `
+			CREATE TABLE IF NOT EXISTS blackout_schedules (
+				id BIGSERIAL PRIMARY KEY,
+				connection_id INTEGER REFERENCES connections(id) ON DELETE CASCADE,
+				database_name TEXT,
+				name TEXT NOT NULL,
+				cron_expression TEXT NOT NULL,
+				duration_minutes INTEGER NOT NULL CHECK (duration_minutes > 0),
+				timezone TEXT NOT NULL DEFAULT 'UTC',
+				reason TEXT NOT NULL,
+				enabled BOOLEAN NOT NULL DEFAULT TRUE,
+				created_by TEXT NOT NULL,
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+			);
+
+			COMMENT ON TABLE blackout_schedules IS
+				'Scheduled recurring blackout periods using cron expressions';
+			COMMENT ON COLUMN blackout_schedules.cron_expression IS
+				'Cron expression defining when the blackout starts (e.g., "0 2 * * 0" for Sunday 2am)';
+			COMMENT ON COLUMN blackout_schedules.duration_minutes IS
+				'Duration of each blackout period in minutes';
+			COMMENT ON COLUMN blackout_schedules.timezone IS
+				'Timezone for interpreting the cron expression';
+
+			CREATE INDEX IF NOT EXISTS idx_blackout_schedules_enabled
+				ON blackout_schedules(enabled) WHERE enabled = TRUE;
+			CREATE INDEX IF NOT EXISTS idx_blackout_schedules_connection
+				ON blackout_schedules(connection_id);
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to create blackout_schedules table: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 9: Anomaly detection tables - baselines and candidates
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     9,
+		Description: "Add anomaly detection tables for baselines and candidates",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Create metric_definitions table
+			_, err := conn.Exec(ctx, `
+			CREATE TABLE IF NOT EXISTS metric_definitions (
+				id BIGSERIAL PRIMARY KEY,
+				name TEXT NOT NULL UNIQUE,
+				category TEXT NOT NULL,
+				description TEXT NOT NULL,
+				unit TEXT,
+				anomaly_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+				min_value REAL,
+				max_value REAL
+			);
+
+			COMMENT ON TABLE metric_definitions IS
+				'Definitions of metrics that can be monitored for anomalies';
+			COMMENT ON COLUMN metric_definitions.unit IS
+				'Unit of measurement (e.g., percent, bytes, milliseconds)';
+			COMMENT ON COLUMN metric_definitions.min_value IS
+				'Minimum valid value for this metric';
+			COMMENT ON COLUMN metric_definitions.max_value IS
+				'Maximum valid value for this metric';
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to create metric_definitions table: %w", err)
+			}
+
+			// Create metric_baselines table
+			_, err = conn.Exec(ctx, `
+			CREATE TABLE IF NOT EXISTS metric_baselines (
+				id BIGSERIAL PRIMARY KEY,
+				connection_id INTEGER NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+				database_name TEXT,
+				metric_name TEXT NOT NULL,
+				period_type TEXT NOT NULL CHECK (period_type IN ('hourly', 'daily', 'weekly')),
+				day_of_week INTEGER CHECK (day_of_week >= 0 AND day_of_week <= 6),
+				hour_of_day INTEGER CHECK (hour_of_day >= 0 AND hour_of_day <= 23),
+				mean REAL NOT NULL,
+				stddev REAL NOT NULL,
+				min REAL NOT NULL,
+				max REAL NOT NULL,
+				sample_count BIGINT NOT NULL DEFAULT 0,
+				last_calculated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				UNIQUE(connection_id, database_name, metric_name, period_type, day_of_week, hour_of_day)
+			);
+
+			COMMENT ON TABLE metric_baselines IS
+				'Statistical baselines for metrics used in anomaly detection';
+			COMMENT ON COLUMN metric_baselines.period_type IS
+				'Granularity of baseline: hourly, daily, or weekly';
+			COMMENT ON COLUMN metric_baselines.day_of_week IS
+				'Day of week for weekly baselines (0=Sunday, 6=Saturday)';
+			COMMENT ON COLUMN metric_baselines.hour_of_day IS
+				'Hour of day for hourly baselines (0-23)';
+
+			CREATE INDEX IF NOT EXISTS idx_metric_baselines_connection
+				ON metric_baselines(connection_id);
+			CREATE INDEX IF NOT EXISTS idx_metric_baselines_metric
+				ON metric_baselines(metric_name);
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to create metric_baselines table: %w", err)
+			}
+
+			// Create correlation_groups table
+			_, err = conn.Exec(ctx, `
+			CREATE TABLE IF NOT EXISTS correlation_groups (
+				id BIGSERIAL PRIMARY KEY,
+				connection_id INTEGER NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+				database_name TEXT,
+				start_time TIMESTAMP NOT NULL,
+				end_time TIMESTAMP,
+				anomaly_count INTEGER NOT NULL DEFAULT 1,
+				root_cause_guess TEXT
+			);
+
+			COMMENT ON TABLE correlation_groups IS
+				'Groups of related anomalies detected within a correlation window';
+			COMMENT ON COLUMN correlation_groups.root_cause_guess IS
+				'LLM-generated hypothesis about the root cause';
+
+			CREATE INDEX IF NOT EXISTS idx_correlation_groups_connection
+				ON correlation_groups(connection_id);
+			CREATE INDEX IF NOT EXISTS idx_correlation_groups_time
+				ON correlation_groups(start_time DESC);
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to create correlation_groups table: %w", err)
+			}
+
+			// Create anomaly_candidates table
+			_, err = conn.Exec(ctx, `
+			CREATE TABLE IF NOT EXISTS anomaly_candidates (
+				id BIGSERIAL PRIMARY KEY,
+				connection_id INTEGER NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+				database_name TEXT,
+				metric_name TEXT NOT NULL,
+				metric_value REAL NOT NULL,
+				z_score REAL NOT NULL,
+				detected_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				context JSONB NOT NULL DEFAULT '{}',
+				tier1_pass BOOLEAN NOT NULL DEFAULT FALSE,
+				tier2_score REAL,
+				tier2_pass BOOLEAN,
+				tier3_result TEXT,
+				tier3_pass BOOLEAN,
+				tier3_error TEXT,
+				final_decision TEXT CHECK (final_decision IN ('alert', 'suppress', 'pending')),
+				alert_id BIGINT REFERENCES alerts(id) ON DELETE SET NULL,
+				processed_at TIMESTAMP
+			);
+
+			COMMENT ON TABLE anomaly_candidates IS
+				'Anomaly candidates being processed through the tiered detection system';
+			COMMENT ON COLUMN anomaly_candidates.z_score IS
+				'Statistical z-score from Tier 1 detection';
+			COMMENT ON COLUMN anomaly_candidates.context IS
+				'Contextual information for embedding generation';
+			COMMENT ON COLUMN anomaly_candidates.tier2_score IS
+				'Similarity score from Tier 2 embedding comparison';
+			COMMENT ON COLUMN anomaly_candidates.tier3_result IS
+				'LLM classification result from Tier 3';
+			COMMENT ON COLUMN anomaly_candidates.tier3_error IS
+				'Error message if Tier 3 processing failed';
+			COMMENT ON COLUMN anomaly_candidates.final_decision IS
+				'Final decision: alert (create alert), suppress (false positive), pending (needs review)';
+
+			CREATE INDEX IF NOT EXISTS idx_anomaly_candidates_connection
+				ON anomaly_candidates(connection_id);
+			CREATE INDEX IF NOT EXISTS idx_anomaly_candidates_detected
+				ON anomaly_candidates(detected_at DESC);
+			CREATE INDEX IF NOT EXISTS idx_anomaly_candidates_pending
+				ON anomaly_candidates(final_decision) WHERE final_decision = 'pending';
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to create anomaly_candidates table: %w", err)
+			}
+
+			// Check if pgvector extension is available and add embedding column
+			var hasVector bool
+			err = conn.QueryRow(ctx, `
+				SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'vector')
+			`).Scan(&hasVector)
+			if err != nil {
+				return fmt.Errorf("failed to check for pgvector: %w", err)
+			}
+
+			if hasVector {
+				_, err = conn.Exec(ctx, `
+					ALTER TABLE anomaly_candidates
+					ADD COLUMN IF NOT EXISTS context_embedding vector(1536);
+
+					CREATE INDEX IF NOT EXISTS idx_anomaly_candidates_embedding
+						ON anomaly_candidates USING ivfflat (context_embedding vector_cosine_ops)
+						WITH (lists = 100);
+
+					COMMENT ON COLUMN anomaly_candidates.context_embedding IS
+						'Normalized embedding vector for similarity search (1536 dimensions)';
+				`)
+				if err != nil {
+					return fmt.Errorf("failed to add embedding column: %w", err)
+				}
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 10: Seed built-in alert rules
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     10,
+		Description: "Seed built-in alert rules for common monitoring scenarios",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			_, err := conn.Exec(ctx, `
+			INSERT INTO alert_rules (name, description, category, metric_name, default_operator, default_threshold, default_severity, default_enabled, required_extension, is_built_in)
+			VALUES
+				-- Connection alerts
+				('high_connection_count', 'Active connections exceed threshold', 'connections', 'pg_stat_activity.count', '>', 100, 'warning', TRUE, NULL, TRUE),
+				('connection_utilization', 'Connection utilization above threshold', 'connections', 'connection_utilization_percent', '>', 80, 'warning', TRUE, NULL, TRUE),
+
+				-- Replication alerts
+				('replication_lag_bytes', 'Replication lag in bytes exceeds threshold', 'replication', 'pg_stat_replication.lag_bytes', '>', 104857600, 'warning', TRUE, NULL, TRUE),
+				('replication_slot_inactive', 'Replication slot is inactive', 'replication', 'pg_replication_slots.inactive', '==', 1, 'critical', TRUE, NULL, TRUE),
+
+				-- Storage alerts
+				('disk_usage_percent', 'Disk usage exceeds threshold', 'storage', 'pg_sys_disk_info.used_percent', '>', 80, 'warning', TRUE, 'system_stats', TRUE),
+				('disk_usage_critical', 'Disk usage critically high', 'storage', 'pg_sys_disk_info.used_percent', '>', 95, 'critical', TRUE, 'system_stats', TRUE),
+				('table_bloat_ratio', 'Table bloat ratio exceeds threshold', 'storage', 'table_bloat_ratio', '>', 50, 'warning', TRUE, NULL, TRUE),
+
+				-- Performance alerts
+				('cpu_usage_high', 'CPU usage exceeds threshold', 'performance', 'pg_sys_cpu_usage_info.processor_time_percent', '>', 80, 'warning', TRUE, 'system_stats', TRUE),
+				('memory_usage_high', 'Memory usage exceeds threshold', 'performance', 'pg_sys_memory_info.used_percent', '>', 85, 'warning', TRUE, 'system_stats', TRUE),
+				('load_average_high', 'System load average exceeds threshold', 'performance', 'pg_sys_load_avg_info.load_avg_fifteen_minutes', '>', 4, 'warning', TRUE, 'system_stats', TRUE),
+				('long_running_queries', 'Queries running longer than threshold', 'performance', 'pg_stat_activity.max_query_duration_seconds', '>', 300, 'warning', TRUE, NULL, TRUE),
+				('blocked_queries', 'Blocked queries detected', 'performance', 'pg_stat_activity.blocked_count', '>', 0, 'warning', TRUE, NULL, TRUE),
+
+				-- Transaction alerts
+				('long_running_transaction', 'Transaction running too long', 'transactions', 'pg_stat_activity.max_xact_duration_seconds', '>', 3600, 'warning', TRUE, NULL, TRUE),
+				('idle_in_transaction', 'Connection idle in transaction too long', 'transactions', 'pg_stat_activity.idle_in_transaction_seconds', '>', 300, 'warning', TRUE, NULL, TRUE),
+				('transaction_wraparound', 'Transaction ID wraparound approaching', 'transactions', 'age_percent', '>', 75, 'critical', TRUE, NULL, TRUE),
+
+				-- Lock alerts
+				('deadlocks_detected', 'Deadlocks detected', 'locks', 'pg_stat_database.deadlocks_delta', '>', 0, 'warning', TRUE, NULL, TRUE),
+				('lock_wait_time', 'Lock wait time exceeds threshold', 'locks', 'pg_stat_activity.max_lock_wait_seconds', '>', 30, 'warning', TRUE, NULL, TRUE),
+
+				-- WAL and Checkpoint alerts
+				('checkpoint_warning', 'Checkpoints requested too frequently', 'wal', 'pg_stat_checkpointer.checkpoints_req_delta', '>', 10, 'warning', TRUE, NULL, TRUE),
+				('wal_archive_failed', 'WAL archiving failures detected', 'wal', 'pg_stat_archiver.failed_count_delta', '>', 0, 'critical', TRUE, NULL, TRUE),
+
+				-- Vacuum alerts
+				('autovacuum_not_running', 'Autovacuum has not run recently', 'maintenance', 'table_last_autovacuum_hours', '>', 24, 'warning', TRUE, NULL, TRUE),
+				('dead_tuple_ratio', 'Dead tuple ratio too high', 'maintenance', 'pg_stat_all_tables.dead_tuple_percent', '>', 20, 'warning', TRUE, NULL, TRUE),
+
+				-- Statement alerts
+				('slow_query_count', 'High number of slow queries', 'queries', 'pg_stat_statements.slow_query_count', '>', 10, 'warning', TRUE, 'pg_stat_statements', TRUE),
+				('cache_hit_ratio_low', 'Buffer cache hit ratio below threshold', 'queries', 'pg_stat_database.cache_hit_ratio', '<', 95, 'warning', TRUE, NULL, TRUE),
+
+				-- Error alerts
+				('temp_files_created', 'Temporary files being created', 'performance', 'pg_stat_database.temp_files_delta', '>', 100, 'warning', TRUE, NULL, TRUE)
+			ON CONFLICT (name) DO NOTHING;
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to insert built-in alert rules: %w", err)
+			}
+
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations

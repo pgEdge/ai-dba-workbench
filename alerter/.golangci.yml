@@ -1,0 +1,39 @@
+linters-settings:
+    errcheck:
+        check-type-assertions: true
+        check-blank: true
+    govet:
+        enable-all: true
+        disable:
+            - fieldalignment
+            - shadow
+    misspell:
+        locale: US
+
+linters:
+    enable:
+        - errcheck      # Check for unchecked errors (enabled by default)
+        - govet         # Vet examines Go source code (enabled by default)
+        - ineffassign   # Detects unused assignments (enabled by default)
+        - staticcheck   # Advanced static analysis (enabled by default)
+        - unused        # Checks for unused code (enabled by default)
+        - misspell      # Finds commonly misspelled English words
+        - gosec         # Inspects source code for security problems
+
+issues:
+    exclude-dirs:
+        - vendor
+    exclude-rules:
+        # Exclude some linters from running on tests files
+        - path: _test\.go
+          linters:
+              - gosec
+        # Exclude known issues with defer Close() in tests
+        - path: _test\.go
+          linters:
+              - errcheck
+          text: "Error return value of.*Close.*not checked"
+
+run:
+    timeout: 5m
+    tests: true

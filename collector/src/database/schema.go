@@ -92,6 +92,7 @@ func (sm *SchemaManager) registerMigrations() {
 				owner_token VARCHAR(255),
 				is_shared BOOLEAN NOT NULL DEFAULT FALSE,
 				is_monitored BOOLEAN NOT NULL DEFAULT FALSE,
+				enabled BOOLEAN NOT NULL DEFAULT TRUE,
 				name VARCHAR(255) NOT NULL,
 				host VARCHAR(255) NOT NULL,
 				hostaddr VARCHAR(255),
@@ -124,6 +125,8 @@ func (sm *SchemaManager) registerMigrations() {
 				'Whether the connection is shared among users or private';
 			COMMENT ON COLUMN connections.is_monitored IS
 				'Whether this connection is actively being monitored';
+			COMMENT ON COLUMN connections.enabled IS
+				'Whether this connection is enabled for alerting';
 			COMMENT ON COLUMN connections.name IS
 				'User-friendly name for the connection';
 			COMMENT ON COLUMN connections.host IS
@@ -159,6 +162,7 @@ func (sm *SchemaManager) registerMigrations() {
 			CREATE INDEX IF NOT EXISTS idx_connections_owner_username ON connections(owner_username);
 			CREATE INDEX IF NOT EXISTS idx_connections_owner_token ON connections(owner_token);
 			CREATE INDEX IF NOT EXISTS idx_connections_is_monitored ON connections(is_monitored) WHERE is_monitored = TRUE;
+			CREATE INDEX IF NOT EXISTS idx_connections_enabled ON connections(enabled) WHERE enabled = TRUE;
 
 			COMMENT ON INDEX idx_connections_name IS
 				'Index for fast lookup of connections by name';
@@ -168,6 +172,8 @@ func (sm *SchemaManager) registerMigrations() {
 				'Index for fast lookup of connections by owner token';
 			COMMENT ON INDEX idx_connections_is_monitored IS
 				'Partial index for efficiently finding actively monitored connections';
+			COMMENT ON INDEX idx_connections_enabled IS
+				'Partial index for efficiently finding enabled connections for alerting';
 		`)
 			if err != nil {
 				return fmt.Errorf("failed to create connections table: %w", err)

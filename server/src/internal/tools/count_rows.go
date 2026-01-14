@@ -81,13 +81,27 @@ Use count_rows to efficiently determine data volume:
 				return mcp.NewToolError("Missing or invalid 'table' parameter")
 			}
 
+			// Validate table name to prevent SQL injection
+			if err := ValidateIdentifier(table); err != nil {
+				return mcp.NewToolError(fmt.Sprintf("Invalid table name: %v", err))
+			}
+
 			// Get schema, default to public
 			schema := "public"
 			if s, ok := args["schema"].(string); ok && s != "" {
 				schema = s
 			}
 
+			// Validate schema name to prevent SQL injection
+			if err := ValidateIdentifier(schema); err != nil {
+				return mcp.NewToolError(fmt.Sprintf("Invalid schema name: %v", err))
+			}
+
 			// Get optional WHERE clause
+			// Note: WHERE clause is user-provided SQL and cannot be fully
+			// parameterized. This is intentional for MCP tools that allow
+			// arbitrary SQL queries. The table and schema names are validated
+			// and quoted to prevent injection in those parts.
 			whereClause := ""
 			if w, ok := args["where"].(string); ok && w != "" {
 				whereClause = w
@@ -117,8 +131,13 @@ Use count_rows to efficiently determine data volume:
 					quoteIdentifier(table))
 			}
 
+			// Extract context from args (injected by registry.Execute)
+			ctx, ok := args["__context"].(context.Context)
+			if !ok {
+				ctx = context.Background()
+			}
+
 			// Execute in a read-only transaction
-			ctx := context.Background()
 			tx, err := pool.Begin(ctx)
 			if err != nil {
 				return mcp.NewToolError(fmt.Sprintf("Failed to begin transaction: %v", err))
@@ -176,4 +195,15 @@ func quoteIdentifier(name string) string {
 	// Double any existing double quotes and wrap in double quotes
 	escaped := strings.ReplaceAll(name, `"`, `""`)
 	return `"` + escaped + `"`
+}
+
+// quoteQualifiedTableName quotes a table name that may include a schema prefix.
+// For "schema.table", it quotes each part separately: "schema"."table"
+// For simple "table", it just quotes the table name: "table"
+func quoteQualifiedTableName(name string) string {
+	parts := strings.Split(name, ".")
+	if len(parts) == 2 {
+		return quoteIdentifier(parts[0]) + "." + quoteIdentifier(parts[1])
+	}
+	return quoteIdentifier(name)
 }

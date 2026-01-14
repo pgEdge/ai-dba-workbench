@@ -40,15 +40,16 @@ func GetRequestIDFromContext(ctx context.Context) string {
 
 // HTTPConfig holds configuration for HTTP/HTTPS server mode
 type HTTPConfig struct {
-	Addr          string                         // Server address (e.g., ":8080")
-	TLSEnable     bool                           // Enable HTTPS
-	CertFile      string                         // Path to TLS certificate file
-	KeyFile       string                         // Path to TLS key file
-	ChainFile     string                         // Optional path to certificate chain file
-	AuthEnabled   bool                           // Enable API token authentication
-	AuthStore     *auth.AuthStore                // Auth store for all authentication (users and tokens)
-	SetupHandlers func(mux *http.ServeMux) error // Optional callback to add custom handlers before auth middleware
-	Debug         bool                           // Enable debug logging
+	Addr           string                         // Server address (e.g., ":8080")
+	TLSEnable      bool                           // Enable HTTPS
+	CertFile       string                         // Path to TLS certificate file
+	KeyFile        string                         // Path to TLS key file
+	ChainFile      string                         // Optional path to certificate chain file
+	AuthEnabled    bool                           // Enable API token authentication
+	AuthStore      *auth.AuthStore                // Auth store for all authentication (users and tokens)
+	SetupHandlers  func(mux *http.ServeMux) error // Optional callback to add custom handlers before auth middleware
+	Debug          bool                           // Enable debug logging
+	TrustedProxies []string                       // CIDR ranges of trusted reverse proxies for secure IP extraction
 }
 
 // RunHTTP starts the MCP server in HTTP/HTTPS mode
@@ -59,6 +60,9 @@ func (s *Server) RunHTTP(config *HTTPConfig) error {
 
 	// Store debug flag for use in handlers
 	s.debug = config.Debug
+
+	// Create secure IP extractor with configured trusted proxies
+	s.ipExtractor = auth.NewIPExtractor(config.TrustedProxies)
 
 	// Create HTTP handler
 	mux := http.NewServeMux()
@@ -77,6 +81,9 @@ func (s *Server) RunHTTP(config *HTTPConfig) error {
 	if config.AuthEnabled {
 		handler = auth.AuthMiddleware(config.AuthStore, true)(handler)
 	}
+
+	// Apply security headers middleware (outermost to ensure headers on all responses)
+	handler = SecurityHeadersMiddleware(handler)
 
 	// Configure server
 	httpServer := &http.Server{
@@ -137,8 +144,15 @@ func (s *Server) handleHTTPRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract IP address and add to context
-	ipAddress := auth.ExtractIPAddress(r)
+	// Extract IP address securely and add to context
+	// Uses IPExtractor which only trusts X-Forwarded-For from configured trusted proxies
+	var ipAddress string
+	if s.ipExtractor != nil {
+		ipAddress = s.ipExtractor.ExtractIP(r)
+	} else {
+		// Fallback to direct connection IP if extractor not configured
+		ipAddress = auth.ExtractIPAddress(r)
+	}
 	ctx := context.WithValue(r.Context(), auth.IPAddressContextKey, ipAddress)
 
 	// Generate request ID and session ID for tracing
@@ -441,4 +455,29 @@ func createErrorResponse(id interface{}, code int, message string, data interfac
 		ID:      id,
 		Error:   &errResp,
 	}
+}
+
+// SecurityHeadersMiddleware adds security headers to protect against common web attacks
+func SecurityHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Strict-Transport-Security: Enforce HTTPS for 1 year including subdomains
+		w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+
+		// X-Content-Type-Options: Prevent MIME type sniffing
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+
+		// X-Frame-Options: Prevent clickjacking by denying framing
+		w.Header().Set("X-Frame-Options", "DENY")
+
+		// X-XSS-Protection: Enable XSS filter in legacy browsers
+		w.Header().Set("X-XSS-Protection", "1; mode=block")
+
+		// Content-Security-Policy: Restrict resource loading to same origin
+		w.Header().Set("Content-Security-Policy", "default-src 'self'")
+
+		// Referrer-Policy: Control referrer information sent with requests
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+
+		next.ServeHTTP(w, r)
+	})
 }

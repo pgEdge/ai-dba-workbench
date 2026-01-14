@@ -95,7 +95,11 @@ CRITICAL: Never silently analyze multiple connections. Always get explicit user 
 				return mcp.NewToolError("Datastore not configured. The list_connections tool requires a datastore connection.")
 			}
 
-			ctx := context.Background()
+			// Extract context from args (injected by registry.Execute)
+			ctx, ok := args["__context"].(context.Context)
+			if !ok {
+				ctx = context.Background()
+			}
 
 			// Query for all connections (excluding sensitive fields like passwords)
 			query := `

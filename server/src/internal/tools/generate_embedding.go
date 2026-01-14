@@ -16,8 +16,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/pgedge/ai-workbench/pkg/embedding"
 	"github.com/pgedge/ai-workbench/server/internal/config"
-	"github.com/pgedge/ai-workbench/server/internal/embedding"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
 )
 
@@ -55,6 +55,12 @@ func GenerateEmbeddingTool(cfg *config.Config) Tool {
 				return mcp.NewToolError("'text' parameter cannot be empty or whitespace-only")
 			}
 
+			// Extract context from args (injected by registry.Execute)
+			ctx, ok := args["__context"].(context.Context)
+			if !ok {
+				ctx = context.Background()
+			}
+
 			// Create embedding provider from config
 			embCfg := embedding.Config{
 				Provider:     cfg.Embedding.Provider,
@@ -70,7 +76,6 @@ func GenerateEmbeddingTool(cfg *config.Config) Tool {
 			}
 
 			// Generate embedding
-			ctx := context.Background()
 			vector, err := provider.Embed(ctx, text)
 			if err != nil {
 				return mcp.NewToolError(fmt.Sprintf("Failed to generate embedding: %v", err))

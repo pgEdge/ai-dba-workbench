@@ -193,8 +193,11 @@ To avoid rate limits (30,000 input tokens/minute):
 				sqlQuery = fmt.Sprintf("%s OFFSET %d", sqlQuery, offset)
 			}
 
-			// Execute the SQL query on the appropriate connection in a read-only transaction
-			ctx := context.Background()
+			// Extract context from args (injected by registry.Execute)
+			ctx, ok := args["__context"].(context.Context)
+			if !ok {
+				ctx = context.Background()
+			}
 			pool := dbClient.GetPoolFor(connStr)
 			if pool == nil {
 				return mcp.NewToolError(fmt.Sprintf("Connection pool not found for: %s", database.SanitizeConnStr(connStr)))

@@ -16,6 +16,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+
+	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
 
 const (
@@ -44,10 +46,11 @@ type PromptProvider interface {
 
 // Server handles MCP protocol communication
 type Server struct {
-	tools     ToolProvider
-	resources ResourceProvider
-	prompts   PromptProvider
-	debug     bool // Enable debug logging for HTTP mode
+	tools       ToolProvider
+	resources   ResourceProvider
+	prompts     PromptProvider
+	debug       bool              // Enable debug logging for HTTP mode
+	ipExtractor *auth.IPExtractor // Secure IP extraction from requests
 }
 
 // NewServer creates a new MCP server

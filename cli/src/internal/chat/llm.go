@@ -21,7 +21,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pgedge/ai-workbench/cli/internal/embedding"
+	"github.com/pgedge/ai-workbench/pkg/embedding"
 	"github.com/pgedge/ai-workbench/cli/internal/mcp"
 )
 

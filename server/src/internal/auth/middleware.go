@@ -15,6 +15,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 )
@@ -114,8 +115,165 @@ func IsSuperuserFromContext(ctx context.Context) bool {
 	return false
 }
 
-// ExtractIPAddress extracts the client IP address from an HTTP request
-// Checks X-Forwarded-For and X-Real-IP headers first (for proxies), then falls back to RemoteAddr
+// IPExtractor securely extracts client IP addresses from HTTP requests.
+// It only trusts X-Forwarded-For and X-Real-IP headers when the direct
+// connection comes from a configured trusted proxy.
+//
+// Security considerations:
+//   - X-Forwarded-For headers can be easily spoofed by clients
+//   - Only trust these headers when the request comes from a known proxy
+//   - When trusting the header, use the rightmost untrusted IP (not leftmost)
+//     because attackers can prepend fake IPs to the header
+type IPExtractor struct {
+	// TrustedProxies contains CIDR ranges of trusted reverse proxies.
+	// Only requests from these IPs will have their X-Forwarded-For headers trusted.
+	TrustedProxies []*net.IPNet
+}
+
+// NewIPExtractor creates a new IPExtractor with the given trusted proxy CIDR ranges.
+// Invalid CIDR strings are silently ignored.
+func NewIPExtractor(trustedProxyCIDRs []string) *IPExtractor {
+	extractor := &IPExtractor{
+		TrustedProxies: make([]*net.IPNet, 0, len(trustedProxyCIDRs)),
+	}
+
+	for _, cidr := range trustedProxyCIDRs {
+		_, ipNet, err := net.ParseCIDR(cidr)
+		if err != nil {
+			// Try parsing as a single IP address (add /32 or /128 suffix)
+			ip := net.ParseIP(cidr)
+			if ip != nil {
+				if ip.To4() != nil {
+					_, ipNet, _ = net.ParseCIDR(cidr + "/32")
+				} else {
+					_, ipNet, _ = net.ParseCIDR(cidr + "/128")
+				}
+			}
+		}
+		if ipNet != nil {
+			extractor.TrustedProxies = append(extractor.TrustedProxies, ipNet)
+		}
+	}
+
+	return extractor
+}
+
+// isTrustedProxy checks if the given IP is within any trusted proxy range.
+func (e *IPExtractor) isTrustedProxy(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	for _, trustedNet := range e.TrustedProxies {
+		if trustedNet.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// ExtractIP securely extracts the client IP address from an HTTP request.
+//
+// Algorithm:
+//  1. Extract the direct connection IP from RemoteAddr
+//  2. If no trusted proxies are configured, return the direct connection IP
+//  3. If the direct connection is not from a trusted proxy, return it directly
+//     (do not trust X-Forwarded-For from untrusted sources)
+//  4. If behind a trusted proxy, parse X-Forwarded-For and find the rightmost
+//     IP that is not a trusted proxy (this is the actual client IP)
+func (e *IPExtractor) ExtractIP(r *http.Request) string {
+	// Extract direct connection IP from RemoteAddr
+	directIP := extractIPFromRemoteAddr(r.RemoteAddr)
+	if directIP == "" {
+		return r.RemoteAddr // Fallback to raw RemoteAddr if parsing fails
+	}
+
+	// If no trusted proxies configured, always use direct connection IP
+	// This is the safe default - don't trust any forwarded headers
+	if len(e.TrustedProxies) == 0 {
+		return directIP
+	}
+
+	// Parse the direct connection IP
+	parsedDirectIP := net.ParseIP(directIP)
+	if parsedDirectIP == nil {
+		return directIP
+	}
+
+	// Only trust X-Forwarded-For if request comes from a trusted proxy
+	if !e.isTrustedProxy(parsedDirectIP) {
+		return directIP
+	}
+
+	// Request is from a trusted proxy - parse X-Forwarded-For header
+	// Format: X-Forwarded-For: client, proxy1, proxy2
+	xff := r.Header.Get("X-Forwarded-For")
+	if xff == "" {
+		// No X-Forwarded-For header, try X-Real-IP
+		if xri := r.Header.Get("X-Real-IP"); xri != "" {
+			return strings.TrimSpace(xri)
+		}
+		return directIP
+	}
+
+	// Split the X-Forwarded-For header and find the rightmost untrusted IP
+	// Working from right to left is more secure because attackers can only
+	// prepend IPs to the left side of the header
+	parts := strings.Split(xff, ",")
+	for i := len(parts) - 1; i >= 0; i-- {
+		ip := strings.TrimSpace(parts[i])
+		if ip == "" {
+			continue
+		}
+
+		parsedIP := net.ParseIP(ip)
+		if parsedIP == nil {
+			continue
+		}
+
+		// Return the first (rightmost) IP that is not a trusted proxy
+		if !e.isTrustedProxy(parsedIP) {
+			return ip
+		}
+	}
+
+	// All IPs in the chain are trusted proxies, return the leftmost
+	// (This shouldn't normally happen in a properly configured setup)
+	if len(parts) > 0 {
+		if ip := strings.TrimSpace(parts[0]); ip != "" {
+			return ip
+		}
+	}
+
+	return directIP
+}
+
+// extractIPFromRemoteAddr extracts the IP address from a RemoteAddr string.
+// RemoteAddr format is typically "IP:port" for IPv4 or "[IP]:port" for IPv6.
+func extractIPFromRemoteAddr(remoteAddr string) string {
+	// Try to parse as host:port
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		// If SplitHostPort fails, it might be an IP without port
+		// Check if it's a valid IP
+		if ip := net.ParseIP(remoteAddr); ip != nil {
+			return remoteAddr
+		}
+		// Last resort: strip port manually for simple cases
+		if idx := strings.LastIndex(remoteAddr, ":"); idx != -1 {
+			return remoteAddr[:idx]
+		}
+		return remoteAddr
+	}
+	return host
+}
+
+// ExtractIPAddress extracts the client IP address from an HTTP request.
+// DEPRECATED: This function blindly trusts X-Forwarded-For headers and is
+// vulnerable to IP spoofing. Use IPExtractor.ExtractIP() instead for secure
+// IP extraction when behind trusted proxies.
+//
+// This function is kept for backwards compatibility but should not be used
+// for security-sensitive operations like rate limiting.
 func ExtractIPAddress(r *http.Request) string {
 	// Check X-Forwarded-For header first (used by proxies/load balancers)
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
@@ -133,13 +291,7 @@ func ExtractIPAddress(r *http.Request) string {
 	}
 
 	// Fall back to RemoteAddr
-	// This may include the port, so strip it if present
-	ip := r.RemoteAddr
-	if colonIndex := strings.LastIndex(ip, ":"); colonIndex != -1 {
-		ip = ip[:colonIndex]
-	}
-
-	return ip
+	return extractIPFromRemoteAddr(r.RemoteAddr)
 }
 
 // AuthMiddleware creates an HTTP middleware that validates API tokens and session tokens

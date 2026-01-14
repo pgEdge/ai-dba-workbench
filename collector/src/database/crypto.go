@@ -18,14 +18,25 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+
+	"golang.org/x/crypto/pbkdf2"
 )
 
 // deriveKey derives a 32-byte AES key from the server secret and optional salt
+// using PBKDF2 with SHA256 and 100,000 iterations for brute-force resistance.
+//
+// BREAKING CHANGE: This function was updated from a simple SHA256 hash to PBKDF2.
+// Existing encrypted passwords created with the previous implementation will no
+// longer decrypt correctly and must be re-encrypted.
 func deriveKey(serverSecret string, salt string) []byte {
-	// Combine server secret with salt
-	combined := serverSecret + salt
-	hash := sha256.Sum256([]byte(combined))
-	return hash[:]
+	// Use PBKDF2 with SHA256, 100,000 iterations for secure key derivation
+	return pbkdf2.Key(
+		[]byte(serverSecret),
+		[]byte(salt),
+		100000,
+		32,
+		sha256.New,
+	)
 }
 
 // EncryptPassword encrypts a password using AES-256-GCM

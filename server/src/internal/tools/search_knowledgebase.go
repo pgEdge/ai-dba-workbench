@@ -20,8 +20,8 @@ import (
 	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/pgedge/ai-workbench/pkg/embedding"
 	"github.com/pgedge/ai-workbench/server/internal/config"
-	"github.com/pgedge/ai-workbench/server/internal/embedding"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
 )
 
@@ -153,8 +153,14 @@ If you get zero results:
 				}
 			}
 
+			// Extract context from args (injected by registry.Execute)
+			ctx, ok := args["__context"].(context.Context)
+			if !ok {
+				ctx = context.Background()
+			}
+
 			// Generate query embedding
-			queryEmbedding, provider, err := generateKBQueryEmbedding(cfg, query)
+			queryEmbedding, provider, err := generateKBQueryEmbedding(ctx, cfg, query)
 			if err != nil {
 				return mcp.NewToolError(fmt.Sprintf("Failed to generate query embedding: %v", err))
 			}
@@ -253,7 +259,7 @@ func listKBProducts(kbPath string) (string, error) {
 	return sb.String(), nil
 }
 
-func generateKBQueryEmbedding(serverCfg *config.Config, queryText string) ([]float32, string, error) {
+func generateKBQueryEmbedding(ctx context.Context, serverCfg *config.Config, queryText string) ([]float32, string, error) {
 	// Use KB-specific embedding configuration (independent of generate_embeddings tool)
 	kbCfg := serverCfg.Knowledgebase
 	if kbCfg.EmbeddingProvider == "" {
@@ -273,7 +279,6 @@ func generateKBQueryEmbedding(serverCfg *config.Config, queryText string) ([]flo
 		return nil, "", err
 	}
 
-	ctx := context.Background()
 	vector, err := provider.Embed(ctx, queryText)
 	if err != nil {
 		return nil, "", err

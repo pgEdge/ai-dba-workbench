@@ -140,9 +140,10 @@ func (c *PromptsConfig) IsPromptEnabled(promptName string) bool {
 
 // HTTPConfig holds HTTP/HTTPS server settings
 type HTTPConfig struct {
-	Address string     `yaml:"address"`
-	TLS     TLSConfig  `yaml:"tls"`
-	Auth    AuthConfig `yaml:"auth"`
+	Address        string     `yaml:"address"`
+	TLS            TLSConfig  `yaml:"tls"`
+	Auth           AuthConfig `yaml:"auth"`
+	TrustedProxies []string   `yaml:"trusted_proxies"` // CIDR ranges of trusted reverse proxies (e.g., ["10.0.0.0/8", "172.16.0.0/12"])
 }
 
 // AuthConfig holds authentication settings
@@ -407,6 +408,11 @@ func mergeConfig(dest, src *Config) {
 	}
 	if src.HTTP.TLS.ChainFile != "" {
 		dest.HTTP.TLS.ChainFile = src.HTTP.TLS.ChainFile
+	}
+
+	// Trusted proxies for secure IP extraction
+	if len(src.HTTP.TrustedProxies) > 0 {
+		dest.HTTP.TrustedProxies = src.HTTP.TrustedProxies
 	}
 
 	// Auth - note: we need to preserve false values

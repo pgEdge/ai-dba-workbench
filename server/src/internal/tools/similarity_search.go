@@ -15,9 +15,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/pgedge/ai-workbench/pkg/embedding"
 	"github.com/pgedge/ai-workbench/server/internal/config"
 	"github.com/pgedge/ai-workbench/server/internal/database"
-	"github.com/pgedge/ai-workbench/server/internal/embedding"
 	"github.com/pgedge/ai-workbench/server/internal/logging"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
 	"github.com/pgedge/ai-workbench/server/internal/search"
@@ -175,6 +175,11 @@ To avoid rate limits (30,000 input tokens/minute):
 				return *errResp, nil
 			}
 
+			// Validate table name to prevent SQL injection
+			if err := ValidateQualifiedTableName(tableName); err != nil {
+				return mcp.NewToolError(fmt.Sprintf("Invalid table name: %v", err))
+			}
+
 			queryText, errResp := ValidateStringParam(args, "query_text")
 			if errResp != nil {
 				return *errResp, nil
@@ -207,6 +212,12 @@ To avoid rate limits (30,000 input tokens/minute):
 			outputFormat := "full"
 			if format, ok := args["output_format"].(string); ok {
 				outputFormat = format
+			}
+
+			// Extract context from args (injected by registry.Execute)
+			ctx, ok := args["__context"].(context.Context)
+			if !ok {
+				ctx = context.Background()
 			}
 
 			// Step 2: Get table metadata and discover columns
@@ -292,7 +303,7 @@ To avoid rate limits (30,000 input tokens/minute):
 			}
 
 			// Step 3: Sample data for smart column type detection
-			sampleData, err := sampleTableData(dbClient, tableName, textCols, 3)
+			sampleData, err := sampleTableData(ctx, dbClient, tableName, textCols, 3)
 			if err != nil {
 				// Non-fatal: proceed with default weights
 				sampleData = make(map[string]string)
@@ -302,7 +313,7 @@ To avoid rate limits (30,000 input tokens/minute):
 			columnWeights := search.DetectColumnTypes(tableInfo, sampleData)
 
 			// Step 4: Generate query embedding (use the global cfg variable, not the search config)
-			queryEmbedding, err := generateQueryEmbeddingWithConfig(cfg, queryText)
+			queryEmbedding, err := generateQueryEmbeddingWithConfig(ctx, cfg, queryText)
 			if err != nil {
 				var errMsg strings.Builder
 				errMsg.WriteString(fmt.Sprintf("Failed to generate query embedding: %v\n\n", err))
@@ -326,6 +337,7 @@ To avoid rate limits (30,000 input tokens/minute):
 
 			// Step 5: Perform weighted vector search
 			results, err := performWeightedVectorSearch(
+				ctx,
 				dbClient,
 				tableName,
 				vectorCols,
@@ -557,9 +569,17 @@ func isTextDataType(dataType string) bool {
 	return false
 }
 
-func sampleTableData(dbClient *database.Client, tableName string, textCols []string, sampleSize int) (map[string]string, error) {
+func sampleTableData(ctx context.Context, dbClient *database.Client, tableName string, textCols []string, sampleSize int) (map[string]string, error) {
 	if len(textCols) == 0 {
 		return make(map[string]string), nil
+	}
+
+	// Validate table name and column names to prevent SQL injection
+	if err := ValidateQualifiedTableName(tableName); err != nil {
+		return nil, fmt.Errorf("invalid table name: %w", err)
+	}
+	if err := ValidateColumnNames(textCols); err != nil {
+		return nil, fmt.Errorf("invalid column name: %w", err)
 	}
 
 	connStr := dbClient.GetDefaultConnection()
@@ -568,11 +588,14 @@ func sampleTableData(dbClient *database.Client, tableName string, textCols []str
 		return nil, fmt.Errorf("no connection pool available")
 	}
 
-	ctx := context.Background()
-
-	// Build query to sample data
-	colList := strings.Join(textCols, ", ")
-	query := fmt.Sprintf("SELECT %s FROM %s LIMIT %d", colList, tableName, sampleSize)
+	// Build query to sample data - identifiers are validated above
+	// Quote identifiers for safety
+	quotedCols := make([]string, len(textCols))
+	for i, col := range textCols {
+		quotedCols[i] = quoteIdentifier(col)
+	}
+	colList := strings.Join(quotedCols, ", ")
+	query := fmt.Sprintf("SELECT %s FROM %s LIMIT %d", colList, quoteQualifiedTableName(tableName), sampleSize)
 
 	rows, err := pool.Query(ctx, query)
 	if err != nil {
@@ -615,7 +638,7 @@ func sampleTableData(dbClient *database.Client, tableName string, textCols []str
 	return sampleData, nil
 }
 
-func generateQueryEmbeddingWithConfig(serverCfg *config.Config, queryText string) ([]float64, error) {
+func generateQueryEmbeddingWithConfig(ctx context.Context, serverCfg *config.Config, queryText string) ([]float64, error) {
 	if !serverCfg.Embedding.Enabled {
 		return nil, fmt.Errorf("embedding generation is not enabled in server configuration")
 	}
@@ -633,7 +656,6 @@ func generateQueryEmbeddingWithConfig(serverCfg *config.Config, queryText string
 		return nil, err
 	}
 
-	ctx := context.Background()
 	vector, err := provider.Embed(ctx, queryText)
 	if err != nil {
 		return nil, err
@@ -647,6 +669,7 @@ func generateQueryEmbeddingWithConfig(serverCfg *config.Config, queryText string
 }
 
 func performWeightedVectorSearch(
+	ctx context.Context,
 	dbClient *database.Client,
 	tableName string,
 	vectorCols []database.ColumnInfo,
@@ -657,27 +680,50 @@ func performWeightedVectorSearch(
 	distanceMetric string,
 ) ([]search.VectorSearchResult, error) {
 
+	// Validate table name and column names to prevent SQL injection
+	if err := ValidateQualifiedTableName(tableName); err != nil {
+		return nil, fmt.Errorf("invalid table name: %w", err)
+	}
+	if err := ValidateColumnNames(textCols); err != nil {
+		return nil, fmt.Errorf("invalid column name: %w", err)
+	}
+	// Validate vector column names
+	for _, vc := range vectorCols {
+		if err := ValidateIdentifier(vc.ColumnName); err != nil {
+			return nil, fmt.Errorf("invalid vector column name: %w", err)
+		}
+	}
+	// Validate column weight vector names
+	for _, cw := range columnWeights {
+		if err := ValidateIdentifier(cw.VectorName); err != nil {
+			return nil, fmt.Errorf("invalid weight vector name: %w", err)
+		}
+	}
+
 	connStr := dbClient.GetDefaultConnection()
 	pool := dbClient.GetPoolFor(connStr)
 	if pool == nil {
 		return nil, fmt.Errorf("no connection pool available")
 	}
 
-	ctx := context.Background()
-
 	// Build SQL query with weighted distance
 	distOp := getDistanceOperator(distanceMetric)
 
-	// Build column list
-	allCols := append([]string{"*"}, textCols...)
+	// Build column list with quoted identifiers
+	// Use * for all columns plus explicitly quoted text columns
+	quotedTextCols := make([]string, len(textCols))
+	for i, col := range textCols {
+		quotedTextCols[i] = quoteIdentifier(col)
+	}
+	allCols := append([]string{"*"}, quotedTextCols...)
 	colList := strings.Join(allCols, ", ")
 
-	// Build weighted distance calculation
+	// Build weighted distance calculation with quoted identifiers
 	var weightedParts []string
 	weightMap := make(map[string]float64)
 
 	for _, weight := range columnWeights {
-		weightedParts = append(weightedParts, fmt.Sprintf("(%s %s $1::vector) * %f", weight.VectorName, distOp, weight.Weight))
+		weightedParts = append(weightedParts, fmt.Sprintf("(%s %s $1::vector) * %f", quoteIdentifier(weight.VectorName), distOp, weight.Weight))
 		weightMap[weight.VectorName] = weight.Weight
 	}
 
@@ -685,7 +731,7 @@ func performWeightedVectorSearch(
 	if len(weightedParts) == 0 {
 		for i := range vectorCols {
 			weight := 1.0 / float64(len(vectorCols))
-			weightedParts = append(weightedParts, fmt.Sprintf("(%s %s $1::vector) * %f", vectorCols[i].ColumnName, distOp, weight))
+			weightedParts = append(weightedParts, fmt.Sprintf("(%s %s $1::vector) * %f", quoteIdentifier(vectorCols[i].ColumnName), distOp, weight))
 			weightMap[vectorCols[i].ColumnName] = weight
 		}
 	}
@@ -697,7 +743,7 @@ func performWeightedVectorSearch(
         FROM %s
         ORDER BY weighted_distance
         LIMIT $2
-    `, colList, weightedDistance, tableName)
+    `, colList, weightedDistance, quoteQualifiedTableName(tableName))
 
 	// Convert embedding to PostgreSQL array format
 	embeddingStr := formatEmbeddingForPostgres(queryEmbedding)

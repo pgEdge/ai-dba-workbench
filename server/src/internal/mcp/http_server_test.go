@@ -725,3 +725,74 @@ func TestRunHTTP_NilConfig(t *testing.T) {
 		t.Error("expected error for nil config")
 	}
 }
+
+func TestSecurityHeadersMiddleware(t *testing.T) {
+	// Create a simple handler that returns 200 OK
+	innerHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// Wrap with security headers middleware
+	handler := SecurityHeadersMiddleware(innerHandler)
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	// Verify all security headers are set
+	tests := []struct {
+		header   string
+		expected string
+	}{
+		{"Strict-Transport-Security", "max-age=31536000; includeSubDomains"},
+		{"X-Content-Type-Options", "nosniff"},
+		{"X-Frame-Options", "DENY"},
+		{"X-XSS-Protection", "1; mode=block"},
+		{"Content-Security-Policy", "default-src 'self'"},
+		{"Referrer-Policy", "strict-origin-when-cross-origin"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.header, func(t *testing.T) {
+			got := w.Header().Get(tt.header)
+			if got != tt.expected {
+				t.Errorf("expected %s=%q, got %q", tt.header, tt.expected, got)
+			}
+		})
+	}
+
+	// Verify the response status
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", w.Code)
+	}
+}
+
+func TestSecurityHeadersMiddleware_PreservesExistingHeaders(t *testing.T) {
+	// Create a handler that sets its own headers
+	innerHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Custom-Header", "custom-value")
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := SecurityHeadersMiddleware(innerHandler)
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	// Verify security headers are set
+	if w.Header().Get("X-Frame-Options") != "DENY" {
+		t.Error("expected X-Frame-Options header to be set")
+	}
+
+	// Verify inner handler headers are preserved
+	if w.Header().Get("Content-Type") != "application/json" {
+		t.Error("expected Content-Type header to be preserved")
+	}
+	if w.Header().Get("X-Custom-Header") != "custom-value" {
+		t.Error("expected X-Custom-Header to be preserved")
+	}
+}

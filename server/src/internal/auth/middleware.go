@@ -143,10 +143,11 @@ func NewIPExtractor(trustedProxyCIDRs []string) *IPExtractor {
 			// Try parsing as a single IP address (add /32 or /128 suffix)
 			ip := net.ParseIP(cidr)
 			if ip != nil {
+				// IP address is valid (ParseIP succeeded), so adding prefix length will work
 				if ip.To4() != nil {
-					_, ipNet, _ = net.ParseCIDR(cidr + "/32")
+					_, ipNet, _ = net.ParseCIDR(cidr + "/32") //nolint:errcheck // IP is already validated
 				} else {
-					_, ipNet, _ = net.ParseCIDR(cidr + "/128")
+					_, ipNet, _ = net.ParseCIDR(cidr + "/128") //nolint:errcheck // IP is already validated
 				}
 			}
 		}
@@ -268,7 +269,8 @@ func extractIPFromRemoteAddr(remoteAddr string) string {
 }
 
 // ExtractIPAddress extracts the client IP address from an HTTP request.
-// DEPRECATED: This function blindly trusts X-Forwarded-For headers and is
+//
+// Deprecated: This function blindly trusts X-Forwarded-For headers and is
 // vulnerable to IP spoofing. Use IPExtractor.ExtractIP() instead for secure
 // IP extraction when behind trusted proxies.
 //

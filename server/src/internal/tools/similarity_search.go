@@ -688,8 +688,8 @@ func performWeightedVectorSearch(
 		return nil, fmt.Errorf("invalid column name: %w", err)
 	}
 	// Validate vector column names
-	for _, vc := range vectorCols {
-		if err := ValidateIdentifier(vc.ColumnName); err != nil {
+	for i := range vectorCols {
+		if err := ValidateIdentifier(vectorCols[i].ColumnName); err != nil {
 			return nil, fmt.Errorf("invalid vector column name: %w", err)
 		}
 	}

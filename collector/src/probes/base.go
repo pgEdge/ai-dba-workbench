@@ -13,12 +13,14 @@ package probes
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"github.com/pgedge/ai-workbench/pkg/logger"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/pkg/logger"
 )
 
 // ProbeConfig represents the configuration for a probe
@@ -119,6 +121,14 @@ func EnsurePartition(ctx context.Context, conn *pgxpool.Conn, tableName string, 
 
 	_, err = conn.Exec(ctx, createSQL)
 	if err != nil {
+		// Check if this is a "relation already exists" error (42P07)
+		// This can happen due to race conditions when multiple goroutines
+		// try to create the same partition simultaneously
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "42P07" {
+			// Partition was created by another goroutine, that's fine
+			return nil
+		}
 		return fmt.Errorf("failed to create partition %s: %w", partitionName, err)
 	}
 

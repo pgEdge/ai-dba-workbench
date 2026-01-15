@@ -55,7 +55,7 @@ func (p *PgStatWalProbe) GetQuery() string {
 // GetQueryForVersion returns the appropriate SQL query for the given PostgreSQL version
 func (p *PgStatWalProbe) GetQueryForVersion(pgVersion int) string {
 	if pgVersion >= 18 {
-		// PG18: wal_write column was removed
+		// PG18: wal_write, wal_sync, wal_write_time, wal_sync_time columns were removed
 		return `
             SELECT
                 wal_records,
@@ -63,9 +63,9 @@ func (p *PgStatWalProbe) GetQueryForVersion(pgVersion int) string {
                 wal_bytes,
                 wal_buffers_full,
                 NULL::bigint AS wal_write,
-                wal_sync,
-                wal_write_time,
-                wal_sync_time,
+                NULL::bigint AS wal_sync,
+                NULL::double precision AS wal_write_time,
+                NULL::double precision AS wal_sync_time,
                 stats_reset
             FROM pg_stat_wal
         `

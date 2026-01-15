@@ -73,11 +73,11 @@ func (p *PgIdentFileMappingsProbe) GetQueryForVersion(pgVersion int) string {
             ORDER BY map_number
         `
 	}
-	// PG15: map_number doesn't exist, use line_number as map_number
+	// PG15: map_number and file_name don't exist
 	return `
         SELECT
             line_number AS map_number,
-            file_name,
+            NULL::text AS file_name,
             line_number,
             map_name,
             sys_name,

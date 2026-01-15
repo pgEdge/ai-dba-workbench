@@ -323,7 +323,7 @@ func (p *PgNodeRoleProbe) getBDRStatus(ctx context.Context, connectionName strin
 
 // determineNodeRole computes the primary role and role flags
 func (p *PgNodeRoleProbe) determineNodeRole(info *NodeRoleInfo) (string, []string) {
-	var flags []string
+	flags := []string{}
 
 	// Detect individual capabilities (flags are non-exclusive)
 	if info.HasBinaryStandbys {

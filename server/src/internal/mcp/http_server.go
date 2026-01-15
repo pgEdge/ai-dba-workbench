@@ -151,7 +151,7 @@ func (s *Server) handleHTTPRequest(w http.ResponseWriter, r *http.Request) {
 		ipAddress = s.ipExtractor.ExtractIP(r)
 	} else {
 		// Fallback to direct connection IP if extractor not configured
-		ipAddress = auth.ExtractIPAddress(r)
+		ipAddress = auth.ExtractIPAddress(r) //nolint:staticcheck // Intentional fallback for backwards compatibility
 	}
 	ctx := context.WithValue(r.Context(), auth.IPAddressContextKey, ipAddress)
 

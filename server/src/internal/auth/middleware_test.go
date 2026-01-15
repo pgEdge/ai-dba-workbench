@@ -356,3 +356,255 @@ func TestAuthMiddleware_ValidSessionToken(t *testing.T) {
 		t.Errorf("Expected 'session authenticated', got %q", body)
 	}
 }
+
+// TestNewIPExtractor tests creating an IPExtractor with various CIDR inputs
+func TestNewIPExtractor(t *testing.T) {
+	t.Run("valid CIDRs", func(t *testing.T) {
+		extractor := NewIPExtractor([]string{"10.0.0.0/8", "192.168.0.0/16"})
+		if len(extractor.TrustedProxies) != 2 {
+			t.Errorf("Expected 2 trusted proxies, got %d", len(extractor.TrustedProxies))
+		}
+	})
+
+	t.Run("valid single IPs", func(t *testing.T) {
+		extractor := NewIPExtractor([]string{"10.0.0.1", "192.168.1.1"})
+		if len(extractor.TrustedProxies) != 2 {
+			t.Errorf("Expected 2 trusted proxies from single IPs, got %d", len(extractor.TrustedProxies))
+		}
+	})
+
+	t.Run("invalid CIDRs ignored", func(t *testing.T) {
+		extractor := NewIPExtractor([]string{"10.0.0.0/8", "invalid", "192.168.0.0/16"})
+		if len(extractor.TrustedProxies) != 2 {
+			t.Errorf("Expected 2 trusted proxies (invalid ignored), got %d", len(extractor.TrustedProxies))
+		}
+	})
+
+	t.Run("empty input", func(t *testing.T) {
+		extractor := NewIPExtractor([]string{})
+		if len(extractor.TrustedProxies) != 0 {
+			t.Errorf("Expected 0 trusted proxies, got %d", len(extractor.TrustedProxies))
+		}
+	})
+
+	t.Run("nil input", func(t *testing.T) {
+		extractor := NewIPExtractor(nil)
+		if len(extractor.TrustedProxies) != 0 {
+			t.Errorf("Expected 0 trusted proxies, got %d", len(extractor.TrustedProxies))
+		}
+	})
+}
+
+// TestIPExtractor_ExtractIP tests secure IP extraction with various scenarios
+func TestIPExtractor_ExtractIP(t *testing.T) {
+	// Test case: no trusted proxies - always use RemoteAddr
+	t.Run("no trusted proxies uses RemoteAddr", func(t *testing.T) {
+		extractor := NewIPExtractor(nil)
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "203.0.113.50:12345"
+		req.Header.Set("X-Forwarded-For", "10.0.0.1, 192.168.1.1")
+
+		ip := extractor.ExtractIP(req)
+		if ip != "203.0.113.50" {
+			t.Errorf("Expected '203.0.113.50' (RemoteAddr), got %q", ip)
+		}
+	})
+
+	// Test case: request not from trusted proxy - ignore X-Forwarded-For
+	t.Run("untrusted source ignores XFF", func(t *testing.T) {
+		extractor := NewIPExtractor([]string{"10.0.0.0/8"})
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "203.0.113.50:12345" // Not in trusted range
+		req.Header.Set("X-Forwarded-For", "192.168.1.100")
+
+		ip := extractor.ExtractIP(req)
+		if ip != "203.0.113.50" {
+			t.Errorf("Expected '203.0.113.50' (ignore spoofed XFF), got %q", ip)
+		}
+	})
+
+	// Test case: request from trusted proxy - use rightmost untrusted IP
+	t.Run("trusted proxy uses rightmost untrusted IP", func(t *testing.T) {
+		extractor := NewIPExtractor([]string{"10.0.0.0/8"})
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "10.0.0.1:12345" // Trusted proxy
+		// Attacker could prepend fake IPs on left, but we use rightmost untrusted
+		req.Header.Set("X-Forwarded-For", "1.1.1.1, 192.168.1.100, 10.0.0.2")
+
+		ip := extractor.ExtractIP(req)
+		// Should get 192.168.1.100 (rightmost non-trusted IP)
+		if ip != "192.168.1.100" {
+			t.Errorf("Expected '192.168.1.100' (rightmost untrusted), got %q", ip)
+		}
+	})
+
+	// Test case: single IP in X-Forwarded-For from trusted proxy
+	t.Run("trusted proxy single IP in XFF", func(t *testing.T) {
+		extractor := NewIPExtractor([]string{"10.0.0.0/8"})
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "10.0.0.1:12345"
+		req.Header.Set("X-Forwarded-For", "203.0.113.50")
+
+		ip := extractor.ExtractIP(req)
+		if ip != "203.0.113.50" {
+			t.Errorf("Expected '203.0.113.50', got %q", ip)
+		}
+	})
+
+	// Test case: no X-Forwarded-For, check X-Real-IP from trusted proxy
+	t.Run("trusted proxy uses X-Real-IP", func(t *testing.T) {
+		extractor := NewIPExtractor([]string{"10.0.0.0/8"})
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "10.0.0.1:12345"
+		req.Header.Set("X-Real-IP", "203.0.113.50")
+
+		ip := extractor.ExtractIP(req)
+		if ip != "203.0.113.50" {
+			t.Errorf("Expected '203.0.113.50' from X-Real-IP, got %q", ip)
+		}
+	})
+
+	// Test case: trusted proxy with no forwarding headers
+	t.Run("trusted proxy no headers", func(t *testing.T) {
+		extractor := NewIPExtractor([]string{"10.0.0.0/8"})
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "10.0.0.1:12345"
+
+		ip := extractor.ExtractIP(req)
+		if ip != "10.0.0.1" {
+			t.Errorf("Expected '10.0.0.1', got %q", ip)
+		}
+	})
+
+	// Test case: IPv6 addresses
+	t.Run("IPv6 addresses", func(t *testing.T) {
+		extractor := NewIPExtractor([]string{"::1/128"})
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "[::1]:12345"
+		req.Header.Set("X-Forwarded-For", "2001:db8::1")
+
+		ip := extractor.ExtractIP(req)
+		if ip != "2001:db8::1" {
+			t.Errorf("Expected '2001:db8::1', got %q", ip)
+		}
+	})
+
+	// Test case: all IPs in chain are trusted (edge case)
+	t.Run("all IPs trusted returns leftmost", func(t *testing.T) {
+		extractor := NewIPExtractor([]string{"10.0.0.0/8", "192.168.0.0/16"})
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "10.0.0.1:12345"
+		req.Header.Set("X-Forwarded-For", "10.0.0.5, 192.168.1.1, 10.0.0.2")
+
+		ip := extractor.ExtractIP(req)
+		// All are trusted, should return leftmost
+		if ip != "10.0.0.5" {
+			t.Errorf("Expected '10.0.0.5' (leftmost when all trusted), got %q", ip)
+		}
+	})
+
+	// Test case: malformed X-Forwarded-For entries
+	t.Run("malformed XFF entries skipped", func(t *testing.T) {
+		extractor := NewIPExtractor([]string{"10.0.0.0/8"})
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "10.0.0.1:12345"
+		req.Header.Set("X-Forwarded-For", "not-an-ip, , 203.0.113.50")
+
+		ip := extractor.ExtractIP(req)
+		if ip != "203.0.113.50" {
+			t.Errorf("Expected '203.0.113.50', got %q", ip)
+		}
+	})
+}
+
+// TestIPExtractor_SecurityScenarios tests specific attack prevention scenarios
+func TestIPExtractor_SecurityScenarios(t *testing.T) {
+	// Scenario: Attacker tries to spoof IP to bypass rate limiting
+	t.Run("spoofing attempt blocked when not from proxy", func(t *testing.T) {
+		extractor := NewIPExtractor([]string{"10.0.0.0/8"}) // Only internal IPs trusted
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "203.0.113.100:12345"         // Attacker's real IP (not trusted)
+		req.Header.Set("X-Forwarded-For", "127.0.0.1") // Attacker tries to spoof localhost
+
+		ip := extractor.ExtractIP(req)
+		if ip != "203.0.113.100" {
+			t.Errorf("Expected attacker's real IP '203.0.113.100', got %q", ip)
+		}
+	})
+
+	// Scenario: Attacker prepends fake IPs to X-Forwarded-For
+	t.Run("prepended fake IPs ignored", func(t *testing.T) {
+		extractor := NewIPExtractor([]string{"10.0.0.0/8"})
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "10.0.0.1:12345" // Request through trusted proxy
+		// Attacker's request had: X-Forwarded-For: 8.8.8.8
+		// Proxy appends their real IP: X-Forwarded-For: 8.8.8.8, 203.0.113.100
+		// Proxy forwards to another proxy: X-Forwarded-For: 8.8.8.8, 203.0.113.100, 10.0.0.2
+		req.Header.Set("X-Forwarded-For", "8.8.8.8, 203.0.113.100, 10.0.0.2")
+
+		ip := extractor.ExtractIP(req)
+		// Should get 203.0.113.100 (rightmost non-trusted), not 8.8.8.8 (spoofed by attacker)
+		if ip != "203.0.113.100" {
+			t.Errorf("Expected real client IP '203.0.113.100', got %q", ip)
+		}
+	})
+}
+
+// TestExtractIPFromRemoteAddr tests the helper function for parsing RemoteAddr
+func TestExtractIPFromRemoteAddr(t *testing.T) {
+	testCases := []struct {
+		name       string
+		remoteAddr string
+		expected   string
+	}{
+		{"IPv4 with port", "192.168.1.1:8080", "192.168.1.1"},
+		{"IPv6 with port", "[::1]:8080", "::1"},
+		{"IPv4 without port", "192.168.1.1", "192.168.1.1"},
+		{"IPv6 without port brackets", "::1", "::1"},
+		{"empty string", "", ""},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := extractIPFromRemoteAddr(tc.remoteAddr)
+			if result != tc.expected {
+				t.Errorf("Expected %q, got %q", tc.expected, result)
+			}
+		})
+	}
+}
+
+// TestExtractIPAddress_Deprecated tests the deprecated function still works
+func TestExtractIPAddress_Deprecated(t *testing.T) {
+	t.Run("uses X-Forwarded-For first", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "10.0.0.1:12345"
+		req.Header.Set("X-Forwarded-For", "203.0.113.50, 10.0.0.1")
+
+		ip := ExtractIPAddress(req)
+		if ip != "203.0.113.50" {
+			t.Errorf("Expected '203.0.113.50', got %q", ip)
+		}
+	})
+
+	t.Run("falls back to X-Real-IP", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "10.0.0.1:12345"
+		req.Header.Set("X-Real-IP", "203.0.113.50")
+
+		ip := ExtractIPAddress(req)
+		if ip != "203.0.113.50" {
+			t.Errorf("Expected '203.0.113.50', got %q", ip)
+		}
+	})
+
+	t.Run("falls back to RemoteAddr", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "10.0.0.1:12345"
+
+		ip := ExtractIPAddress(req)
+		if ip != "10.0.0.1" {
+			t.Errorf("Expected '10.0.0.1', got %q", ip)
+		}
+	})
+}

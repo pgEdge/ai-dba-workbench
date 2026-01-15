@@ -43,6 +43,11 @@ http:
     # key_file: "/etc/ai-workbench/certs/server-key.pem"
     # chain_file: "/etc/ai-workbench/certs/chain.pem"
 
+  # Trusted reverse proxies (CIDR ranges)
+  # trusted_proxies:
+  #   - "10.0.0.0/8"
+  #   - "172.16.0.0/12"
+
   # Authentication Configuration
   auth:
     enabled: true
@@ -80,7 +85,6 @@ embedding:
 # LLM CONFIGURATION (Web Client Chat Proxy)
 #=========================================================================
 llm:
-  enabled: false
   provider: "anthropic"  # anthropic, openai, or ollama
   model: "claude-sonnet-4-5"
   # anthropic_api_key_file: "~/.anthropic-api-key"
@@ -108,16 +112,16 @@ builtins:
     get_schema_info: true
     similarity_search: true
     execute_explain: true
+    count_rows: true
+    list_probes: true
+    describe_probe: true
+    query_metrics: true
+    list_connections: true
     generate_embedding: true
     search_knowledgebase: true
-    count_rows: true
   resources:
     system_info: true
-  prompts:
-    explore_database: true
-    setup_semantic_search: true
-    diagnose_query_issue: true
-    design_schema: true
+    connection_info: true
 
 #=========================================================================
 # PATHS AND DATA DIRECTORIES
@@ -136,6 +140,7 @@ builtins:
 | `-config string` | Path to configuration file |
 | `-debug` | Enable debug logging (logs HTTP requests/responses) |
 | `-data-dir string` | Data directory for auth database and conversations |
+| `-trace-file string` | Path to trace file for logging MCP requests/responses |
 
 ### HTTP Server Options
 
@@ -167,6 +172,7 @@ builtins:
 | `-list-tokens` | List all service tokens |
 | `-token-note string` | Annotation for new token |
 | `-token-expiry string` | Token expiry (30d, 1y, 2w, 12h, never) |
+| `-superuser` | Grant superuser privileges (bypasses access checks) |
 
 ### User Management Options
 
@@ -182,6 +188,49 @@ builtins:
 | `-password string` | Password for user commands |
 | `-user-note string` | Annotation for new user |
 
+### Group Management Options
+
+| Flag | Description |
+|------|-------------|
+| `-add-group` | Add a new RBAC group |
+| `-delete-group` | Delete an RBAC group |
+| `-list-groups` | List all RBAC groups |
+| `-add-member` | Add a user or group to a group |
+| `-remove-member` | Remove a user or group from a group |
+| `-group string` | Group name for group commands |
+| `-member-group string` | Member group name for nested membership |
+| `-set-superuser` | Set superuser status for a user |
+| `-unset-superuser` | Remove superuser status from a user |
+
+### Privilege Management Options
+
+| Flag | Description |
+|------|-------------|
+| `-grant-privilege` | Grant an MCP privilege to a group |
+| `-revoke-privilege` | Revoke an MCP privilege from a group |
+| `-grant-connection` | Grant connection access to a group |
+| `-revoke-connection` | Revoke connection access from a group |
+| `-list-privileges` | List all registered MCP privileges |
+| `-show-group-privileges` | Show privileges for a specific group |
+| `-register-privilege` | Register a new MCP privilege identifier |
+| `-privilege string` | MCP privilege identifier |
+| `-privilege-type string` | MCP privilege type (tool, resource, prompt) |
+| `-privilege-description string` | Description for the privilege |
+| `-connection int` | Connection ID for connection privileges |
+| `-access-level string` | Access level (read, read_write); default: read |
+
+### Token Scope Options
+
+| Flag | Description |
+|------|-------------|
+| `-scope-token-connections` | Set connection scope for a token |
+| `-scope-token-tools` | Set MCP tool scope for a token |
+| `-clear-token-scope` | Clear all scope restrictions from a token |
+| `-show-token-scope` | Show current scope for a token |
+| `-token-id int` | Token ID for token scope commands |
+| `-scope-connections string` | Comma-separated list of connection IDs |
+| `-scope-tools string` | Comma-separated list of tool names |
+
 ## Configuration Sections
 
 ### HTTP Server (`http`)
@@ -193,6 +242,7 @@ builtins:
 | `tls.cert_file` | string | | Path to certificate file |
 | `tls.key_file` | string | | Path to private key file |
 | `tls.chain_file` | string | | Path to certificate chain |
+| `trusted_proxies` | list | `[]` | CIDR ranges of trusted reverse proxies |
 | `auth.enabled` | bool | `true` | Enable authentication |
 | `auth.max_failed_attempts_before_lockout` | int | `0` | Lock after N failures (0=disabled) |
 | `auth.max_user_token_days` | int | `0` | Max user token lifetime (0=unlimited) |
@@ -227,9 +277,10 @@ builtins:
 
 ### LLM Proxy (`llm`)
 
+The LLM proxy is always enabled; configure API keys for your chosen provider.
+
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `enabled` | bool | `false` | Enable LLM proxy |
 | `provider` | string | `anthropic` | Provider (anthropic, openai, ollama) |
 | `model` | string | `claude-sonnet-4-5` | Model name |
 | `anthropic_api_key_file` | string | | Path to Anthropic API key |
@@ -255,21 +306,33 @@ Enable or disable individual tools, resources, and prompts:
 ```yaml
 builtins:
   tools:
+    # Database tools
     query_database: true
     get_schema_info: true
     similarity_search: true
     execute_explain: true
+    count_rows: true
+    # Datastore/metrics tools
+    list_probes: true
+    describe_probe: true
+    query_metrics: true
+    list_connections: true
+    # Utility tools
     generate_embedding: true
     search_knowledgebase: true
-    count_rows: true
   resources:
     system_info: true
-  prompts:
-    explore_database: true
-    setup_semantic_search: true
-    diagnose_query_issue: true
-    design_schema: true
+    connection_info: true
 ```
+
+### Paths and Directories
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `secret_file` | string | `/etc/pgedge/ai-dba-server.secret` | Path to encryption secret file |
+| `custom_definitions_path` | string | | Path to custom prompts/resources file |
+| `data_dir` | string | `./data/` | Directory for auth and conversation databases |
+| `trace_file` | string | | Path to MCP request/response trace file |
 
 ## Data Directory
 
@@ -290,6 +353,21 @@ Or in configuration:
 
 ```yaml
 data_dir: "/var/lib/ai-workbench/data"
+```
+
+## MCP Tracing
+
+The server can log all MCP requests and responses to a trace file for
+debugging purposes. Enable tracing via command line or configuration:
+
+```bash
+./bin/ai-dba-server -trace-file /var/log/ai-workbench/mcp-trace.log
+```
+
+Or in configuration:
+
+```yaml
+trace_file: "/var/log/ai-workbench/mcp-trace.log"
 ```
 
 ## Configuration Examples
@@ -314,7 +392,8 @@ embedding:
   provider: "ollama"
   model: "nomic-embed-text"
 llm:
-  enabled: false
+  provider: "ollama"
+  model: "llama3:latest"
 ```
 
 ### Production Configuration
@@ -326,6 +405,9 @@ http:
     enabled: true
     cert_file: "/etc/ai-workbench/certs/server-cert.pem"
     key_file: "/etc/ai-workbench/certs/server-key.pem"
+  trusted_proxies:
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
   auth:
     enabled: true
     max_failed_attempts_before_lockout: 5
@@ -343,7 +425,6 @@ embedding:
   model: "voyage-3"
   voyage_api_key_file: "/etc/ai-workbench/voyage-api-key"
 llm:
-  enabled: true
   provider: "anthropic"
   model: "claude-sonnet-4-5"
   anthropic_api_key_file: "/etc/ai-workbench/anthropic-api-key"

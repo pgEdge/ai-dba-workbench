@@ -192,7 +192,11 @@ To manage response sizes:
 				aggregation = aggVal
 			}
 
-			ctx := context.Background()
+			// Extract context from args (injected by registry.Execute)
+			ctx, ok := args["__context"].(context.Context)
+			if !ok {
+				ctx = context.Background()
+			}
 
 			// Verify probe exists
 			existsQuery := `

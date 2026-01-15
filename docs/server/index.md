@@ -174,6 +174,7 @@ collector:
 | `list_probes` | List available metrics probes in the datastore |
 | `describe_probe` | Get column details for a specific metrics probe |
 | `query_metrics` | Query historical metrics with time-based aggregation |
+| `list_connections` | List available monitored database connections |
 
 See [Metrics Tools](metrics.md) for detailed documentation on querying
 collected metrics.
@@ -187,10 +188,13 @@ collected metrics.
 
 ## Available Resources
 
-| Resource | Description |
-|----------|-------------|
+| Resource URI | Description |
+|--------------|-------------|
 | `pg://system_info` | PostgreSQL server information (version, platform) |
 | `pg://connection_info` | Current database connection details |
+
+Resources can be disabled in configuration; see
+[Configuration](configuration.md) for details.
 
 ## Available Prompts
 

@@ -10,12 +10,15 @@ require (
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/jackc/pgx/v5 v5.7.6
 	github.com/mattn/go-sqlite3 v1.14.32
+	github.com/pgedge/ai-workbench/pkg v0.0.0
 	github.com/spf13/cobra v1.10.1
 	golang.org/x/crypto v0.44.0
 	golang.org/x/term v0.37.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.40.1
 )
+
+replace github.com/pgedge/ai-workbench/pkg => ../../pkg
 
 require (
 	github.com/alecthomas/chroma/v2 v2.14.0 // indirect

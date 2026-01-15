@@ -16,11 +16,13 @@ package engine
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"sync"
 	"time"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
+	"github.com/pgedge/ai-workbench/alerter/internal/cron"
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 )
 
@@ -619,25 +621,17 @@ func (e *Engine) checkScheduledBlackouts(ctx context.Context) {
 	}
 }
 
-// cronMatches checks if the current time matches a cron expression
-// This is a simplified implementation - a full version would use a cron library
+// cronMatches checks if the current time matches a cron expression.
+// It supports standard 5-field cron expressions with wildcards, ranges,
+// lists, and steps (e.g., "*/15 9-17 * * 1-5" for every 15 minutes
+// from 9am-5pm on weekdays).
 func (e *Engine) cronMatches(cronExpr string, now time.Time, timezone string) bool {
-	// Parse timezone
-	loc, err := time.LoadLocation(timezone)
+	matches, err := cron.Matches(cronExpr, now, timezone)
 	if err != nil {
-		loc = time.UTC
-	}
-	localNow := now.In(loc)
-
-	// Parse cron expression (minute hour day-of-month month day-of-week)
-	// This is a basic implementation that only checks minute and hour for simplicity
-	var minute, hour int
-	_, err = fmt.Sscanf(cronExpr, "%d %d", &minute, &hour)
-	if err != nil {
+		e.debug_log("Invalid cron expression %q: %v", cronExpr, err)
 		return false
 	}
-
-	return localNow.Minute() == minute && localNow.Hour() == hour
+	return matches
 }
 
 // calculateStats calculates mean and standard deviation for a slice of values
@@ -660,15 +654,7 @@ func calculateStats(values []float64) (mean, stddev float64) {
 		variance += diff * diff
 	}
 	variance /= float64(len(values))
-	stddev = variance // sqrt would be applied here, but for simplicity we use variance
-
-	// Apply sqrt for proper stddev
-	if variance > 0 {
-		stddev = 1.0
-		for i := 0; i < 10; i++ {
-			stddev = (stddev + variance/stddev) / 2 // Newton's method approximation
-		}
-	}
+	stddev = math.Sqrt(variance)
 
 	return mean, stddev
 }

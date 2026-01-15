@@ -4,26 +4,41 @@ The pgEdge AI DBA Workbench Alerter is a background monitoring service that
 evaluates collected metrics against thresholds and uses AI-powered anomaly
 detection to generate alerts.
 
-## Overview
+## Table of Contents
 
-The alerter is a standalone Go application that:
+- [Features](#features)
+- [Prerequisites](#prerequisites)
+- [Building](#building)
+- [Configuration](#configuration)
+- [Running](#running)
+- [Anomaly Detection Tiers](#anomaly-detection-tiers)
+- [Documentation](#documentation)
 
-- Evaluates metrics against configurable threshold-based alert rules
-- Implements tiered AI-powered anomaly detection
-- Manages alert lifecycle including automatic clearing
-- Supports blackout periods for maintenance windows
-- Calculates metric baselines for anomaly detection
+For complete documentation, visit [docs.pgedge.com](https://docs.pgedge.com).
 
-## Getting Started
+## Features
 
-### Prerequisites
+The alerter provides the following capabilities:
 
-- Go 1.24 or later
-- PostgreSQL 12 or later (for the datastore with pgvector for Tier 2)
-- Network access to the AI DBA Workbench datastore
-- (Optional) Ollama, OpenAI, Anthropic, or Voyage API access for Tier 3
+- The threshold engine evaluates metrics against configurable alert rules.
+- The tiered anomaly detection system uses statistical analysis, embedding
+  similarity, and LLM classification.
+- The alert lifecycle manager tracks states and handles automatic clearing.
+- The blackout scheduler suppresses alerts during maintenance windows.
+- The baseline calculator computes metric baselines for anomaly detection.
 
-### Building
+## Prerequisites
+
+Before installing, ensure you have the following:
+
+- [Go 1.24](https://go.dev/doc/install) or later.
+- [PostgreSQL 12](https://www.postgresql.org/download/) or later with pgvector
+  extension for Tier 2 anomaly detection.
+- Network access to the AI DBA Workbench datastore.
+- (Optional) [Ollama](https://ollama.ai/), OpenAI, Anthropic, or Voyage API
+  access for Tier 3 LLM classification.
+
+## Building
 
 ```bash
 cd src
@@ -31,15 +46,15 @@ go mod tidy
 go build -o ai-dba-alerter ./cmd/ai-dba-alerter
 ```
 
-### Configuration
+## Configuration
 
-The alerter can be configured using a YAML configuration file, command line
-flags, or environment variables. Command line flags take precedence over
-configuration file settings.
+The alerter supports configuration through YAML files, environment variables,
+and command-line flags. Command-line flags take precedence over environment
+variables, which take precedence over configuration file settings.
 
-#### Configuration File
+### Configuration File
 
-By default, the alerter looks for configuration in:
+By default, the alerter searches for configuration in these locations:
 
 1. `/etc/pgedge/ai-dba-alerter.yaml`
 2. `<binary-directory>/ai-dba-alerter.yaml`
@@ -49,72 +64,70 @@ You can specify a different path using the `-config` flag.
 A sample configuration file is provided at
 [../examples/ai-dba-alerter.yaml](../examples/ai-dba-alerter.yaml).
 
-Key configuration options:
+In the following example, the configuration sets up a basic alerter instance:
 
 ```yaml
 datastore:
   host: localhost
   database: ai_workbench
   username: alerter
-  password_file: /path/to/password.txt
+  password_file: /etc/ai-workbench/password.txt
   port: 5432
   sslmode: prefer
 
 threshold:
-  check_interval_seconds: 60
-  default_severity: warning
+  evaluation_interval_seconds: 60
 
 anomaly:
   enabled: true
   tier1:
     enabled: true
-    z_score_threshold: 3.0
+    default_sensitivity: 3.0
 ```
 
-See the example configuration file for all available options.
+### Command-Line Flags
 
-#### Command Line Flags
+The following table lists all command-line flags:
 
-```
--config string
-    Path to configuration file
--debug
-    Enable debug logging
--db-host string
-    Database host (overrides config)
--db-port int
-    Database port (overrides config)
--db-name string
-    Database name (overrides config)
--db-user string
-    Database user (overrides config)
--db-password string
-    Database password (overrides config)
--db-sslmode string
-    Database SSL mode (overrides config)
-```
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-config` | Path to configuration file | Auto-detected |
+| `-debug` | Enable debug logging | `false` |
+| `-db-host` | Database host (overrides config) | None |
+| `-db-port` | Database port (overrides config) | None |
+| `-db-name` | Database name (overrides config) | None |
+| `-db-user` | Database user (overrides config) | None |
+| `-db-password` | Database password (overrides config) | None |
+| `-db-sslmode` | Database SSL mode (overrides config) | None |
 
-#### Environment Variables
+### Environment Variables
 
-The following environment variables can override configuration:
+The following environment variables override configuration file settings:
 
-- `AI_DBA_PG_HOST` - Database host
-- `AI_DBA_PG_HOSTADDR` - Database host address
-- `AI_DBA_PG_DATABASE` - Database name
-- `AI_DBA_PG_USERNAME` - Database username
-- `AI_DBA_PG_PASSWORD` - Database password
-- `AI_DBA_PG_SSLMODE` - SSL mode
-- `AI_DBA_PG_SSLCERT` - SSL certificate path
-- `AI_DBA_PG_SSLKEY` - SSL key path
-- `AI_DBA_PG_SSLROOTCERT` - SSL root certificate path
+| Variable | Description |
+|----------|-------------|
+| `AI_DBA_PG_HOST` | Database hostname |
+| `AI_DBA_PG_HOSTADDR` | Database IP address |
+| `AI_DBA_PG_DATABASE` | Database name |
+| `AI_DBA_PG_USERNAME` | Database username |
+| `AI_DBA_PG_PASSWORD` | Database password |
+| `AI_DBA_PG_SSLMODE` | SSL connection mode |
+| `AI_DBA_PG_SSLCERT` | Path to SSL certificate |
+| `AI_DBA_PG_SSLKEY` | Path to SSL key |
+| `AI_DBA_PG_SSLROOTCERT` | Path to CA certificate |
 
-### Running
+For complete configuration documentation, see
+[docs/alerter/configuration.md](../docs/alerter/configuration.md).
+
+## Running
+
+In the following example, the alerter starts with a custom configuration file:
 
 ```bash
 ./ai-dba-alerter -config /path/to/config.yaml
 ```
 
-To enable debug logging for troubleshooting:
+In the following example, the alerter starts with debug logging enabled:
 
 ```bash
 ./ai-dba-alerter -debug -config /path/to/config.yaml
@@ -122,57 +135,76 @@ To enable debug logging for troubleshooting:
 
 ### Signal Handling
 
-The alerter responds to the following signals:
+The alerter responds to Unix signals for operational control:
 
-- `SIGINT`, `SIGTERM` - Graceful shutdown
-- `SIGHUP` - Reload configuration
+- `SIGINT` and `SIGTERM` trigger a graceful shutdown.
+- `SIGHUP` reloads the configuration file without restarting.
 
 ## Anomaly Detection Tiers
 
-The alerter implements a tiered approach to anomaly detection:
+The alerter implements a tiered approach to anomaly detection. Each tier
+provides increasingly sophisticated analysis at the cost of additional
+processing time.
 
 ### Tier 1: Statistical Analysis
 
-Uses z-score calculations to detect deviations from baseline metrics. This
-tier is fast and runs on all metrics with baseline data available.
+Tier 1 uses z-score calculations to detect deviations from baseline metrics.
+The tier runs on all metrics that have baseline data available. This approach
+provides fast detection with minimal resource usage.
 
 ### Tier 2: Embedding Similarity
 
-Uses pgvector to find similar patterns in historical anomaly data. Requires
-the pgvector extension and pre-computed embeddings.
+Tier 2 uses pgvector to find similar patterns in historical anomaly data.
+The tier requires the pgvector extension and pre-computed embeddings. This
+approach identifies anomalies that match known problematic patterns.
 
 ### Tier 3: LLM Classification
 
-Uses large language models to classify complex anomalies. Supports Ollama
-(local), OpenAI, Anthropic, and Voyage providers.
+Tier 3 uses large language models to classify complex anomalies. The tier
+supports Ollama (local), OpenAI, Anthropic, and Voyage providers. This
+approach provides the most sophisticated analysis for difficult cases.
 
 ## Documentation
 
-For detailed documentation, see [../docs/alerter/index.md](../docs/alerter/index.md).
+For detailed documentation, see [docs/alerter/index.md](../docs/alerter/index.md).
+
+The documentation includes the following topics:
+
+- [Configuration Reference](../docs/alerter/configuration.md) covers all
+  configuration options, environment variables, and command-line flags.
+- [Cron Expressions](../docs/alerter/cron-expressions.md) explains the cron
+  syntax for scheduling blackout periods.
 
 ## Testing and Linting
 
 The project uses a Makefile to manage testing, linting, and building.
 
-### Run tests
+Run all tests with the following command:
 
 ```bash
 make test
 ```
 
-### Run linting
+Run the linter with the following command:
 
 ```bash
 make lint
 ```
 
-### Run all checks
+Run both tests and linting with the following command:
 
 ```bash
 make test-all
 ```
 
-## License
+---
 
-This software is released under The PostgreSQL License. See
-[LICENSE.md](../LICENSE.md) for details.
+To report an issue with the software, visit:
+[GitHub Issues](https://github.com/pgEdge/ai-dba-workbench/issues)
+
+We welcome your project contributions; for more information, see
+[docs/developers.md](../docs/developers.md).
+
+For more information, visit [docs.pgedge.com](https://docs.pgedge.com)
+
+This project is licensed under the [PostgreSQL License](../LICENSE.md).

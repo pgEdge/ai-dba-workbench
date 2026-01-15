@@ -45,6 +45,8 @@ directory:
 - **[Documentation Index](docs/index.md)** - Main documentation entry point
 - **[CLI Documentation](docs/cli/index.md)** - Command-line interface usage
   and configuration
+- **[Server Documentation](docs/server/index.md)** - MCP server configuration
+  and authentication
 - **[Collector Documentation](docs/collector/index.md)** - Data collection
   and monitoring
 - **[Alerter Documentation](docs/alerter/index.md)** - Alert generation and
@@ -114,3 +116,19 @@ For information on getting started with each component, please refer to:
 
 - [CLI Quick Start](docs/cli/index.md) - Get started with the CLI
 - [Collector Quick Start](docs/collector/quickstart.md) - Set up monitoring
+- [Server Configuration](docs/server/configuration.md) - Configure the server
+- [Alerter Overview](docs/alerter/index.md) - Set up alerting
+
+## Issues
+
+To report an issue with the software, visit:
+[GitHub Issues](https://github.com/pgEdge/ai-workbench/issues)
+
+## Contributing
+
+We welcome your project contributions; for more information, see
+[docs/developers.md](docs/developers.md).
+
+For more information, visit [docs.pgedge.com](https://docs.pgedge.com)
+
+This project is licensed under the [PostgreSQL License](LICENSE.md).

@@ -46,21 +46,20 @@ the AI DBA Workbench system.
 
 ## Key Features
 
-The Collector provides:
+The Collector provides the following capabilities:
 
-- **Multi-Server Monitoring**: Monitor multiple PostgreSQL servers
-  simultaneously with independent connection pools
-- **29 Built-in Probes**: Comprehensive coverage of PostgreSQL system views
-  and statistics, including configuration tracking, authentication monitoring,
-  and cluster topology detection
-- **Flexible Scheduling**: Configurable collection intervals per probe
-- **Automated Data Management**: Weekly partitioning and retention-based
-  garbage collection
-- **Secure Connections**: Password encryption using AES-256-GCM, SSL/TLS
-  support
-- **Connection Pooling**: Efficient connection management for both datastore
-  and monitored servers
-- **Graceful Shutdown**: Proper cleanup of all connections and resources
+- Multi-server monitoring collects metrics from multiple PostgreSQL servers
+  simultaneously with independent connection pools.
+- The system includes 29 built-in probes that provide comprehensive coverage
+  of PostgreSQL system views and statistics.
+- Flexible scheduling allows configurable collection intervals per probe.
+- Automated data management handles weekly partitioning and retention-based
+  garbage collection.
+- Secure connections protect passwords using AES-256-GCM encryption with
+  PBKDF2 key derivation and support SSL/TLS connections.
+- Efficient connection pooling manages connections for both the datastore
+  and monitored servers.
+- Graceful shutdown ensures proper cleanup of all connections and resources.
 
 ## Getting Help
 

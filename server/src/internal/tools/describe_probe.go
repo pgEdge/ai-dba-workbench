@@ -87,7 +87,11 @@ Returns TSV with:
 				return mcp.NewToolError("Invalid probe name. Probe names must contain only letters, numbers, and underscores.")
 			}
 
-			ctx := context.Background()
+			// Extract context from args (injected by registry.Execute)
+			ctx, ok := args["__context"].(context.Context)
+			if !ok {
+				ctx = context.Background()
+			}
 
 			// First check if the probe exists
 			existsQuery := `

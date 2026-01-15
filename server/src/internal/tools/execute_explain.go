@@ -156,7 +156,11 @@ READ ONLY transaction to prevent side effects. However, be cautious with:
 			connStr := dbClient.GetDefaultConnection()
 			pool := dbClient.GetPoolFor(connStr)
 
-			ctx := context.Background()
+			// Extract context from args (injected by registry.Execute)
+			ctx, ok := args["__context"].(context.Context)
+			if !ok {
+				ctx = context.Background()
+			}
 
 			// Execute EXPLAIN in a READ ONLY transaction
 			tx, err := pool.Begin(ctx)

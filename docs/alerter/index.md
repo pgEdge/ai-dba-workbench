@@ -8,26 +8,29 @@ violations and uses AI-powered anomaly detection to generate alerts.
 
 ### Getting Started
 
-- [Overview](overview.md) - High-level architecture and key concepts
-- [Quick Start Guide](quickstart.md) - Get up and running quickly
-- [Configuration Guide](configuration.md) - Configuration with examples
+- [Overview](overview.md) - High-level architecture and key concepts.
+- [Quick Start Guide](quickstart.md) - Get up and running quickly.
+- [Configuration Reference](configuration.md) - All configuration options.
 
 ### Architecture and Design
 
-- [System Architecture](architecture.md) - Detailed system design
-- [Alert Rules](alert-rules.md) - Built-in and custom alert rules
-- [Anomaly Detection](anomaly-detection.md) - AI-powered anomaly detection
+- [System Architecture](architecture.md) - Detailed system design.
+- [Alert Rules](alert-rules.md) - Built-in and custom alert rules.
+- [Anomaly Detection](anomaly-detection.md) - AI-powered anomaly detection.
+
+### Scheduling
+
+- [Cron Expressions](cron-expressions.md) - Cron syntax for blackout schedules.
 
 ### Development
 
-- [Development Guide](development.md) - Setting up for development
-- [Testing Guide](testing.md) - Running and writing tests
-- [Adding Alert Rules](adding-rules.md) - Creating custom alert rules
+- [Development Guide](development.md) - Setting up for development.
+- [Testing Guide](testing.md) - Running and writing tests.
+- [Adding Alert Rules](adding-rules.md) - Creating custom alert rules.
 
 ### Reference
 
-- [Configuration Reference](config-reference.md) - All configuration options
-- [Alert Rule Reference](rule-reference.md) - List of built-in alert rules
+- [Alert Rule Reference](rule-reference.md) - List of built-in alert rules.
 
 ## Quick Links
 

@@ -173,6 +173,9 @@ pool:
 # This secret is used to encrypt sensitive data such as passwords for
 # monitored database connections stored in the datastore.
 #
+# ENCRYPTION: The collector uses AES-256-GCM encryption with PBKDF2 key
+# derivation (SHA256, 100,000 iterations) to protect stored passwords.
+#
 # IMPORTANT SECURITY NOTES:
 # - Generate a strong random string (at least 32 characters recommended)
 # - Keep this secret secure and do not share it
@@ -180,6 +183,10 @@ pool:
 #   datastore will become unreadable and must be re-entered
 # - Use different secrets for different environments (dev, staging, prod)
 # - The secret file should have restricted permissions (chmod 600)
+#
+# MIGRATION NOTE: Recent versions upgraded from SHA256 to PBKDF2 key
+# derivation. If upgrading from an older version, you must re-enter
+# passwords for all monitored connections.
 #
 # Generate a secure secret file:
 #   openssl rand -base64 32 > /etc/pgedge/ai-dba-collector.secret

@@ -21,8 +21,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pgedge/ai-workbench/cli/internal/embedding"
 	"github.com/pgedge/ai-workbench/cli/internal/mcp"
+	"github.com/pgedge/ai-workbench/pkg/embedding"
 )
 
 // Message represents a chat message

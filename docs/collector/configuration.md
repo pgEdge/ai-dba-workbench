@@ -250,7 +250,8 @@ Maximum time (seconds) to wait for an available monitored connection.
 
 #### secret_file
 
-Path to file containing per-installation secret for encryption.
+The `secret_file` option specifies the path to a file containing
+per-installation secret for encryption.
 
 - **Type**: string (file path)
 - **Default**: Searches in order:
@@ -258,16 +259,33 @@ Path to file containing per-installation secret for encryption.
     2. `<binary-directory>/ai-dba-collector.secret`
     3. `./ai-dba-collector.secret`
 - **Example**: `secret_file: /etc/pgedge/ai-dba-collector.secret`
-- **Note**: Used to encrypt/decrypt passwords for monitored connections
-- **Important**: Keep this file secure (chmod 600). If lost, passwords must be
-  re-entered
+- **Note**: The Collector uses this secret to encrypt/decrypt passwords for
+  monitored connections.
+- **Important**: Keep this file secure (chmod 600). If the file is lost, you
+  must re-enter all monitored connection passwords.
 
-**Generate a secure secret file:**
+The following command generates a secure secret file:
 
 ```bash
 openssl rand -base64 32 > /etc/pgedge/ai-dba-collector.secret
 chmod 600 /etc/pgedge/ai-dba-collector.secret
 ```
+
+#### Encryption Details
+
+The Collector uses AES-256-GCM encryption to protect stored passwords. The
+encryption key is derived from the server secret using PBKDF2 with SHA256 and
+100,000 iterations. This provides strong protection against brute-force
+attacks on the encrypted passwords.
+
+#### PBKDF2 Migration Note
+
+Recent versions upgraded from simple SHA256 hashing to PBKDF2 key derivation.
+This change is a breaking change for existing installations. Encrypted
+passwords created with the previous implementation will no longer decrypt
+correctly. After upgrading, you must re-enter passwords for all monitored
+connections using the MCP server API or by updating the `connections` table
+directly.
 
 ## Command-Line Flags
 

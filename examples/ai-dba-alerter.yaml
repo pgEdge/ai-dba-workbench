@@ -112,48 +112,28 @@ pool:
   # Maximum number of concurrent connections to the datastore
   # This limits the total number of open connections at any time
   # Higher values allow more concurrent alert evaluation operations
-  # Default: 25
-  datastore_max_connections: 25
+  # Default: 10
+  max_connections: 10
 
   # Maximum idle time for datastore connections in seconds
   # Connections idle longer than this duration are automatically closed
   # Set to 0 to disable automatic cleanup of idle connections
   # Default: 300 (5 minutes)
-  datastore_max_idle_seconds: 300
-
-  # Maximum time (seconds) to wait for an available datastore connection
-  # Alert evaluation will fail if timeout is exceeded
-  # Default: 60
-  datastore_max_wait_seconds: 60
+  max_idle_seconds: 300
 
 #=========================================================================
 # THRESHOLD EVALUATION SETTINGS
 #=========================================================================
 #
 # These settings control how frequently the alerter evaluates metrics
-# against defined thresholds and the default severity for new alerts.
+# against defined thresholds.
 #
 
 threshold:
   # How often to check metrics against threshold rules (in seconds)
   # Lower values provide faster alert detection but increase load
   # Default: 60
-  check_interval_seconds: 60
-
-  # Default severity level for alerts when not specified in the rule
-  # Options: info, warning, critical
-  # Default: warning
-  default_severity: warning
-
-  # Number of consecutive threshold violations required to trigger alert
-  # Helps prevent false positives from brief metric spikes
-  # Default: 1
-  trigger_count: 1
-
-  # Number of consecutive normal readings required to auto-clear alert
-  # Prevents alert flapping when metrics hover near threshold
-  # Default: 3
-  clear_count: 3
+  evaluation_interval_seconds: 60
 
 #=========================================================================
 # ANOMALY DETECTION SETTINGS
@@ -183,16 +163,15 @@ anomaly:
     # Default: true
     enabled: true
 
-    # Z-score threshold for anomaly detection
+    # Z-score sensitivity threshold for anomaly detection
     # Values with z-score above this are flagged as anomalies
     # Common values: 2.0 (95%), 2.5 (99%), 3.0 (99.7%)
     # Default: 3.0
-    z_score_threshold: 3.0
+    default_sensitivity: 3.0
 
-    # Minimum number of baseline samples required for analysis
-    # More samples provide more accurate baseline statistics
-    # Default: 100
-    min_samples: 100
+    # How often to run tier 1 anomaly detection (in seconds)
+    # Default: 60
+    evaluation_interval_seconds: 60
 
   #-------------------------------------------------------------------------
   # Tier 2: Embedding Similarity Search
@@ -202,23 +181,19 @@ anomaly:
 
   tier2:
     # Enable tier 2 embedding similarity search
-    # Default: false (requires additional setup)
-    enabled: false
+    # Default: true
+    enabled: true
 
-    # Similarity threshold for anomaly detection (cosine distance)
-    # Lower values require closer matches to known anomalies
+    # Suppression threshold for embedding similarity
+    # Anomalies with similarity above this are suppressed as duplicates
     # Range: 0.0 - 1.0
-    # Default: 0.8
-    similarity_threshold: 0.8
+    # Default: 0.85
+    suppression_threshold: 0.85
 
-    # Number of similar patterns to retrieve for comparison
-    # Default: 5
-    top_k: 5
-
-    # Embedding dimensions (must match your embedding model)
-    # Common values: 384, 768, 1536
-    # Default: 1536
-    dimensions: 1536
+    # Similarity threshold for matching known anomaly patterns
+    # Range: 0.0 - 1.0
+    # Default: 0.3
+    similarity_threshold: 0.3
 
   #-------------------------------------------------------------------------
   # Tier 3: LLM Classification
@@ -228,17 +203,8 @@ anomaly:
 
   tier3:
     # Enable tier 3 LLM classification
-    # Default: false (requires LLM provider configuration)
-    enabled: false
-
-    # Confidence threshold for LLM anomaly classification
-    # Range: 0.0 - 1.0
-    # Default: 0.7
-    confidence_threshold: 0.7
-
-    # Maximum tokens for LLM response
-    # Default: 500
-    max_tokens: 500
+    # Default: true
+    enabled: true
 
     # Timeout for LLM API calls in seconds
     # Default: 30
@@ -249,35 +215,13 @@ anomaly:
 #=========================================================================
 #
 # Baselines are calculated from historical metric data and used for
-# anomaly detection. The alerter periodically recalculates baselines
-# during low-activity periods.
+# anomaly detection. The alerter periodically recalculates baselines.
 #
 
-baseline:
-  # Hour of day (0-23) to run baseline calculations
-  # Choose a low-activity time to minimize performance impact
-  # Default: 3 (3:00 AM)
-  calculation_hour: 3
-
-  # Number of days of historical data to use for baseline calculation
-  # More days provide more accurate baselines but increase computation
-  # Default: 30
-  lookback_days: 30
-
-  # Number of days to retain baseline data
-  # Older baselines are automatically deleted
-  # Default: 90
-  retention_days: 90
-
-  # Metrics to include in baseline calculation (empty means all)
-  # Example: ["cpu_usage", "memory_usage", "connection_count"]
-  # Default: [] (all metrics)
-  include_metrics: []
-
-  # Metrics to exclude from baseline calculation
-  # Example: ["temporary_metrics", "debug_counters"]
-  # Default: []
-  exclude_metrics: []
+baselines:
+  # How often to refresh baseline calculations (in seconds)
+  # Default: 3600 (1 hour)
+  refresh_interval_seconds: 3600
 
 #=========================================================================
 # CORRELATION SETTINGS
@@ -288,40 +232,29 @@ baseline:
 #
 
 correlation:
-  # Enable alert correlation
-  # Default: true
-  enabled: true
-
   # Time window for correlating related alerts (in seconds)
   # Alerts within this window may be grouped together
   # Default: 120
   window_seconds: 120
 
-  # Minimum number of related alerts to form a correlation group
-  # Default: 3
-  min_group_size: 3
-
-  # Consider alerts from the same connection as related
-  # Default: true
-  same_connection: true
-
-  # Consider alerts of the same type as related
-  # Default: true
-  same_rule: true
-
 #=========================================================================
 # LLM PROVIDER SETTINGS
 #=========================================================================
 #
-# Configure the LLM provider for tier 3 anomaly detection.
+# Configure the LLM providers for tier 2 embeddings and tier 3 reasoning.
 # Supports Ollama (local), OpenAI, Anthropic, and Voyage.
 #
 
 llm:
-  # LLM provider to use for anomaly classification
-  # Options: ollama, openai, anthropic, voyage
+  # Provider to use for generating embeddings (tier 2)
+  # Options: ollama, openai, voyage
   # Default: ollama
-  provider: ollama
+  embedding_provider: ollama
+
+  # Provider to use for reasoning/classification (tier 3)
+  # Options: ollama, openai, anthropic
+  # Default: ollama
+  reasoning_provider: ollama
 
   #-------------------------------------------------------------------------
   # Ollama Settings (local LLM)
@@ -330,11 +263,15 @@ llm:
   ollama:
     # Ollama server URL
     # Default: http://localhost:11434
-    url: http://localhost:11434
+    base_url: http://localhost:11434
 
-    # Model to use for classification
-    # Default: llama2
-    model: llama2
+    # Model to use for embeddings
+    # Default: nomic-embed-text
+    embedding_model: nomic-embed-text
+
+    # Model to use for reasoning/classification
+    # Default: qwen2.5:7b-instruct
+    reasoning_model: qwen2.5:7b-instruct
 
   #-------------------------------------------------------------------------
   # OpenAI Settings
@@ -345,13 +282,13 @@ llm:
     # File should contain only the API key with no extra whitespace
     # api_key_file: /etc/ai-workbench/openai-api-key.txt
 
-    # Model to use for classification
-    # Default: gpt-4o
-    model: gpt-4o
+    # Model to use for embeddings
+    # Default: text-embedding-3-small
+    embedding_model: text-embedding-3-small
 
-    # API endpoint (for Azure OpenAI or compatible APIs)
-    # Default: https://api.openai.com/v1
-    # endpoint: https://api.openai.com/v1
+    # Model to use for reasoning/classification
+    # Default: gpt-4o-mini
+    reasoning_model: gpt-4o-mini
 
   #-------------------------------------------------------------------------
   # Anthropic Settings
@@ -362,12 +299,12 @@ llm:
     # File should contain only the API key with no extra whitespace
     # api_key_file: /etc/ai-workbench/anthropic-api-key.txt
 
-    # Model to use for classification
-    # Default: claude-sonnet-4-20250514
-    model: claude-sonnet-4-20250514
+    # Model to use for reasoning/classification
+    # Default: claude-3-5-haiku-20241022
+    reasoning_model: claude-3-5-haiku-20241022
 
   #-------------------------------------------------------------------------
-  # Voyage Settings (for embeddings)
+  # Voyage Settings (for embeddings only)
   #-------------------------------------------------------------------------
 
   voyage:
@@ -376,8 +313,8 @@ llm:
     # api_key_file: /etc/ai-workbench/voyage-api-key.txt
 
     # Model to use for embeddings
-    # Default: voyage-large-2
-    model: voyage-large-2
+    # Default: voyage-3-lite
+    embedding_model: voyage-3-lite
 
 #=========================================================================
 # BLACKOUT PERIOD SETTINGS
@@ -489,24 +426,26 @@ retention:
 #   port: 5432
 #   sslmode: disable
 # pool:
-#   datastore_max_connections: 10
+#   max_connections: 10
 # threshold:
-#   check_interval_seconds: 30
-#   default_severity: info
+#   evaluation_interval_seconds: 30
 # anomaly:
 #   enabled: true
 #   tier1:
 #     enabled: true
-#     z_score_threshold: 2.5
+#     default_sensitivity: 2.5
+#     evaluation_interval_seconds: 30
 #   tier2:
 #     enabled: false
 #   tier3:
 #     enabled: false
 # llm:
-#   provider: ollama
+#   embedding_provider: ollama
+#   reasoning_provider: ollama
 #   ollama:
-#     url: http://localhost:11434
-#     model: llama2
+#     base_url: http://localhost:11434
+#     embedding_model: nomic-embed-text
+#     reasoning_model: qwen2.5:7b-instruct
 # secret_file: ./ai-dba-alerter.secret
 
 #-------------------------------------------------------------------------
@@ -523,40 +462,36 @@ retention:
 #   sslkey: /etc/ai-workbench/certs/client-key.pem
 #   sslrootcert: /etc/ai-workbench/certs/ca-cert.pem
 # pool:
-#   datastore_max_connections: 50
-#   datastore_max_idle_seconds: 300
-#   datastore_max_wait_seconds: 60
+#   max_connections: 50
+#   max_idle_seconds: 300
 # threshold:
-#   check_interval_seconds: 60
-#   default_severity: warning
-#   trigger_count: 2
-#   clear_count: 5
+#   evaluation_interval_seconds: 60
 # anomaly:
 #   enabled: true
 #   tier1:
 #     enabled: true
-#     z_score_threshold: 3.0
-#     min_samples: 200
+#     default_sensitivity: 3.0
+#     evaluation_interval_seconds: 60
 #   tier2:
 #     enabled: true
-#     similarity_threshold: 0.85
-#     top_k: 10
+#     suppression_threshold: 0.85
+#     similarity_threshold: 0.3
 #   tier3:
 #     enabled: true
-#     confidence_threshold: 0.8
+#     timeout_seconds: 30
 # llm:
-#   provider: anthropic
+#   embedding_provider: voyage
+#   reasoning_provider: anthropic
 #   anthropic:
 #     api_key_file: /var/secrets/ai-workbench/anthropic-api-key.txt
-#     model: claude-sonnet-4-20250514
-# baseline:
-#   calculation_hour: 3
-#   lookback_days: 60
-#   retention_days: 180
+#     reasoning_model: claude-3-5-haiku-20241022
+#   voyage:
+#     api_key_file: /var/secrets/ai-workbench/voyage-api-key.txt
+#     embedding_model: voyage-3-lite
+# baselines:
+#   refresh_interval_seconds: 3600
 # correlation:
-#   enabled: true
 #   window_seconds: 180
-#   min_group_size: 3
 # blackout:
 #   enabled: true
 #   timezone: America/New_York
@@ -564,8 +499,4 @@ retention:
 #     - name: sunday_maintenance
 #       cron: "0 2 * * 0"
 #       duration_minutes: 120
-# retention:
-#   alert_days: 180
-#   cleared_alert_days: 60
-#   history_days: 365
 # secret_file: /var/secrets/ai-workbench/alerter.secret

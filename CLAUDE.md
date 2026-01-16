@@ -40,18 +40,36 @@ Reference these files for project context:
 ## Sub-Agents
 
 Specialized sub-agents in `/.claude/agents/` handle complex domain tasks.
-Most sub-agents research and recommend; they do not edit code directly.
-The documentation-writer is the exception and writes documentation files.
+Use sub-agents proactively to preserve context in the main conversation.
 
-Use the appropriate sub-agent for these domains:
+### When to Use Sub-Agents
+
+**Proactively delegate to sub-agents** for:
+
+- Any Go implementation task (use **golang-expert**)
+- Any React/TypeScript implementation task (use **react-expert**)
+- Complex domain questions requiring research
+- Tasks that would consume significant context in the main conversation
+
+Sub-agents have full access to the codebase and can both advise and write
+code directly. Delegating implementation work preserves context in the main
+conversation for coordination and higher-level decisions.
+
+### Available Sub-Agents
+
+**Implementation Agents** (can write code):
+
+- **golang-expert** - Go development: features, bugs, architecture, review.
+
+- **react-expert** - React/MUI development: components, features, bugs.
+
+- **documentation-writer** - Documentation following project style guide.
+
+**Advisory Agents** (research and recommend):
 
 - **postgres-expert** - PostgreSQL administration, tuning, troubleshooting.
 
 - **spock-expert** - pgEdge Spock replication, Snowflake, Lolor extensions.
-
-- **golang-expert-advisor** - Go architecture, best practices, code review.
-
-- **react-mui-advisor** - React/MUI component design, frontend patterns.
 
 - **mcp-server-expert** - MCP protocol, tool implementation, debugging.
 
@@ -62,8 +80,6 @@ Use the appropriate sub-agent for these domains:
 - **code-reviewer** - Code quality, bug detection, anti-patterns.
 
 - **codebase-navigator** - Finding code, tracing data flow, structure.
-
-- **documentation-writer** - Documentation following project style guide.
 
 - **design-compliance-validator** - Ensuring changes align with DESIGN.md.
 

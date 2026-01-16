@@ -309,26 +309,22 @@ func TestCreateUserIntegration(t *testing.T) {
         t.Fatalf("Initialize failed: %v", err)
     }
 
-    // Step 2: Authenticate (get token)
-    authReq := []byte(`{
-        "jsonrpc": "2.0",
-        "id": "2",
-        "method": "tools/call",
-        "params": {
-            "name": "authenticate_user",
-            "arguments": {
-                "username": "admin",
-                "password": "adminpass"
-            }
-        }
-    }`)
-    authResp, err := handler.HandleRequest(authReq, "")
+    // Step 2: Authenticate via HTTP API (get token)
+    authBody := []byte(`{"username": "admin", "password": "adminpass"}`)
+    authReq, _ := http.NewRequest("POST", server.URL+"/api/auth/login", bytes.NewBuffer(authBody))
+    authReq.Header.Set("Content-Type", "application/json")
+    authResp, err := http.DefaultClient.Do(authReq)
     if err != nil {
         t.Fatalf("Authentication failed: %v", err)
     }
+    defer authResp.Body.Close()
 
     // Extract token from response
-    token := extractTokenFromResponse(authResp)
+    var authResult struct {
+        SessionToken string `json:"session_token"`
+    }
+    json.NewDecoder(authResp.Body).Decode(&authResult)
+    token := authResult.SessionToken
 
     // Step 3: Create user with token
     createReq := []byte(`{

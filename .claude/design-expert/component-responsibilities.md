@@ -291,7 +291,7 @@ integration.
 **Unauthenticated Methods**:
 - `initialize`: Protocol handshake
 - `ping`: Health check
-- `tools/call` with `authenticate_user`: Login
+- `POST /api/auth/login`: Login (HTTP API, not MCP)
 
 #### 3. Authorization
 
@@ -649,10 +649,10 @@ interaction.
 **What**: Handle user login and session management.
 
 **How**:
-- Login form calls authenticate_user tool
+- Login form calls POST /api/auth/login HTTP API
 - Store session token in browser
 - Include token in all MCP requests
-- Logout calls logout tool
+- Logout clears stored token
 
 ### What Client Does NOT Do
 
@@ -922,10 +922,10 @@ options.
 ### Example 1: User Authenticates and Queries Metrics
 
 **Flow**:
-1. **Client** -> **Server**: POST /sse with authenticate_user tool
-2. **Server** queries **Datastore**: SELECT from user_accounts
+1. **Client** -> **Server**: POST /api/auth/login with credentials
+2. **Server** queries **Auth DB**: SELECT from users
 3. **Server** validates password hash
-4. **Server** writes **Datastore**: INSERT into user_sessions
+4. **Server** writes **Auth DB**: INSERT session
 5. **Server** -> **Client**: Return session token
 6. **Client** -> **Server**: POST /sse with read_metrics resource
 7. **Server** validates token against **Datastore**

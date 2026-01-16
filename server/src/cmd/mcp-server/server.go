@@ -377,10 +377,11 @@ func (s *Server) Run(flags *Flags, configPath string) error {
 
 	// Setup HTTP handlers
 	deps := &HandlerDependencies{
-		AuthStore: s.authStore,
-		ConvStore: s.convStore,
-		Datastore: s.datastore,
-		Config:    s.cfg,
+		AuthStore:   s.authStore,
+		RateLimiter: s.rateLimiter,
+		ConvStore:   s.convStore,
+		Datastore:   s.datastore,
+		Config:      s.cfg,
 	}
 	httpConfig.SetupHandlers = SetupHandlers(deps)
 

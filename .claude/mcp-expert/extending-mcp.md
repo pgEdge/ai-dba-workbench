@@ -648,9 +648,9 @@ go test ./src/integration/... -v
       -d '{"jsonrpc":"2.0","id":"1","method":"initialize","params":{}}'
 
     # Authenticate
-    curl -X POST http://localhost:8080/mcp \
+    curl -X POST http://localhost:8080/api/auth/login \
       -H "Content-Type: application/json" \
-      -d '{"jsonrpc":"2.0","id":"2","method":"tools/call","params":{"name":"authenticate_user","arguments":{"username":"admin","password":"password"}}}'
+      -d '{"username":"admin","password":"password"}'
 
     # Call your new tool
     curl -X POST http://localhost:8080/mcp \

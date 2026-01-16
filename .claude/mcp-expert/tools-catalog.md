@@ -4,28 +4,29 @@ This document catalogs all available MCP tools, their purposes, authorization re
 
 ## Tool Categories
 
-1. **Authentication** (1 tool)
-2. **User Management** (3 tools)
-3. **Service Token Management** (3 tools)
-4. **User Token Management** (3 tools)
-5. **Group Management** (7 tools)
-6. **Connection Privilege Management** (3 tools)
-7. **MCP Privilege Management** (4 tools)
-8. **Token Scope Management** (4 tools)
+1. **User Management** (3 tools)
+2. **Service Token Management** (3 tools)
+3. **User Token Management** (3 tools)
+4. **Group Management** (7 tools)
+5. **Connection Privilege Management** (3 tools)
+6. **MCP Privilege Management** (4 tools)
+7. **Token Scope Management** (4 tools)
 
-**Total: 28 tools**
+**Total: 27 tools**
 
 ---
 
-## 1. Authentication Tools
+## Authentication (HTTP API)
 
-### authenticate_user
+Authentication is handled via HTTP API, not MCP tools.
+
+### POST /api/auth/login
 
 **Purpose:** Authenticate a user and obtain a session token
 
 **Authorization:** None required (public endpoint)
 
-**Input Schema:**
+**Request Body:**
 ```json
 {
     "username": "string (required)",
@@ -33,33 +34,32 @@ This document catalogs all available MCP tools, their purposes, authorization re
 }
 ```
 
-**Handler:** `handleAuthenticateUser()`
-
 **Implementation Details:**
-- Queries `user_accounts` table for username
-- Verifies password hash using `usermgmt.HashPassword()`
+- Queries `users` table for username
+- Verifies password using bcrypt
 - Checks password expiry if set
-- Generates session token via `usermgmt.GenerateToken()`
-- Creates session in `user_sessions` table with 24-hour expiration
+- Generates session token
+- Creates session with 24-hour expiration
 - Returns session token to client
 
-**Success Response:**
+**Success Response (200 OK):**
 ```json
 {
-    "content": [{
-        "type": "text",
-        "text": "Authentication successful. Session token: <token>\nExpires at: <timestamp>"
-    }]
+    "success": true,
+    "session_token": "<token>",
+    "expires_at": "2024-11-15T09:30:00Z",
+    "message": "Authentication successful"
 }
 ```
 
-**Common Errors:**
-- Invalid username or password
-- Password has expired
+**Error Responses:**
+- 400 Bad Request - Missing or invalid fields
+- 401 Unauthorized - Invalid credentials
+- 429 Too Many Requests - Rate limited
 
 ---
 
-## 2. User Management Tools
+## 1. User Management Tools
 
 ### create_user
 

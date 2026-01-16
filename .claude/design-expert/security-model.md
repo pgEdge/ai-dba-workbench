@@ -47,10 +47,10 @@ practices for the pgEdge AI DBA Workbench.
 **Purpose**: Interactive user sessions through web client or CLI.
 
 **Lifecycle**:
-1. User calls authenticate_user tool with username/password
-2. Server validates credentials against user_accounts table
+1. User calls POST /api/auth/login with username/password
+2. Server validates credentials against users table
 3. Server generates cryptographically random token
-4. Token stored in user_sessions with 24-hour expiry
+4. Token stored in sessions with 24-hour expiry
 5. Token returned to client for use in Authorization header
 6. Token validated on each subsequent request
 7. Token deleted on explicit logout or automatic 24-hour expiry
@@ -283,20 +283,22 @@ CONSTRAINT chk_email_not_empty CHECK (email <> '')
 
 ### Authentication Enforcement
 
-**Rule**: Every MCP method except initialize, ping, and authenticate_user
-MUST validate bearer token.
+**Rule**: Every MCP method except initialize and ping MUST validate bearer
+token. Authentication is handled via HTTP API (`POST /api/auth/login`).
 
-**Implementation** (mcp/handler.go):
+**Implementation** (internal/auth/middleware.go):
 ```go
+// Public endpoints that don't require authentication
+publicEndpoints := []string{
+    "/health",
+    "/api/auth/login",
+}
+
+// MCP methods that don't require authentication
 requiresAuth := true
 switch req.Method {
 case "initialize", "ping":
     requiresAuth = false
-case "tools/call":
-    // Check if it's the authenticate_user tool
-    if toolName == "authenticate_user" {
-        requiresAuth = false
-    }
 }
 
 if requiresAuth {

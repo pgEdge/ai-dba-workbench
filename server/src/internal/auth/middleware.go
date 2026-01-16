@@ -11,10 +11,7 @@
 package auth
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -309,13 +306,7 @@ func AuthMiddleware(authStore *AuthStore, enabled bool) func(http.Handler) http.
 
 			// Skip authentication for public endpoints (needed before login)
 			switch r.URL.Path {
-			case HealthCheckPath, UserInfoPath:
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			// Check if this is an authenticate_user tool call (which should bypass auth)
-			if isAuthenticateUserCall(r) {
+			case HealthCheckPath, UserInfoPath, "/api/auth/login":
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -386,47 +377,4 @@ func AuthMiddleware(authStore *AuthStore, enabled bool) func(http.Handler) http.
 			http.Error(w, "Invalid or unknown token", http.StatusUnauthorized)
 		})
 	}
-}
-
-// isAuthenticateUserCall checks if the request is a tools/call for authenticate_user
-// This function reads and restores the request body
-func isAuthenticateUserCall(r *http.Request) bool {
-	// Defensive nil check for request
-	if r == nil {
-		return false
-	}
-
-	// Defensive nil check for request body
-	if r.Body == nil {
-		return false
-	}
-
-	// Read the body
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		return false
-	}
-	defer func() {
-		// Restore the body for the next handler
-		r.Body = io.NopCloser(bytes.NewBuffer(body))
-	}()
-
-	// Parse as JSON-RPC request
-	var req struct {
-		Method string                 `json:"method"`
-		Params map[string]interface{} `json:"params"`
-	}
-
-	if err := json.Unmarshal(body, &req); err != nil {
-		return false
-	}
-
-	// Check if it's a tools/call for authenticate_user
-	if req.Method == "tools/call" {
-		if name, ok := req.Params["name"].(string); ok {
-			return name == "authenticate_user"
-		}
-	}
-
-	return false
 }

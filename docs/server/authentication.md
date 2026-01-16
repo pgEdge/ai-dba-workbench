@@ -210,22 +210,14 @@ ID     Hash Prefix        Expires              Status     Annotation
 
 ### For Interactive Applications (User Authentication)
 
-1. **Authenticate with username/password** using the `authenticate_user` tool:
+1. **Authenticate with username/password** using the login API:
 
    ```bash
-   curl -X POST http://localhost:8080/mcp/v1 \
+   curl -X POST http://localhost:8080/api/auth/login \
      -H "Content-Type: application/json" \
      -d '{
-       "jsonrpc": "2.0",
-       "id": 1,
-       "method": "tools/call",
-       "params": {
-         "name": "authenticate_user",
-         "arguments": {
-           "username": "alice",
-           "password": "SecurePassword123!"
-         }
-       }
+       "username": "alice",
+       "password": "SecurePassword123!"
      }'
    ```
 
@@ -233,16 +225,10 @@ ID     Hash Prefix        Expires              Status     Annotation
 
    ```json
    {
-     "jsonrpc": "2.0",
-     "id": 1,
-     "result": {
-       "content": [
-         {
-           "type": "text",
-           "text": "{\"success\": true, \"session_token\": \"AQz9XfK...\", \"expires_at\": \"2024-11-15T09:30:00Z\", \"message\": \"Authentication successful\"}"
-         }
-       ]
-     }
+     "success": true,
+     "session_token": "AQz9XfK...",
+     "expires_at": "2024-11-15T09:30:00Z",
+     "message": "Authentication successful"
    }
    ```
 

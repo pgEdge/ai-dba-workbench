@@ -29,10 +29,11 @@ import (
 
 // HandlerDependencies holds all dependencies needed for HTTP handlers
 type HandlerDependencies struct {
-	AuthStore *auth.AuthStore
-	ConvStore *conversations.Store
-	Datastore *database.Datastore
-	Config    *config.Config
+	AuthStore   *auth.AuthStore
+	RateLimiter *auth.RateLimiter
+	ConvStore   *conversations.Store
+	Datastore   *database.Datastore
+	Config      *config.Config
 }
 
 // SetupHandlers configures all HTTP handlers for the server
@@ -40,6 +41,10 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 	return func(mux *http.ServeMux) error {
 		// Helper to wrap handlers with authentication
 		authWrapper := createAuthWrapper(deps.AuthStore)
+
+		// Authentication endpoint (does NOT require auth - it IS the login endpoint)
+		authHandler := api.NewAuthHandler(deps.AuthStore, deps.RateLimiter)
+		authHandler.RegisterRoutes(mux)
 
 		// Chat history compaction endpoint
 		mux.HandleFunc("/api/chat/compact",

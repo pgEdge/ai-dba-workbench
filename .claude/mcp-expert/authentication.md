@@ -62,7 +62,7 @@ The following operations do **not** require authentication:
 
 - `initialize` - Protocol handshake
 - `ping` - Health check
-- `tools/call` with `authenticate_user` - Initial login
+- `POST /api/auth/login` - HTTP API for initial login
 
 All other operations require a valid bearer token.
 
@@ -166,7 +166,7 @@ h.userInfo = userInfo
 **Allowed Operations:**
 - `initialize`
 - `ping`
-- `tools/call` with `authenticate_user` tool
+- `POST /api/auth/login` (HTTP API)
 
 **Access:** Public
 
@@ -525,7 +525,7 @@ Integration tests should:
 
 **Cause:** Invalid or expired token
 
-**Solution:** Obtain a new token via `authenticate_user` tool
+**Solution:** Obtain a new token via `POST /api/auth/login` HTTP API
 
 ### "Permission denied: superuser privileges required"
 

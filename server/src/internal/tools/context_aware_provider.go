@@ -145,10 +145,8 @@ func NewContextAwareProvider(clientManager *database.ClientManager, resourceReg 
 	provider.registerDatastoreTools(provider.baseRegistry)
 	provider.registerDatabaseTools(provider.baseRegistry, nil) // nil client for base registry
 
-	// Register hidden tools (not advertised to LLM but available for execution)
-	if authStore != nil {
-		provider.hiddenRegistry.Register("authenticate_user", AuthenticateUserTool(authStore, rateLimiter))
-	}
+	// Note: Authentication is now handled via HTTP API at /api/auth/login
+	// The hidden registry remains for potential future use
 
 	return provider
 }

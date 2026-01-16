@@ -373,8 +373,8 @@ deployment simplicity and performance.
 2. **Direct User-to-User Access**: Never allow users to access connections
    or data belonging to other users without explicit privilege grants
 
-3. **Authentication Bypass**: Every MCP method except initialize, ping, and
-   authenticate_user must validate tokens
+3. **Authentication Bypass**: Every MCP method except initialize and ping
+   must validate tokens (login is via HTTP API, not MCP)
 
 4. **Modifying Existing Tests**: Tests should only change when functionality
    changes or to fix bugs/improve code quality

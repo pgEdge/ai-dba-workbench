@@ -111,7 +111,7 @@ Authentication is **required** for all methods except:
 
 - `initialize`
 - `ping`
-- `tools/call` with the `authenticate_user` tool
+- `POST /api/auth/login` (HTTP API, not MCP)
 
 The authentication flow:
 
@@ -272,7 +272,7 @@ return NewErrorResponse(req.ID, InvalidParams,
 3. **Session tokens** - Stored unhashed but with expiration
 4. **Input validation** - All request parameters are validated
 5. **SQL injection protection** - Uses parameterized queries via pgx
-6. **Authentication bypass** - Only allowed for initialize, ping, and authenticate_user
+6. **Authentication bypass** - Only allowed for initialize, ping, and /api/auth/login
 
 ## Performance Optimizations
 

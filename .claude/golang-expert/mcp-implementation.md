@@ -316,7 +316,7 @@ Executes an MCP tool.
 }
 ```
 
-**Authentication:** Required (except for `authenticate_user` tool)
+**Authentication:** Required (authentication handled via HTTP API `/api/auth/login`)
 
 **Authorization:** Checked per-tool
 
@@ -380,7 +380,6 @@ func (h *Handler) handleToolExecuteQuery(params map[string]interface{}) (
 - `delete_connection` - Delete connection
 
 **User Management:**
-- `authenticate_user` - Authenticate and get token
 - `create_user` - Create user account
 - `update_user` - Update user account
 - `delete_user` - Delete user account
@@ -507,52 +506,32 @@ func (h *Handler) validateToken(bearerToken string) (*UserInfo, error) {
 }
 ```
 
-### Special Case: authenticate_user Tool
+### Authentication via HTTP API
 
-The `authenticate_user` tool is the only tool that doesn't require a bearer
-token. It accepts username/password and returns a user token.
+Authentication is handled via an HTTP API endpoint, not an MCP tool. This
+keeps authentication separate from the MCP protocol.
 
-```go
-func (h *Handler) handleToolAuthenticateUser(params map[string]interface{}) (
-    *Response, error) {
-    username, err := validateStringParam(params, "username")
-    if err != nil {
-        return nil, err
-    }
+**Endpoint:** `POST /api/auth/login`
 
-    password, err := validateStringParam(params, "password")
-    if err != nil {
-        return nil, err
-    }
-
-    // Validate credentials
-    passwordHash := usermgmt.HashPassword(password)
-
-    var userID int
-    var isSuperuser bool
-    err = h.dbPool.QueryRow(ctx, `
-        SELECT id, is_superuser
-        FROM user_accounts
-        WHERE username = $1 AND password_hash = $2
-    `, username, passwordHash).Scan(&userID, &isSuperuser)
-
-    if err != nil {
-        return nil, fmt.Errorf("invalid credentials")
-    }
-
-    // Create user token
-    message, token, err := usermgmt.CreateUserTokenNonInteractive(
-        h.dbPool, username, nil, 90, h.config.MaxUserTokenLifetimeDays, nil)
-    if err != nil {
-        return nil, fmt.Errorf("failed to create token: %w", err)
-    }
-
-    return h.formatToolResponse(map[string]interface{}{
-        "message": message,
-        "token":   token,
-    }), nil
+**Request:**
+```json
+{
+    "username": "alice",
+    "password": "SecurePassword123!"
 }
 ```
+
+**Response:**
+```json
+{
+    "success": true,
+    "session_token": "<token>",
+    "expires_at": "2024-11-15T09:30:00Z",
+    "message": "Authentication successful"
+}
+```
+
+**Implementation:** See `internal/api/auth_handlers.go`
 
 ## Authorization Flow
 

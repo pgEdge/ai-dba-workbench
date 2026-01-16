@@ -220,7 +220,7 @@ Only these methods don't require authentication:
 
 1. `initialize` - Protocol handshake
 2. `ping` - Health check
-3. `tools/call` with `authenticate_user` tool - Initial login
+3. `POST /api/auth/login` - HTTP API for initial login
 
 All other methods require a valid bearer token.
 

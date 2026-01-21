@@ -34,8 +34,8 @@ The workbench consists of five components:
 - **Alerter** (`/alerter`) - Background service for threshold-based and
   anomaly-detection alerting on collected metrics.
 
-- **Client** (`/client`) - Web-based UI (React/TypeScript) - planned but not
-  yet implemented.
+- **Client** (`/client`) - Web-based UI (React/TypeScript) for cluster
+  navigation and monitoring.
 
 Supporting infrastructure includes:
 
@@ -52,11 +52,11 @@ component into a single binary that can easily be packaged and distributed
 without runtime dependencies. Go also offers memory management and a language
 design that lends itself to secure and less bug prone code.
 
-The web client (when implemented) will be written in React, running under
-Node.js, and use the MUI library for ease of development of a professional,
-clean design. It will connect to the MCP server and to either Anthropic's
-Claude or Ollama APIs (using the server's proxy), utilising one of those to
-transform textual user requests into responses based on information retrieved 
+The web client is written in React with Vite as the build tool, and uses the
+MUI library for a professional, clean design. It connects to the MCP server
+for cluster topology data and connection management, and will connect to
+either Anthropic's Claude or Ollama APIs (using the server's proxy) to
+transform textual user requests into responses based on information retrieved
 from the MCP server.
 
 ## Key Architecture
@@ -230,7 +230,7 @@ pg_stat_archiver, pg_stat_user_tables, pg_stat_user_indexes, and more.
 
 **Configuration**: pg_settings, pg_hba_file_rules, pg_ident_file_mappings.
 
-**Replication**: pg_node_role (Spock replication detection), replication
+**Replication**: pg_node_role (cluster topology detection), replication
 slot status, subscription status.
 
 #### Probe Configuration
@@ -247,6 +247,36 @@ The `ProbeScheduler` coordinates probe execution:
 - Runs probes in separate goroutines to avoid blocking
 - Handles connection pooling for monitored servers
 - Creates weekly partitions automatically
+
+#### Cluster Topology Detection
+
+The `pg_node_role` probe automatically detects the replication topology of
+monitored PostgreSQL servers. It queries system catalogs and extension tables
+to determine each server's role in the cluster architecture.
+
+The probe detects the following node roles:
+
+- **standalone** - Single server with no replication
+- **binary_primary** - Primary server with streaming standbys
+- **binary_standby** - Standby server receiving binary replication
+- **binary_cascading** - Cascading standby (standby with its own standbys)
+- **logical_publisher** - Server publishing logical replication changes
+- **logical_subscriber** - Server subscribing to logical replication
+- **logical_bidirectional** - Server with both publications and subscriptions
+- **spock_node** - Node in a pgEdge Spock multi-master cluster
+- **bdr_node** - Node in a BDR cluster
+
+The probe collects additional topology metadata:
+
+- Upstream host and port for standbys
+- Publisher host and port for logical subscribers
+- Standby count for primary servers
+- Spock node name and subscription count
+- Replication lag (received vs replayed LSN)
+
+This topology information enables the server and web client to display
+hierarchical views of cluster relationships, showing primary servers with
+their standbys nested beneath them.
 
 ### Server
 
@@ -308,6 +338,15 @@ and are not accessible to LLMs.
 - `GET /api/connections/current` - Get current connection
 - `POST /api/connections/current` - Set current connection
 - `DELETE /api/connections/current` - Clear current connection
+
+**Cluster Topology**:
+
+- `GET /api/clusters` - Get auto-detected cluster topology hierarchy
+- `GET /api/cluster-groups` - List cluster groups
+- `POST /api/cluster-groups` - Create a cluster group
+- `GET /api/cluster-groups/{id}/clusters` - List clusters in a group
+- `POST /api/cluster-groups/{id}/clusters` - Create a cluster in a group
+- `GET /api/clusters/{id}/servers` - List servers in a cluster
 
 **User Information**:
 
@@ -377,6 +416,59 @@ The CLI provides an interactive interface for working with the MCP server.
 - CLI flags override configuration
 - MCP server URL and credentials
 - LLM provider and model selection
+
+### Web Client
+
+The web client provides a browser-based interface for cluster monitoring and
+management.
+
+#### Features
+
+- User authentication with session token management
+- Light and dark theme support with preference persistence
+- Cluster navigation panel with hierarchical group/cluster/server display
+- Server selection for context-based operations
+- Responsive design using Material-UI components
+
+#### Cluster Navigator
+
+The cluster navigator displays monitored servers in a hierarchical tree:
+
+- **Groups** - Top-level organizational containers
+- **Clusters** - Named clusters containing related servers
+- **Servers** - Individual PostgreSQL instances with status indicators
+
+The navigator automatically detects and displays cluster types based on server
+roles:
+
+- **Binary replication clusters** - Primary with nested standby servers
+- **Logical replication clusters** - Publishers and subscribers
+- **Spock clusters** - Multi-master nodes with amber visual styling
+- **Standalone servers** - Single servers without replication
+
+Each server displays:
+
+- Connection status indicator (online, warning, offline)
+- Role badge (Primary, Standby, Cascade, Spock, Publisher, Subscriber)
+- Tree lines showing parent-child relationships for cascading standbys
+
+Cluster containers use color-coded borders to indicate replication type:
+
+- Cyan for binary replication
+- Amber for Spock multi-master
+- Purple for logical replication
+- Gray for standalone servers
+
+#### Architecture
+
+The client uses React contexts for state management:
+
+- `AuthContext` - Authentication state and session token
+- `ClusterContext` - Cluster hierarchy data and server selection
+
+The client fetches cluster topology from the `/api/clusters` endpoint and
+falls back to the `/api/connections` endpoint with client-side transformation
+if the cluster API is unavailable.
 
 ### Alerter
 
@@ -474,7 +566,7 @@ The top-level Makefile calls targets in sub-projects and implements:
 
 ### Future Enhancements
 
-- Web client implementation (React/MUI)
+- AI-powered chat interface in the web client
 - Support for multiple collectors (high availability and load balancing)
 - Enhanced anomaly detection algorithms
 - Additional MCP tools for database administration

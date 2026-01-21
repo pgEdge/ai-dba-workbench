@@ -192,7 +192,7 @@ func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Requ
 		w.WriteHeader(http.StatusBadRequest)
 		//nolint:errcheck // Encoding simple error response
 		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "name is required",
+			Error: "Name is required",
 		})
 		return
 	}
@@ -201,7 +201,7 @@ func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Requ
 		w.WriteHeader(http.StatusBadRequest)
 		//nolint:errcheck // Encoding simple error response
 		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "host is required",
+			Error: "Host is required",
 		})
 		return
 	}
@@ -210,7 +210,7 @@ func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Requ
 		w.WriteHeader(http.StatusBadRequest)
 		//nolint:errcheck // Encoding simple error response
 		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "port is required and must be positive",
+			Error: "Port is required and must be positive",
 		})
 		return
 	}
@@ -219,7 +219,7 @@ func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Requ
 		w.WriteHeader(http.StatusBadRequest)
 		//nolint:errcheck // Encoding simple error response
 		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "database_name is required",
+			Error: "Maintenance Database is required",
 		})
 		return
 	}
@@ -228,7 +228,7 @@ func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Requ
 		w.WriteHeader(http.StatusBadRequest)
 		//nolint:errcheck // Encoding simple error response
 		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "username is required",
+			Error: "Username is required",
 		})
 		return
 	}
@@ -237,7 +237,7 @@ func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Requ
 		w.WriteHeader(http.StatusBadRequest)
 		//nolint:errcheck // Encoding simple error response
 		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "password is required",
+			Error: "Password is required",
 		})
 		return
 	}

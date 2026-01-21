@@ -74,7 +74,7 @@ const STATUS_LABELS = {
     online: 'Online',
     warning: 'Warning',
     offline: 'Offline',
-    unknown: 'Unknown',
+    unknown: 'Initializing',
 };
 
 // Role configuration with colors and labels
@@ -421,7 +421,22 @@ const ServerItem = memo(({
                         }}
                     />
                 </Box>
-                {effectiveRole && ROLE_CONFIGS[effectiveRole] && (
+                {server.status === 'unknown' ? (
+                    <Box sx={{ ml: 'auto', flexShrink: 0 }}>
+                        <Chip
+                            label="Initializing"
+                            size="small"
+                            sx={{
+                                height: 20,
+                                fontSize: '0.625rem',
+                                fontWeight: 600,
+                                bgcolor: isDark ? 'rgba(107, 114, 128, 0.2)' : 'rgba(107, 114, 128, 0.1)',
+                                color: isDark ? '#9CA3AF' : '#6B7280',
+                                '& .MuiChip-label': { px: 1 },
+                            }}
+                        />
+                    </Box>
+                ) : effectiveRole && ROLE_CONFIGS[effectiveRole] && (
                     <Box sx={{ ml: 'auto', flexShrink: 0 }}>
                         <RolePill role={effectiveRole} isDark={isDark} />
                     </Box>

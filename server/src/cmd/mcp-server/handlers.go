@@ -164,11 +164,19 @@ func createUserInfoHandler(authStore *auth.AuthStore) http.HandlerFunc {
 			return
 		}
 
+		// Look up user to get superuser status
+		isSuperuser := false
+		user, userErr := authStore.GetUser(username)
+		if userErr == nil && user != nil {
+			isSuperuser = user.IsSuperuser
+		}
+
 		// Return user info as JSON
 		//nolint:errcheck // Encoding a simple map should never fail
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"authenticated": true,
 			"username":      username,
+			"is_superuser":  isSuperuser,
 		})
 	}
 }

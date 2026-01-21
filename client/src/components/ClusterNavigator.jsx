@@ -10,7 +10,10 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
+import { useAuth } from '../contexts/AuthContext';
+import { useCluster } from '../contexts/ClusterContext';
+import InlineEditText from './InlineEditText';
 import {
     Box,
     Typography,
@@ -256,7 +259,11 @@ const ServerItem = ({
     isLast = false,
     showTreeLines = true,
     clusterType = 'default',
+    user,
+    onUpdateServer,
 }) => {
+    // User can edit if they're superuser or the owner
+    const canEditServer = user?.isSuperuser || server.owner_username === user?.username;
     const statusColor = STATUS_COLORS[server.status] || STATUS_COLORS.unknown;
     const hasChildren = server.children?.length > 0 || server.is_expandable;
     const isExpanded = expandedServers?.has(server.id);
@@ -282,9 +289,14 @@ const ServerItem = ({
     const expanderWidth = 2; // Width reserved for expand/collapse button
 
     // Calculate tree line position to align with parent's expand icon
-    // Parent's expand icon center is at: baseIndent + (depth-1)*depthIndent + iconOffset
-    // In pixels: 12 + (depth-1)*20 + 10 = 22 + (depth-1)*20
-    const lineLeftPos = 22 + (depth - 1) * 20;
+    // For depth=1, parent is cluster header: mx(4) + px(8) + buttonCenter(10) = 22px
+    // For depth>1, parent is ServerItem: mx(4) + pl(12 + (d-1)*20) + buttonCenter(10) = 26 + (d-1)*20
+    const lineLeftPos = 22 + (depth - 1) * 20 + (depth > 1 ? 4 : 0);
+
+    // Row height calculation for positioning tree lines
+    // Row has py: 0.5 (4px each side) + content ~20px = ~28px total
+    // Center of row is at ~14px from top
+    const rowCenterY = 14;
 
     return (
         <Box sx={{ position: 'relative' }}>
@@ -297,7 +309,7 @@ const ServerItem = ({
                             position: 'absolute',
                             left: `${lineLeftPos}px`,
                             top: 0,
-                            bottom: isLast ? '50%' : 0,
+                            bottom: isLast ? `calc(100% - ${rowCenterY}px)` : '-2px',
                             width: '1px',
                             bgcolor: lineColor,
                         }}
@@ -307,8 +319,8 @@ const ServerItem = ({
                         sx={{
                             position: 'absolute',
                             left: `${lineLeftPos}px`,
-                            top: '50%',
-                            width: '14px',
+                            top: `${rowCenterY}px`,
+                            width: hasChildren ? '20px' : '14px',
                             height: '1px',
                             bgcolor: lineColor,
                         }}
@@ -374,21 +386,24 @@ const ServerItem = ({
                     }}
                 />
                 <Box sx={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <Typography
-                        variant="body2"
-                        sx={{
-                            fontWeight: isSelected ? 600 : 400,
-                            color: isSelected ? 'text.primary' : 'text.secondary',
-                            fontSize: '0.8125rem',
-                            lineHeight: 1.3,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                            opacity: server.status === 'offline' ? 0.6 : 1,
+                    <InlineEditText
+                        value={server.name}
+                        onSave={(newName) => onUpdateServer(server.id, newName)}
+                        canEdit={canEditServer}
+                        typographyProps={{
+                            variant: 'body2',
+                            sx: {
+                                fontWeight: isSelected ? 600 : 400,
+                                color: isSelected ? 'text.primary' : 'text.secondary',
+                                fontSize: '0.8125rem',
+                                lineHeight: 1.3,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                                opacity: server.status === 'offline' ? 0.6 : 1,
+                            },
                         }}
-                    >
-                        {server.name}
-                    </Typography>
+                    />
                 </Box>
                 {effectiveRole && ROLE_CONFIGS[effectiveRole] && (
                     <RolePill role={effectiveRole} isDark={isDark} />
@@ -412,6 +427,8 @@ const ServerItem = ({
                                 isLast={index === server.children.length - 1}
                                 showTreeLines={showTreeLines}
                                 clusterType={clusterType}
+                                user={user}
+                                onUpdateServer={onUpdateServer}
                             />
                         ))}
                     </Box>
@@ -439,6 +456,7 @@ const countServersRecursive = (servers, filterFn = () => true) => {
  */
 const ClusterItem = ({
     cluster,
+    groupId,
     isExpanded,
     onToggle,
     selectedServerId,
@@ -448,7 +466,16 @@ const ClusterItem = ({
     expandedServers,
     onToggleServer,
     isLast = false,
+    user,
+    onUpdateCluster,
+    onUpdateServer,
 }) => {
+    // Superusers can edit:
+    // - Database-backed clusters (cluster-{id} format)
+    // - Auto-detected clusters that have auto_cluster_key (binary, logical, spock)
+    const isDbBackedCluster = /^cluster-\d+$/.test(cluster.id);
+    const isAutoDetectedCluster = cluster.auto_cluster_key ? true : false;
+    const canEditCluster = user?.isSuperuser && (isDbBackedCluster || isAutoDetectedCluster);
     const totalCount = countServersRecursive(cluster.servers);
     const onlineCount = countServersRecursive(cluster.servers, s => s.status === 'online');
     const hasWarning = countServersRecursive(cluster.servers, s => s.status === 'warning') > 0;
@@ -511,20 +538,23 @@ const ClusterItem = ({
                     }}
                 />
                 <Box sx={{ flex: 1, minWidth: 0 }}>
-                    <Typography
-                        variant="body2"
-                        sx={{
-                            fontWeight: 500,
-                            color: 'text.primary',
-                            fontSize: '0.8125rem',
-                            lineHeight: 1.3,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
+                    <InlineEditText
+                        value={cluster.name}
+                        onSave={(newName) => onUpdateCluster(cluster.id, newName, groupId, cluster.auto_cluster_key)}
+                        canEdit={canEditCluster}
+                        typographyProps={{
+                            variant: 'body2',
+                            sx: {
+                                fontWeight: 500,
+                                color: 'text.primary',
+                                fontSize: '0.8125rem',
+                                lineHeight: 1.3,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                            },
                         }}
-                    >
-                        {cluster.name}
-                    </Typography>
+                    />
                 </Box>
                 <Chip
                     label={`${onlineCount}/${totalCount}`}
@@ -558,6 +588,8 @@ const ClusterItem = ({
                             isLast={index === cluster.servers.length - 1}
                             showTreeLines={true}
                             clusterType={clusterType}
+                            user={user}
+                            onUpdateServer={onUpdateServer}
                         />
                     ))}
                 </Box>
@@ -580,7 +612,15 @@ const GroupItem = ({
     isDark,
     expandedServers,
     onToggleServer,
+    user,
+    onUpdateGroup,
+    onUpdateCluster,
+    onUpdateServer,
 }) => {
+    // Superusers can edit both database-backed groups (ID: group-{number})
+    // and auto-detected groups (groups with auto_group_key)
+    const isEditableGroup = /^group-\d+$/.test(group.id) || !!group.auto_group_key;
+    const canEditGroup = user?.isSuperuser && isEditableGroup;
     const totalServers = group.clusters?.reduce(
         (acc, c) => acc + countServersRecursive(c.servers),
         0
@@ -616,21 +656,24 @@ const GroupItem = ({
                     <GroupIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
                 )}
                 <Box sx={{ flex: 1, minWidth: 0 }}>
-                    <Typography
-                        variant="body2"
-                        sx={{
-                            fontWeight: 600,
-                            color: 'text.primary',
-                            fontSize: '0.8125rem',
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.04em',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
+                    <InlineEditText
+                        value={group.name}
+                        onSave={(newName) => onUpdateGroup(group.id, newName)}
+                        canEdit={canEditGroup}
+                        typographyProps={{
+                            variant: 'body2',
+                            sx: {
+                                fontWeight: 600,
+                                color: 'text.primary',
+                                fontSize: '0.8125rem',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.04em',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                            },
                         }}
-                    >
-                        {group.name}
-                    </Typography>
+                    />
                 </Box>
                 <Typography
                     variant="caption"
@@ -682,6 +725,8 @@ const GroupItem = ({
                                         isLast={true}
                                         showTreeLines={false}
                                         clusterType={clusterType}
+                                        user={user}
+                                        onUpdateServer={onUpdateServer}
                                     />
                                 );
                             }
@@ -703,6 +748,8 @@ const GroupItem = ({
                                             isLast={serverIndex === cluster.servers.length - 1}
                                             showTreeLines={hasMultipleServers || hasChildServers}
                                             clusterType={clusterType}
+                                            user={user}
+                                            onUpdateServer={onUpdateServer}
                                         />
                                     ))}
                                 </ClusterContainer>
@@ -714,6 +761,7 @@ const GroupItem = ({
                             <ClusterItem
                                 key={cluster.id}
                                 cluster={cluster}
+                                groupId={group.id}
                                 isExpanded={expandedClusters.has(cluster.id)}
                                 onToggle={() => onToggleCluster(cluster.id)}
                                 selectedServerId={selectedServerId}
@@ -723,6 +771,9 @@ const GroupItem = ({
                                 expandedServers={expandedServers}
                                 onToggleServer={onToggleServer}
                                 isLast={clusterIndex === group.clusters.length - 1}
+                                user={user}
+                                onUpdateCluster={onUpdateCluster}
+                                onUpdateServer={onUpdateServer}
                             />
                         );
                     })}
@@ -742,14 +793,55 @@ const ClusterNavigator = ({
     onRefresh,
     loading = false,
     mode = 'light',
-    width = 280,
+    defaultWidth = 280,
+    minWidth = 200,
+    maxWidth = 500,
 }) => {
     const [searchQuery, setSearchQuery] = useState('');
     const [expandedGroups, setExpandedGroups] = useState(new Set());
     const [expandedClusters, setExpandedClusters] = useState(new Set());
     const [expandedServers, setExpandedServers] = useState(new Set());
+    const [panelWidth, setPanelWidth] = useState(defaultWidth);
+    const [isResizing, setIsResizing] = useState(false);
+    const resizeRef = useRef(null);
 
     const isDark = mode === 'dark';
+
+    // Handle resize drag
+    useEffect(() => {
+        const handleMouseMove = (e) => {
+            if (!isResizing) return;
+            const newWidth = Math.min(maxWidth, Math.max(minWidth, e.clientX));
+            setPanelWidth(newWidth);
+        };
+
+        const handleMouseUp = () => {
+            setIsResizing(false);
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+        };
+
+        if (isResizing) {
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+            document.addEventListener('mousemove', handleMouseMove);
+            document.addEventListener('mouseup', handleMouseUp);
+        }
+
+        return () => {
+            document.removeEventListener('mousemove', handleMouseMove);
+            document.removeEventListener('mouseup', handleMouseUp);
+        };
+    }, [isResizing, minWidth, maxWidth]);
+
+    const handleResizeStart = useCallback((e) => {
+        e.preventDefault();
+        setIsResizing(true);
+    }, []);
+
+    // Get user info and update functions from contexts
+    const { user } = useAuth();
+    const { updateGroupName, updateClusterName, updateServerName } = useCluster();
 
     /**
      * Collect all expandable server IDs recursively
@@ -882,15 +974,37 @@ const ClusterNavigator = ({
     return (
         <Box
             sx={{
-                width,
+                width: panelWidth,
                 height: '100%',
                 display: 'flex',
                 flexDirection: 'column',
                 bgcolor: isDark ? '#1E293B' : '#FFFFFF',
                 borderRight: '1px solid',
                 borderColor: isDark ? '#334155' : '#E5E7EB',
+                position: 'relative',
+                flexShrink: 0,
             }}
         >
+            {/* Resize handle */}
+            <Box
+                ref={resizeRef}
+                onMouseDown={handleResizeStart}
+                sx={{
+                    position: 'absolute',
+                    top: 0,
+                    right: -3,
+                    bottom: 0,
+                    width: 6,
+                    cursor: 'col-resize',
+                    zIndex: 10,
+                    '&:hover': {
+                        bgcolor: alpha(isDark ? '#60A5FA' : '#3B82F6', 0.3),
+                    },
+                    ...(isResizing && {
+                        bgcolor: alpha(isDark ? '#60A5FA' : '#3B82F6', 0.5),
+                    }),
+                }}
+            />
             {/* Header */}
             <Box
                 sx={{
@@ -1113,6 +1227,10 @@ const ClusterNavigator = ({
                             isDark={isDark}
                             expandedServers={expandedServers}
                             onToggleServer={toggleServer}
+                            user={user}
+                            onUpdateGroup={updateGroupName}
+                            onUpdateCluster={updateClusterName}
+                            onUpdateServer={updateServerName}
                         />
                     ))
                 )}

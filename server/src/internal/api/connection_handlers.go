@@ -37,6 +37,11 @@ func NewConnectionHandler(datastore *database.Datastore, authStore *auth.AuthSto
 	}
 }
 
+// ConnectionUpdateRequest is the request body for updating a connection
+type ConnectionUpdateRequest struct {
+	Name *string `json:"name,omitempty"`
+}
+
 // CurrentConnectionRequest is the request body for setting current connection
 type CurrentConnectionRequest struct {
 	ConnectionID int     `json:"connection_id"`
@@ -114,9 +119,9 @@ func (h *ConnectionHandler) handleConnections(w http.ResponseWriter, r *http.Req
 	json.NewEncoder(w).Encode(connections)
 }
 
-// handleConnectionSubpath handles /api/connections/{id}/databases
+// handleConnectionSubpath handles /api/connections/{id} and /api/connections/{id}/databases
 func (h *ConnectionHandler) handleConnectionSubpath(w http.ResponseWriter, r *http.Request) {
-	// Parse the path: /api/connections/{id}/databases
+	// Parse the path: /api/connections/{id} or /api/connections/{id}/databases
 	path := strings.TrimPrefix(r.URL.Path, "/api/connections/")
 
 	// Handle /api/connections/current separately
@@ -126,17 +131,12 @@ func (h *ConnectionHandler) handleConnectionSubpath(w http.ResponseWriter, r *ht
 	}
 
 	parts := strings.Split(path, "/")
-	if len(parts) != 2 || parts[1] != "databases" {
+	if len(parts) < 1 || parts[0] == "" {
 		http.NotFound(w, r)
 		return
 	}
 
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", "GET")
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
+	// Parse connection ID
 	connectionID, err := strconv.Atoi(parts[0])
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -148,6 +148,139 @@ func (h *ConnectionHandler) handleConnectionSubpath(w http.ResponseWriter, r *ht
 		return
 	}
 
+	// Handle /api/connections/{id}
+	if len(parts) == 1 {
+		switch r.Method {
+		case http.MethodGet:
+			h.getConnection(w, r, connectionID)
+		case http.MethodPut:
+			h.updateConnection(w, r, connectionID)
+		default:
+			w.Header().Set("Allow", "GET, PUT")
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+		return
+	}
+
+	// Handle /api/connections/{id}/databases
+	if len(parts) == 2 && parts[1] == "databases" {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", "GET")
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		h.listDatabases(w, r, connectionID)
+		return
+	}
+
+	http.NotFound(w, r)
+}
+
+// getConnection handles GET /api/connections/{id}
+func (h *ConnectionHandler) getConnection(w http.ResponseWriter, r *http.Request, id int) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	conn, err := h.datastore.GetConnection(ctx, id)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: fmt.Sprintf("Connection not found: %v", err),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	//nolint:errcheck // Encoding connection
+	json.NewEncoder(w).Encode(conn)
+}
+
+// updateConnection handles PUT /api/connections/{id}
+func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Request, id int) {
+	// Get current user info for permission check
+	username, isSuperuser, err := h.getUserInfoFromRequest(r)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: "Invalid or missing authentication token",
+		})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	// Get connection to check ownership
+	conn, err := h.datastore.GetConnection(ctx, id)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: fmt.Sprintf("Connection not found: %v", err),
+		})
+		return
+	}
+
+	// Permission check: must be owner or superuser
+	isOwner := conn.OwnerUsername.Valid && conn.OwnerUsername.String == username
+	if !isSuperuser && !isOwner {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: "Permission denied: you must be the owner or a superuser to update this connection",
+		})
+		return
+	}
+
+	// Parse request body
+	var req ConnectionUpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: "Invalid request body",
+		})
+		return
+	}
+
+	// Update connection name if provided
+	if req.Name != nil {
+		if *req.Name == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			//nolint:errcheck // Encoding simple error response
+			json.NewEncoder(w).Encode(ErrorResponse{
+				Error: "Name cannot be empty",
+			})
+			return
+		}
+
+		conn, err = h.datastore.UpdateConnectionName(ctx, id, *req.Name)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			//nolint:errcheck // Encoding simple error response
+			json.NewEncoder(w).Encode(ErrorResponse{
+				Error: fmt.Sprintf("Failed to update connection: %v", err),
+			})
+			return
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	//nolint:errcheck // Encoding connection
+	json.NewEncoder(w).Encode(conn)
+}
+
+// listDatabases handles GET /api/connections/{id}/databases
+func (h *ConnectionHandler) listDatabases(w http.ResponseWriter, r *http.Request, connectionID int) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
@@ -165,6 +298,33 @@ func (h *ConnectionHandler) handleConnectionSubpath(w http.ResponseWriter, r *ht
 	w.Header().Set("Content-Type", "application/json")
 	//nolint:errcheck // Encoding databases list
 	json.NewEncoder(w).Encode(databases)
+}
+
+// getUserInfoFromRequest extracts username and superuser status from the request
+func (h *ConnectionHandler) getUserInfoFromRequest(r *http.Request) (string, bool, error) {
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		return "", false, fmt.Errorf("missing authorization header")
+	}
+
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	if token == authHeader {
+		return "", false, fmt.Errorf("invalid authorization header format")
+	}
+
+	// Validate session token and get username
+	username, err := h.authStore.ValidateSessionToken(token)
+	if err != nil {
+		return "", false, err
+	}
+
+	// Look up user to get superuser status
+	user, err := h.authStore.GetUser(username)
+	if err != nil {
+		return username, false, nil // User exists but couldn't get details
+	}
+
+	return username, user.IsSuperuser, nil
 }
 
 // handleCurrentConnection handles GET/POST/DELETE /api/connections/current

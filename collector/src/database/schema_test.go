@@ -272,7 +272,10 @@ func TestNewSchemaManager(t *testing.T) {
 	// Migrations 7-10 add alerter tables
 	// Migration 11 adds cluster_groups and clusters tables
 	// Migration 12 adds publisher_host/port to pg_node_role for logical replication topology
-	expectedVersions := []int{1, 3, 4, 5, 7, 8, 9, 10, 11, 12}
+	// Migration 13 adds owner and shared columns to cluster_groups
+	// Migration 14 adds auto_cluster_key to clusters for auto-detected cluster naming
+	// Migration 15 adds auto_group_key to cluster_groups for auto-detected group naming
+	expectedVersions := []int{1, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15}
 	if len(sm.migrations) != len(expectedVersions) {
 		t.Fatalf("Expected %d migrations, got %d", len(expectedVersions), len(sm.migrations))
 	}

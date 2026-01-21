@@ -140,7 +140,19 @@ func (h *ClusterHandler) handleClusterSubpath(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Parse cluster ID
+	// Check if it's an auto-detected cluster ID (server-{id} or cluster-spock-{prefix})
+	if strings.HasPrefix(parts[0], "server-") || strings.HasPrefix(parts[0], "cluster-spock-") {
+		switch r.Method {
+		case http.MethodPut:
+			h.updateAutoDetectedCluster(w, r, parts[0])
+		default:
+			w.Header().Set("Allow", "PUT")
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+		return
+	}
+
+	// Parse cluster ID (numeric for database-backed clusters)
 	clusterID, err := strconv.Atoi(parts[0])
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -203,7 +215,19 @@ func (h *ClusterHandler) handleClusterGroupSubpath(w http.ResponseWriter, r *htt
 		return
 	}
 
-	// Parse group ID
+	// Check if it's an auto-detected group ID (group-auto)
+	if strings.HasPrefix(parts[0], "group-auto") {
+		switch r.Method {
+		case http.MethodPut:
+			h.updateAutoDetectedGroup(w, r, parts[0])
+		default:
+			w.Header().Set("Allow", "PUT")
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+		return
+	}
+
+	// Parse group ID (numeric for database-backed groups)
 	groupID, err := strconv.Atoi(parts[0])
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -313,6 +337,45 @@ func (h *ClusterHandler) createClusterGroup(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *ClusterHandler) updateClusterGroup(w http.ResponseWriter, r *http.Request, id int) {
+	// Check user permissions
+	username, isSuperuser, err := h.getUserInfoFromRequest(r)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: "Invalid or missing authentication token",
+		})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	// Get group to check ownership
+	existingGroup, err := h.datastore.GetClusterGroup(ctx, id)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: fmt.Sprintf("Cluster group not found: %v", err),
+		})
+		return
+	}
+
+	// Permission check: superuser, owner, or shared group can be edited
+	isOwner := existingGroup.OwnerUsername.Valid && existingGroup.OwnerUsername.String == username
+	if !isSuperuser && !isOwner {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: "You do not have permission to update this cluster group",
+		})
+		return
+	}
+
 	var req ClusterGroupRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -333,9 +396,6 @@ func (h *ClusterHandler) updateClusterGroup(w http.ResponseWriter, r *http.Reque
 		})
 		return
 	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
 
 	group, err := h.datastore.UpdateClusterGroup(ctx, id, req.Name, req.Description)
 	if err != nil {
@@ -544,6 +604,185 @@ func (h *ClusterHandler) deleteCluster(w http.ResponseWriter, r *http.Request, i
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// AutoDetectedClusterRequest is the request body for updating auto-detected clusters
+type AutoDetectedClusterRequest struct {
+	Name           string `json:"name"`
+	AutoClusterKey string `json:"auto_cluster_key,omitempty"` // Optional: use if provided, else compute from ID
+}
+
+// updateAutoDetectedCluster handles PUT requests for auto-detected clusters
+// (binary replication, logical replication, or Spock clusters)
+func (h *ClusterHandler) updateAutoDetectedCluster(w http.ResponseWriter, r *http.Request, clusterID string) {
+	// Check user permissions - only superusers can rename auto-detected clusters
+	_, isSuperuser, err := h.getUserInfoFromRequest(r)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: "Invalid or missing authentication token",
+		})
+		return
+	}
+
+	if !isSuperuser {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: "Only superusers can rename auto-detected clusters",
+		})
+		return
+	}
+
+	// Parse request body
+	var req AutoDetectedClusterRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: "Invalid request body",
+		})
+		return
+	}
+
+	if req.Name == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: "Name is required",
+		})
+		return
+	}
+
+	// Use auto_cluster_key from request if provided, else compute from cluster ID
+	autoKey := req.AutoClusterKey
+	if autoKey == "" {
+		autoKey = computeAutoClusterKey(clusterID)
+	}
+	if autoKey == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: "auto_cluster_key is required for this cluster type",
+		})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	// Upsert cluster record with custom name
+	cluster, err := h.datastore.UpsertClusterByAutoKey(ctx, autoKey, req.Name)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: fmt.Sprintf("Failed to update auto-detected cluster: %v", err),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	//nolint:errcheck // Encoding cluster
+	json.NewEncoder(w).Encode(cluster)
+}
+
+// computeAutoClusterKey computes the auto_cluster_key from a cluster ID
+// This only works for Spock clusters; binary/logical need the key from the frontend
+func computeAutoClusterKey(clusterID string) string {
+	if strings.HasPrefix(clusterID, "cluster-spock-") {
+		prefix := strings.TrimPrefix(clusterID, "cluster-spock-")
+		return "spock:" + prefix
+	}
+	// For server-{id} format, we can't determine if it's binary or logical
+	// The frontend should provide the auto_cluster_key from the topology data
+	return ""
+}
+
+// updateAutoDetectedGroup handles PUT requests for auto-detected groups (e.g., group-auto)
+func (h *ClusterHandler) updateAutoDetectedGroup(w http.ResponseWriter, r *http.Request, groupID string) {
+	// Check user permissions - only superusers can rename auto-detected groups
+	_, isSuperuser, err := h.getUserInfoFromRequest(r)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: "Invalid or missing authentication token",
+		})
+		return
+	}
+
+	if !isSuperuser {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: "Only superusers can rename auto-detected groups",
+		})
+		return
+	}
+
+	// Parse request body
+	var req ClusterGroupRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: "Invalid request body",
+		})
+		return
+	}
+
+	if req.Name == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: "Name is required",
+		})
+		return
+	}
+
+	// Compute auto_group_key from group ID
+	// group-auto -> auto
+	autoKey := strings.TrimPrefix(groupID, "group-")
+	if autoKey == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: "Invalid auto-detected group ID",
+		})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	// Upsert group record with custom name
+	group, err := h.datastore.UpsertGroupByAutoKey(ctx, autoKey, req.Name)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: fmt.Sprintf("Failed to update auto-detected group: %v", err),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	//nolint:errcheck // Encoding group
+	json.NewEncoder(w).Encode(group)
+}
+
 // Server operations
 
 func (h *ClusterHandler) handleClusterServers(w http.ResponseWriter, r *http.Request, clusterID int) {
@@ -574,4 +813,31 @@ func (h *ClusterHandler) listServersInCluster(w http.ResponseWriter, r *http.Req
 	w.Header().Set("Content-Type", "application/json")
 	//nolint:errcheck // Encoding servers list
 	json.NewEncoder(w).Encode(servers)
+}
+
+// getUserInfoFromRequest extracts username and superuser status from the request
+func (h *ClusterHandler) getUserInfoFromRequest(r *http.Request) (string, bool, error) {
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		return "", false, fmt.Errorf("missing authorization header")
+	}
+
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	if token == authHeader {
+		return "", false, fmt.Errorf("invalid authorization header format")
+	}
+
+	// Validate session token and get username
+	username, err := h.authStore.ValidateSessionToken(token)
+	if err != nil {
+		return "", false, err
+	}
+
+	// Look up user to get superuser status
+	user, err := h.authStore.GetUser(username)
+	if err != nil {
+		return username, false, nil // User exists but couldn't get details
+	}
+
+	return username, user.IsSuperuser, nil
 }

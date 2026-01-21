@@ -50,7 +50,8 @@ export const AuthProvider = ({ children }) => {
             if (userInfo.authenticated) {
                 setUser({
                     authenticated: true,
-                    username: userInfo.username
+                    username: userInfo.username,
+                    isSuperuser: userInfo.is_superuser || false
                 });
             } else {
                 // Session is invalid - clear it
@@ -92,11 +93,28 @@ export const AuthProvider = ({ children }) => {
             setSessionToken(result.session_token);
             localStorage.setItem('session-token', result.session_token);
 
-            // Set user info
-            setUser({
-                username: username,
-                expiresAt: result.expires_at
+            // Fetch full user info including superuser status
+            const userInfoResponse = await fetch(`${API_BASE_URL}/user/info`, {
+                headers: {
+                    'Authorization': `Bearer ${result.session_token}`
+                }
             });
+
+            if (userInfoResponse.ok) {
+                const userInfo = await userInfoResponse.json();
+                setUser({
+                    authenticated: true,
+                    username: userInfo.username,
+                    isSuperuser: userInfo.is_superuser || false,
+                    expiresAt: result.expires_at
+                });
+            } else {
+                // Fallback if user info fetch fails
+                setUser({
+                    username: username,
+                    expiresAt: result.expires_at
+                });
+            }
         } catch (error) {
             // Re-throw with user-friendly message
             throw new Error(error.message || 'Login failed');

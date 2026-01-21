@@ -2426,6 +2426,82 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration 13: Add owner and shared columns to cluster_groups
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     13,
+		Description: "Add owner and shared columns to cluster_groups table",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Add owner and shared columns to cluster_groups
+			_, err := conn.Exec(ctx, `
+			ALTER TABLE cluster_groups
+				ADD COLUMN IF NOT EXISTS owner_username VARCHAR(255),
+				ADD COLUMN IF NOT EXISTS owner_token VARCHAR(255),
+				ADD COLUMN IF NOT EXISTS is_shared BOOLEAN NOT NULL DEFAULT TRUE;
+
+			COMMENT ON COLUMN cluster_groups.owner_username IS
+				'Username of the user who owns this cluster group';
+			COMMENT ON COLUMN cluster_groups.owner_token IS
+				'Token that owns this cluster group (alternative to user ownership)';
+			COMMENT ON COLUMN cluster_groups.is_shared IS
+				'Whether this group is shared with all users (default true)';
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to add owner columns to cluster_groups: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 14: Add auto_cluster_key to clusters table for linking auto-detected clusters
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     14,
+		Description: "Add auto_cluster_key column to clusters table",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Add auto_cluster_key column and make group_id nullable
+			_, err := conn.Exec(ctx, `
+			ALTER TABLE clusters
+				ADD COLUMN IF NOT EXISTS auto_cluster_key VARCHAR(255) UNIQUE,
+				ALTER COLUMN group_id DROP NOT NULL;
+
+			COMMENT ON COLUMN clusters.auto_cluster_key IS
+				'Key linking to auto-detected cluster (format: type:id, e.g., binary:123, spock:pg17)';
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to add auto_cluster_key to clusters: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 15: Add auto_group_key to cluster_groups table for linking auto-detected groups
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     15,
+		Description: "Add auto_group_key column to cluster_groups table",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Add auto_group_key column for auto-detected groups like "Servers/Clusters"
+			_, err := conn.Exec(ctx, `
+			ALTER TABLE cluster_groups
+				ADD COLUMN IF NOT EXISTS auto_group_key VARCHAR(255) UNIQUE;
+
+			COMMENT ON COLUMN cluster_groups.auto_group_key IS
+				'Key linking to auto-detected group (e.g., auto for the default Servers/Clusters group)';
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to add auto_group_key to cluster_groups: %w", err)
+			}
+
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations

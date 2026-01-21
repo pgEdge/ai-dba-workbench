@@ -218,6 +218,34 @@ func (d *Datastore) GetConnectionWithPassword(ctx context.Context, id int) (*Mon
 	return conn, password, nil
 }
 
+// UpdateConnectionName updates a connection's name
+func (d *Datastore) UpdateConnectionName(ctx context.Context, id int, name string) (*MonitoredConnection, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	query := `
+        UPDATE connections
+        SET name = $2
+        WHERE id = $1
+        RETURNING id, name, host, hostaddr, port, database_name, username,
+                  password_encrypted, sslmode, sslcert, sslkey, sslrootcert,
+                  owner_username, owner_token, is_monitored, is_shared
+    `
+
+	var conn MonitoredConnection
+	err := d.pool.QueryRow(ctx, query, id, name).Scan(
+		&conn.ID, &conn.Name, &conn.Host, &conn.HostAddr, &conn.Port,
+		&conn.DatabaseName, &conn.Username, &conn.PasswordEncrypted,
+		&conn.SSLMode, &conn.SSLCert, &conn.SSLKey, &conn.SSLRootCert,
+		&conn.OwnerUsername, &conn.OwnerToken, &conn.IsMonitored, &conn.IsShared,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update connection: %w", err)
+	}
+
+	return &conn, nil
+}
+
 // BuildConnectionString creates a PostgreSQL connection string from a MonitoredConnection
 func (d *Datastore) BuildConnectionString(conn *MonitoredConnection, password string, databaseOverride string) string {
 	// Use override database if specified, otherwise use connection's default
@@ -310,21 +338,26 @@ func (d *Datastore) GetPool() *pgxpool.Pool {
 
 // ClusterGroup represents a group of clusters
 type ClusterGroup struct {
-	ID          int       `json:"id"`
-	Name        string    `json:"name"`
-	Description *string   `json:"description,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID            int            `json:"id"`
+	Name          string         `json:"name"`
+	Description   *string        `json:"description,omitempty"`
+	OwnerUsername sql.NullString `json:"owner_username,omitempty"`
+	OwnerToken    sql.NullString `json:"-"` // Never expose token in JSON
+	IsShared      bool           `json:"is_shared"`
+	AutoGroupKey  sql.NullString `json:"auto_group_key,omitempty"`
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
 }
 
 // Cluster represents a database cluster containing servers
 type Cluster struct {
-	ID          int       `json:"id"`
-	GroupID     int       `json:"group_id"`
-	Name        string    `json:"name"`
-	Description *string   `json:"description,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID             int            `json:"id"`
+	GroupID        sql.NullInt32  `json:"group_id,omitempty"`
+	Name           string         `json:"name"`
+	Description    *string        `json:"description,omitempty"`
+	AutoClusterKey sql.NullString `json:"auto_cluster_key,omitempty"`
+	CreatedAt      time.Time      `json:"created_at"`
+	UpdatedAt      time.Time      `json:"updated_at"`
 }
 
 // ServerInfo represents a server in the cluster hierarchy with status
@@ -358,7 +391,8 @@ func (d *Datastore) GetClusterGroups(ctx context.Context) ([]ClusterGroup, error
 	defer d.mu.RUnlock()
 
 	query := `
-        SELECT id, name, description, created_at, updated_at
+        SELECT id, name, description, owner_username, owner_token, is_shared,
+               created_at, updated_at
         FROM cluster_groups
         ORDER BY name
     `
@@ -372,7 +406,8 @@ func (d *Datastore) GetClusterGroups(ctx context.Context) ([]ClusterGroup, error
 	var groups []ClusterGroup
 	for rows.Next() {
 		var g ClusterGroup
-		if err := rows.Scan(&g.ID, &g.Name, &g.Description, &g.CreatedAt, &g.UpdatedAt); err != nil {
+		if err := rows.Scan(&g.ID, &g.Name, &g.Description, &g.OwnerUsername,
+			&g.OwnerToken, &g.IsShared, &g.CreatedAt, &g.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan cluster group: %w", err)
 		}
 		groups = append(groups, g)
@@ -391,14 +426,16 @@ func (d *Datastore) GetClusterGroup(ctx context.Context, id int) (*ClusterGroup,
 	defer d.mu.RUnlock()
 
 	query := `
-        SELECT id, name, description, created_at, updated_at
+        SELECT id, name, description, owner_username, owner_token, is_shared,
+               created_at, updated_at
         FROM cluster_groups
         WHERE id = $1
     `
 
 	var g ClusterGroup
 	err := d.pool.QueryRow(ctx, query, id).Scan(
-		&g.ID, &g.Name, &g.Description, &g.CreatedAt, &g.UpdatedAt,
+		&g.ID, &g.Name, &g.Description, &g.OwnerUsername, &g.OwnerToken,
+		&g.IsShared, &g.CreatedAt, &g.UpdatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cluster group: %w", err)
@@ -409,18 +446,25 @@ func (d *Datastore) GetClusterGroup(ctx context.Context, id int) (*ClusterGroup,
 
 // CreateClusterGroup creates a new cluster group
 func (d *Datastore) CreateClusterGroup(ctx context.Context, name string, description *string) (*ClusterGroup, error) {
+	return d.CreateClusterGroupWithOwner(ctx, name, description, nil, true)
+}
+
+// CreateClusterGroupWithOwner creates a new cluster group with optional owner
+func (d *Datastore) CreateClusterGroupWithOwner(ctx context.Context, name string, description *string, ownerUsername *string, isShared bool) (*ClusterGroup, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	query := `
-        INSERT INTO cluster_groups (name, description)
-        VALUES ($1, $2)
-        RETURNING id, name, description, created_at, updated_at
+        INSERT INTO cluster_groups (name, description, owner_username, is_shared)
+        VALUES ($1, $2, $3, $4)
+        RETURNING id, name, description, owner_username, owner_token, is_shared,
+                  created_at, updated_at
     `
 
 	var g ClusterGroup
-	err := d.pool.QueryRow(ctx, query, name, description).Scan(
-		&g.ID, &g.Name, &g.Description, &g.CreatedAt, &g.UpdatedAt,
+	err := d.pool.QueryRow(ctx, query, name, description, ownerUsername, isShared).Scan(
+		&g.ID, &g.Name, &g.Description, &g.OwnerUsername, &g.OwnerToken,
+		&g.IsShared, &g.CreatedAt, &g.UpdatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create cluster group: %w", err)
@@ -438,12 +482,14 @@ func (d *Datastore) UpdateClusterGroup(ctx context.Context, id int, name string,
         UPDATE cluster_groups
         SET name = $2, description = $3, updated_at = CURRENT_TIMESTAMP
         WHERE id = $1
-        RETURNING id, name, description, created_at, updated_at
+        RETURNING id, name, description, owner_username, owner_token, is_shared,
+                  created_at, updated_at
     `
 
 	var g ClusterGroup
 	err := d.pool.QueryRow(ctx, query, id, name, description).Scan(
-		&g.ID, &g.Name, &g.Description, &g.CreatedAt, &g.UpdatedAt,
+		&g.ID, &g.Name, &g.Description, &g.OwnerUsername, &g.OwnerToken,
+		&g.IsShared, &g.CreatedAt, &g.UpdatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update cluster group: %w", err)
@@ -477,7 +523,7 @@ func (d *Datastore) GetClustersInGroup(ctx context.Context, groupID int) ([]Clus
 	defer d.mu.RUnlock()
 
 	query := `
-        SELECT id, group_id, name, description, created_at, updated_at
+        SELECT id, group_id, name, description, auto_cluster_key, created_at, updated_at
         FROM clusters
         WHERE group_id = $1
         ORDER BY name
@@ -492,7 +538,7 @@ func (d *Datastore) GetClustersInGroup(ctx context.Context, groupID int) ([]Clus
 	var clusters []Cluster
 	for rows.Next() {
 		var c Cluster
-		if err := rows.Scan(&c.ID, &c.GroupID, &c.Name, &c.Description, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.GroupID, &c.Name, &c.Description, &c.AutoClusterKey, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan cluster: %w", err)
 		}
 		clusters = append(clusters, c)
@@ -511,14 +557,14 @@ func (d *Datastore) GetCluster(ctx context.Context, id int) (*Cluster, error) {
 	defer d.mu.RUnlock()
 
 	query := `
-        SELECT id, group_id, name, description, created_at, updated_at
+        SELECT id, group_id, name, description, auto_cluster_key, created_at, updated_at
         FROM clusters
         WHERE id = $1
     `
 
 	var c Cluster
 	err := d.pool.QueryRow(ctx, query, id).Scan(
-		&c.ID, &c.GroupID, &c.Name, &c.Description, &c.CreatedAt, &c.UpdatedAt,
+		&c.ID, &c.GroupID, &c.Name, &c.Description, &c.AutoClusterKey, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cluster: %w", err)
@@ -535,12 +581,12 @@ func (d *Datastore) CreateCluster(ctx context.Context, groupID int, name string,
 	query := `
         INSERT INTO clusters (group_id, name, description)
         VALUES ($1, $2, $3)
-        RETURNING id, group_id, name, description, created_at, updated_at
+        RETURNING id, group_id, name, description, auto_cluster_key, created_at, updated_at
     `
 
 	var c Cluster
 	err := d.pool.QueryRow(ctx, query, groupID, name, description).Scan(
-		&c.ID, &c.GroupID, &c.Name, &c.Description, &c.CreatedAt, &c.UpdatedAt,
+		&c.ID, &c.GroupID, &c.Name, &c.Description, &c.AutoClusterKey, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create cluster: %w", err)
@@ -558,12 +604,12 @@ func (d *Datastore) UpdateCluster(ctx context.Context, id int, groupID int, name
         UPDATE clusters
         SET group_id = $2, name = $3, description = $4, updated_at = CURRENT_TIMESTAMP
         WHERE id = $1
-        RETURNING id, group_id, name, description, created_at, updated_at
+        RETURNING id, group_id, name, description, auto_cluster_key, created_at, updated_at
     `
 
 	var c Cluster
 	err := d.pool.QueryRow(ctx, query, id, groupID, name, description).Scan(
-		&c.ID, &c.GroupID, &c.Name, &c.Description, &c.CreatedAt, &c.UpdatedAt,
+		&c.ID, &c.GroupID, &c.Name, &c.Description, &c.AutoClusterKey, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update cluster: %w", err)
@@ -589,6 +635,138 @@ func (d *Datastore) DeleteCluster(ctx context.Context, id int) error {
 	}
 
 	return nil
+}
+
+// GetClusterOverrides returns a map of auto_cluster_key -> custom name
+// for all clusters that have an auto_cluster_key set. This is used to
+// apply custom names to auto-detected clusters in the topology view.
+func (d *Datastore) GetClusterOverrides(ctx context.Context) (map[string]string, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	return d.getClusterOverridesInternal(ctx)
+}
+
+// getClusterOverridesInternal is the lock-free internal implementation
+func (d *Datastore) getClusterOverridesInternal(ctx context.Context) (map[string]string, error) {
+	query := `
+        SELECT auto_cluster_key, name
+        FROM clusters
+        WHERE auto_cluster_key IS NOT NULL
+    `
+
+	rows, err := d.pool.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query cluster overrides: %w", err)
+	}
+	defer rows.Close()
+
+	overrides := make(map[string]string)
+	for rows.Next() {
+		var key, name string
+		if err := rows.Scan(&key, &name); err != nil {
+			return nil, fmt.Errorf("failed to scan cluster override: %w", err)
+		}
+		overrides[key] = name
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating cluster overrides: %w", err)
+	}
+
+	return overrides, nil
+}
+
+// UpsertClusterByAutoKey creates or updates a cluster by its auto_cluster_key.
+// This is used when users rename auto-detected clusters.
+func (d *Datastore) UpsertClusterByAutoKey(ctx context.Context, autoKey, name string) (*Cluster, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	// Use INSERT ... ON CONFLICT to upsert
+	query := `
+        INSERT INTO clusters (name, auto_cluster_key)
+        VALUES ($1, $2)
+        ON CONFLICT (auto_cluster_key)
+        DO UPDATE SET name = EXCLUDED.name, updated_at = CURRENT_TIMESTAMP
+        RETURNING id, group_id, name, description, auto_cluster_key, created_at, updated_at
+    `
+
+	var c Cluster
+	err := d.pool.QueryRow(ctx, query, name, autoKey).Scan(
+		&c.ID, &c.GroupID, &c.Name, &c.Description, &c.AutoClusterKey, &c.CreatedAt, &c.UpdatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to upsert cluster by auto key: %w", err)
+	}
+
+	return &c, nil
+}
+
+// GetGroupOverrides returns a map of auto_group_key -> custom name
+// for all cluster groups that have an auto_group_key set. This is used to
+// apply custom names to auto-detected groups in the topology view.
+func (d *Datastore) GetGroupOverrides(ctx context.Context) (map[string]string, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	return d.getGroupOverridesInternal(ctx)
+}
+
+// getGroupOverridesInternal is the lock-free internal implementation
+func (d *Datastore) getGroupOverridesInternal(ctx context.Context) (map[string]string, error) {
+	query := `
+        SELECT auto_group_key, name
+        FROM cluster_groups
+        WHERE auto_group_key IS NOT NULL
+    `
+
+	rows, err := d.pool.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query group overrides: %w", err)
+	}
+	defer rows.Close()
+
+	overrides := make(map[string]string)
+	for rows.Next() {
+		var key, name string
+		if err := rows.Scan(&key, &name); err != nil {
+			return nil, fmt.Errorf("failed to scan group override: %w", err)
+		}
+		overrides[key] = name
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating group overrides: %w", err)
+	}
+
+	return overrides, nil
+}
+
+// UpsertGroupByAutoKey creates or updates a cluster group by its auto_group_key.
+// This is used when users rename auto-detected groups like "Servers/Clusters".
+func (d *Datastore) UpsertGroupByAutoKey(ctx context.Context, autoKey, name string) (*ClusterGroup, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	// Use INSERT ... ON CONFLICT to upsert
+	query := `
+        INSERT INTO cluster_groups (name, auto_group_key, is_shared)
+        VALUES ($1, $2, true)
+        ON CONFLICT (auto_group_key)
+        DO UPDATE SET name = EXCLUDED.name, updated_at = CURRENT_TIMESTAMP
+        RETURNING id, name, description, owner_username, owner_token, is_shared, auto_group_key, created_at, updated_at
+    `
+
+	var g ClusterGroup
+	err := d.pool.QueryRow(ctx, query, name, autoKey).Scan(
+		&g.ID, &g.Name, &g.Description, &g.OwnerUsername, &g.OwnerToken, &g.IsShared, &g.AutoGroupKey, &g.CreatedAt, &g.UpdatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to upsert group by auto key: %w", err)
+	}
+
+	return &g, nil
 }
 
 // GetServersInCluster returns all servers (connections) in a cluster with status
@@ -674,28 +852,28 @@ func (d *Datastore) GetClusterHierarchy(ctx context.Context) ([]ClusterGroupWith
 	}
 
 	result := make([]ClusterGroupWithClusters, 0, len(groups)+1)
-	for _, group := range groups {
+	for i := range groups {
 		groupWithClusters := ClusterGroupWithClusters{
-			ID:       fmt.Sprintf("group-%d", group.ID),
-			Name:     group.Name,
+			ID:       fmt.Sprintf("group-%d", groups[i].ID),
+			Name:     groups[i].Name,
 			Clusters: []ClusterWithServers{},
 		}
 
 		// Get clusters for this group
-		clusters, err := d.getClustersInGroupInternal(ctx, group.ID)
+		clusters, err := d.getClustersInGroupInternal(ctx, groups[i].ID)
 		if err != nil {
 			return nil, err
 		}
 
-		for _, cluster := range clusters {
+		for j := range clusters {
 			clusterWithServers := ClusterWithServers{
-				ID:      fmt.Sprintf("cluster-%d", cluster.ID),
-				Name:    cluster.Name,
+				ID:      fmt.Sprintf("cluster-%d", clusters[j].ID),
+				Name:    clusters[j].Name,
 				Servers: []ServerInfo{},
 			}
 
 			// Get servers for this cluster
-			servers, err := d.getServersInClusterInternal(ctx, cluster.ID)
+			servers, err := d.getServersInClusterInternal(ctx, clusters[j].ID)
 			if err != nil {
 				return nil, err
 			}
@@ -821,7 +999,7 @@ func (d *Datastore) getClusterGroupsInternal(ctx context.Context) ([]ClusterGrou
 
 func (d *Datastore) getClustersInGroupInternal(ctx context.Context, groupID int) ([]Cluster, error) {
 	query := `
-        SELECT id, group_id, name, description, created_at, updated_at
+        SELECT id, group_id, name, description, auto_cluster_key, created_at, updated_at
         FROM clusters
         WHERE group_id = $1
         ORDER BY name
@@ -836,7 +1014,7 @@ func (d *Datastore) getClustersInGroupInternal(ctx context.Context, groupID int)
 	var clusters []Cluster
 	for rows.Next() {
 		var c Cluster
-		if err := rows.Scan(&c.ID, &c.GroupID, &c.Name, &c.Description, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.GroupID, &c.Name, &c.Description, &c.AutoClusterKey, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan cluster: %w", err)
 		}
 		clusters = append(clusters, c)
@@ -936,30 +1114,33 @@ func (d *Datastore) AssignConnectionToCluster(ctx context.Context, connectionID 
 
 // TopologyServerInfo extends ServerInfo with topology and child servers
 type TopologyServerInfo struct {
-	ID           int                  `json:"id"`
-	Name         string               `json:"name"`
-	Host         string               `json:"host"`
-	Port         int                  `json:"port"`
-	Status       string               `json:"status"`
-	Role         string               `json:"role,omitempty"`
-	PrimaryRole  string               `json:"primary_role"`
-	IsExpandable bool                 `json:"is_expandable"`
-	Children     []TopologyServerInfo `json:"children,omitempty"`
+	ID            int                  `json:"id"`
+	Name          string               `json:"name"`
+	Host          string               `json:"host"`
+	Port          int                  `json:"port"`
+	Status        string               `json:"status"`
+	Role          string               `json:"role,omitempty"`
+	PrimaryRole   string               `json:"primary_role"`
+	IsExpandable  bool                 `json:"is_expandable"`
+	OwnerUsername string               `json:"owner_username,omitempty"`
+	Children      []TopologyServerInfo `json:"children,omitempty"`
 }
 
 // TopologyCluster represents a replication-aware cluster
 type TopologyCluster struct {
-	ID          string               `json:"id"`
-	Name        string               `json:"name"`
-	ClusterType string               `json:"cluster_type"` // spock, binary_replication, standalone
-	Servers     []TopologyServerInfo `json:"servers"`
+	ID             string               `json:"id"`
+	Name           string               `json:"name"`
+	ClusterType    string               `json:"cluster_type"` // spock, spock_ha, binary, logical, server
+	AutoClusterKey string               `json:"auto_cluster_key,omitempty"`
+	Servers        []TopologyServerInfo `json:"servers"`
 }
 
 // TopologyGroup represents a group with topology-aware clusters
 type TopologyGroup struct {
-	ID       string            `json:"id"`
-	Name     string            `json:"name"`
-	Clusters []TopologyCluster `json:"clusters"`
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	AutoGroupKey string            `json:"auto_group_key,omitempty"`
+	Clusters     []TopologyCluster `json:"clusters"`
 }
 
 // connectionWithRole holds connection data with role information from metrics
@@ -968,6 +1149,7 @@ type connectionWithRole struct {
 	Name               string
 	Host               string
 	Port               int
+	OwnerUsername      sql.NullString
 	PrimaryRole        string
 	UpstreamHost       sql.NullString
 	UpstreamPort       sql.NullInt32
@@ -1003,7 +1185,7 @@ func (d *Datastore) GetClusterTopology(ctx context.Context) ([]TopologyGroup, er
             WHERE collected_at > NOW() - INTERVAL '15 minutes'
             ORDER BY connection_id, collected_at DESC
         )
-        SELECT c.id, c.name, c.host, c.port,
+        SELECT c.id, c.name, c.host, c.port, c.owner_username,
                COALESCE(lr.primary_role, 'unknown') as primary_role,
                lr.upstream_host, lr.upstream_port,
                COALESCE(lr.has_spock, false) as has_spock,
@@ -1028,7 +1210,7 @@ func (d *Datastore) GetClusterTopology(ctx context.Context) ([]TopologyGroup, er
 	for rows.Next() {
 		var conn connectionWithRole
 		if err := rows.Scan(
-			&conn.ID, &conn.Name, &conn.Host, &conn.Port,
+			&conn.ID, &conn.Name, &conn.Host, &conn.Port, &conn.OwnerUsername,
 			&conn.PrimaryRole, &conn.UpstreamHost, &conn.UpstreamPort,
 			&conn.HasSpock, &conn.SpockNodeName,
 			&conn.BinaryStandbyCount, &conn.IsStreamingStandby,
@@ -1044,11 +1226,25 @@ func (d *Datastore) GetClusterTopology(ctx context.Context) ([]TopologyGroup, er
 		return nil, fmt.Errorf("error iterating connections: %w", err)
 	}
 
-	return d.buildTopologyHierarchy(connections), nil
+	// Get cluster name overrides for auto-detected clusters
+	clusterOverrides, err := d.getClusterOverridesInternal(ctx)
+	if err != nil {
+		// Log but don't fail - custom names are optional
+		clusterOverrides = make(map[string]string)
+	}
+
+	// Get group name overrides for auto-detected groups
+	groupOverrides, err := d.getGroupOverridesInternal(ctx)
+	if err != nil {
+		// Log but don't fail - custom names are optional
+		groupOverrides = make(map[string]string)
+	}
+
+	return d.buildTopologyHierarchy(connections, clusterOverrides, groupOverrides), nil
 }
 
 // buildTopologyHierarchy builds the topology hierarchy from connections
-func (d *Datastore) buildTopologyHierarchy(connections []connectionWithRole) []TopologyGroup {
+func (d *Datastore) buildTopologyHierarchy(connections []connectionWithRole, clusterOverrides, groupOverrides map[string]string) []TopologyGroup {
 	// Create maps for lookups
 	connByID := make(map[int]*connectionWithRole)
 	connByHostPort := make(map[string]*connectionWithRole)
@@ -1099,14 +1295,14 @@ func (d *Datastore) buildTopologyHierarchy(connections []connectionWithRole) []T
 	// Group Spock nodes into clusters based on naming patterns
 	// e.g., pg17-node1, pg17-node2, pg17-node3 -> one cluster
 	// pg18-spock1, pg18-spock2 -> another cluster
-	spockClusters := d.groupSpockNodesByClusters(spockNodes, childrenMap, connByID, assignedConnections)
+	spockClusters := d.groupSpockNodesByClusters(spockNodes, childrenMap, connByID, assignedConnections, clusterOverrides)
 
 	// Build clusters list
 	var clusters []TopologyCluster
 	clusters = append(clusters, spockClusters...)
 
 	// 2. Create entries for non-Spock primaries with standbys (binary replication)
-	// These don't get a cluster wrapper - just the primary server with children
+	// These now get a cluster wrapper with type "binary" so UI shows cluster header
 	for i := range connections {
 		conn := &connections[i]
 		if assignedConnections[conn.ID] {
@@ -1114,13 +1310,22 @@ func (d *Datastore) buildTopologyHierarchy(connections []connectionWithRole) []T
 		}
 		// Check if this is a primary with standbys (and not a Spock node)
 		if !conn.HasSpock && (conn.PrimaryRole == "binary_primary" && len(childrenMap[conn.ID]) > 0) {
-			// Build server with children, use cluster_type "server" to indicate no cluster wrapper
+			// Build server with children
 			server := d.buildServerWithChildren(conn, childrenMap, connByID, assignedConnections)
+
+			// Compute auto_cluster_key and check for custom name
+			autoKey := fmt.Sprintf("binary:%d", conn.ID)
+			clusterName := conn.Name
+			if customName, ok := clusterOverrides[autoKey]; ok {
+				clusterName = customName
+			}
+
 			cluster := TopologyCluster{
-				ID:          fmt.Sprintf("server-%d", conn.ID),
-				Name:        conn.Name,
-				ClusterType: "server", // UI will not show cluster header for this type
-				Servers:     []TopologyServerInfo{server},
+				ID:             fmt.Sprintf("server-%d", conn.ID),
+				Name:           clusterName,
+				ClusterType:    "binary", // UI will show cluster header for binary replication
+				AutoClusterKey: autoKey,
+				Servers:        []TopologyServerInfo{server},
 			}
 			clusters = append(clusters, cluster)
 		}
@@ -1128,7 +1333,7 @@ func (d *Datastore) buildTopologyHierarchy(connections []connectionWithRole) []T
 
 	// 2.5. Group logical replication publishers with their subscribers
 	// Match subscribers to publishers based on publisher_host:publisher_port
-	logicalClusters := d.groupLogicalReplicationByPublisher(connections, connByID, connByHostPort, connByNamePort, assignedConnections)
+	logicalClusters := d.groupLogicalReplicationByPublisher(connections, connByID, connByHostPort, connByNamePort, assignedConnections, clusterOverrides)
 	clusters = append(clusters, logicalClusters...)
 
 	// 3. Handle standalone servers and servers without children
@@ -1150,10 +1355,18 @@ func (d *Datastore) buildTopologyHierarchy(connections []connectionWithRole) []T
 	}
 
 	// Create the topology group
+	// Check for custom name in groupOverrides
+	groupName := "Servers/Clusters"
+	autoGroupKey := "auto"
+	if customName, ok := groupOverrides[autoGroupKey]; ok {
+		groupName = customName
+	}
+
 	group := TopologyGroup{
-		ID:       "group-auto",
-		Name:     "Servers/Clusters",
-		Clusters: clusters,
+		ID:           "group-auto",
+		Name:         groupName,
+		AutoGroupKey: autoGroupKey,
+		Clusters:     clusters,
 	}
 
 	return []TopologyGroup{group}
@@ -1165,6 +1378,7 @@ func (d *Datastore) groupSpockNodesByClusters(
 	childrenMap map[int][]int,
 	connByID map[int]*connectionWithRole,
 	assignedConnections map[int]bool,
+	overrides map[string]string,
 ) []TopologyCluster {
 	if len(spockNodes) == 0 {
 		return nil
@@ -1196,11 +1410,18 @@ func (d *Datastore) groupSpockNodesByClusters(
 			clusterName = fmt.Sprintf("%s Spock HA", prefix)
 		}
 
+		// Compute auto_cluster_key and check for custom name
+		autoKey := fmt.Sprintf("spock:%s", prefix)
+		if customName, ok := overrides[autoKey]; ok {
+			clusterName = customName
+		}
+
 		cluster := TopologyCluster{
-			ID:          fmt.Sprintf("cluster-spock-%s", prefix),
-			Name:        clusterName,
-			ClusterType: clusterType,
-			Servers:     make([]TopologyServerInfo, 0, len(nodes)),
+			ID:             fmt.Sprintf("cluster-spock-%s", prefix),
+			Name:           clusterName,
+			ClusterType:    clusterType,
+			AutoClusterKey: autoKey,
+			Servers:        make([]TopologyServerInfo, 0, len(nodes)),
 		}
 
 		for _, node := range nodes {
@@ -1223,6 +1444,7 @@ func (d *Datastore) groupLogicalReplicationByPublisher(
 	connByHostPort map[string]*connectionWithRole,
 	connByNamePort map[string]*connectionWithRole,
 	assignedConnections map[int]bool,
+	overrides map[string]string,
 ) []TopologyCluster {
 	// Build publisher->subscribers map by matching publisher_host:port to connections
 	subscribersByPublisher := make(map[int][]*connectionWithRole) // publisher connection ID -> subscribers
@@ -1271,41 +1493,59 @@ func (d *Datastore) groupLogicalReplicationByPublisher(
 		assignedConnections[publisher.ID] = true
 
 		// Build publisher server with subscribers as children
+		pubOwner := ""
+		if publisher.OwnerUsername.Valid {
+			pubOwner = publisher.OwnerUsername.String
+		}
 		pubServer := TopologyServerInfo{
-			ID:           publisher.ID,
-			Name:         publisher.Name,
-			Host:         publisher.Host,
-			Port:         publisher.Port,
-			Status:       publisher.Status,
-			Role:         d.mapPrimaryRoleToDisplayRole(publisher.PrimaryRole),
-			PrimaryRole:  publisher.PrimaryRole,
-			IsExpandable: true,
-			Children:     make([]TopologyServerInfo, 0, len(subscribers)),
+			ID:            publisher.ID,
+			Name:          publisher.Name,
+			Host:          publisher.Host,
+			Port:          publisher.Port,
+			Status:        publisher.Status,
+			Role:          d.mapPrimaryRoleToDisplayRole(publisher.PrimaryRole),
+			PrimaryRole:   publisher.PrimaryRole,
+			IsExpandable:  true,
+			OwnerUsername: pubOwner,
+			Children:      make([]TopologyServerInfo, 0, len(subscribers)),
 		}
 
 		// Add subscribers as children
 		for _, sub := range subscribers {
 			assignedConnections[sub.ID] = true
+			subOwner := ""
+			if sub.OwnerUsername.Valid {
+				subOwner = sub.OwnerUsername.String
+			}
 			subServer := TopologyServerInfo{
-				ID:           sub.ID,
-				Name:         sub.Name,
-				Host:         sub.Host,
-				Port:         sub.Port,
-				Status:       sub.Status,
-				Role:         d.mapPrimaryRoleToDisplayRole(sub.PrimaryRole),
-				PrimaryRole:  sub.PrimaryRole,
-				IsExpandable: false,
-				Children:     nil,
+				ID:            sub.ID,
+				Name:          sub.Name,
+				Host:          sub.Host,
+				Port:          sub.Port,
+				Status:        sub.Status,
+				Role:          d.mapPrimaryRoleToDisplayRole(sub.PrimaryRole),
+				PrimaryRole:   sub.PrimaryRole,
+				IsExpandable:  false,
+				OwnerUsername: subOwner,
+				Children:      nil,
 			}
 			pubServer.Children = append(pubServer.Children, subServer)
 		}
 
-		// Use cluster_type "server" so UI doesn't show cluster header
+		// Compute auto_cluster_key and check for custom name
+		autoKey := fmt.Sprintf("logical:%d", publisher.ID)
+		clusterName := publisher.Name
+		if customName, ok := overrides[autoKey]; ok {
+			clusterName = customName
+		}
+
+		// Use cluster_type "logical" so UI shows cluster header for logical replication
 		cluster := TopologyCluster{
-			ID:          fmt.Sprintf("server-%d", publisher.ID),
-			Name:        publisher.Name,
-			ClusterType: "server",
-			Servers:     []TopologyServerInfo{pubServer},
+			ID:             fmt.Sprintf("server-%d", publisher.ID),
+			Name:           clusterName,
+			ClusterType:    "logical",
+			AutoClusterKey: autoKey,
+			Servers:        []TopologyServerInfo{pubServer},
 		}
 		clusters = append(clusters, cluster)
 	}
@@ -1335,16 +1575,22 @@ func (d *Datastore) buildServerWithChildren(
 ) TopologyServerInfo {
 	assignedConnections[conn.ID] = true
 
+	ownerUsername := ""
+	if conn.OwnerUsername.Valid {
+		ownerUsername = conn.OwnerUsername.String
+	}
+
 	server := TopologyServerInfo{
-		ID:           conn.ID,
-		Name:         conn.Name,
-		Host:         conn.Host,
-		Port:         conn.Port,
-		Status:       conn.Status,
-		Role:         d.mapPrimaryRoleToDisplayRole(conn.PrimaryRole),
-		PrimaryRole:  conn.PrimaryRole,
-		IsExpandable: len(childrenMap[conn.ID]) > 0,
-		Children:     make([]TopologyServerInfo, 0),
+		ID:            conn.ID,
+		Name:          conn.Name,
+		Host:          conn.Host,
+		Port:          conn.Port,
+		Status:        conn.Status,
+		Role:          d.mapPrimaryRoleToDisplayRole(conn.PrimaryRole),
+		PrimaryRole:   conn.PrimaryRole,
+		IsExpandable:  len(childrenMap[conn.ID]) > 0,
+		OwnerUsername: ownerUsername,
+		Children:      make([]TopologyServerInfo, 0),
 	}
 
 	// Recursively add children

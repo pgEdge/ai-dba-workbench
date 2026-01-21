@@ -13,6 +13,22 @@ import { render, screen, fireEvent, within } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import ClusterNavigator from '../ClusterNavigator';
 
+// Mock the AuthContext
+vi.mock('../../contexts/AuthContext', () => ({
+    useAuth: () => ({
+        user: { isSuperuser: false },
+    }),
+}));
+
+// Mock the ClusterContext
+vi.mock('../../contexts/ClusterContext', () => ({
+    useCluster: () => ({
+        updateGroupName: vi.fn(),
+        updateClusterName: vi.fn(),
+        updateServerName: vi.fn(),
+    }),
+}));
+
 // Mock data
 const mockClusterData = [
     {

@@ -241,6 +241,151 @@ export const ClusterProvider = ({ children }) => {
         }
     }, [clusterData, fetchCurrentConnection]);
 
+    /**
+     * Update a cluster group's name
+     * Handles both database-backed groups (group-{id}) and
+     * auto-detected groups (group-auto)
+     */
+    const updateGroupName = useCallback(async (groupId, newName) => {
+        if (!token) throw new Error('Not authenticated');
+
+        const groupIdStr = groupId.toString();
+
+        // Check if it's an auto-detected group (group-auto)
+        const isAutoDetected = /^group-auto/.test(groupIdStr);
+
+        if (isAutoDetected) {
+            // Auto-detected groups: send the group ID as-is
+            const response = await fetch(`/api/cluster-groups/${groupIdStr}`, {
+                method: 'PUT',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ name: newName }),
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to update group');
+            }
+        } else {
+            // Database-backed groups: extract numeric ID
+            if (!/^group-\d+$/.test(groupIdStr)) {
+                throw new Error('Invalid group ID format');
+            }
+
+            // Extract numeric ID from group ID format (e.g., "group-1" -> 1)
+            const numericId = parseInt(groupIdStr.replace('group-', ''), 10);
+
+            const response = await fetch(`/api/cluster-groups/${numericId}`, {
+                method: 'PUT',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ name: newName }),
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to update group');
+            }
+        }
+
+        // Refresh cluster data to reflect the change
+        await fetchClusterData();
+    }, [token, fetchClusterData]);
+
+    /**
+     * Update a cluster's name
+     * Handles both database-backed clusters (cluster-{id}) and
+     * auto-detected clusters (server-{id}, cluster-spock-{prefix})
+     */
+    const updateClusterName = useCallback(async (clusterId, newName, groupId, autoClusterKey) => {
+        if (!token) throw new Error('Not authenticated');
+
+        const clusterIdStr = clusterId.toString();
+
+        // Check if it's an auto-detected cluster
+        const isAutoDetected = /^(server-\d+|cluster-spock-.+)$/.test(clusterIdStr);
+
+        if (isAutoDetected) {
+            // Auto-detected clusters: send the cluster ID as-is and include auto_cluster_key
+            const body = { name: newName };
+            if (autoClusterKey) {
+                body.auto_cluster_key = autoClusterKey;
+            }
+
+            const response = await fetch(`/api/clusters/${clusterIdStr}`, {
+                method: 'PUT',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(body),
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to update cluster');
+            }
+        } else {
+            // Database-backed clusters: extract numeric IDs
+            const numericId = parseInt(clusterIdStr.replace('cluster-', ''), 10);
+            if (isNaN(numericId)) {
+                throw new Error('Invalid cluster ID');
+            }
+
+            // Extract numeric group ID
+            const numericGroupId = parseInt(groupId.toString().replace('group-', ''), 10);
+            if (isNaN(numericGroupId)) {
+                throw new Error('Invalid group ID');
+            }
+
+            const response = await fetch(`/api/clusters/${numericId}`, {
+                method: 'PUT',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ name: newName, group_id: numericGroupId }),
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to update cluster');
+            }
+        }
+
+        // Refresh cluster data to reflect the change
+        await fetchClusterData();
+    }, [token, fetchClusterData]);
+
+    /**
+     * Update a server's (connection's) name
+     */
+    const updateServerName = useCallback(async (serverId, newName) => {
+        if (!token) throw new Error('Not authenticated');
+
+        const response = await fetch(`/api/connections/${serverId}`, {
+            method: 'PUT',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ name: newName }),
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to update server');
+        }
+
+        // Refresh cluster data to reflect the change
+        await fetchClusterData();
+    }, [token, fetchClusterData]);
+
     const value = {
         clusterData,
         selectedServer,
@@ -250,6 +395,9 @@ export const ClusterProvider = ({ children }) => {
         fetchClusterData,
         selectServer,
         clearSelection,
+        updateGroupName,
+        updateClusterName,
+        updateServerName,
     };
 
     return (

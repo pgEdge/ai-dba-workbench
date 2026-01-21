@@ -37,9 +37,43 @@ func NewConnectionHandler(datastore *database.Datastore, authStore *auth.AuthSto
 	}
 }
 
-// ConnectionUpdateRequest is the request body for updating a connection
+// ConnectionUpdateRequest is the request body for updating a connection (legacy, name-only)
 type ConnectionUpdateRequest struct {
 	Name *string `json:"name,omitempty"`
+}
+
+// ConnectionCreateRequest is the request body for creating a connection
+type ConnectionCreateRequest struct {
+	Name         string  `json:"name"`
+	Host         string  `json:"host"`
+	HostAddr     *string `json:"hostaddr,omitempty"`
+	Port         int     `json:"port"`
+	DatabaseName string  `json:"database_name"`
+	Username     string  `json:"username"`
+	Password     string  `json:"password"`
+	SSLMode      *string `json:"sslmode,omitempty"`
+	SSLCert      *string `json:"sslcert,omitempty"`
+	SSLKey       *string `json:"sslkey,omitempty"`
+	SSLRootCert  *string `json:"sslrootcert,omitempty"`
+	IsShared     bool    `json:"is_shared"`
+	IsMonitored  bool    `json:"is_monitored"`
+}
+
+// ConnectionFullUpdateRequest is the request body for full connection update
+type ConnectionFullUpdateRequest struct {
+	Name         *string `json:"name,omitempty"`
+	Host         *string `json:"host,omitempty"`
+	HostAddr     *string `json:"hostaddr,omitempty"`
+	Port         *int    `json:"port,omitempty"`
+	DatabaseName *string `json:"database_name,omitempty"`
+	Username     *string `json:"username,omitempty"`
+	Password     *string `json:"password,omitempty"`
+	SSLMode      *string `json:"sslmode,omitempty"`
+	SSLCert      *string `json:"sslcert,omitempty"`
+	SSLKey       *string `json:"sslkey,omitempty"`
+	SSLRootCert  *string `json:"sslrootcert,omitempty"`
+	IsShared     *bool   `json:"is_shared,omitempty"`
+	IsMonitored  *bool   `json:"is_monitored,omitempty"`
 }
 
 // CurrentConnectionRequest is the request body for setting current connection
@@ -92,14 +126,21 @@ func (h *ConnectionHandler) handleNotConfigured(w http.ResponseWriter, r *http.R
 	})
 }
 
-// handleConnections handles GET /api/connections
+// handleConnections handles GET/POST /api/connections
 func (h *ConnectionHandler) handleConnections(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", "GET")
+	switch r.Method {
+	case http.MethodGet:
+		h.listConnections(w, r)
+	case http.MethodPost:
+		h.createConnection(w, r)
+	default:
+		w.Header().Set("Allow", "GET, POST")
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
 	}
+}
 
+// listConnections handles GET /api/connections
+func (h *ConnectionHandler) listConnections(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -117,6 +158,137 @@ func (h *ConnectionHandler) handleConnections(w http.ResponseWriter, r *http.Req
 	w.Header().Set("Content-Type", "application/json")
 	//nolint:errcheck // Encoding connections list
 	json.NewEncoder(w).Encode(connections)
+}
+
+// createConnection handles POST /api/connections
+func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Request) {
+	// Get current user info
+	username, isSuperuser, err := h.getUserInfoFromRequest(r)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: "Invalid or missing authentication token",
+		})
+		return
+	}
+
+	// Parse request body
+	var req ConnectionCreateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: "Invalid request body",
+		})
+		return
+	}
+
+	// Validate required fields
+	if req.Name == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: "name is required",
+		})
+		return
+	}
+	if req.Host == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: "host is required",
+		})
+		return
+	}
+	if req.Port <= 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: "port is required and must be positive",
+		})
+		return
+	}
+	if req.DatabaseName == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: "database_name is required",
+		})
+		return
+	}
+	if req.Username == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: "username is required",
+		})
+		return
+	}
+	if req.Password == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: "password is required",
+		})
+		return
+	}
+
+	// Only superusers can create shared connections
+	if req.IsShared && !isSuperuser {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: "Permission denied: only superusers can create shared connections",
+		})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	// Create connection
+	params := database.ConnectionCreateParams{
+		Name:          req.Name,
+		Host:          req.Host,
+		HostAddr:      req.HostAddr,
+		Port:          req.Port,
+		DatabaseName:  req.DatabaseName,
+		Username:      req.Username,
+		Password:      req.Password,
+		SSLMode:       req.SSLMode,
+		SSLCert:       req.SSLCert,
+		SSLKey:        req.SSLKey,
+		SSLRootCert:   req.SSLRootCert,
+		IsShared:      req.IsShared,
+		IsMonitored:   req.IsMonitored,
+		OwnerUsername: username,
+	}
+
+	conn, err := h.datastore.CreateConnection(ctx, params)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: fmt.Sprintf("Failed to create connection: %v", err),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	//nolint:errcheck // Encoding connection
+	json.NewEncoder(w).Encode(conn)
 }
 
 // handleConnectionSubpath handles /api/connections/{id} and /api/connections/{id}/databases
@@ -155,8 +327,10 @@ func (h *ConnectionHandler) handleConnectionSubpath(w http.ResponseWriter, r *ht
 			h.getConnection(w, r, connectionID)
 		case http.MethodPut:
 			h.updateConnection(w, r, connectionID)
+		case http.MethodDelete:
+			h.deleteConnection(w, r, connectionID)
 		default:
-			w.Header().Set("Allow", "GET, PUT")
+			w.Header().Set("Allow", "GET, PUT, DELETE")
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 		return
@@ -238,8 +412,8 @@ func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Parse request body
-	var req ConnectionUpdateRequest
+	// Parse request body - try full update request first
+	var req ConnectionFullUpdateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
@@ -250,33 +424,114 @@ func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Update connection name if provided
-	if req.Name != nil {
-		if *req.Name == "" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			//nolint:errcheck // Encoding simple error response
-			json.NewEncoder(w).Encode(ErrorResponse{
-				Error: "Name cannot be empty",
-			})
-			return
-		}
+	// Validate name if provided
+	if req.Name != nil && *req.Name == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: "Name cannot be empty",
+		})
+		return
+	}
 
-		conn, err = h.datastore.UpdateConnectionName(ctx, id, *req.Name)
-		if err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusInternalServerError)
-			//nolint:errcheck // Encoding simple error response
-			json.NewEncoder(w).Encode(ErrorResponse{
-				Error: fmt.Sprintf("Failed to update connection: %v", err),
-			})
-			return
-		}
+	// Only superusers can make connections shared
+	if req.IsShared != nil && *req.IsShared && !isSuperuser {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: "Permission denied: only superusers can make connections shared",
+		})
+		return
+	}
+
+	// Build update params
+	params := database.ConnectionUpdateParams{
+		Name:         req.Name,
+		Host:         req.Host,
+		HostAddr:     req.HostAddr,
+		Port:         req.Port,
+		DatabaseName: req.DatabaseName,
+		Username:     req.Username,
+		Password:     req.Password,
+		SSLMode:      req.SSLMode,
+		SSLCert:      req.SSLCert,
+		SSLKey:       req.SSLKey,
+		SSLRootCert:  req.SSLRootCert,
+		IsShared:     req.IsShared,
+		IsMonitored:  req.IsMonitored,
+	}
+
+	conn, err = h.datastore.UpdateConnectionFull(ctx, id, params)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: fmt.Sprintf("Failed to update connection: %v", err),
+		})
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	//nolint:errcheck // Encoding connection
 	json.NewEncoder(w).Encode(conn)
+}
+
+// deleteConnection handles DELETE /api/connections/{id}
+func (h *ConnectionHandler) deleteConnection(w http.ResponseWriter, r *http.Request, id int) {
+	// Get current user info for permission check
+	username, isSuperuser, err := h.getUserInfoFromRequest(r)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: "Invalid or missing authentication token",
+		})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	// Get connection to check ownership
+	conn, err := h.datastore.GetConnection(ctx, id)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: fmt.Sprintf("Connection not found: %v", err),
+		})
+		return
+	}
+
+	// Permission check: must be owner or superuser
+	isOwner := conn.OwnerUsername.Valid && conn.OwnerUsername.String == username
+	if !isSuperuser && !isOwner {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: "Permission denied: you must be the owner or a superuser to delete this connection",
+		})
+		return
+	}
+
+	// Delete the connection
+	if err := h.datastore.DeleteConnection(ctx, id); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: fmt.Sprintf("Failed to delete connection: %v", err),
+		})
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // listDatabases handles GET /api/connections/{id}/databases

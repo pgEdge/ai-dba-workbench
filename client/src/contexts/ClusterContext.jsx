@@ -89,6 +89,9 @@ export const ClusterProvider = ({ children }) => {
     const [currentConnection, setCurrentConnection] = useState(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
+    const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
+    const [lastRefresh, setLastRefresh] = useState(null);
+    const autoRefreshInterval = 30000; // 30 seconds
 
     /**
      * Fetch cluster hierarchy from the API
@@ -112,6 +115,7 @@ export const ClusterProvider = ({ children }) => {
             if (response.ok) {
                 const data = await response.json();
                 setClusterData(data);
+                setLastRefresh(new Date());
             } else if (response.status === 404) {
                 // Fall back to connections endpoint
                 response = await fetch('/api/connections', {
@@ -125,6 +129,7 @@ export const ClusterProvider = ({ children }) => {
                     const connections = await response.json();
                     const hierarchy = transformConnectionsToHierarchy(connections);
                     setClusterData(hierarchy);
+                    setLastRefresh(new Date());
                 } else {
                     throw new Error('Failed to fetch connections');
                 }
@@ -240,6 +245,17 @@ export const ClusterProvider = ({ children }) => {
             fetchCurrentConnection();
         }
     }, [clusterData, fetchCurrentConnection]);
+
+    // Auto-refresh effect
+    useEffect(() => {
+        if (!autoRefreshEnabled || !token) return;
+
+        const intervalId = setInterval(() => {
+            fetchClusterData();
+        }, autoRefreshInterval);
+
+        return () => clearInterval(intervalId);
+    }, [autoRefreshEnabled, token, fetchClusterData]);
 
     /**
      * Update a cluster group's name
@@ -386,18 +402,203 @@ export const ClusterProvider = ({ children }) => {
         await fetchClusterData();
     }, [token, fetchClusterData]);
 
+    /**
+     * Create a new server (connection)
+     */
+    const createServer = useCallback(async (serverData) => {
+        if (!token) throw new Error('Not authenticated');
+
+        const response = await fetch('/api/connections', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(serverData),
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to create server');
+        }
+
+        await fetchClusterData();
+        return await response.json();
+    }, [token, fetchClusterData]);
+
+    /**
+     * Update an existing server (connection)
+     */
+    const updateServer = useCallback(async (serverId, serverData) => {
+        if (!token) throw new Error('Not authenticated');
+
+        const response = await fetch(`/api/connections/${serverId}`, {
+            method: 'PUT',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(serverData),
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to update server');
+        }
+
+        await fetchClusterData();
+        return await response.json();
+    }, [token, fetchClusterData]);
+
+    /**
+     * Delete a server (connection)
+     */
+    const deleteServer = useCallback(async (serverId) => {
+        if (!token) throw new Error('Not authenticated');
+
+        const response = await fetch(`/api/connections/${serverId}`, {
+            method: 'DELETE',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+            },
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to delete server');
+        }
+
+        // Clear selection if deleted server was selected
+        if (selectedServer?.id === serverId) {
+            setSelectedServer(null);
+            setCurrentConnection(null);
+        }
+
+        await fetchClusterData();
+    }, [token, fetchClusterData, selectedServer]);
+
+    /**
+     * Create a new cluster group
+     */
+    const createGroup = useCallback(async (groupData) => {
+        if (!token) throw new Error('Not authenticated');
+
+        const response = await fetch('/api/cluster-groups', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(groupData),
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to create group');
+        }
+
+        await fetchClusterData();
+        return await response.json();
+    }, [token, fetchClusterData]);
+
+    /**
+     * Delete a cluster group
+     */
+    const deleteGroup = useCallback(async (groupId) => {
+        if (!token) throw new Error('Not authenticated');
+
+        // Extract numeric ID from group-{id} format if needed
+        const numericId = typeof groupId === 'string' && groupId.startsWith('group-')
+            ? parseInt(groupId.replace('group-', ''), 10)
+            : groupId;
+
+        const response = await fetch(`/api/cluster-groups/${numericId}`, {
+            method: 'DELETE',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+            },
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to delete group');
+        }
+
+        await fetchClusterData();
+    }, [token, fetchClusterData]);
+
+    /**
+     * Move a cluster to a different group
+     * Supports both database-backed clusters and auto-detected clusters
+     */
+    const moveClusterToGroup = useCallback(async (clusterId, targetGroupId, autoClusterKey, clusterName) => {
+        if (!token) throw new Error('Not authenticated');
+
+        const clusterIdStr = clusterId.toString();
+
+        // Extract the target group's numeric ID from the group ID string (e.g., "group-123")
+        let numericGroupId = null;
+        if (targetGroupId) {
+            const groupIdStr = targetGroupId.toString();
+            const match = groupIdStr.match(/^group-(\d+)$/);
+            if (match) {
+                numericGroupId = parseInt(match[1], 10);
+            }
+        }
+
+        // Build request body
+        const body = { group_id: numericGroupId };
+        if (autoClusterKey) {
+            body.auto_cluster_key = autoClusterKey;
+        }
+        // Include name for creating new cluster records during move
+        if (clusterName) {
+            body.name = clusterName;
+        }
+
+        const response = await fetch(`/api/clusters/${clusterIdStr}`, {
+            method: 'PUT',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(body),
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to move cluster');
+        }
+
+        await fetchClusterData();
+    }, [token, fetchClusterData]);
+
     const value = {
+        // Data
         clusterData,
         selectedServer,
         currentConnection,
         loading,
         error,
+        // Data fetching
         fetchClusterData,
         selectServer,
         clearSelection,
+        // Update functions
         updateGroupName,
         updateClusterName,
         updateServerName,
+        // CRUD functions
+        createServer,
+        updateServer,
+        deleteServer,
+        createGroup,
+        deleteGroup,
+        moveClusterToGroup,
+        // Auto-refresh
+        autoRefreshEnabled,
+        setAutoRefreshEnabled,
+        lastRefresh,
     };
 
     return (

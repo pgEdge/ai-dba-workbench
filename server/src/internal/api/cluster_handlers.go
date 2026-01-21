@@ -45,8 +45,8 @@ type ClusterGroupRequest struct {
 
 // ClusterRequest is the request body for creating/updating clusters
 type ClusterRequest struct {
-	GroupID     int     `json:"group_id"`
-	Name        string  `json:"name"`
+	GroupID     *int    `json:"group_id,omitempty"`
+	Name        string  `json:"name,omitempty"`
 	Description *string `json:"description,omitempty"`
 }
 
@@ -88,7 +88,7 @@ func (h *ClusterHandler) handleNotConfigured(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-// handleClusters handles GET /api/clusters (returns auto-detected topology)
+// handleClusters handles GET /api/clusters (returns topology with manual groups and auto-detected servers)
 func (h *ClusterHandler) handleClusters(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", "GET")
@@ -152,8 +152,17 @@ func (h *ClusterHandler) handleClusterSubpath(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Parse cluster ID (numeric for database-backed clusters)
-	clusterID, err := strconv.Atoi(parts[0])
+	// Parse cluster ID - handle both numeric (123) and prefixed (cluster-123) formats
+	var clusterID int
+	var err error
+	if strings.HasPrefix(parts[0], "cluster-") {
+		// Database-backed cluster with cluster-{id} format
+		idStr := strings.TrimPrefix(parts[0], "cluster-")
+		clusterID, err = strconv.Atoi(idStr)
+	} else {
+		// Plain numeric ID
+		clusterID, err = strconv.Atoi(parts[0])
+	}
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
@@ -417,7 +426,19 @@ func (h *ClusterHandler) deleteClusterGroup(w http.ResponseWriter, r *http.Reque
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	err := h.datastore.DeleteClusterGroup(ctx, id)
+	// Protect the default group from deletion
+	defaultGroupID, err := h.datastore.GetDefaultGroupID(ctx)
+	if err == nil && defaultGroupID == id {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		//nolint:errcheck // Encoding simple error response
+		json.NewEncoder(w).Encode(ErrorResponse{
+			Error: "The default group cannot be deleted",
+		})
+		return
+	}
+
+	err = h.datastore.DeleteClusterGroup(ctx, id)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		if strings.Contains(err.Error(), "not found") {
@@ -543,22 +564,13 @@ func (h *ClusterHandler) updateCluster(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 
-	if req.Name == "" {
+	// At least name or group_id must be provided for update
+	if req.Name == "" && req.GroupID == nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		//nolint:errcheck // Encoding simple error response
 		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "Name is required",
-		})
-		return
-	}
-
-	if req.GroupID == 0 {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "group_id is required",
+			Error: "At least name or group_id is required",
 		})
 		return
 	}
@@ -566,7 +578,7 @@ func (h *ClusterHandler) updateCluster(w http.ResponseWriter, r *http.Request, i
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	cluster, err := h.datastore.UpdateCluster(ctx, id, req.GroupID, req.Name, req.Description)
+	cluster, err := h.datastore.UpdateClusterPartial(ctx, id, req.GroupID, req.Name, req.Description)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -606,14 +618,16 @@ func (h *ClusterHandler) deleteCluster(w http.ResponseWriter, r *http.Request, i
 
 // AutoDetectedClusterRequest is the request body for updating auto-detected clusters
 type AutoDetectedClusterRequest struct {
-	Name           string `json:"name"`
+	Name           string `json:"name,omitempty"`
 	AutoClusterKey string `json:"auto_cluster_key,omitempty"` // Optional: use if provided, else compute from ID
+	GroupID        *int   `json:"group_id,omitempty"`         // Optional: move cluster to different group
 }
 
 // updateAutoDetectedCluster handles PUT requests for auto-detected clusters
 // (binary replication, logical replication, or Spock clusters)
+// Supports both renaming and moving clusters to different groups
 func (h *ClusterHandler) updateAutoDetectedCluster(w http.ResponseWriter, r *http.Request, clusterID string) {
-	// Check user permissions - only superusers can rename auto-detected clusters
+	// Check user permissions - only superusers can modify auto-detected clusters
 	_, isSuperuser, err := h.getUserInfoFromRequest(r)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -630,7 +644,7 @@ func (h *ClusterHandler) updateAutoDetectedCluster(w http.ResponseWriter, r *htt
 		w.WriteHeader(http.StatusForbidden)
 		//nolint:errcheck // Encoding simple error response
 		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "Only superusers can rename auto-detected clusters",
+			Error: "Only superusers can modify auto-detected clusters",
 		})
 		return
 	}
@@ -647,12 +661,13 @@ func (h *ClusterHandler) updateAutoDetectedCluster(w http.ResponseWriter, r *htt
 		return
 	}
 
-	if req.Name == "" {
+	// At least name or group_id must be provided
+	if req.Name == "" && req.GroupID == nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		//nolint:errcheck // Encoding simple error response
 		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "Name is required",
+			Error: "At least name or group_id is required",
 		})
 		return
 	}
@@ -675,8 +690,8 @@ func (h *ClusterHandler) updateAutoDetectedCluster(w http.ResponseWriter, r *htt
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	// Upsert cluster record with custom name
-	cluster, err := h.datastore.UpsertClusterByAutoKey(ctx, autoKey, req.Name)
+	// Update cluster record (name and/or group_id)
+	cluster, err := h.datastore.UpsertAutoDetectedCluster(ctx, autoKey, req.Name, req.GroupID)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -693,14 +708,20 @@ func (h *ClusterHandler) updateAutoDetectedCluster(w http.ResponseWriter, r *htt
 }
 
 // computeAutoClusterKey computes the auto_cluster_key from a cluster ID
-// This only works for Spock clusters; binary/logical need the key from the frontend
+// For Spock clusters (cluster-spock-{prefix}), computes spock:{prefix}
+// For standalone servers (server-{id}), computes standalone:{id}
+// For binary/logical clusters, the frontend should provide the auto_cluster_key
 func computeAutoClusterKey(clusterID string) string {
 	if strings.HasPrefix(clusterID, "cluster-spock-") {
 		prefix := strings.TrimPrefix(clusterID, "cluster-spock-")
 		return "spock:" + prefix
 	}
-	// For server-{id} format, we can't determine if it's binary or logical
-	// The frontend should provide the auto_cluster_key from the topology data
+	// For server-{id} format without auto_cluster_key from frontend,
+	// assume it's a standalone server (binary clusters will provide the key)
+	if strings.HasPrefix(clusterID, "server-") {
+		idStr := strings.TrimPrefix(clusterID, "server-")
+		return "standalone:" + idStr
+	}
 	return ""
 }
 

@@ -2502,6 +2502,53 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration 16: Add is_default column and create default group
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     16,
+		Description: "Add is_default column to cluster_groups and create default group",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Add is_default column to cluster_groups
+			_, err := conn.Exec(ctx, `
+			ALTER TABLE cluster_groups
+				ADD COLUMN IF NOT EXISTS is_default BOOLEAN NOT NULL DEFAULT FALSE;
+
+			COMMENT ON COLUMN cluster_groups.is_default IS
+				'Whether this is the default group for ungrouped servers/clusters (only one allowed)';
+
+			-- Create unique partial index to ensure only one default group
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_cluster_groups_is_default
+				ON cluster_groups (is_default) WHERE is_default = TRUE;
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to add is_default column to cluster_groups: %w", err)
+			}
+
+			// Insert the default group
+			_, err = conn.Exec(ctx, `
+			INSERT INTO cluster_groups (name, description, is_shared, is_default)
+			VALUES ('Servers/Clusters', 'Default group for all servers and clusters', TRUE, TRUE)
+			ON CONFLICT DO NOTHING;
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to create default cluster group: %w", err)
+			}
+
+			// Update any clusters with NULL group_id to use the default group
+			_, err = conn.Exec(ctx, `
+			UPDATE clusters
+			SET group_id = (SELECT id FROM cluster_groups WHERE is_default = TRUE)
+			WHERE group_id IS NULL;
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to update clusters with default group: %w", err)
+			}
+
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations

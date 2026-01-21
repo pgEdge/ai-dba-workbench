@@ -15,6 +15,13 @@ import { useAuth } from '../contexts/AuthContext';
 import { useCluster } from '../contexts/ClusterContext';
 import InlineEditText from './InlineEditText';
 import {
+    DndContext,
+    useDraggable,
+    useDroppable,
+    DragOverlay,
+    pointerWithin,
+} from '@dnd-kit/core';
+import {
     Box,
     Typography,
     IconButton,
@@ -23,7 +30,6 @@ import {
     TextField,
     InputAdornment,
     Chip,
-    Divider,
     alpha,
     Skeleton,
 } from '@mui/material';
@@ -45,7 +51,15 @@ import {
     Publish as PublisherIcon,
     Download as SubscriberIcon,
     Storage as StandaloneIcon,
+    Edit as EditIcon,
+    Delete as DeleteIcon,
+    Autorenew as AutorenewIcon,
+    DragIndicator as DragIcon,
 } from '@mui/icons-material';
+import ServerDialog from './ServerDialog';
+import GroupDialog from './GroupDialog';
+import DeleteConfirmationDialog from './DeleteConfirmationDialog';
+import AddMenu from './AddMenu';
 
 // Status color mapping
 const STATUS_COLORS = {
@@ -61,12 +75,6 @@ const STATUS_LABELS = {
     warning: 'Warning',
     offline: 'Offline',
     unknown: 'Unknown',
-};
-
-// Tree spacing constants
-const TREE_SPACING = {
-    INDENT_SIZE: 20,
-    LINE_WIDTH: 1,
 };
 
 // Role configuration with colors and labels
@@ -89,27 +97,6 @@ const ROLE_ICONS = {
     standalone: StandaloneIcon,
     logical_publisher: PublisherIcon,
     logical_subscriber: SubscriberIcon,
-};
-
-/**
- * Format role for display - converts snake_case to readable format
- */
-const formatRole = (role) => {
-    if (!role) return null;
-    // Convert snake_case to readable format
-    const roleMap = {
-        'binary_primary': 'Primary',
-        'binary_standby': 'Binary Standby',
-        'binary_cascading': 'Cascading Standby',
-        'spock_node': 'Spock Node',
-        'standalone': 'Standalone',
-        'logical_publisher': 'Logical Publisher',
-        'logical_subscriber': 'Logical Replica',
-        'logical_bidirectional': 'Logical Bidirectional',
-        'bdr_node': 'BDR Node',
-        'unknown': null,
-    };
-    return roleMap[role] || role.replace(/_/g, ' ').toUpperCase();
 };
 
 /**
@@ -261,6 +248,8 @@ const ServerItem = ({
     clusterType = 'default',
     user,
     onUpdateServer,
+    onEditServer,
+    onDeleteServer,
 }) => {
     // User can edit if they're superuser or the owner
     const canEditServer = user?.isSuperuser || server.owner_username === user?.username;
@@ -328,8 +317,10 @@ const ServerItem = ({
                 </>
             )}
             <Box
+                className="server-item-row"
                 onClick={handleSelect}
                 sx={{
+                    position: 'relative',
                     display: 'flex',
                     alignItems: 'center',
                     gap: 0.5,
@@ -406,7 +397,50 @@ const ServerItem = ({
                     />
                 </Box>
                 {effectiveRole && ROLE_CONFIGS[effectiveRole] && (
-                    <RolePill role={effectiveRole} isDark={isDark} />
+                    <Box sx={{ ml: 'auto', flexShrink: 0 }}>
+                        <RolePill role={effectiveRole} isDark={isDark} />
+                    </Box>
+                )}
+                {canEditServer && (
+                    <Box
+                        className="action-buttons"
+                        sx={{
+                            position: 'absolute',
+                            right: 8,
+                            top: '50%',
+                            transform: 'translateY(-50%)',
+                            display: 'flex',
+                            gap: 0.25,
+                            opacity: 0,
+                            transition: 'opacity 0.15s',
+                            bgcolor: isDark ? 'rgba(30, 41, 59, 0.95)' : 'rgba(255, 255, 255, 0.95)',
+                            borderRadius: 1,
+                            px: 0.5,
+                            py: 0.25,
+                            '.server-item-row:hover &': { opacity: 1 },
+                        }}
+                    >
+                        <IconButton
+                            size="small"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onEditServer?.(server);
+                            }}
+                            sx={{ p: 0.25, color: 'text.disabled', '&:hover': { color: 'primary.main' } }}
+                        >
+                            <EditIcon sx={{ fontSize: 14 }} />
+                        </IconButton>
+                        <IconButton
+                            size="small"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onDeleteServer?.(server);
+                            }}
+                            sx={{ p: 0.25, color: 'text.disabled', '&:hover': { color: 'error.main' } }}
+                        >
+                            <DeleteIcon sx={{ fontSize: 14 }} />
+                        </IconButton>
+                    </Box>
                 )}
             </Box>
             {/* Render child servers recursively */}
@@ -429,6 +463,8 @@ const ServerItem = ({
                                 clusterType={clusterType}
                                 user={user}
                                 onUpdateServer={onUpdateServer}
+                                onEditServer={onEditServer}
+                                onDeleteServer={onDeleteServer}
                             />
                         ))}
                     </Box>
@@ -469,6 +505,8 @@ const ClusterItem = ({
     user,
     onUpdateCluster,
     onUpdateServer,
+    onEditServer,
+    onDeleteServer,
 }) => {
     // Superusers can edit:
     // - Database-backed clusters (cluster-{id} format)
@@ -560,6 +598,8 @@ const ClusterItem = ({
                     label={`${onlineCount}/${totalCount}`}
                     size="small"
                     sx={{
+                        ml: 'auto',
+                        flexShrink: 0,
                         height: 18,
                         fontSize: '0.625rem',
                         fontWeight: 600,
@@ -590,11 +630,189 @@ const ClusterItem = ({
                             clusterType={clusterType}
                             user={user}
                             onUpdateServer={onUpdateServer}
+                            onEditServer={onEditServer}
+                            onDeleteServer={onDeleteServer}
                         />
                     ))}
                 </Box>
             </Collapse>
         </ClusterContainer>
+    );
+};
+
+/**
+ * DraggableCluster - Wrapper that makes a cluster draggable via drag handle
+ * Uses a drag handle approach to avoid blocking click events on child components
+ */
+const DraggableCluster = ({
+    cluster,
+    groupId,
+    children,
+    isDark,
+    canDrag = true,
+}) => {
+    const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+        id: `draggable-${cluster.id}`,
+        data: {
+            type: 'cluster',
+            cluster,
+            groupId,
+        },
+        disabled: !canDrag,
+    });
+
+    const style = transform
+        ? {
+            transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
+        }
+        : undefined;
+
+    return (
+        <Box
+            ref={setNodeRef}
+            style={style}
+            className="draggable-cluster"
+            sx={{
+                position: 'relative',
+                opacity: isDragging ? 0.5 : 1,
+            }}
+        >
+            {/* Drag handle - only appears on hover when dragging is allowed */}
+            {canDrag && (
+                <Box
+                    {...attributes}
+                    {...listeners}
+                    sx={{
+                        position: 'absolute',
+                        left: -4,
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        zIndex: 10,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        width: 20,
+                        height: 28,
+                        borderRadius: 1,
+                        cursor: 'grab',
+                        opacity: 0,
+                        transition: 'opacity 0.15s',
+                        bgcolor: isDark ? 'rgba(30, 41, 59, 0.95)' : 'rgba(255, 255, 255, 0.95)',
+                        boxShadow: isDark
+                            ? '0 2px 8px rgba(0, 0, 0, 0.3)'
+                            : '0 2px 8px rgba(0, 0, 0, 0.1)',
+                        '.draggable-cluster:hover &': { opacity: 1 },
+                        '&:hover': {
+                            bgcolor: isDark ? alpha('#22B8CF', 0.15) : alpha('#15AABF', 0.1),
+                        },
+                        '&:active': { cursor: 'grabbing' },
+                    }}
+                >
+                    <DragIcon sx={{ fontSize: 14, color: 'text.disabled' }} />
+                </Box>
+            )}
+            {children}
+        </Box>
+    );
+};
+
+/**
+ * DroppableGroup - Wrapper that makes a group a drop target
+ */
+const DroppableGroup = ({
+    groupId,
+    children,
+    isDark,
+}) => {
+    const { isOver, setNodeRef } = useDroppable({
+        id: `droppable-${groupId}`,
+        data: {
+            type: 'group',
+            groupId,
+        },
+    });
+
+    return (
+        <Box
+            ref={setNodeRef}
+            sx={{
+                position: 'relative',
+                transition: 'all 0.2s ease',
+                ...(isOver && {
+                    '&::before': {
+                        content: '""',
+                        position: 'absolute',
+                        top: 0,
+                        left: 8,
+                        right: 8,
+                        bottom: 0,
+                        border: '2px dashed',
+                        borderColor: isDark ? '#22B8CF' : '#15AABF',
+                        borderRadius: 2,
+                        bgcolor: isDark ? alpha('#22B8CF', 0.08) : alpha('#15AABF', 0.05),
+                        pointerEvents: 'none',
+                        zIndex: 1,
+                    },
+                }),
+            }}
+        >
+            {children}
+        </Box>
+    );
+};
+
+/**
+ * DragOverlayContent - Content shown during drag
+ */
+const DragOverlayContent = ({ cluster, isDark }) => {
+    if (!cluster) return null;
+
+    const totalCount = countServersRecursive(cluster.servers);
+    const onlineCount = countServersRecursive(cluster.servers, s => s.status === 'online');
+
+    return (
+        <Box
+            sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1,
+                py: 0.75,
+                px: 1.5,
+                bgcolor: isDark ? '#1E293B' : '#FFFFFF',
+                border: '1px solid',
+                borderColor: isDark ? '#22B8CF' : '#15AABF',
+                borderRadius: 2,
+                boxShadow: isDark
+                    ? '0 8px 24px rgba(0, 0, 0, 0.4)'
+                    : '0 8px 24px rgba(0, 0, 0, 0.15)',
+                cursor: 'grabbing',
+            }}
+        >
+            <DragIcon sx={{ fontSize: 16, color: 'text.disabled' }} />
+            <ClusterIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
+            <Typography
+                variant="body2"
+                sx={{
+                    fontWeight: 500,
+                    fontSize: '0.8125rem',
+                    color: 'text.primary',
+                }}
+            >
+                {cluster.name}
+            </Typography>
+            <Chip
+                label={`${onlineCount}/${totalCount}`}
+                size="small"
+                sx={{
+                    height: 18,
+                    fontSize: '0.625rem',
+                    fontWeight: 600,
+                    bgcolor: isDark ? alpha('#22B8CF', 0.15) : alpha('#15AABF', 0.1),
+                    color: isDark ? '#22B8CF' : '#15AABF',
+                    '& .MuiChip-label': { px: 0.75 },
+                }}
+            />
+        </Box>
     );
 };
 
@@ -616,6 +834,9 @@ const GroupItem = ({
     onUpdateGroup,
     onUpdateCluster,
     onUpdateServer,
+    onEditServer,
+    onDeleteServer,
+    onDeleteGroup,
 }) => {
     // Superusers can edit both database-backed groups (ID: group-{number})
     // and auto-detected groups (groups with auto_group_key)
@@ -630,11 +851,17 @@ const GroupItem = ({
         0
     ) || 0;
 
+    // Groups can be deleted if they're not auto-detected and not the default group
+    const canDeleteGroup = canEditGroup && !group.auto_group_key && !group.is_default;
+
     return (
-        <Box sx={{ mb: 0.5 }}>
-            <Box
+        <DroppableGroup groupId={group.id} isDark={isDark}>
+            <Box sx={{ mb: 0.5 }}>
+                <Box
+                className="group-item-row"
                 onClick={onToggle}
                 sx={{
+                    position: 'relative',
                     display: 'flex',
                     alignItems: 'center',
                     gap: 0.75,
@@ -680,6 +907,8 @@ const GroupItem = ({
                     sx={{
                         color: 'text.disabled',
                         fontSize: '0.6875rem',
+                        ml: 'auto',
+                        flexShrink: 0,
                     }}
                 >
                     {onlineServers}/{totalServers}
@@ -689,6 +918,7 @@ const GroupItem = ({
                     sx={{
                         p: 0.25,
                         color: 'text.secondary',
+                        ml: 0.5,
                     }}
                 >
                     {isExpanded ? (
@@ -697,6 +927,36 @@ const GroupItem = ({
                         <CollapseIcon sx={{ fontSize: 18 }} />
                     )}
                 </IconButton>
+                {canDeleteGroup && (
+                    <Box
+                        className="action-buttons"
+                        sx={{
+                            position: 'absolute',
+                            right: 40,
+                            top: '50%',
+                            transform: 'translateY(-50%)',
+                            display: 'flex',
+                            gap: 0.25,
+                            opacity: 0,
+                            transition: 'opacity 0.15s',
+                            bgcolor: isDark ? 'rgba(30, 41, 59, 0.95)' : 'rgba(255, 255, 255, 0.95)',
+                            borderRadius: 1,
+                            px: 0.5,
+                            '.group-item-row:hover &': { opacity: 1 },
+                        }}
+                    >
+                        <IconButton
+                            size="small"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onDeleteGroup?.(group);
+                            }}
+                            sx={{ p: 0.25, color: 'text.disabled', '&:hover': { color: 'error.main' } }}
+                        >
+                            <DeleteIcon sx={{ fontSize: 14 }} />
+                        </IconButton>
+                    </Box>
+                )}
             </Box>
             <Collapse in={isExpanded} timeout="auto">
                 <Box sx={{ pt: 0.5 }}>
@@ -712,31 +972,14 @@ const GroupItem = ({
                             if (serverCount === 1 && !hasChildServers) {
                                 const server = cluster.servers[0];
                                 return (
-                                    <ServerItem
-                                        key={server.id}
-                                        server={server}
-                                        isSelected={selectedServerId === server.id}
-                                        onSelect={onSelectServer}
-                                        depth={0}
+                                    <DraggableCluster
+                                        key={cluster.id}
+                                        cluster={cluster}
+                                        groupId={group.id}
                                         isDark={isDark}
-                                        expandedServers={expandedServers}
-                                        onToggleServer={onToggleServer}
-                                        selectedServerId={selectedServerId}
-                                        isLast={true}
-                                        showTreeLines={false}
-                                        clusterType={clusterType}
-                                        user={user}
-                                        onUpdateServer={onUpdateServer}
-                                    />
-                                );
-                            }
-
-                            // Multiple servers or servers with children - use container
-                            return (
-                                <ClusterContainer key={cluster.id} cluster={cluster} isDark={isDark}>
-                                    {cluster.servers?.map((server, serverIndex) => (
+                                        canDrag={user?.isSuperuser}
+                                    >
                                         <ServerItem
-                                            key={server.id}
                                             server={server}
                                             isSelected={selectedServerId === server.id}
                                             onSelect={onSelectServer}
@@ -745,41 +988,87 @@ const GroupItem = ({
                                             expandedServers={expandedServers}
                                             onToggleServer={onToggleServer}
                                             selectedServerId={selectedServerId}
-                                            isLast={serverIndex === cluster.servers.length - 1}
-                                            showTreeLines={hasMultipleServers || hasChildServers}
+                                            isLast={true}
+                                            showTreeLines={false}
                                             clusterType={clusterType}
                                             user={user}
                                             onUpdateServer={onUpdateServer}
+                                            onEditServer={onEditServer}
+                                            onDeleteServer={onDeleteServer}
                                         />
-                                    ))}
-                                </ClusterContainer>
+                                    </DraggableCluster>
+                                );
+                            }
+
+                            // Multiple servers or servers with children - use container
+                            return (
+                                <DraggableCluster
+                                    key={cluster.id}
+                                    cluster={cluster}
+                                    groupId={group.id}
+                                    isDark={isDark}
+                                    canDrag={user?.isSuperuser}
+                                >
+                                    <ClusterContainer cluster={cluster} isDark={isDark}>
+                                        {cluster.servers?.map((server, serverIndex) => (
+                                            <ServerItem
+                                                key={server.id}
+                                                server={server}
+                                                isSelected={selectedServerId === server.id}
+                                                onSelect={onSelectServer}
+                                                depth={0}
+                                                isDark={isDark}
+                                                expandedServers={expandedServers}
+                                                onToggleServer={onToggleServer}
+                                                selectedServerId={selectedServerId}
+                                                isLast={serverIndex === cluster.servers.length - 1}
+                                                showTreeLines={hasMultipleServers || hasChildServers}
+                                                clusterType={clusterType}
+                                                user={user}
+                                                onUpdateServer={onUpdateServer}
+                                                onEditServer={onEditServer}
+                                                onDeleteServer={onDeleteServer}
+                                            />
+                                        ))}
+                                    </ClusterContainer>
+                                </DraggableCluster>
                             );
                         }
 
                         // Regular cluster with header
                         return (
-                            <ClusterItem
+                            <DraggableCluster
                                 key={cluster.id}
                                 cluster={cluster}
                                 groupId={group.id}
-                                isExpanded={expandedClusters.has(cluster.id)}
-                                onToggle={() => onToggleCluster(cluster.id)}
-                                selectedServerId={selectedServerId}
-                                onSelectServer={onSelectServer}
-                                depth={1}
                                 isDark={isDark}
-                                expandedServers={expandedServers}
-                                onToggleServer={onToggleServer}
-                                isLast={clusterIndex === group.clusters.length - 1}
-                                user={user}
-                                onUpdateCluster={onUpdateCluster}
-                                onUpdateServer={onUpdateServer}
-                            />
+                                canDrag={user?.isSuperuser}
+                            >
+                                <ClusterItem
+                                    cluster={cluster}
+                                    groupId={group.id}
+                                    isExpanded={expandedClusters.has(cluster.id)}
+                                    onToggle={() => onToggleCluster(cluster.id)}
+                                    selectedServerId={selectedServerId}
+                                    onSelectServer={onSelectServer}
+                                    depth={1}
+                                    isDark={isDark}
+                                    expandedServers={expandedServers}
+                                    onToggleServer={onToggleServer}
+                                    isLast={clusterIndex === group.clusters.length - 1}
+                                    user={user}
+                                    onUpdateCluster={onUpdateCluster}
+                                    onUpdateServer={onUpdateServer}
+                                    onEditServer={onEditServer}
+                                    onDeleteServer={onDeleteServer}
+                                />
+                            </DraggableCluster>
                         );
                     })}
                 </Box>
             </Collapse>
-        </Box>
+            </Box>
+        </DroppableGroup>
     );
 };
 
@@ -804,6 +1093,21 @@ const ClusterNavigator = ({
     const [panelWidth, setPanelWidth] = useState(defaultWidth);
     const [isResizing, setIsResizing] = useState(false);
     const resizeRef = useRef(null);
+
+    // Dialog states
+    const [addMenuAnchor, setAddMenuAnchor] = useState(null);
+    const [serverDialogOpen, setServerDialogOpen] = useState(false);
+    const [serverDialogMode, setServerDialogMode] = useState('create');
+    const [editingServer, setEditingServer] = useState(null);
+    const [groupDialogOpen, setGroupDialogOpen] = useState(false);
+    const [groupDialogMode, setGroupDialogMode] = useState('create');
+    const [editingGroup, setEditingGroup] = useState(null);
+    const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+    const [deleteTarget, setDeleteTarget] = useState(null);
+    const [deleteLoading, setDeleteLoading] = useState(false);
+
+    // Drag and drop state
+    const [activeDragItem, setActiveDragItem] = useState(null);
 
     const isDark = mode === 'dark';
 
@@ -841,7 +1145,151 @@ const ClusterNavigator = ({
 
     // Get user info and update functions from contexts
     const { user } = useAuth();
-    const { updateGroupName, updateClusterName, updateServerName } = useCluster();
+    const {
+        updateGroupName,
+        updateClusterName,
+        updateServerName,
+        createServer,
+        updateServer,
+        deleteServer,
+        createGroup,
+        deleteGroup,
+        moveClusterToGroup,
+        autoRefreshEnabled,
+        setAutoRefreshEnabled,
+        lastRefresh,
+    } = useCluster();
+
+    // Helper to format relative time
+    const formatRelativeTime = (date) => {
+        if (!date) return '';
+        const seconds = Math.floor((new Date() - date) / 1000);
+        if (seconds < 60) return 'just now';
+        const minutes = Math.floor(seconds / 60);
+        return `${minutes}m ago`;
+    };
+
+    // Handler for adding a server
+    const handleAddServer = () => {
+        setAddMenuAnchor(null);
+        setEditingServer(null);
+        setServerDialogMode('create');
+        setServerDialogOpen(true);
+    };
+
+    // Handler for editing a server
+    const handleEditServer = (server) => {
+        setEditingServer(server);
+        setServerDialogMode('edit');
+        setServerDialogOpen(true);
+    };
+
+    // Handler for saving a server (create or update)
+    const handleSaveServer = async (serverData) => {
+        if (serverDialogMode === 'create') {
+            await createServer(serverData);
+        } else {
+            await updateServer(editingServer.id, serverData);
+        }
+        setServerDialogOpen(false);
+    };
+
+    // Handler for deleting a server
+    const handleDeleteServer = (server) => {
+        setDeleteTarget({ type: 'server', item: server });
+        setDeleteDialogOpen(true);
+    };
+
+    // Handler for adding a group
+    const handleAddGroup = () => {
+        setAddMenuAnchor(null);
+        setEditingGroup(null);
+        setGroupDialogMode('create');
+        setGroupDialogOpen(true);
+    };
+
+    // Handler for editing a group
+    const handleEditGroup = (group) => {
+        setEditingGroup(group);
+        setGroupDialogMode('edit');
+        setGroupDialogOpen(true);
+    };
+
+    // Handler for saving a group
+    const handleSaveGroup = async (groupData) => {
+        if (groupDialogMode === 'create') {
+            await createGroup(groupData);
+        } else {
+            // For edit, we just update the name using existing function
+            await updateGroupName(editingGroup.id, groupData.name);
+        }
+        setGroupDialogOpen(false);
+    };
+
+    // Handler for deleting a group
+    const handleDeleteGroup = (group) => {
+        setDeleteTarget({ type: 'group', item: group });
+        setDeleteDialogOpen(true);
+    };
+
+    // Handler for confirming delete
+    const handleConfirmDelete = async () => {
+        if (!deleteTarget) return;
+
+        setDeleteLoading(true);
+        try {
+            if (deleteTarget.type === 'server') {
+                await deleteServer(deleteTarget.item.id);
+            } else {
+                await deleteGroup(deleteTarget.item.id);
+            }
+            setDeleteDialogOpen(false);
+            setDeleteTarget(null);
+        } catch (error) {
+            // Error handling - could show a toast
+            console.error('Delete failed:', error);
+        } finally {
+            setDeleteLoading(false);
+        }
+    };
+
+    // Drag and drop handlers
+    const handleDragStart = (event) => {
+        const { active } = event;
+        if (active.data.current?.type === 'cluster') {
+            setActiveDragItem(active.data.current.cluster);
+        }
+    };
+
+    const handleDragEnd = async (event) => {
+        const { active, over } = event;
+        setActiveDragItem(null);
+
+        if (!over || !active.data.current) return;
+
+        const dragData = active.data.current;
+        const dropData = over.data.current;
+
+        // Only handle dropping on groups
+        if (dragData.type !== 'cluster' || dropData?.type !== 'group') return;
+
+        const sourceGroupId = dragData.groupId;
+        const targetGroupId = dropData.groupId;
+
+        // Don't move if dropping on same group
+        if (sourceGroupId === targetGroupId) return;
+
+        try {
+            await moveClusterToGroup(
+                dragData.cluster.id,
+                targetGroupId,
+                dragData.cluster.auto_cluster_key,
+                dragData.cluster.name
+            );
+        } catch (error) {
+            console.error('Failed to move cluster:', error);
+        }
+    };
 
     /**
      * Collect all expandable server IDs recursively
@@ -972,20 +1420,25 @@ const ClusterNavigator = ({
     );
 
     return (
-        <Box
-            sx={{
-                width: panelWidth,
-                height: '100%',
-                display: 'flex',
-                flexDirection: 'column',
-                bgcolor: isDark ? '#1E293B' : '#FFFFFF',
-                borderRight: '1px solid',
-                borderColor: isDark ? '#334155' : '#E5E7EB',
-                position: 'relative',
-                flexShrink: 0,
-            }}
+        <DndContext
+            collisionDetection={pointerWithin}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
         >
-            {/* Resize handle */}
+            <Box
+                sx={{
+                    width: panelWidth,
+                    height: '100%',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    bgcolor: isDark ? '#1E293B' : '#FFFFFF',
+                    borderRight: '1px solid',
+                    borderColor: isDark ? '#334155' : '#E5E7EB',
+                    position: 'relative',
+                    flexShrink: 0,
+                }}
+            >
+                {/* Resize handle */}
             <Box
                 ref={resizeRef}
                 onMouseDown={handleResizeStart}
@@ -1032,16 +1485,31 @@ const ClusterNavigator = ({
                         Database Servers
                     </Typography>
                     <Box sx={{ display: 'flex', gap: 0.5 }}>
-                        <Tooltip title="Add server">
+                        <Tooltip title="Add server or group">
                             <IconButton
                                 size="small"
+                                onClick={(e) => setAddMenuAnchor(e.currentTarget)}
                                 sx={{
                                     p: 0.5,
-                                    color: 'text.secondary',
+                                    color: isDark ? 'rgba(255,255,255,0.7)' : 'text.secondary',
                                     '&:hover': { color: 'primary.main' },
                                 }}
                             >
                                 <AddIcon sx={{ fontSize: 18 }} />
+                            </IconButton>
+                        </Tooltip>
+                        <Tooltip title={autoRefreshEnabled ? 'Auto-refresh enabled' : 'Auto-refresh disabled'}>
+                            <IconButton
+                                size="small"
+                                onClick={() => setAutoRefreshEnabled(!autoRefreshEnabled)}
+                                sx={{
+                                    p: 0.5,
+                                    color: autoRefreshEnabled
+                                        ? (isDark ? '#22B8CF' : '#15AABF')
+                                        : (isDark ? 'rgba(255,255,255,0.4)' : 'text.disabled'),
+                                }}
+                            >
+                                <AutorenewIcon sx={{ fontSize: 18 }} />
                             </IconButton>
                         </Tooltip>
                         <Tooltip title="Refresh">
@@ -1231,6 +1699,9 @@ const ClusterNavigator = ({
                             onUpdateGroup={updateGroupName}
                             onUpdateCluster={updateClusterName}
                             onUpdateServer={updateServerName}
+                            onEditServer={handleEditServer}
+                            onDeleteServer={handleDeleteServer}
+                            onDeleteGroup={handleDeleteGroup}
                         />
                     ))
                 )}
@@ -1244,6 +1715,9 @@ const ClusterNavigator = ({
                     borderTop: '1px solid',
                     borderColor: isDark ? '#334155' : '#E5E7EB',
                     bgcolor: isDark ? alpha('#0F172A', 0.5) : alpha('#F9FAFB', 0.5),
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
                 }}
             >
                 <Typography
@@ -1257,8 +1731,72 @@ const ClusterNavigator = ({
                         filteredData.reduce((a, g) => a + (g.clusters?.length || 0), 0)
                     } clusters
                 </Typography>
+                {lastRefresh && (
+                    <Typography
+                        variant="caption"
+                        sx={{
+                            color: isDark ? 'rgba(255,255,255,0.5)' : 'text.disabled',
+                            fontSize: '0.625rem',
+                        }}
+                    >
+                        Updated {formatRelativeTime(lastRefresh)}
+                    </Typography>
+                )}
             </Box>
-        </Box>
+
+            {/* Add Menu */}
+            <AddMenu
+                anchorEl={addMenuAnchor}
+                open={Boolean(addMenuAnchor)}
+                onClose={() => setAddMenuAnchor(null)}
+                onAddServer={handleAddServer}
+                onAddGroup={handleAddGroup}
+            />
+
+            {/* Server Dialog */}
+            <ServerDialog
+                open={serverDialogOpen}
+                onClose={() => setServerDialogOpen(false)}
+                onSave={handleSaveServer}
+                mode={serverDialogMode}
+                server={editingServer}
+                isSuperuser={user?.isSuperuser}
+            />
+
+            {/* Group Dialog */}
+            <GroupDialog
+                open={groupDialogOpen}
+                onClose={() => setGroupDialogOpen(false)}
+                onSave={handleSaveGroup}
+                mode={groupDialogMode}
+                group={editingGroup}
+                isSuperuser={user?.isSuperuser}
+            />
+
+            {/* Delete Confirmation Dialog */}
+            <DeleteConfirmationDialog
+                open={deleteDialogOpen}
+                onClose={() => {
+                    setDeleteDialogOpen(false);
+                    setDeleteTarget(null);
+                }}
+                onConfirm={handleConfirmDelete}
+                title={deleteTarget?.type === 'server' ? 'Delete Server' : 'Delete Cluster Group'}
+                message={deleteTarget?.type === 'server'
+                    ? 'Are you sure you want to delete this server? This action cannot be undone.'
+                    : 'Are you sure you want to delete this group? Servers in this group will be moved to Ungrouped.'}
+                itemName={deleteTarget?.item?.name}
+                loading={deleteLoading}
+            />
+            </Box>
+
+            {/* Drag overlay for visual feedback */}
+            <DragOverlay>
+                {activeDragItem && (
+                    <DragOverlayContent cluster={activeDragItem} isDark={isDark} />
+                )}
+            </DragOverlay>
+        </DndContext>
     );
 };
 

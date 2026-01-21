@@ -55,3 +55,4 @@ temp/
 coverage.html
 alerter/ai-dba-alerter-linux
 CLAUDE.local.md
+collector/src/ai-dba-collector

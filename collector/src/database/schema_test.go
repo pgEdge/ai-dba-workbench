@@ -275,7 +275,8 @@ func TestNewSchemaManager(t *testing.T) {
 	// Migration 13 adds owner and shared columns to cluster_groups
 	// Migration 14 adds auto_cluster_key to clusters for auto-detected cluster naming
 	// Migration 15 adds auto_group_key to cluster_groups for auto-detected group naming
-	expectedVersions := []int{1, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15}
+	// Migration 16 adds is_default column and creates the default group
+	expectedVersions := []int{1, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
 	if len(sm.migrations) != len(expectedVersions) {
 		t.Fatalf("Expected %d migrations, got %d", len(expectedVersions), len(sm.migrations))
 	}

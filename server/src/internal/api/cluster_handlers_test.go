@@ -137,8 +137,9 @@ func TestClusterGroupRequest_JSON(t *testing.T) {
 func TestClusterRequest_JSON(t *testing.T) {
 	// Test JSON serialization/deserialization
 	description := "Test cluster"
+	groupID := 1
 	req := ClusterRequest{
-		GroupID:     1,
+		GroupID:     &groupID,
 		Name:        "US East Cluster",
 		Description: &description,
 	}
@@ -155,8 +156,8 @@ func TestClusterRequest_JSON(t *testing.T) {
 		t.Fatalf("Failed to unmarshal: %v", err)
 	}
 
-	if decoded.GroupID != req.GroupID {
-		t.Errorf("GroupID mismatch: expected %d, got %d", req.GroupID, decoded.GroupID)
+	if decoded.GroupID == nil || *decoded.GroupID != *req.GroupID {
+		t.Errorf("GroupID mismatch")
 	}
 
 	if decoded.Name != req.Name {
@@ -242,11 +243,11 @@ func TestClusterHandler_CreateClusterGroup_MissingName(t *testing.T) {
 	}
 }
 
-func TestClusterHandler_UpdateCluster_MissingGroupID(t *testing.T) {
+func TestClusterHandler_UpdateCluster_MissingBothNameAndGroupID(t *testing.T) {
 	handler := NewClusterHandler(nil, nil)
 
-	// Test with missing group_id
-	body := `{"name": "Updated Cluster"}`
+	// Test with missing both name and group_id
+	body := `{}`
 	req := httptest.NewRequest(http.MethodPut, "/api/clusters/1", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -262,8 +263,8 @@ func TestClusterHandler_UpdateCluster_MissingGroupID(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	if response.Error != "group_id is required" {
-		t.Errorf("Expected 'group_id is required', got %q", response.Error)
+	if response.Error != "At least name or group_id is required" {
+		t.Errorf("Expected 'At least name or group_id is required', got %q", response.Error)
 	}
 }
 

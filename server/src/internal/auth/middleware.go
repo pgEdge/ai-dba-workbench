@@ -47,6 +47,10 @@ const (
 
 	// UserInfoPath is the path for the user info endpoint (bypasses auth to return auth status)
 	UserInfoPath = "/api/user/info"
+
+	// LLM provider endpoints (bypasses auth to allow login page to show provider options)
+	LLMProvidersPath = "/api/llm/providers"
+	LLMModelsPath    = "/api/llm/models"
 )
 
 // GetTokenHashFromContext retrieves the token hash from the request context
@@ -306,7 +310,8 @@ func AuthMiddleware(authStore *AuthStore, enabled bool) func(http.Handler) http.
 
 			// Skip authentication for public endpoints (needed before login)
 			switch r.URL.Path {
-			case HealthCheckPath, UserInfoPath, "/api/auth/login":
+			case HealthCheckPath, UserInfoPath, "/api/auth/login",
+				LLMProvidersPath, LLMModelsPath:
 				next.ServeHTTP(w, r)
 				return
 			}

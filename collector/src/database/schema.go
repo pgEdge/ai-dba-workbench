@@ -2301,6 +2301,131 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration 11: Add cluster_groups and clusters tables for hierarchical organization
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     11,
+		Description: "Add cluster_groups and clusters tables for hierarchical server organization",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Create cluster_groups table
+			_, err := conn.Exec(ctx, `
+			CREATE TABLE IF NOT EXISTS cluster_groups (
+				id SERIAL PRIMARY KEY,
+				name VARCHAR(255) NOT NULL,
+				description TEXT,
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				CONSTRAINT cluster_groups_name_unique UNIQUE (name)
+			);
+
+			COMMENT ON TABLE cluster_groups IS
+				'Groups for organizing database clusters hierarchically';
+			COMMENT ON COLUMN cluster_groups.id IS
+				'Unique identifier for the cluster group';
+			COMMENT ON COLUMN cluster_groups.name IS
+				'User-friendly name for the cluster group';
+			COMMENT ON COLUMN cluster_groups.description IS
+				'Optional description of the cluster group';
+			COMMENT ON COLUMN cluster_groups.created_at IS
+				'Timestamp when the cluster group was created';
+			COMMENT ON COLUMN cluster_groups.updated_at IS
+				'Timestamp when the cluster group was last updated';
+
+			CREATE INDEX IF NOT EXISTS idx_cluster_groups_name ON cluster_groups(name);
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to create cluster_groups table: %w", err)
+			}
+
+			// Create clusters table
+			_, err = conn.Exec(ctx, `
+			CREATE TABLE IF NOT EXISTS clusters (
+				id SERIAL PRIMARY KEY,
+				group_id INTEGER NOT NULL REFERENCES cluster_groups(id) ON DELETE CASCADE,
+				name VARCHAR(255) NOT NULL,
+				description TEXT,
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				CONSTRAINT clusters_group_name_unique UNIQUE (group_id, name)
+			);
+
+			COMMENT ON TABLE clusters IS
+				'Database clusters that contain one or more server connections';
+			COMMENT ON COLUMN clusters.id IS
+				'Unique identifier for the cluster';
+			COMMENT ON COLUMN clusters.group_id IS
+				'Reference to the parent cluster group';
+			COMMENT ON COLUMN clusters.name IS
+				'User-friendly name for the cluster';
+			COMMENT ON COLUMN clusters.description IS
+				'Optional description of the cluster';
+			COMMENT ON COLUMN clusters.created_at IS
+				'Timestamp when the cluster was created';
+			COMMENT ON COLUMN clusters.updated_at IS
+				'Timestamp when the cluster was last updated';
+
+			CREATE INDEX IF NOT EXISTS idx_clusters_group_id ON clusters(group_id);
+			CREATE INDEX IF NOT EXISTS idx_clusters_name ON clusters(name);
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to create clusters table: %w", err)
+			}
+
+			// Add cluster_id and role columns to connections table
+			_, err = conn.Exec(ctx, `
+			ALTER TABLE connections
+				ADD COLUMN IF NOT EXISTS cluster_id INTEGER REFERENCES clusters(id) ON DELETE SET NULL,
+				ADD COLUMN IF NOT EXISTS role VARCHAR(50) DEFAULT 'primary';
+
+			COMMENT ON COLUMN connections.cluster_id IS
+				'Reference to the cluster this connection belongs to (NULL if unassigned)';
+			COMMENT ON COLUMN connections.role IS
+				'Role of the server in the cluster (primary, replica, standby, etc.)';
+
+			CREATE INDEX IF NOT EXISTS idx_connections_cluster_id ON connections(cluster_id);
+			CREATE INDEX IF NOT EXISTS idx_connections_role ON connections(role);
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to add cluster columns to connections: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 12: Add publisher connection info for logical replication topology tracking
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     12,
+		Description: "Add publisher_host and publisher_port to pg_node_role for logical replication topology",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Add publisher connection columns to pg_node_role
+			_, err := conn.Exec(ctx, `
+			ALTER TABLE metrics.pg_node_role
+				ADD COLUMN IF NOT EXISTS publisher_host VARCHAR(255),
+				ADD COLUMN IF NOT EXISTS publisher_port INTEGER,
+				ADD COLUMN IF NOT EXISTS has_active_logical_slots BOOLEAN DEFAULT FALSE,
+				ADD COLUMN IF NOT EXISTS active_logical_slot_count INTEGER DEFAULT 0;
+
+			COMMENT ON COLUMN metrics.pg_node_role.publisher_host IS
+				'For logical subscribers: hostname of the publisher server';
+			COMMENT ON COLUMN metrics.pg_node_role.publisher_port IS
+				'For logical subscribers: port of the publisher server';
+			COMMENT ON COLUMN metrics.pg_node_role.has_active_logical_slots IS
+				'Whether this server has active logical replication slots (subscribers connected)';
+			COMMENT ON COLUMN metrics.pg_node_role.active_logical_slot_count IS
+				'Number of active logical replication slots';
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to add publisher columns to pg_node_role: %w", err)
+			}
+
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations

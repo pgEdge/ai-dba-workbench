@@ -270,7 +270,9 @@ func TestNewSchemaManager(t *testing.T) {
 	// Verify migrations are registered in order
 	// Note: Migrations 2 and 6 were removed (auth moved to SQLite)
 	// Migrations 7-10 add alerter tables
-	expectedVersions := []int{1, 3, 4, 5, 7, 8, 9, 10}
+	// Migration 11 adds cluster_groups and clusters tables
+	// Migration 12 adds publisher_host/port to pg_node_role for logical replication topology
+	expectedVersions := []int{1, 3, 4, 5, 7, 8, 9, 10, 11, 12}
 	if len(sm.migrations) != len(expectedVersions) {
 		t.Fatalf("Expected %d migrations, got %d", len(expectedVersions), len(sm.migrations))
 	}

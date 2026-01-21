@@ -14,12 +14,36 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/lib/pq"
 	"github.com/pgedge/ai-workbench/pkg/logger"
 )
+
+// parseConnInfo parses a PostgreSQL connection info string and extracts host and port
+// Format: "host=hostname port=5432 dbname=mydb user=myuser"
+func parseConnInfo(conninfo string) (host string, port int) {
+	// Parse key=value pairs from the conninfo string
+	parts := strings.Fields(conninfo)
+	for _, part := range parts {
+		if strings.HasPrefix(part, "host=") {
+			host = strings.TrimPrefix(part, "host=")
+		} else if strings.HasPrefix(part, "port=") {
+			portStr := strings.TrimPrefix(part, "port=")
+			if p, err := strconv.Atoi(portStr); err == nil {
+				port = p
+			}
+		}
+	}
+	// Default port if not specified
+	if port == 0 && host != "" {
+		port = 5432
+	}
+	return host, port
+}
 
 // NodeRole constants
 const (
@@ -97,6 +121,10 @@ type NodeRoleInfo struct {
 	PublicationCount        int
 	SubscriptionCount       int
 	ActiveSubscriptionCount int
+	HasActiveLogicalSlots   bool
+	ActiveLogicalSlotCount  int
+	PublisherHost           *string // For subscribers: the publisher's host
+	PublisherPort           *int    // For subscribers: the publisher's port
 
 	// Spock
 	HasSpock               bool
@@ -171,11 +199,16 @@ func (p *PgNodeRoleProbe) getFundamentalStatus(ctx context.Context, conn *pgxpoo
 
 // getBinaryReplicationStatus gets physical replication information
 func (p *PgNodeRoleProbe) getBinaryReplicationStatus(ctx context.Context, conn *pgxpool.Conn, info *NodeRoleInfo) error {
-	// Count active streaming standbys
+	// Count active streaming standbys (physical/binary replication only)
+	// pg_stat_replication shows BOTH physical and logical replication connections,
+	// so we must join with pg_replication_slots to filter out logical replication.
+	// Physical standbys either have no slot (streaming without slot) or a physical slot.
 	countQuery := `
         SELECT COUNT(*)
-        FROM pg_stat_replication
-        WHERE state = 'streaming'
+        FROM pg_stat_replication r
+        LEFT JOIN pg_replication_slots s ON r.pid = s.active_pid
+        WHERE r.state = 'streaming'
+          AND (s.slot_type IS NULL OR s.slot_type = 'physical')
     `
 	row := conn.QueryRow(ctx, countQuery)
 	if err := row.Scan(&info.BinaryStandbyCount); err != nil {
@@ -185,11 +218,13 @@ func (p *PgNodeRoleProbe) getBinaryReplicationStatus(ctx context.Context, conn *
 
 	// If in recovery, get standby info from wal receiver
 	if info.IsInRecovery {
+		// Note: pg_stat_wal_receiver has flushed_lsn (synced to disk) and written_lsn (received)
+		// We use flushed_lsn as the "received" position since it's more reliable
 		receiverQuery := `
             SELECT
                 sender_host,
                 sender_port,
-                received_lsn::text,
+                flushed_lsn::text,
                 (SELECT pg_last_wal_replay_lsn()::text)
             FROM pg_stat_wal_receiver
             LIMIT 1
@@ -198,8 +233,10 @@ func (p *PgNodeRoleProbe) getBinaryReplicationStatus(ctx context.Context, conn *
 		err := row.Scan(&info.UpstreamHost, &info.UpstreamPort, &info.ReceivedLSN, &info.ReplayedLSN)
 		if err != nil {
 			// Not necessarily an error - wal receiver might not be active
-			if err.Error() != "no rows in result set" {
-				logger.Infof("WAL receiver query: %v", err)
+			// pgx returns pgx.ErrNoRows for no rows, but error string varies
+			errStr := err.Error()
+			if errStr != "no rows in result set" {
+				logger.Infof("WAL receiver query for %s: %v", "standby", err)
 			}
 		} else {
 			info.IsStreamingStandby = true
@@ -237,6 +274,37 @@ func (p *PgNodeRoleProbe) getLogicalReplicationStatus(ctx context.Context, conn 
 		info.ActiveSubscriptionCount = 0
 	}
 
+	// Count active logical replication slots (indicates subscribers are connected)
+	logicalSlotQuery := `
+        SELECT COUNT(*)
+        FROM pg_replication_slots
+        WHERE slot_type = 'logical' AND active = true
+    `
+	row = conn.QueryRow(ctx, logicalSlotQuery)
+	if err := row.Scan(&info.ActiveLogicalSlotCount); err != nil {
+		info.ActiveLogicalSlotCount = 0
+	}
+	info.HasActiveLogicalSlots = info.ActiveLogicalSlotCount > 0
+
+	// For subscribers, extract publisher host/port from subscription conninfo
+	// We take the first subscription's connection info as the primary publisher
+	if info.SubscriptionCount > 0 {
+		pubConnQuery := `
+            SELECT subconninfo FROM pg_subscription LIMIT 1
+        `
+		var conninfo string
+		row = conn.QueryRow(ctx, pubConnQuery)
+		if err := row.Scan(&conninfo); err == nil && conninfo != "" {
+			host, port := parseConnInfo(conninfo)
+			if host != "" {
+				info.PublisherHost = &host
+			}
+			if port != 0 {
+				info.PublisherPort = &port
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -254,9 +322,12 @@ func (p *PgNodeRoleProbe) getSpockStatus(ctx context.Context, connectionName str
 	}
 
 	// Get local node info from Spock
+	// Note: spock.local_node only has node_id, node_name is in spock.node
+	// Cast node_id to bigint since OID type can't be scanned directly into int64
 	nodeQuery := `
-        SELECT node_id, node_name
-        FROM spock.local_node
+        SELECT ln.node_id::bigint, n.node_name
+        FROM spock.local_node ln
+        JOIN spock.node n ON ln.node_id = n.node_id
         LIMIT 1
     `
 	row := conn.QueryRow(ctx, nodeQuery)
@@ -332,48 +403,57 @@ func (p *PgNodeRoleProbe) determineNodeRole(info *NodeRoleInfo) (string, []strin
 	if info.IsStreamingStandby {
 		flags = append(flags, FlagBinaryStandby)
 	}
-	if info.PublicationCount > 0 {
+	if info.PublicationCount > 0 && info.HasActiveLogicalSlots {
+		// Only flag as publisher if there are active logical replication slots
 		flags = append(flags, FlagLogicalPublisher)
 	}
 	if info.SubscriptionCount > 0 {
 		flags = append(flags, FlagLogicalSubscriber)
 	}
-	if info.HasSpock && info.SpockNodeName != nil {
+	// Only flag as Spock node if NOT in recovery - a streaming standby of a Spock
+	// node inherits the Spock tables but is not itself a Spock cluster member
+	if info.HasSpock && info.SpockNodeName != nil && !info.IsInRecovery {
 		flags = append(flags, FlagSpockNode)
 	}
-	if info.HasBDR && info.BDRNodeName != nil {
+	if info.HasBDR && info.BDRNodeName != nil && !info.IsInRecovery {
 		flags = append(flags, FlagBDRNode)
 	}
 
 	// Determine primary role (most specific applicable role)
+	// Priority: Spock/BDR > Binary replication > Logical replication > Standalone
 	var primaryRole string
 	switch {
-	case info.HasSpock && info.SpockNodeName != nil:
-		if info.IsInRecovery {
-			primaryRole = RoleSpockStandby
-		} else {
-			primaryRole = RoleSpockNode
-		}
-	case info.HasBDR && info.BDRNodeName != nil:
-		if info.IsInRecovery {
-			primaryRole = RoleBDRStandby
-		} else {
-			primaryRole = RoleBDRNode
-		}
+	// Spock node: has Spock extension configured AND is not in recovery
+	// A streaming standby of a Spock node has the Spock tables (replicated) but
+	// is NOT a Spock cluster member - it's a binary standby for HA
+	case info.HasSpock && info.SpockNodeName != nil && !info.IsInRecovery:
+		primaryRole = RoleSpockNode
+
+	// BDR node: has BDR extension configured AND is not in recovery
+	case info.HasBDR && info.BDRNodeName != nil && !info.IsInRecovery:
+		primaryRole = RoleBDRNode
+
+	// Any server in recovery mode is a binary standby (streaming replication)
 	case info.IsInRecovery:
 		if info.HasBinaryStandbys {
 			primaryRole = RoleBinaryCascading
 		} else {
 			primaryRole = RoleBinaryStandby
 		}
+
+	// Primary with streaming standbys
 	case info.HasBinaryStandbys:
 		primaryRole = RoleBinaryPrimary
-	case info.PublicationCount > 0 && info.SubscriptionCount > 0:
+
+	// Logical replication: only if there are active subscribers (not just publications)
+	// A server with publications but no active logical slots is effectively standalone
+	case info.PublicationCount > 0 && info.SubscriptionCount > 0 && info.HasActiveLogicalSlots:
 		primaryRole = RoleLogicalBidirectional
-	case info.PublicationCount > 0:
+	case info.PublicationCount > 0 && info.HasActiveLogicalSlots:
 		primaryRole = RoleLogicalPublisher
 	case info.SubscriptionCount > 0:
 		primaryRole = RoleLogicalSubscriber
+
 	default:
 		primaryRole = RoleStandalone
 	}
@@ -425,6 +505,10 @@ func (p *PgNodeRoleProbe) infoToMap(info *NodeRoleInfo) map[string]interface{} {
 		"publication_count":         info.PublicationCount,
 		"subscription_count":        info.SubscriptionCount,
 		"active_subscription_count": info.ActiveSubscriptionCount,
+		"has_active_logical_slots":  info.HasActiveLogicalSlots,
+		"active_logical_slot_count": info.ActiveLogicalSlotCount,
+		"publisher_host":            info.PublisherHost,
+		"publisher_port":            info.PublisherPort,
 		"has_spock":                 info.HasSpock,
 		"spock_node_id":             info.SpockNodeID,
 		"spock_node_name":           info.SpockNodeName,
@@ -459,6 +543,8 @@ func (p *PgNodeRoleProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn
 		"is_streaming_standby", "upstream_host", "upstream_port",
 		"received_lsn", "replayed_lsn",
 		"publication_count", "subscription_count", "active_subscription_count",
+		"has_active_logical_slots", "active_logical_slot_count",
+		"publisher_host", "publisher_port",
 		"has_spock", "spock_node_id", "spock_node_name", "spock_subscription_count",
 		"has_bdr", "bdr_node_id", "bdr_node_name", "bdr_node_group", "bdr_node_state",
 		"primary_role", "role_flags", "role_details",
@@ -492,6 +578,10 @@ func (p *PgNodeRoleProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn
 			metric["publication_count"],
 			metric["subscription_count"],
 			metric["active_subscription_count"],
+			metric["has_active_logical_slots"],
+			metric["active_logical_slot_count"],
+			metric["publisher_host"],
+			metric["publisher_port"],
 			metric["has_spock"],
 			metric["spock_node_id"],
 			metric["spock_node_name"],

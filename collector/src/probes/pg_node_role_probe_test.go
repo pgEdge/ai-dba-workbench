@@ -205,13 +205,15 @@ func TestPgNodeRoleProbe_DetermineNodeRole_LogicalPublisher(t *testing.T) {
 	}
 	probe := NewPgNodeRoleProbe(config)
 
+	// A server with publications AND active logical replication slots (subscribers connected)
 	info := &NodeRoleInfo{
-		IsInRecovery:      false,
-		HasBinaryStandbys: false,
-		PublicationCount:  3,
-		SubscriptionCount: 0,
-		HasSpock:          false,
-		HasBDR:            false,
+		IsInRecovery:          false,
+		HasBinaryStandbys:     false,
+		PublicationCount:      3,
+		SubscriptionCount:     0,
+		HasActiveLogicalSlots: true, // Active subscribers are connected
+		HasSpock:              false,
+		HasBDR:                false,
 	}
 
 	role, flags := probe.determineNodeRole(info)
@@ -257,13 +259,15 @@ func TestPgNodeRoleProbe_DetermineNodeRole_LogicalBidirectional(t *testing.T) {
 	}
 	probe := NewPgNodeRoleProbe(config)
 
+	// A server with both publications and subscriptions, and active logical slots
 	info := &NodeRoleInfo{
-		IsInRecovery:      false,
-		HasBinaryStandbys: false,
-		PublicationCount:  2,
-		SubscriptionCount: 2,
-		HasSpock:          false,
-		HasBDR:            false,
+		IsInRecovery:          false,
+		HasBinaryStandbys:     false,
+		PublicationCount:      2,
+		SubscriptionCount:     2,
+		HasActiveLogicalSlots: true, // Active subscribers are connected
+		HasSpock:              false,
+		HasBDR:                false,
 	}
 
 	role, flags := probe.determineNodeRole(info)
@@ -309,6 +313,9 @@ func TestPgNodeRoleProbe_DetermineNodeRole_SpockNode(t *testing.T) {
 }
 
 func TestPgNodeRoleProbe_DetermineNodeRole_SpockStandby(t *testing.T) {
+	// A streaming standby of a Spock node is NOT a Spock cluster member.
+	// It has Spock extension and tables (replicated from primary) but is just
+	// a binary standby for HA purposes. Only the primary is a true Spock node.
 	config := &ProbeConfig{
 		Name: ProbeNamePgNodeRole,
 	}
@@ -322,18 +329,20 @@ func TestPgNodeRoleProbe_DetermineNodeRole_SpockStandby(t *testing.T) {
 		PublicationCount:   0,
 		SubscriptionCount:  0,
 		HasSpock:           true,
-		SpockNodeName:      &nodeName,
+		SpockNodeName:      &nodeName, // Has Spock tables from replication, but not a true Spock member
 		HasBDR:             false,
 	}
 
 	role, flags := probe.determineNodeRole(info)
 
-	if role != RoleSpockStandby {
-		t.Errorf("determineNodeRole() role = %v, want %v", role, RoleSpockStandby)
+	// Should be binary_standby, NOT spock_standby
+	if role != RoleBinaryStandby {
+		t.Errorf("determineNodeRole() role = %v, want %v", role, RoleBinaryStandby)
 	}
 
-	if !containsString(flags, FlagSpockNode) {
-		t.Errorf("determineNodeRole() flags should contain %v", FlagSpockNode)
+	// Should NOT have spock_node flag since it's in recovery
+	if containsString(flags, FlagSpockNode) {
+		t.Errorf("determineNodeRole() flags should NOT contain %v for a standby", FlagSpockNode)
 	}
 	if !containsString(flags, FlagBinaryStandby) {
 		t.Errorf("determineNodeRole() flags should contain %v", FlagBinaryStandby)
@@ -346,15 +355,16 @@ func TestPgNodeRoleProbe_DetermineNodeRole_CombinedRoles(t *testing.T) {
 	}
 	probe := NewPgNodeRoleProbe(config)
 
-	// A primary with standbys AND logical publications
+	// A primary with standbys AND logical publications with active subscribers
 	info := &NodeRoleInfo{
-		IsInRecovery:       false,
-		HasBinaryStandbys:  true,
-		BinaryStandbyCount: 2,
-		PublicationCount:   3,
-		SubscriptionCount:  0,
-		HasSpock:           false,
-		HasBDR:             false,
+		IsInRecovery:          false,
+		HasBinaryStandbys:     true,
+		BinaryStandbyCount:    2,
+		PublicationCount:      3,
+		SubscriptionCount:     0,
+		HasActiveLogicalSlots: true, // Has active subscribers connected
+		HasSpock:              false,
+		HasBDR:                false,
 	}
 
 	role, flags := probe.determineNodeRole(info)

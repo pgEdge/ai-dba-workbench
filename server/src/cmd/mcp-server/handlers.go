@@ -73,6 +73,15 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 			fmt.Fprintf(os.Stderr, "Connection management: DISABLED (datastore not configured)\n")
 		}
 
+		// Cluster hierarchy endpoints (for ClusterNavigator component)
+		clusterHandler := api.NewClusterHandler(deps.Datastore, deps.AuthStore)
+		clusterHandler.RegisterRoutes(mux, authWrapper)
+		if deps.Datastore != nil {
+			fmt.Fprintf(os.Stderr, "Cluster management: ENABLED\n")
+		} else {
+			fmt.Fprintf(os.Stderr, "Cluster management: DISABLED (datastore not configured)\n")
+		}
+
 		return nil
 	}
 }

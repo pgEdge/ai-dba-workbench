@@ -82,6 +82,15 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 			fmt.Fprintf(os.Stderr, "Cluster management: DISABLED (datastore not configured)\n")
 		}
 
+		// Alert endpoints (for StatusPanel component)
+		alertHandler := api.NewAlertHandler(deps.Datastore, deps.AuthStore)
+		alertHandler.RegisterRoutes(mux, authWrapper)
+		if deps.Datastore != nil {
+			fmt.Fprintf(os.Stderr, "Alert management: ENABLED\n")
+		} else {
+			fmt.Fprintf(os.Stderr, "Alert management: DISABLED (datastore not configured)\n")
+		}
+
 		return nil
 	}
 }

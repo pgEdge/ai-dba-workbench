@@ -1522,6 +1522,9 @@ type TopologyServerInfo struct {
 	PrimaryRole   string               `json:"primary_role"`
 	IsExpandable  bool                 `json:"is_expandable"`
 	OwnerUsername string               `json:"owner_username,omitempty"`
+	Version       string               `json:"version,omitempty"`
+	DatabaseName  string               `json:"database_name,omitempty"`
+	Username      string               `json:"username,omitempty"`
 	Children      []TopologyServerInfo `json:"children,omitempty"`
 }
 
@@ -1550,6 +1553,9 @@ type connectionWithRole struct {
 	Host               string
 	Port               int
 	OwnerUsername      sql.NullString
+	DatabaseName       string
+	Username           string
+	Version            sql.NullString // PostgreSQL version from metrics
 	PrimaryRole        string
 	UpstreamHost       sql.NullString
 	UpstreamPort       sql.NullInt32
@@ -1664,8 +1670,17 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
             FROM metrics.pg_node_role
             WHERE collected_at > NOW() - INTERVAL '15 minutes'
             ORDER BY connection_id, collected_at DESC
+        ),
+        latest_server_info AS (
+            SELECT DISTINCT ON (connection_id)
+                connection_id, server_version
+            FROM metrics.pg_server_info
+            WHERE collected_at > NOW() - INTERVAL '15 minutes'
+            ORDER BY connection_id, collected_at DESC
         )
         SELECT c.id, c.name, c.host, c.port, c.owner_username,
+               c.database_name, c.username,
+               lsi.server_version,
                COALESCE(lr.primary_role, 'unknown') as primary_role,
                lr.upstream_host, lr.upstream_port,
                COALESCE(lr.has_spock, false) as has_spock,
@@ -1676,6 +1691,7 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
                COALESCE(lr.status, 'unknown') as status
         FROM connections c
         LEFT JOIN latest_roles lr ON c.id = lr.connection_id
+        LEFT JOIN latest_server_info lsi ON c.id = lsi.connection_id
         ORDER BY c.name
     `
 
@@ -1690,6 +1706,8 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
 		var conn connectionWithRole
 		if err := rows.Scan(
 			&conn.ID, &conn.Name, &conn.Host, &conn.Port, &conn.OwnerUsername,
+			&conn.DatabaseName, &conn.Username,
+			&conn.Version,
 			&conn.PrimaryRole, &conn.UpstreamHost, &conn.UpstreamPort,
 			&conn.HasSpock, &conn.SpockNodeName,
 			&conn.BinaryStandbyCount, &conn.IsStreamingStandby,
@@ -1963,12 +1981,22 @@ func (d *Datastore) getServersInClusterWithRolesInternal(ctx context.Context, cl
             FROM metrics.pg_node_role
             WHERE collected_at > NOW() - INTERVAL '15 minutes'
             ORDER BY connection_id, collected_at DESC
+        ),
+        latest_server_info AS (
+            SELECT DISTINCT ON (connection_id)
+                connection_id, server_version
+            FROM metrics.pg_server_info
+            WHERE collected_at > NOW() - INTERVAL '15 minutes'
+            ORDER BY connection_id, collected_at DESC
         )
         SELECT c.id, c.name, c.host, c.port, c.owner_username, c.role,
+               c.database_name, c.username,
+               lsi.server_version,
                COALESCE(lr.primary_role, 'unknown') as primary_role,
                COALESCE(lr.status, 'unknown') as status
         FROM connections c
         LEFT JOIN latest_roles lr ON c.id = lr.connection_id
+        LEFT JOIN latest_server_info lsi ON c.id = lsi.connection_id
         WHERE c.cluster_id = $1
         ORDER BY
             CASE WHEN c.role = 'primary' THEN 0 ELSE 1 END,
@@ -1984,9 +2012,9 @@ func (d *Datastore) getServersInClusterWithRolesInternal(ctx context.Context, cl
 	var servers []TopologyServerInfo
 	for rows.Next() {
 		var s TopologyServerInfo
-		var ownerUsername, role sql.NullString
-		if err := rows.Scan(&s.ID, &s.Name, &s.Host, &s.Port, &ownerUsername,
-			&role, &s.PrimaryRole, &s.Status); err != nil {
+		var ownerUsername, role, version sql.NullString
+		if err := rows.Scan(&s.ID, &s.Name, &s.Host, &s.Port, &ownerUsername, &role,
+			&s.DatabaseName, &s.Username, &version, &s.PrimaryRole, &s.Status); err != nil {
 			return nil, fmt.Errorf("failed to scan server: %w", err)
 		}
 		if ownerUsername.Valid {
@@ -1996,6 +2024,9 @@ func (d *Datastore) getServersInClusterWithRolesInternal(ctx context.Context, cl
 			s.Role = role.String
 		} else {
 			s.Role = d.mapPrimaryRoleToDisplayRole(s.PrimaryRole)
+		}
+		if version.Valid {
+			s.Version = version.String
 		}
 		s.IsExpandable = false
 		servers = append(servers, s)
@@ -2285,6 +2316,10 @@ func (d *Datastore) groupLogicalReplicationByPublisher(
 		if publisher.OwnerUsername.Valid {
 			pubOwner = publisher.OwnerUsername.String
 		}
+		pubVersion := ""
+		if publisher.Version.Valid {
+			pubVersion = publisher.Version.String
+		}
 		pubServer := TopologyServerInfo{
 			ID:            publisher.ID,
 			Name:          publisher.Name,
@@ -2295,6 +2330,9 @@ func (d *Datastore) groupLogicalReplicationByPublisher(
 			PrimaryRole:   publisher.PrimaryRole,
 			IsExpandable:  true,
 			OwnerUsername: pubOwner,
+			Version:       pubVersion,
+			DatabaseName:  publisher.DatabaseName,
+			Username:      publisher.Username,
 			Children:      make([]TopologyServerInfo, 0, len(subscribers)),
 		}
 
@@ -2304,6 +2342,10 @@ func (d *Datastore) groupLogicalReplicationByPublisher(
 			subOwner := ""
 			if sub.OwnerUsername.Valid {
 				subOwner = sub.OwnerUsername.String
+			}
+			subVersion := ""
+			if sub.Version.Valid {
+				subVersion = sub.Version.String
 			}
 			subServer := TopologyServerInfo{
 				ID:            sub.ID,
@@ -2315,6 +2357,9 @@ func (d *Datastore) groupLogicalReplicationByPublisher(
 				PrimaryRole:   sub.PrimaryRole,
 				IsExpandable:  false,
 				OwnerUsername: subOwner,
+				Version:       subVersion,
+				DatabaseName:  sub.DatabaseName,
+				Username:      sub.Username,
 				Children:      nil,
 			}
 			pubServer.Children = append(pubServer.Children, subServer)
@@ -2368,6 +2413,11 @@ func (d *Datastore) buildServerWithChildren(
 		ownerUsername = conn.OwnerUsername.String
 	}
 
+	version := ""
+	if conn.Version.Valid {
+		version = conn.Version.String
+	}
+
 	server := TopologyServerInfo{
 		ID:            conn.ID,
 		Name:          conn.Name,
@@ -2378,6 +2428,9 @@ func (d *Datastore) buildServerWithChildren(
 		PrimaryRole:   conn.PrimaryRole,
 		IsExpandable:  len(childrenMap[conn.ID]) > 0,
 		OwnerUsername: ownerUsername,
+		Version:       version,
+		DatabaseName:  conn.DatabaseName,
+		Username:      conn.Username,
 		Children:      make([]TopologyServerInfo, 0),
 	}
 
@@ -2418,4 +2471,232 @@ func (d *Datastore) mapPrimaryRoleToDisplayRole(primaryRole string) string {
 	default:
 		return primaryRole
 	}
+}
+
+// Alert represents an alert from the alerter
+type Alert struct {
+	ID             int64      `json:"id"`
+	AlertType      string     `json:"alert_type"`
+	RuleID         *int64     `json:"rule_id,omitempty"`
+	ConnectionID   int        `json:"connection_id"`
+	DatabaseName   *string    `json:"database_name,omitempty"`
+	ProbeName      *string    `json:"probe_name,omitempty"`
+	MetricName     *string    `json:"metric_name,omitempty"`
+	MetricValue    *float64   `json:"metric_value,omitempty"`
+	ThresholdValue *float64   `json:"threshold_value,omitempty"`
+	Operator       *string    `json:"operator,omitempty"`
+	Severity       string     `json:"severity"`
+	Title          string     `json:"title"`
+	Description    string     `json:"description"`
+	CorrelationID  *string    `json:"correlation_id,omitempty"`
+	Status         string     `json:"status"`
+	TriggeredAt    time.Time  `json:"triggered_at"`
+	ClearedAt      *time.Time `json:"cleared_at,omitempty"`
+	AnomalyScore   *float64   `json:"anomaly_score,omitempty"`
+	AnomalyDetails *string    `json:"anomaly_details,omitempty"`
+	ServerName     string     `json:"server_name,omitempty"`
+}
+
+// AlertListFilter holds filter options for listing alerts
+type AlertListFilter struct {
+	ConnectionID  *int
+	ConnectionIDs []int
+	DatabaseName  *string
+	Status        *string
+	Severity      *string
+	AlertType     *string
+	StartTime     *time.Time
+	EndTime       *time.Time
+	Limit         int
+	Offset        int
+}
+
+// AlertListResult holds the result of listing alerts
+type AlertListResult struct {
+	Alerts []Alert `json:"alerts"`
+	Total  int64   `json:"total"`
+}
+
+// GetAlerts retrieves alerts with optional filtering
+func (d *Datastore) GetAlerts(ctx context.Context, filter AlertListFilter) (*AlertListResult, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	// Build the WHERE clause
+	conditions := []string{}
+	args := []interface{}{}
+	argNum := 1
+
+	if filter.ConnectionID != nil {
+		conditions = append(conditions, fmt.Sprintf("a.connection_id = $%d", argNum))
+		args = append(args, *filter.ConnectionID)
+		argNum++
+	}
+
+	if len(filter.ConnectionIDs) > 0 {
+		placeholders := make([]string, len(filter.ConnectionIDs))
+		for i, id := range filter.ConnectionIDs {
+			placeholders[i] = fmt.Sprintf("$%d", argNum)
+			args = append(args, id)
+			argNum++
+		}
+		conditions = append(conditions, fmt.Sprintf("a.connection_id IN (%s)", strings.Join(placeholders, ", ")))
+	}
+
+	if filter.Status != nil {
+		conditions = append(conditions, fmt.Sprintf("a.status = $%d", argNum))
+		args = append(args, *filter.Status)
+		argNum++
+	}
+
+	if filter.Severity != nil {
+		conditions = append(conditions, fmt.Sprintf("a.severity = $%d", argNum))
+		args = append(args, *filter.Severity)
+		argNum++
+	}
+
+	if filter.AlertType != nil {
+		conditions = append(conditions, fmt.Sprintf("a.alert_type = $%d", argNum))
+		args = append(args, *filter.AlertType)
+		argNum++
+	}
+
+	if filter.StartTime != nil {
+		conditions = append(conditions, fmt.Sprintf("a.triggered_at >= $%d", argNum))
+		args = append(args, *filter.StartTime)
+		argNum++
+	}
+
+	if filter.EndTime != nil {
+		conditions = append(conditions, fmt.Sprintf("a.triggered_at <= $%d", argNum))
+		args = append(args, *filter.EndTime)
+		argNum++
+	}
+
+	whereClause := ""
+	if len(conditions) > 0 {
+		whereClause = "WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	// Count total matching alerts
+	countQuery := fmt.Sprintf(`
+		SELECT COUNT(*)
+		FROM alerts a
+		%s
+	`, whereClause)
+
+	var total int64
+	err := d.pool.QueryRow(ctx, countQuery, args...).Scan(&total)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count alerts: %w", err)
+	}
+
+	// Apply limit and offset
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	offset := filter.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	// Query alerts with connection name
+	query := fmt.Sprintf(`
+		SELECT a.id, a.alert_type, a.rule_id, a.connection_id, a.database_name,
+		       a.probe_name, a.metric_name, a.metric_value, a.threshold_value,
+		       a.operator, a.severity, a.title, a.description, a.correlation_id,
+		       a.status, a.triggered_at, a.cleared_at, a.anomaly_score, a.anomaly_details,
+		       COALESCE(c.name, 'Unknown') as server_name
+		FROM alerts a
+		LEFT JOIN connections c ON a.connection_id = c.id
+		%s
+		ORDER BY a.triggered_at DESC
+		LIMIT $%d OFFSET $%d
+	`, whereClause, argNum, argNum+1)
+
+	args = append(args, limit, offset)
+
+	rows, err := d.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query alerts: %w", err)
+	}
+	defer rows.Close()
+
+	var alerts []Alert
+	for rows.Next() {
+		var alert Alert
+		err := rows.Scan(
+			&alert.ID, &alert.AlertType, &alert.RuleID, &alert.ConnectionID,
+			&alert.DatabaseName, &alert.ProbeName, &alert.MetricName,
+			&alert.MetricValue, &alert.ThresholdValue, &alert.Operator,
+			&alert.Severity, &alert.Title, &alert.Description,
+			&alert.CorrelationID, &alert.Status, &alert.TriggeredAt,
+			&alert.ClearedAt, &alert.AnomalyScore, &alert.AnomalyDetails,
+			&alert.ServerName,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan alert: %w", err)
+		}
+		alerts = append(alerts, alert)
+	}
+
+	if alerts == nil {
+		alerts = []Alert{}
+	}
+
+	return &AlertListResult{
+		Alerts: alerts,
+		Total:  total,
+	}, nil
+}
+
+// AlertCountsResult contains alert counts grouped by server
+type AlertCountsResult struct {
+	Total    int64         `json:"total"`
+	ByServer map[int]int64 `json:"by_server"`
+}
+
+// GetAlertCounts returns counts of active alerts grouped by connection_id
+func (d *Datastore) GetAlertCounts(ctx context.Context) (*AlertCountsResult, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	// Get total count of active alerts
+	var total int64
+	err := d.pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM alerts
+		WHERE status = 'active'
+	`).Scan(&total)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count total alerts: %w", err)
+	}
+
+	// Get counts grouped by connection_id
+	rows, err := d.pool.Query(ctx, `
+		SELECT connection_id, COUNT(*) as count
+		FROM alerts
+		WHERE status = 'active'
+		GROUP BY connection_id
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query alert counts: %w", err)
+	}
+	defer rows.Close()
+
+	byServer := make(map[int]int64)
+	for rows.Next() {
+		var connID int
+		var count int64
+		if err := rows.Scan(&connID, &count); err != nil {
+			return nil, fmt.Errorf("failed to scan alert count: %w", err)
+		}
+		byServer[connID] = count
+	}
+
+	return &AlertCountsResult{
+		Total:    total,
+		ByServer: byServer,
+	}, nil
 }

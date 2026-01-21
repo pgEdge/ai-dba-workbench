@@ -116,6 +116,8 @@ export const ClusterProvider = ({ children }) => {
     const { sessionToken: token } = useAuth();
     const [clusterData, setClusterData] = useState([]);
     const [selectedServer, setSelectedServer] = useState(null);
+    const [selectedCluster, setSelectedCluster] = useState(null);
+    const [selectionType, setSelectionType] = useState(null); // 'server', 'cluster', or 'estate'
     const [currentConnection, setCurrentConnection] = useState(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
@@ -204,6 +206,8 @@ export const ClusterProvider = ({ children }) => {
         if (!token || !server) return;
 
         setSelectedServer(server);
+        setSelectedCluster(null);
+        setSelectionType('server');
 
         try {
             const response = await fetch('/api/connections/current', {
@@ -229,12 +233,34 @@ export const ClusterProvider = ({ children }) => {
     }, [token]);
 
     /**
-     * Clear the current server selection
+     * Select a cluster (all servers in the cluster)
+     */
+    const selectCluster = useCallback((cluster) => {
+        setSelectedCluster(cluster);
+        setSelectedServer(null);
+        setCurrentConnection(null);
+        setSelectionType('cluster');
+    }, []);
+
+    /**
+     * Select the entire estate (all servers across all groups)
+     */
+    const selectEstate = useCallback(() => {
+        setSelectedServer(null);
+        setSelectedCluster(null);
+        setCurrentConnection(null);
+        setSelectionType('estate');
+    }, []);
+
+    /**
+     * Clear the current selection
      */
     const clearSelection = useCallback(async () => {
         if (!token) return;
 
         setSelectedServer(null);
+        setSelectedCluster(null);
+        setSelectionType(null);
 
         try {
             await fetch('/api/connections/current', {
@@ -651,12 +677,17 @@ export const ClusterProvider = ({ children }) => {
         // Data
         clusterData,
         selectedServer,
+        selectedCluster,
+        selectionType,
         currentConnection,
         loading,
         error,
         // Data fetching
         fetchClusterData,
+        // Selection functions
         selectServer,
+        selectCluster,
+        selectEstate,
         clearSelection,
         // Update functions
         updateGroupName,

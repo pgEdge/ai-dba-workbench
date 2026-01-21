@@ -10,12 +10,14 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeProvider } from '@mui/material/styles';
-import { Box, CircularProgress, CssBaseline, Typography } from '@mui/material';
+import { Box, CircularProgress, CssBaseline } from '@mui/material';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ClusterProvider, useCluster } from './contexts/ClusterContext';
+import { AlertsProvider } from './contexts/AlertsContext';
 import Header from './components/Header';
 import Login from './components/Login';
 import ClusterNavigator from './components/ClusterNavigator';
+import StatusPanel from './components/StatusPanel';
 import { createPgedgeTheme, loginTheme } from './theme/pgedgeTheme';
 
 const AppContent = () => {
@@ -70,7 +72,9 @@ const AppContent = () => {
         <ThemeProvider theme={theme}>
             <CssBaseline />
             <ClusterProvider>
-                <MainLayout mode={mode} onToggleTheme={toggleTheme} />
+                <AlertsProvider>
+                    <MainLayout mode={mode} onToggleTheme={toggleTheme} />
+                </AlertsProvider>
             </ClusterProvider>
         </ThemeProvider>
     );
@@ -80,10 +84,75 @@ const MainLayout = ({ mode, onToggleTheme }) => {
     const {
         clusterData,
         selectedServer,
+        selectedCluster,
+        selectionType,
         loading,
         fetchClusterData,
         selectServer,
+        selectCluster,
+        selectEstate,
     } = useCluster();
+
+    // Build selection object based on current selection type
+    const selection = useMemo(() => {
+        if (selectionType === 'server' && selectedServer) {
+            return {
+                type: 'server',
+                id: selectedServer.id,
+                name: selectedServer.name,
+                status: selectedServer.status || 'unknown',
+                host: selectedServer.host,
+                port: selectedServer.port,
+                role: selectedServer.role,
+                version: selectedServer.version,
+                // Extended server info (may not be available yet)
+                database: selectedServer.database_name || selectedServer.database,
+                username: selectedServer.username,
+                os: selectedServer.os,
+                platform: selectedServer.platform,
+            };
+        }
+
+        if (selectionType === 'cluster' && selectedCluster) {
+            // Collect all servers in the cluster (including nested children)
+            const collectServers = (servers) => {
+                const result = [];
+                servers?.forEach(s => {
+                    result.push(s);
+                    if (s.children) {
+                        result.push(...collectServers(s.children));
+                    }
+                });
+                return result;
+            };
+            const servers = collectServers(selectedCluster.servers);
+            const serverIds = servers.map(s => s.id);
+
+            return {
+                type: 'cluster',
+                id: selectedCluster.id,
+                name: selectedCluster.name,
+                servers: servers,
+                serverIds: serverIds,
+                status: servers.every(s => s.status === 'offline') && servers.length > 0
+                    ? 'offline'
+                    : servers.some(s => s.status === 'offline' || s.status === 'warning')
+                        ? 'warning'
+                        : 'online',
+            };
+        }
+
+        if (selectionType === 'estate') {
+            return {
+                type: 'estate',
+                name: 'All Servers',
+                groups: clusterData,
+                status: 'online', // Will be calculated by StatusPanel
+            };
+        }
+
+        return null;
+    }, [selectionType, selectedServer, selectedCluster, clusterData]);
 
     return (
         <Box sx={{
@@ -107,7 +176,11 @@ const MainLayout = ({ mode, onToggleTheme }) => {
                 <ClusterNavigator
                     data={clusterData}
                     selectedServerId={selectedServer?.id}
+                    selectedClusterId={selectedCluster?.id}
+                    selectionType={selectionType}
                     onSelectServer={selectServer}
+                    onSelectCluster={selectCluster}
+                    onSelectEstate={selectEstate}
                     onRefresh={fetchClusterData}
                     loading={loading}
                     mode={mode}
@@ -120,38 +193,10 @@ const MainLayout = ({ mode, onToggleTheme }) => {
                     flexDirection: 'column',
                     overflow: 'hidden',
                 }}>
-                    {selectedServer ? (
-                        <Box sx={{
-                            flex: 1,
-                            p: 3,
-                            display: 'flex',
-                            flexDirection: 'column',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                        }}>
-                            <Typography variant="h6" color="text.secondary">
-                                Connected to: {selectedServer.name}
-                            </Typography>
-                            <Typography variant="body2" color="text.disabled" sx={{ mt: 1 }}>
-                                {selectedServer.host}:{selectedServer.port}
-                            </Typography>
-                        </Box>
-                    ) : (
-                        <Box sx={{
-                            flex: 1,
-                            display: 'flex',
-                            flexDirection: 'column',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                        }}>
-                            <Typography variant="h6" color="text.secondary">
-                                Select a server to get started
-                            </Typography>
-                            <Typography variant="body2" color="text.disabled" sx={{ mt: 1 }}>
-                                Choose a database server from the navigation panel
-                            </Typography>
-                        </Box>
-                    )}
+                    <StatusPanel
+                        selection={selection}
+                        mode={mode}
+                    />
                 </Box>
             </Box>
         </Box>

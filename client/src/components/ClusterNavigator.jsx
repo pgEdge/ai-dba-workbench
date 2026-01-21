@@ -13,6 +13,7 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect, memo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useCluster } from '../contexts/ClusterContext';
+import { useAlerts } from '../contexts/AlertsContext';
 import InlineEditText from './InlineEditText';
 import {
     DndContext,
@@ -124,6 +125,39 @@ const RolePill = ({ role, isDark }) => {
                 '& .MuiChip-label': { pl: 0.75, pr: 0.75 },
             }}
         />
+    );
+};
+
+/**
+ * AlertBadge - Small badge showing alert count (red/error color)
+ */
+const AlertBadge = ({ count, isDark }) => {
+    if (!count || count === 0) return null;
+
+    const color = '#EF4444'; // Red/error color
+
+    return (
+        <Tooltip title={`${count} active alert${count !== 1 ? 's' : ''}`} placement="right">
+            <Box
+                sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    minWidth: 16,
+                    height: 16,
+                    px: 0.5,
+                    borderRadius: '8px',
+                    bgcolor: alpha(color, isDark ? 0.25 : 0.15),
+                    color: isDark ? '#F87171' : '#DC2626',
+                    fontSize: '0.625rem',
+                    fontWeight: 700,
+                    lineHeight: 1,
+                    flexShrink: 0,
+                }}
+            >
+                {count > 99 ? '99+' : count}
+            </Box>
+        </Tooltip>
     );
 };
 
@@ -251,6 +285,8 @@ const ServerItem = memo(({
     onUpdateServer,
     onEditServer,
     onDeleteServer,
+    alertCount = 0,
+    getServerAlertCount,
 }) => {
     // User can edit if they're superuser or the owner
     const canEditServer = user?.isSuperuser || server.owner_username === user?.username;
@@ -436,9 +472,12 @@ const ServerItem = memo(({
                             }}
                         />
                     </Box>
-                ) : effectiveRole && ROLE_CONFIGS[effectiveRole] && (
-                    <Box sx={{ ml: 'auto', flexShrink: 0 }}>
-                        <RolePill role={effectiveRole} isDark={isDark} />
+                ) : (
+                    <Box sx={{ ml: 'auto', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                        {effectiveRole && ROLE_CONFIGS[effectiveRole] && (
+                            <RolePill role={effectiveRole} isDark={isDark} />
+                        )}
+                        <AlertBadge count={alertCount} isDark={isDark} />
                     </Box>
                 )}
                 {canEditServer && (
@@ -505,6 +544,8 @@ const ServerItem = memo(({
                                 onUpdateServer={onUpdateServer}
                                 onEditServer={onEditServer}
                                 onDeleteServer={onDeleteServer}
+                                alertCount={getServerAlertCount ? getServerAlertCount(childServer.id) : 0}
+                                getServerAlertCount={getServerAlertCount}
                             />
                         ))}
                     </Box>
@@ -540,7 +581,9 @@ const ClusterItem = memo(({
     isExpanded,
     onToggle,
     selectedServerId,
+    selectedClusterId,
     onSelectServer,
+    onSelectCluster,
     depth = 0,
     isDark,
     expandedServers,
@@ -551,6 +594,7 @@ const ClusterItem = memo(({
     onUpdateServer,
     onEditServer,
     onDeleteServer,
+    getServerAlertCount,
 }) => {
     // Superusers can edit:
     // - Database-backed clusters (cluster-{id} format)
@@ -566,12 +610,38 @@ const ClusterItem = memo(({
     const clusterStatus = allOffline ? 'offline' : (hasWarning ? 'warning' : 'online');
     const statusColor = STATUS_COLORS[clusterStatus];
     const clusterType = getClusterType(cluster);
+    const isSelected = selectedClusterId === cluster.id;
+
+    // Calculate total alert count for the cluster
+    const clusterAlertCount = useMemo(() => {
+        if (!getServerAlertCount) return 0;
+        const collectServerIds = (servers) => {
+            const ids = [];
+            servers?.forEach(s => {
+                ids.push(s.id);
+                if (s.children) ids.push(...collectServerIds(s.children));
+            });
+            return ids;
+        };
+        const serverIds = collectServerIds(cluster.servers);
+        return serverIds.reduce((sum, id) => sum + (getServerAlertCount(id) || 0), 0);
+    }, [cluster.servers, getServerAlertCount]);
+
+    const handleClusterClick = (e) => {
+        // Don't select if clicking on expand button or inline edit
+        if (e.target.closest('.MuiIconButton-root') || e.target.closest('.inline-edit-input')) {
+            return;
+        }
+        if (onSelectCluster) {
+            onSelectCluster(cluster);
+        }
+    };
 
     return (
         <ClusterContainer cluster={cluster} isDark={isDark}>
             {/* Cluster Header */}
             <Box
-                onClick={onToggle}
+                onClick={handleClusterClick}
                 sx={{
                     display: 'flex',
                     alignItems: 'center',
@@ -581,9 +651,16 @@ const ClusterItem = memo(({
                     cursor: 'pointer',
                     borderRadius: 1,
                     mx: 0.5,
+                    bgcolor: isSelected
+                        ? (isDark ? alpha('#22B8CF', 0.20) : alpha('#15AABF', 0.12))
+                        : 'transparent',
+                    borderLeft: isSelected ? '2px solid' : '2px solid transparent',
+                    borderLeftColor: isSelected ? 'primary.main' : 'transparent',
                     transition: 'all 0.15s ease',
                     '&:hover': {
-                        bgcolor: isDark ? alpha('#22B8CF', 0.08) : alpha('#15AABF', 0.04),
+                        bgcolor: isSelected
+                            ? (isDark ? alpha('#22B8CF', 0.25) : alpha('#15AABF', 0.16))
+                            : (isDark ? alpha('#22B8CF', 0.08) : alpha('#15AABF', 0.04)),
                     },
                 }}
             >
@@ -616,7 +693,7 @@ const ClusterItem = memo(({
                 <ClusterIcon
                     sx={{
                         fontSize: 18,
-                        color: 'text.secondary',
+                        color: isSelected ? 'primary.main' : 'text.secondary',
                     }}
                 />
                 <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -627,8 +704,8 @@ const ClusterItem = memo(({
                         typographyProps={{
                             variant: 'body2',
                             sx: {
-                                fontWeight: 500,
-                                color: 'text.primary',
+                                fontWeight: isSelected ? 600 : 500,
+                                color: isSelected ? 'text.primary' : 'text.primary',
                                 fontSize: '0.8125rem',
                                 lineHeight: 1.3,
                                 overflow: 'hidden',
@@ -638,22 +715,23 @@ const ClusterItem = memo(({
                         }}
                     />
                 </Box>
-                <Chip
-                    label={`${onlineCount}/${totalCount}`}
-                    size="small"
-                    sx={{
-                        ml: 'auto',
-                        flexShrink: 0,
-                        height: 18,
-                        fontSize: '0.625rem',
-                        fontWeight: 600,
-                        bgcolor: isDark ? alpha(statusColor, 0.15) : alpha(statusColor, 0.1),
-                        color: statusColor,
-                        '& .MuiChip-label': {
-                            px: 0.75,
-                        },
-                    }}
-                />
+                <Box sx={{ ml: 'auto', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <Chip
+                        label={`${onlineCount}/${totalCount}`}
+                        size="small"
+                        sx={{
+                            height: 18,
+                            fontSize: '0.625rem',
+                            fontWeight: 600,
+                            bgcolor: isDark ? alpha(statusColor, 0.15) : alpha(statusColor, 0.1),
+                            color: statusColor,
+                            '& .MuiChip-label': {
+                                px: 0.75,
+                            },
+                        }}
+                    />
+                    <AlertBadge count={clusterAlertCount} isDark={isDark} />
+                </Box>
             </Box>
             {/* Server List */}
             <Collapse in={isExpanded} timeout="auto">
@@ -676,6 +754,8 @@ const ClusterItem = memo(({
                             onUpdateServer={onUpdateServer}
                             onEditServer={onEditServer}
                             onDeleteServer={onDeleteServer}
+                            alertCount={getServerAlertCount ? getServerAlertCount(server.id) : 0}
+                            getServerAlertCount={getServerAlertCount}
                         />
                     ))}
                 </Box>
@@ -874,7 +954,9 @@ const GroupItem = memo(({
     expandedClusters,
     onToggleCluster,
     selectedServerId,
+    selectedClusterId,
     onSelectServer,
+    onSelectCluster,
     isDark,
     expandedServers,
     onToggleServer,
@@ -885,6 +967,7 @@ const GroupItem = memo(({
     onEditServer,
     onDeleteServer,
     onDeleteGroup,
+    getServerAlertCount,
 }) => {
     // Superusers can edit both database-backed groups (ID: group-{number})
     // and auto-detected groups (groups with auto_group_key)
@@ -1043,6 +1126,8 @@ const GroupItem = memo(({
                                             onUpdateServer={onUpdateServer}
                                             onEditServer={onEditServer}
                                             onDeleteServer={onDeleteServer}
+                                            alertCount={getServerAlertCount ? getServerAlertCount(server.id) : 0}
+                                            getServerAlertCount={getServerAlertCount}
                                         />
                                     </DraggableCluster>
                                 );
@@ -1076,6 +1161,8 @@ const GroupItem = memo(({
                                                 onUpdateServer={onUpdateServer}
                                                 onEditServer={onEditServer}
                                                 onDeleteServer={onDeleteServer}
+                                                alertCount={getServerAlertCount ? getServerAlertCount(server.id) : 0}
+                                                getServerAlertCount={getServerAlertCount}
                                             />
                                         ))}
                                     </ClusterContainer>
@@ -1098,7 +1185,9 @@ const GroupItem = memo(({
                                     isExpanded={expandedClusters.has(cluster.id)}
                                     onToggle={() => onToggleCluster(cluster.id)}
                                     selectedServerId={selectedServerId}
+                                    selectedClusterId={selectedClusterId}
                                     onSelectServer={onSelectServer}
+                                    onSelectCluster={onSelectCluster}
                                     depth={1}
                                     isDark={isDark}
                                     expandedServers={expandedServers}
@@ -1109,6 +1198,7 @@ const GroupItem = memo(({
                                     onUpdateServer={onUpdateServer}
                                     onEditServer={onEditServer}
                                     onDeleteServer={onDeleteServer}
+                                    getServerAlertCount={getServerAlertCount}
                                 />
                             </DraggableCluster>
                         );
@@ -1159,7 +1249,11 @@ const saveToStorage = (key, value) => {
 const ClusterNavigator = ({
     data = [],
     selectedServerId,
+    selectedClusterId,
+    selectionType,
     onSelectServer,
+    onSelectCluster,
+    onSelectEstate,
     onRefresh,
     loading = false,
     mode = 'light',
@@ -1204,6 +1298,9 @@ const ClusterNavigator = ({
     const [activeDragItem, setActiveDragItem] = useState(null);
 
     const isDark = mode === 'dark';
+
+    // Get alert counts from context
+    const { getServerAlertCount, getTotalAlertCount } = useAlerts();
 
     // Handle resize drag
     useEffect(() => {
@@ -1670,36 +1767,60 @@ const ClusterNavigator = ({
                     </Box>
                 </Box>
 
-                {/* Status summary */}
-                <Box sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 1,
-                    mb: 1.5,
-                }}>
-                    <Chip
-                        icon={<StatusIcon sx={{ fontSize: '8px !important', color: STATUS_COLORS.online }} />}
-                        label={`${onlineServers} online`}
-                        size="small"
+                {/* Status summary - clickable for estate selection */}
+                <Tooltip title="View estate overview" placement="right">
+                    <Box
+                        onClick={() => onSelectEstate?.()}
                         sx={{
-                            height: 22,
-                            fontSize: '0.6875rem',
-                            bgcolor: isDark ? alpha(STATUS_COLORS.online, 0.12) : alpha(STATUS_COLORS.online, 0.08),
-                            color: isDark ? '#4ADE80' : '#16A34A',
-                            '& .MuiChip-icon': { ml: 0.75 },
-                            '& .MuiChip-label': { px: 0.75 },
-                        }}
-                    />
-                    <Typography
-                        variant="caption"
-                        sx={{
-                            color: 'text.secondary',
-                            fontSize: '0.6875rem',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 1,
+                            mb: 1.5,
+                            py: 0.5,
+                            px: 1,
+                            mx: -1,
+                            borderRadius: 1,
+                            cursor: 'pointer',
+                            bgcolor: selectionType === 'estate'
+                                ? (isDark ? alpha('#22B8CF', 0.20) : alpha('#15AABF', 0.12))
+                                : 'transparent',
+                            borderLeft: selectionType === 'estate' ? '2px solid' : '2px solid transparent',
+                            borderLeftColor: selectionType === 'estate' ? 'primary.main' : 'transparent',
+                            transition: 'all 0.15s ease',
+                            '&:hover': {
+                                bgcolor: selectionType === 'estate'
+                                    ? (isDark ? alpha('#22B8CF', 0.25) : alpha('#15AABF', 0.16))
+                                    : (isDark ? alpha('#22B8CF', 0.08) : alpha('#15AABF', 0.04)),
+                            },
                         }}
                     >
-                        of {totalServers} servers
-                    </Typography>
-                </Box>
+                        <Chip
+                            icon={<StatusIcon sx={{ fontSize: '8px !important', color: STATUS_COLORS.online }} />}
+                            label={`${onlineServers} online`}
+                            size="small"
+                            sx={{
+                                height: 22,
+                                fontSize: '0.6875rem',
+                                bgcolor: isDark ? alpha(STATUS_COLORS.online, 0.12) : alpha(STATUS_COLORS.online, 0.08),
+                                color: isDark ? '#4ADE80' : '#16A34A',
+                                '& .MuiChip-icon': { ml: 0.75 },
+                                '& .MuiChip-label': { px: 0.75 },
+                            }}
+                        />
+                        <Typography
+                            variant="caption"
+                            sx={{
+                                color: selectionType === 'estate' ? 'text.primary' : 'text.secondary',
+                                fontSize: '0.6875rem',
+                                fontWeight: selectionType === 'estate' ? 600 : 400,
+                                flex: 1,
+                            }}
+                        >
+                            of {totalServers} servers
+                        </Typography>
+                        <AlertBadge count={getTotalAlertCount()} isDark={isDark} />
+                    </Box>
+                </Tooltip>
 
                 {/* Search */}
                 <TextField
@@ -1825,7 +1946,9 @@ const ClusterNavigator = ({
                             expandedClusters={expandedClusters}
                             onToggleCluster={toggleCluster}
                             selectedServerId={selectedServerId}
+                            selectedClusterId={selectedClusterId}
                             onSelectServer={onSelectServer}
+                            onSelectCluster={onSelectCluster}
                             isDark={isDark}
                             expandedServers={expandedServers}
                             onToggleServer={toggleServer}
@@ -1836,6 +1959,7 @@ const ClusterNavigator = ({
                             onEditServer={handleEditServer}
                             onDeleteServer={handleDeleteServer}
                             onDeleteGroup={handleDeleteGroup}
+                            getServerAlertCount={getServerAlertCount}
                         />
                     ))
                 )}

@@ -273,20 +273,44 @@ const ServerItem = memo(({
         onSelect(server);
     };
 
-    // Calculate indentation based on depth
-    const baseIndent = 1.5; // Base left padding
-    const depthIndent = depth * 2.5; // Additional indent per depth level
-    const expanderWidth = 2; // Width reserved for expand/collapse button
+    // Calculate indentation based on depth (MUI spacing: 1 unit = 8px)
+    const baseIndent = 1.5; // Base left padding in MUI units (12px)
+    const depthIndent = depth * 2.5; // Additional indent per depth level (20px per level)
+    const expanderWidth = 2; // Width reserved for expand/collapse button (16px)
 
-    // Calculate tree line position to align with parent's expand icon
-    // For depth=1, parent is cluster header: mx(4) + px(8) + buttonCenter(10) = 22px
-    // For depth>1, parent is ServerItem: mx(4) + pl(12 + (d-1)*20) + buttonCenter(10) = 26 + (d-1)*20
-    const lineLeftPos = 22 + (depth - 1) * 20 + (depth > 1 ? 4 : 0);
+    // Tree line positioning (in pixels)
+    // Lines connect from parent's expand button center to this node's expand button or status icon
+    //
+    // For depth=1, parent is the cluster header:
+    //   Cluster header layout: mx(4px) + px(8px) + IconButton(p:0.25=2px, icon:18px)
+    //   Expand button center = 4 + 8 + 2 + 9 = 23px from container content edge
+    //
+    // For depth>1, parent is another ServerItem at depth-1:
+    //   ServerItem layout: mx(4px) + pl in pixels
+    //   Parent pl = (1.5 + (d-1)*2.5) * 8 = 12 + (d-1)*20  (parent always hasChildren since it has us)
+    //   Parent expand button center = 4 + parentPl + 2 + 8 = 26 + (d-1)*20 px
+    //
+    const lineLeftPos = depth === 1
+        ? 23 // Align with cluster header expand button center
+        : 26 + (depth - 1) * 20; // Align with parent ServerItem expand button center
 
-    // Row height calculation for positioning tree lines
-    // Row has py: 0.5 (4px each side) + content ~20px = ~28px total
-    // Center of row is at ~14px from top
-    const rowCenterY = 14;
+    // This node's target position (where horizontal line should end)
+    // ServerItem row: mx(4px) + pl + content
+    // pl = (baseIndent + depthIndent + (hasChildren ? 0 : expanderWidth)) * 8
+    //    = (1.5 + depth*2.5 + (hasChildren ? 0 : 2)) * 8
+    // If hasChildren: expand button at pl, center = 4 + pl + 2 + 8 = 14 + pl
+    // If no children: status icon at pl, center = 4 + pl + 4 = 8 + pl
+    const thisNodePl = (baseIndent + depthIndent + (hasChildren ? 0 : expanderWidth)) * 8;
+    const thisNodeTargetX = hasChildren
+        ? 4 + thisNodePl + 10 // To expand button center (p:0.25=2px + icon:16px/2=8px)
+        : 4 + thisNodePl + 4; // To status icon center (8px icon / 2)
+    const horizontalLineWidth = thisNodeTargetX - lineLeftPos - 10;
+
+    // Row height for vertical centering of horizontal connector
+    // Row has py:0.5 (4px) + content height (~20px) + py:0.5 (4px) = ~28px total
+    // Visual center of content is approximately at 4px + 10px = 14px, but accounting
+    // for the status icon and server icon vertical alignment, 18px works better
+    const rowCenterY = 18;
 
     return (
         <Box sx={{ position: 'relative' }}>
@@ -310,7 +334,7 @@ const ServerItem = memo(({
                             position: 'absolute',
                             left: `${lineLeftPos}px`,
                             top: `${rowCenterY}px`,
-                            width: hasChildren ? '20px' : '14px',
+                            width: `${horizontalLineWidth}px`,
                             height: '1px',
                             bgcolor: lineColor,
                         }}
@@ -1084,6 +1108,36 @@ const GroupItem = memo(({
 // Display name for debugging
 GroupItem.displayName = 'GroupItem';
 
+// localStorage keys for persisting navigator state
+const STORAGE_KEYS = {
+    WIDTH: 'clusterNavigator.width',
+    EXPANDED_CLUSTERS: 'clusterNavigator.expandedClusters',
+};
+
+/**
+ * Load a value from localStorage with JSON parsing
+ */
+const loadFromStorage = (key, defaultValue) => {
+    try {
+        const stored = localStorage.getItem(key);
+        if (stored === null) return defaultValue;
+        return JSON.parse(stored);
+    } catch {
+        return defaultValue;
+    }
+};
+
+/**
+ * Save a value to localStorage with JSON serialization
+ */
+const saveToStorage = (key, value) => {
+    try {
+        localStorage.setItem(key, JSON.stringify(value));
+    } catch {
+        // Ignore storage errors (quota exceeded, etc.)
+    }
+};
+
 /**
  * ClusterNavigator - Main navigation panel component
  */
@@ -1100,13 +1154,24 @@ const ClusterNavigator = ({
 }) => {
     const [searchQuery, setSearchQuery] = useState('');
     const [expandedGroups, setExpandedGroups] = useState(new Set());
-    const [expandedClusters, setExpandedClusters] = useState(new Set());
+    // Initialize expandedClusters from localStorage (default to empty = all collapsed)
+    const [expandedClusters, setExpandedClusters] = useState(() => {
+        const stored = loadFromStorage(STORAGE_KEYS.EXPANDED_CLUSTERS, []);
+        return new Set(stored);
+    });
     const [expandedServers, setExpandedServers] = useState(new Set());
-    const [panelWidth, setPanelWidth] = useState(defaultWidth);
+    // Initialize panelWidth from localStorage
+    const [panelWidth, setPanelWidth] = useState(() => {
+        const stored = loadFromStorage(STORAGE_KEYS.WIDTH, null);
+        return stored !== null ? Math.min(maxWidth, Math.max(minWidth, stored)) : defaultWidth;
+    });
     const [isResizing, setIsResizing] = useState(false);
+    const panelWidthRef = useRef(panelWidth);
     const resizeRef = useRef(null);
     const scrollContainerRef = useRef(null);
     const scrollPositionRef = useRef(0);
+    // Track whether initial state has been set up
+    const initializedRef = useRef(false);
 
     // Dialog states
     const [addMenuAnchor, setAddMenuAnchor] = useState(null);
@@ -1130,6 +1195,7 @@ const ClusterNavigator = ({
         const handleMouseMove = (e) => {
             if (!isResizing) return;
             const newWidth = Math.min(maxWidth, Math.max(minWidth, e.clientX));
+            panelWidthRef.current = newWidth;
             setPanelWidth(newWidth);
         };
 
@@ -1137,6 +1203,8 @@ const ClusterNavigator = ({
             setIsResizing(false);
             document.body.style.cursor = '';
             document.body.style.userSelect = '';
+            // Save the final width to localStorage (use ref to get current value)
+            saveToStorage(STORAGE_KEYS.WIDTH, panelWidthRef.current);
         };
 
         if (isResizing) {
@@ -1316,21 +1384,28 @@ const ClusterNavigator = ({
         });
     };
 
-    // Initialize all groups, clusters, and expandable servers as expanded on first render
+    // Initialize groups and servers on first data load
+    // Groups are always expanded by default to show clusters
+    // Clusters default to collapsed unless restored from localStorage
+    // Expandable servers (with children) are expanded by default
     React.useEffect(() => {
-        if (data.length > 0 && expandedGroups.size === 0) {
+        if (data.length > 0 && !initializedRef.current) {
+            initializedRef.current = true;
+
+            // Always expand all groups to show clusters
             const allGroupIds = new Set(data.map(g => g.id));
-            const allClusterIds = new Set(
-                data.flatMap(g => g.clusters?.map(c => c.id) || [])
-            );
+            setExpandedGroups(allGroupIds);
+
+            // Expand all expandable servers (those with children) by default
             const allExpandableServerIds = new Set(
                 data.flatMap(g =>
                     g.clusters?.flatMap(c => collectExpandableServerIds(c.servers)) || []
                 )
             );
-            setExpandedGroups(allGroupIds);
-            setExpandedClusters(allClusterIds);
             setExpandedServers(allExpandableServerIds);
+
+            // Note: expandedClusters is already initialized from localStorage
+            // and defaults to empty (all collapsed) if no saved state exists
         }
     }, [data]);
 
@@ -1418,6 +1493,8 @@ const ClusterNavigator = ({
             } else {
                 next.add(clusterId);
             }
+            // Persist expanded clusters to localStorage
+            saveToStorage(STORAGE_KEYS.EXPANDED_CLUSTERS, Array.from(next));
             return next;
         });
     };

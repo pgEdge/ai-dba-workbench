@@ -259,7 +259,7 @@ const ServerDialog = ({
                 <DialogTitle
                     sx={{
                         fontWeight: 600,
-                        color: '#1F2937',
+                        color: 'text.primary',
                         pb: 1,
                     }}
                 >
@@ -281,7 +281,7 @@ const ServerDialog = ({
                     <Typography
                         variant="subtitle2"
                         sx={{
-                            color: '#6B7280',
+                            color: 'text.secondary',
                             mb: 1,
                             mt: 1,
                             textTransform: 'uppercase',
@@ -363,6 +363,7 @@ const ServerDialog = ({
                             required
                             disabled={isSaving}
                             margin="dense"
+                            autoComplete="off"
                             sx={{ flex: 1, ...textFieldSx }}
                         />
                         <TextField
@@ -379,6 +380,7 @@ const ServerDialog = ({
                             required={!isEditMode}
                             disabled={isSaving}
                             margin="dense"
+                            autoComplete="new-password"
                             sx={{ flex: 1, ...textFieldSx }}
                         />
                     </Box>
@@ -405,7 +407,7 @@ const ServerDialog = ({
                             <Typography
                                 variant="subtitle2"
                                 sx={{
-                                    color: '#6B7280',
+                                    color: 'text.secondary',
                                     textTransform: 'uppercase',
                                     fontSize: '0.75rem',
                                     letterSpacing: '0.05em',
@@ -477,7 +479,7 @@ const ServerDialog = ({
                     <Typography
                         variant="subtitle2"
                         sx={{
-                            color: '#6B7280',
+                            color: 'text.secondary',
                             mb: 1,
                             mt: 2,
                             textTransform: 'uppercase',
@@ -506,7 +508,7 @@ const ServerDialog = ({
                             sx={{
                                 '& .MuiFormControlLabel-label': {
                                     fontSize: '0.875rem',
-                                    color: '#374151',
+                                    color: 'text.primary',
                                 },
                             }}
                         />
@@ -529,7 +531,7 @@ const ServerDialog = ({
                                 sx={{
                                     '& .MuiFormControlLabel-label': {
                                         fontSize: '0.875rem',
-                                        color: '#374151',
+                                        color: 'text.primary',
                                     },
                                 }}
                             />

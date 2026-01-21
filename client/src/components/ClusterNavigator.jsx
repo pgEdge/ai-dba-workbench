@@ -1582,7 +1582,7 @@ const ClusterNavigator = ({
                     <Typography
                         variant="overline"
                         sx={{
-                            color: 'text.secondary',
+                            color: 'text.primary',
                             fontSize: '0.6875rem',
                             fontWeight: 600,
                             letterSpacing: '0.08em',
@@ -1667,7 +1667,7 @@ const ClusterNavigator = ({
                     <Typography
                         variant="caption"
                         sx={{
-                            color: 'text.disabled',
+                            color: 'text.secondary',
                             fontSize: '0.6875rem',
                         }}
                     >

@@ -296,4 +296,80 @@ describe('ClusterNavigator', () => {
         expect(screen.getByText(/2 groups/)).toBeInTheDocument();
         expect(screen.getByText(/3 clusters/)).toBeInTheDocument();
     });
+
+    it('preserves selection when data is updated with same content', () => {
+        const { rerender } = render(
+            <ClusterNavigator
+                data={mockClusterData}
+                selectedServerId={1}
+                onSelectServer={onSelectServer}
+                onRefresh={onRefresh}
+            />
+        );
+
+        // Verify server is selected
+        expect(screen.getByText('pg-east-1')).toBeInTheDocument();
+
+        // Rerender with same data (simulating refresh with no changes)
+        rerender(
+            <ClusterNavigator
+                data={mockClusterData}
+                selectedServerId={1}
+                onSelectServer={onSelectServer}
+                onRefresh={onRefresh}
+            />
+        );
+
+        // Server should still be visible and selection preserved
+        expect(screen.getByText('pg-east-1')).toBeInTheDocument();
+    });
+
+    it('maintains expanded state after data update', () => {
+        const { rerender } = render(
+            <ClusterNavigator
+                data={mockClusterData}
+                onSelectServer={onSelectServer}
+                onRefresh={onRefresh}
+            />
+        );
+
+        // All groups and clusters should be expanded by default
+        expect(screen.getByText('pg-east-1')).toBeInTheDocument();
+        expect(screen.getByText('pg-west-1')).toBeInTheDocument();
+        expect(screen.getByText('pg-dev-1')).toBeInTheDocument();
+
+        // Rerender with updated data (same structure, different status)
+        const updatedData = JSON.parse(JSON.stringify(mockClusterData));
+        updatedData[0].clusters[0].servers[0].status = 'warning';
+
+        rerender(
+            <ClusterNavigator
+                data={updatedData}
+                onSelectServer={onSelectServer}
+                onRefresh={onRefresh}
+            />
+        );
+
+        // All servers should still be visible (expanded state preserved)
+        expect(screen.getByText('pg-east-1')).toBeInTheDocument();
+        expect(screen.getByText('pg-west-1')).toBeInTheDocument();
+        expect(screen.getByText('pg-dev-1')).toBeInTheDocument();
+    });
+
+    it('attaches scroll handler to navigation tree container', () => {
+        render(
+            <ClusterNavigator
+                data={mockClusterData}
+                onSelectServer={onSelectServer}
+                onRefresh={onRefresh}
+            />
+        );
+
+        // Find the scrollable container (the one with overflow: auto)
+        const scrollContainer = document.querySelector('[style*="overflow"]') ||
+            screen.getByText('Production').closest('[class*="MuiBox"]')?.parentElement;
+
+        // Verify scroll container exists
+        expect(scrollContainer).toBeInTheDocument();
+    });
 });

@@ -10,10 +10,40 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { useAuth } from './AuthContext';
 
 const ClusterContext = createContext(null);
+
+/**
+ * Generate a fingerprint for cluster data to detect actual changes.
+ * This allows us to skip re-renders when the data hasn't changed.
+ */
+const generateDataFingerprint = (data) => {
+    if (!data || data.length === 0) return '';
+
+    // Create a fingerprint that captures the essential structure and values
+    const fingerprint = data.map(group => {
+        const clusterFingerprints = (group.clusters || []).map(cluster => {
+            const serverFingerprints = collectServerFingerprints(cluster.servers || []);
+            return `${cluster.id}:${cluster.name}:${serverFingerprints}`;
+        }).join('|');
+        return `${group.id}:${group.name}:${clusterFingerprints}`;
+    }).join('||');
+
+    return fingerprint;
+};
+
+/**
+ * Recursively collect server fingerprints including nested children
+ */
+const collectServerFingerprints = (servers) => {
+    if (!servers || servers.length === 0) return '';
+    return servers.map(server => {
+        const childFingerprints = collectServerFingerprints(server.children);
+        return `${server.id}:${server.name}:${server.status}:${server.primary_role || server.role || ''}${childFingerprints ? ':' + childFingerprints : ''}`;
+    }).join(',');
+};
 
 /**
  * Transform flat connections list into hierarchical structure
@@ -93,13 +123,23 @@ export const ClusterProvider = ({ children }) => {
     const [lastRefresh, setLastRefresh] = useState(null);
     const autoRefreshInterval = 30000; // 30 seconds
 
+    // Track data fingerprint to detect actual changes
+    const dataFingerprintRef = useRef('');
+    // Track if this is the initial load (to show loading state)
+    const isInitialLoadRef = useRef(true);
+
     /**
-     * Fetch cluster hierarchy from the API
+     * Fetch cluster hierarchy from the API.
+     * Uses fingerprinting to detect actual changes and avoid unnecessary re-renders.
+     * Only shows loading state on initial load, not during auto-refresh.
      */
     const fetchClusterData = useCallback(async () => {
         if (!token) return;
 
-        setLoading(true);
+        // Only show loading spinner on initial load
+        if (isInitialLoadRef.current) {
+            setLoading(true);
+        }
         setError(null);
 
         try {
@@ -112,10 +152,10 @@ export const ClusterProvider = ({ children }) => {
                 },
             });
 
+            let newData = null;
+
             if (response.ok) {
-                const data = await response.json();
-                setClusterData(data);
-                setLastRefresh(new Date());
+                newData = await response.json();
             } else if (response.status === 404) {
                 // Fall back to connections endpoint
                 response = await fetch('/api/connections', {
@@ -127,19 +167,32 @@ export const ClusterProvider = ({ children }) => {
 
                 if (response.ok) {
                     const connections = await response.json();
-                    const hierarchy = transformConnectionsToHierarchy(connections);
-                    setClusterData(hierarchy);
-                    setLastRefresh(new Date());
+                    newData = transformConnectionsToHierarchy(connections);
                 } else {
                     throw new Error('Failed to fetch connections');
                 }
             } else {
                 throw new Error('Failed to fetch cluster data');
             }
+
+            // Generate fingerprint for the new data
+            const newFingerprint = generateDataFingerprint(newData);
+
+            // Only update state if data has actually changed
+            if (newFingerprint !== dataFingerprintRef.current) {
+                dataFingerprintRef.current = newFingerprint;
+                setClusterData(newData);
+            }
+
+            // Always update last refresh time
+            setLastRefresh(new Date());
         } catch (err) {
             console.error('Error fetching cluster data:', err);
             setError(err.message);
         } finally {
+            if (isInitialLoadRef.current) {
+                isInitialLoadRef.current = false;
+            }
             setLoading(false);
         }
     }, [token]);

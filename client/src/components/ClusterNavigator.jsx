@@ -10,7 +10,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useRef, useEffect, memo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useCluster } from '../contexts/ClusterContext';
 import InlineEditText from './InlineEditText';
@@ -233,8 +233,9 @@ const ClusterContainer = ({ children, cluster, isDark }) => {
 /**
  * ServerItem - Individual server entry in the navigation tree
  * Supports recursive rendering for replication topology with cascading standbys
+ * Memoized to prevent unnecessary re-renders during data refresh
  */
-const ServerItem = ({
+const ServerItem = memo(({
     server,
     isSelected,
     onSelect,
@@ -472,7 +473,10 @@ const ServerItem = ({
             )}
         </Box>
     );
-};
+});
+
+// Display name for debugging
+ServerItem.displayName = 'ServerItem';
 
 /**
  * Count all servers recursively (including children)
@@ -489,8 +493,9 @@ const countServersRecursive = (servers, filterFn = () => true) => {
 /**
  * ClusterItem - Cluster entry that can be expanded to show member servers
  * Entire cluster (header + servers) is wrapped in a container
+ * Memoized to prevent unnecessary re-renders during data refresh
  */
-const ClusterItem = ({
+const ClusterItem = memo(({
     cluster,
     groupId,
     isExpanded,
@@ -638,7 +643,10 @@ const ClusterItem = ({
             </Collapse>
         </ClusterContainer>
     );
-};
+});
+
+// Display name for debugging
+ClusterItem.displayName = 'ClusterItem';
 
 /**
  * DraggableCluster - Wrapper that makes a cluster draggable via drag handle
@@ -818,8 +826,9 @@ const DragOverlayContent = ({ cluster, isDark }) => {
 
 /**
  * GroupItem - Cluster group that can be expanded to show clusters
+ * Memoized to prevent unnecessary re-renders during data refresh
  */
-const GroupItem = ({
+const GroupItem = memo(({
     group,
     isExpanded,
     onToggle,
@@ -1070,7 +1079,10 @@ const GroupItem = ({
             </Box>
         </DroppableGroup>
     );
-};
+});
+
+// Display name for debugging
+GroupItem.displayName = 'GroupItem';
 
 /**
  * ClusterNavigator - Main navigation panel component
@@ -1093,6 +1105,8 @@ const ClusterNavigator = ({
     const [panelWidth, setPanelWidth] = useState(defaultWidth);
     const [isResizing, setIsResizing] = useState(false);
     const resizeRef = useRef(null);
+    const scrollContainerRef = useRef(null);
+    const scrollPositionRef = useRef(0);
 
     // Dialog states
     const [addMenuAnchor, setAddMenuAnchor] = useState(null);
@@ -1319,6 +1333,21 @@ const ClusterNavigator = ({
             setExpandedServers(allExpandableServerIds);
         }
     }, [data]);
+
+    // Preserve scroll position across data updates
+    // Save scroll position before data changes, restore after render
+    useEffect(() => {
+        const scrollContainer = scrollContainerRef.current;
+        if (scrollContainer && scrollPositionRef.current > 0) {
+            // Restore scroll position after data update
+            scrollContainer.scrollTop = scrollPositionRef.current;
+        }
+    }, [data]);
+
+    // Track scroll position changes
+    const handleScroll = useCallback((e) => {
+        scrollPositionRef.current = e.target.scrollTop;
+    }, []);
 
     /**
      * Recursively filter servers by search query, including children
@@ -1607,6 +1636,8 @@ const ClusterNavigator = ({
 
             {/* Navigation Tree */}
             <Box
+                ref={scrollContainerRef}
+                onScroll={handleScroll}
                 sx={{
                     flex: 1,
                     overflow: 'auto',

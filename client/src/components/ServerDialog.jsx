@@ -111,7 +111,7 @@ const ServerDialog = ({
                     name: server.name || '',
                     host: server.host || '',
                     port: server.port || 5432,
-                    database: server.database || '',
+                    database: server.database_name || '',
                     username: server.username || '',
                     password: '', // Never pre-populate password
                     ssl_mode: server.ssl_mode || 'prefer',

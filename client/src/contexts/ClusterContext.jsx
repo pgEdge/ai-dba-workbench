@@ -456,6 +456,27 @@ export const ClusterProvider = ({ children }) => {
     }, [token, fetchClusterData]);
 
     /**
+     * Get full server (connection) details for editing
+     */
+    const getServer = useCallback(async (serverId) => {
+        if (!token) throw new Error('Not authenticated');
+
+        const response = await fetch(`/api/connections/${serverId}`, {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+            },
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to get server details');
+        }
+
+        return await response.json();
+    }, [token]);
+
+    /**
      * Create a new server (connection)
      */
     const createServer = useCallback(async (serverData) => {
@@ -642,6 +663,7 @@ export const ClusterProvider = ({ children }) => {
         updateClusterName,
         updateServerName,
         // CRUD functions
+        getServer,
         createServer,
         updateServer,
         deleteServer,

@@ -1246,6 +1246,7 @@ const ClusterNavigator = ({
         updateGroupName,
         updateClusterName,
         updateServerName,
+        getServer,
         createServer,
         updateServer,
         deleteServer,
@@ -1275,10 +1276,20 @@ const ClusterNavigator = ({
     };
 
     // Handler for editing a server
-    const handleEditServer = (server) => {
-        setEditingServer(server);
-        setServerDialogMode('edit');
-        setServerDialogOpen(true);
+    const handleEditServer = async (server) => {
+        try {
+            // Fetch full server details including username and database_name
+            const fullServerDetails = await getServer(server.id);
+            setEditingServer(fullServerDetails);
+            setServerDialogMode('edit');
+            setServerDialogOpen(true);
+        } catch (err) {
+            console.error('Failed to get server details:', err);
+            // Fall back to using the limited data we have
+            setEditingServer(server);
+            setServerDialogMode('edit');
+            setServerDialogOpen(true);
+        }
     };
 
     // Handler for saving a server (create or update)

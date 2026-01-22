@@ -42,6 +42,9 @@ type Config struct {
 
 	// LLM provider settings
 	LLM LLMConfig `yaml:"llm"`
+
+	// Notifications settings
+	Notifications NotificationsConfig `yaml:"notifications"`
 }
 
 // DatastoreConfig holds PostgreSQL connection settings for the datastore
@@ -116,6 +119,40 @@ type LLMConfig struct {
 	OpenAI            OpenAIConfig    `yaml:"openai"`
 	Anthropic         AnthropicConfig `yaml:"anthropic"`
 	Voyage            VoyageConfig    `yaml:"voyage"`
+}
+
+// NotificationsConfig holds notification settings
+type NotificationsConfig struct {
+	// Enabled enables/disables notifications
+	Enabled bool `yaml:"enabled"`
+
+	// SecretFile is the path to the file containing the encryption key
+	// The file should contain a hex-encoded 32-byte key (64 hex characters)
+	SecretFile string `yaml:"secret_file"`
+
+	// ProcessIntervalSeconds is how often to process pending notifications
+	// Default: 30
+	ProcessIntervalSeconds int `yaml:"process_interval_seconds"`
+
+	// ReminderCheckIntervalMinutes is how often to check for due reminders
+	// Default: 60
+	ReminderCheckIntervalMinutes int `yaml:"reminder_check_interval_minutes"`
+
+	// MaxRetryAttempts is the maximum number of retry attempts for failed notifications
+	// Default: 3
+	MaxRetryAttempts int `yaml:"max_retry_attempts"`
+
+	// RetryBackoffMinutes is the backoff schedule for retries (array of minutes)
+	// Default: [5, 15, 60]
+	RetryBackoffMinutes []int `yaml:"retry_backoff_minutes"`
+
+	// HTTPTimeoutSeconds is the timeout for HTTP requests (webhooks, Slack, Mattermost)
+	// Default: 30
+	HTTPTimeoutSeconds int `yaml:"http_timeout_seconds"`
+
+	// HTTPMaxIdleConns is the maximum number of idle HTTP connections
+	// Default: 10
+	HTTPMaxIdleConns int `yaml:"http_max_idle_conns"`
 }
 
 // OllamaConfig holds Ollama provider settings
@@ -219,6 +256,9 @@ func (c *Config) LoadFromFile(filename string) error {
 	if err := yaml.Unmarshal(data, c); err != nil {
 		return fmt.Errorf("failed to parse YAML config: %w", err)
 	}
+
+	// Apply defaults for notification settings
+	c.SetNotificationDefaults()
 
 	return nil
 }
@@ -367,4 +407,26 @@ func GetDefaultConfigPath(binaryPath string) string {
 func ConfigFileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// SetNotificationDefaults sets default values for notification config
+func (c *Config) SetNotificationDefaults() {
+	if c.Notifications.ProcessIntervalSeconds == 0 {
+		c.Notifications.ProcessIntervalSeconds = 30
+	}
+	if c.Notifications.ReminderCheckIntervalMinutes == 0 {
+		c.Notifications.ReminderCheckIntervalMinutes = 60
+	}
+	if c.Notifications.MaxRetryAttempts == 0 {
+		c.Notifications.MaxRetryAttempts = 3
+	}
+	if len(c.Notifications.RetryBackoffMinutes) == 0 {
+		c.Notifications.RetryBackoffMinutes = []int{5, 15, 60}
+	}
+	if c.Notifications.HTTPTimeoutSeconds == 0 {
+		c.Notifications.HTTPTimeoutSeconds = 30
+	}
+	if c.Notifications.HTTPMaxIdleConns == 0 {
+		c.Notifications.HTTPMaxIdleConns = 10
+	}
 }

@@ -278,7 +278,8 @@ func TestNewSchemaManager(t *testing.T) {
 	// Migration 16 adds is_default column and creates the default group
 	// Migration 17 adds pg_extension table for tracking installed extensions
 	// Migration 18 adds database_name to pg_extension table
-	expectedVersions := []int{1, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18}
+	// Migration 19 adds notification tables for alert notifications
+	expectedVersions := []int{1, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19}
 	if len(sm.migrations) != len(expectedVersions) {
 		t.Fatalf("Expected %d migrations, got %d", len(expectedVersions), len(sm.migrations))
 	}

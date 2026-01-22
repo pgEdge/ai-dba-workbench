@@ -2661,6 +2661,343 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration 19: Add notification channel tables for alert delivery
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     19,
+		Description: "Add notification channel tables for alert delivery",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Create notification_channels table
+			_, err := conn.Exec(ctx, `
+			CREATE TABLE IF NOT EXISTS notification_channels (
+				id BIGSERIAL PRIMARY KEY,
+				owner_username VARCHAR(255),
+				owner_token VARCHAR(255),
+				is_shared BOOLEAN NOT NULL DEFAULT FALSE,
+				enabled BOOLEAN NOT NULL DEFAULT TRUE,
+				channel_type TEXT NOT NULL CHECK (channel_type IN ('slack', 'mattermost', 'webhook', 'email')),
+				name TEXT NOT NULL,
+				description TEXT,
+				webhook_url_encrypted TEXT,
+				endpoint_url TEXT,
+				http_method TEXT DEFAULT 'POST',
+				headers_json JSONB DEFAULT '{}',
+				auth_type TEXT,
+				auth_credentials_encrypted TEXT,
+				smtp_host TEXT,
+				smtp_port INTEGER DEFAULT 587,
+				smtp_username TEXT,
+				smtp_password_encrypted TEXT,
+				smtp_use_tls BOOLEAN DEFAULT TRUE,
+				from_address TEXT,
+				from_name TEXT,
+				template_alert_fire TEXT,
+				template_alert_clear TEXT,
+				template_reminder TEXT,
+				reminder_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+				reminder_interval_hours INTEGER DEFAULT 24,
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				CONSTRAINT chk_notification_channel_owner CHECK (
+					(owner_username IS NOT NULL AND owner_token IS NULL) OR
+					(owner_username IS NULL AND owner_token IS NOT NULL)
+				)
+			);
+
+			COMMENT ON TABLE notification_channels IS
+				'Notification channels for delivering alerts (Slack, Mattermost, webhook, email)';
+			COMMENT ON COLUMN notification_channels.id IS
+				'Unique identifier for the notification channel';
+			COMMENT ON COLUMN notification_channels.owner_username IS
+				'Username of the user who owns this channel (mutually exclusive with owner_token)';
+			COMMENT ON COLUMN notification_channels.owner_token IS
+				'Service token that owns this channel (mutually exclusive with owner_username)';
+			COMMENT ON COLUMN notification_channels.is_shared IS
+				'Whether this channel is shared among users or private';
+			COMMENT ON COLUMN notification_channels.enabled IS
+				'Whether this notification channel is enabled';
+			COMMENT ON COLUMN notification_channels.channel_type IS
+				'Type of notification channel: slack, mattermost, webhook, or email';
+			COMMENT ON COLUMN notification_channels.name IS
+				'User-friendly name for the notification channel';
+			COMMENT ON COLUMN notification_channels.description IS
+				'Optional description of the notification channel';
+			COMMENT ON COLUMN notification_channels.webhook_url_encrypted IS
+				'Encrypted webhook URL for Slack or Mattermost channels';
+			COMMENT ON COLUMN notification_channels.endpoint_url IS
+				'Endpoint URL for webhook channels';
+			COMMENT ON COLUMN notification_channels.http_method IS
+				'HTTP method for webhook channels (default POST)';
+			COMMENT ON COLUMN notification_channels.headers_json IS
+				'Custom HTTP headers for webhook channels as JSON object';
+			COMMENT ON COLUMN notification_channels.auth_type IS
+				'Authentication type for webhook channels (e.g., basic, bearer, api_key)';
+			COMMENT ON COLUMN notification_channels.auth_credentials_encrypted IS
+				'Encrypted authentication credentials for webhook channels';
+			COMMENT ON COLUMN notification_channels.smtp_host IS
+				'SMTP server hostname for email channels';
+			COMMENT ON COLUMN notification_channels.smtp_port IS
+				'SMTP server port for email channels (default 587)';
+			COMMENT ON COLUMN notification_channels.smtp_username IS
+				'SMTP authentication username for email channels';
+			COMMENT ON COLUMN notification_channels.smtp_password_encrypted IS
+				'Encrypted SMTP password for email channels';
+			COMMENT ON COLUMN notification_channels.smtp_use_tls IS
+				'Whether to use TLS for SMTP connections (default true)';
+			COMMENT ON COLUMN notification_channels.from_address IS
+				'From email address for email channels';
+			COMMENT ON COLUMN notification_channels.from_name IS
+				'From display name for email channels';
+			COMMENT ON COLUMN notification_channels.template_alert_fire IS
+				'Custom template for alert firing notifications';
+			COMMENT ON COLUMN notification_channels.template_alert_clear IS
+				'Custom template for alert clearing notifications';
+			COMMENT ON COLUMN notification_channels.template_reminder IS
+				'Custom template for reminder notifications';
+			COMMENT ON COLUMN notification_channels.reminder_enabled IS
+				'Whether reminder notifications are enabled for this channel';
+			COMMENT ON COLUMN notification_channels.reminder_interval_hours IS
+				'Interval in hours between reminder notifications (default 24)';
+			COMMENT ON COLUMN notification_channels.created_at IS
+				'Timestamp when the notification channel was created';
+			COMMENT ON COLUMN notification_channels.updated_at IS
+				'Timestamp when the notification channel was last updated';
+			COMMENT ON CONSTRAINT chk_notification_channel_owner ON notification_channels IS
+				'Ensures exactly one of owner_username or owner_token is set';
+
+			CREATE INDEX IF NOT EXISTS idx_notification_channels_channel_type
+				ON notification_channels(channel_type);
+			CREATE INDEX IF NOT EXISTS idx_notification_channels_enabled
+				ON notification_channels(enabled) WHERE enabled = TRUE;
+			CREATE INDEX IF NOT EXISTS idx_notification_channels_owner_username
+				ON notification_channels(owner_username);
+			CREATE INDEX IF NOT EXISTS idx_notification_channels_owner_token
+				ON notification_channels(owner_token);
+
+			COMMENT ON INDEX idx_notification_channels_channel_type IS
+				'Index for filtering notification channels by type';
+			COMMENT ON INDEX idx_notification_channels_enabled IS
+				'Partial index for efficiently finding enabled notification channels';
+			COMMENT ON INDEX idx_notification_channels_owner_username IS
+				'Index for fast lookup of notification channels by owner username';
+			COMMENT ON INDEX idx_notification_channels_owner_token IS
+				'Index for fast lookup of notification channels by owner token';
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to create notification_channels table: %w", err)
+			}
+
+			// Create email_recipients table
+			_, err = conn.Exec(ctx, `
+			CREATE TABLE IF NOT EXISTS email_recipients (
+				id BIGSERIAL PRIMARY KEY,
+				channel_id BIGINT NOT NULL REFERENCES notification_channels(id) ON DELETE CASCADE,
+				email_address TEXT NOT NULL,
+				display_name TEXT,
+				enabled BOOLEAN NOT NULL DEFAULT TRUE,
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+			);
+
+			COMMENT ON TABLE email_recipients IS
+				'Email recipients for email notification channels';
+			COMMENT ON COLUMN email_recipients.id IS
+				'Unique identifier for the email recipient';
+			COMMENT ON COLUMN email_recipients.channel_id IS
+				'Foreign key to the notification channel';
+			COMMENT ON COLUMN email_recipients.email_address IS
+				'Email address of the recipient';
+			COMMENT ON COLUMN email_recipients.display_name IS
+				'Optional display name for the recipient';
+			COMMENT ON COLUMN email_recipients.enabled IS
+				'Whether this recipient is enabled';
+			COMMENT ON COLUMN email_recipients.created_at IS
+				'Timestamp when the recipient was created';
+
+			CREATE INDEX IF NOT EXISTS idx_email_recipients_channel_id
+				ON email_recipients(channel_id);
+			CREATE INDEX IF NOT EXISTS idx_email_recipients_channel_enabled
+				ON email_recipients(channel_id, enabled) WHERE enabled = TRUE;
+
+			COMMENT ON INDEX idx_email_recipients_channel_id IS
+				'Index for fast lookup of recipients by channel';
+			COMMENT ON INDEX idx_email_recipients_channel_enabled IS
+				'Partial index for efficiently finding enabled recipients per channel';
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to create email_recipients table: %w", err)
+			}
+
+			// Create connection_notification_channels table
+			_, err = conn.Exec(ctx, `
+			CREATE TABLE IF NOT EXISTS connection_notification_channels (
+				id BIGSERIAL PRIMARY KEY,
+				connection_id INTEGER NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+				channel_id BIGINT NOT NULL REFERENCES notification_channels(id) ON DELETE CASCADE,
+				enabled BOOLEAN NOT NULL DEFAULT TRUE,
+				reminder_enabled_override BOOLEAN,
+				reminder_interval_hours_override INTEGER,
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				CONSTRAINT connection_channel_unique UNIQUE (connection_id, channel_id)
+			);
+
+			COMMENT ON TABLE connection_notification_channels IS
+				'Links connections to notification channels for alert delivery';
+			COMMENT ON COLUMN connection_notification_channels.id IS
+				'Unique identifier for the connection-channel link';
+			COMMENT ON COLUMN connection_notification_channels.connection_id IS
+				'Foreign key to the connection';
+			COMMENT ON COLUMN connection_notification_channels.channel_id IS
+				'Foreign key to the notification channel';
+			COMMENT ON COLUMN connection_notification_channels.enabled IS
+				'Whether notifications are enabled for this connection-channel pair';
+			COMMENT ON COLUMN connection_notification_channels.reminder_enabled_override IS
+				'Override for reminder enabled setting (NULL uses channel default)';
+			COMMENT ON COLUMN connection_notification_channels.reminder_interval_hours_override IS
+				'Override for reminder interval (NULL uses channel default)';
+			COMMENT ON COLUMN connection_notification_channels.created_at IS
+				'Timestamp when the link was created';
+			COMMENT ON CONSTRAINT connection_channel_unique ON connection_notification_channels IS
+				'Ensures each connection-channel pair is unique';
+
+			CREATE INDEX IF NOT EXISTS idx_connection_notification_channels_connection_id
+				ON connection_notification_channels(connection_id);
+			CREATE INDEX IF NOT EXISTS idx_connection_notification_channels_channel_id
+				ON connection_notification_channels(channel_id);
+
+			COMMENT ON INDEX idx_connection_notification_channels_connection_id IS
+				'Index for fast lookup of notification channels by connection';
+			COMMENT ON INDEX idx_connection_notification_channels_channel_id IS
+				'Index for fast lookup of connections by notification channel';
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to create connection_notification_channels table: %w", err)
+			}
+
+			// Create notification_history table
+			_, err = conn.Exec(ctx, `
+			CREATE TABLE IF NOT EXISTS notification_history (
+				id BIGSERIAL PRIMARY KEY,
+				alert_id BIGINT REFERENCES alerts(id) ON DELETE SET NULL,
+				channel_id BIGINT REFERENCES notification_channels(id) ON DELETE SET NULL,
+				connection_id INTEGER REFERENCES connections(id) ON DELETE SET NULL,
+				notification_type TEXT NOT NULL CHECK (notification_type IN ('alert_fire', 'alert_clear', 'reminder')),
+				status TEXT NOT NULL CHECK (status IN ('pending', 'sent', 'failed', 'retrying')),
+				payload_json JSONB,
+				response_code INTEGER,
+				response_body TEXT,
+				error_message TEXT,
+				attempt_count INTEGER NOT NULL DEFAULT 1,
+				max_attempts INTEGER NOT NULL DEFAULT 3,
+				next_retry_at TIMESTAMP,
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				sent_at TIMESTAMP
+			);
+
+			COMMENT ON TABLE notification_history IS
+				'History of notification delivery attempts and their outcomes';
+			COMMENT ON COLUMN notification_history.id IS
+				'Unique identifier for the notification history entry';
+			COMMENT ON COLUMN notification_history.alert_id IS
+				'Foreign key to the alert that triggered the notification';
+			COMMENT ON COLUMN notification_history.channel_id IS
+				'Foreign key to the notification channel used';
+			COMMENT ON COLUMN notification_history.connection_id IS
+				'Foreign key to the connection associated with the alert';
+			COMMENT ON COLUMN notification_history.notification_type IS
+				'Type of notification: alert_fire, alert_clear, or reminder';
+			COMMENT ON COLUMN notification_history.status IS
+				'Delivery status: pending, sent, failed, or retrying';
+			COMMENT ON COLUMN notification_history.payload_json IS
+				'JSON payload sent to the notification channel';
+			COMMENT ON COLUMN notification_history.response_code IS
+				'HTTP response code from the notification endpoint';
+			COMMENT ON COLUMN notification_history.response_body IS
+				'Response body from the notification endpoint';
+			COMMENT ON COLUMN notification_history.error_message IS
+				'Error message if the notification failed';
+			COMMENT ON COLUMN notification_history.attempt_count IS
+				'Number of delivery attempts made';
+			COMMENT ON COLUMN notification_history.max_attempts IS
+				'Maximum number of delivery attempts allowed';
+			COMMENT ON COLUMN notification_history.next_retry_at IS
+				'Timestamp for next retry attempt if retrying';
+			COMMENT ON COLUMN notification_history.created_at IS
+				'Timestamp when the notification was created';
+			COMMENT ON COLUMN notification_history.sent_at IS
+				'Timestamp when the notification was successfully sent';
+
+			CREATE INDEX IF NOT EXISTS idx_notification_history_alert_id
+				ON notification_history(alert_id);
+			CREATE INDEX IF NOT EXISTS idx_notification_history_channel_id
+				ON notification_history(channel_id);
+			CREATE INDEX IF NOT EXISTS idx_notification_history_status
+				ON notification_history(status);
+			CREATE INDEX IF NOT EXISTS idx_notification_history_pending_retry
+				ON notification_history(status, next_retry_at)
+				WHERE status IN ('pending', 'retrying');
+			CREATE INDEX IF NOT EXISTS idx_notification_history_created_at
+				ON notification_history(created_at DESC);
+
+			COMMENT ON INDEX idx_notification_history_alert_id IS
+				'Index for fast lookup of notifications by alert';
+			COMMENT ON INDEX idx_notification_history_channel_id IS
+				'Index for fast lookup of notifications by channel';
+			COMMENT ON INDEX idx_notification_history_status IS
+				'Index for filtering notifications by status';
+			COMMENT ON INDEX idx_notification_history_pending_retry IS
+				'Partial index for efficiently finding notifications pending retry';
+			COMMENT ON INDEX idx_notification_history_created_at IS
+				'Index for querying notification history by time';
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to create notification_history table: %w", err)
+			}
+
+			// Create notification_reminder_state table
+			_, err = conn.Exec(ctx, `
+			CREATE TABLE IF NOT EXISTS notification_reminder_state (
+				id BIGSERIAL PRIMARY KEY,
+				alert_id BIGINT NOT NULL REFERENCES alerts(id) ON DELETE CASCADE,
+				channel_id BIGINT NOT NULL REFERENCES notification_channels(id) ON DELETE CASCADE,
+				last_reminder_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				reminder_count INTEGER NOT NULL DEFAULT 0,
+				CONSTRAINT alert_channel_reminder_unique UNIQUE (alert_id, channel_id)
+			);
+
+			COMMENT ON TABLE notification_reminder_state IS
+				'Tracks reminder notification state for active alerts per channel';
+			COMMENT ON COLUMN notification_reminder_state.id IS
+				'Unique identifier for the reminder state entry';
+			COMMENT ON COLUMN notification_reminder_state.alert_id IS
+				'Foreign key to the active alert';
+			COMMENT ON COLUMN notification_reminder_state.channel_id IS
+				'Foreign key to the notification channel';
+			COMMENT ON COLUMN notification_reminder_state.last_reminder_at IS
+				'Timestamp of the last reminder notification sent';
+			COMMENT ON COLUMN notification_reminder_state.reminder_count IS
+				'Number of reminder notifications sent for this alert-channel pair';
+			COMMENT ON CONSTRAINT alert_channel_reminder_unique ON notification_reminder_state IS
+				'Ensures each alert-channel pair has only one reminder state';
+
+			CREATE INDEX IF NOT EXISTS idx_notification_reminder_state_alert_id
+				ON notification_reminder_state(alert_id);
+			CREATE INDEX IF NOT EXISTS idx_notification_reminder_state_last_reminder
+				ON notification_reminder_state(last_reminder_at);
+
+			COMMENT ON INDEX idx_notification_reminder_state_alert_id IS
+				'Index for fast lookup of reminder state by alert';
+			COMMENT ON INDEX idx_notification_reminder_state_last_reminder IS
+				'Index for finding alerts due for reminder notifications';
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to create notification_reminder_state table: %w", err)
+			}
+
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations

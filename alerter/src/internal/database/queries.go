@@ -294,6 +294,29 @@ func (d *Datastore) GetActiveAlerts(ctx context.Context) ([]*Alert, error) {
 	return alerts, nil
 }
 
+// GetAlert retrieves a single alert by ID
+func (d *Datastore) GetAlert(ctx context.Context, alertID int64) (*Alert, error) {
+	var alert Alert
+	err := d.pool.QueryRow(ctx, `
+		SELECT id, alert_type, rule_id, connection_id, database_name, probe_name,
+		       metric_name, metric_value, threshold_value, operator, severity,
+		       title, description, correlation_id, status, triggered_at, cleared_at,
+		       anomaly_score, anomaly_details
+		FROM alerts
+		WHERE id = $1
+	`, alertID).Scan(
+		&alert.ID, &alert.AlertType, &alert.RuleID, &alert.ConnectionID,
+		&alert.DatabaseName, &alert.ProbeName, &alert.MetricName, &alert.MetricValue,
+		&alert.ThresholdValue, &alert.Operator, &alert.Severity, &alert.Title,
+		&alert.Description, &alert.CorrelationID, &alert.Status, &alert.TriggeredAt,
+		&alert.ClearedAt, &alert.AnomalyScore, &alert.AnomalyDetails)
+
+	if err != nil {
+		return nil, err
+	}
+	return &alert, nil
+}
+
 // ClearAlert marks an alert as cleared
 func (d *Datastore) ClearAlert(ctx context.Context, alertID int64) error {
 	_, err := d.pool.Exec(ctx, `

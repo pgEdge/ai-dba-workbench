@@ -24,13 +24,15 @@ import (
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
 	"github.com/pgedge/ai-workbench/alerter/internal/cron"
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
+	"github.com/pgedge/ai-workbench/alerter/internal/notifications"
 )
 
 // Engine is the main alerter engine that coordinates all background processing
 type Engine struct {
-	config    *config.Config
-	datastore *database.Datastore
-	debug     bool
+	config          *config.Config
+	datastore       *database.Datastore
+	notificationMgr *notifications.Manager
+	debug           bool
 
 	// Synchronization
 	mu sync.RWMutex
@@ -38,11 +40,23 @@ type Engine struct {
 
 // NewEngine creates a new alerter engine
 func NewEngine(cfg *config.Config, datastore *database.Datastore, debug bool) *Engine {
-	return &Engine{
+	e := &Engine{
 		config:    cfg,
 		datastore: datastore,
 		debug:     debug,
 	}
+
+	// Initialize notification manager (only if config and datastore are provided)
+	if cfg != nil && datastore != nil {
+		notificationMgr, err := notifications.NewManager(datastore, &cfg.Notifications, debug, e.log)
+		if err != nil {
+			// Log warning but don't fail - notifications are optional
+			e.log("WARNING: Failed to initialize notification manager: %v", err)
+		}
+		e.notificationMgr = notificationMgr
+	}
+
+	return e
 }
 
 // Run starts the engine and runs until the context is canceled
@@ -95,6 +109,21 @@ func (e *Engine) Run(ctx context.Context) error {
 		defer wg.Done()
 		e.runRetentionManager(ctx)
 	}()
+
+	// Start notification workers
+	if e.notificationMgr != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			e.runNotificationWorker(ctx)
+		}()
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			e.runReminderWorker(ctx)
+		}()
+	}
 
 	e.log("All workers started")
 
@@ -240,6 +269,67 @@ func (e *Engine) runRetentionManager(ctx context.Context) {
 	}
 }
 
+// runNotificationWorker processes pending and retry notifications
+func (e *Engine) runNotificationWorker(ctx context.Context) {
+	interval := time.Duration(e.config.Notifications.ProcessIntervalSeconds) * time.Second
+	if interval == 0 {
+		interval = 30 * time.Second
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	e.log("Notification worker started (interval: %v)", interval)
+
+	for {
+		select {
+		case <-ctx.Done():
+			e.log("Notification worker stopping")
+			return
+		case <-ticker.C:
+			if e.notificationMgr != nil {
+				if err := e.notificationMgr.ProcessPendingNotifications(ctx); err != nil {
+					e.log("ERROR: Failed to process pending notifications: %v", err)
+				}
+			}
+		}
+	}
+}
+
+// runReminderWorker sends periodic reminder notifications for active alerts
+func (e *Engine) runReminderWorker(ctx context.Context) {
+	interval := time.Duration(e.config.Notifications.ReminderCheckIntervalMinutes) * time.Minute
+	if interval == 0 {
+		interval = 60 * time.Minute
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	e.log("Reminder worker started (interval: %v)", interval)
+
+	// Process reminders immediately on start
+	if e.notificationMgr != nil {
+		if err := e.notificationMgr.ProcessReminders(ctx); err != nil {
+			e.log("ERROR: Failed to process reminders: %v", err)
+		}
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			e.log("Reminder worker stopping")
+			return
+		case <-ticker.C:
+			if e.notificationMgr != nil {
+				if err := e.notificationMgr.ProcessReminders(ctx); err != nil {
+					e.log("ERROR: Failed to process reminders: %v", err)
+				}
+			}
+		}
+	}
+}
+
 // evaluateThresholds checks all threshold rules against current metrics
 func (e *Engine) evaluateThresholds(ctx context.Context) {
 	e.debug_log("Evaluating threshold rules...")
@@ -355,6 +445,18 @@ func (e *Engine) triggerThresholdAlert(ctx context.Context, rule *database.Alert
 
 	if err := e.datastore.CreateAlert(ctx, alert); err != nil {
 		e.log("ERROR: Failed to create alert: %v", err)
+		return
+	}
+
+	// Send alert notification
+	if e.notificationMgr != nil {
+		go func(alert *database.Alert) {
+			notifCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := e.notificationMgr.SendAlertNotification(notifCtx, alert, database.NotificationTypeAlertFire); err != nil {
+				e.log("ERROR: Failed to send alert notification: %v", err)
+			}
+		}(alert)
 	}
 }
 
@@ -728,6 +830,23 @@ func (e *Engine) checkAlertResolved(ctx context.Context, alert *database.Alert) 
 		e.log("Alert resolved: %s (%.2f no longer %s %.2f)", alert.Title, value, *alert.Operator, *alert.ThresholdValue)
 		if err := e.datastore.ClearAlert(ctx, alert.ID); err != nil {
 			e.log("ERROR: Failed to clear alert: %v", err)
+			return
+		}
+
+		// Send clear notification
+		if e.notificationMgr != nil {
+			go func(alert *database.Alert) {
+				notifCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				// Get updated alert with cleared_at timestamp
+				if err := e.notificationMgr.SendAlertNotification(notifCtx, alert, database.NotificationTypeAlertClear); err != nil {
+					e.log("ERROR: Failed to send clear notification: %v", err)
+				}
+				// Delete reminder states for this alert
+				if err := e.datastore.DeleteReminderStatesForAlert(notifCtx, alert.ID); err != nil {
+					e.log("ERROR: Failed to delete reminder states for alert %d: %v", alert.ID, err)
+				}
+			}(alert)
 		}
 	}
 }

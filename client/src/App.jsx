@@ -93,6 +93,14 @@ const MainLayout = ({ mode, onToggleTheme }) => {
         selectEstate,
     } = useCluster();
 
+    // Determine help context based on current selection
+    const helpContext = useMemo(() => {
+        if (selectionType === 'server') return 'server';
+        if (selectionType === 'cluster') return 'cluster';
+        if (selectionType === 'estate') return 'navigator';
+        return null;
+    }, [selectionType]);
+
     // Build selection object based on current selection type
     const selection = useMemo(() => {
         if (selectionType === 'server' && selectedServer) {
@@ -167,6 +175,7 @@ const MainLayout = ({ mode, onToggleTheme }) => {
             <Header
                 onToggleTheme={onToggleTheme}
                 mode={mode}
+                helpContext={helpContext}
             />
             <Box sx={{
                 flex: 1,

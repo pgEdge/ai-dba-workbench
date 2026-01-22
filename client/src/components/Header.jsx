@@ -38,7 +38,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useMenu } from '../hooks/useMenu';
 import HelpPanel from './HelpPanel';
 
-const Header = ({ onToggleTheme, mode }) => {
+const Header = ({ onToggleTheme, mode, helpContext }) => {
     const { user, logout } = useAuth();
     const userMenu = useMenu();
     const [helpOpen, setHelpOpen] = useState(false);
@@ -259,7 +259,7 @@ const Header = ({ onToggleTheme, mode }) => {
             </Menu>
 
             {/* Help Panel */}
-            <HelpPanel open={helpOpen} onClose={handleHelpClose} />
+            <HelpPanel open={helpOpen} onClose={handleHelpClose} helpContext={helpContext} mode={mode} />
         </>
     );
 };

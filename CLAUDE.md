@@ -44,7 +44,7 @@ Use sub-agents proactively to preserve context in the main conversation.
 
 ### When to Use Sub-Agents
 
-**Proactively delegate to sub-agents** for:
+**ALWAYS delegate to sub-agents** for:
 
 - Any Go implementation task (use **golang-expert**)
 - Any React/TypeScript implementation task (use **react-expert**)

@@ -74,6 +74,9 @@ type ToolsConfig struct {
 	DescribeProbe       *bool `yaml:"describe_probe"`       // Describe metrics in a probe (default: true)
 	QueryMetrics        *bool `yaml:"query_metrics"`        // Query collected metrics (default: true)
 	ListConnections     *bool `yaml:"list_connections"`     // List available connections (default: true)
+	GetAlertHistory     *bool `yaml:"get_alert_history"`    // Query historic alerts (default: true)
+	GetAlertRules       *bool `yaml:"get_alert_rules"`      // Query alert rules and thresholds (default: true)
+	GetMetricBaselines  *bool `yaml:"get_metric_baselines"` // Query metric baselines for anomaly context (default: true)
 }
 
 // ResourcesConfig holds configuration for enabling/disabling built-in resources
@@ -114,6 +117,12 @@ func (c *ToolsConfig) IsToolEnabled(toolName string) bool {
 		return c.QueryMetrics == nil || *c.QueryMetrics
 	case "list_connections":
 		return c.ListConnections == nil || *c.ListConnections
+	case "get_alert_history":
+		return c.GetAlertHistory == nil || *c.GetAlertHistory
+	case "get_alert_rules":
+		return c.GetAlertRules == nil || *c.GetAlertRules
+	case "get_metric_baselines":
+		return c.GetMetricBaselines == nil || *c.GetMetricBaselines
 	default:
 		return true // Unknown tools are enabled by default
 	}

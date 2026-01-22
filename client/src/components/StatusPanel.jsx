@@ -44,9 +44,11 @@ import {
     Info as InfoIcon,
     CheckCircleOutline as AckIcon,
     Undo as UnackIcon,
+    Psychology as AnalyzeIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import EventTimeline from './EventTimeline';
+import AlertAnalysisDialog from './AlertAnalysisDialog';
 
 // Map internal alert titles to friendly display names
 const FRIENDLY_ALERT_TITLES = {
@@ -422,7 +424,7 @@ const ServerInfoCard = ({ selection, isDark }) => {
 /**
  * AlertItem - Compact alert entry with severity indicator and ack functionality
  */
-const AlertItem = ({ alert, isDark, showServer = false, onAcknowledge, onUnacknowledge }) => {
+const AlertItem = ({ alert, isDark, showServer = false, onAcknowledge, onUnacknowledge, onAnalyze }) => {
     const isAcknowledged = !!alert.acknowledgedAt;
     const baseColor = isAcknowledged ? '#64748B' : (SEVERITY_COLORS[alert.severity] || SEVERITY_COLORS.info);
     const SeverityIcon = alert.severity === 'critical' ? ErrorIcon : WarningIcon;
@@ -571,6 +573,26 @@ const AlertItem = ({ alert, isDark, showServer = false, onAcknowledge, onUnackno
                 />
             </Box>
 
+            {/* Analyze button */}
+            <Tooltip title="Analyze with AI" placement="left">
+                <IconButton
+                    size="small"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        onAnalyze?.(alert);
+                    }}
+                    sx={{
+                        p: 0.5,
+                        color: isDark ? '#818CF8' : '#6366F1',
+                        '&:hover': {
+                            bgcolor: isDark ? alpha('#6366F1', 0.15) : alpha('#6366F1', 0.1),
+                        },
+                    }}
+                >
+                    <AnalyzeIcon sx={{ fontSize: 16 }} />
+                </IconButton>
+            </Tooltip>
+
             {/* Ack/Unack button */}
             <Tooltip title={isAcknowledged ? 'Restore to active' : 'Acknowledge'} placement="left">
                 <IconButton
@@ -718,7 +740,7 @@ const AcknowledgeDialog = ({ open, alert, onClose, onConfirm, isDark }) => {
 /**
  * AlertsSection - Collapsible alerts list with active/acknowledged separation
  */
-const AlertsSection = ({ alerts, isDark, loading, showServer = false, onAcknowledge, onUnacknowledge }) => {
+const AlertsSection = ({ alerts, isDark, loading, showServer = false, onAcknowledge, onUnacknowledge, onAnalyze }) => {
     const [expanded, setExpanded] = useState(true);
     const [ackExpanded, setAckExpanded] = useState(false);
 
@@ -836,6 +858,7 @@ const AlertsSection = ({ alerts, isDark, loading, showServer = false, onAcknowle
                                 showServer={showServer}
                                 onAcknowledge={onAcknowledge}
                                 onUnacknowledge={onUnacknowledge}
+                                onAnalyze={onAnalyze}
                             />
                         ))
                     )}
@@ -906,6 +929,7 @@ const AlertsSection = ({ alerts, isDark, loading, showServer = false, onAcknowle
                                     showServer={showServer}
                                     onAcknowledge={onAcknowledge}
                                     onUnacknowledge={onUnacknowledge}
+                                    onAnalyze={onAnalyze}
                                 />
                             ))}
                         </Box>
@@ -1018,6 +1042,8 @@ const StatusPanel = ({
     const initialLoadDoneRef = React.useRef(false);
     const [ackDialogOpen, setAckDialogOpen] = useState(false);
     const [selectedAlertForAck, setSelectedAlertForAck] = useState(null);
+    const [analysisDialogOpen, setAnalysisDialogOpen] = useState(false);
+    const [analysisAlert, setAnalysisAlert] = useState(null);
 
     // Calculate metrics based on selection type
     const metrics = useMemo(() => {
@@ -1126,6 +1152,12 @@ const StatusPanel = ({
     const handleAcknowledge = (alert) => {
         setSelectedAlertForAck(alert);
         setAckDialogOpen(true);
+    };
+
+    // Handle opening analysis dialog
+    const handleAnalyze = (alert) => {
+        setAnalysisAlert(alert);
+        setAnalysisDialogOpen(true);
     };
 
     // Handle confirming acknowledgment
@@ -1399,6 +1431,7 @@ const StatusPanel = ({
                     showServer={selection.type !== 'server'}
                     onAcknowledge={handleAcknowledge}
                     onUnacknowledge={handleUnacknowledge}
+                    onAnalyze={handleAnalyze}
                 />
             </Box>
 
@@ -1411,6 +1444,17 @@ const StatusPanel = ({
                     setSelectedAlertForAck(null);
                 }}
                 onConfirm={handleAckConfirm}
+                isDark={isDark}
+            />
+
+            {/* Alert Analysis Dialog */}
+            <AlertAnalysisDialog
+                open={analysisDialogOpen}
+                alert={analysisAlert}
+                onClose={() => {
+                    setAnalysisDialogOpen(false);
+                    setAnalysisAlert(null);
+                }}
                 isDark={isDark}
             />
         </Box>

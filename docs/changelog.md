@@ -11,6 +11,12 @@ and this project adheres to
 
 ### Added
 
+- Alert Analysis feature with LLM-powered remediation recommendations:
+  - New MCP tools for alert context: `get_alert_history`, `get_alert_rules`,
+    `get_metric_baselines`
+  - AlertAnalysisDialog component with professional analytics design
+  - Analyze button on each alert in the StatusPanel
+  - Markdown report generation with download option
 - Shared embedding package in `pkg/embedding` for reusable components.
 - Documentation for the embedding package with provider details and usage
   examples.

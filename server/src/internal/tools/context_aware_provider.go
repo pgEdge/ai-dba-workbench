@@ -85,6 +85,15 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 		if p.cfg.Builtins.Tools.IsToolEnabled("list_connections") {
 			registry.Register("list_connections", ListConnectionsTool(datastorePool))
 		}
+		if p.cfg.Builtins.Tools.IsToolEnabled("get_alert_history") {
+			registry.Register("get_alert_history", GetAlertHistoryTool(datastorePool))
+		}
+		if p.cfg.Builtins.Tools.IsToolEnabled("get_alert_rules") {
+			registry.Register("get_alert_rules", GetAlertRulesTool(datastorePool))
+		}
+		if p.cfg.Builtins.Tools.IsToolEnabled("get_metric_baselines") {
+			registry.Register("get_metric_baselines", GetMetricBaselinesTool(datastorePool))
+		}
 	} else {
 		// Register tools with nil pool - they'll return helpful errors
 		if p.cfg.Builtins.Tools.IsToolEnabled("list_probes") {
@@ -98,6 +107,15 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("list_connections") {
 			registry.Register("list_connections", ListConnectionsTool(nil))
+		}
+		if p.cfg.Builtins.Tools.IsToolEnabled("get_alert_history") {
+			registry.Register("get_alert_history", GetAlertHistoryTool(nil))
+		}
+		if p.cfg.Builtins.Tools.IsToolEnabled("get_alert_rules") {
+			registry.Register("get_alert_rules", GetAlertRulesTool(nil))
+		}
+		if p.cfg.Builtins.Tools.IsToolEnabled("get_metric_baselines") {
+			registry.Register("get_metric_baselines", GetMetricBaselinesTool(nil))
 		}
 	}
 }
@@ -342,17 +360,25 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 
 	// Check if this is a stateless tool that doesn't require a per-token database client
 	statelessTools := map[string]bool{
-		"read_resource":      true, // Resource access tool
-		"generate_embedding": true, // Embedding generation doesn't need database
-		"list_probes":        true, // Datastore tool - uses shared datastore pool
-		"describe_probe":     true, // Datastore tool - uses shared datastore pool
-		"query_metrics":      true, // Datastore tool - uses shared datastore pool
-		"list_connections":   true, // Datastore tool - uses shared datastore pool
+		"read_resource":        true, // Resource access tool
+		"generate_embedding":   true, // Embedding generation doesn't need database
+		"list_probes":          true, // Datastore tool - uses shared datastore pool
+		"describe_probe":       true, // Datastore tool - uses shared datastore pool
+		"query_metrics":        true, // Datastore tool - uses shared datastore pool
+		"list_connections":     true, // Datastore tool - uses shared datastore pool
+		"get_alert_history":    true, // Datastore tool - uses shared datastore pool
+		"get_alert_rules":      true, // Datastore tool - uses shared datastore pool
+		"get_metric_baselines": true, // Datastore tool - uses shared datastore pool
 	}
 
 	if statelessTools[name] {
-		// For query_metrics, inject the default connection_id from session if not provided
-		if name == "query_metrics" {
+		// For datastore tools that use connection_id, inject the default from session if not provided
+		connectionIDTools := map[string]bool{
+			"query_metrics":        true,
+			"get_alert_history":    true,
+			"get_metric_baselines": true,
+		}
+		if connectionIDTools[name] {
 			if _, hasConnID := args["connection_id"]; !hasConnID && p.authStore != nil {
 				if tokenHash != "" {
 					session, err := p.authStore.GetConnectionSession(tokenHash)

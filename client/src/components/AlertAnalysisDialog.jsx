@@ -35,6 +35,8 @@ import {
 } from '@mui/icons-material';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { useAlertAnalysis } from '../hooks/useAlertAnalysis';
 
 // Severity colors for indicators
@@ -159,8 +161,11 @@ const MarkdownContent = ({ content, isDark }) => {
             </Box>
         ),
         li: ({ children }) => <li>{children}</li>,
-        code: ({ inline, children }) =>
-            inline ? (
+        code: ({ inline, className, children, ...props }) => {
+            const match = /language-(\w+)/.exec(className || '');
+            const language = match ? match[1] : '';
+
+            return inline ? (
                 <Box
                     component="code"
                     sx={{
@@ -177,23 +182,36 @@ const MarkdownContent = ({ content, isDark }) => {
                 </Box>
             ) : (
                 <Box
-                    component="pre"
                     sx={{
-                        fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-                        fontSize: '0.8125rem',
-                        bgcolor: isDark ? alpha('#0F172A', 0.8) : alpha('#F1F5F9', 0.8),
-                        color: isDark ? '#E2E8F0' : '#374151',
-                        p: 2,
-                        borderRadius: 1,
-                        overflow: 'auto',
                         my: 1.5,
+                        borderRadius: 1,
+                        overflow: 'hidden',
                         border: '1px solid',
                         borderColor: isDark ? '#334155' : '#E2E8F0',
+                        '& pre': {
+                            margin: '0 !important',
+                            borderRadius: '0 !important',
+                        },
                     }}
                 >
-                    <code>{children}</code>
+                    <SyntaxHighlighter
+                        style={isDark ? oneDark : oneLight}
+                        language={language || 'sql'}
+                        PreTag="div"
+                        customStyle={{
+                            margin: 0,
+                            padding: '1rem',
+                            fontSize: '0.8125rem',
+                            fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+                            background: isDark ? '#1E293B' : '#F8FAFC',
+                        }}
+                        {...props}
+                    >
+                        {String(children).replace(/\n$/, '')}
+                    </SyntaxHighlighter>
                 </Box>
-            ),
+            );
+        },
         strong: ({ children }) => (
             <Box component="strong" sx={{ fontWeight: 600 }}>
                 {children}
@@ -544,11 +562,12 @@ ${analysis}
             <DialogContent
                 sx={{
                     p: 3,
+                    pt: 0,
                     bgcolor: isDark ? '#0F172A' : '#F8FAFC',
                 }}
             >
                 <Fade in={true} timeout={300}>
-                    <Box>
+                    <Box sx={{ mt: 3 }}>
                         {loading && (
                             <Box>
                                 <Box

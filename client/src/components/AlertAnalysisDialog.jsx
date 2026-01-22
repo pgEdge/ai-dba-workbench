@@ -11,7 +11,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import {
     Box,
     Typography,
@@ -33,6 +33,8 @@ import {
     Warning as WarningIcon,
     Info as InfoIcon,
 } from '@mui/icons-material';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { useAlertAnalysis } from '../hooks/useAlertAnalysis';
 
 // Severity colors for indicators
@@ -55,148 +57,61 @@ const getSeverityIcon = (severity) => {
 };
 
 /**
- * Simple markdown parser for rendering analysis content
- * Handles headers, lists, bold, code, and paragraphs
+ * Styled markdown content component using react-markdown
  */
-const renderMarkdown = (text, isDark) => {
-    if (!text) return null;
-
-    const lines = text.split('\n');
-    const elements = [];
-    let currentList = [];
-    let currentListType = null;
-    let key = 0;
-
-    const flushList = () => {
-        if (currentList.length > 0) {
-            if (currentListType === 'numbered') {
-                elements.push(
-                    <Box
-                        key={key++}
-                        component="ol"
-                        sx={{
-                            pl: 2.5,
-                            my: 1.5,
-                            '& li': {
-                                mb: 0.75,
-                                fontSize: '0.875rem',
-                                lineHeight: 1.6,
-                                color: 'text.primary',
-                            },
-                        }}
-                    >
-                        {currentList.map((item, idx) => (
-                            <li key={idx}>{renderInlineMarkdown(item, isDark)}</li>
-                        ))}
-                    </Box>
-                );
-            } else {
-                elements.push(
-                    <Box
-                        key={key++}
-                        component="ul"
-                        sx={{
-                            pl: 2.5,
-                            my: 1.5,
-                            listStyleType: 'disc',
-                            '& li': {
-                                mb: 0.75,
-                                fontSize: '0.875rem',
-                                lineHeight: 1.6,
-                                color: 'text.primary',
-                            },
-                        }}
-                    >
-                        {currentList.map((item, idx) => (
-                            <li key={idx}>{renderInlineMarkdown(item, isDark)}</li>
-                        ))}
-                    </Box>
-                );
-            }
-            currentList = [];
-            currentListType = null;
-        }
-    };
-
-    for (const line of lines) {
-        const trimmedLine = line.trim();
-
-        // Skip empty lines but flush lists
-        if (!trimmedLine) {
-            flushList();
-            continue;
-        }
-
-        // Headers
-        if (trimmedLine.startsWith('## ')) {
-            flushList();
-            elements.push(
-                <Typography
-                    key={key++}
-                    variant="h6"
-                    sx={{
-                        fontWeight: 600,
-                        color: isDark ? '#6366F1' : '#4F46E5',
-                        fontSize: '1rem',
-                        mt: elements.length > 0 ? 2.5 : 0,
-                        mb: 1,
-                        pb: 0.5,
-                        borderBottom: '1px solid',
-                        borderColor: isDark ? alpha('#6366F1', 0.2) : alpha('#4F46E5', 0.15),
-                    }}
-                >
-                    {trimmedLine.slice(3)}
-                </Typography>
-            );
-            continue;
-        }
-
-        if (trimmedLine.startsWith('### ')) {
-            flushList();
-            elements.push(
-                <Typography
-                    key={key++}
-                    variant="subtitle1"
-                    sx={{
-                        fontWeight: 600,
-                        color: 'text.primary',
-                        fontSize: '0.9375rem',
-                        mt: 2,
-                        mb: 0.75,
-                    }}
-                >
-                    {trimmedLine.slice(4)}
-                </Typography>
-            );
-            continue;
-        }
-
-        // Numbered list items
-        const numberedMatch = trimmedLine.match(/^(\d+)\.\s+(.*)$/);
-        if (numberedMatch) {
-            if (currentListType !== 'numbered') {
-                flushList();
-            }
-            currentListType = 'numbered';
-            currentList.push(numberedMatch[2]);
-            continue;
-        }
-
-        // Bullet list items
-        if (trimmedLine.startsWith('- ') || trimmedLine.startsWith('* ')) {
-            if (currentListType !== 'bullet') {
-                flushList();
-            }
-            currentListType = 'bullet';
-            currentList.push(trimmedLine.slice(2));
-            continue;
-        }
-
-        // Regular paragraph
-        flushList();
-        elements.push(
+const MarkdownContent = ({ content, isDark }) => {
+    // Memoize markdown components to avoid re-creating on each render
+    const components = useMemo(() => ({
+        h1: ({ children }) => (
             <Typography
-                key={key++}
+                variant="h5"
+                sx={{
+                    fontWeight: 600,
+                    color: isDark ? '#6366F1' : '#4F46E5',
+                    fontSize: '1.125rem',
+                    mt: 2,
+                    mb: 1,
+                    pb: 0.5,
+                    borderBottom: '1px solid',
+                    borderColor: isDark ? alpha('#6366F1', 0.2) : alpha('#4F46E5', 0.15),
+                }}
+            >
+                {children}
+            </Typography>
+        ),
+        h2: ({ children }) => (
+            <Typography
+                variant="h6"
+                sx={{
+                    fontWeight: 600,
+                    color: isDark ? '#6366F1' : '#4F46E5',
+                    fontSize: '1rem',
+                    mt: 2.5,
+                    mb: 1,
+                    pb: 0.5,
+                    borderBottom: '1px solid',
+                    borderColor: isDark ? alpha('#6366F1', 0.2) : alpha('#4F46E5', 0.15),
+                }}
+            >
+                {children}
+            </Typography>
+        ),
+        h3: ({ children }) => (
+            <Typography
+                variant="subtitle1"
+                sx={{
+                    fontWeight: 600,
+                    color: 'text.primary',
+                    fontSize: '0.9375rem',
+                    mt: 2,
+                    mb: 0.75,
+                }}
+            >
+                {children}
+            </Typography>
+        ),
+        p: ({ children }) => (
+            <Typography
                 variant="body2"
                 sx={{
                     color: 'text.primary',
@@ -205,111 +120,155 @@ const renderMarkdown = (text, isDark) => {
                     my: 1,
                 }}
             >
-                {renderInlineMarkdown(trimmedLine, isDark)}
+                {children}
             </Typography>
-        );
-    }
-
-    flushList();
-    return elements;
-};
-
-/**
- * Render inline markdown elements (bold, code, etc.)
- */
-const renderInlineMarkdown = (text, isDark) => {
-    if (!text) return null;
-
-    const parts = [];
-    let remaining = text;
-    let partKey = 0;
-
-    // Process inline code first (`code`)
-    while (remaining.includes('`')) {
-        const startIdx = remaining.indexOf('`');
-        const endIdx = remaining.indexOf('`', startIdx + 1);
-
-        if (endIdx === -1) break;
-
-        // Add text before code
-        if (startIdx > 0) {
-            parts.push(processTextForBold(remaining.slice(0, startIdx), isDark, partKey++));
-        }
-
-        // Add code span
-        const code = remaining.slice(startIdx + 1, endIdx);
-        parts.push(
+        ),
+        ul: ({ children }) => (
             <Box
-                key={`code-${partKey++}`}
-                component="code"
+                component="ul"
                 sx={{
-                    fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-                    fontSize: '0.8125rem',
-                    bgcolor: isDark ? alpha('#334155', 0.6) : alpha('#E5E7EB', 0.8),
-                    color: isDark ? '#E2E8F0' : '#374151',
-                    px: 0.75,
-                    py: 0.25,
-                    borderRadius: 0.5,
+                    pl: 2.5,
+                    my: 1.5,
+                    listStyleType: 'disc',
+                    '& li': {
+                        mb: 0.75,
+                        fontSize: '0.875rem',
+                        lineHeight: 1.6,
+                        color: 'text.primary',
+                    },
                 }}
             >
-                {code}
+                {children}
             </Box>
-        );
-
-        remaining = remaining.slice(endIdx + 1);
-    }
-
-    // Process remaining text for bold
-    if (remaining) {
-        parts.push(processTextForBold(remaining, isDark, partKey));
-    }
-
-    return parts.length === 1 ? parts[0] : parts;
-};
-
-/**
- * Process text for bold formatting (**text**)
- */
-const processTextForBold = (text, isDark, baseKey) => {
-    if (!text.includes('**')) {
-        return text;
-    }
-
-    const parts = [];
-    let remaining = text;
-    let partKey = 0;
-
-    while (remaining.includes('**')) {
-        const startIdx = remaining.indexOf('**');
-        const endIdx = remaining.indexOf('**', startIdx + 2);
-
-        if (endIdx === -1) break;
-
-        // Add text before bold
-        if (startIdx > 0) {
-            parts.push(remaining.slice(0, startIdx));
-        }
-
-        // Add bold span
-        const bold = remaining.slice(startIdx + 2, endIdx);
-        parts.push(
+        ),
+        ol: ({ children }) => (
             <Box
-                key={`bold-${baseKey}-${partKey++}`}
-                component="strong"
-                sx={{ fontWeight: 600 }}
+                component="ol"
+                sx={{
+                    pl: 2.5,
+                    my: 1.5,
+                    '& li': {
+                        mb: 0.75,
+                        fontSize: '0.875rem',
+                        lineHeight: 1.6,
+                        color: 'text.primary',
+                    },
+                }}
             >
-                {bold}
+                {children}
             </Box>
-        );
+        ),
+        li: ({ children }) => <li>{children}</li>,
+        code: ({ inline, children }) =>
+            inline ? (
+                <Box
+                    component="code"
+                    sx={{
+                        fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+                        fontSize: '0.8125rem',
+                        bgcolor: isDark ? alpha('#334155', 0.6) : alpha('#E5E7EB', 0.8),
+                        color: isDark ? '#E2E8F0' : '#374151',
+                        px: 0.75,
+                        py: 0.25,
+                        borderRadius: 0.5,
+                    }}
+                >
+                    {children}
+                </Box>
+            ) : (
+                <Box
+                    component="pre"
+                    sx={{
+                        fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+                        fontSize: '0.8125rem',
+                        bgcolor: isDark ? alpha('#0F172A', 0.8) : alpha('#F1F5F9', 0.8),
+                        color: isDark ? '#E2E8F0' : '#374151',
+                        p: 2,
+                        borderRadius: 1,
+                        overflow: 'auto',
+                        my: 1.5,
+                        border: '1px solid',
+                        borderColor: isDark ? '#334155' : '#E2E8F0',
+                    }}
+                >
+                    <code>{children}</code>
+                </Box>
+            ),
+        strong: ({ children }) => (
+            <Box component="strong" sx={{ fontWeight: 600 }}>
+                {children}
+            </Box>
+        ),
+        em: ({ children }) => (
+            <Box component="em" sx={{ fontStyle: 'italic' }}>
+                {children}
+            </Box>
+        ),
+        a: ({ href, children }) => (
+            <Box
+                component="a"
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                sx={{
+                    color: isDark ? '#818CF8' : '#4F46E5',
+                    textDecoration: 'none',
+                    '&:hover': {
+                        textDecoration: 'underline',
+                    },
+                }}
+            >
+                {children}
+            </Box>
+        ),
+        blockquote: ({ children }) => (
+            <Box
+                component="blockquote"
+                sx={{
+                    borderLeft: '3px solid',
+                    borderColor: isDark ? '#6366F1' : '#4F46E5',
+                    pl: 2,
+                    ml: 0,
+                    my: 1.5,
+                    color: isDark ? '#94A3B8' : '#64748B',
+                    fontStyle: 'italic',
+                }}
+            >
+                {children}
+            </Box>
+        ),
+        table: ({ children }) => (
+            <Box
+                component="table"
+                sx={{
+                    width: '100%',
+                    borderCollapse: 'collapse',
+                    my: 1.5,
+                    fontSize: '0.875rem',
+                    '& th, & td': {
+                        border: '1px solid',
+                        borderColor: isDark ? '#334155' : '#E2E8F0',
+                        p: 1,
+                        textAlign: 'left',
+                    },
+                    '& th': {
+                        bgcolor: isDark ? alpha('#334155', 0.5) : alpha('#F1F5F9', 0.8),
+                        fontWeight: 600,
+                    },
+                }}
+            >
+                {children}
+            </Box>
+        ),
+    }), [isDark]);
 
-        remaining = remaining.slice(endIdx + 2);
-    }
+    if (!content) return null;
 
-    if (remaining) {
-        parts.push(remaining);
-    }
-
-    return parts;
+    return (
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+            {content}
+        </ReactMarkdown>
+    );
 };
 
 /**
@@ -681,7 +640,7 @@ ${analysis}
                                         : '0 1px 3px 0 rgba(0, 0, 0, 0.05)',
                                 }}
                             >
-                                {renderMarkdown(analysis, isDark)}
+                                <MarkdownContent content={analysis} isDark={isDark} />
                             </Box>
                         )}
                     </Box>

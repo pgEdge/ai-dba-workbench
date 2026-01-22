@@ -2595,16 +2595,17 @@ type Alert struct {
 
 // AlertListFilter holds filter options for listing alerts
 type AlertListFilter struct {
-	ConnectionID  *int
-	ConnectionIDs []int
-	DatabaseName  *string
-	Status        *string
-	Severity      *string
-	AlertType     *string
-	StartTime     *time.Time
-	EndTime       *time.Time
-	Limit         int
-	Offset        int
+	ConnectionID   *int
+	ConnectionIDs  []int
+	DatabaseName   *string
+	Status         *string
+	Severity       *string
+	AlertType      *string
+	StartTime      *time.Time
+	EndTime        *time.Time
+	ExcludeCleared bool // If true, only return alerts where cleared_at IS NULL
+	Limit          int
+	Offset         int
 }
 
 // AlertListResult holds the result of listing alerts
@@ -2667,6 +2668,10 @@ func (d *Datastore) GetAlerts(ctx context.Context, filter AlertListFilter) (*Ale
 		conditions = append(conditions, fmt.Sprintf("a.triggered_at <= $%d", argNum))
 		args = append(args, *filter.EndTime)
 		argNum++
+	}
+
+	if filter.ExcludeCleared {
+		conditions = append(conditions, "a.cleared_at IS NULL")
 	}
 
 	whereClause := ""

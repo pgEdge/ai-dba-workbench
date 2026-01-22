@@ -46,6 +46,7 @@ import {
     Undo as UnackIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
+import EventTimeline from './EventTimeline';
 
 // Map internal alert titles to friendly display names
 const FRIENDLY_ALERT_TITLES = {
@@ -1013,7 +1014,8 @@ const StatusPanel = ({
     const isDark = mode === 'dark';
     const { sessionToken: token } = useAuth();
     const [alerts, setAlerts] = useState([]);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(false);
+    const initialLoadDoneRef = React.useRef(false);
     const [ackDialogOpen, setAckDialogOpen] = useState(false);
     const [selectedAlertForAck, setSelectedAlertForAck] = useState(null);
 
@@ -1190,12 +1192,25 @@ const StatusPanel = ({
             return;
         }
 
-        setLoading(true);
+        // For server selections, require a valid ID
+        if (selection.type === 'server' && (selection.id === undefined || selection.id === null)) {
+            console.warn('Server selection missing ID, skipping alert fetch');
+            setAlerts([]);
+            setLoading(false);
+            return;
+        }
+
+        // Only show loading on initial fetch to prevent flashing (use ref to avoid re-renders)
+        if (!initialLoadDoneRef.current) {
+            setLoading(true);
+        }
+
         try {
             // Build query params based on selection type
-            // No status filter - fetch all alerts to show both active and acknowledged
-            let url = '/api/alerts?limit=50';
-            if (selection.type === 'server' && selection.id) {
+            // Fetch active and acknowledged alerts, but exclude cleared ones
+            let url = '/api/alerts?limit=50&exclude_cleared=true';
+            if (selection.type === 'server') {
+                // Use explicit check for ID - must be a number (including 0)
                 url += `&connection_id=${selection.id}`;
             } else if (selection.type === 'cluster' && selection.serverIds?.length) {
                 // For cluster, filter by multiple connection IDs
@@ -1213,6 +1228,7 @@ const StatusPanel = ({
                 const data = await response.json();
                 const transformedAlerts = transformAlerts(data.alerts || []);
                 setAlerts(transformedAlerts);
+                initialLoadDoneRef.current = true;
             } else {
                 setAlerts([]);
             }
@@ -1223,6 +1239,11 @@ const StatusPanel = ({
             setLoading(false);
         }
     }, [token, selection]);
+
+    // Reset initial load state when selection changes
+    useEffect(() => {
+        initialLoadDoneRef.current = false;
+    }, [selection?.type, selection?.id]);
 
     // Fetch alerts on selection change
     useEffect(() => {
@@ -1363,6 +1384,12 @@ const StatusPanel = ({
                         )}
                     </Box>
                 )}
+
+                {/* Event Timeline */}
+                <EventTimeline
+                    selection={selection}
+                    mode={isDark ? 'dark' : 'light'}
+                />
 
                 {/* Alerts Section */}
                 <AlertsSection

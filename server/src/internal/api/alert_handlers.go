@@ -93,6 +93,11 @@ func (h *AlertHandler) handleAlerts(w http.ResponseWriter, r *http.Request) {
 		filter.Status = &status
 	}
 
+	// Parse exclude_cleared
+	if excludeCleared := query.Get("exclude_cleared"); excludeCleared == "true" || excludeCleared == "1" {
+		filter.ExcludeCleared = true
+	}
+
 	// Parse severity
 	if severity := query.Get("severity"); severity != "" {
 		filter.Severity = &severity

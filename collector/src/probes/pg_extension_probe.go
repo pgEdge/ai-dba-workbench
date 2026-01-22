@@ -12,9 +12,6 @@ package probes
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -134,8 +131,23 @@ func (p *PgExtensionProbe) Store(ctx context.Context, datastoreConn *pgxpool.Con
 // hasDataChanged checks if the current extensions differ from the most
 // recently stored data
 func (p *PgExtensionProbe) hasDataChanged(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, currentMetrics []map[string]interface{}) (bool, error) {
-	// Compute hash of current metrics
-	currentHash, err := p.computeMetricsHash(currentMetrics)
+	// Normalize current metrics to match stored format
+	// The scheduler adds _database_name but the DB stores it as database_name
+	normalizedMetrics := make([]map[string]interface{}, len(currentMetrics))
+	for i, m := range currentMetrics {
+		normalized := make(map[string]interface{})
+		for k, v := range m {
+			if k == "_database_name" {
+				normalized["database_name"] = v
+			} else {
+				normalized[k] = v
+			}
+		}
+		normalizedMetrics[i] = normalized
+	}
+
+	// Compute hash of normalized current metrics
+	currentHash, err := p.computeMetricsHash(normalizedMetrics)
 	if err != nil {
 		return false, fmt.Errorf("failed to compute current metrics hash: %w", err)
 	}
@@ -186,15 +198,7 @@ func (p *PgExtensionProbe) hasDataChanged(ctx context.Context, datastoreConn *pg
 
 // computeMetricsHash computes a hash of the metrics for comparison
 func (p *PgExtensionProbe) computeMetricsHash(metrics []map[string]interface{}) (string, error) {
-	// Convert metrics to a canonical JSON representation
-	jsonBytes, err := json.Marshal(metrics)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal metrics to JSON: %w", err)
-	}
-
-	// Compute SHA256 hash
-	hash := sha256.Sum256(jsonBytes)
-	return hex.EncodeToString(hash[:]), nil
+	return ComputeMetricsHash(metrics)
 }
 
 // EnsurePartition ensures a partition exists for the given timestamp

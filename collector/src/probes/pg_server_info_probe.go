@@ -12,9 +12,6 @@ package probes
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -248,15 +245,7 @@ func (p *PgServerInfoProbe) hasDataChanged(ctx context.Context, datastoreConn *p
 
 // computeMetricsHash computes a hash of the metrics for comparison
 func (p *PgServerInfoProbe) computeMetricsHash(metrics []map[string]interface{}) (string, error) {
-	// Convert metrics to a canonical JSON representation
-	jsonBytes, err := json.Marshal(metrics)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal metrics to JSON: %w", err)
-	}
-
-	// Compute SHA256 hash
-	hash := sha256.Sum256(jsonBytes)
-	return hex.EncodeToString(hash[:]), nil
+	return ComputeMetricsHash(metrics)
 }
 
 // EnsurePartition ensures a partition exists for the given timestamp

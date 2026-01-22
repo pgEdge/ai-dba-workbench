@@ -13,8 +13,12 @@ package probes
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -537,4 +541,88 @@ func CheckExtensionExists(ctx context.Context, connectionName string, conn *pgxp
 	}
 
 	return exists, nil
+}
+
+// ComputeMetricsHash computes a canonical hash of metrics for change detection.
+// This function normalizes the data to ensure consistent hashing regardless of
+// map iteration order or minor type differences between database drivers.
+func ComputeMetricsHash(metrics []map[string]interface{}) (string, error) {
+	// Build a canonical representation by sorting keys and normalizing values
+	var canonicalData []map[string]interface{}
+	for _, m := range metrics {
+		normalized := make(map[string]interface{})
+		for k, v := range m {
+			normalized[k] = normalizeValue(v)
+		}
+		canonicalData = append(canonicalData, normalized)
+	}
+
+	// Sort the slice by a deterministic key (first key alphabetically, then value)
+	// This ensures consistent ordering even if rows come in different order
+	sort.Slice(canonicalData, func(i, j int) bool {
+		// Get sorted keys for comparison
+		keysI := getSortedKeys(canonicalData[i])
+		keysJ := getSortedKeys(canonicalData[j])
+
+		// Compare by first key's value, then second, etc.
+		for idx := 0; idx < len(keysI) && idx < len(keysJ); idx++ {
+			if keysI[idx] != keysJ[idx] {
+				return keysI[idx] < keysJ[idx]
+			}
+			valI := fmt.Sprintf("%v", canonicalData[i][keysI[idx]])
+			valJ := fmt.Sprintf("%v", canonicalData[j][keysJ[idx]])
+			if valI != valJ {
+				return valI < valJ
+			}
+		}
+		return len(keysI) < len(keysJ)
+	})
+
+	// Marshal to JSON (Go's json.Marshal sorts map keys)
+	jsonBytes, err := json.Marshal(canonicalData)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal metrics: %w", err)
+	}
+
+	hash := sha256.Sum256(jsonBytes)
+	return hex.EncodeToString(hash[:]), nil
+}
+
+// normalizeValue converts a value to a canonical form for comparison
+func normalizeValue(v interface{}) interface{} {
+	if v == nil {
+		return nil
+	}
+
+	switch val := v.(type) {
+	case []interface{}:
+		// Normalize array elements
+		result := make([]interface{}, len(val))
+		for i, elem := range val {
+			result[i] = normalizeValue(elem)
+		}
+		return result
+	case []string:
+		// Convert []string to []interface{} for consistent comparison
+		result := make([]interface{}, len(val))
+		for i, elem := range val {
+			result[i] = elem
+		}
+		return result
+	case []byte:
+		// Convert byte arrays to string
+		return string(val)
+	default:
+		return v
+	}
+}
+
+// getSortedKeys returns the keys of a map in sorted order
+func getSortedKeys(m map[string]interface{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }

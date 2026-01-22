@@ -41,11 +41,13 @@ func (h *AlertHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(http.
 	if h.datastore == nil {
 		mux.HandleFunc("/api/alerts", authWrapper(h.handleNotConfigured))
 		mux.HandleFunc("/api/alerts/counts", authWrapper(h.handleNotConfigured))
+		mux.HandleFunc("/api/alerts/acknowledge", authWrapper(h.handleNotConfigured))
 		return
 	}
 
 	mux.HandleFunc("/api/alerts", authWrapper(h.handleAlerts))
 	mux.HandleFunc("/api/alerts/counts", authWrapper(h.handleAlertCounts))
+	mux.HandleFunc("/api/alerts/acknowledge", authWrapper(h.handleAcknowledge))
 }
 
 // handleNotConfigured returns a 503 when the datastore is not configured
@@ -166,4 +168,100 @@ func (h *AlertHandler) handleAlertCounts(w http.ResponseWriter, r *http.Request)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(counts)
+}
+
+// AcknowledgeRequest represents the request body for acknowledging an alert
+type AcknowledgeRequest struct {
+	AlertID       int64  `json:"alert_id"`
+	Message       string `json:"message"`
+	FalsePositive bool   `json:"false_positive"`
+}
+
+// handleAcknowledge handles POST /api/alerts/acknowledge (acknowledge) and
+// DELETE /api/alerts/acknowledge (unacknowledge)
+func (h *AlertHandler) handleAcknowledge(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodPost:
+		h.acknowledgeAlert(w, r)
+	case http.MethodDelete:
+		h.unacknowledgeAlert(w, r)
+	default:
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
+	}
+}
+
+// acknowledgeAlert handles POST /api/alerts/acknowledge
+func (h *AlertHandler) acknowledgeAlert(w http.ResponseWriter, r *http.Request) {
+	// Parse request body
+	var req AcknowledgeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid request body: " + err.Error()})
+		return
+	}
+
+	if req.AlertID == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "alert_id is required"})
+		return
+	}
+
+	// Get the username from the auth context
+	username := auth.GetUsernameFromContext(r.Context())
+	if username == "" {
+		username = "unknown"
+	}
+
+	// Acknowledge the alert
+	ackReq := database.AcknowledgeAlertRequest{
+		AlertID:        req.AlertID,
+		AcknowledgedBy: username,
+		Message:        req.Message,
+		FalsePositive:  req.FalsePositive,
+	}
+
+	if err := h.datastore.AcknowledgeAlert(r.Context(), ackReq); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Failed to acknowledge alert: " + err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "acknowledged"})
+}
+
+// unacknowledgeAlert handles DELETE /api/alerts/acknowledge
+func (h *AlertHandler) unacknowledgeAlert(w http.ResponseWriter, r *http.Request) {
+	// Parse alert_id from query params
+	alertIDStr := r.URL.Query().Get("alert_id")
+	if alertIDStr == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "alert_id query parameter is required"})
+		return
+	}
+
+	alertID, err := strconv.ParseInt(alertIDStr, 10, 64)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid alert_id"})
+		return
+	}
+
+	// Unacknowledge the alert
+	if err := h.datastore.UnacknowledgeAlert(r.Context(), alertID); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Failed to unacknowledge alert: " + err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "active"})
 }

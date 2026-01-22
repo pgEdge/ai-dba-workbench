@@ -672,6 +672,8 @@ func (ps *ProbeScheduler) createProbe(config *probes.ProbeConfig) probes.Metrics
 		return probes.NewPgStatUserFunctionsProbe(config)
 	case probes.ProbeNamePgStatStatements:
 		return probes.NewPgStatStatementsProbe(config)
+	case probes.ProbeNamePgExtension:
+		return probes.NewPgExtensionProbe(config)
 	// System Stats Extension probes (server-scoped)
 	case probes.ProbeNamePgSysOsInfo:
 		return probes.NewPgSysOsInfoProbe(config)

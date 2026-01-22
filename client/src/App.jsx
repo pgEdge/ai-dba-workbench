@@ -110,6 +110,8 @@ const MainLayout = ({ mode, onToggleTheme }) => {
                 username: selectedServer.username,
                 os: selectedServer.os,
                 platform: selectedServer.platform,
+                spockNodeName: selectedServer.spock_node_name,
+                spockVersion: selectedServer.spock_version,
             };
         }
 

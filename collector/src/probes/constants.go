@@ -45,6 +45,7 @@ const (
 	ProbeNamePgStatioAllSequences    = "pg_statio_all_sequences"
 	ProbeNamePgStatUserFunctions     = "pg_stat_user_functions"
 	ProbeNamePgStatStatements        = "pg_stat_statements"
+	ProbeNamePgExtension             = "pg_extension"
 )
 
 // Probe names - System Stats Extension probes (server-scoped, require system_stats extension)

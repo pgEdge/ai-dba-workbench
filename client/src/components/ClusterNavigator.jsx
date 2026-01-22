@@ -42,7 +42,6 @@ import {
     Dns as ClusterIcon,
     FolderOpen as GroupOpenIcon,
     Folder as GroupIcon,
-    Circle as StatusIcon,
     Refresh as RefreshIcon,
     Add as AddIcon,
     Star as PrimaryIcon,
@@ -56,27 +55,15 @@ import {
     Delete as DeleteIcon,
     Autorenew as AutorenewIcon,
     DragIndicator as DragIcon,
+    CheckCircle as HealthyIcon,
+    Warning as WarningIcon,
+    Error as ErrorIcon,
 } from '@mui/icons-material';
 import ServerDialog from './ServerDialog';
 import GroupDialog from './GroupDialog';
 import DeleteConfirmationDialog from './DeleteConfirmationDialog';
 import AddMenu from './AddMenu';
 
-// Status color mapping
-const STATUS_COLORS = {
-    online: '#22C55E',
-    warning: '#F59E0B',
-    offline: '#EF4444',
-    unknown: '#6B7280',
-};
-
-// Status labels
-const STATUS_LABELS = {
-    online: 'Online',
-    warning: 'Warning',
-    offline: 'Offline',
-    unknown: 'Initializing',
-};
 
 // Role configuration with colors and labels
 const ROLE_CONFIGS = {
@@ -129,34 +116,75 @@ const RolePill = ({ role, isDark }) => {
 };
 
 /**
- * AlertBadge - Small badge showing alert count (red/error color)
+ * StatusIndicator - Shows node health status with appropriate icon
+ * - Red error icon for offline/down nodes
+ * - Yellow warning icon with count for nodes with alerts
+ * - Green checkmark for healthy nodes
  */
-const AlertBadge = ({ count, isDark }) => {
-    if (!count || count === 0) return null;
+const StatusIndicator = ({ status, alertCount = 0, isDark }) => {
+    // Offline/down nodes - red error icon
+    if (status === 'offline') {
+        return (
+            <Tooltip title="Offline" placement="right">
+                <ErrorIcon
+                    sx={{
+                        fontSize: 14,
+                        color: '#EF4444',
+                        filter: 'drop-shadow(0 0 2px #EF4444)',
+                    }}
+                />
+            </Tooltip>
+        );
+    }
 
-    const color = '#EF4444'; // Red/error color
+    // Nodes with alerts - yellow warning icon with count
+    if (alertCount > 0) {
+        return (
+            <Tooltip title={`${alertCount} active alert${alertCount !== 1 ? 's' : ''}`} placement="right">
+                <Box sx={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                    <WarningIcon
+                        sx={{
+                            fontSize: 14,
+                            color: '#F59E0B',
+                            filter: 'drop-shadow(0 0 2px #F59E0B)',
+                        }}
+                    />
+                    <Box
+                        sx={{
+                            position: 'absolute',
+                            top: -4,
+                            left: -6,
+                            minWidth: 12,
+                            height: 12,
+                            px: 0.25,
+                            borderRadius: '6px',
+                            bgcolor: isDark ? '#64748B' : '#6B7280',
+                            color: '#FFF',
+                            fontSize: '0.5rem',
+                            fontWeight: 700,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            lineHeight: 1,
+                        }}
+                    >
+                        {alertCount > 99 ? '99+' : alertCount}
+                    </Box>
+                </Box>
+            </Tooltip>
+        );
+    }
 
+    // Healthy nodes - green checkmark
     return (
-        <Tooltip title={`${count} active alert${count !== 1 ? 's' : ''}`} placement="right">
-            <Box
+        <Tooltip title="Online" placement="right">
+            <HealthyIcon
                 sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    minWidth: 16,
-                    height: 16,
-                    px: 0.5,
-                    borderRadius: '8px',
-                    bgcolor: alpha(color, isDark ? 0.25 : 0.15),
-                    color: isDark ? '#F87171' : '#DC2626',
-                    fontSize: '0.625rem',
-                    fontWeight: 700,
-                    lineHeight: 1,
-                    flexShrink: 0,
+                    fontSize: 14,
+                    color: '#22C55E',
+                    filter: 'drop-shadow(0 0 2px #22C55E)',
                 }}
-            >
-                {count > 99 ? '99+' : count}
-            </Box>
+            />
         </Tooltip>
     );
 };
@@ -290,7 +318,6 @@ const ServerItem = memo(({
 }) => {
     // User can edit if they're superuser or the owner
     const canEditServer = user?.isSuperuser || server.owner_username === user?.username;
-    const statusColor = STATUS_COLORS[server.status] || STATUS_COLORS.unknown;
     const hasChildren = server.children?.length > 0 || server.is_expandable;
     const isExpanded = expandedServers?.has(server.id);
     const serverRole = server.primary_role || server.role;
@@ -421,15 +448,7 @@ const ServerItem = memo(({
                         )}
                     </IconButton>
                 )}
-                <Tooltip title={STATUS_LABELS[server.status] || 'Unknown'} placement="right">
-                    <StatusIcon
-                        sx={{
-                            fontSize: 8,
-                            color: statusColor,
-                            filter: `drop-shadow(0 0 2px ${statusColor})`,
-                        }}
-                    />
-                </Tooltip>
+                <StatusIndicator status={server.status} alertCount={alertCount} isDark={isDark} />
                 <ServerIcon
                     sx={{
                         fontSize: 16,
@@ -472,14 +491,11 @@ const ServerItem = memo(({
                             }}
                         />
                     </Box>
-                ) : (
-                    <Box sx={{ ml: 'auto', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                        {effectiveRole && ROLE_CONFIGS[effectiveRole] && (
-                            <RolePill role={effectiveRole} isDark={isDark} />
-                        )}
-                        <AlertBadge count={alertCount} isDark={isDark} />
+                ) : effectiveRole && ROLE_CONFIGS[effectiveRole] ? (
+                    <Box sx={{ ml: 'auto', flexShrink: 0 }}>
+                        <RolePill role={effectiveRole} isDark={isDark} />
                     </Box>
-                )}
+                ) : null}
                 {canEditServer && (
                     <Box
                         className="action-buttons"
@@ -608,7 +624,6 @@ const ClusterItem = memo(({
     const allOffline = totalCount > 0 && onlineCount === 0;
 
     const clusterStatus = allOffline ? 'offline' : (hasWarning ? 'warning' : 'online');
-    const statusColor = STATUS_COLORS[clusterStatus];
     const clusterType = getClusterType(cluster);
     const isSelected = selectedClusterId === cluster.id;
 
@@ -681,15 +696,7 @@ const ClusterItem = memo(({
                         <CollapseIcon sx={{ fontSize: 18 }} />
                     )}
                 </IconButton>
-                <Tooltip title={`${onlineCount}/${totalCount} servers online`} placement="right">
-                    <StatusIcon
-                        sx={{
-                            fontSize: 8,
-                            color: statusColor,
-                            filter: `drop-shadow(0 0 2px ${statusColor})`,
-                        }}
-                    />
-                </Tooltip>
+                <StatusIndicator status={clusterStatus} alertCount={clusterAlertCount} isDark={isDark} />
                 <ClusterIcon
                     sx={{
                         fontSize: 18,
@@ -715,7 +722,7 @@ const ClusterItem = memo(({
                         }}
                     />
                 </Box>
-                <Box sx={{ ml: 'auto', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                <Box sx={{ ml: 'auto', flexShrink: 0 }}>
                     <Chip
                         label={`${onlineCount}/${totalCount}`}
                         size="small"
@@ -723,14 +730,13 @@ const ClusterItem = memo(({
                             height: 18,
                             fontSize: '0.625rem',
                             fontWeight: 600,
-                            bgcolor: isDark ? alpha(statusColor, 0.15) : alpha(statusColor, 0.1),
-                            color: statusColor,
+                            bgcolor: isDark ? alpha('#64748B', 0.2) : alpha('#64748B', 0.1),
+                            color: isDark ? '#94A3B8' : '#64748B',
                             '& .MuiChip-label': {
                                 px: 0.75,
                             },
                         }}
                     />
-                    <AlertBadge count={clusterAlertCount} isDark={isDark} />
                 </Box>
             </Box>
             {/* Server List */}
@@ -1647,6 +1653,13 @@ const ClusterNavigator = ({
         ) || 0),
         0
     );
+    const offlineServers = data.reduce(
+        (acc, g) => acc + (g.clusters?.reduce(
+            (a, c) => a + countServersRecursive(c.servers, s => s.status === 'offline'), 0
+        ) || 0),
+        0
+    );
+    const estateStatus = offlineServers > 0 ? 'offline' : 'online';
 
     return (
         <DndContext
@@ -1794,19 +1807,7 @@ const ClusterNavigator = ({
                             },
                         }}
                     >
-                        <Chip
-                            icon={<StatusIcon sx={{ fontSize: '8px !important', color: STATUS_COLORS.online }} />}
-                            label={`${onlineServers} online`}
-                            size="small"
-                            sx={{
-                                height: 22,
-                                fontSize: '0.6875rem',
-                                bgcolor: isDark ? alpha(STATUS_COLORS.online, 0.12) : alpha(STATUS_COLORS.online, 0.08),
-                                color: isDark ? '#4ADE80' : '#16A34A',
-                                '& .MuiChip-icon': { ml: 0.75 },
-                                '& .MuiChip-label': { px: 0.75 },
-                            }}
-                        />
+                        <StatusIndicator status={estateStatus} alertCount={getTotalAlertCount()} isDark={isDark} />
                         <Typography
                             variant="caption"
                             sx={{
@@ -1816,9 +1817,8 @@ const ClusterNavigator = ({
                                 flex: 1,
                             }}
                         >
-                            of {totalServers} servers
+                            {onlineServers} online of {totalServers} servers
                         </Typography>
-                        <AlertBadge count={getTotalAlertCount()} isDark={isDark} />
                     </Box>
                 </Tooltip>
 

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/pkg/logger"
 	"github.com/pgedge/ai-workbench/server/internal/config"
 )
 
@@ -1523,6 +1524,9 @@ type TopologyServerInfo struct {
 	IsExpandable  bool                 `json:"is_expandable"`
 	OwnerUsername string               `json:"owner_username,omitempty"`
 	Version       string               `json:"version,omitempty"`
+	OS            string               `json:"os,omitempty"`
+	SpockNodeName string               `json:"spock_node_name,omitempty"`
+	SpockVersion  string               `json:"spock_version,omitempty"`
 	DatabaseName  string               `json:"database_name,omitempty"`
 	Username      string               `json:"username,omitempty"`
 	Children      []TopologyServerInfo `json:"children,omitempty"`
@@ -1556,6 +1560,7 @@ type connectionWithRole struct {
 	DatabaseName       string
 	Username           string
 	Version            sql.NullString // PostgreSQL version from metrics
+	OS                 sql.NullString // OS name from pg_sys_os_info
 	PrimaryRole        string
 	UpstreamHost       sql.NullString
 	UpstreamPort       sql.NullInt32
@@ -1563,6 +1568,7 @@ type connectionWithRole struct {
 	PublisherPort      sql.NullInt32  // For logical subscribers: publisher's port
 	HasSpock           bool
 	SpockNodeName      sql.NullString
+	SpockVersion       sql.NullString // Spock extension version from metrics.pg_extension
 	BinaryStandbyCount int
 	IsStreamingStandby bool
 	Status             string
@@ -1677,14 +1683,30 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
             FROM metrics.pg_server_info
             WHERE collected_at > NOW() - INTERVAL '15 minutes'
             ORDER BY connection_id, collected_at DESC
+        ),
+        latest_os_info AS (
+            SELECT DISTINCT ON (connection_id)
+                connection_id, name as os_name
+            FROM metrics.pg_sys_os_info
+            WHERE collected_at > NOW() - INTERVAL '15 minutes'
+            ORDER BY connection_id, collected_at DESC
+        ),
+        latest_spock_version AS (
+            SELECT DISTINCT ON (connection_id)
+                connection_id, extversion as spock_version
+            FROM metrics.pg_extension
+            WHERE extname = 'spock'
+            ORDER BY connection_id, collected_at DESC
         )
         SELECT c.id, c.name, c.host, c.port, c.owner_username,
                c.database_name, c.username,
                lsi.server_version,
+               loi.os_name,
                COALESCE(lr.primary_role, 'unknown') as primary_role,
                lr.upstream_host, lr.upstream_port,
                COALESCE(lr.has_spock, false) as has_spock,
                lr.spock_node_name,
+               lsv.spock_version,
                COALESCE(lr.binary_standby_count, 0) as binary_standby_count,
                COALESCE(lr.is_streaming_standby, false) as is_streaming_standby,
                lr.publisher_host, lr.publisher_port,
@@ -1692,6 +1714,8 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
         FROM connections c
         LEFT JOIN latest_roles lr ON c.id = lr.connection_id
         LEFT JOIN latest_server_info lsi ON c.id = lsi.connection_id
+        LEFT JOIN latest_os_info loi ON c.id = loi.connection_id
+        LEFT JOIN latest_spock_version lsv ON c.id = lsv.connection_id
         ORDER BY c.name
     `
 
@@ -1708,8 +1732,10 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
 			&conn.ID, &conn.Name, &conn.Host, &conn.Port, &conn.OwnerUsername,
 			&conn.DatabaseName, &conn.Username,
 			&conn.Version,
+			&conn.OS,
 			&conn.PrimaryRole, &conn.UpstreamHost, &conn.UpstreamPort,
 			&conn.HasSpock, &conn.SpockNodeName,
+			&conn.SpockVersion,
 			&conn.BinaryStandbyCount, &conn.IsStreamingStandby,
 			&conn.PublisherHost, &conn.PublisherPort,
 			&conn.Status,
@@ -1970,7 +1996,7 @@ func (d *Datastore) getServersInClusterWithRolesInternal(ctx context.Context, cl
 	query := `
         WITH latest_roles AS (
             SELECT DISTINCT ON (connection_id)
-                connection_id, primary_role,
+                connection_id, primary_role, spock_node_name,
                 COALESCE(
                     CASE
                         WHEN collected_at > NOW() - INTERVAL '6 minutes' THEN 'online'
@@ -1988,15 +2014,25 @@ func (d *Datastore) getServersInClusterWithRolesInternal(ctx context.Context, cl
             FROM metrics.pg_server_info
             WHERE collected_at > NOW() - INTERVAL '15 minutes'
             ORDER BY connection_id, collected_at DESC
+        ),
+        latest_os_info AS (
+            SELECT DISTINCT ON (connection_id)
+                connection_id, name as os_name
+            FROM metrics.pg_sys_os_info
+            WHERE collected_at > NOW() - INTERVAL '15 minutes'
+            ORDER BY connection_id, collected_at DESC
         )
         SELECT c.id, c.name, c.host, c.port, c.owner_username, c.role,
                c.database_name, c.username,
                lsi.server_version,
+               loi.os_name,
+               lr.spock_node_name,
                COALESCE(lr.primary_role, 'unknown') as primary_role,
                COALESCE(lr.status, 'unknown') as status
         FROM connections c
         LEFT JOIN latest_roles lr ON c.id = lr.connection_id
         LEFT JOIN latest_server_info lsi ON c.id = lsi.connection_id
+        LEFT JOIN latest_os_info loi ON c.id = loi.connection_id
         WHERE c.cluster_id = $1
         ORDER BY
             CASE WHEN c.role = 'primary' THEN 0 ELSE 1 END,
@@ -2012,9 +2048,10 @@ func (d *Datastore) getServersInClusterWithRolesInternal(ctx context.Context, cl
 	var servers []TopologyServerInfo
 	for rows.Next() {
 		var s TopologyServerInfo
-		var ownerUsername, role, version sql.NullString
+		var ownerUsername, role, version, osName, spockNodeName sql.NullString
 		if err := rows.Scan(&s.ID, &s.Name, &s.Host, &s.Port, &ownerUsername, &role,
-			&s.DatabaseName, &s.Username, &version, &s.PrimaryRole, &s.Status); err != nil {
+			&s.DatabaseName, &s.Username, &version, &osName, &spockNodeName,
+			&s.PrimaryRole, &s.Status); err != nil {
 			return nil, fmt.Errorf("failed to scan server: %w", err)
 		}
 		if ownerUsername.Valid {
@@ -2027,6 +2064,12 @@ func (d *Datastore) getServersInClusterWithRolesInternal(ctx context.Context, cl
 		}
 		if version.Valid {
 			s.Version = version.String
+		}
+		if osName.Valid {
+			s.OS = osName.String
+		}
+		if spockNodeName.Valid {
+			s.SpockNodeName = spockNodeName.String
 		}
 		s.IsExpandable = false
 		servers = append(servers, s)
@@ -2320,6 +2363,18 @@ func (d *Datastore) groupLogicalReplicationByPublisher(
 		if publisher.Version.Valid {
 			pubVersion = publisher.Version.String
 		}
+		pubOS := ""
+		if publisher.OS.Valid {
+			pubOS = publisher.OS.String
+		}
+		pubSpockNodeName := ""
+		if publisher.SpockNodeName.Valid {
+			pubSpockNodeName = publisher.SpockNodeName.String
+		}
+		pubSpockVersion := ""
+		if publisher.SpockVersion.Valid {
+			pubSpockVersion = publisher.SpockVersion.String
+		}
 		pubServer := TopologyServerInfo{
 			ID:            publisher.ID,
 			Name:          publisher.Name,
@@ -2331,6 +2386,9 @@ func (d *Datastore) groupLogicalReplicationByPublisher(
 			IsExpandable:  true,
 			OwnerUsername: pubOwner,
 			Version:       pubVersion,
+			OS:            pubOS,
+			SpockNodeName: pubSpockNodeName,
+			SpockVersion:  pubSpockVersion,
 			DatabaseName:  publisher.DatabaseName,
 			Username:      publisher.Username,
 			Children:      make([]TopologyServerInfo, 0, len(subscribers)),
@@ -2347,6 +2405,18 @@ func (d *Datastore) groupLogicalReplicationByPublisher(
 			if sub.Version.Valid {
 				subVersion = sub.Version.String
 			}
+			subOS := ""
+			if sub.OS.Valid {
+				subOS = sub.OS.String
+			}
+			subSpockNodeName := ""
+			if sub.SpockNodeName.Valid {
+				subSpockNodeName = sub.SpockNodeName.String
+			}
+			subSpockVersion := ""
+			if sub.SpockVersion.Valid {
+				subSpockVersion = sub.SpockVersion.String
+			}
 			subServer := TopologyServerInfo{
 				ID:            sub.ID,
 				Name:          sub.Name,
@@ -2358,6 +2428,9 @@ func (d *Datastore) groupLogicalReplicationByPublisher(
 				IsExpandable:  false,
 				OwnerUsername: subOwner,
 				Version:       subVersion,
+				OS:            subOS,
+				SpockNodeName: subSpockNodeName,
+				SpockVersion:  subSpockVersion,
 				DatabaseName:  sub.DatabaseName,
 				Username:      sub.Username,
 				Children:      nil,
@@ -2418,6 +2491,21 @@ func (d *Datastore) buildServerWithChildren(
 		version = conn.Version.String
 	}
 
+	os := ""
+	if conn.OS.Valid {
+		os = conn.OS.String
+	}
+
+	spockNodeName := ""
+	if conn.SpockNodeName.Valid {
+		spockNodeName = conn.SpockNodeName.String
+	}
+
+	spockVersion := ""
+	if conn.SpockVersion.Valid {
+		spockVersion = conn.SpockVersion.String
+	}
+
 	server := TopologyServerInfo{
 		ID:            conn.ID,
 		Name:          conn.Name,
@@ -2429,6 +2517,9 @@ func (d *Datastore) buildServerWithChildren(
 		IsExpandable:  len(childrenMap[conn.ID]) > 0,
 		OwnerUsername: ownerUsername,
 		Version:       version,
+		OS:            os,
+		SpockNodeName: spockNodeName,
+		SpockVersion:  spockVersion,
 		DatabaseName:  conn.DatabaseName,
 		Username:      conn.Username,
 		Children:      make([]TopologyServerInfo, 0),
@@ -2495,6 +2586,11 @@ type Alert struct {
 	AnomalyScore   *float64   `json:"anomaly_score,omitempty"`
 	AnomalyDetails *string    `json:"anomaly_details,omitempty"`
 	ServerName     string     `json:"server_name,omitempty"`
+	// Acknowledgment fields (from alert_acknowledgments table)
+	AcknowledgedAt *time.Time `json:"acknowledged_at,omitempty"`
+	AcknowledgedBy *string    `json:"acknowledged_by,omitempty"`
+	AckMessage     *string    `json:"ack_message,omitempty"`
+	FalsePositive  *bool      `json:"false_positive,omitempty"`
 }
 
 // AlertListFilter holds filter options for listing alerts
@@ -2601,15 +2697,24 @@ func (d *Datastore) GetAlerts(ctx context.Context, filter AlertListFilter) (*Ale
 		offset = 0
 	}
 
-	// Query alerts with connection name
+	// Query alerts with connection name and acknowledgment info
+	// Uses DISTINCT ON to get only the most recent acknowledgment per alert
 	query := fmt.Sprintf(`
 		SELECT a.id, a.alert_type, a.rule_id, a.connection_id, a.database_name,
 		       a.probe_name, a.metric_name, a.metric_value, a.threshold_value,
 		       a.operator, a.severity, a.title, a.description, a.correlation_id,
 		       a.status, a.triggered_at, a.cleared_at, a.anomaly_score, a.anomaly_details,
-		       COALESCE(c.name, 'Unknown') as server_name
+		       COALESCE(c.name, 'Unknown') as server_name,
+		       ack.acknowledged_at, ack.acknowledged_by, ack.message, ack.false_positive
 		FROM alerts a
 		LEFT JOIN connections c ON a.connection_id = c.id
+		LEFT JOIN LATERAL (
+			SELECT acknowledged_at, acknowledged_by, message, false_positive
+			FROM alert_acknowledgments
+			WHERE alert_id = a.id
+			ORDER BY acknowledged_at DESC
+			LIMIT 1
+		) ack ON true
 		%s
 		ORDER BY a.triggered_at DESC
 		LIMIT $%d OFFSET $%d
@@ -2634,6 +2739,8 @@ func (d *Datastore) GetAlerts(ctx context.Context, filter AlertListFilter) (*Ale
 			&alert.CorrelationID, &alert.Status, &alert.TriggeredAt,
 			&alert.ClearedAt, &alert.AnomalyScore, &alert.AnomalyDetails,
 			&alert.ServerName,
+			&alert.AcknowledgedAt, &alert.AcknowledgedBy, &alert.AckMessage,
+			&alert.FalsePositive,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan alert: %w", err)
@@ -2699,4 +2806,90 @@ func (d *Datastore) GetAlertCounts(ctx context.Context) (*AlertCountsResult, err
 		Total:    total,
 		ByServer: byServer,
 	}, nil
+}
+
+// AcknowledgeAlertRequest contains the data for acknowledging an alert
+type AcknowledgeAlertRequest struct {
+	AlertID        int64  `json:"alert_id"`
+	AcknowledgedBy string `json:"acknowledged_by"`
+	Message        string `json:"message"`
+	FalsePositive  bool   `json:"false_positive"`
+}
+
+// AcknowledgeAlert acknowledges an alert, updating its status and creating
+// an acknowledgment record
+func (d *Datastore) AcknowledgeAlert(ctx context.Context, req AcknowledgeAlertRequest) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	logger.Infof("AcknowledgeAlert: starting for alert_id=%d, by=%s, false_positive=%v",
+		req.AlertID, req.AcknowledgedBy, req.FalsePositive)
+
+	// Start a transaction
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		logger.Errorf("AcknowledgeAlert: failed to begin transaction: %v", err)
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Update alert status to acknowledged
+	result, err := tx.Exec(ctx, `
+		UPDATE alerts
+		SET status = 'acknowledged'
+		WHERE id = $1 AND status = 'active'
+	`, req.AlertID)
+	if err != nil {
+		logger.Errorf("AcknowledgeAlert: failed to update alert status: %v", err)
+		return fmt.Errorf("failed to update alert status: %w", err)
+	}
+
+	rowsAffected := result.RowsAffected()
+	logger.Infof("AcknowledgeAlert: UPDATE affected %d rows", rowsAffected)
+
+	if rowsAffected == 0 {
+		logger.Infof("AcknowledgeAlert: alert %d not found or already acknowledged", req.AlertID)
+		return fmt.Errorf("alert not found or already acknowledged")
+	}
+
+	// Create acknowledgment record
+	_, err = tx.Exec(ctx, `
+		INSERT INTO alert_acknowledgments (alert_id, acknowledged_by, message, acknowledge_type, false_positive)
+		VALUES ($1, $2, $3, 'acknowledge', $4)
+	`, req.AlertID, req.AcknowledgedBy, req.Message, req.FalsePositive)
+	if err != nil {
+		logger.Errorf("AcknowledgeAlert: failed to create acknowledgment record: %v", err)
+		return fmt.Errorf("failed to create acknowledgment record: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		logger.Errorf("AcknowledgeAlert: failed to commit transaction: %v", err)
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	logger.Infof("AcknowledgeAlert: successfully acknowledged alert %d", req.AlertID)
+	return nil
+}
+
+// UnacknowledgeAlert removes acknowledgment from an alert, returning it
+// to active status
+func (d *Datastore) UnacknowledgeAlert(ctx context.Context, alertID int64) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	// Update alert status back to active
+	result, err := d.pool.Exec(ctx, `
+		UPDATE alerts
+		SET status = 'active'
+		WHERE id = $1 AND status = 'acknowledged'
+	`, alertID)
+	if err != nil {
+		return fmt.Errorf("failed to update alert status: %w", err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("alert not found or not acknowledged")
+	}
+
+	return nil
 }

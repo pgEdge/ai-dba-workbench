@@ -2549,6 +2549,118 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration 17: Add pg_extension table for tracking installed extensions
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     17,
+		Description: "Add pg_extension table for tracking installed extensions",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Create the pg_extension metrics table (partitioned)
+			_, err := conn.Exec(ctx, `
+			CREATE TABLE IF NOT EXISTS metrics.pg_extension (
+				connection_id INTEGER NOT NULL,
+				extname TEXT NOT NULL,
+				extversion TEXT,
+				extrelocatable BOOLEAN,
+				schema_name TEXT,
+				collected_at TIMESTAMP NOT NULL,
+				PRIMARY KEY (connection_id, extname, collected_at)
+			) PARTITION BY RANGE (collected_at);
+
+			COMMENT ON TABLE metrics.pg_extension IS
+				'Installed PostgreSQL extensions and their versions';
+
+			ALTER TABLE metrics.pg_extension
+				ADD CONSTRAINT fk_pg_extension_connection_id
+				FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
+
+			CREATE INDEX IF NOT EXISTS idx_pg_extension_collected_at
+				ON metrics.pg_extension(collected_at DESC);
+			CREATE INDEX IF NOT EXISTS idx_pg_extension_connection_time
+				ON metrics.pg_extension(connection_id, collected_at DESC);
+			CREATE INDEX IF NOT EXISTS idx_pg_extension_extname
+				ON metrics.pg_extension(connection_id, extname);
+
+			COMMENT ON INDEX metrics.idx_pg_extension_collected_at IS
+				'Index for efficiently querying extensions by time range';
+			COMMENT ON INDEX metrics.idx_pg_extension_connection_time IS
+				'Index for efficiently querying extensions by connection and time range';
+			COMMENT ON INDEX metrics.idx_pg_extension_extname IS
+				'Index for efficiently looking up specific extensions';
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to create pg_extension table: %w", err)
+			}
+
+			// Insert the probe configuration
+			_, err = conn.Exec(ctx, `
+			INSERT INTO probe_configs (connection_id, is_enabled, name, description, collection_interval_seconds, retention_days)
+			VALUES (NULL, TRUE, 'pg_extension', 'Monitors installed PostgreSQL extensions and versions', 3600, 30)
+			ON CONFLICT (COALESCE(connection_id, 0), name) DO NOTHING;
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to insert pg_extension probe config: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 18: Add database_name to pg_extension table for database-scoped data
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     18,
+		Description: "Add database_name to pg_extension table",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Drop and recreate the table with database_name column
+			// Safe since we're early in deployment and table should be empty
+			_, err := conn.Exec(ctx, `
+			-- Drop existing table and partitions
+			DROP TABLE IF EXISTS metrics.pg_extension CASCADE;
+
+			-- Recreate with database_name column
+			CREATE TABLE IF NOT EXISTS metrics.pg_extension (
+				connection_id INTEGER NOT NULL,
+				database_name TEXT NOT NULL,
+				extname TEXT NOT NULL,
+				extversion TEXT,
+				extrelocatable BOOLEAN,
+				schema_name TEXT,
+				collected_at TIMESTAMP NOT NULL,
+				PRIMARY KEY (connection_id, database_name, extname, collected_at)
+			) PARTITION BY RANGE (collected_at);
+
+			COMMENT ON TABLE metrics.pg_extension IS
+				'Installed PostgreSQL extensions and their versions per database';
+
+			ALTER TABLE metrics.pg_extension
+				ADD CONSTRAINT fk_pg_extension_connection_id
+				FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
+
+			CREATE INDEX IF NOT EXISTS idx_pg_extension_collected_at
+				ON metrics.pg_extension(collected_at DESC);
+			CREATE INDEX IF NOT EXISTS idx_pg_extension_connection_time
+				ON metrics.pg_extension(connection_id, collected_at DESC);
+			CREATE INDEX IF NOT EXISTS idx_pg_extension_extname
+				ON metrics.pg_extension(connection_id, database_name, extname);
+
+			COMMENT ON INDEX metrics.idx_pg_extension_collected_at IS
+				'Index for efficiently querying extensions by time range';
+			COMMENT ON INDEX metrics.idx_pg_extension_connection_time IS
+				'Index for efficiently querying extensions by connection and time range';
+			COMMENT ON INDEX metrics.idx_pg_extension_extname IS
+				'Index for efficiently looking up specific extensions';
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to recreate pg_extension table: %w", err)
+			}
+
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations

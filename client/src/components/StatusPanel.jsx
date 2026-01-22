@@ -10,22 +10,25 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
     Box,
     Typography,
     Paper,
     Chip,
     alpha,
-    Divider,
     IconButton,
     Tooltip,
     Collapse,
-    LinearProgress,
     Skeleton,
+    Button,
+    Dialog,
+    DialogTitle,
+    DialogContent,
+    DialogActions,
+    TextField,
 } from '@mui/material';
 import {
-    Circle as StatusIcon,
     Storage as ServerIcon,
     Dns as ClusterIcon,
     Language as EstateIcon,
@@ -38,10 +41,63 @@ import {
     NotificationsActive as AlertIcon,
     ExpandMore as ExpandMoreIcon,
     ExpandLess as ExpandLessIcon,
-    Refresh as RefreshIcon,
     Info as InfoIcon,
+    CheckCircleOutline as AckIcon,
+    Undo as UnackIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
+
+// Map internal alert titles to friendly display names
+const FRIENDLY_ALERT_TITLES = {
+    // Connection alerts
+    'max_connections threshold exceeded': 'Connection Limit Exceeded',
+    'active_connections threshold exceeded': 'High Active Connections',
+    'idle_connections threshold exceeded': 'High Idle Connections',
+    // Performance alerts
+    'cpu_usage threshold exceeded': 'High CPU Usage',
+    'memory_usage threshold exceeded': 'High Memory Usage',
+    'disk_usage threshold exceeded': 'Disk Space Low',
+    // Database alerts
+    'deadlocks threshold exceeded': 'Deadlocks Detected',
+    'rollbacks threshold exceeded': 'High Rollback Rate',
+    'cache_hit_ratio threshold exceeded': 'Low Cache Hit Ratio',
+    'replication_lag threshold exceeded': 'Replication Lag',
+    // Query alerts
+    'long_running_queries threshold exceeded': 'Long Running Queries',
+    'blocked_queries threshold exceeded': 'Blocked Queries',
+};
+
+// Get friendly title for an alert
+const getFriendlyTitle = (title) => {
+    // Check for exact match first
+    const lowerTitle = title?.toLowerCase() || '';
+    if (FRIENDLY_ALERT_TITLES[lowerTitle]) {
+        return FRIENDLY_ALERT_TITLES[lowerTitle];
+    }
+    // Check for partial matches
+    for (const [key, value] of Object.entries(FRIENDLY_ALERT_TITLES)) {
+        if (lowerTitle.includes(key.split(' ')[0])) {
+            return value;
+        }
+    }
+    // Fallback: clean up the title
+    return title?.replace(/_/g, ' ').replace(/threshold exceeded/i, '').trim() || 'Alert';
+};
+
+// Format threshold info for display
+const formatThresholdInfo = (alert) => {
+    if (alert.alertType !== 'threshold' || !alert.metricValue || !alert.thresholdValue) {
+        return null;
+    }
+    const value = typeof alert.metricValue === 'number'
+        ? alert.metricValue.toLocaleString(undefined, { maximumFractionDigits: 2 })
+        : alert.metricValue;
+    const threshold = typeof alert.thresholdValue === 'number'
+        ? alert.thresholdValue.toLocaleString(undefined, { maximumFractionDigits: 2 })
+        : alert.thresholdValue;
+    const op = alert.operator === '>' ? 'exceeds' : alert.operator === '<' ? 'below' : 'at';
+    return `${value} ${op} threshold of ${threshold}`;
+};
 
 // Status color mapping
 const STATUS_COLORS = {
@@ -59,51 +115,84 @@ const SEVERITY_COLORS = {
 };
 
 /**
- * StatusBadge - Large status indicator with glow effect
+ * HeaderStatusIndicator - Shows node health status with appropriate icon
+ * Matches the ClusterNavigator's status indicator style but sized for header
+ * - Red error icon for offline/down nodes
+ * - Yellow warning icon with count for nodes with alerts
+ * - Green checkmark for healthy nodes
  */
-const StatusBadge = ({ status, size = 'large', isDark }) => {
-    const color = STATUS_COLORS[status] || STATUS_COLORS.unknown;
+const HeaderStatusIndicator = ({ status, alertCount = 0, size = 'large', isDark }) => {
     const sizes = {
-        small: { badge: 10, glow: 20 },
-        medium: { badge: 14, glow: 28 },
-        large: { badge: 18, glow: 36 },
+        small: 14,
+        medium: 18,
+        large: 22,
     };
-    const s = sizes[size];
+    const fontSize = sizes[size];
 
+    // Offline/down nodes - red error icon
+    if (status === 'offline') {
+        return (
+            <Tooltip title="Offline" placement="left">
+                <ErrorIcon
+                    sx={{
+                        fontSize,
+                        color: '#EF4444',
+                        filter: 'drop-shadow(0 0 3px #EF4444)',
+                    }}
+                />
+            </Tooltip>
+        );
+    }
+
+    // Nodes with alerts - yellow warning icon with count
+    if (alertCount > 0) {
+        return (
+            <Tooltip title={`${alertCount} active alert${alertCount !== 1 ? 's' : ''}`} placement="left">
+                <Box sx={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                    <WarningIcon
+                        sx={{
+                            fontSize,
+                            color: '#F59E0B',
+                            filter: 'drop-shadow(0 0 3px #F59E0B)',
+                        }}
+                    />
+                    <Box
+                        sx={{
+                            position: 'absolute',
+                            top: -5,
+                            left: -7,
+                            minWidth: 14,
+                            height: 14,
+                            px: 0.25,
+                            borderRadius: '7px',
+                            bgcolor: isDark ? '#64748B' : '#6B7280',
+                            color: '#FFF',
+                            fontSize: '0.5625rem',
+                            fontWeight: 700,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            lineHeight: 1,
+                        }}
+                    >
+                        {alertCount > 99 ? '99+' : alertCount}
+                    </Box>
+                </Box>
+            </Tooltip>
+        );
+    }
+
+    // Healthy nodes - green checkmark
     return (
-        <Box
-            sx={{
-                position: 'relative',
-                width: s.glow,
-                height: s.glow,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-            }}
-        >
-            <Box
+        <Tooltip title="Online" placement="left">
+            <HealthyIcon
                 sx={{
-                    position: 'absolute',
-                    width: s.glow,
-                    height: s.glow,
-                    borderRadius: '50%',
-                    bgcolor: alpha(color, 0.2),
-                    animation: status === 'online' ? 'pulse 2s ease-in-out infinite' : 'none',
-                    '@keyframes pulse': {
-                        '0%, 100%': { transform: 'scale(1)', opacity: 1 },
-                        '50%': { transform: 'scale(1.2)', opacity: 0.6 },
-                    },
+                    fontSize,
+                    color: '#22C55E',
+                    filter: 'drop-shadow(0 0 3px #22C55E)',
                 }}
             />
-            <StatusIcon
-                sx={{
-                    fontSize: s.badge,
-                    color: color,
-                    filter: `drop-shadow(0 0 4px ${color})`,
-                    zIndex: 1,
-                }}
-            />
-        </Box>
+        </Tooltip>
     );
 };
 
@@ -179,172 +268,473 @@ const MetricCard = ({ label, value, trend, trendValue, icon: Icon, color, isDark
 };
 
 /**
- * InfoChip - Compact label/value display for server details
+ * ServerInfoCard - Unified compact server information display
+ * Combines connection details, server info, and replication status in a clean grid
  */
-const InfoChip = ({ label, value, isDark, mono = false, capitalize = false }) => {
+const ServerInfoCard = ({ selection, isDark }) => {
+    // Combine all data items into a single array for the grid
+    const allData = [
+        { label: 'HOST', value: selection.host, mono: true },
+        { label: 'PORT', value: selection.port, mono: true },
+        { label: 'DATABASE', value: selection.database, mono: true },
+        { label: 'USER', value: selection.username, mono: true },
+        { label: 'POSTGRESQL', value: selection.version, mono: true },
+        { label: 'OS', value: selection.os, mono: false },
+        { label: 'ROLE', value: selection.role?.replace(/_/g, ' '), mono: false, capitalize: true },
+    ].filter(item => item.value);
+
+    const replicationData = selection.spockVersion || selection.spockNodeName ? {
+        version: selection.spockVersion,
+        nodeName: selection.spockNodeName,
+    } : null;
+
+    return (
+        <Box
+            sx={{
+                borderRadius: 1.5,
+                overflow: 'hidden',
+                border: '1px solid',
+                borderColor: isDark ? '#334155' : '#E2E8F0',
+                bgcolor: isDark ? alpha('#1E293B', 0.4) : '#FFFFFF',
+            }}
+        >
+            {/* Data grid - single row that wraps if needed */}
+            <Box
+                sx={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                }}
+            >
+                {allData.map((item, idx) => (
+                    <Box
+                        key={item.label}
+                        sx={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 0.25,
+                            px: 1.5,
+                            py: 1,
+                            borderRight: idx < allData.length - 1 ? '1px solid' : 'none',
+                            borderColor: isDark ? '#334155' : '#E2E8F0',
+                            minWidth: item.label === 'OS' ? 180 : 'auto',
+                        }}
+                    >
+                        <Typography
+                            sx={{
+                                color: isDark ? '#64748B' : '#94A3B8',
+                                fontSize: '0.5625rem',
+                                fontWeight: 700,
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.1em',
+                                lineHeight: 1,
+                            }}
+                        >
+                            {item.label}
+                        </Typography>
+                        <Typography
+                            sx={{
+                                color: 'text.primary',
+                                fontSize: '0.8125rem',
+                                fontWeight: 500,
+                                fontFamily: item.mono ? '"JetBrains Mono", "SF Mono", monospace' : 'inherit',
+                                lineHeight: 1.2,
+                                textTransform: item.capitalize ? 'capitalize' : 'none',
+                                whiteSpace: 'nowrap',
+                            }}
+                        >
+                            {item.value}
+                        </Typography>
+                    </Box>
+                ))}
+            </Box>
+
+            {/* Spock replication section - only shown if Spock is installed */}
+            {replicationData && (
+                <Box
+                    sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 2,
+                        px: 1.5,
+                        py: 0.75,
+                        bgcolor: isDark ? alpha('#0EA5E9', 0.08) : alpha('#0EA5E9', 0.04),
+                        borderTop: '1px solid',
+                        borderColor: isDark ? alpha('#0EA5E9', 0.2) : alpha('#0EA5E9', 0.15),
+                    }}
+                >
+                    <Box
+                        sx={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 0.75,
+                        }}
+                    >
+                        <Box
+                            sx={{
+                                width: 6,
+                                height: 6,
+                                borderRadius: '50%',
+                                bgcolor: '#0EA5E9',
+                            }}
+                        />
+                        <Typography
+                            sx={{
+                                fontSize: '0.6875rem',
+                                fontWeight: 600,
+                                color: isDark ? '#38BDF8' : '#0284C7',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.05em',
+                            }}
+                        >
+                            Spock Replication
+                        </Typography>
+                    </Box>
+                    {replicationData.version && (
+                        <Typography
+                            sx={{
+                                fontSize: '0.75rem',
+                                fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+                                color: 'text.secondary',
+                            }}
+                        >
+                            v{replicationData.version}
+                        </Typography>
+                    )}
+                    {replicationData.nodeName && (
+                        <Typography
+                            sx={{
+                                fontSize: '0.75rem',
+                                fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+                                color: 'text.primary',
+                                fontWeight: 500,
+                            }}
+                        >
+                            {replicationData.nodeName}
+                        </Typography>
+                    )}
+                </Box>
+            )}
+        </Box>
+    );
+};
+
+/**
+ * AlertItem - Compact alert entry with severity indicator and ack functionality
+ */
+const AlertItem = ({ alert, isDark, showServer = false, onAcknowledge, onUnacknowledge }) => {
+    const isAcknowledged = !!alert.acknowledgedAt;
+    const baseColor = isAcknowledged ? '#64748B' : (SEVERITY_COLORS[alert.severity] || SEVERITY_COLORS.info);
+    const SeverityIcon = alert.severity === 'critical' ? ErrorIcon : WarningIcon;
+    const thresholdInfo = formatThresholdInfo(alert);
+    const friendlyTitle = getFriendlyTitle(alert.title);
+
     return (
         <Box
             sx={{
                 display: 'flex',
                 alignItems: 'center',
-                gap: 0.75,
-                px: 1,
-                py: 0.5,
+                gap: 1,
+                px: 1.25,
+                py: 0.75,
                 borderRadius: 1,
-                bgcolor: isDark ? alpha('#1E293B', 0.6) : alpha('#FFFFFF', 0.8),
+                bgcolor: isAcknowledged
+                    ? (isDark ? alpha('#64748B', 0.12) : alpha('#64748B', 0.06))
+                    : (isDark ? alpha(baseColor, 0.08) : alpha(baseColor, 0.04)),
                 border: '1px solid',
-                borderColor: isDark ? alpha('#475569', 0.4) : '#E5E7EB',
+                borderColor: isAcknowledged
+                    ? (isDark ? alpha('#64748B', 0.25) : alpha('#64748B', 0.2))
+                    : alpha(baseColor, isDark ? 0.25 : 0.15),
             }}
         >
-            <Typography
-                variant="caption"
-                sx={{
-                    color: 'text.disabled',
-                    fontSize: '0.625rem',
-                    fontWeight: 600,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                }}
-            >
-                {label}
-            </Typography>
-            <Typography
-                variant="body2"
-                sx={{
-                    color: 'text.primary',
-                    fontSize: '0.75rem',
-                    fontWeight: 500,
-                    fontFamily: mono ? '"JetBrains Mono", "SF Mono", monospace' : 'inherit',
-                    textTransform: capitalize ? 'capitalize' : 'none',
-                }}
-            >
-                {value}
-            </Typography>
-        </Box>
-    );
-};
-
-/**
- * AlertItem - Single alert entry with severity indicator
- */
-const AlertItem = ({ alert, isDark }) => {
-    const severityColor = SEVERITY_COLORS[alert.severity] || SEVERITY_COLORS.info;
-    const SeverityIcon = alert.severity === 'critical' ? ErrorIcon : WarningIcon;
-
-    return (
-        <Box
-            sx={{
-                display: 'flex',
-                alignItems: 'flex-start',
-                gap: 1.5,
-                p: 1.5,
-                borderRadius: 1.5,
-                bgcolor: isDark ? alpha(severityColor, 0.08) : alpha(severityColor, 0.05),
-                border: '1px solid',
-                borderColor: alpha(severityColor, isDark ? 0.3 : 0.2),
-                transition: 'all 0.15s ease',
-                '&:hover': {
-                    bgcolor: isDark ? alpha(severityColor, 0.12) : alpha(severityColor, 0.08),
-                    transform: 'translateX(4px)',
-                },
-            }}
-        >
+            {/* Severity indicator */}
             <SeverityIcon
                 sx={{
-                    fontSize: 18,
-                    color: severityColor,
-                    mt: 0.25,
+                    fontSize: 16,
+                    color: baseColor,
                     flexShrink: 0,
                 }}
             />
+
+            {/* Main content */}
             <Box sx={{ flex: 1, minWidth: 0 }}>
-                <Typography
-                    variant="body2"
-                    sx={{
-                        fontWeight: 600,
-                        color: 'text.primary',
-                        fontSize: '0.875rem',
-                        lineHeight: 1.3,
-                        mb: 0.5,
-                    }}
-                >
-                    {alert.title}
-                </Typography>
-                <Typography
-                    variant="caption"
-                    sx={{
-                        color: 'text.secondary',
-                        fontSize: '0.75rem',
-                        lineHeight: 1.4,
-                        display: 'block',
-                    }}
-                >
-                    {alert.description}
-                </Typography>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
-                    <Chip
-                        label={alert.severity}
-                        size="small"
-                        sx={{
-                            height: 18,
-                            fontSize: '0.625rem',
-                            fontWeight: 600,
-                            textTransform: 'uppercase',
-                            bgcolor: alpha(severityColor, 0.15),
-                            color: severityColor,
-                            '& .MuiChip-label': { px: 0.75 },
-                        }}
-                    />
+                {/* Title row */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <Typography
-                        variant="caption"
                         sx={{
-                            color: 'text.disabled',
-                            fontSize: '0.6875rem',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 0.5,
+                            fontWeight: 600,
+                            color: isAcknowledged ? 'text.secondary' : 'text.primary',
+                            fontSize: '0.8125rem',
+                            lineHeight: 1.2,
                         }}
                     >
-                        <ScheduleIcon sx={{ fontSize: 12 }} />
-                        {alert.time}
+                        {friendlyTitle}
                     </Typography>
-                    {alert.server && (
-                        <Typography
-                            variant="caption"
+                    {showServer && alert.server && (
+                        <Chip
+                            label={alert.server}
+                            size="small"
                             sx={{
-                                color: 'text.disabled',
-                                fontSize: '0.6875rem',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 0.5,
+                                height: 16,
+                                fontSize: '0.625rem',
+                                bgcolor: isDark ? alpha('#64748B', 0.2) : alpha('#64748B', 0.1),
+                                color: 'text.secondary',
+                                '& .MuiChip-label': { px: 0.5 },
                             }}
-                        >
-                            <ServerIcon sx={{ fontSize: 12 }} />
-                            {alert.server}
-                        </Typography>
+                        />
                     )}
                 </Box>
+
+                {/* Threshold info or description */}
+                {thresholdInfo ? (
+                    <Typography
+                        sx={{
+                            color: 'text.secondary',
+                            fontSize: '0.6875rem',
+                            fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+                            mt: 0.25,
+                        }}
+                    >
+                        {thresholdInfo}
+                    </Typography>
+                ) : alert.description && (
+                    <Typography
+                        sx={{
+                            color: 'text.secondary',
+                            fontSize: '0.6875rem',
+                            mt: 0.25,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                        }}
+                    >
+                        {alert.description}
+                    </Typography>
+                )}
+
+                {/* Ack info if acknowledged */}
+                {isAcknowledged && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mt: 0.25 }}>
+                        <Typography
+                            sx={{
+                                color: 'text.secondary',
+                                fontSize: '0.625rem',
+                                fontStyle: 'italic',
+                            }}
+                        >
+                            Acked by {alert.acknowledgedBy}{alert.ackMessage ? `: ${alert.ackMessage}` : ''}
+                        </Typography>
+                        {alert.falsePositive && (
+                            <Chip
+                                label="False Positive"
+                                size="small"
+                                sx={{
+                                    height: 14,
+                                    fontSize: '0.5rem',
+                                    fontWeight: 600,
+                                    bgcolor: isDark ? alpha('#EF4444', 0.15) : alpha('#EF4444', 0.1),
+                                    color: '#EF4444',
+                                    '& .MuiChip-label': { px: 0.5 },
+                                }}
+                            />
+                        )}
+                    </Box>
+                )}
             </Box>
+
+            {/* Time and severity */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexShrink: 0 }}>
+                <Typography
+                    sx={{
+                        color: 'text.disabled',
+                        fontSize: '0.625rem',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 0.25,
+                    }}
+                >
+                    <ScheduleIcon sx={{ fontSize: 10 }} />
+                    {alert.time}
+                </Typography>
+                <Chip
+                    label={alert.severity}
+                    size="small"
+                    sx={{
+                        height: 16,
+                        fontSize: '0.5625rem',
+                        fontWeight: 600,
+                        textTransform: 'uppercase',
+                        bgcolor: alpha(baseColor, 0.15),
+                        color: baseColor,
+                        '& .MuiChip-label': { px: 0.5 },
+                    }}
+                />
+            </Box>
+
+            {/* Ack/Unack button */}
+            <Tooltip title={isAcknowledged ? 'Restore to active' : 'Acknowledge'} placement="left">
+                <IconButton
+                    size="small"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        if (isAcknowledged) {
+                            onUnacknowledge?.(alert.id);
+                        } else {
+                            onAcknowledge?.(alert);
+                        }
+                    }}
+                    sx={{
+                        p: 0.5,
+                        color: isAcknowledged ? '#6B7280' : baseColor,
+                        '&:hover': {
+                            bgcolor: alpha(baseColor, 0.1),
+                        },
+                    }}
+                >
+                    {isAcknowledged ? (
+                        <UnackIcon sx={{ fontSize: 16 }} />
+                    ) : (
+                        <AckIcon sx={{ fontSize: 16 }} />
+                    )}
+                </IconButton>
+            </Tooltip>
         </Box>
     );
 };
 
 /**
- * AlertsSection - Collapsible alerts list
+ * AcknowledgeDialog - Dialog for entering ack reason and false positive flag
  */
-const AlertsSection = ({ alerts, isDark, loading }) => {
+const AcknowledgeDialog = ({ open, alert, onClose, onConfirm, isDark }) => {
+    const [message, setMessage] = useState('');
+    const [falsePositive, setFalsePositive] = useState(false);
+
+    const handleConfirm = () => {
+        onConfirm(alert?.id, message, falsePositive);
+        setMessage('');
+        setFalsePositive(false);
+    };
+
+    const handleClose = () => {
+        setMessage('');
+        setFalsePositive(false);
+        onClose();
+    };
+
+    return (
+        <Dialog
+            open={open}
+            onClose={handleClose}
+            maxWidth="sm"
+            fullWidth
+            PaperProps={{
+                sx: {
+                    bgcolor: isDark ? '#1E293B' : '#FFFFFF',
+                    backgroundImage: 'none',
+                },
+            }}
+        >
+            <DialogTitle sx={{ pb: 1 }}>
+                Acknowledge Alert
+            </DialogTitle>
+            <DialogContent>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    {alert ? getFriendlyTitle(alert.title) : 'Alert'}
+                </Typography>
+                <TextField
+                    autoFocus
+                    label="Reason"
+                    placeholder="e.g., Investigating, Known issue, Scheduled maintenance"
+                    fullWidth
+                    multiline
+                    rows={2}
+                    value={message}
+                    onChange={(e) => setMessage(e.target.value)}
+                    variant="outlined"
+                    size="small"
+                    InputLabelProps={{ shrink: true }}
+                    sx={{ mb: 2 }}
+                />
+                <Box
+                    sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 1,
+                        p: 1.5,
+                        borderRadius: 1,
+                        bgcolor: isDark ? 'rgba(239, 68, 68, 0.08)' : 'rgba(239, 68, 68, 0.04)',
+                        border: '1px solid',
+                        borderColor: isDark ? 'rgba(239, 68, 68, 0.2)' : 'rgba(239, 68, 68, 0.15)',
+                        cursor: 'pointer',
+                    }}
+                    onClick={() => setFalsePositive(!falsePositive)}
+                >
+                    <Box
+                        sx={{
+                            width: 18,
+                            height: 18,
+                            borderRadius: 0.5,
+                            border: '2px solid',
+                            borderColor: falsePositive ? '#EF4444' : (isDark ? '#64748B' : '#94A3B8'),
+                            bgcolor: falsePositive ? '#EF4444' : 'transparent',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            flexShrink: 0,
+                            transition: 'all 0.15s ease',
+                        }}
+                    >
+                        {falsePositive && (
+                            <HealthyIcon sx={{ fontSize: 14, color: '#FFF' }} />
+                        )}
+                    </Box>
+                    <Box>
+                        <Typography sx={{ fontSize: '0.8125rem', fontWeight: 500, color: 'text.primary' }}>
+                            Mark as false positive
+                        </Typography>
+                        <Typography sx={{ fontSize: '0.6875rem', color: 'text.secondary' }}>
+                            This helps improve alert accuracy over time
+                        </Typography>
+                    </Box>
+                </Box>
+            </DialogContent>
+            <DialogActions sx={{ px: 3, pb: 2 }}>
+                <Button onClick={handleClose} color="inherit" size="small">
+                    Cancel
+                </Button>
+                <Button
+                    onClick={handleConfirm}
+                    variant="contained"
+                    size="small"
+                    startIcon={<AckIcon />}
+                >
+                    Acknowledge
+                </Button>
+            </DialogActions>
+        </Dialog>
+    );
+};
+
+/**
+ * AlertsSection - Collapsible alerts list with active/acknowledged separation
+ */
+const AlertsSection = ({ alerts, isDark, loading, showServer = false, onAcknowledge, onUnacknowledge }) => {
     const [expanded, setExpanded] = useState(true);
+    const [ackExpanded, setAckExpanded] = useState(false);
+
+    // Separate active and acknowledged alerts
+    const activeAlerts = alerts.filter(a => !a.acknowledgedAt);
+    const acknowledgedAlerts = alerts.filter(a => !!a.acknowledgedAt);
 
     if (loading) {
         return (
-            <Box sx={{ mt: 3 }}>
-                <Skeleton variant="text" width={120} height={24} />
-                <Box sx={{ mt: 2, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-                    {[1, 2, 3].map((i) => (
+            <Box sx={{ mt: 2 }}>
+                <Skeleton variant="text" width={120} height={20} />
+                <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+                    {[1, 2].map((i) => (
                         <Skeleton
                             key={i}
                             variant="rounded"
-                            height={80}
+                            height={48}
                             sx={{ bgcolor: isDark ? '#334155' : '#E5E7EB' }}
                         />
                     ))}
@@ -354,93 +744,173 @@ const AlertsSection = ({ alerts, isDark, loading }) => {
     }
 
     return (
-        <Box sx={{ mt: 3 }}>
+        <Box sx={{ mt: 2 }}>
+            {/* Active Alerts Header */}
             <Box
                 onClick={() => setExpanded(!expanded)}
                 sx={{
                     display: 'flex',
                     alignItems: 'center',
-                    gap: 1,
+                    gap: 0.75,
                     cursor: 'pointer',
-                    py: 0.5,
+                    py: 0.25,
                     '&:hover': { opacity: 0.8 },
                 }}
             >
-                <AlertIcon sx={{ fontSize: 18, color: 'primary.main' }} />
+                <AlertIcon sx={{ fontSize: 16, color: 'primary.main' }} />
                 <Typography
-                    variant="subtitle2"
                     sx={{
                         fontWeight: 600,
                         color: 'text.primary',
-                        fontSize: '0.875rem',
+                        fontSize: '0.8125rem',
                     }}
                 >
                     Active Alerts
                 </Typography>
                 <Chip
-                    label={alerts.length}
+                    label={activeAlerts.length}
                     size="small"
                     sx={{
-                        height: 20,
-                        fontSize: '0.6875rem',
+                        height: 18,
+                        fontSize: '0.625rem',
                         fontWeight: 600,
-                        bgcolor: alerts.length > 0
+                        bgcolor: activeAlerts.length > 0
                             ? alpha(SEVERITY_COLORS.warning, 0.15)
                             : (isDark ? alpha('#22C55E', 0.15) : alpha('#22C55E', 0.1)),
-                        color: alerts.length > 0 ? SEVERITY_COLORS.warning : '#22C55E',
-                        '& .MuiChip-label': { px: 0.75 },
+                        color: activeAlerts.length > 0 ? SEVERITY_COLORS.warning : '#22C55E',
+                        '& .MuiChip-label': { px: 0.5 },
                     }}
                 />
                 <Box sx={{ flex: 1 }} />
                 <IconButton size="small" sx={{ p: 0.25 }}>
                     {expanded ? (
-                        <ExpandLessIcon sx={{ fontSize: 18 }} />
+                        <ExpandLessIcon sx={{ fontSize: 16 }} />
                     ) : (
-                        <ExpandMoreIcon sx={{ fontSize: 18 }} />
+                        <ExpandMoreIcon sx={{ fontSize: 16 }} />
                     )}
                 </IconButton>
             </Box>
+
+            {/* Active Alerts List */}
             <Collapse in={expanded}>
                 <Box
                     sx={{
-                        mt: 1.5,
+                        mt: 1,
                         display: 'flex',
                         flexDirection: 'column',
-                        gap: 1,
+                        gap: 0.5,
                     }}
                 >
-                    {alerts.length === 0 ? (
+                    {activeAlerts.length === 0 ? (
                         <Box
                             sx={{
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
-                                gap: 1,
-                                py: 3,
-                                borderRadius: 2,
-                                bgcolor: isDark ? alpha('#22C55E', 0.08) : alpha('#22C55E', 0.05),
+                                gap: 0.75,
+                                py: 2,
+                                borderRadius: 1,
+                                bgcolor: isDark ? alpha('#22C55E', 0.06) : alpha('#22C55E', 0.04),
                                 border: '1px solid',
-                                borderColor: isDark ? alpha('#22C55E', 0.2) : alpha('#22C55E', 0.15),
+                                borderColor: isDark ? alpha('#22C55E', 0.15) : alpha('#22C55E', 0.1),
                             }}
                         >
-                            <HealthyIcon sx={{ fontSize: 20, color: '#22C55E' }} />
+                            <HealthyIcon sx={{ fontSize: 16, color: '#22C55E' }} />
                             <Typography
-                                variant="body2"
                                 sx={{
                                     color: '#22C55E',
                                     fontWeight: 500,
+                                    fontSize: '0.8125rem',
                                 }}
                             >
                                 No active alerts
                             </Typography>
                         </Box>
                     ) : (
-                        alerts.map((alert, index) => (
-                            <AlertItem key={alert.id || index} alert={alert} isDark={isDark} />
+                        activeAlerts.map((alert) => (
+                            <AlertItem
+                                key={alert.id}
+                                alert={alert}
+                                isDark={isDark}
+                                showServer={showServer}
+                                onAcknowledge={onAcknowledge}
+                                onUnacknowledge={onUnacknowledge}
+                            />
                         ))
                     )}
                 </Box>
             </Collapse>
+
+            {/* Acknowledged Alerts Section */}
+            {acknowledgedAlerts.length > 0 && (
+                <>
+                    <Box
+                        onClick={() => setAckExpanded(!ackExpanded)}
+                        sx={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 0.75,
+                            cursor: 'pointer',
+                            py: 0.25,
+                            mt: 1.5,
+                            '&:hover': { opacity: 0.8 },
+                        }}
+                    >
+                        <AckIcon sx={{ fontSize: 16, color: 'text.disabled' }} />
+                        <Typography
+                            sx={{
+                                fontWeight: 500,
+                                color: 'text.secondary',
+                                fontSize: '0.75rem',
+                            }}
+                        >
+                            Acknowledged
+                        </Typography>
+                        <Chip
+                            label={acknowledgedAlerts.length}
+                            size="small"
+                            sx={{
+                                height: 16,
+                                fontSize: '0.5625rem',
+                                fontWeight: 600,
+                                bgcolor: isDark ? alpha('#64748B', 0.2) : alpha('#64748B', 0.1),
+                                color: 'text.disabled',
+                                '& .MuiChip-label': { px: 0.5 },
+                            }}
+                        />
+                        <Box sx={{ flex: 1 }} />
+                        <IconButton size="small" sx={{ p: 0.25 }}>
+                            {ackExpanded ? (
+                                <ExpandLessIcon sx={{ fontSize: 14, color: 'text.disabled' }} />
+                            ) : (
+                                <ExpandMoreIcon sx={{ fontSize: 14, color: 'text.disabled' }} />
+                            )}
+                        </IconButton>
+                    </Box>
+
+                    <Collapse in={ackExpanded}>
+                        <Box
+                            sx={{
+                                mt: 0.75,
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: 0.5,
+                            }}
+                        >
+                            {acknowledgedAlerts.map((alert) => (
+                                <AlertItem
+                                    key={alert.id}
+                                    alert={alert}
+                                    isDark={isDark}
+                                    showServer={showServer}
+                                    onAcknowledge={onAcknowledge}
+                                    onUnacknowledge={onUnacknowledge}
+                                />
+                            ))}
+                        </Box>
+                    </Collapse>
+                </>
+            )}
         </Box>
     );
 };
@@ -448,7 +918,7 @@ const AlertsSection = ({ alerts, isDark, loading }) => {
 /**
  * SelectionHeader - Header showing what's currently selected
  */
-const SelectionHeader = ({ selection, isDark }) => {
+const SelectionHeader = ({ selection, alertCount = 0, isDark }) => {
     const getIcon = () => {
         switch (selection.type) {
             case 'server':
@@ -523,20 +993,12 @@ const SelectionHeader = ({ selection, isDark }) => {
                 >
                     {selection.name}
                 </Typography>
-                {selection.subtitle && (
-                    <Typography
-                        variant="body2"
-                        sx={{
-                            color: 'text.secondary',
-                            fontSize: '0.8125rem',
-                            mt: 0.25,
-                        }}
-                    >
-                        {selection.subtitle}
-                    </Typography>
-                )}
             </Box>
-            <StatusBadge status={selection.status} isDark={isDark} />
+            <HeaderStatusIndicator
+                status={selection.status}
+                alertCount={alertCount}
+                isDark={isDark}
+            />
         </Box>
     );
 };
@@ -552,6 +1014,8 @@ const StatusPanel = ({
     const { sessionToken: token } = useAuth();
     const [alerts, setAlerts] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [ackDialogOpen, setAckDialogOpen] = useState(false);
+    const [selectedAlertForAck, setSelectedAlertForAck] = useState(null);
 
     // Calculate metrics based on selection type
     const metrics = useMemo(() => {
@@ -643,53 +1107,132 @@ const StatusPanel = ({
             time: formatRelativeTime(alert.triggered_at),
             server: alert.server_name,
             connectionId: alert.connection_id,
+            // Threshold info
+            alertType: alert.alert_type,
+            metricValue: alert.metric_value,
+            thresholdValue: alert.threshold_value,
+            operator: alert.operator,
+            // Acknowledgment info
+            acknowledgedAt: alert.acknowledged_at,
+            acknowledgedBy: alert.acknowledged_by,
+            ackMessage: alert.ack_message,
+            falsePositive: alert.false_positive,
         }));
     };
 
-    // Fetch alerts based on selection
-    useEffect(() => {
-        const fetchAlerts = async () => {
-            if (!token || !selection) {
-                setAlerts([]);
-                setLoading(false);
-                return;
+    // Handle opening ack dialog
+    const handleAcknowledge = (alert) => {
+        setSelectedAlertForAck(alert);
+        setAckDialogOpen(true);
+    };
+
+    // Handle confirming acknowledgment
+    const handleAckConfirm = async (alertId, message, falsePositive = false) => {
+        if (!token || !alertId) return;
+
+        try {
+            const response = await fetch('/api/alerts/acknowledge', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    alert_id: alertId,
+                    message: message || '',
+                    false_positive: falsePositive,
+                }),
+            });
+
+            if (response.ok) {
+                // Refresh alerts to show updated status
+                fetchAlertsData();
+            } else {
+                const errorData = await response.json().catch(() => ({}));
+                console.error('Failed to acknowledge alert:', errorData.error || response.statusText);
             }
+        } catch (err) {
+            console.error('Error acknowledging alert:', err);
+        } finally {
+            setAckDialogOpen(false);
+            setSelectedAlertForAck(null);
+        }
+    };
 
-            setLoading(true);
-            try {
-                // Build query params based on selection type
-                let url = '/api/alerts?status=active&limit=10';
-                if (selection.type === 'server' && selection.id) {
-                    url += `&connection_id=${selection.id}`;
-                } else if (selection.type === 'cluster' && selection.serverIds?.length) {
-                    // For cluster, filter by multiple connection IDs
-                    url += `&connection_ids=${selection.serverIds.join(',')}`;
-                }
-                // For estate, fetch all active alerts (no connection filter)
+    // Handle unacknowledging an alert
+    const handleUnacknowledge = async (alertId) => {
+        if (!token || !alertId) return;
 
-                const response = await fetch(url, {
-                    headers: {
-                        'Authorization': `Bearer ${token}`,
-                    },
-                });
+        try {
+            const response = await fetch(`/api/alerts/acknowledge?alert_id=${alertId}`, {
+                method: 'DELETE',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                },
+            });
 
-                if (response.ok) {
-                    const data = await response.json();
-                    const transformedAlerts = transformAlerts(data.alerts || []);
-                    setAlerts(transformedAlerts);
-                } else {
-                    setAlerts([]);
-                }
-            } catch (err) {
-                console.error('Error fetching alerts:', err);
-                setAlerts([]);
-            } finally {
-                setLoading(false);
+            if (response.ok) {
+                // Refresh alerts to show updated status
+                fetchAlertsData();
+            } else {
+                console.error('Failed to unacknowledge alert');
             }
-        };
+        } catch (err) {
+            console.error('Error unacknowledging alert:', err);
+        }
+    };
 
-        fetchAlerts();
+    // Fetch alerts data function
+    const fetchAlertsData = useCallback(async () => {
+        if (!token || !selection) {
+            setAlerts([]);
+            setLoading(false);
+            return;
+        }
+
+        setLoading(true);
+        try {
+            // Build query params based on selection type
+            // No status filter - fetch all alerts to show both active and acknowledged
+            let url = '/api/alerts?limit=50';
+            if (selection.type === 'server' && selection.id) {
+                url += `&connection_id=${selection.id}`;
+            } else if (selection.type === 'cluster' && selection.serverIds?.length) {
+                // For cluster, filter by multiple connection IDs
+                url += `&connection_ids=${selection.serverIds.join(',')}`;
+            }
+            // For estate, fetch all alerts (no connection filter)
+
+            const response = await fetch(url, {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                },
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                const transformedAlerts = transformAlerts(data.alerts || []);
+                setAlerts(transformedAlerts);
+            } else {
+                setAlerts([]);
+            }
+        } catch (err) {
+            console.error('Error fetching alerts:', err);
+            setAlerts([]);
+        } finally {
+            setLoading(false);
+        }
     }, [token, selection]);
+
+    // Fetch alerts on selection change
+    useEffect(() => {
+        fetchAlertsData();
+    }, [fetchAlertsData]);
+
+    // Count only active (non-acknowledged) alerts for the header indicator
+    const activeAlertCount = useMemo(() => {
+        return alerts.filter(a => !a.acknowledgedAt).length;
+    }, [alerts]);
 
     if (!selection) {
         return (
@@ -748,19 +1291,10 @@ const StatusPanel = ({
                 p: 3,
             }}
         >
-            {/* Content Card */}
-            <Paper
-                elevation={0}
-                sx={{
-                    p: 3,
-                    borderRadius: 2,
-                    bgcolor: isDark ? alpha('#1E293B', 0.5) : alpha('#FFFFFF', 0.9),
-                    border: '1px solid',
-                    borderColor: isDark ? alpha('#475569', 0.5) : '#E5E7EB',
-                }}
-            >
+            {/* Content Container */}
+            <Box>
                 {/* Selection Header */}
-                <SelectionHeader selection={selection} isDark={isDark} />
+                <SelectionHeader selection={selection} alertCount={activeAlertCount} isDark={isDark} />
 
                 {/* Divider with gradient */}
                 <Box
@@ -773,43 +1307,10 @@ const StatusPanel = ({
                     }}
                 />
 
-                {/* Server Details - Compact horizontal layout for single server */}
+                {/* Server Info Card - Unified display for single server */}
                 {selection.type === 'server' && (
-                    <Box
-                        sx={{
-                            display: 'flex',
-                            flexWrap: 'wrap',
-                            gap: 1.5,
-                            mb: 2,
-                            p: 1.5,
-                            borderRadius: 2,
-                            bgcolor: isDark ? alpha('#334155', 0.3) : alpha('#F3F4F6', 0.6),
-                            border: '1px solid',
-                            borderColor: isDark ? alpha('#475569', 0.5) : '#E5E7EB',
-                        }}
-                    >
-                        <InfoChip label="Host" value={selection.host || 'N/A'} isDark={isDark} mono />
-                        <InfoChip label="Port" value={selection.port || 'N/A'} isDark={isDark} mono />
-                        {selection.database && (
-                            <InfoChip label="Database" value={selection.database} isDark={isDark} mono />
-                        )}
-                        {selection.username && (
-                            <InfoChip label="User" value={selection.username} isDark={isDark} />
-                        )}
-                        {selection.role && (
-                            <InfoChip
-                                label="Role"
-                                value={selection.role.replace(/_/g, ' ')}
-                                isDark={isDark}
-                                capitalize
-                            />
-                        )}
-                        {selection.version && (
-                            <InfoChip label="PostgreSQL" value={selection.version} isDark={isDark} mono />
-                        )}
-                        {selection.os && (
-                            <InfoChip label="OS" value={selection.os} isDark={isDark} />
-                        )}
+                    <Box sx={{ mb: 2 }}>
+                        <ServerInfoCard selection={selection} isDark={isDark} />
                     </Box>
                 )}
 
@@ -864,8 +1365,27 @@ const StatusPanel = ({
                 )}
 
                 {/* Alerts Section */}
-                <AlertsSection alerts={alerts} isDark={isDark} loading={loading} />
-            </Paper>
+                <AlertsSection
+                    alerts={alerts}
+                    isDark={isDark}
+                    loading={loading}
+                    showServer={selection.type !== 'server'}
+                    onAcknowledge={handleAcknowledge}
+                    onUnacknowledge={handleUnacknowledge}
+                />
+            </Box>
+
+            {/* Acknowledge Dialog */}
+            <AcknowledgeDialog
+                open={ackDialogOpen}
+                alert={selectedAlertForAck}
+                onClose={() => {
+                    setAckDialogOpen(false);
+                    setSelectedAlertForAck(null);
+                }}
+                onConfirm={handleAckConfirm}
+                isDark={isDark}
+            />
         </Box>
     );
 };

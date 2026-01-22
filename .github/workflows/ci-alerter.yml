@@ -1,20 +1,20 @@
-name: CI - Server
+name: CI - Alerter
 
 on:
     push:
         branches: [ main, master ]
         paths:
-            - 'server/**'
-            - '.github/workflows/ci-server.yml'
+            - 'alerter/**'
+            - '.github/workflows/ci-alerter.yml'
     pull_request:
         branches: [ main, master ]
         paths:
-            - 'server/**'
-            - '.github/workflows/ci-server.yml'
+            - 'alerter/**'
+            - '.github/workflows/ci-alerter.yml'
 
 jobs:
-    server:
-        name: Server (Go ${{ matrix.go-version }}, PG ${{ matrix.postgres-version }})
+    alerter:
+        name: Alerter (Go ${{ matrix.go-version }}, PG ${{ matrix.postgres-version }})
         runs-on: ubuntu-latest
         strategy:
             matrix:
@@ -52,21 +52,21 @@ jobs:
                   path: |
                       ~/go/pkg/mod
                       ~/.cache/go-build
-                  key: ${{ runner.os }}-go-${{ matrix.go-version }}-server-${{ hashFiles('server/src/go.sum') }}
+                  key: ${{ runner.os }}-go-${{ matrix.go-version }}-alerter-${{ hashFiles('alerter/src/go.sum') }}
                   restore-keys: |
-                      ${{ runner.os }}-go-${{ matrix.go-version }}-server-
+                      ${{ runner.os }}-go-${{ matrix.go-version }}-alerter-
 
             - name: Verify dependencies
-              working-directory: server/src
+              working-directory: alerter/src
               run: go mod verify
 
             - name: Download dependencies
-              working-directory: server/src
+              working-directory: alerter/src
               run: go mod download
 
-            - name: Lint server code
+            - name: Lint alerter code
               if: matrix.go-version == '1.24' && matrix.postgres-version == '18'
-              working-directory: server
+              working-directory: alerter
               run: |
                   go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
                   echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
@@ -74,12 +74,12 @@ jobs:
 
             - name: Run go vet
               if: matrix.go-version == '1.24' && matrix.postgres-version == '18'
-              working-directory: server/src
+              working-directory: alerter/src
               run: go vet ./...
 
             - name: Check formatting
               if: matrix.go-version == '1.24' && matrix.postgres-version == '18'
-              working-directory: server
+              working-directory: alerter
               run: |
                   gofmt -l ./src > /tmp/gofmt.out
                   if [ -s /tmp/gofmt.out ]; then
@@ -88,14 +88,14 @@ jobs:
                     exit 1
                   fi
 
-            - name: Build server
-              working-directory: server
+            - name: Build alerter
+              working-directory: alerter
               run: make build
 
             - name: Verify binary
               run: |
-                  ls -lh server/ai-dba-server
-                  file server/ai-dba-server
+                  ls -lh alerter/ai-dba-alerter
+                  file alerter/ai-dba-alerter
 
             - name: Wait for PostgreSQL
               run: |
@@ -105,14 +105,14 @@ jobs:
                   done
 
             - name: Run tests with coverage
-              working-directory: server
+              working-directory: alerter
               env:
                   TEST_AI_WORKBENCH_SERVER: postgres://postgres:postgres@localhost:5432/postgres
               run: make coverage
 
             - name: Generate coverage report
               if: matrix.go-version == '1.24' && matrix.postgres-version == '18'
-              working-directory: server/src
+              working-directory: alerter/src
               run: |
                   go tool cover -func=coverage.out
 
@@ -120,16 +120,16 @@ jobs:
               if: matrix.go-version == '1.24' && matrix.postgres-version == '18'
               uses: actions/upload-artifact@v4
               with:
-                  name: ai-dba-server-linux-amd64
-                  path: server/ai-dba-server
+                  name: ai-dba-alerter-linux-amd64
+                  path: alerter/ai-dba-alerter
                   retention-days: 7
 
             - name: Upload coverage artifact
               if: matrix.go-version == '1.24' && matrix.postgres-version == '18'
               uses: actions/upload-artifact@v4
               with:
-                  name: server-coverage
+                  name: alerter-coverage
                   path: |
-                      server/src/coverage.html
-                      server/src/coverage.out
+                      alerter/src/coverage.html
+                      alerter/src/coverage.out
                   retention-days: 7

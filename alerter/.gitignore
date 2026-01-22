@@ -1,5 +1,6 @@
 # Binaries
-ai-dba-alerter
+/ai-dba-alerter
+/ai-dba-alerter-*
 *.exe
 *.exe~
 *.dll

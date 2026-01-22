@@ -147,7 +147,7 @@ func main() {
 
 	fmt.Fprintf(os.Stderr, "Starting alerter engine...\n")
 
-	// Run the engine (blocks until context is cancelled)
+	// Run the engine (blocks until context is canceled)
 	if err := alerterEngine.Run(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: Engine error: %v\n", err)
 		os.Exit(1)

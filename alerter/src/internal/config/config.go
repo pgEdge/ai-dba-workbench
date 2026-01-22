@@ -72,10 +72,10 @@ type ThresholdConfig struct {
 
 // AnomalyConfig holds anomaly detection settings
 type AnomalyConfig struct {
-	Enabled bool         `yaml:"enabled"`
-	Tier1   Tier1Config  `yaml:"tier1"`
-	Tier2   Tier2Config  `yaml:"tier2"`
-	Tier3   Tier3Config  `yaml:"tier3"`
+	Enabled bool        `yaml:"enabled"`
+	Tier1   Tier1Config `yaml:"tier1"`
+	Tier2   Tier2Config `yaml:"tier2"`
+	Tier3   Tier3Config `yaml:"tier3"`
 }
 
 // Tier1Config holds Tier 1 statistical detection settings

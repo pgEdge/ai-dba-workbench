@@ -33,8 +33,7 @@ type Engine struct {
 	debug     bool
 
 	// Synchronization
-	mu       sync.RWMutex
-	stopOnce sync.Once
+	mu sync.RWMutex
 }
 
 // NewEngine creates a new alerter engine
@@ -46,7 +45,7 @@ func NewEngine(cfg *config.Config, datastore *database.Datastore, debug bool) *E
 	}
 }
 
-// Run starts the engine and runs until the context is cancelled
+// Run starts the engine and runs until the context is canceled
 func (e *Engine) Run(ctx context.Context) error {
 	e.log("Engine starting...")
 
@@ -278,7 +277,11 @@ func (e *Engine) evaluateRuleForAllConnections(ctx context.Context, rule *databa
 
 		// Check if there's a blackout active for this connection
 		connID := mv.ConnectionID
-		if active, _ := e.datastore.IsBlackoutActive(ctx, &connID, mv.DatabaseName); active {
+		active, err := e.datastore.IsBlackoutActive(ctx, &connID, mv.DatabaseName)
+		if err != nil {
+			e.debug_log("Error checking blackout for connection %d: %v", connID, err)
+		}
+		if active {
 			e.debug_log("Skipping rule %s for connection %d: blackout active", rule.Name, connID)
 			continue
 		}
@@ -353,17 +356,6 @@ func (e *Engine) triggerThresholdAlert(ctx context.Context, rule *database.Alert
 	if err := e.datastore.CreateAlert(ctx, alert); err != nil {
 		e.log("ERROR: Failed to create alert: %v", err)
 	}
-}
-
-// isBlackoutActive checks if any blackout is active for the given rule
-func (e *Engine) isBlackoutActive(ctx context.Context, rule *database.AlertRule) bool {
-	// Check global blackouts and connection-specific blackouts
-	active, err := e.datastore.IsBlackoutActive(ctx, nil, nil)
-	if err != nil {
-		e.log("ERROR: Failed to check blackout: %v", err)
-		return false
-	}
-	return active
 }
 
 // calculateBaselines recalculates metric baselines for anomaly detection
@@ -595,7 +587,10 @@ func (e *Engine) checkScheduledBlackouts(ctx context.Context) {
 		if e.cronMatches(schedule.CronExpression, now, schedule.Timezone) {
 			// Check if there's already an active blackout for this schedule
 			connID := schedule.ConnectionID
-			active, _ := e.datastore.IsBlackoutActive(ctx, connID, schedule.DatabaseName)
+			active, err := e.datastore.IsBlackoutActive(ctx, connID, schedule.DatabaseName)
+			if err != nil {
+				e.debug_log("Error checking blackout for schedule %s: %v", schedule.Name, err)
+			}
 			if active {
 				continue
 			}

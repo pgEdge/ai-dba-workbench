@@ -37,7 +37,10 @@ func NewDatastore(cfg *config.Config) (*Datastore, error) {
 	}
 
 	// Configure pool settings
-	poolConfig.MaxConns = int32(cfg.Pool.MaxConnections)
+	maxConns := cfg.Pool.MaxConnections
+	if maxConns > 0 && maxConns <= 32767 {
+		poolConfig.MaxConns = int32(maxConns)
+	}
 	poolConfig.MaxConnIdleTime = time.Duration(cfg.Pool.MaxIdleSeconds) * time.Second
 
 	// Create connection pool

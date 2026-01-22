@@ -174,13 +174,19 @@ func (p *PgHbaFileRulesProbe) hasDataChanged(ctx context.Context, datastoreConn 
 	}
 
 	// Get the most recent stored data for this connection
+	// Uses a subquery to get the latest collected_at timestamp, then retrieves
+	// all rows from that snapshot ordered by rule_number (matching the collection query)
 	query := `
         SELECT rule_number, file_name, line_number, type, database,
                user_name, address, netmask, auth_method, options, error
         FROM metrics.pg_hba_file_rules
         WHERE connection_id = $1
-        ORDER BY collected_at DESC, rule_number
-        LIMIT (SELECT COUNT(*) FROM pg_hba_file_rules)
+          AND collected_at = (
+              SELECT MAX(collected_at)
+              FROM metrics.pg_hba_file_rules
+              WHERE connection_id = $1
+          )
+        ORDER BY rule_number
     `
 
 	rows, err := datastoreConn.Query(ctx, query, connectionID)

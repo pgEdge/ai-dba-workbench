@@ -164,14 +164,20 @@ func (p *PgSettingsProbe) hasDataChanged(ctx context.Context, datastoreConn *pgx
 	}
 
 	// Get the most recent stored data for this connection
+	// Uses a subquery to get the latest collected_at timestamp, then retrieves
+	// all rows from that snapshot ordered by name (matching the collection query)
 	query := `
 		SELECT name, setting, unit, category, short_desc, extra_desc,
 		       context, vartype, source, min_val, max_val, enumvals,
 		       boot_val, reset_val, sourcefile, sourceline, pending_restart
 		FROM metrics.pg_settings
 		WHERE connection_id = $1
-		ORDER BY collected_at DESC
-		LIMIT (SELECT COUNT(*) FROM pg_settings)
+		  AND collected_at = (
+		      SELECT MAX(collected_at)
+		      FROM metrics.pg_settings
+		      WHERE connection_id = $1
+		  )
+		ORDER BY name
 	`
 
 	rows, err := datastoreConn.Query(ctx, query, connectionID)

@@ -191,13 +191,19 @@ func (p *PgIdentFileMappingsProbe) hasDataChanged(ctx context.Context, datastore
 	}
 
 	// Get the most recent stored data for this connection
+	// Uses a subquery to get the latest collected_at timestamp, then retrieves
+	// all rows from that snapshot ordered by map_number (matching the collection query)
 	query := `
         SELECT map_number, file_name, line_number, map_name,
                sys_name, pg_username, error
         FROM metrics.pg_ident_file_mappings
         WHERE connection_id = $1
-        ORDER BY collected_at DESC, map_number
-        LIMIT (SELECT COUNT(*) FROM pg_ident_file_mappings)
+          AND collected_at = (
+              SELECT MAX(collected_at)
+              FROM metrics.pg_ident_file_mappings
+              WHERE connection_id = $1
+          )
+        ORDER BY map_number
     `
 
 	rows, err := datastoreConn.Query(ctx, query, connectionID)

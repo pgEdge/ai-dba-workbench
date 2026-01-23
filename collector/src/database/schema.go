@@ -2105,7 +2105,7 @@ func (sm *SchemaManager) registerMigrations() {
 				connection_id INTEGER NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
 				database_name TEXT,
 				metric_name TEXT NOT NULL,
-				period_type TEXT NOT NULL CHECK (period_type IN ('hourly', 'daily', 'weekly')),
+				period_type TEXT NOT NULL CHECK (period_type IN ('all', 'hourly', 'daily', 'weekly')),
 				day_of_week INTEGER CHECK (day_of_week >= 0 AND day_of_week <= 6),
 				hour_of_day INTEGER CHECK (hour_of_day >= 0 AND hour_of_day <= 23),
 				mean REAL NOT NULL,
@@ -2113,14 +2113,13 @@ func (sm *SchemaManager) registerMigrations() {
 				min REAL NOT NULL,
 				max REAL NOT NULL,
 				sample_count BIGINT NOT NULL DEFAULT 0,
-				last_calculated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-				UNIQUE(connection_id, database_name, metric_name, period_type, day_of_week, hour_of_day)
+				last_calculated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 			);
 
 			COMMENT ON TABLE metric_baselines IS
 				'Statistical baselines for metrics used in anomaly detection';
 			COMMENT ON COLUMN metric_baselines.period_type IS
-				'Granularity of baseline: hourly, daily, or weekly';
+				'Granularity of baseline: all (global), hourly, daily, or weekly';
 			COMMENT ON COLUMN metric_baselines.day_of_week IS
 				'Day of week for weekly baselines (0=Sunday, 6=Saturday)';
 			COMMENT ON COLUMN metric_baselines.hour_of_day IS
@@ -2130,6 +2129,18 @@ func (sm *SchemaManager) registerMigrations() {
 				ON metric_baselines(connection_id);
 			CREATE INDEX IF NOT EXISTS idx_metric_baselines_metric
 				ON metric_baselines(metric_name);
+
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_metric_baselines_unique
+				ON metric_baselines(
+					connection_id,
+					COALESCE(database_name, ''),
+					metric_name,
+					period_type,
+					COALESCE(day_of_week, -1),
+					COALESCE(hour_of_day, -1)
+				);
+			COMMENT ON INDEX idx_metric_baselines_unique IS
+				'Unique index for baselines with NULL-safe handling for optional columns';
 		`)
 			if err != nil {
 				return fmt.Errorf("failed to create metric_baselines table: %w", err)
@@ -2993,6 +3004,56 @@ func (sm *SchemaManager) registerMigrations() {
 		`)
 			if err != nil {
 				return fmt.Errorf("failed to create notification_reminder_state table: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration #20: Fix metric_baselines constraints for baseline calculation
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     20,
+		Description: "Fix metric_baselines: allow 'all' period type and add NULL-safe unique index",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Drop the existing CHECK constraint and recreate with 'all' included
+			_, err := conn.Exec(ctx, `
+			ALTER TABLE metric_baselines
+				DROP CONSTRAINT IF EXISTS metric_baselines_period_type_check;
+
+			ALTER TABLE metric_baselines
+				ADD CONSTRAINT metric_baselines_period_type_check
+				CHECK (period_type IN ('all', 'hourly', 'daily', 'weekly'));
+
+			COMMENT ON COLUMN metric_baselines.period_type IS
+				'Granularity of baseline: all (global), hourly, daily, or weekly';
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to update metric_baselines period_type constraint: %w", err)
+			}
+
+			// Drop the existing unique constraint that doesn't handle NULLs properly
+			// and create a functional unique index that uses COALESCE for NULL handling
+			_, err = conn.Exec(ctx, `
+			ALTER TABLE metric_baselines
+				DROP CONSTRAINT IF EXISTS metric_baselines_connection_id_database_name_metric_name_pe_key;
+
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_metric_baselines_unique
+				ON metric_baselines(
+					connection_id,
+					COALESCE(database_name, ''),
+					metric_name,
+					period_type,
+					COALESCE(day_of_week, -1),
+					COALESCE(hour_of_day, -1)
+				);
+
+			COMMENT ON INDEX idx_metric_baselines_unique IS
+				'Unique index for baselines with NULL-safe handling for optional columns';
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to create NULL-safe unique index: %w", err)
 			}
 
 			return nil

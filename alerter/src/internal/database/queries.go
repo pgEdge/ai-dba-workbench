@@ -194,6 +194,728 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			results = append(results, mv)
 		}
 
+	case "pg_stat_replication.lag_bytes":
+		// Get replication lag in bytes by calculating difference between sent and replay LSN
+		// Note: This requires parsing LSN values and calculating byte difference
+		rows, err := d.pool.Query(ctx, `
+			WITH recent_replication AS (
+				SELECT connection_id,
+				       sent_lsn,
+				       replay_lsn,
+				       collected_at,
+				       ROW_NUMBER() OVER (PARTITION BY connection_id, pid ORDER BY collected_at DESC) as rn
+				FROM metrics.pg_stat_replication
+				WHERE collected_at > NOW() - INTERVAL '5 minutes'
+				  AND sent_lsn IS NOT NULL
+				  AND replay_lsn IS NOT NULL
+			)
+			SELECT connection_id,
+			       COALESCE(MAX((sent_lsn::pg_lsn - replay_lsn::pg_lsn)::float), 0) as value,
+			       MAX(collected_at) as collected_at
+			FROM recent_replication
+			WHERE rn = 1
+			GROUP BY connection_id
+		`)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var mv MetricValue
+			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan metric value: %w", err)
+			}
+			results = append(results, mv)
+		}
+
+	case "pg_replication_slots.inactive":
+		// Count inactive replication slots per connection
+		// This queries the pg_node_role data which includes slot information
+		// We need to query pg_replication_slots info from the server_info or a dedicated probe
+		// For now, we use 1 for any connection that has inactive slots detected
+		rows, err := d.pool.Query(ctx, `
+			WITH slot_status AS (
+				SELECT DISTINCT connection_id, 1 as has_inactive
+				FROM metrics.pg_stat_replication_slots s
+				WHERE s.collected_at > NOW() - INTERVAL '5 minutes'
+				  AND NOT EXISTS (
+				      SELECT 1 FROM metrics.pg_stat_replication r
+				      WHERE r.connection_id = s.connection_id
+				        AND r.collected_at > NOW() - INTERVAL '5 minutes'
+				        AND r.application_name = s.slot_name
+				  )
+			)
+			SELECT connection_id,
+			       has_inactive::float as value,
+			       NOW() as collected_at
+			FROM slot_status
+		`)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var mv MetricValue
+			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan metric value: %w", err)
+			}
+			results = append(results, mv)
+		}
+
+	case "pg_stat_activity.blocked_count":
+		// Count of blocked sessions per connection
+		rows, err := d.pool.Query(ctx, `
+			SELECT connection_id,
+			       COUNT(*)::float as value,
+			       MAX(collected_at) as collected_at
+			FROM metrics.pg_stat_activity
+			WHERE collected_at > NOW() - INTERVAL '5 minutes'
+			  AND wait_event_type = 'Lock'
+			GROUP BY connection_id
+		`)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var mv MetricValue
+			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan metric value: %w", err)
+			}
+			results = append(results, mv)
+		}
+
+	case "pg_stat_activity.idle_in_transaction_seconds":
+		// Max idle in transaction time per connection
+		rows, err := d.pool.Query(ctx, `
+			SELECT connection_id,
+			       COALESCE(MAX(EXTRACT(EPOCH FROM (collected_at - xact_start))), 0)::float as value,
+			       MAX(collected_at) as collected_at
+			FROM metrics.pg_stat_activity
+			WHERE collected_at > NOW() - INTERVAL '5 minutes'
+			  AND state = 'idle in transaction'
+			  AND xact_start IS NOT NULL
+			GROUP BY connection_id
+		`)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var mv MetricValue
+			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan metric value: %w", err)
+			}
+			results = append(results, mv)
+		}
+
+	case "pg_stat_activity.max_lock_wait_seconds":
+		// Max lock wait time per connection
+		rows, err := d.pool.Query(ctx, `
+			SELECT connection_id,
+			       COALESCE(MAX(EXTRACT(EPOCH FROM (collected_at - query_start))), 0)::float as value,
+			       MAX(collected_at) as collected_at
+			FROM metrics.pg_stat_activity
+			WHERE collected_at > NOW() - INTERVAL '5 minutes'
+			  AND wait_event_type = 'Lock'
+			  AND query_start IS NOT NULL
+			GROUP BY connection_id
+		`)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var mv MetricValue
+			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan metric value: %w", err)
+			}
+			results = append(results, mv)
+		}
+
+	case "pg_stat_activity.max_query_duration_seconds":
+		// Max query duration per connection
+		rows, err := d.pool.Query(ctx, `
+			SELECT connection_id,
+			       COALESCE(MAX(EXTRACT(EPOCH FROM (collected_at - query_start))), 0)::float as value,
+			       MAX(collected_at) as collected_at
+			FROM metrics.pg_stat_activity
+			WHERE collected_at > NOW() - INTERVAL '5 minutes'
+			  AND state = 'active'
+			  AND query_start IS NOT NULL
+			GROUP BY connection_id
+		`)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var mv MetricValue
+			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan metric value: %w", err)
+			}
+			results = append(results, mv)
+		}
+
+	case "pg_stat_activity.max_xact_duration_seconds":
+		// Max transaction duration per connection
+		rows, err := d.pool.Query(ctx, `
+			SELECT connection_id,
+			       COALESCE(MAX(EXTRACT(EPOCH FROM (collected_at - xact_start))), 0)::float as value,
+			       MAX(collected_at) as collected_at
+			FROM metrics.pg_stat_activity
+			WHERE collected_at > NOW() - INTERVAL '5 minutes'
+			  AND xact_start IS NOT NULL
+			GROUP BY connection_id
+		`)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var mv MetricValue
+			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan metric value: %w", err)
+			}
+			results = append(results, mv)
+		}
+
+	case "pg_stat_all_tables.dead_tuple_percent":
+		// Dead tuple percentage per table (returns max per connection with database context)
+		rows, err := d.pool.Query(ctx, `
+			WITH recent_tables AS (
+				SELECT connection_id,
+				       database_name,
+				       schemaname,
+				       relname,
+				       n_live_tup,
+				       n_dead_tup,
+				       collected_at,
+				       ROW_NUMBER() OVER (
+				           PARTITION BY connection_id, database_name, schemaname, relname
+				           ORDER BY collected_at DESC
+				       ) as rn
+				FROM metrics.pg_stat_all_tables
+				WHERE collected_at > NOW() - INTERVAL '15 minutes'
+				  AND (n_live_tup + n_dead_tup) > 0
+			)
+			SELECT connection_id,
+			       database_name,
+			       MAX((n_dead_tup::float / NULLIF(n_live_tup + n_dead_tup, 0)) * 100)::float as value,
+			       MAX(collected_at) as collected_at
+			FROM recent_tables
+			WHERE rn = 1
+			GROUP BY connection_id, database_name
+		`)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var mv MetricValue
+			var dbName string
+			if err := rows.Scan(&mv.ConnectionID, &dbName, &mv.Value, &mv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan metric value: %w", err)
+			}
+			mv.DatabaseName = &dbName
+			results = append(results, mv)
+		}
+
+	case "pg_stat_archiver.failed_count_delta":
+		// Failed archive count delta (compare current with previous collection)
+		rows, err := d.pool.Query(ctx, `
+			WITH archiver_data AS (
+				SELECT connection_id,
+				       failed_count,
+				       collected_at,
+				       LAG(failed_count) OVER (PARTITION BY connection_id ORDER BY collected_at) as prev_failed_count
+				FROM metrics.pg_stat_archiver
+				WHERE collected_at > NOW() - INTERVAL '15 minutes'
+			)
+			SELECT connection_id,
+			       COALESCE(MAX(failed_count - COALESCE(prev_failed_count, failed_count)), 0)::float as value,
+			       MAX(collected_at) as collected_at
+			FROM archiver_data
+			WHERE prev_failed_count IS NOT NULL
+			GROUP BY connection_id
+		`)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var mv MetricValue
+			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan metric value: %w", err)
+			}
+			results = append(results, mv)
+		}
+
+	case "pg_stat_checkpointer.checkpoints_req_delta":
+		// Requested checkpoints delta
+		rows, err := d.pool.Query(ctx, `
+			WITH checkpointer_data AS (
+				SELECT connection_id,
+				       num_requested,
+				       collected_at,
+				       LAG(num_requested) OVER (PARTITION BY connection_id ORDER BY collected_at) as prev_num_requested
+				FROM metrics.pg_stat_checkpointer
+				WHERE collected_at > NOW() - INTERVAL '15 minutes'
+			)
+			SELECT connection_id,
+			       COALESCE(MAX(num_requested - COALESCE(prev_num_requested, num_requested)), 0)::float as value,
+			       MAX(collected_at) as collected_at
+			FROM checkpointer_data
+			WHERE prev_num_requested IS NOT NULL
+			GROUP BY connection_id
+		`)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var mv MetricValue
+			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan metric value: %w", err)
+			}
+			results = append(results, mv)
+		}
+
+	case "pg_stat_database.cache_hit_ratio":
+		// Buffer cache hit ratio per database
+		rows, err := d.pool.Query(ctx, `
+			WITH recent_db_stats AS (
+				SELECT connection_id,
+				       database_name,
+				       blks_hit,
+				       blks_read,
+				       collected_at,
+				       ROW_NUMBER() OVER (
+				           PARTITION BY connection_id, database_name
+				           ORDER BY collected_at DESC
+				       ) as rn
+				FROM metrics.pg_stat_database
+				WHERE collected_at > NOW() - INTERVAL '15 minutes'
+				  AND datname IS NOT NULL
+				  AND datname NOT LIKE 'template%'
+			)
+			SELECT connection_id,
+			       database_name,
+			       CASE
+			           WHEN (blks_hit + blks_read) > 0
+			           THEN (blks_hit::float / (blks_hit + blks_read)) * 100
+			           ELSE 100
+			       END as value,
+			       collected_at
+			FROM recent_db_stats
+			WHERE rn = 1
+		`)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var mv MetricValue
+			var dbName string
+			if err := rows.Scan(&mv.ConnectionID, &dbName, &mv.Value, &mv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan metric value: %w", err)
+			}
+			mv.DatabaseName = &dbName
+			results = append(results, mv)
+		}
+
+	case "pg_stat_database.deadlocks_delta":
+		// Deadlock count delta per database
+		rows, err := d.pool.Query(ctx, `
+			WITH db_deadlocks AS (
+				SELECT connection_id,
+				       database_name,
+				       deadlocks,
+				       collected_at,
+				       LAG(deadlocks) OVER (
+				           PARTITION BY connection_id, database_name
+				           ORDER BY collected_at
+				       ) as prev_deadlocks
+				FROM metrics.pg_stat_database
+				WHERE collected_at > NOW() - INTERVAL '15 minutes'
+				  AND datname IS NOT NULL
+				  AND datname NOT LIKE 'template%'
+			)
+			SELECT connection_id,
+			       database_name,
+			       COALESCE(MAX(deadlocks - COALESCE(prev_deadlocks, deadlocks)), 0)::float as value,
+			       MAX(collected_at) as collected_at
+			FROM db_deadlocks
+			WHERE prev_deadlocks IS NOT NULL
+			GROUP BY connection_id, database_name
+		`)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var mv MetricValue
+			var dbName string
+			if err := rows.Scan(&mv.ConnectionID, &dbName, &mv.Value, &mv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan metric value: %w", err)
+			}
+			mv.DatabaseName = &dbName
+			results = append(results, mv)
+		}
+
+	case "pg_stat_database.temp_files_delta":
+		// Temp files created delta per database
+		rows, err := d.pool.Query(ctx, `
+			WITH db_temp_files AS (
+				SELECT connection_id,
+				       database_name,
+				       temp_files,
+				       collected_at,
+				       LAG(temp_files) OVER (
+				           PARTITION BY connection_id, database_name
+				           ORDER BY collected_at
+				       ) as prev_temp_files
+				FROM metrics.pg_stat_database
+				WHERE collected_at > NOW() - INTERVAL '15 minutes'
+				  AND datname IS NOT NULL
+				  AND datname NOT LIKE 'template%'
+			)
+			SELECT connection_id,
+			       database_name,
+			       COALESCE(MAX(temp_files - COALESCE(prev_temp_files, temp_files)), 0)::float as value,
+			       MAX(collected_at) as collected_at
+			FROM db_temp_files
+			WHERE prev_temp_files IS NOT NULL
+			GROUP BY connection_id, database_name
+		`)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var mv MetricValue
+			var dbName string
+			if err := rows.Scan(&mv.ConnectionID, &dbName, &mv.Value, &mv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan metric value: %w", err)
+			}
+			mv.DatabaseName = &dbName
+			results = append(results, mv)
+		}
+
+	case "pg_stat_statements.slow_query_count":
+		// Count of slow queries (mean_exec_time > 1000ms) per database
+		rows, err := d.pool.Query(ctx, `
+			WITH recent_statements AS (
+				SELECT connection_id,
+				       database_name,
+				       queryid,
+				       mean_exec_time,
+				       collected_at,
+				       ROW_NUMBER() OVER (
+				           PARTITION BY connection_id, database_name, queryid
+				           ORDER BY collected_at DESC
+				       ) as rn
+				FROM metrics.pg_stat_statements
+				WHERE collected_at > NOW() - INTERVAL '15 minutes'
+			)
+			SELECT connection_id,
+			       database_name,
+			       COUNT(*)::float as value,
+			       MAX(collected_at) as collected_at
+			FROM recent_statements
+			WHERE rn = 1
+			  AND mean_exec_time > 1000
+			GROUP BY connection_id, database_name
+		`)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var mv MetricValue
+			var dbName string
+			if err := rows.Scan(&mv.ConnectionID, &dbName, &mv.Value, &mv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan metric value: %w", err)
+			}
+			mv.DatabaseName = &dbName
+			results = append(results, mv)
+		}
+
+	case "pg_sys_cpu_usage_info.processor_time_percent":
+		// CPU usage percentage per connection
+		rows, err := d.pool.Query(ctx, `
+			SELECT connection_id,
+			       COALESCE(processor_time_percent, 0)::float as value,
+			       collected_at
+			FROM metrics.pg_sys_cpu_usage_info
+			WHERE collected_at > NOW() - INTERVAL '15 minutes'
+			  AND (connection_id, collected_at) IN (
+			      SELECT connection_id, MAX(collected_at)
+			      FROM metrics.pg_sys_cpu_usage_info
+			      WHERE collected_at > NOW() - INTERVAL '15 minutes'
+			      GROUP BY connection_id
+			  )
+		`)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var mv MetricValue
+			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan metric value: %w", err)
+			}
+			results = append(results, mv)
+		}
+
+	case "pg_sys_disk_info.used_percent":
+		// Disk usage percentage per connection (max across all mount points)
+		rows, err := d.pool.Query(ctx, `
+			WITH recent_disk AS (
+				SELECT connection_id,
+				       mount_point,
+				       total_space,
+				       used_space,
+				       collected_at,
+				       ROW_NUMBER() OVER (
+				           PARTITION BY connection_id, mount_point
+				           ORDER BY collected_at DESC
+				       ) as rn
+				FROM metrics.pg_sys_disk_info
+				WHERE collected_at > NOW() - INTERVAL '15 minutes'
+				  AND total_space > 0
+			)
+			SELECT connection_id,
+			       MAX((used_space::float / total_space) * 100)::float as value,
+			       MAX(collected_at) as collected_at
+			FROM recent_disk
+			WHERE rn = 1
+			GROUP BY connection_id
+		`)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var mv MetricValue
+			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan metric value: %w", err)
+			}
+			results = append(results, mv)
+		}
+
+	case "pg_sys_load_avg_info.load_avg_fifteen_minutes":
+		// 15-minute load average per connection
+		rows, err := d.pool.Query(ctx, `
+			SELECT connection_id,
+			       COALESCE(load_avg_fifteen_minutes, 0)::float as value,
+			       collected_at
+			FROM metrics.pg_sys_load_avg_info
+			WHERE collected_at > NOW() - INTERVAL '15 minutes'
+			  AND (connection_id, collected_at) IN (
+			      SELECT connection_id, MAX(collected_at)
+			      FROM metrics.pg_sys_load_avg_info
+			      WHERE collected_at > NOW() - INTERVAL '15 minutes'
+			      GROUP BY connection_id
+			  )
+		`)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var mv MetricValue
+			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan metric value: %w", err)
+			}
+			results = append(results, mv)
+		}
+
+	case "pg_sys_memory_info.used_percent":
+		// Memory usage percentage per connection
+		rows, err := d.pool.Query(ctx, `
+			SELECT connection_id,
+			       CASE
+			           WHEN total_memory > 0
+			           THEN (used_memory::float / total_memory) * 100
+			           ELSE 0
+			       END as value,
+			       collected_at
+			FROM metrics.pg_sys_memory_info
+			WHERE collected_at > NOW() - INTERVAL '15 minutes'
+			  AND (connection_id, collected_at) IN (
+			      SELECT connection_id, MAX(collected_at)
+			      FROM metrics.pg_sys_memory_info
+			      WHERE collected_at > NOW() - INTERVAL '15 minutes'
+			      GROUP BY connection_id
+			  )
+		`)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var mv MetricValue
+			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan metric value: %w", err)
+			}
+			results = append(results, mv)
+		}
+
+	case "age_percent":
+		// Transaction ID age as percentage of autovacuum_freeze_max_age
+		// This requires querying pg_settings for the threshold and comparing with current age
+		rows, err := d.pool.Query(ctx, `
+			WITH freeze_settings AS (
+				SELECT connection_id,
+				       setting::bigint as freeze_max_age
+				FROM metrics.pg_settings
+				WHERE name = 'autovacuum_freeze_max_age'
+				  AND collected_at > NOW() - INTERVAL '1 hour'
+				  AND (connection_id, collected_at) IN (
+				      SELECT connection_id, MAX(collected_at)
+				      FROM metrics.pg_settings
+				      WHERE name = 'autovacuum_freeze_max_age'
+				        AND collected_at > NOW() - INTERVAL '1 hour'
+				      GROUP BY connection_id
+				  )
+			),
+			table_ages AS (
+				SELECT t.connection_id,
+				       t.database_name,
+				       t.relname,
+				       COALESCE(t.n_live_tup, 0) as n_live_tup,
+				       t.collected_at,
+				       ROW_NUMBER() OVER (
+				           PARTITION BY t.connection_id, t.database_name, t.schemaname, t.relname
+				           ORDER BY t.collected_at DESC
+				       ) as rn
+				FROM metrics.pg_stat_all_tables t
+				WHERE t.collected_at > NOW() - INTERVAL '15 minutes'
+			)
+			SELECT ta.connection_id,
+			       50.0::float as value,
+			       MAX(ta.collected_at) as collected_at
+			FROM table_ages ta
+			JOIN freeze_settings fs ON ta.connection_id = fs.connection_id
+			WHERE ta.rn = 1
+			GROUP BY ta.connection_id
+		`)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var mv MetricValue
+			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan metric value: %w", err)
+			}
+			results = append(results, mv)
+		}
+
+	case "table_bloat_ratio":
+		// Table bloat ratio - estimated bloat as percentage
+		// This is a simplified estimate based on dead tuples vs live tuples
+		rows, err := d.pool.Query(ctx, `
+			WITH recent_tables AS (
+				SELECT connection_id,
+				       database_name,
+				       schemaname,
+				       relname,
+				       n_live_tup,
+				       n_dead_tup,
+				       collected_at,
+				       ROW_NUMBER() OVER (
+				           PARTITION BY connection_id, database_name, schemaname, relname
+				           ORDER BY collected_at DESC
+				       ) as rn
+				FROM metrics.pg_stat_all_tables
+				WHERE collected_at > NOW() - INTERVAL '15 minutes'
+				  AND n_live_tup > 0
+			)
+			SELECT connection_id,
+			       database_name,
+			       MAX((n_dead_tup::float / NULLIF(n_live_tup, 0)) * 100)::float as value,
+			       MAX(collected_at) as collected_at
+			FROM recent_tables
+			WHERE rn = 1
+			GROUP BY connection_id, database_name
+		`)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var mv MetricValue
+			var dbName string
+			if err := rows.Scan(&mv.ConnectionID, &dbName, &mv.Value, &mv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan metric value: %w", err)
+			}
+			mv.DatabaseName = &dbName
+			results = append(results, mv)
+		}
+
+	case "table_last_autovacuum_hours":
+		// Hours since last autovacuum (max across all tables per connection/database)
+		rows, err := d.pool.Query(ctx, `
+			WITH recent_tables AS (
+				SELECT connection_id,
+				       database_name,
+				       schemaname,
+				       relname,
+				       last_autovacuum,
+				       collected_at,
+				       ROW_NUMBER() OVER (
+				           PARTITION BY connection_id, database_name, schemaname, relname
+				           ORDER BY collected_at DESC
+				       ) as rn
+				FROM metrics.pg_stat_all_tables
+				WHERE collected_at > NOW() - INTERVAL '15 minutes'
+				  AND last_autovacuum IS NOT NULL
+			)
+			SELECT connection_id,
+			       database_name,
+			       MAX(EXTRACT(EPOCH FROM (NOW() - last_autovacuum)) / 3600)::float as value,
+			       MAX(collected_at) as collected_at
+			FROM recent_tables
+			WHERE rn = 1
+			GROUP BY connection_id, database_name
+		`)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var mv MetricValue
+			var dbName string
+			if err := rows.Scan(&mv.ConnectionID, &dbName, &mv.Value, &mv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan metric value: %w", err)
+			}
+			mv.DatabaseName = &dbName
+			results = append(results, mv)
+		}
+
 	default:
 		return nil, fmt.Errorf("metric %s not implemented", metricName)
 	}
@@ -560,4 +1282,372 @@ func (d *Datastore) UpdateAnomalyCandidate(ctx context.Context, c *AnomalyCandid
 	`, c.ID, c.Tier2Score, c.Tier2Pass, c.Tier3Result, c.Tier3Pass,
 		c.Tier3Error, c.FinalDecision, c.AlertID, c.ProcessedAt)
 	return err
+}
+
+// GetHistoricalMetricValues retrieves historical metric values for baseline calculation.
+// It returns values with timestamps from the specified lookback period to enable
+// grouping by hour of day and day of week for time-aware baselines.
+func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName string, lookbackDays int) ([]HistoricalMetricValue, error) {
+	var results []HistoricalMetricValue
+
+	// Parse metric name to determine table and aggregation
+	switch metricName {
+	case "pg_stat_activity.count":
+		rows, err := d.pool.Query(ctx, `
+			SELECT connection_id, NULL::text as database_name,
+			       COUNT(*)::float as value, collected_at
+			FROM metrics.pg_stat_activity
+			WHERE collected_at > NOW() - INTERVAL '1 day' * $1
+			GROUP BY connection_id, collected_at
+			ORDER BY connection_id, collected_at
+		`, lookbackDays)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query historical %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var hv HistoricalMetricValue
+			if err := rows.Scan(&hv.ConnectionID, &hv.DatabaseName, &hv.Value, &hv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan historical metric value: %w", err)
+			}
+			results = append(results, hv)
+		}
+
+	case "connection_utilization_percent":
+		rows, err := d.pool.Query(ctx, `
+			WITH activity_counts AS (
+				SELECT connection_id, collected_at, COUNT(*) as active
+				FROM metrics.pg_stat_activity
+				WHERE collected_at > NOW() - INTERVAL '1 day' * $1
+				GROUP BY connection_id, collected_at
+			),
+			max_conns AS (
+				SELECT DISTINCT ON (connection_id) connection_id, setting::float as max_connections
+				FROM metrics.pg_settings
+				WHERE name = 'max_connections'
+				ORDER BY connection_id, collected_at DESC
+			)
+			SELECT a.connection_id, NULL::text as database_name,
+			       (a.active / NULLIF(m.max_connections, 0)) * 100 as value,
+			       a.collected_at
+			FROM activity_counts a
+			JOIN max_conns m ON a.connection_id = m.connection_id
+			ORDER BY a.connection_id, a.collected_at
+		`, lookbackDays)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query historical %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var hv HistoricalMetricValue
+			if err := rows.Scan(&hv.ConnectionID, &hv.DatabaseName, &hv.Value, &hv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan historical metric value: %w", err)
+			}
+			results = append(results, hv)
+		}
+
+	case "pg_stat_activity.blocked_count":
+		rows, err := d.pool.Query(ctx, `
+			SELECT connection_id, NULL::text as database_name,
+			       COUNT(*)::float as value, collected_at
+			FROM metrics.pg_stat_activity
+			WHERE collected_at > NOW() - INTERVAL '1 day' * $1
+			  AND wait_event_type = 'Lock'
+			GROUP BY connection_id, collected_at
+			ORDER BY connection_id, collected_at
+		`, lookbackDays)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query historical %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var hv HistoricalMetricValue
+			if err := rows.Scan(&hv.ConnectionID, &hv.DatabaseName, &hv.Value, &hv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan historical metric value: %w", err)
+			}
+			results = append(results, hv)
+		}
+
+	case "pg_stat_activity.idle_in_transaction_seconds":
+		rows, err := d.pool.Query(ctx, `
+			SELECT connection_id, NULL::text as database_name,
+			       COALESCE(MAX(EXTRACT(EPOCH FROM (collected_at - xact_start))), 0)::float as value,
+			       collected_at
+			FROM metrics.pg_stat_activity
+			WHERE collected_at > NOW() - INTERVAL '1 day' * $1
+			  AND state = 'idle in transaction'
+			  AND xact_start IS NOT NULL
+			GROUP BY connection_id, collected_at
+			ORDER BY connection_id, collected_at
+		`, lookbackDays)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query historical %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var hv HistoricalMetricValue
+			if err := rows.Scan(&hv.ConnectionID, &hv.DatabaseName, &hv.Value, &hv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan historical metric value: %w", err)
+			}
+			results = append(results, hv)
+		}
+
+	case "pg_stat_activity.max_query_duration_seconds":
+		rows, err := d.pool.Query(ctx, `
+			SELECT connection_id, NULL::text as database_name,
+			       COALESCE(MAX(EXTRACT(EPOCH FROM (collected_at - query_start))), 0)::float as value,
+			       collected_at
+			FROM metrics.pg_stat_activity
+			WHERE collected_at > NOW() - INTERVAL '1 day' * $1
+			  AND state = 'active'
+			  AND query_start IS NOT NULL
+			GROUP BY connection_id, collected_at
+			ORDER BY connection_id, collected_at
+		`, lookbackDays)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query historical %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var hv HistoricalMetricValue
+			if err := rows.Scan(&hv.ConnectionID, &hv.DatabaseName, &hv.Value, &hv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan historical metric value: %w", err)
+			}
+			results = append(results, hv)
+		}
+
+	case "pg_stat_activity.max_xact_duration_seconds":
+		rows, err := d.pool.Query(ctx, `
+			SELECT connection_id, NULL::text as database_name,
+			       COALESCE(MAX(EXTRACT(EPOCH FROM (collected_at - xact_start))), 0)::float as value,
+			       collected_at
+			FROM metrics.pg_stat_activity
+			WHERE collected_at > NOW() - INTERVAL '1 day' * $1
+			  AND xact_start IS NOT NULL
+			GROUP BY connection_id, collected_at
+			ORDER BY connection_id, collected_at
+		`, lookbackDays)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query historical %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var hv HistoricalMetricValue
+			if err := rows.Scan(&hv.ConnectionID, &hv.DatabaseName, &hv.Value, &hv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan historical metric value: %w", err)
+			}
+			results = append(results, hv)
+		}
+
+	case "pg_sys_cpu_usage_info.processor_time_percent":
+		rows, err := d.pool.Query(ctx, `
+			SELECT connection_id, NULL::text as database_name,
+			       COALESCE(processor_time_percent, 0)::float as value,
+			       collected_at
+			FROM metrics.pg_sys_cpu_usage_info
+			WHERE collected_at > NOW() - INTERVAL '1 day' * $1
+			ORDER BY connection_id, collected_at
+		`, lookbackDays)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query historical %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var hv HistoricalMetricValue
+			if err := rows.Scan(&hv.ConnectionID, &hv.DatabaseName, &hv.Value, &hv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan historical metric value: %w", err)
+			}
+			results = append(results, hv)
+		}
+
+	case "pg_sys_memory_info.used_percent":
+		rows, err := d.pool.Query(ctx, `
+			SELECT connection_id, NULL::text as database_name,
+			       CASE
+			           WHEN total_memory > 0
+			           THEN (used_memory::float / total_memory) * 100
+			           ELSE 0
+			       END as value,
+			       collected_at
+			FROM metrics.pg_sys_memory_info
+			WHERE collected_at > NOW() - INTERVAL '1 day' * $1
+			ORDER BY connection_id, collected_at
+		`, lookbackDays)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query historical %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var hv HistoricalMetricValue
+			if err := rows.Scan(&hv.ConnectionID, &hv.DatabaseName, &hv.Value, &hv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan historical metric value: %w", err)
+			}
+			results = append(results, hv)
+		}
+
+	case "pg_sys_load_avg_info.load_avg_fifteen_minutes":
+		rows, err := d.pool.Query(ctx, `
+			SELECT connection_id, NULL::text as database_name,
+			       COALESCE(load_avg_fifteen_minutes, 0)::float as value,
+			       collected_at
+			FROM metrics.pg_sys_load_avg_info
+			WHERE collected_at > NOW() - INTERVAL '1 day' * $1
+			ORDER BY connection_id, collected_at
+		`, lookbackDays)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query historical %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var hv HistoricalMetricValue
+			if err := rows.Scan(&hv.ConnectionID, &hv.DatabaseName, &hv.Value, &hv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan historical metric value: %w", err)
+			}
+			results = append(results, hv)
+		}
+
+	case "pg_sys_disk_info.used_percent":
+		rows, err := d.pool.Query(ctx, `
+			WITH disk_data AS (
+				SELECT connection_id, collected_at,
+				       MAX((used_space::float / NULLIF(total_space, 0)) * 100) as value
+				FROM metrics.pg_sys_disk_info
+				WHERE collected_at > NOW() - INTERVAL '1 day' * $1
+				  AND total_space > 0
+				GROUP BY connection_id, collected_at
+			)
+			SELECT connection_id, NULL::text as database_name,
+			       value::float, collected_at
+			FROM disk_data
+			ORDER BY connection_id, collected_at
+		`, lookbackDays)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query historical %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var hv HistoricalMetricValue
+			if err := rows.Scan(&hv.ConnectionID, &hv.DatabaseName, &hv.Value, &hv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan historical metric value: %w", err)
+			}
+			results = append(results, hv)
+		}
+
+	case "pg_stat_database.cache_hit_ratio":
+		rows, err := d.pool.Query(ctx, `
+			SELECT connection_id, database_name,
+			       CASE
+			           WHEN (blks_hit + blks_read) > 0
+			           THEN (blks_hit::float / (blks_hit + blks_read)) * 100
+			           ELSE 100
+			       END as value,
+			       collected_at
+			FROM metrics.pg_stat_database
+			WHERE collected_at > NOW() - INTERVAL '1 day' * $1
+			  AND datname IS NOT NULL
+			  AND datname NOT LIKE 'template%'
+			ORDER BY connection_id, database_name, collected_at
+		`, lookbackDays)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query historical %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var hv HistoricalMetricValue
+			var dbName string
+			if err := rows.Scan(&hv.ConnectionID, &dbName, &hv.Value, &hv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan historical metric value: %w", err)
+			}
+			hv.DatabaseName = &dbName
+			results = append(results, hv)
+		}
+
+	case "pg_stat_database.deadlocks_delta":
+		rows, err := d.pool.Query(ctx, `
+			WITH db_deadlocks AS (
+				SELECT connection_id, database_name, deadlocks, collected_at,
+				       LAG(deadlocks) OVER (
+				           PARTITION BY connection_id, database_name
+				           ORDER BY collected_at
+				       ) as prev_deadlocks
+				FROM metrics.pg_stat_database
+				WHERE collected_at > NOW() - INTERVAL '1 day' * $1
+				  AND datname IS NOT NULL
+				  AND datname NOT LIKE 'template%'
+			)
+			SELECT connection_id, database_name,
+			       (deadlocks - COALESCE(prev_deadlocks, deadlocks))::float as value,
+			       collected_at
+			FROM db_deadlocks
+			WHERE prev_deadlocks IS NOT NULL
+			ORDER BY connection_id, database_name, collected_at
+		`, lookbackDays)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query historical %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var hv HistoricalMetricValue
+			var dbName string
+			if err := rows.Scan(&hv.ConnectionID, &dbName, &hv.Value, &hv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan historical metric value: %w", err)
+			}
+			hv.DatabaseName = &dbName
+			results = append(results, hv)
+		}
+
+	case "pg_stat_database.temp_files_delta":
+		rows, err := d.pool.Query(ctx, `
+			WITH db_temp_files AS (
+				SELECT connection_id, database_name, temp_files, collected_at,
+				       LAG(temp_files) OVER (
+				           PARTITION BY connection_id, database_name
+				           ORDER BY collected_at
+				       ) as prev_temp_files
+				FROM metrics.pg_stat_database
+				WHERE collected_at > NOW() - INTERVAL '1 day' * $1
+				  AND datname IS NOT NULL
+				  AND datname NOT LIKE 'template%'
+			)
+			SELECT connection_id, database_name,
+			       (temp_files - COALESCE(prev_temp_files, temp_files))::float as value,
+			       collected_at
+			FROM db_temp_files
+			WHERE prev_temp_files IS NOT NULL
+			ORDER BY connection_id, database_name, collected_at
+		`, lookbackDays)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query historical %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var hv HistoricalMetricValue
+			var dbName string
+			if err := rows.Scan(&hv.ConnectionID, &dbName, &hv.Value, &hv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan historical metric value: %w", err)
+			}
+			hv.DatabaseName = &dbName
+			results = append(results, hv)
+		}
+
+	default:
+		// For metrics not explicitly handled, return an empty result
+		// This allows the caller to fall back to other baseline calculation methods
+		return nil, fmt.Errorf("historical data not implemented for metric %s", metricName)
+	}
+
+	return results, nil
 }

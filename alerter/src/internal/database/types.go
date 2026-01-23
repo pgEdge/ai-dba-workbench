@@ -207,3 +207,11 @@ type AlertListResult struct {
 	Alerts []Alert `json:"alerts"`
 	Total  int64   `json:"total"`
 }
+
+// HistoricalMetricValue represents a metric value with timestamp for baseline calculation
+type HistoricalMetricValue struct {
+	ConnectionID int
+	DatabaseName *string
+	Value        float64
+	CollectedAt  time.Time
+}

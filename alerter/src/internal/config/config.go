@@ -104,6 +104,7 @@ type Tier3Config struct {
 // BaselineConfig holds baseline calculation settings
 type BaselineConfig struct {
 	RefreshIntervalSeconds int `yaml:"refresh_interval_seconds"`
+	LookbackDays           int `yaml:"lookback_days"`
 }
 
 // CorrelationConfig holds correlation detection settings
@@ -220,6 +221,7 @@ func NewConfig() *Config {
 		},
 		Baselines: BaselineConfig{
 			RefreshIntervalSeconds: 3600,
+			LookbackDays:           7,
 		},
 		Correlation: CorrelationConfig{
 			WindowSeconds: 120,

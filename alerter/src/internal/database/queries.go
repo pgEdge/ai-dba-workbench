@@ -1651,3 +1651,124 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 
 	return results, nil
 }
+
+// SimilarAnomaly represents a past anomaly found by similarity search
+type SimilarAnomaly struct {
+	CandidateID   int64
+	Similarity    float64
+	FinalDecision *string
+	MetricName    string
+	Context       string
+}
+
+// StoreAnomalyEmbedding stores an embedding for an anomaly candidate
+func (d *Datastore) StoreAnomalyEmbedding(ctx context.Context, candidateID int64, embedding []float32, modelName string) error {
+	// Convert []float32 to PostgreSQL vector format
+	vectorStr := float32SliceToVectorString(embedding)
+
+	_, err := d.pool.Exec(ctx, `
+		INSERT INTO anomaly_embeddings (candidate_id, embedding, model_name)
+		VALUES ($1, $2::vector, $3)
+		ON CONFLICT (candidate_id) DO UPDATE
+		SET embedding = $2::vector, model_name = $3, created_at = CURRENT_TIMESTAMP
+	`, candidateID, vectorStr, modelName)
+
+	if err != nil {
+		return fmt.Errorf("failed to store embedding: %w", err)
+	}
+
+	// Update the anomaly_candidates.embedding_id reference
+	_, err = d.pool.Exec(ctx, `
+		UPDATE anomaly_candidates
+		SET embedding_id = (SELECT id FROM anomaly_embeddings WHERE candidate_id = $1)
+		WHERE id = $1
+	`, candidateID)
+
+	if err != nil {
+		return fmt.Errorf("failed to update embedding reference: %w", err)
+	}
+
+	return nil
+}
+
+// FindSimilarAnomalies finds past anomalies similar to the given embedding
+// Returns candidates with similarity scores above threshold, excluding the current candidate
+func (d *Datastore) FindSimilarAnomalies(ctx context.Context, embedding []float32, excludeCandidateID int64, threshold float64, limit int) ([]*SimilarAnomaly, error) {
+	// Convert []float32 to PostgreSQL vector format
+	vectorStr := float32SliceToVectorString(embedding)
+
+	rows, err := d.pool.Query(ctx, `
+		SELECT
+			c.id,
+			1 - (e.embedding <=> $1::vector) as similarity,
+			c.final_decision,
+			c.metric_name,
+			c.context
+		FROM anomaly_embeddings e
+		JOIN anomaly_candidates c ON e.candidate_id = c.id
+		WHERE c.id != $2
+		  AND c.processed_at IS NOT NULL
+		  AND c.final_decision IS NOT NULL
+		  AND 1 - (e.embedding <=> $1::vector) >= $3
+		ORDER BY similarity DESC
+		LIMIT $4
+	`, vectorStr, excludeCandidateID, threshold, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find similar anomalies: %w", err)
+	}
+	defer rows.Close()
+
+	var results []*SimilarAnomaly
+	for rows.Next() {
+		var sa SimilarAnomaly
+		err := rows.Scan(&sa.CandidateID, &sa.Similarity, &sa.FinalDecision, &sa.MetricName, &sa.Context)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan similar anomaly: %w", err)
+		}
+		results = append(results, &sa)
+	}
+
+	return results, nil
+}
+
+// GetAnomalyCandidateByID retrieves an anomaly candidate by ID
+func (d *Datastore) GetAnomalyCandidateByID(ctx context.Context, id int64) (*AnomalyCandidate, error) {
+	var c AnomalyCandidate
+	err := d.pool.QueryRow(ctx, `
+		SELECT id, connection_id, database_name, metric_name, metric_value,
+		       z_score, detected_at, context, tier1_pass, tier2_score, tier2_pass,
+		       tier3_result, tier3_pass, tier3_error, final_decision, alert_id,
+		       processed_at
+		FROM anomaly_candidates
+		WHERE id = $1
+	`, id).Scan(&c.ID, &c.ConnectionID, &c.DatabaseName, &c.MetricName,
+		&c.MetricValue, &c.ZScore, &c.DetectedAt, &c.Context, &c.Tier1Pass,
+		&c.Tier2Score, &c.Tier2Pass, &c.Tier3Result, &c.Tier3Pass,
+		&c.Tier3Error, &c.FinalDecision, &c.AlertID, &c.ProcessedAt)
+
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// float32SliceToVectorString converts a []float32 to a PostgreSQL vector string format
+func float32SliceToVectorString(v []float32) string {
+	if len(v) == 0 {
+		return "[]"
+	}
+
+	// Pre-allocate approximate size: "[" + (number * ~12 chars) + "]"
+	result := make([]byte, 0, 1+len(v)*12+1)
+	result = append(result, '[')
+
+	for i, val := range v {
+		if i > 0 {
+			result = append(result, ',')
+		}
+		result = append(result, fmt.Sprintf("%g", val)...)
+	}
+
+	result = append(result, ']')
+	return string(result)
+}

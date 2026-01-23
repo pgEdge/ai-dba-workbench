@@ -3059,6 +3059,72 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration #21: Add pgvector support for anomaly embedding similarity
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     21,
+		Description: "Add pgvector extension and anomaly embeddings table for Tier 2 similarity",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Create pgvector extension
+			_, err := conn.Exec(ctx, `
+			CREATE EXTENSION IF NOT EXISTS vector;
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to create vector extension: %w", err)
+			}
+
+			// Create anomaly_embeddings table for storing embeddings
+			_, err = conn.Exec(ctx, `
+			CREATE TABLE IF NOT EXISTS anomaly_embeddings (
+				id BIGSERIAL PRIMARY KEY,
+				candidate_id BIGINT REFERENCES anomaly_candidates(id) ON DELETE CASCADE,
+				embedding vector(1536),
+				model_name TEXT NOT NULL,
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				UNIQUE(candidate_id)
+			);
+
+			COMMENT ON TABLE anomaly_embeddings IS
+				'Embeddings for anomaly candidates used in Tier 2 similarity matching';
+			COMMENT ON COLUMN anomaly_embeddings.candidate_id IS
+				'Reference to the anomaly candidate';
+			COMMENT ON COLUMN anomaly_embeddings.embedding IS
+				'Vector embedding (1536 dimensions for OpenAI/Voyage, resized for others)';
+			COMMENT ON COLUMN anomaly_embeddings.model_name IS
+				'Name of the embedding model used';
+
+			CREATE INDEX IF NOT EXISTS idx_anomaly_embeddings_candidate
+				ON anomaly_embeddings(candidate_id);
+
+			CREATE INDEX IF NOT EXISTS idx_anomaly_embeddings_vector
+				ON anomaly_embeddings USING hnsw (embedding vector_cosine_ops);
+
+			COMMENT ON INDEX idx_anomaly_embeddings_candidate IS
+				'Fast lookup of embeddings by candidate';
+			COMMENT ON INDEX idx_anomaly_embeddings_vector IS
+				'HNSW index for fast vector similarity search';
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to create anomaly_embeddings table: %w", err)
+			}
+
+			// Add embedding_id column to anomaly_candidates for quick reference
+			_, err = conn.Exec(ctx, `
+			ALTER TABLE anomaly_candidates
+				ADD COLUMN IF NOT EXISTS embedding_id BIGINT REFERENCES anomaly_embeddings(id) ON DELETE SET NULL;
+
+			COMMENT ON COLUMN anomaly_candidates.embedding_id IS
+				'Reference to the embedding for this candidate (for Tier 2 processing)';
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to add embedding_id to anomaly_candidates: %w", err)
+			}
+
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations

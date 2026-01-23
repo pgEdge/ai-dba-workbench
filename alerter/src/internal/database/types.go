@@ -215,3 +215,12 @@ type HistoricalMetricValue struct {
 	Value        float64
 	CollectedAt  time.Time
 }
+
+// AnomalyEmbedding represents a stored embedding for an anomaly candidate
+type AnomalyEmbedding struct {
+	ID          int64
+	CandidateID int64
+	Embedding   []float32
+	ModelName   string
+	CreatedAt   time.Time
+}

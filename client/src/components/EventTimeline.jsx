@@ -733,9 +733,36 @@ IdentChangeDetails.displayName = 'IdentChangeDetails';
 /**
  * AlertDetails - Shows alert fired/cleared/acknowledged details
  */
-const AlertDetails = memo(({ details, config }) => {
+const AlertDetails = memo(({ details, config, isDark }) => {
     return (
         <Box sx={{ mt: 1 }}>
+            {/* Database name if present */}
+            {details?.database_name && (
+                <Box sx={{ mb: 1 }}>
+                    <Typography
+                        sx={{
+                            fontSize: '0.6875rem',
+                            fontWeight: 600,
+                            color: 'text.secondary',
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.05em',
+                            mb: 0.25,
+                        }}
+                    >
+                        Database
+                    </Typography>
+                    <Typography
+                        sx={{
+                            fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+                            fontSize: '0.8125rem',
+                            fontWeight: 500,
+                            color: isDark ? '#818CF8' : '#6366F1',
+                        }}
+                    >
+                        {details.database_name}
+                    </Typography>
+                </Box>
+            )}
             {/* Acknowledged by info */}
             {details?.acknowledged_by && (
                 <Box sx={{ mb: 1 }}>
@@ -901,7 +928,7 @@ const EventDetails = memo(({ event, config, isDark }) => {
         case 'alert_fired':
         case 'alert_cleared':
         case 'alert_acknowledged':
-            return <AlertDetails details={event.details} config={config} />;
+            return <AlertDetails details={event.details} config={config} isDark={isDark} />;
         case 'restart':
             return <RestartDetails details={event.details} isDark={isDark} />;
         default:

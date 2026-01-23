@@ -392,16 +392,19 @@ const AlertAnalysisDialog = ({ open, alert, onClose, isDark }) => {
         const timestamp = new Date().toISOString().split('T')[0];
         const filename = `alert-analysis-${alert.id || 'unknown'}-${timestamp}.md`;
 
+        // Build optional fields
+        const serverLine = alert.server ? `- **Server:** ${alert.server}\n` : '';
+        const databaseLine = alert.databaseName ? `- **Database:** ${alert.databaseName}\n` : '';
+
         const content = `# Alert Analysis Report
 
 ## Alert Details
 
 - **Title:** ${alert.title || 'N/A'}
 - **Severity:** ${alert.severity || 'N/A'}
-- **Alert Type:** ${alert.alertType || 'threshold'}
+${serverLine}${databaseLine}- **Alert Type:** ${alert.alertType || 'threshold'}
 - **Metric Value:** ${alert.metricValue ?? 'N/A'}
 - **Threshold:** ${alert.operator || '>'} ${alert.thresholdValue ?? 'N/A'}
-- **Connection ID:** ${alert.connectionId || 'N/A'}
 - **Triggered At:** ${alert.triggeredAt || alert.time || 'N/A'}
 
 ---
@@ -508,7 +511,8 @@ ${analysis}
                     >
                         Alert Analysis
                     </Typography>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 0.5 }}>
+                    {/* First row: severity, title, time */}
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 0.5, flexWrap: 'wrap' }}>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                             <SeverityIcon sx={{ fontSize: 14, color: severityColor }} />
                             <Typography
@@ -538,6 +542,72 @@ ${analysis}
                                 }}
                             >
                                 {alert.time}
+                            </Typography>
+                        )}
+                    </Box>
+                    {/* Second row: server, database, threshold info */}
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.75, flexWrap: 'wrap' }}>
+                        {alert?.server && (
+                            <Box
+                                sx={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 0.5,
+                                    px: 0.75,
+                                    py: 0.25,
+                                    borderRadius: 0.5,
+                                    bgcolor: isDark ? alpha('#64748B', 0.2) : alpha('#64748B', 0.1),
+                                }}
+                            >
+                                <Typography
+                                    sx={{
+                                        fontSize: '0.6875rem',
+                                        color: 'text.secondary',
+                                        fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+                                    }}
+                                >
+                                    {alert.server}
+                                </Typography>
+                            </Box>
+                        )}
+                        {alert?.databaseName && (
+                            <Box
+                                sx={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 0.5,
+                                    px: 0.75,
+                                    py: 0.25,
+                                    borderRadius: 0.5,
+                                    bgcolor: isDark ? alpha('#6366F1', 0.2) : alpha('#6366F1', 0.1),
+                                }}
+                            >
+                                <Typography
+                                    sx={{
+                                        fontSize: '0.6875rem',
+                                        color: isDark ? '#818CF8' : '#6366F1',
+                                        fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+                                    }}
+                                >
+                                    {alert.databaseName}
+                                </Typography>
+                            </Box>
+                        )}
+                        {alert?.metricValue !== undefined && alert?.thresholdValue !== undefined && (
+                            <Typography
+                                sx={{
+                                    fontSize: '0.6875rem',
+                                    color: 'text.disabled',
+                                    fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+                                }}
+                            >
+                                {typeof alert.metricValue === 'number'
+                                    ? alert.metricValue.toLocaleString(undefined, { maximumFractionDigits: 2 })
+                                    : alert.metricValue}
+                                {' '}{alert.operator === '>' ? '>' : alert.operator === '<' ? '<' : '='}{' '}
+                                {typeof alert.thresholdValue === 'number'
+                                    ? alert.thresholdValue.toLocaleString(undefined, { maximumFractionDigits: 2 })
+                                    : alert.thresholdValue}
                             </Typography>
                         )}
                     </Box>

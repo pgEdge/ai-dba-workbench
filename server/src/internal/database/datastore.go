@@ -2574,6 +2574,7 @@ type Alert struct {
 	ProbeName      *string    `json:"probe_name,omitempty"`
 	MetricName     *string    `json:"metric_name,omitempty"`
 	MetricValue    *float64   `json:"metric_value,omitempty"`
+	MetricUnit     *string    `json:"metric_unit,omitempty"`
 	ThresholdValue *float64   `json:"threshold_value,omitempty"`
 	Operator       *string    `json:"operator,omitempty"`
 	Severity       string     `json:"severity"`
@@ -2702,17 +2703,18 @@ func (d *Datastore) GetAlerts(ctx context.Context, filter AlertListFilter) (*Ale
 		offset = 0
 	}
 
-	// Query alerts with connection name and acknowledgment info
+	// Query alerts with connection name, metric unit, and acknowledgment info
 	// Uses DISTINCT ON to get only the most recent acknowledgment per alert
 	query := fmt.Sprintf(`
 		SELECT a.id, a.alert_type, a.rule_id, a.connection_id, a.database_name,
-		       a.probe_name, a.metric_name, a.metric_value, a.threshold_value,
+		       a.probe_name, a.metric_name, a.metric_value, r.metric_unit, a.threshold_value,
 		       a.operator, a.severity, a.title, a.description, a.correlation_id,
 		       a.status, a.triggered_at, a.cleared_at, a.anomaly_score, a.anomaly_details,
 		       COALESCE(c.name, 'Unknown') as server_name,
 		       ack.acknowledged_at, ack.acknowledged_by, ack.message, ack.false_positive
 		FROM alerts a
 		LEFT JOIN connections c ON a.connection_id = c.id
+		LEFT JOIN alert_rules r ON a.rule_id = r.id
 		LEFT JOIN LATERAL (
 			SELECT acknowledged_at, acknowledged_by, message, false_positive
 			FROM alert_acknowledgments
@@ -2739,7 +2741,7 @@ func (d *Datastore) GetAlerts(ctx context.Context, filter AlertListFilter) (*Ale
 		err := rows.Scan(
 			&alert.ID, &alert.AlertType, &alert.RuleID, &alert.ConnectionID,
 			&alert.DatabaseName, &alert.ProbeName, &alert.MetricName,
-			&alert.MetricValue, &alert.ThresholdValue, &alert.Operator,
+			&alert.MetricValue, &alert.MetricUnit, &alert.ThresholdValue, &alert.Operator,
 			&alert.Severity, &alert.Title, &alert.Description,
 			&alert.CorrelationID, &alert.Status, &alert.TriggeredAt,
 			&alert.ClearedAt, &alert.AnomalyScore, &alert.AnomalyDetails,

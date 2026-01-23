@@ -666,6 +666,7 @@ func buildAlertFiredQuery(whereClause string) string {
                 'alert_type', a.alert_type,
                 'metric_name', a.metric_name,
                 'metric_value', a.metric_value,
+                'metric_unit', r.metric_unit,
                 'threshold_value', a.threshold_value,
                 'operator', a.operator,
                 'database_name', a.database_name,
@@ -673,6 +674,7 @@ func buildAlertFiredQuery(whereClause string) string {
             )::TEXT AS details
         FROM alerts a
         JOIN connections c ON a.connection_id = c.id
+        LEFT JOIN alert_rules r ON a.rule_id = r.id
         %s
     `, EventTypeAlertFired, tableWhere)
 }

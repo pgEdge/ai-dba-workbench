@@ -98,8 +98,11 @@ const formatThresholdInfo = (alert) => {
     const threshold = typeof alert.thresholdValue === 'number'
         ? alert.thresholdValue.toLocaleString(undefined, { maximumFractionDigits: 2 })
         : alert.thresholdValue;
+    const unit = alert.metricUnit || '';
     const op = alert.operator === '>' ? 'exceeds' : alert.operator === '<' ? 'below' : 'at';
-    return `${value} ${op} threshold of ${threshold}`;
+    return unit
+        ? `${value} ${unit} ${op} threshold of ${threshold} ${unit}`
+        : `${value} ${op} threshold of ${threshold}`;
 };
 
 // Status color mapping
@@ -1152,6 +1155,7 @@ const StatusPanel = ({
             // Threshold info
             alertType: alert.alert_type,
             metricValue: alert.metric_value,
+            metricUnit: alert.metric_unit,
             thresholdValue: alert.threshold_value,
             operator: alert.operator,
             // Acknowledgment info

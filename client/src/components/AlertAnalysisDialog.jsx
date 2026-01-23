@@ -39,6 +39,31 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { useAlertAnalysis } from '../hooks/useAlertAnalysis';
 
+/**
+ * Create a modified Prism theme that removes token background colors.
+ * This prevents subtle background color conflicts with our custom backgrounds.
+ */
+const createCleanTheme = (baseTheme, customBackground) => {
+    const cleanTheme = {};
+    for (const [key, value] of Object.entries(baseTheme)) {
+        if (typeof value === 'object' && value !== null) {
+            // Remove background from token styles, keep other properties
+            const { background, backgroundColor, ...rest } = value;
+            cleanTheme[key] = rest;
+        } else {
+            cleanTheme[key] = value;
+        }
+    }
+    // Set the base code block background
+    if (cleanTheme['pre[class*="language-"]']) {
+        cleanTheme['pre[class*="language-"]'].background = customBackground;
+    }
+    if (cleanTheme['code[class*="language-"]']) {
+        cleanTheme['code[class*="language-"]'].background = 'transparent';
+    }
+    return cleanTheme;
+};
+
 // Severity colors for indicators
 const SEVERITY_COLORS = {
     critical: '#EF4444',
@@ -165,6 +190,16 @@ const MarkdownContent = ({ content, isDark }) => {
             const match = /language-(\w+)/.exec(className || '');
             const language = match ? match[1] : '';
 
+            // Custom backgrounds for code blocks
+            const darkBackground = '#1E293B';
+            const lightBackground = '#F8FAFC';
+            const customBackground = isDark ? darkBackground : lightBackground;
+
+            // Create clean themes without token background colors
+            const cleanTheme = isDark
+                ? createCleanTheme(oneDark, darkBackground)
+                : createCleanTheme(oneLight, lightBackground);
+
             return inline ? (
                 <Box
                     component="code"
@@ -195,7 +230,7 @@ const MarkdownContent = ({ content, isDark }) => {
                     }}
                 >
                     <SyntaxHighlighter
-                        style={isDark ? oneDark : oneLight}
+                        style={cleanTheme}
                         language={language || 'sql'}
                         PreTag="div"
                         customStyle={{
@@ -203,7 +238,7 @@ const MarkdownContent = ({ content, isDark }) => {
                             padding: '1rem',
                             fontSize: '0.8125rem',
                             fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-                            background: isDark ? '#1E293B' : '#F8FAFC',
+                            background: customBackground,
                         }}
                         {...props}
                     >
@@ -395,6 +430,13 @@ const AlertAnalysisDialog = ({ open, alert, onClose, isDark }) => {
         // Build optional fields
         const serverLine = alert.server ? `- **Server:** ${alert.server}\n` : '';
         const databaseLine = alert.databaseName ? `- **Database:** ${alert.databaseName}\n` : '';
+        const unit = alert.metricUnit || '';
+        const metricDisplay = alert.metricValue !== undefined
+            ? `${alert.metricValue}${unit ? ` ${unit}` : ''}`
+            : 'N/A';
+        const thresholdDisplay = alert.thresholdValue !== undefined
+            ? `${alert.operator || '>'} ${alert.thresholdValue}${unit ? ` ${unit}` : ''}`
+            : 'N/A';
 
         const content = `# Alert Analysis Report
 
@@ -403,8 +445,8 @@ const AlertAnalysisDialog = ({ open, alert, onClose, isDark }) => {
 - **Title:** ${alert.title || 'N/A'}
 - **Severity:** ${alert.severity || 'N/A'}
 ${serverLine}${databaseLine}- **Alert Type:** ${alert.alertType || 'threshold'}
-- **Metric Value:** ${alert.metricValue ?? 'N/A'}
-- **Threshold:** ${alert.operator || '>'} ${alert.thresholdValue ?? 'N/A'}
+- **Metric Value:** ${metricDisplay}
+- **Threshold:** ${thresholdDisplay}
 - **Triggered At:** ${alert.triggeredAt || alert.time || 'N/A'}
 
 ---
@@ -604,10 +646,12 @@ ${analysis}
                                 {typeof alert.metricValue === 'number'
                                     ? alert.metricValue.toLocaleString(undefined, { maximumFractionDigits: 2 })
                                     : alert.metricValue}
+                                {alert.metricUnit && ` ${alert.metricUnit}`}
                                 {' '}{alert.operator === '>' ? '>' : alert.operator === '<' ? '<' : '='}{' '}
                                 {typeof alert.thresholdValue === 'number'
                                     ? alert.thresholdValue.toLocaleString(undefined, { maximumFractionDigits: 2 })
                                     : alert.thresholdValue}
+                                {alert.metricUnit && ` ${alert.metricUnit}`}
                             </Typography>
                         )}
                     </Box>

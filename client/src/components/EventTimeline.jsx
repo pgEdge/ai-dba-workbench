@@ -340,6 +340,7 @@ const EventMarker = memo(({ cluster, isDark, showServer, onClick }) => {
                             {showServer && primaryEvent.server_name && (
                                 <Typography sx={{ fontSize: '0.6875rem', color: 'grey.400' }}>
                                     {primaryEvent.server_name}
+                                    {primaryEvent.details?.database_name && ` / ${primaryEvent.details.database_name}`}
                                 </Typography>
                             )}
                         </>
@@ -841,6 +842,19 @@ const AlertDetails = memo(({ details, config, isDark }) => {
                         }}
                     >
                         {details.metric_value}
+                        {details.metric_unit && (
+                            <Typography
+                                component="span"
+                                sx={{
+                                    fontWeight: 400,
+                                    color: 'text.secondary',
+                                    fontSize: '0.75rem',
+                                    ml: 0.5,
+                                }}
+                            >
+                                {details.metric_unit}
+                            </Typography>
+                        )}
                         {details.threshold_value !== undefined && (
                             <Typography
                                 component="span"
@@ -851,6 +865,7 @@ const AlertDetails = memo(({ details, config, isDark }) => {
                                 }}
                             >
                                 {' '}/ threshold: {details.threshold_value}
+                                {details.metric_unit && ` ${details.metric_unit}`}
                             </Typography>
                         )}
                     </Typography>
@@ -988,6 +1003,7 @@ const SingleEventCard = memo(({ event, isDark, isCompact = false }) => {
                                 sx={{ color: 'text.disabled', fontSize: 'inherit' }}
                             >
                                 {' · '}{event.server_name}
+                                {event.details?.database_name && ` / ${event.details.database_name}`}
                             </Typography>
                         )}
                     </Typography>
@@ -1089,6 +1105,7 @@ const CollapsibleEventCard = memo(({ event, isDark, defaultExpanded = true }) =>
                                 sx={{ color: 'text.disabled', fontSize: 'inherit' }}
                             >
                                 {' · '}{event.server_name}
+                                {event.details?.database_name && ` / ${event.details.database_name}`}
                             </Typography>
                         )}
                     </Typography>

@@ -3148,6 +3148,73 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration 23: Add metric_unit column to alert_rules table
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     23,
+		Description: "Add metric_unit column to alert_rules for human-readable metric display",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Add metric_unit column
+			_, err := conn.Exec(ctx, `
+			ALTER TABLE alert_rules
+				ADD COLUMN IF NOT EXISTS metric_unit TEXT;
+
+			COMMENT ON COLUMN alert_rules.metric_unit IS
+				'Unit of measurement for the metric (e.g., percent, bytes, seconds, hours)';
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to add metric_unit column: %w", err)
+			}
+
+			// Update existing rules with appropriate units
+			_, err = conn.Exec(ctx, `
+			UPDATE alert_rules SET metric_unit = CASE name
+				-- Connection alerts
+				WHEN 'high_connection_count' THEN 'connections'
+				WHEN 'connection_utilization' THEN 'percent'
+				-- Replication alerts
+				WHEN 'replication_lag_bytes' THEN 'bytes'
+				WHEN 'replication_slot_inactive' THEN NULL
+				-- Storage alerts
+				WHEN 'disk_usage_percent' THEN 'percent'
+				WHEN 'disk_usage_critical' THEN 'percent'
+				WHEN 'table_bloat_ratio' THEN 'percent'
+				-- Performance alerts
+				WHEN 'cpu_usage_high' THEN 'percent'
+				WHEN 'memory_usage_high' THEN 'percent'
+				WHEN 'load_average_high' THEN 'load average'
+				WHEN 'long_running_queries' THEN 'seconds'
+				WHEN 'blocked_queries' THEN 'queries'
+				-- Transaction alerts
+				WHEN 'long_running_transaction' THEN 'seconds'
+				WHEN 'idle_in_transaction' THEN 'seconds'
+				WHEN 'transaction_wraparound' THEN 'percent'
+				-- Lock alerts
+				WHEN 'deadlocks_detected' THEN 'deadlocks'
+				WHEN 'lock_wait_time' THEN 'seconds'
+				-- WAL and Checkpoint alerts
+				WHEN 'checkpoint_warning' THEN 'checkpoints'
+				WHEN 'wal_archive_failed' THEN 'failures'
+				-- Vacuum alerts
+				WHEN 'autovacuum_not_running' THEN 'hours'
+				WHEN 'dead_tuple_ratio' THEN 'percent'
+				-- Statement alerts
+				WHEN 'slow_query_count' THEN 'queries'
+				WHEN 'cache_hit_ratio_low' THEN 'percent'
+				-- Error alerts
+				WHEN 'temp_files_created' THEN 'files'
+				ELSE NULL
+			END;
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to update metric units: %w", err)
+			}
+
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations

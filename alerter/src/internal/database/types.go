@@ -85,6 +85,7 @@ type Alert struct {
 	Status         string     `json:"status"`
 	TriggeredAt    time.Time  `json:"triggered_at"`
 	ClearedAt      *time.Time `json:"cleared_at,omitempty"`
+	LastUpdated    *time.Time `json:"last_updated,omitempty"`
 	AnomalyScore   *float64   `json:"anomaly_score,omitempty"`
 	AnomalyDetails *string    `json:"anomaly_details,omitempty"`
 }

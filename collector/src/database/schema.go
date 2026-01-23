@@ -3125,6 +3125,29 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration #22: Add last_updated column to alerts table
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     22,
+		Description: "Add last_updated column to alerts table for tracking ongoing violations",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Add last_updated column to alerts table
+			_, err := conn.Exec(ctx, `
+			ALTER TABLE alerts
+				ADD COLUMN IF NOT EXISTS last_updated TIMESTAMP;
+
+			COMMENT ON COLUMN alerts.last_updated IS
+				'Timestamp of last metric value update for ongoing threshold violations';
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to add last_updated column to alerts: %w", err)
+			}
+
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations

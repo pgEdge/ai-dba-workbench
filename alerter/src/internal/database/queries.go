@@ -947,7 +947,7 @@ func (d *Datastore) GetActiveThresholdAlert(ctx context.Context, ruleID int64, c
 		SELECT id, alert_type, rule_id, connection_id, database_name, probe_name,
 		       metric_name, metric_value, threshold_value, operator, severity,
 		       title, description, correlation_id, status, triggered_at, cleared_at,
-		       anomaly_score, anomaly_details
+		       last_updated, anomaly_score, anomaly_details
 		FROM alerts
 		WHERE rule_id = $1 AND connection_id = $2 AND status = 'active'
 		  AND (database_name = $3 OR ($3 IS NULL AND database_name IS NULL))
@@ -957,12 +957,22 @@ func (d *Datastore) GetActiveThresholdAlert(ctx context.Context, ruleID int64, c
 		&alert.DatabaseName, &alert.ProbeName, &alert.MetricName, &alert.MetricValue,
 		&alert.ThresholdValue, &alert.Operator, &alert.Severity, &alert.Title,
 		&alert.Description, &alert.CorrelationID, &alert.Status, &alert.TriggeredAt,
-		&alert.ClearedAt, &alert.AnomalyScore, &alert.AnomalyDetails)
+		&alert.ClearedAt, &alert.LastUpdated, &alert.AnomalyScore, &alert.AnomalyDetails)
 
 	if err != nil {
 		return nil, err
 	}
 	return &alert, nil
+}
+
+// UpdateAlertMetricValue updates the metric_value and last_updated timestamp for an active alert
+func (d *Datastore) UpdateAlertMetricValue(ctx context.Context, alertID int64, metricValue float64) error {
+	_, err := d.pool.Exec(ctx, `
+		UPDATE alerts
+		SET metric_value = $2, last_updated = $3
+		WHERE id = $1
+	`, alertID, metricValue, time.Now())
+	return err
 }
 
 // CreateAlert creates a new alert
@@ -988,7 +998,7 @@ func (d *Datastore) GetActiveAlerts(ctx context.Context) ([]*Alert, error) {
 		SELECT id, alert_type, rule_id, connection_id, database_name, probe_name,
 		       metric_name, metric_value, threshold_value, operator, severity,
 		       title, description, correlation_id, status, triggered_at, cleared_at,
-		       anomaly_score, anomaly_details
+		       last_updated, anomaly_score, anomaly_details
 		FROM alerts
 		WHERE status = 'active'
 		ORDER BY triggered_at DESC
@@ -1006,7 +1016,7 @@ func (d *Datastore) GetActiveAlerts(ctx context.Context) ([]*Alert, error) {
 			&alert.DatabaseName, &alert.ProbeName, &alert.MetricName, &alert.MetricValue,
 			&alert.ThresholdValue, &alert.Operator, &alert.Severity, &alert.Title,
 			&alert.Description, &alert.CorrelationID, &alert.Status, &alert.TriggeredAt,
-			&alert.ClearedAt, &alert.AnomalyScore, &alert.AnomalyDetails)
+			&alert.ClearedAt, &alert.LastUpdated, &alert.AnomalyScore, &alert.AnomalyDetails)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan alert: %w", err)
 		}
@@ -1023,7 +1033,7 @@ func (d *Datastore) GetAlert(ctx context.Context, alertID int64) (*Alert, error)
 		SELECT id, alert_type, rule_id, connection_id, database_name, probe_name,
 		       metric_name, metric_value, threshold_value, operator, severity,
 		       title, description, correlation_id, status, triggered_at, cleared_at,
-		       anomaly_score, anomaly_details
+		       last_updated, anomaly_score, anomaly_details
 		FROM alerts
 		WHERE id = $1
 	`, alertID).Scan(
@@ -1031,7 +1041,7 @@ func (d *Datastore) GetAlert(ctx context.Context, alertID int64) (*Alert, error)
 		&alert.DatabaseName, &alert.ProbeName, &alert.MetricName, &alert.MetricValue,
 		&alert.ThresholdValue, &alert.Operator, &alert.Severity, &alert.Title,
 		&alert.Description, &alert.CorrelationID, &alert.Status, &alert.TriggeredAt,
-		&alert.ClearedAt, &alert.AnomalyScore, &alert.AnomalyDetails)
+		&alert.ClearedAt, &alert.LastUpdated, &alert.AnomalyScore, &alert.AnomalyDetails)
 
 	if err != nil {
 		return nil, err

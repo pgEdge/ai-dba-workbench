@@ -485,6 +485,19 @@ const AlertItem = ({ alert, isDark, showServer = false, onAcknowledge, onUnackno
                             }}
                         />
                     )}
+                    {alert.databaseName && (
+                        <Chip
+                            label={alert.databaseName}
+                            size="small"
+                            sx={{
+                                height: 16,
+                                fontSize: '0.625rem',
+                                bgcolor: isDark ? alpha('#6366F1', 0.2) : alpha('#6366F1', 0.1),
+                                color: isDark ? '#818CF8' : '#6366F1',
+                                '& .MuiChip-label': { px: 0.5 },
+                            }}
+                        />
+                    )}
                 </Box>
 
                 {/* Threshold info or description */}
@@ -1135,6 +1148,7 @@ const StatusPanel = ({
             time: formatRelativeTime(alert.triggered_at),
             server: alert.server_name,
             connectionId: alert.connection_id,
+            databaseName: alert.database_name,
             // Threshold info
             alertType: alert.alert_type,
             metricValue: alert.metric_value,

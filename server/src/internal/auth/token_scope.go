@@ -122,6 +122,10 @@ func (s *AuthStore) GetTokenScope(tokenID int64) (*TokenScope, error) {
 		}
 		scope.ConnectionIDs = append(scope.ConnectionIDs, connID)
 	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("error iterating connection scope: %w", err)
+	}
 	rows.Close()
 
 	// Get MCP scope
@@ -140,6 +144,10 @@ func (s *AuthStore) GetTokenScope(tokenID int64) (*TokenScope, error) {
 			return nil, fmt.Errorf("failed to scan privilege ID: %w", err)
 		}
 		scope.MCPPrivileges = append(scope.MCPPrivileges, privID)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("error iterating MCP scope: %w", err)
 	}
 	rows.Close()
 
@@ -266,6 +274,10 @@ func (s *AuthStore) GetTokenConnectionScope(tokenID int64) ([]int, error) {
 		connections = append(connections, connID)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating token connection scope: %w", err)
+	}
+
 	return connections, nil
 }
 
@@ -293,6 +305,10 @@ func (s *AuthStore) GetTokenMCPScope(tokenID int64) ([]string, error) {
 			return nil, fmt.Errorf("failed to scan identifier: %w", err)
 		}
 		identifiers = append(identifiers, identifier)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating token MCP scope: %w", err)
 	}
 
 	return identifiers, nil

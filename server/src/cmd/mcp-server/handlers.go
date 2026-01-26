@@ -30,6 +30,7 @@ import (
 type HandlerDependencies struct {
 	AuthStore   *auth.AuthStore
 	RateLimiter *auth.RateLimiter
+	IPExtractor *auth.IPExtractor
 	ConvStore   *conversations.Store
 	Datastore   *database.Datastore
 	Config      *config.Config
@@ -45,7 +46,9 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		mux.HandleFunc("/api/v1/openapi.json", handleOpenAPISpec)
 
 		// Authentication endpoint (does NOT require auth - it IS the login endpoint)
-		authHandler := api.NewAuthHandler(deps.AuthStore, deps.RateLimiter)
+		// IPExtractor provides secure IP extraction that only trusts X-Forwarded-For
+		// from configured trusted proxies, preventing rate limit bypass via IP spoofing
+		authHandler := api.NewAuthHandler(deps.AuthStore, deps.RateLimiter, deps.IPExtractor)
 		authHandler.RegisterRoutes(mux)
 
 		// Chat history compaction endpoint
@@ -67,7 +70,14 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		}
 
 		// Connection management endpoints (for selecting monitored database connections)
-		connHandler := api.NewConnectionHandler(deps.Datastore, deps.AuthStore)
+		// Uses security configuration to prevent SSRF attacks
+		connHandler := api.NewConnectionHandlerWithSecurity(
+			deps.Datastore,
+			deps.AuthStore,
+			deps.Config.ConnectionSecurity.AllowInternalNetworks,
+			deps.Config.ConnectionSecurity.AllowedHosts,
+			deps.Config.ConnectionSecurity.BlockedHosts,
+		)
 		connHandler.RegisterRoutes(mux, authWrapper)
 		if deps.Datastore != nil {
 			fmt.Fprintf(os.Stderr, "Connection management: ENABLED\n")
@@ -107,23 +117,31 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 }
 
 // createAuthWrapper creates a handler wrapper that enforces authentication
+// Supports both Authorization header (for API tokens) and session cookies (for browser sessions)
 func createAuthWrapper(authStore *auth.AuthStore) func(http.HandlerFunc) http.HandlerFunc {
 	return func(handler http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			// Extract token from Authorization header
-			authHeader := r.Header.Get("Authorization")
-			if authHeader == "" {
-				http.Error(w, "Missing Authorization header",
-					http.StatusUnauthorized)
-				return
-			}
+			var token string
 
-			// Extract Bearer token
-			token := strings.TrimPrefix(authHeader, "Bearer ")
-			if token == authHeader {
-				http.Error(w, "Invalid Authorization header format",
-					http.StatusUnauthorized)
-				return
+			// Try Authorization header first (for API tokens and backwards compatibility)
+			authHeader := r.Header.Get("Authorization")
+			if authHeader != "" {
+				// Extract Bearer token
+				token = strings.TrimPrefix(authHeader, "Bearer ")
+				if token == authHeader {
+					http.Error(w, "Invalid Authorization header format",
+						http.StatusUnauthorized)
+					return
+				}
+			} else {
+				// Try to get token from httpOnly session cookie
+				cookie, err := r.Cookie("session_token")
+				if err != nil || cookie.Value == "" {
+					http.Error(w, "Missing authentication credentials",
+						http.StatusUnauthorized)
+					return
+				}
+				token = cookie.Value
 			}
 
 			// Try API/service token first, then session token
@@ -150,23 +168,30 @@ func createAuthWrapper(authStore *auth.AuthStore) func(http.HandlerFunc) http.Ha
 // createUserInfoHandler creates a handler for the user info endpoint
 func createUserInfoHandler(authStore *auth.AuthStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Extract session token from Authorization header
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			api.RespondJSON(w, http.StatusOK, map[string]interface{}{
-				"authenticated": false,
-			})
-			return
-		}
+		var token string
 
-		// Extract Bearer token
-		token := strings.TrimPrefix(authHeader, "Bearer ")
-		if token == authHeader {
-			api.RespondJSON(w, http.StatusOK, map[string]interface{}{
-				"authenticated": false,
-				"error":         "Invalid Authorization header format",
-			})
-			return
+		// Try Authorization header first (for API tokens and backwards compatibility)
+		authHeader := r.Header.Get("Authorization")
+		if authHeader != "" {
+			// Extract Bearer token
+			token = strings.TrimPrefix(authHeader, "Bearer ")
+			if token == authHeader {
+				api.RespondJSON(w, http.StatusOK, map[string]interface{}{
+					"authenticated": false,
+					"error":         "Invalid Authorization header format",
+				})
+				return
+			}
+		} else {
+			// Try to get token from httpOnly session cookie
+			cookie, err := r.Cookie("session_token")
+			if err != nil || cookie.Value == "" {
+				api.RespondJSON(w, http.StatusOK, map[string]interface{}{
+					"authenticated": false,
+				})
+				return
+			}
+			token = cookie.Value
 		}
 
 		// Validate session token and get username

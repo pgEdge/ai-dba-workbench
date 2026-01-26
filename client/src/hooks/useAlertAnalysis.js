@@ -99,7 +99,7 @@ const ANALYSIS_TOOLS = [
  * Implements an agentic loop to gather context via tools before providing recommendations
  */
 export const useAlertAnalysis = () => {
-    const { sessionToken: token } = useAuth();
+    const { user } = useAuth();
     const [analysis, setAnalysis] = useState(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
@@ -132,14 +132,15 @@ Provide remediation recommendations and any threshold tuning suggestions.`;
             // Agentic loop - keep calling until no more tool use
             let maxIterations = 10;
             let iterations = 0;
+            let gotResponse = false; // Track completion with local variable (not state) to avoid stale closure
 
             while (iterations < maxIterations) {
                 iterations++;
 
                 const response = await fetch('/api/v1/llm/chat', {
                     method: 'POST',
+                    credentials: 'include',
                     headers: {
-                        'Authorization': `Bearer ${token}`,
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
@@ -165,6 +166,7 @@ Provide remediation recommendations and any threshold tuning suggestions.`;
                         .map(c => c.text)
                         .join('\n') || '';
                     setAnalysis(textContent);
+                    gotResponse = true;
                     break;
                 }
 
@@ -177,8 +179,8 @@ Provide remediation recommendations and any threshold tuning suggestions.`;
                     try {
                         const toolResponse = await fetch('/api/v1/mcp/tools/call', {
                             method: 'POST',
+                            credentials: 'include',
                             headers: {
-                                'Authorization': `Bearer ${token}`,
                                 'Content-Type': 'application/json',
                             },
                             body: JSON.stringify({
@@ -209,7 +211,7 @@ Provide remediation recommendations and any threshold tuning suggestions.`;
                 messages.push({ role: 'user', content: toolResults });
             }
 
-            if (iterations >= maxIterations && !analysis) {
+            if (iterations >= maxIterations && !gotResponse) {
                 throw new Error('Analysis exceeded maximum iterations');
             }
 
@@ -219,7 +221,7 @@ Provide remediation recommendations and any threshold tuning suggestions.`;
         } finally {
             setLoading(false);
         }
-    }, [token]);
+    }, [user]);
 
     const reset = useCallback(() => {
         setAnalysis(null);

@@ -25,15 +25,27 @@ import (
 
 // ConnectionHandler handles REST API requests for database connection management
 type ConnectionHandler struct {
-	datastore *database.Datastore
-	authStore *auth.AuthStore
+	datastore     *database.Datastore
+	authStore     *auth.AuthStore
+	hostValidator *HostValidator
 }
 
 // NewConnectionHandler creates a new connection handler
 func NewConnectionHandler(datastore *database.Datastore, authStore *auth.AuthStore) *ConnectionHandler {
 	return &ConnectionHandler{
-		datastore: datastore,
-		authStore: authStore,
+		datastore:     datastore,
+		authStore:     authStore,
+		hostValidator: DefaultHostValidator(),
+	}
+}
+
+// NewConnectionHandlerWithSecurity creates a new connection handler with custom security settings
+func NewConnectionHandlerWithSecurity(datastore *database.Datastore, authStore *auth.AuthStore,
+	allowInternal bool, allowedHosts, blockedHosts []string) *ConnectionHandler {
+	return &ConnectionHandler{
+		datastore:     datastore,
+		authStore:     authStore,
+		hostValidator: NewHostValidator(allowInternal, allowedHosts, blockedHosts),
 	}
 }
 
@@ -184,6 +196,18 @@ func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Requ
 	}
 	if req.Password == "" {
 		RespondError(w, http.StatusBadRequest, "Password is required")
+		return
+	}
+
+	// Validate host to prevent SSRF attacks
+	if err := h.hostValidator.ValidateHost(req.Host); err != nil {
+		RespondError(w, http.StatusBadRequest, fmt.Sprintf("Invalid host: %v", err))
+		return
+	}
+
+	// Validate port
+	if err := h.hostValidator.ValidatePort(req.Port); err != nil {
+		RespondError(w, http.StatusBadRequest, fmt.Sprintf("Invalid port: %v", err))
 		return
 	}
 
@@ -340,6 +364,22 @@ func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Requ
 		RespondError(w, http.StatusForbidden,
 			"Permission denied: only superusers can make connections shared")
 		return
+	}
+
+	// Validate host if being updated (SSRF protection)
+	if req.Host != nil {
+		if err := h.hostValidator.ValidateHost(*req.Host); err != nil {
+			RespondError(w, http.StatusBadRequest, fmt.Sprintf("Invalid host: %v", err))
+			return
+		}
+	}
+
+	// Validate port if being updated
+	if req.Port != nil {
+		if err := h.hostValidator.ValidatePort(*req.Port); err != nil {
+			RespondError(w, http.StatusBadRequest, fmt.Sprintf("Invalid port: %v", err))
+			return
+		}
 	}
 
 	// Build update params

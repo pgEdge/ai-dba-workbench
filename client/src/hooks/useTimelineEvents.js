@@ -72,7 +72,7 @@ export const useTimelineEvents = ({
     eventTypes = ['all'],
     enabled = true,
 } = {}) => {
-    const { sessionToken: token } = useAuth();
+    const { user } = useAuth();
     const [events, setEvents] = useState([]);
     const [totalCount, setTotalCount] = useState(0);
     const [loading, setLoading] = useState(false);
@@ -112,7 +112,7 @@ export const useTimelineEvents = ({
      * Fetch timeline events from the API
      */
     const fetchEvents = useCallback(async () => {
-        if (!token || !enabled) return;
+        if (!user || !enabled) return;
 
         // Only show loading state on the very first fetch ever (use ref to avoid re-renders)
         if (!initialLoadDoneRef.current) {
@@ -123,9 +123,7 @@ export const useTimelineEvents = ({
         try {
             const queryString = buildQueryString();
             const response = await fetch(`/api/v1/timeline/events?${queryString}`, {
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                },
+                credentials: 'include',
             });
 
             if (!response.ok) {
@@ -149,7 +147,7 @@ export const useTimelineEvents = ({
                 setLoading(false);
             }
         }
-    }, [token, enabled, buildQueryString]);
+    }, [user, enabled, buildQueryString]);
 
     /**
      * Manual refetch function
@@ -169,22 +167,22 @@ export const useTimelineEvents = ({
     useEffect(() => {
         isMountedRef.current = true;
 
-        if (enabled && token) {
+        if (enabled && user) {
             fetchEvents();
         }
 
         return () => {
             isMountedRef.current = false;
         };
-    }, [enabled, token, fetchEvents]);
+    }, [enabled, user, fetchEvents]);
 
     // Auto-refresh when enabled (no loading indicator)
     useEffect(() => {
-        if (!enabled || !token) return;
+        if (!enabled || !user) return;
 
         const intervalId = setInterval(fetchEvents, refreshInterval);
         return () => clearInterval(intervalId);
-    }, [enabled, token, fetchEvents]);
+    }, [enabled, user, fetchEvents]);
 
     return {
         events,

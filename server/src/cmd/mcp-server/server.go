@@ -375,10 +375,15 @@ func (s *Server) Run(flags *Flags, configPath string) error {
 		TrustedProxies: s.cfg.HTTP.TrustedProxies,
 	}
 
+	// Create secure IP extractor for rate limiting
+	// This ensures X-Forwarded-For headers are only trusted from configured proxies
+	ipExtractor := auth.NewIPExtractor(s.cfg.HTTP.TrustedProxies)
+
 	// Setup HTTP handlers
 	deps := &HandlerDependencies{
 		AuthStore:   s.authStore,
 		RateLimiter: s.rateLimiter,
+		IPExtractor: ipExtractor,
 		ConvStore:   s.convStore,
 		Datastore:   s.datastore,
 		Config:      s.cfg,

@@ -88,6 +88,21 @@ nav:
           - Node Role Probe: collector/node-role-probe-design.md
   - Alerter:
       - Overview: alerter/index.md
+      - Getting Started:
+          - Quick Start: alerter/quickstart.md
+          - Configuration: alerter/configuration.md
+      - Architecture:
+          - System Overview: alerter/overview.md
+          - System Architecture: alerter/architecture.md
+      - Alert Rules:
+          - How Rules Work: alerter/alert-rules.md
+          - Rule Reference: alerter/rule-reference.md
+          - Adding Rules: alerter/adding-rules.md
+          - Cron Expressions: alerter/cron-expressions.md
+      - Anomaly Detection: alerter/anomaly-detection.md
+      - Development:
+          - Development Guide: alerter/development.md
+          - Testing: alerter/testing.md
   - Server:
       - Overview: server/index.md
       - API Reference: server/api-reference.md

@@ -21,7 +21,6 @@ global.fetch = vi.fn();
 const MockAuthProvider = ({ children }) => {
     const mockValue = {
         user: { username: 'testuser' },
-        sessionToken: 'test-token',
         loading: false,
         login: vi.fn(),
         logout: vi.fn(),
@@ -43,12 +42,6 @@ const renderHeader = (props = {}) => {
         onToggleTheme: vi.fn(),
         mode: 'light',
     };
-
-    // Set up localStorage to simulate authenticated user
-    window.localStorage.getItem.mockImplementation((key) => {
-        if (key === 'session-token') return 'test-token';
-        return null;
-    });
 
     // Mock the user info endpoint to return authenticated user
     global.fetch.mockResolvedValue({

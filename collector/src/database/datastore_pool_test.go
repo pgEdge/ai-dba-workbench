@@ -26,6 +26,22 @@ func getMockConnStr() string {
 	return "host=localhost port=9999 dbname=nonexistent user=nobody sslmode=disable connect_timeout=1"
 }
 
+// waitForCondition polls a condition function until it returns true or timeout expires.
+// This is more robust than time.Sleep as it succeeds immediately when the condition is met
+// and provides clear error messages on timeout. Useful for testing time-based behavior.
+func waitForCondition(t *testing.T, timeout, interval time.Duration, condition func() bool, msg string) bool {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return true
+		}
+		time.Sleep(interval)
+	}
+	t.Errorf("Timeout waiting for: %s", msg)
+	return false
+}
+
 // TestConnectionPoolCreation tests creating a connection pool
 func TestConnectionPoolCreation(t *testing.T) {
 	pool, err := NewConnectionPool(getMockConnStr(), 5, 10)
@@ -211,13 +227,18 @@ func TestConnectionPoolWithTestDB(t *testing.T) {
 		t.Fatalf("Failed to return second connection: %v", err)
 	}
 
-	// Wait for idle timeout (2 seconds) plus a bit more for cleanup cycle
+	// Wait for idle timeout (2 seconds) using polling instead of fixed sleep
+	// This is more robust as it succeeds as soon as the condition is met
 	t.Logf("Waiting for idle timeout...")
-	time.Sleep(3 * time.Second)
+	connectionCleaned := waitForCondition(t, 5*time.Second, 100*time.Millisecond,
+		func() bool {
+			total, _, _ := pool.Stats()
+			return total == 0
+		},
+		"idle connection to be cleaned up")
 
-	// Verify the connection was cleaned up
-	total, _, _ = pool.Stats()
-	if total != 0 {
+	if !connectionCleaned {
+		total, _, _ = pool.Stats()
 		t.Errorf("After idle timeout: expected total=0, got total=%d (connection should have been closed)", total)
 	}
 

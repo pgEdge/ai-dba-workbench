@@ -17,6 +17,22 @@ import (
 	"time"
 )
 
+// waitForCondition polls a condition function until it returns true or timeout expires.
+// This is more robust than time.Sleep as it succeeds immediately when the condition is met
+// and provides clear error messages on timeout. Useful for testing time-based behavior.
+func waitForCondition(t *testing.T, timeout, interval time.Duration, condition func() bool, msg string) bool {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return true
+		}
+		time.Sleep(interval)
+	}
+	t.Errorf("Timeout waiting for: %s", msg)
+	return false
+}
+
 func TestGenerateToken(t *testing.T) {
 	t.Run("generates unique tokens", func(t *testing.T) {
 		token1, err := GenerateToken()
@@ -514,10 +530,19 @@ func TestTokenExpirationEdgeCases(t *testing.T) {
 			t.Fatal("Token should be valid before expiry")
 		}
 
-		// Wait for expiration
-		time.Sleep(2 * time.Second)
+		// Wait for token to become invalid using polling (more robust than fixed sleep)
+		expired := waitForCondition(t, 3*time.Second, 100*time.Millisecond,
+			func() bool {
+				valid, _ := store.ValidateToken(token)
+				return !valid
+			},
+			"token to expire")
 
-		// Should be invalid now
+		if !expired {
+			t.Fatal("Token should be invalid after expiry")
+		}
+
+		// Verify the validation error
 		valid, err = store.ValidateToken(token)
 		if err == nil {
 			t.Fatal("Expected error for expired token")

@@ -29,6 +29,19 @@ vi.mock('../../contexts/ClusterContext', () => ({
     }),
 }));
 
+// Mock the AlertsContext
+vi.mock('../../contexts/AlertsContext', () => ({
+    useAlerts: () => ({
+        alerts: [],
+        activeAlerts: [],
+        loading: false,
+        error: null,
+        fetchAlerts: vi.fn(),
+        getServerAlertCount: () => 0,
+        getTotalAlertCount: () => 0,
+    }),
+}));
+
 // Mock data
 const mockClusterData = [
     {

@@ -13,6 +13,7 @@ package conversations
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,6 +21,15 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite" // Pure Go SQLite driver
+)
+
+// Sentinel errors for conversation operations
+var (
+	// ErrNotFound is returned when a conversation is not found
+	ErrNotFound = errors.New("conversation not found")
+
+	// ErrAccessDenied is returned when access to a conversation is denied
+	ErrAccessDenied = errors.New("access denied")
 )
 
 // Message represents a single message in a conversation
@@ -253,13 +263,13 @@ func (s *Store) Update(id, username, provider, model, connection string, message
 		"SELECT username FROM conversations WHERE id = ?", id,
 	).Scan(&existingUsername)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("conversation not found")
+		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to query conversation: %w", err)
 	}
 	if existingUsername != username {
-		return nil, fmt.Errorf("access denied")
+		return nil, ErrAccessDenied
 	}
 
 	messagesJSON, err := json.Marshal(messages)
@@ -306,7 +316,7 @@ func (s *Store) getUnlocked(id, username string) (*Conversation, error) {
 		&messagesJSON, &conv.CreatedAt, &conv.UpdatedAt)
 
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("conversation not found")
+		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to query conversation: %w", err)
@@ -400,7 +410,7 @@ func (s *Store) Rename(id, username, title string) error {
 		return fmt.Errorf("failed to get rows affected: %w", err)
 	}
 	if rows == 0 {
-		return fmt.Errorf("conversation not found or access denied")
+		return ErrNotFound
 	}
 
 	return nil
@@ -424,7 +434,7 @@ func (s *Store) Delete(id, username string) error {
 		return fmt.Errorf("failed to get rows affected: %w", err)
 	}
 	if rows == 0 {
-		return fmt.Errorf("conversation not found or access denied")
+		return ErrNotFound
 	}
 
 	return nil

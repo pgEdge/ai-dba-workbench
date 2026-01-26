@@ -96,7 +96,7 @@ describe('ServerDialog', () => {
             name: 'Production DB',
             host: 'prod.example.com',
             port: 5433,
-            database: 'mydb',
+            database_name: 'mydb',
             username: 'admin',
             ssl_mode: 'require',
             ssl_cert_path: '/path/to/cert.pem',
@@ -188,6 +188,8 @@ describe('ServerDialog', () => {
 
             await user.type(getNameField(), 'Test Server');
             await user.type(getHostField(), 'localhost');
+            // Clear the default 'postgres' value
+            await user.clear(getDatabaseField());
             await user.click(screen.getByRole('button', { name: /save/i }));
 
             expect(screen.getByText(/maintenance database is required/i)).toBeInTheDocument();
@@ -200,6 +202,8 @@ describe('ServerDialog', () => {
             await user.type(getNameField(), 'Test Server');
             await user.type(getHostField(), 'localhost');
             await user.type(getDatabaseField(), 'postgres');
+            // Clear the default 'postgres' username
+            await user.clear(getUsernameField());
             await user.click(screen.getByRole('button', { name: /save/i }));
 
             expect(screen.getByText(/username is required/i)).toBeInTheDocument();
@@ -225,7 +229,7 @@ describe('ServerDialog', () => {
                 name: 'Test Server',
                 host: 'localhost',
                 port: 5432,
-                database: 'postgres',
+                database_name: 'postgres',
                 username: 'admin',
             };
 
@@ -270,8 +274,11 @@ describe('ServerDialog', () => {
 
             await user.type(getNameField(), '  Test Server  ');
             await user.type(getHostField(), '  localhost  ');
-            await user.type(getDatabaseField(), 'postgres');
-            await user.type(getUsernameField(), 'admin');
+            // Clear defaults and type new values
+            await user.clear(getDatabaseField());
+            await user.type(getDatabaseField(), '  mydb  ');
+            await user.clear(getUsernameField());
+            await user.type(getUsernameField(), '  admin  ');
             await user.type(getPasswordField(), 'secret');
 
             await user.click(screen.getByRole('button', { name: /save/i }));
@@ -282,7 +289,7 @@ describe('ServerDialog', () => {
                         name: 'Test Server',
                         host: 'localhost',
                         port: 5432,
-                        database: 'postgres',
+                        database_name: 'mydb',
                         username: 'admin',
                         password: 'secret',
                     })

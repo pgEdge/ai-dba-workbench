@@ -12,6 +12,7 @@ package conversations
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -134,7 +135,7 @@ func (h *Handler) HandleGet(w http.ResponseWriter, r *http.Request) {
 
 	conv, err := h.store.Get(id, username)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, ErrNotFound) {
 			sendError(w, http.StatusNotFound, "Conversation not found")
 		} else {
 			sendError(w, http.StatusInternalServerError, "Failed to get conversation")
@@ -222,9 +223,9 @@ func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 
 	conv, err := h.store.Update(id, username, req.Provider, req.Model, req.Connection, req.Messages)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, ErrNotFound) {
 			sendError(w, http.StatusNotFound, "Conversation not found")
-		} else if strings.Contains(err.Error(), "access denied") {
+		} else if errors.Is(err, ErrAccessDenied) {
 			sendError(w, http.StatusForbidden, "Access denied")
 		} else {
 			sendError(w, http.StatusInternalServerError, "Failed to update conversation")
@@ -273,7 +274,7 @@ func (h *Handler) HandleRename(w http.ResponseWriter, r *http.Request) {
 
 	err = h.store.Rename(id, username, req.Title)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "access denied") {
+		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrAccessDenied) {
 			sendError(w, http.StatusNotFound, "Conversation not found")
 		} else {
 			sendError(w, http.StatusInternalServerError, "Failed to rename conversation")
@@ -306,7 +307,7 @@ func (h *Handler) HandleDelete(w http.ResponseWriter, r *http.Request) {
 
 	err = h.store.Delete(id, username)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "access denied") {
+		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrAccessDenied) {
 			sendError(w, http.StatusNotFound, "Conversation not found")
 		} else {
 			sendError(w, http.StatusInternalServerError, "Failed to delete conversation")

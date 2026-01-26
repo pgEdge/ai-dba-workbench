@@ -628,6 +628,10 @@ func sampleTableData(ctx context.Context, dbClient *database.Client, tableName s
 		count++
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error sampling table data: %w", err)
+	}
+
 	// Calculate average lengths
 	if count > 0 {
 		for col := range sampleData {
@@ -789,6 +793,10 @@ func performWeightedVectorSearch(
 			VectorWeights: weightMap,
 		}
 		results = append(results, result)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating vector search results: %w", err)
 	}
 
 	return results, nil

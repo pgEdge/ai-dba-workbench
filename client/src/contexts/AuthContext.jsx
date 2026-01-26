@@ -17,10 +17,6 @@ const API_BASE_URL = '/api/v1';
 
 export const AuthProvider = ({ children }) => {
     const [user, setUser] = useState(null);
-    const [sessionToken, setSessionToken] = useState(() => {
-        // Load session token from localStorage on initialization
-        return localStorage.getItem('session-token');
-    });
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
@@ -29,16 +25,10 @@ export const AuthProvider = ({ children }) => {
 
     const checkAuth = async () => {
         try {
-            if (!sessionToken) {
-                setLoading(false);
-                return;
-            }
-
             // Validate session by calling the user info endpoint
+            // The httpOnly cookie will be sent automatically with credentials: 'include'
             const response = await fetch(`${API_BASE_URL}/user/info`, {
-                headers: {
-                    'Authorization': `Bearer ${sessionToken}`
-                }
+                credentials: 'include'
             });
 
             if (!response.ok) {
@@ -55,13 +45,11 @@ export const AuthProvider = ({ children }) => {
                 });
             } else {
                 // Session is invalid - clear it
-                throw new Error('Session invalid');
+                setUser(null);
             }
         } catch (error) {
             console.error('Auth check failed:', error);
             // Invalid or expired session - clear it
-            setSessionToken(null);
-            localStorage.removeItem('session-token');
             setUser(null);
         } finally {
             setLoading(false);
@@ -71,11 +59,13 @@ export const AuthProvider = ({ children }) => {
     const login = async (username, password) => {
         try {
             // Authenticate via REST API
+            // The server will set an httpOnly cookie with the session token
             const response = await fetch(`${API_BASE_URL}/auth/login`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
+                credentials: 'include', // Receive the httpOnly cookie
                 body: JSON.stringify({ username, password })
             });
 
@@ -85,19 +75,14 @@ export const AuthProvider = ({ children }) => {
                 throw new Error(result.error || 'Login failed');
             }
 
-            if (!result.success || !result.session_token) {
+            if (!result.success) {
                 throw new Error(result.message || 'Authentication failed');
             }
 
-            // Store session token in state and localStorage
-            setSessionToken(result.session_token);
-            localStorage.setItem('session-token', result.session_token);
-
             // Fetch full user info including superuser status
+            // The httpOnly cookie will be sent automatically
             const userInfoResponse = await fetch(`${API_BASE_URL}/user/info`, {
-                headers: {
-                    'Authorization': `Bearer ${result.session_token}`
-                }
+                credentials: 'include'
             });
 
             if (userInfoResponse.ok) {
@@ -111,6 +96,7 @@ export const AuthProvider = ({ children }) => {
             } else {
                 // Fallback if user info fetch fails
                 setUser({
+                    authenticated: true,
                     username: username,
                     expiresAt: result.expires_at
                 });
@@ -121,24 +107,36 @@ export const AuthProvider = ({ children }) => {
         }
     };
 
-    const logout = () => {
-        // Clear session token
-        setSessionToken(null);
-        localStorage.removeItem('session-token');
+    const logout = async () => {
+        try {
+            // Call logout endpoint to clear the httpOnly cookie on the server
+            await fetch(`${API_BASE_URL}/auth/logout`, {
+                method: 'POST',
+                credentials: 'include'
+            });
+        } catch (error) {
+            console.error('Logout request failed:', error);
+            // Continue with local logout even if server request fails
+        }
         setUser(null);
     };
 
     // Force logout without any cleanup (used when session is invalidated)
-    const forceLogout = () => {
-        setSessionToken(null);
-        localStorage.removeItem('session-token');
+    const forceLogout = async () => {
+        try {
+            await fetch(`${API_BASE_URL}/auth/logout`, {
+                method: 'POST',
+                credentials: 'include'
+            });
+        } catch (error) {
+            // Ignore errors during force logout
+        }
         setUser(null);
     };
 
     return (
         <AuthContext.Provider value={{
             user,
-            sessionToken,
             loading,
             login,
             logout,

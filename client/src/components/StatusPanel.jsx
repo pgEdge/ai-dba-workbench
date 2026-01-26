@@ -1052,7 +1052,7 @@ const StatusPanel = ({
     mode = 'light',
 }) => {
     const isDark = mode === 'dark';
-    const { sessionToken: token } = useAuth();
+    const { user } = useAuth();
     const [alerts, setAlerts] = useState([]);
     const [loading, setLoading] = useState(false);
     const initialLoadDoneRef = React.useRef(false);
@@ -1180,13 +1180,13 @@ const StatusPanel = ({
 
     // Handle confirming acknowledgment
     const handleAckConfirm = async (alertId, message, falsePositive = false) => {
-        if (!token || !alertId) return;
+        if (!user || !alertId) return;
 
         try {
             const response = await fetch('/api/v1/alerts/acknowledge', {
                 method: 'POST',
+                credentials: 'include',
                 headers: {
-                    'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
@@ -1213,14 +1213,12 @@ const StatusPanel = ({
 
     // Handle unacknowledging an alert
     const handleUnacknowledge = async (alertId) => {
-        if (!token || !alertId) return;
+        if (!user || !alertId) return;
 
         try {
             const response = await fetch(`/api/v1/alerts/acknowledge?alert_id=${alertId}`, {
                 method: 'DELETE',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                },
+                credentials: 'include',
             });
 
             if (response.ok) {
@@ -1236,7 +1234,7 @@ const StatusPanel = ({
 
     // Fetch alerts data function
     const fetchAlertsData = useCallback(async () => {
-        if (!token || !selection) {
+        if (!user || !selection) {
             setAlerts([]);
             setLoading(false);
             return;
@@ -1269,9 +1267,7 @@ const StatusPanel = ({
             // For estate, fetch all alerts (no connection filter)
 
             const response = await fetch(url, {
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                },
+                credentials: 'include',
             });
 
             if (response.ok) {
@@ -1288,7 +1284,7 @@ const StatusPanel = ({
         } finally {
             setLoading(false);
         }
-    }, [token, selection]);
+    }, [user, selection]);
 
     // Reset initial load state when selection changes
     useEffect(() => {

@@ -150,6 +150,10 @@ func (s *AuthStore) ListGroups() ([]*UserGroup, error) {
 		groups = append(groups, &group)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating groups: %w", err)
+	}
+
 	return groups, nil
 }
 
@@ -283,6 +287,10 @@ func (s *AuthStore) GetGroupMembers(groupID int64) (*GroupWithMembers, error) {
 		result.UserMembers = append(result.UserMembers, username)
 	}
 
+	if err := userRows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating user members: %w", err)
+	}
+
 	// Get group members
 	groupRows, err := s.db.Query(`
         SELECT g.name
@@ -302,6 +310,10 @@ func (s *AuthStore) GetGroupMembers(groupID int64) (*GroupWithMembers, error) {
 			return nil, fmt.Errorf("failed to scan group member: %w", err)
 		}
 		result.GroupMembers = append(result.GroupMembers, groupName)
+	}
+
+	if err := groupRows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating group members: %w", err)
 	}
 
 	return result, nil
@@ -353,6 +365,10 @@ func (s *AuthStore) getUserGroupsInternal(userID int64) ([]int64, error) {
 			return nil, fmt.Errorf("failed to scan group ID: %w", err)
 		}
 		groupIDs = append(groupIDs, groupID)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating user groups: %w", err)
 	}
 
 	return groupIDs, nil

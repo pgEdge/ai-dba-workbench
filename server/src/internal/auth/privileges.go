@@ -132,6 +132,10 @@ func (s *AuthStore) ListMCPPrivileges() ([]*MCPPrivilege, error) {
 		privileges = append(privileges, &priv)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating privileges: %w", err)
+	}
+
 	return privileges, nil
 }
 
@@ -159,6 +163,10 @@ func (s *AuthStore) ListMCPPrivilegesByType(itemType string) ([]*MCPPrivilege, e
 			return nil, fmt.Errorf("failed to scan privilege: %w", err)
 		}
 		privileges = append(privileges, &priv)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating privileges by type: %w", err)
 	}
 
 	return privileges, nil
@@ -370,6 +378,10 @@ func (s *AuthStore) ListGroupMCPPrivileges(groupID int64) ([]*MCPPrivilege, erro
 		privileges = append(privileges, &priv)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating group MCP privileges: %w", err)
+	}
+
 	return privileges, nil
 }
 
@@ -397,6 +409,10 @@ func (s *AuthStore) ListGroupConnectionPrivileges(groupID int64) ([]*ConnectionP
 			return nil, fmt.Errorf("failed to scan privilege: %w", err)
 		}
 		privileges = append(privileges, &priv)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating group connection privileges: %w", err)
 	}
 
 	return privileges, nil
@@ -497,6 +513,10 @@ func (s *AuthStore) GetUserMCPPrivileges(userID int64) (map[string]bool, error) 
 			}
 			privileges[identifier] = true
 		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("error iterating user privileges: %w", err)
+		}
 		rows.Close()
 	}
 
@@ -547,6 +567,10 @@ func (s *AuthStore) GetUserConnectionPrivileges(userID int64) (map[int]string, e
 			} else if existing == AccessLevelRead && accessLevel == AccessLevelReadWrite {
 				privileges[connID] = accessLevel
 			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("error iterating connection privileges: %w", err)
 		}
 		rows.Close()
 	}

@@ -113,7 +113,7 @@ const transformConnectionsToHierarchy = (connections) => {
 };
 
 export const ClusterProvider = ({ children }) => {
-    const { sessionToken: token } = useAuth();
+    const { user } = useAuth();
     const [clusterData, setClusterData] = useState([]);
     const [selectedServer, setSelectedServer] = useState(null);
     const [selectedCluster, setSelectedCluster] = useState(null);
@@ -136,7 +136,7 @@ export const ClusterProvider = ({ children }) => {
      * Only shows loading state on initial load, not during auto-refresh.
      */
     const fetchClusterData = useCallback(async () => {
-        if (!token) return;
+        if (!user) return;
 
         // Only show loading spinner on initial load
         if (isInitialLoadRef.current) {
@@ -148,8 +148,8 @@ export const ClusterProvider = ({ children }) => {
             // First, try to get the hierarchical cluster data
             // If the API doesn't support it yet, fall back to connections
             let response = await fetch('/api/v1/clusters', {
+                credentials: 'include',
                 headers: {
-                    'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json',
                 },
             });
@@ -161,8 +161,8 @@ export const ClusterProvider = ({ children }) => {
             } else if (response.status === 404) {
                 // Fall back to connections endpoint
                 response = await fetch('/api/v1/connections', {
+                    credentials: 'include',
                     headers: {
-                        'Authorization': `Bearer ${token}`,
                         'Content-Type': 'application/json',
                     },
                 });
@@ -197,13 +197,13 @@ export const ClusterProvider = ({ children }) => {
             }
             setLoading(false);
         }
-    }, [token]);
+    }, [user]);
 
     /**
      * Select a server and set it as the current connection
      */
     const selectServer = useCallback(async (server) => {
-        if (!token || !server) return;
+        if (!user || !server) return;
 
         setSelectedServer(server);
         setSelectedCluster(null);
@@ -212,8 +212,8 @@ export const ClusterProvider = ({ children }) => {
         try {
             const response = await fetch('/api/v1/connections/current', {
                 method: 'POST',
+                credentials: 'include',
                 headers: {
-                    'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
@@ -230,7 +230,7 @@ export const ClusterProvider = ({ children }) => {
         } catch (err) {
             console.error('Error setting current connection:', err);
         }
-    }, [token]);
+    }, [user]);
 
     /**
      * Select a cluster (all servers in the cluster)
@@ -256,7 +256,7 @@ export const ClusterProvider = ({ children }) => {
      * Clear the current selection
      */
     const clearSelection = useCallback(async () => {
-        if (!token) return;
+        if (!user) return;
 
         setSelectedServer(null);
         setSelectedCluster(null);
@@ -265,27 +265,23 @@ export const ClusterProvider = ({ children }) => {
         try {
             await fetch('/api/v1/connections/current', {
                 method: 'DELETE',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                },
+                credentials: 'include',
             });
             setCurrentConnection(null);
         } catch (err) {
             console.error('Error clearing current connection:', err);
         }
-    }, [token]);
+    }, [user]);
 
     /**
      * Get the current connection from the server on initial load
      */
     const fetchCurrentConnection = useCallback(async () => {
-        if (!token) return;
+        if (!user) return;
 
         try {
             const response = await fetch('/api/v1/connections/current', {
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                },
+                credentials: 'include',
             });
 
             if (response.ok) {
@@ -305,18 +301,18 @@ export const ClusterProvider = ({ children }) => {
         } catch (err) {
             // Ignore errors - current connection might not be set
         }
-    }, [token, clusterData]);
+    }, [user, clusterData]);
 
-    // Fetch cluster data when token changes
+    // Fetch cluster data when user changes
     useEffect(() => {
-        if (token) {
+        if (user) {
             fetchClusterData();
         } else {
             setClusterData([]);
             setSelectedServer(null);
             setCurrentConnection(null);
         }
-    }, [token, fetchClusterData]);
+    }, [user, fetchClusterData]);
 
     // Fetch current connection after cluster data is loaded
     useEffect(() => {
@@ -327,14 +323,14 @@ export const ClusterProvider = ({ children }) => {
 
     // Auto-refresh effect
     useEffect(() => {
-        if (!autoRefreshEnabled || !token) return;
+        if (!autoRefreshEnabled || !user) return;
 
         const intervalId = setInterval(() => {
             fetchClusterData();
         }, autoRefreshInterval);
 
         return () => clearInterval(intervalId);
-    }, [autoRefreshEnabled, token, fetchClusterData]);
+    }, [autoRefreshEnabled, user, fetchClusterData]);
 
     /**
      * Update a cluster group's name
@@ -342,7 +338,7 @@ export const ClusterProvider = ({ children }) => {
      * auto-detected groups (group-auto)
      */
     const updateGroupName = useCallback(async (groupId, newName) => {
-        if (!token) throw new Error('Not authenticated');
+        if (!user) throw new Error('Not authenticated');
 
         const groupIdStr = groupId.toString();
 
@@ -353,8 +349,8 @@ export const ClusterProvider = ({ children }) => {
             // Auto-detected groups: send the group ID as-is
             const response = await fetch(`/api/v1/cluster-groups/${groupIdStr}`, {
                 method: 'PUT',
+                credentials: 'include',
                 headers: {
-                    'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({ name: newName }),
@@ -375,8 +371,8 @@ export const ClusterProvider = ({ children }) => {
 
             const response = await fetch(`/api/v1/cluster-groups/${numericId}`, {
                 method: 'PUT',
+                credentials: 'include',
                 headers: {
-                    'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({ name: newName }),
@@ -390,7 +386,7 @@ export const ClusterProvider = ({ children }) => {
 
         // Refresh cluster data to reflect the change
         await fetchClusterData();
-    }, [token, fetchClusterData]);
+    }, [user, fetchClusterData]);
 
     /**
      * Update a cluster's name
@@ -398,7 +394,7 @@ export const ClusterProvider = ({ children }) => {
      * auto-detected clusters (server-{id}, cluster-spock-{prefix})
      */
     const updateClusterName = useCallback(async (clusterId, newName, groupId, autoClusterKey) => {
-        if (!token) throw new Error('Not authenticated');
+        if (!user) throw new Error('Not authenticated');
 
         const clusterIdStr = clusterId.toString();
 
@@ -414,8 +410,8 @@ export const ClusterProvider = ({ children }) => {
 
             const response = await fetch(`/api/v1/clusters/${clusterIdStr}`, {
                 method: 'PUT',
+                credentials: 'include',
                 headers: {
-                    'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify(body),
@@ -440,8 +436,8 @@ export const ClusterProvider = ({ children }) => {
 
             const response = await fetch(`/api/v1/clusters/${numericId}`, {
                 method: 'PUT',
+                credentials: 'include',
                 headers: {
-                    'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({ name: newName, group_id: numericGroupId }),
@@ -455,18 +451,18 @@ export const ClusterProvider = ({ children }) => {
 
         // Refresh cluster data to reflect the change
         await fetchClusterData();
-    }, [token, fetchClusterData]);
+    }, [user, fetchClusterData]);
 
     /**
      * Update a server's (connection's) name
      */
     const updateServerName = useCallback(async (serverId, newName) => {
-        if (!token) throw new Error('Not authenticated');
+        if (!user) throw new Error('Not authenticated');
 
         const response = await fetch(`/api/v1/connections/${serverId}`, {
             method: 'PUT',
+            credentials: 'include',
             headers: {
-                'Authorization': `Bearer ${token}`,
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({ name: newName }),
@@ -479,19 +475,17 @@ export const ClusterProvider = ({ children }) => {
 
         // Refresh cluster data to reflect the change
         await fetchClusterData();
-    }, [token, fetchClusterData]);
+    }, [user, fetchClusterData]);
 
     /**
      * Get full server (connection) details for editing
      */
     const getServer = useCallback(async (serverId) => {
-        if (!token) throw new Error('Not authenticated');
+        if (!user) throw new Error('Not authenticated');
 
         const response = await fetch(`/api/v1/connections/${serverId}`, {
             method: 'GET',
-            headers: {
-                'Authorization': `Bearer ${token}`,
-            },
+            credentials: 'include',
         });
 
         if (!response.ok) {
@@ -500,18 +494,18 @@ export const ClusterProvider = ({ children }) => {
         }
 
         return await response.json();
-    }, [token]);
+    }, [user]);
 
     /**
      * Create a new server (connection)
      */
     const createServer = useCallback(async (serverData) => {
-        if (!token) throw new Error('Not authenticated');
+        if (!user) throw new Error('Not authenticated');
 
         const response = await fetch('/api/v1/connections', {
             method: 'POST',
+            credentials: 'include',
             headers: {
-                'Authorization': `Bearer ${token}`,
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify(serverData),
@@ -524,18 +518,18 @@ export const ClusterProvider = ({ children }) => {
 
         await fetchClusterData();
         return await response.json();
-    }, [token, fetchClusterData]);
+    }, [user, fetchClusterData]);
 
     /**
      * Update an existing server (connection)
      */
     const updateServer = useCallback(async (serverId, serverData) => {
-        if (!token) throw new Error('Not authenticated');
+        if (!user) throw new Error('Not authenticated');
 
         const response = await fetch(`/api/v1/connections/${serverId}`, {
             method: 'PUT',
+            credentials: 'include',
             headers: {
-                'Authorization': `Bearer ${token}`,
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify(serverData),
@@ -548,19 +542,17 @@ export const ClusterProvider = ({ children }) => {
 
         await fetchClusterData();
         return await response.json();
-    }, [token, fetchClusterData]);
+    }, [user, fetchClusterData]);
 
     /**
      * Delete a server (connection)
      */
     const deleteServer = useCallback(async (serverId) => {
-        if (!token) throw new Error('Not authenticated');
+        if (!user) throw new Error('Not authenticated');
 
         const response = await fetch(`/api/v1/connections/${serverId}`, {
             method: 'DELETE',
-            headers: {
-                'Authorization': `Bearer ${token}`,
-            },
+            credentials: 'include',
         });
 
         if (!response.ok) {
@@ -575,18 +567,18 @@ export const ClusterProvider = ({ children }) => {
         }
 
         await fetchClusterData();
-    }, [token, fetchClusterData, selectedServer]);
+    }, [user, fetchClusterData, selectedServer]);
 
     /**
      * Create a new cluster group
      */
     const createGroup = useCallback(async (groupData) => {
-        if (!token) throw new Error('Not authenticated');
+        if (!user) throw new Error('Not authenticated');
 
         const response = await fetch('/api/v1/cluster-groups', {
             method: 'POST',
+            credentials: 'include',
             headers: {
-                'Authorization': `Bearer ${token}`,
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify(groupData),
@@ -599,13 +591,13 @@ export const ClusterProvider = ({ children }) => {
 
         await fetchClusterData();
         return await response.json();
-    }, [token, fetchClusterData]);
+    }, [user, fetchClusterData]);
 
     /**
      * Delete a cluster group
      */
     const deleteGroup = useCallback(async (groupId) => {
-        if (!token) throw new Error('Not authenticated');
+        if (!user) throw new Error('Not authenticated');
 
         // Extract numeric ID from group-{id} format if needed
         const numericId = typeof groupId === 'string' && groupId.startsWith('group-')
@@ -614,9 +606,7 @@ export const ClusterProvider = ({ children }) => {
 
         const response = await fetch(`/api/v1/cluster-groups/${numericId}`, {
             method: 'DELETE',
-            headers: {
-                'Authorization': `Bearer ${token}`,
-            },
+            credentials: 'include',
         });
 
         if (!response.ok) {
@@ -625,14 +615,14 @@ export const ClusterProvider = ({ children }) => {
         }
 
         await fetchClusterData();
-    }, [token, fetchClusterData]);
+    }, [user, fetchClusterData]);
 
     /**
      * Move a cluster to a different group
      * Supports both database-backed clusters and auto-detected clusters
      */
     const moveClusterToGroup = useCallback(async (clusterId, targetGroupId, autoClusterKey, clusterName) => {
-        if (!token) throw new Error('Not authenticated');
+        if (!user) throw new Error('Not authenticated');
 
         const clusterIdStr = clusterId.toString();
 
@@ -658,8 +648,8 @@ export const ClusterProvider = ({ children }) => {
 
         const response = await fetch(`/api/v1/clusters/${clusterIdStr}`, {
             method: 'PUT',
+            credentials: 'include',
             headers: {
-                'Authorization': `Bearer ${token}`,
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify(body),
@@ -671,7 +661,7 @@ export const ClusterProvider = ({ children }) => {
         }
 
         await fetchClusterData();
-    }, [token, fetchClusterData]);
+    }, [user, fetchClusterData]);
 
     const value = {
         // Data

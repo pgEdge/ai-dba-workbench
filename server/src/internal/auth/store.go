@@ -485,6 +485,10 @@ func (s *AuthStore) ListUsers() ([]*StoredUser, error) {
 		users = append(users, &user)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating users: %w", err)
+	}
+
 	return users, nil
 }
 
@@ -549,8 +553,11 @@ func (s *AuthStore) AuthenticateUser(username, password string) (string, time.Ti
 	// Set expiration
 	expiration := time.Now().Add(DefaultSessionExpiry)
 
-	// Store session in memory
-	s.sessions.Store(token, &SessionInfo{
+	// Store session in memory using hashed token to prevent timing attacks
+	// The hash operation is constant-time with respect to the token content,
+	// preventing attackers from inferring valid tokens via response timing
+	tokenHash := GetTokenHashByRawToken(token)
+	s.sessions.Store(tokenHash, &SessionInfo{
 		Username:  username,
 		ExpiresAt: expiration,
 	})
@@ -563,9 +570,14 @@ func (s *AuthStore) AuthenticateUser(username, password string) (string, time.Ti
 	return token, expiration, nil
 }
 
-// ValidateSessionToken checks if a session token is valid
+// ValidateSessionToken checks if a session token is valid.
+// Uses token hashing to prevent timing attacks - the hash lookup has
+// consistent timing regardless of whether the token exists.
 func (s *AuthStore) ValidateSessionToken(token string) (string, error) {
-	value, ok := s.sessions.Load(token)
+	// Hash the token first for constant-time lookup
+	tokenHash := GetTokenHashByRawToken(token)
+
+	value, ok := s.sessions.Load(tokenHash)
 	if !ok {
 		return "", fmt.Errorf("invalid session token")
 	}
@@ -575,18 +587,18 @@ func (s *AuthStore) ValidateSessionToken(token string) (string, error) {
 		return "", fmt.Errorf("invalid session data")
 	}
 	if session.ExpiresAt.Before(time.Now()) {
-		s.sessions.Delete(token)
+		s.sessions.Delete(tokenHash)
 		return "", fmt.Errorf("session has expired")
 	}
 
 	// Verify user is still enabled
 	user, err := s.GetUser(session.Username)
 	if err != nil || user == nil {
-		s.sessions.Delete(token)
+		s.sessions.Delete(tokenHash)
 		return "", fmt.Errorf("user not found")
 	}
 	if !user.Enabled {
-		s.sessions.Delete(token)
+		s.sessions.Delete(tokenHash)
 		return "", fmt.Errorf("user account is disabled")
 	}
 
@@ -595,7 +607,7 @@ func (s *AuthStore) ValidateSessionToken(token string) (string, error) {
 
 // InvalidateSession removes a session token
 func (s *AuthStore) InvalidateSession(token string) {
-	s.sessions.Delete(token)
+	s.sessions.Delete(GetTokenHashByRawToken(token))
 }
 
 // =============================================================================
@@ -890,6 +902,8 @@ func (s *AuthStore) CleanupExpiredTokens() (int, []string) {
 			hashes = append(hashes, hash)
 		}
 	}
+	//nolint:errcheck // Err check non-critical for cleanup operation
+	_ = rows.Err()
 	rows.Close()
 
 	// Delete expired tokens
@@ -917,6 +931,11 @@ func (s *AuthStore) scanTokens(rows *sql.Rows) ([]*StoredToken, error) {
 		}
 		tokens = append(tokens, &token)
 	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating tokens: %w", err)
+	}
+
 	return tokens, nil
 }
 

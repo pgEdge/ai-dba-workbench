@@ -1633,12 +1633,20 @@ const EventTimeline = ({ selection, mode = 'light' }) => {
         [selection?.type, selection?.serverIds?.join(',')]
     );
 
+    // Memoize the eventTypes array to prevent creating new references on each render
+    // This is critical to avoid infinite re-fetch loops in useTimelineEvents
+    const memoizedEventTypes = useMemo(
+        () => (eventTypes.includes('all') ? ['all'] : eventTypes),
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [eventTypes.join(',')]
+    );
+
     // Fetch events using the hook
     const { events, loading, totalCount } = useTimelineEvents({
         connectionId,
         connectionIds,
         timeRange,
-        eventTypes: eventTypes.includes('all') ? ['all'] : eventTypes,
+        eventTypes: memoizedEventTypes,
         enabled: Boolean(selection),
     });
 

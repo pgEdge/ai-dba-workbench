@@ -50,8 +50,9 @@ func HandleCompact(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create compactor and perform compaction
+	// Pass request context for proper cancellation support
 	compactor := NewCompactor(req)
-	response := compactor.Compact(req.Messages)
+	response := compactor.Compact(r.Context(), req.Messages)
 
 	// Send response with RFC 8631 Link header
 	w.Header().Set("Content-Type", "application/json")

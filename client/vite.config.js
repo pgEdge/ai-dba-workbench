@@ -20,6 +20,17 @@ export default defineConfig({
             '/api': {
                 target: 'http://localhost:8080',
                 changeOrigin: true,
+                // Ensure cookies are forwarded through the proxy
+                cookieDomainRewrite: '',
+                // Configure proxy to handle credentials
+                configure: (proxy) => {
+                    proxy.on('proxyReq', (proxyReq, req) => {
+                        // Forward cookies from browser to server
+                        if (req.headers.cookie) {
+                            proxyReq.setHeader('Cookie', req.headers.cookie);
+                        }
+                    });
+                },
             },
         },
     },

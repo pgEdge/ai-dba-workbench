@@ -252,6 +252,10 @@ func listKBProducts(kbPath string) (string, error) {
 		totalChunks += count
 	}
 
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("error iterating products: %w", err)
+	}
+
 	sb.WriteString("\n")
 	sb.WriteString(strings.Repeat("=", 50))
 	sb.WriteString(fmt.Sprintf("\nTotal: %d chunks across all products\n", totalChunks))
@@ -394,6 +398,10 @@ func searchKB(kbPath string, queryEmbedding []float32, projectNames, projectVers
 			FilePath:       filePath,
 			Similarity:     similarity,
 		})
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating search results: %w", err)
 	}
 
 	// Sort by similarity (descending)

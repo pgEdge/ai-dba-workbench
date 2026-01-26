@@ -24,6 +24,10 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/tracing"
 )
 
+// MaxRequestBodySize is the maximum allowed size for HTTP request bodies (1MB).
+// This prevents denial-of-service attacks via memory exhaustion from large payloads.
+const MaxRequestBodySize = 1 << 20 // 1MB
+
 // contextKey is a type for context keys to avoid collisions
 type contextKey string
 
@@ -81,6 +85,9 @@ func (s *Server) RunHTTP(config *HTTPConfig) error {
 	if config.AuthEnabled {
 		handler = auth.AuthMiddleware(config.AuthStore, true)(handler)
 	}
+
+	// Apply request body size limit middleware to prevent memory exhaustion attacks
+	handler = MaxBytesMiddleware(MaxRequestBodySize)(handler)
 
 	// Apply security headers middleware (outermost to ensure headers on all responses)
 	handler = SecurityHeadersMiddleware(handler)
@@ -160,9 +167,14 @@ func (s *Server) handleHTTPRequest(w http.ResponseWriter, r *http.Request) {
 	tokenHash := auth.GetTokenHashFromContext(ctx)
 	sessionID := tokenHash // Use token hash as session ID for correlation
 
-	// Read request body
+	// Read request body (size already limited by MaxBytesMiddleware)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		// Check if this is a "request body too large" error from MaxBytesMiddleware
+		if err.Error() == "http: request body too large" {
+			http.Error(w, "Request body too large (max 1MB)", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
@@ -454,6 +466,21 @@ func createErrorResponse(id interface{}, code int, message string, data interfac
 		JSONRPC: "2.0",
 		ID:      id,
 		Error:   &errResp,
+	}
+}
+
+// MaxBytesMiddleware limits request body size to prevent memory exhaustion attacks.
+// This middleware wraps all incoming request bodies with http.MaxBytesReader,
+// ensuring consistent protection across all endpoints.
+func MaxBytesMiddleware(maxBytes int64) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Only limit body size for requests that have a body
+			if r.Body != nil && r.Body != http.NoBody {
+				r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+			}
+			next.ServeHTTP(w, r)
+		})
 	}
 }
 

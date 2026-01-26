@@ -13,6 +13,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -347,7 +348,7 @@ func (h *ClusterHandler) deleteClusterGroup(w http.ResponseWriter, r *http.Reque
 
 	err = h.datastore.DeleteClusterGroup(ctx, id)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, database.ErrClusterGroupNotFound) {
 			RespondError(w, http.StatusNotFound,
 				fmt.Sprintf("Failed to delete cluster group: %v", err))
 		} else {
@@ -459,7 +460,7 @@ func (h *ClusterHandler) deleteCluster(w http.ResponseWriter, r *http.Request, i
 
 	err := h.datastore.DeleteCluster(ctx, id)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, database.ErrClusterNotFound) {
 			RespondError(w, http.StatusNotFound,
 				fmt.Sprintf("Failed to delete cluster: %v", err))
 		} else {

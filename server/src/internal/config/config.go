@@ -27,6 +27,9 @@ type Config struct {
 	// Database connection configuration (single database - the datastore)
 	Database *DatabaseConfig `yaml:"database"`
 
+	// Connection security configuration (for user-created connections, SSRF protection)
+	ConnectionSecurity ConnectionSecurityConfig `yaml:"connection_security"`
+
 	// Embedding configuration
 	Embedding EmbeddingConfig `yaml:"embedding"`
 
@@ -185,6 +188,23 @@ type DatabaseConfig struct {
 	PoolMaxConns        int    `yaml:"pool_max_conns"`          // Maximum number of connections (default: 4)
 	PoolMinConns        int    `yaml:"pool_min_conns"`          // Minimum number of connections (default: 0)
 	PoolMaxConnIdleTime string `yaml:"pool_max_conn_idle_time"` // Max time a connection can be idle before being closed (default: 30m)
+}
+
+// ConnectionSecurityConfig holds settings for user-created database connections (SSRF protection)
+type ConnectionSecurityConfig struct {
+	// AllowInternalNetworks permits connections to RFC 1918 private addresses,
+	// localhost, link-local, and other internal network ranges.
+	// Default: false (connections to internal networks are blocked)
+	AllowInternalNetworks bool `yaml:"allow_internal_networks"`
+
+	// AllowedHosts is an optional allowlist of hosts/IPs/CIDRs that are always permitted.
+	// Example: ["db.example.com", "192.168.1.0/24"]
+	AllowedHosts []string `yaml:"allowed_hosts"`
+
+	// BlockedHosts is an optional blocklist of hosts/IPs/CIDRs that are never permitted.
+	// Evaluated after AllowedHosts.
+	// Example: ["metadata.internal", "169.254.169.254"]
+	BlockedHosts []string `yaml:"blocked_hosts"`
 }
 
 // BuildConnectionString creates a PostgreSQL connection string from DatabaseConfig

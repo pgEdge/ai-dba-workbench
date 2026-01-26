@@ -117,8 +117,8 @@ func TestAuthMiddleware_MissingAuthHeader(t *testing.T) {
 	}
 
 	body := strings.TrimSpace(rr.Body.String())
-	if !strings.Contains(body, "Missing Authorization header") {
-		t.Errorf("Expected 'Missing Authorization header' in response, got %q", body)
+	if !strings.Contains(body, "Missing authentication credentials") {
+		t.Errorf("Expected 'Missing authentication credentials' in response, got %q", body)
 	}
 }
 

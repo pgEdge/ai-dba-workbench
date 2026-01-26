@@ -90,7 +90,8 @@ func NewCompactor(req CompactRequest) *Compactor {
 }
 
 // Compact performs smart compaction on the message history.
-func (c *Compactor) Compact(messages []Message) CompactResponse {
+// The context parameter should be derived from the HTTP request for proper cancellation support.
+func (c *Compactor) Compact(ctx context.Context, messages []Message) CompactResponse {
 	startTime := time.Now()
 	originalCount := len(messages)
 
@@ -178,7 +179,6 @@ func (c *Compactor) Compact(messages []Message) CompactResponse {
 
 		// Enhance summary with LLM if enabled
 		if c.llmSummarizer != nil && c.options.EnableLLMSummarization {
-			ctx := context.Background()
 			enhanced, err := c.llmSummarizer.GenerateSummary(ctx, middle, summary)
 			if err == nil {
 				summary = enhanced

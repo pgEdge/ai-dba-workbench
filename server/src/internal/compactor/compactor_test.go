@@ -11,6 +11,7 @@
 package compactor
 
 import (
+	"context"
 	"testing"
 )
 
@@ -52,7 +53,7 @@ func TestCompactor_NoCompactionNeeded(t *testing.T) {
 	}
 
 	compactor := NewCompactor(req)
-	result := compactor.Compact(messages)
+	result := compactor.Compact(context.Background(), messages)
 
 	if result.CompactionInfo.OriginalCount != 2 {
 		t.Errorf("Expected original count 2, got %d", result.CompactionInfo.OriginalCount)
@@ -85,7 +86,7 @@ func TestCompactor_BasicCompaction(t *testing.T) {
 	}
 
 	compactor := NewCompactor(req)
-	result := compactor.Compact(messages)
+	result := compactor.Compact(context.Background(), messages)
 
 	// Should keep first message + some messages + recent window
 	if result.CompactionInfo.CompactedCount > result.CompactionInfo.OriginalCount {
@@ -122,7 +123,7 @@ func TestCompactor_PreservesSchemaMessages(t *testing.T) {
 	}
 
 	compactor := NewCompactor(req)
-	result := compactor.Compact(messages)
+	result := compactor.Compact(context.Background(), messages)
 
 	// Should preserve schema messages even if not in recent window
 	foundSchema1 := false
@@ -170,7 +171,7 @@ func TestCompactor_PreservesToolMessages(t *testing.T) {
 	}
 
 	compactor := NewCompactor(req)
-	result := compactor.Compact(messages)
+	result := compactor.Compact(context.Background(), messages)
 
 	// Should preserve schema tool even if not in recent window
 	foundSchemaTool := false
@@ -205,7 +206,7 @@ func TestCompactor_TokenEstimation(t *testing.T) {
 	}
 
 	compactor := NewCompactor(req)
-	result := compactor.Compact(messages)
+	result := compactor.Compact(context.Background(), messages)
 
 	if result.TokenEstimate <= 0 {
 		t.Error("Expected positive token estimate")
@@ -235,7 +236,7 @@ func TestCompactor_CompressionRatio(t *testing.T) {
 	}
 
 	compactor := NewCompactor(req)
-	result := compactor.Compact(messages)
+	result := compactor.Compact(context.Background(), messages)
 
 	// Compression ratio should be between 0 and 1 (or 1.0 if no compression)
 	if result.CompactionInfo.CompressionRatio < 0 {
@@ -272,7 +273,7 @@ func TestCompactor_SummaryGeneration(t *testing.T) {
 	}
 
 	compactor := NewCompactor(req)
-	result := compactor.Compact(messages)
+	result := compactor.Compact(context.Background(), messages)
 
 	// Summary may or may not be generated depending on whether compaction happens
 	// Just verify the compaction worked
@@ -292,7 +293,7 @@ func TestCompactor_EmptyMessages(t *testing.T) {
 	}
 
 	compactor := NewCompactor(req)
-	result := compactor.Compact(messages)
+	result := compactor.Compact(context.Background(), messages)
 
 	if len(result.Messages) != 0 {
 		t.Errorf("Expected 0 messages, got %d", len(result.Messages))
@@ -312,7 +313,7 @@ func TestCompactor_SingleMessage(t *testing.T) {
 	}
 
 	compactor := NewCompactor(req)
-	result := compactor.Compact(messages)
+	result := compactor.Compact(context.Background(), messages)
 
 	if len(result.Messages) != 1 {
 		t.Errorf("Expected 1 message, got %d", len(result.Messages))

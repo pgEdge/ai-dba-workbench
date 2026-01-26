@@ -18,18 +18,37 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
 
+// MaxRequestBodySize is the maximum size for request bodies (1MB)
+const MaxRequestBodySize = 1 << 20
+
+// SessionCookieName is the name of the httpOnly cookie used for session tokens.
+// Using httpOnly cookies prevents XSS attacks from accessing the token.
+const SessionCookieName = "session_token"
+
 // AuthHandler handles authentication-related HTTP requests
 type AuthHandler struct {
-	authStore   *auth.AuthStore
-	rateLimiter *auth.RateLimiter
+	authStore    *auth.AuthStore
+	rateLimiter  *auth.RateLimiter
+	ipExtractor  *auth.IPExtractor
+	secureCookie bool // Whether to set Secure flag on cookies (true for HTTPS)
 }
 
-// NewAuthHandler creates a new authentication handler
-func NewAuthHandler(authStore *auth.AuthStore, rateLimiter *auth.RateLimiter) *AuthHandler {
+// NewAuthHandler creates a new authentication handler.
+// The ipExtractor parameter is optional; if nil, RemoteAddr will be used directly.
+// The secureCookie parameter should be true when serving over HTTPS.
+func NewAuthHandler(authStore *auth.AuthStore, rateLimiter *auth.RateLimiter, ipExtractor *auth.IPExtractor) *AuthHandler {
 	return &AuthHandler{
-		authStore:   authStore,
-		rateLimiter: rateLimiter,
+		authStore:    authStore,
+		rateLimiter:  rateLimiter,
+		ipExtractor:  ipExtractor,
+		secureCookie: false, // Default to false for development; set via SetSecureCookie for production
 	}
+}
+
+// SetSecureCookie configures whether cookies should have the Secure flag.
+// This should be set to true when serving over HTTPS in production.
+func (h *AuthHandler) SetSecureCookie(secure bool) {
+	h.secureCookie = secure
 }
 
 // LoginRequest is the request body for the login endpoint
@@ -50,6 +69,7 @@ type LoginResponse struct {
 // Note: These routes should NOT be wrapped with auth middleware
 func (h *AuthHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/auth/login", h.handleLogin)
+	mux.HandleFunc("/api/v1/auth/logout", h.handleLogout)
 }
 
 // handleLogin handles POST /api/v1/auth/login
@@ -84,8 +104,9 @@ func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get IP address for rate limiting
-	ipAddress := extractIPFromRequest(r)
+	// Get IP address for rate limiting using secure IP extraction
+	// Uses the IPExtractor which only trusts X-Forwarded-For from configured trusted proxies
+	ipAddress := h.extractIPFromRequest(r)
 
 	// Check rate limit if rate limiter is configured
 	if h.rateLimiter != nil && ipAddress != "" {
@@ -113,7 +134,19 @@ func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		h.rateLimiter.Reset(ipAddress)
 	}
 
-	// Return success response
+	// Set httpOnly cookie for secure session management.
+	// This prevents XSS attacks from accessing the session token.
+	http.SetCookie(w, &http.Cookie{
+		Name:     SessionCookieName,
+		Value:    token,
+		Path:     "/",
+		Expires:  expiration,
+		HttpOnly: true,                 // Prevents JavaScript access (XSS protection)
+		Secure:   h.secureCookie,       // Only send over HTTPS in production
+		SameSite: http.SameSiteLaxMode, // CSRF protection (Lax works with proxies)
+	})
+
+	// Return success response (token also in body for backwards compatibility)
 	RespondJSON(w, http.StatusOK, LoginResponse{
 		Success:      true,
 		SessionToken: token,
@@ -122,16 +155,40 @@ func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// extractIPFromRequest extracts the client IP from an HTTP request
-func extractIPFromRequest(r *http.Request) string {
-	// Try X-Forwarded-For first (common proxy header)
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return xff
+// handleLogout handles POST /api/v1/auth/logout
+// Clears the session cookie to log the user out
+func (h *AuthHandler) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
 	}
-	// Try X-Real-IP (nginx proxy header)
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
+
+	// Clear the session cookie by setting it to expire immediately
+	http.SetCookie(w, &http.Cookie{
+		Name:     SessionCookieName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1, // Expire immediately
+		HttpOnly: true,
+		Secure:   h.secureCookie,
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	RespondJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "Logged out successfully",
+	})
+}
+
+// extractIPFromRequest securely extracts the client IP from an HTTP request.
+// It uses the configured IPExtractor which only trusts X-Forwarded-For headers
+// from known trusted proxies, preventing IP spoofing attacks on rate limiting.
+func (h *AuthHandler) extractIPFromRequest(r *http.Request) string {
+	if h.ipExtractor != nil {
+		return h.ipExtractor.ExtractIP(r)
 	}
-	// Fall back to RemoteAddr
+	// Fallback to RemoteAddr if no IPExtractor is configured
+	// This is the safe default - don't trust any forwarded headers
 	return r.RemoteAddr
 }

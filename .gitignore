@@ -4,6 +4,9 @@
 # Build output directory (including runtime configs copied there)
 bin/
 
+# Docs site build
+site/
+
 # Binaries (legacy paths - for local builds in sub-project directories)
 collector/ai-dba-collector
 collector/ai-dba-collector-*

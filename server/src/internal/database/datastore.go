@@ -13,6 +13,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -22,6 +23,21 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/pkg/logger"
 	"github.com/pgedge/ai-workbench/server/internal/config"
+)
+
+// Sentinel errors for datastore operations
+var (
+	// ErrConnectionNotFound is returned when a connection is not found
+	ErrConnectionNotFound = errors.New("connection not found")
+
+	// ErrClusterGroupNotFound is returned when a cluster group is not found
+	ErrClusterGroupNotFound = errors.New("cluster group not found")
+
+	// ErrClusterNotFound is returned when a cluster is not found
+	ErrClusterNotFound = errors.New("cluster not found")
+
+	// ErrAlertNotFound is returned when an alert is not found
+	ErrAlertNotFound = errors.New("alert not found")
 )
 
 // MonitoredConnection represents a connection stored in the datastore
@@ -327,7 +343,7 @@ func (d *Datastore) DeleteConnection(ctx context.Context, id int) error {
 	}
 
 	if result.RowsAffected() == 0 {
-		return fmt.Errorf("connection not found")
+		return ErrConnectionNotFound
 	}
 
 	return nil
@@ -739,7 +755,7 @@ func (d *Datastore) DeleteClusterGroup(ctx context.Context, id int) error {
 	}
 
 	if result.RowsAffected() == 0 {
-		return fmt.Errorf("cluster group not found")
+		return ErrClusterGroupNotFound
 	}
 
 	return nil
@@ -909,7 +925,7 @@ func (d *Datastore) DeleteCluster(ctx context.Context, id int) error {
 	}
 
 	if result.RowsAffected() == 0 {
-		return fmt.Errorf("cluster not found")
+		return ErrClusterNotFound
 	}
 
 	return nil
@@ -1506,7 +1522,7 @@ func (d *Datastore) AssignConnectionToCluster(ctx context.Context, connectionID 
 	}
 
 	if result.RowsAffected() == 0 {
-		return fmt.Errorf("connection not found")
+		return ErrConnectionNotFound
 	}
 
 	return nil

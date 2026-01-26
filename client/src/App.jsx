@@ -14,6 +14,7 @@ import { Box, CircularProgress, CssBaseline } from '@mui/material';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ClusterProvider, useCluster } from './contexts/ClusterContext';
 import { AlertsProvider } from './contexts/AlertsContext';
+import ErrorBoundary from './components/ErrorBoundary';
 import Header from './components/Header';
 import Login from './components/Login';
 import ClusterNavigator from './components/ClusterNavigator';
@@ -73,7 +74,9 @@ const AppContent = () => {
             <CssBaseline />
             <ClusterProvider>
                 <AlertsProvider>
-                    <MainLayout mode={mode} onToggleTheme={toggleTheme} />
+                    <ErrorBoundary>
+                        <MainLayout mode={mode} onToggleTheme={toggleTheme} />
+                    </ErrorBoundary>
                 </AlertsProvider>
             </ClusterProvider>
         </ThemeProvider>
@@ -216,9 +219,11 @@ const MainLayout = ({ mode, onToggleTheme }) => {
 
 const App = () => {
     return (
-        <AuthProvider>
-            <AppContent />
-        </AuthProvider>
+        <ErrorBoundary>
+            <AuthProvider>
+                <AppContent />
+            </AuthProvider>
+        </ErrorBoundary>
     );
 };
 

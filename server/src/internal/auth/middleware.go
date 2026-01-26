@@ -310,27 +310,34 @@ func AuthMiddleware(authStore *AuthStore, enabled bool) func(http.Handler) http.
 
 			// Skip authentication for public endpoints (needed before login)
 			switch r.URL.Path {
-			case HealthCheckPath, UserInfoPath, "/api/v1/auth/login",
+			case HealthCheckPath, UserInfoPath, "/api/v1/auth/login", "/api/v1/auth/logout",
 				LLMProvidersPath, LLMModelsPath:
 				next.ServeHTTP(w, r)
 				return
 			}
 
-			// Get token from Authorization header
+			// Get token from Authorization header or session cookie
+			// Priority: 1. Authorization header (for API tokens and backwards compatibility)
+			//           2. Session cookie (for XSS-safe browser sessions)
+			var token string
 			authHeader := r.Header.Get("Authorization")
-			if authHeader == "" {
-				http.Error(w, "Missing Authorization header", http.StatusUnauthorized)
-				return
+			if authHeader != "" {
+				// Parse Bearer token from header
+				parts := strings.SplitN(authHeader, " ", 2)
+				if len(parts) != 2 || parts[0] != "Bearer" {
+					http.Error(w, "Invalid Authorization header format. Expected: Bearer <token>", http.StatusUnauthorized)
+					return
+				}
+				token = parts[1]
+			} else {
+				// Try to get token from httpOnly session cookie
+				cookie, err := r.Cookie("session_token")
+				if err != nil || cookie.Value == "" {
+					http.Error(w, "Missing authentication credentials", http.StatusUnauthorized)
+					return
+				}
+				token = cookie.Value
 			}
-
-			// Parse Bearer token
-			parts := strings.SplitN(authHeader, " ", 2)
-			if len(parts) != 2 || parts[0] != "Bearer" {
-				http.Error(w, "Invalid Authorization header format. Expected: Bearer <token>", http.StatusUnauthorized)
-				return
-			}
-
-			token := parts[1]
 
 			// Try to validate as API token (service token or user token) first
 			storedToken, err := authStore.ValidateToken(token)

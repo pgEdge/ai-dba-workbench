@@ -30,6 +30,41 @@ import (
 	"github.com/pgedge/ai-workbench/alerter/internal/notifications"
 )
 
+// NotificationWorkerPoolSize is the maximum number of concurrent notification goroutines.
+// This bounds resource usage when many alerts fire simultaneously.
+const NotificationWorkerPoolSize = 10
+
+// Time interval constants for various background workers.
+// These provide readable names for hardcoded durations and make tuning easier.
+const (
+	// NotificationTimeout is the maximum time allowed for sending a notification.
+	NotificationTimeout = 30 * time.Second
+
+	// BlackoutCheckInterval is how often the scheduler checks for scheduled blackouts.
+	BlackoutCheckInterval = 1 * time.Minute
+
+	// AlertCleanerInterval is how often resolved alerts are checked and cleared.
+	AlertCleanerInterval = 30 * time.Second
+
+	// RetentionCleanupInterval is how often old data is cleaned up.
+	RetentionCleanupInterval = 24 * time.Hour
+
+	// DefaultNotificationProcessInterval is the fallback interval for processing pending notifications.
+	DefaultNotificationProcessInterval = 30 * time.Second
+
+	// DefaultReminderCheckInterval is the fallback interval for checking reminder notifications.
+	DefaultReminderCheckInterval = 60 * time.Minute
+
+	// DefaultTier3Timeout is the fallback timeout for Tier 3 LLM classification.
+	DefaultTier3Timeout = 30 * time.Second
+)
+
+// notificationJob represents a notification to be sent by a worker
+type notificationJob struct {
+	alert    *database.Alert
+	notifTyp database.NotificationType
+}
+
 // Engine is the main alerter engine that coordinates all background processing
 type Engine struct {
 	config          *config.Config
@@ -41,6 +76,11 @@ type Engine struct {
 	embeddingProvider llm.EmbeddingProvider
 	reasoningProvider llm.ReasoningProvider
 
+	// Notification worker pool
+	notificationChan chan notificationJob
+	notificationWg   sync.WaitGroup
+	stopNotifications chan struct{}
+
 	// Synchronization
 	mu sync.RWMutex
 }
@@ -48,9 +88,11 @@ type Engine struct {
 // NewEngine creates a new alerter engine
 func NewEngine(cfg *config.Config, datastore *database.Datastore, debug bool) *Engine {
 	e := &Engine{
-		config:    cfg,
-		datastore: datastore,
-		debug:     debug,
+		config:            cfg,
+		datastore:         datastore,
+		debug:             debug,
+		notificationChan:  make(chan notificationJob, 100), // Buffer for burst handling
+		stopNotifications: make(chan struct{}),
 	}
 
 	// Initialize notification manager (only if config and datastore are provided)
@@ -68,7 +110,76 @@ func NewEngine(cfg *config.Config, datastore *database.Datastore, debug bool) *E
 		e.initLLMProviders()
 	}
 
+	// Start notification worker pool
+	e.startNotificationWorkers()
+
 	return e
+}
+
+// startNotificationWorkers starts the bounded notification worker pool
+func (e *Engine) startNotificationWorkers() {
+	for i := 0; i < NotificationWorkerPoolSize; i++ {
+		e.notificationWg.Add(1)
+		go e.notificationWorker()
+	}
+	e.log("Started %d notification workers", NotificationWorkerPoolSize)
+}
+
+// notificationWorker processes notification jobs from the channel
+func (e *Engine) notificationWorker() {
+	defer e.notificationWg.Done()
+
+	for {
+		select {
+		case <-e.stopNotifications:
+			return
+		case job, ok := <-e.notificationChan:
+			if !ok {
+				return
+			}
+			e.processNotificationJob(job)
+		}
+	}
+}
+
+// processNotificationJob handles a single notification job
+func (e *Engine) processNotificationJob(job notificationJob) {
+	if e.notificationMgr == nil {
+		return
+	}
+
+	notifCtx, cancel := context.WithTimeout(context.Background(), NotificationTimeout)
+	defer cancel()
+
+	if err := e.notificationMgr.SendAlertNotification(notifCtx, job.alert, job.notifTyp); err != nil {
+		e.log("ERROR: Failed to send notification: %v", err)
+	}
+
+	// For clear notifications, also delete reminder states
+	if job.notifTyp == database.NotificationTypeAlertClear {
+		if err := e.datastore.DeleteReminderStatesForAlert(notifCtx, job.alert.ID); err != nil {
+			e.log("ERROR: Failed to delete reminder states for alert %d: %v", job.alert.ID, err)
+		}
+	}
+}
+
+// queueNotification queues a notification job for async processing by the worker pool
+func (e *Engine) queueNotification(alert *database.Alert, notifTyp database.NotificationType) {
+	select {
+	case e.notificationChan <- notificationJob{alert: alert, notifTyp: notifTyp}:
+		// Job queued successfully
+	default:
+		// Channel full - log warning but don't block
+		e.log("WARNING: Notification queue full, dropping notification for alert %d", alert.ID)
+	}
+}
+
+// StopNotificationWorkers gracefully shuts down the notification worker pool
+func (e *Engine) StopNotificationWorkers() {
+	close(e.stopNotifications)
+	e.notificationWg.Wait()
+	close(e.notificationChan)
+	e.log("Notification workers stopped")
 }
 
 // initLLMProviders initializes the LLM providers based on configuration
@@ -177,6 +288,9 @@ func (e *Engine) Run(ctx context.Context) error {
 	// Wait for all workers to finish
 	wg.Wait()
 
+	// Stop notification worker pool
+	e.StopNotificationWorkers()
+
 	e.log("All workers stopped")
 	return nil
 }
@@ -254,8 +368,8 @@ func (e *Engine) runAnomalyDetector(ctx context.Context) {
 
 // runBlackoutScheduler checks and activates scheduled blackouts
 func (e *Engine) runBlackoutScheduler(ctx context.Context) {
-	// Check every minute for scheduled blackouts
-	ticker := time.NewTicker(1 * time.Minute)
+	// Check for scheduled blackouts periodically
+	ticker := time.NewTicker(BlackoutCheckInterval)
 	defer ticker.Stop()
 
 	e.log("Blackout scheduler started")
@@ -273,8 +387,8 @@ func (e *Engine) runBlackoutScheduler(ctx context.Context) {
 
 // runAlertCleaner checks for resolved conditions and clears alerts
 func (e *Engine) runAlertCleaner(ctx context.Context) {
-	// Check every 30 seconds for resolved alerts
-	ticker := time.NewTicker(30 * time.Second)
+	// Check for resolved alerts periodically
+	ticker := time.NewTicker(AlertCleanerInterval)
 	defer ticker.Stop()
 
 	e.log("Alert cleaner started")
@@ -292,8 +406,8 @@ func (e *Engine) runAlertCleaner(ctx context.Context) {
 
 // runRetentionManager cleans up old data based on retention policy
 func (e *Engine) runRetentionManager(ctx context.Context) {
-	// Run retention cleanup daily
-	ticker := time.NewTicker(24 * time.Hour)
+	// Run retention cleanup periodically
+	ticker := time.NewTicker(RetentionCleanupInterval)
 	defer ticker.Stop()
 
 	e.log("Retention manager started")
@@ -316,7 +430,7 @@ func (e *Engine) runRetentionManager(ctx context.Context) {
 func (e *Engine) runNotificationWorker(ctx context.Context) {
 	interval := time.Duration(e.config.Notifications.ProcessIntervalSeconds) * time.Second
 	if interval == 0 {
-		interval = 30 * time.Second
+		interval = DefaultNotificationProcessInterval
 	}
 
 	ticker := time.NewTicker(interval)
@@ -343,7 +457,7 @@ func (e *Engine) runNotificationWorker(ctx context.Context) {
 func (e *Engine) runReminderWorker(ctx context.Context) {
 	interval := time.Duration(e.config.Notifications.ReminderCheckIntervalMinutes) * time.Minute
 	if interval == 0 {
-		interval = 60 * time.Minute
+		interval = DefaultReminderCheckInterval
 	}
 
 	ticker := time.NewTicker(interval)
@@ -495,16 +609,8 @@ func (e *Engine) triggerThresholdAlert(ctx context.Context, rule *database.Alert
 		return
 	}
 
-	// Send alert notification
-	if e.notificationMgr != nil {
-		go func(alert *database.Alert) {
-			notifCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			if err := e.notificationMgr.SendAlertNotification(notifCtx, alert, database.NotificationTypeAlertFire); err != nil {
-				e.log("ERROR: Failed to send alert notification: %v", err)
-			}
-		}(alert)
-	}
+	// Queue alert notification for async processing by worker pool
+	e.queueNotification(alert, database.NotificationTypeAlertFire)
 }
 
 // calculateBaselines recalculates metric baselines for anomaly detection.
@@ -1003,7 +1109,7 @@ func (e *Engine) processTier3(ctx context.Context, candidate *database.AnomalyCa
 	// Create a timeout context for Tier 3
 	timeout := time.Duration(e.config.Anomaly.Tier3.TimeoutSeconds) * time.Second
 	if timeout <= 0 {
-		timeout = 30 * time.Second
+		timeout = DefaultTier3Timeout
 	}
 	tier3Ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -1370,21 +1476,8 @@ func (e *Engine) checkAlertResolved(ctx context.Context, alert *database.Alert) 
 			return
 		}
 
-		// Send clear notification
-		if e.notificationMgr != nil {
-			go func(alert *database.Alert) {
-				notifCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer cancel()
-				// Get updated alert with cleared_at timestamp
-				if err := e.notificationMgr.SendAlertNotification(notifCtx, alert, database.NotificationTypeAlertClear); err != nil {
-					e.log("ERROR: Failed to send clear notification: %v", err)
-				}
-				// Delete reminder states for this alert
-				if err := e.datastore.DeleteReminderStatesForAlert(notifCtx, alert.ID); err != nil {
-					e.log("ERROR: Failed to delete reminder states for alert %d: %v", alert.ID, err)
-				}
-			}(alert)
-		}
+		// Queue clear notification for async processing by worker pool
+		e.queueNotification(alert, database.NotificationTypeAlertClear)
 	}
 }
 

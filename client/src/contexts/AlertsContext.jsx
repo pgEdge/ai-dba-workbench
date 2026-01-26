@@ -16,7 +16,7 @@ import { useAuth } from './AuthContext';
 const AlertsContext = createContext(null);
 
 export const AlertsProvider = ({ children }) => {
-    const { sessionToken: token } = useAuth();
+    const { user } = useAuth();
     const [alertCounts, setAlertCounts] = useState({
         total: 0,
         byServer: {},    // Map of server ID -> count
@@ -31,14 +31,12 @@ export const AlertsProvider = ({ children }) => {
      * Fetch alert counts from the API
      */
     const fetchAlertCounts = useCallback(async () => {
-        if (!token) return;
+        if (!user) return;
 
         setLoading(true);
         try {
             const response = await fetch('/api/v1/alerts/counts', {
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                },
+                credentials: 'include',
             });
 
             if (response.ok && isMountedRef.current) {
@@ -57,7 +55,7 @@ export const AlertsProvider = ({ children }) => {
                 setLoading(false);
             }
         }
-    }, [token]);
+    }, [user]);
 
     /**
      * Get alert count for a specific server
@@ -84,21 +82,21 @@ export const AlertsProvider = ({ children }) => {
     // Initial fetch
     useEffect(() => {
         isMountedRef.current = true;
-        if (token) {
+        if (user) {
             fetchAlertCounts();
         }
         return () => {
             isMountedRef.current = false;
         };
-    }, [token, fetchAlertCounts]);
+    }, [user, fetchAlertCounts]);
 
     // Auto-refresh
     useEffect(() => {
-        if (!token) return;
+        if (!user) return;
 
         const intervalId = setInterval(fetchAlertCounts, refreshInterval);
         return () => clearInterval(intervalId);
-    }, [token, fetchAlertCounts]);
+    }, [user, fetchAlertCounts]);
 
     const value = {
         alertCounts,

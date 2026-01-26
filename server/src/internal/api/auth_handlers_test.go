@@ -47,7 +47,7 @@ func TestAuthHandler_HandleLogin(t *testing.T) {
 	defer rateLimiter.Stop()
 
 	// Create handler
-	handler := NewAuthHandler(authStore, rateLimiter)
+	handler := NewAuthHandler(authStore, rateLimiter, nil)
 
 	tests := []struct {
 		name           string
@@ -195,7 +195,7 @@ func TestAuthHandler_HandleLogin(t *testing.T) {
 
 func TestAuthHandler_NilAuthStore(t *testing.T) {
 	// Create handler with nil auth store
-	handler := NewAuthHandler(nil, nil)
+	handler := NewAuthHandler(nil, nil, nil)
 
 	body, _ := json.Marshal(LoginRequest{Username: "test", Password: "test"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
@@ -218,7 +218,7 @@ func TestAuthHandler_NilAuthStore(t *testing.T) {
 }
 
 func TestAuthHandler_RegisterRoutes(t *testing.T) {
-	handler := NewAuthHandler(nil, nil)
+	handler := NewAuthHandler(nil, nil, nil)
 	mux := http.NewServeMux()
 
 	handler.RegisterRoutes(mux)
@@ -235,53 +235,56 @@ func TestAuthHandler_RegisterRoutes(t *testing.T) {
 	}
 }
 
-func TestExtractIPFromRequest(t *testing.T) {
-	tests := []struct {
-		name       string
-		headers    map[string]string
-		remoteAddr string
-		expected   string
-	}{
-		{
-			name:       "X-Forwarded-For header",
-			headers:    map[string]string{"X-Forwarded-For": "192.168.1.1"},
-			remoteAddr: "10.0.0.1:12345",
-			expected:   "192.168.1.1",
-		},
-		{
-			name:       "X-Real-IP header",
-			headers:    map[string]string{"X-Real-IP": "192.168.2.2"},
-			remoteAddr: "10.0.0.1:12345",
-			expected:   "192.168.2.2",
-		},
-		{
-			name:       "RemoteAddr fallback",
-			headers:    map[string]string{},
-			remoteAddr: "10.0.0.1:12345",
-			expected:   "10.0.0.1:12345",
-		},
-		{
-			name:       "X-Forwarded-For takes precedence",
-			headers:    map[string]string{"X-Forwarded-For": "192.168.1.1", "X-Real-IP": "192.168.2.2"},
-			remoteAddr: "10.0.0.1:12345",
-			expected:   "192.168.1.1",
-		},
-	}
+func TestAuthHandler_ExtractIPFromRequest(t *testing.T) {
+	// Test the secure IP extraction behavior:
+	// - Without an IPExtractor, it should use RemoteAddr directly (safe default)
+	// - With an IPExtractor that has trusted proxies, it should extract from headers when appropriate
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/", nil)
-			req.RemoteAddr = tt.remoteAddr
-			for k, v := range tt.headers {
-				req.Header.Set(k, v)
-			}
+	t.Run("without IPExtractor - uses RemoteAddr directly", func(t *testing.T) {
+		handler := NewAuthHandler(nil, nil, nil)
 
-			ip := extractIPFromRequest(req)
-			if ip != tt.expected {
-				t.Errorf("Expected IP '%s', got '%s'", tt.expected, ip)
-			}
-		})
-	}
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.RemoteAddr = "10.0.0.1:12345"
+		req.Header.Set("X-Forwarded-For", "192.168.1.1")
+
+		// Without IPExtractor, should return raw RemoteAddr (safe default)
+		ip := handler.extractIPFromRequest(req)
+		if ip != "10.0.0.1:12345" {
+			t.Errorf("Expected RemoteAddr '10.0.0.1:12345', got '%s'", ip)
+		}
+	})
+
+	t.Run("with IPExtractor and trusted proxy", func(t *testing.T) {
+		// Create IPExtractor that trusts 10.0.0.0/8 range
+		extractor := auth.NewIPExtractor([]string{"10.0.0.0/8"})
+		handler := NewAuthHandler(nil, nil, extractor)
+
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.RemoteAddr = "10.0.0.1:12345" // From trusted proxy
+		req.Header.Set("X-Forwarded-For", "192.168.1.1")
+
+		// With trusted proxy, should extract client IP from X-Forwarded-For
+		ip := handler.extractIPFromRequest(req)
+		if ip != "192.168.1.1" {
+			t.Errorf("Expected forwarded IP '192.168.1.1', got '%s'", ip)
+		}
+	})
+
+	t.Run("with IPExtractor but untrusted proxy", func(t *testing.T) {
+		// Create IPExtractor that trusts a different range
+		extractor := auth.NewIPExtractor([]string{"172.16.0.0/12"})
+		handler := NewAuthHandler(nil, nil, extractor)
+
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.RemoteAddr = "10.0.0.1:12345" // Not a trusted proxy
+		req.Header.Set("X-Forwarded-For", "192.168.1.1")
+
+		// With untrusted proxy, should return direct connection IP (not X-Forwarded-For)
+		ip := handler.extractIPFromRequest(req)
+		if ip != "10.0.0.1" {
+			t.Errorf("Expected direct IP '10.0.0.1', got '%s'", ip)
+		}
+	})
 }
 
 func TestAuthHandler_RateLimiting(t *testing.T) {
@@ -308,7 +311,7 @@ func TestAuthHandler_RateLimiting(t *testing.T) {
 	rateLimiter := auth.NewRateLimiter(15, 2) // 2 max attempts
 	defer rateLimiter.Stop()
 
-	handler := NewAuthHandler(authStore, rateLimiter)
+	handler := NewAuthHandler(authStore, rateLimiter, nil)
 
 	// Make failed attempts to trigger rate limit
 	for i := 0; i < 3; i++ {

@@ -102,8 +102,12 @@ Use count_rows to efficiently determine data volume:
 			// parameterized. This is intentional for MCP tools that allow
 			// arbitrary SQL queries. The table and schema names are validated
 			// and quoted to prevent injection in those parts.
+			// Additional safeguards block dangerous SQL patterns.
 			whereClause := ""
 			if w, ok := args["where"].(string); ok && w != "" {
+				if err := validateWhereClause(w); err != nil {
+					return mcp.NewToolError(fmt.Sprintf("Invalid WHERE clause: %v", err))
+				}
 				whereClause = w
 			}
 
@@ -206,4 +210,56 @@ func quoteQualifiedTableName(name string) string {
 		return quoteIdentifier(parts[0]) + "." + quoteIdentifier(parts[1])
 	}
 	return quoteIdentifier(name)
+}
+
+// validateWhereClause checks a WHERE clause for dangerous SQL patterns.
+// While this tool intentionally allows arbitrary SQL for DBA use cases,
+// we block patterns that could be used for denial of service or file access.
+// The query already runs in a read-only transaction, but these additional
+// safeguards prevent time-based attacks and access to PostgreSQL internals.
+func validateWhereClause(clause string) error {
+	lower := strings.ToLower(clause)
+
+	// Dangerous patterns that could enable attacks even in read-only mode
+	dangerousPatterns := []struct {
+		pattern string
+		reason  string
+	}{
+		{"pg_sleep", "time-based denial of service"},
+		{"pg_cancel_backend", "can cancel other queries"},
+		{"pg_terminate_backend", "can terminate connections"},
+		{"dblink", "can connect to external databases"},
+		{"copy ", "file system access"},
+		{"lo_import", "large object file import"},
+		{"lo_export", "large object file export"},
+		{"pg_read_file", "file system read access"},
+		{"pg_read_binary_file", "file system read access"},
+		{"pg_ls_dir", "directory listing"},
+		{"pg_stat_file", "file system stat access"},
+	}
+
+	for _, dp := range dangerousPatterns {
+		if strings.Contains(lower, dp.pattern) {
+			return fmt.Errorf("WHERE clause contains disallowed pattern '%s' (%s)", dp.pattern, dp.reason)
+		}
+	}
+
+	// Block statement terminators and comment markers that could enable injection
+	// Note: Single statements without these are allowed for legitimate filtering
+	injectionPatterns := []struct {
+		pattern string
+		reason  string
+	}{
+		{";", "multiple statements not allowed"},
+		{"--", "SQL comments not allowed"},
+		{"/*", "SQL block comments not allowed"},
+	}
+
+	for _, ip := range injectionPatterns {
+		if strings.Contains(clause, ip.pattern) {
+			return fmt.Errorf("WHERE clause contains disallowed pattern '%s' (%s)", ip.pattern, ip.reason)
+		}
+	}
+
+	return nil
 }

@@ -13,10 +13,13 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { ClusterProvider, useCluster } from '../ClusterContext';
 
+// Create stable user object outside the mock to avoid infinite re-renders
+const mockUser = { username: 'testuser' };
+
 // Mock the AuthContext
 vi.mock('../AuthContext', () => ({
     useAuth: () => ({
-        sessionToken: 'test-token',
+        user: mockUser,
     }),
 }));
 

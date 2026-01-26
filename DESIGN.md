@@ -129,7 +129,7 @@ ai-dba-server --create-user <username>
 
 Two types of tokens exist:
 
-**User Tokens**: Issued upon successful login via the `/api/auth/login`
+**User Tokens**: Issued upon successful login via the `/api/v1/auth/login`
 endpoint. Each user may have multiple tokens. Tokens are deleted upon logout
 or after 24 hours by default.
 
@@ -325,38 +325,42 @@ for database interaction:
 #### HTTP APIs
 
 HTTP APIs serve client applications (CLI, web client). These are not MCP tools
-and are not accessible to LLMs.
+and are not accessible to LLMs. All REST API endpoints are versioned with the
+`/api/v1/` prefix.
+
+The API implements RFC 8631 for API discovery. All JSON responses include a
+Link header pointing to the OpenAPI specification at `/api/v1/openapi.json`.
 
 **Authentication**:
 
-- `POST /api/auth/login` - Authenticate user and obtain session token
+- `POST /api/v1/auth/login` - Authenticate user and obtain session token
 
 **Connection Management**:
 
-- `GET /api/connections` - List all connections
-- `GET /api/connections/{id}/databases` - List databases for a connection
-- `GET /api/connections/current` - Get current connection
-- `POST /api/connections/current` - Set current connection
-- `DELETE /api/connections/current` - Clear current connection
+- `GET /api/v1/connections` - List all connections
+- `GET /api/v1/connections/{id}/databases` - List databases for a connection
+- `GET /api/v1/connections/current` - Get current connection
+- `POST /api/v1/connections/current` - Set current connection
+- `DELETE /api/v1/connections/current` - Clear current connection
 
 **Cluster Topology**:
 
-- `GET /api/clusters` - Get auto-detected cluster topology hierarchy
-- `GET /api/cluster-groups` - List cluster groups
-- `POST /api/cluster-groups` - Create a cluster group
-- `GET /api/cluster-groups/{id}/clusters` - List clusters in a group
-- `POST /api/cluster-groups/{id}/clusters` - Create a cluster in a group
-- `GET /api/clusters/{id}/servers` - List servers in a cluster
+- `GET /api/v1/clusters` - Get auto-detected cluster topology hierarchy
+- `GET /api/v1/cluster-groups` - List cluster groups
+- `POST /api/v1/cluster-groups` - Create a cluster group
+- `GET /api/v1/cluster-groups/{id}/clusters` - List clusters in a group
+- `POST /api/v1/cluster-groups/{id}/clusters` - Create a cluster in a group
+- `GET /api/v1/clusters/{id}/servers` - List servers in a cluster
 
 **User Information**:
 
-- `GET /api/user/info` - Get authenticated user information
+- `GET /api/v1/user/info` - Get authenticated user information
 
 **LLM Proxy**:
 
-- `GET /api/llm/providers` - List available LLM providers
-- `GET /api/llm/models` - List models for a provider
-- `POST /api/llm/chat` - Proxy chat requests to LLM providers
+- `GET /api/v1/llm/providers` - List available LLM providers
+- `GET /api/v1/llm/models` - List models for a provider
+- `POST /api/v1/llm/chat` - Proxy chat requests to LLM providers
 
 **Conversation History**:
 
@@ -466,9 +470,9 @@ The client uses React contexts for state management:
 - `AuthContext` - Authentication state and session token
 - `ClusterContext` - Cluster hierarchy data and server selection
 
-The client fetches cluster topology from the `/api/clusters` endpoint and
-falls back to the `/api/connections` endpoint with client-side transformation
-if the cluster API is unavailable.
+The client fetches cluster topology from the `/api/v1/clusters` endpoint and
+falls back to the `/api/v1/connections` endpoint with client-side
+transformation if the cluster API is unavailable.
 
 ### Alerter
 

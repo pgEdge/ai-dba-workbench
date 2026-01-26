@@ -40,6 +40,9 @@ const calculateTimeRange = (timeRange) => {
             case '7d':
                 startTime = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
                 break;
+            case '30d':
+                startTime = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+                break;
             default:
                 // Default to last 24 hours
                 startTime = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -119,7 +122,7 @@ export const useTimelineEvents = ({
 
         try {
             const queryString = buildQueryString();
-            const response = await fetch(`/api/timeline/events?${queryString}`, {
+            const response = await fetch(`/api/v1/timeline/events?${queryString}`, {
                 headers: {
                     'Authorization': `Bearer ${token}`,
                 },

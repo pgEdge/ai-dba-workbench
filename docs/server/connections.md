@@ -43,7 +43,7 @@ All endpoints require authentication via Bearer token.
 List all available database connections from the datastore.
 
 ```
-GET /api/connections
+GET /api/v1/connections
 Authorization: Bearer <token>
 ```
 
@@ -75,7 +75,7 @@ Authorization: Bearer <token>
 List all databases on a specific connection.
 
 ```
-GET /api/connections/{id}/databases
+GET /api/v1/connections/{id}/databases
 Authorization: Bearer <token>
 ```
 
@@ -103,7 +103,7 @@ Authorization: Bearer <token>
 Get the currently selected connection for the session.
 
 ```
-GET /api/connections/current
+GET /api/v1/connections/current
 Authorization: Bearer <token>
 ```
 
@@ -132,7 +132,7 @@ Authorization: Bearer <token>
 Select a connection and optionally a specific database.
 
 ```
-POST /api/connections/current
+POST /api/v1/connections/current
 Authorization: Bearer <token>
 Content-Type: application/json
 
@@ -162,7 +162,7 @@ database is used.
 Clear the current connection selection.
 
 ```
-DELETE /api/connections/current
+DELETE /api/v1/connections/current
 Authorization: Bearer <token>
 ```
 

@@ -26,12 +26,12 @@ func GetAlertHistoryTool(pool *pgxpool.Pool) Tool {
 	return Tool{
 		Definition: mcp.Tool{
 			Name: "get_alert_history",
-			Description: `Query historic alerts for a monitored connection.
+			Description: `Query alerts for a monitored connection.
 
 <database_context>
-This tool queries the DATASTORE to retrieve historical alerts that have been
-triggered for monitored PostgreSQL servers. Use this to understand alert
-patterns and recurring issues.
+This tool queries the DATASTORE to retrieve alerts that have been triggered
+for monitored PostgreSQL servers. Use this to check current alert status or
+analyze historical alert patterns.
 </database_context>
 
 <important_behavior>
@@ -49,19 +49,25 @@ If NO connection is selected (connected: false):
 NEVER silently query multiple connections without explicit user consent.
 </important_behavior>
 
-<usecase>
-Use this tool to:
-- View recent alerts for a connection
-- Analyze alert patterns for specific rules or metrics
-- Investigate recurring issues over time
-- Understand the frequency and severity of alerts
-</usecase>
+<critical_status_behavior>
+When the user asks about "active alerts", "current alerts", or "alerting servers":
+- ALWAYS use status="active" - this returns ALL active alerts regardless of age
+- Do NOT apply a time filter for active alerts
+
+When the user asks about "alert history", "past alerts", or "recent alerts":
+- Use status="all" or omit status to see all alerts
+- Apply time_start filter as needed (default: 7 days)
+
+The time_start parameter is IGNORED when status="active" because active alerts
+should always be shown regardless of when they were triggered.
+</critical_status_behavior>
 
 <parameters>
 - connection_id: ID of the monitored connection. OMIT to use the currently selected connection.
+- status: Filter by alert status. Values: "active", "cleared", "acknowledged", "all". Default: "all". IMPORTANT: Use "active" when checking for current/active alerts.
 - rule_id: (optional) Filter to alerts from a specific alert rule
 - metric_name: (optional) Filter to alerts for a specific metric
-- time_start: Start of time range (default: "7d", supports relative like "24h", "7d", "30d")
+- time_start: Start of time range (default: "7d"). IGNORED when status="active".
 - limit: Maximum results to return (default: 50, max: 100)
 - offset: Pagination offset (default: 0)
 </parameters>
@@ -79,10 +85,11 @@ Returns TSV data with:
 </output>
 
 <examples>
-- get_alert_history() - uses current connection, last 7 days
-- get_alert_history(time_start="24h") - last 24 hours
+- get_alert_history(status="active") - ALL active alerts (no time filter)
+- get_alert_history() - all alerts from last 7 days
+- get_alert_history(time_start="24h") - all alerts from last 24 hours
+- get_alert_history(status="active", connection_id=33) - active alerts for specific connection
 - get_alert_history(rule_id=5, time_start="30d") - specific rule, last 30 days
-- get_alert_history(metric_name="cpu_usage", limit=20) - CPU alerts, max 20 results
 </examples>`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
@@ -90,6 +97,12 @@ Returns TSV data with:
 					"connection_id": map[string]interface{}{
 						"type":        "integer",
 						"description": "ID of the monitored connection. If not specified, uses the currently selected connection.",
+					},
+					"status": map[string]interface{}{
+						"type":        "string",
+						"description": "Filter by alert status. Use 'active' to see all currently active alerts (ignores time_start). Values: active, cleared, acknowledged, all. Default: all",
+						"enum":        []string{"active", "cleared", "acknowledged", "all"},
+						"default":     "all",
 					},
 					"rule_id": map[string]interface{}{
 						"type":        "integer",
@@ -101,7 +114,7 @@ Returns TSV data with:
 					},
 					"time_start": map[string]interface{}{
 						"type":        "string",
-						"description": "Start of time range. Relative duration (24h, 7d, 30d) or ISO 8601 format. Default: 7d",
+						"description": "Start of time range. Relative duration (24h, 7d, 30d) or ISO 8601 format. Default: 7d. IGNORED when status='active'.",
 						"default":     "7d",
 					},
 					"limit": map[string]interface{}{
@@ -126,10 +139,42 @@ Returns TSV data with:
 				return mcp.NewToolError("Datastore not configured. The get_alert_history tool requires a datastore connection.")
 			}
 
+			// Extract context from args (injected by registry.Execute)
+			ctx, ok := args["__context"].(context.Context)
+			if !ok {
+				ctx = context.Background()
+			}
+
 			// Parse connection_id (required after injection)
 			connectionID, err := parseIntArg(args, "connection_id")
 			if err != nil {
 				return mcp.NewToolError("Missing or invalid 'connection_id' parameter. If you haven't selected a database connection, use list_connections to find available connection IDs, then specify connection_id explicitly.")
+			}
+
+			// Verify the connection_id exists in the connections table
+			var connName string
+			err = pool.QueryRow(ctx, "SELECT name FROM connections WHERE id = $1", connectionID).Scan(&connName)
+			if err != nil {
+				// Connection doesn't exist - provide helpful error with valid IDs
+				rows, qerr := pool.Query(ctx, "SELECT id, name FROM connections ORDER BY id LIMIT 20")
+				if qerr == nil {
+					defer rows.Close()
+					var validIDs []string
+					for rows.Next() {
+						var id int
+						var name string
+						if rows.Scan(&id, &name) == nil {
+							validIDs = append(validIDs, fmt.Sprintf("%d (%s)", id, name))
+						}
+					}
+					if len(validIDs) > 0 {
+						return mcp.NewToolError(fmt.Sprintf(
+							"Connection ID %d does not exist. Valid connection IDs are: %s. "+
+								"Use list_connections to see all available connections.",
+							connectionID, strings.Join(validIDs, ", ")))
+					}
+				}
+				return mcp.NewToolError(fmt.Sprintf("Connection ID %d does not exist. Use list_connections to see available connections.", connectionID))
 			}
 
 			// Parse optional rule_id
@@ -148,16 +193,32 @@ Returns TSV data with:
 				metricName = &mn
 			}
 
-			// Parse time_start (default: 7 days)
-			timeStart := time.Now().UTC().Add(-7 * 24 * time.Hour)
-			if startStr, ok := args["time_start"].(string); ok && startStr != "" {
-				if dur, err := parseRelativeDuration(startStr); err == nil {
-					timeStart = time.Now().UTC().Add(-dur)
-				} else if parsed, err := parseTimeArg(startStr); err == nil {
-					timeStart = parsed
-				} else {
-					return mcp.NewToolError("Invalid 'time_start' parameter: use relative duration (e.g., '24h', '7d') or ISO 8601 format")
+			// Parse status filter (default: "all")
+			statusFilter := "all"
+			if s, ok := args["status"].(string); ok && s != "" {
+				s = strings.ToLower(s)
+				validStatuses := map[string]bool{"active": true, "cleared": true, "acknowledged": true, "all": true}
+				if !validStatuses[s] {
+					return mcp.NewToolError("Invalid 'status' parameter: must be one of 'active', 'cleared', 'acknowledged', or 'all'")
 				}
+				statusFilter = s
+			}
+
+			// Parse time_start (default: 7 days) - IGNORED when status="active"
+			var timeStart *time.Time
+			if statusFilter != "active" {
+				// Only apply time filter for non-active status queries
+				t := time.Now().UTC().Add(-7 * 24 * time.Hour)
+				if startStr, ok := args["time_start"].(string); ok && startStr != "" {
+					if dur, err := parseRelativeDuration(startStr); err == nil {
+						t = time.Now().UTC().Add(-dur)
+					} else if parsed, err := parseTimeArg(startStr); err == nil {
+						t = parsed
+					} else {
+						return mcp.NewToolError("Invalid 'time_start' parameter: use relative duration (e.g., '24h', '7d') or ISO 8601 format")
+					}
+				}
+				timeStart = &t
 			}
 
 			// Parse limit (default: 50, max: 100)
@@ -182,26 +243,27 @@ Returns TSV data with:
 				}
 			}
 
-			// Extract context from args (injected by registry.Execute)
-			ctx, ok := args["__context"].(context.Context)
-			if !ok {
-				ctx = context.Background()
-			}
-
-			// Build the query
+			// Build the query with conditional time and status filters
 			query := `
                 SELECT id, triggered_at, severity, title, description, metric_name,
                        metric_value, threshold_value, operator, status, cleared_at
                 FROM alerts
                 WHERE connection_id = $1
-                  AND triggered_at >= $2
-                  AND ($3::bigint IS NULL OR rule_id = $3)
-                  AND ($4::text IS NULL OR metric_name = $4)
+                  AND ($2::timestamp IS NULL OR triggered_at >= $2)
+                  AND ($3::text IS NULL OR $3 = 'all' OR status = $3)
+                  AND ($4::bigint IS NULL OR rule_id = $4)
+                  AND ($5::text IS NULL OR metric_name = $5)
                 ORDER BY triggered_at DESC
-                LIMIT $5 OFFSET $6
+                LIMIT $6 OFFSET $7
             `
 
-			rows, err := pool.Query(ctx, query, connectionID, timeStart, ruleID, metricName, limit, offset)
+			// Convert statusFilter for query - use nil for "all" to skip status check
+			var statusParam *string
+			if statusFilter != "all" {
+				statusParam = &statusFilter
+			}
+
+			rows, err := pool.Query(ctx, query, connectionID, timeStart, statusParam, ruleID, metricName, limit, offset)
 			if err != nil {
 				return mcp.NewToolError(fmt.Sprintf("Failed to query alerts: %v", err))
 			}
@@ -209,8 +271,12 @@ Returns TSV data with:
 
 			// Build TSV output
 			var sb strings.Builder
-			sb.WriteString(fmt.Sprintf("Alert History | Connection: %d | Since: %s | Limit: %d | Offset: %d\n\n",
-				connectionID, timeStart.Format(time.RFC3339), limit, offset))
+			timeInfo := "all time"
+			if timeStart != nil {
+				timeInfo = "since " + timeStart.Format(time.RFC3339)
+			}
+			sb.WriteString(fmt.Sprintf("Alerts | Connection: %d (%s) | Status: %s | Time: %s | Limit: %d\n\n",
+				connectionID, connName, statusFilter, timeInfo, limit))
 
 			// Header
 			sb.WriteString("id\ttriggered_at\tseverity\ttitle\tmetric_value\tthreshold_value\tstatus\tcleared_at\n")
@@ -256,7 +322,10 @@ Returns TSV data with:
 			}
 
 			if rowCount == 0 {
-				return mcp.NewToolSuccess(fmt.Sprintf("No alerts found for connection %d in the specified time range.", connectionID))
+				if statusFilter == "active" {
+					return mcp.NewToolSuccess(fmt.Sprintf("No active alerts for connection %d (%s).", connectionID, connName))
+				}
+				return mcp.NewToolSuccess(fmt.Sprintf("No alerts found for connection %d (%s) with status='%s' in the specified time range.", connectionID, connName, statusFilter))
 			}
 
 			sb.WriteString(fmt.Sprintf("\n(%d rows)\n", rowCount))

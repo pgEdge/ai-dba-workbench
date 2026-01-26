@@ -54,15 +54,16 @@ func (h *Handler) extractUsername(r *http.Request) (string, error) {
 	return username, nil
 }
 
-// sendJSON sends a JSON response
+// sendJSON sends a JSON response with RFC 8631 Link header for API discovery
 func sendJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Link", "</api/v1/openapi.json>; rel=\"service-desc\"")
 	w.WriteHeader(status)
 	//nolint:errcheck // Encoding a simple map should never fail
 	json.NewEncoder(w).Encode(data)
 }
 
-// sendError sends an error response
+// sendError sends an error response with RFC 8631 Link header
 func sendError(w http.ResponseWriter, status int, message string) {
 	sendJSON(w, status, map[string]string{"error": message})
 }
@@ -111,7 +112,7 @@ func (h *Handler) HandleList(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// HandleGet handles GET /api/conversations/{id}
+// HandleGet handles GET /api/v1/conversations/{id}
 func (h *Handler) HandleGet(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
@@ -125,7 +126,7 @@ func (h *Handler) HandleGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Extract ID from path
-	id := strings.TrimPrefix(r.URL.Path, "/api/conversations/")
+	id := strings.TrimPrefix(r.URL.Path, "/api/v1/conversations/")
 	if id == "" {
 		sendError(w, http.StatusBadRequest, "Conversation ID required")
 		return
@@ -193,7 +194,7 @@ type UpdateRequest struct {
 	Messages   []Message `json:"messages"`
 }
 
-// HandleUpdate handles PUT /api/conversations/{id}
+// HandleUpdate handles PUT /api/v1/conversations/{id}
 func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
 		sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
@@ -207,7 +208,7 @@ func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Extract ID from path
-	id := strings.TrimPrefix(r.URL.Path, "/api/conversations/")
+	id := strings.TrimPrefix(r.URL.Path, "/api/v1/conversations/")
 	if id == "" {
 		sendError(w, http.StatusBadRequest, "Conversation ID required")
 		return
@@ -239,7 +240,7 @@ type RenameRequest struct {
 	Title string `json:"title"`
 }
 
-// HandleRename handles PATCH /api/conversations/{id}
+// HandleRename handles PATCH /api/v1/conversations/{id}
 func (h *Handler) HandleRename(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPatch {
 		sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
@@ -253,7 +254,7 @@ func (h *Handler) HandleRename(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Extract ID from path
-	id := strings.TrimPrefix(r.URL.Path, "/api/conversations/")
+	id := strings.TrimPrefix(r.URL.Path, "/api/v1/conversations/")
 	if id == "" {
 		sendError(w, http.StatusBadRequest, "Conversation ID required")
 		return
@@ -283,7 +284,7 @@ func (h *Handler) HandleRename(w http.ResponseWriter, r *http.Request) {
 	sendJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
-// HandleDelete handles DELETE /api/conversations/{id}
+// HandleDelete handles DELETE /api/v1/conversations/{id}
 func (h *Handler) HandleDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
@@ -297,7 +298,7 @@ func (h *Handler) HandleDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Extract ID from path
-	id := strings.TrimPrefix(r.URL.Path, "/api/conversations/")
+	id := strings.TrimPrefix(r.URL.Path, "/api/v1/conversations/")
 	if id == "" {
 		sendError(w, http.StatusBadRequest, "Conversation ID required")
 		return
@@ -344,7 +345,7 @@ func (h *Handler) HandleDeleteAll(w http.ResponseWriter, r *http.Request) {
 // RegisterRoutes registers conversation routes with the given mux
 func (h *Handler) RegisterRoutes(mux *http.ServeMux, authWrapper func(http.HandlerFunc) http.HandlerFunc) {
 	// List conversations
-	mux.HandleFunc("/api/conversations", authWrapper(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/conversations", authWrapper(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			h.HandleList(w, r)
@@ -363,7 +364,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, authWrapper func(http.Handl
 	}))
 
 	// Single conversation operations
-	mux.HandleFunc("/api/conversations/", authWrapper(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/conversations/", authWrapper(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			h.HandleGet(w, r)

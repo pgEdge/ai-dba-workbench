@@ -147,7 +147,7 @@ export const ClusterProvider = ({ children }) => {
         try {
             // First, try to get the hierarchical cluster data
             // If the API doesn't support it yet, fall back to connections
-            let response = await fetch('/api/clusters', {
+            let response = await fetch('/api/v1/clusters', {
                 headers: {
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json',
@@ -160,7 +160,7 @@ export const ClusterProvider = ({ children }) => {
                 newData = await response.json();
             } else if (response.status === 404) {
                 // Fall back to connections endpoint
-                response = await fetch('/api/connections', {
+                response = await fetch('/api/v1/connections', {
                     headers: {
                         'Authorization': `Bearer ${token}`,
                         'Content-Type': 'application/json',
@@ -210,7 +210,7 @@ export const ClusterProvider = ({ children }) => {
         setSelectionType('server');
 
         try {
-            const response = await fetch('/api/connections/current', {
+            const response = await fetch('/api/v1/connections/current', {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${token}`,
@@ -263,7 +263,7 @@ export const ClusterProvider = ({ children }) => {
         setSelectionType(null);
 
         try {
-            await fetch('/api/connections/current', {
+            await fetch('/api/v1/connections/current', {
                 method: 'DELETE',
                 headers: {
                     'Authorization': `Bearer ${token}`,
@@ -282,7 +282,7 @@ export const ClusterProvider = ({ children }) => {
         if (!token) return;
 
         try {
-            const response = await fetch('/api/connections/current', {
+            const response = await fetch('/api/v1/connections/current', {
                 headers: {
                     'Authorization': `Bearer ${token}`,
                 },
@@ -351,7 +351,7 @@ export const ClusterProvider = ({ children }) => {
 
         if (isAutoDetected) {
             // Auto-detected groups: send the group ID as-is
-            const response = await fetch(`/api/cluster-groups/${groupIdStr}`, {
+            const response = await fetch(`/api/v1/cluster-groups/${groupIdStr}`, {
                 method: 'PUT',
                 headers: {
                     'Authorization': `Bearer ${token}`,
@@ -373,7 +373,7 @@ export const ClusterProvider = ({ children }) => {
             // Extract numeric ID from group ID format (e.g., "group-1" -> 1)
             const numericId = parseInt(groupIdStr.replace('group-', ''), 10);
 
-            const response = await fetch(`/api/cluster-groups/${numericId}`, {
+            const response = await fetch(`/api/v1/cluster-groups/${numericId}`, {
                 method: 'PUT',
                 headers: {
                     'Authorization': `Bearer ${token}`,
@@ -412,7 +412,7 @@ export const ClusterProvider = ({ children }) => {
                 body.auto_cluster_key = autoClusterKey;
             }
 
-            const response = await fetch(`/api/clusters/${clusterIdStr}`, {
+            const response = await fetch(`/api/v1/clusters/${clusterIdStr}`, {
                 method: 'PUT',
                 headers: {
                     'Authorization': `Bearer ${token}`,
@@ -438,7 +438,7 @@ export const ClusterProvider = ({ children }) => {
                 throw new Error('Invalid group ID');
             }
 
-            const response = await fetch(`/api/clusters/${numericId}`, {
+            const response = await fetch(`/api/v1/clusters/${numericId}`, {
                 method: 'PUT',
                 headers: {
                     'Authorization': `Bearer ${token}`,
@@ -463,7 +463,7 @@ export const ClusterProvider = ({ children }) => {
     const updateServerName = useCallback(async (serverId, newName) => {
         if (!token) throw new Error('Not authenticated');
 
-        const response = await fetch(`/api/connections/${serverId}`, {
+        const response = await fetch(`/api/v1/connections/${serverId}`, {
             method: 'PUT',
             headers: {
                 'Authorization': `Bearer ${token}`,
@@ -487,7 +487,7 @@ export const ClusterProvider = ({ children }) => {
     const getServer = useCallback(async (serverId) => {
         if (!token) throw new Error('Not authenticated');
 
-        const response = await fetch(`/api/connections/${serverId}`, {
+        const response = await fetch(`/api/v1/connections/${serverId}`, {
             method: 'GET',
             headers: {
                 'Authorization': `Bearer ${token}`,
@@ -508,7 +508,7 @@ export const ClusterProvider = ({ children }) => {
     const createServer = useCallback(async (serverData) => {
         if (!token) throw new Error('Not authenticated');
 
-        const response = await fetch('/api/connections', {
+        const response = await fetch('/api/v1/connections', {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${token}`,
@@ -532,7 +532,7 @@ export const ClusterProvider = ({ children }) => {
     const updateServer = useCallback(async (serverId, serverData) => {
         if (!token) throw new Error('Not authenticated');
 
-        const response = await fetch(`/api/connections/${serverId}`, {
+        const response = await fetch(`/api/v1/connections/${serverId}`, {
             method: 'PUT',
             headers: {
                 'Authorization': `Bearer ${token}`,
@@ -556,7 +556,7 @@ export const ClusterProvider = ({ children }) => {
     const deleteServer = useCallback(async (serverId) => {
         if (!token) throw new Error('Not authenticated');
 
-        const response = await fetch(`/api/connections/${serverId}`, {
+        const response = await fetch(`/api/v1/connections/${serverId}`, {
             method: 'DELETE',
             headers: {
                 'Authorization': `Bearer ${token}`,
@@ -583,7 +583,7 @@ export const ClusterProvider = ({ children }) => {
     const createGroup = useCallback(async (groupData) => {
         if (!token) throw new Error('Not authenticated');
 
-        const response = await fetch('/api/cluster-groups', {
+        const response = await fetch('/api/v1/cluster-groups', {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${token}`,
@@ -612,7 +612,7 @@ export const ClusterProvider = ({ children }) => {
             ? parseInt(groupId.replace('group-', ''), 10)
             : groupId;
 
-        const response = await fetch(`/api/cluster-groups/${numericId}`, {
+        const response = await fetch(`/api/v1/cluster-groups/${numericId}`, {
             method: 'DELETE',
             headers: {
                 'Authorization': `Bearer ${token}`,
@@ -656,7 +656,7 @@ export const ClusterProvider = ({ children }) => {
             body.name = clusterName;
         }
 
-        const response = await fetch(`/api/clusters/${clusterIdStr}`, {
+        const response = await fetch(`/api/v1/clusters/${clusterIdStr}`, {
             method: 'PUT',
             headers: {
                 'Authorization': `Bearer ${token}`,

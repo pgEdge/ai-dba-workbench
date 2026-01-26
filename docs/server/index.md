@@ -74,6 +74,11 @@ The binary is created at `bin/ai-dba-server`.
 
 ## Documentation Sections
 
+### API Reference
+
+- [API Reference](api-reference.md) - Interactive OpenAPI documentation with
+  endpoint details, request/response schemas, and examples
+
 ### Authentication
 
 - [Authentication Guide](authentication.md) - Complete guide to user management,
@@ -96,11 +101,11 @@ The MCP server is built with the following components:
 ```
 ┌───────────────────────────────────────────────────────────────────────┐
 │                            HTTP Server                                 │
-│  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────────┐   │
-│  │  /mcp/v1   │  │/api/auth/* │  │ /api/llm/* │  │    /api/*      │   │
-│  │MCP Protocol│  │   Login    │  │ LLM Proxy  │  │ Connections,   │   │
-│  │            │  │            │  │            │  │ Conversations  │   │
-│  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘  └───────┬────────┘   │
+│  ┌────────────┐  ┌─────────────┐  ┌─────────────┐  ┌───────────────┐  │
+│  │  /mcp/v1   │  │/api/v1/auth │  │/api/v1/llm  │  │   /api/v1/*   │  │
+│  │MCP Protocol│  │    Login    │  │  LLM Proxy  │  │  Connections, │  │
+│  │            │  │             │  │             │  │ Conversations │  │
+│  └─────┬──────┘  └──────┬──────┘  └──────┬──────┘  └───────┬───────┘  │
 └────────┼───────────────┼───────────────┼─────────────────┼────────────┘
          │               │               │                 │
          ▼               │               ▼                 │

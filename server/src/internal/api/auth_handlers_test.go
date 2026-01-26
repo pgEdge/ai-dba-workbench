@@ -176,7 +176,7 @@ func TestAuthHandler_HandleLogin(t *testing.T) {
 				}
 			}
 
-			req := httptest.NewRequest(tt.method, "/api/auth/login", bytes.NewReader(body))
+			req := httptest.NewRequest(tt.method, "/api/v1/auth/login", bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
 
@@ -198,7 +198,7 @@ func TestAuthHandler_NilAuthStore(t *testing.T) {
 	handler := NewAuthHandler(nil, nil)
 
 	body, _ := json.Marshal(LoginRequest{Username: "test", Password: "test"})
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -224,14 +224,14 @@ func TestAuthHandler_RegisterRoutes(t *testing.T) {
 	handler.RegisterRoutes(mux)
 
 	// Test that the route is registered
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
 	w := httptest.NewRecorder()
 
 	mux.ServeHTTP(w, req)
 
 	// Should get a response (even if it's an error, not a 404)
 	if w.Code == http.StatusNotFound {
-		t.Error("Expected /api/auth/login to be registered")
+		t.Error("Expected /api/v1/auth/login to be registered")
 	}
 }
 
@@ -313,7 +313,7 @@ func TestAuthHandler_RateLimiting(t *testing.T) {
 	// Make failed attempts to trigger rate limit
 	for i := 0; i < 3; i++ {
 		body, _ := json.Marshal(LoginRequest{Username: "testuser", Password: "wrongpass"})
-		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.RemoteAddr = "192.168.1.100:12345"
 		w := httptest.NewRecorder()
@@ -337,7 +337,7 @@ func TestAuthHandler_RateLimiting(t *testing.T) {
 	rateLimiter.Reset("192.168.1.100:12345")
 
 	body, _ := json.Marshal(LoginRequest{Username: "testuser", Password: "testpass123"})
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.RemoteAddr = "192.168.1.100:12345"
 	w := httptest.NewRecorder()

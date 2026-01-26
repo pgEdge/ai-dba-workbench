@@ -2838,6 +2838,7 @@ func (d *Datastore) AcknowledgeAlert(ctx context.Context, req AcknowledgeAlertRe
 		logger.Errorf("AcknowledgeAlert: failed to begin transaction: %v", err)
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
+	//nolint:errcheck // Rollback is no-op if already committed
 	defer tx.Rollback(ctx)
 
 	// Update alert status to acknowledged

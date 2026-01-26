@@ -107,7 +107,7 @@ func NewProxyClient(baseURL, token, provider, model string, debug bool) LLMClien
 	}
 }
 
-// proxyRequest represents the request body for POST /api/llm/chat
+// proxyRequest represents the request body for POST /api/v1/llm/chat
 type proxyRequest struct {
 	Messages []Message   `json:"messages"`
 	Tools    interface{} `json:"tools"`
@@ -116,7 +116,7 @@ type proxyRequest struct {
 	Debug    bool        `json:"debug,omitempty"`
 }
 
-// proxyResponse represents the response body from POST /api/llm/chat
+// proxyResponse represents the response body from POST /api/v1/llm/chat
 type proxyResponse struct {
 	Content    []map[string]interface{} `json:"content"`
 	StopReason string                   `json:"stop_reason"`
@@ -126,7 +126,7 @@ type proxyResponse struct {
 func (c *proxyClient) Chat(ctx context.Context, messages []Message, tools interface{}) (LLMResponse, error) {
 	startTime := time.Now()
 	operation := "chat"
-	url := c.baseURL + "/api/llm/chat"
+	url := c.baseURL + "/api/v1/llm/chat"
 
 	embedding.LogLLMCallDetails(c.provider, c.model, operation, url, len(messages))
 
@@ -291,7 +291,7 @@ func (c *proxyClient) Chat(ctx context.Context, messages []Message, tools interf
 
 // ListModels returns available models from the server's LLM proxy
 func (c *proxyClient) ListModels(ctx context.Context) ([]string, error) {
-	url := c.baseURL + "/api/llm/models?provider=" + c.provider
+	url := c.baseURL + "/api/v1/llm/models?provider=" + c.provider
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {

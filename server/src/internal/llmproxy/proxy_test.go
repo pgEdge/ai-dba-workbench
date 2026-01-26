@@ -26,7 +26,7 @@ func TestHandleProviders_Success(t *testing.T) {
 		OpenAIAPIKey:    "test-openai-key",
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/llm/providers", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/llm/providers", nil)
 	w := httptest.NewRecorder()
 
 	HandleProviders(w, req, config)
@@ -66,7 +66,7 @@ func TestHandleProviders_Success(t *testing.T) {
 func TestHandleProviders_MethodNotAllowed(t *testing.T) {
 	config := &Config{}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/llm/providers", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/providers", nil)
 	w := httptest.NewRecorder()
 
 	HandleProviders(w, req, config)
@@ -79,7 +79,7 @@ func TestHandleProviders_MethodNotAllowed(t *testing.T) {
 func TestHandleProviders_NoProviders(t *testing.T) {
 	config := &Config{}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/llm/providers", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/llm/providers", nil)
 	w := httptest.NewRecorder()
 
 	HandleProviders(w, req, config)
@@ -107,7 +107,7 @@ func TestHandleProviders_AllProviders(t *testing.T) {
 		OllamaURL:       "http://localhost:11434",
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/llm/providers", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/llm/providers", nil)
 	w := httptest.NewRecorder()
 
 	HandleProviders(w, req, config)
@@ -139,7 +139,7 @@ func TestHandleProviders_AllProviders(t *testing.T) {
 func TestHandleModels_MethodNotAllowed(t *testing.T) {
 	config := &Config{}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/llm/models", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/models", nil)
 	w := httptest.NewRecorder()
 
 	HandleModels(w, req, config)
@@ -152,7 +152,7 @@ func TestHandleModels_MethodNotAllowed(t *testing.T) {
 func TestHandleModels_MissingProvider(t *testing.T) {
 	config := &Config{}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/llm/models", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/llm/models", nil)
 	w := httptest.NewRecorder()
 
 	HandleModels(w, req, config)
@@ -165,7 +165,7 @@ func TestHandleModels_MissingProvider(t *testing.T) {
 func TestHandleModels_UnsupportedProvider(t *testing.T) {
 	config := &Config{}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/llm/models?provider=unsupported", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/llm/models?provider=unsupported", nil)
 	w := httptest.NewRecorder()
 
 	HandleModels(w, req, config)
@@ -178,7 +178,7 @@ func TestHandleModels_UnsupportedProvider(t *testing.T) {
 func TestHandleModels_AnthropicNotConfigured(t *testing.T) {
 	config := &Config{}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/llm/models?provider=anthropic", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/llm/models?provider=anthropic", nil)
 	w := httptest.NewRecorder()
 
 	HandleModels(w, req, config)
@@ -191,7 +191,7 @@ func TestHandleModels_AnthropicNotConfigured(t *testing.T) {
 func TestHandleModels_OpenAINotConfigured(t *testing.T) {
 	config := &Config{}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/llm/models?provider=openai", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/llm/models?provider=openai", nil)
 	w := httptest.NewRecorder()
 
 	HandleModels(w, req, config)
@@ -204,7 +204,7 @@ func TestHandleModels_OpenAINotConfigured(t *testing.T) {
 func TestHandleModels_OllamaNotConfigured(t *testing.T) {
 	config := &Config{}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/llm/models?provider=ollama", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/llm/models?provider=ollama", nil)
 	w := httptest.NewRecorder()
 
 	HandleModels(w, req, config)
@@ -217,7 +217,7 @@ func TestHandleModels_OllamaNotConfigured(t *testing.T) {
 func TestHandleChat_MethodNotAllowed(t *testing.T) {
 	config := &Config{}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/llm/chat", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/llm/chat", nil)
 	w := httptest.NewRecorder()
 
 	HandleChat(w, req, config)
@@ -232,7 +232,7 @@ func TestHandleChat_InvalidBody(t *testing.T) {
 		Provider: "anthropic",
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/llm/chat",
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat",
 		bytes.NewReader([]byte("invalid json")))
 	req.Header.Set("Content-Type", "application/json")
 
@@ -254,7 +254,7 @@ func TestHandleChat_UnsupportedProvider(t *testing.T) {
 	}
 	bodyBytes, _ := json.Marshal(body)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/llm/chat",
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat",
 		bytes.NewReader(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 
@@ -277,7 +277,7 @@ func TestHandleChat_AnthropicNotConfigured(t *testing.T) {
 	}
 	bodyBytes, _ := json.Marshal(body)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/llm/chat",
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat",
 		bytes.NewReader(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 
@@ -300,7 +300,7 @@ func TestHandleChat_OpenAINotConfigured(t *testing.T) {
 	}
 	bodyBytes, _ := json.Marshal(body)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/llm/chat",
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat",
 		bytes.NewReader(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 
@@ -323,7 +323,7 @@ func TestHandleChat_OllamaNotConfigured(t *testing.T) {
 	}
 	bodyBytes, _ := json.Marshal(body)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/llm/chat",
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat",
 		bytes.NewReader(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 
@@ -348,7 +348,7 @@ func TestHandleChat_OverrideProvider(t *testing.T) {
 	}
 	bodyBytes, _ := json.Marshal(body)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/llm/chat",
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat",
 		bytes.NewReader(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 

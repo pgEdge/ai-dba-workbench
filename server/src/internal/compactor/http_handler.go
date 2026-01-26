@@ -16,7 +16,10 @@ import (
 	"net/http"
 )
 
-// HandleCompact is the HTTP handler for the /api/chat/compact endpoint.
+// OpenAPISpecPath is the path to the OpenAPI specification for RFC 8631 API discovery.
+const OpenAPISpecPath = "/api/v1/openapi.json"
+
+// HandleCompact is the HTTP handler for the /api/v1/chat/compact endpoint.
 func HandleCompact(w http.ResponseWriter, r *http.Request) {
 	// Only accept POST requests
 	if r.Method != http.MethodPost {
@@ -50,8 +53,9 @@ func HandleCompact(w http.ResponseWriter, r *http.Request) {
 	compactor := NewCompactor(req)
 	response := compactor.Compact(req.Messages)
 
-	// Send response
+	// Send response with RFC 8631 Link header
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Link", fmt.Sprintf("<%s>; rel=\"service-desc\"", OpenAPISpecPath))
 	encoder := json.NewEncoder(w)
 	if err := encoder.Encode(response); err != nil {
 		http.Error(w, "Failed to encode response", http.StatusInternalServerError)

@@ -35,7 +35,7 @@ export const AlertsProvider = ({ children }) => {
 
         setLoading(true);
         try {
-            const response = await fetch('/api/alerts/counts', {
+            const response = await fetch('/api/v1/alerts/counts', {
                 headers: {
                     'Authorization': `Bearer ${token}`,
                 },

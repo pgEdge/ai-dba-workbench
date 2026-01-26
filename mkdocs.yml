@@ -90,6 +90,7 @@ nav:
       - Overview: alerter/index.md
   - Server:
       - Overview: server/index.md
+      - API Reference: server/api-reference.md
       - Authentication: server/authentication.md
       - Configuration: server/configuration.md
       - Connections: server/connections.md

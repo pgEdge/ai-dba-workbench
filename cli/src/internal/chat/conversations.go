@@ -58,7 +58,7 @@ func NewConversationsClient(baseURL, token string) *ConversationsClient {
 		apiURL = apiURL[:len(apiURL)-7]
 	}
 	return &ConversationsClient{
-		baseURL: apiURL + "/api/conversations",
+		baseURL: apiURL + "/api/v1/conversations",
 		token:   token,
 		client:  &http.Client{Timeout: 30 * time.Second},
 	}

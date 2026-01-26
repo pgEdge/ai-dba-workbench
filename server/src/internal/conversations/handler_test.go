@@ -99,7 +99,7 @@ func TestHandleList(t *testing.T) {
 	}
 
 	// Create request
-	req := httptest.NewRequest("GET", "/api/conversations", nil)
+	req := httptest.NewRequest("GET", "/api/v1/conversations", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 
 	// Create response recorder
@@ -131,7 +131,7 @@ func TestHandleList_Unauthorized(t *testing.T) {
 	defer cleanup()
 
 	// Create request without token
-	req := httptest.NewRequest("GET", "/api/conversations", nil)
+	req := httptest.NewRequest("GET", "/api/v1/conversations", nil)
 	rr := httptest.NewRecorder()
 
 	handler.HandleList(rr, req)
@@ -145,7 +145,7 @@ func TestHandleList_WrongMethod(t *testing.T) {
 	handler, cleanup, token := setupTestHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest("POST", "/api/conversations", nil)
+	req := httptest.NewRequest("POST", "/api/v1/conversations", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rr := httptest.NewRecorder()
 
@@ -169,7 +169,7 @@ func TestHandleCreate(t *testing.T) {
 	}
 	body, _ := json.Marshal(createReq)
 
-	req := httptest.NewRequest("POST", "/api/conversations", bytes.NewBuffer(body))
+	req := httptest.NewRequest("POST", "/api/v1/conversations", bytes.NewBuffer(body))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
@@ -204,7 +204,7 @@ func TestHandleCreate_EmptyMessages(t *testing.T) {
 	}
 	body, _ := json.Marshal(createReq)
 
-	req := httptest.NewRequest("POST", "/api/conversations", bytes.NewBuffer(body))
+	req := httptest.NewRequest("POST", "/api/v1/conversations", bytes.NewBuffer(body))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
@@ -220,7 +220,7 @@ func TestHandleCreate_InvalidBody(t *testing.T) {
 	handler, cleanup, token := setupTestHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest("POST", "/api/conversations", bytes.NewBufferString("invalid json"))
+	req := httptest.NewRequest("POST", "/api/v1/conversations", bytes.NewBufferString("invalid json"))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
@@ -243,7 +243,7 @@ func TestHandleGet(t *testing.T) {
 		t.Fatalf("Failed to create conversation: %v", err)
 	}
 
-	req := httptest.NewRequest("GET", "/api/conversations/"+conv.ID, nil)
+	req := httptest.NewRequest("GET", "/api/v1/conversations/"+conv.ID, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rr := httptest.NewRecorder()
 
@@ -267,7 +267,7 @@ func TestHandleGet_NotFound(t *testing.T) {
 	handler, cleanup, token := setupTestHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest("GET", "/api/conversations/nonexistent", nil)
+	req := httptest.NewRequest("GET", "/api/v1/conversations/nonexistent", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rr := httptest.NewRecorder()
 
@@ -282,7 +282,7 @@ func TestHandleGet_MissingID(t *testing.T) {
 	handler, cleanup, token := setupTestHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest("GET", "/api/conversations/", nil)
+	req := httptest.NewRequest("GET", "/api/v1/conversations/", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rr := httptest.NewRecorder()
 
@@ -313,7 +313,7 @@ func TestHandleUpdate(t *testing.T) {
 	}
 	body, _ := json.Marshal(updateReq)
 
-	req := httptest.NewRequest("PUT", "/api/conversations/"+conv.ID, bytes.NewBuffer(body))
+	req := httptest.NewRequest("PUT", "/api/v1/conversations/"+conv.ID, bytes.NewBuffer(body))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
@@ -343,7 +343,7 @@ func TestHandleUpdate_NotFound(t *testing.T) {
 	}
 	body, _ := json.Marshal(updateReq)
 
-	req := httptest.NewRequest("PUT", "/api/conversations/nonexistent", bytes.NewBuffer(body))
+	req := httptest.NewRequest("PUT", "/api/v1/conversations/nonexistent", bytes.NewBuffer(body))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
@@ -370,7 +370,7 @@ func TestHandleRename(t *testing.T) {
 	renameReq := RenameRequest{Title: "New Title"}
 	body, _ := json.Marshal(renameReq)
 
-	req := httptest.NewRequest("PATCH", "/api/conversations/"+conv.ID, bytes.NewBuffer(body))
+	req := httptest.NewRequest("PATCH", "/api/v1/conversations/"+conv.ID, bytes.NewBuffer(body))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
@@ -406,7 +406,7 @@ func TestHandleRename_EmptyTitle(t *testing.T) {
 	renameReq := RenameRequest{Title: ""}
 	body, _ := json.Marshal(renameReq)
 
-	req := httptest.NewRequest("PATCH", "/api/conversations/"+conv.ID, bytes.NewBuffer(body))
+	req := httptest.NewRequest("PATCH", "/api/v1/conversations/"+conv.ID, bytes.NewBuffer(body))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
@@ -429,7 +429,7 @@ func TestHandleDelete(t *testing.T) {
 		t.Fatalf("Failed to create conversation: %v", err)
 	}
 
-	req := httptest.NewRequest("DELETE", "/api/conversations/"+conv.ID, nil)
+	req := httptest.NewRequest("DELETE", "/api/v1/conversations/"+conv.ID, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rr := httptest.NewRecorder()
 
@@ -450,7 +450,7 @@ func TestHandleDelete_NotFound(t *testing.T) {
 	handler, cleanup, token := setupTestHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest("DELETE", "/api/conversations/nonexistent", nil)
+	req := httptest.NewRequest("DELETE", "/api/v1/conversations/nonexistent", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rr := httptest.NewRecorder()
 
@@ -474,7 +474,7 @@ func TestHandleDeleteAll(t *testing.T) {
 		}
 	}
 
-	req := httptest.NewRequest("DELETE", "/api/conversations?all=true", nil)
+	req := httptest.NewRequest("DELETE", "/api/v1/conversations?all=true", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rr := httptest.NewRecorder()
 
@@ -505,7 +505,7 @@ func TestExtractUsername_MissingHeader(t *testing.T) {
 	handler, cleanup, _ := setupTestHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest("GET", "/api/conversations", nil)
+	req := httptest.NewRequest("GET", "/api/v1/conversations", nil)
 	// No Authorization header
 
 	_, err := handler.extractUsername(req)
@@ -518,7 +518,7 @@ func TestExtractUsername_InvalidFormat(t *testing.T) {
 	handler, cleanup, _ := setupTestHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest("GET", "/api/conversations", nil)
+	req := httptest.NewRequest("GET", "/api/v1/conversations", nil)
 	req.Header.Set("Authorization", "Basic invalid") // Wrong format
 
 	_, err := handler.extractUsername(req)
@@ -531,7 +531,7 @@ func TestExtractUsername_InvalidToken(t *testing.T) {
 	handler, cleanup, _ := setupTestHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest("GET", "/api/conversations", nil)
+	req := httptest.NewRequest("GET", "/api/v1/conversations", nil)
 	req.Header.Set("Authorization", "Bearer invalid-token")
 
 	_, err := handler.extractUsername(req)
@@ -554,7 +554,7 @@ func TestHandleList_WithPagination(t *testing.T) {
 	}
 
 	// Request with limit=2
-	req := httptest.NewRequest("GET", "/api/conversations?limit=2&offset=0", nil)
+	req := httptest.NewRequest("GET", "/api/v1/conversations?limit=2&offset=0", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rr := httptest.NewRecorder()
 

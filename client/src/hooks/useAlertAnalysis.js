@@ -136,7 +136,7 @@ Provide remediation recommendations and any threshold tuning suggestions.`;
             while (iterations < maxIterations) {
                 iterations++;
 
-                const response = await fetch('/api/llm/chat', {
+                const response = await fetch('/api/v1/llm/chat', {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${token}`,
@@ -175,7 +175,7 @@ Provide remediation recommendations and any threshold tuning suggestions.`;
                 const toolResults = [];
                 for (const toolUse of toolUses) {
                     try {
-                        const toolResponse = await fetch('/api/mcp/tools/call', {
+                        const toolResponse = await fetch('/api/v1/mcp/tools/call', {
                             method: 'POST',
                             headers: {
                                 'Authorization': `Bearer ${token}`,

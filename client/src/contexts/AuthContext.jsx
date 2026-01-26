@@ -13,7 +13,7 @@ import React, { createContext, useState, useContext, useEffect } from 'react';
 const AuthContext = createContext(null);
 
 // API base URL for authentication
-const API_BASE_URL = '/api';
+const API_BASE_URL = '/api/v1';
 
 export const AuthProvider = ({ children }) => {
     const [user, setUser] = useState(null);

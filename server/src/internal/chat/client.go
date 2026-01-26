@@ -717,7 +717,7 @@ func (c *Client) tryServerCompaction(messages []Message, maxTokens, recentWindow
 	}
 
 	// Call the compaction endpoint
-	req, err := http.NewRequest("POST", httpClient.url+"/api/chat/compact", bytes.NewBuffer(jsonData))
+	req, err := http.NewRequest("POST", httpClient.url+"/api/v1/chat/compact", bytes.NewBuffer(jsonData))
 	if err != nil {
 		if c.config.UI.Debug {
 			fmt.Fprintf(os.Stderr, "[DEBUG] Failed to create compaction request: %v\n", err)

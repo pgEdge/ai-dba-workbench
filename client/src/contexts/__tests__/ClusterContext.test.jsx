@@ -66,7 +66,7 @@ describe('ClusterContext', () => {
             expect(result.current.clusterData.length).toBeGreaterThan(0);
         });
 
-        expect(mockFetch).toHaveBeenCalledWith('/api/clusters', expect.any(Object));
+        expect(mockFetch).toHaveBeenCalledWith('/api/v1/clusters', expect.any(Object));
     });
 
     it('does not update state when data fingerprint is unchanged', async () => {

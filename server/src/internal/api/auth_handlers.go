@@ -49,10 +49,10 @@ type LoginResponse struct {
 // RegisterRoutes registers authentication routes on the mux
 // Note: These routes should NOT be wrapped with auth middleware
 func (h *AuthHandler) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/api/auth/login", h.handleLogin)
+	mux.HandleFunc("/api/v1/auth/login", h.handleLogin)
 }
 
-// handleLogin handles POST /api/auth/login
+// handleLogin handles POST /api/v1/auth/login
 func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
@@ -62,45 +62,25 @@ func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// Check if auth store is available
 	if h.authStore == nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "User authentication is not configured",
-		})
+		RespondError(w, http.StatusServiceUnavailable, "User authentication is not configured")
 		return
 	}
 
 	// Parse request body
 	var req LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "Invalid request body",
-		})
+		RespondError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	// Validate required fields
 	if req.Username == "" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "Username is required",
-		})
+		RespondError(w, http.StatusBadRequest, "Username is required")
 		return
 	}
 
 	if req.Password == "" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "Password is required",
-		})
+		RespondError(w, http.StatusBadRequest, "Password is required")
 		return
 	}
 
@@ -110,12 +90,8 @@ func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// Check rate limit if rate limiter is configured
 	if h.rateLimiter != nil && ipAddress != "" {
 		if !h.rateLimiter.IsAllowed(ipAddress) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusTooManyRequests)
-			//nolint:errcheck // Encoding simple error response
-			json.NewEncoder(w).Encode(ErrorResponse{
-				Error: "Too many failed authentication attempts, please try again later",
-			})
+			RespondError(w, http.StatusTooManyRequests,
+				"Too many failed authentication attempts, please try again later")
 			return
 		}
 	}
@@ -127,12 +103,8 @@ func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		if h.rateLimiter != nil && ipAddress != "" {
 			h.rateLimiter.RecordFailedAttempt(ipAddress)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "Authentication failed: invalid username or password",
-		})
+		RespondError(w, http.StatusUnauthorized,
+			"Authentication failed: invalid username or password")
 		return
 	}
 
@@ -142,9 +114,7 @@ func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Return success response
-	w.Header().Set("Content-Type", "application/json")
-	//nolint:errcheck // Encoding login response
-	json.NewEncoder(w).Encode(LoginResponse{
+	RespondJSON(w, http.StatusOK, LoginResponse{
 		Success:      true,
 		SessionToken: token,
 		ExpiresAt:    expiration.Format(time.RFC3339),

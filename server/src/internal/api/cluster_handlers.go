@@ -60,35 +60,31 @@ type AssignServerRequest struct {
 func (h *ClusterHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(http.HandlerFunc) http.HandlerFunc) {
 	if h.datastore == nil {
 		// Datastore not configured, register handlers that return appropriate errors
-		mux.HandleFunc("/api/clusters", authWrapper(h.handleNotConfigured))
-		mux.HandleFunc("/api/clusters/", authWrapper(h.handleNotConfigured))
-		mux.HandleFunc("/api/cluster-groups", authWrapper(h.handleNotConfigured))
-		mux.HandleFunc("/api/cluster-groups/", authWrapper(h.handleNotConfigured))
+		mux.HandleFunc("/api/v1/clusters", authWrapper(h.handleNotConfigured))
+		mux.HandleFunc("/api/v1/clusters/", authWrapper(h.handleNotConfigured))
+		mux.HandleFunc("/api/v1/cluster-groups", authWrapper(h.handleNotConfigured))
+		mux.HandleFunc("/api/v1/cluster-groups/", authWrapper(h.handleNotConfigured))
 		return
 	}
 
 	// Cluster hierarchy endpoint (returns full hierarchy for ClusterNavigator)
-	mux.HandleFunc("/api/clusters", authWrapper(h.handleClusters))
+	mux.HandleFunc("/api/v1/clusters", authWrapper(h.handleClusters))
 
 	// Cluster CRUD endpoints
-	mux.HandleFunc("/api/clusters/", authWrapper(h.handleClusterSubpath))
+	mux.HandleFunc("/api/v1/clusters/", authWrapper(h.handleClusterSubpath))
 
 	// Cluster group endpoints
-	mux.HandleFunc("/api/cluster-groups", authWrapper(h.handleClusterGroups))
-	mux.HandleFunc("/api/cluster-groups/", authWrapper(h.handleClusterGroupSubpath))
+	mux.HandleFunc("/api/v1/cluster-groups", authWrapper(h.handleClusterGroups))
+	mux.HandleFunc("/api/v1/cluster-groups/", authWrapper(h.handleClusterGroupSubpath))
 }
 
 // handleNotConfigured returns an error when datastore is not configured
 func (h *ClusterHandler) handleNotConfigured(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusServiceUnavailable)
-	//nolint:errcheck // Encoding simple error response
-	json.NewEncoder(w).Encode(ErrorResponse{
-		Error: "Cluster management is not available. The datastore is not configured.",
-	})
+	RespondError(w, http.StatusServiceUnavailable,
+		"Cluster management is not available. The datastore is not configured.")
 }
 
-// handleClusters handles GET /api/clusters (returns topology with manual groups and auto-detected servers)
+// handleClusters handles GET /api/v1/clusters (returns topology with manual groups and auto-detected servers)
 func (h *ClusterHandler) handleClusters(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", "GET")
@@ -101,39 +97,28 @@ func (h *ClusterHandler) handleClusters(w http.ResponseWriter, r *http.Request) 
 
 	topology, err := h.datastore.GetClusterTopology(ctx)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: fmt.Sprintf("Failed to get cluster topology: %v", err),
-		})
+		RespondError(w, http.StatusInternalServerError,
+			fmt.Sprintf("Failed to get cluster topology: %v", err))
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	//nolint:errcheck // Encoding topology
-	json.NewEncoder(w).Encode(topology)
+	RespondJSON(w, http.StatusOK, topology)
 }
 
-// handleClusterSubpath handles /api/clusters/{id}
+// handleClusterSubpath handles /api/v1/clusters/{id}
 func (h *ClusterHandler) handleClusterSubpath(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/api/clusters/")
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/clusters/")
 	if path == "" {
 		http.NotFound(w, r)
 		return
 	}
 
-	// Check for servers sub-path: /api/clusters/{id}/servers
+	// Check for servers sub-path: /api/v1/clusters/{id}/servers
 	parts := strings.Split(path, "/")
 	if len(parts) == 2 && parts[1] == "servers" {
 		clusterID, err := strconv.Atoi(parts[0])
 		if err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			//nolint:errcheck // Encoding simple error response
-			json.NewEncoder(w).Encode(ErrorResponse{
-				Error: "Invalid cluster ID",
-			})
+			RespondError(w, http.StatusBadRequest, "Invalid cluster ID")
 			return
 		}
 		h.handleClusterServers(w, r, clusterID)
@@ -164,12 +149,7 @@ func (h *ClusterHandler) handleClusterSubpath(w http.ResponseWriter, r *http.Req
 		clusterID, err = strconv.Atoi(parts[0])
 	}
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "Invalid cluster ID",
-		})
+		RespondError(w, http.StatusBadRequest, "Invalid cluster ID")
 		return
 	}
 
@@ -186,7 +166,7 @@ func (h *ClusterHandler) handleClusterSubpath(w http.ResponseWriter, r *http.Req
 	}
 }
 
-// handleClusterGroups handles GET/POST /api/cluster-groups
+// handleClusterGroups handles GET/POST /api/v1/cluster-groups
 func (h *ClusterHandler) handleClusterGroups(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -199,25 +179,20 @@ func (h *ClusterHandler) handleClusterGroups(w http.ResponseWriter, r *http.Requ
 	}
 }
 
-// handleClusterGroupSubpath handles /api/cluster-groups/{id} and sub-paths
+// handleClusterGroupSubpath handles /api/v1/cluster-groups/{id} and sub-paths
 func (h *ClusterHandler) handleClusterGroupSubpath(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/api/cluster-groups/")
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/cluster-groups/")
 	if path == "" {
 		http.NotFound(w, r)
 		return
 	}
 
-	// Check for clusters sub-path: /api/cluster-groups/{id}/clusters
+	// Check for clusters sub-path: /api/v1/cluster-groups/{id}/clusters
 	parts := strings.Split(path, "/")
 	if len(parts) == 2 && parts[1] == "clusters" {
 		groupID, err := strconv.Atoi(parts[0])
 		if err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			//nolint:errcheck // Encoding simple error response
-			json.NewEncoder(w).Encode(ErrorResponse{
-				Error: "Invalid group ID",
-			})
+			RespondError(w, http.StatusBadRequest, "Invalid group ID")
 			return
 		}
 		h.handleGroupClusters(w, r, groupID)
@@ -239,12 +214,7 @@ func (h *ClusterHandler) handleClusterGroupSubpath(w http.ResponseWriter, r *htt
 	// Parse group ID (numeric for database-backed groups)
 	groupID, err := strconv.Atoi(parts[0])
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "Invalid group ID",
-		})
+		RespondError(w, http.StatusBadRequest, "Invalid group ID")
 		return
 	}
 
@@ -269,18 +239,12 @@ func (h *ClusterHandler) listClusterGroups(w http.ResponseWriter, r *http.Reques
 
 	groups, err := h.datastore.GetClusterGroups(ctx)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: fmt.Sprintf("Failed to list cluster groups: %v", err),
-		})
+		RespondError(w, http.StatusInternalServerError,
+			fmt.Sprintf("Failed to list cluster groups: %v", err))
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	//nolint:errcheck // Encoding groups list
-	json.NewEncoder(w).Encode(groups)
+	RespondJSON(w, http.StatusOK, groups)
 }
 
 func (h *ClusterHandler) getClusterGroup(w http.ResponseWriter, r *http.Request, id int) {
@@ -289,39 +253,23 @@ func (h *ClusterHandler) getClusterGroup(w http.ResponseWriter, r *http.Request,
 
 	group, err := h.datastore.GetClusterGroup(ctx, id)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: fmt.Sprintf("Cluster group not found: %v", err),
-		})
+		RespondError(w, http.StatusNotFound,
+			fmt.Sprintf("Cluster group not found: %v", err))
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	//nolint:errcheck // Encoding group
-	json.NewEncoder(w).Encode(group)
+	RespondJSON(w, http.StatusOK, group)
 }
 
 func (h *ClusterHandler) createClusterGroup(w http.ResponseWriter, r *http.Request) {
 	var req ClusterGroupRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "Invalid request body",
-		})
+		RespondError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	if req.Name == "" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "Name is required",
-		})
+		RespondError(w, http.StatusBadRequest, "Name is required")
 		return
 	}
 
@@ -330,31 +278,19 @@ func (h *ClusterHandler) createClusterGroup(w http.ResponseWriter, r *http.Reque
 
 	group, err := h.datastore.CreateClusterGroup(ctx, req.Name, req.Description)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: fmt.Sprintf("Failed to create cluster group: %v", err),
-		})
+		RespondError(w, http.StatusInternalServerError,
+			fmt.Sprintf("Failed to create cluster group: %v", err))
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	//nolint:errcheck // Encoding group
-	json.NewEncoder(w).Encode(group)
+	RespondJSON(w, http.StatusCreated, group)
 }
 
 func (h *ClusterHandler) updateClusterGroup(w http.ResponseWriter, r *http.Request, id int) {
 	// Check user permissions
 	username, isSuperuser, err := h.getUserInfoFromRequest(r)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "Invalid or missing authentication token",
-		})
+		RespondError(w, http.StatusUnauthorized, "Invalid or missing authentication token")
 		return
 	}
 
@@ -364,62 +300,38 @@ func (h *ClusterHandler) updateClusterGroup(w http.ResponseWriter, r *http.Reque
 	// Get group to check ownership
 	existingGroup, err := h.datastore.GetClusterGroup(ctx, id)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: fmt.Sprintf("Cluster group not found: %v", err),
-		})
+		RespondError(w, http.StatusNotFound,
+			fmt.Sprintf("Cluster group not found: %v", err))
 		return
 	}
 
 	// Permission check: superuser, owner, or shared group can be edited
 	isOwner := existingGroup.OwnerUsername.Valid && existingGroup.OwnerUsername.String == username
 	if !isSuperuser && !isOwner {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusForbidden)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "You do not have permission to update this cluster group",
-		})
+		RespondError(w, http.StatusForbidden,
+			"You do not have permission to update this cluster group")
 		return
 	}
 
 	var req ClusterGroupRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "Invalid request body",
-		})
+		RespondError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	if req.Name == "" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "Name is required",
-		})
+		RespondError(w, http.StatusBadRequest, "Name is required")
 		return
 	}
 
 	group, err := h.datastore.UpdateClusterGroup(ctx, id, req.Name, req.Description)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: fmt.Sprintf("Failed to update cluster group: %v", err),
-		})
+		RespondError(w, http.StatusInternalServerError,
+			fmt.Sprintf("Failed to update cluster group: %v", err))
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	//nolint:errcheck // Encoding group
-	json.NewEncoder(w).Encode(group)
+	RespondJSON(w, http.StatusOK, group)
 }
 
 func (h *ClusterHandler) deleteClusterGroup(w http.ResponseWriter, r *http.Request, id int) {
@@ -429,27 +341,19 @@ func (h *ClusterHandler) deleteClusterGroup(w http.ResponseWriter, r *http.Reque
 	// Protect the default group from deletion
 	defaultGroupID, err := h.datastore.GetDefaultGroupID(ctx)
 	if err == nil && defaultGroupID == id {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusForbidden)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "The default group cannot be deleted",
-		})
+		RespondError(w, http.StatusForbidden, "The default group cannot be deleted")
 		return
 	}
 
 	err = h.datastore.DeleteClusterGroup(ctx, id)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
 		if strings.Contains(err.Error(), "not found") {
-			w.WriteHeader(http.StatusNotFound)
+			RespondError(w, http.StatusNotFound,
+				fmt.Sprintf("Failed to delete cluster group: %v", err))
 		} else {
-			w.WriteHeader(http.StatusInternalServerError)
+			RespondError(w, http.StatusInternalServerError,
+				fmt.Sprintf("Failed to delete cluster group: %v", err))
 		}
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: fmt.Sprintf("Failed to delete cluster group: %v", err),
-		})
 		return
 	}
 
@@ -476,39 +380,23 @@ func (h *ClusterHandler) listClustersInGroup(w http.ResponseWriter, r *http.Requ
 
 	clusters, err := h.datastore.GetClustersInGroup(ctx, groupID)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: fmt.Sprintf("Failed to list clusters: %v", err),
-		})
+		RespondError(w, http.StatusInternalServerError,
+			fmt.Sprintf("Failed to list clusters: %v", err))
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	//nolint:errcheck // Encoding clusters list
-	json.NewEncoder(w).Encode(clusters)
+	RespondJSON(w, http.StatusOK, clusters)
 }
 
 func (h *ClusterHandler) createClusterInGroup(w http.ResponseWriter, r *http.Request, groupID int) {
 	var req ClusterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "Invalid request body",
-		})
+		RespondError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	if req.Name == "" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "Name is required",
-		})
+		RespondError(w, http.StatusBadRequest, "Name is required")
 		return
 	}
 
@@ -517,19 +405,12 @@ func (h *ClusterHandler) createClusterInGroup(w http.ResponseWriter, r *http.Req
 
 	cluster, err := h.datastore.CreateCluster(ctx, groupID, req.Name, req.Description)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: fmt.Sprintf("Failed to create cluster: %v", err),
-		})
+		RespondError(w, http.StatusInternalServerError,
+			fmt.Sprintf("Failed to create cluster: %v", err))
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	//nolint:errcheck // Encoding cluster
-	json.NewEncoder(w).Encode(cluster)
+	RespondJSON(w, http.StatusCreated, cluster)
 }
 
 func (h *ClusterHandler) getCluster(w http.ResponseWriter, r *http.Request, id int) {
@@ -538,40 +419,24 @@ func (h *ClusterHandler) getCluster(w http.ResponseWriter, r *http.Request, id i
 
 	cluster, err := h.datastore.GetCluster(ctx, id)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: fmt.Sprintf("Cluster not found: %v", err),
-		})
+		RespondError(w, http.StatusNotFound,
+			fmt.Sprintf("Cluster not found: %v", err))
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	//nolint:errcheck // Encoding cluster
-	json.NewEncoder(w).Encode(cluster)
+	RespondJSON(w, http.StatusOK, cluster)
 }
 
 func (h *ClusterHandler) updateCluster(w http.ResponseWriter, r *http.Request, id int) {
 	var req ClusterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "Invalid request body",
-		})
+		RespondError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	// At least name or group_id must be provided for update
 	if req.Name == "" && req.GroupID == nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "At least name or group_id is required",
-		})
+		RespondError(w, http.StatusBadRequest, "At least name or group_id is required")
 		return
 	}
 
@@ -580,18 +445,12 @@ func (h *ClusterHandler) updateCluster(w http.ResponseWriter, r *http.Request, i
 
 	cluster, err := h.datastore.UpdateClusterPartial(ctx, id, req.GroupID, req.Name, req.Description)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: fmt.Sprintf("Failed to update cluster: %v", err),
-		})
+		RespondError(w, http.StatusInternalServerError,
+			fmt.Sprintf("Failed to update cluster: %v", err))
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	//nolint:errcheck // Encoding cluster
-	json.NewEncoder(w).Encode(cluster)
+	RespondJSON(w, http.StatusOK, cluster)
 }
 
 func (h *ClusterHandler) deleteCluster(w http.ResponseWriter, r *http.Request, id int) {
@@ -600,16 +459,13 @@ func (h *ClusterHandler) deleteCluster(w http.ResponseWriter, r *http.Request, i
 
 	err := h.datastore.DeleteCluster(ctx, id)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
 		if strings.Contains(err.Error(), "not found") {
-			w.WriteHeader(http.StatusNotFound)
+			RespondError(w, http.StatusNotFound,
+				fmt.Sprintf("Failed to delete cluster: %v", err))
 		} else {
-			w.WriteHeader(http.StatusInternalServerError)
+			RespondError(w, http.StatusInternalServerError,
+				fmt.Sprintf("Failed to delete cluster: %v", err))
 		}
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: fmt.Sprintf("Failed to delete cluster: %v", err),
-		})
 		return
 	}
 
@@ -630,45 +486,25 @@ func (h *ClusterHandler) updateAutoDetectedCluster(w http.ResponseWriter, r *htt
 	// Check user permissions - only superusers can modify auto-detected clusters
 	_, isSuperuser, err := h.getUserInfoFromRequest(r)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "Invalid or missing authentication token",
-		})
+		RespondError(w, http.StatusUnauthorized, "Invalid or missing authentication token")
 		return
 	}
 
 	if !isSuperuser {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusForbidden)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "Only superusers can modify auto-detected clusters",
-		})
+		RespondError(w, http.StatusForbidden, "Only superusers can modify auto-detected clusters")
 		return
 	}
 
 	// Parse request body
 	var req AutoDetectedClusterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "Invalid request body",
-		})
+		RespondError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	// At least name or group_id must be provided
 	if req.Name == "" && req.GroupID == nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "At least name or group_id is required",
-		})
+		RespondError(w, http.StatusBadRequest, "At least name or group_id is required")
 		return
 	}
 
@@ -678,12 +514,7 @@ func (h *ClusterHandler) updateAutoDetectedCluster(w http.ResponseWriter, r *htt
 		autoKey = computeAutoClusterKey(clusterID)
 	}
 	if autoKey == "" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "auto_cluster_key is required for this cluster type",
-		})
+		RespondError(w, http.StatusBadRequest, "auto_cluster_key is required for this cluster type")
 		return
 	}
 
@@ -693,18 +524,12 @@ func (h *ClusterHandler) updateAutoDetectedCluster(w http.ResponseWriter, r *htt
 	// Update cluster record (name and/or group_id)
 	cluster, err := h.datastore.UpsertAutoDetectedCluster(ctx, autoKey, req.Name, req.GroupID)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: fmt.Sprintf("Failed to update auto-detected cluster: %v", err),
-		})
+		RespondError(w, http.StatusInternalServerError,
+			fmt.Sprintf("Failed to update auto-detected cluster: %v", err))
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	//nolint:errcheck // Encoding cluster
-	json.NewEncoder(w).Encode(cluster)
+	RespondJSON(w, http.StatusOK, cluster)
 }
 
 // computeAutoClusterKey computes the auto_cluster_key from a cluster ID
@@ -730,44 +555,24 @@ func (h *ClusterHandler) updateAutoDetectedGroup(w http.ResponseWriter, r *http.
 	// Check user permissions - only superusers can rename auto-detected groups
 	_, isSuperuser, err := h.getUserInfoFromRequest(r)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "Invalid or missing authentication token",
-		})
+		RespondError(w, http.StatusUnauthorized, "Invalid or missing authentication token")
 		return
 	}
 
 	if !isSuperuser {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusForbidden)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "Only superusers can rename auto-detected groups",
-		})
+		RespondError(w, http.StatusForbidden, "Only superusers can rename auto-detected groups")
 		return
 	}
 
 	// Parse request body
 	var req ClusterGroupRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "Invalid request body",
-		})
+		RespondError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	if req.Name == "" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "Name is required",
-		})
+		RespondError(w, http.StatusBadRequest, "Name is required")
 		return
 	}
 
@@ -775,12 +580,7 @@ func (h *ClusterHandler) updateAutoDetectedGroup(w http.ResponseWriter, r *http.
 	// group-auto -> auto
 	autoKey := strings.TrimPrefix(groupID, "group-")
 	if autoKey == "" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: "Invalid auto-detected group ID",
-		})
+		RespondError(w, http.StatusBadRequest, "Invalid auto-detected group ID")
 		return
 	}
 
@@ -790,18 +590,12 @@ func (h *ClusterHandler) updateAutoDetectedGroup(w http.ResponseWriter, r *http.
 	// Upsert group record with custom name
 	group, err := h.datastore.UpsertGroupByAutoKey(ctx, autoKey, req.Name)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: fmt.Sprintf("Failed to update auto-detected group: %v", err),
-		})
+		RespondError(w, http.StatusInternalServerError,
+			fmt.Sprintf("Failed to update auto-detected group: %v", err))
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	//nolint:errcheck // Encoding group
-	json.NewEncoder(w).Encode(group)
+	RespondJSON(w, http.StatusOK, group)
 }
 
 // Server operations
@@ -822,18 +616,12 @@ func (h *ClusterHandler) listServersInCluster(w http.ResponseWriter, r *http.Req
 
 	servers, err := h.datastore.GetServersInCluster(ctx, clusterID)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		//nolint:errcheck // Encoding simple error response
-		json.NewEncoder(w).Encode(ErrorResponse{
-			Error: fmt.Sprintf("Failed to list servers: %v", err),
-		})
+		RespondError(w, http.StatusInternalServerError,
+			fmt.Sprintf("Failed to list servers: %v", err))
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	//nolint:errcheck // Encoding servers list
-	json.NewEncoder(w).Encode(servers)
+	RespondJSON(w, http.StatusOK, servers)
 }
 
 // getUserInfoFromRequest extracts username and superuser status from the request

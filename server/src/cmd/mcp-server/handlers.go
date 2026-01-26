@@ -12,7 +12,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -42,16 +41,19 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		// Helper to wrap handlers with authentication
 		authWrapper := createAuthWrapper(deps.AuthStore)
 
+		// OpenAPI specification endpoint (public - used for API discovery)
+		mux.HandleFunc("/api/v1/openapi.json", handleOpenAPISpec)
+
 		// Authentication endpoint (does NOT require auth - it IS the login endpoint)
 		authHandler := api.NewAuthHandler(deps.AuthStore, deps.RateLimiter)
 		authHandler.RegisterRoutes(mux)
 
 		// Chat history compaction endpoint
-		mux.HandleFunc("/api/chat/compact",
+		mux.HandleFunc("/api/v1/chat/compact",
 			authWrapper(compactor.HandleCompact))
 
 		// User info endpoint - returns auth status (no error if not logged in)
-		mux.HandleFunc("/api/user/info",
+		mux.HandleFunc("/api/v1/user/info",
 			createUserInfoHandler(deps.AuthStore))
 
 		// LLM proxy handlers (always enabled)
@@ -148,13 +150,10 @@ func createAuthWrapper(authStore *auth.AuthStore) func(http.HandlerFunc) http.Ha
 // createUserInfoHandler creates a handler for the user info endpoint
 func createUserInfoHandler(authStore *auth.AuthStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
 		// Extract session token from Authorization header
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
-			//nolint:errcheck // Encoding a simple map should never fail
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			api.RespondJSON(w, http.StatusOK, map[string]interface{}{
 				"authenticated": false,
 			})
 			return
@@ -163,8 +162,7 @@ func createUserInfoHandler(authStore *auth.AuthStore) http.HandlerFunc {
 		// Extract Bearer token
 		token := strings.TrimPrefix(authHeader, "Bearer ")
 		if token == authHeader {
-			//nolint:errcheck // Encoding a simple map should never fail
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			api.RespondJSON(w, http.StatusOK, map[string]interface{}{
 				"authenticated": false,
 				"error":         "Invalid Authorization header format",
 			})
@@ -174,8 +172,7 @@ func createUserInfoHandler(authStore *auth.AuthStore) http.HandlerFunc {
 		// Validate session token and get username
 		username, err := authStore.ValidateSessionToken(token)
 		if err != nil {
-			//nolint:errcheck // Encoding a simple map should never fail
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			api.RespondJSON(w, http.StatusOK, map[string]interface{}{
 				"authenticated": false,
 				"error":         "Invalid or expired session",
 			})
@@ -190,13 +187,22 @@ func createUserInfoHandler(authStore *auth.AuthStore) http.HandlerFunc {
 		}
 
 		// Return user info as JSON
-		//nolint:errcheck // Encoding a simple map should never fail
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		api.RespondJSON(w, http.StatusOK, map[string]interface{}{
 			"authenticated": true,
 			"username":      username,
 			"is_superuser":  isSuperuser,
 		})
 	}
+}
+
+// handleOpenAPISpec serves the OpenAPI specification
+func handleOpenAPISpec(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	spec := api.BuildOpenAPISpec()
+	api.RespondJSON(w, http.StatusOK, spec)
 }
 
 // setupLLMHandlers configures LLM proxy endpoints
@@ -213,16 +219,16 @@ func setupLLMHandlers(mux *http.ServeMux, cfg *config.Config, authWrapper func(h
 	}
 
 	// Provider/model listing don't require auth (needed for login page)
-	mux.HandleFunc("/api/llm/providers",
+	mux.HandleFunc("/api/v1/llm/providers",
 		func(w http.ResponseWriter, r *http.Request) {
 			llmproxy.HandleProviders(w, r, llmConfig)
 		})
-	mux.HandleFunc("/api/llm/models",
+	mux.HandleFunc("/api/v1/llm/models",
 		func(w http.ResponseWriter, r *http.Request) {
 			llmproxy.HandleModels(w, r, llmConfig)
 		})
 	// Chat endpoint requires auth (makes actual LLM API calls)
-	mux.HandleFunc("/api/llm/chat",
+	mux.HandleFunc("/api/v1/llm/chat",
 		authWrapper(func(w http.ResponseWriter, r *http.Request) {
 			llmproxy.HandleChat(w, r, llmConfig)
 		}))

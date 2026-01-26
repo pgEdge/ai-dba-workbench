@@ -30,19 +30,19 @@ func TestNewConversationsClient(t *testing.T) {
 			name:            "with mcp/v1 suffix",
 			baseURL:         "http://localhost:8080/mcp/v1",
 			token:           "test-token",
-			expectedBaseURL: "http://localhost:8080/api/conversations",
+			expectedBaseURL: "http://localhost:8080/api/v1/conversations",
 		},
 		{
 			name:            "without mcp/v1 suffix",
 			baseURL:         "http://localhost:8080",
 			token:           "test-token",
-			expectedBaseURL: "http://localhost:8080/api/conversations",
+			expectedBaseURL: "http://localhost:8080/api/v1/conversations",
 		},
 		{
 			name:            "empty token",
 			baseURL:         "http://localhost:8080",
 			token:           "",
-			expectedBaseURL: "http://localhost:8080/api/conversations",
+			expectedBaseURL: "http://localhost:8080/api/v1/conversations",
 		},
 	}
 
@@ -139,7 +139,7 @@ func TestConversationsClient_Get(t *testing.T) {
 		}
 
 		// Check path includes conversation ID
-		expectedPath := "/api/conversations/conv_123"
+		expectedPath := "/api/v1/conversations/conv_123"
 		if r.URL.Path != expectedPath {
 			t.Errorf("Expected path %q, got %q", expectedPath, r.URL.Path)
 		}
@@ -257,7 +257,7 @@ func TestConversationsClient_Update(t *testing.T) {
 			t.Errorf("Expected PUT, got %s", r.Method)
 		}
 
-		expectedPath := "/api/conversations/conv_123"
+		expectedPath := "/api/v1/conversations/conv_123"
 		if r.URL.Path != expectedPath {
 			t.Errorf("Expected path %q, got %q", expectedPath, r.URL.Path)
 		}
@@ -308,7 +308,7 @@ func TestConversationsClient_Rename(t *testing.T) {
 			t.Errorf("Expected PATCH, got %s", r.Method)
 		}
 
-		expectedPath := "/api/conversations/conv_123"
+		expectedPath := "/api/v1/conversations/conv_123"
 		if r.URL.Path != expectedPath {
 			t.Errorf("Expected path %q, got %q", expectedPath, r.URL.Path)
 		}
@@ -352,7 +352,7 @@ func TestConversationsClient_Delete(t *testing.T) {
 			t.Errorf("Expected DELETE, got %s", r.Method)
 		}
 
-		expectedPath := "/api/conversations/conv_123"
+		expectedPath := "/api/v1/conversations/conv_123"
 		if r.URL.Path != expectedPath {
 			t.Errorf("Expected path %q, got %q", expectedPath, r.URL.Path)
 		}

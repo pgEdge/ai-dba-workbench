@@ -36,7 +36,7 @@ func TestClusterHandler_HandleNotConfigured(t *testing.T) {
 	handler := NewClusterHandler(nil, nil)
 
 	// Create a test request
-	req := httptest.NewRequest(http.MethodGet, "/api/clusters", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/clusters", nil)
 	rec := httptest.NewRecorder()
 
 	// Call the handler
@@ -69,7 +69,7 @@ func TestClusterHandler_HandleClusters_MethodNotAllowed(t *testing.T) {
 	handler := NewClusterHandler(nil, nil)
 
 	// Test POST method (should be rejected even without datastore)
-	req := httptest.NewRequest(http.MethodPost, "/api/clusters", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/clusters", nil)
 	rec := httptest.NewRecorder()
 
 	// Note: We can only test the method check part here since datastore is nil
@@ -90,7 +90,7 @@ func TestClusterHandler_HandleClusterGroups_MethodNotAllowed(t *testing.T) {
 	handler := NewClusterHandler(nil, nil)
 
 	// Test DELETE method (should be rejected)
-	req := httptest.NewRequest(http.MethodDelete, "/api/cluster-groups", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/cluster-groups", nil)
 	rec := httptest.NewRecorder()
 
 	handler.handleClusterGroups(rec, req)
@@ -199,7 +199,7 @@ func TestClusterHandler_CreateClusterGroup_InvalidRequest(t *testing.T) {
 	handler := NewClusterHandler(nil, nil)
 
 	// Test with invalid JSON
-	req := httptest.NewRequest(http.MethodPost, "/api/cluster-groups", bytes.NewBufferString("invalid json"))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups", bytes.NewBufferString("invalid json"))
 	rec := httptest.NewRecorder()
 
 	handler.createClusterGroup(rec, req)
@@ -223,7 +223,7 @@ func TestClusterHandler_CreateClusterGroup_MissingName(t *testing.T) {
 
 	// Test with missing name
 	body := `{"description": "Test group"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/cluster-groups", bytes.NewBufferString(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -248,7 +248,7 @@ func TestClusterHandler_UpdateCluster_MissingBothNameAndGroupID(t *testing.T) {
 
 	// Test with missing both name and group_id
 	body := `{}`
-	req := httptest.NewRequest(http.MethodPut, "/api/clusters/1", bytes.NewBufferString(body))
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/clusters/1", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -272,7 +272,7 @@ func TestClusterHandler_HandleClusterSubpath_InvalidID(t *testing.T) {
 	handler := NewClusterHandler(nil, nil)
 
 	// Test with invalid cluster ID
-	req := httptest.NewRequest(http.MethodGet, "/api/clusters/invalid", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/clusters/invalid", nil)
 	rec := httptest.NewRecorder()
 
 	handler.handleClusterSubpath(rec, req)
@@ -295,7 +295,7 @@ func TestClusterHandler_HandleClusterGroupSubpath_InvalidID(t *testing.T) {
 	handler := NewClusterHandler(nil, nil)
 
 	// Test with invalid group ID
-	req := httptest.NewRequest(http.MethodGet, "/api/cluster-groups/invalid", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cluster-groups/invalid", nil)
 	rec := httptest.NewRecorder()
 
 	handler.handleClusterGroupSubpath(rec, req)
@@ -318,7 +318,7 @@ func TestClusterHandler_HandleClusterServers_MethodNotAllowed(t *testing.T) {
 	handler := NewClusterHandler(nil, nil)
 
 	// Test POST method (should be rejected)
-	req := httptest.NewRequest(http.MethodPost, "/api/clusters/1/servers", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/clusters/1/servers", nil)
 	rec := httptest.NewRecorder()
 
 	handler.handleClusterServers(rec, req, 1)

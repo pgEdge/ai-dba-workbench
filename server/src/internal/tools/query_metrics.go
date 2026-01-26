@@ -149,9 +149,15 @@ To manage response sizes:
 				return mcp.NewToolError("Datastore not configured. The query_metrics tool requires a datastore connection.")
 			}
 
+			// Extract context from args (injected by registry.Execute)
+			ctx, ok := args["__context"].(context.Context)
+			if !ok {
+				ctx = context.Background()
+			}
+
 			// Parse required parameters
-			probeName, ok := args["probe_name"].(string)
-			if !ok || probeName == "" {
+			probeName, pok := args["probe_name"].(string)
+			if !pok || probeName == "" {
 				return mcp.NewToolError("Missing or invalid 'probe_name' parameter")
 			}
 
@@ -162,6 +168,32 @@ To manage response sizes:
 			connectionID, err := parseIntArg(args, "connection_id")
 			if err != nil {
 				return mcp.NewToolError("Missing or invalid 'connection_id' parameter. If you haven't selected a database connection, use list_connections to find available connection IDs, then specify connection_id explicitly.")
+			}
+
+			// Verify the connection_id exists in the connections table
+			var connName string
+			err = pool.QueryRow(ctx, "SELECT name FROM connections WHERE id = $1", connectionID).Scan(&connName)
+			if err != nil {
+				// Connection doesn't exist - provide helpful error with valid IDs
+				rows, qerr := pool.Query(ctx, "SELECT id, name FROM connections ORDER BY id LIMIT 20")
+				if qerr == nil {
+					defer rows.Close()
+					var validIDs []string
+					for rows.Next() {
+						var id int
+						var name string
+						if rows.Scan(&id, &name) == nil {
+							validIDs = append(validIDs, fmt.Sprintf("%d (%s)", id, name))
+						}
+					}
+					if len(validIDs) > 0 {
+						return mcp.NewToolError(fmt.Sprintf(
+							"Connection ID %d does not exist. Valid connection IDs are: %s. "+
+								"Use list_connections to see all available connections.",
+							connectionID, strings.Join(validIDs, ", ")))
+					}
+				}
+				return mcp.NewToolError(fmt.Sprintf("Connection ID %d does not exist. Use list_connections to see available connections.", connectionID))
 			}
 
 			// Parse time range
@@ -190,12 +222,6 @@ To manage response sizes:
 					return mcp.NewToolError("Invalid 'aggregation' parameter: must be one of avg, sum, min, max, last")
 				}
 				aggregation = aggVal
-			}
-
-			// Extract context from args (injected by registry.Execute)
-			ctx, ok := args["__context"].(context.Context)
-			if !ok {
-				ctx = context.Background()
 			}
 
 			// Verify probe exists

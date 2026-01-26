@@ -348,7 +348,7 @@ func (c *httpClient) sendRESTRequest(ctx context.Context, method, path string, b
 
 func (c *httpClient) ListConnections(ctx context.Context) ([]ConnectionListItem, error) {
 	var result []ConnectionListItem
-	if err := c.sendRESTRequest(ctx, "GET", "/api/connections", nil, &result); err != nil {
+	if err := c.sendRESTRequest(ctx, "GET", "/api/v1/connections", nil, &result); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -356,7 +356,7 @@ func (c *httpClient) ListConnections(ctx context.Context) ([]ConnectionListItem,
 
 func (c *httpClient) ListDatabases(ctx context.Context, connectionID int) ([]DatabaseInfo, error) {
 	var result []DatabaseInfo
-	path := fmt.Sprintf("/api/connections/%d/databases", connectionID)
+	path := fmt.Sprintf("/api/v1/connections/%d/databases", connectionID)
 	if err := c.sendRESTRequest(ctx, "GET", path, nil, &result); err != nil {
 		return nil, err
 	}
@@ -365,7 +365,7 @@ func (c *httpClient) ListDatabases(ctx context.Context, connectionID int) ([]Dat
 
 func (c *httpClient) GetCurrentConnection(ctx context.Context) (*CurrentConnection, error) {
 	var result CurrentConnection
-	if err := c.sendRESTRequest(ctx, "GET", "/api/connections/current", nil, &result); err != nil {
+	if err := c.sendRESTRequest(ctx, "GET", "/api/v1/connections/current", nil, &result); err != nil {
 		if err.Error() == "not found" {
 			return nil, nil // No connection selected
 		}
@@ -383,12 +383,12 @@ func (c *httpClient) SetCurrentConnection(ctx context.Context, connectionID int,
 	}
 
 	var result CurrentConnection
-	if err := c.sendRESTRequest(ctx, "POST", "/api/connections/current", body, &result); err != nil {
+	if err := c.sendRESTRequest(ctx, "POST", "/api/v1/connections/current", body, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 func (c *httpClient) ClearCurrentConnection(ctx context.Context) error {
-	return c.sendRESTRequest(ctx, "DELETE", "/api/connections/current", nil, nil)
+	return c.sendRESTRequest(ctx, "DELETE", "/api/v1/connections/current", nil, nil)
 }

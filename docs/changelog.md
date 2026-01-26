@@ -11,6 +11,10 @@ and this project adheres to
 
 ### Added
 
+- RFC 8631 compliant REST API with versioned endpoints (`/api/v1/`):
+  - All JSON responses include Link header for API discovery
+  - OpenAPI 3.0.3 specification at `/api/v1/openapi.json`
+  - Interactive API browser in documentation using ReDoc
 - Alert Analysis feature with LLM-powered remediation recommendations:
   - New MCP tools for alert context: `get_alert_history`, `get_alert_rules`,
     `get_metric_baselines`
@@ -24,7 +28,7 @@ and this project adheres to
 - Alerter engine for monitoring metrics with threshold and anomaly detection.
 - Comprehensive test coverage for the alerter engine.
 - Connection management REST APIs for selecting database connections
-  (`/api/connections`, `/api/connections/current`)
+  (`/api/v1/connections`, `/api/v1/connections/current`)
 - CLI slash commands for connection management (`/list connections`,
   `/set connection`, `/show connection`)
 - Session-based connection selection persisted in SQLite auth database
@@ -85,6 +89,9 @@ and this project adheres to
 
 ### Breaking Changes
 
+- REST API paths have changed from `/api/` to `/api/v1/`. Update any custom
+  integrations or scripts that call the API directly. The CLI and web client
+  have been updated to use the new paths.
 - PBKDF2 key derivation is incompatible with the previous SHA256
   implementation. Existing encrypted passwords for monitored connections will
   no longer decrypt correctly after upgrading. You must re-enter passwords for

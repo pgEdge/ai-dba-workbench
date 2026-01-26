@@ -39,30 +39,26 @@ func NewAlertHandler(datastore *database.Datastore, authStore *auth.AuthStore) *
 func (h *AlertHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(http.HandlerFunc) http.HandlerFunc) {
 	// Check if datastore is configured
 	if h.datastore == nil {
-		mux.HandleFunc("/api/alerts", authWrapper(h.handleNotConfigured))
-		mux.HandleFunc("/api/alerts/counts", authWrapper(h.handleNotConfigured))
-		mux.HandleFunc("/api/alerts/acknowledge", authWrapper(h.handleNotConfigured))
+		mux.HandleFunc("/api/v1/alerts", authWrapper(h.handleNotConfigured))
+		mux.HandleFunc("/api/v1/alerts/counts", authWrapper(h.handleNotConfigured))
+		mux.HandleFunc("/api/v1/alerts/acknowledge", authWrapper(h.handleNotConfigured))
 		return
 	}
 
-	mux.HandleFunc("/api/alerts", authWrapper(h.handleAlerts))
-	mux.HandleFunc("/api/alerts/counts", authWrapper(h.handleAlertCounts))
-	mux.HandleFunc("/api/alerts/acknowledge", authWrapper(h.handleAcknowledge))
+	mux.HandleFunc("/api/v1/alerts", authWrapper(h.handleAlerts))
+	mux.HandleFunc("/api/v1/alerts/counts", authWrapper(h.handleAlertCounts))
+	mux.HandleFunc("/api/v1/alerts/acknowledge", authWrapper(h.handleAcknowledge))
 }
 
 // handleNotConfigured returns a 503 when the datastore is not configured
 func (h *AlertHandler) handleNotConfigured(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusServiceUnavailable)
-	json.NewEncoder(w).Encode(ErrorResponse{Error: "Datastore not configured"})
+	RespondError(w, http.StatusServiceUnavailable, "Datastore not configured")
 }
 
-// handleAlerts handles GET /api/alerts
+// handleAlerts handles GET /api/v1/alerts
 func (h *AlertHandler) handleAlerts(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
+		RespondError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
 
@@ -142,37 +138,29 @@ func (h *AlertHandler) handleAlerts(w http.ResponseWriter, r *http.Request) {
 	// Fetch alerts
 	result, err := h.datastore.GetAlerts(r.Context(), filter)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Failed to fetch alerts: " + err.Error()})
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch alerts: "+err.Error())
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	RespondJSON(w, http.StatusOK, result)
 }
 
-// handleAlertCounts handles GET /api/alerts/counts
+// handleAlertCounts handles GET /api/v1/alerts/counts
 // Returns counts of active alerts grouped by server
 func (h *AlertHandler) handleAlertCounts(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
+		RespondError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
 
 	// Fetch alert counts
 	counts, err := h.datastore.GetAlertCounts(r.Context())
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Failed to fetch alert counts: " + err.Error()})
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch alert counts: "+err.Error())
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(counts)
+	RespondJSON(w, http.StatusOK, counts)
 }
 
 // AcknowledgeRequest represents the request body for acknowledging an alert
@@ -182,8 +170,8 @@ type AcknowledgeRequest struct {
 	FalsePositive bool   `json:"false_positive"`
 }
 
-// handleAcknowledge handles POST /api/alerts/acknowledge (acknowledge) and
-// DELETE /api/alerts/acknowledge (unacknowledge)
+// handleAcknowledge handles POST /api/v1/alerts/acknowledge (acknowledge) and
+// DELETE /api/v1/alerts/acknowledge (unacknowledge)
 func (h *AlertHandler) handleAcknowledge(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
@@ -191,27 +179,21 @@ func (h *AlertHandler) handleAcknowledge(w http.ResponseWriter, r *http.Request)
 	case http.MethodDelete:
 		h.unacknowledgeAlert(w, r)
 	default:
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
+		RespondError(w, http.StatusMethodNotAllowed, "Method not allowed")
 	}
 }
 
-// acknowledgeAlert handles POST /api/alerts/acknowledge
+// acknowledgeAlert handles POST /api/v1/alerts/acknowledge
 func (h *AlertHandler) acknowledgeAlert(w http.ResponseWriter, r *http.Request) {
 	// Parse request body
 	var req AcknowledgeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid request body: " + err.Error()})
+		RespondError(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
 		return
 	}
 
 	if req.AlertID == 0 {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "alert_id is required"})
+		RespondError(w, http.StatusBadRequest, "alert_id is required")
 		return
 	}
 
@@ -230,43 +212,33 @@ func (h *AlertHandler) acknowledgeAlert(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := h.datastore.AcknowledgeAlert(r.Context(), ackReq); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Failed to acknowledge alert: " + err.Error()})
+		RespondError(w, http.StatusInternalServerError, "Failed to acknowledge alert: "+err.Error())
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "acknowledged"})
+	RespondJSON(w, http.StatusOK, map[string]string{"status": "acknowledged"})
 }
 
-// unacknowledgeAlert handles DELETE /api/alerts/acknowledge
+// unacknowledgeAlert handles DELETE /api/v1/alerts/acknowledge
 func (h *AlertHandler) unacknowledgeAlert(w http.ResponseWriter, r *http.Request) {
 	// Parse alert_id from query params
 	alertIDStr := r.URL.Query().Get("alert_id")
 	if alertIDStr == "" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "alert_id query parameter is required"})
+		RespondError(w, http.StatusBadRequest, "alert_id query parameter is required")
 		return
 	}
 
 	alertID, err := strconv.ParseInt(alertIDStr, 10, 64)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid alert_id"})
+		RespondError(w, http.StatusBadRequest, "Invalid alert_id")
 		return
 	}
 
 	// Unacknowledge the alert
 	if err := h.datastore.UnacknowledgeAlert(r.Context(), alertID); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Failed to unacknowledge alert: " + err.Error()})
+		RespondError(w, http.StatusInternalServerError, "Failed to unacknowledge alert: "+err.Error())
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "active"})
+	RespondJSON(w, http.StatusOK, map[string]string{"status": "active"})
 }

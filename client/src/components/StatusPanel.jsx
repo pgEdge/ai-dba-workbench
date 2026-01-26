@@ -1183,7 +1183,7 @@ const StatusPanel = ({
         if (!token || !alertId) return;
 
         try {
-            const response = await fetch('/api/alerts/acknowledge', {
+            const response = await fetch('/api/v1/alerts/acknowledge', {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${token}`,
@@ -1216,7 +1216,7 @@ const StatusPanel = ({
         if (!token || !alertId) return;
 
         try {
-            const response = await fetch(`/api/alerts/acknowledge?alert_id=${alertId}`, {
+            const response = await fetch(`/api/v1/alerts/acknowledge?alert_id=${alertId}`, {
                 method: 'DELETE',
                 headers: {
                     'Authorization': `Bearer ${token}`,
@@ -1258,7 +1258,7 @@ const StatusPanel = ({
         try {
             // Build query params based on selection type
             // Fetch active and acknowledged alerts, but exclude cleared ones
-            let url = '/api/alerts?limit=50&exclude_cleared=true';
+            let url = '/api/v1/alerts?limit=50&exclude_cleared=true';
             if (selection.type === 'server') {
                 // Use explicit check for ID - must be a number (including 0)
                 url += `&connection_id=${selection.id}`;

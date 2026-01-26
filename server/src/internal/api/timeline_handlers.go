@@ -11,7 +11,6 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -39,26 +38,22 @@ func NewTimelineHandler(datastore *database.Datastore, authStore *auth.AuthStore
 func (h *TimelineHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(http.HandlerFunc) http.HandlerFunc) {
 	// Check if datastore is configured
 	if h.datastore == nil {
-		mux.HandleFunc("/api/timeline/events", authWrapper(h.handleNotConfigured))
+		mux.HandleFunc("/api/v1/timeline/events", authWrapper(h.handleNotConfigured))
 		return
 	}
 
-	mux.HandleFunc("/api/timeline/events", authWrapper(h.handleTimelineEvents))
+	mux.HandleFunc("/api/v1/timeline/events", authWrapper(h.handleTimelineEvents))
 }
 
 // handleNotConfigured returns a 503 when the datastore is not configured
 func (h *TimelineHandler) handleNotConfigured(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusServiceUnavailable)
-	json.NewEncoder(w).Encode(ErrorResponse{Error: "Datastore not configured"})
+	RespondError(w, http.StatusServiceUnavailable, "Datastore not configured")
 }
 
-// handleTimelineEvents handles GET /api/timeline/events
+// handleTimelineEvents handles GET /api/v1/timeline/events
 func (h *TimelineHandler) handleTimelineEvents(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
+		RespondError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
 
@@ -70,9 +65,7 @@ func (h *TimelineHandler) handleTimelineEvents(w http.ResponseWriter, r *http.Re
 	if connID := query.Get("connection_id"); connID != "" {
 		id, err := strconv.Atoi(connID)
 		if err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid connection_id: " + err.Error()})
+			RespondError(w, http.StatusBadRequest, "Invalid connection_id: "+err.Error())
 			return
 		}
 		filter.ConnectionID = &id
@@ -84,9 +77,7 @@ func (h *TimelineHandler) handleTimelineEvents(w http.ResponseWriter, r *http.Re
 		for _, idStr := range ids {
 			id, err := strconv.Atoi(strings.TrimSpace(idStr))
 			if err != nil {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusBadRequest)
-				json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid connection_ids: " + err.Error()})
+				RespondError(w, http.StatusBadRequest, "Invalid connection_ids: "+err.Error())
 				return
 			}
 			filter.ConnectionIDs = append(filter.ConnectionIDs, id)
@@ -96,16 +87,12 @@ func (h *TimelineHandler) handleTimelineEvents(w http.ResponseWriter, r *http.Re
 	// Parse start_time (required)
 	startTimeStr := query.Get("start_time")
 	if startTimeStr == "" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "start_time is required"})
+		RespondError(w, http.StatusBadRequest, "start_time is required")
 		return
 	}
 	startTime, err := time.Parse(time.RFC3339, startTimeStr)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid start_time format, expected RFC3339: " + err.Error()})
+		RespondError(w, http.StatusBadRequest, "Invalid start_time format, expected RFC3339: "+err.Error())
 		return
 	}
 	filter.StartTime = startTime
@@ -113,25 +100,19 @@ func (h *TimelineHandler) handleTimelineEvents(w http.ResponseWriter, r *http.Re
 	// Parse end_time (required)
 	endTimeStr := query.Get("end_time")
 	if endTimeStr == "" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "end_time is required"})
+		RespondError(w, http.StatusBadRequest, "end_time is required")
 		return
 	}
 	endTime, err := time.Parse(time.RFC3339, endTimeStr)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid end_time format, expected RFC3339: " + err.Error()})
+		RespondError(w, http.StatusBadRequest, "Invalid end_time format, expected RFC3339: "+err.Error())
 		return
 	}
 	filter.EndTime = endTime
 
 	// Validate time range
 	if filter.EndTime.Before(filter.StartTime) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "end_time must be after start_time"})
+		RespondError(w, http.StatusBadRequest, "end_time must be after start_time")
 		return
 	}
 
@@ -151,9 +132,7 @@ func (h *TimelineHandler) handleTimelineEvents(w http.ResponseWriter, r *http.Re
 		for _, t := range types {
 			trimmedType := strings.TrimSpace(t)
 			if !validTypes[trimmedType] {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusBadRequest)
-				json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid event_type: " + trimmedType})
+				RespondError(w, http.StatusBadRequest, "Invalid event_type: "+trimmedType)
 				return
 			}
 			filter.EventTypes = append(filter.EventTypes, trimmedType)
@@ -164,15 +143,11 @@ func (h *TimelineHandler) handleTimelineEvents(w http.ResponseWriter, r *http.Re
 	if limitStr := query.Get("limit"); limitStr != "" {
 		limit, err := strconv.Atoi(limitStr)
 		if err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid limit: " + err.Error()})
+			RespondError(w, http.StatusBadRequest, "Invalid limit: "+err.Error())
 			return
 		}
 		if limit <= 0 {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(ErrorResponse{Error: "limit must be greater than 0"})
+			RespondError(w, http.StatusBadRequest, "limit must be greater than 0")
 			return
 		}
 		if limit > 1000 {
@@ -187,12 +162,9 @@ func (h *TimelineHandler) handleTimelineEvents(w http.ResponseWriter, r *http.Re
 	// Fetch timeline events
 	result, err := h.datastore.GetTimelineEvents(r.Context(), filter)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Failed to fetch timeline events: " + err.Error()})
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch timeline events: "+err.Error())
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	RespondJSON(w, http.StatusOK, result)
 }

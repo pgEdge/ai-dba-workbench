@@ -94,7 +94,10 @@ type ChatResponse struct {
 	TokenUsage *chat.TokenUsage `json:"token_usage,omitempty"` // Optional token usage (when debug enabled)
 }
 
-// HandleProviders handles GET /api/llm/providers
+// OpenAPISpecPath is the path to the OpenAPI specification for RFC 8631 API discovery.
+const OpenAPISpecPath = "/api/v1/openapi.json"
+
+// HandleProviders handles GET /api/v1/llm/providers
 func HandleProviders(w http.ResponseWriter, r *http.Request, config *Config) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -134,12 +137,13 @@ func HandleProviders(w http.ResponseWriter, r *http.Request, config *Config) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Link", fmt.Sprintf("<%s>; rel=\"service-desc\"", OpenAPISpecPath))
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: Failed to encode LLM providers response: %v\n", err)
 	}
 }
 
-// HandleModels handles GET /api/llm/models?provider=<provider>
+// HandleModels handles GET /api/v1/llm/models?provider=<provider>
 func HandleModels(w http.ResponseWriter, r *http.Request, config *Config) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -198,12 +202,13 @@ func HandleModels(w http.ResponseWriter, r *http.Request, config *Config) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Link", fmt.Sprintf("<%s>; rel=\"service-desc\"", OpenAPISpecPath))
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: Failed to encode LLM models response: %v\n", err)
 	}
 }
 
-// HandleChat handles POST /api/llm/chat
+// HandleChat handles POST /api/v1/llm/chat
 func HandleChat(w http.ResponseWriter, r *http.Request, config *Config) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -314,6 +319,7 @@ func HandleChat(w http.ResponseWriter, r *http.Request, config *Config) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Link", fmt.Sprintf("<%s>; rel=\"service-desc\"", OpenAPISpecPath))
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: Failed to encode LLM chat response: %v\n", err)
 	}

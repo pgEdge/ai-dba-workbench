@@ -885,7 +885,7 @@ func (e *Engine) processTier2And3(ctx context.Context) {
 		e.determineFinalDecision(candidate)
 
 		// Store embedding if we have one
-		if embedding != nil && len(embedding) > 0 {
+		if len(embedding) > 0 {
 			if err := e.datastore.StoreAnomalyEmbedding(ctx, candidate.ID, embedding, e.embeddingProvider.ModelName()); err != nil {
 				e.debug_log("Failed to store embedding for candidate %d: %v", candidate.ID, err)
 			}

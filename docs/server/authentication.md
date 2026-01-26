@@ -213,7 +213,7 @@ ID     Hash Prefix        Expires              Status     Annotation
 1. **Authenticate with username/password** using the login API:
 
    ```bash
-   curl -X POST http://localhost:8080/api/auth/login \
+   curl -X POST http://localhost:8080/api/v1/auth/login \
      -H "Content-Type: application/json" \
      -d '{
        "username": "alice",

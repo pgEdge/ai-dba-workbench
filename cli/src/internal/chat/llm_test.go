@@ -24,8 +24,8 @@ func TestProxyClient_TextResponse(t *testing.T) {
 	// Create test server that mimics the LLM proxy endpoint
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Verify request path
-		if r.URL.Path != "/api/llm/chat" {
-			t.Errorf("Expected path '/api/llm/chat', got '%s'", r.URL.Path)
+		if r.URL.Path != "/api/v1/llm/chat" {
+			t.Errorf("Expected path '/api/v1/llm/chat', got '%s'", r.URL.Path)
 		}
 
 		// Verify method
@@ -227,8 +227,8 @@ func TestProxyClient_ListModels(t *testing.T) {
 	// Create test server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Verify request path
-		if r.URL.Path != "/api/llm/models" {
-			t.Errorf("Expected path '/api/llm/models', got '%s'", r.URL.Path)
+		if r.URL.Path != "/api/v1/llm/models" {
+			t.Errorf("Expected path '/api/v1/llm/models', got '%s'", r.URL.Path)
 		}
 
 		// Verify query parameter

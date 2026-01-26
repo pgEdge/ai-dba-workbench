@@ -276,7 +276,7 @@ func (c *Client) authenticateUser(ctx context.Context, username, password string
 	baseURL = strings.TrimSuffix(baseURL, "/")
 
 	// Build the login endpoint URL
-	loginURL := baseURL + "/api/auth/login"
+	loginURL := baseURL + "/api/v1/auth/login"
 
 	// Create request body
 	reqBody := map[string]string{
@@ -687,7 +687,7 @@ func (c *Client) tryServerCompaction(messages []Message, maxTokens, recentWindow
 	}
 
 	// Call the compaction endpoint
-	req, err := http.NewRequest("POST", httpClient.url+"/api/chat/compact", bytes.NewBuffer(jsonData))
+	req, err := http.NewRequest("POST", httpClient.url+"/api/v1/chat/compact", bytes.NewBuffer(jsonData))
 	if err != nil {
 		if c.config.UI.Debug {
 			fmt.Fprintf(os.Stderr, "[DEBUG] Failed to create compaction request: %v\n", err)

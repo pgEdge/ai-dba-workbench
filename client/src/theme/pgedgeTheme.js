@@ -107,8 +107,8 @@ const darkPalette = {
     },
     text: {
         primary: '#F1F5F9',
-        secondary: '#94A3B8',
-        disabled: '#64748B',
+        secondary: '#CBD5E1',   // Brightened from #94A3B8 (slate-400) to slate-300
+        disabled: '#94A3B8',    // Brightened from #64748B (slate-500) to slate-400
     },
     divider: '#334155',
     grey: {
@@ -124,10 +124,10 @@ const darkPalette = {
         900: '#0F172A',
     },
     action: {
-        active: '#94A3B8',
+        active: '#CBD5E1',      // Brightened to match text.secondary
         hover: alpha('#22B8CF', 0.08),
         selected: alpha('#22B8CF', 0.16),
-        disabled: '#64748B',
+        disabled: '#94A3B8',    // Brightened to match text.disabled
         disabledBackground: '#334155',
     },
 };

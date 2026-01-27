@@ -14,9 +14,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
-	"gopkg.in/yaml.v3"
+	"github.com/pgedge/ai-workbench/pkg/fileutil"
 )
 
 // Config holds all configuration for the chat client
@@ -115,12 +114,7 @@ func LoadConfig(configPath string) (*Config, error) {
 
 // loadConfigFile loads configuration from a YAML file
 func loadConfigFile(path string, cfg *Config) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-
-	return yaml.Unmarshal(data, cfg)
+	return fileutil.LoadYAMLFile(path, cfg)
 }
 
 // loadAuthToken loads the authentication token from file
@@ -128,9 +122,8 @@ func loadConfigFile(path string, cfg *Config) error {
 func loadAuthToken() string {
 	homeDir, _ := os.UserHomeDir()
 	tokenPath := filepath.Join(homeDir, ".ai-dba-cli-token")
-	if data, err := os.ReadFile(tokenPath); err == nil {
-		// Trim whitespace and newlines
-		return strings.TrimSpace(string(data))
+	if token, err := fileutil.ReadTrimmedFile(tokenPath); err == nil {
+		return token
 	}
 
 	return ""

@@ -14,8 +14,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
+	"github.com/pgedge/ai-workbench/pkg/fileutil"
 	"gopkg.in/yaml.v3"
 )
 
@@ -617,36 +617,36 @@ func mergeConfig(dest, src *Config) {
 func loadAPIKeysFromFiles(cfg *Config) {
 	// Embedding API keys
 	if cfg.Embedding.VoyageAPIKey == "" && cfg.Embedding.VoyageAPIKeyFile != "" {
-		if key, err := readAPIKeyFromFile(cfg.Embedding.VoyageAPIKeyFile); err == nil && key != "" {
+		if key, err := fileutil.ReadOptionalTrimmedFile(cfg.Embedding.VoyageAPIKeyFile); err == nil && key != "" {
 			cfg.Embedding.VoyageAPIKey = key
 		}
 	}
 	if cfg.Embedding.OpenAIAPIKey == "" && cfg.Embedding.OpenAIAPIKeyFile != "" {
-		if key, err := readAPIKeyFromFile(cfg.Embedding.OpenAIAPIKeyFile); err == nil && key != "" {
+		if key, err := fileutil.ReadOptionalTrimmedFile(cfg.Embedding.OpenAIAPIKeyFile); err == nil && key != "" {
 			cfg.Embedding.OpenAIAPIKey = key
 		}
 	}
 
 	// LLM API keys
 	if cfg.LLM.AnthropicAPIKey == "" && cfg.LLM.AnthropicAPIKeyFile != "" {
-		if key, err := readAPIKeyFromFile(cfg.LLM.AnthropicAPIKeyFile); err == nil && key != "" {
+		if key, err := fileutil.ReadOptionalTrimmedFile(cfg.LLM.AnthropicAPIKeyFile); err == nil && key != "" {
 			cfg.LLM.AnthropicAPIKey = key
 		}
 	}
 	if cfg.LLM.OpenAIAPIKey == "" && cfg.LLM.OpenAIAPIKeyFile != "" {
-		if key, err := readAPIKeyFromFile(cfg.LLM.OpenAIAPIKeyFile); err == nil && key != "" {
+		if key, err := fileutil.ReadOptionalTrimmedFile(cfg.LLM.OpenAIAPIKeyFile); err == nil && key != "" {
 			cfg.LLM.OpenAIAPIKey = key
 		}
 	}
 
 	// Knowledgebase API keys
 	if cfg.Knowledgebase.EmbeddingVoyageAPIKey == "" && cfg.Knowledgebase.EmbeddingVoyageAPIKeyFile != "" {
-		if key, err := readAPIKeyFromFile(cfg.Knowledgebase.EmbeddingVoyageAPIKeyFile); err == nil && key != "" {
+		if key, err := fileutil.ReadOptionalTrimmedFile(cfg.Knowledgebase.EmbeddingVoyageAPIKeyFile); err == nil && key != "" {
 			cfg.Knowledgebase.EmbeddingVoyageAPIKey = key
 		}
 	}
 	if cfg.Knowledgebase.EmbeddingOpenAIAPIKey == "" && cfg.Knowledgebase.EmbeddingOpenAIAPIKeyFile != "" {
-		if key, err := readAPIKeyFromFile(cfg.Knowledgebase.EmbeddingOpenAIAPIKeyFile); err == nil && key != "" {
+		if key, err := fileutil.ReadOptionalTrimmedFile(cfg.Knowledgebase.EmbeddingOpenAIAPIKeyFile); err == nil && key != "" {
 			cfg.Knowledgebase.EmbeddingOpenAIAPIKey = key
 		}
 	}
@@ -745,38 +745,6 @@ func validateConfig(cfg *Config) error {
 	}
 
 	return nil
-}
-
-// readAPIKeyFromFile reads an API key from a file
-// Returns the key with whitespace trimmed, or empty string if file doesn't exist or is empty
-func readAPIKeyFromFile(filePath string) (string, error) {
-	if filePath == "" {
-		return "", nil
-	}
-
-	// Expand tilde to home directory
-	if filePath != "" && filePath[0] == '~' {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("failed to get home directory: %w", err)
-		}
-		filePath = filepath.Join(homeDir, filePath[1:])
-	}
-
-	// Check if file exists
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		return "", nil // File doesn't exist, return empty (not an error)
-	}
-
-	// Read file contents
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return "", fmt.Errorf("failed to read API key file %s: %w", filePath, err)
-	}
-
-	// Return trimmed contents (remove whitespace/newlines)
-	key := strings.TrimSpace(string(data))
-	return key, nil
 }
 
 // GetDefaultConfigPath returns the default config file path

@@ -15,8 +15,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
+	"github.com/pgedge/ai-workbench/pkg/fileutil"
 	"gopkg.in/yaml.v3"
 )
 
@@ -194,21 +194,7 @@ func (c *Config) LoadSecret(binaryPath string) error {
 
 // readSecretFile reads a secret from a file
 func readSecretFile(filename string) (string, error) {
-	// Expand tilde to home directory
-	if filename != "" && filename[0] == '~' {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("failed to get home directory: %w", err)
-		}
-		filename = filepath.Join(homeDir, filename[1:])
-	}
-
-	content, err := os.ReadFile(filename) // #nosec G304 - Secret file path is provided by administrator
-	if err != nil {
-		return "", err
-	}
-	// Trim whitespace and newlines
-	return strings.TrimSpace(string(content)), nil
+	return fileutil.ReadTrimmedFileWithTilde(filename)
 }
 
 // GetServerSecret returns the loaded server secret
@@ -218,21 +204,7 @@ func (c *Config) GetServerSecret() string {
 
 // readPasswordFile reads a password from a file
 func readPasswordFile(filename string) (string, error) {
-	// Expand tilde to home directory
-	if filename != "" && filename[0] == '~' {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("failed to get home directory: %w", err)
-		}
-		filename = filepath.Join(homeDir, filename[1:])
-	}
-
-	content, err := os.ReadFile(filename) // #nosec G304 - Password file path is provided by administrator
-	if err != nil {
-		return "", err
-	}
-	// Trim whitespace and newlines
-	return strings.TrimSpace(string(content)), nil
+	return fileutil.ReadTrimmedFileWithTilde(filename)
 }
 
 // Validate checks if the configuration is valid

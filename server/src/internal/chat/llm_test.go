@@ -295,9 +295,9 @@ func TestExtractAnthropicErrorMessage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := extractAnthropicErrorMessage(tt.statusCode, []byte(tt.body))
+			got := extractErrorMessage(tt.statusCode, []byte(tt.body), "API error", extractAnthropicError)
 			if got != tt.want {
-				t.Errorf("extractAnthropicErrorMessage() = %v, want %v", got, tt.want)
+				t.Errorf("extractErrorMessage() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -332,9 +332,9 @@ func TestExtractOllamaErrorMessage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := extractOllamaErrorMessage(tt.statusCode, []byte(tt.body))
+			got := extractErrorMessage(tt.statusCode, []byte(tt.body), "Ollama error", extractOllamaError)
 			if !containsSubstring(got, tt.wantContains) {
-				t.Errorf("extractOllamaErrorMessage() = %v, want to contain %v", got, tt.wantContains)
+				t.Errorf("extractErrorMessage() = %v, want to contain %v", got, tt.wantContains)
 			}
 		})
 	}
@@ -503,9 +503,9 @@ func TestExtractOpenAIErrorMessage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := extractOpenAIErrorMessage(tt.statusCode, []byte(tt.body))
+			got := extractErrorMessage(tt.statusCode, []byte(tt.body), "API error", extractOpenAIError)
 			if got != tt.want {
-				t.Errorf("extractOpenAIErrorMessage() = %v, want %v", got, tt.want)
+				t.Errorf("extractErrorMessage() = %v, want %v", got, tt.want)
 			}
 		})
 	}

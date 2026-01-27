@@ -28,6 +28,7 @@ import (
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 	"github.com/pgedge/ai-workbench/alerter/internal/llm"
 	"github.com/pgedge/ai-workbench/alerter/internal/notifications"
+	"github.com/pgedge/ai-workbench/pkg/worker"
 )
 
 // NotificationWorkerPoolSize is the maximum number of concurrent notification goroutines.
@@ -76,10 +77,8 @@ type Engine struct {
 	embeddingProvider llm.EmbeddingProvider
 	reasoningProvider llm.ReasoningProvider
 
-	// Notification worker pool
-	notificationChan  chan notificationJob
-	notificationWg    sync.WaitGroup
-	stopNotifications chan struct{}
+	// Notification worker pool using generic WorkerPool abstraction
+	notificationPool *worker.WorkerPool[notificationJob]
 
 	// Synchronization
 	mu sync.RWMutex
@@ -88,11 +87,9 @@ type Engine struct {
 // NewEngine creates a new alerter engine
 func NewEngine(cfg *config.Config, datastore *database.Datastore, debug bool) *Engine {
 	e := &Engine{
-		config:            cfg,
-		datastore:         datastore,
-		debug:             debug,
-		notificationChan:  make(chan notificationJob, 100), // Buffer for burst handling
-		stopNotifications: make(chan struct{}),
+		config:    cfg,
+		datastore: datastore,
+		debug:     debug,
 	}
 
 	// Initialize notification manager (only if config and datastore are provided)
@@ -110,36 +107,17 @@ func NewEngine(cfg *config.Config, datastore *database.Datastore, debug bool) *E
 		e.initLLMProviders()
 	}
 
-	// Start notification worker pool
-	e.startNotificationWorkers()
+	// Create and start notification worker pool using the generic WorkerPool abstraction.
+	// The pool handles bounded concurrency with non-blocking submission and graceful shutdown.
+	e.notificationPool = worker.NewWorkerPool(
+		NotificationWorkerPoolSize,
+		100, // Buffer for burst handling
+		e.processNotificationJob,
+	)
+	e.notificationPool.Start()
+	e.log("Started %d notification workers", NotificationWorkerPoolSize)
 
 	return e
-}
-
-// startNotificationWorkers starts the bounded notification worker pool
-func (e *Engine) startNotificationWorkers() {
-	for i := 0; i < NotificationWorkerPoolSize; i++ {
-		e.notificationWg.Add(1)
-		go e.notificationWorker()
-	}
-	e.log("Started %d notification workers", NotificationWorkerPoolSize)
-}
-
-// notificationWorker processes notification jobs from the channel
-func (e *Engine) notificationWorker() {
-	defer e.notificationWg.Done()
-
-	for {
-		select {
-		case <-e.stopNotifications:
-			return
-		case job, ok := <-e.notificationChan:
-			if !ok {
-				return
-			}
-			e.processNotificationJob(job)
-		}
-	}
 }
 
 // processNotificationJob handles a single notification job
@@ -165,20 +143,15 @@ func (e *Engine) processNotificationJob(job notificationJob) {
 
 // queueNotification queues a notification job for async processing by the worker pool
 func (e *Engine) queueNotification(alert *database.Alert, notifTyp database.NotificationType) {
-	select {
-	case e.notificationChan <- notificationJob{alert: alert, notifTyp: notifTyp}:
-		// Job queued successfully
-	default:
-		// Channel full - log warning but don't block
+	if !e.notificationPool.Submit(notificationJob{alert: alert, notifTyp: notifTyp}) {
+		// Queue full or pool stopped - log warning but don't block
 		e.log("WARNING: Notification queue full, dropping notification for alert %d", alert.ID)
 	}
 }
 
 // StopNotificationWorkers gracefully shuts down the notification worker pool
 func (e *Engine) StopNotificationWorkers() {
-	close(e.stopNotifications)
-	e.notificationWg.Wait()
-	close(e.notificationChan)
+	e.notificationPool.Stop()
 	e.log("Notification workers stopped")
 }
 

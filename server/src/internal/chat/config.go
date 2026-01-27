@@ -14,9 +14,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
-	"gopkg.in/yaml.v3"
+	"github.com/pgedge/ai-workbench/pkg/fileutil"
 )
 
 // Config holds all configuration for the chat client
@@ -123,13 +122,13 @@ func LoadConfig(configPath string) (*Config, error) {
 	// Environment variables were already loaded above, now check for API key files
 	// 1. If env vars not set and api_key_file is specified, load from file
 	if cfg.LLM.AnthropicAPIKey == "" && cfg.LLM.AnthropicAPIKeyFile != "" {
-		if key, err := readAPIKeyFromFile(cfg.LLM.AnthropicAPIKeyFile); err == nil && key != "" {
+		if key, err := fileutil.ReadOptionalTrimmedFile(cfg.LLM.AnthropicAPIKeyFile); err == nil && key != "" {
 			cfg.LLM.AnthropicAPIKey = key
 		}
 		// Note: errors are silently ignored - file may not exist and that's ok
 	}
 	if cfg.LLM.OpenAIAPIKey == "" && cfg.LLM.OpenAIAPIKeyFile != "" {
-		if key, err := readAPIKeyFromFile(cfg.LLM.OpenAIAPIKeyFile); err == nil && key != "" {
+		if key, err := fileutil.ReadOptionalTrimmedFile(cfg.LLM.OpenAIAPIKeyFile); err == nil && key != "" {
 			cfg.LLM.OpenAIAPIKey = key
 		}
 		// Note: errors are silently ignored - file may not exist and that's ok
@@ -144,12 +143,7 @@ func LoadConfig(configPath string) (*Config, error) {
 
 // loadConfigFile loads configuration from a YAML file
 func loadConfigFile(path string, cfg *Config) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-
-	return yaml.Unmarshal(data, cfg)
+	return fileutil.LoadYAMLFile(path, cfg)
 }
 
 // loadAuthToken loads the authentication token with priority:
@@ -164,9 +158,8 @@ func loadAuthToken() string {
 
 	// Priority 2: Token file
 	tokenPath := filepath.Join(os.Getenv("HOME"), ".pgedge-pg-mcp-cli-token")
-	if data, err := os.ReadFile(tokenPath); err == nil {
-		// Trim whitespace and newlines
-		return string(data)
+	if token, err := fileutil.ReadTrimmedFile(tokenPath); err == nil {
+		return token
 	}
 
 	return ""
@@ -272,36 +265,4 @@ func getEnvWithFallback(keys ...string) string {
 		}
 	}
 	return ""
-}
-
-// readAPIKeyFromFile reads an API key from a file
-// Returns the key with whitespace trimmed, or empty string if file doesn't exist or is empty
-func readAPIKeyFromFile(filePath string) (string, error) {
-	if filePath == "" {
-		return "", nil
-	}
-
-	// Expand tilde to home directory
-	if filePath != "" && filePath[0] == '~' {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("failed to get home directory: %w", err)
-		}
-		filePath = filepath.Join(homeDir, filePath[1:])
-	}
-
-	// Check if file exists
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		return "", nil // File doesn't exist, return empty (not an error)
-	}
-
-	// Read file contents
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return "", fmt.Errorf("failed to read API key file %s: %w", filePath, err)
-	}
-
-	// Return trimmed contents (remove whitespace/newlines)
-	key := strings.TrimSpace(string(data))
-	return key, nil
 }

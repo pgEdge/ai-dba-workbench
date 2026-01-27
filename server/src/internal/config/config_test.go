@@ -14,6 +14,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/pgedge/ai-workbench/pkg/fileutil"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -285,7 +287,7 @@ func containsHelper(s, substr string) bool {
 	return false
 }
 
-func TestReadAPIKeyFromFile(t *testing.T) {
+func TestReadOptionalTrimmedFile(t *testing.T) {
 	// Create temp directory
 	tmpDir := t.TempDir()
 
@@ -295,7 +297,7 @@ func TestReadAPIKeyFromFile(t *testing.T) {
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
-	key, err := readAPIKeyFromFile(keyFile)
+	key, err := fileutil.ReadOptionalTrimmedFile(keyFile)
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -304,7 +306,7 @@ func TestReadAPIKeyFromFile(t *testing.T) {
 	}
 
 	// Test empty path
-	key, err = readAPIKeyFromFile("")
+	key, err = fileutil.ReadOptionalTrimmedFile("")
 	if err != nil {
 		t.Errorf("unexpected error for empty path: %v", err)
 	}
@@ -313,7 +315,7 @@ func TestReadAPIKeyFromFile(t *testing.T) {
 	}
 
 	// Test non-existent file (should return empty, not error)
-	key, err = readAPIKeyFromFile(filepath.Join(tmpDir, "nonexistent.txt"))
+	key, err = fileutil.ReadOptionalTrimmedFile(filepath.Join(tmpDir, "nonexistent.txt"))
 	if err != nil {
 		t.Errorf("unexpected error for non-existent file: %v", err)
 	}

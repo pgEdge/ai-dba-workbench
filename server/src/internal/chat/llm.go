@@ -1,12 +1,12 @@
 /*-------------------------------------------------------------------------
-*
+ *
  * pgEdge AI DBA Workbench
-*
-* Portions copyright (c) 2025 - 2026, pgEdge, Inc.
-* This software is released under The PostgreSQL License
-*
-*-------------------------------------------------------------------------
-*/
+ *
+ * Portions copyright (c) 2025 - 2026, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-------------------------------------------------------------------------
+ */
 
 package chat
 
@@ -24,6 +24,105 @@ import (
 	"github.com/pgedge/ai-workbench/pkg/embedding"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
 )
+
+// -------------------------------------------------------------------------
+// Shared constants and helpers
+// -------------------------------------------------------------------------
+
+// systemPrompt is the shared expert DBA persona used by all LLM clients.
+const systemPrompt = `You are an expert PostgreSQL database administrator assistant with deep knowledge of:
+- PostgreSQL internals, performance tuning, and optimization
+- Query analysis using EXPLAIN and pg_stat_statements
+- Replication topologies (streaming, logical, pgEdge Spock)
+- Monitoring, diagnostics, and troubleshooting
+- pgEdge products and extensions
+
+DATABASE ARCHITECTURE:
+You have access to TWO types of database connections:
+
+1. DATASTORE (metrics database) - Use these tools for historical metrics:
+   - list_probes: List available metrics probes being collected
+   - describe_probe: Get column details for a specific probe
+   - query_metrics: Query historical metrics with time-based aggregation
+   The datastore contains metrics collected from monitored servers over time.
+
+2. MONITORED DATABASES (live connections) - Use these tools for live queries:
+   - query_database: Execute SQL queries on the selected database
+   - get_schema_info: Get schema information
+   - execute_explain: Analyze query execution plans
+   - similarity_search: Semantic search on vector columns
+   - count_rows: Count rows in tables
+   Use read_resource(uri="pg://connection_info") to check the current connection.
+
+WORKFLOW:
+- For historical analysis (trends, patterns), use datastore tools
+- For live data (current state, ad-hoc queries), use monitored database tools
+- Always verify the connection before running queries if unsure
+
+GUIDELINES:
+- Be concise and direct
+- Show results without explaining methodology unless asked
+- Base responses ONLY on actual tool results - never make up data
+- Format results clearly for the user
+- Only use tools when necessary to answer the question`
+
+// sharedHTTPClient is a reusable HTTP client for all LLM providers.
+var sharedHTTPClient = &http.Client{}
+
+// convertToMCPTools converts an interface{} tools parameter to []mcp.Tool via JSON.
+// This is used by all clients to handle the dynamic tools parameter.
+func convertToMCPTools(tools interface{}) ([]mcp.Tool, error) {
+	if tools == nil {
+		return nil, nil
+	}
+
+	toolsJSON, err := json.Marshal(tools)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal tools: %w", err)
+	}
+
+	var mcpTools []mcp.Tool
+	if err := json.Unmarshal(toolsJSON, &mcpTools); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal tools: %w", err)
+	}
+
+	return mcpTools, nil
+}
+
+// extractErrorMessage parses a provider's error response to get a user-friendly message.
+// It tries to unmarshal the body into the given error response type, extracts the message
+// using the provided extractor function, and falls back to the raw body if parsing fails.
+func extractErrorMessage(statusCode int, body []byte, prefix string, extractor func([]byte) string) string {
+	if msg := extractor(body); msg != "" {
+		return fmt.Sprintf("%s (%d): %s", prefix, statusCode, msg)
+	}
+	// Fallback to raw body if parsing fails
+	bodyStr := string(body)
+	if len(bodyStr) > 200 {
+		bodyStr = bodyStr[:200] + "..."
+	}
+	return fmt.Sprintf("%s (%d): %s", prefix, statusCode, bodyStr)
+}
+
+// logTokenUsage logs token usage information to stderr when debug is enabled.
+func logTokenUsage(provider string, promptTokens, completionTokens, totalTokens int,
+	cacheCreationTokens, cacheReadTokens int, cacheSavingsPercent float64) {
+	if cacheCreationTokens > 0 || cacheReadTokens > 0 {
+		fmt.Fprintf(os.Stderr, "\r\n[LLM] [DEBUG] %s - Prompt Cache: Created %d tokens, Read %d tokens (saved ~%.0f%% on input)\n",
+			provider, cacheCreationTokens, cacheReadTokens, cacheSavingsPercent)
+		fmt.Fprintf(os.Stderr, "\r[LLM] [DEBUG] %s - Tokens: Input %d, Output %d, Total %d\n",
+			provider, promptTokens, completionTokens, totalTokens)
+	} else if promptTokens > 0 || completionTokens > 0 {
+		fmt.Fprintf(os.Stderr, "\r\n[LLM] [DEBUG] %s - Tokens: Prompt %d, Completion %d, Total %d\n",
+			provider, promptTokens, completionTokens, totalTokens)
+	} else {
+		fmt.Fprintf(os.Stderr, "\r\n[LLM] [DEBUG] %s - Response received (token counts not available)\n", provider)
+	}
+}
+
+// -------------------------------------------------------------------------
+// Types
+// -------------------------------------------------------------------------
 
 // Message represents a chat message
 type Message struct {
@@ -81,6 +180,10 @@ type LLMClient interface {
 	ListModels(ctx context.Context) ([]string, error)
 }
 
+// -------------------------------------------------------------------------
+// Anthropic Client
+// -------------------------------------------------------------------------
+
 // anthropicClient implements LLMClient for Anthropic Claude
 type anthropicClient struct {
 	apiKey      string
@@ -99,7 +202,7 @@ func NewAnthropicClient(apiKey, model string, maxTokens int, temperature float64
 		maxTokens:   maxTokens,
 		temperature: temperature,
 		debug:       debug,
-		client:      &http.Client{},
+		client:      sharedHTTPClient,
 	}
 }
 
@@ -136,15 +239,13 @@ type anthropicErrorResponse struct {
 	} `json:"error"`
 }
 
-// extractAnthropicErrorMessage parses Anthropic's error response to get a user-friendly message
-func extractAnthropicErrorMessage(statusCode int, body []byte) string {
+// extractAnthropicError extracts an error message from Anthropic's JSON error response.
+func extractAnthropicError(body []byte) string {
 	var errResp anthropicErrorResponse
 	if err := json.Unmarshal(body, &errResp); err == nil && errResp.Error.Message != "" {
-		// Successfully parsed error response, return the message
-		return fmt.Sprintf("API error (%d): %s", statusCode, errResp.Error.Message)
+		return errResp.Error.Message
 	}
-	// Fallback to raw body if parsing fails
-	return fmt.Sprintf("API error (%d): %s", statusCode, string(body))
+	return ""
 }
 
 func (c *anthropicClient) Chat(ctx context.Context, messages []Message, tools interface{}) (LLMResponse, error) {
@@ -154,16 +255,10 @@ func (c *anthropicClient) Chat(ctx context.Context, messages []Message, tools in
 
 	embedding.LogLLMCallDetails("anthropic", c.model, operation, url, len(messages))
 
-	// Convert interface{} tools to []mcp.Tool via JSON
-	var mcpTools []mcp.Tool
-	if tools != nil {
-		toolsJSON, err := json.Marshal(tools)
-		if err != nil {
-			return LLMResponse{}, fmt.Errorf("failed to marshal tools: %w", err)
-		}
-		if err := json.Unmarshal(toolsJSON, &mcpTools); err != nil {
-			return LLMResponse{}, fmt.Errorf("failed to unmarshal tools: %w", err)
-		}
+	// Convert interface{} tools to []mcp.Tool
+	mcpTools, err := convertToMCPTools(tools)
+	if err != nil {
+		return LLMResponse{}, err
 	}
 
 	// Convert MCP tools to Anthropic format with caching
@@ -187,46 +282,10 @@ func (c *anthropicClient) Chat(ctx context.Context, messages []Message, tools in
 	}
 
 	// Create system message for better UX
-	systemContent := `You are an expert PostgreSQL database administrator assistant with deep knowledge of:
-- PostgreSQL internals, performance tuning, and optimization
-- Query analysis using EXPLAIN and pg_stat_statements
-- Replication topologies (streaming, logical, pgEdge Spock)
-- Monitoring, diagnostics, and troubleshooting
-- pgEdge products and extensions
-
-DATABASE ARCHITECTURE:
-You have access to TWO types of database connections:
-
-1. DATASTORE (metrics database) - Use these tools for historical metrics:
-   - list_probes: List available metrics probes being collected
-   - describe_probe: Get column details for a specific probe
-   - query_metrics: Query historical metrics with time-based aggregation
-   The datastore contains metrics collected from monitored servers over time.
-
-2. MONITORED DATABASES (live connections) - Use these tools for live queries:
-   - query_database: Execute SQL queries on the selected database
-   - get_schema_info: Get schema information
-   - execute_explain: Analyze query execution plans
-   - similarity_search: Semantic search on vector columns
-   - count_rows: Count rows in tables
-   Use read_resource(uri="pg://connection_info") to check the current connection.
-
-WORKFLOW:
-- For historical analysis (trends, patterns), use datastore tools
-- For live data (current state, ad-hoc queries), use monitored database tools
-- Always verify the connection before running queries if unsure
-
-GUIDELINES:
-- Be concise and direct
-- Show results without explaining methodology unless asked
-- Base responses ONLY on actual tool results - never make up data
-- Format results clearly for the user
-- Only use tools when necessary to answer the question`
-
 	systemMessage := []map[string]interface{}{
 		{
 			"type": "text",
-			"text": systemContent,
+			"text": systemPrompt,
 		},
 	}
 
@@ -280,7 +339,7 @@ GUIDELINES:
 		}
 
 		// Extract user-friendly error message from Anthropic's error response
-		userFriendlyMsg := extractAnthropicErrorMessage(resp.StatusCode, body)
+		userFriendlyMsg := extractErrorMessage(resp.StatusCode, body, "API error", extractAnthropicError)
 
 		duration := time.Since(startTime)
 		apiErr := fmt.Errorf("%s", userFriendlyMsg)
@@ -357,25 +416,13 @@ GUIDELINES:
 			CacheSavingsPercentage: savePercent,
 		}
 
-		// Log to stderr for CLI (use \r\n to clear spinner line first)
-		if anthropicResp.Usage.CacheCreationInputTokens > 0 || anthropicResp.Usage.CacheReadInputTokens > 0 {
-			fmt.Fprintf(os.Stderr, "\r\n[LLM] [DEBUG] Anthropic - Prompt Cache: Created %d tokens, Read %d tokens (saved ~%.0f%% on input)\n",
-				anthropicResp.Usage.CacheCreationInputTokens,
-				anthropicResp.Usage.CacheReadInputTokens,
-				savePercent,
-			)
-			fmt.Fprintf(os.Stderr, "\r[LLM] [DEBUG] Anthropic - Tokens: Input %d, Output %d, Total %d\n",
-				anthropicResp.Usage.InputTokens,
-				anthropicResp.Usage.OutputTokens,
-				anthropicResp.Usage.InputTokens+anthropicResp.Usage.OutputTokens,
-			)
-		} else {
-			fmt.Fprintf(os.Stderr, "\r\n[LLM] [DEBUG] Anthropic - Tokens: Input %d, Output %d, Total %d\n",
-				anthropicResp.Usage.InputTokens,
-				anthropicResp.Usage.OutputTokens,
-				anthropicResp.Usage.InputTokens+anthropicResp.Usage.OutputTokens,
-			)
-		}
+		logTokenUsage("Anthropic",
+			anthropicResp.Usage.InputTokens,
+			anthropicResp.Usage.OutputTokens,
+			anthropicResp.Usage.InputTokens+anthropicResp.Usage.OutputTokens,
+			anthropicResp.Usage.CacheCreationInputTokens,
+			anthropicResp.Usage.CacheReadInputTokens,
+			savePercent)
 	}
 
 	return LLMResponse{
@@ -431,6 +478,10 @@ func (c *anthropicClient) ListModels(ctx context.Context) ([]string, error) {
 	return models, nil
 }
 
+// -------------------------------------------------------------------------
+// Ollama Client
+// -------------------------------------------------------------------------
+
 // ollamaClient implements LLMClient for Ollama
 type ollamaClient struct {
 	baseURL string
@@ -445,7 +496,7 @@ func NewOllamaClient(baseURL, model string, debug bool) LLMClient {
 		baseURL: baseURL,
 		model:   model,
 		debug:   debug,
-		client:  &http.Client{},
+		client:  sharedHTTPClient,
 	}
 }
 
@@ -476,19 +527,13 @@ type ollamaErrorResponse struct {
 	Error string `json:"error"`
 }
 
-// extractOllamaErrorMessage parses Ollama's error response to get a user-friendly message
-func extractOllamaErrorMessage(statusCode int, body []byte) string {
+// extractOllamaError extracts an error message from Ollama's JSON error response.
+func extractOllamaError(body []byte) string {
 	var errResp ollamaErrorResponse
 	if err := json.Unmarshal(body, &errResp); err == nil && errResp.Error != "" {
-		// Successfully parsed error response, return the message
-		return fmt.Sprintf("Ollama error (%d): %s", statusCode, errResp.Error)
+		return errResp.Error
 	}
-	// Fallback to raw body if parsing fails
-	bodyStr := string(body)
-	if len(bodyStr) > 200 {
-		bodyStr = bodyStr[:200] + "..."
-	}
-	return fmt.Sprintf("Ollama error (%d): %s", statusCode, bodyStr)
+	return ""
 }
 
 // extractJSONFromText attempts to extract a JSON object from text that may contain
@@ -522,30 +567,10 @@ func extractJSONFromText(text string) string {
 	return text[firstBrace : lastBrace+1]
 }
 
-func (c *ollamaClient) Chat(ctx context.Context, messages []Message, tools interface{}) (LLMResponse, error) {
-	startTime := time.Now()
-	operation := "chat"
-	url := c.baseURL + "/api/chat"
-
-	embedding.LogLLMCallDetails("ollama", c.model, operation, url, len(messages))
-
-	// Convert interface{} tools to []mcp.Tool via JSON
-	var mcpTools []mcp.Tool
-	if tools != nil {
-		toolsJSON, err := json.Marshal(tools)
-		if err != nil {
-			return LLMResponse{}, fmt.Errorf("failed to marshal tools: %w", err)
-		}
-		if err := json.Unmarshal(toolsJSON, &mcpTools); err != nil {
-			return LLMResponse{}, fmt.Errorf("failed to unmarshal tools: %w", err)
-		}
-	}
-
-	// Format tools for Ollama
-	toolsContext := c.formatToolsForOllama(mcpTools)
-
-	// Create system message with tool information
-	systemMessage := fmt.Sprintf(`You are an expert PostgreSQL database administrator assistant with deep knowledge of PostgreSQL internals, performance tuning, replication, and pgEdge products.
+// ollamaSystemPromptWithTools returns the system prompt with tool information for Ollama.
+// Since Ollama doesn't have native function calling, we include tool descriptions in the prompt.
+func ollamaSystemPromptWithTools(toolsContext string) string {
+	return fmt.Sprintf(`You are an expert PostgreSQL database administrator assistant with deep knowledge of PostgreSQL internals, performance tuning, replication, and pgEdge products.
 
 DATABASE ARCHITECTURE:
 You have TWO types of database connections:
@@ -582,6 +607,26 @@ IMPORTANT INSTRUCTIONS:
 5. Only use tools when necessary to answer the user's question.
 6. Be concise and direct - show results without explaining your methodology unless specifically asked.
 7. For historical trends, use datastore tools. For live queries, use monitored database tools.`, toolsContext)
+}
+
+func (c *ollamaClient) Chat(ctx context.Context, messages []Message, tools interface{}) (LLMResponse, error) {
+	startTime := time.Now()
+	operation := "chat"
+	url := c.baseURL + "/api/chat"
+
+	embedding.LogLLMCallDetails("ollama", c.model, operation, url, len(messages))
+
+	// Convert interface{} tools to []mcp.Tool
+	mcpTools, err := convertToMCPTools(tools)
+	if err != nil {
+		return LLMResponse{}, err
+	}
+
+	// Format tools for Ollama
+	toolsContext := c.formatToolsForOllama(mcpTools)
+
+	// Create system message with tool information
+	systemMessage := ollamaSystemPromptWithTools(toolsContext)
 
 	// Convert messages to Ollama format
 	ollamaMessages := []ollamaMessage{
@@ -670,7 +715,7 @@ IMPORTANT INSTRUCTIONS:
 		}
 
 		// Extract user-friendly error message from Ollama's error response
-		userFriendlyMsg := extractOllamaErrorMessage(resp.StatusCode, body)
+		userFriendlyMsg := extractErrorMessage(resp.StatusCode, body, "Ollama error", extractOllamaError)
 
 		duration := time.Since(startTime)
 		apiErr := fmt.Errorf("%s", userFriendlyMsg)
@@ -702,9 +747,7 @@ IMPORTANT INSTRUCTIONS:
 			tokenUsage = &TokenUsage{
 				Provider: "ollama",
 			}
-
-			// Log to stderr for CLI
-			fmt.Fprintf(os.Stderr, "\r\n[LLM] [DEBUG] Ollama - Response: tool_use (Ollama does not provide token counts)\n")
+			logTokenUsage("Ollama", 0, 0, 0, 0, 0, 0)
 		}
 
 		return LLMResponse{
@@ -736,9 +779,7 @@ IMPORTANT INSTRUCTIONS:
 				tokenUsage = &TokenUsage{
 					Provider: "ollama",
 				}
-
-				// Log to stderr for CLI
-				fmt.Fprintf(os.Stderr, "\r\n[LLM] [DEBUG] Ollama - Response: tool_use (Ollama does not provide token counts)\n")
+				logTokenUsage("Ollama", 0, 0, 0, 0, 0, 0)
 			}
 
 			return LLMResponse{
@@ -767,9 +808,7 @@ IMPORTANT INSTRUCTIONS:
 		tokenUsage = &TokenUsage{
 			Provider: "ollama",
 		}
-
-		// Log to stderr for CLI
-		fmt.Fprintf(os.Stderr, "\r\n[LLM] [DEBUG] Ollama - Response: end_turn (Ollama does not provide token counts)\n")
+		logTokenUsage("Ollama", 0, 0, 0, 0, 0, 0)
 	}
 
 	return LLMResponse{
@@ -854,6 +893,10 @@ func (c *ollamaClient) ListModels(ctx context.Context) ([]string, error) {
 	return models, nil
 }
 
+// -------------------------------------------------------------------------
+// OpenAI Client
+// -------------------------------------------------------------------------
+
 // openaiClient implements LLMClient for OpenAI GPT models
 type openaiClient struct {
 	apiKey      string
@@ -872,7 +915,7 @@ func NewOpenAIClient(apiKey, model string, maxTokens int, temperature float64, d
 		maxTokens:   maxTokens,
 		temperature: temperature,
 		debug:       debug,
-		client:      &http.Client{},
+		client:      sharedHTTPClient,
 	}
 }
 
@@ -921,15 +964,13 @@ type openaiErrorResponse struct {
 	} `json:"error"`
 }
 
-// extractOpenAIErrorMessage parses OpenAI's error response to get a user-friendly message
-func extractOpenAIErrorMessage(statusCode int, body []byte) string {
+// extractOpenAIError extracts an error message from OpenAI's JSON error response.
+func extractOpenAIError(body []byte) string {
 	var errResp openaiErrorResponse
 	if err := json.Unmarshal(body, &errResp); err == nil && errResp.Error.Message != "" {
-		// Successfully parsed error response, return the message
-		return fmt.Sprintf("API error (%d): %s", statusCode, errResp.Error.Message)
+		return errResp.Error.Message
 	}
-	// Fallback to raw body if parsing fails
-	return fmt.Sprintf("API error (%d): %s", statusCode, string(body))
+	return ""
 }
 
 // extractTextFromContent extracts text from tool result content
@@ -970,16 +1011,10 @@ func (c *openaiClient) Chat(ctx context.Context, messages []Message, tools inter
 
 	embedding.LogLLMCallDetails("openai", c.model, operation, url, len(messages))
 
-	// Convert interface{} tools to []mcp.Tool via JSON
-	var mcpTools []mcp.Tool
-	if tools != nil {
-		toolsJSON, err := json.Marshal(tools)
-		if err != nil {
-			return LLMResponse{}, fmt.Errorf("failed to marshal tools: %w", err)
-		}
-		if err := json.Unmarshal(toolsJSON, &mcpTools); err != nil {
-			return LLMResponse{}, fmt.Errorf("failed to unmarshal tools: %w", err)
-		}
+	// Convert interface{} tools to []mcp.Tool
+	mcpTools, err := convertToMCPTools(tools)
+	if err != nil {
+		return LLMResponse{}, err
 	}
 
 	// Convert MCP tools to OpenAI format
@@ -999,44 +1034,10 @@ func (c *openaiClient) Chat(ctx context.Context, messages []Message, tools inter
 
 	// Convert messages to OpenAI format
 	// Start with system message
-	systemContent := `You are an expert PostgreSQL database administrator assistant with deep knowledge of:
-- PostgreSQL internals, performance tuning, and optimization
-- Query analysis using EXPLAIN and pg_stat_statements
-- Replication topologies (streaming, logical, pgEdge Spock)
-- Monitoring, diagnostics, and troubleshooting
-- pgEdge products and extensions
-
-DATABASE ARCHITECTURE:
-You have access to TWO types of database connections:
-
-1. DATASTORE (metrics database) - Use these tools for historical metrics:
-   - list_probes: List available metrics probes being collected
-   - describe_probe: Get column details for a specific probe
-   - query_metrics: Query historical metrics with time-based aggregation
-   The datastore contains metrics collected from monitored servers over time.
-
-2. MONITORED DATABASES (live connections) - Use these tools for live queries:
-   - query_database: Execute SQL queries on the selected database
-   - get_schema_info: Get schema information
-   - execute_explain: Analyze query execution plans
-   - similarity_search: Semantic search on vector columns
-   - count_rows: Count rows in tables
-
-WORKFLOW:
-- For historical analysis (trends, patterns), use datastore tools
-- For live data (current state, ad-hoc queries), use monitored database tools
-
-GUIDELINES:
-- Be concise and direct
-- Show results without explaining methodology unless asked
-- Base responses ONLY on actual tool results - never make up data
-- Format results clearly for the user
-- Only use tools when necessary to answer the question`
-
 	openaiMessages := make([]openaiMessage, 0, len(messages)+1)
 	openaiMessages = append(openaiMessages, openaiMessage{
 		Role:    "system",
-		Content: systemContent,
+		Content: systemPrompt,
 	})
 
 	for _, msg := range messages {
@@ -1240,7 +1241,7 @@ GUIDELINES:
 		}
 
 		// Extract user-friendly error message from OpenAI's error response
-		userFriendlyMsg := extractOpenAIErrorMessage(resp.StatusCode, body)
+		userFriendlyMsg := extractErrorMessage(resp.StatusCode, body, "API error", extractOpenAIError)
 
 		duration := time.Since(startTime)
 		apiErr := fmt.Errorf("%s", userFriendlyMsg)
@@ -1282,12 +1283,11 @@ GUIDELINES:
 					TotalTokens:      openaiResp.Usage.TotalTokens,
 				}
 
-				// Log to stderr for CLI
-				fmt.Fprintf(os.Stderr, "\r\n[LLM] [DEBUG] OpenAI - Tokens: Prompt %d, Completion %d, Total %d\n",
+				logTokenUsage("OpenAI",
 					openaiResp.Usage.PromptTokens,
 					openaiResp.Usage.CompletionTokens,
 					openaiResp.Usage.TotalTokens,
-				)
+					0, 0, 0)
 			}
 
 			// Convert tool calls to our format
@@ -1359,12 +1359,11 @@ GUIDELINES:
 			TotalTokens:      openaiResp.Usage.TotalTokens,
 		}
 
-		// Log to stderr for CLI
-		fmt.Fprintf(os.Stderr, "\r\n[LLM] [DEBUG] OpenAI - Tokens: Prompt %d, Completion %d, Total %d\n",
+		logTokenUsage("OpenAI",
 			openaiResp.Usage.PromptTokens,
 			openaiResp.Usage.CompletionTokens,
 			openaiResp.Usage.TotalTokens,
-		)
+			0, 0, 0)
 	}
 
 	return LLMResponse{

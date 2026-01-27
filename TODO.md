@@ -3,23 +3,6 @@
 These are lower-priority refactoring tasks that don't affect security or
 functionality. They can be addressed incrementally over time.
 
-## Code Duplication
-
-### Issue 8: Chat Client Duplication
-
-Extract shared chat client code between different chat implementations in
-the server package to reduce duplication.
-
-### Issue 9: Duplicate File Reading Functions
-
-Consolidate file reading utilities that are repeated across different
-packages.
-
-### Issue 10: Repeated Worker Pattern
-
-Create a generic worker pool abstraction to replace repeated goroutine +
-channel patterns used for background processing.
-
 ## Component/Function Size
 
 ### Issue 11: Large React Components

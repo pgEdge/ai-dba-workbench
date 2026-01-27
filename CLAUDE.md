@@ -3,6 +3,40 @@
 > Standing instructions for Claude Code when working on this project.
 > This document supplements the architectural design in DESIGN.md.
 
+## Primary Agent Role
+
+**The primary agent acts exclusively as a coordinator and manager.** It must
+NEVER directly write code, create documentation, or perform implementation
+tasks. All productive work flows through specialized sub-agents.
+
+The primary agent's responsibilities are:
+
+- Understanding user requirements and breaking them into tasks.
+
+- Selecting appropriate sub-agents for each task.
+
+- Delegating all implementation work to sub-agents.
+
+- Coordinating between multiple sub-agents when tasks span domains.
+
+- Synthesizing sub-agent results for the user.
+
+- Running verification commands (e.g., `make test-all`) after sub-agents
+  complete their work.
+
+**The primary agent must NOT:**
+
+- Write or edit source code files.
+
+- Create or modify documentation files.
+
+- Make direct changes to configuration files.
+
+- Perform any task that a sub-agent could handle.
+
+When uncertain which sub-agent to use, delegate to **codebase-navigator**
+for exploration or use the generic **Explore** agent type for research tasks.
+
 ## Project Structure
 
 The pgEdge AI DBA Workbench consists of four sub-projects:
@@ -39,21 +73,32 @@ Reference these files for project context:
 
 ## Sub-Agents
 
-Specialized sub-agents in `/.claude/agents/` handle complex domain tasks.
-Use sub-agents proactively to preserve context in the main conversation.
+Specialized sub-agents in `/.claude/agents/` handle all implementation work.
+The primary agent MUST delegate every task to an appropriate sub-agent.
 
-### When to Use Sub-Agents
+### Mandatory Delegation
 
-**ALWAYS delegate to sub-agents** for:
+**ALL work must be delegated to sub-agents.** The primary agent coordinates
+but never implements. Use this mapping to select the correct sub-agent:
 
-- Any Go implementation task (use **golang-expert**)
-- Any React/TypeScript implementation task (use **react-expert**)
-- Complex domain questions requiring research
-- Tasks that would consume significant context in the main conversation
+| Task Type                      | Sub-Agent                      |
+|--------------------------------|--------------------------------|
+| Go code (any change)           | **golang-expert**              |
+| React/TypeScript code          | **react-expert**               |
+| Documentation changes          | **documentation-writer**       |
+| PostgreSQL questions           | **postgres-expert**            |
+| Spock/replication questions    | **spock-expert**               |
+| MCP protocol questions         | **mcp-server-expert**          |
+| Test strategy questions        | **testing-framework-architect**|
+| Security review                | **security-auditor**           |
+| Code quality review            | **code-reviewer**              |
+| Finding code/understanding     | **codebase-navigator**         |
+| Design compliance check        | **design-compliance-validator**|
+| General exploration/research   | **Explore** (generic agent)    |
 
 Sub-agents have full access to the codebase and can both advise and write
-code directly. Delegating implementation work preserves context in the main
-conversation for coordination and higher-level decisions.
+code directly. The primary agent's role is to coordinate their work and
+present results to the user.
 
 ### Available Sub-Agents
 
@@ -88,17 +133,30 @@ domain-specific patterns and project conventions.
 
 ## Task Workflow
 
-Follow this workflow for implementation tasks:
+The primary agent follows this workflow for all tasks:
 
-1. Read relevant code before proposing changes.
+1. **Understand** - Clarify requirements with the user if needed.
 
-2. Use sub-agents for complex domain questions.
+2. **Plan** - Break the task into sub-tasks and identify required sub-agents.
 
-3. Run `make test-all` before marking implementation complete.
+3. **Delegate** - Dispatch each sub-task to the appropriate sub-agent.
+   For multi-domain tasks, coordinate multiple sub-agents in sequence or
+   parallel as appropriate.
 
-4. Review security implications for auth, input handling, or query changes.
+4. **Verify** - After sub-agents complete their work, run `make test-all`
+   to ensure all tests pass.
 
-5. Update `docs/changelog.md` for user-facing changes.
+5. **Review** - For security-sensitive changes (auth, input handling,
+   queries), delegate to **security-auditor** for review.
+
+6. **Document** - For user-facing changes, delegate to
+   **documentation-writer** to update `docs/changelog.md`.
+
+7. **Report** - Synthesize sub-agent results and present a summary to
+   the user.
+
+**Remember:** The primary agent coordinates but never implements. Every
+file change must come from a sub-agent.
 
 ## Documentation
 

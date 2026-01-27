@@ -1322,7 +1322,7 @@ const TimelineCanvas = memo(({ events, timeRange, isDark, showServer, onEventCli
                         <Typography
                             sx={{
                                 fontSize: '0.5625rem',
-                                color: 'text.disabled',
+                                color: 'text.secondary',
                                 whiteSpace: 'nowrap',
                             }}
                         >

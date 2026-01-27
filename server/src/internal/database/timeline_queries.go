@@ -80,17 +80,17 @@ func (d *Datastore) GetTimelineEvents(ctx context.Context, filter TimelineFilter
 	// Build time filter conditions
 	timeCondition, timeArgs, argNum := buildTimeFilter(filter, argNum)
 
-	// Build event type filter
-	typeCondition, typeArgs, argNum := buildEventTypeFilter(filter, argNum)
+	// Note: Event type filtering is handled by including/excluding subqueries
+	// in buildUnionQuery, not via SQL WHERE clause placeholders. We don't need
+	// to build a typeCondition or add typeArgs to the query arguments.
 
 	// Combine all conditions - create new slice to avoid modifying originals
-	allArgs := make([]interface{}, 0, len(connArgs)+len(timeArgs)+len(typeArgs))
+	allArgs := make([]interface{}, 0, len(connArgs)+len(timeArgs))
 	allArgs = append(allArgs, connArgs...)
 	allArgs = append(allArgs, timeArgs...)
-	allArgs = append(allArgs, typeArgs...)
 
 	// Build the UNION ALL query
-	query := buildUnionQuery(connCondition, timeCondition, typeCondition, filter, limit, argNum)
+	query := buildUnionQuery(connCondition, timeCondition, "", filter, limit, argNum)
 
 	// Execute main query
 	rows, err := d.pool.Query(queryCtx, query, allArgs...)
@@ -126,7 +126,7 @@ func (d *Datastore) GetTimelineEvents(ctx context.Context, filter TimelineFilter
 	}
 
 	// Get total count (without limit)
-	countQuery := buildCountQuery(connCondition, timeCondition, typeCondition, filter)
+	countQuery := buildCountQuery(connCondition, timeCondition, "", filter)
 	var totalCount int
 	err = d.pool.QueryRow(queryCtx, countQuery, allArgs...).Scan(&totalCount)
 	if err != nil {
@@ -193,26 +193,9 @@ func buildTimeFilter(filter TimelineFilter, startArgNum int) (string, []interfac
 	return strings.Join(conditions, " AND "), args, argNum
 }
 
-// buildEventTypeFilter creates the event type filter portion of the WHERE clause
-func buildEventTypeFilter(filter TimelineFilter, startArgNum int) (string, []interface{}, int) {
-	if len(filter.EventTypes) == 0 {
-		return "", nil, startArgNum
-	}
-
-	placeholders := make([]string, len(filter.EventTypes))
-	args := make([]interface{}, len(filter.EventTypes))
-	argNum := startArgNum
-
-	for i, eventType := range filter.EventTypes {
-		placeholders[i] = fmt.Sprintf("$%d", argNum)
-		args[i] = eventType
-		argNum++
-	}
-
-	return fmt.Sprintf("event_type IN (%s)", strings.Join(placeholders, ", ")), args, argNum
-}
-
 // buildUnionQuery constructs the full UNION ALL query for timeline events
+// Note: Event type filtering is handled by conditionally including/excluding
+// subqueries based on filter.EventTypes, not via SQL WHERE clause placeholders.
 func buildUnionQuery(connCondition, timeCondition, typeCondition string, filter TimelineFilter, limit int, argNum int) string {
 	// Build WHERE clause for each subquery
 	whereClause := buildWhereClause(connCondition, timeCondition, "")

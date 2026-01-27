@@ -81,6 +81,11 @@ export const useTimelineEvents = ({
     const initialLoadDoneRef = useRef(false);
     const refreshInterval = 60000; // 60 seconds
 
+    // Create a stable string representation of eventTypes for dependency comparison
+    // This ensures the callback is recreated when event types change, regardless of
+    // array reference equality issues
+    const eventTypesKey = eventTypes ? eventTypes.slice().sort().join(',') : '';
+
     /**
      * Build the query string for the API request
      */
@@ -106,7 +111,8 @@ export const useTimelineEvents = ({
         }
 
         return params.toString();
-    }, [connectionId, connectionIds, timeRange, eventTypes]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [connectionId, connectionIds, timeRange, eventTypesKey]);
 
     /**
      * Fetch timeline events from the API

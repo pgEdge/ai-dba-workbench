@@ -77,8 +77,8 @@ type Engine struct {
 	reasoningProvider llm.ReasoningProvider
 
 	// Notification worker pool
-	notificationChan chan notificationJob
-	notificationWg   sync.WaitGroup
+	notificationChan  chan notificationJob
+	notificationWg    sync.WaitGroup
 	stopNotifications chan struct{}
 
 	// Synchronization
@@ -546,7 +546,7 @@ func (e *Engine) evaluateRuleForAllConnections(ctx context.Context, rule *databa
 
 		if violated {
 			e.triggerThresholdAlert(ctx, rule, mv.Value, threshold, operator,
-				severity, mv.ConnectionID, mv.DatabaseName)
+				severity, mv.ConnectionID, mv.DatabaseName, mv.ObjectName)
 		}
 	}
 }
@@ -572,7 +572,7 @@ func (e *Engine) checkThreshold(value float64, operator string, threshold float6
 }
 
 // triggerThresholdAlert creates or updates an alert for a threshold violation
-func (e *Engine) triggerThresholdAlert(ctx context.Context, rule *database.AlertRule, value, threshold float64, operator, severity string, connectionID int, dbName *string) {
+func (e *Engine) triggerThresholdAlert(ctx context.Context, rule *database.AlertRule, value, threshold float64, operator, severity string, connectionID int, dbName *string, objectName *string) {
 	e.log("Threshold violated: %s (%.2f %s %.2f) on connection %d", rule.Name, value, operator, threshold, connectionID)
 
 	// Check if there's already an active alert for this rule/connection
@@ -593,6 +593,7 @@ func (e *Engine) triggerThresholdAlert(ctx context.Context, rule *database.Alert
 		RuleID:         &rule.ID,
 		ConnectionID:   connectionID,
 		DatabaseName:   dbName,
+		ObjectName:     objectName,
 		MetricName:     &rule.MetricName,
 		MetricValue:    &value,
 		ThresholdValue: &threshold,

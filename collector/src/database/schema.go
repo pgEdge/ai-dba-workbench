@@ -3215,6 +3215,35 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration 24: Add object_name column to alerts table
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     24,
+		Description: "Add object_name column to alerts for table-specific alerts",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			// Add object_name column
+			_, err := conn.Exec(ctx, `
+			ALTER TABLE alerts
+				ADD COLUMN IF NOT EXISTS object_name TEXT;
+
+			COMMENT ON COLUMN alerts.object_name IS
+				'For table-specific alerts: the schema.table_name that triggered the alert';
+
+			CREATE INDEX IF NOT EXISTS idx_alerts_object_name
+				ON alerts(object_name) WHERE object_name IS NOT NULL;
+
+			COMMENT ON INDEX idx_alerts_object_name IS
+				'Partial index for efficiently querying table-specific alerts by object name';
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to add object_name column to alerts: %w", err)
+			}
+
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations

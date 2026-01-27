@@ -283,7 +283,8 @@ func TestNewSchemaManager(t *testing.T) {
 	// Migration 21 adds pgvector extension and anomaly embeddings table
 	// Migration 22 adds last_updated column to alerts table
 	// Migration 23 adds metric_unit column to alert_rules table
-	expectedVersions := []int{1, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23}
+	// Migration 24 adds object_name column to alerts table
+	expectedVersions := []int{1, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24}
 	if len(sm.migrations) != len(expectedVersions) {
 		t.Fatalf("Expected %d migrations, got %d", len(expectedVersions), len(sm.migrations))
 	}

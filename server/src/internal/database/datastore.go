@@ -2587,6 +2587,7 @@ type Alert struct {
 	RuleID         *int64     `json:"rule_id,omitempty"`
 	ConnectionID   int        `json:"connection_id"`
 	DatabaseName   *string    `json:"database_name,omitempty"`
+	ObjectName     *string    `json:"object_name,omitempty"`
 	ProbeName      *string    `json:"probe_name,omitempty"`
 	MetricName     *string    `json:"metric_name,omitempty"`
 	MetricValue    *float64   `json:"metric_value,omitempty"`
@@ -2723,9 +2724,10 @@ func (d *Datastore) GetAlerts(ctx context.Context, filter AlertListFilter) (*Ale
 	// Uses DISTINCT ON to get only the most recent acknowledgment per alert
 	query := fmt.Sprintf(`
 		SELECT a.id, a.alert_type, a.rule_id, a.connection_id, a.database_name,
-		       a.probe_name, a.metric_name, a.metric_value, r.metric_unit, a.threshold_value,
-		       a.operator, a.severity, a.title, a.description, a.correlation_id,
-		       a.status, a.triggered_at, a.cleared_at, a.anomaly_score, a.anomaly_details,
+		       a.object_name, a.probe_name, a.metric_name, a.metric_value, r.metric_unit,
+		       a.threshold_value, a.operator, a.severity, a.title, a.description,
+		       a.correlation_id, a.status, a.triggered_at, a.cleared_at,
+		       a.anomaly_score, a.anomaly_details,
 		       COALESCE(c.name, 'Unknown') as server_name,
 		       ack.acknowledged_at, ack.acknowledged_by, ack.message, ack.false_positive
 		FROM alerts a
@@ -2756,7 +2758,7 @@ func (d *Datastore) GetAlerts(ctx context.Context, filter AlertListFilter) (*Ale
 		var alert Alert
 		err := rows.Scan(
 			&alert.ID, &alert.AlertType, &alert.RuleID, &alert.ConnectionID,
-			&alert.DatabaseName, &alert.ProbeName, &alert.MetricName,
+			&alert.DatabaseName, &alert.ObjectName, &alert.ProbeName, &alert.MetricName,
 			&alert.MetricValue, &alert.MetricUnit, &alert.ThresholdValue, &alert.Operator,
 			&alert.Severity, &alert.Title, &alert.Description,
 			&alert.CorrelationID, &alert.Status, &alert.TriggeredAt,

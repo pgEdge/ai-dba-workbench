@@ -11,6 +11,12 @@ and this project adheres to
 
 ### Added
 
+- Grouped alert display on the dashboard:
+  - Alerts of the same type are grouped into single panels
+  - Each group shows individual instances by server, database, and table
+  - Table names are now captured for table-specific alerts (bloat ratio,
+    dead tuple ratio, autovacuum status)
+  - Consistent capitalization of alert titles
 - RFC 8631 compliant REST API with versioned endpoints (`/api/v1/`):
   - All JSON responses include Link header for API discovery
   - OpenAPI 3.0.3 specification at `/api/v1/openapi.json`

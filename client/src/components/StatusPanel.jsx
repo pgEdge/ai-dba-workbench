@@ -45,46 +45,66 @@ import {
     CheckCircleOutline as AckIcon,
     Undo as UnackIcon,
     Psychology as AnalyzeIcon,
+    TableChart as TableIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import EventTimeline from './EventTimeline';
 import AlertAnalysisDialog from './AlertAnalysisDialog';
 
-// Map internal alert titles to friendly display names
+// Map internal alert rule names to friendly display names
 const FRIENDLY_ALERT_TITLES = {
     // Connection alerts
-    'max_connections threshold exceeded': 'Connection Limit Exceeded',
-    'active_connections threshold exceeded': 'High Active Connections',
-    'idle_connections threshold exceeded': 'High Idle Connections',
-    // Performance alerts
-    'cpu_usage threshold exceeded': 'High CPU Usage',
-    'memory_usage threshold exceeded': 'High Memory Usage',
-    'disk_usage threshold exceeded': 'Disk Space Low',
-    // Database alerts
-    'deadlocks threshold exceeded': 'Deadlocks Detected',
-    'rollbacks threshold exceeded': 'High Rollback Rate',
-    'cache_hit_ratio threshold exceeded': 'Low Cache Hit Ratio',
-    'replication_lag threshold exceeded': 'Replication Lag',
+    'high_connection_count': 'High Connection Count',
+    'connection_utilization': 'Connection Utilization',
+    // Replication alerts
+    'replication_lag_bytes': 'Replication Lag',
+    'replication_slot_inactive': 'Replication Slot Inactive',
+    // Resource alerts
+    'disk_usage_percent': 'Disk Usage',
+    'disk_usage_critical': 'Critical Disk Usage',
+    'table_bloat_ratio': 'Table Bloat Ratio',
+    'cpu_usage_high': 'High CPU Usage',
+    'memory_usage_high': 'High Memory Usage',
+    'load_average_high': 'High Load Average',
     // Query alerts
-    'long_running_queries threshold exceeded': 'Long Running Queries',
-    'blocked_queries threshold exceeded': 'Blocked Queries',
+    'long_running_queries': 'Long Running Queries',
+    'blocked_queries': 'Blocked Queries',
+    'long_running_transaction': 'Long Running Transaction',
+    'idle_in_transaction': 'Idle in Transaction',
+    // Transaction alerts
+    'transaction_wraparound': 'Transaction Wraparound',
+    'deadlocks_detected': 'Deadlocks Detected',
+    'lock_wait_time': 'Lock Wait Time',
+    // Maintenance alerts
+    'checkpoint_warning': 'Checkpoint Warning',
+    'wal_archive_failed': 'WAL Archive Failed',
+    'autovacuum_not_running': 'Autovacuum Not Running',
+    'dead_tuple_ratio': 'High Dead Tuple Ratio',
+    // Performance alerts
+    'slow_query_count': 'Slow Query Count',
+    'cache_hit_ratio_low': 'Low Cache Hit Ratio',
+    'temp_files_created': 'Temporary Files Created',
 };
 
 // Get friendly title for an alert
 const getFriendlyTitle = (title) => {
-    // Check for exact match first
-    const lowerTitle = title?.toLowerCase() || '';
-    if (FRIENDLY_ALERT_TITLES[lowerTitle]) {
-        return FRIENDLY_ALERT_TITLES[lowerTitle];
+    if (!title) return 'Alert';
+    // Check for exact match first (alert rule names are typically lowercase with underscores)
+    const normalizedTitle = title.toLowerCase().trim();
+    if (FRIENDLY_ALERT_TITLES[normalizedTitle]) {
+        return FRIENDLY_ALERT_TITLES[normalizedTitle];
     }
-    // Check for partial matches
+    // Check for partial matches (handle cases where title might have additional text)
     for (const [key, value] of Object.entries(FRIENDLY_ALERT_TITLES)) {
-        if (lowerTitle.includes(key.split(' ')[0])) {
+        if (normalizedTitle.includes(key) || normalizedTitle.startsWith(key)) {
             return value;
         }
     }
-    // Fallback: clean up the title
-    return title?.replace(/_/g, ' ').replace(/threshold exceeded/i, '').trim() || 'Alert';
+    // Fallback: clean up the title by replacing underscores and capitalizing words
+    return title
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, (char) => char.toUpperCase())
+        .trim();
 };
 
 // Format threshold info for display
@@ -464,7 +484,7 @@ const AlertItem = ({ alert, isDark, showServer = false, onAcknowledge, onUnackno
             {/* Main content */}
             <Box sx={{ flex: 1, minWidth: 0 }}>
                 {/* Title row */}
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
                     <Typography
                         sx={{
                             fontWeight: 600,
@@ -498,6 +518,25 @@ const AlertItem = ({ alert, isDark, showServer = false, onAcknowledge, onUnackno
                                 bgcolor: isDark ? alpha('#6366F1', 0.2) : alpha('#6366F1', 0.1),
                                 color: isDark ? '#818CF8' : '#6366F1',
                                 '& .MuiChip-label': { px: 0.5 },
+                            }}
+                        />
+                    )}
+                    {alert.objectName && (
+                        <Chip
+                            icon={<TableIcon sx={{ fontSize: '0.625rem !important' }} />}
+                            label={alert.objectName}
+                            size="small"
+                            sx={{
+                                height: 16,
+                                fontSize: '0.625rem',
+                                bgcolor: isDark ? alpha('#10B981', 0.2) : alpha('#10B981', 0.1),
+                                color: isDark ? '#34D399' : '#059669',
+                                '& .MuiChip-label': { px: 0.5 },
+                                '& .MuiChip-icon': {
+                                    color: 'inherit',
+                                    ml: 0.25,
+                                    mr: -0.25,
+                                },
                             }}
                         />
                     )}
@@ -641,6 +680,290 @@ const AlertItem = ({ alert, isDark, showServer = false, onAcknowledge, onUnackno
 };
 
 /**
+ * GroupedAlertInstance - A single instance row within a grouped alert panel
+ */
+const GroupedAlertInstance = ({ alert, isDark, showServer, onAcknowledge, onUnacknowledge, onAnalyze }) => {
+    const isAcknowledged = !!alert.acknowledgedAt;
+    const baseColor = isAcknowledged ? '#64748B' : (SEVERITY_COLORS[alert.severity] || SEVERITY_COLORS.info);
+    const thresholdInfo = formatThresholdInfo(alert);
+
+    return (
+        <Box
+            sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1,
+                px: 1,
+                py: 0.5,
+                borderRadius: 0.5,
+                bgcolor: isAcknowledged
+                    ? (isDark ? alpha('#64748B', 0.08) : alpha('#64748B', 0.04))
+                    : 'transparent',
+                '&:hover': {
+                    bgcolor: isDark ? alpha('#64748B', 0.12) : alpha('#64748B', 0.06),
+                },
+            }}
+        >
+            {/* Context chips (server, database, object) */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
+                {showServer && alert.server && (
+                    <Chip
+                        label={alert.server}
+                        size="small"
+                        sx={{
+                            height: 16,
+                            fontSize: '0.625rem',
+                            bgcolor: isDark ? alpha('#64748B', 0.2) : alpha('#64748B', 0.1),
+                            color: 'text.secondary',
+                            '& .MuiChip-label': { px: 0.5 },
+                        }}
+                    />
+                )}
+                {alert.databaseName && (
+                    <Chip
+                        label={alert.databaseName}
+                        size="small"
+                        sx={{
+                            height: 16,
+                            fontSize: '0.625rem',
+                            bgcolor: isDark ? alpha('#6366F1', 0.2) : alpha('#6366F1', 0.1),
+                            color: isDark ? '#818CF8' : '#6366F1',
+                            '& .MuiChip-label': { px: 0.5 },
+                        }}
+                    />
+                )}
+                {alert.objectName && (
+                    <Chip
+                        icon={<TableIcon sx={{ fontSize: '0.625rem !important' }} />}
+                        label={alert.objectName}
+                        size="small"
+                        sx={{
+                            height: 16,
+                            fontSize: '0.625rem',
+                            bgcolor: isDark ? alpha('#10B981', 0.2) : alpha('#10B981', 0.1),
+                            color: isDark ? '#34D399' : '#059669',
+                            '& .MuiChip-label': { px: 0.5 },
+                            '& .MuiChip-icon': {
+                                color: 'inherit',
+                                ml: 0.25,
+                                mr: -0.25,
+                            },
+                        }}
+                    />
+                )}
+                {/* Threshold info */}
+                {thresholdInfo && (
+                    <Typography
+                        sx={{
+                            color: 'text.secondary',
+                            fontSize: '0.625rem',
+                            fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+                        }}
+                    >
+                        {thresholdInfo}
+                    </Typography>
+                )}
+            </Box>
+
+            {/* Time */}
+            <Typography
+                sx={{
+                    color: 'text.disabled',
+                    fontSize: '0.5625rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 0.25,
+                    flexShrink: 0,
+                }}
+            >
+                <ScheduleIcon sx={{ fontSize: 10 }} />
+                {alert.time}
+            </Typography>
+
+            {/* Analyze button */}
+            <Tooltip title="Analyze with AI" placement="left">
+                <IconButton
+                    size="small"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        onAnalyze?.(alert);
+                    }}
+                    sx={{
+                        p: 0.25,
+                        color: isDark ? '#818CF8' : '#6366F1',
+                        '&:hover': {
+                            bgcolor: isDark ? alpha('#6366F1', 0.15) : alpha('#6366F1', 0.1),
+                        },
+                    }}
+                >
+                    <AnalyzeIcon sx={{ fontSize: 14 }} />
+                </IconButton>
+            </Tooltip>
+
+            {/* Ack/Unack button */}
+            <Tooltip title={isAcknowledged ? 'Restore to active' : 'Acknowledge'} placement="left">
+                <IconButton
+                    size="small"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        if (isAcknowledged) {
+                            onUnacknowledge?.(alert.id);
+                        } else {
+                            onAcknowledge?.(alert);
+                        }
+                    }}
+                    sx={{
+                        p: 0.25,
+                        color: isAcknowledged ? '#6B7280' : baseColor,
+                        '&:hover': {
+                            bgcolor: alpha(baseColor, 0.1),
+                        },
+                    }}
+                >
+                    {isAcknowledged ? (
+                        <UnackIcon sx={{ fontSize: 14 }} />
+                    ) : (
+                        <AckIcon sx={{ fontSize: 14 }} />
+                    )}
+                </IconButton>
+            </Tooltip>
+        </Box>
+    );
+};
+
+/**
+ * GroupedAlertItem - Display a group of alerts with the same title in a single panel
+ */
+const GroupedAlertItem = ({ title, alerts, isDark, showServer = false, onAcknowledge, onUnacknowledge, onAnalyze }) => {
+    const [expanded, setExpanded] = useState(true);
+
+    // Determine highest severity in the group
+    const highestSeverity = alerts.reduce((highest, alert) => {
+        if (alert.severity === 'critical') return 'critical';
+        if (alert.severity === 'warning' && highest !== 'critical') return 'warning';
+        return highest;
+    }, 'info');
+
+    const baseColor = SEVERITY_COLORS[highestSeverity] || SEVERITY_COLORS.info;
+    const SeverityIcon = highestSeverity === 'critical' ? ErrorIcon : WarningIcon;
+    const friendlyTitle = getFriendlyTitle(title);
+
+    return (
+        <Box
+            sx={{
+                borderRadius: 1,
+                bgcolor: isDark ? alpha(baseColor, 0.06) : alpha(baseColor, 0.03),
+                border: '1px solid',
+                borderColor: alpha(baseColor, isDark ? 0.2 : 0.12),
+                overflow: 'hidden',
+            }}
+        >
+            {/* Group header */}
+            <Box
+                onClick={() => setExpanded(!expanded)}
+                sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 1,
+                    px: 1.25,
+                    py: 0.75,
+                    cursor: 'pointer',
+                    bgcolor: isDark ? alpha(baseColor, 0.08) : alpha(baseColor, 0.05),
+                    '&:hover': {
+                        bgcolor: isDark ? alpha(baseColor, 0.12) : alpha(baseColor, 0.08),
+                    },
+                }}
+            >
+                {/* Severity indicator */}
+                <SeverityIcon
+                    sx={{
+                        fontSize: 16,
+                        color: baseColor,
+                        flexShrink: 0,
+                    }}
+                />
+
+                {/* Title */}
+                <Typography
+                    sx={{
+                        fontWeight: 600,
+                        color: 'text.primary',
+                        fontSize: '0.8125rem',
+                        lineHeight: 1.2,
+                        flex: 1,
+                    }}
+                >
+                    {friendlyTitle}
+                </Typography>
+
+                {/* Instance count */}
+                <Chip
+                    label={`${alerts.length} instance${alerts.length !== 1 ? 's' : ''}`}
+                    size="small"
+                    sx={{
+                        height: 18,
+                        fontSize: '0.625rem',
+                        fontWeight: 600,
+                        bgcolor: alpha(baseColor, 0.15),
+                        color: baseColor,
+                        '& .MuiChip-label': { px: 0.75 },
+                    }}
+                />
+
+                {/* Severity badge */}
+                <Chip
+                    label={highestSeverity}
+                    size="small"
+                    sx={{
+                        height: 16,
+                        fontSize: '0.5625rem',
+                        fontWeight: 600,
+                        textTransform: 'uppercase',
+                        bgcolor: alpha(baseColor, 0.15),
+                        color: baseColor,
+                        '& .MuiChip-label': { px: 0.5 },
+                    }}
+                />
+
+                {/* Expand/Collapse */}
+                <IconButton size="small" sx={{ p: 0.25 }}>
+                    {expanded ? (
+                        <ExpandLessIcon sx={{ fontSize: 16 }} />
+                    ) : (
+                        <ExpandMoreIcon sx={{ fontSize: 16 }} />
+                    )}
+                </IconButton>
+            </Box>
+
+            {/* Instances list */}
+            <Collapse in={expanded}>
+                <Box
+                    sx={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 0.25,
+                        px: 0.5,
+                        py: 0.5,
+                    }}
+                >
+                    {alerts.map((alert) => (
+                        <GroupedAlertInstance
+                            key={alert.id}
+                            alert={alert}
+                            isDark={isDark}
+                            showServer={showServer}
+                            onAcknowledge={onAcknowledge}
+                            onUnacknowledge={onUnacknowledge}
+                            onAnalyze={onAnalyze}
+                        />
+                    ))}
+                </Box>
+            </Collapse>
+        </Box>
+    );
+};
+
+/**
  * AcknowledgeDialog - Dialog for entering ack reason and false positive flag
  */
 const AcknowledgeDialog = ({ open, alert, onClose, onConfirm, isDark }) => {
@@ -754,7 +1077,22 @@ const AcknowledgeDialog = ({ open, alert, onClose, onConfirm, isDark }) => {
 };
 
 /**
+ * Group alerts by their title for consolidated display
+ */
+const groupAlertsByTitle = (alerts) => {
+    return alerts.reduce((groups, alert) => {
+        const title = alert.title || 'Unknown Alert';
+        if (!groups[title]) {
+            groups[title] = [];
+        }
+        groups[title].push(alert);
+        return groups;
+    }, {});
+};
+
+/**
  * AlertsSection - Collapsible alerts list with active/acknowledged separation
+ * Groups alerts by title and renders grouped panels for multiple instances
  */
 const AlertsSection = ({ alerts, isDark, loading, showServer = false, onAcknowledge, onUnacknowledge, onAnalyze }) => {
     const [expanded, setExpanded] = useState(true);
@@ -763,6 +1101,29 @@ const AlertsSection = ({ alerts, isDark, loading, showServer = false, onAcknowle
     // Separate active and acknowledged alerts
     const activeAlerts = alerts.filter(a => !a.acknowledgedAt);
     const acknowledgedAlerts = alerts.filter(a => !!a.acknowledgedAt);
+
+    // Group active alerts by title
+    const groupedActiveAlerts = useMemo(() => groupAlertsByTitle(activeAlerts), [activeAlerts]);
+    const groupedAcknowledgedAlerts = useMemo(() => groupAlertsByTitle(acknowledgedAlerts), [acknowledgedAlerts]);
+
+    // Convert grouped object to sorted array of [title, alerts] pairs
+    const sortedActiveGroups = useMemo(() => {
+        return Object.entries(groupedActiveAlerts).sort((a, b) => {
+            // Sort by highest severity first, then by count
+            const getSeverityWeight = (alerts) => {
+                if (alerts.some(a => a.severity === 'critical')) return 3;
+                if (alerts.some(a => a.severity === 'warning')) return 2;
+                return 1;
+            };
+            const severityDiff = getSeverityWeight(b[1]) - getSeverityWeight(a[1]);
+            if (severityDiff !== 0) return severityDiff;
+            return b[1].length - a[1].length;
+        });
+    }, [groupedActiveAlerts]);
+
+    const sortedAcknowledgedGroups = useMemo(() => {
+        return Object.entries(groupedAcknowledgedAlerts).sort((a, b) => b[1].length - a[1].length);
+    }, [groupedAcknowledgedAlerts]);
 
     if (loading) {
         return (
@@ -781,6 +1142,37 @@ const AlertsSection = ({ alerts, isDark, loading, showServer = false, onAcknowle
             </Box>
         );
     }
+
+    // Render either a single AlertItem or a GroupedAlertItem depending on count
+    const renderAlertGroup = (title, alertsInGroup) => {
+        if (alertsInGroup.length === 1) {
+            // Single alert - render as simple AlertItem
+            return (
+                <AlertItem
+                    key={alertsInGroup[0].id}
+                    alert={alertsInGroup[0]}
+                    isDark={isDark}
+                    showServer={showServer}
+                    onAcknowledge={onAcknowledge}
+                    onUnacknowledge={onUnacknowledge}
+                    onAnalyze={onAnalyze}
+                />
+            );
+        }
+        // Multiple alerts - render as grouped panel
+        return (
+            <GroupedAlertItem
+                key={title}
+                title={title}
+                alerts={alertsInGroup}
+                isDark={isDark}
+                showServer={showServer}
+                onAcknowledge={onAcknowledge}
+                onUnacknowledge={onUnacknowledge}
+                onAnalyze={onAnalyze}
+            />
+        );
+    };
 
     return (
         <Box sx={{ mt: 2 }}>
@@ -820,6 +1212,16 @@ const AlertsSection = ({ alerts, isDark, loading, showServer = false, onAcknowle
                         '& .MuiChip-label': { px: 0.5 },
                     }}
                 />
+                {sortedActiveGroups.length > 0 && sortedActiveGroups.length !== activeAlerts.length && (
+                    <Typography
+                        sx={{
+                            color: 'text.disabled',
+                            fontSize: '0.625rem',
+                        }}
+                    >
+                        ({sortedActiveGroups.length} type{sortedActiveGroups.length !== 1 ? 's' : ''})
+                    </Typography>
+                )}
                 <Box sx={{ flex: 1 }} />
                 <IconButton size="small" sx={{ p: 0.25 }}>
                     {expanded ? (
@@ -866,17 +1268,9 @@ const AlertsSection = ({ alerts, isDark, loading, showServer = false, onAcknowle
                             </Typography>
                         </Box>
                     ) : (
-                        activeAlerts.map((alert) => (
-                            <AlertItem
-                                key={alert.id}
-                                alert={alert}
-                                isDark={isDark}
-                                showServer={showServer}
-                                onAcknowledge={onAcknowledge}
-                                onUnacknowledge={onUnacknowledge}
-                                onAnalyze={onAnalyze}
-                            />
-                        ))
+                        sortedActiveGroups.map(([title, alertsInGroup]) =>
+                            renderAlertGroup(title, alertsInGroup)
+                        )
                     )}
                 </Box>
             </Collapse>
@@ -937,17 +1331,9 @@ const AlertsSection = ({ alerts, isDark, loading, showServer = false, onAcknowle
                                 gap: 0.5,
                             }}
                         >
-                            {acknowledgedAlerts.map((alert) => (
-                                <AlertItem
-                                    key={alert.id}
-                                    alert={alert}
-                                    isDark={isDark}
-                                    showServer={showServer}
-                                    onAcknowledge={onAcknowledge}
-                                    onUnacknowledge={onUnacknowledge}
-                                    onAnalyze={onAnalyze}
-                                />
-                            ))}
+                            {sortedAcknowledgedGroups.map(([title, alertsInGroup]) =>
+                                renderAlertGroup(title, alertsInGroup)
+                            )}
                         </Box>
                     </Collapse>
                 </>
@@ -1152,6 +1538,7 @@ const StatusPanel = ({
             server: alert.server_name,
             connectionId: alert.connection_id,
             databaseName: alert.database_name,
+            objectName: alert.object_name,
             // Threshold info
             alertType: alert.alert_type,
             metricValue: alert.metric_value,

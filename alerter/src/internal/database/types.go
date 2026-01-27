@@ -73,6 +73,7 @@ type Alert struct {
 	RuleID         *int64     `json:"rule_id,omitempty"`
 	ConnectionID   int        `json:"connection_id"`
 	DatabaseName   *string    `json:"database_name,omitempty"`
+	ObjectName     *string    `json:"object_name,omitempty"`
 	ProbeName      *string    `json:"probe_name,omitempty"`
 	MetricName     *string    `json:"metric_name,omitempty"`
 	MetricValue    *float64   `json:"metric_value,omitempty"`

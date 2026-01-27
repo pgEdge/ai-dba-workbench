@@ -104,6 +104,7 @@ func (d *Datastore) GetEffectiveThreshold(ctx context.Context, ruleID int64, con
 type MetricValue struct {
 	ConnectionID int
 	DatabaseName *string
+	ObjectName   *string
 	Value        float64
 	CollectedAt  time.Time
 }
@@ -388,7 +389,8 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 		}
 
 	case "pg_stat_all_tables.dead_tuple_percent":
-		// Dead tuple percentage per table (returns max per connection with database context)
+		// Dead tuple percentage per table
+		// Returns the table with the highest dead tuple percentage per connection/database
 		rows, err := d.pool.Query(ctx, `
 			WITH recent_tables AS (
 				SELECT connection_id,
@@ -405,14 +407,32 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 				FROM metrics.pg_stat_all_tables
 				WHERE collected_at > NOW() - INTERVAL '15 minutes'
 				  AND (n_live_tup + n_dead_tup) > 0
+			),
+			calculated AS (
+				SELECT connection_id,
+				       database_name,
+				       schemaname,
+				       relname,
+				       (n_dead_tup::float / NULLIF(n_live_tup + n_dead_tup, 0)) * 100 as dead_pct,
+				       collected_at
+				FROM recent_tables
+				WHERE rn = 1
+			),
+			ranked AS (
+				SELECT *,
+				       ROW_NUMBER() OVER (
+				           PARTITION BY connection_id, database_name
+				           ORDER BY dead_pct DESC
+				       ) as rank
+				FROM calculated
 			)
 			SELECT connection_id,
 			       database_name,
-			       MAX((n_dead_tup::float / NULLIF(n_live_tup + n_dead_tup, 0)) * 100)::float as value,
-			       MAX(collected_at) as collected_at
-			FROM recent_tables
-			WHERE rn = 1
-			GROUP BY connection_id, database_name
+			       schemaname || '.' || relname as object_name,
+			       dead_pct::float as value,
+			       collected_at
+			FROM ranked
+			WHERE rank = 1
 		`)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
@@ -422,10 +442,12 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 		for rows.Next() {
 			var mv MetricValue
 			var dbName string
-			if err := rows.Scan(&mv.ConnectionID, &dbName, &mv.Value, &mv.CollectedAt); err != nil {
+			var objectName string
+			if err := rows.Scan(&mv.ConnectionID, &dbName, &objectName, &mv.Value, &mv.CollectedAt); err != nil {
 				return nil, fmt.Errorf("failed to scan metric value: %w", err)
 			}
 			mv.DatabaseName = &dbName
+			mv.ObjectName = &objectName
 			results = append(results, mv)
 		}
 
@@ -835,6 +857,7 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 	case "table_bloat_ratio":
 		// Table bloat ratio - estimated bloat as percentage
 		// This is a simplified estimate based on dead tuples vs live tuples
+		// Returns the table with the highest bloat ratio per connection/database
 		rows, err := d.pool.Query(ctx, `
 			WITH recent_tables AS (
 				SELECT connection_id,
@@ -851,14 +874,32 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 				FROM metrics.pg_stat_all_tables
 				WHERE collected_at > NOW() - INTERVAL '15 minutes'
 				  AND n_live_tup > 0
+			),
+			calculated AS (
+				SELECT connection_id,
+				       database_name,
+				       schemaname,
+				       relname,
+				       (n_dead_tup::float / NULLIF(n_live_tup, 0)) * 100 as bloat_ratio,
+				       collected_at
+				FROM recent_tables
+				WHERE rn = 1
+			),
+			ranked AS (
+				SELECT *,
+				       ROW_NUMBER() OVER (
+				           PARTITION BY connection_id, database_name
+				           ORDER BY bloat_ratio DESC
+				       ) as rank
+				FROM calculated
 			)
 			SELECT connection_id,
 			       database_name,
-			       MAX((n_dead_tup::float / NULLIF(n_live_tup, 0)) * 100)::float as value,
-			       MAX(collected_at) as collected_at
-			FROM recent_tables
-			WHERE rn = 1
-			GROUP BY connection_id, database_name
+			       schemaname || '.' || relname as object_name,
+			       bloat_ratio::float as value,
+			       collected_at
+			FROM ranked
+			WHERE rank = 1
 		`)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
@@ -868,15 +909,18 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 		for rows.Next() {
 			var mv MetricValue
 			var dbName string
-			if err := rows.Scan(&mv.ConnectionID, &dbName, &mv.Value, &mv.CollectedAt); err != nil {
+			var objectName string
+			if err := rows.Scan(&mv.ConnectionID, &dbName, &objectName, &mv.Value, &mv.CollectedAt); err != nil {
 				return nil, fmt.Errorf("failed to scan metric value: %w", err)
 			}
 			mv.DatabaseName = &dbName
+			mv.ObjectName = &objectName
 			results = append(results, mv)
 		}
 
 	case "table_last_autovacuum_hours":
-		// Hours since last autovacuum (max across all tables per connection/database)
+		// Hours since last autovacuum
+		// Returns the table with the longest time since autovacuum per connection/database
 		rows, err := d.pool.Query(ctx, `
 			WITH recent_tables AS (
 				SELECT connection_id,
@@ -892,14 +936,32 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 				FROM metrics.pg_stat_all_tables
 				WHERE collected_at > NOW() - INTERVAL '15 minutes'
 				  AND last_autovacuum IS NOT NULL
+			),
+			calculated AS (
+				SELECT connection_id,
+				       database_name,
+				       schemaname,
+				       relname,
+				       EXTRACT(EPOCH FROM (NOW() - last_autovacuum)) / 3600 as hours_since_vacuum,
+				       collected_at
+				FROM recent_tables
+				WHERE rn = 1
+			),
+			ranked AS (
+				SELECT *,
+				       ROW_NUMBER() OVER (
+				           PARTITION BY connection_id, database_name
+				           ORDER BY hours_since_vacuum DESC
+				       ) as rank
+				FROM calculated
 			)
 			SELECT connection_id,
 			       database_name,
-			       MAX(EXTRACT(EPOCH FROM (NOW() - last_autovacuum)) / 3600)::float as value,
-			       MAX(collected_at) as collected_at
-			FROM recent_tables
-			WHERE rn = 1
-			GROUP BY connection_id, database_name
+			       schemaname || '.' || relname as object_name,
+			       hours_since_vacuum::float as value,
+			       collected_at
+			FROM ranked
+			WHERE rank = 1
 		`)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
@@ -909,10 +971,12 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 		for rows.Next() {
 			var mv MetricValue
 			var dbName string
-			if err := rows.Scan(&mv.ConnectionID, &dbName, &mv.Value, &mv.CollectedAt); err != nil {
+			var objectName string
+			if err := rows.Scan(&mv.ConnectionID, &dbName, &objectName, &mv.Value, &mv.CollectedAt); err != nil {
 				return nil, fmt.Errorf("failed to scan metric value: %w", err)
 			}
 			mv.DatabaseName = &dbName
+			mv.ObjectName = &objectName
 			results = append(results, mv)
 		}
 
@@ -944,20 +1008,21 @@ func (d *Datastore) GetLatestMetricValue(ctx context.Context, metricName string)
 func (d *Datastore) GetActiveThresholdAlert(ctx context.Context, ruleID int64, connectionID int, dbName *string) (*Alert, error) {
 	var alert Alert
 	err := d.pool.QueryRow(ctx, `
-		SELECT id, alert_type, rule_id, connection_id, database_name, probe_name,
-		       metric_name, metric_value, threshold_value, operator, severity,
-		       title, description, correlation_id, status, triggered_at, cleared_at,
-		       last_updated, anomaly_score, anomaly_details
+		SELECT id, alert_type, rule_id, connection_id, database_name, object_name,
+		       probe_name, metric_name, metric_value, threshold_value, operator,
+		       severity, title, description, correlation_id, status, triggered_at,
+		       cleared_at, last_updated, anomaly_score, anomaly_details
 		FROM alerts
 		WHERE rule_id = $1 AND connection_id = $2 AND status = 'active'
 		  AND (database_name = $3 OR ($3 IS NULL AND database_name IS NULL))
 		LIMIT 1
 	`, ruleID, connectionID, dbName).Scan(
 		&alert.ID, &alert.AlertType, &alert.RuleID, &alert.ConnectionID,
-		&alert.DatabaseName, &alert.ProbeName, &alert.MetricName, &alert.MetricValue,
-		&alert.ThresholdValue, &alert.Operator, &alert.Severity, &alert.Title,
-		&alert.Description, &alert.CorrelationID, &alert.Status, &alert.TriggeredAt,
-		&alert.ClearedAt, &alert.LastUpdated, &alert.AnomalyScore, &alert.AnomalyDetails)
+		&alert.DatabaseName, &alert.ObjectName, &alert.ProbeName, &alert.MetricName,
+		&alert.MetricValue, &alert.ThresholdValue, &alert.Operator, &alert.Severity,
+		&alert.Title, &alert.Description, &alert.CorrelationID, &alert.Status,
+		&alert.TriggeredAt, &alert.ClearedAt, &alert.LastUpdated, &alert.AnomalyScore,
+		&alert.AnomalyDetails)
 
 	if err != nil {
 		return nil, err
@@ -979,26 +1044,26 @@ func (d *Datastore) UpdateAlertMetricValue(ctx context.Context, alertID int64, m
 func (d *Datastore) CreateAlert(ctx context.Context, alert *Alert) error {
 	return d.pool.QueryRow(ctx, `
 		INSERT INTO alerts (
-			alert_type, rule_id, connection_id, database_name, probe_name,
-			metric_name, metric_value, threshold_value, operator, severity,
-			title, description, correlation_id, status, triggered_at,
+			alert_type, rule_id, connection_id, database_name, object_name,
+			probe_name, metric_name, metric_value, threshold_value, operator,
+			severity, title, description, correlation_id, status, triggered_at,
 			anomaly_score, anomaly_details
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 		RETURNING id
 	`, alert.AlertType, alert.RuleID, alert.ConnectionID, alert.DatabaseName,
-		alert.ProbeName, alert.MetricName, alert.MetricValue, alert.ThresholdValue,
-		alert.Operator, alert.Severity, alert.Title, alert.Description,
-		alert.CorrelationID, alert.Status, alert.TriggeredAt,
+		alert.ObjectName, alert.ProbeName, alert.MetricName, alert.MetricValue,
+		alert.ThresholdValue, alert.Operator, alert.Severity, alert.Title,
+		alert.Description, alert.CorrelationID, alert.Status, alert.TriggeredAt,
 		alert.AnomalyScore, alert.AnomalyDetails).Scan(&alert.ID)
 }
 
 // GetActiveAlerts retrieves all active alerts
 func (d *Datastore) GetActiveAlerts(ctx context.Context) ([]*Alert, error) {
 	rows, err := d.pool.Query(ctx, `
-		SELECT id, alert_type, rule_id, connection_id, database_name, probe_name,
-		       metric_name, metric_value, threshold_value, operator, severity,
-		       title, description, correlation_id, status, triggered_at, cleared_at,
-		       last_updated, anomaly_score, anomaly_details
+		SELECT id, alert_type, rule_id, connection_id, database_name, object_name,
+		       probe_name, metric_name, metric_value, threshold_value, operator,
+		       severity, title, description, correlation_id, status, triggered_at,
+		       cleared_at, last_updated, anomaly_score, anomaly_details
 		FROM alerts
 		WHERE status = 'active'
 		ORDER BY triggered_at DESC
@@ -1013,10 +1078,11 @@ func (d *Datastore) GetActiveAlerts(ctx context.Context) ([]*Alert, error) {
 		var alert Alert
 		err := rows.Scan(
 			&alert.ID, &alert.AlertType, &alert.RuleID, &alert.ConnectionID,
-			&alert.DatabaseName, &alert.ProbeName, &alert.MetricName, &alert.MetricValue,
-			&alert.ThresholdValue, &alert.Operator, &alert.Severity, &alert.Title,
-			&alert.Description, &alert.CorrelationID, &alert.Status, &alert.TriggeredAt,
-			&alert.ClearedAt, &alert.LastUpdated, &alert.AnomalyScore, &alert.AnomalyDetails)
+			&alert.DatabaseName, &alert.ObjectName, &alert.ProbeName, &alert.MetricName,
+			&alert.MetricValue, &alert.ThresholdValue, &alert.Operator, &alert.Severity,
+			&alert.Title, &alert.Description, &alert.CorrelationID, &alert.Status,
+			&alert.TriggeredAt, &alert.ClearedAt, &alert.LastUpdated, &alert.AnomalyScore,
+			&alert.AnomalyDetails)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan alert: %w", err)
 		}
@@ -1030,18 +1096,19 @@ func (d *Datastore) GetActiveAlerts(ctx context.Context) ([]*Alert, error) {
 func (d *Datastore) GetAlert(ctx context.Context, alertID int64) (*Alert, error) {
 	var alert Alert
 	err := d.pool.QueryRow(ctx, `
-		SELECT id, alert_type, rule_id, connection_id, database_name, probe_name,
-		       metric_name, metric_value, threshold_value, operator, severity,
-		       title, description, correlation_id, status, triggered_at, cleared_at,
-		       last_updated, anomaly_score, anomaly_details
+		SELECT id, alert_type, rule_id, connection_id, database_name, object_name,
+		       probe_name, metric_name, metric_value, threshold_value, operator,
+		       severity, title, description, correlation_id, status, triggered_at,
+		       cleared_at, last_updated, anomaly_score, anomaly_details
 		FROM alerts
 		WHERE id = $1
 	`, alertID).Scan(
 		&alert.ID, &alert.AlertType, &alert.RuleID, &alert.ConnectionID,
-		&alert.DatabaseName, &alert.ProbeName, &alert.MetricName, &alert.MetricValue,
-		&alert.ThresholdValue, &alert.Operator, &alert.Severity, &alert.Title,
-		&alert.Description, &alert.CorrelationID, &alert.Status, &alert.TriggeredAt,
-		&alert.ClearedAt, &alert.LastUpdated, &alert.AnomalyScore, &alert.AnomalyDetails)
+		&alert.DatabaseName, &alert.ObjectName, &alert.ProbeName, &alert.MetricName,
+		&alert.MetricValue, &alert.ThresholdValue, &alert.Operator, &alert.Severity,
+		&alert.Title, &alert.Description, &alert.CorrelationID, &alert.Status,
+		&alert.TriggeredAt, &alert.ClearedAt, &alert.LastUpdated, &alert.AnomalyScore,
+		&alert.AnomalyDetails)
 
 	if err != nil {
 		return nil, err

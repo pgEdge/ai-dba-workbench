@@ -12,7 +12,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -168,8 +167,7 @@ func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Requ
 
 	// Parse request body
 	var req ConnectionCreateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		RespondError(w, http.StatusBadRequest, "Invalid request body")
+	if !DecodeJSONBody(w, r, &req) {
 		return
 	}
 
@@ -348,8 +346,7 @@ func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Requ
 
 	// Parse request body - try full update request first
 	var req ConnectionFullUpdateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		RespondError(w, http.StatusBadRequest, "Invalid request body")
+	if !DecodeJSONBody(w, r, &req) {
 		return
 	}
 
@@ -462,31 +459,14 @@ func (h *ConnectionHandler) listDatabases(w http.ResponseWriter, r *http.Request
 	RespondJSON(w, http.StatusOK, databases)
 }
 
-// getUserInfoFromRequest extracts username and superuser status from the request
+// getUserInfoFromRequest extracts username and superuser status from the request.
+// Deprecated: Use GetUserInfoFromRequest from request_helpers.go instead.
 func (h *ConnectionHandler) getUserInfoFromRequest(r *http.Request) (string, bool, error) {
-	authHeader := r.Header.Get("Authorization")
-	if authHeader == "" {
-		return "", false, fmt.Errorf("missing authorization header")
-	}
-
-	token := strings.TrimPrefix(authHeader, "Bearer ")
-	if token == authHeader {
-		return "", false, fmt.Errorf("invalid authorization header format")
-	}
-
-	// Validate session token and get username
-	username, err := h.authStore.ValidateSessionToken(token)
+	info, err := GetUserInfoFromRequest(r, h.authStore)
 	if err != nil {
 		return "", false, err
 	}
-
-	// Look up user to get superuser status
-	user, err := h.authStore.GetUser(username)
-	if err != nil {
-		return username, false, nil // User exists but couldn't get details
-	}
-
-	return username, user.IsSuperuser, nil
+	return info.Username, info.IsSuperuser, nil
 }
 
 // handleCurrentConnection handles GET/POST/DELETE /api/v1/connections/current
@@ -550,8 +530,7 @@ func (h *ConnectionHandler) getCurrentConnection(w http.ResponseWriter, r *http.
 // setCurrentConnection handles POST /api/v1/connections/current
 func (h *ConnectionHandler) setCurrentConnection(w http.ResponseWriter, r *http.Request, tokenHash string) {
 	var req CurrentConnectionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		RespondError(w, http.StatusBadRequest, "Invalid request body")
+	if !DecodeJSONBody(w, r, &req) {
 		return
 	}
 
@@ -601,17 +580,8 @@ func (h *ConnectionHandler) clearCurrentConnection(w http.ResponseWriter, r *htt
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// getTokenHashFromRequest extracts and hashes the token from the Authorization header
+// getTokenHashFromRequest extracts and hashes the token from the Authorization header.
+// Deprecated: Use GetTokenHashFromRequest from request_helpers.go instead.
 func (h *ConnectionHandler) getTokenHashFromRequest(r *http.Request) string {
-	authHeader := r.Header.Get("Authorization")
-	if authHeader == "" {
-		return ""
-	}
-
-	token := strings.TrimPrefix(authHeader, "Bearer ")
-	if token == authHeader {
-		return ""
-	}
-
-	return auth.GetTokenHashByRawToken(token)
+	return GetTokenHashFromRequest(r)
 }

@@ -12,9 +12,6 @@ package api
 
 import (
 	"net/http"
-	"strconv"
-	"strings"
-	"time"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
@@ -52,73 +49,47 @@ func (h *TimelineHandler) handleNotConfigured(w http.ResponseWriter, r *http.Req
 
 // handleTimelineEvents handles GET /api/v1/timeline/events
 func (h *TimelineHandler) handleTimelineEvents(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		RespondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	if !RequireGET(w, r) {
 		return
 	}
 
-	// Parse query parameters
-	query := r.URL.Query()
 	filter := database.TimelineFilter{}
 
 	// Parse connection_id (single)
-	if connID := query.Get("connection_id"); connID != "" {
-		id, err := strconv.Atoi(connID)
-		if err != nil {
-			RespondError(w, http.StatusBadRequest, "Invalid connection_id: "+err.Error())
-			return
-		}
+	if id, ok := ParseQueryInt(w, r, "connection_id"); ok {
 		filter.ConnectionID = &id
+	} else if r.URL.Query().Get("connection_id") != "" {
+		return // Error already sent
 	}
 
 	// Parse connection_ids (multiple, comma-separated)
-	if connIDs := query.Get("connection_ids"); connIDs != "" {
-		ids := strings.Split(connIDs, ",")
-		for _, idStr := range ids {
-			id, err := strconv.Atoi(strings.TrimSpace(idStr))
-			if err != nil {
-				RespondError(w, http.StatusBadRequest, "Invalid connection_ids: "+err.Error())
-				return
-			}
-			filter.ConnectionIDs = append(filter.ConnectionIDs, id)
-		}
+	if ids, ok := ParseQueryIntList(w, r, "connection_ids"); ok {
+		filter.ConnectionIDs = ids
+	} else if r.URL.Query().Get("connection_ids") != "" {
+		return // Error already sent
 	}
 
 	// Parse start_time (required)
-	startTimeStr := query.Get("start_time")
-	if startTimeStr == "" {
-		RespondError(w, http.StatusBadRequest, "start_time is required")
-		return
-	}
-	startTime, err := time.Parse(time.RFC3339, startTimeStr)
-	if err != nil {
-		RespondError(w, http.StatusBadRequest, "Invalid start_time format, expected RFC3339: "+err.Error())
+	startTime, ok := RequireQueryTime(w, r, "start_time")
+	if !ok {
 		return
 	}
 	filter.StartTime = startTime
 
 	// Parse end_time (required)
-	endTimeStr := query.Get("end_time")
-	if endTimeStr == "" {
-		RespondError(w, http.StatusBadRequest, "end_time is required")
-		return
-	}
-	endTime, err := time.Parse(time.RFC3339, endTimeStr)
-	if err != nil {
-		RespondError(w, http.StatusBadRequest, "Invalid end_time format, expected RFC3339: "+err.Error())
+	endTime, ok := RequireQueryTime(w, r, "end_time")
+	if !ok {
 		return
 	}
 	filter.EndTime = endTime
 
 	// Validate time range
-	if filter.EndTime.Before(filter.StartTime) {
-		RespondError(w, http.StatusBadRequest, "end_time must be after start_time")
+	if !ValidateTimeRange(w, filter.StartTime, filter.EndTime) {
 		return
 	}
 
 	// Parse event_types (optional, comma-separated)
-	if eventTypes := query.Get("event_types"); eventTypes != "" {
-		types := strings.Split(eventTypes, ",")
+	if eventTypes, ok := ParseQueryStringList(r, "event_types"); ok {
 		validTypes := map[string]bool{
 			database.EventTypeConfigChange:      true,
 			database.EventTypeHBAChange:         true,
@@ -129,35 +100,14 @@ func (h *TimelineHandler) handleTimelineEvents(w http.ResponseWriter, r *http.Re
 			database.EventTypeAlertAcknowledged: true,
 			database.EventTypeExtensionChange:   true,
 		}
-		for _, t := range types {
-			trimmedType := strings.TrimSpace(t)
-			if !validTypes[trimmedType] {
-				RespondError(w, http.StatusBadRequest, "Invalid event_type: "+trimmedType)
-				return
-			}
-			filter.EventTypes = append(filter.EventTypes, trimmedType)
+		if !ValidateStringsInSet(w, eventTypes, "event_type", validTypes) {
+			return
 		}
+		filter.EventTypes = eventTypes
 	}
 
 	// Parse limit (optional, default 500, max 1000)
-	if limitStr := query.Get("limit"); limitStr != "" {
-		limit, err := strconv.Atoi(limitStr)
-		if err != nil {
-			RespondError(w, http.StatusBadRequest, "Invalid limit: "+err.Error())
-			return
-		}
-		if limit <= 0 {
-			RespondError(w, http.StatusBadRequest, "limit must be greater than 0")
-			return
-		}
-		if limit > 1000 {
-			limit = 1000
-		}
-		filter.Limit = limit
-	}
-	if filter.Limit == 0 {
-		filter.Limit = 500
-	}
+	filter.Limit = ParseLimitWithDefaults(r, 500, 1000)
 
 	// Fetch timeline events
 	result, err := h.datastore.GetTimelineEvents(r.Context(), filter)

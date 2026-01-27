@@ -12,7 +12,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -264,8 +263,7 @@ func (h *ClusterHandler) getClusterGroup(w http.ResponseWriter, r *http.Request,
 
 func (h *ClusterHandler) createClusterGroup(w http.ResponseWriter, r *http.Request) {
 	var req ClusterGroupRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		RespondError(w, http.StatusBadRequest, "Invalid request body")
+	if !DecodeJSONBody(w, r, &req) {
 		return
 	}
 
@@ -315,8 +313,7 @@ func (h *ClusterHandler) updateClusterGroup(w http.ResponseWriter, r *http.Reque
 	}
 
 	var req ClusterGroupRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		RespondError(w, http.StatusBadRequest, "Invalid request body")
+	if !DecodeJSONBody(w, r, &req) {
 		return
 	}
 
@@ -391,8 +388,7 @@ func (h *ClusterHandler) listClustersInGroup(w http.ResponseWriter, r *http.Requ
 
 func (h *ClusterHandler) createClusterInGroup(w http.ResponseWriter, r *http.Request, groupID int) {
 	var req ClusterRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		RespondError(w, http.StatusBadRequest, "Invalid request body")
+	if !DecodeJSONBody(w, r, &req) {
 		return
 	}
 
@@ -430,8 +426,7 @@ func (h *ClusterHandler) getCluster(w http.ResponseWriter, r *http.Request, id i
 
 func (h *ClusterHandler) updateCluster(w http.ResponseWriter, r *http.Request, id int) {
 	var req ClusterRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		RespondError(w, http.StatusBadRequest, "Invalid request body")
+	if !DecodeJSONBody(w, r, &req) {
 		return
 	}
 
@@ -498,8 +493,7 @@ func (h *ClusterHandler) updateAutoDetectedCluster(w http.ResponseWriter, r *htt
 
 	// Parse request body
 	var req AutoDetectedClusterRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		RespondError(w, http.StatusBadRequest, "Invalid request body")
+	if !DecodeJSONBody(w, r, &req) {
 		return
 	}
 
@@ -567,8 +561,7 @@ func (h *ClusterHandler) updateAutoDetectedGroup(w http.ResponseWriter, r *http.
 
 	// Parse request body
 	var req ClusterGroupRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		RespondError(w, http.StatusBadRequest, "Invalid request body")
+	if !DecodeJSONBody(w, r, &req) {
 		return
 	}
 
@@ -625,29 +618,12 @@ func (h *ClusterHandler) listServersInCluster(w http.ResponseWriter, r *http.Req
 	RespondJSON(w, http.StatusOK, servers)
 }
 
-// getUserInfoFromRequest extracts username and superuser status from the request
+// getUserInfoFromRequest extracts username and superuser status from the request.
+// Deprecated: Use GetUserInfoFromRequest from request_helpers.go instead.
 func (h *ClusterHandler) getUserInfoFromRequest(r *http.Request) (string, bool, error) {
-	authHeader := r.Header.Get("Authorization")
-	if authHeader == "" {
-		return "", false, fmt.Errorf("missing authorization header")
-	}
-
-	token := strings.TrimPrefix(authHeader, "Bearer ")
-	if token == authHeader {
-		return "", false, fmt.Errorf("invalid authorization header format")
-	}
-
-	// Validate session token and get username
-	username, err := h.authStore.ValidateSessionToken(token)
+	info, err := GetUserInfoFromRequest(r, h.authStore)
 	if err != nil {
 		return "", false, err
 	}
-
-	// Look up user to get superuser status
-	user, err := h.authStore.GetUser(username)
-	if err != nil {
-		return username, false, nil // User exists but couldn't get details
-	}
-
-	return username, user.IsSuperuser, nil
+	return info.Username, info.IsSuperuser, nil
 }

@@ -11,11 +11,7 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
-	"strconv"
-	"strings"
-	"time"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
@@ -57,83 +53,51 @@ func (h *AlertHandler) handleNotConfigured(w http.ResponseWriter, r *http.Reques
 
 // handleAlerts handles GET /api/v1/alerts
 func (h *AlertHandler) handleAlerts(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		RespondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	if !RequireGET(w, r) {
 		return
 	}
 
-	// Parse query parameters
-	query := r.URL.Query()
 	filter := database.AlertListFilter{}
 
-	// Parse connection_id (single)
-	if connID := query.Get("connection_id"); connID != "" {
-		id, err := strconv.Atoi(connID)
-		if err == nil {
-			filter.ConnectionID = &id
-		}
+	// Parse connection_id (single) - silently ignore invalid values
+	if id, ok := ParseQueryIntSilent(r, "connection_id"); ok {
+		filter.ConnectionID = &id
 	}
 
-	// Parse connection_ids (multiple, comma-separated)
-	if connIDs := query.Get("connection_ids"); connIDs != "" {
-		ids := strings.Split(connIDs, ",")
-		for _, idStr := range ids {
-			if id, err := strconv.Atoi(strings.TrimSpace(idStr)); err == nil {
-				filter.ConnectionIDs = append(filter.ConnectionIDs, id)
-			}
-		}
-	}
+	// Parse connection_ids (multiple, comma-separated) - silently skip invalid
+	filter.ConnectionIDs = ParseQueryIntListSilent(r, "connection_ids")
 
 	// Parse status
-	if status := query.Get("status"); status != "" {
+	if status := ParseQueryString(r, "status"); status != "" {
 		filter.Status = &status
 	}
 
 	// Parse exclude_cleared
-	if excludeCleared := query.Get("exclude_cleared"); excludeCleared == "true" || excludeCleared == "1" {
-		filter.ExcludeCleared = true
-	}
+	filter.ExcludeCleared = ParseQueryBool(r, "exclude_cleared")
 
 	// Parse severity
-	if severity := query.Get("severity"); severity != "" {
+	if severity := ParseQueryString(r, "severity"); severity != "" {
 		filter.Severity = &severity
 	}
 
 	// Parse alert_type
-	if alertType := query.Get("alert_type"); alertType != "" {
+	if alertType := ParseQueryString(r, "alert_type"); alertType != "" {
 		filter.AlertType = &alertType
 	}
 
-	// Parse start_time
-	if startTimeStr := query.Get("start_time"); startTimeStr != "" {
-		if startTime, err := time.Parse(time.RFC3339, startTimeStr); err == nil {
-			filter.StartTime = &startTime
-		}
+	// Parse start_time - silently ignore invalid
+	if startTime, ok := ParseQueryTimeSilent(r, "start_time"); ok {
+		filter.StartTime = &startTime
 	}
 
-	// Parse end_time
-	if endTimeStr := query.Get("end_time"); endTimeStr != "" {
-		if endTime, err := time.Parse(time.RFC3339, endTimeStr); err == nil {
-			filter.EndTime = &endTime
-		}
+	// Parse end_time - silently ignore invalid
+	if endTime, ok := ParseQueryTimeSilent(r, "end_time"); ok {
+		filter.EndTime = &endTime
 	}
 
-	// Parse limit
-	if limitStr := query.Get("limit"); limitStr != "" {
-		if limit, err := strconv.Atoi(limitStr); err == nil && limit > 0 {
-			filter.Limit = limit
-		}
-	}
-	if filter.Limit == 0 {
-		filter.Limit = 100
-	}
-
-	// Parse offset
-	if offsetStr := query.Get("offset"); offsetStr != "" {
-		if offset, err := strconv.Atoi(offsetStr); err == nil && offset >= 0 {
-			filter.Offset = offset
-		}
-	}
+	// Parse limit and offset with defaults
+	filter.Limit = ParseLimitWithDefaults(r, 100, 1000)
+	filter.Offset = ParseOffsetWithDefault(r, 0)
 
 	// Fetch alerts
 	result, err := h.datastore.GetAlerts(r.Context(), filter)
@@ -148,8 +112,7 @@ func (h *AlertHandler) handleAlerts(w http.ResponseWriter, r *http.Request) {
 // handleAlertCounts handles GET /api/v1/alerts/counts
 // Returns counts of active alerts grouped by server
 func (h *AlertHandler) handleAlertCounts(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		RespondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	if !RequireGET(w, r) {
 		return
 	}
 
@@ -187,8 +150,7 @@ func (h *AlertHandler) handleAcknowledge(w http.ResponseWriter, r *http.Request)
 func (h *AlertHandler) acknowledgeAlert(w http.ResponseWriter, r *http.Request) {
 	// Parse request body
 	var req AcknowledgeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		RespondError(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
+	if !DecodeJSONBody(w, r, &req) {
 		return
 	}
 
@@ -221,17 +183,16 @@ func (h *AlertHandler) acknowledgeAlert(w http.ResponseWriter, r *http.Request) 
 
 // unacknowledgeAlert handles DELETE /api/v1/alerts/acknowledge
 func (h *AlertHandler) unacknowledgeAlert(w http.ResponseWriter, r *http.Request) {
-	// Parse alert_id from query params
-	alertIDStr := r.URL.Query().Get("alert_id")
+	// Parse alert_id from query params (required)
+	alertIDStr := ParseQueryString(r, "alert_id")
 	if alertIDStr == "" {
 		RespondError(w, http.StatusBadRequest, "alert_id query parameter is required")
 		return
 	}
 
-	alertID, err := strconv.ParseInt(alertIDStr, 10, 64)
-	if err != nil {
-		RespondError(w, http.StatusBadRequest, "Invalid alert_id")
-		return
+	alertID, ok := ParseQueryInt64(w, r, "alert_id")
+	if !ok {
+		return // Error already sent
 	}
 
 	// Unacknowledge the alert

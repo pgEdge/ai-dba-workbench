@@ -143,7 +143,7 @@ func EnsurePartition(ctx context.Context, conn *pgxpool.Conn, tableName string, 
 // DropExpiredPartitions drops partitions that contain only expired data
 func DropExpiredPartitions(ctx context.Context, conn *pgxpool.Conn, tableName string, retentionDays int) error {
 	// Calculate the cutoff timestamp
-	cutoff := time.Now().AddDate(0, 0, -retentionDays)
+	cutoff := time.Now().UTC().AddDate(0, 0, -retentionDays)
 
 	// For change-tracked probes (pg_settings, pg_hba_file_rules, pg_ident_file_mappings, pg_server_info),
 	// find the most recent partition with data for each connection

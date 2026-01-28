@@ -334,7 +334,7 @@ func (ps *ProbeScheduler) executeProbeForConnection(ctx context.Context, probe p
 	// Collect all metrics before storing
 	var allMetrics []map[string]interface{}
 	var databases []string
-	timestamp := time.Now()
+	timestamp := time.Now().UTC()
 
 	if probe.IsDatabaseScoped() {
 		// Execute probe for each database and collect metrics

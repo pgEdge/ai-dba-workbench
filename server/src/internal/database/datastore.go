@@ -1218,7 +1218,7 @@ func (d *Datastore) GetServersInCluster(ctx context.Context, clusterID int) ([]S
 	}
 	defer rows.Close()
 
-	now := time.Now()
+	now := time.Now().UTC()
 	var servers []ServerInfo
 	for rows.Next() {
 		var s ServerInfo
@@ -1471,7 +1471,7 @@ func (d *Datastore) getServersInClusterInternal(ctx context.Context, clusterID i
 	}
 	defer rows.Close()
 
-	now := time.Now()
+	now := time.Now().UTC()
 	var servers []ServerInfo
 	for rows.Next() {
 		var s ServerInfo

@@ -242,11 +242,17 @@ func DropExpiredPartitions(ctx context.Context, conn *pgxpool.Conn, tableName st
 
 		timestampStr := partitionBound[timestampStart : timestampStart+timestampEnd]
 
-		// Parse the timestamp string
-		endTimestamp, err := time.Parse("2006-01-02 15:04:05", timestampStr)
+		// Parse the timestamp string - try with timezone first (TIMESTAMPTZ), then without (legacy TIMESTAMP)
+		var endTimestamp time.Time
+		var err error
+		endTimestamp, err = time.Parse("2006-01-02 15:04:05-07", timestampStr)
 		if err != nil {
-			logger.Errorf("Warning: failed to parse timestamp in partition bound for %s: %v", partitionName, err)
-			continue
+			// Fall back to parsing without timezone for legacy partitions
+			endTimestamp, err = time.Parse("2006-01-02 15:04:05", timestampStr)
+			if err != nil {
+				logger.Errorf("Warning: failed to parse timestamp in partition bound for %s: %v", partitionName, err)
+				continue
+			}
 		}
 
 		// If the partition end time is before the cutoff, drop it

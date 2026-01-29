@@ -61,4 +61,5 @@ server/data/
 coverage.html
 alerter/ai-dba-alerter-linux
 CLAUDE.local.md
+WORK_TODO.md
 collector/src/ai-dba-collector

@@ -35,7 +35,7 @@ const (
 	TokenTypeUser    = "user"    // User-created tokens
 
 	// Schema version for migrations
-	schemaVersion = 3
+	schemaVersion = 4
 )
 
 // AuthStore manages users and tokens in SQLite
@@ -288,6 +288,31 @@ func (s *AuthStore) initSchema() error {
 		_, err = s.db.Exec(migrationV3)
 		if err != nil {
 			return fmt.Errorf("failed to apply schema migration v3: %w", err)
+		}
+	}
+
+	// Apply migrations for schema version 4 (admin permissions)
+	if currentVersion < 4 {
+		migrationV4 := `
+        -- Group admin permissions
+        CREATE TABLE IF NOT EXISTS group_admin_permissions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER NOT NULL
+                REFERENCES user_groups(id) ON DELETE CASCADE,
+            permission TEXT NOT NULL CHECK (permission IN (
+                'manage_connections', 'manage_groups',
+                'manage_privileges', 'manage_users',
+                'manage_token_scopes'
+            )),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(group_id, permission)
+        );
+        CREATE INDEX IF NOT EXISTS idx_admin_perms_group ON group_admin_permissions(group_id);
+        CREATE INDEX IF NOT EXISTS idx_admin_perms_perm ON group_admin_permissions(permission);
+        `
+		_, err = s.db.Exec(migrationV4)
+		if err != nil {
+			return fmt.Errorf("failed to apply schema migration v4: %w", err)
 		}
 	}
 

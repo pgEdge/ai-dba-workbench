@@ -21,11 +21,11 @@ import (
 )
 
 // CreateGroupTool creates a tool for creating RBAC groups
-func CreateGroupTool(authStore *auth.AuthStore) tools.Tool {
+func CreateGroupTool(authStore *auth.AuthStore, checker *auth.RBACChecker) tools.Tool {
 	return tools.Tool{
 		Definition: mcp.Tool{
 			Name:        "create_group",
-			Description: "Create a new RBAC group for organizing users and managing privileges. Groups can contain users and other groups for hierarchical access control. Requires superuser privileges.",
+			Description: "Create a new RBAC group for organizing users and managing privileges. Groups can contain users and other groups for hierarchical access control. Requires manage_groups permission.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{
@@ -42,9 +42,8 @@ func CreateGroupTool(authStore *auth.AuthStore) tools.Tool {
 			},
 		},
 		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
-			ctx := getContextFromArgs(args)
-			if !auth.IsSuperuserFromContext(ctx) {
-				return mcp.NewToolError("Access denied: superuser privileges required")
+			if err := RequirePermission(args, checker, auth.PermManageGroups); err != nil {
+				return mcp.NewToolError(err.Error())
 			}
 
 			name, ok := args["name"].(string)
@@ -68,11 +67,11 @@ func CreateGroupTool(authStore *auth.AuthStore) tools.Tool {
 }
 
 // UpdateGroupTool creates a tool for updating RBAC groups
-func UpdateGroupTool(authStore *auth.AuthStore) tools.Tool {
+func UpdateGroupTool(authStore *auth.AuthStore, checker *auth.RBACChecker) tools.Tool {
 	return tools.Tool{
 		Definition: mcp.Tool{
 			Name:        "update_group",
-			Description: "Update an existing RBAC group's name or description. Requires superuser privileges.",
+			Description: "Update an existing RBAC group's name or description. Requires manage_groups permission.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{
@@ -93,9 +92,8 @@ func UpdateGroupTool(authStore *auth.AuthStore) tools.Tool {
 			},
 		},
 		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
-			ctx := getContextFromArgs(args)
-			if !auth.IsSuperuserFromContext(ctx) {
-				return mcp.NewToolError("Access denied: superuser privileges required")
+			if err := RequirePermission(args, checker, auth.PermManageGroups); err != nil {
+				return mcp.NewToolError(err.Error())
 			}
 
 			groupID, err := parseIntArg(args, "group_id")
@@ -126,11 +124,11 @@ func UpdateGroupTool(authStore *auth.AuthStore) tools.Tool {
 }
 
 // DeleteGroupTool creates a tool for deleting RBAC groups
-func DeleteGroupTool(authStore *auth.AuthStore) tools.Tool {
+func DeleteGroupTool(authStore *auth.AuthStore, checker *auth.RBACChecker) tools.Tool {
 	return tools.Tool{
 		Definition: mcp.Tool{
 			Name:        "delete_group",
-			Description: "Delete an RBAC group. This will also remove all group memberships and privilege grants. Requires superuser privileges.",
+			Description: "Delete an RBAC group. This will also remove all group memberships and privilege grants. Requires manage_groups permission.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{
@@ -143,9 +141,8 @@ func DeleteGroupTool(authStore *auth.AuthStore) tools.Tool {
 			},
 		},
 		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
-			ctx := getContextFromArgs(args)
-			if !auth.IsSuperuserFromContext(ctx) {
-				return mcp.NewToolError("Access denied: superuser privileges required")
+			if err := RequirePermission(args, checker, auth.PermManageGroups); err != nil {
+				return mcp.NewToolError(err.Error())
 			}
 
 			groupID, err := parseIntArg(args, "group_id")
@@ -163,20 +160,19 @@ func DeleteGroupTool(authStore *auth.AuthStore) tools.Tool {
 }
 
 // ListGroupsTool creates a tool for listing RBAC groups
-func ListGroupsTool(authStore *auth.AuthStore) tools.Tool {
+func ListGroupsTool(authStore *auth.AuthStore, checker *auth.RBACChecker) tools.Tool {
 	return tools.Tool{
 		Definition: mcp.Tool{
 			Name:        "list_groups",
-			Description: "List all RBAC groups with their members and assigned privileges. Requires superuser privileges.",
+			Description: "List all RBAC groups with their members and assigned privileges. Requires manage_groups permission.",
 			InputSchema: mcp.InputSchema{
 				Type:       "object",
 				Properties: map[string]interface{}{},
 			},
 		},
 		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
-			ctx := getContextFromArgs(args)
-			if !auth.IsSuperuserFromContext(ctx) {
-				return mcp.NewToolError("Access denied: superuser privileges required")
+			if err := RequirePermission(args, checker, auth.PermManageGroups); err != nil {
+				return mcp.NewToolError(err.Error())
 			}
 
 			groups, err := authStore.ListGroups()
@@ -219,11 +215,11 @@ func ListGroupsTool(authStore *auth.AuthStore) tools.Tool {
 }
 
 // AddGroupMemberTool creates a tool for adding members to groups
-func AddGroupMemberTool(authStore *auth.AuthStore) tools.Tool {
+func AddGroupMemberTool(authStore *auth.AuthStore, checker *auth.RBACChecker) tools.Tool {
 	return tools.Tool{
 		Definition: mcp.Tool{
 			Name:        "add_group_member",
-			Description: "Add a user or group to an RBAC group. Use either user_id or member_group_id, not both. Requires superuser privileges.",
+			Description: "Add a user or group to an RBAC group. Use either user_id or member_group_id, not both. Requires manage_groups permission.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{
@@ -244,9 +240,8 @@ func AddGroupMemberTool(authStore *auth.AuthStore) tools.Tool {
 			},
 		},
 		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
-			ctx := getContextFromArgs(args)
-			if !auth.IsSuperuserFromContext(ctx) {
-				return mcp.NewToolError("Access denied: superuser privileges required")
+			if err := RequirePermission(args, checker, auth.PermManageGroups); err != nil {
+				return mcp.NewToolError(err.Error())
 			}
 
 			groupID, err := parseIntArg(args, "group_id")
@@ -283,11 +278,11 @@ func AddGroupMemberTool(authStore *auth.AuthStore) tools.Tool {
 }
 
 // RemoveGroupMemberTool creates a tool for removing members from groups
-func RemoveGroupMemberTool(authStore *auth.AuthStore) tools.Tool {
+func RemoveGroupMemberTool(authStore *auth.AuthStore, checker *auth.RBACChecker) tools.Tool {
 	return tools.Tool{
 		Definition: mcp.Tool{
 			Name:        "remove_group_member",
-			Description: "Remove a user or group from an RBAC group. Use either user_id or member_group_id, not both. Requires superuser privileges.",
+			Description: "Remove a user or group from an RBAC group. Use either user_id or member_group_id, not both. Requires manage_groups permission.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{
@@ -308,9 +303,8 @@ func RemoveGroupMemberTool(authStore *auth.AuthStore) tools.Tool {
 			},
 		},
 		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
-			ctx := getContextFromArgs(args)
-			if !auth.IsSuperuserFromContext(ctx) {
-				return mcp.NewToolError("Access denied: superuser privileges required")
+			if err := RequirePermission(args, checker, auth.PermManageGroups); err != nil {
+				return mcp.NewToolError(err.Error())
 			}
 
 			groupID, err := parseIntArg(args, "group_id")

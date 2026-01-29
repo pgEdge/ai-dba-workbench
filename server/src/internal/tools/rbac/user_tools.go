@@ -41,9 +41,8 @@ func SetSuperuserTool(authStore *auth.AuthStore) tools.Tool {
 			},
 		},
 		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
-			ctx := getContextFromArgs(args)
-			if !auth.IsSuperuserFromContext(ctx) {
-				return mcp.NewToolError("Access denied: superuser privileges required")
+			if err := RequireSuperuser(args); err != nil {
+				return mcp.NewToolError(err.Error())
 			}
 
 			username, ok := args["username"].(string)
@@ -69,20 +68,19 @@ func SetSuperuserTool(authStore *auth.AuthStore) tools.Tool {
 }
 
 // ListUsersTool creates a tool for listing all users with their group memberships
-func ListUsersTool(authStore *auth.AuthStore) tools.Tool {
+func ListUsersTool(authStore *auth.AuthStore, checker *auth.RBACChecker) tools.Tool {
 	return tools.Tool{
 		Definition: mcp.Tool{
 			Name:        "list_users",
-			Description: "List all users with their group memberships and superuser status. Requires superuser privileges.",
+			Description: "List all users with their group memberships and superuser status. Requires manage_users permission.",
 			InputSchema: mcp.InputSchema{
 				Type:       "object",
 				Properties: map[string]interface{}{},
 			},
 		},
 		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
-			ctx := getContextFromArgs(args)
-			if !auth.IsSuperuserFromContext(ctx) {
-				return mcp.NewToolError("Access denied: superuser privileges required")
+			if err := RequirePermission(args, checker, auth.PermManageUsers); err != nil {
+				return mcp.NewToolError(err.Error())
 			}
 
 			users, err := authStore.ListUsers()
@@ -128,11 +126,11 @@ func ListUsersTool(authStore *auth.AuthStore) tools.Tool {
 }
 
 // GetUserPrivilegesTool creates a tool for viewing a user's effective privileges
-func GetUserPrivilegesTool(authStore *auth.AuthStore) tools.Tool {
+func GetUserPrivilegesTool(authStore *auth.AuthStore, checker *auth.RBACChecker) tools.Tool {
 	return tools.Tool{
 		Definition: mcp.Tool{
 			Name:        "get_user_privileges",
-			Description: "View a user's effective privileges (from all group memberships). Requires superuser privileges.",
+			Description: "View a user's effective privileges (from all group memberships). Requires manage_users permission.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{
@@ -145,9 +143,8 @@ func GetUserPrivilegesTool(authStore *auth.AuthStore) tools.Tool {
 			},
 		},
 		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
-			ctx := getContextFromArgs(args)
-			if !auth.IsSuperuserFromContext(ctx) {
-				return mcp.NewToolError("Access denied: superuser privileges required")
+			if err := RequirePermission(args, checker, auth.PermManageUsers); err != nil {
+				return mcp.NewToolError(err.Error())
 			}
 
 			username, ok := args["username"].(string)

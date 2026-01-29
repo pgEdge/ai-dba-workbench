@@ -20,11 +20,11 @@ import (
 )
 
 // GrantMCPPrivilegeTool creates a tool for granting MCP privileges to groups
-func GrantMCPPrivilegeTool(authStore *auth.AuthStore) tools.Tool {
+func GrantMCPPrivilegeTool(authStore *auth.AuthStore, checker *auth.RBACChecker) tools.Tool {
 	return tools.Tool{
 		Definition: mcp.Tool{
 			Name:        "grant_mcp_privilege",
-			Description: "Grant an MCP privilege (tool, resource, or prompt) to a group. Requires superuser privileges.",
+			Description: "Grant an MCP privilege (tool, resource, or prompt) to a group. Requires manage_privileges permission.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{
@@ -41,9 +41,8 @@ func GrantMCPPrivilegeTool(authStore *auth.AuthStore) tools.Tool {
 			},
 		},
 		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
-			ctx := getContextFromArgs(args)
-			if !auth.IsSuperuserFromContext(ctx) {
-				return mcp.NewToolError("Access denied: superuser privileges required")
+			if err := RequirePermission(args, checker, auth.PermManagePrivileges); err != nil {
+				return mcp.NewToolError(err.Error())
 			}
 
 			groupID, err := parseIntArg(args, "group_id")
@@ -66,11 +65,11 @@ func GrantMCPPrivilegeTool(authStore *auth.AuthStore) tools.Tool {
 }
 
 // RevokeMCPPrivilegeTool creates a tool for revoking MCP privileges from groups
-func RevokeMCPPrivilegeTool(authStore *auth.AuthStore) tools.Tool {
+func RevokeMCPPrivilegeTool(authStore *auth.AuthStore, checker *auth.RBACChecker) tools.Tool {
 	return tools.Tool{
 		Definition: mcp.Tool{
 			Name:        "revoke_mcp_privilege",
-			Description: "Revoke an MCP privilege (tool, resource, or prompt) from a group. Requires superuser privileges.",
+			Description: "Revoke an MCP privilege (tool, resource, or prompt) from a group. Requires manage_privileges permission.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{
@@ -87,9 +86,8 @@ func RevokeMCPPrivilegeTool(authStore *auth.AuthStore) tools.Tool {
 			},
 		},
 		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
-			ctx := getContextFromArgs(args)
-			if !auth.IsSuperuserFromContext(ctx) {
-				return mcp.NewToolError("Access denied: superuser privileges required")
+			if err := RequirePermission(args, checker, auth.PermManagePrivileges); err != nil {
+				return mcp.NewToolError(err.Error())
 			}
 
 			groupID, err := parseIntArg(args, "group_id")
@@ -112,11 +110,11 @@ func RevokeMCPPrivilegeTool(authStore *auth.AuthStore) tools.Tool {
 }
 
 // GrantConnectionPrivilegeTool creates a tool for granting connection privileges to groups
-func GrantConnectionPrivilegeTool(authStore *auth.AuthStore) tools.Tool {
+func GrantConnectionPrivilegeTool(authStore *auth.AuthStore, checker *auth.RBACChecker) tools.Tool {
 	return tools.Tool{
 		Definition: mcp.Tool{
 			Name:        "grant_connection_privilege",
-			Description: "Grant access to a database connection for a group. Access levels are 'read' (SELECT only) or 'read_write' (full access). Requires superuser privileges.",
+			Description: "Grant access to a database connection for a group. Access levels are 'read' (SELECT only) or 'read_write' (full access). Requires manage_privileges permission.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{
@@ -138,9 +136,8 @@ func GrantConnectionPrivilegeTool(authStore *auth.AuthStore) tools.Tool {
 			},
 		},
 		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
-			ctx := getContextFromArgs(args)
-			if !auth.IsSuperuserFromContext(ctx) {
-				return mcp.NewToolError("Access denied: superuser privileges required")
+			if err := RequirePermission(args, checker, auth.PermManagePrivileges); err != nil {
+				return mcp.NewToolError(err.Error())
 			}
 
 			groupID, err := parseIntArg(args, "group_id")
@@ -168,11 +165,11 @@ func GrantConnectionPrivilegeTool(authStore *auth.AuthStore) tools.Tool {
 }
 
 // RevokeConnectionPrivilegeTool creates a tool for revoking connection privileges from groups
-func RevokeConnectionPrivilegeTool(authStore *auth.AuthStore) tools.Tool {
+func RevokeConnectionPrivilegeTool(authStore *auth.AuthStore, checker *auth.RBACChecker) tools.Tool {
 	return tools.Tool{
 		Definition: mcp.Tool{
 			Name:        "revoke_connection_privilege",
-			Description: "Revoke access to a database connection from a group. Requires superuser privileges.",
+			Description: "Revoke access to a database connection from a group. Requires manage_privileges permission.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{
@@ -189,9 +186,8 @@ func RevokeConnectionPrivilegeTool(authStore *auth.AuthStore) tools.Tool {
 			},
 		},
 		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
-			ctx := getContextFromArgs(args)
-			if !auth.IsSuperuserFromContext(ctx) {
-				return mcp.NewToolError("Access denied: superuser privileges required")
+			if err := RequirePermission(args, checker, auth.PermManagePrivileges); err != nil {
+				return mcp.NewToolError(err.Error())
 			}
 
 			groupID, err := parseIntArg(args, "group_id")
@@ -214,11 +210,11 @@ func RevokeConnectionPrivilegeTool(authStore *auth.AuthStore) tools.Tool {
 }
 
 // ListPrivilegesTool creates a tool for listing available and assigned privileges
-func ListPrivilegesTool(authStore *auth.AuthStore) tools.Tool {
+func ListPrivilegesTool(authStore *auth.AuthStore, checker *auth.RBACChecker) tools.Tool {
 	return tools.Tool{
 		Definition: mcp.Tool{
 			Name:        "list_privileges",
-			Description: "List all registered MCP privileges and optionally show assignments for a specific group. Requires superuser privileges.",
+			Description: "List all registered MCP privileges and optionally show assignments for a specific group. Requires manage_privileges permission.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{
@@ -230,9 +226,8 @@ func ListPrivilegesTool(authStore *auth.AuthStore) tools.Tool {
 			},
 		},
 		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
-			ctx := getContextFromArgs(args)
-			if !auth.IsSuperuserFromContext(ctx) {
-				return mcp.NewToolError("Access denied: superuser privileges required")
+			if err := RequirePermission(args, checker, auth.PermManagePrivileges); err != nil {
+				return mcp.NewToolError(err.Error())
 			}
 
 			var sb strings.Builder

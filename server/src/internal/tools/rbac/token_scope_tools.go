@@ -21,11 +21,11 @@ import (
 )
 
 // SetTokenScopeTool creates a tool for setting token scope restrictions
-func SetTokenScopeTool(authStore *auth.AuthStore) tools.Tool {
+func SetTokenScopeTool(authStore *auth.AuthStore, checker *auth.RBACChecker) tools.Tool {
 	return tools.Tool{
 		Definition: mcp.Tool{
 			Name:        "set_token_scope",
-			Description: "Restrict a token's access to specific connections or MCP privileges. This can only restrict access, never expand beyond the token owner's privileges. Requires superuser privileges.",
+			Description: "Restrict a token's access to specific connections or MCP privileges. This can only restrict access, never expand beyond the token owner's privileges. Requires manage_token_scopes permission.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{
@@ -46,9 +46,8 @@ func SetTokenScopeTool(authStore *auth.AuthStore) tools.Tool {
 			},
 		},
 		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
-			ctx := getContextFromArgs(args)
-			if !auth.IsSuperuserFromContext(ctx) {
-				return mcp.NewToolError("Access denied: superuser privileges required")
+			if err := RequirePermission(args, checker, auth.PermManageTokenScopes); err != nil {
+				return mcp.NewToolError(err.Error())
 			}
 
 			tokenID, err := parseIntArg(args, "token_id")
@@ -94,11 +93,11 @@ func SetTokenScopeTool(authStore *auth.AuthStore) tools.Tool {
 }
 
 // GetTokenScopeTool creates a tool for viewing token scope restrictions
-func GetTokenScopeTool(authStore *auth.AuthStore) tools.Tool {
+func GetTokenScopeTool(authStore *auth.AuthStore, checker *auth.RBACChecker) tools.Tool {
 	return tools.Tool{
 		Definition: mcp.Tool{
 			Name:        "get_token_scope",
-			Description: "View the scope restrictions for a token. Requires superuser privileges.",
+			Description: "View the scope restrictions for a token. Requires manage_token_scopes permission.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{
@@ -111,9 +110,8 @@ func GetTokenScopeTool(authStore *auth.AuthStore) tools.Tool {
 			},
 		},
 		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
-			ctx := getContextFromArgs(args)
-			if !auth.IsSuperuserFromContext(ctx) {
-				return mcp.NewToolError("Access denied: superuser privileges required")
+			if err := RequirePermission(args, checker, auth.PermManageTokenScopes); err != nil {
+				return mcp.NewToolError(err.Error())
 			}
 
 			tokenID, err := parseIntArg(args, "token_id")
@@ -160,11 +158,11 @@ func GetTokenScopeTool(authStore *auth.AuthStore) tools.Tool {
 }
 
 // ClearTokenScopeTool creates a tool for clearing token scope restrictions
-func ClearTokenScopeTool(authStore *auth.AuthStore) tools.Tool {
+func ClearTokenScopeTool(authStore *auth.AuthStore, checker *auth.RBACChecker) tools.Tool {
 	return tools.Tool{
 		Definition: mcp.Tool{
 			Name:        "clear_token_scope",
-			Description: "Remove all scope restrictions from a token, restoring full access to assigned privileges. Requires superuser privileges.",
+			Description: "Remove all scope restrictions from a token, restoring full access to assigned privileges. Requires manage_token_scopes permission.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{
@@ -177,9 +175,8 @@ func ClearTokenScopeTool(authStore *auth.AuthStore) tools.Tool {
 			},
 		},
 		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
-			ctx := getContextFromArgs(args)
-			if !auth.IsSuperuserFromContext(ctx) {
-				return mcp.NewToolError("Access denied: superuser privileges required")
+			if err := RequirePermission(args, checker, auth.PermManageTokenScopes); err != nil {
+				return mcp.NewToolError(err.Error())
 			}
 
 			tokenID, err := parseIntArg(args, "token_id")

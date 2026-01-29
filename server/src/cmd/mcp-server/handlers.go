@@ -69,11 +69,15 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 			fmt.Fprintf(os.Stderr, "Conversation history: ENABLED\n")
 		}
 
+		// Create RBAC checker for permission-based access control in REST handlers
+		rbacChecker := auth.NewRBACChecker(deps.AuthStore, true)
+
 		// Connection management endpoints (for selecting monitored database connections)
 		// Uses security configuration to prevent SSRF attacks
 		connHandler := api.NewConnectionHandlerWithSecurity(
 			deps.Datastore,
 			deps.AuthStore,
+			rbacChecker,
 			deps.Config.ConnectionSecurity.AllowInternalNetworks,
 			deps.Config.ConnectionSecurity.AllowedHosts,
 			deps.Config.ConnectionSecurity.BlockedHosts,
@@ -86,7 +90,7 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		}
 
 		// Cluster hierarchy endpoints (for ClusterNavigator component)
-		clusterHandler := api.NewClusterHandler(deps.Datastore, deps.AuthStore)
+		clusterHandler := api.NewClusterHandler(deps.Datastore, deps.AuthStore, rbacChecker)
 		clusterHandler.RegisterRoutes(mux, authWrapper)
 		if deps.Datastore != nil {
 			fmt.Fprintf(os.Stderr, "Cluster management: ENABLED\n")
@@ -110,6 +114,13 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 			fmt.Fprintf(os.Stderr, "Timeline events: ENABLED\n")
 		} else {
 			fmt.Fprintf(os.Stderr, "Timeline events: DISABLED (datastore not configured)\n")
+		}
+
+		// RBAC management endpoints
+		if deps.AuthStore != nil {
+			rbacHandler := api.NewRBACHandler(deps.AuthStore, rbacChecker)
+			rbacHandler.RegisterRoutes(mux, authWrapper)
+			fmt.Fprintf(os.Stderr, "RBAC management: ENABLED\n")
 		}
 
 		return nil
@@ -144,19 +155,39 @@ func createAuthWrapper(authStore *auth.AuthStore) func(http.HandlerFunc) http.Ha
 				token = cookie.Value
 			}
 
+			// Token valid - add token hash to context for tracing and isolation
+			tokenHash := auth.GetTokenHashByRawToken(token)
+			ctx := context.WithValue(r.Context(), auth.TokenHashContextKey, tokenHash)
+
 			// Try API/service token first, then session token
-			if _, err := authStore.ValidateToken(token); err != nil {
+			// Populate RBAC context values (UserID, IsSuperuser) for permission checks
+			storedToken, err := authStore.ValidateToken(token)
+			if err == nil && storedToken != nil {
+				ctx = context.WithValue(ctx, auth.IsSuperuserContextKey, storedToken.IsSuperuser)
+				if storedToken.OwnerID != nil {
+					ctx = context.WithValue(ctx, auth.UserIDContextKey, *storedToken.OwnerID)
+					// Check if the owning user is a superuser
+					user, userErr := authStore.GetUserByID(*storedToken.OwnerID)
+					if userErr == nil && user != nil && user.IsSuperuser {
+						ctx = context.WithValue(ctx, auth.IsSuperuserContextKey, true)
+					}
+				}
+			} else {
 				// Try session token
-				if _, err := authStore.ValidateSessionToken(token); err != nil {
+				username, sessionErr := authStore.ValidateSessionToken(token)
+				if sessionErr != nil {
 					http.Error(w, "Invalid or expired token",
 						http.StatusUnauthorized)
 					return
 				}
+				// Get user ID and superuser status for RBAC
+				user, userErr := authStore.GetUser(username)
+				if userErr == nil && user != nil {
+					ctx = context.WithValue(ctx, auth.UserIDContextKey, user.ID)
+					ctx = context.WithValue(ctx, auth.IsSuperuserContextKey, user.IsSuperuser)
+				}
 			}
 
-			// Token valid - add token hash to context for tracing and isolation
-			tokenHash := auth.GetTokenHashByRawToken(token)
-			ctx := context.WithValue(r.Context(), auth.TokenHashContextKey, tokenHash)
 			r = r.WithContext(ctx)
 
 			// Proceed with handler
@@ -211,11 +242,26 @@ func createUserInfoHandler(authStore *auth.AuthStore) http.HandlerFunc {
 			isSuperuser = user.IsSuperuser
 		}
 
+		// Get admin permissions for the user
+		var adminPermissions []string
+		if user != nil {
+			perms, permErr := authStore.GetUserAdminPermissions(user.ID)
+			if permErr == nil {
+				for perm := range perms {
+					adminPermissions = append(adminPermissions, perm)
+				}
+			}
+		}
+		if adminPermissions == nil {
+			adminPermissions = []string{}
+		}
+
 		// Return user info as JSON
 		api.RespondJSON(w, http.StatusOK, map[string]interface{}{
-			"authenticated": true,
-			"username":      username,
-			"is_superuser":  isSuperuser,
+			"authenticated":     true,
+			"username":          username,
+			"is_superuser":      isSuperuser,
+			"admin_permissions": adminPermissions,
 		})
 	}
 }

@@ -139,6 +139,31 @@ func (p *ContextAwareProvider) registerDatabaseTools(registry *Registry, client 
 	}
 }
 
+// ToolRegistrationFunc is a callback that registers additional tools into a registry.
+// This is used to break import cycles by allowing external packages to provide
+// tool registration logic without being directly imported.
+type ToolRegistrationFunc func(registry *Registry, cfg *config.Config, authStore *auth.AuthStore, rbacChecker *auth.RBACChecker)
+
+// SetRBACToolRegistration sets the callback used to register RBAC tools.
+// This must be called before NewContextAwareProvider to have effect.
+func SetRBACToolRegistration(fn ToolRegistrationFunc) {
+	rbacToolRegistration = fn
+}
+
+// rbacToolRegistration holds the callback for registering RBAC tools.
+var rbacToolRegistration ToolRegistrationFunc
+
+// registerRBACTools registers RBAC management tools when auth is enabled
+func (p *ContextAwareProvider) registerRBACTools(registry *Registry) {
+	if !p.authEnabled || p.authStore == nil || p.rbacChecker == nil {
+		return
+	}
+	if rbacToolRegistration == nil {
+		return
+	}
+	rbacToolRegistration(registry, p.cfg, p.authStore, p.rbacChecker)
+}
+
 // NewContextAwareProvider creates a new context-aware tool provider
 func NewContextAwareProvider(clientManager *database.ClientManager, resourceReg *resources.ContextAwareRegistry, authEnabled bool, fallbackClient *database.Client, cfg *config.Config, authStore *auth.AuthStore, rateLimiter *auth.RateLimiter, datastore *database.Datastore) *ContextAwareProvider {
 	provider := &ContextAwareProvider{
@@ -162,6 +187,7 @@ func NewContextAwareProvider(clientManager *database.ClientManager, resourceReg 
 	provider.registerStatelessTools(provider.baseRegistry)
 	provider.registerDatastoreTools(provider.baseRegistry)
 	provider.registerDatabaseTools(provider.baseRegistry, nil) // nil client for base registry
+	provider.registerRBACTools(provider.baseRegistry)
 
 	// Note: Authentication is now handled via HTTP API at /api/auth/login
 	// The hidden registry remains for potential future use
@@ -268,6 +294,7 @@ func (p *ContextAwareProvider) getOrCreateRegistryForClient(client *database.Cli
 	p.registerStatelessTools(registry)
 	p.registerDatastoreTools(registry)
 	p.registerDatabaseTools(registry, client)
+	p.registerRBACTools(registry)
 
 	// Cache for future use
 	p.clientRegistries[client] = registry
@@ -360,15 +387,32 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 
 	// Check if this is a stateless tool that doesn't require a per-token database client
 	statelessTools := map[string]bool{
-		"read_resource":        true, // Resource access tool
-		"generate_embedding":   true, // Embedding generation doesn't need database
-		"list_probes":          true, // Datastore tool - uses shared datastore pool
-		"describe_probe":       true, // Datastore tool - uses shared datastore pool
-		"query_metrics":        true, // Datastore tool - uses shared datastore pool
-		"list_connections":     true, // Datastore tool - uses shared datastore pool
-		"get_alert_history":    true, // Datastore tool - uses shared datastore pool
-		"get_alert_rules":      true, // Datastore tool - uses shared datastore pool
-		"get_metric_baselines": true, // Datastore tool - uses shared datastore pool
+		"read_resource":               true, // Resource access tool
+		"generate_embedding":          true, // Embedding generation doesn't need database
+		"list_probes":                 true, // Datastore tool - uses shared datastore pool
+		"describe_probe":              true, // Datastore tool - uses shared datastore pool
+		"query_metrics":               true, // Datastore tool - uses shared datastore pool
+		"list_connections":            true, // Datastore tool - uses shared datastore pool
+		"get_alert_history":           true, // Datastore tool - uses shared datastore pool
+		"get_alert_rules":             true, // Datastore tool - uses shared datastore pool
+		"get_metric_baselines":        true, // Datastore tool - uses shared datastore pool
+		"create_group":                true, // RBAC tool - uses authStore
+		"update_group":                true, // RBAC tool - uses authStore
+		"delete_group":                true, // RBAC tool - uses authStore
+		"list_groups":                 true, // RBAC tool - uses authStore
+		"add_group_member":            true, // RBAC tool - uses authStore
+		"remove_group_member":         true, // RBAC tool - uses authStore
+		"grant_mcp_privilege":         true, // RBAC tool - uses authStore
+		"revoke_mcp_privilege":        true, // RBAC tool - uses authStore
+		"grant_connection_privilege":  true, // RBAC tool - uses authStore
+		"revoke_connection_privilege": true, // RBAC tool - uses authStore
+		"list_privileges":             true, // RBAC tool - uses authStore
+		"list_users":                  true, // RBAC tool - uses authStore
+		"get_user_privileges":         true, // RBAC tool - uses authStore
+		"set_superuser":               true, // RBAC tool - uses authStore
+		"set_token_scope":             true, // RBAC tool - uses authStore
+		"get_token_scope":             true, // RBAC tool - uses authStore
+		"clear_token_scope":           true, // RBAC tool - uses authStore
 	}
 
 	if statelessTools[name] {

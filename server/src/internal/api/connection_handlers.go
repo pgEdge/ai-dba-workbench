@@ -27,24 +27,27 @@ type ConnectionHandler struct {
 	datastore     *database.Datastore
 	authStore     *auth.AuthStore
 	hostValidator *HostValidator
+	rbacChecker   *auth.RBACChecker
 }
 
 // NewConnectionHandler creates a new connection handler
-func NewConnectionHandler(datastore *database.Datastore, authStore *auth.AuthStore) *ConnectionHandler {
+func NewConnectionHandler(datastore *database.Datastore, authStore *auth.AuthStore, rbacChecker *auth.RBACChecker) *ConnectionHandler {
 	return &ConnectionHandler{
 		datastore:     datastore,
 		authStore:     authStore,
 		hostValidator: DefaultHostValidator(),
+		rbacChecker:   rbacChecker,
 	}
 }
 
 // NewConnectionHandlerWithSecurity creates a new connection handler with custom security settings
 func NewConnectionHandlerWithSecurity(datastore *database.Datastore, authStore *auth.AuthStore,
-	allowInternal bool, allowedHosts, blockedHosts []string) *ConnectionHandler {
+	rbacChecker *auth.RBACChecker, allowInternal bool, allowedHosts, blockedHosts []string) *ConnectionHandler {
 	return &ConnectionHandler{
 		datastore:     datastore,
 		authStore:     authStore,
 		hostValidator: NewHostValidator(allowInternal, allowedHosts, blockedHosts),
+		rbacChecker:   rbacChecker,
 	}
 }
 
@@ -159,7 +162,7 @@ func (h *ConnectionHandler) listConnections(w http.ResponseWriter, r *http.Reque
 // createConnection handles POST /api/v1/connections
 func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Request) {
 	// Get current user info
-	username, isSuperuser, err := h.getUserInfoFromRequest(r)
+	username, _, err := h.getUserInfoFromRequest(r)
 	if err != nil {
 		RespondError(w, http.StatusUnauthorized, "Invalid or missing authentication token")
 		return
@@ -209,10 +212,10 @@ func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Only superusers can create shared connections
-	if req.IsShared && !isSuperuser {
+	// Only users with manage_connections permission can create shared connections
+	if req.IsShared && !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
 		RespondError(w, http.StatusForbidden,
-			"Permission denied: only superusers can create shared connections")
+			"Permission denied: you do not have permission to create shared connections")
 		return
 	}
 
@@ -319,11 +322,13 @@ func (h *ConnectionHandler) getConnection(w http.ResponseWriter, r *http.Request
 // updateConnection handles PUT /api/v1/connections/{id}
 func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Request, id int) {
 	// Get current user info for permission check
-	username, isSuperuser, err := h.getUserInfoFromRequest(r)
+	username, _, err := h.getUserInfoFromRequest(r)
 	if err != nil {
 		RespondError(w, http.StatusUnauthorized, "Invalid or missing authentication token")
 		return
 	}
+
+	hasManageConns := h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
@@ -336,11 +341,11 @@ func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Permission check: must be owner or superuser
+	// Permission check: must be owner or have manage_connections permission
 	isOwner := conn.OwnerUsername.Valid && conn.OwnerUsername.String == username
-	if !isSuperuser && !isOwner {
+	if !hasManageConns && !isOwner {
 		RespondError(w, http.StatusForbidden,
-			"Permission denied: you must be the owner or a superuser to update this connection")
+			"Permission denied: you must be the owner or have the manage_connections permission to update this connection")
 		return
 	}
 
@@ -356,10 +361,10 @@ func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Only superusers can make connections shared
-	if req.IsShared != nil && *req.IsShared && !isSuperuser {
+	// Only users with manage_connections permission can make connections shared
+	if req.IsShared != nil && *req.IsShared && !hasManageConns {
 		RespondError(w, http.StatusForbidden,
-			"Permission denied: only superusers can make connections shared")
+			"Permission denied: you do not have permission to make connections shared")
 		return
 	}
 
@@ -409,11 +414,13 @@ func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Requ
 // deleteConnection handles DELETE /api/v1/connections/{id}
 func (h *ConnectionHandler) deleteConnection(w http.ResponseWriter, r *http.Request, id int) {
 	// Get current user info for permission check
-	username, isSuperuser, err := h.getUserInfoFromRequest(r)
+	username, _, err := h.getUserInfoFromRequest(r)
 	if err != nil {
 		RespondError(w, http.StatusUnauthorized, "Invalid or missing authentication token")
 		return
 	}
+
+	hasManageConns := h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
@@ -426,11 +433,11 @@ func (h *ConnectionHandler) deleteConnection(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Permission check: must be owner or superuser
+	// Permission check: must be owner or have manage_connections permission
 	isOwner := conn.OwnerUsername.Valid && conn.OwnerUsername.String == username
-	if !isSuperuser && !isOwner {
+	if !hasManageConns && !isOwner {
 		RespondError(w, http.StatusForbidden,
-			"Permission denied: you must be the owner or a superuser to delete this connection")
+			"Permission denied: you must be the owner or have the manage_connections permission to delete this connection")
 		return
 	}
 

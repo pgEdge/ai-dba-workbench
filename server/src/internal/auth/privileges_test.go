@@ -703,6 +703,234 @@ func TestIsConnectionAssignedToAnyGroup(t *testing.T) {
 // Helper Tests
 // =============================================================================
 
+// =============================================================================
+// Admin Permission Tests
+// =============================================================================
+
+func TestGrantAdminPermission(t *testing.T) {
+	store, cleanup := createTestAuthStoreForPrivileges(t)
+	defer cleanup()
+
+	groupID, _ := store.CreateGroup("test-group", "Test group")
+
+	err := store.GrantAdminPermission(groupID, PermManageConnections)
+	if err != nil {
+		t.Fatalf("Failed to grant admin permission: %v", err)
+	}
+
+	// Verify it's listed
+	perms, err := store.ListGroupAdminPermissions(groupID)
+	if err != nil {
+		t.Fatalf("Failed to list permissions: %v", err)
+	}
+
+	if len(perms) != 1 {
+		t.Fatalf("Expected 1 permission, got %d", len(perms))
+	}
+
+	if perms[0] != PermManageConnections {
+		t.Errorf("Expected %q, got %q", PermManageConnections, perms[0])
+	}
+}
+
+func TestGrantAdminPermissionDuplicate(t *testing.T) {
+	store, cleanup := createTestAuthStoreForPrivileges(t)
+	defer cleanup()
+
+	groupID, _ := store.CreateGroup("test-group", "Test group")
+
+	// Grant same permission twice (INSERT OR IGNORE)
+	err := store.GrantAdminPermission(groupID, PermManageGroups)
+	if err != nil {
+		t.Fatalf("First grant failed: %v", err)
+	}
+
+	err = store.GrantAdminPermission(groupID, PermManageGroups)
+	if err != nil {
+		t.Fatalf("Duplicate grant should not error: %v", err)
+	}
+
+	// Verify only one entry
+	perms, _ := store.ListGroupAdminPermissions(groupID)
+	if len(perms) != 1 {
+		t.Errorf("Expected 1 permission after duplicate grant, got %d", len(perms))
+	}
+}
+
+func TestGrantAdminPermissionInvalid(t *testing.T) {
+	store, cleanup := createTestAuthStoreForPrivileges(t)
+	defer cleanup()
+
+	groupID, _ := store.CreateGroup("test-group", "Test group")
+
+	// Invalid permission string is silently ignored by INSERT OR IGNORE
+	// with the CHECK constraint; verify no row was inserted
+	_ = store.GrantAdminPermission(groupID, "invalid_permission")
+
+	perms, err := store.ListGroupAdminPermissions(groupID)
+	if err != nil {
+		t.Fatalf("Failed to list permissions: %v", err)
+	}
+
+	if len(perms) != 0 {
+		t.Errorf("Expected 0 permissions for invalid grant, got %d", len(perms))
+	}
+}
+
+func TestRevokeAdminPermission(t *testing.T) {
+	store, cleanup := createTestAuthStoreForPrivileges(t)
+	defer cleanup()
+
+	groupID, _ := store.CreateGroup("test-group", "Test group")
+	store.GrantAdminPermission(groupID, PermManageUsers)
+
+	err := store.RevokeAdminPermission(groupID, PermManageUsers)
+	if err != nil {
+		t.Fatalf("Failed to revoke admin permission: %v", err)
+	}
+
+	perms, _ := store.ListGroupAdminPermissions(groupID)
+	if len(perms) != 0 {
+		t.Errorf("Expected 0 permissions after revocation, got %d", len(perms))
+	}
+}
+
+func TestRevokeAdminPermissionNotFound(t *testing.T) {
+	store, cleanup := createTestAuthStoreForPrivileges(t)
+	defer cleanup()
+
+	groupID, _ := store.CreateGroup("test-group", "Test group")
+
+	err := store.RevokeAdminPermission(groupID, PermManageUsers)
+	if err == nil {
+		t.Error("Expected error when revoking non-existent permission")
+	}
+}
+
+func TestListGroupAdminPermissions(t *testing.T) {
+	store, cleanup := createTestAuthStoreForPrivileges(t)
+	defer cleanup()
+
+	groupID, _ := store.CreateGroup("test-group", "Test group")
+
+	store.GrantAdminPermission(groupID, PermManageConnections)
+	store.GrantAdminPermission(groupID, PermManageGroups)
+	store.GrantAdminPermission(groupID, PermManageUsers)
+
+	perms, err := store.ListGroupAdminPermissions(groupID)
+	if err != nil {
+		t.Fatalf("Failed to list permissions: %v", err)
+	}
+
+	if len(perms) != 3 {
+		t.Errorf("Expected 3 permissions, got %d", len(perms))
+	}
+}
+
+func TestListGroupAdminPermissionsEmpty(t *testing.T) {
+	store, cleanup := createTestAuthStoreForPrivileges(t)
+	defer cleanup()
+
+	groupID, _ := store.CreateGroup("test-group", "Test group")
+
+	perms, err := store.ListGroupAdminPermissions(groupID)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if len(perms) != 0 {
+		t.Errorf("Expected 0 permissions, got %d", len(perms))
+	}
+}
+
+func TestGetUserAdminPermissions(t *testing.T) {
+	store, cleanup := createTestAuthStoreForPrivileges(t)
+	defer cleanup()
+
+	store.CreateUser("testuser", "password", "Test user")
+	userID, _ := store.GetUserID("testuser")
+	groupID, _ := store.CreateGroup("test-group", "Test group")
+	store.AddUserToGroup(groupID, userID)
+
+	store.GrantAdminPermission(groupID, PermManageConnections)
+	store.GrantAdminPermission(groupID, PermManageUsers)
+
+	perms, err := store.GetUserAdminPermissions(userID)
+	if err != nil {
+		t.Fatalf("Failed to get user admin permissions: %v", err)
+	}
+
+	if len(perms) != 2 {
+		t.Errorf("Expected 2 permissions, got %d", len(perms))
+	}
+
+	if !perms[PermManageConnections] {
+		t.Error("Expected user to have manage_connections permission")
+	}
+
+	if !perms[PermManageUsers] {
+		t.Error("Expected user to have manage_users permission")
+	}
+}
+
+func TestGetUserAdminPermissionsMultipleGroups(t *testing.T) {
+	store, cleanup := createTestAuthStoreForPrivileges(t)
+	defer cleanup()
+
+	store.CreateUser("testuser", "password", "Test user")
+	userID, _ := store.GetUserID("testuser")
+	group1ID, _ := store.CreateGroup("group1", "Group 1")
+	group2ID, _ := store.CreateGroup("group2", "Group 2")
+	store.AddUserToGroup(group1ID, userID)
+	store.AddUserToGroup(group2ID, userID)
+
+	store.GrantAdminPermission(group1ID, PermManageConnections)
+	store.GrantAdminPermission(group2ID, PermManageUsers)
+
+	perms, err := store.GetUserAdminPermissions(userID)
+	if err != nil {
+		t.Fatalf("Failed to get user admin permissions: %v", err)
+	}
+
+	if len(perms) != 2 {
+		t.Errorf("Expected 2 permissions (unioned), got %d", len(perms))
+	}
+
+	if !perms[PermManageConnections] {
+		t.Error("Expected manage_connections from group1")
+	}
+
+	if !perms[PermManageUsers] {
+		t.Error("Expected manage_users from group2")
+	}
+}
+
+func TestGetUserAdminPermissionsNestedGroups(t *testing.T) {
+	store, cleanup := createTestAuthStoreForPrivileges(t)
+	defer cleanup()
+
+	store.CreateUser("testuser", "password", "Test user")
+	userID, _ := store.GetUserID("testuser")
+	parentID, _ := store.CreateGroup("parent-group", "Parent")
+	childID, _ := store.CreateGroup("child-group", "Child")
+
+	// Add child to parent, user to child
+	store.AddGroupToGroup(parentID, childID)
+	store.AddUserToGroup(childID, userID)
+
+	// Grant permission to parent only
+	store.GrantAdminPermission(parentID, PermManagePrivileges)
+
+	perms, err := store.GetUserAdminPermissions(userID)
+	if err != nil {
+		t.Fatalf("Failed to get user admin permissions: %v", err)
+	}
+
+	if !perms[PermManagePrivileges] {
+		t.Error("Expected user to inherit manage_privileges from parent group")
+	}
+}
+
 func TestMCPPrivilegeCount(t *testing.T) {
 	store, cleanup := createTestAuthStoreForPrivileges(t)
 	defer cleanup()

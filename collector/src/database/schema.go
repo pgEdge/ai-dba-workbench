@@ -258,6 +258,7 @@ func (sm *SchemaManager) registerMigrations() {
 				(NULL, TRUE, 'pg_stat_checkpointer', 'Monitors checkpoint process statistics', 600, 7),
 				(NULL, TRUE, 'pg_stat_wal', 'Monitors WAL generation statistics', 600, 7),
 				(NULL, TRUE, 'pg_stat_slru', 'Monitors SLRU cache statistics', 600, 7),
+				(NULL, TRUE, 'pg_database', 'Monitors database catalog including transaction ID wraparound metrics', 300, 7),
 				-- Database-scoped probes
 				(NULL, TRUE, 'pg_stat_database', 'Monitors database-wide statistics', 300, 7),
 				(NULL, TRUE, 'pg_stat_database_conflicts', 'Monitors database conflicts during recovery', 300, 7),
@@ -3239,6 +3240,52 @@ func (sm *SchemaManager) registerMigrations() {
 		`)
 			if err != nil {
 				return fmt.Errorf("failed to add object_name column to alerts: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration 25: Add pg_database metrics table for XID wraparound monitoring
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     25,
+		Description: "Add pg_database metrics table for XID wraparound monitoring",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			_, err := conn.Exec(ctx, `
+			CREATE TABLE IF NOT EXISTS metrics.pg_database (
+				connection_id INTEGER NOT NULL,
+				datname TEXT,
+				datdba OID,
+				encoding INTEGER,
+				datlocprovider TEXT,
+				datistemplate BOOLEAN,
+				datallowconn BOOLEAN,
+				datconnlimit INTEGER,
+				datfrozenxid XID,
+				datminmxid XID,
+				dattablespace OID,
+				age_datfrozenxid BIGINT,
+				age_datminmxid BIGINT,
+				database_size_bytes BIGINT,
+				collected_at TIMESTAMPTZ NOT NULL
+			) PARTITION BY RANGE (collected_at);
+
+			COMMENT ON TABLE metrics.pg_database IS
+				'Stores pg_database catalog metrics including transaction ID wraparound indicators';
+
+			CREATE INDEX IF NOT EXISTS idx_pg_database_collected_at
+				ON metrics.pg_database(collected_at DESC);
+			CREATE INDEX IF NOT EXISTS idx_pg_database_connection_time
+				ON metrics.pg_database(connection_id, collected_at DESC);
+
+			INSERT INTO probe_configs (connection_id, is_enabled, name, description, collection_interval_seconds, retention_days)
+			VALUES (NULL, TRUE, 'pg_database', 'Monitors database catalog including transaction ID wraparound metrics', 300, 7)
+			ON CONFLICT DO NOTHING;
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to create pg_database metrics table: %w", err)
 			}
 
 			return nil

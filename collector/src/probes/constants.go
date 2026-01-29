@@ -32,6 +32,7 @@ const (
 	ProbeNamePgIdentFileMappings     = "pg_ident_file_mappings"
 	ProbeNamePgServerInfo            = "pg_server_info"
 	ProbeNamePgNodeRole              = "pg_node_role"
+	ProbeNamePgDatabase              = "pg_database"
 )
 
 // Probe names - Database-scoped probes

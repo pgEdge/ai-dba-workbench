@@ -68,7 +68,7 @@ func (sm *SchemaManager) registerMigrations() {
 			CREATE TABLE IF NOT EXISTS schema_version (
 				version INTEGER PRIMARY KEY,
 				description TEXT NOT NULL,
-				applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+				applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 			);
 
 			COMMENT ON TABLE schema_version IS
@@ -104,8 +104,8 @@ func (sm *SchemaManager) registerMigrations() {
 				sslcert TEXT,
 				sslkey TEXT,
 				sslrootcert TEXT,
-				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 				CONSTRAINT chk_owner CHECK (
 					(owner_username IS NOT NULL AND owner_token IS NULL) OR
 					(owner_username IS NULL AND owner_token IS NOT NULL)
@@ -189,8 +189,8 @@ func (sm *SchemaManager) registerMigrations() {
 				description TEXT NOT NULL,
 				collection_interval_seconds INTEGER NOT NULL DEFAULT 60,
 				retention_days INTEGER NOT NULL DEFAULT 28,
-				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 				CONSTRAINT chk_name_not_empty CHECK (name <> ''),
 				CONSTRAINT chk_collection_interval_positive CHECK (collection_interval_seconds > 0),
 				CONSTRAINT chk_retention_days_positive CHECK (retention_days > 0)
@@ -318,11 +318,11 @@ func (sm *SchemaManager) registerMigrations() {
 				backend_xid TEXT,
 				backend_xmin TEXT,
 				query TEXT,
-				backend_start TIMESTAMP,
-				xact_start TIMESTAMP,
-				query_start TIMESTAMP,
-				state_change TIMESTAMP,
-				collected_at TIMESTAMP NOT NULL,
+				backend_start TIMESTAMPTZ,
+				xact_start TIMESTAMPTZ,
+				query_start TIMESTAMPTZ,
+				state_change TIMESTAMPTZ,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at, pid)
 			) PARTITION BY RANGE (collected_at);
 
@@ -411,11 +411,11 @@ func (sm *SchemaManager) registerMigrations() {
 				autovacuum_count BIGINT,
 				analyze_count BIGINT,
 				autoanalyze_count BIGINT,
-				last_vacuum TIMESTAMP,
-				last_autovacuum TIMESTAMP,
-				last_analyze TIMESTAMP,
-				last_autoanalyze TIMESTAMP,
-				collected_at TIMESTAMP NOT NULL,
+				last_vacuum TIMESTAMPTZ,
+				last_autovacuum TIMESTAMPTZ,
+				last_analyze TIMESTAMPTZ,
+				last_autoanalyze TIMESTAMPTZ,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, database_name, collected_at, schemaname, relname)
 			) PARTITION BY RANGE (collected_at);
 
@@ -497,8 +497,8 @@ func (sm *SchemaManager) registerMigrations() {
 				idx_scan BIGINT,
 				idx_tup_read BIGINT,
 				idx_tup_fetch BIGINT,
-				last_idx_scan TIMESTAMP,
-				collected_at TIMESTAMP NOT NULL,
+				last_idx_scan TIMESTAMPTZ,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at, database_name, indexrelid)
 			) PARTITION BY RANGE (collected_at);
 
@@ -544,7 +544,7 @@ func (sm *SchemaManager) registerMigrations() {
 				shared_blk_write_time DOUBLE PRECISION,
 				local_blk_read_time DOUBLE PRECISION,
 				local_blk_write_time DOUBLE PRECISION,
-				collected_at TIMESTAMP NOT NULL,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, database_name, collected_at, queryid, userid, dbid, toplevel)
 			) PARTITION BY RANGE (collected_at);
 
@@ -662,9 +662,9 @@ func (sm *SchemaManager) registerMigrations() {
 				sessions_abandoned BIGINT,
 				sessions_fatal BIGINT,
 				sessions_killed BIGINT,
-				checksum_last_failure TIMESTAMP,
-				stats_reset TIMESTAMP,
-				collected_at TIMESTAMP NOT NULL,
+				checksum_last_failure TIMESTAMPTZ,
+				stats_reset TIMESTAMPTZ,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at, database_name)
 			) PARTITION BY RANGE (collected_at);
 
@@ -686,7 +686,7 @@ func (sm *SchemaManager) registerMigrations() {
 				confl_bufferpin BIGINT,
 				confl_deadlock BIGINT,
 				confl_active_logicalslot BIGINT,
-				collected_at TIMESTAMP NOT NULL,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at, database_name)
 			) PARTITION BY RANGE (collected_at);
 
@@ -704,10 +704,10 @@ func (sm *SchemaManager) registerMigrations() {
 				last_archived_wal TEXT,
 				failed_count BIGINT,
 				last_failed_wal TEXT,
-				last_archived_time TIMESTAMP,
-				last_failed_time TIMESTAMP,
-				stats_reset TIMESTAMP,
-				collected_at TIMESTAMP NOT NULL,
+				last_archived_time TIMESTAMPTZ,
+				last_failed_time TIMESTAMPTZ,
+				stats_reset TIMESTAMPTZ,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at)
 			) PARTITION BY RANGE (collected_at);
 
@@ -724,8 +724,8 @@ func (sm *SchemaManager) registerMigrations() {
 				buffers_clean BIGINT,
 				maxwritten_clean BIGINT,
 				buffers_alloc BIGINT,
-				stats_reset TIMESTAMP,
-				collected_at TIMESTAMP NOT NULL,
+				stats_reset TIMESTAMPTZ,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at)
 			) PARTITION BY RANGE (collected_at);
 
@@ -747,8 +747,8 @@ func (sm *SchemaManager) registerMigrations() {
 				write_time DOUBLE PRECISION,
 				sync_time DOUBLE PRECISION,
 				buffers_written BIGINT,
-				stats_reset TIMESTAMP,
-				collected_at TIMESTAMP NOT NULL,
+				stats_reset TIMESTAMPTZ,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at)
 			) PARTITION BY RANGE (collected_at);
 
@@ -770,8 +770,8 @@ func (sm *SchemaManager) registerMigrations() {
 				wal_sync BIGINT,
 				wal_write_time DOUBLE PRECISION,
 				wal_sync_time DOUBLE PRECISION,
-				stats_reset TIMESTAMP,
-				collected_at TIMESTAMP NOT NULL,
+				stats_reset TIMESTAMPTZ,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at)
 			) PARTITION BY RANGE (collected_at);
 
@@ -803,9 +803,9 @@ func (sm *SchemaManager) registerMigrations() {
 				replay_lag INTERVAL,
 				sync_priority INTEGER,
 				sync_state TEXT,
-				backend_start TIMESTAMP,
-				reply_time TIMESTAMP,
-				collected_at TIMESTAMP NOT NULL,
+				backend_start TIMESTAMPTZ,
+				reply_time TIMESTAMPTZ,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at, pid)
 			) PARTITION BY RANGE (collected_at);
 
@@ -828,8 +828,8 @@ func (sm *SchemaManager) registerMigrations() {
 				stream_bytes BIGINT,
 				total_txns BIGINT,
 				total_bytes BIGINT,
-				stats_reset TIMESTAMP,
-				collected_at TIMESTAMP NOT NULL,
+				stats_reset TIMESTAMPTZ,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at, slot_name)
 			) PARTITION BY RANGE (collected_at);
 
@@ -871,10 +871,10 @@ func (sm *SchemaManager) registerMigrations() {
 				relid OID,
 				received_lsn TEXT,
 				latest_end_lsn TEXT,
-				last_msg_send_time TIMESTAMP,
-				last_msg_receipt_time TIMESTAMP,
-				latest_end_time TIMESTAMP,
-				collected_at TIMESTAMP NOT NULL,
+				last_msg_send_time TIMESTAMPTZ,
+				last_msg_receipt_time TIMESTAMPTZ,
+				latest_end_time TIMESTAMPTZ,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at, subid)
 			) PARTITION BY RANGE (collected_at);
 
@@ -892,8 +892,8 @@ func (sm *SchemaManager) registerMigrations() {
 				subname TEXT,
 				apply_error_count BIGINT,
 				sync_error_count BIGINT,
-				stats_reset TIMESTAMP,
-				collected_at TIMESTAMP NOT NULL,
+				stats_reset TIMESTAMPTZ,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at, subid)
 			) PARTITION BY RANGE (collected_at);
 
@@ -919,10 +919,10 @@ func (sm *SchemaManager) registerMigrations() {
 				sender_port INTEGER,
 				conninfo TEXT,
 				latest_end_lsn TEXT,
-				last_msg_send_time TIMESTAMP,
-				last_msg_receipt_time TIMESTAMP,
-				latest_end_time TIMESTAMP,
-				collected_at TIMESTAMP NOT NULL,
+				last_msg_send_time TIMESTAMPTZ,
+				last_msg_receipt_time TIMESTAMPTZ,
+				latest_end_time TIMESTAMPTZ,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at)
 			) PARTITION BY RANGE (collected_at);
 
@@ -945,8 +945,8 @@ func (sm *SchemaManager) registerMigrations() {
 				wal_distance BIGINT,
 				block_distance BIGINT,
 				io_depth BIGINT,
-				stats_reset TIMESTAMP,
-				collected_at TIMESTAMP NOT NULL,
+				stats_reset TIMESTAMPTZ,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at)
 			) PARTITION BY RANGE (collected_at);
 
@@ -968,8 +968,8 @@ func (sm *SchemaManager) registerMigrations() {
 				blks_exists BIGINT,
 				flushes BIGINT,
 				truncates BIGINT,
-				stats_reset TIMESTAMP,
-				collected_at TIMESTAMP NOT NULL,
+				stats_reset TIMESTAMPTZ,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at, name)
 			) PARTITION BY RANGE (collected_at);
 
@@ -1000,8 +1000,8 @@ func (sm *SchemaManager) registerMigrations() {
 				reuses BIGINT,
 				fsyncs BIGINT,
 				fsync_time DOUBLE PRECISION,
-				stats_reset TIMESTAMP,
-				collected_at TIMESTAMP NOT NULL,
+				stats_reset TIMESTAMPTZ,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at, backend_type, object, context)
 			) PARTITION BY RANGE (collected_at);
 
@@ -1023,7 +1023,7 @@ func (sm *SchemaManager) registerMigrations() {
 				client_dn TEXT,
 				client_serial TEXT,
 				issuer_dn TEXT,
-				collected_at TIMESTAMP NOT NULL,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at, pid)
 			) PARTITION BY RANGE (collected_at);
 
@@ -1042,7 +1042,7 @@ func (sm *SchemaManager) registerMigrations() {
 				encrypted BOOLEAN,
 				credentials_delegated BOOLEAN,
 				principal TEXT,
-				collected_at TIMESTAMP NOT NULL,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at, pid)
 			) PARTITION BY RANGE (collected_at);
 
@@ -1063,7 +1063,7 @@ func (sm *SchemaManager) registerMigrations() {
 				calls BIGINT,
 				total_time DOUBLE PRECISION,
 				self_time DOUBLE PRECISION,
-				collected_at TIMESTAMP NOT NULL,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at, database_name, funcid)
 			) PARTITION BY RANGE (collected_at);
 
@@ -1089,7 +1089,7 @@ func (sm *SchemaManager) registerMigrations() {
 				toast_blks_hit BIGINT,
 				tidx_blks_read BIGINT,
 				tidx_blks_hit BIGINT,
-				collected_at TIMESTAMP NOT NULL,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at, database_name, relid)
 			) PARTITION BY RANGE (collected_at);
 
@@ -1111,7 +1111,7 @@ func (sm *SchemaManager) registerMigrations() {
 				indexrelname TEXT,
 				idx_blks_read BIGINT,
 				idx_blks_hit BIGINT,
-				collected_at TIMESTAMP NOT NULL,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at, database_name, indexrelid)
 			) PARTITION BY RANGE (collected_at);
 
@@ -1131,7 +1131,7 @@ func (sm *SchemaManager) registerMigrations() {
 				relname TEXT,
 				blks_read BIGINT,
 				blks_hit BIGINT,
-				collected_at TIMESTAMP NOT NULL,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at, database_name, relid)
 			) PARTITION BY RANGE (collected_at);
 
@@ -1188,7 +1188,7 @@ func (sm *SchemaManager) registerMigrations() {
 				processor_time_percent REAL,
 				privileged_time_percent REAL,
 				interrupt_time_percent REAL,
-				collected_at TIMESTAMP NOT NULL,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at)
 			) PARTITION BY RANGE (collected_at);
 
@@ -1218,7 +1218,7 @@ func (sm *SchemaManager) registerMigrations() {
 				cpu_usage REAL,
 				memory_usage REAL,
 				memory_bytes BIGINT,
-				collected_at TIMESTAMP NOT NULL,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at, pid)
 			) PARTITION BY RANGE (collected_at);
 
@@ -1275,7 +1275,7 @@ func (sm *SchemaManager) registerMigrations() {
 				used_inodes BIGINT,
 				free_inodes BIGINT,
 				file_system_type TEXT,
-				collected_at TIMESTAMP NOT NULL,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at, mount_point)
 			) PARTITION BY RANGE (collected_at);
 
@@ -1320,7 +1320,7 @@ func (sm *SchemaManager) registerMigrations() {
 				load_avg_five_minutes REAL,
 				load_avg_ten_minutes REAL,
 				load_avg_fifteen_minutes REAL,
-				collected_at TIMESTAMP NOT NULL,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at)
 			) PARTITION BY RANGE (collected_at);
 
@@ -1355,7 +1355,7 @@ func (sm *SchemaManager) registerMigrations() {
 				rx_errors BIGINT,
 				rx_dropped BIGINT,
 				link_speed_mbps INTEGER,
-				collected_at TIMESTAMP NOT NULL,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at, interface_name)
 			) PARTITION BY RANGE (collected_at);
 
@@ -1388,8 +1388,8 @@ func (sm *SchemaManager) registerMigrations() {
 				thread_count BIGINT,
 				architecture TEXT,
 				os_up_since_seconds BIGINT,
-				last_bootup_time TIMESTAMP,
-				collected_at TIMESTAMP NOT NULL,
+				last_bootup_time TIMESTAMPTZ,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at)
 			) PARTITION BY RANGE (collected_at);
 
@@ -1418,7 +1418,7 @@ func (sm *SchemaManager) registerMigrations() {
 				sleeping_processes INTEGER,
 				stopped_processes INTEGER,
 				zombie_processes INTEGER,
-				collected_at TIMESTAMP NOT NULL,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at)
 			) PARTITION BY RANGE (collected_at);
 
@@ -1475,7 +1475,7 @@ func (sm *SchemaManager) registerMigrations() {
 				sourcefile TEXT,
 				sourceline INTEGER,
 				pending_restart BOOLEAN,
-				collected_at TIMESTAMP NOT NULL,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at, name)
 			) PARTITION BY RANGE (collected_at);
 
@@ -1526,7 +1526,7 @@ func (sm *SchemaManager) registerMigrations() {
 				auth_method TEXT,
 				options TEXT[],
 				error TEXT,
-				collected_at TIMESTAMP NOT NULL,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at, rule_number)
 			) PARTITION BY RANGE (collected_at);
 
@@ -1552,7 +1552,7 @@ func (sm *SchemaManager) registerMigrations() {
 				sys_name TEXT,
 				pg_username TEXT,
 				error TEXT,
-				collected_at TIMESTAMP NOT NULL,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at, map_number)
 			) PARTITION BY RANGE (collected_at);
 
@@ -1618,7 +1618,7 @@ func (sm *SchemaManager) registerMigrations() {
 				-- Extensions (for role detection)
 				installed_extensions TEXT[],
 
-				collected_at TIMESTAMP NOT NULL,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at)
 			) PARTITION BY RANGE (collected_at);
 
@@ -1700,7 +1700,7 @@ func (sm *SchemaManager) registerMigrations() {
 				-- Extended Information (JSON for flexibility)
 				role_details JSONB,
 
-				collected_at TIMESTAMP NOT NULL,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at)
 			) PARTITION BY RANGE (collected_at);
 
@@ -1811,7 +1811,7 @@ func (sm *SchemaManager) registerMigrations() {
 				default_anomaly_sensitivity REAL NOT NULL DEFAULT 3.0,
 				baseline_refresh_interval_mins INTEGER NOT NULL DEFAULT 60,
 				correlation_window_seconds INTEGER NOT NULL DEFAULT 120,
-				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+				updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 			);
 
 			COMMENT ON TABLE alerter_settings IS
@@ -1843,8 +1843,8 @@ func (sm *SchemaManager) registerMigrations() {
 				probe_name TEXT NOT NULL,
 				extension_name TEXT,
 				is_available BOOLEAN NOT NULL DEFAULT FALSE,
-				last_checked TIMESTAMP,
-				last_collected TIMESTAMP,
+				last_checked TIMESTAMPTZ,
+				last_collected TIMESTAMPTZ,
 				unavailable_reason TEXT,
 				UNIQUE(connection_id, database_name, probe_name)
 			);
@@ -1881,7 +1881,7 @@ func (sm *SchemaManager) registerMigrations() {
 				default_enabled BOOLEAN NOT NULL DEFAULT TRUE,
 				required_extension TEXT,
 				is_built_in BOOLEAN NOT NULL DEFAULT FALSE,
-				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+				created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 			);
 
 			COMMENT ON TABLE alert_rules IS
@@ -1914,8 +1914,8 @@ func (sm *SchemaManager) registerMigrations() {
 				threshold REAL NOT NULL,
 				severity TEXT NOT NULL CHECK (severity IN ('info', 'warning', 'critical')),
 				enabled BOOLEAN NOT NULL DEFAULT TRUE,
-				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 				UNIQUE(rule_id, connection_id, database_name)
 			);
 
@@ -1951,8 +1951,8 @@ func (sm *SchemaManager) registerMigrations() {
 				description TEXT NOT NULL,
 				correlation_id TEXT,
 				status TEXT NOT NULL CHECK (status IN ('active', 'cleared', 'acknowledged')),
-				triggered_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-				cleared_at TIMESTAMP,
+				triggered_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				cleared_at TIMESTAMPTZ,
 				anomaly_score REAL,
 				anomaly_details JSONB
 			);
@@ -1986,7 +1986,7 @@ func (sm *SchemaManager) registerMigrations() {
 				id BIGSERIAL PRIMARY KEY,
 				alert_id BIGINT NOT NULL REFERENCES alerts(id) ON DELETE CASCADE,
 				acknowledged_by TEXT NOT NULL,
-				acknowledged_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				acknowledged_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 				acknowledge_type TEXT NOT NULL CHECK (acknowledge_type IN ('acknowledge', 'dismiss', 'false_positive')),
 				message TEXT NOT NULL DEFAULT '',
 				false_positive BOOLEAN NOT NULL DEFAULT FALSE
@@ -2025,10 +2025,10 @@ func (sm *SchemaManager) registerMigrations() {
 				connection_id INTEGER REFERENCES connections(id) ON DELETE CASCADE,
 				database_name TEXT,
 				reason TEXT NOT NULL,
-				start_time TIMESTAMP NOT NULL,
-				end_time TIMESTAMP NOT NULL,
+				start_time TIMESTAMPTZ NOT NULL,
+				end_time TIMESTAMPTZ NOT NULL,
 				created_by TEXT NOT NULL,
-				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 				CHECK (end_time > start_time)
 			);
 
@@ -2061,8 +2061,8 @@ func (sm *SchemaManager) registerMigrations() {
 				reason TEXT NOT NULL,
 				enabled BOOLEAN NOT NULL DEFAULT TRUE,
 				created_by TEXT NOT NULL,
-				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+				created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 			);
 
 			COMMENT ON TABLE blackout_schedules IS
@@ -2135,7 +2135,7 @@ func (sm *SchemaManager) registerMigrations() {
 				min REAL NOT NULL,
 				max REAL NOT NULL,
 				sample_count BIGINT NOT NULL DEFAULT 0,
-				last_calculated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+				last_calculated TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 			);
 
 			COMMENT ON TABLE metric_baselines IS
@@ -2174,8 +2174,8 @@ func (sm *SchemaManager) registerMigrations() {
 				id BIGSERIAL PRIMARY KEY,
 				connection_id INTEGER NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
 				database_name TEXT,
-				start_time TIMESTAMP NOT NULL,
-				end_time TIMESTAMP,
+				start_time TIMESTAMPTZ NOT NULL,
+				end_time TIMESTAMPTZ,
 				anomaly_count INTEGER NOT NULL DEFAULT 1,
 				root_cause_guess TEXT
 			);
@@ -2203,7 +2203,7 @@ func (sm *SchemaManager) registerMigrations() {
 				metric_name TEXT NOT NULL,
 				metric_value REAL NOT NULL,
 				z_score REAL NOT NULL,
-				detected_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				detected_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 				context JSONB NOT NULL DEFAULT '{}',
 				tier1_pass BOOLEAN NOT NULL DEFAULT FALSE,
 				tier2_score REAL,
@@ -2213,7 +2213,7 @@ func (sm *SchemaManager) registerMigrations() {
 				tier3_error TEXT,
 				final_decision TEXT CHECK (final_decision IN ('alert', 'suppress', 'pending')),
 				alert_id BIGINT REFERENCES alerts(id) ON DELETE SET NULL,
-				processed_at TIMESTAMP
+				processed_at TIMESTAMPTZ
 			);
 
 			COMMENT ON TABLE anomaly_candidates IS
@@ -2348,8 +2348,8 @@ func (sm *SchemaManager) registerMigrations() {
 				id SERIAL PRIMARY KEY,
 				name VARCHAR(255) NOT NULL,
 				description TEXT,
-				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 				CONSTRAINT cluster_groups_name_unique UNIQUE (name)
 			);
 
@@ -2379,8 +2379,8 @@ func (sm *SchemaManager) registerMigrations() {
 				group_id INTEGER NOT NULL REFERENCES cluster_groups(id) ON DELETE CASCADE,
 				name VARCHAR(255) NOT NULL,
 				description TEXT,
-				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 				CONSTRAINT clusters_group_name_unique UNIQUE (group_id, name)
 			);
 
@@ -2598,7 +2598,7 @@ func (sm *SchemaManager) registerMigrations() {
 				extversion TEXT,
 				extrelocatable BOOLEAN,
 				schema_name TEXT,
-				collected_at TIMESTAMP NOT NULL,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, extname, collected_at)
 			) PARTITION BY RANGE (collected_at);
 
@@ -2662,7 +2662,7 @@ func (sm *SchemaManager) registerMigrations() {
 				extversion TEXT,
 				extrelocatable BOOLEAN,
 				schema_name TEXT,
-				collected_at TIMESTAMP NOT NULL,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, database_name, extname, collected_at)
 			) PARTITION BY RANGE (collected_at);
 
@@ -2731,8 +2731,8 @@ func (sm *SchemaManager) registerMigrations() {
 				template_reminder TEXT,
 				reminder_enabled BOOLEAN NOT NULL DEFAULT FALSE,
 				reminder_interval_hours INTEGER DEFAULT 24,
-				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 				CONSTRAINT chk_notification_channel_owner CHECK (
 					(owner_username IS NOT NULL AND owner_token IS NULL) OR
 					(owner_username IS NULL AND owner_token IS NOT NULL)
@@ -2830,7 +2830,7 @@ func (sm *SchemaManager) registerMigrations() {
 				email_address TEXT NOT NULL,
 				display_name TEXT,
 				enabled BOOLEAN NOT NULL DEFAULT TRUE,
-				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+				created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 			);
 
 			COMMENT ON TABLE email_recipients IS
@@ -2871,7 +2871,7 @@ func (sm *SchemaManager) registerMigrations() {
 				enabled BOOLEAN NOT NULL DEFAULT TRUE,
 				reminder_enabled_override BOOLEAN,
 				reminder_interval_hours_override INTEGER,
-				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 				CONSTRAINT connection_channel_unique UNIQUE (connection_id, channel_id)
 			);
 
@@ -2923,9 +2923,9 @@ func (sm *SchemaManager) registerMigrations() {
 				error_message TEXT,
 				attempt_count INTEGER NOT NULL DEFAULT 1,
 				max_attempts INTEGER NOT NULL DEFAULT 3,
-				next_retry_at TIMESTAMP,
-				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-				sent_at TIMESTAMP
+				next_retry_at TIMESTAMPTZ,
+				created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				sent_at TIMESTAMPTZ
 			);
 
 			COMMENT ON TABLE notification_history IS
@@ -2994,7 +2994,7 @@ func (sm *SchemaManager) registerMigrations() {
 				id BIGSERIAL PRIMARY KEY,
 				alert_id BIGINT NOT NULL REFERENCES alerts(id) ON DELETE CASCADE,
 				channel_id BIGINT NOT NULL REFERENCES notification_channels(id) ON DELETE CASCADE,
-				last_reminder_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				last_reminder_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 				reminder_count INTEGER NOT NULL DEFAULT 0,
 				CONSTRAINT alert_channel_reminder_unique UNIQUE (alert_id, channel_id)
 			);
@@ -3120,7 +3120,7 @@ func (sm *SchemaManager) registerMigrations() {
 				candidate_id BIGINT REFERENCES anomaly_candidates(id) ON DELETE CASCADE,
 				embedding vector(1536),
 				model_name TEXT NOT NULL,
-				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 				UNIQUE(candidate_id)
 			);
 
@@ -3174,7 +3174,7 @@ func (sm *SchemaManager) registerMigrations() {
 			// Add last_updated column to alerts table
 			_, err := conn.Exec(ctx, `
 			ALTER TABLE alerts
-				ADD COLUMN IF NOT EXISTS last_updated TIMESTAMP;
+				ADD COLUMN IF NOT EXISTS last_updated TIMESTAMPTZ;
 
 			COMMENT ON COLUMN alerts.last_updated IS
 				'Timestamp of last metric value update for ongoing threshold violations';
@@ -3344,7 +3344,7 @@ func (sm *SchemaManager) registerMigrations() {
 				wal_status TEXT,
 				safe_wal_size BIGINT,
 				retained_bytes NUMERIC,
-				collected_at TIMESTAMP NOT NULL,
+				collected_at TIMESTAMPTZ NOT NULL,
 				PRIMARY KEY (connection_id, collected_at, slot_name)
 			) PARTITION BY RANGE (collected_at);
 

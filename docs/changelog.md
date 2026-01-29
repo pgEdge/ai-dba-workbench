@@ -56,6 +56,9 @@ and this project adheres to
 
 ### Changed
 
+- All timestamp columns in the collector database now use TIMESTAMPTZ
+  (timestamp with timezone) for unambiguous time representation. **Breaking
+  change**: Existing collector databases must be dropped and recreated.
 - Server `main.go` refactored for improved code organization.
 - Context propagation added to MCP tools for better request handling.
 - Full 5-field cron parser implementation replaces the limited parser.

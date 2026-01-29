@@ -53,9 +53,18 @@ and this project adheres to
   variables, and command-line flags in `docs/alerter/configuration.md`
 - Cron expression documentation for blackout schedule configuration in
   `docs/alerter/cron-expressions.md`
+- Standardized indexes on all collector metrics tables for improved query
+  performance:
+  - `(connection_id, collected_at DESC)` on every metrics table
+  - `(connection_id, database_name, collected_at DESC)` on database-scoped
+    tables
+  - Object-specific indexes for tables with additional key columns
 
 ### Changed
 
+- Collector schema migrations consolidated into single migration for simpler
+  deployment and reduced complexity. **Breaking change**: Existing collector
+  databases must be dropped and recreated.
 - All timestamp columns in the collector database now use TIMESTAMPTZ
   (timestamp with timezone) for unambiguous time representation. **Breaking
   change**: Existing collector databases must be dropped and recreated.

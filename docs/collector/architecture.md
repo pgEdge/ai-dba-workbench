@@ -95,16 +95,16 @@ func waitForShutdown()
 - `datastore_pool.go` - Datastore connection pooling
 - `monitored_pool.go` - Monitored server connection pooling
 - `schema.go` - Schema migrations
-- `crypto.go` - Password encryption/decryption
 - `connstring.go` - Connection string building
 - `types.go` - Type definitions
+
+Password encryption is handled by the shared `pkg/crypto` package.
 
 **Responsibilities**:
 
 - Manage datastore connection pool
 - Manage monitored connection pools (one per server)
 - Apply schema migrations
-- Encrypt/decrypt passwords
 - Provide connection acquisition/release interface
 
 **Key Types**:
@@ -515,34 +515,40 @@ main goroutine
 
 ### Password Encryption
 
-**Algorithm**: AES-256-GCM
+**Algorithm**: AES-256-GCM with PBKDF2 key derivation
 
 The server secret is loaded from a file (see `secret_file` configuration option).
+Password encryption is handled by the shared `pkg/crypto` package.
 
 **Key Derivation**:
 ```
-key = SHA256(server_secret + username)
+salt = random 16 bytes (cryptographically secure)
+key = PBKDF2(server_secret, salt, 100000 iterations, SHA256)
 ```
 
 **Encryption Process**:
 ```
-1. Derive key from server_secret and username
-2. Generate random nonce
-3. Encrypt password with AES-GCM
-4. Prepend nonce to ciphertext
-5. Base64 encode result
-6. Store in connections.password_encrypted
+1. Generate random 16-byte salt
+2. Derive 256-bit key using PBKDF2 with server_secret and salt
+3. Generate random 12-byte nonce
+4. Encrypt password with AES-256-GCM
+5. Concatenate: salt + nonce + ciphertext
+6. Base64 encode result
+7. Store in connections.password_encrypted
 ```
 
 **Decryption Process**:
 ```
 1. Base64 decode encrypted password
-2. Extract nonce (first 12 bytes)
-3. Extract ciphertext (remaining bytes)
-4. Derive key from server_secret and username
-5. Decrypt with AES-GCM
-6. Return plaintext password
+2. Extract salt (first 16 bytes)
+3. Extract nonce (next 12 bytes)
+4. Extract ciphertext (remaining bytes)
+5. Derive key using PBKDF2 with server_secret and salt
+6. Decrypt with AES-256-GCM
+7. Return plaintext password
 ```
+
+Users should not manually encrypt passwords; use the MCP server API instead.
 
 ### Isolation
 

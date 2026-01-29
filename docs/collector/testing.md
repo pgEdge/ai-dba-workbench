@@ -146,28 +146,25 @@ func TestPasswordEncryption(t *testing.T) {
         name     string
         password string
         secret   string
-        username string
         wantErr  bool
     }{
         {
             name:     "valid encryption",
             password: "mypassword",
             secret:   "mysecret",
-            username: "user1",
             wantErr:  false,
         },
         {
             name:     "empty secret",
             password: "mypassword",
             secret:   "",
-            username: "user1",
             wantErr:  true,
         },
     }
-    
+
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
-            encrypted, err := EncryptPassword(tt.password, tt.secret, tt.username)
+            encrypted, err := crypto.EncryptPassword(tt.password, tt.secret)
             if (err != nil) != tt.wantErr {
                 t.Errorf("EncryptPassword() error = %v, wantErr %v", err, tt.wantErr)
                 return
@@ -499,10 +496,9 @@ SELECT * FROM probes;
 func BenchmarkEncryption(b *testing.B) {
     password := "test-password"
     secret := "test-secret"
-    username := "test-user"
-    
+
     for i := 0; i < b.N; i++ {
-        _, err := EncryptPassword(password, secret, username)
+        _, err := crypto.EncryptPassword(password, secret)
         if err != nil {
             b.Fatal(err)
         }

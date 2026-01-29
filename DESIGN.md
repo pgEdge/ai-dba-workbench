@@ -525,6 +525,37 @@ token_scopes         - Token scope restrictions
 connection_privileges - Connection access per group
 ```
 
+#### Design Rationale
+
+The server stores authentication data in SQLite rather than
+in the PostgreSQL datastore for three reasons.
+
+**Privilege separation.** The SQLite database is a local file
+that only the server process can access. The PostgreSQL
+datastore is shared by the collector, alerter, and server.
+Storing auth data in SQLite prevents a compromised collector
+or alerter from reading user credentials, token hashes, or
+RBAC rules.
+
+**No network dependency.** Authentication checks run on every
+API request through middleware. SQLite serves token validation
+and RBAC lookups locally without network round-trips. Moving
+auth to PostgreSQL would make every request depend on network
+connectivity to the remote datastore. A network partition or
+datastore outage would lock out all users.
+
+**Failure isolation.** Datastore failures such as a full disk
+from metrics, a crash, or corruption do not affect
+authentication. The auth database operates in an independent
+failure domain.
+
+**Trade-offs.** This separation prevents foreign-key
+relationships between auth tables and the datastore
+`connections` table. Operations that span both databases
+require application-level coordination rather than database
+transactions. The application uses connection IDs as shared
+identifiers to bridge the two databases.
+
 ### Testing
 
 Each sub-project contains a test suite with unit and regression tests. Unit

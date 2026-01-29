@@ -230,6 +230,41 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			results = append(results, mv)
 		}
 
+	case "pg_replication_slots.retained_bytes":
+		rows, err := d.pool.Query(ctx, `
+			WITH recent_slots AS (
+				SELECT connection_id,
+				       slot_name,
+				       retained_bytes,
+				       collected_at,
+				       ROW_NUMBER() OVER (
+				           PARTITION BY connection_id, slot_name
+				           ORDER BY collected_at DESC
+				       ) as rn
+				FROM metrics.pg_replication_slots
+				WHERE collected_at > NOW() - INTERVAL '15 minutes'
+				  AND retained_bytes IS NOT NULL
+			)
+			SELECT connection_id,
+			       COALESCE(MAX(retained_bytes), 0)::float as value,
+			       MAX(collected_at) as collected_at
+			FROM recent_slots
+			WHERE rn = 1
+			GROUP BY connection_id
+		`)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var mv MetricValue
+			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan metric value: %w", err)
+			}
+			results = append(results, mv)
+		}
+
 	case "pg_replication_slots.inactive":
 		// Count inactive replication slots per connection
 		// This queries the pg_node_role data which includes slot information

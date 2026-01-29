@@ -246,6 +246,7 @@ func (sm *SchemaManager) registerMigrations() {
 				(NULL, TRUE, 'pg_stat_activity', 'Monitors current database activity and backend processes', 60, 7),
 				(NULL, TRUE, 'pg_stat_replication', 'Monitors replication status and lag', 30, 7),
 				(NULL, TRUE, 'pg_stat_replication_slots', 'Monitors replication slot status and usage', 300, 7),
+				(NULL, TRUE, 'pg_replication_slots', 'Monitors replication slot WAL retention', 300, 7),
 				(NULL, TRUE, 'pg_stat_wal_receiver', 'Monitors WAL receiver process status', 30, 7),
 				(NULL, TRUE, 'pg_stat_recovery_prefetch', 'Monitors recovery prefetch statistics', 600, 7),
 				(NULL, TRUE, 'pg_stat_subscription', 'Monitors logical replication subscription status', 300, 7),
@@ -837,6 +838,26 @@ func (sm *SchemaManager) registerMigrations() {
 
 			ALTER TABLE metrics.pg_stat_replication_slots
 				ADD CONSTRAINT fk_pg_stat_replication_slots_connection_id
+				FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
+
+			-- pg_replication_slots
+			CREATE TABLE IF NOT EXISTS metrics.pg_replication_slots (
+				connection_id INTEGER NOT NULL,
+				slot_name TEXT NOT NULL,
+				slot_type TEXT,
+				active BOOLEAN,
+				wal_status TEXT,
+				safe_wal_size BIGINT,
+				retained_bytes NUMERIC,
+				collected_at TIMESTAMP NOT NULL,
+				PRIMARY KEY (connection_id, collected_at, slot_name)
+			) PARTITION BY RANGE (collected_at);
+
+			COMMENT ON TABLE metrics.pg_replication_slots IS
+				'Replication slot WAL retention metrics';
+
+			ALTER TABLE metrics.pg_replication_slots
+				ADD CONSTRAINT fk_pg_replication_slots_connection_id
 				FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
 
 			-- pg_stat_subscription
@@ -3286,6 +3307,52 @@ func (sm *SchemaManager) registerMigrations() {
 		`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_database metrics table: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     26,
+		Description: "Add pg_replication_slots metrics table for WAL retention monitoring",
+		Up: func(conn *pgxpool.Conn) error {
+			ctx := context.Background()
+
+			_, err := conn.Exec(ctx, `
+			CREATE TABLE IF NOT EXISTS metrics.pg_replication_slots (
+				connection_id INTEGER NOT NULL,
+				slot_name TEXT NOT NULL,
+				slot_type TEXT,
+				active BOOLEAN,
+				wal_status TEXT,
+				safe_wal_size BIGINT,
+				retained_bytes NUMERIC,
+				collected_at TIMESTAMP NOT NULL,
+				PRIMARY KEY (connection_id, collected_at, slot_name)
+			) PARTITION BY RANGE (collected_at);
+
+			COMMENT ON TABLE metrics.pg_replication_slots IS
+				'Replication slot WAL retention metrics';
+
+			DO $$
+			BEGIN
+				IF NOT EXISTS (
+					SELECT 1 FROM pg_constraint
+					WHERE conname = 'fk_pg_replication_slots_connection_id'
+				) THEN
+					ALTER TABLE metrics.pg_replication_slots
+						ADD CONSTRAINT fk_pg_replication_slots_connection_id
+						FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
+				END IF;
+			END $$;
+
+			INSERT INTO probe_configs (connection_id, is_enabled, name, description, collection_interval_seconds, retention_days)
+			VALUES (NULL, TRUE, 'pg_replication_slots', 'Monitors replication slot WAL retention', 300, 7)
+			ON CONFLICT DO NOTHING;
+		`)
+			if err != nil {
+				return fmt.Errorf("failed to create pg_replication_slots metrics table: %w", err)
 			}
 
 			return nil

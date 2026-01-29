@@ -15,6 +15,7 @@ const (
 	ProbeNamePgStatActivity          = "pg_stat_activity"
 	ProbeNamePgStatReplication       = "pg_stat_replication"
 	ProbeNamePgStatReplicationSlots  = "pg_stat_replication_slots"
+	ProbeNamePgReplicationSlots      = "pg_replication_slots"
 	ProbeNamePgStatWALReceiver       = "pg_stat_wal_receiver"
 	ProbeNamePgStatRecoveryPrefetch  = "pg_stat_recovery_prefetch"
 	ProbeNamePgStatSubscription      = "pg_stat_subscription"

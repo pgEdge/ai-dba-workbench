@@ -695,6 +695,8 @@ func (ps *ProbeScheduler) createProbe(config *probes.ProbeConfig) probes.Metrics
 		return probes.NewPgStatReplicationProbe(config)
 	case probes.ProbeNamePgStatReplicationSlots:
 		return probes.NewPgStatReplicationSlotsProbe(config)
+	case probes.ProbeNamePgReplicationSlots:
+		return probes.NewPgReplicationSlotsProbe(config)
 	case probes.ProbeNamePgStatWALReceiver:
 		return probes.NewPgStatWALReceiverProbe(config)
 	case probes.ProbeNamePgStatRecoveryPrefetch:

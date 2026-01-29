@@ -480,6 +480,7 @@ func getDefaultInterval(probeName string) int {
 		"pg_stat_subscription":       300,  // IntervalSubscription
 		"pg_stat_subscription_stats": 300,  // IntervalDefault
 		"pg_stat_replication_slots":  300,  // IntervalReplicationSlots
+		"pg_replication_slots":       300,  // IntervalReplicationSlots
 		"pg_stat_recovery_prefetch":  600,  // IntervalRecoveryPrefetch
 		"pg_stat_database_conflicts": 300,  // IntervalDefault
 		"pg_stat_ssl":                300,  // IntervalDefault

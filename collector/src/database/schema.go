@@ -3089,8 +3089,24 @@ func (sm *SchemaManager) registerMigrations() {
 		Up: func(conn *pgxpool.Conn) error {
 			ctx := context.Background()
 
+			// Check if pgvector extension is available
+			var vectorAvailable bool
+			err := conn.QueryRow(ctx, `
+				SELECT EXISTS(
+					SELECT 1 FROM pg_available_extensions WHERE name = 'vector'
+				)
+			`).Scan(&vectorAvailable)
+			if err != nil {
+				return fmt.Errorf("failed to check vector extension availability: %w", err)
+			}
+
+			if !vectorAvailable {
+				logger.Info("pgvector extension not available, skipping anomaly embeddings setup")
+				return nil
+			}
+
 			// Create pgvector extension
-			_, err := conn.Exec(ctx, `
+			_, err = conn.Exec(ctx, `
 			CREATE EXTENSION IF NOT EXISTS vector;
 		`)
 			if err != nil {

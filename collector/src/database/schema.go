@@ -1054,7 +1054,7 @@ func (sm *SchemaManager) registerMigrations() {
 			_, err = conn.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_database (
 					connection_id INTEGER NOT NULL,
-					datname TEXT,
+					datname TEXT NOT NULL,
 					datdba OID,
 					encoding INTEGER,
 					datlocprovider "char",
@@ -1067,14 +1067,21 @@ func (sm *SchemaManager) registerMigrations() {
 					age_datfrozenxid BIGINT,
 					age_datminmxid BIGINT,
 					database_size_bytes BIGINT,
-					collected_at TIMESTAMPTZ NOT NULL
+					collected_at TIMESTAMPTZ NOT NULL,
+					PRIMARY KEY (connection_id, collected_at, datname)
 				) PARTITION BY RANGE (collected_at);
 
 				COMMENT ON TABLE metrics.pg_database IS
 					'Stores pg_database catalog metrics including transaction ID wraparound indicators';
 
+				ALTER TABLE metrics.pg_database
+					ADD CONSTRAINT fk_pg_database_connection_id
+					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
+
 				CREATE INDEX IF NOT EXISTS idx_pg_database_conn_time
 					ON metrics.pg_database(connection_id, collected_at DESC);
+				CREATE INDEX IF NOT EXISTS idx_pg_database_conn_db_time
+					ON metrics.pg_database(connection_id, datname, collected_at DESC);
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_database table: %w", err)

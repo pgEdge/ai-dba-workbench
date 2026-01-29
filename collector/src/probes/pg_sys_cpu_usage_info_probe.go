@@ -37,6 +37,10 @@ func (p *PgSysCPUUsageInfoProbe) GetName() string {
 	return ProbeNamePgSysCPUUsageInfo
 }
 
+func (p *PgSysCPUUsageInfoProbe) GetExtensionName() string {
+	return "system_stats"
+}
+
 // GetTableName returns the metrics table name
 func (p *PgSysCPUUsageInfoProbe) GetTableName() string {
 	return ProbeNamePgSysCPUUsageInfo

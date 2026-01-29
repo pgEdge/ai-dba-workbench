@@ -37,6 +37,10 @@ func (p *PgSysLoadAvgInfoProbe) GetName() string {
 	return ProbeNamePgSysLoadAvgInfo
 }
 
+func (p *PgSysLoadAvgInfoProbe) GetExtensionName() string {
+	return "system_stats"
+}
+
 // GetTableName returns the metrics table name
 func (p *PgSysLoadAvgInfoProbe) GetTableName() string {
 	return ProbeNamePgSysLoadAvgInfo

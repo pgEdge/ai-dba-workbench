@@ -37,6 +37,10 @@ func (p *PgSysDiskInfoProbe) GetName() string {
 	return ProbeNamePgSysDiskInfo
 }
 
+func (p *PgSysDiskInfoProbe) GetExtensionName() string {
+	return "system_stats"
+}
+
 // GetTableName returns the metrics table name
 func (p *PgSysDiskInfoProbe) GetTableName() string {
 	return ProbeNamePgSysDiskInfo

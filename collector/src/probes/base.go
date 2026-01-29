@@ -66,6 +66,12 @@ type MetricsProbe interface {
 	IsDatabaseScoped() bool
 }
 
+// ExtensionProbe is implemented by probes that require a PostgreSQL
+// extension. The scheduler uses this to record why a probe is unavailable.
+type ExtensionProbe interface {
+    GetExtensionName() string
+}
+
 // BaseMetricsProbe provides common probe functionality
 type BaseMetricsProbe struct {
 	config *ProbeConfig

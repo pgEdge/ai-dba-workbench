@@ -37,6 +37,10 @@ func (p *PgStatStatementsProbe) GetName() string {
 	return ProbeNamePgStatStatements
 }
 
+func (p *PgStatStatementsProbe) GetExtensionName() string {
+	return "pg_stat_statements"
+}
+
 // GetTableName returns the metrics table name
 func (p *PgStatStatementsProbe) GetTableName() string {
 	return ProbeNamePgStatStatements

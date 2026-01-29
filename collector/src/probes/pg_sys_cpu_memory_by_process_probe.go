@@ -37,6 +37,10 @@ func (p *PgSysCPUMemoryByProcessProbe) GetName() string {
 	return ProbeNamePgSysCPUMemoryByProcess
 }
 
+func (p *PgSysCPUMemoryByProcessProbe) GetExtensionName() string {
+	return "system_stats"
+}
+
 // GetTableName returns the metrics table name
 func (p *PgSysCPUMemoryByProcessProbe) GetTableName() string {
 	return ProbeNamePgSysCPUMemoryByProcess

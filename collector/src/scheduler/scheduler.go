@@ -24,6 +24,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// availabilityKey identifies a probe for a specific connection
+type availabilityKey struct {
+	connectionID int
+	probeName    string
+}
+
 // ProbeScheduler manages the execution of monitoring probes
 type ProbeScheduler struct {
 	datastore      *database.Datastore
@@ -37,6 +43,9 @@ type ProbeScheduler struct {
 	cancel         context.CancelFunc
 	wg             sync.WaitGroup
 	configReloader *time.Ticker
+	availCache     map[availabilityKey]bool      // tracks last known is_available per probe/connection
+	availLastWrite map[availabilityKey]time.Time  // tracks when we last wrote to DB
+	availMutex     sync.Mutex
 }
 
 // Config interface defines the minimal configuration needed by ProbeScheduler
@@ -53,10 +62,12 @@ func NewProbeScheduler(datastore *database.Datastore, poolManager *database.Moni
 		poolManager:  poolManager,
 		serverSecret: serverSecret,
 		config:       config,
-		probesByConn: make(map[int]map[string]probes.MetricsProbe),
-		shutdownChan: make(chan struct{}),
-		ctx:          ctx,
-		cancel:       cancel,
+		probesByConn:   make(map[int]map[string]probes.MetricsProbe),
+		shutdownChan:   make(chan struct{}),
+		ctx:            ctx,
+		cancel:         cancel,
+		availCache:     make(map[availabilityKey]bool),
+		availLastWrite: make(map[availabilityKey]time.Time),
 	}
 }
 
@@ -348,6 +359,14 @@ func (ps *ProbeScheduler) executeProbeForConnection(ctx context.Context, probe p
 	if execCtx.Err() == context.DeadlineExceeded {
 		logger.Errorf("Probe %s execution timed out for connection %s (timeout: %d seconds)",
 			config.Name, conn.Name, ps.config.GetMonitoredPoolMaxWaitSeconds())
+		// Record timeout as unavailable
+		var extName *string
+		if ep, ok := probe.(probes.ExtensionProbe); ok {
+			name := ep.GetExtensionName()
+			extName = &name
+		}
+		reason := "probe execution timed out"
+		ps.recordAvailability(conn.ID, config.Name, extName, false, &reason)
 		return
 	}
 
@@ -371,6 +390,63 @@ func (ps *ProbeScheduler) executeProbeForConnection(ctx context.Context, probe p
 		logger.Infof("Probe %s on %s completed in %.2fms (no metrics collected)",
 			config.Name, conn.Name, float64(duration.Microseconds())/1000.0)
 	}
+
+	// Record probe availability
+	var extName *string
+	if ep, ok := probe.(probes.ExtensionProbe); ok {
+		name := ep.GetExtensionName()
+		extName = &name
+	}
+
+	if metricsStored > 0 {
+		ps.recordAvailability(conn.ID, config.Name, extName, true, nil)
+	} else if extName != nil && allMetrics == nil {
+		reason := fmt.Sprintf("extension '%s' not installed", *extName)
+		ps.recordAvailability(conn.ID, config.Name, extName, false, &reason)
+	} else {
+		// Non-extension probe with no metrics is normal (e.g., no replication)
+		ps.recordAvailability(conn.ID, config.Name, extName, true, nil)
+	}
+}
+
+// recordAvailability records probe availability, writing to the DB only
+// when the status changes or every 10 minutes to keep last_checked fresh.
+func (ps *ProbeScheduler) recordAvailability(connectionID int, probeName string, extensionName *string, isAvailable bool, unavailableReason *string) {
+	key := availabilityKey{connectionID: connectionID, probeName: probeName}
+
+	ps.availMutex.Lock()
+	prev, known := ps.availCache[key]
+	lastWrite := ps.availLastWrite[key]
+	ps.availMutex.Unlock()
+
+	changed := !known || prev != isAvailable
+	stale := time.Since(lastWrite) > 10*time.Minute
+
+	if !changed && !stale {
+		return
+	}
+
+	// Get a datastore connection to write availability
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, err := ps.datastore.GetConnectionWithContext(ctx)
+	if err != nil {
+		logger.Errorf("Failed to get datastore connection for probe availability: %v", err)
+		return
+	}
+	defer ps.datastore.ReturnConnection(conn)
+
+	err = database.UpsertProbeAvailability(ctx, conn, connectionID, nil, probeName, extensionName, isAvailable, unavailableReason)
+	if err != nil {
+		logger.Errorf("Failed to upsert probe availability for %s on connection %d: %v", probeName, connectionID, err)
+		return
+	}
+
+	ps.availMutex.Lock()
+	ps.availCache[key] = isAvailable
+	ps.availLastWrite[key] = time.Now()
+	ps.availMutex.Unlock()
 }
 
 // executeProbeForAllDatabases executes a database-scoped probe for all databases and returns all collected metrics and database list
@@ -653,6 +729,8 @@ func (ps *ProbeScheduler) createProbe(config *probes.ProbeConfig) probes.Metrics
 		return probes.NewPgServerInfoProbe(config)
 	case probes.ProbeNamePgNodeRole:
 		return probes.NewPgNodeRoleProbe(config)
+	case probes.ProbeNamePgDatabase:
+		return probes.NewPgDatabaseProbe(config)
 	// Database-scoped probes
 	case probes.ProbeNamePgStatDatabase:
 		return probes.NewPgStatDatabaseProbe(config)

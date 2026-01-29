@@ -4,8 +4,8 @@ Complete reference for all built-in probes in the Collector.
 
 ## Probe Categories
 
-- **Server-Scoped**: Collect server-wide statistics (17 probes)
-- **Database-Scoped**: Collect per-database statistics (9 probes)
+- **Server-Scoped**: Collect server-wide statistics (32 probes)
+- **Database-Scoped**: Collect per-database statistics (10 probes)
 
 ## Server-Scoped Probes
 
@@ -136,6 +136,24 @@ Monitors replication slot usage and WAL retention.
 
 **Columns Collected**: slot_name, spill_txns, spill_count, spill_bytes,
 stream_txns, stream_count, stream_bytes, total_txns, total_bytes, stats_reset
+
+### pg_replication_slots
+
+Monitors replication slot WAL retention by computing the difference
+between the current WAL position and each slot's restart LSN.
+
+- **Source View**: `pg_replication_slots`
+- **Default Interval**: 300 seconds (5 minutes)
+- **Default Retention**: 7 days
+- **Key Metrics**: Retained WAL bytes per slot, slot activity,
+  WAL status
+- **Use Cases**: WAL accumulation monitoring, disk usage
+  prevention, inactive slot detection
+- **Version Notes**: The `wal_status` and `safe_wal_size` columns
+  require PostgreSQL 13 or later; older versions return NULL.
+
+**Columns Collected**: slot_name, slot_type, active, wal_status,
+safe_wal_size, retained_bytes
 
 ### pg_stat_slru
 
@@ -344,6 +362,24 @@ bdr_node_state, primary_role, role_flags, role_details
 **See Also**: [Node Role Probe Design](node-role-probe-design.md) for detailed
 architecture and detection algorithms.
 
+### pg_database
+
+Monitors the `pg_database` catalog including transaction ID
+wraparound indicators and database size.
+
+- **Source**: `pg_database` catalog
+- **Default Interval**: 300 seconds (5 minutes)
+- **Default Retention**: 7 days
+- **Key Metrics**: Transaction ID age, multixact age, database
+  size
+- **Use Cases**: XID wraparound monitoring, database size
+  tracking, capacity planning
+
+**Columns Collected**: datname, datdba, encoding,
+datlocprovider, datistemplate, datallowconn, datconnlimit,
+datfrozenxid, datminmxid, dattablespace, age_datfrozenxid,
+age_datminmxid, database_size_bytes
+
 ## Database-Scoped Probes
 
 These probes execute once for each database on a monitored server.
@@ -487,6 +523,137 @@ blk_read_time, blk_write_time, temp_blk_read_time, temp_blk_write_time,
 wal_records, wal_fpi, wal_bytes, jit_functions, jit_generation_time,
 jit_inlining_count, jit_inlining_time, jit_optimization_count,
 jit_optimization_time, jit_emission_count, jit_emission_time
+
+### pg_extension
+
+Monitors installed PostgreSQL extensions with change detection.
+This probe only stores data when installed extensions change,
+making it ideal for tracking extension installations and
+upgrades.
+
+- **Source**: `pg_extension` catalog joined with `pg_namespace`
+- **Default Interval**: 300 seconds (5 minutes)
+- **Default Retention**: 7 days
+- **Key Metrics**: Extension names, versions, schemas
+- **Use Cases**: Extension inventory tracking, upgrade
+  verification, compliance auditing
+- **Special Behavior**: Uses SHA256 hash comparison to detect
+  changes. Data is only stored when extensions differ from the
+  most recent snapshot. The garbage collector ensures the most
+  recent snapshot for each server is never deleted, regardless
+  of age.
+
+**Columns Collected**: extname, extversion, extrelocatable,
+schema_name
+
+## System Statistics Probes
+
+These probes collect operating system metrics through the
+`system_stats` PostgreSQL extension. They require the extension
+to be installed on the monitored server.
+
+### pg_sys_os_info
+
+Monitors operating system identification information.
+
+- **Source**: `pg_sys_os_info()` function
+- **Default Interval**: 300 seconds (5 minutes)
+- **Default Retention**: 7 days
+- **Key Metrics**: OS name, version, architecture
+- **Use Cases**: Server inventory, OS upgrade tracking
+
+### pg_sys_cpu_info
+
+Monitors CPU hardware information.
+
+- **Source**: `pg_sys_cpu_info()` function
+- **Default Interval**: 300 seconds (5 minutes)
+- **Default Retention**: 7 days
+- **Key Metrics**: CPU model, cores, speed
+- **Use Cases**: Hardware inventory, capacity planning
+
+### pg_sys_cpu_usage_info
+
+Monitors real-time CPU utilization.
+
+- **Source**: `pg_sys_cpu_usage_info()` function
+- **Default Interval**: 300 seconds (5 minutes)
+- **Default Retention**: 7 days
+- **Key Metrics**: CPU utilization percentages (user, system,
+  idle)
+- **Use Cases**: CPU load monitoring, alerting on high usage
+
+### pg_sys_memory_info
+
+Monitors system memory usage.
+
+- **Source**: `pg_sys_memory_info()` function
+- **Default Interval**: 300 seconds (5 minutes)
+- **Default Retention**: 7 days
+- **Key Metrics**: Total, used, free, cached memory
+- **Use Cases**: Memory utilization monitoring, capacity planning
+
+### pg_sys_io_analysis_info
+
+Monitors disk I/O statistics.
+
+- **Source**: `pg_sys_io_analysis_info()` function
+- **Default Interval**: 300 seconds (5 minutes)
+- **Default Retention**: 7 days
+- **Key Metrics**: Read/write operations, throughput, latency
+- **Use Cases**: I/O performance analysis, bottleneck detection
+
+### pg_sys_disk_info
+
+Monitors disk space usage.
+
+- **Source**: `pg_sys_disk_info()` function
+- **Default Interval**: 300 seconds (5 minutes)
+- **Default Retention**: 7 days
+- **Key Metrics**: Disk capacity, used space, usage percentage
+- **Use Cases**: Disk space monitoring, capacity planning,
+  alerting
+
+### pg_sys_load_avg_info
+
+Monitors system load averages.
+
+- **Source**: `pg_sys_load_avg_info()` function
+- **Default Interval**: 300 seconds (5 minutes)
+- **Default Retention**: 7 days
+- **Key Metrics**: 1-minute, 5-minute, 15-minute load averages
+- **Use Cases**: System load monitoring, trend analysis
+
+### pg_sys_process_info
+
+Monitors system process statistics.
+
+- **Source**: `pg_sys_process_info()` function
+- **Default Interval**: 300 seconds (5 minutes)
+- **Default Retention**: 7 days
+- **Key Metrics**: Process counts, states
+- **Use Cases**: Process monitoring, resource usage tracking
+
+### pg_sys_network_info
+
+Monitors network interface statistics.
+
+- **Source**: `pg_sys_network_info()` function
+- **Default Interval**: 300 seconds (5 minutes)
+- **Default Retention**: 7 days
+- **Key Metrics**: Network throughput, packets, errors
+- **Use Cases**: Network performance monitoring, error detection
+
+### pg_sys_cpu_memory_by_process
+
+Monitors per-process CPU and memory usage.
+
+- **Source**: `pg_sys_cpu_memory_by_process()` function
+- **Default Interval**: 300 seconds (5 minutes)
+- **Default Retention**: 7 days
+- **Key Metrics**: Per-process CPU percentage, memory usage
+- **Use Cases**: Process-level resource analysis, identifying
+  resource-intensive processes
 
 ## Configuring Probes
 

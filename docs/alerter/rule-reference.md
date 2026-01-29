@@ -168,6 +168,22 @@ Alerts when a replication slot becomes inactive.
 Inactive replication slots prevent WAL cleanup and can cause disk
 exhaustion. Drop unused slots or reconnect the subscriber.
 
+### High Replication Slot WAL Retention
+
+Alerts when a replication slot retains more WAL data than the
+threshold.
+
+| Property | Value |
+|----------|-------|
+| Metric | `pg_replication_slots.retained_bytes` |
+| Operator | `>` |
+| Default Threshold | 1073741824 (1 GB) |
+| Default Severity | warning |
+
+Large WAL retention by a replication slot can lead to disk
+exhaustion. Investigate the subscriber connection or consider
+dropping unused slots.
+
 ## Storage Rules
 
 ### High Disk Usage

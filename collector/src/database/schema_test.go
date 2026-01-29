@@ -268,25 +268,9 @@ func TestNewSchemaManager(t *testing.T) {
 	}
 
 	// Verify migrations are registered in order
-	// Note: Migrations 2 and 6 were removed (auth moved to SQLite)
-	// Migrations 7-10 add alerter tables
-	// Migration 11 adds cluster_groups and clusters tables
-	// Migration 12 adds publisher_host/port to pg_node_role for logical replication topology
-	// Migration 13 adds owner and shared columns to cluster_groups
-	// Migration 14 adds auto_cluster_key to clusters for auto-detected cluster naming
-	// Migration 15 adds auto_group_key to cluster_groups for auto-detected group naming
-	// Migration 16 adds is_default column and creates the default group
-	// Migration 17 adds pg_extension table for tracking installed extensions
-	// Migration 18 adds database_name to pg_extension table
-	// Migration 19 adds notification tables for alert notifications
-	// Migration 20 adds timeline events table
-	// Migration 21 adds pgvector extension and anomaly embeddings table
-	// Migration 22 adds last_updated column to alerts table
-	// Migration 23 adds metric_unit column to alert_rules table
-	// Migration 24 adds object_name column to alerts table
-	// Migration 25 adds pg_database metrics table for XID wraparound monitoring
-	// Migration 26 adds pg_replication_slots metrics table for WAL retention monitoring
-	expectedVersions := []int{1, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26}
+	// All migrations have been squashed into a single migration at version 1
+	// that creates the complete schema with all tables, indexes, and seed data
+	expectedVersions := []int{1}
 	if len(sm.migrations) != len(expectedVersions) {
 		t.Fatalf("Expected %d migrations, got %d", len(expectedVersions), len(sm.migrations))
 	}

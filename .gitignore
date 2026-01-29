@@ -55,6 +55,9 @@ password.txt
 *.tmp
 tmp/
 temp/
+
+# Runtime data directories
+server/data/
 coverage.html
 alerter/ai-dba-alerter-linux
 CLAUDE.local.md

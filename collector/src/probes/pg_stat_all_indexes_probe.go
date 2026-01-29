@@ -12,14 +12,15 @@ package probes
 
 import (
 	"context"
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/pgedge/ai-workbench/collector/src/utils"
-
 	"fmt"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/collector/src/utils"
 )
 
 // PgStatAllIndexesProbe collects metrics from pg_stat_all_indexes view
+// and joins with pg_statio_all_indexes for I/O statistics
 type PgStatAllIndexesProbe struct {
 	BaseMetricsProbe
 }
@@ -57,33 +58,39 @@ func (p *PgStatAllIndexesProbe) GetQueryForVersion(pgVersion int) string {
 		// PG16+ has last_idx_scan column
 		return `
             SELECT
-                relid,
-                indexrelid,
-                schemaname,
-                relname,
-                indexrelname,
-                idx_scan,
-                last_idx_scan,
-                idx_tup_read,
-                idx_tup_fetch
-            FROM pg_stat_all_indexes
-            ORDER BY schemaname, relname, indexrelname
+                s.relid,
+                s.indexrelid,
+                s.schemaname,
+                s.relname,
+                s.indexrelname,
+                s.idx_scan,
+                s.last_idx_scan,
+                s.idx_tup_read,
+                s.idx_tup_fetch,
+                io.idx_blks_read,
+                io.idx_blks_hit
+            FROM pg_stat_all_indexes s
+            LEFT JOIN pg_statio_all_indexes io ON s.indexrelid = io.indexrelid
+            ORDER BY s.schemaname, s.relname, s.indexrelname
         `
 	}
 	// PG14-15: last_idx_scan doesn't exist, return NULL
 	return `
         SELECT
-            relid,
-            indexrelid,
-            schemaname,
-            relname,
-            indexrelname,
-            idx_scan,
+            s.relid,
+            s.indexrelid,
+            s.schemaname,
+            s.relname,
+            s.indexrelname,
+            s.idx_scan,
             NULL::timestamptz AS last_idx_scan,
-            idx_tup_read,
-            idx_tup_fetch
-        FROM pg_stat_all_indexes
-        ORDER BY schemaname, relname, indexrelname
+            s.idx_tup_read,
+            s.idx_tup_fetch,
+            io.idx_blks_read,
+            io.idx_blks_hit
+        FROM pg_stat_all_indexes s
+        LEFT JOIN pg_statio_all_indexes io ON s.indexrelid = io.indexrelid
+        ORDER BY s.schemaname, s.relname, s.indexrelname
     `
 }
 
@@ -115,6 +122,7 @@ func (p *PgStatAllIndexesProbe) Store(ctx context.Context, datastoreConn *pgxpoo
 		"connection_id", "collected_at", "database_name",
 		"relid", "indexrelid", "schemaname", "relname", "indexrelname",
 		"idx_scan", "last_idx_scan", "idx_tup_read", "idx_tup_fetch",
+		"idx_blks_read", "idx_blks_hit",
 	}
 
 	// Build values array
@@ -139,6 +147,8 @@ func (p *PgStatAllIndexesProbe) Store(ctx context.Context, datastoreConn *pgxpoo
 			metric["last_idx_scan"],
 			metric["idx_tup_read"],
 			metric["idx_tup_fetch"],
+			metric["idx_blks_read"],
+			metric["idx_blks_hit"],
 		}
 		values = append(values, row)
 	}

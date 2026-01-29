@@ -104,7 +104,7 @@ alerter supports the following metric name patterns:
 
 ### Other Metrics
 
-- `pg_stat_archiver.failed_count_delta` - Failed archive attempts.
+- `pg_stat_wal.failed_count_delta` - Failed archive attempts.
 - `pg_stat_checkpointer.checkpoints_req_delta` - Requested checkpoints.
 - `pg_stat_statements.slow_query_count` - Slow queries per interval.
 

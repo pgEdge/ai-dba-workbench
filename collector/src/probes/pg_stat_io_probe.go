@@ -12,15 +12,16 @@ package probes
 
 import (
 	"context"
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/pgedge/ai-workbench/collector/src/utils"
-
 	"fmt"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/collector/src/utils"
 )
 
-// PgStatIOProbe collects metrics from pg_stat_io view
-// Note: This view is available in PostgreSQL 16+ and returns multiple rows
+// PgStatIOProbe collects metrics from pg_stat_io and pg_stat_slru views
+// Note: pg_stat_io is available in PostgreSQL 16+
+// SLRU data is collected with backend_type='slru' to distinguish from regular I/O stats
 type PgStatIOProbe struct {
 	BaseMetricsProbe
 }
@@ -47,68 +48,15 @@ func (p *PgStatIOProbe) IsDatabaseScoped() bool {
 	return false
 }
 
-// GetQuery returns the SQL query to execute (default for PG16-17)
+// GetQuery returns the SQL query to execute
 func (p *PgStatIOProbe) GetQuery() string {
-	return p.GetQueryForVersion(16)
+	return ""
 }
 
-// GetQueryForVersion returns the appropriate SQL query for the given PostgreSQL version
-func (p *PgStatIOProbe) GetQueryForVersion(pgVersion int) string {
-	if pgVersion >= 18 {
-		// PG18: op_bytes column was removed
-		return `
-            SELECT
-                backend_type,
-                object,
-                context,
-                reads,
-                read_time,
-                writes,
-                write_time,
-                writebacks,
-                writeback_time,
-                extends,
-                extend_time,
-                NULL::bigint AS op_bytes,
-                hits,
-                evictions,
-                reuses,
-                fsyncs,
-                fsync_time,
-                stats_reset
-            FROM pg_stat_io
-        `
-	}
-	// PG16-17: op_bytes column exists
-	return `
-        SELECT
-            backend_type,
-            object,
-            context,
-            reads,
-            read_time,
-            writes,
-            write_time,
-            writebacks,
-            writeback_time,
-            extends,
-            extend_time,
-            op_bytes,
-            hits,
-            evictions,
-            reuses,
-            fsyncs,
-            fsync_time,
-            stats_reset
-        FROM pg_stat_io
-    `
-}
-
-// Execute runs the probe against a monitored connection
-func (p *PgStatIOProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
-	// First check if the view exists (PG 16+)
+// checkIOViewExists checks if pg_stat_io view exists (PG16+)
+func (p *PgStatIOProbe) checkIOViewExists(ctx context.Context, conn *pgxpool.Conn) (bool, error) {
 	var exists bool
-	err := monitoredConn.QueryRow(ctx, `
+	err := conn.QueryRow(ctx, `
         SELECT EXISTS (
             SELECT 1 FROM pg_views
             WHERE schemaname = 'pg_catalog'
@@ -116,21 +64,166 @@ func (p *PgStatIOProbe) Execute(ctx context.Context, connectionName string, moni
         )
     `).Scan(&exists)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check if pg_stat_io exists: %w", err)
+		return false, fmt.Errorf("failed to check if pg_stat_io exists: %w", err)
 	}
+	return exists, nil
+}
 
-	if !exists {
-		return nil, nil // View doesn't exist, return empty result
-	}
-
-	query := p.GetQueryForVersion(pgVersion)
-	rows, err := monitoredConn.Query(ctx, query)
+// checkSLRUViewExists checks if pg_stat_slru view exists (PG13+)
+func (p *PgStatIOProbe) checkSLRUViewExists(ctx context.Context, conn *pgxpool.Conn) (bool, error) {
+	var exists bool
+	err := conn.QueryRow(ctx, `
+        SELECT EXISTS (
+            SELECT 1 FROM pg_views
+            WHERE schemaname = 'pg_catalog'
+            AND viewname = 'pg_stat_slru'
+        )
+    `).Scan(&exists)
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute query: %w", err)
+		return false, fmt.Errorf("failed to check if pg_stat_slru exists: %w", err)
 	}
-	defer rows.Close()
+	return exists, nil
+}
 
-	return utils.ScanRowsToMaps(rows)
+// Execute runs the probe against a monitored connection
+func (p *PgStatIOProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
+	var allMetrics []map[string]interface{}
+
+	// Check if pg_stat_io exists (PG 16+)
+	ioExists, err := p.checkIOViewExists(ctx, monitoredConn)
+	if err != nil {
+		return nil, err
+	}
+
+	if ioExists {
+		var query string
+		if pgVersion >= 180000 {
+			// PG18: op_bytes column was removed
+			query = `
+                SELECT
+                    backend_type,
+                    object,
+                    context,
+                    reads,
+                    read_time,
+                    writes,
+                    write_time,
+                    writebacks,
+                    writeback_time,
+                    extends,
+                    extend_time,
+                    NULL::bigint AS op_bytes,
+                    hits,
+                    evictions,
+                    reuses,
+                    fsyncs,
+                    fsync_time,
+                    stats_reset,
+                    NULL::bigint AS blks_zeroed,
+                    NULL::bigint AS blks_exists,
+                    NULL::bigint AS flushes,
+                    NULL::bigint AS truncates
+                FROM pg_stat_io
+            `
+		} else {
+			// PG16-17: op_bytes column exists
+			query = `
+                SELECT
+                    backend_type,
+                    object,
+                    context,
+                    reads,
+                    read_time,
+                    writes,
+                    write_time,
+                    writebacks,
+                    writeback_time,
+                    extends,
+                    extend_time,
+                    op_bytes,
+                    hits,
+                    evictions,
+                    reuses,
+                    fsyncs,
+                    fsync_time,
+                    stats_reset,
+                    NULL::bigint AS blks_zeroed,
+                    NULL::bigint AS blks_exists,
+                    NULL::bigint AS flushes,
+                    NULL::bigint AS truncates
+                FROM pg_stat_io
+            `
+		}
+
+		rows, err := monitoredConn.Query(ctx, query)
+		if err != nil {
+			return nil, fmt.Errorf("failed to execute query: %w", err)
+		}
+
+		ioMetrics, err := utils.ScanRowsToMaps(rows)
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+
+		allMetrics = append(allMetrics, ioMetrics...)
+	}
+
+	// Check if pg_stat_slru exists (PG 13+)
+	slruExists, err := p.checkSLRUViewExists(ctx, monitoredConn)
+	if err != nil {
+		return nil, err
+	}
+
+	if slruExists {
+		// Query SLRU data and store with backend_type='slru'
+		slruQuery := `
+            SELECT
+                'slru' AS backend_type,
+                name AS object,
+                'normal' AS context,
+                blks_read AS reads,
+                NULL::double precision AS read_time,
+                blks_written AS writes,
+                NULL::double precision AS write_time,
+                NULL::bigint AS writebacks,
+                NULL::double precision AS writeback_time,
+                NULL::bigint AS extends,
+                NULL::double precision AS extend_time,
+                NULL::bigint AS op_bytes,
+                blks_hit AS hits,
+                NULL::bigint AS evictions,
+                NULL::bigint AS reuses,
+                NULL::bigint AS fsyncs,
+                NULL::double precision AS fsync_time,
+                stats_reset,
+                blks_zeroed,
+                blks_exists,
+                flushes,
+                truncates
+            FROM pg_stat_slru
+        `
+
+		slruRows, err := monitoredConn.Query(ctx, slruQuery)
+		if err != nil {
+			return nil, fmt.Errorf("failed to execute SLRU query: %w", err)
+		}
+
+		slruMetrics, err := utils.ScanRowsToMaps(slruRows)
+		slruRows.Close()
+		if err != nil {
+			return nil, err
+		}
+
+		allMetrics = append(allMetrics, slruMetrics...)
+	}
+
+	// If neither view exists, return empty result
+	if !ioExists && !slruExists {
+		return nil, nil
+	}
+
+	return allMetrics, nil
 }
 
 // Store stores the collected metrics in the datastore
@@ -152,6 +245,7 @@ func (p *PgStatIOProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, 
 		"writebacks", "writeback_time", "extends", "extend_time",
 		"op_bytes", "hits", "evictions", "reuses",
 		"fsyncs", "fsync_time", "stats_reset",
+		"blks_zeroed", "blks_exists", "flushes", "truncates",
 	}
 
 	// Build values array
@@ -178,6 +272,10 @@ func (p *PgStatIOProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, 
 			metric["fsyncs"],
 			metric["fsync_time"],
 			metric["stats_reset"],
+			metric["blks_zeroed"],
+			metric["blks_exists"],
+			metric["flushes"],
+			metric["truncates"],
 		}
 		values = append(values, row)
 	}

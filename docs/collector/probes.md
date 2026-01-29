@@ -12,7 +12,7 @@ A probe is a data collection unit that:
 3. Stores the results in a partitioned metrics table
 4. Manages data retention through automated cleanup
 
-The Collector includes 27 built-in probes covering the most important
+The Collector includes 34 built-in probes covering the most important
 PostgreSQL statistics views.
 
 ## Probe Types
@@ -25,23 +25,20 @@ These probes collect server-wide statistics and execute once per monitored
 connection:
 
 - `pg_stat_activity` - Current database activity
-- `pg_stat_replication` - Replication status and lag
-- `pg_stat_replication_slots` - Replication slot usage
-- `pg_stat_wal_receiver` - WAL receiver status
+- `pg_stat_replication` - Replication status, lag, and WAL receiver stats
+- `pg_replication_slots` - Replication slot usage and statistics
 - `pg_stat_recovery_prefetch` - Recovery prefetch statistics
-- `pg_stat_subscription` - Logical replication subscriptions
-- `pg_stat_subscription_stats` - Subscription statistics
-- `pg_stat_ssl` - SSL connection information
-- `pg_stat_gssapi` - GSSAPI connection information
-- `pg_stat_archiver` - WAL archiver statistics
-- `pg_stat_io` - I/O statistics
-- `pg_stat_bgwriter` - Background writer statistics
-- `pg_stat_checkpointer` - Checkpointer statistics
-- `pg_stat_wal` - WAL generation statistics
-- `pg_stat_slru` - SLRU (Simple LRU) cache statistics
+- `pg_stat_subscription` - Logical replication subscriptions and statistics
+- `pg_stat_connection_security` - SSL and GSSAPI connection security
+- `pg_stat_io` - I/O and SLRU cache statistics
+- `pg_stat_checkpointer` - Checkpointer and background writer statistics
+- `pg_stat_wal` - WAL generation and archiver statistics
 - `pg_settings` - PostgreSQL configuration settings (change-tracked)
 - `pg_hba_file_rules` - pg_hba.conf authentication rules (change-tracked)
 - `pg_ident_file_mappings` - pg_ident.conf user mappings (change-tracked)
+- `pg_server_info` - Server identification and configuration (change-tracked)
+- `pg_node_role` - Node role detection for cluster topologies
+- `pg_database` - Database catalog with XID wraparound indicators
 
 ### Database-Scoped Probes
 
@@ -50,13 +47,12 @@ database on a monitored server:
 
 - `pg_stat_database` - Database-wide statistics
 - `pg_stat_database_conflicts` - Recovery conflict statistics
-- `pg_stat_all_tables` - Table access statistics
-- `pg_stat_all_indexes` - Index usage statistics
-- `pg_statio_all_tables` - Table I/O statistics
-- `pg_statio_all_indexes` - Index I/O statistics
+- `pg_stat_all_tables` - Table access and I/O statistics
+- `pg_stat_all_indexes` - Index usage and I/O statistics
 - `pg_statio_all_sequences` - Sequence I/O statistics
 - `pg_stat_user_functions` - User function statistics
 - `pg_stat_statements` - Query performance statistics (requires extension)
+- `pg_extension` - Installed extensions (change-tracked)
 
 ## Probe Lifecycle
 
@@ -180,7 +176,7 @@ how frequently their data changes:
 
 - **Fast**: 30-60 seconds (replication, activity)
 - **Normal**: 300 seconds / 5 minutes (most probes)
-- **Slow**: 600 seconds / 10 minutes (archiver, bgwriter, checkpointer)
+- **Slow**: 600 seconds / 10 minutes (checkpointer, WAL)
 - **Very Slow**: 900 seconds / 15 minutes (I/O statistics)
 - **Change-Tracked**: 3600 seconds / 1 hour (pg_settings - only stored when
     changes detected)

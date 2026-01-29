@@ -44,7 +44,7 @@ type ProbeScheduler struct {
 	wg             sync.WaitGroup
 	configReloader *time.Ticker
 	availCache     map[availabilityKey]bool      // tracks last known is_available per probe/connection
-	availLastWrite map[availabilityKey]time.Time  // tracks when we last wrote to DB
+	availLastWrite map[availabilityKey]time.Time // tracks when we last wrote to DB
 	availMutex     sync.Mutex
 }
 
@@ -58,10 +58,10 @@ type Config interface {
 func NewProbeScheduler(datastore *database.Datastore, poolManager *database.MonitoredConnectionPoolManager, config Config, serverSecret string) *ProbeScheduler {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &ProbeScheduler{
-		datastore:    datastore,
-		poolManager:  poolManager,
-		serverSecret: serverSecret,
-		config:       config,
+		datastore:      datastore,
+		poolManager:    poolManager,
+		serverSecret:   serverSecret,
+		config:         config,
 		probesByConn:   make(map[int]map[string]probes.MetricsProbe),
 		shutdownChan:   make(chan struct{}),
 		ctx:            ctx,

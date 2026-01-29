@@ -69,7 +69,7 @@ type MetricsProbe interface {
 // ExtensionProbe is implemented by probes that require a PostgreSQL
 // extension. The scheduler uses this to record why a probe is unavailable.
 type ExtensionProbe interface {
-    GetExtensionName() string
+	GetExtensionName() string
 }
 
 // BaseMetricsProbe provides common probe functionality

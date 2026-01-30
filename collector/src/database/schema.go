@@ -27,7 +27,7 @@ import (
 type Migration struct {
 	Version     int
 	Description string
-	Up          func(*pgxpool.Conn) error
+	Up          func(pgx.Tx) error
 }
 
 // SchemaManager handles database schema migrations
@@ -56,7 +56,7 @@ func (sm *SchemaManager) registerMigrations() {
 	sm.migrations = append(sm.migrations, Migration{
 		Version:     1,
 		Description: "Complete schema with all tables, indexes, and seed data",
-		Up: func(conn *pgxpool.Conn) error {
+		Up: func(tx pgx.Tx) error {
 			ctx := context.Background()
 
 			// =====================================================================
@@ -64,7 +64,7 @@ func (sm *SchemaManager) registerMigrations() {
 			// =====================================================================
 
 			// Create schema_version table
-			_, err := conn.Exec(ctx, `
+			_, err := tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS schema_version (
 					version INTEGER PRIMARY KEY,
 					description TEXT NOT NULL,
@@ -85,7 +85,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// Create connections table
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS connections (
 					id SERIAL PRIMARY KEY,
 					owner_username VARCHAR(255),
@@ -188,7 +188,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// Create cluster_groups table
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS cluster_groups (
 					id SERIAL PRIMARY KEY,
 					owner_username VARCHAR(255),
@@ -240,7 +240,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// Create clusters table
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS clusters (
 					id SERIAL PRIMARY KEY,
 					group_id INTEGER REFERENCES cluster_groups(id) ON DELETE CASCADE,
@@ -282,7 +282,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// Create probe_configs table
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS probe_configs (
 					id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
 					connection_id INTEGER,
@@ -341,7 +341,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// Insert default global probe configurations
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				INSERT INTO probe_configs (connection_id, is_enabled, name, description, collection_interval_seconds, retention_days)
 				VALUES
 					-- Server-scoped probes
@@ -397,7 +397,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// Create metrics schema
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE SCHEMA IF NOT EXISTS metrics;
 				COMMENT ON SCHEMA metrics IS
 					'Schema for storing monitoring probe metrics data';
@@ -411,7 +411,7 @@ func (sm *SchemaManager) registerMigrations() {
 			// =====================================================================
 
 			// metrics.pg_stat_activity
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_activity (
 					connection_id INTEGER NOT NULL,
 					pid INTEGER NOT NULL,
@@ -450,7 +450,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_stat_all_tables
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_all_tables (
 					connection_id INTEGER NOT NULL,
 					database_name TEXT NOT NULL,
@@ -494,7 +494,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_stat_all_indexes
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_all_indexes (
 					connection_id INTEGER NOT NULL,
 					database_name VARCHAR(255) NOT NULL,
@@ -530,7 +530,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_stat_statements
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_statements (
 					connection_id INTEGER NOT NULL,
 					database_name TEXT NOT NULL,
@@ -579,7 +579,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_stat_database
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_database (
 					connection_id INTEGER NOT NULL,
 					database_name VARCHAR(255) NOT NULL,
@@ -631,7 +631,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_stat_database_conflicts
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_database_conflicts (
 					connection_id INTEGER NOT NULL,
 					database_name VARCHAR(255) NOT NULL,
@@ -664,7 +664,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_stat_archiver
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_archiver (
 					connection_id INTEGER NOT NULL,
 					archived_count BIGINT,
@@ -693,7 +693,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_stat_bgwriter
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_bgwriter (
 					connection_id INTEGER NOT NULL,
 					buffers_clean BIGINT,
@@ -719,7 +719,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_stat_checkpointer
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_checkpointer (
 					connection_id INTEGER NOT NULL,
 					num_timed BIGINT,
@@ -750,7 +750,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_stat_wal
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_wal (
 					connection_id INTEGER NOT NULL,
 					wal_records BIGINT,
@@ -781,7 +781,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_stat_replication
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_replication (
 					connection_id INTEGER NOT NULL,
 					pid INTEGER NOT NULL,
@@ -823,7 +823,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_stat_replication_slots
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_replication_slots (
 					connection_id INTEGER NOT NULL,
 					slot_name TEXT NOT NULL,
@@ -857,7 +857,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_replication_slots
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_replication_slots (
 					connection_id INTEGER NOT NULL,
 					slot_name TEXT NOT NULL,
@@ -887,7 +887,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_stat_subscription
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_subscription (
 					connection_id INTEGER NOT NULL,
 					subid OID NOT NULL,
@@ -922,7 +922,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_stat_subscription_stats
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_subscription_stats (
 					connection_id INTEGER NOT NULL,
 					subid OID NOT NULL,
@@ -951,7 +951,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_stat_wal_receiver
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_wal_receiver (
 					connection_id INTEGER NOT NULL,
 					pid INTEGER,
@@ -988,7 +988,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_stat_recovery_prefetch
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_recovery_prefetch (
 					connection_id INTEGER NOT NULL,
 					prefetch BIGINT,
@@ -1020,7 +1020,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_stat_slru
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_slru (
 					connection_id INTEGER NOT NULL,
 					name TEXT NOT NULL,
@@ -1053,7 +1053,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_stat_io
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_io (
 					connection_id INTEGER NOT NULL,
 					backend_type TEXT NOT NULL,
@@ -1095,7 +1095,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_stat_ssl
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_ssl (
 					connection_id INTEGER NOT NULL,
 					pid INTEGER NOT NULL,
@@ -1127,7 +1127,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_stat_gssapi
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_gssapi (
 					connection_id INTEGER NOT NULL,
 					pid INTEGER NOT NULL,
@@ -1156,7 +1156,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_stat_user_functions
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_user_functions (
 					connection_id INTEGER NOT NULL,
 					database_name VARCHAR(255) NOT NULL,
@@ -1189,7 +1189,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_statio_all_tables
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_statio_all_tables (
 					connection_id INTEGER NOT NULL,
 					database_name VARCHAR(255) NOT NULL,
@@ -1227,7 +1227,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_statio_all_indexes
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_statio_all_indexes (
 					connection_id INTEGER NOT NULL,
 					database_name VARCHAR(255) NOT NULL,
@@ -1261,7 +1261,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_statio_all_sequences
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_statio_all_sequences (
 					connection_id INTEGER NOT NULL,
 					database_name VARCHAR(255) NOT NULL,
@@ -1291,7 +1291,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_database
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_database (
 					connection_id INTEGER NOT NULL,
 					datname TEXT,
@@ -1321,7 +1321,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_settings
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_settings (
 					connection_id INTEGER NOT NULL,
 					name TEXT NOT NULL,
@@ -1362,7 +1362,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_hba_file_rules
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_hba_file_rules (
 					connection_id INTEGER NOT NULL,
 					rule_number INTEGER NOT NULL,
@@ -1397,7 +1397,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_ident_file_mappings
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_ident_file_mappings (
 					connection_id INTEGER NOT NULL,
 					map_number INTEGER NOT NULL,
@@ -1428,7 +1428,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_server_info
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_server_info (
 					connection_id INTEGER NOT NULL,
 					server_version TEXT,
@@ -1459,7 +1459,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_node_role
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_node_role (
 					connection_id INTEGER NOT NULL,
 					is_in_recovery BOOLEAN NOT NULL,
@@ -1511,7 +1511,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_extension
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_extension (
 					connection_id INTEGER NOT NULL,
 					database_name TEXT NOT NULL,
@@ -1544,7 +1544,7 @@ func (sm *SchemaManager) registerMigrations() {
 			// =====================================================================
 
 			// metrics.pg_sys_cpu_info
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_sys_cpu_info (
 					connection_id INTEGER NOT NULL,
 					vendor TEXT,
@@ -1575,7 +1575,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_sys_cpu_usage_info
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_sys_cpu_usage_info (
 					connection_id INTEGER NOT NULL,
 					usermode_normal_process_percent REAL,
@@ -1608,7 +1608,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_sys_cpu_memory_by_process
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_sys_cpu_memory_by_process (
 					connection_id INTEGER NOT NULL,
 					pid INTEGER NOT NULL,
@@ -1638,7 +1638,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_sys_memory_info
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_sys_memory_info (
 					connection_id INTEGER NOT NULL,
 					total_memory BIGINT,
@@ -1665,7 +1665,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_sys_disk_info
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_sys_disk_info (
 					connection_id INTEGER NOT NULL,
 					mount_point TEXT NOT NULL,
@@ -1700,7 +1700,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_sys_io_analysis_info
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_sys_io_analysis_info (
 					connection_id INTEGER NOT NULL,
 					device_name TEXT NOT NULL,
@@ -1724,7 +1724,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_sys_load_avg_info
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_sys_load_avg_info (
 					connection_id INTEGER NOT NULL,
 					load_avg_one_minute REAL,
@@ -1750,7 +1750,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_sys_network_info
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_sys_network_info (
 					connection_id INTEGER NOT NULL,
 					interface_name TEXT NOT NULL,
@@ -1785,7 +1785,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_sys_os_info
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_sys_os_info (
 					connection_id INTEGER NOT NULL,
 					name TEXT,
@@ -1817,7 +1817,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metrics.pg_sys_process_info
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_sys_process_info (
 					connection_id INTEGER NOT NULL,
 					total_processes INTEGER,
@@ -1848,7 +1848,7 @@ func (sm *SchemaManager) registerMigrations() {
 			// =====================================================================
 
 			// alerter_settings
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS alerter_settings (
 					id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
 					retention_days INTEGER NOT NULL DEFAULT 90,
@@ -1869,7 +1869,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// probe_availability
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS probe_availability (
 					id BIGSERIAL PRIMARY KEY,
 					connection_id INTEGER NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
@@ -1896,7 +1896,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// alert_rules
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS alert_rules (
 					id BIGSERIAL PRIMARY KEY,
 					name TEXT NOT NULL UNIQUE,
@@ -1925,7 +1925,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// alert_thresholds
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS alert_thresholds (
 					id BIGSERIAL PRIMARY KEY,
 					rule_id BIGINT NOT NULL REFERENCES alert_rules(id) ON DELETE CASCADE,
@@ -1951,7 +1951,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// alerts
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS alerts (
 					id BIGSERIAL PRIMARY KEY,
 					alert_type TEXT NOT NULL CHECK (alert_type IN ('threshold', 'anomaly')),
@@ -1991,7 +1991,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// alert_acknowledgments
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS alert_acknowledgments (
 					id BIGSERIAL PRIMARY KEY,
 					alert_id BIGINT NOT NULL REFERENCES alerts(id) ON DELETE CASCADE,
@@ -2014,7 +2014,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// blackouts
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS blackouts (
 					id BIGSERIAL PRIMARY KEY,
 					connection_id INTEGER REFERENCES connections(id) ON DELETE CASCADE,
@@ -2038,7 +2038,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// blackout_schedules
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS blackout_schedules (
 					id BIGSERIAL PRIMARY KEY,
 					connection_id INTEGER REFERENCES connections(id) ON DELETE CASCADE,
@@ -2069,7 +2069,7 @@ func (sm *SchemaManager) registerMigrations() {
 			// =====================================================================
 
 			// metric_definitions
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metric_definitions (
 					id BIGSERIAL PRIMARY KEY,
 					name TEXT NOT NULL UNIQUE,
@@ -2089,7 +2089,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// metric_baselines
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metric_baselines (
 					id BIGSERIAL PRIMARY KEY,
 					connection_id INTEGER NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
@@ -2126,7 +2126,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// correlation_groups
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS correlation_groups (
 					id BIGSERIAL PRIMARY KEY,
 					connection_id INTEGER NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
@@ -2148,7 +2148,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// anomaly_candidates
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS anomaly_candidates (
 					id BIGSERIAL PRIMARY KEY,
 					connection_id INTEGER NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
@@ -2186,7 +2186,7 @@ func (sm *SchemaManager) registerMigrations() {
 			// =====================================================================
 
 			// notification_channels
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS notification_channels (
 					id BIGSERIAL PRIMARY KEY,
 					owner_username VARCHAR(255),
@@ -2235,7 +2235,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// email_recipients
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS email_recipients (
 					id BIGSERIAL PRIMARY KEY,
 					channel_id BIGINT NOT NULL REFERENCES notification_channels(id) ON DELETE CASCADE,
@@ -2256,7 +2256,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// connection_notification_channels
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS connection_notification_channels (
 					id BIGSERIAL PRIMARY KEY,
 					connection_id INTEGER NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
@@ -2279,7 +2279,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// notification_history
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS notification_history (
 					id BIGSERIAL PRIMARY KEY,
 					alert_id BIGINT REFERENCES alerts(id) ON DELETE SET NULL,
@@ -2312,7 +2312,7 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			// notification_reminder_state
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS notification_reminder_state (
 					id BIGSERIAL PRIMARY KEY,
 					alert_id BIGINT NOT NULL REFERENCES alerts(id) ON DELETE CASCADE,
@@ -2338,7 +2338,7 @@ func (sm *SchemaManager) registerMigrations() {
 
 			// Check if pgvector extension is available
 			var vectorAvailable bool
-			err = conn.QueryRow(ctx, `
+			err = tx.QueryRow(ctx, `
 				SELECT EXISTS(SELECT 1 FROM pg_available_extensions WHERE name = 'vector')
 			`).Scan(&vectorAvailable)
 			if err != nil {
@@ -2346,12 +2346,12 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			if vectorAvailable {
-				_, err = conn.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS vector;`)
+				_, err = tx.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS vector;`)
 				if err != nil {
 					logger.Infof("Failed to create vector extension: %v", err)
 				} else {
 					// anomaly_embeddings table
-					_, err = conn.Exec(ctx, `
+					_, err = tx.Exec(ctx, `
 						CREATE TABLE IF NOT EXISTS anomaly_embeddings (
 							id BIGSERIAL PRIMARY KEY,
 							candidate_id BIGINT REFERENCES anomaly_candidates(id) ON DELETE CASCADE,
@@ -2383,7 +2383,7 @@ func (sm *SchemaManager) registerMigrations() {
 			// PART 8: Seed Data - Built-in Alert Rules
 			// =====================================================================
 
-			_, err = conn.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				INSERT INTO alert_rules (name, description, category, metric_name, metric_unit, default_operator, default_threshold, default_severity, default_enabled, required_extension, is_built_in)
 				VALUES
 					-- Connection alerts
@@ -2475,7 +2475,7 @@ func (sm *SchemaManager) Migrate(conn *pgxpool.Conn) error {
 		}
 
 		// Apply the migration
-		if err := migration.Up(conn); err != nil {
+		if err := migration.Up(tx); err != nil {
 			if rbErr := tx.Rollback(ctx); rbErr != nil {
 				logger.Errorf("Failed to rollback transaction: %v", rbErr)
 			}
@@ -2483,7 +2483,7 @@ func (sm *SchemaManager) Migrate(conn *pgxpool.Conn) error {
 		}
 
 		// Record the migration in schema_version
-		_, err = conn.Exec(ctx, `
+		_, err = tx.Exec(ctx, `
             INSERT INTO schema_version (version, description)
             VALUES ($1, $2)
             ON CONFLICT (version) DO NOTHING

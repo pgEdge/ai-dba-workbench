@@ -31,17 +31,20 @@ import {
     LightMode as LightModeIcon,
     Logout as LogoutIcon,
     HelpOutline as HelpIcon,
+    Settings as SettingsIcon,
 } from '@mui/icons-material';
 import logoLight from '../assets/images/logo-light.png';
 import logoDark from '../assets/images/logo-dark.png';
 import { useAuth } from '../contexts/AuthContext';
 import { useMenu } from '../hooks/useMenu';
 import HelpPanel from './HelpPanel';
+import AdminPanel from './AdminPanel';
 
 const Header = ({ onToggleTheme, mode, helpContext }) => {
-    const { user, logout } = useAuth();
+    const { user, logout, hasAnyAdminAccess } = useAuth();
     const userMenu = useMenu();
     const [helpOpen, setHelpOpen] = useState(false);
+    const [adminOpen, setAdminOpen] = useState(false);
 
     const handleLogout = () => {
         userMenu.handleClose();
@@ -128,6 +131,25 @@ const Header = ({ onToggleTheme, mode, helpContext }) => {
                                 {isDark ? <LightModeIcon /> : <DarkModeIcon />}
                             </IconButton>
                         </Tooltip>
+
+                        {/* Admin Settings Button */}
+                        {hasAnyAdminAccess && (
+                            <Tooltip title="Administration">
+                                <IconButton
+                                    onClick={() => setAdminOpen(true)}
+                                    aria-label="open administration"
+                                    sx={{
+                                        color: isDark ? '#94A3B8' : '#6B7280',
+                                        '&:hover': {
+                                            bgcolor: isDark ? alpha('#22B8CF', 0.08) : alpha('#15AABF', 0.04),
+                                            color: '#15AABF',
+                                        },
+                                    }}
+                                >
+                                    <SettingsIcon />
+                                </IconButton>
+                            </Tooltip>
+                        )}
 
                         {/* Help Button */}
                         <Tooltip title="Help">
@@ -260,6 +282,9 @@ const Header = ({ onToggleTheme, mode, helpContext }) => {
 
             {/* Help Panel */}
             <HelpPanel open={helpOpen} onClose={handleHelpClose} helpContext={helpContext} mode={mode} />
+
+            {/* Admin Panel */}
+            <AdminPanel open={adminOpen} onClose={() => setAdminOpen(false)} mode={mode} />
         </>
     );
 };

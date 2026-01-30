@@ -92,7 +92,8 @@ and this project adheres to
   names.
 - X-Forwarded-For IP spoofing vulnerability addressed with trusted proxy
   configuration.
-- PBKDF2 key derivation replaces weak SHA256 hashing for improved security.
+- Shared `pkg/crypto` package provides consistent password encryption across
+  collector and server using random salts instead of username-based salts.
 - Alerter standard deviation calculation corrected with proper `math.Sqrt`
   usage.
 - URL encoding for passwords with special characters in connection strings
@@ -110,7 +111,7 @@ and this project adheres to
 - REST API paths have changed from `/api/` to `/api/v1/`. Update any custom
   integrations or scripts that call the API directly. The CLI and web client
   have been updated to use the new paths.
-- PBKDF2 key derivation is incompatible with the previous SHA256
-  implementation. Existing encrypted passwords for monitored connections will
-  no longer decrypt correctly after upgrading. You must re-enter passwords for
-  all monitored connections after upgrading to this version.
+- Password encryption now uses random salts instead of username-based salts.
+  Existing encrypted passwords will no longer decrypt correctly after
+  upgrading. You must re-enter passwords for all monitored connections using
+  the MCP server API.

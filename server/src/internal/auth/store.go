@@ -35,7 +35,7 @@ const (
 	TokenTypeUser    = "user"    // User-created tokens
 
 	// Schema version for migrations
-	schemaVersion = 3
+	schemaVersion = 8
 )
 
 // AuthStore manages users and tokens in SQLite
@@ -70,6 +70,8 @@ type StoredUser struct {
 	LastLogin      *time.Time
 	Enabled        bool
 	Annotation     string
+	DisplayName    string
+	Email          string
 	FailedAttempts int
 	IsSuperuser    bool
 }
@@ -291,6 +293,109 @@ func (s *AuthStore) initSchema() error {
 		}
 	}
 
+	// Apply migrations for schema version 4 (admin permissions)
+	if currentVersion < 4 {
+		migrationV4 := `
+        -- Group admin permissions
+        CREATE TABLE IF NOT EXISTS group_admin_permissions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER NOT NULL
+                REFERENCES user_groups(id) ON DELETE CASCADE,
+            permission TEXT NOT NULL CHECK (permission IN (
+                'manage_connections', 'manage_groups',
+                'manage_permissions', 'manage_users',
+                'manage_token_scopes'
+            )),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(group_id, permission)
+        );
+        CREATE INDEX IF NOT EXISTS idx_admin_perms_group ON group_admin_permissions(group_id);
+        CREATE INDEX IF NOT EXISTS idx_admin_perms_perm ON group_admin_permissions(permission);
+        `
+		_, err = s.db.Exec(migrationV4)
+		if err != nil {
+			return fmt.Errorf("failed to apply schema migration v4: %w", err)
+		}
+	}
+
+	// Apply migrations for schema version 5 (user profile fields)
+	if currentVersion < 5 {
+		statements := []string{
+			"ALTER TABLE users ADD COLUMN display_name TEXT DEFAULT ''",
+			"ALTER TABLE users ADD COLUMN email TEXT DEFAULT ''",
+		}
+		for _, stmt := range statements {
+			// Ignore errors for ALTER TABLE as column may already exist
+			//nolint:errcheck // Intentionally ignoring error - column may already exist
+			s.db.Exec(stmt)
+		}
+	}
+
+	// Apply migrations for schema version 6 (rename manage_privileges to manage_permissions)
+	if currentVersion < 6 {
+		migrationV6 := `
+        UPDATE group_admin_permissions SET permission = 'manage_permissions'
+            WHERE permission = 'manage_privileges';
+
+        -- Recreate table with updated CHECK constraint
+        CREATE TABLE IF NOT EXISTS group_admin_permissions_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER NOT NULL
+                REFERENCES user_groups(id) ON DELETE CASCADE,
+            permission TEXT NOT NULL CHECK (permission IN (
+                'manage_connections', 'manage_groups',
+                'manage_permissions', 'manage_users',
+                'manage_token_scopes'
+            )),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(group_id, permission)
+        );
+        INSERT INTO group_admin_permissions_new (id, group_id, permission, created_at)
+            SELECT id, group_id, permission, created_at
+            FROM group_admin_permissions;
+        DROP TABLE group_admin_permissions;
+        ALTER TABLE group_admin_permissions_new RENAME TO group_admin_permissions;
+        CREATE INDEX IF NOT EXISTS idx_admin_perms_group ON group_admin_permissions(group_id);
+        CREATE INDEX IF NOT EXISTS idx_admin_perms_perm ON group_admin_permissions(permission);
+        `
+		_, err = s.db.Exec(migrationV6)
+		if err != nil {
+			return fmt.Errorf("failed to apply schema migration v6: %w", err)
+		}
+	}
+
+	// Apply migrations for schema version 7 (remove stale admin MCP privilege identifiers)
+	if currentVersion < 7 {
+		migrationV7 := `
+        DELETE FROM mcp_privilege_identifiers WHERE identifier IN (
+            'create_group', 'update_group', 'delete_group', 'list_groups',
+            'add_group_member', 'remove_group_member',
+            'grant_mcp_privilege', 'revoke_mcp_privilege',
+            'grant_connection_privilege', 'revoke_connection_privilege',
+            'list_privileges',
+            'set_token_scope', 'get_token_scope', 'clear_token_scope',
+            'set_superuser', 'list_users', 'get_user_privileges'
+        );
+        `
+		_, err = s.db.Exec(migrationV7)
+		if err != nil {
+			return fmt.Errorf("failed to apply schema migration v7: %w", err)
+		}
+	}
+
+	// Apply migrations for schema version 8 (remove obsolete privilege identifiers)
+	if currentVersion < 8 {
+		migrationV8 := `
+        DELETE FROM mcp_privilege_identifiers WHERE identifier IN (
+            'authenticate_user'
+        );
+        `
+		_, err = s.db.Exec(migrationV8)
+		if err != nil {
+			return fmt.Errorf("failed to apply schema migration v8: %w", err)
+		}
+	}
+
 	// Set schema version
 	_, err = s.db.Exec("INSERT OR REPLACE INTO schema_version (version) VALUES (?)", schemaVersion)
 	return err
@@ -332,18 +437,27 @@ func (s *AuthStore) GetUser(username string) (*StoredUser, error) {
 	defer s.mu.RUnlock()
 
 	var user StoredUser
+	var displayName sql.NullString
+	var email sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, username, password_hash, created_at, last_login, enabled, annotation, failed_attempts, is_superuser
+		`SELECT id, username, password_hash, created_at, last_login, enabled, annotation, display_name, email, failed_attempts, is_superuser
          FROM users WHERE username = ?`,
 		username,
 	).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.CreatedAt,
-		&user.LastLogin, &user.Enabled, &user.Annotation, &user.FailedAttempts, &user.IsSuperuser)
+		&user.LastLogin, &user.Enabled, &user.Annotation, &displayName, &email, &user.FailedAttempts, &user.IsSuperuser)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user: %w", err)
+	}
+
+	if displayName.Valid {
+		user.DisplayName = displayName.String
+	}
+	if email.Valid {
+		user.Email = email.String
 	}
 
 	return &user, nil
@@ -355,18 +469,27 @@ func (s *AuthStore) GetUserByID(id int64) (*StoredUser, error) {
 	defer s.mu.RUnlock()
 
 	var user StoredUser
+	var displayName sql.NullString
+	var email sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, username, password_hash, created_at, last_login, enabled, annotation, failed_attempts, is_superuser
+		`SELECT id, username, password_hash, created_at, last_login, enabled, annotation, display_name, email, failed_attempts, is_superuser
          FROM users WHERE id = ?`,
 		id,
 	).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.CreatedAt,
-		&user.LastLogin, &user.Enabled, &user.Annotation, &user.FailedAttempts, &user.IsSuperuser)
+		&user.LastLogin, &user.Enabled, &user.Annotation, &displayName, &email, &user.FailedAttempts, &user.IsSuperuser)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user by ID: %w", err)
+	}
+
+	if displayName.Valid {
+		user.DisplayName = displayName.String
+	}
+	if email.Valid {
+		user.Email = email.String
 	}
 
 	return &user, nil
@@ -393,6 +516,48 @@ func (s *AuthStore) UpdateUser(username, newPassword, newAnnotation string) erro
 		if err != nil {
 			return fmt.Errorf("failed to update annotation: %w", err)
 		}
+	}
+
+	return nil
+}
+
+// UpdateUserDisplayName updates a user's display name
+func (s *AuthStore) UpdateUserDisplayName(username, displayName string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	result, err := s.db.Exec("UPDATE users SET display_name = ? WHERE username = ?", displayName, username)
+	if err != nil {
+		return fmt.Errorf("failed to update display name: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("user '%s' not found", username)
+	}
+
+	return nil
+}
+
+// UpdateUserEmail updates a user's email address
+func (s *AuthStore) UpdateUserEmail(username, email string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	result, err := s.db.Exec("UPDATE users SET email = ? WHERE username = ?", email, username)
+	if err != nil {
+		return fmt.Errorf("failed to update email: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("user '%s' not found", username)
 	}
 
 	return nil
@@ -467,7 +632,7 @@ func (s *AuthStore) ListUsers() ([]*StoredUser, error) {
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.Query(
-		`SELECT id, username, password_hash, created_at, last_login, enabled, annotation, failed_attempts, is_superuser
+		`SELECT id, username, password_hash, created_at, last_login, enabled, annotation, display_name, email, failed_attempts, is_superuser
          FROM users ORDER BY username`,
 	)
 	if err != nil {
@@ -478,9 +643,17 @@ func (s *AuthStore) ListUsers() ([]*StoredUser, error) {
 	var users []*StoredUser
 	for rows.Next() {
 		var user StoredUser
+		var displayName sql.NullString
+		var email sql.NullString
 		if err := rows.Scan(&user.ID, &user.Username, &user.PasswordHash, &user.CreatedAt,
-			&user.LastLogin, &user.Enabled, &user.Annotation, &user.FailedAttempts, &user.IsSuperuser); err != nil {
+			&user.LastLogin, &user.Enabled, &user.Annotation, &displayName, &email, &user.FailedAttempts, &user.IsSuperuser); err != nil {
 			return nil, fmt.Errorf("failed to scan user: %w", err)
+		}
+		if displayName.Valid {
+			user.DisplayName = displayName.String
+		}
+		if email.Valid {
+			user.Email = email.String
 		}
 		users = append(users, &user)
 	}
@@ -791,18 +964,30 @@ func (s *AuthStore) ValidateToken(rawToken string) (*StoredToken, error) {
 	tokenHash := hex.EncodeToString(hash[:])
 
 	var token StoredToken
+	var annotation sql.NullString
+	var database sql.NullString
+	var isSuperuser sql.NullBool
 	err := s.db.QueryRow(
 		`SELECT id, token_hash, token_type, owner_id, expires_at, annotation, created_at, database, is_superuser
          FROM tokens WHERE token_hash = ?`,
 		tokenHash,
 	).Scan(&token.ID, &token.TokenHash, &token.TokenType, &token.OwnerID,
-		&token.ExpiresAt, &token.Annotation, &token.CreatedAt, &token.Database, &token.IsSuperuser)
+		&token.ExpiresAt, &annotation, &token.CreatedAt, &database, &isSuperuser)
 
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("invalid token")
 	}
 	if err != nil {
 		return nil, fmt.Errorf("token validation error: %w", err)
+	}
+	if annotation.Valid {
+		token.Annotation = annotation.String
+	}
+	if database.Valid {
+		token.Database = database.String
+	}
+	if isSuperuser.Valid {
+		token.IsSuperuser = isSuperuser.Bool
 	}
 
 	// Check expiration
@@ -825,6 +1010,23 @@ func (s *AuthStore) ValidateToken(rawToken string) (*StoredToken, error) {
 // =============================================================================
 // Service Token Management (for CLI commands)
 // =============================================================================
+
+// ListAllTokens lists all tokens regardless of type
+func (s *AuthStore) ListAllTokens() ([]*StoredToken, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query(
+		`SELECT id, token_hash, token_type, owner_id, expires_at, annotation, created_at, database, is_superuser
+         FROM tokens ORDER BY created_at DESC`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list tokens: %w", err)
+	}
+	defer rows.Close()
+
+	return s.scanTokens(rows)
+}
 
 // ListServiceTokens lists all service tokens
 func (s *AuthStore) ListServiceTokens() ([]*StoredToken, error) {
@@ -925,9 +1127,21 @@ func (s *AuthStore) scanTokens(rows *sql.Rows) ([]*StoredToken, error) {
 	var tokens []*StoredToken
 	for rows.Next() {
 		var token StoredToken
+		var annotation sql.NullString
+		var database sql.NullString
+		var isSuperuser sql.NullBool
 		if err := rows.Scan(&token.ID, &token.TokenHash, &token.TokenType, &token.OwnerID,
-			&token.ExpiresAt, &token.Annotation, &token.CreatedAt, &token.Database, &token.IsSuperuser); err != nil {
+			&token.ExpiresAt, &annotation, &token.CreatedAt, &database, &isSuperuser); err != nil {
 			return nil, fmt.Errorf("failed to scan token: %w", err)
+		}
+		if annotation.Valid {
+			token.Annotation = annotation.String
+		}
+		if database.Valid {
+			token.Database = database.String
+		}
+		if isSuperuser.Valid {
+			token.IsSuperuser = isSuperuser.Bool
 		}
 		tokens = append(tokens, &token)
 	}

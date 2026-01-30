@@ -157,6 +157,48 @@ func (s *AuthStore) ListGroups() ([]*UserGroup, error) {
 	return groups, nil
 }
 
+// GroupWithMemberCount pairs a group with its direct member count.
+type GroupWithMemberCount struct {
+	UserGroup
+	MemberCount int `json:"member_count"`
+}
+
+// ListGroupsWithMemberCount returns all groups with their direct member
+// counts in a single query, avoiding N+1 lookups.
+func (s *AuthStore) ListGroupsWithMemberCount() ([]*GroupWithMemberCount, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query(`
+        SELECT g.id, g.name, g.description, g.created_at,
+               COUNT(gm.id) AS member_count
+        FROM user_groups g
+        LEFT JOIN group_memberships gm ON g.id = gm.parent_group_id
+        GROUP BY g.id, g.name, g.description, g.created_at
+        ORDER BY g.name
+    `)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list groups with member counts: %w", err)
+	}
+	defer rows.Close()
+
+	var groups []*GroupWithMemberCount
+	for rows.Next() {
+		var g GroupWithMemberCount
+		if err := rows.Scan(&g.ID, &g.Name, &g.Description, &g.CreatedAt,
+			&g.MemberCount); err != nil {
+			return nil, fmt.Errorf("failed to scan group: %w", err)
+		}
+		groups = append(groups, &g)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating groups: %w", err)
+	}
+
+	return groups, nil
+}
+
 // =============================================================================
 // Group Membership Management
 // =============================================================================

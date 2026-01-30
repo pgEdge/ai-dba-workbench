@@ -277,9 +277,10 @@ func (c *Client) connectToMCP(ctx context.Context) error {
 	return nil
 }
 
-// authenticateUser authenticates with username/password and returns a session token
+// authenticateUser authenticates with username/password via the REST API
+// and returns a session token
 func (c *Client) authenticateUser(ctx context.Context, username, password string) (string, error) {
-	// Construct the URL for authentication (without /mcp/v1 suffix)
+	// Construct the base URL for the REST API
 	baseURL := c.config.MCP.URL
 	if !strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://") {
 		if c.config.MCP.TLS {
@@ -289,43 +290,59 @@ func (c *Client) authenticateUser(ctx context.Context, username, password string
 		}
 	}
 
-	// Ensure URL ends with /mcp/v1
-	if !strings.HasSuffix(baseURL, "/mcp/v1") {
-		if strings.HasSuffix(baseURL, "/") {
-			baseURL += "mcp/v1"
-		} else {
-			baseURL += "/mcp/v1"
-		}
+	// Remove any trailing path components to get the server root
+	// The MCP URL may end with /mcp/v1 but the auth endpoint is at /api/v1/auth/login
+	if idx := strings.Index(baseURL, "/mcp"); idx != -1 {
+		baseURL = baseURL[:idx]
+	}
+	baseURL = strings.TrimRight(baseURL, "/")
+
+	// Build the login request
+	loginReq := struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}{
+		Username: username,
+		Password: password,
 	}
 
-	// Create a temporary HTTP client without authentication to call authenticate_user
-	tempClient := NewHTTPClient(baseURL, "")
-
-	// Call authenticate_user tool
-	args := map[string]interface{}{
-		"username": username,
-		"password": password,
-	}
-
-	response, err := tempClient.CallTool(ctx, "authenticate_user", args)
+	reqBody, err := json.Marshal(loginReq)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to marshal login request: %w", err)
 	}
 
-	// Check for errors in response
-	if response.IsError {
-		if len(response.Content) > 0 {
-			return "", fmt.Errorf("%v", response.Content[0].Text)
+	// POST to the REST API login endpoint
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		baseURL+"/api/v1/auth/login", bytes.NewReader(reqBody))
+	if err != nil {
+		return "", fmt.Errorf("failed to create login request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("login request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read the response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read login response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		// Try to extract error message from JSON response
+		var errResp struct {
+			Error string `json:"error"`
 		}
-		return "", fmt.Errorf("authentication failed")
+		if json.Unmarshal(body, &errResp) == nil && errResp.Error != "" {
+			return "", fmt.Errorf("%s", errResp.Error)
+		}
+		return "", fmt.Errorf("authentication failed (HTTP %d)", resp.StatusCode)
 	}
 
-	// Parse the response to extract session token
-	if len(response.Content) == 0 {
-		return "", fmt.Errorf("empty response from authentication")
-	}
-
-	// The response is JSON: {"success": true, "session_token": "...", "expires_at": "...", "message": "..."}
+	// Parse the success response
 	var authResult struct {
 		Success      bool   `json:"success"`
 		SessionToken string `json:"session_token"`
@@ -333,8 +350,7 @@ func (c *Client) authenticateUser(ctx context.Context, username, password string
 		Message      string `json:"message"`
 	}
 
-	// Parse JSON from text content
-	if err := json.Unmarshal([]byte(response.Content[0].Text), &authResult); err != nil {
+	if err := json.Unmarshal(body, &authResult); err != nil {
 		return "", fmt.Errorf("failed to parse authentication response: %w", err)
 	}
 

@@ -127,26 +127,10 @@ func (h *RBACHandler) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.authStore.CreateUser(req.Username, req.Password, req.Annotation); err != nil {
+	if err := h.authStore.CreateUser(req.Username, req.Password, req.Annotation, req.DisplayName, req.Email); err != nil {
 		RespondError(w, http.StatusInternalServerError,
 			fmt.Sprintf("Failed to create user: %v", err))
 		return
-	}
-
-	if req.DisplayName != "" {
-		if err := h.authStore.UpdateUserDisplayName(req.Username, req.DisplayName); err != nil {
-			RespondError(w, http.StatusInternalServerError,
-				fmt.Sprintf("Failed to set display name: %v", err))
-			return
-		}
-	}
-
-	if req.Email != "" {
-		if err := h.authStore.UpdateUserEmail(req.Username, req.Email); err != nil {
-			RespondError(w, http.StatusInternalServerError,
-				fmt.Sprintf("Failed to set email: %v", err))
-			return
-		}
 	}
 
 	if req.Enabled != nil && !*req.Enabled {
@@ -193,7 +177,7 @@ func (h *RBACHandler) updateUser(w http.ResponseWriter, r *http.Request, userID 
 		return
 	}
 
-	if req.Password != nil || req.Annotation != nil {
+	if req.Password != nil || req.Annotation != nil || req.DisplayName != nil || req.Email != nil {
 		newPassword := ""
 		if req.Password != nil {
 			newPassword = *req.Password
@@ -202,25 +186,17 @@ func (h *RBACHandler) updateUser(w http.ResponseWriter, r *http.Request, userID 
 		if req.Annotation != nil {
 			newAnnotation = *req.Annotation
 		}
-		if err := h.authStore.UpdateUser(user.Username, newPassword, newAnnotation); err != nil {
+		newDisplayName := user.DisplayName
+		if req.DisplayName != nil {
+			newDisplayName = *req.DisplayName
+		}
+		newEmail := user.Email
+		if req.Email != nil {
+			newEmail = *req.Email
+		}
+		if err := h.authStore.UpdateUser(user.Username, newPassword, newAnnotation, newDisplayName, newEmail); err != nil {
 			RespondError(w, http.StatusInternalServerError,
 				fmt.Sprintf("Failed to update user: %v", err))
-			return
-		}
-	}
-
-	if req.DisplayName != nil {
-		if err := h.authStore.UpdateUserDisplayName(user.Username, *req.DisplayName); err != nil {
-			RespondError(w, http.StatusInternalServerError,
-				fmt.Sprintf("Failed to update display name: %v", err))
-			return
-		}
-	}
-
-	if req.Email != nil {
-		if err := h.authStore.UpdateUserEmail(user.Username, *req.Email); err != nil {
-			RespondError(w, http.StatusInternalServerError,
-				fmt.Sprintf("Failed to update email: %v", err))
 			return
 		}
 	}

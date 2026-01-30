@@ -59,6 +59,8 @@ type Flags struct {
 	Username       string
 	UserPassword   string
 	UserNote       string
+	FullName       string
+	Email          string
 
 	// Group management commands
 	AddGroupCmd       bool
@@ -135,7 +137,9 @@ func ParseFlags(defaultConfigPath string) *Flags {
 	flag.BoolVar(&f.DisableUserCmd, "disable-user", false, "Disable a user account")
 	flag.StringVar(&f.Username, "username", "", "Username for user management commands")
 	flag.StringVar(&f.UserPassword, "password", "", "Password for user management commands (prompted if not provided)")
-	flag.StringVar(&f.UserNote, "user-note", "", "Annotation for the new user (used with -add-user)")
+	flag.StringVar(&f.UserNote, "user-note", "", "Notes for the user (used with -add-user, -update-user)")
+	flag.StringVar(&f.FullName, "full-name", "", "Full name for user management commands")
+	flag.StringVar(&f.Email, "email", "", "Email address for user management commands")
 
 	// Group management commands
 	flag.BoolVar(&f.AddGroupCmd, "add-group", false, "Add a new RBAC group")

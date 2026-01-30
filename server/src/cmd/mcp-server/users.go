@@ -23,7 +23,7 @@ import (
 )
 
 // addUserCommand handles the add-user command
-func addUserCommand(dataDir, username, password, annotation string) error {
+func addUserCommand(dataDir, username, password, annotation, fullName, email string) error {
 	// Open auth store
 	store, err := auth.NewAuthStore(dataDir, 0, 0)
 	if err != nil {
@@ -31,10 +31,11 @@ func addUserCommand(dataDir, username, password, annotation string) error {
 	}
 	defer store.Close()
 
+	reader := bufio.NewReader(os.Stdin)
+
 	// Prompt for username if not provided
 	if username == "" {
 		fmt.Print("Enter username: ")
-		reader := bufio.NewReader(os.Stdin)
 		if input, err := reader.ReadString('\n'); err == nil {
 			username = strings.TrimSpace(input)
 		}
@@ -70,17 +71,32 @@ func addUserCommand(dataDir, username, password, annotation string) error {
 		}
 	}
 
-	// Prompt for annotation if not provided
+	// Prompt for full name if not provided
+	if fullName == "" {
+		fmt.Print("Enter full name (optional): ")
+		if input, err := reader.ReadString('\n'); err == nil {
+			fullName = strings.TrimSpace(input)
+		}
+	}
+
+	// Prompt for email if not provided
+	if email == "" {
+		fmt.Print("Enter email address (optional): ")
+		if input, err := reader.ReadString('\n'); err == nil {
+			email = strings.TrimSpace(input)
+		}
+	}
+
+	// Prompt for notes if not provided
 	if annotation == "" {
-		fmt.Print("Enter annotation/note for this user (optional): ")
-		reader := bufio.NewReader(os.Stdin)
+		fmt.Print("Enter notes for this user (optional): ")
 		if input, err := reader.ReadString('\n'); err == nil {
 			annotation = strings.TrimSpace(input)
 		}
 	}
 
 	// Add user to store
-	if err := store.CreateUser(username, password, annotation); err != nil {
+	if err := store.CreateUser(username, password, annotation, fullName, email); err != nil {
 		return fmt.Errorf("failed to add user: %w", err)
 	}
 
@@ -88,9 +104,15 @@ func addUserCommand(dataDir, username, password, annotation string) error {
 	fmt.Println("\n" + strings.Repeat("=", 70))
 	fmt.Println("User created successfully!")
 	fmt.Println(strings.Repeat("=", 70))
-	fmt.Printf("\nUsername: %s\n", username)
+	fmt.Printf("\nUsername:  %s\n", username)
+	if fullName != "" {
+		fmt.Printf("Full Name: %s\n", fullName)
+	}
+	if email != "" {
+		fmt.Printf("Email:    %s\n", email)
+	}
 	if annotation != "" {
-		fmt.Printf("Note:     %s\n", annotation)
+		fmt.Printf("Notes:    %s\n", annotation)
 	}
 	fmt.Printf("Status:   Enabled\n")
 	fmt.Println(strings.Repeat("=", 70) + "\n")
@@ -99,7 +121,7 @@ func addUserCommand(dataDir, username, password, annotation string) error {
 }
 
 // updateUserCommand handles the update-user command
-func updateUserCommand(dataDir, username, newPassword, newAnnotation string) error {
+func updateUserCommand(dataDir, username, newPassword, newAnnotation, newFullName, newEmail string) error {
 	// Open auth store
 	store, err := auth.NewAuthStore(dataDir, 0, 0)
 	if err != nil {
@@ -128,11 +150,29 @@ func updateUserCommand(dataDir, username, newPassword, newAnnotation string) err
 		return fmt.Errorf("user '%s' not found", username)
 	}
 
-	// If neither password nor annotation provided, prompt for what to update
-	if newPassword == "" && newAnnotation == "" {
+	// Track whether any flags were provided
+	hasUpdates := newPassword != "" || newAnnotation != "" || newFullName != "" || newEmail != ""
+
+	// Use existing values as defaults
+	annotation := user.Annotation
+	fullName := user.DisplayName
+	email := user.Email
+
+	if newAnnotation != "" {
+		annotation = newAnnotation
+	}
+	if newFullName != "" {
+		fullName = newFullName
+	}
+	if newEmail != "" {
+		email = newEmail
+	}
+
+	// If no flags were provided, prompt for what to update
+	if !hasUpdates {
+		reader := bufio.NewReader(os.Stdin)
 		fmt.Println("What would you like to update?")
 		fmt.Print("Update password? (y/N): ")
-		reader := bufio.NewReader(os.Stdin)
 		if input, err := reader.ReadString('\n'); err == nil {
 			response := strings.TrimSpace(strings.ToLower(input))
 			if response == "y" || response == "yes" {
@@ -156,28 +196,54 @@ func updateUserCommand(dataDir, username, newPassword, newAnnotation string) err
 					if newPassword != string(confirmBytes) {
 						return fmt.Errorf("passwords do not match")
 					}
+					hasUpdates = true
 				}
 			}
 		}
 
-		fmt.Print("Update annotation? (y/N): ")
+		fmt.Print("Update full name? (y/N): ")
 		if input, err := reader.ReadString('\n'); err == nil {
 			response := strings.TrimSpace(strings.ToLower(input))
 			if response == "y" || response == "yes" {
-				fmt.Print("Enter new annotation (leave empty to clear): ")
+				fmt.Print("Enter new full name (leave empty to clear): ")
 				if input, err := reader.ReadString('\n'); err == nil {
-					newAnnotation = strings.TrimSpace(input)
+					fullName = strings.TrimSpace(input)
+					hasUpdates = true
 				}
 			}
 		}
 
-		if newPassword == "" && newAnnotation == "" {
+		fmt.Print("Update email? (y/N): ")
+		if input, err := reader.ReadString('\n'); err == nil {
+			response := strings.TrimSpace(strings.ToLower(input))
+			if response == "y" || response == "yes" {
+				fmt.Print("Enter new email (leave empty to clear): ")
+				if input, err := reader.ReadString('\n'); err == nil {
+					email = strings.TrimSpace(input)
+					hasUpdates = true
+				}
+			}
+		}
+
+		fmt.Print("Update notes? (y/N): ")
+		if input, err := reader.ReadString('\n'); err == nil {
+			response := strings.TrimSpace(strings.ToLower(input))
+			if response == "y" || response == "yes" {
+				fmt.Print("Enter new notes (leave empty to clear): ")
+				if input, err := reader.ReadString('\n'); err == nil {
+					annotation = strings.TrimSpace(input)
+					hasUpdates = true
+				}
+			}
+		}
+
+		if !hasUpdates {
 			return fmt.Errorf("no updates specified")
 		}
 	}
 
 	// Update user
-	if err := store.UpdateUser(username, newPassword, newAnnotation); err != nil {
+	if err := store.UpdateUser(username, newPassword, annotation, fullName, email); err != nil {
 		return fmt.Errorf("failed to update user: %w", err)
 	}
 
@@ -247,7 +313,7 @@ func listUsersCommand(dataDir string) error {
 
 	fmt.Println("\nUsers:")
 	fmt.Println(strings.Repeat("=", 90))
-	fmt.Printf("%-20s %-25s %-20s %-10s %s\n", "Username", "Created", "Last Login", "Status", "Annotation")
+	fmt.Printf("%-20s %-25s %-20s %-10s %s\n", "Username", "Created", "Last Login", "Status", "Notes")
 	fmt.Println(strings.Repeat("-", 90))
 
 	for _, user := range users {

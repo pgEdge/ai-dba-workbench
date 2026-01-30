@@ -49,7 +49,7 @@ func RunCLICommands(f *Flags, dataDir string) bool {
 	// Handle user management commands
 	if f.HasUserCommand() {
 		if f.AddUserCmd {
-			if err := addUserCommand(dataDir, f.Username, f.UserPassword, f.UserNote); err != nil {
+			if err := addUserCommand(dataDir, f.Username, f.UserPassword, f.UserNote, f.FullName, f.Email); err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 				os.Exit(1)
 			}
@@ -57,7 +57,7 @@ func RunCLICommands(f *Flags, dataDir string) bool {
 		}
 
 		if f.UpdateUserCmd {
-			if err := updateUserCommand(dataDir, f.Username, f.UserPassword, f.UserNote); err != nil {
+			if err := updateUserCommand(dataDir, f.Username, f.UserPassword, f.UserNote, f.FullName, f.Email); err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 				os.Exit(1)
 			}

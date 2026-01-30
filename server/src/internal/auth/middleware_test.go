@@ -324,7 +324,7 @@ func TestAuthMiddleware_ValidSessionToken(t *testing.T) {
 	defer store.Close()
 
 	// Create a user
-	err = store.CreateUser("testuser", "testpass123", "Test user")
+	err = store.CreateUser("testuser", "testpass123", "Test user", "", "")
 	if err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}

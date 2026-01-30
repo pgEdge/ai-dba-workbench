@@ -361,7 +361,7 @@ const AdminUsers = ({ mode }) => {
                             <TableCell sx={{ fontWeight: 600 }}>Username</TableCell>
                             <TableCell sx={{ fontWeight: 600 }}>Display Name</TableCell>
                             <TableCell sx={{ fontWeight: 600 }}>Email</TableCell>
-                            <TableCell sx={{ fontWeight: 600 }}>Annotation</TableCell>
+                            <TableCell sx={{ fontWeight: 600 }}>Notes</TableCell>
                             <TableCell sx={{ fontWeight: 600 }} align="center">Superuser</TableCell>
                             <TableCell sx={{ fontWeight: 600 }} align="center">Enabled</TableCell>
                             <TableCell sx={{ fontWeight: 600 }} align="right">Actions</TableCell>
@@ -514,7 +514,7 @@ const AdminUsers = ({ mode }) => {
                     />
                     <TextField
                         fullWidth
-                        label="Annotation"
+                        label="Notes"
                         value={createAnnotation}
                         onChange={(e) => setCreateAnnotation(e.target.value)}
                         disabled={createLoading}
@@ -608,7 +608,7 @@ const AdminUsers = ({ mode }) => {
                     />
                     <TextField
                         fullWidth
-                        label="Annotation"
+                        label="Notes"
                         value={editAnnotation}
                         onChange={(e) => setEditAnnotation(e.target.value)}
                         disabled={editLoading}

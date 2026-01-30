@@ -33,7 +33,7 @@ func addTokenCommand(dataDir, annotation string, expiresIn time.Duration, isSupe
 
 	// Prompt for annotation if not provided
 	if annotation == "" {
-		fmt.Print("Enter annotation/note for this token (optional): ")
+		fmt.Print("Enter notes for this token (optional): ")
 		if input, err := reader.ReadString('\n'); err == nil {
 			annotation = strings.TrimSpace(input)
 		}
@@ -133,7 +133,7 @@ func listTokensCommand(dataDir string) error {
 
 	fmt.Println("\nService Tokens:")
 	fmt.Println(strings.Repeat("=", 100))
-	fmt.Printf("%-6s %-18s %-20s %-10s %-10s %s\n", "ID", "Hash Prefix", "Expires", "Status", "Superuser", "Annotation")
+	fmt.Printf("%-6s %-18s %-20s %-10s %-10s %s\n", "ID", "Hash Prefix", "Expires", "Status", "Superuser", "Notes")
 	fmt.Println(strings.Repeat("-", 100))
 
 	now := time.Now()

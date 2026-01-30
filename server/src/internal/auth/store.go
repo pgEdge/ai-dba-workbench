@@ -411,7 +411,7 @@ func (s *AuthStore) Close() error {
 // =============================================================================
 
 // CreateUser creates a new user
-func (s *AuthStore) CreateUser(username, password, annotation string) error {
+func (s *AuthStore) CreateUser(username, password, annotation, displayName, email string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -421,8 +421,8 @@ func (s *AuthStore) CreateUser(username, password, annotation string) error {
 	}
 
 	_, err = s.db.Exec(
-		"INSERT INTO users (username, password_hash, annotation) VALUES (?, ?, ?)",
-		username, string(hash), annotation,
+		"INSERT INTO users (username, password_hash, annotation, display_name, email) VALUES (?, ?, ?, ?, ?)",
+		username, string(hash), annotation, displayName, email,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create user: %w", err)
@@ -495,8 +495,8 @@ func (s *AuthStore) GetUserByID(id int64) (*StoredUser, error) {
 	return &user, nil
 }
 
-// UpdateUser updates a user's password and/or annotation
-func (s *AuthStore) UpdateUser(username, newPassword, newAnnotation string) error {
+// UpdateUser updates a user's password, annotation, display name, and/or email
+func (s *AuthStore) UpdateUser(username, newPassword, newAnnotation, newDisplayName, newEmail string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -511,11 +511,10 @@ func (s *AuthStore) UpdateUser(username, newPassword, newAnnotation string) erro
 		}
 	}
 
-	if newAnnotation != "" {
-		_, err := s.db.Exec("UPDATE users SET annotation = ? WHERE username = ?", newAnnotation, username)
-		if err != nil {
-			return fmt.Errorf("failed to update annotation: %w", err)
-		}
+	_, err := s.db.Exec("UPDATE users SET annotation = ?, display_name = ?, email = ? WHERE username = ?",
+		newAnnotation, newDisplayName, newEmail, username)
+	if err != nil {
+		return fmt.Errorf("failed to update user: %w", err)
 	}
 
 	return nil

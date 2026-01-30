@@ -38,7 +38,7 @@ func TestAuthHandler_HandleLogin(t *testing.T) {
 	defer authStore.Close()
 
 	// Create a test user
-	if err := authStore.CreateUser("testuser", "testpass123", "Test user"); err != nil {
+	if err := authStore.CreateUser("testuser", "testpass123", "Test user", "", ""); err != nil {
 		t.Fatalf("Failed to create test user: %v", err)
 	}
 
@@ -303,7 +303,7 @@ func TestAuthHandler_RateLimiting(t *testing.T) {
 	defer authStore.Close()
 
 	// Create a test user
-	if err := authStore.CreateUser("testuser", "testpass123", "Test user"); err != nil {
+	if err := authStore.CreateUser("testuser", "testpass123", "Test user", "", ""); err != nil {
 		t.Fatalf("Failed to create test user: %v", err)
 	}
 

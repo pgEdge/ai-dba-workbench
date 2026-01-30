@@ -202,6 +202,7 @@ const AdminTokenScopes = ({ mode }) => {
                     <TableHead>
                         <TableRow>
                             <TableCell sx={{ fontWeight: 600 }}>Token</TableCell>
+                            <TableCell sx={{ fontWeight: 600 }}>Token ID</TableCell>
                             <TableCell sx={{ fontWeight: 600 }}>User</TableCell>
                             <TableCell sx={{ fontWeight: 600 }}>Scope</TableCell>
                             <TableCell sx={{ fontWeight: 600 }} align="right">Actions</TableCell>
@@ -216,6 +217,7 @@ const AdminTokenScopes = ({ mode }) => {
                                         <TableCell>
                                             {token.name || token.token_prefix || `Token #${token.id}`}
                                         </TableCell>
+                                        <TableCell>{token.id}</TableCell>
                                         <TableCell>{token.username || '-'}</TableCell>
                                         <TableCell>
                                             {hasScope ? (
@@ -275,7 +277,7 @@ const AdminTokenScopes = ({ mode }) => {
                             })
                         ) : (
                             <TableRow>
-                                <TableCell colSpan={4} align="center" sx={{ py: 4 }}>
+                                <TableCell colSpan={5} align="center" sx={{ py: 4 }}>
                                     <Typography color="text.secondary">No tokens found.</Typography>
                                 </TableCell>
                             </TableRow>

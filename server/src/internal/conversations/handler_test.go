@@ -44,7 +44,7 @@ func setupTestHandler(t *testing.T) (*Handler, func(), string) {
 	}
 
 	// Add a test user
-	err = authStore.CreateUser("testuser", "password123", "Test User")
+	err = authStore.CreateUser("testuser", "password123", "Test User", "", "")
 	if err != nil {
 		authStore.Close()
 		store.Close()

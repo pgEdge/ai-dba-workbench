@@ -134,9 +134,10 @@ algorithms.
 
 - The system uses AES-256-GCM encryption for password protection.
 - Encryption keys are derived using PBKDF2 with SHA256 and 100,000 iterations.
-- The key derivation combines the server secret with the username as salt.
+- Each password uses a cryptographically random 16-byte salt for key derivation.
 - Encrypted passwords are stored in the datastore's `connections` table.
 - The Collector decrypts passwords only when establishing connections.
+- Users do not need to manually encrypt passwords; use the MCP server API.
 
 ## Component Architecture
 
@@ -154,9 +155,10 @@ The Collector consists of several key components:
 - Datastore connection management (`datastore.go`, `datastore_pool.go`)
 - Monitored connection pools (`monitored_pool.go`)
 - Schema migrations (`schema.go`)
-- Password encryption/decryption (`crypto.go`)
 - Connection string building (`connstring.go`)
 - Type definitions (`types.go`)
+
+Password encryption is handled by the shared `pkg/crypto` package.
 
 ### Probes Package
 

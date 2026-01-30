@@ -273,19 +273,14 @@ chmod 600 /etc/pgedge/ai-dba-collector.secret
 
 #### Encryption Details
 
-The Collector uses AES-256-GCM encryption to protect stored passwords. The
+The Collector uses AES-256-GCM encryption to protect stored passwords. Each
+password is encrypted with a unique cryptographically random salt. The
 encryption key is derived from the server secret using PBKDF2 with SHA256 and
 100,000 iterations. This provides strong protection against brute-force
 attacks on the encrypted passwords.
 
-#### PBKDF2 Migration Note
-
-Recent versions upgraded from simple SHA256 hashing to PBKDF2 key derivation.
-This change is a breaking change for existing installations. Encrypted
-passwords created with the previous implementation will no longer decrypt
-correctly. After upgrading, you must re-enter passwords for all monitored
-connections using the MCP server API or by updating the `connections` table
-directly.
+Users should not manually encrypt passwords. Use the MCP server API to create
+and manage connections with passwords.
 
 ## Command-Line Flags
 

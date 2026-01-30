@@ -185,10 +185,15 @@ func (rc *RBACChecker) CanAccessConnection(ctx context.Context, connectionID int
 		return false, ""
 	}
 
-	// Check if user has access to this connection
+	// Check if user has access to this connection (specific or via "all connections")
 	accessLevel, hasAccess := privileges[connectionID]
-	if !hasAccess {
+	allLevel, hasAll := privileges[ConnectionIDAll]
+	if !hasAccess && !hasAll {
 		return false, ""
+	}
+	// Use the higher of the two access levels
+	if hasAll && (!hasAccess || allLevel == AccessLevelReadWrite) {
+		accessLevel = allLevel
 	}
 
 	// Check token scoping (if applicable)
@@ -213,6 +218,7 @@ func (rc *RBACChecker) GetEffectivePrivileges(ctx context.Context) *EffectivePri
 	result := &EffectivePrivileges{
 		MCPPrivileges:        make(map[string]bool),
 		ConnectionPrivileges: make(map[int]string),
+		AdminPermissions:     make(map[string]bool),
 	}
 
 	// Auth disabled - return empty (no restrictions means full access)
@@ -244,6 +250,12 @@ func (rc *RBACChecker) GetEffectivePrivileges(ctx context.Context) *EffectivePri
 	connPrivs, err := rc.authStore.GetUserConnectionPrivileges(userID)
 	if err == nil {
 		result.ConnectionPrivileges = connPrivs
+	}
+
+	// Get admin permissions
+	adminPerms, err := rc.authStore.GetUserAdminPermissions(userID)
+	if err == nil {
+		result.AdminPermissions = adminPerms
 	}
 
 	// Apply token scoping if applicable
@@ -297,6 +309,33 @@ func (rc *RBACChecker) GetAccessibleConnections(ctx context.Context) []int {
 		connections = append(connections, connID)
 	}
 	return connections
+}
+
+// HasAdminPermission checks if the current context has a specific admin permission
+func (rc *RBACChecker) HasAdminPermission(ctx context.Context, permission string) bool {
+	// Auth disabled - full access
+	if !rc.authEnabled || rc.authStore == nil {
+		return true
+	}
+
+	// Superuser bypass
+	if IsSuperuserFromContext(ctx) {
+		return true
+	}
+
+	// Get user ID from context
+	userID := GetUserIDFromContext(ctx)
+	if userID == 0 {
+		return false
+	}
+
+	// Get user's admin permissions through group membership
+	perms, err := rc.authStore.GetUserAdminPermissions(userID)
+	if err != nil {
+		return false
+	}
+
+	return perms[permission]
 }
 
 // HasWriteAccess checks if the current context has write access to a connection

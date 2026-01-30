@@ -161,7 +161,7 @@ INSERT INTO connections (
     5432,
     'postgres',
     'monitoring_user',
-    NULL,  -- Will encrypt password separately
+    NULL,  -- Use the MCP server API to set the password
     true,  -- Shared connection
     true,  -- Enable monitoring
     'admin',
@@ -169,13 +169,11 @@ INSERT INTO connections (
 );
 ```
 
-To add an encrypted password, you'll need to use the MCP server API (once
-available) or write a small utility using the `database.EncryptPassword()`
-function.
+### Method 2: Using the MCP Server API (Recommended)
 
-### Method 2: Using the MCP Server API
-
-(To be documented when MCP server is available)
+Use the MCP server's connection management API to add connections with
+passwords. The API handles password encryption automatically using AES-256-GCM
+with random salts.
 
 ## Verifying the Setup
 
@@ -249,25 +247,8 @@ Monitored Connections" above.
 
 ## Upgrading
 
-### PBKDF2 Migration
-
-Recent versions upgraded the key derivation algorithm from simple SHA256 to
-PBKDF2 with 100,000 iterations. This change provides stronger protection
-against brute-force attacks but is a breaking change.
-
-After upgrading to the new version, encrypted passwords for monitored
-connections will no longer decrypt correctly. You must re-enter passwords for
-all monitored connections. Use the MCP server API or update the `connections`
-table directly by setting the `password_encrypted` column to `NULL` and then
-re-entering the passwords.
-
-The following query identifies affected connections:
-
-```sql
-SELECT id, name, host, database_name
-FROM connections
-WHERE password_encrypted IS NOT NULL;
-```
+When upgrading the Collector, schema migrations run automatically on startup.
+There are typically no manual steps required for upgrades.
 
 ## Next Steps
 

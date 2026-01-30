@@ -50,6 +50,23 @@ const (
 	MCPPrivilegeTypePrompt   = "prompt"
 )
 
+// Admin permission constants
+const (
+	PermManageConnections = "manage_connections"
+	PermManageGroups      = "manage_groups"
+	PermManagePermissions = "manage_permissions"
+	PermManageUsers       = "manage_users"
+	PermManageTokenScopes = "manage_token_scopes"
+)
+
+// AdminPermissionGrant represents a granted admin permission for a group
+type AdminPermissionGrant struct {
+	ID         int64  `json:"id"`
+	GroupID    int64  `json:"group_id"`
+	Permission string `json:"permission"`
+	CreatedAt  string `json:"created_at"`
+}
+
 // GroupMCPPrivilege represents a group's access to an MCP privilege
 type GroupMCPPrivilege struct {
 	ID                    int64     `json:"id"`
@@ -66,6 +83,9 @@ type ConnectionPrivilege struct {
 	AccessLevel  string    `json:"access_level"` // "read" or "read_write"
 	CreatedAt    time.Time `json:"created_at"`
 }
+
+// ConnectionIDAll represents access to all connections
+const ConnectionIDAll = 0
 
 // ConnectionAccessLevel constants
 const (
@@ -101,6 +121,7 @@ type EffectivePrivileges struct {
 	IsSuperuser          bool            `json:"is_superuser"`
 	MCPPrivileges        map[string]bool `json:"mcp_privileges"`        // identifier -> allowed
 	ConnectionPrivileges map[int]string  `json:"connection_privileges"` // connection_id -> access_level
+	AdminPermissions     map[string]bool `json:"admin_permissions"`     // permission -> granted
 	TokenScope           *TokenScope     `json:"token_scope,omitempty"` // nil if no scoping
 }
 

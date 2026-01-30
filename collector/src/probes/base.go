@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/pkg/logger"
@@ -251,7 +252,7 @@ func DropExpiredPartitions(ctx context.Context, conn *pgxpool.Conn, tableName st
 		}
 
 		// Parse the partition bound to get the end timestamp
-		// Format is: FOR VALUES FROM ('2025-11-03 00:00:00') TO ('2025-11-04 00:00:00')
+		// Format is: FOR VALUES FROM ('2025-11-03 00:00:00+00') TO ('2025-11-04 00:00:00+00')
 		// We need to extract the TO timestamp
 		toIdx := strings.Index(partitionBound, "TO ('")
 		if toIdx == -1 {
@@ -269,22 +270,28 @@ func DropExpiredPartitions(ctx context.Context, conn *pgxpool.Conn, tableName st
 
 		timestampStr := partitionBound[timestampStart : timestampStart+timestampEnd]
 
-		// Parse the timestamp string - try with timezone first (TIMESTAMPTZ), then without (legacy TIMESTAMP)
+		// Try timezone formats: with minutes (+05:30), without minutes (+05), then legacy (no tz)
 		var endTimestamp time.Time
-		var err error
-		endTimestamp, err = time.Parse("2006-01-02 15:04:05-07", timestampStr)
-		if err != nil {
-			// Fall back to parsing without timezone for legacy partitions
-			endTimestamp, err = time.Parse("2006-01-02 15:04:05", timestampStr)
-			if err != nil {
-				logger.Errorf("Warning: failed to parse timestamp in partition bound for %s: %v", partitionName, err)
-				continue
+		tzFormats := []string{
+			"2006-01-02 15:04:05-07:00",
+			"2006-01-02 15:04:05-07",
+			"2006-01-02 15:04:05",
+		}
+		var parseErr error
+		for _, layout := range tzFormats {
+			endTimestamp, parseErr = time.Parse(layout, timestampStr)
+			if parseErr == nil {
+				break
 			}
+		}
+		if parseErr != nil {
+			logger.Errorf("Warning: failed to parse timestamp in partition bound for %s: %v", partitionName, parseErr)
+			continue
 		}
 
 		// If the partition end time is before the cutoff, drop it
 		if endTimestamp.Before(cutoff) {
-			dropSQL := fmt.Sprintf("DROP TABLE IF EXISTS metrics.%s", partitionName)
+			dropSQL := fmt.Sprintf("DROP TABLE IF EXISTS %s", pgx.Identifier{"metrics", partitionName}.Sanitize())
 			if _, err := conn.Exec(ctx, dropSQL); err != nil {
 				logger.Errorf("Warning: failed to drop partition %s: %v", partitionName, err)
 				continue

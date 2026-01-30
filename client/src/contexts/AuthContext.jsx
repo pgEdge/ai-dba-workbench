@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { createContext, useState, useContext, useEffect } from 'react';
+import React, { createContext, useState, useContext, useEffect, useCallback, useMemo } from 'react';
 
 const AuthContext = createContext(null);
 
@@ -18,6 +18,7 @@ const API_BASE_URL = '/api/v1';
 export const AuthProvider = ({ children }) => {
     const [user, setUser] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [adminPermissions, setAdminPermissions] = useState([]);
 
     useEffect(() => {
         checkAuth();
@@ -43,14 +44,17 @@ export const AuthProvider = ({ children }) => {
                     username: userInfo.username,
                     isSuperuser: userInfo.is_superuser || false
                 });
+                setAdminPermissions(userInfo.admin_permissions || []);
             } else {
                 // Session is invalid - clear it
                 setUser(null);
+                setAdminPermissions([]);
             }
         } catch (error) {
             console.error('Auth check failed:', error);
             // Invalid or expired session - clear it
             setUser(null);
+            setAdminPermissions([]);
         } finally {
             setLoading(false);
         }
@@ -93,6 +97,7 @@ export const AuthProvider = ({ children }) => {
                     isSuperuser: userInfo.is_superuser || false,
                     expiresAt: result.expires_at
                 });
+                setAdminPermissions(userInfo.admin_permissions || []);
             } else {
                 // Fallback if user info fetch fails
                 setUser({
@@ -100,6 +105,7 @@ export const AuthProvider = ({ children }) => {
                     username: username,
                     expiresAt: result.expires_at
                 });
+                setAdminPermissions([]);
             }
         } catch (error) {
             // Re-throw with user-friendly message
@@ -119,7 +125,19 @@ export const AuthProvider = ({ children }) => {
             // Continue with local logout even if server request fails
         }
         setUser(null);
+        setAdminPermissions([]);
     };
+
+    // Check if the user has a specific admin permission
+    const hasPermission = useCallback((perm) => {
+        if (user?.isSuperuser) return true;
+        return adminPermissions.includes(perm);
+    }, [user?.isSuperuser, adminPermissions]);
+
+    // True if the user is a superuser or has any admin permissions
+    const hasAnyAdminAccess = useMemo(() => {
+        return !!(user?.isSuperuser || adminPermissions.length > 0);
+    }, [user?.isSuperuser, adminPermissions]);
 
     // Force logout without any cleanup (used when session is invalidated)
     const forceLogout = async () => {
@@ -132,6 +150,7 @@ export const AuthProvider = ({ children }) => {
             // Ignore errors during force logout
         }
         setUser(null);
+        setAdminPermissions([]);
     };
 
     return (
@@ -140,7 +159,10 @@ export const AuthProvider = ({ children }) => {
             loading,
             login,
             logout,
-            forceLogout
+            forceLogout,
+            adminPermissions,
+            hasPermission,
+            hasAnyAdminAccess,
         }}>
             {children}
         </AuthContext.Provider>

@@ -26,7 +26,9 @@ type MonitoredConnectionInfo struct {
 	Host         string `json:"host"`
 	Port         int    `json:"port"`
 	DatabaseName string `json:"database_name"`
-	IsMonitored  bool   `json:"is_monitored"`
+	IsMonitored     bool   `json:"is_monitored"`
+	Status          string `json:"status"`
+	ConnectionError string `json:"connection_error,omitempty"`
 }
 
 // ListConnectionsTool creates the list_connections tool for listing monitored connections
@@ -63,6 +65,8 @@ Returns a TSV table with:
 - port: PostgreSQL server port
 - database_name: Default database name
 - is_monitored: Whether the collector is gathering metrics from this server
+- status: Connection status (online, warning, offline, or unknown)
+- error: Connection error message if the connection is unavailable
 </provided_info>
 
 <examples>
@@ -103,15 +107,49 @@ CRITICAL: Never silently analyze multiple connections. Always get explicit user 
 
 			// Query for all connections (excluding sensitive fields like passwords)
 			query := `
+                WITH latest_roles AS (
+                    SELECT DISTINCT ON (connection_id)
+                        connection_id,
+                        COALESCE(
+                            CASE
+                                WHEN collected_at > NOW() - INTERVAL '6 minutes' THEN 'online'
+                                WHEN collected_at > NOW() - INTERVAL '12 minutes' THEN 'warning'
+                                ELSE 'offline'
+                            END, 'unknown'
+                        ) as status
+                    FROM metrics.pg_node_role
+                    WHERE collected_at > NOW() - INTERVAL '15 minutes'
+                    ORDER BY connection_id, collected_at DESC
+                ),
+                latest_conn_error AS (
+                    SELECT connection_id,
+                           bool_and(is_available) = false AS all_unavailable,
+                           (array_agg(unavailable_reason ORDER BY last_checked DESC)
+                            FILTER (WHERE unavailable_reason IS NOT NULL))[1]
+                                AS error_reason
+                    FROM probe_availability
+                    WHERE last_checked > NOW() - INTERVAL '15 minutes'
+                    GROUP BY connection_id
+                )
                 SELECT
-                    id,
-                    name,
-                    host,
-                    port,
-                    database_name,
-                    is_monitored
-                FROM public.connections
-                ORDER BY name, host
+                    c.id,
+                    c.name,
+                    c.host,
+                    c.port,
+                    c.database_name,
+                    c.is_monitored,
+                    CASE
+                        WHEN c.is_monitored AND lr.connection_id IS NULL AND lce.connection_id IS NULL
+                        THEN 'initialising'
+                        WHEN COALESCE(lce.all_unavailable, false) AND COALESCE(lr.status, 'unknown') = 'unknown'
+                        THEN 'offline'
+                        ELSE COALESCE(lr.status, 'unknown')
+                    END as status,
+                    COALESCE(lce.error_reason, '') as connection_error
+                FROM public.connections c
+                LEFT JOIN latest_roles lr ON c.id = lr.connection_id
+                LEFT JOIN latest_conn_error lce ON c.id = lce.connection_id
+                ORDER BY c.name, c.host
             `
 
 			rows, err := pool.Query(ctx, query)
@@ -123,7 +161,7 @@ CRITICAL: Never silently analyze multiple connections. Always get explicit user 
 			var connections []MonitoredConnectionInfo
 			for rows.Next() {
 				var conn MonitoredConnectionInfo
-				if err := rows.Scan(&conn.ID, &conn.Name, &conn.Host, &conn.Port, &conn.DatabaseName, &conn.IsMonitored); err != nil {
+				if err := rows.Scan(&conn.ID, &conn.Name, &conn.Host, &conn.Port, &conn.DatabaseName, &conn.IsMonitored, &conn.Status, &conn.ConnectionError); err != nil {
 					return mcp.NewToolError(fmt.Sprintf("Failed to scan connection: %v", err))
 				}
 				connections = append(connections, conn)
@@ -148,10 +186,10 @@ CRITICAL: Never silently analyze multiple connections. Always get explicit user 
 			// Format as TSV
 			var sb strings.Builder
 			sb.WriteString(fmt.Sprintf("Found %d connections (%d monitored):\n\n", len(connections), monitoredCount))
-			sb.WriteString("id\tname\thost\tport\tdatabase_name\tis_monitored\n")
+			sb.WriteString("id\tname\thost\tport\tdatabase_name\tis_monitored\tstatus\terror\n")
 			for _, conn := range connections {
-				sb.WriteString(fmt.Sprintf("%d\t%s\t%s\t%d\t%s\t%t\n",
-					conn.ID, conn.Name, conn.Host, conn.Port, conn.DatabaseName, conn.IsMonitored))
+				sb.WriteString(fmt.Sprintf("%d\t%s\t%s\t%d\t%s\t%t\t%s\t%s\n",
+					conn.ID, conn.Name, conn.Host, conn.Port, conn.DatabaseName, conn.IsMonitored, conn.Status, conn.ConnectionError))
 			}
 
 			sb.WriteString("\nNote: Use the 'id' column value as the connection_id parameter in query_metrics.\n")

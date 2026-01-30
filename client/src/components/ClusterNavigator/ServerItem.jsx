@@ -185,7 +185,7 @@ const ServerItem = memo(({
                         )}
                     </IconButton>
                 )}
-                <StatusIndicator status={server.status} alertCount={alertCount} isDark={isDark} />
+                <StatusIndicator status={server.status} alertCount={alertCount} isDark={isDark} connectionError={server.connection_error} />
                 <ServerIcon
                     sx={{
                         fontSize: 16,

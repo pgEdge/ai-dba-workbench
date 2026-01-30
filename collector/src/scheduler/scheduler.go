@@ -347,12 +347,13 @@ func (ps *ProbeScheduler) executeProbeForConnection(ctx context.Context, probe p
 	var databases []string
 	timestamp := time.Now()
 
+	var connectionError bool
 	if probe.IsDatabaseScoped() {
 		// Execute probe for each database and collect metrics
-		allMetrics, databases = ps.executeProbeForAllDatabases(execCtx, probe, conn)
+		allMetrics, databases, connectionError = ps.executeProbeForAllDatabases(execCtx, probe, conn)
 	} else {
 		// Execute probe once for the connection
-		allMetrics = ps.executeProbeForServerWide(execCtx, probe, conn)
+		allMetrics, connectionError = ps.executeProbeForServerWide(execCtx, probe, conn)
 	}
 
 	// Check if we hit the timeout
@@ -391,21 +392,23 @@ func (ps *ProbeScheduler) executeProbeForConnection(ctx context.Context, probe p
 			config.Name, conn.Name, float64(duration.Microseconds())/1000.0)
 	}
 
-	// Record probe availability
-	var extName *string
-	if ep, ok := probe.(probes.ExtensionProbe); ok {
-		name := ep.GetExtensionName()
-		extName = &name
-	}
+	// Record probe availability (skip if we already recorded a connection error)
+	if !connectionError {
+		var extName *string
+		if ep, ok := probe.(probes.ExtensionProbe); ok {
+			name := ep.GetExtensionName()
+			extName = &name
+		}
 
-	if metricsStored > 0 {
-		ps.recordAvailability(conn.ID, config.Name, extName, true, nil)
-	} else if extName != nil && allMetrics == nil {
-		reason := fmt.Sprintf("extension '%s' not installed", *extName)
-		ps.recordAvailability(conn.ID, config.Name, extName, false, &reason)
-	} else {
-		// Non-extension probe with no metrics is normal (e.g., no replication)
-		ps.recordAvailability(conn.ID, config.Name, extName, true, nil)
+		if metricsStored > 0 {
+			ps.recordAvailability(conn.ID, config.Name, extName, true, nil)
+		} else if extName != nil && allMetrics == nil {
+			reason := fmt.Sprintf("extension '%s' not installed", *extName)
+			ps.recordAvailability(conn.ID, config.Name, extName, false, &reason)
+		} else {
+			// Non-extension probe with no metrics is normal (e.g., no replication)
+			ps.recordAvailability(conn.ID, config.Name, extName, true, nil)
+		}
 	}
 }
 
@@ -450,7 +453,7 @@ func (ps *ProbeScheduler) recordAvailability(connectionID int, probeName string,
 }
 
 // executeProbeForAllDatabases executes a database-scoped probe for all databases and returns all collected metrics and database list
-func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe probes.MetricsProbe, conn database.MonitoredConnection) ([]map[string]interface{}, []string) {
+func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe probes.MetricsProbe, conn database.MonitoredConnection) ([]map[string]interface{}, []string, bool) {
 	config := probe.GetConfig()
 	var allMetrics []map[string]interface{}
 	var databases []string
@@ -459,7 +462,7 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 	if ctx.Err() != nil {
 		logger.Errorf("Error getting connection for probe %s on %s: context already canceled",
 			config.Name, conn.Name)
-		return allMetrics, databases
+		return allMetrics, databases, false
 	}
 
 	// Get connection to query pg_database (connects to default database)
@@ -473,7 +476,9 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 			logger.Errorf("Error getting connection to monitored database %s for probe %s: %v",
 				conn.Name, config.Name, err)
 		}
-		return allMetrics, databases
+		reason := fmt.Sprintf("connection error: %v", err)
+		ps.recordAvailability(conn.ID, config.Name, nil, false, &reason)
+		return allMetrics, databases, true
 	}
 
 	// Detect and cache PostgreSQL version
@@ -497,7 +502,7 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 			logger.Errorf("Error getting database list for probe %s on connection %s: %v",
 				config.Name, conn.Name, err)
 		}
-		return allMetrics, databases
+		return allMetrics, databases, false
 	}
 
 	// Execute probe on the default/first database using the connection we already have
@@ -563,7 +568,7 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 		}
 	}
 
-	return allMetrics, databases
+	return allMetrics, databases, false
 }
 
 // getDatabaseList queries pg_database to get list of accessible databases
@@ -597,7 +602,7 @@ func (ps *ProbeScheduler) getDatabaseList(ctx context.Context, conn *pgxpool.Con
 }
 
 // executeProbeForServerWide executes a server-wide probe and returns collected metrics
-func (ps *ProbeScheduler) executeProbeForServerWide(ctx context.Context, probe probes.MetricsProbe, conn database.MonitoredConnection) []map[string]interface{} {
+func (ps *ProbeScheduler) executeProbeForServerWide(ctx context.Context, probe probes.MetricsProbe, conn database.MonitoredConnection) ([]map[string]interface{}, bool) {
 	config := probe.GetConfig()
 	var metrics []map[string]interface{}
 
@@ -605,7 +610,7 @@ func (ps *ProbeScheduler) executeProbeForServerWide(ctx context.Context, probe p
 	if ctx.Err() != nil {
 		logger.Errorf("Error getting connection for probe %s on %s: context already canceled",
 			config.Name, conn.Name)
-		return metrics
+		return metrics, false
 	}
 
 	// Get connection to the monitored server
@@ -619,7 +624,9 @@ func (ps *ProbeScheduler) executeProbeForServerWide(ctx context.Context, probe p
 			logger.Errorf("Error getting connection to monitored database %s for probe %s: %v",
 				conn.Name, config.Name, err)
 		}
-		return metrics
+		reason := fmt.Sprintf("connection error: %v", err)
+		ps.recordAvailability(conn.ID, config.Name, nil, false, &reason)
+		return metrics, true
 	}
 
 	// Detect and cache PostgreSQL version
@@ -644,10 +651,10 @@ func (ps *ProbeScheduler) executeProbeForServerWide(ctx context.Context, probe p
 			logger.Debugf("Error executing probe %s on connection %s: %v",
 				config.Name, conn.Name, err)
 		}
-		return nil
+		return nil, false
 	}
 
-	return metrics
+	return metrics, false
 }
 
 // storeMetrics stores collected metrics to the datastore and returns the number of metrics stored

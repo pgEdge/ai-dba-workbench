@@ -39,7 +39,7 @@ export const collectServerFingerprints = (servers) => {
     if (!servers || servers.length === 0) return '';
     return servers.map(server => {
         const childFingerprints = collectServerFingerprints(server.children);
-        return `${server.id}:${server.name}:${server.status}:${server.primary_role || server.role || ''}${childFingerprints ? ':' + childFingerprints : ''}`;
+        return `${server.id}:${server.name}:${server.status}:${server.connection_error || ''}:${server.primary_role || server.role || ''}${childFingerprints ? ':' + childFingerprints : ''}`;
     }).join(',');
 };
 

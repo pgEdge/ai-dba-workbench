@@ -322,6 +322,9 @@ func (d *Datastore) CreateConnection(ctx context.Context, params ConnectionCreat
 		return nil, fmt.Errorf("failed to create connection: %w", err)
 	}
 
+	// Clear any stale probe availability records so the connection shows as "initializing"
+	_, _ = d.pool.Exec(ctx, "DELETE FROM probe_availability WHERE connection_id = $1", conn.ID) //nolint:errcheck // best-effort cleanup
+
 	return &conn, nil
 }
 
@@ -468,6 +471,9 @@ func (d *Datastore) UpdateConnectionFull(ctx context.Context, id int, params Con
 	if err != nil {
 		return nil, fmt.Errorf("failed to update connection: %w", err)
 	}
+
+	// Clear probe availability records so the connection shows as "initializing" until re-probed
+	_, _ = d.pool.Exec(ctx, "DELETE FROM probe_availability WHERE connection_id = $1", id) //nolint:errcheck // best-effort cleanup
 
 	return &conn, nil
 }
@@ -1517,8 +1523,9 @@ type TopologyServerInfo struct {
 	Name          string               `json:"name"`
 	Host          string               `json:"host"`
 	Port          int                  `json:"port"`
-	Status        string               `json:"status"`
-	Role          string               `json:"role,omitempty"`
+	Status          string               `json:"status"`
+	ConnectionError string               `json:"connection_error,omitempty"`
+	Role            string               `json:"role,omitempty"`
 	PrimaryRole   string               `json:"primary_role"`
 	IsExpandable  bool                 `json:"is_expandable"`
 	OwnerUsername string               `json:"owner_username,omitempty"`
@@ -1571,6 +1578,7 @@ type connectionWithRole struct {
 	BinaryStandbyCount int
 	IsStreamingStandby bool
 	Status             string
+	ConnectionError    sql.NullString
 }
 
 // GetClusterTopology returns the combined topology including manually-created
@@ -1696,6 +1704,16 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
             FROM metrics.pg_extension
             WHERE extname = 'spock'
             ORDER BY connection_id, collected_at DESC
+        ),
+        latest_conn_error AS (
+            SELECT connection_id,
+                   bool_and(is_available) = false AS all_unavailable,
+                   (array_agg(unavailable_reason ORDER BY last_checked DESC)
+                    FILTER (WHERE unavailable_reason IS NOT NULL))[1]
+                        AS error_reason
+            FROM probe_availability
+            WHERE last_checked > NOW() - INTERVAL '15 minutes'
+            GROUP BY connection_id
         )
         SELECT c.id, c.name, c.host, c.port, c.owner_username,
                c.database_name, c.username,
@@ -1709,12 +1727,20 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
                COALESCE(lr.binary_standby_count, 0) as binary_standby_count,
                COALESCE(lr.is_streaming_standby, false) as is_streaming_standby,
                lr.publisher_host, lr.publisher_port,
-               COALESCE(lr.status, 'unknown') as status
+               CASE
+                   WHEN c.is_monitored AND lr.connection_id IS NULL AND lce.connection_id IS NULL
+                   THEN 'initialising'
+                   WHEN COALESCE(lce.all_unavailable, false) AND COALESCE(lr.status, 'unknown') = 'unknown'
+                   THEN 'offline'
+                   ELSE COALESCE(lr.status, 'unknown')
+               END as status,
+               lce.error_reason as connection_error
         FROM connections c
         LEFT JOIN latest_roles lr ON c.id = lr.connection_id
         LEFT JOIN latest_server_info lsi ON c.id = lsi.connection_id
         LEFT JOIN latest_os_info loi ON c.id = loi.connection_id
         LEFT JOIN latest_spock_version lsv ON c.id = lsv.connection_id
+        LEFT JOIN latest_conn_error lce ON c.id = lce.connection_id
         ORDER BY c.name
     `
 
@@ -1738,6 +1764,7 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
 			&conn.BinaryStandbyCount, &conn.IsStreamingStandby,
 			&conn.PublisherHost, &conn.PublisherPort,
 			&conn.Status,
+			&conn.ConnectionError,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan connection: %w", err)
 		}
@@ -2522,6 +2549,10 @@ func (d *Datastore) buildServerWithChildren(
 		DatabaseName:  conn.DatabaseName,
 		Username:      conn.Username,
 		Children:      make([]TopologyServerInfo, 0),
+	}
+
+	if conn.ConnectionError.Valid {
+		server.ConnectionError = conn.ConnectionError.String
 	}
 
 	// Recursively add children

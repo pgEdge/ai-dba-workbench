@@ -14,6 +14,7 @@ import {
     CheckCircle as HealthyIcon,
     Warning as WarningIcon,
     Error as ErrorIcon,
+    HourglassEmpty,
 } from '@mui/icons-material';
 
 /**
@@ -22,16 +23,35 @@ import {
  * - Yellow warning icon with count for nodes with alerts
  * - Green checkmark for healthy nodes
  */
-const StatusIndicator = ({ status, alertCount = 0, isDark }) => {
+const StatusIndicator = ({ status, alertCount = 0, isDark, connectionError }) => {
     // Offline/down nodes - red error icon
     if (status === 'offline') {
         return (
-            <Tooltip title="Offline" placement="right">
+            <Tooltip title={connectionError || "Offline"} placement="right">
                 <ErrorIcon
                     sx={{
                         fontSize: 14,
                         color: '#EF4444',
                         filter: 'drop-shadow(0 0 2px #EF4444)',
+                    }}
+                />
+            </Tooltip>
+        );
+    }
+
+    // Initialising nodes - blue hourglass icon with pulse
+    if (status === 'initialising') {
+        return (
+            <Tooltip title="Initialising - waiting for first probe results" placement="right">
+                <HourglassEmpty
+                    sx={{
+                        fontSize: 14,
+                        color: '#3B82F6',
+                        animation: 'pulse 2s ease-in-out infinite',
+                        '@keyframes pulse': {
+                            '0%, 100%': { opacity: 1 },
+                            '50%': { opacity: 0.4 },
+                        },
                     }}
                 />
             </Tooltip>

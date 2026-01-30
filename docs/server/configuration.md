@@ -57,6 +57,17 @@ http:
     rate_limit_max_attempts: 10
 
 #=========================================================================
+# CONNECTION SECURITY
+#=========================================================================
+connection_security:
+  allow_internal_networks: false
+  # allowed_hosts:
+  #   - "db.example.com"
+  #   - "192.168.1.0/24"
+  # blocked_hosts:
+  #   - "169.254.169.254"
+
+#=========================================================================
 # DATABASE CONNECTION
 #=========================================================================
 database:
@@ -249,6 +260,17 @@ builtins:
 | `auth.rate_limit_window_minutes` | int | `15` | Rate limit time window |
 | `auth.rate_limit_max_attempts` | int | `10` | Max attempts per window |
 
+### Connection Security (`connection_security`)
+
+The connection security section controls SSRF protection for
+user-created database connections.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `allow_internal_networks` | bool | `false` | Allow connections to RFC 1918 private addresses and other internal ranges |
+| `allowed_hosts` | list | `[]` | Allowlist of hosts, IPs, or CIDRs that are always permitted |
+| `blocked_hosts` | list | `[]` | Blocklist of hosts, IPs, or CIDRs that are never permitted (evaluated after allowed_hosts) |
+
 ### Database (`database`)
 
 | Option | Type | Default | Description |
@@ -381,6 +403,8 @@ http:
     enabled: false
   auth:
     enabled: true
+connection_security:
+  allow_internal_networks: true
 database:
   host: "localhost"
   port: 5432
@@ -412,6 +436,12 @@ http:
     enabled: true
     max_failed_attempts_before_lockout: 5
     max_user_token_days: 90
+connection_security:
+  allow_internal_networks: false
+  allowed_hosts:
+    - "db.internal.example.com"
+  blocked_hosts:
+    - "169.254.169.254"
 database:
   host: "db.internal.example.com"
   port: 5432

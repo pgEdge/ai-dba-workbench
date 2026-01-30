@@ -101,6 +101,33 @@ http:
     rate_limit_max_attempts: 10
 
 #=========================================================================
+# CONNECTION SECURITY
+#=========================================================================
+#
+# Controls SSRF protection for user-created database connections.
+#
+connection_security:
+  # Allow connections to RFC 1918 private addresses (10.x.x.x,
+  # 172.16.x.x, 192.168.x.x), localhost, link-local, and other
+  # internal network ranges.
+  # Default: false
+  allow_internal_networks: false
+
+  # Optional allowlist of hosts, IPs, or CIDRs that are always
+  # permitted, even when allow_internal_networks is false.
+  # Example:
+  # allowed_hosts:
+  #   - "db.example.com"
+  #   - "192.168.1.0/24"
+
+  # Optional blocklist of hosts, IPs, or CIDRs that are never
+  # permitted. Evaluated after allowed_hosts.
+  # Example:
+  # blocked_hosts:
+  #   - "metadata.internal"
+  #   - "169.254.169.254"
+
+#=========================================================================
 # DATABASE CONNECTION
 #=========================================================================
 #

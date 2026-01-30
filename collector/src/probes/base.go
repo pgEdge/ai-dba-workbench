@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -27,6 +28,32 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/pkg/logger"
 )
+
+// featureCache stores boolean feature-detection results keyed by
+// "connectionName:checkName". View and column existence checks never
+// change during the lifetime of a PostgreSQL connection, so caching
+// them avoids repeated catalog queries on every collection cycle.
+var featureCache sync.Map
+
+// cachedCheck returns a cached boolean result for a feature-detection
+// check identified by connectionName and checkName. If no cached value
+// exists, it calls checkFn, caches the result, and returns it.
+func cachedCheck(connectionName, checkName string, checkFn func() (bool, error)) (bool, error) {
+	key := connectionName + ":" + checkName
+	if val, ok := featureCache.Load(key); ok {
+		boolVal, ok2 := val.(bool)
+		if !ok2 {
+			return false, fmt.Errorf("cached value for %s is not a bool", key)
+		}
+		return boolVal, nil
+	}
+	result, err := checkFn()
+	if err != nil {
+		return false, err
+	}
+	featureCache.Store(key, result)
+	return result, nil
+}
 
 // ProbeConfig represents the configuration for a probe
 type ProbeConfig struct {

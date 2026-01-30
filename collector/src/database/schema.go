@@ -346,29 +346,20 @@ func (sm *SchemaManager) registerMigrations() {
 				VALUES
 					-- Server-scoped probes
 					(NULL, TRUE, 'pg_stat_activity', 'Monitors current database activity and backend processes', 60, 7),
-					(NULL, TRUE, 'pg_stat_replication', 'Monitors replication status and lag', 30, 7),
-					(NULL, TRUE, 'pg_stat_replication_slots', 'Monitors replication slot status and usage', 300, 7),
-					(NULL, TRUE, 'pg_replication_slots', 'Monitors replication slot WAL retention', 300, 7),
-					(NULL, TRUE, 'pg_stat_wal_receiver', 'Monitors WAL receiver process status', 30, 7),
+					(NULL, TRUE, 'pg_stat_replication', 'Monitors replication status and lag (includes WAL receiver)', 30, 7),
+					(NULL, TRUE, 'pg_replication_slots', 'Monitors replication slot WAL retention and statistics', 300, 7),
 					(NULL, TRUE, 'pg_stat_recovery_prefetch', 'Monitors recovery prefetch statistics', 600, 7),
-					(NULL, TRUE, 'pg_stat_subscription', 'Monitors logical replication subscription status', 300, 7),
-					(NULL, TRUE, 'pg_stat_subscription_stats', 'Monitors logical replication subscription statistics', 300, 7),
-					(NULL, TRUE, 'pg_stat_ssl', 'Monitors SSL connection information', 300, 7),
-					(NULL, TRUE, 'pg_stat_gssapi', 'Monitors GSSAPI authentication information', 300, 7),
-					(NULL, TRUE, 'pg_stat_archiver', 'Monitors WAL archiver process status', 600, 7),
+					(NULL, TRUE, 'pg_stat_subscription', 'Monitors logical replication subscription status and statistics', 300, 7),
+					(NULL, TRUE, 'pg_stat_connection_security', 'Monitors connection security (SSL and GSSAPI)', 300, 7),
 					(NULL, TRUE, 'pg_stat_io', 'Monitors I/O statistics by backend type', 900, 7),
-					(NULL, TRUE, 'pg_stat_bgwriter', 'Monitors background writer process statistics', 600, 7),
-					(NULL, TRUE, 'pg_stat_checkpointer', 'Monitors checkpoint process statistics', 600, 7),
-					(NULL, TRUE, 'pg_stat_wal', 'Monitors WAL generation statistics', 600, 7),
-					(NULL, TRUE, 'pg_stat_slru', 'Monitors SLRU cache statistics', 600, 7),
+					(NULL, TRUE, 'pg_stat_checkpointer', 'Monitors checkpoint and background writer statistics', 600, 7),
+					(NULL, TRUE, 'pg_stat_wal', 'Monitors WAL generation and archiver statistics', 600, 7),
 					(NULL, TRUE, 'pg_database', 'Monitors database catalog including transaction ID wraparound metrics', 300, 7),
 					-- Database-scoped probes
 					(NULL, TRUE, 'pg_stat_database', 'Monitors database-wide statistics', 300, 7),
 					(NULL, TRUE, 'pg_stat_database_conflicts', 'Monitors database conflicts during recovery', 300, 7),
-					(NULL, TRUE, 'pg_stat_all_tables', 'Monitors table access statistics', 300, 7),
-					(NULL, TRUE, 'pg_stat_all_indexes', 'Monitors index access statistics', 300, 7),
-					(NULL, TRUE, 'pg_statio_all_tables', 'Monitors table I/O statistics', 300, 7),
-					(NULL, TRUE, 'pg_statio_all_indexes', 'Monitors index I/O statistics', 300, 7),
+					(NULL, TRUE, 'pg_stat_all_tables', 'Monitors table access and I/O statistics', 300, 7),
+					(NULL, TRUE, 'pg_stat_all_indexes', 'Monitors index access and I/O statistics', 300, 7),
 					(NULL, TRUE, 'pg_statio_all_sequences', 'Monitors sequence I/O statistics', 300, 7),
 					(NULL, TRUE, 'pg_stat_user_functions', 'Monitors user-defined function statistics', 300, 7),
 					(NULL, TRUE, 'pg_stat_statements', 'Monitors SQL statement execution statistics', 300, 7),
@@ -449,7 +440,7 @@ func (sm *SchemaManager) registerMigrations() {
 				return fmt.Errorf("failed to create pg_stat_activity table: %w", err)
 			}
 
-			// metrics.pg_stat_all_tables
+			// metrics.pg_stat_all_tables (consolidated with pg_statio_all_tables)
 			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_all_tables (
 					connection_id INTEGER NOT NULL,
@@ -471,6 +462,14 @@ func (sm *SchemaManager) registerMigrations() {
 					autovacuum_count BIGINT,
 					analyze_count BIGINT,
 					autoanalyze_count BIGINT,
+					heap_blks_read BIGINT,
+					heap_blks_hit BIGINT,
+					idx_blks_read BIGINT,
+					idx_blks_hit BIGINT,
+					toast_blks_read BIGINT,
+					toast_blks_hit BIGINT,
+					tidx_blks_read BIGINT,
+					tidx_blks_hit BIGINT,
 					last_vacuum TIMESTAMPTZ,
 					last_autovacuum TIMESTAMPTZ,
 					last_analyze TIMESTAMPTZ,
@@ -480,7 +479,7 @@ func (sm *SchemaManager) registerMigrations() {
 				) PARTITION BY RANGE (collected_at);
 
 				COMMENT ON TABLE metrics.pg_stat_all_tables IS
-					'Metrics collected from pg_stat_all_tables view, showing table-level statistics per database';
+					'Table-level access and I/O statistics per database';
 
 				CREATE INDEX IF NOT EXISTS idx_pg_stat_all_tables_conn_time
 					ON metrics.pg_stat_all_tables(connection_id, collected_at DESC);
@@ -493,7 +492,7 @@ func (sm *SchemaManager) registerMigrations() {
 				return fmt.Errorf("failed to create pg_stat_all_tables table: %w", err)
 			}
 
-			// metrics.pg_stat_all_indexes
+			// metrics.pg_stat_all_indexes (consolidated with pg_statio_all_indexes)
 			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_all_indexes (
 					connection_id INTEGER NOT NULL,
@@ -506,13 +505,15 @@ func (sm *SchemaManager) registerMigrations() {
 					idx_scan BIGINT,
 					idx_tup_read BIGINT,
 					idx_tup_fetch BIGINT,
+					idx_blks_read BIGINT,
+					idx_blks_hit BIGINT,
 					last_idx_scan TIMESTAMPTZ,
 					collected_at TIMESTAMPTZ NOT NULL,
 					PRIMARY KEY (connection_id, collected_at, database_name, indexrelid)
 				) PARTITION BY RANGE (collected_at);
 
 				COMMENT ON TABLE metrics.pg_stat_all_indexes IS
-					'Statistics for all indexes in all databases';
+					'Index access and I/O statistics for all databases';
 
 				ALTER TABLE metrics.pg_stat_all_indexes
 					ADD CONSTRAINT fk_pg_stat_all_indexes_connection_id
@@ -663,62 +664,7 @@ func (sm *SchemaManager) registerMigrations() {
 				return fmt.Errorf("failed to create pg_stat_database_conflicts table: %w", err)
 			}
 
-			// metrics.pg_stat_archiver
-			_, err = tx.Exec(ctx, `
-				CREATE TABLE IF NOT EXISTS metrics.pg_stat_archiver (
-					connection_id INTEGER NOT NULL,
-					archived_count BIGINT,
-					last_archived_wal TEXT,
-					failed_count BIGINT,
-					last_failed_wal TEXT,
-					last_archived_time TIMESTAMPTZ,
-					last_failed_time TIMESTAMPTZ,
-					stats_reset TIMESTAMPTZ,
-					collected_at TIMESTAMPTZ NOT NULL,
-					PRIMARY KEY (connection_id, collected_at)
-				) PARTITION BY RANGE (collected_at);
-
-				COMMENT ON TABLE metrics.pg_stat_archiver IS
-					'WAL archiver statistics (singleton)';
-
-				ALTER TABLE metrics.pg_stat_archiver
-					ADD CONSTRAINT fk_pg_stat_archiver_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
-				CREATE INDEX IF NOT EXISTS idx_pg_stat_archiver_conn_time
-					ON metrics.pg_stat_archiver(connection_id, collected_at DESC);
-			`)
-			if err != nil {
-				return fmt.Errorf("failed to create pg_stat_archiver table: %w", err)
-			}
-
-			// metrics.pg_stat_bgwriter
-			_, err = tx.Exec(ctx, `
-				CREATE TABLE IF NOT EXISTS metrics.pg_stat_bgwriter (
-					connection_id INTEGER NOT NULL,
-					buffers_clean BIGINT,
-					maxwritten_clean BIGINT,
-					buffers_alloc BIGINT,
-					stats_reset TIMESTAMPTZ,
-					collected_at TIMESTAMPTZ NOT NULL,
-					PRIMARY KEY (connection_id, collected_at)
-				) PARTITION BY RANGE (collected_at);
-
-				COMMENT ON TABLE metrics.pg_stat_bgwriter IS
-					'Background writer statistics (singleton, deprecated PG 17+)';
-
-				ALTER TABLE metrics.pg_stat_bgwriter
-					ADD CONSTRAINT fk_pg_stat_bgwriter_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
-				CREATE INDEX IF NOT EXISTS idx_pg_stat_bgwriter_conn_time
-					ON metrics.pg_stat_bgwriter(connection_id, collected_at DESC);
-			`)
-			if err != nil {
-				return fmt.Errorf("failed to create pg_stat_bgwriter table: %w", err)
-			}
-
-			// metrics.pg_stat_checkpointer
+			// metrics.pg_stat_checkpointer (consolidated with pg_stat_bgwriter)
 			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_checkpointer (
 					connection_id INTEGER NOT NULL,
@@ -730,13 +676,17 @@ func (sm *SchemaManager) registerMigrations() {
 					write_time DOUBLE PRECISION,
 					sync_time DOUBLE PRECISION,
 					buffers_written BIGINT,
+					buffers_clean BIGINT,
+					maxwritten_clean BIGINT,
+					buffers_alloc BIGINT,
 					stats_reset TIMESTAMPTZ,
+					bgwriter_stats_reset TIMESTAMPTZ,
 					collected_at TIMESTAMPTZ NOT NULL,
 					PRIMARY KEY (connection_id, collected_at)
 				) PARTITION BY RANGE (collected_at);
 
 				COMMENT ON TABLE metrics.pg_stat_checkpointer IS
-					'Checkpointer statistics (singleton, PG 17+)';
+					'Checkpointer and background writer statistics';
 
 				ALTER TABLE metrics.pg_stat_checkpointer
 					ADD CONSTRAINT fk_pg_stat_checkpointer_connection_id
@@ -749,7 +699,7 @@ func (sm *SchemaManager) registerMigrations() {
 				return fmt.Errorf("failed to create pg_stat_checkpointer table: %w", err)
 			}
 
-			// metrics.pg_stat_wal
+			// metrics.pg_stat_wal (consolidated with pg_stat_archiver)
 			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_wal (
 					connection_id INTEGER NOT NULL,
@@ -761,13 +711,20 @@ func (sm *SchemaManager) registerMigrations() {
 					wal_sync BIGINT,
 					wal_write_time DOUBLE PRECISION,
 					wal_sync_time DOUBLE PRECISION,
+					archived_count BIGINT,
+					last_archived_wal TEXT,
+					last_archived_time TIMESTAMPTZ,
+					failed_count BIGINT,
+					last_failed_wal TEXT,
+					last_failed_time TIMESTAMPTZ,
 					stats_reset TIMESTAMPTZ,
+					archiver_stats_reset TIMESTAMPTZ,
 					collected_at TIMESTAMPTZ NOT NULL,
 					PRIMARY KEY (connection_id, collected_at)
 				) PARTITION BY RANGE (collected_at);
 
 				COMMENT ON TABLE metrics.pg_stat_wal IS
-					'WAL generation statistics (singleton)';
+					'WAL generation and archiver statistics';
 
 				ALTER TABLE metrics.pg_stat_wal
 					ADD CONSTRAINT fk_pg_stat_wal_connection_id
@@ -780,7 +737,7 @@ func (sm *SchemaManager) registerMigrations() {
 				return fmt.Errorf("failed to create pg_stat_wal table: %w", err)
 			}
 
-			// metrics.pg_stat_replication
+			// metrics.pg_stat_replication (consolidated with pg_stat_wal_receiver)
 			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_replication (
 					connection_id INTEGER NOT NULL,
@@ -804,12 +761,28 @@ func (sm *SchemaManager) registerMigrations() {
 					sync_state TEXT,
 					backend_start TIMESTAMPTZ,
 					reply_time TIMESTAMPTZ,
+					role TEXT,
+					receiver_pid INTEGER,
+					receiver_status TEXT,
+					receive_start_lsn TEXT,
+					receive_start_tli INTEGER,
+					written_lsn TEXT,
+					receiver_flushed_lsn TEXT,
+					received_tli INTEGER,
+					last_msg_send_time TIMESTAMPTZ,
+					last_msg_receipt_time TIMESTAMPTZ,
+					latest_end_lsn TEXT,
+					latest_end_time TIMESTAMPTZ,
+					receiver_slot_name TEXT,
+					sender_host TEXT,
+					sender_port INTEGER,
+					conninfo TEXT,
 					collected_at TIMESTAMPTZ NOT NULL,
 					PRIMARY KEY (connection_id, collected_at, pid)
 				) PARTITION BY RANGE (collected_at);
 
 				COMMENT ON TABLE metrics.pg_stat_replication IS
-					'Replication statistics for active replication connections';
+					'Replication statistics for senders and receivers';
 
 				ALTER TABLE metrics.pg_stat_replication
 					ADD CONSTRAINT fk_pg_stat_replication_connection_id
@@ -822,41 +795,7 @@ func (sm *SchemaManager) registerMigrations() {
 				return fmt.Errorf("failed to create pg_stat_replication table: %w", err)
 			}
 
-			// metrics.pg_stat_replication_slots
-			_, err = tx.Exec(ctx, `
-				CREATE TABLE IF NOT EXISTS metrics.pg_stat_replication_slots (
-					connection_id INTEGER NOT NULL,
-					slot_name TEXT NOT NULL,
-					spill_txns BIGINT,
-					spill_count BIGINT,
-					spill_bytes BIGINT,
-					stream_txns BIGINT,
-					stream_count BIGINT,
-					stream_bytes BIGINT,
-					total_txns BIGINT,
-					total_bytes BIGINT,
-					stats_reset TIMESTAMPTZ,
-					collected_at TIMESTAMPTZ NOT NULL,
-					PRIMARY KEY (connection_id, collected_at, slot_name)
-				) PARTITION BY RANGE (collected_at);
-
-				COMMENT ON TABLE metrics.pg_stat_replication_slots IS
-					'Replication slot statistics';
-
-				ALTER TABLE metrics.pg_stat_replication_slots
-					ADD CONSTRAINT fk_pg_stat_replication_slots_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
-				CREATE INDEX IF NOT EXISTS idx_pg_stat_replication_slots_conn_time
-					ON metrics.pg_stat_replication_slots(connection_id, collected_at DESC);
-				CREATE INDEX IF NOT EXISTS idx_pg_stat_replication_slots_object
-					ON metrics.pg_stat_replication_slots(connection_id, slot_name, collected_at DESC);
-			`)
-			if err != nil {
-				return fmt.Errorf("failed to create pg_stat_replication_slots table: %w", err)
-			}
-
-			// metrics.pg_replication_slots
+			// metrics.pg_replication_slots (consolidated with pg_stat_replication_slots)
 			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_replication_slots (
 					connection_id INTEGER NOT NULL,
@@ -866,12 +805,22 @@ func (sm *SchemaManager) registerMigrations() {
 					wal_status TEXT,
 					safe_wal_size BIGINT,
 					retained_bytes NUMERIC,
+					spill_txns BIGINT,
+					spill_count BIGINT,
+					spill_bytes BIGINT,
+					stream_txns BIGINT,
+					stream_count BIGINT,
+					stream_bytes BIGINT,
+					total_txns BIGINT,
+					total_count BIGINT,
+					total_bytes BIGINT,
+					stats_reset TIMESTAMPTZ,
 					collected_at TIMESTAMPTZ NOT NULL,
 					PRIMARY KEY (connection_id, collected_at, slot_name)
 				) PARTITION BY RANGE (collected_at);
 
 				COMMENT ON TABLE metrics.pg_replication_slots IS
-					'Replication slot WAL retention metrics';
+					'Replication slot WAL retention and statistics metrics';
 
 				ALTER TABLE metrics.pg_replication_slots
 					ADD CONSTRAINT fk_pg_replication_slots_connection_id
@@ -886,7 +835,7 @@ func (sm *SchemaManager) registerMigrations() {
 				return fmt.Errorf("failed to create pg_replication_slots table: %w", err)
 			}
 
-			// metrics.pg_stat_subscription
+			// metrics.pg_stat_subscription (consolidated with pg_stat_subscription_stats)
 			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_subscription (
 					connection_id INTEGER NOT NULL,
@@ -901,6 +850,9 @@ func (sm *SchemaManager) registerMigrations() {
 					last_msg_send_time TIMESTAMPTZ,
 					last_msg_receipt_time TIMESTAMPTZ,
 					latest_end_time TIMESTAMPTZ,
+					apply_error_count BIGINT,
+					sync_error_count BIGINT,
+					stats_reset TIMESTAMPTZ,
 					collected_at TIMESTAMPTZ NOT NULL,
 					PRIMARY KEY (connection_id, collected_at, subid)
 				) PARTITION BY RANGE (collected_at);
@@ -921,71 +873,7 @@ func (sm *SchemaManager) registerMigrations() {
 				return fmt.Errorf("failed to create pg_stat_subscription table: %w", err)
 			}
 
-			// metrics.pg_stat_subscription_stats
-			_, err = tx.Exec(ctx, `
-				CREATE TABLE IF NOT EXISTS metrics.pg_stat_subscription_stats (
-					connection_id INTEGER NOT NULL,
-					subid OID NOT NULL,
-					subname TEXT,
-					apply_error_count BIGINT,
-					sync_error_count BIGINT,
-					stats_reset TIMESTAMPTZ,
-					collected_at TIMESTAMPTZ NOT NULL,
-					PRIMARY KEY (connection_id, collected_at, subid)
-				) PARTITION BY RANGE (collected_at);
 
-				COMMENT ON TABLE metrics.pg_stat_subscription_stats IS
-					'Logical replication subscription cumulative statistics';
-
-				ALTER TABLE metrics.pg_stat_subscription_stats
-					ADD CONSTRAINT fk_pg_stat_subscription_stats_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
-				CREATE INDEX IF NOT EXISTS idx_pg_stat_subscription_stats_conn_time
-					ON metrics.pg_stat_subscription_stats(connection_id, collected_at DESC);
-				CREATE INDEX IF NOT EXISTS idx_pg_stat_subscription_stats_object
-					ON metrics.pg_stat_subscription_stats(connection_id, subid, collected_at DESC);
-			`)
-			if err != nil {
-				return fmt.Errorf("failed to create pg_stat_subscription_stats table: %w", err)
-			}
-
-			// metrics.pg_stat_wal_receiver
-			_, err = tx.Exec(ctx, `
-				CREATE TABLE IF NOT EXISTS metrics.pg_stat_wal_receiver (
-					connection_id INTEGER NOT NULL,
-					pid INTEGER,
-					status TEXT,
-					receive_start_lsn TEXT,
-					receive_start_tli INTEGER,
-					written_lsn TEXT,
-					flushed_lsn TEXT,
-					received_tli INTEGER,
-					slot_name TEXT,
-					sender_host TEXT,
-					sender_port INTEGER,
-					conninfo TEXT,
-					latest_end_lsn TEXT,
-					last_msg_send_time TIMESTAMPTZ,
-					last_msg_receipt_time TIMESTAMPTZ,
-					latest_end_time TIMESTAMPTZ,
-					collected_at TIMESTAMPTZ NOT NULL,
-					PRIMARY KEY (connection_id, collected_at)
-				) PARTITION BY RANGE (collected_at);
-
-				COMMENT ON TABLE metrics.pg_stat_wal_receiver IS
-					'WAL receiver statistics (standby servers)';
-
-				ALTER TABLE metrics.pg_stat_wal_receiver
-					ADD CONSTRAINT fk_pg_stat_wal_receiver_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
-				CREATE INDEX IF NOT EXISTS idx_pg_stat_wal_receiver_conn_time
-					ON metrics.pg_stat_wal_receiver(connection_id, collected_at DESC);
-			`)
-			if err != nil {
-				return fmt.Errorf("failed to create pg_stat_wal_receiver table: %w", err)
-			}
 
 			// metrics.pg_stat_recovery_prefetch
 			_, err = tx.Exec(ctx, `
@@ -1019,38 +907,7 @@ func (sm *SchemaManager) registerMigrations() {
 				return fmt.Errorf("failed to create pg_stat_recovery_prefetch table: %w", err)
 			}
 
-			// metrics.pg_stat_slru
-			_, err = tx.Exec(ctx, `
-				CREATE TABLE IF NOT EXISTS metrics.pg_stat_slru (
-					connection_id INTEGER NOT NULL,
-					name TEXT NOT NULL,
-					blks_zeroed BIGINT,
-					blks_hit BIGINT,
-					blks_read BIGINT,
-					blks_written BIGINT,
-					blks_exists BIGINT,
-					flushes BIGINT,
-					truncates BIGINT,
-					stats_reset TIMESTAMPTZ,
-					collected_at TIMESTAMPTZ NOT NULL,
-					PRIMARY KEY (connection_id, collected_at, name)
-				) PARTITION BY RANGE (collected_at);
 
-				COMMENT ON TABLE metrics.pg_stat_slru IS
-					'SLRU (Simple LRU) cache statistics';
-
-				ALTER TABLE metrics.pg_stat_slru
-					ADD CONSTRAINT fk_pg_stat_slru_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
-				CREATE INDEX IF NOT EXISTS idx_pg_stat_slru_conn_time
-					ON metrics.pg_stat_slru(connection_id, collected_at DESC);
-				CREATE INDEX IF NOT EXISTS idx_pg_stat_slru_object
-					ON metrics.pg_stat_slru(connection_id, name, collected_at DESC);
-			`)
-			if err != nil {
-				return fmt.Errorf("failed to create pg_stat_slru table: %w", err)
-			}
 
 			// metrics.pg_stat_io
 			_, err = tx.Exec(ctx, `
@@ -1074,12 +931,16 @@ func (sm *SchemaManager) registerMigrations() {
 					fsyncs BIGINT,
 					fsync_time DOUBLE PRECISION,
 					stats_reset TIMESTAMPTZ,
+					blks_zeroed BIGINT,
+					blks_exists BIGINT,
+					flushes BIGINT,
+					truncates BIGINT,
 					collected_at TIMESTAMPTZ NOT NULL,
 					PRIMARY KEY (connection_id, collected_at, backend_type, object, context)
 				) PARTITION BY RANGE (collected_at);
 
 				COMMENT ON TABLE metrics.pg_stat_io IS
-					'I/O statistics by backend type and context';
+					'I/O statistics by backend type and context. When backend_type is slru, the object column contains the SLRU cache name rather than an I/O object type';
 
 				ALTER TABLE metrics.pg_stat_io
 					ADD CONSTRAINT fk_pg_stat_io_connection_id
@@ -1094,65 +955,40 @@ func (sm *SchemaManager) registerMigrations() {
 				return fmt.Errorf("failed to create pg_stat_io table: %w", err)
 			}
 
-			// metrics.pg_stat_ssl
+			// metrics.pg_stat_connection_security (merged from pg_stat_ssl and pg_stat_gssapi)
 			_, err = tx.Exec(ctx, `
-				CREATE TABLE IF NOT EXISTS metrics.pg_stat_ssl (
+				CREATE TABLE IF NOT EXISTS metrics.pg_stat_connection_security (
 					connection_id INTEGER NOT NULL,
 					pid INTEGER NOT NULL,
 					ssl BOOLEAN,
-					version TEXT,
+					ssl_version TEXT,
 					cipher TEXT,
 					bits INTEGER,
 					client_dn TEXT,
 					client_serial TEXT,
 					issuer_dn TEXT,
-					collected_at TIMESTAMPTZ NOT NULL,
-					PRIMARY KEY (connection_id, collected_at, pid)
-				) PARTITION BY RANGE (collected_at);
-
-				COMMENT ON TABLE metrics.pg_stat_ssl IS
-					'SSL connection statistics';
-
-				ALTER TABLE metrics.pg_stat_ssl
-					ADD CONSTRAINT fk_pg_stat_ssl_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
-				CREATE INDEX IF NOT EXISTS idx_pg_stat_ssl_conn_time
-					ON metrics.pg_stat_ssl(connection_id, collected_at DESC);
-				CREATE INDEX IF NOT EXISTS idx_pg_stat_ssl_object
-					ON metrics.pg_stat_ssl(connection_id, pid, collected_at DESC);
-			`)
-			if err != nil {
-				return fmt.Errorf("failed to create pg_stat_ssl table: %w", err)
-			}
-
-			// metrics.pg_stat_gssapi
-			_, err = tx.Exec(ctx, `
-				CREATE TABLE IF NOT EXISTS metrics.pg_stat_gssapi (
-					connection_id INTEGER NOT NULL,
-					pid INTEGER NOT NULL,
 					gss_authenticated BOOLEAN,
-					encrypted BOOLEAN,
-					credentials_delegated BOOLEAN,
 					principal TEXT,
+					gss_encrypted BOOLEAN,
+					credentials_delegated BOOLEAN,
 					collected_at TIMESTAMPTZ NOT NULL,
 					PRIMARY KEY (connection_id, collected_at, pid)
 				) PARTITION BY RANGE (collected_at);
 
-				COMMENT ON TABLE metrics.pg_stat_gssapi IS
-					'GSSAPI connection statistics';
+				COMMENT ON TABLE metrics.pg_stat_connection_security IS
+					'Combined SSL and GSSAPI connection security statistics';
 
-				ALTER TABLE metrics.pg_stat_gssapi
-					ADD CONSTRAINT fk_pg_stat_gssapi_connection_id
+				ALTER TABLE metrics.pg_stat_connection_security
+					ADD CONSTRAINT fk_pg_stat_connection_security_connection_id
 					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
 
-				CREATE INDEX IF NOT EXISTS idx_pg_stat_gssapi_conn_time
-					ON metrics.pg_stat_gssapi(connection_id, collected_at DESC);
-				CREATE INDEX IF NOT EXISTS idx_pg_stat_gssapi_object
-					ON metrics.pg_stat_gssapi(connection_id, pid, collected_at DESC);
+				CREATE INDEX IF NOT EXISTS idx_pg_stat_connection_security_conn_time
+					ON metrics.pg_stat_connection_security(connection_id, collected_at DESC);
+				CREATE INDEX IF NOT EXISTS idx_pg_stat_connection_security_object
+					ON metrics.pg_stat_connection_security(connection_id, pid, collected_at DESC);
 			`)
 			if err != nil {
-				return fmt.Errorf("failed to create pg_stat_gssapi table: %w", err)
+				return fmt.Errorf("failed to create pg_stat_connection_security table: %w", err)
 			}
 
 			// metrics.pg_stat_user_functions
@@ -1188,77 +1024,7 @@ func (sm *SchemaManager) registerMigrations() {
 				return fmt.Errorf("failed to create pg_stat_user_functions table: %w", err)
 			}
 
-			// metrics.pg_statio_all_tables
-			_, err = tx.Exec(ctx, `
-				CREATE TABLE IF NOT EXISTS metrics.pg_statio_all_tables (
-					connection_id INTEGER NOT NULL,
-					database_name VARCHAR(255) NOT NULL,
-					relid OID NOT NULL,
-					schemaname TEXT,
-					relname TEXT,
-					heap_blks_read BIGINT,
-					heap_blks_hit BIGINT,
-					idx_blks_read BIGINT,
-					idx_blks_hit BIGINT,
-					toast_blks_read BIGINT,
-					toast_blks_hit BIGINT,
-					tidx_blks_read BIGINT,
-					tidx_blks_hit BIGINT,
-					collected_at TIMESTAMPTZ NOT NULL,
-					PRIMARY KEY (connection_id, collected_at, database_name, relid)
-				) PARTITION BY RANGE (collected_at);
 
-				COMMENT ON TABLE metrics.pg_statio_all_tables IS
-					'I/O statistics for all tables';
-
-				ALTER TABLE metrics.pg_statio_all_tables
-					ADD CONSTRAINT fk_pg_statio_all_tables_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
-				CREATE INDEX IF NOT EXISTS idx_pg_statio_all_tables_conn_time
-					ON metrics.pg_statio_all_tables(connection_id, collected_at DESC);
-				CREATE INDEX IF NOT EXISTS idx_pg_statio_all_tables_conn_db_time
-					ON metrics.pg_statio_all_tables(connection_id, database_name, collected_at DESC);
-				CREATE INDEX IF NOT EXISTS idx_pg_statio_all_tables_object
-					ON metrics.pg_statio_all_tables(connection_id, database_name, schemaname, relname, collected_at DESC);
-			`)
-			if err != nil {
-				return fmt.Errorf("failed to create pg_statio_all_tables table: %w", err)
-			}
-
-			// metrics.pg_statio_all_indexes
-			_, err = tx.Exec(ctx, `
-				CREATE TABLE IF NOT EXISTS metrics.pg_statio_all_indexes (
-					connection_id INTEGER NOT NULL,
-					database_name VARCHAR(255) NOT NULL,
-					indexrelid OID NOT NULL,
-					relid OID,
-					schemaname TEXT,
-					relname TEXT,
-					indexrelname TEXT,
-					idx_blks_read BIGINT,
-					idx_blks_hit BIGINT,
-					collected_at TIMESTAMPTZ NOT NULL,
-					PRIMARY KEY (connection_id, collected_at, database_name, indexrelid)
-				) PARTITION BY RANGE (collected_at);
-
-				COMMENT ON TABLE metrics.pg_statio_all_indexes IS
-					'I/O statistics for all indexes';
-
-				ALTER TABLE metrics.pg_statio_all_indexes
-					ADD CONSTRAINT fk_pg_statio_all_indexes_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
-				CREATE INDEX IF NOT EXISTS idx_pg_statio_all_indexes_conn_time
-					ON metrics.pg_statio_all_indexes(connection_id, collected_at DESC);
-				CREATE INDEX IF NOT EXISTS idx_pg_statio_all_indexes_conn_db_time
-					ON metrics.pg_statio_all_indexes(connection_id, database_name, collected_at DESC);
-				CREATE INDEX IF NOT EXISTS idx_pg_statio_all_indexes_object
-					ON metrics.pg_statio_all_indexes(connection_id, database_name, schemaname, indexrelname, collected_at DESC);
-			`)
-			if err != nil {
-				return fmt.Errorf("failed to create pg_statio_all_indexes table: %w", err)
-			}
 
 			// metrics.pg_statio_all_sequences
 			_, err = tx.Exec(ctx, `
@@ -1294,10 +1060,10 @@ func (sm *SchemaManager) registerMigrations() {
 			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_database (
 					connection_id INTEGER NOT NULL,
-					datname TEXT,
+					datname TEXT NOT NULL,
 					datdba OID,
 					encoding INTEGER,
-					datlocprovider TEXT,
+					datlocprovider "char",
 					datistemplate BOOLEAN,
 					datallowconn BOOLEAN,
 					datconnlimit INTEGER,
@@ -1307,14 +1073,21 @@ func (sm *SchemaManager) registerMigrations() {
 					age_datfrozenxid BIGINT,
 					age_datminmxid BIGINT,
 					database_size_bytes BIGINT,
-					collected_at TIMESTAMPTZ NOT NULL
+					collected_at TIMESTAMPTZ NOT NULL,
+					PRIMARY KEY (connection_id, collected_at, datname)
 				) PARTITION BY RANGE (collected_at);
 
 				COMMENT ON TABLE metrics.pg_database IS
 					'Stores pg_database catalog metrics including transaction ID wraparound indicators';
 
+				ALTER TABLE metrics.pg_database
+					ADD CONSTRAINT fk_pg_database_connection_id
+					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
+
 				CREATE INDEX IF NOT EXISTS idx_pg_database_conn_time
 					ON metrics.pg_database(connection_id, collected_at DESC);
+				CREATE INDEX IF NOT EXISTS idx_pg_database_conn_db_time
+					ON metrics.pg_database(connection_id, datname, collected_at DESC);
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_database table: %w", err)
@@ -2417,7 +2190,7 @@ func (sm *SchemaManager) registerMigrations() {
 
 					-- WAL and Checkpoint alerts
 					('checkpoint_warning', 'Checkpoints requested too frequently', 'wal', 'pg_stat_checkpointer.checkpoints_req_delta', 'checkpoints', '>', 10, 'warning', TRUE, NULL, TRUE),
-					('wal_archive_failed', 'WAL archiving failures detected', 'wal', 'pg_stat_archiver.failed_count_delta', 'failures', '>', 0, 'critical', TRUE, NULL, TRUE),
+					('wal_archive_failed', 'WAL archiving failures detected', 'wal', 'pg_stat_wal.failed_count_delta', 'failures', '>', 0, 'critical', TRUE, NULL, TRUE),
 
 					-- Vacuum alerts
 					('autovacuum_not_running', 'Autovacuum has not run recently', 'maintenance', 'table_last_autovacuum_hours', 'hours', '>', 24, 'warning', TRUE, NULL, TRUE),

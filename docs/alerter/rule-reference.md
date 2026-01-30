@@ -366,7 +366,7 @@ Alerts when WAL archiving fails.
 
 | Property | Value |
 |----------|-------|
-| Metric | `pg_stat_archiver.failed_count_delta` |
+| Metric | `pg_stat_wal.failed_count_delta` |
 | Operator | `>` |
 | Default Threshold | 0 |
 | Default Severity | critical |

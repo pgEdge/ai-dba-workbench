@@ -12,14 +12,15 @@ package probes
 
 import (
 	"context"
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/pgedge/ai-workbench/collector/src/utils"
-
 	"fmt"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/collector/src/utils"
 )
 
 // PgStatAllTablesProbe collects metrics from pg_stat_all_tables view
+// and joins with pg_statio_all_tables for I/O statistics
 type PgStatAllTablesProbe struct {
 	BaseMetricsProbe
 }
@@ -50,29 +51,38 @@ func (p *PgStatAllTablesProbe) IsDatabaseScoped() bool {
 func (p *PgStatAllTablesProbe) GetQuery() string {
 	return `
         SELECT
-            schemaname,
-            relname,
-            seq_scan,
-            seq_tup_read,
-            idx_scan,
-            idx_tup_fetch,
-            n_tup_ins,
-            n_tup_upd,
-            n_tup_del,
-            n_tup_hot_upd,
-            n_live_tup,
-            n_dead_tup,
-            n_mod_since_analyze,
-            last_vacuum,
-            last_autovacuum,
-            last_analyze,
-            last_autoanalyze,
-            vacuum_count,
-            autovacuum_count,
-            analyze_count,
-            autoanalyze_count
-        FROM pg_stat_all_tables
-        ORDER BY schemaname, relname
+            s.schemaname,
+            s.relname,
+            s.seq_scan,
+            s.seq_tup_read,
+            s.idx_scan,
+            s.idx_tup_fetch,
+            s.n_tup_ins,
+            s.n_tup_upd,
+            s.n_tup_del,
+            s.n_tup_hot_upd,
+            s.n_live_tup,
+            s.n_dead_tup,
+            s.n_mod_since_analyze,
+            s.last_vacuum,
+            s.last_autovacuum,
+            s.last_analyze,
+            s.last_autoanalyze,
+            s.vacuum_count,
+            s.autovacuum_count,
+            s.analyze_count,
+            s.autoanalyze_count,
+            io.heap_blks_read,
+            io.heap_blks_hit,
+            io.idx_blks_read,
+            io.idx_blks_hit,
+            io.toast_blks_read,
+            io.toast_blks_hit,
+            io.tidx_blks_read,
+            io.tidx_blks_hit
+        FROM pg_stat_all_tables s
+        LEFT JOIN pg_statio_all_tables io ON s.relid = io.relid
+        ORDER BY s.schemaname, s.relname
     `
 }
 
@@ -107,6 +117,10 @@ func (p *PgStatAllTablesProbe) Store(ctx context.Context, datastoreConn *pgxpool
 		"n_live_tup", "n_dead_tup", "n_mod_since_analyze",
 		"last_vacuum", "last_autovacuum", "last_analyze", "last_autoanalyze",
 		"vacuum_count", "autovacuum_count", "analyze_count", "autoanalyze_count",
+		"heap_blks_read", "heap_blks_hit",
+		"idx_blks_read", "idx_blks_hit",
+		"toast_blks_read", "toast_blks_hit",
+		"tidx_blks_read", "tidx_blks_hit",
 	}
 
 	// Build values array
@@ -143,6 +157,14 @@ func (p *PgStatAllTablesProbe) Store(ctx context.Context, datastoreConn *pgxpool
 			metric["autovacuum_count"],
 			metric["analyze_count"],
 			metric["autoanalyze_count"],
+			metric["heap_blks_read"],
+			metric["heap_blks_hit"],
+			metric["idx_blks_read"],
+			metric["idx_blks_hit"],
+			metric["toast_blks_read"],
+			metric["toast_blks_hit"],
+			metric["tidx_blks_read"],
+			metric["tidx_blks_hit"],
 		}
 		values = append(values, row)
 	}

@@ -59,8 +59,22 @@ and this project adheres to
   - `(connection_id, database_name, collected_at DESC)` on database-scoped
     tables
   - Object-specific indexes for tables with additional key columns
+- New consolidated `pg_stat_connection_security` probe combining SSL and GSSAPI
+  connection security metrics into a single collection
 
 ### Changed
+
+- Probe consolidation reduces database round-trips by ~20%:
+  - `pg_stat_replication_slots` merged into `pg_replication_slots`
+  - `pg_stat_subscription_stats` merged into `pg_stat_subscription`
+  - `pg_stat_bgwriter` merged into `pg_stat_checkpointer`
+  - `pg_stat_archiver` merged into `pg_stat_wal`
+  - `pg_stat_wal_receiver` merged into `pg_stat_replication`
+  - `pg_statio_all_tables` merged into `pg_stat_all_tables`
+  - `pg_statio_all_indexes` merged into `pg_stat_all_indexes`
+  - `pg_stat_slru` merged into `pg_stat_io`
+  - `pg_stat_ssl` and `pg_stat_gssapi` merged into new
+    `pg_stat_connection_security`
 
 - Collector schema migrations consolidated into single migration for simpler
   deployment and reduced complexity. **Breaking change**: Existing collector
@@ -105,9 +119,15 @@ and this project adheres to
 - Comprehensive handling of PostgreSQL pgtype wrappers in query results
   (Float8, Float4, Int8, Int4, Int2, Text, Bool, Timestamp, Timestamptz, Date,
   Interval, UUID)
+- pg_database probe type mismatch for `datlocprovider` column; schema now uses
+  correct `"char"` type instead of TEXT
 
 ### Breaking Changes
 
+- **Collector schema completely redesigned.** The datastore database must be
+  dropped and recreated. All historical metrics data will be lost. Changes
+  include: probe consolidations (43 probes reduced to 34), standardized indexes
+  on all tables, and TIMESTAMPTZ for all timestamp columns.
 - REST API paths have changed from `/api/` to `/api/v1/`. Update any custom
   integrations or scripts that call the API directly. The CLI and web client
   have been updated to use the new paths.

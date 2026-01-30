@@ -4,8 +4,8 @@ Complete reference for all built-in probes in the Collector.
 
 ## Probe Categories
 
-- **Server-Scoped**: Collect server-wide statistics (32 probes)
-- **Database-Scoped**: Collect per-database statistics (10 probes)
+- **Server-Scoped**: Collect server-wide statistics (26 probes)
+- **Database-Scoped**: Collect per-database statistics (8 probes)
 
 ## Server-Scoped Probes
 
@@ -27,74 +27,61 @@ application_name, client_addr, client_hostname, client_port, backend_start,
 xact_start, query_start, state_change, wait_event_type, wait_event, state,
 backend_xid, backend_xmin, query, backend_type
 
-### pg_stat_archiver
-
-Monitors WAL archiver statistics.
-
-- **Source View**: `pg_stat_archiver`
-- **Default Interval**: 600 seconds (10 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: Archived WAL count, failed archives, last archive time
-- **Use Cases**: Archive monitoring, backup health checks
-
-**Columns Collected**: archived_count, last_archived_wal, last_archived_time,
-failed_count, last_failed_wal, last_failed_time, stats_reset
-
-### pg_stat_bgwriter
-
-Monitors background writer statistics.
-
-- **Source View**: `pg_stat_bgwriter`
-- **Default Interval**: 600 seconds (10 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: Checkpoint timing, buffer writes, backend fsync
-- **Use Cases**: Checkpoint tuning, I/O performance analysis
-
-**Columns Collected**: checkpoints_timed, checkpoints_req,
-checkpoint_write_time, checkpoint_sync_time, buffers_checkpoint,
-buffers_clean, maxwritten_clean, buffers_backend, buffers_backend_fsync,
-buffers_alloc, stats_reset
-
 ### pg_stat_checkpointer
 
-Monitors checkpointer process statistics (PostgreSQL 15+).
+Monitors checkpointer process statistics. This probe consolidates data from
+the `pg_stat_checkpointer` view and includes background writer statistics
+that were previously collected separately from `pg_stat_bgwriter`.
 
-- **Source View**: `pg_stat_checkpointer`
+- **Source View**: `pg_stat_checkpointer` (with bgwriter stats)
 - **Default Interval**: 600 seconds (10 minutes)
 - **Default Retention**: 7 days
-- **Key Metrics**: Checkpoints, buffers written, sync times
-- **Use Cases**: Checkpoint performance analysis, I/O tuning
+- **Key Metrics**: Checkpoints, buffers written, sync times, background writer
+  activity
+- **Use Cases**: Checkpoint performance analysis, I/O tuning, buffer management
+- **Version Notes**: PostgreSQL 15+ uses `pg_stat_checkpointer`; earlier
+  versions collect from `pg_stat_bgwriter`
 
 **Columns Collected**: num_timed, num_requested, restartpoints_timed,
 restartpoints_req, restartpoints_done, write_time, sync_time, buffers_written,
-stats_reset
+buffers_clean, maxwritten_clean, buffers_backend, buffers_backend_fsync,
+buffers_alloc, stats_reset
 
-### pg_stat_gssapi
+### pg_stat_connection_security
 
-Monitors GSSAPI authentication information.
+Monitors SSL and GSSAPI connection security information. This probe
+consolidates data from both `pg_stat_ssl` and `pg_stat_gssapi` views to
+provide a unified view of connection security.
 
-- **Source View**: `pg_stat_gssapi`
+- **Source Views**: `pg_stat_ssl`, `pg_stat_gssapi`
 - **Default Interval**: 300 seconds (5 minutes)
 - **Default Retention**: 7 days
-- **Key Metrics**: GSSAPI authentication status, principals, encryption
-- **Use Cases**: Kerberos authentication monitoring
+- **Key Metrics**: SSL version, cipher, GSSAPI authentication status,
+  principals, encryption
+- **Use Cases**: SSL/TLS security monitoring, Kerberos authentication
+  monitoring, connection security auditing
 
-**Columns Collected**: pid, gss_authenticated, gss_principal, gss_encrypted,
-gss_credentials_delegated
+**Columns Collected**: pid, ssl, ssl_version, ssl_cipher, ssl_bits,
+ssl_client_dn, ssl_client_serial, ssl_issuer_dn, gss_authenticated,
+gss_principal, gss_encrypted, gss_credentials_delegated
 
 ### pg_stat_io
 
-Monitors I/O statistics by backend type and context.
+Monitors I/O statistics by backend type and context. This probe consolidates
+data from `pg_stat_io` and includes SLRU cache statistics that were previously
+collected separately from `pg_stat_slru`.
 
-- **Source View**: `pg_stat_io`
+- **Source Views**: `pg_stat_io`, `pg_stat_slru`
 - **Default Interval**: 900 seconds (15 minutes)
 - **Default Retention**: 7 days
-- **Key Metrics**: Reads, writes, extends, hits by context
-- **Use Cases**: Detailed I/O analysis, cache efficiency
+- **Key Metrics**: Reads, writes, extends, hits by context, SLRU cache
+  performance
+- **Use Cases**: Detailed I/O analysis, cache efficiency, SLRU performance
 
 **Columns Collected**: backend_type, context, reads, read_time, writes,
 write_time, writebacks, writeback_time, extends, extend_time, op_bytes, hits,
-evictions, reuses, fsyncs, fsync_time, stats_reset
+evictions, reuses, fsyncs, fsync_time, slru_name, blks_zeroed, blks_hit,
+blks_read, blks_written, blks_exists, flushes, truncates, stats_reset
 
 ### pg_stat_recovery_prefetch
 
@@ -111,129 +98,79 @@ skip_fpw, skip_rep, wal_distance, block_distance, io_depth
 
 ### pg_stat_replication
 
-Monitors replication status and lag.
+Monitors replication status and lag. This probe consolidates data from
+`pg_stat_replication` and includes WAL receiver statistics that were
+previously collected separately from `pg_stat_wal_receiver`.
 
-- **Source View**: `pg_stat_replication`
+- **Source Views**: `pg_stat_replication`, `pg_stat_wal_receiver`
 - **Default Interval**: 30 seconds
 - **Default Retention**: 7 days
-- **Key Metrics**: Replication lag, sync state, sent/received LSN
-- **Use Cases**: Replication monitoring, lag alerting
+- **Key Metrics**: Replication lag, sync state, sent/received LSN, WAL receiver
+  status
+- **Use Cases**: Replication monitoring, lag alerting, replica health
 
 **Columns Collected**: pid, usesysid, usename, application_name, client_addr,
 client_hostname, client_port, backend_start, backend_xmin, state, sent_lsn,
 write_lsn, flush_lsn, replay_lsn, write_lag, flush_lag, replay_lag,
-sync_state, sync_priority, reply_time
-
-### pg_stat_replication_slots
-
-Monitors replication slot usage and WAL retention.
-
-- **Source View**: `pg_stat_replication_slots`
-- **Default Interval**: 300 seconds (5 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: Spill files, bytes, transactions
-- **Use Cases**: Slot monitoring, WAL buildup detection
-
-**Columns Collected**: slot_name, spill_txns, spill_count, spill_bytes,
-stream_txns, stream_count, stream_bytes, total_txns, total_bytes, stats_reset
+sync_state, sync_priority, reply_time, receiver_pid, receiver_status,
+receive_start_lsn, receive_start_tli, written_lsn, flushed_lsn, received_tli,
+slot_name, sender_host, sender_port
 
 ### pg_replication_slots
 
-Monitors replication slot WAL retention by computing the difference
-between the current WAL position and each slot's restart LSN.
+Monitors replication slot WAL retention by computing the difference between
+the current WAL position and each slot's restart LSN. This probe consolidates
+data from `pg_replication_slots` and includes slot statistics that were
+previously collected separately from `pg_stat_replication_slots`.
 
-- **Source View**: `pg_replication_slots`
+- **Source Views**: `pg_replication_slots`, `pg_stat_replication_slots`
 - **Default Interval**: 300 seconds (5 minutes)
 - **Default Retention**: 7 days
-- **Key Metrics**: Retained WAL bytes per slot, slot activity,
-  WAL status
-- **Use Cases**: WAL accumulation monitoring, disk usage
-  prevention, inactive slot detection
-- **Version Notes**: The `wal_status` and `safe_wal_size` columns
-  require PostgreSQL 13 or later; older versions return NULL.
+- **Key Metrics**: Retained WAL bytes per slot, slot activity, WAL status,
+  spill statistics
+- **Use Cases**: WAL accumulation monitoring, disk usage prevention, inactive
+  slot detection, slot performance analysis
+- **Version Notes**: The `wal_status` and `safe_wal_size` columns require
+  PostgreSQL 13 or later; older versions return NULL.
 
 **Columns Collected**: slot_name, slot_type, active, wal_status,
-safe_wal_size, retained_bytes
-
-### pg_stat_slru
-
-Monitors SLRU (Simple LRU) cache statistics.
-
-- **Source View**: `pg_stat_slru`
-- **Default Interval**: 600 seconds (10 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: Cache hits, reads, writes by SLRU type
-- **Use Cases**: Internal cache performance analysis
-
-**Columns Collected**: name, blks_zeroed, blks_hit, blks_read, blks_written,
-blks_exists, flushes, truncates, stats_reset
-
-### pg_stat_ssl
-
-Monitors SSL connection information.
-
-- **Source View**: `pg_stat_ssl`
-- **Default Interval**: 300 seconds (5 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: SSL version, cipher, compression, client DN
-- **Use Cases**: SSL/TLS security monitoring
-
-**Columns Collected**: pid, ssl, ssl_version, ssl_cipher, ssl_bits,
-ssl_client_dn, ssl_client_serial, ssl_issuer_dn
+safe_wal_size, retained_bytes, spill_txns, spill_count, spill_bytes,
+stream_txns, stream_count, stream_bytes, total_txns, total_bytes, stats_reset
 
 ### pg_stat_subscription
 
-Monitors logical replication subscriptions.
+Monitors logical replication subscriptions. This probe consolidates data from
+`pg_stat_subscription` and includes subscription statistics that were
+previously collected separately from `pg_stat_subscription_stats`.
 
-- **Source View**: `pg_stat_subscription`
+- **Source Views**: `pg_stat_subscription`, `pg_stat_subscription_stats`
 - **Default Interval**: 300 seconds (5 minutes)
 - **Default Retention**: 7 days
-- **Key Metrics**: Subscription state, worker info, LSN positions
-- **Use Cases**: Logical replication monitoring
+- **Key Metrics**: Subscription state, worker info, LSN positions, apply
+  errors, sync errors
+- **Use Cases**: Logical replication monitoring, subscription health tracking
 
 **Columns Collected**: subid, subname, pid, leader_pid, relid, received_lsn,
-last_msg_send_time, last_msg_receipt_time, latest_end_lsn, latest_end_time
-
-### pg_stat_subscription_stats
-
-Monitors subscription statistics.
-
-- **Source View**: `pg_stat_subscription_stats`
-- **Default Interval**: 300 seconds (5 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: Apply errors, sync errors
-- **Use Cases**: Subscription health monitoring
-
-**Columns Collected**: subid, subname, apply_error_count, sync_error_count,
-stats_reset
+last_msg_send_time, last_msg_receipt_time, latest_end_lsn, latest_end_time,
+apply_error_count, sync_error_count, stats_reset
 
 ### pg_stat_wal
 
-Monitors WAL generation statistics.
+Monitors WAL generation statistics. This probe consolidates data from
+`pg_stat_wal` and includes archiver statistics that were previously collected
+separately from `pg_stat_archiver`.
 
-- **Source View**: `pg_stat_wal`
+- **Source Views**: `pg_stat_wal`, `pg_stat_archiver`
 - **Default Interval**: 600 seconds (10 minutes)
 - **Default Retention**: 7 days
-- **Key Metrics**: WAL records, bytes, sync operations
-- **Use Cases**: WAL generation analysis, write load monitoring
+- **Key Metrics**: WAL records, bytes, sync operations, archived WAL count,
+  archive failures
+- **Use Cases**: WAL generation analysis, write load monitoring, archive health
 
 **Columns Collected**: wal_records, wal_fpi, wal_bytes, wal_buffers_full,
-wal_write, wal_sync, wal_write_time, wal_sync_time, stats_reset
-
-### pg_stat_wal_receiver
-
-Monitors WAL receiver status on replicas.
-
-- **Source View**: `pg_stat_wal_receiver`
-- **Default Interval**: 30 seconds
-- **Default Retention**: 7 days
-- **Key Metrics**: Receiver status, timeline, LSN positions
-- **Use Cases**: Replica health monitoring
-
-**Columns Collected**: pid, status, receive_start_lsn, receive_start_tli,
-written_lsn, flushed_lsn, received_tli, last_msg_send_time,
-last_msg_receipt_time, latest_end_lsn, latest_end_time, slot_name, sender_host,
-sender_port, conninfo
+wal_write, wal_sync, wal_write_time, wal_sync_time, archived_count,
+last_archived_wal, last_archived_time, failed_count, last_failed_wal,
+last_failed_time, stats_reset
 
 ### pg_settings
 
@@ -416,59 +353,40 @@ confl_snapshot, confl_bufferpin, confl_deadlock
 
 ### pg_stat_all_tables
 
-Monitors table access statistics.
+Monitors table access and I/O statistics. This probe consolidates data from
+`pg_stat_all_tables` and includes I/O statistics that were previously
+collected separately from `pg_statio_all_tables`.
 
-- **Source View**: `pg_stat_all_tables`
+- **Source Views**: `pg_stat_all_tables`, `pg_statio_all_tables`
 - **Default Interval**: 300 seconds (5 minutes)
 - **Default Retention**: 7 days
-- **Key Metrics**: Sequential/index scans, tuples read/written, vacuum/analyze
-- **Use Cases**: Table usage analysis, vacuum monitoring
+- **Key Metrics**: Sequential/index scans, tuples read/written, vacuum/analyze,
+  heap/index/toast blocks read/hit
+- **Use Cases**: Table usage analysis, vacuum monitoring, I/O analysis, cache
+  effectiveness
 
 **Columns Collected**: relid, schemaname, relname, seq_scan, seq_tup_read,
 idx_scan, idx_tup_fetch, n_tup_ins, n_tup_upd, n_tup_del, n_tup_hot_upd,
 n_live_tup, n_dead_tup, n_mod_since_analyze, n_ins_since_vacuum,
 last_vacuum, last_autovacuum, last_analyze, last_autoanalyze, vacuum_count,
-autovacuum_count, analyze_count, autoanalyze_count
-
-### pg_stat_all_indexes
-
-Monitors index usage statistics.
-
-- **Source View**: `pg_stat_all_indexes`
-- **Default Interval**: 300 seconds (5 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: Index scans, tuples read/fetched
-- **Use Cases**: Index usage analysis, unused index detection
-
-**Columns Collected**: relid, indexrelid, schemaname, relname, indexrelname,
-idx_scan, idx_tup_read, idx_tup_fetch
-
-### pg_statio_all_tables
-
-Monitors table I/O statistics.
-
-- **Source View**: `pg_statio_all_tables`
-- **Default Interval**: 300 seconds (5 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: Heap/index/toast blocks read/hit
-- **Use Cases**: Table I/O analysis, cache effectiveness
-
-**Columns Collected**: relid, schemaname, relname, heap_blks_read,
+autovacuum_count, analyze_count, autoanalyze_count, heap_blks_read,
 heap_blks_hit, idx_blks_read, idx_blks_hit, toast_blks_read, toast_blks_hit,
 tidx_blks_read, tidx_blks_hit
 
-### pg_statio_all_indexes
+### pg_stat_all_indexes
 
-Monitors index I/O statistics.
+Monitors index usage and I/O statistics. This probe consolidates data from
+`pg_stat_all_indexes` and includes I/O statistics that were previously
+collected separately from `pg_statio_all_indexes`.
 
-- **Source View**: `pg_statio_all_indexes`
+- **Source Views**: `pg_stat_all_indexes`, `pg_statio_all_indexes`
 - **Default Interval**: 300 seconds (5 minutes)
 - **Default Retention**: 7 days
-- **Key Metrics**: Index blocks read/hit
-- **Use Cases**: Index I/O analysis
+- **Key Metrics**: Index scans, tuples read/fetched, index blocks read/hit
+- **Use Cases**: Index usage analysis, unused index detection, I/O analysis
 
 **Columns Collected**: relid, indexrelid, schemaname, relname, indexrelname,
-idx_blks_read, idx_blks_hit
+idx_scan, idx_tup_read, idx_tup_fetch, idx_blks_read, idx_blks_hit
 
 ### pg_statio_all_sequences
 

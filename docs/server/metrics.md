@@ -116,12 +116,12 @@ Queries collected metrics with time-based aggregation into buckets.
 | Probe | Description |
 |-------|-------------|
 | `pg_stat_activity` | Current database connections and queries |
-| `pg_stat_replication` | Streaming replication status |
-| `pg_stat_wal` | WAL activity statistics |
+| `pg_stat_replication` | Streaming replication and WAL receiver status |
+| `pg_stat_wal` | WAL activity and archiver statistics |
 | `pg_settings` | PostgreSQL configuration settings |
-| `pg_stat_bgwriter` | Background writer statistics |
-| `pg_stat_checkpointer` | Checkpoint statistics |
-| `pg_stat_io` | I/O statistics (PostgreSQL 16+) |
+| `pg_stat_checkpointer` | Checkpoint and background writer statistics |
+| `pg_stat_io` | I/O and SLRU cache statistics |
+| `pg_stat_connection_security` | SSL and GSSAPI connection security |
 
 ### Database-Scoped Probes
 

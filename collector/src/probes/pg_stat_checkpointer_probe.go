@@ -12,15 +12,16 @@ package probes
 
 import (
 	"context"
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/pgedge/ai-workbench/collector/src/utils"
-
 	"fmt"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/collector/src/utils"
 )
 
-// PgStatCheckpointerProbe collects metrics from pg_stat_checkpointer view
-// Note: This view is available in PostgreSQL 17+
+// PgStatCheckpointerProbe collects metrics from pg_stat_checkpointer and pg_stat_bgwriter
+// Note: pg_stat_checkpointer is available in PostgreSQL 17+
+// For older versions, we collect from the combined pg_stat_bgwriter view
 type PgStatCheckpointerProbe struct {
 	BaseMetricsProbe
 }
@@ -49,26 +50,13 @@ func (p *PgStatCheckpointerProbe) IsDatabaseScoped() bool {
 
 // GetQuery returns the SQL query to execute
 func (p *PgStatCheckpointerProbe) GetQuery() string {
-	return `
-        SELECT
-            num_timed,
-            num_requested,
-            restartpoints_timed,
-            restartpoints_req,
-            restartpoints_done,
-            write_time,
-            sync_time,
-            buffers_written,
-            stats_reset
-        FROM pg_stat_checkpointer
-    `
+	return ""
 }
 
-// Execute runs the probe against a monitored connection
-func (p *PgStatCheckpointerProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
-	// First check if the view exists (PG 17+)
+// checkCheckpointerViewExists checks if pg_stat_checkpointer view exists (PG17+)
+func (p *PgStatCheckpointerProbe) checkCheckpointerViewExists(ctx context.Context, conn *pgxpool.Conn) (bool, error) {
 	var exists bool
-	err := monitoredConn.QueryRow(ctx, `
+	err := conn.QueryRow(ctx, `
         SELECT EXISTS (
             SELECT 1 FROM pg_views
             WHERE schemaname = 'pg_catalog'
@@ -76,14 +64,63 @@ func (p *PgStatCheckpointerProbe) Execute(ctx context.Context, connectionName st
         )
     `).Scan(&exists)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check if pg_stat_checkpointer exists: %w", err)
+		return false, fmt.Errorf("failed to check if pg_stat_checkpointer exists: %w", err)
+	}
+	return exists, nil
+}
+
+// Execute runs the probe against a monitored connection
+func (p *PgStatCheckpointerProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
+	// Check if the pg_stat_checkpointer view exists (PG 17+)
+	checkpointerExists, err := p.checkCheckpointerViewExists(ctx, monitoredConn)
+	if err != nil {
+		return nil, err
 	}
 
-	if !exists {
-		return nil, nil // View doesn't exist, return empty result
+	var query string
+	if checkpointerExists {
+		// PG17+: Separate pg_stat_checkpointer and pg_stat_bgwriter views
+		// Query both and combine results
+		query = `
+            SELECT
+                c.num_timed,
+                c.num_requested,
+                c.restartpoints_timed,
+                c.restartpoints_req,
+                c.restartpoints_done,
+                c.write_time,
+                c.sync_time,
+                c.buffers_written,
+                c.stats_reset,
+                b.buffers_clean,
+                b.maxwritten_clean,
+                b.buffers_alloc,
+                b.stats_reset AS bgwriter_stats_reset
+            FROM pg_stat_checkpointer c
+            CROSS JOIN pg_stat_bgwriter b
+        `
+	} else {
+		// PG16 and earlier: Combined pg_stat_bgwriter view has both checkpoint and bgwriter stats
+		query = `
+            SELECT
+                checkpoints_timed AS num_timed,
+                checkpoints_req AS num_requested,
+                NULL::bigint AS restartpoints_timed,
+                NULL::bigint AS restartpoints_req,
+                NULL::bigint AS restartpoints_done,
+                checkpoint_write_time AS write_time,
+                checkpoint_sync_time AS sync_time,
+                buffers_checkpoint AS buffers_written,
+                stats_reset,
+                buffers_clean,
+                maxwritten_clean,
+                buffers_alloc,
+                stats_reset AS bgwriter_stats_reset
+            FROM pg_stat_bgwriter
+        `
 	}
 
-	rows, err := monitoredConn.Query(ctx, p.GetQuery())
+	rows, err := monitoredConn.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute query: %w", err)
 	}
@@ -109,6 +146,8 @@ func (p *PgStatCheckpointerProbe) Store(ctx context.Context, datastoreConn *pgxp
 		"num_timed", "num_requested", "restartpoints_timed",
 		"restartpoints_req", "restartpoints_done", "write_time",
 		"sync_time", "buffers_written", "stats_reset",
+		"buffers_clean", "maxwritten_clean", "buffers_alloc",
+		"bgwriter_stats_reset",
 	}
 
 	// Build values array
@@ -126,6 +165,10 @@ func (p *PgStatCheckpointerProbe) Store(ctx context.Context, datastoreConn *pgxp
 			metric["sync_time"],
 			metric["buffers_written"],
 			metric["stats_reset"],
+			metric["buffers_clean"],
+			metric["maxwritten_clean"],
+			metric["buffers_alloc"],
+			metric["bgwriter_stats_reset"],
 		}
 		values = append(values, row)
 	}

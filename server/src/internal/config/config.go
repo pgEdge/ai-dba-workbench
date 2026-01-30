@@ -571,6 +571,17 @@ func mergeConfig(dest, src *Config) {
 		dest.TraceFile = src.TraceFile
 	}
 
+	// Connection security - merge if any fields are set
+	if src.ConnectionSecurity.AllowInternalNetworks {
+		dest.ConnectionSecurity.AllowInternalNetworks = src.ConnectionSecurity.AllowInternalNetworks
+	}
+	if len(src.ConnectionSecurity.AllowedHosts) > 0 {
+		dest.ConnectionSecurity.AllowedHosts = src.ConnectionSecurity.AllowedHosts
+	}
+	if len(src.ConnectionSecurity.BlockedHosts) > 0 {
+		dest.ConnectionSecurity.BlockedHosts = src.ConnectionSecurity.BlockedHosts
+	}
+
 	// Builtins - merge individual settings (pointer fields preserve explicit false values)
 	// Tools
 	if src.Builtins.Tools.QueryDatabase != nil {

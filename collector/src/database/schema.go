@@ -873,8 +873,6 @@ func (sm *SchemaManager) registerMigrations() {
 				return fmt.Errorf("failed to create pg_stat_subscription table: %w", err)
 			}
 
-
-
 			// metrics.pg_stat_recovery_prefetch
 			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.pg_stat_recovery_prefetch (
@@ -906,8 +904,6 @@ func (sm *SchemaManager) registerMigrations() {
 			if err != nil {
 				return fmt.Errorf("failed to create pg_stat_recovery_prefetch table: %w", err)
 			}
-
-
 
 			// metrics.pg_stat_io
 			_, err = tx.Exec(ctx, `
@@ -1023,8 +1019,6 @@ func (sm *SchemaManager) registerMigrations() {
 			if err != nil {
 				return fmt.Errorf("failed to create pg_stat_user_functions table: %w", err)
 			}
-
-
 
 			// metrics.pg_statio_all_sequences
 			_, err = tx.Exec(ctx, `

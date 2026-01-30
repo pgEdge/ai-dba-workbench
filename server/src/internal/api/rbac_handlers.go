@@ -40,6 +40,7 @@ func (h *RBACHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(http.H
 	mux.HandleFunc("/api/v1/rbac/groups", authWrapper(h.handleGroups))
 	mux.HandleFunc("/api/v1/rbac/groups/", authWrapper(h.handleGroupSubpath))
 	mux.HandleFunc("/api/v1/rbac/privileges/mcp", authWrapper(h.handleMCPPrivileges))
+	mux.HandleFunc("/api/v1/rbac/tokens", authWrapper(h.handleTokens))
 	mux.HandleFunc("/api/v1/rbac/tokens/", authWrapper(h.handleTokenSubpath))
 }
 
@@ -47,14 +48,20 @@ func (h *RBACHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(http.H
 // Users
 // =============================================================================
 
-// handleUsers handles GET /api/v1/rbac/users
+// handleUsers handles GET/POST /api/v1/rbac/users
 func (h *RBACHandler) handleUsers(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", "GET")
+	switch r.Method {
+	case http.MethodGet:
+		h.listUsers(w, r)
+	case http.MethodPost:
+		h.createUser(w, r)
+	default:
+		w.Header().Set("Allow", "GET, POST")
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
 	}
+}
 
+func (h *RBACHandler) listUsers(w http.ResponseWriter, r *http.Request) {
 	if !h.requirePermission(w, r, auth.PermManageUsers) {
 		return
 	}
@@ -70,6 +77,8 @@ func (h *RBACHandler) handleUsers(w http.ResponseWriter, r *http.Request) {
 	type userResponse struct {
 		ID          int64  `json:"id"`
 		Username    string `json:"username"`
+		DisplayName string `json:"display_name"`
+		Email       string `json:"email"`
 		Enabled     bool   `json:"enabled"`
 		IsSuperuser bool   `json:"is_superuser"`
 		Annotation  string `json:"annotation,omitempty"`
@@ -80,13 +89,186 @@ func (h *RBACHandler) handleUsers(w http.ResponseWriter, r *http.Request) {
 		result[i] = userResponse{
 			ID:          u.ID,
 			Username:    u.Username,
+			DisplayName: u.DisplayName,
+			Email:       u.Email,
 			Enabled:     u.Enabled,
 			IsSuperuser: u.IsSuperuser,
 			Annotation:  u.Annotation,
 		}
 	}
 
-	RespondJSON(w, http.StatusOK, result)
+	RespondJSON(w, http.StatusOK, map[string]any{"users": result})
+}
+
+func (h *RBACHandler) createUser(w http.ResponseWriter, r *http.Request) {
+	if !h.requirePermission(w, r, auth.PermManageUsers) {
+		return
+	}
+
+	var req struct {
+		Username    string `json:"username"`
+		Password    string `json:"password"`
+		DisplayName string `json:"display_name"`
+		Email       string `json:"email"`
+		Annotation  string `json:"annotation"`
+		Enabled     *bool  `json:"enabled"`
+		IsSuperuser *bool  `json:"is_superuser"`
+	}
+	if !DecodeJSONBody(w, r, &req) {
+		return
+	}
+
+	if req.Username == "" {
+		RespondError(w, http.StatusBadRequest, "Username is required")
+		return
+	}
+	if req.Password == "" {
+		RespondError(w, http.StatusBadRequest, "Password is required")
+		return
+	}
+
+	if err := h.authStore.CreateUser(req.Username, req.Password, req.Annotation); err != nil {
+		RespondError(w, http.StatusInternalServerError,
+			fmt.Sprintf("Failed to create user: %v", err))
+		return
+	}
+
+	if req.DisplayName != "" {
+		if err := h.authStore.UpdateUserDisplayName(req.Username, req.DisplayName); err != nil {
+			RespondError(w, http.StatusInternalServerError,
+				fmt.Sprintf("Failed to set display name: %v", err))
+			return
+		}
+	}
+
+	if req.Email != "" {
+		if err := h.authStore.UpdateUserEmail(req.Username, req.Email); err != nil {
+			RespondError(w, http.StatusInternalServerError,
+				fmt.Sprintf("Failed to set email: %v", err))
+			return
+		}
+	}
+
+	if req.Enabled != nil && !*req.Enabled {
+		if err := h.authStore.DisableUser(req.Username); err != nil {
+			RespondError(w, http.StatusInternalServerError,
+				fmt.Sprintf("Failed to disable user: %v", err))
+			return
+		}
+	}
+
+	if req.IsSuperuser != nil && *req.IsSuperuser {
+		if err := h.authStore.SetUserSuperuser(req.Username, true); err != nil {
+			RespondError(w, http.StatusInternalServerError,
+				fmt.Sprintf("Failed to set superuser status: %v", err))
+			return
+		}
+	}
+
+	RespondJSON(w, http.StatusCreated, map[string]string{
+		"message": "User created",
+	})
+}
+
+func (h *RBACHandler) updateUser(w http.ResponseWriter, r *http.Request, userID int64) {
+	if !h.requirePermission(w, r, auth.PermManageUsers) {
+		return
+	}
+
+	var req struct {
+		Password    *string `json:"password"`
+		DisplayName *string `json:"display_name"`
+		Email       *string `json:"email"`
+		Annotation  *string `json:"annotation"`
+		Enabled     *bool   `json:"enabled"`
+		IsSuperuser *bool   `json:"is_superuser"`
+	}
+	if !DecodeJSONBody(w, r, &req) {
+		return
+	}
+
+	user, err := h.authStore.GetUserByID(userID)
+	if err != nil || user == nil {
+		RespondError(w, http.StatusNotFound, "User not found")
+		return
+	}
+
+	if req.Password != nil || req.Annotation != nil {
+		newPassword := ""
+		if req.Password != nil {
+			newPassword = *req.Password
+		}
+		newAnnotation := user.Annotation
+		if req.Annotation != nil {
+			newAnnotation = *req.Annotation
+		}
+		if err := h.authStore.UpdateUser(user.Username, newPassword, newAnnotation); err != nil {
+			RespondError(w, http.StatusInternalServerError,
+				fmt.Sprintf("Failed to update user: %v", err))
+			return
+		}
+	}
+
+	if req.DisplayName != nil {
+		if err := h.authStore.UpdateUserDisplayName(user.Username, *req.DisplayName); err != nil {
+			RespondError(w, http.StatusInternalServerError,
+				fmt.Sprintf("Failed to update display name: %v", err))
+			return
+		}
+	}
+
+	if req.Email != nil {
+		if err := h.authStore.UpdateUserEmail(user.Username, *req.Email); err != nil {
+			RespondError(w, http.StatusInternalServerError,
+				fmt.Sprintf("Failed to update email: %v", err))
+			return
+		}
+	}
+
+	if req.Enabled != nil {
+		if *req.Enabled {
+			err = h.authStore.EnableUser(user.Username)
+		} else {
+			err = h.authStore.DisableUser(user.Username)
+		}
+		if err != nil {
+			RespondError(w, http.StatusInternalServerError,
+				fmt.Sprintf("Failed to update user enabled status: %v", err))
+			return
+		}
+	}
+
+	if req.IsSuperuser != nil {
+		if err := h.authStore.SetUserSuperuser(user.Username, *req.IsSuperuser); err != nil {
+			RespondError(w, http.StatusInternalServerError,
+				fmt.Sprintf("Failed to update user superuser status: %v", err))
+			return
+		}
+	}
+
+	RespondJSON(w, http.StatusOK, map[string]string{
+		"message": "User updated",
+	})
+}
+
+func (h *RBACHandler) deleteUser(w http.ResponseWriter, r *http.Request, userID int64) {
+	if !h.requirePermission(w, r, auth.PermManageUsers) {
+		return
+	}
+
+	user, err := h.authStore.GetUserByID(userID)
+	if err != nil || user == nil {
+		RespondError(w, http.StatusNotFound, "User not found")
+		return
+	}
+
+	if err := h.authStore.DeleteUser(user.Username); err != nil {
+		RespondError(w, http.StatusInternalServerError,
+			fmt.Sprintf("Failed to delete user: %v", err))
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleUserSubpath handles /api/v1/rbac/users/{id}/...
@@ -101,6 +283,20 @@ func (h *RBACHandler) handleUserSubpath(w http.ResponseWriter, r *http.Request) 
 	userID, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil {
 		RespondError(w, http.StatusBadRequest, "Invalid user ID")
+		return
+	}
+
+	// /api/v1/rbac/users/{id}
+	if len(parts) == 1 {
+		switch r.Method {
+		case http.MethodPut:
+			h.updateUser(w, r, userID)
+		case http.MethodDelete:
+			h.deleteUser(w, r, userID)
+		default:
+			w.Header().Set("Allow", "PUT, DELETE")
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
 		return
 	}
 
@@ -210,14 +406,14 @@ func (h *RBACHandler) listGroups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	groups, err := h.authStore.ListGroups()
+	groups, err := h.authStore.ListGroupsWithMemberCount()
 	if err != nil {
 		RespondError(w, http.StatusInternalServerError,
 			fmt.Sprintf("Failed to list groups: %v", err))
 		return
 	}
 
-	RespondJSON(w, http.StatusOK, groups)
+	RespondJSON(w, http.StatusOK, map[string]any{"groups": groups})
 }
 
 func (h *RBACHandler) createGroup(w http.ResponseWriter, r *http.Request) {
@@ -300,6 +496,17 @@ func (h *RBACHandler) handleGroupSubpath(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// /api/v1/rbac/groups/{id}/effective-privileges
+	if parts[1] == "effective-privileges" && len(parts) == 2 {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", "GET")
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		h.getGroupEffectivePrivileges(w, r, groupID)
+		return
+	}
+
 	http.NotFound(w, r)
 }
 
@@ -341,6 +548,66 @@ func (h *RBACHandler) getGroup(w http.ResponseWriter, r *http.Request, groupID i
 	}
 
 	RespondJSON(w, http.StatusOK, detail)
+}
+
+// getGroupEffectivePrivileges handles GET /api/v1/rbac/groups/{id}/effective-privileges
+func (h *RBACHandler) getGroupEffectivePrivileges(w http.ResponseWriter, r *http.Request, groupID int64) {
+	if !h.requirePermission(w, r, auth.PermManagePermissions) {
+		return
+	}
+
+	group, err := h.authStore.GetGroup(groupID)
+	if err != nil || group == nil {
+		RespondError(w, http.StatusNotFound, "Group not found")
+		return
+	}
+
+	type connPriv struct {
+		ConnectionID int    `json:"connection_id"`
+		AccessLevel  string `json:"access_level"`
+	}
+
+	type effectiveResponse struct {
+		GroupName            string     `json:"group_name"`
+		MCPPrivileges        []string   `json:"mcp_privileges"`
+		ConnectionPrivileges []connPriv `json:"connection_privileges"`
+		AdminPermissions     []string   `json:"admin_permissions"`
+	}
+
+	resp := effectiveResponse{
+		GroupName: group.Name,
+	}
+
+	mcpPrivs, err := h.authStore.GetGroupEffectiveMCPPrivileges(groupID)
+	if err == nil {
+		resp.MCPPrivileges = mcpPrivs
+	}
+	if resp.MCPPrivileges == nil {
+		resp.MCPPrivileges = []string{}
+	}
+
+	connPrivs, err := h.authStore.GetGroupEffectiveConnectionPrivileges(groupID)
+	if err == nil {
+		for _, cp := range connPrivs {
+			resp.ConnectionPrivileges = append(resp.ConnectionPrivileges, connPriv{
+				ConnectionID: cp.ConnectionID,
+				AccessLevel:  cp.AccessLevel,
+			})
+		}
+	}
+	if resp.ConnectionPrivileges == nil {
+		resp.ConnectionPrivileges = []connPriv{}
+	}
+
+	adminPerms, err := h.authStore.GetGroupEffectiveAdminPermissions(groupID)
+	if err == nil {
+		resp.AdminPermissions = adminPerms
+	}
+	if resp.AdminPermissions == nil {
+		resp.AdminPermissions = []string{}
+	}
+
+	RespondJSON(w, http.StatusOK, resp)
 }
 
 func (h *RBACHandler) updateGroup(w http.ResponseWriter, r *http.Request, groupID int64) {
@@ -496,7 +763,7 @@ func (h *RBACHandler) removeGroupMember(w http.ResponseWriter, r *http.Request, 
 // =============================================================================
 
 func (h *RBACHandler) handleGroupPrivileges(w http.ResponseWriter, r *http.Request, groupID int64, remaining []string) {
-	if !h.requirePermission(w, r, auth.PermManagePrivileges) {
+	if !h.requirePermission(w, r, auth.PermManagePermissions) {
 		return
 	}
 
@@ -517,48 +784,46 @@ func (h *RBACHandler) handleGroupPrivileges(w http.ResponseWriter, r *http.Reque
 
 func (h *RBACHandler) handleGroupMCPPrivileges(w http.ResponseWriter, r *http.Request, groupID int64, remaining []string) {
 	// POST /api/v1/rbac/groups/{id}/privileges/mcp
+	// DELETE /api/v1/rbac/groups/{id}/privileges/mcp?name=<privilege>
 	if len(remaining) == 0 {
-		if r.Method != http.MethodPost {
-			w.Header().Set("Allow", "POST")
+		switch r.Method {
+		case http.MethodPost:
+			var req struct {
+				Privilege string `json:"privilege"`
+			}
+			if !DecodeJSONBody(w, r, &req) {
+				return
+			}
+			if req.Privilege == "" {
+				RespondError(w, http.StatusBadRequest, "Privilege is required")
+				return
+			}
+
+			if err := h.authStore.GrantMCPPrivilegeByName(groupID, req.Privilege); err != nil {
+				RespondError(w, http.StatusInternalServerError,
+					fmt.Sprintf("Failed to grant MCP privilege: %v", err))
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+
+		case http.MethodDelete:
+			privilege := r.URL.Query().Get("name")
+			if privilege == "" {
+				RespondError(w, http.StatusBadRequest, "Query parameter 'name' is required")
+				return
+			}
+
+			if err := h.authStore.RevokeMCPPrivilegeByName(groupID, privilege); err != nil {
+				RespondError(w, http.StatusInternalServerError,
+					fmt.Sprintf("Failed to revoke MCP privilege: %v", err))
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+
+		default:
+			w.Header().Set("Allow", "POST, DELETE")
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
 		}
-
-		var req struct {
-			Privilege string `json:"privilege"`
-		}
-		if !DecodeJSONBody(w, r, &req) {
-			return
-		}
-		if req.Privilege == "" {
-			RespondError(w, http.StatusBadRequest, "Privilege is required")
-			return
-		}
-
-		if err := h.authStore.GrantMCPPrivilegeByName(groupID, req.Privilege); err != nil {
-			RespondError(w, http.StatusInternalServerError,
-				fmt.Sprintf("Failed to grant MCP privilege: %v", err))
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-
-	// DELETE /api/v1/rbac/groups/{id}/privileges/mcp/{privilege}
-	if len(remaining) == 1 {
-		if r.Method != http.MethodDelete {
-			w.Header().Set("Allow", "DELETE")
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
-		privilege := remaining[0]
-		if err := h.authStore.RevokeMCPPrivilegeByName(groupID, privilege); err != nil {
-			RespondError(w, http.StatusInternalServerError,
-				fmt.Sprintf("Failed to revoke MCP privilege: %v", err))
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
@@ -581,7 +846,7 @@ func (h *RBACHandler) handleGroupConnectionPrivileges(w http.ResponseWriter, r *
 		if !DecodeJSONBody(w, r, &req) {
 			return
 		}
-		if req.ConnectionID <= 0 {
+		if req.ConnectionID < 0 {
 			RespondError(w, http.StatusBadRequest, "Valid connection_id is required")
 			return
 		}
@@ -638,7 +903,7 @@ func (h *RBACHandler) handleMCPPrivileges(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if !h.requirePermission(w, r, auth.PermManagePrivileges) {
+	if !h.requirePermission(w, r, auth.PermManagePermissions) {
 		return
 	}
 
@@ -741,9 +1006,81 @@ func (h *RBACHandler) revokeGroupPermission(w http.ResponseWriter, r *http.Reque
 // Token Scopes
 // =============================================================================
 
+// handleTokens handles GET /api/v1/rbac/tokens
+func (h *RBACHandler) handleTokens(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET")
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if !h.requirePermission(w, r, auth.PermManageTokenScopes) {
+		return
+	}
+
+	tokens, err := h.authStore.ListAllTokens()
+	if err != nil {
+		RespondError(w, http.StatusInternalServerError,
+			fmt.Sprintf("Failed to list tokens: %v", err))
+		return
+	}
+
+	type tokenScope struct {
+		Scoped        bool    `json:"scoped"`
+		ConnectionIDs []int   `json:"connection_ids,omitempty"`
+		MCPPrivileges []int64 `json:"mcp_privileges,omitempty"`
+	}
+
+	type tokenResponse struct {
+		ID          int64       `json:"id"`
+		Name        string      `json:"name"`
+		TokenPrefix string      `json:"token_prefix"`
+		TokenType   string      `json:"token_type"`
+		UserID      *int64      `json:"user_id,omitempty"`
+		Username    string      `json:"username,omitempty"`
+		Scope       *tokenScope `json:"scope,omitempty"`
+	}
+
+	result := make([]tokenResponse, 0, len(tokens))
+	for _, t := range tokens {
+		prefix := t.TokenHash
+		if len(prefix) > 12 {
+			prefix = prefix[:12]
+		}
+		tr := tokenResponse{
+			ID:          t.ID,
+			Name:        t.Annotation,
+			TokenPrefix: prefix,
+			TokenType:   t.TokenType,
+			UserID:      t.OwnerID,
+		}
+		if t.OwnerID != nil {
+			user, err := h.authStore.GetUserByID(*t.OwnerID)
+			if err == nil && user != nil {
+				tr.Username = user.Username
+			}
+		}
+		scope, err := h.authStore.GetTokenScope(t.ID)
+		if err == nil && scope != nil {
+			tr.Scope = &tokenScope{
+				Scoped:        true,
+				ConnectionIDs: scope.ConnectionIDs,
+				MCPPrivileges: scope.MCPPrivileges,
+			}
+		}
+		result = append(result, tr)
+	}
+
+	RespondJSON(w, http.StatusOK, map[string]any{"tokens": result})
+}
+
 // handleTokenSubpath handles /api/v1/rbac/tokens/{id}/scope
 func (h *RBACHandler) handleTokenSubpath(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/rbac/tokens/")
+	if path == "" {
+		h.handleTokens(w, r)
+		return
+	}
 	parts := strings.Split(path, "/")
 	if len(parts) != 2 || parts[1] != "scope" {
 		http.NotFound(w, r)

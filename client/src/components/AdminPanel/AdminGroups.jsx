@@ -40,7 +40,6 @@ import {
     RadioGroup,
     FormControlLabel,
     Radio,
-    alpha,
 } from '@mui/material';
 import {
     Add as AddIcon,
@@ -51,8 +50,11 @@ import {
     PersonRemove as RemoveIcon,
 } from '@mui/icons-material';
 import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
+import EffectivePermissionsPanel from './EffectivePermissionsPanel';
+import { useAuth } from '../../contexts/AuthContext';
 
 const API_BASE_URL = '/api/v1';
+
 const ACCENT_COLOR = '#15AABF';
 const ACCENT_HOVER = '#0C8599';
 
@@ -71,12 +73,16 @@ const textFieldSx = {
 
 const AdminGroups = ({ mode }) => {
     const isDark = mode === 'dark';
+    const { user } = useAuth();
+    const isSuperuser = !!user?.isSuperuser;
     const [groups, setGroups] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [expandedGroup, setExpandedGroup] = useState(null);
     const [groupDetail, setGroupDetail] = useState(null);
     const [detailLoading, setDetailLoading] = useState(false);
+    const [effectivePerms, setEffectivePerms] = useState(null);
+    const [effectivePermsLoading, setEffectivePermsLoading] = useState(false);
 
     // Create group dialog
     const [createOpen, setCreateOpen] = useState(false);
@@ -133,19 +139,27 @@ const AdminGroups = ({ mode }) => {
     const fetchGroupDetail = useCallback(async (groupId) => {
         try {
             setDetailLoading(true);
-            const response = await fetch(
-                `${API_BASE_URL}/rbac/groups/${groupId}`,
-                { credentials: 'include' }
-            );
-            if (!response.ok) {
+            setEffectivePermsLoading(true);
+            const [detailRes, effectiveRes] = await Promise.all([
+                fetch(`${API_BASE_URL}/rbac/groups/${groupId}`, { credentials: 'include' }),
+                fetch(`${API_BASE_URL}/rbac/groups/${groupId}/effective-privileges`, { credentials: 'include' }),
+            ]);
+            if (!detailRes.ok) {
                 throw new Error('Failed to fetch group details');
             }
-            const data = await response.json();
+            const data = await detailRes.json();
             setGroupDetail(data);
+            if (effectiveRes.ok) {
+                const permsData = await effectiveRes.json();
+                setEffectivePerms(permsData);
+            } else {
+                setEffectivePerms(null);
+            }
         } catch (err) {
             setError(err.message);
         } finally {
             setDetailLoading(false);
+            setEffectivePermsLoading(false);
         }
     }, []);
 
@@ -153,6 +167,7 @@ const AdminGroups = ({ mode }) => {
         if (expandedGroup === group.id) {
             setExpandedGroup(null);
             setGroupDetail(null);
+            setEffectivePerms(null);
         } else {
             setExpandedGroup(group.id);
             fetchGroupDetail(group.id);
@@ -302,15 +317,21 @@ const AdminGroups = ({ mode }) => {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     credentials: 'include',
-                    body: JSON.stringify({
-                        member_type: memberType,
-                        member_id: parseInt(selectedMemberId, 10),
-                    }),
+                    body: JSON.stringify(
+                        memberType === 'user'
+                            ? { user_id: parseInt(selectedMemberId, 10) }
+                            : { group_id: parseInt(selectedMemberId, 10) }
+                    ),
                 }
             );
             if (!response.ok) {
                 const data = await response.json();
-                throw new Error(data.error || 'Failed to add member');
+                const errorMsg = data.error || 'Failed to add member';
+                throw new Error(
+                    errorMsg.includes('UNIQUE constraint')
+                        ? 'This member is already in the group.'
+                        : errorMsg
+                );
             }
             setAddMemberOpen(false);
             fetchGroupDetail(expandedGroup);
@@ -326,15 +347,10 @@ const AdminGroups = ({ mode }) => {
         if (!expandedGroup) return;
         try {
             const response = await fetch(
-                `${API_BASE_URL}/rbac/groups/${expandedGroup}/members`,
+                `${API_BASE_URL}/rbac/groups/${expandedGroup}/members/${mType}/${memberId}`,
                 {
                     method: 'DELETE',
-                    headers: { 'Content-Type': 'application/json' },
                     credentials: 'include',
-                    body: JSON.stringify({
-                        member_type: mType,
-                        member_id: memberId,
-                    }),
                 }
             );
             if (!response.ok) {
@@ -342,6 +358,31 @@ const AdminGroups = ({ mode }) => {
             }
             fetchGroupDetail(expandedGroup);
             fetchGroups();
+        } catch (err) {
+            setError(err.message);
+        }
+    };
+
+    const handleRemoveMemberByName = async (name, mType) => {
+        if (!expandedGroup) return;
+        try {
+            let memberId;
+            if (mType === 'user') {
+                const res = await fetch(`${API_BASE_URL}/rbac/users`, { credentials: 'include' });
+                if (res.ok) {
+                    const data = await res.json();
+                    const user = (data.users || []).find(u => u.username === name);
+                    if (user) memberId = user.id;
+                }
+            } else {
+                const found = groups.find(g => g.name === name);
+                if (found) memberId = found.id;
+            }
+            if (!memberId) {
+                setError(`Could not find ${mType} "${name}"`);
+                return;
+            }
+            await handleRemoveMember(memberId, mType);
         } catch (err) {
             setError(err.message);
         }
@@ -465,13 +506,13 @@ const AdminGroups = ({ mode }) => {
                                                                 Add Member
                                                             </Button>
                                                         </Box>
-                                                        {groupDetail.members?.length > 0 ? (
+                                                        {((groupDetail.user_members?.length > 0) || (groupDetail.group_members?.length > 0)) ? (
                                                             <List dense disablePadding>
-                                                                {groupDetail.members.map((member, i) => (
-                                                                    <ListItem key={i} disablePadding sx={{ py: 0.5 }}>
+                                                                {(groupDetail.user_members || []).map((username, i) => (
+                                                                    <ListItem key={`user-${i}`} disablePadding sx={{ py: 0.5 }}>
                                                                         <ListItemText
-                                                                            primary={member.name || member.username || `${member.member_type} #${member.member_id}`}
-                                                                            secondary={member.member_type}
+                                                                            primary={username}
+                                                                            secondary="user"
                                                                             primaryTypographyProps={{ fontSize: '0.875rem' }}
                                                                             secondaryTypographyProps={{ fontSize: '0.75rem' }}
                                                                         />
@@ -479,7 +520,28 @@ const AdminGroups = ({ mode }) => {
                                                                             <IconButton
                                                                                 edge="end"
                                                                                 size="small"
-                                                                                onClick={() => handleRemoveMember(member.member_id || member.id, member.member_type)}
+                                                                                onClick={() => handleRemoveMemberByName(username, 'user')}
+                                                                                aria-label="remove member"
+                                                                                sx={{ color: '#EF4444' }}
+                                                                            >
+                                                                                <RemoveIcon fontSize="small" />
+                                                                            </IconButton>
+                                                                        </ListItemSecondaryAction>
+                                                                    </ListItem>
+                                                                ))}
+                                                                {(groupDetail.group_members || []).map((groupName, i) => (
+                                                                    <ListItem key={`group-${i}`} disablePadding sx={{ py: 0.5 }}>
+                                                                        <ListItemText
+                                                                            primary={groupName}
+                                                                            secondary="group"
+                                                                            primaryTypographyProps={{ fontSize: '0.875rem' }}
+                                                                            secondaryTypographyProps={{ fontSize: '0.75rem' }}
+                                                                        />
+                                                                        <ListItemSecondaryAction>
+                                                                            <IconButton
+                                                                                edge="end"
+                                                                                size="small"
+                                                                                onClick={() => handleRemoveMemberByName(groupName, 'group')}
                                                                                 aria-label="remove member"
                                                                                 sx={{ color: '#EF4444' }}
                                                                             >
@@ -494,6 +556,27 @@ const AdminGroups = ({ mode }) => {
                                                                 No members in this group.
                                                             </Typography>
                                                         )}
+                                                        {effectivePermsLoading ? (
+                                                            <Box sx={{ display: 'flex', justifyContent: 'center', py: 2, mt: 3 }}>
+                                                                <CircularProgress size={24} sx={{ color: ACCENT_COLOR }} />
+                                                            </Box>
+                                                        ) : effectivePerms ? (
+                                                            <Box sx={{ mt: 3 }}>
+                                                                <Typography
+                                                                    variant="subtitle2"
+                                                                    sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem', mb: 1 }}
+                                                                >
+                                                                    Effective Permissions
+                                                                </Typography>
+                                                                <EffectivePermissionsPanel
+                                                                    connectionPrivileges={effectivePerms.connection_privileges}
+                                                                    adminPermissions={effectivePerms.admin_permissions}
+                                                                    mcpPrivileges={effectivePerms.mcp_privileges}
+                                                                    isSuperuser={isSuperuser}
+                                                                    isDark={isDark}
+                                                                />
+                                                            </Box>
+                                                        ) : null}
                                                     </Box>
                                                 ) : null}
                                             </Box>
@@ -540,6 +623,7 @@ const AdminGroups = ({ mode }) => {
                         margin="dense"
                         multiline
                         rows={2}
+                        InputLabelProps={{ shrink: true }}
                         sx={textFieldSx}
                     />
                 </DialogContent>
@@ -585,6 +669,7 @@ const AdminGroups = ({ mode }) => {
                         margin="dense"
                         multiline
                         rows={2}
+                        InputLabelProps={{ shrink: true }}
                         sx={textFieldSx}
                     />
                 </DialogContent>

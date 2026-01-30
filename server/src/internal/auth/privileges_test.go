@@ -919,15 +919,161 @@ func TestGetUserAdminPermissionsNestedGroups(t *testing.T) {
 	store.AddUserToGroup(childID, userID)
 
 	// Grant permission to parent only
-	store.GrantAdminPermission(parentID, PermManagePrivileges)
+	store.GrantAdminPermission(parentID, PermManagePermissions)
 
 	perms, err := store.GetUserAdminPermissions(userID)
 	if err != nil {
 		t.Fatalf("Failed to get user admin permissions: %v", err)
 	}
 
-	if !perms[PermManagePrivileges] {
-		t.Error("Expected user to inherit manage_privileges from parent group")
+	if !perms[PermManagePermissions] {
+		t.Error("Expected user to inherit manage_permissions from parent group")
+	}
+}
+
+// =============================================================================
+// Group Effective (Inherited) Privilege Tests
+// =============================================================================
+
+func TestGetGroupEffectiveMCPPrivileges(t *testing.T) {
+	store, cleanup := createTestAuthStoreForPrivileges(t)
+	defer cleanup()
+
+	// Create group hierarchy: GroupA (parent) -> GroupB (child) -> GroupC (grandchild)
+	groupA, _ := store.CreateGroup("group-a", "Group A")
+	groupB, _ := store.CreateGroup("group-b", "Group B")
+	groupC, _ := store.CreateGroup("group-c", "Group C")
+	store.AddGroupToGroup(groupA, groupB)
+	store.AddGroupToGroup(groupB, groupC)
+
+	// Assign MCP privileges to GroupA and GroupC
+	privA, _ := store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A")
+	privC, _ := store.RegisterMCPPrivilege("tool_c", MCPPrivilegeTypeTool, "Tool C")
+	store.GrantMCPPrivilege(groupA, privA)
+	store.GrantMCPPrivilege(groupC, privC)
+
+	// GroupC's effective privileges should include both its own and GroupA's
+	effectiveC, err := store.GetGroupEffectiveMCPPrivileges(groupC)
+	if err != nil {
+		t.Fatalf("Failed to get effective MCP privileges for GroupC: %v", err)
+	}
+
+	effectiveCSet := make(map[string]bool)
+	for _, p := range effectiveC {
+		effectiveCSet[p] = true
+	}
+
+	if !effectiveCSet["tool_a"] {
+		t.Error("Expected GroupC to inherit 'tool_a' from GroupA")
+	}
+	if !effectiveCSet["tool_c"] {
+		t.Error("Expected GroupC to have its own 'tool_c'")
+	}
+
+	// GroupA's effective privileges should include only its own
+	effectiveA, err := store.GetGroupEffectiveMCPPrivileges(groupA)
+	if err != nil {
+		t.Fatalf("Failed to get effective MCP privileges for GroupA: %v", err)
+	}
+
+	if len(effectiveA) != 1 {
+		t.Errorf("Expected 1 effective privilege for GroupA, got %d", len(effectiveA))
+	}
+	if len(effectiveA) > 0 && effectiveA[0] != "tool_a" {
+		t.Errorf("Expected 'tool_a' for GroupA, got %q", effectiveA[0])
+	}
+}
+
+func TestGetGroupEffectiveConnectionPrivileges(t *testing.T) {
+	store, cleanup := createTestAuthStoreForPrivileges(t)
+	defer cleanup()
+
+	// Create group hierarchy: GroupA -> GroupB -> GroupC
+	groupA, _ := store.CreateGroup("group-a", "Group A")
+	groupB, _ := store.CreateGroup("group-b", "Group B")
+	groupC, _ := store.CreateGroup("group-c", "Group C")
+	store.AddGroupToGroup(groupA, groupB)
+	store.AddGroupToGroup(groupB, groupC)
+
+	// GroupA gets connection 1 with "read", GroupC gets connection 1 with "read_write"
+	store.GrantConnectionPrivilege(groupA, 1, AccessLevelRead)
+	store.GrantConnectionPrivilege(groupC, 1, AccessLevelReadWrite)
+
+	// GroupA also gets connection 2 with "read"
+	store.GrantConnectionPrivilege(groupA, 2, AccessLevelRead)
+
+	// GroupC's effective privileges should show "read_write" for connection 1
+	effectiveC, err := store.GetGroupEffectiveConnectionPrivileges(groupC)
+	if err != nil {
+		t.Fatalf("Failed to get effective connection privileges for GroupC: %v", err)
+	}
+
+	connMap := make(map[int]string)
+	for _, p := range effectiveC {
+		connMap[p.ConnectionID] = p.AccessLevel
+	}
+
+	if connMap[1] != AccessLevelReadWrite {
+		t.Errorf("Expected 'read_write' for connection 1 (highest wins), got %q", connMap[1])
+	}
+
+	// GroupC should inherit connection 2 from GroupA
+	if connMap[2] != AccessLevelRead {
+		t.Errorf("Expected 'read' for connection 2 (inherited from GroupA), got %q", connMap[2])
+	}
+
+	if len(connMap) != 2 {
+		t.Errorf("Expected 2 effective connection privileges for GroupC, got %d", len(connMap))
+	}
+}
+
+func TestGetGroupEffectiveAdminPermissions(t *testing.T) {
+	store, cleanup := createTestAuthStoreForPrivileges(t)
+	defer cleanup()
+
+	// Create group hierarchy: GroupA -> GroupB -> GroupC
+	groupA, _ := store.CreateGroup("group-a", "Group A")
+	groupB, _ := store.CreateGroup("group-b", "Group B")
+	groupC, _ := store.CreateGroup("group-c", "Group C")
+	store.AddGroupToGroup(groupA, groupB)
+	store.AddGroupToGroup(groupB, groupC)
+
+	// Assign "manage_users" to GroupA, "manage_groups" to GroupC
+	store.GrantAdminPermission(groupA, PermManageUsers)
+	store.GrantAdminPermission(groupC, PermManageGroups)
+
+	// GroupC's effective permissions should include both
+	effectiveC, err := store.GetGroupEffectiveAdminPermissions(groupC)
+	if err != nil {
+		t.Fatalf("Failed to get effective admin permissions for GroupC: %v", err)
+	}
+
+	effectiveCSet := make(map[string]bool)
+	for _, p := range effectiveC {
+		effectiveCSet[p] = true
+	}
+
+	if !effectiveCSet[PermManageUsers] {
+		t.Error("Expected GroupC to inherit 'manage_users' from GroupA")
+	}
+	if !effectiveCSet[PermManageGroups] {
+		t.Error("Expected GroupC to have its own 'manage_groups'")
+	}
+	if len(effectiveC) != 2 {
+		t.Errorf("Expected 2 effective permissions for GroupC, got %d", len(effectiveC))
+	}
+
+	// GroupA's effective permissions should include only "manage_users"
+	effectiveA, err := store.GetGroupEffectiveAdminPermissions(groupA)
+	if err != nil {
+		t.Fatalf("Failed to get effective admin permissions for GroupA: %v", err)
+	}
+
+	if len(effectiveA) != 1 {
+		t.Errorf("Expected 1 effective permission for GroupA, got %d", len(effectiveA))
+	}
+	if len(effectiveA) > 0 && effectiveA[0] != PermManageUsers {
+		t.Errorf("Expected 'manage_users' for GroupA, got %q", effectiveA[0])
 	}
 }
 

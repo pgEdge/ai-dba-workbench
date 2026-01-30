@@ -21,10 +21,6 @@ import {
     Paper,
     Button,
     IconButton,
-    FormControl,
-    InputLabel,
-    Select,
-    MenuItem,
     CircularProgress,
     Alert,
     Dialog,
@@ -62,6 +58,8 @@ const textFieldSx = {
 const AdminTokenScopes = ({ mode }) => {
     const isDark = mode === 'dark';
     const [tokens, setTokens] = useState([]);
+    const [connections, setConnections] = useState([]);
+    const [mcpPrivileges, setMcpPrivileges] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
 
@@ -73,20 +71,37 @@ const AdminTokenScopes = ({ mode }) => {
     const [editLoading, setEditLoading] = useState(false);
     const [editError, setEditError] = useState(null);
 
-    // Available options for multi-select
-    const [availableConnections, setAvailableConnections] = useState([]);
-    const [availableMcpPrivileges, setAvailableMcpPrivileges] = useState([]);
+    const getConnectionName = useCallback((id) => {
+        if (id === 0) return 'All Connections';
+        const conn = connections.find(c => c.id === id);
+        return conn ? conn.name : `Connection ${id}`;
+    }, [connections]);
+
+    const getMcpPrivilegeName = useCallback((id) => {
+        const priv = mcpPrivileges.find(p => p.id === id);
+        return priv ? priv.identifier : `Privilege ${id}`;
+    }, [mcpPrivileges]);
 
     const fetchTokens = useCallback(async () => {
         try {
             setLoading(true);
             setError(null);
-            const response = await fetch(`${API_BASE_URL}/rbac/tokens`, {
-                credentials: 'include',
-            });
-            if (!response.ok) throw new Error('Failed to fetch tokens');
-            const data = await response.json();
-            setTokens(data.tokens || []);
+            const [tokRes, connRes, mcpRes] = await Promise.all([
+                fetch(`${API_BASE_URL}/rbac/tokens`, { credentials: 'include' }),
+                fetch(`${API_BASE_URL}/connections`, { credentials: 'include' }),
+                fetch(`${API_BASE_URL}/rbac/privileges/mcp`, { credentials: 'include' }),
+            ]);
+            if (!tokRes.ok) throw new Error('Failed to fetch tokens');
+            const tokData = await tokRes.json();
+            setTokens(tokData.tokens || []);
+            if (connRes.ok) {
+                const connData = await connRes.json();
+                setConnections(connData.connections || connData || []);
+            }
+            if (mcpRes.ok) {
+                const mcpData = await mcpRes.json();
+                setMcpPrivileges(mcpData || []);
+            }
         } catch (err) {
             setError(err.message);
         } finally {
@@ -98,28 +113,14 @@ const AdminTokenScopes = ({ mode }) => {
         fetchTokens();
     }, [fetchTokens]);
 
-    const handleOpenEdit = async (token) => {
+    const handleOpenEdit = (token) => {
         setEditToken(token);
-        setEditConnections(token.scope?.connections || []);
-        setEditMcpPrivileges(token.scope?.mcp_privileges || []);
+        const scopeConnIds = token.scope?.connection_ids || [];
+        setEditConnections(connections.filter(c => scopeConnIds.includes(c.id)));
+        const scopeMcpIds = token.scope?.mcp_privileges || [];
+        setEditMcpPrivileges(mcpPrivileges.filter(p => scopeMcpIds.includes(p.id)));
         setEditError(null);
         setEditOpen(true);
-        try {
-            const [connRes, mcpRes] = await Promise.all([
-                fetch(`${API_BASE_URL}/connections`, { credentials: 'include' }),
-                fetch(`${API_BASE_URL}/rbac/mcp-privileges`, { credentials: 'include' }),
-            ]);
-            if (connRes.ok) {
-                const data = await connRes.json();
-                setAvailableConnections(data.connections || data || []);
-            }
-            if (mcpRes.ok) {
-                const data = await mcpRes.json();
-                setAvailableMcpPrivileges(data.privileges || []);
-            }
-        } catch (err) {
-            setEditError('Failed to load available options');
-        }
     };
 
     const handleSaveScope = async () => {
@@ -134,8 +135,8 @@ const AdminTokenScopes = ({ mode }) => {
                     headers: { 'Content-Type': 'application/json' },
                     credentials: 'include',
                     body: JSON.stringify({
-                        connections: editConnections,
-                        mcp_privileges: editMcpPrivileges,
+                        connection_ids: editConnections.map(c => c.id),
+                        mcp_privileges: editMcpPrivileges.map(p => p.identifier),
                     }),
                 }
             );
@@ -209,9 +210,7 @@ const AdminTokenScopes = ({ mode }) => {
                     <TableBody>
                         {tokens.length > 0 ? (
                             tokens.map((token) => {
-                                const hasScope = token.scope &&
-                                    ((token.scope.connections?.length > 0) ||
-                                     (token.scope.mcp_privileges?.length > 0));
+                                const hasScope = token.scope?.scoped;
                                 return (
                                     <TableRow key={token.id}>
                                         <TableCell>
@@ -221,10 +220,10 @@ const AdminTokenScopes = ({ mode }) => {
                                         <TableCell>
                                             {hasScope ? (
                                                 <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
-                                                    {token.scope.connections?.map((c, i) => (
+                                                    {token.scope.connection_ids?.map((id, i) => (
                                                         <Chip
                                                             key={`c-${i}`}
-                                                            label={c.name || c}
+                                                            label={getConnectionName(id)}
                                                             size="small"
                                                             sx={{
                                                                 bgcolor: alpha(ACCENT_COLOR, 0.15),
@@ -233,10 +232,10 @@ const AdminTokenScopes = ({ mode }) => {
                                                             }}
                                                         />
                                                     ))}
-                                                    {token.scope.mcp_privileges?.map((p, i) => (
+                                                    {token.scope.mcp_privileges?.map((id, i) => (
                                                         <Chip
                                                             key={`m-${i}`}
-                                                            label={p.name || p}
+                                                            label={getMcpPrivilegeName(id)}
                                                             size="small"
                                                             sx={{
                                                                 bgcolor: alpha('#8B5CF6', 0.15),
@@ -307,8 +306,9 @@ const AdminTokenScopes = ({ mode }) => {
                     </Typography>
                     <Autocomplete
                         multiple
-                        options={availableConnections}
-                        getOptionLabel={(option) => option.name || option}
+                        options={connections}
+                        getOptionLabel={(option) => option.name || ''}
+                        isOptionEqualToValue={(option, value) => option.id === value.id}
                         value={editConnections}
                         onChange={(e, value) => setEditConnections(value)}
                         renderInput={(params) => (
@@ -329,8 +329,9 @@ const AdminTokenScopes = ({ mode }) => {
                     </Typography>
                     <Autocomplete
                         multiple
-                        options={availableMcpPrivileges}
-                        getOptionLabel={(option) => option.name || option}
+                        options={mcpPrivileges}
+                        getOptionLabel={(option) => option.identifier || ''}
+                        isOptionEqualToValue={(option, value) => option.id === value.id}
                         value={editMcpPrivileges}
                         onChange={(e, value) => setEditMcpPrivileges(value)}
                         renderInput={(params) => (

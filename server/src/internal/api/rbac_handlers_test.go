@@ -331,14 +331,16 @@ func TestRBACHandler_ListUsers(t *testing.T) {
             http.StatusOK, rec.Code, rec.Body.String())
     }
 
-    var users []map[string]interface{}
-    if err := json.NewDecoder(rec.Body).Decode(&users); err != nil {
+    var resp struct {
+        Users []map[string]interface{} `json:"users"`
+    }
+    if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
         t.Fatalf("Failed to decode response: %v", err)
     }
 
     // Should have at least the 2 users we created
-    if len(users) < 2 {
-        t.Errorf("Expected at least 2 users, got %d", len(users))
+    if len(resp.Users) < 2 {
+        t.Errorf("Expected at least 2 users, got %d", len(resp.Users))
     }
 }
 
@@ -386,7 +388,7 @@ func TestRBACHandler_HandleUsers_MethodNotAllowed(t *testing.T) {
     handler, _, cleanup := createTestRBACHandler(t, true)
     defer cleanup()
 
-    req := httptest.NewRequest(http.MethodPost, "/api/v1/rbac/users", nil)
+    req := httptest.NewRequest(http.MethodPut, "/api/v1/rbac/users", nil)
     req = withSuperuser(req)
     rec := httptest.NewRecorder()
 
@@ -395,6 +397,11 @@ func TestRBACHandler_HandleUsers_MethodNotAllowed(t *testing.T) {
     if rec.Code != http.StatusMethodNotAllowed {
         t.Errorf("Expected status %d, got %d",
             http.StatusMethodNotAllowed, rec.Code)
+    }
+
+    allowed := rec.Header().Get("Allow")
+    if allowed != "GET, POST" {
+        t.Errorf("Expected Allow header 'GET, POST', got %q", allowed)
     }
 }
 

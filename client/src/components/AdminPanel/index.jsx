@@ -26,7 +26,6 @@ import {
 import { useAuth } from '../../contexts/AuthContext';
 import AdminUsers from './AdminUsers';
 import AdminGroups from './AdminGroups';
-import AdminPrivileges from './AdminPrivileges';
 import AdminPermissions from './AdminPermissions';
 import AdminTokenScopes from './AdminTokenScopes';
 
@@ -41,8 +40,7 @@ const Transition = React.forwardRef(function Transition(props, ref) {
 const TAB_DEFS = [
     { id: 'users', label: 'Users', permission: 'manage_users', Component: AdminUsers },
     { id: 'groups', label: 'Groups', permission: 'manage_groups', Component: AdminGroups },
-    { id: 'privileges', label: 'Privileges', permission: 'manage_privileges', Component: AdminPrivileges },
-    { id: 'permissions', label: 'Permissions', permission: null, Component: AdminPermissions }, // superuser only
+    { id: 'permissions', label: 'Permissions', permission: 'manage_permissions', Component: AdminPermissions },
     { id: 'token_scopes', label: 'Token Scopes', permission: 'manage_token_scopes', Component: AdminTokenScopes },
 ];
 

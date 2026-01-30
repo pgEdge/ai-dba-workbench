@@ -27,7 +27,6 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/prompts"
 	"github.com/pgedge/ai-workbench/server/internal/resources"
 	"github.com/pgedge/ai-workbench/server/internal/tools"
-	"github.com/pgedge/ai-workbench/server/internal/tools/rbac"
 	"github.com/pgedge/ai-workbench/server/internal/tracing"
 )
 
@@ -274,9 +273,6 @@ func (s *Server) initMCPServer() error {
 	contextAwareResourceProvider := resources.NewContextAwareRegistry(
 		s.clientManager, authEnabled, s.cfg, s.authStore, s.datastore,
 	)
-
-	// Register RBAC tools (breaks import cycle by using callback)
-	tools.SetRBACToolRegistration(rbac.RegisterTools)
 
 	// Context-aware tool provider
 	contextAwareToolProvider := tools.NewContextAwareProvider(

@@ -54,7 +54,7 @@ const (
 const (
 	PermManageConnections = "manage_connections"
 	PermManageGroups      = "manage_groups"
-	PermManagePrivileges  = "manage_privileges"
+	PermManagePermissions = "manage_permissions"
 	PermManageUsers       = "manage_users"
 	PermManageTokenScopes = "manage_token_scopes"
 )
@@ -83,6 +83,9 @@ type ConnectionPrivilege struct {
 	AccessLevel  string    `json:"access_level"` // "read" or "read_write"
 	CreatedAt    time.Time `json:"created_at"`
 }
+
+// ConnectionIDAll represents access to all connections
+const ConnectionIDAll = 0
 
 // ConnectionAccessLevel constants
 const (

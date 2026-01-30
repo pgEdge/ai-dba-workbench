@@ -31,11 +31,14 @@ import {
     DialogTitle,
     DialogContent,
     DialogActions,
+    Autocomplete,
+    TextField,
 } from '@mui/material';
 import {
     Add as AddIcon,
     Delete as DeleteIcon,
 } from '@mui/icons-material';
+import { useAuth } from '../../contexts/AuthContext';
 
 const API_BASE_URL = '/api/v1';
 const ACCENT_COLOR = '#15AABF';
@@ -44,10 +47,26 @@ const ACCENT_HOVER = '#0C8599';
 const PERMISSION_TYPES = [
     { value: 'manage_users', label: 'Manage Users' },
     { value: 'manage_groups', label: 'Manage Groups' },
-    { value: 'manage_privileges', label: 'Manage Privileges' },
+    { value: 'manage_permissions', label: 'Manage Permissions' },
     { value: 'manage_connections', label: 'Manage Connections' },
     { value: 'manage_token_scopes', label: 'Manage Token Scopes' },
 ];
+
+const mcpTypeLabel = (itemType) => {
+    switch (itemType) {
+        case 'tool': return 'Tool';
+        case 'resource': return 'Resource';
+        case 'prompt': return 'Prompt';
+        default: return 'API';
+    }
+};
+
+const formatMcpName = (permission) => {
+    const name = permission.identifier || permission.privilege || permission;
+    const type = permission.item_type;
+    if (type) return `${mcpTypeLabel(type)}: ${name}`;
+    return name;
+};
 
 const textFieldSx = {
     '& .MuiOutlinedInput-root': {
@@ -64,19 +83,43 @@ const textFieldSx = {
 
 const AdminPermissions = ({ mode }) => {
     const isDark = mode === 'dark';
+    const { user } = useAuth();
+    const isSuperuser = !!user?.isSuperuser;
+
     const [groups, setGroups] = useState([]);
     const [selectedGroupId, setSelectedGroupId] = useState('');
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
-    const [permissions, setPermissions] = useState([]);
-    const [permsLoading, setPermsLoading] = useState(false);
 
-    // Grant dialog
-    const [grantOpen, setGrantOpen] = useState(false);
-    const [selectedPermission, setSelectedPermission] = useState('');
-    const [grantLoading, setGrantLoading] = useState(false);
-    const [grantError, setGrantError] = useState(null);
+    // MCP permissions
+    const [mcpPermissions, setMcpPermissions] = useState([]);
+    const [mcpLoading, setMcpLoading] = useState(false);
+    const [grantMcpOpen, setGrantMcpOpen] = useState(false);
+    const [availableMcpPermissions, setAvailableMcpPermissions] = useState([]);
+    const [selectedMcpPermission, setSelectedMcpPermission] = useState(null);
+    const [grantMcpLoading, setGrantMcpLoading] = useState(false);
+    const [grantMcpError, setGrantMcpError] = useState(null);
 
+    // Connection permissions
+    const [connPermissions, setConnPermissions] = useState([]);
+    const [connLoading, setConnLoading] = useState(false);
+    const [grantConnOpen, setGrantConnOpen] = useState(false);
+    const [availableConnections, setAvailableConnections] = useState([]);
+    const [selectedConnectionId, setSelectedConnectionId] = useState('');
+    const [selectedAccessLevel, setSelectedAccessLevel] = useState('read');
+    const [grantConnLoading, setGrantConnLoading] = useState(false);
+    const [grantConnError, setGrantConnError] = useState(null);
+    const [connections, setConnections] = useState([]);
+
+    // Admin permissions
+    const [adminPermissions, setAdminPermissions] = useState([]);
+    const [adminPermsLoading, setAdminPermsLoading] = useState(false);
+    const [grantAdminOpen, setGrantAdminOpen] = useState(false);
+    const [selectedAdminPermission, setSelectedAdminPermission] = useState('');
+    const [grantAdminLoading, setGrantAdminLoading] = useState(false);
+    const [grantAdminError, setGrantAdminError] = useState(null);
+
+    // Fetch groups on mount
     useEffect(() => {
         const fetchGroups = async () => {
             try {
@@ -95,74 +138,231 @@ const AdminPermissions = ({ mode }) => {
         fetchGroups();
     }, []);
 
+    // Fetch MCP and connection permissions when group changes
     const fetchPermissions = useCallback(async (groupId) => {
         if (!groupId) return;
         try {
-            setPermsLoading(true);
+            setMcpLoading(true);
+            setConnLoading(true);
+            const [groupResponse, connResponse] = await Promise.all([
+                fetch(`${API_BASE_URL}/rbac/groups/${groupId}`, {
+                    credentials: 'include',
+                }),
+                fetch(`${API_BASE_URL}/connections`, {
+                    credentials: 'include',
+                }),
+            ]);
+            if (!groupResponse.ok) throw new Error('Failed to fetch permissions');
+            const data = await groupResponse.json();
+            setMcpPermissions(data.mcp_privileges || []);
+            setConnPermissions(data.connection_privileges || []);
+            if (connResponse.ok) {
+                const connData = await connResponse.json();
+                setConnections(connData.connections || connData || []);
+            }
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setMcpLoading(false);
+            setConnLoading(false);
+        }
+    }, []);
+
+    // Fetch admin permissions when group changes
+    const fetchAdminPermissions = useCallback(async (groupId) => {
+        if (!groupId || !isSuperuser) return;
+        try {
+            setAdminPermsLoading(true);
             const response = await fetch(
                 `${API_BASE_URL}/rbac/groups/${groupId}/permissions`,
                 { credentials: 'include' }
             );
-            if (!response.ok) throw new Error('Failed to fetch permissions');
+            if (!response.ok) throw new Error('Failed to fetch admin permissions');
             const data = await response.json();
-            setPermissions(data.permissions || []);
+            setAdminPermissions(data.permissions || []);
         } catch (err) {
             setError(err.message);
         } finally {
-            setPermsLoading(false);
+            setAdminPermsLoading(false);
         }
-    }, []);
+    }, [isSuperuser]);
 
     useEffect(() => {
         if (selectedGroupId) {
             fetchPermissions(selectedGroupId);
+            fetchAdminPermissions(selectedGroupId);
         } else {
-            setPermissions([]);
+            setMcpPermissions([]);
+            setConnPermissions([]);
+            setAdminPermissions([]);
         }
-    }, [selectedGroupId, fetchPermissions]);
+    }, [selectedGroupId, fetchPermissions, fetchAdminPermissions]);
 
-    const handleGrant = async () => {
-        if (!selectedPermission || !selectedGroupId) return;
+    // Grant MCP permission
+    const handleOpenGrantMcp = async () => {
+        setGrantMcpOpen(true);
+        setGrantMcpError(null);
+        setSelectedMcpPermission(null);
         try {
-            setGrantLoading(true);
-            setGrantError(null);
+            const response = await fetch(`${API_BASE_URL}/rbac/privileges/mcp`, {
+                credentials: 'include',
+            });
+            if (response.ok) {
+                const data = await response.json();
+                setAvailableMcpPermissions(data || []);
+            }
+        } catch (err) {
+            setGrantMcpError('Failed to load available permissions');
+        }
+    };
+
+    const handleGrantMcp = async () => {
+        if (!selectedMcpPermission || !selectedGroupId) return;
+        try {
+            setGrantMcpLoading(true);
+            setGrantMcpError(null);
             const response = await fetch(
-                `${API_BASE_URL}/rbac/groups/${selectedGroupId}/permissions`,
+                `${API_BASE_URL}/rbac/groups/${selectedGroupId}/privileges/mcp`,
                 {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     credentials: 'include',
-                    body: JSON.stringify({ permission: selectedPermission }),
+                    body: JSON.stringify({
+                        privilege: selectedMcpPermission.identifier || selectedMcpPermission,
+                    }),
                 }
             );
             if (!response.ok) {
                 const data = await response.json();
                 throw new Error(data.error || 'Failed to grant permission');
             }
-            setGrantOpen(false);
+            setGrantMcpOpen(false);
             fetchPermissions(selectedGroupId);
         } catch (err) {
-            setGrantError(err.message);
+            setGrantMcpError(err.message);
         } finally {
-            setGrantLoading(false);
+            setGrantMcpLoading(false);
         }
     };
 
-    const handleRevoke = async (permission) => {
+    const handleRevokeMcp = async (permission) => {
         try {
+            const identifier = permission.identifier || permission.privilege || permission;
             const response = await fetch(
-                `${API_BASE_URL}/rbac/groups/${selectedGroupId}/permissions`,
+                `${API_BASE_URL}/rbac/groups/${selectedGroupId}/privileges/mcp?name=${encodeURIComponent(identifier)}`,
                 {
                     method: 'DELETE',
-                    headers: { 'Content-Type': 'application/json' },
                     credentials: 'include',
-                    body: JSON.stringify({
-                        permission: permission.permission || permission.name || permission,
-                    }),
                 }
             );
             if (!response.ok) throw new Error('Failed to revoke permission');
             fetchPermissions(selectedGroupId);
+        } catch (err) {
+            setError(err.message);
+        }
+    };
+
+    const getConnectionName = (id) => {
+        if (id === 0) return 'All Connections';
+        const conn = connections.find((c) => c.id === id);
+        return conn ? conn.name : id;
+    };
+
+    // Grant connection permission
+    const handleOpenGrantConn = () => {
+        setGrantConnOpen(true);
+        setGrantConnError(null);
+        setSelectedConnectionId('');
+        setSelectedAccessLevel('read');
+        setAvailableConnections(connections);
+    };
+
+    const handleGrantConn = async () => {
+        if (selectedConnectionId === '' || !selectedGroupId) return;
+        try {
+            setGrantConnLoading(true);
+            setGrantConnError(null);
+            const response = await fetch(
+                `${API_BASE_URL}/rbac/groups/${selectedGroupId}/privileges/connections`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        connection_id: parseInt(selectedConnectionId, 10),
+                        access_level: selectedAccessLevel,
+                    }),
+                }
+            );
+            if (!response.ok) {
+                const data = await response.json();
+                throw new Error(data.error || 'Failed to grant permission');
+            }
+            setGrantConnOpen(false);
+            fetchPermissions(selectedGroupId);
+        } catch (err) {
+            setGrantConnError(err.message);
+        } finally {
+            setGrantConnLoading(false);
+        }
+    };
+
+    const handleRevokeConn = async (permission) => {
+        try {
+            const response = await fetch(
+                `${API_BASE_URL}/rbac/groups/${selectedGroupId}/privileges/connections/${permission.connection_id}`,
+                {
+                    method: 'DELETE',
+                    credentials: 'include',
+                }
+            );
+            if (!response.ok) throw new Error('Failed to revoke permission');
+            fetchPermissions(selectedGroupId);
+        } catch (err) {
+            setError(err.message);
+        }
+    };
+
+    // Grant admin permission
+    const handleGrantAdmin = async () => {
+        if (!selectedAdminPermission || !selectedGroupId) return;
+        try {
+            setGrantAdminLoading(true);
+            setGrantAdminError(null);
+            const response = await fetch(
+                `${API_BASE_URL}/rbac/groups/${selectedGroupId}/permissions`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ permission: selectedAdminPermission }),
+                }
+            );
+            if (!response.ok) {
+                const data = await response.json();
+                throw new Error(data.error || 'Failed to grant permission');
+            }
+            setGrantAdminOpen(false);
+            fetchAdminPermissions(selectedGroupId);
+        } catch (err) {
+            setGrantAdminError(err.message);
+        } finally {
+            setGrantAdminLoading(false);
+        }
+    };
+
+    const handleRevokeAdmin = async (permission) => {
+        try {
+            const permValue = permission.permission || permission.name || permission;
+            const response = await fetch(
+                `${API_BASE_URL}/rbac/groups/${selectedGroupId}/permissions/${encodeURIComponent(permValue)}`,
+                {
+                    method: 'DELETE',
+                    credentials: 'include',
+                }
+            );
+            if (!response.ok) throw new Error('Failed to revoke permission');
+            fetchAdminPermissions(selectedGroupId);
         } catch (err) {
             setError(err.message);
         }
@@ -179,7 +379,7 @@ const AdminPermissions = ({ mode }) => {
     return (
         <Box>
             <Typography variant="h6" sx={{ fontWeight: 600, mb: 2, color: 'text.primary' }}>
-                Admin Permissions
+                Permissions
             </Typography>
 
             {error && (
@@ -188,6 +388,7 @@ const AdminPermissions = ({ mode }) => {
                 </Alert>
             )}
 
+            {/* Group Selector */}
             <FormControl fullWidth sx={{ mb: 3, ...textFieldSx }}>
                 <InputLabel sx={{ '&.Mui-focused': { color: ACCENT_COLOR } }}>
                     Select Group
@@ -204,60 +405,55 @@ const AdminPermissions = ({ mode }) => {
             </FormControl>
 
             {selectedGroupId && (
-                <Box>
-                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                        <Typography variant="subtitle1" sx={{ flex: 1, fontWeight: 600 }}>
-                            Granted Permissions
-                        </Typography>
-                        <Button
-                            size="small"
-                            startIcon={<AddIcon />}
-                            onClick={() => {
-                                setSelectedPermission('');
-                                setGrantError(null);
-                                setGrantOpen(true);
+                <>
+                    {/* Connection Permissions */}
+                    <Box sx={{ mb: 4 }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                            <Typography variant="subtitle1" sx={{ flex: 1, fontWeight: 600 }}>
+                                Connection Permissions
+                            </Typography>
+                            <Button
+                                size="small"
+                                startIcon={<AddIcon />}
+                                onClick={handleOpenGrantConn}
+                                sx={{ textTransform: 'none', color: ACCENT_COLOR }}
+                            >
+                                Grant
+                            </Button>
+                        </Box>
+                        <TableContainer
+                            component={Paper}
+                            elevation={0}
+                            sx={{
+                                border: '1px solid',
+                                borderColor: isDark ? '#334155' : '#E5E7EB',
+                                borderRadius: 1,
                             }}
-                            sx={{ textTransform: 'none', color: ACCENT_COLOR }}
                         >
-                            Grant Permission
-                        </Button>
-                    </Box>
-                    <TableContainer
-                        component={Paper}
-                        elevation={0}
-                        sx={{
-                            border: '1px solid',
-                            borderColor: isDark ? '#334155' : '#E5E7EB',
-                            borderRadius: 1,
-                        }}
-                    >
-                        <Table size="small">
-                            <TableHead>
-                                <TableRow>
-                                    <TableCell sx={{ fontWeight: 600 }}>Permission</TableCell>
-                                    <TableCell sx={{ fontWeight: 600 }} align="right">Actions</TableCell>
-                                </TableRow>
-                            </TableHead>
-                            <TableBody>
-                                {permsLoading ? (
+                            <Table size="small">
+                                <TableHead>
                                     <TableRow>
-                                        <TableCell colSpan={2} align="center" sx={{ py: 3 }}>
-                                            <CircularProgress size={24} sx={{ color: ACCENT_COLOR }} />
-                                        </TableCell>
+                                        <TableCell sx={{ fontWeight: 600 }}>Connection</TableCell>
+                                        <TableCell sx={{ fontWeight: 600 }}>Access Level</TableCell>
+                                        <TableCell sx={{ fontWeight: 600 }} align="right">Actions</TableCell>
                                     </TableRow>
-                                ) : permissions.length > 0 ? (
-                                    permissions.map((p, i) => {
-                                        const permValue = p.permission || p.name || p;
-                                        const permLabel = PERMISSION_TYPES.find(
-                                            (pt) => pt.value === permValue
-                                        )?.label || permValue;
-                                        return (
+                                </TableHead>
+                                <TableBody>
+                                    {connLoading ? (
+                                        <TableRow>
+                                            <TableCell colSpan={3} align="center" sx={{ py: 3 }}>
+                                                <CircularProgress size={24} sx={{ color: ACCENT_COLOR }} />
+                                            </TableCell>
+                                        </TableRow>
+                                    ) : connPermissions.length > 0 ? (
+                                        connPermissions.map((p, i) => (
                                             <TableRow key={i}>
-                                                <TableCell>{permLabel}</TableCell>
+                                                <TableCell>{getConnectionName(p.connection_id)}</TableCell>
+                                                <TableCell>{p.access_level || 'read'}</TableCell>
                                                 <TableCell align="right">
                                                     <IconButton
                                                         size="small"
-                                                        onClick={() => handleRevoke(p)}
+                                                        onClick={() => handleRevokeConn(p)}
                                                         sx={{ color: '#EF4444' }}
                                                         aria-label="revoke permission"
                                                     >
@@ -265,39 +461,279 @@ const AdminPermissions = ({ mode }) => {
                                                     </IconButton>
                                                 </TableCell>
                                             </TableRow>
-                                        );
-                                    })
-                                ) : (
+                                        ))
+                                    ) : (
+                                        <TableRow>
+                                            <TableCell colSpan={3} align="center" sx={{ py: 2 }}>
+                                                <Typography color="text.secondary" sx={{ fontSize: '0.875rem' }}>
+                                                    No connection permissions granted.
+                                                </Typography>
+                                            </TableCell>
+                                        </TableRow>
+                                    )}
+                                </TableBody>
+                            </Table>
+                        </TableContainer>
+                    </Box>
+
+                    {/* Admin Permissions - superuser only */}
+                    {isSuperuser && (
+                        <Box sx={{ mb: 4 }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                                <Typography variant="subtitle1" sx={{ flex: 1, fontWeight: 600 }}>
+                                    Admin Permissions
+                                </Typography>
+                                <Button
+                                    size="small"
+                                    startIcon={<AddIcon />}
+                                    onClick={() => {
+                                        setSelectedAdminPermission('');
+                                        setGrantAdminError(null);
+                                        setGrantAdminOpen(true);
+                                    }}
+                                    sx={{ textTransform: 'none', color: ACCENT_COLOR }}
+                                >
+                                    Grant Permission
+                                </Button>
+                            </Box>
+                            <TableContainer
+                                component={Paper}
+                                elevation={0}
+                                sx={{
+                                    border: '1px solid',
+                                    borderColor: isDark ? '#334155' : '#E5E7EB',
+                                    borderRadius: 1,
+                                }}
+                            >
+                                <Table size="small">
+                                    <TableHead>
+                                        <TableRow>
+                                            <TableCell sx={{ fontWeight: 600 }}>Permission</TableCell>
+                                            <TableCell sx={{ fontWeight: 600 }} align="right">Actions</TableCell>
+                                        </TableRow>
+                                    </TableHead>
+                                    <TableBody>
+                                        {adminPermsLoading ? (
+                                            <TableRow>
+                                                <TableCell colSpan={2} align="center" sx={{ py: 3 }}>
+                                                    <CircularProgress size={24} sx={{ color: ACCENT_COLOR }} />
+                                                </TableCell>
+                                            </TableRow>
+                                        ) : adminPermissions.length > 0 ? (
+                                            adminPermissions.map((p, i) => {
+                                                const permValue = p.permission || p.name || p;
+                                                const permLabel = PERMISSION_TYPES.find(
+                                                    (pt) => pt.value === permValue
+                                                )?.label || permValue;
+                                                return (
+                                                    <TableRow key={i}>
+                                                        <TableCell>{permLabel}</TableCell>
+                                                        <TableCell align="right">
+                                                            <IconButton
+                                                                size="small"
+                                                                onClick={() => handleRevokeAdmin(p)}
+                                                                sx={{ color: '#EF4444' }}
+                                                                aria-label="revoke permission"
+                                                            >
+                                                                <DeleteIcon fontSize="small" />
+                                                            </IconButton>
+                                                        </TableCell>
+                                                    </TableRow>
+                                                );
+                                            })
+                                        ) : (
+                                            <TableRow>
+                                                <TableCell colSpan={2} align="center" sx={{ py: 2 }}>
+                                                    <Typography color="text.secondary" sx={{ fontSize: '0.875rem' }}>
+                                                        No admin permissions granted.
+                                                    </Typography>
+                                                </TableCell>
+                                            </TableRow>
+                                        )}
+                                    </TableBody>
+                                </Table>
+                            </TableContainer>
+                        </Box>
+                    )}
+
+                    {/* MCP Permissions */}
+                    <Box>
+                        <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                            <Typography variant="subtitle1" sx={{ flex: 1, fontWeight: 600 }}>
+                                MCP Permissions
+                            </Typography>
+                            <Button
+                                size="small"
+                                startIcon={<AddIcon />}
+                                onClick={handleOpenGrantMcp}
+                                sx={{ textTransform: 'none', color: ACCENT_COLOR }}
+                            >
+                                Grant
+                            </Button>
+                        </Box>
+                        <TableContainer
+                            component={Paper}
+                            elevation={0}
+                            sx={{
+                                border: '1px solid',
+                                borderColor: isDark ? '#334155' : '#E5E7EB',
+                                borderRadius: 1,
+                            }}
+                        >
+                            <Table size="small">
+                                <TableHead>
                                     <TableRow>
-                                        <TableCell colSpan={2} align="center" sx={{ py: 2 }}>
-                                            <Typography color="text.secondary" sx={{ fontSize: '0.875rem' }}>
-                                                No admin permissions granted.
-                                            </Typography>
-                                        </TableCell>
+                                        <TableCell sx={{ fontWeight: 600 }}>Permission</TableCell>
+                                        <TableCell sx={{ fontWeight: 600 }} align="right">Actions</TableCell>
                                     </TableRow>
-                                )}
-                            </TableBody>
-                        </Table>
-                    </TableContainer>
-                </Box>
+                                </TableHead>
+                                <TableBody>
+                                    {mcpLoading ? (
+                                        <TableRow>
+                                            <TableCell colSpan={2} align="center" sx={{ py: 3 }}>
+                                                <CircularProgress size={24} sx={{ color: ACCENT_COLOR }} />
+                                            </TableCell>
+                                        </TableRow>
+                                    ) : mcpPermissions.length > 0 ? (
+                                        mcpPermissions.map((p, i) => (
+                                            <TableRow key={i}>
+                                                <TableCell>{formatMcpName(p)}</TableCell>
+                                                <TableCell align="right">
+                                                    <IconButton
+                                                        size="small"
+                                                        onClick={() => handleRevokeMcp(p)}
+                                                        sx={{ color: '#EF4444' }}
+                                                        aria-label="revoke permission"
+                                                    >
+                                                        <DeleteIcon fontSize="small" />
+                                                    </IconButton>
+                                                </TableCell>
+                                            </TableRow>
+                                        ))
+                                    ) : (
+                                        <TableRow>
+                                            <TableCell colSpan={2} align="center" sx={{ py: 2 }}>
+                                                <Typography color="text.secondary" sx={{ fontSize: '0.875rem' }}>
+                                                    No MCP permissions granted.
+                                                </Typography>
+                                            </TableCell>
+                                        </TableRow>
+                                    )}
+                                </TableBody>
+                            </Table>
+                        </TableContainer>
+                    </Box>
+                </>
             )}
 
-            {/* Grant Permission Dialog */}
-            <Dialog open={grantOpen} onClose={() => !grantLoading && setGrantOpen(false)} maxWidth="xs" fullWidth>
+            {/* Grant MCP Permission Dialog */}
+            <Dialog open={grantMcpOpen} onClose={() => !grantMcpLoading && setGrantMcpOpen(false)} maxWidth="xs" fullWidth>
+                <DialogTitle sx={{ fontWeight: 600 }}>Grant MCP Permission</DialogTitle>
+                <DialogContent>
+                    {grantMcpError && (
+                        <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }}>{grantMcpError}</Alert>
+                    )}
+                    <Autocomplete
+                        options={availableMcpPermissions}
+                        getOptionLabel={(option) => typeof option === 'string' ? option : formatMcpName(option)}
+                        value={selectedMcpPermission}
+                        onChange={(e, value) => setSelectedMcpPermission(value)}
+                        renderInput={(params) => (
+                            <TextField
+                                {...params}
+                                label="Permission"
+                                margin="dense"
+                                sx={textFieldSx}
+                            />
+                        )}
+                        disabled={grantMcpLoading}
+                        sx={{ mt: 1 }}
+                    />
+                </DialogContent>
+                <DialogActions sx={{ px: 3, pb: 2 }}>
+                    <Button onClick={() => setGrantMcpOpen(false)} disabled={grantMcpLoading}>
+                        Cancel
+                    </Button>
+                    <Button
+                        onClick={handleGrantMcp}
+                        variant="contained"
+                        disabled={grantMcpLoading || !selectedMcpPermission}
+                        sx={{ bgcolor: ACCENT_COLOR, '&:hover': { bgcolor: ACCENT_HOVER } }}
+                    >
+                        {grantMcpLoading ? <CircularProgress size={20} color="inherit" /> : 'Grant'}
+                    </Button>
+                </DialogActions>
+            </Dialog>
+
+            {/* Grant Connection Permission Dialog */}
+            <Dialog open={grantConnOpen} onClose={() => !grantConnLoading && setGrantConnOpen(false)} maxWidth="xs" fullWidth>
+                <DialogTitle sx={{ fontWeight: 600 }}>Grant Connection Permission</DialogTitle>
+                <DialogContent>
+                    {grantConnError && (
+                        <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }}>{grantConnError}</Alert>
+                    )}
+                    <FormControl fullWidth margin="dense" sx={textFieldSx}>
+                        <InputLabel sx={{ '&.Mui-focused': { color: ACCENT_COLOR } }}>
+                            Connection
+                        </InputLabel>
+                        <Select
+                            value={selectedConnectionId}
+                            label="Connection"
+                            onChange={(e) => setSelectedConnectionId(e.target.value)}
+                            disabled={grantConnLoading}
+                        >
+                            <MenuItem value={0}>All Connections</MenuItem>
+                            {availableConnections.map((c) => (
+                                <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>
+                            ))}
+                        </Select>
+                    </FormControl>
+                    <FormControl fullWidth margin="dense" sx={textFieldSx}>
+                        <InputLabel sx={{ '&.Mui-focused': { color: ACCENT_COLOR } }}>
+                            Access Level
+                        </InputLabel>
+                        <Select
+                            value={selectedAccessLevel}
+                            label="Access Level"
+                            onChange={(e) => setSelectedAccessLevel(e.target.value)}
+                            disabled={grantConnLoading}
+                        >
+                            <MenuItem value="read">Read</MenuItem>
+                            <MenuItem value="read_write">Read/Write</MenuItem>
+                        </Select>
+                    </FormControl>
+                </DialogContent>
+                <DialogActions sx={{ px: 3, pb: 2 }}>
+                    <Button onClick={() => setGrantConnOpen(false)} disabled={grantConnLoading}>
+                        Cancel
+                    </Button>
+                    <Button
+                        onClick={handleGrantConn}
+                        variant="contained"
+                        disabled={grantConnLoading || selectedConnectionId === ''}
+                        sx={{ bgcolor: ACCENT_COLOR, '&:hover': { bgcolor: ACCENT_HOVER } }}
+                    >
+                        {grantConnLoading ? <CircularProgress size={20} color="inherit" /> : 'Grant'}
+                    </Button>
+                </DialogActions>
+            </Dialog>
+
+            {/* Grant Admin Permission Dialog */}
+            <Dialog open={grantAdminOpen} onClose={() => !grantAdminLoading && setGrantAdminOpen(false)} maxWidth="xs" fullWidth>
                 <DialogTitle sx={{ fontWeight: 600 }}>Grant Admin Permission</DialogTitle>
                 <DialogContent>
-                    {grantError && (
-                        <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }}>{grantError}</Alert>
+                    {grantAdminError && (
+                        <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }}>{grantAdminError}</Alert>
                     )}
                     <FormControl fullWidth margin="dense" sx={textFieldSx}>
                         <InputLabel sx={{ '&.Mui-focused': { color: ACCENT_COLOR } }}>
                             Permission
                         </InputLabel>
                         <Select
-                            value={selectedPermission}
+                            value={selectedAdminPermission}
                             label="Permission"
-                            onChange={(e) => setSelectedPermission(e.target.value)}
-                            disabled={grantLoading}
+                            onChange={(e) => setSelectedAdminPermission(e.target.value)}
+                            disabled={grantAdminLoading}
                         >
                             {PERMISSION_TYPES.map((pt) => (
                                 <MenuItem key={pt.value} value={pt.value}>{pt.label}</MenuItem>
@@ -306,16 +742,16 @@ const AdminPermissions = ({ mode }) => {
                     </FormControl>
                 </DialogContent>
                 <DialogActions sx={{ px: 3, pb: 2 }}>
-                    <Button onClick={() => setGrantOpen(false)} disabled={grantLoading}>
+                    <Button onClick={() => setGrantAdminOpen(false)} disabled={grantAdminLoading}>
                         Cancel
                     </Button>
                     <Button
-                        onClick={handleGrant}
+                        onClick={handleGrantAdmin}
                         variant="contained"
-                        disabled={grantLoading || !selectedPermission}
+                        disabled={grantAdminLoading || !selectedAdminPermission}
                         sx={{ bgcolor: ACCENT_COLOR, '&:hover': { bgcolor: ACCENT_HOVER } }}
                     >
-                        {grantLoading ? <CircularProgress size={20} color="inherit" /> : 'Grant'}
+                        {grantAdminLoading ? <CircularProgress size={20} color="inherit" /> : 'Grant'}
                     </Button>
                 </DialogActions>
             </Dialog>

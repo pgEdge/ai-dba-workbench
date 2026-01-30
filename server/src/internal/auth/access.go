@@ -185,10 +185,15 @@ func (rc *RBACChecker) CanAccessConnection(ctx context.Context, connectionID int
 		return false, ""
 	}
 
-	// Check if user has access to this connection
+	// Check if user has access to this connection (specific or via "all connections")
 	accessLevel, hasAccess := privileges[connectionID]
-	if !hasAccess {
+	allLevel, hasAll := privileges[ConnectionIDAll]
+	if !hasAccess && !hasAll {
 		return false, ""
+	}
+	// Use the higher of the two access levels
+	if hasAll && (!hasAccess || allLevel == AccessLevelReadWrite) {
+		accessLevel = allLevel
 	}
 
 	// Check token scoping (if applicable)

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/pkg/crypto"
 	"github.com/pgedge/ai-workbench/pkg/logger"
 	"github.com/pgedge/ai-workbench/server/internal/config"
 )
@@ -221,13 +222,7 @@ func (d *Datastore) GetConnectionWithPassword(ctx context.Context, id int) (*Mon
 		if d.serverSecret == "" {
 			return nil, "", fmt.Errorf("server secret is required to decrypt password")
 		}
-		// Use owner_username as salt if present (matches collector encryption),
-		// otherwise fall back to connection username
-		salt := conn.Username
-		if conn.OwnerUsername.Valid && conn.OwnerUsername.String != "" {
-			salt = conn.OwnerUsername.String
-		}
-		password, err = DecryptPassword(conn.PasswordEncrypted.String, d.serverSecret, salt)
+		password, err = crypto.DecryptPassword(conn.PasswordEncrypted.String, d.serverSecret)
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to decrypt password: %w", err)
 		}
@@ -287,13 +282,13 @@ func (d *Datastore) CreateConnection(ctx context.Context, params ConnectionCreat
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	// Encrypt password using owner_username as salt (matches collector encryption)
+	// Encrypt password using shared crypto package
 	var encryptedPassword *string
 	if params.Password != "" {
 		if d.serverSecret == "" {
 			return nil, fmt.Errorf("server secret is required to encrypt password")
 		}
-		encrypted, err := EncryptPassword(params.Password, d.serverSecret, params.OwnerUsername)
+		encrypted, err := crypto.EncryptPassword(params.Password, d.serverSecret)
 		if err != nil {
 			return nil, fmt.Errorf("failed to encrypt password: %w", err)
 		}
@@ -373,13 +368,6 @@ func (d *Datastore) UpdateConnectionFull(ctx context.Context, id int, params Con
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	// First get the existing connection to determine owner_username for password encryption
-	var ownerUsername sql.NullString
-	err := d.pool.QueryRow(ctx, "SELECT owner_username FROM connections WHERE id = $1", id).Scan(&ownerUsername)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get connection: %w", err)
-	}
-
 	// Build dynamic update query
 	setClauses := []string{"updated_at = CURRENT_TIMESTAMP"}
 	args := []interface{}{}
@@ -419,12 +407,7 @@ func (d *Datastore) UpdateConnectionFull(ctx context.Context, id int, params Con
 		if d.serverSecret == "" {
 			return nil, fmt.Errorf("server secret is required to encrypt password")
 		}
-		// Use owner_username as salt for encryption
-		salt := ""
-		if ownerUsername.Valid {
-			salt = ownerUsername.String
-		}
-		encrypted, err := EncryptPassword(*params.Password, d.serverSecret, salt)
+		encrypted, err := crypto.EncryptPassword(*params.Password, d.serverSecret)
 		if err != nil {
 			return nil, fmt.Errorf("failed to encrypt password: %w", err)
 		}
@@ -476,7 +459,7 @@ func (d *Datastore) UpdateConnectionFull(ctx context.Context, id int, params Con
     `, strings.Join(setClauses, ", "), argNum)
 
 	var conn MonitoredConnection
-	err = d.pool.QueryRow(ctx, query, args...).Scan(
+	err := d.pool.QueryRow(ctx, query, args...).Scan(
 		&conn.ID, &conn.Name, &conn.Host, &conn.HostAddr, &conn.Port,
 		&conn.DatabaseName, &conn.Username, &conn.PasswordEncrypted,
 		&conn.SSLMode, &conn.SSLCert, &conn.SSLKey, &conn.SSLRootCert,

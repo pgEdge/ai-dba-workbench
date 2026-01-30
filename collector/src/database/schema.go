@@ -3110,7 +3110,8 @@ func (sm *SchemaManager) registerMigrations() {
 			CREATE EXTENSION IF NOT EXISTS vector;
 		`)
 			if err != nil {
-				return fmt.Errorf("failed to create vector extension: %w", err)
+				logger.Info("pgvector extension could not be created, skipping anomaly embeddings setup")
+				return nil
 			}
 
 			// Create anomaly_embeddings table for storing embeddings

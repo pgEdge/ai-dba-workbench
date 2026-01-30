@@ -353,27 +353,10 @@ func registerMCPPrivileges(store *auth.AuthStore) {
 		{"similarity_search", "tool", "Perform vector similarity search on database tables"},
 		{"read_resource", "tool", "Read MCP resource content"},
 
-		// Authentication Tool (typically unrestricted but registered for completeness)
-		{"authenticate_user", "tool", "Authenticate a user with username and password"},
-
-		// RBAC Administration Tools (require superuser)
-		{"create_group", "tool", "Create a new RBAC group"},
-		{"update_group", "tool", "Update an existing RBAC group"},
-		{"delete_group", "tool", "Delete an RBAC group"},
-		{"list_groups", "tool", "List all RBAC groups"},
-		{"add_group_member", "tool", "Add a user or group to a group"},
-		{"remove_group_member", "tool", "Remove a user or group from a group"},
-		{"grant_mcp_privilege", "tool", "Grant an MCP privilege to a group"},
-		{"revoke_mcp_privilege", "tool", "Revoke an MCP privilege from a group"},
-		{"grant_connection_privilege", "tool", "Grant connection access to a group"},
-		{"revoke_connection_privilege", "tool", "Revoke connection access from a group"},
-		{"list_privileges", "tool", "List all registered MCP privileges"},
-		{"set_token_scope", "tool", "Set scope restrictions for a token"},
-		{"get_token_scope", "tool", "Get current scope restrictions for a token"},
-		{"clear_token_scope", "tool", "Clear all scope restrictions from a token"},
-		{"set_superuser", "tool", "Set or remove superuser status for a user"},
-		{"list_users", "tool", "List all users with their group memberships"},
-		{"get_user_privileges", "tool", "View a user's effective privileges"},
+		// Alert and Baseline Tools
+		{"get_alert_history", "tool", "Query alert history for monitored connections"},
+		{"get_alert_rules", "tool", "Query current alerting rules and effective thresholds"},
+		{"get_metric_baselines", "tool", "Query statistical baselines for metrics used in anomaly detection"},
 
 		// Resources
 		{"pg://system_info", "resource", "PostgreSQL system information resource"},

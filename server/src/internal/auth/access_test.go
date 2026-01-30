@@ -304,6 +304,93 @@ func TestRBACCheckerTokenScoping(t *testing.T) {
 }
 
 // =============================================================================
+// HasAdminPermission Tests
+// =============================================================================
+
+func TestHasAdminPermissionSuperuser(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store, true)
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, true)
+
+	// Superuser always returns true regardless of permission
+	if !checker.HasAdminPermission(ctx, PermManageUsers) {
+		t.Error("Expected superuser to have admin permission")
+	}
+}
+
+func TestHasAdminPermissionAuthDisabled(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store, false)
+	ctx := context.Background()
+
+	// Auth disabled returns true for any permission
+	if !checker.HasAdminPermission(ctx, PermManageConnections) {
+		t.Error("Expected true when auth disabled")
+	}
+}
+
+func TestHasAdminPermissionGranted(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store, true)
+
+	// Create user in group with permission
+	store.CreateUser("testuser", "password", "Test user")
+	userID, _ := store.GetUserID("testuser")
+	groupID, _ := store.CreateGroup("admin-group", "Admin group")
+	store.AddUserToGroup(groupID, userID)
+	store.GrantAdminPermission(groupID, PermManageUsers)
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+
+	if !checker.HasAdminPermission(ctx, PermManageUsers) {
+		t.Error("Expected user with granted permission to return true")
+	}
+}
+
+func TestHasAdminPermissionNotGranted(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store, true)
+
+	// Create user in group without the required permission
+	store.CreateUser("testuser", "password", "Test user")
+	userID, _ := store.GetUserID("testuser")
+	groupID, _ := store.CreateGroup("limited-group", "Limited group")
+	store.AddUserToGroup(groupID, userID)
+	store.GrantAdminPermission(groupID, PermManageConnections)
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+
+	// User has manage_connections but not manage_users
+	if checker.HasAdminPermission(ctx, PermManageUsers) {
+		t.Error("Expected false for permission not granted to user")
+	}
+}
+
+func TestHasAdminPermissionNoUser(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store, true)
+
+	// Context without user ID
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+
+	if checker.HasAdminPermission(ctx, PermManageUsers) {
+		t.Error("Expected false when no user in context")
+	}
+}
+
+// =============================================================================
 // GetEffectivePrivileges Tests
 // =============================================================================
 

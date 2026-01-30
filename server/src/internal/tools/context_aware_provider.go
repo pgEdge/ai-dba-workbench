@@ -163,9 +163,6 @@ func NewContextAwareProvider(clientManager *database.ClientManager, resourceReg 
 	provider.registerDatastoreTools(provider.baseRegistry)
 	provider.registerDatabaseTools(provider.baseRegistry, nil) // nil client for base registry
 
-	// Note: Authentication is now handled via HTTP API at /api/auth/login
-	// The hidden registry remains for potential future use
-
 	return provider
 }
 
@@ -209,7 +206,6 @@ func (p *ContextAwareProvider) RegisterTools(ctx context.Context) error {
 }
 
 // List returns all registered tool definitions
-// Hidden tools (like authenticate_user) are not included as they're in a separate registry
 // Note: This returns ALL tools without RBAC filtering. Use ListForContext for filtered results.
 func (p *ContextAwareProvider) List() []mcp.Tool {
 	return p.baseRegistry.List()
@@ -312,7 +308,7 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 		return response, err
 	}
 
-	// Check if this is a hidden tool (like authenticate_user)
+	// Check if this is a hidden tool
 	// Hidden tools don't require authentication and are not advertised to LLM
 	if p.hiddenRegistry != nil {
 		if _, exists := p.hiddenRegistry.Get(name); exists {
@@ -360,15 +356,15 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 
 	// Check if this is a stateless tool that doesn't require a per-token database client
 	statelessTools := map[string]bool{
-		"read_resource":        true, // Resource access tool
-		"generate_embedding":   true, // Embedding generation doesn't need database
-		"list_probes":          true, // Datastore tool - uses shared datastore pool
-		"describe_probe":       true, // Datastore tool - uses shared datastore pool
-		"query_metrics":        true, // Datastore tool - uses shared datastore pool
-		"list_connections":     true, // Datastore tool - uses shared datastore pool
-		"get_alert_history":    true, // Datastore tool - uses shared datastore pool
-		"get_alert_rules":      true, // Datastore tool - uses shared datastore pool
-		"get_metric_baselines": true, // Datastore tool - uses shared datastore pool
+		"read_resource":               true, // Resource access tool
+		"generate_embedding":          true, // Embedding generation doesn't need database
+		"list_probes":                 true, // Datastore tool - uses shared datastore pool
+		"describe_probe":              true, // Datastore tool - uses shared datastore pool
+		"query_metrics":               true, // Datastore tool - uses shared datastore pool
+		"list_connections":            true, // Datastore tool - uses shared datastore pool
+		"get_alert_history":           true, // Datastore tool - uses shared datastore pool
+		"get_alert_rules":             true, // Datastore tool - uses shared datastore pool
+		"get_metric_baselines":        true, // Datastore tool - uses shared datastore pool
 	}
 
 	if statelessTools[name] {

@@ -586,7 +586,7 @@ func (s *AuthStore) IsConnectionAssignedToAnyGroup(connectionID int) (bool, erro
 
 	var count int
 	err := s.db.QueryRow(
-		"SELECT COUNT(*) FROM connection_privileges WHERE connection_id = ?",
+		"SELECT COUNT(*) FROM connection_privileges WHERE connection_id = ? OR connection_id = 0",
 		connectionID,
 	).Scan(&count)
 	if err != nil {
@@ -594,6 +594,275 @@ func (s *AuthStore) IsConnectionAssignedToAnyGroup(connectionID int) (bool, erro
 	}
 
 	return count > 0, nil
+}
+
+// =============================================================================
+// Admin Permission Grants
+// =============================================================================
+
+// GrantAdminPermission grants an admin permission to a group
+func (s *AuthStore) GrantAdminPermission(groupID int64, permission string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec(
+		`INSERT OR IGNORE INTO group_admin_permissions (group_id, permission)
+         VALUES (?, ?)`,
+		groupID, permission,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to grant admin permission: %w", err)
+	}
+
+	return nil
+}
+
+// RevokeAdminPermission revokes an admin permission from a group
+func (s *AuthStore) RevokeAdminPermission(groupID int64, permission string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	result, err := s.db.Exec(
+		"DELETE FROM group_admin_permissions WHERE group_id = ? AND permission = ?",
+		groupID, permission,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to revoke admin permission: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("admin permission grant not found")
+	}
+
+	return nil
+}
+
+// ListGroupAdminPermissions returns all admin permissions granted to a group
+func (s *AuthStore) ListGroupAdminPermissions(groupID int64) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query(
+		`SELECT permission FROM group_admin_permissions
+         WHERE group_id = ?
+         ORDER BY permission`,
+		groupID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list group admin permissions: %w", err)
+	}
+	defer rows.Close()
+
+	var permissions []string
+	for rows.Next() {
+		var perm string
+		if err := rows.Scan(&perm); err != nil {
+			return nil, fmt.Errorf("failed to scan permission: %w", err)
+		}
+		permissions = append(permissions, perm)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating admin permissions: %w", err)
+	}
+
+	return permissions, nil
+}
+
+// GetUserAdminPermissions returns all admin permissions for a user through all group memberships
+func (s *AuthStore) GetUserAdminPermissions(userID int64) (map[string]bool, error) {
+	// Get all groups the user belongs to (including nested groups)
+	groupIDs, err := s.GetUserGroups(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(groupIDs) == 0 {
+		return map[string]bool{}, nil
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	permissions := make(map[string]bool)
+
+	for _, groupID := range groupIDs {
+		rows, err := s.db.Query(
+			"SELECT permission FROM group_admin_permissions WHERE group_id = ?",
+			groupID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get user admin permissions: %w", err)
+		}
+
+		for rows.Next() {
+			var perm string
+			if err := rows.Scan(&perm); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("failed to scan permission: %w", err)
+			}
+			permissions[perm] = true
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("error iterating admin permissions: %w", err)
+		}
+		rows.Close()
+	}
+
+	return permissions, nil
+}
+
+// =============================================================================
+// Group Effective (Inherited) Privileges
+// =============================================================================
+
+// GetGroupEffectiveMCPPrivileges returns all MCP privilege identifiers accessible
+// to a group through its own grants and all ancestor groups in the hierarchy.
+func (s *AuthStore) GetGroupEffectiveMCPPrivileges(groupID int64) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	query := `
+        WITH RECURSIVE ancestor_groups AS (
+            SELECT ? as group_id
+            UNION
+            SELECT gm.parent_group_id
+            FROM group_memberships gm
+            INNER JOIN ancestor_groups ag ON gm.member_group_id = ag.group_id
+            WHERE gm.member_group_id IS NOT NULL
+        )
+        SELECT DISTINCT mpi.identifier
+        FROM mcp_privilege_identifiers mpi
+        JOIN group_mcp_privileges gmp ON mpi.id = gmp.privilege_identifier_id
+        JOIN ancestor_groups ag ON gmp.group_id = ag.group_id
+        ORDER BY mpi.identifier
+    `
+
+	rows, err := s.db.Query(query, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get group effective MCP privileges: %w", err)
+	}
+	defer rows.Close()
+
+	var privileges []string
+	for rows.Next() {
+		var identifier string
+		if err := rows.Scan(&identifier); err != nil {
+			return nil, fmt.Errorf("failed to scan privilege: %w", err)
+		}
+		privileges = append(privileges, identifier)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating group effective MCP privileges: %w", err)
+	}
+
+	return privileges, nil
+}
+
+// GetGroupEffectiveConnectionPrivileges returns all connection privileges accessible
+// to a group through its own grants and all ancestor groups. For duplicate
+// connection IDs, the highest access level wins (read_write > read).
+func (s *AuthStore) GetGroupEffectiveConnectionPrivileges(groupID int64) ([]ConnectionPrivilege, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	query := `
+        WITH RECURSIVE ancestor_groups AS (
+            SELECT ? as group_id
+            UNION
+            SELECT gm.parent_group_id
+            FROM group_memberships gm
+            INNER JOIN ancestor_groups ag ON gm.member_group_id = ag.group_id
+            WHERE gm.member_group_id IS NOT NULL
+        )
+        SELECT cp.connection_id, cp.access_level
+        FROM connection_privileges cp
+        JOIN ancestor_groups ag ON cp.group_id = ag.group_id
+    `
+
+	rows, err := s.db.Query(query, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get group effective connection privileges: %w", err)
+	}
+	defer rows.Close()
+
+	// Collect highest access level per connection
+	connMap := make(map[int]string)
+	for rows.Next() {
+		var connID int
+		var accessLevel string
+		if err := rows.Scan(&connID, &accessLevel); err != nil {
+			return nil, fmt.Errorf("failed to scan privilege: %w", err)
+		}
+
+		existing, exists := connMap[connID]
+		if !exists || (existing == AccessLevelRead && accessLevel == AccessLevelReadWrite) {
+			connMap[connID] = accessLevel
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating group effective connection privileges: %w", err)
+	}
+
+	var privileges []ConnectionPrivilege
+	for connID, accessLevel := range connMap {
+		privileges = append(privileges, ConnectionPrivilege{
+			ConnectionID: connID,
+			AccessLevel:  accessLevel,
+		})
+	}
+
+	return privileges, nil
+}
+
+// GetGroupEffectiveAdminPermissions returns all admin permissions accessible
+// to a group through its own grants and all ancestor groups in the hierarchy.
+func (s *AuthStore) GetGroupEffectiveAdminPermissions(groupID int64) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	query := `
+        WITH RECURSIVE ancestor_groups AS (
+            SELECT ? as group_id
+            UNION
+            SELECT gm.parent_group_id
+            FROM group_memberships gm
+            INNER JOIN ancestor_groups ag ON gm.member_group_id = ag.group_id
+            WHERE gm.member_group_id IS NOT NULL
+        )
+        SELECT DISTINCT gap.permission
+        FROM group_admin_permissions gap
+        JOIN ancestor_groups ag ON gap.group_id = ag.group_id
+        ORDER BY gap.permission
+    `
+
+	rows, err := s.db.Query(query, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get group effective admin permissions: %w", err)
+	}
+	defer rows.Close()
+
+	var permissions []string
+	for rows.Next() {
+		var perm string
+		if err := rows.Scan(&perm); err != nil {
+			return nil, fmt.Errorf("failed to scan permission: %w", err)
+		}
+		permissions = append(permissions, perm)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating group effective admin permissions: %w", err)
+	}
+
+	return permissions, nil
 }
 
 // MCPPrivilegeCount returns the number of registered MCP privileges

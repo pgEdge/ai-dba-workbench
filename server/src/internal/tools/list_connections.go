@@ -120,16 +120,6 @@ CRITICAL: Never silently analyze multiple connections. Always get explicit user 
                     FROM metrics.pg_node_role
                     WHERE collected_at > NOW() - INTERVAL '15 minutes'
                     ORDER BY connection_id, collected_at DESC
-                ),
-                latest_conn_error AS (
-                    SELECT connection_id,
-                           bool_and(is_available) = false AS all_unavailable,
-                           (array_agg(unavailable_reason ORDER BY last_checked DESC)
-                            FILTER (WHERE unavailable_reason IS NOT NULL))[1]
-                                AS error_reason
-                    FROM probe_availability
-                    WHERE last_checked > NOW() - INTERVAL '15 minutes'
-                    GROUP BY connection_id
                 )
                 SELECT
                     c.id,
@@ -139,16 +129,15 @@ CRITICAL: Never silently analyze multiple connections. Always get explicit user 
                     c.database_name,
                     c.is_monitored,
                     CASE
-                        WHEN c.is_monitored AND lr.connection_id IS NULL AND lce.connection_id IS NULL
-                        THEN 'initialising'
-                        WHEN COALESCE(lce.all_unavailable, false) AND COALESCE(lr.status, 'unknown') = 'unknown'
+                        WHEN c.is_monitored AND c.connection_error IS NOT NULL
                         THEN 'offline'
+                        WHEN c.is_monitored AND lr.connection_id IS NULL
+                        THEN 'initialising'
                         ELSE COALESCE(lr.status, 'unknown')
                     END as status,
-                    COALESCE(lce.error_reason, '') as connection_error
+                    COALESCE(c.connection_error, '') as connection_error
                 FROM public.connections c
                 LEFT JOIN latest_roles lr ON c.id = lr.connection_id
-                LEFT JOIN latest_conn_error lce ON c.id = lce.connection_id
                 ORDER BY c.name, c.host
             `
 

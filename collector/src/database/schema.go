@@ -2205,6 +2205,27 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration #2: Add connection_error column to connections table
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     2,
+		Description: "Add connection_error column to connections table",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				ALTER TABLE connections ADD COLUMN IF NOT EXISTS connection_error TEXT;
+
+				COMMENT ON COLUMN connections.connection_error IS
+					'Last connection error message, NULL when connection is healthy';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to add connection_error column: %w", err)
+			}
+
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations

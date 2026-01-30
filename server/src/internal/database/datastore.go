@@ -322,9 +322,6 @@ func (d *Datastore) CreateConnection(ctx context.Context, params ConnectionCreat
 		return nil, fmt.Errorf("failed to create connection: %w", err)
 	}
 
-	// Clear any stale probe availability records so the connection shows as "initializing"
-	_, _ = d.pool.Exec(ctx, "DELETE FROM probe_availability WHERE connection_id = $1", conn.ID) //nolint:errcheck // best-effort cleanup
-
 	return &conn, nil
 }
 
@@ -472,8 +469,8 @@ func (d *Datastore) UpdateConnectionFull(ctx context.Context, id int, params Con
 		return nil, fmt.Errorf("failed to update connection: %w", err)
 	}
 
-	// Clear probe availability records so the connection shows as "initializing" until re-probed
-	_, _ = d.pool.Exec(ctx, "DELETE FROM probe_availability WHERE connection_id = $1", id) //nolint:errcheck // best-effort cleanup
+	// Clear connection error so it shows as initializing until the collector re-probes
+	_, _ = d.pool.Exec(ctx, "UPDATE connections SET connection_error = NULL WHERE id = $1", id) //nolint:errcheck // best-effort cleanup
 
 	return &conn, nil
 }
@@ -1704,16 +1701,6 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
             FROM metrics.pg_extension
             WHERE extname = 'spock'
             ORDER BY connection_id, collected_at DESC
-        ),
-        latest_conn_error AS (
-            SELECT connection_id,
-                   bool_and(is_available) = false AS all_unavailable,
-                   (array_agg(unavailable_reason ORDER BY last_checked DESC)
-                    FILTER (WHERE unavailable_reason IS NOT NULL))[1]
-                        AS error_reason
-            FROM probe_availability
-            WHERE last_checked > NOW() - INTERVAL '15 minutes'
-            GROUP BY connection_id
         )
         SELECT c.id, c.name, c.host, c.port, c.owner_username,
                c.database_name, c.username,
@@ -1728,19 +1715,18 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
                COALESCE(lr.is_streaming_standby, false) as is_streaming_standby,
                lr.publisher_host, lr.publisher_port,
                CASE
-                   WHEN c.is_monitored AND lr.connection_id IS NULL AND lce.connection_id IS NULL
-                   THEN 'initialising'
-                   WHEN COALESCE(lce.all_unavailable, false) AND COALESCE(lr.status, 'unknown') = 'unknown'
+                   WHEN c.is_monitored AND c.connection_error IS NOT NULL
                    THEN 'offline'
+                   WHEN c.is_monitored AND lr.connection_id IS NULL
+                   THEN 'initialising'
                    ELSE COALESCE(lr.status, 'unknown')
                END as status,
-               lce.error_reason as connection_error
+               c.connection_error
         FROM connections c
         LEFT JOIN latest_roles lr ON c.id = lr.connection_id
         LEFT JOIN latest_server_info lsi ON c.id = lsi.connection_id
         LEFT JOIN latest_os_info loi ON c.id = loi.connection_id
         LEFT JOIN latest_spock_version lsv ON c.id = lsv.connection_id
-        LEFT JOIN latest_conn_error lce ON c.id = lce.connection_id
         ORDER BY c.name
     `
 

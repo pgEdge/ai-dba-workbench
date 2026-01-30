@@ -10,7 +10,10 @@
 
 package database
 
-import "database/sql"
+import (
+	"database/sql"
+	"time"
+)
 
 // MonitoredConnection represents a PostgreSQL connection to monitor
 type MonitoredConnection struct {
@@ -28,6 +31,7 @@ type MonitoredConnection struct {
 	SSLRootCert       sql.NullString
 	OwnerUsername     sql.NullString
 	OwnerToken        sql.NullString
+	UpdatedAt         time.Time
 }
 
 // ApplicationName identifies monitoring connections

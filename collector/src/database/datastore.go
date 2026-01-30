@@ -208,7 +208,7 @@ func (ds *Datastore) GetMonitoredConnections() ([]MonitoredConnection, error) {
 	rows, err := conn.Query(ctx, `
         SELECT id, name, host, hostaddr, port, database_name, username,
                password_encrypted, sslmode, sslcert, sslkey, sslrootcert,
-               owner_username, owner_token
+               owner_username, owner_token, updated_at
         FROM connections
         WHERE is_monitored = TRUE
     `)
@@ -224,7 +224,7 @@ func (ds *Datastore) GetMonitoredConnections() ([]MonitoredConnection, error) {
 			&c.ID, &c.Name, &c.Host, &c.HostAddr, &c.Port,
 			&c.DatabaseName, &c.Username, &c.PasswordEncrypted,
 			&c.SSLMode, &c.SSLCert, &c.SSLKey, &c.SSLRootCert,
-			&c.OwnerUsername, &c.OwnerToken,
+			&c.OwnerUsername, &c.OwnerToken, &c.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan connection row: %w", err)
 		}
@@ -232,4 +232,13 @@ func (ds *Datastore) GetMonitoredConnections() ([]MonitoredConnection, error) {
 	}
 
 	return connections, rows.Err()
+}
+
+// SetConnectionError updates the connection_error column for a connection.
+// Pass nil to clear the error, or a string pointer to set it.
+func SetConnectionError(ctx context.Context, conn *pgxpool.Conn, connectionID int, errorMsg *string) error {
+	_, err := conn.Exec(ctx,
+		"UPDATE connections SET connection_error = $1, updated_at = NOW() WHERE id = $2",
+		errorMsg, connectionID)
+	return err
 }

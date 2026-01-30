@@ -121,6 +121,10 @@ func (ps *ProbeScheduler) loadConfigs(ctx context.Context) error {
 	// This closes pools for connections that are no longer monitored
 	ps.poolManager.SyncPools(activeConnectionIDs)
 
+	// Invalidate pools whose connection parameters have changed
+	// (e.g. password updated via the UI)
+	ps.poolManager.InvalidateChangedPools(connections, ps.serverSecret)
+
 	// Clean up probes for connections that are no longer monitored
 	var connectionsToRemove []int
 	for connID := range ps.probesByConn {
@@ -326,14 +330,43 @@ func (ps *ProbeScheduler) scheduleProbeForConnection(probe probes.MetricsProbe, 
 				return
 			}
 
+			// Refresh connection info to pick up updated_at changes
+			freshConn, err := ps.getMonitoredConnectionByID(connectionID)
+			if err != nil {
+				logger.Errorf("Error refreshing connection %d for probe %s: %v", connectionID, config.Name, err)
+				continue
+			}
+			conn = freshConn
+
 			ps.executeProbeForConnection(ps.ctx, probe, conn)
 		}
 	}
 }
 
+// getMonitoredConnectionByID retrieves a single monitored connection by its ID.
+// This is used to refresh connection metadata (e.g. updated_at) each probe cycle.
+func (ps *ProbeScheduler) getMonitoredConnectionByID(connectionID int) (database.MonitoredConnection, error) {
+	connections, err := ps.datastore.GetMonitoredConnections()
+	if err != nil {
+		return database.MonitoredConnection{}, fmt.Errorf("failed to get monitored connections: %w", err)
+	}
+	for _, c := range connections {
+		if c.ID == connectionID {
+			return c, nil
+		}
+	}
+	return database.MonitoredConnection{}, fmt.Errorf("connection %d not found or no longer monitored", connectionID)
+}
+
 // executeProbeForConnection executes a probe against a single monitored connection
 func (ps *ProbeScheduler) executeProbeForConnection(ctx context.Context, probe probes.MetricsProbe, conn database.MonitoredConnection) {
 	config := probe.GetConfig()
+
+	// Check if connection details have been updated since the pool was created
+	if ps.poolManager.CheckConnectionUpdated(conn.ID, conn.UpdatedAt) {
+		logger.Infof("Connection %d (%s) was updated, invalidated cached pool", conn.ID, conn.Name)
+	}
+
 	startTime := time.Now()
 
 	// Create a timeout context for this probe execution using configured timeout
@@ -348,12 +381,13 @@ func (ps *ProbeScheduler) executeProbeForConnection(ctx context.Context, probe p
 	timestamp := time.Now()
 
 	var connectionError bool
+	var connectionErrorMsg string
 	if probe.IsDatabaseScoped() {
 		// Execute probe for each database and collect metrics
-		allMetrics, databases, connectionError = ps.executeProbeForAllDatabases(execCtx, probe, conn)
+		allMetrics, databases, connectionError, connectionErrorMsg = ps.executeProbeForAllDatabases(execCtx, probe, conn)
 	} else {
 		// Execute probe once for the connection
-		allMetrics, connectionError = ps.executeProbeForServerWide(execCtx, probe, conn)
+		allMetrics, connectionError, connectionErrorMsg = ps.executeProbeForServerWide(execCtx, probe, conn)
 	}
 
 	// Check if we hit the timeout
@@ -390,6 +424,31 @@ func (ps *ProbeScheduler) executeProbeForConnection(ctx context.Context, probe p
 	} else {
 		logger.Infof("Probe %s on %s completed in %.2fms (no metrics collected)",
 			config.Name, conn.Name, float64(duration.Microseconds())/1000.0)
+	}
+
+	// Update connection_error column on the connections table
+	dsCtx, dsCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer dsCancel()
+
+	dsConn, dsErr := ps.datastore.GetConnectionWithContext(dsCtx)
+	if dsErr != nil {
+		logger.Errorf("Failed to get datastore connection for connection error update: %v", dsErr)
+	} else {
+		if connectionError {
+			if setErr := database.SetConnectionError(dsCtx, dsConn, conn.ID, &connectionErrorMsg); setErr != nil {
+				logger.Errorf("Failed to set connection error for connection %d: %v", conn.ID, setErr)
+			}
+			// Remove the cached pool so the next probe cycle creates a fresh one
+			// with potentially updated credentials
+			if removeErr := ps.poolManager.RemovePool(conn.ID); removeErr != nil {
+				logger.Errorf("Failed to remove cached pool for connection %d: %v", conn.ID, removeErr)
+			}
+		} else {
+			if setErr := database.SetConnectionError(dsCtx, dsConn, conn.ID, nil); setErr != nil {
+				logger.Errorf("Failed to clear connection error for connection %d: %v", conn.ID, setErr)
+			}
+		}
+		ps.datastore.ReturnConnection(dsConn)
 	}
 
 	// Record probe availability (skip if we already recorded a connection error)
@@ -453,7 +512,7 @@ func (ps *ProbeScheduler) recordAvailability(connectionID int, probeName string,
 }
 
 // executeProbeForAllDatabases executes a database-scoped probe for all databases and returns all collected metrics and database list
-func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe probes.MetricsProbe, conn database.MonitoredConnection) ([]map[string]interface{}, []string, bool) {
+func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe probes.MetricsProbe, conn database.MonitoredConnection) ([]map[string]interface{}, []string, bool, string) {
 	config := probe.GetConfig()
 	var allMetrics []map[string]interface{}
 	var databases []string
@@ -462,7 +521,7 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 	if ctx.Err() != nil {
 		logger.Errorf("Error getting connection for probe %s on %s: context already canceled",
 			config.Name, conn.Name)
-		return allMetrics, databases, false
+		return allMetrics, databases, false, ""
 	}
 
 	// Get connection to query pg_database (connects to default database)
@@ -476,9 +535,8 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 			logger.Errorf("Error getting connection to monitored database %s for probe %s: %v",
 				conn.Name, config.Name, err)
 		}
-		reason := fmt.Sprintf("connection error: %v", err)
-		ps.recordAvailability(conn.ID, config.Name, nil, false, &reason)
-		return allMetrics, databases, true
+		errMsg := fmt.Sprintf("connection error: %v", err)
+		return allMetrics, databases, true, errMsg
 	}
 
 	// Detect and cache PostgreSQL version
@@ -502,7 +560,7 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 			logger.Errorf("Error getting database list for probe %s on connection %s: %v",
 				config.Name, conn.Name, err)
 		}
-		return allMetrics, databases, false
+		return allMetrics, databases, false, ""
 	}
 
 	// Execute probe on the default/first database using the connection we already have
@@ -568,7 +626,7 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 		}
 	}
 
-	return allMetrics, databases, false
+	return allMetrics, databases, false, ""
 }
 
 // getDatabaseList queries pg_database to get list of accessible databases
@@ -602,7 +660,7 @@ func (ps *ProbeScheduler) getDatabaseList(ctx context.Context, conn *pgxpool.Con
 }
 
 // executeProbeForServerWide executes a server-wide probe and returns collected metrics
-func (ps *ProbeScheduler) executeProbeForServerWide(ctx context.Context, probe probes.MetricsProbe, conn database.MonitoredConnection) ([]map[string]interface{}, bool) {
+func (ps *ProbeScheduler) executeProbeForServerWide(ctx context.Context, probe probes.MetricsProbe, conn database.MonitoredConnection) ([]map[string]interface{}, bool, string) {
 	config := probe.GetConfig()
 	var metrics []map[string]interface{}
 
@@ -610,7 +668,7 @@ func (ps *ProbeScheduler) executeProbeForServerWide(ctx context.Context, probe p
 	if ctx.Err() != nil {
 		logger.Errorf("Error getting connection for probe %s on %s: context already canceled",
 			config.Name, conn.Name)
-		return metrics, false
+		return metrics, false, ""
 	}
 
 	// Get connection to the monitored server
@@ -624,9 +682,8 @@ func (ps *ProbeScheduler) executeProbeForServerWide(ctx context.Context, probe p
 			logger.Errorf("Error getting connection to monitored database %s for probe %s: %v",
 				conn.Name, config.Name, err)
 		}
-		reason := fmt.Sprintf("connection error: %v", err)
-		ps.recordAvailability(conn.ID, config.Name, nil, false, &reason)
-		return metrics, true
+		errMsg := fmt.Sprintf("connection error: %v", err)
+		return metrics, true, errMsg
 	}
 
 	// Detect and cache PostgreSQL version
@@ -651,10 +708,10 @@ func (ps *ProbeScheduler) executeProbeForServerWide(ctx context.Context, probe p
 			logger.Debugf("Error executing probe %s on connection %s: %v",
 				config.Name, conn.Name, err)
 		}
-		return nil, false
+		return nil, false, ""
 	}
 
-	return metrics, false
+	return metrics, false, ""
 }
 
 // storeMetrics stores collected metrics to the datastore and returns the number of metrics stored

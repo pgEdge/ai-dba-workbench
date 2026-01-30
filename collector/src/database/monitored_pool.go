@@ -12,6 +12,7 @@ package database
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"sync"
 	"time"
@@ -26,6 +27,8 @@ type MonitoredConnectionPoolManager struct {
 	pools          map[int]*pgxpool.Pool
 	semaphores     map[int]chan struct{} // Per-connection semaphores for limiting concurrent connections
 	versions       map[int]int           // Per-connection PostgreSQL major version cache
+	poolHashes     map[int]string        // Pool key -> hash of connection params used to create pool
+	poolUpdatedAt  map[int]time.Time     // Connection ID -> updated_at when pool was created
 	maxConnections int                   // Maximum concurrent connections per monitored server
 	maxIdleSeconds int                   // Maximum idle time (seconds) before closing idle connections
 	mu             sync.RWMutex
@@ -37,6 +40,8 @@ func NewMonitoredConnectionPoolManager(maxConnectionsPerServer int, maxIdleSecon
 		pools:          make(map[int]*pgxpool.Pool),
 		semaphores:     make(map[int]chan struct{}),
 		versions:       make(map[int]int),
+		poolHashes:     make(map[int]string),
+		poolUpdatedAt:  make(map[int]time.Time),
 		maxConnections: maxConnectionsPerServer,
 		maxIdleSeconds: maxIdleSeconds,
 	}
@@ -187,8 +192,10 @@ func (m *MonitoredConnectionPoolManager) GetConnectionForDatabase(ctx context.Co
 		return pgxConn, nil
 	}
 
-	// Add our new pool to the map
+	// Add our new pool to the map and store the connection string hash
 	m.pools[poolKey] = newPool
+	m.poolHashes[poolKey] = hashConnString(connStr)
+	m.poolUpdatedAt[conn.ID] = conn.UpdatedAt
 	m.mu.Unlock()
 
 	dbInfo := conn.Name
@@ -226,9 +233,42 @@ func (m *MonitoredConnectionPoolManager) RemovePool(connectionID int) error {
 
 	pool.Close()
 	delete(m.pools, connectionID)
+	delete(m.poolHashes, connectionID)
+	delete(m.poolUpdatedAt, connectionID)
 	logger.Infof("Removed connection pool for monitored connection %d", connectionID)
 
 	return nil
+}
+
+// CheckConnectionUpdated checks if the connection's updated_at timestamp has
+// changed since the pool was created. If so, it closes and removes all pools
+// for that connection and returns true. This allows credential or parameter
+// changes to take effect within one probe cycle.
+func (m *MonitoredConnectionPoolManager) CheckConnectionUpdated(connectionID int, updatedAt time.Time) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	stored, exists := m.poolUpdatedAt[connectionID]
+	if !exists || stored.Equal(updatedAt) {
+		return false
+	}
+
+	// Connection was updated, invalidate all pools for this connection
+	for poolKey := range m.pools {
+		connID := poolKey
+		if poolKey < 0 {
+			connID = -(poolKey / 10000)
+		}
+		if connID == connectionID {
+			m.pools[poolKey].Close()
+			delete(m.pools, poolKey)
+			delete(m.poolHashes, poolKey)
+		}
+	}
+	delete(m.poolUpdatedAt, connectionID)
+	delete(m.versions, connectionID)
+
+	return true
 }
 
 // SyncPools synchronizes the pools with the current list of monitored connections
@@ -265,6 +305,7 @@ func (m *MonitoredConnectionPoolManager) SyncPools(activeConnectionIDs []int) {
 		pool := m.pools[poolKey]
 		pool.Close()
 		delete(m.pools, poolKey)
+		delete(m.poolHashes, poolKey)
 
 		// Also remove the semaphore for regular connections
 		connID := poolKey
@@ -285,8 +326,75 @@ func (m *MonitoredConnectionPoolManager) SyncPools(activeConnectionIDs []int) {
 		}
 		if !hasOtherPools {
 			delete(m.semaphores, connID)
+			delete(m.poolUpdatedAt, connID)
 			logger.Infof("Removed connection pool for connection %d (no longer monitored)", connID)
 		}
+	}
+}
+
+// hashConnString returns a hex-encoded SHA-256 hash of a connection string
+func hashConnString(connStr string) string {
+	h := sha256.Sum256([]byte(connStr))
+	return fmt.Sprintf("%x", h)
+}
+
+// InvalidateChangedPools compares current connection parameters against the
+// hashes stored when each pool was created. If a connection's parameters have
+// changed (e.g. password rotation), every pool derived from that connection is
+// closed so the next GetConnection call creates a fresh pool.
+func (m *MonitoredConnectionPoolManager) InvalidateChangedPools(connections []MonitoredConnection, serverSecret string) {
+	// Build a map of connection ID -> current connection string hash
+	currentHashes := make(map[int]string)
+	for _, conn := range connections {
+		connStr, err := buildMonitoredConnectionStringForDatabase(conn, "", serverSecret)
+		if err != nil {
+			logger.Errorf("Failed to build connection string for pool invalidation check on connection %d: %v", conn.ID, err)
+			continue
+		}
+		currentHashes[conn.ID] = hashConnString(connStr)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Identify pool keys whose connection parameters have changed
+	var toRemove []int
+	for poolKey, storedHash := range m.poolHashes {
+		// Derive the connection ID from the pool key
+		connID := poolKey
+		if poolKey < 0 {
+			connID = -(poolKey / 10000)
+		}
+
+		currentHash, exists := currentHashes[connID]
+		if !exists {
+			// Connection no longer active; SyncPools handles removal
+			continue
+		}
+
+		if currentHash != storedHash {
+			toRemove = append(toRemove, poolKey)
+		}
+	}
+
+	// Close and remove invalidated pools
+	for _, poolKey := range toRemove {
+		connID := poolKey
+		if poolKey < 0 {
+			connID = -(poolKey / 10000)
+		}
+
+		pool := m.pools[poolKey]
+		if pool != nil {
+			pool.Close()
+		}
+		delete(m.pools, poolKey)
+		delete(m.poolHashes, poolKey)
+
+		// Also clear the cached version for this connection
+		delete(m.versions, connID)
+
+		logger.Infof("Invalidated connection pool (key %d) for connection %d due to changed connection parameters", poolKey, connID)
 	}
 }
 

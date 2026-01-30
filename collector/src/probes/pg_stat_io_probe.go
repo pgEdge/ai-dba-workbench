@@ -90,7 +90,9 @@ func (p *PgStatIOProbe) Execute(ctx context.Context, connectionName string, moni
 	var allMetrics []map[string]interface{}
 
 	// Check if pg_stat_io exists (PG 16+)
-	ioExists, err := p.checkIOViewExists(ctx, monitoredConn)
+	ioExists, err := cachedCheck(connectionName, "pg_stat_io_exists", func() (bool, error) {
+		return p.checkIOViewExists(ctx, monitoredConn)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -159,9 +161,9 @@ func (p *PgStatIOProbe) Execute(ctx context.Context, connectionName string, moni
 		if err != nil {
 			return nil, fmt.Errorf("failed to execute query: %w", err)
 		}
+		defer rows.Close()
 
 		ioMetrics, err := utils.ScanRowsToMaps(rows)
-		rows.Close()
 		if err != nil {
 			return nil, err
 		}
@@ -170,7 +172,9 @@ func (p *PgStatIOProbe) Execute(ctx context.Context, connectionName string, moni
 	}
 
 	// Check if pg_stat_slru exists (PG 13+)
-	slruExists, err := p.checkSLRUViewExists(ctx, monitoredConn)
+	slruExists, err := cachedCheck(connectionName, "pg_stat_slru_exists", func() (bool, error) {
+		return p.checkSLRUViewExists(ctx, monitoredConn)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -208,9 +212,9 @@ func (p *PgStatIOProbe) Execute(ctx context.Context, connectionName string, moni
 		if err != nil {
 			return nil, fmt.Errorf("failed to execute SLRU query: %w", err)
 		}
+		defer slruRows.Close()
 
 		slruMetrics, err := utils.ScanRowsToMaps(slruRows)
-		slruRows.Close()
 		if err != nil {
 			return nil, err
 		}

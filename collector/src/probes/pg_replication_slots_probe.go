@@ -94,7 +94,9 @@ func (p *PgReplicationSlotsProbe) checkHasTotalCount(ctx context.Context, conn *
 // Execute runs the probe against a monitored connection
 func (p *PgReplicationSlotsProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
 	// Check if pg_stat_replication_slots is available (PG14+)
-	statsAvailable, err := p.checkStatReplicationSlotsAvailable(ctx, monitoredConn)
+	statsAvailable, err := cachedCheck(connectionName, "stat_replication_slots_available", func() (bool, error) {
+		return p.checkStatReplicationSlotsAvailable(ctx, monitoredConn)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +113,9 @@ func (p *PgReplicationSlotsProbe) Execute(ctx context.Context, connectionName st
 	var query string
 	if statsAvailable {
 		// Check for total_count column (PG15+)
-		hasTotalCount, err := p.checkHasTotalCount(ctx, monitoredConn)
+		hasTotalCount, err := cachedCheck(connectionName, "replication_slots_total_count", func() (bool, error) {
+			return p.checkHasTotalCount(ctx, monitoredConn)
+		})
 		if err != nil {
 			return nil, err
 		}

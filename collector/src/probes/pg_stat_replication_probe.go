@@ -133,7 +133,7 @@ func (p *PgStatReplicationProbe) Execute(ctx context.Context, connectionName str
 	receiverQuery := `
         SELECT
             'standby' AS role,
-            NULL::integer AS pid,
+            pid,
             NULL::oid AS usesysid,
             NULL::text AS usename,
             NULL::text AS application_name,

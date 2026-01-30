@@ -764,14 +764,14 @@ func (sm *SchemaManager) registerMigrations() {
 					role TEXT,
 					receiver_pid INTEGER,
 					receiver_status TEXT,
-					receive_start_lsn pg_lsn,
+					receive_start_lsn TEXT,
 					receive_start_tli INTEGER,
-					written_lsn pg_lsn,
-					receiver_flushed_lsn pg_lsn,
+					written_lsn TEXT,
+					receiver_flushed_lsn TEXT,
 					received_tli INTEGER,
 					last_msg_send_time TIMESTAMPTZ,
 					last_msg_receipt_time TIMESTAMPTZ,
-					latest_end_lsn pg_lsn,
+					latest_end_lsn TEXT,
 					latest_end_time TIMESTAMPTZ,
 					receiver_slot_name TEXT,
 					sender_host TEXT,
@@ -936,7 +936,7 @@ func (sm *SchemaManager) registerMigrations() {
 				) PARTITION BY RANGE (collected_at);
 
 				COMMENT ON TABLE metrics.pg_stat_io IS
-					'I/O statistics by backend type and context';
+					'I/O statistics by backend type and context. When backend_type is slru, the object column contains the SLRU cache name rather than an I/O object type';
 
 				ALTER TABLE metrics.pg_stat_io
 					ADD CONSTRAINT fk_pg_stat_io_connection_id

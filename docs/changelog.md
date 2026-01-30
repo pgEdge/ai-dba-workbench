@@ -119,6 +119,9 @@ and this project adheres to
 - Comprehensive handling of PostgreSQL pgtype wrappers in query results
   (Float8, Float4, Int8, Int4, Int2, Text, Bool, Timestamp, Timestamptz, Date,
   Interval, UUID)
+- Scheduler now starts a new goroutine when probe interval changes; previously
+  interval changes via the `probe_configs` table left probes orphaned with no
+  active scheduler until collector restart
 - pg_database probe type mismatch for `datlocprovider` column; schema now uses
   correct `"char"` type instead of TEXT
 

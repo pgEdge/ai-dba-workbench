@@ -182,11 +182,11 @@ func (ps *ProbeScheduler) loadConfigs(ctx context.Context) error {
 					logger.Infof("Initialized probe %s for connection %d (interval: %ds, retention: %dd)",
 						config.Name, conn.ID, config.CollectionIntervalSeconds, config.RetentionDays)
 
-					// Start scheduling if this is a new probe
-					if existingProbe == nil {
-						ps.wg.Add(1)
-						go ps.scheduleProbeForConnection(probe, conn.ID)
-					}
+					// Start scheduling goroutine for new probes and when interval changes.
+					// When interval changes, the old goroutine will detect the config
+					// mismatch on its next tick and exit gracefully.
+					ps.wg.Add(1)
+					go ps.scheduleProbeForConnection(probe, conn.ID)
 				}
 			}
 		}

@@ -12,14 +12,15 @@ package probes
 
 import (
 	"context"
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/pgedge/ai-workbench/collector/src/utils"
-
 	"fmt"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/collector/src/utils"
 )
 
 // PgStatSubscriptionProbe collects metrics from pg_stat_subscription view
+// and joins with pg_stat_subscription_stats (PG15+) for cumulative statistics
 type PgStatSubscriptionProbe struct {
 	BaseMetricsProbe
 }
@@ -46,24 +47,9 @@ func (p *PgStatSubscriptionProbe) IsDatabaseScoped() bool {
 	return false
 }
 
-// GetQuery returns the SQL query to execute (for PG 16+)
-// Version-specific queries are handled in Execute()
+// GetQuery returns the SQL query to execute
 func (p *PgStatSubscriptionProbe) GetQuery() string {
-	return `
-        SELECT
-            subid,
-            subname,
-            worker_type,
-            pid,
-            leader_pid,
-            relid,
-            received_lsn::text,
-            last_msg_send_time,
-            last_msg_receipt_time,
-            latest_end_lsn::text,
-            latest_end_time
-        FROM pg_stat_subscription
-    `
+	return ""
 }
 
 // checkHasWorkerType checks if the pg_stat_subscription view has worker_type column (PG 16+)
@@ -86,6 +72,25 @@ func (p *PgStatSubscriptionProbe) checkHasWorkerType(ctx context.Context, conn *
 	return hasColumn, nil
 }
 
+// checkStatSubscriptionStatsAvailable checks if pg_stat_subscription_stats view exists (PG15+)
+func (p *PgStatSubscriptionProbe) checkStatSubscriptionStatsAvailable(ctx context.Context, conn *pgxpool.Conn) (bool, error) {
+	var exists bool
+	err := conn.QueryRow(ctx, `
+        SELECT EXISTS(
+            SELECT 1
+            FROM pg_views
+            WHERE schemaname = 'pg_catalog'
+            AND viewname = 'pg_stat_subscription_stats'
+        )
+    `).Scan(&exists)
+
+	if err != nil {
+		return false, fmt.Errorf("failed to check for pg_stat_subscription_stats view: %w", err)
+	}
+
+	return exists, nil
+}
+
 // Execute runs the probe against a monitored connection
 func (p *PgStatSubscriptionProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
 	// Check if we have worker_type column (PG 16+)
@@ -94,41 +99,99 @@ func (p *PgStatSubscriptionProbe) Execute(ctx context.Context, connectionName st
 		return nil, err
 	}
 
+	// Check if pg_stat_subscription_stats is available (PG15+)
+	statsAvailable, err := p.checkStatSubscriptionStatsAvailable(ctx, monitoredConn)
+	if err != nil {
+		return nil, err
+	}
+
 	var query string
 	if hasWorkerType {
 		// PostgreSQL 16+ with worker_type and leader_pid columns
-		query = `
-            SELECT
-                subid,
-                subname,
-                worker_type,
-                pid,
-                leader_pid,
-                relid,
-                received_lsn::text,
-                last_msg_send_time,
-                last_msg_receipt_time,
-                latest_end_lsn::text,
-                latest_end_time
-            FROM pg_stat_subscription
-        `
+		if statsAvailable {
+			query = `
+                SELECT
+                    s.subid,
+                    s.subname,
+                    s.worker_type,
+                    s.pid,
+                    s.leader_pid,
+                    s.relid,
+                    s.received_lsn::text,
+                    s.last_msg_send_time,
+                    s.last_msg_receipt_time,
+                    s.latest_end_lsn::text,
+                    s.latest_end_time,
+                    ss.apply_error_count,
+                    ss.sync_error_count,
+                    ss.stats_reset
+                FROM pg_stat_subscription s
+                LEFT JOIN pg_stat_subscription_stats ss ON s.subid = ss.subid
+            `
+		} else {
+			query = `
+                SELECT
+                    subid,
+                    subname,
+                    worker_type,
+                    pid,
+                    leader_pid,
+                    relid,
+                    received_lsn::text,
+                    last_msg_send_time,
+                    last_msg_receipt_time,
+                    latest_end_lsn::text,
+                    latest_end_time,
+                    NULL::bigint AS apply_error_count,
+                    NULL::bigint AS sync_error_count,
+                    NULL::timestamptz AS stats_reset
+                FROM pg_stat_subscription
+            `
+		}
 	} else {
 		// PostgreSQL < 16 without worker_type and leader_pid columns
-		query = `
-            SELECT
-                subid,
-                subname,
-                NULL::text AS worker_type,
-                pid,
-                NULL::integer AS leader_pid,
-                relid,
-                received_lsn::text,
-                last_msg_send_time,
-                last_msg_receipt_time,
-                latest_end_lsn::text,
-                latest_end_time
-            FROM pg_stat_subscription
-        `
+		if statsAvailable {
+			// PG15 with stats but without worker_type
+			query = `
+                SELECT
+                    s.subid,
+                    s.subname,
+                    NULL::text AS worker_type,
+                    s.pid,
+                    NULL::integer AS leader_pid,
+                    s.relid,
+                    s.received_lsn::text,
+                    s.last_msg_send_time,
+                    s.last_msg_receipt_time,
+                    s.latest_end_lsn::text,
+                    s.latest_end_time,
+                    ss.apply_error_count,
+                    ss.sync_error_count,
+                    ss.stats_reset
+                FROM pg_stat_subscription s
+                LEFT JOIN pg_stat_subscription_stats ss ON s.subid = ss.subid
+            `
+		} else {
+			// PG14 and earlier
+			query = `
+                SELECT
+                    subid,
+                    subname,
+                    NULL::text AS worker_type,
+                    pid,
+                    NULL::integer AS leader_pid,
+                    relid,
+                    received_lsn::text,
+                    last_msg_send_time,
+                    last_msg_receipt_time,
+                    latest_end_lsn::text,
+                    latest_end_time,
+                    NULL::bigint AS apply_error_count,
+                    NULL::bigint AS sync_error_count,
+                    NULL::timestamptz AS stats_reset
+                FROM pg_stat_subscription
+            `
+		}
 	}
 
 	rows, err := monitoredConn.Query(ctx, query)
@@ -157,6 +220,7 @@ func (p *PgStatSubscriptionProbe) Store(ctx context.Context, datastoreConn *pgxp
 		"subid", "subname", "worker_type", "pid", "leader_pid", "relid",
 		"received_lsn", "last_msg_send_time", "last_msg_receipt_time",
 		"latest_end_lsn", "latest_end_time",
+		"apply_error_count", "sync_error_count", "stats_reset",
 	}
 
 	// Build values array
@@ -176,6 +240,9 @@ func (p *PgStatSubscriptionProbe) Store(ctx context.Context, datastoreConn *pgxp
 			metric["last_msg_receipt_time"],
 			metric["latest_end_lsn"],
 			metric["latest_end_time"],
+			metric["apply_error_count"],
+			metric["sync_error_count"],
+			metric["stats_reset"],
 		}
 		values = append(values, row)
 	}

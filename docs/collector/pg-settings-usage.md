@@ -454,13 +454,13 @@ SELECT
   ps.collected_at AS config_snapshot,
   ps.name AS setting_name,
   ps.setting,
-  psa.stats_reset AS postgres_restart
+  pw.archiver_stats_reset AS postgres_restart
 FROM metrics.pg_settings ps
-JOIN metrics.pg_stat_archiver psa
-  ON psa.connection_id = ps.connection_id
-  AND ABS(EXTRACT(EPOCH FROM (psa.collected_at - ps.collected_at))) < 3600
+JOIN metrics.pg_stat_wal pw
+  ON pw.connection_id = ps.connection_id
+  AND ABS(EXTRACT(EPOCH FROM (pw.collected_at - ps.collected_at))) < 3600
 WHERE ps.connection_id = 1
-  AND psa.stats_reset IS NOT NULL
+  AND pw.archiver_stats_reset IS NOT NULL
 ORDER BY ps.collected_at DESC;
 ```
 

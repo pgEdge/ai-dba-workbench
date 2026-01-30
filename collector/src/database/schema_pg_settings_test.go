@@ -18,8 +18,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// TestMigration3_PgSettings tests migration 3 (pg_settings probe)
-func TestMigration3_PgSettings(t *testing.T) {
+// TestMigration_PgSettings tests the pg_settings table creation in the squashed migration
+func TestMigration_PgSettings(t *testing.T) {
 	// Skip if SKIP_DB_TESTS is set
 	if os.Getenv("SKIP_DB_TESTS") != "" {
 		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
@@ -62,14 +62,14 @@ func TestMigration3_PgSettings(t *testing.T) {
 		t.Fatalf("Migration failed: %v", err)
 	}
 
-	// Verify schema version is at least 3 (migrations run up to latest)
+	// Verify schema version is 1 (single squashed migration)
 	var version int
 	err = conn.QueryRow(ctx, "SELECT MAX(version) FROM schema_version").Scan(&version)
 	if err != nil {
 		t.Fatalf("Failed to query schema version: %v", err)
 	}
-	if version < 3 {
-		t.Errorf("Expected schema version at least 3, got %d", version)
+	if version != 1 {
+		t.Errorf("Expected schema version 1, got %d", version)
 	}
 
 	// Verify pg_settings table exists

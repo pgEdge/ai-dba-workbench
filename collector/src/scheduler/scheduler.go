@@ -693,34 +693,20 @@ func (ps *ProbeScheduler) createProbe(config *probes.ProbeConfig) probes.Metrics
 		return probes.NewPgStatActivityProbe(config)
 	case probes.ProbeNamePgStatReplication:
 		return probes.NewPgStatReplicationProbe(config)
-	case probes.ProbeNamePgStatReplicationSlots:
-		return probes.NewPgStatReplicationSlotsProbe(config)
 	case probes.ProbeNamePgReplicationSlots:
 		return probes.NewPgReplicationSlotsProbe(config)
-	case probes.ProbeNamePgStatWALReceiver:
-		return probes.NewPgStatWALReceiverProbe(config)
 	case probes.ProbeNamePgStatRecoveryPrefetch:
 		return probes.NewPgStatRecoveryPrefetchProbe(config)
 	case probes.ProbeNamePgStatSubscription:
 		return probes.NewPgStatSubscriptionProbe(config)
-	case probes.ProbeNamePgStatSubscriptionStats:
-		return probes.NewPgStatSubscriptionStatsProbe(config)
-	case probes.ProbeNamePgStatSSL:
-		return probes.NewPgStatSSLProbe(config)
-	case probes.ProbeNamePgStatGSSAPI:
-		return probes.NewPgStatGSSAPIProbe(config)
-	case probes.ProbeNamePgStatArchiver:
-		return probes.NewPgStatArchiverProbe(config)
+	case probes.ProbeNamePgStatConnectionSecurity:
+		return probes.NewPgStatConnectionSecurityProbe(config)
 	case probes.ProbeNamePgStatIO:
 		return probes.NewPgStatIOProbe(config)
-	case probes.ProbeNamePgStatBgwriter:
-		return probes.NewPgStatBgwriterProbe(config)
 	case probes.ProbeNamePgStatCheckpointer:
 		return probes.NewPgStatCheckpointerProbe(config)
 	case probes.ProbeNamePgStatWAL:
 		return probes.NewPgStatWalProbe(config)
-	case probes.ProbeNamePgStatSLRU:
-		return probes.NewPgStatSLRUProbe(config)
 	case probes.ProbeNamePgSettings:
 		return probes.NewPgSettingsProbe(config)
 	case probes.ProbeNamePgHbaFileRules:
@@ -742,10 +728,6 @@ func (ps *ProbeScheduler) createProbe(config *probes.ProbeConfig) probes.Metrics
 		return probes.NewPgStatAllTablesProbe(config)
 	case probes.ProbeNamePgStatAllIndexes:
 		return probes.NewPgStatAllIndexesProbe(config)
-	case probes.ProbeNamePgStatioAllTables:
-		return probes.NewPgStatioAllTablesProbe(config)
-	case probes.ProbeNamePgStatioAllIndexes:
-		return probes.NewPgStatioAllIndexesProbe(config)
 	case probes.ProbeNamePgStatioAllSequences:
 		return probes.NewPgStatioAllSequencesProbe(config)
 	case probes.ProbeNamePgStatUserFunctions:

@@ -20,12 +20,40 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/pkg/logger"
 )
+
+// featureCache stores boolean feature-detection results keyed by
+// "connectionName:checkName". View and column existence checks never
+// change during the lifetime of a PostgreSQL connection, so caching
+// them avoids repeated catalog queries on every collection cycle.
+var featureCache sync.Map
+
+// cachedCheck returns a cached boolean result for a feature-detection
+// check identified by connectionName and checkName. If no cached value
+// exists, it calls checkFn, caches the result, and returns it.
+func cachedCheck(connectionName, checkName string, checkFn func() (bool, error)) (bool, error) {
+	key := connectionName + ":" + checkName
+	if val, ok := featureCache.Load(key); ok {
+		boolVal, ok2 := val.(bool)
+		if !ok2 {
+			return false, fmt.Errorf("cached value for %s is not a bool", key)
+		}
+		return boolVal, nil
+	}
+	result, err := checkFn()
+	if err != nil {
+		return false, err
+	}
+	featureCache.Store(key, result)
+	return result, nil
+}
 
 // ProbeConfig represents the configuration for a probe
 type ProbeConfig struct {
@@ -224,7 +252,7 @@ func DropExpiredPartitions(ctx context.Context, conn *pgxpool.Conn, tableName st
 		}
 
 		// Parse the partition bound to get the end timestamp
-		// Format is: FOR VALUES FROM ('2025-11-03 00:00:00') TO ('2025-11-04 00:00:00')
+		// Format is: FOR VALUES FROM ('2025-11-03 00:00:00+00') TO ('2025-11-04 00:00:00+00')
 		// We need to extract the TO timestamp
 		toIdx := strings.Index(partitionBound, "TO ('")
 		if toIdx == -1 {
@@ -242,16 +270,28 @@ func DropExpiredPartitions(ctx context.Context, conn *pgxpool.Conn, tableName st
 
 		timestampStr := partitionBound[timestampStart : timestampStart+timestampEnd]
 
-		// Parse the timestamp string
-		endTimestamp, err := time.Parse("2006-01-02 15:04:05", timestampStr)
-		if err != nil {
-			logger.Errorf("Warning: failed to parse timestamp in partition bound for %s: %v", partitionName, err)
+		// Try timezone formats: with minutes (+05:30), without minutes (+05), then legacy (no tz)
+		var endTimestamp time.Time
+		tzFormats := []string{
+			"2006-01-02 15:04:05-07:00",
+			"2006-01-02 15:04:05-07",
+			"2006-01-02 15:04:05",
+		}
+		var parseErr error
+		for _, layout := range tzFormats {
+			endTimestamp, parseErr = time.Parse(layout, timestampStr)
+			if parseErr == nil {
+				break
+			}
+		}
+		if parseErr != nil {
+			logger.Errorf("Warning: failed to parse timestamp in partition bound for %s: %v", partitionName, parseErr)
 			continue
 		}
 
 		// If the partition end time is before the cutoff, drop it
 		if endTimestamp.Before(cutoff) {
-			dropSQL := fmt.Sprintf("DROP TABLE IF EXISTS metrics.%s", partitionName)
+			dropSQL := fmt.Sprintf("DROP TABLE IF EXISTS %s", pgx.Identifier{"metrics", partitionName}.Sanitize())
 			if _, err := conn.Exec(ctx, dropSQL); err != nil {
 				logger.Errorf("Warning: failed to drop partition %s: %v", partitionName, err)
 				continue

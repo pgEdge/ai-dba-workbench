@@ -25,15 +25,17 @@ import (
 
 // ClusterHandler handles REST API requests for cluster hierarchy management
 type ClusterHandler struct {
-	datastore *database.Datastore
-	authStore *auth.AuthStore
+	datastore   *database.Datastore
+	authStore   *auth.AuthStore
+	rbacChecker *auth.RBACChecker
 }
 
 // NewClusterHandler creates a new cluster handler
-func NewClusterHandler(datastore *database.Datastore, authStore *auth.AuthStore) *ClusterHandler {
+func NewClusterHandler(datastore *database.Datastore, authStore *auth.AuthStore, rbacChecker *auth.RBACChecker) *ClusterHandler {
 	return &ClusterHandler{
-		datastore: datastore,
-		authStore: authStore,
+		datastore:   datastore,
+		authStore:   authStore,
+		rbacChecker: rbacChecker,
 	}
 }
 
@@ -287,11 +289,13 @@ func (h *ClusterHandler) createClusterGroup(w http.ResponseWriter, r *http.Reque
 
 func (h *ClusterHandler) updateClusterGroup(w http.ResponseWriter, r *http.Request, id int) {
 	// Check user permissions
-	username, isSuperuser, err := h.getUserInfoFromRequest(r)
+	username, _, err := h.getUserInfoFromRequest(r)
 	if err != nil {
 		RespondError(w, http.StatusUnauthorized, "Invalid or missing authentication token")
 		return
 	}
+
+	hasManageConns := h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
@@ -304,9 +308,9 @@ func (h *ClusterHandler) updateClusterGroup(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Permission check: superuser, owner, or shared group can be edited
+	// Permission check: manage_connections permission, or owner
 	isOwner := existingGroup.OwnerUsername.Valid && existingGroup.OwnerUsername.String == username
-	if !isSuperuser && !isOwner {
+	if !hasManageConns && !isOwner {
 		RespondError(w, http.StatusForbidden,
 			"You do not have permission to update this cluster group")
 		return
@@ -479,15 +483,10 @@ type AutoDetectedClusterRequest struct {
 // (binary replication, logical replication, or Spock clusters)
 // Supports both renaming and moving clusters to different groups
 func (h *ClusterHandler) updateAutoDetectedCluster(w http.ResponseWriter, r *http.Request, clusterID string) {
-	// Check user permissions - only superusers can modify auto-detected clusters
-	_, isSuperuser, err := h.getUserInfoFromRequest(r)
-	if err != nil {
-		RespondError(w, http.StatusUnauthorized, "Invalid or missing authentication token")
-		return
-	}
-
-	if !isSuperuser {
-		RespondError(w, http.StatusForbidden, "Only superusers can modify auto-detected clusters")
+	// Check user permissions - requires manage_connections permission
+	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
+		RespondError(w, http.StatusForbidden,
+			"Permission denied: you do not have permission to modify auto-detected clusters")
 		return
 	}
 
@@ -547,15 +546,10 @@ func computeAutoClusterKey(clusterID string) string {
 
 // updateAutoDetectedGroup handles PUT requests for auto-detected groups (e.g., group-auto)
 func (h *ClusterHandler) updateAutoDetectedGroup(w http.ResponseWriter, r *http.Request, groupID string) {
-	// Check user permissions - only superusers can rename auto-detected groups
-	_, isSuperuser, err := h.getUserInfoFromRequest(r)
-	if err != nil {
-		RespondError(w, http.StatusUnauthorized, "Invalid or missing authentication token")
-		return
-	}
-
-	if !isSuperuser {
-		RespondError(w, http.StatusForbidden, "Only superusers can rename auto-detected groups")
+	// Check user permissions - requires manage_connections permission
+	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
+		RespondError(w, http.StatusForbidden,
+			"Permission denied: you do not have permission to rename auto-detected groups")
 		return
 	}
 

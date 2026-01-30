@@ -13,11 +13,12 @@ package database
 import (
 	"context"
 	"fmt"
-	"github.com/pgedge/ai-workbench/pkg/logger"
 	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/pkg/crypto"
+	"github.com/pgedge/ai-workbench/pkg/logger"
 )
 
 // MonitoredConnectionPoolManager manages connection pools for monitored databases
@@ -380,20 +381,13 @@ func buildMonitoredConnectionStringForDatabase(conn MonitoredConnection, databas
 
 	params["user"] = conn.Username
 
-	// Decrypt password if encrypted and we have an owner username
+	// Decrypt password if encrypted
 	if conn.PasswordEncrypted.Valid && conn.PasswordEncrypted.String != "" {
-		if conn.OwnerUsername.Valid && conn.OwnerUsername.String != "" {
-			// Decrypt the password using the server secret and owner username
-			decryptedPassword, err := DecryptPassword(conn.PasswordEncrypted.String, serverSecret, conn.OwnerUsername.String)
-			if err != nil {
-				return "", fmt.Errorf("failed to decrypt password for connection %d: %w", conn.ID, err)
-			}
-			params["password"] = decryptedPassword
-		} else {
-			// No owner username - password might not be encrypted or uses legacy encryption
-			// For now, use it as-is (this handles backward compatibility)
-			params["password"] = conn.PasswordEncrypted.String
+		decryptedPassword, err := crypto.DecryptPassword(conn.PasswordEncrypted.String, serverSecret)
+		if err != nil {
+			return "", fmt.Errorf("failed to decrypt password for connection %d: %w", conn.ID, err)
 		}
+		params["password"] = decryptedPassword
 	}
 
 	if conn.SSLMode.Valid && conn.SSLMode.String != "" {

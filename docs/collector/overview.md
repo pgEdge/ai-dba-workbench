@@ -55,7 +55,7 @@ Probes are the data collection units in the Collector. Each probe:
 - Can be enabled or disabled individually
 - Stores data in its own partitioned table
 
-The Collector includes 24 built-in probes covering the most important
+The Collector includes 34 built-in probes covering the most important
 PostgreSQL statistics views.
 
 ### Probe Types
@@ -68,9 +68,9 @@ These probes collect server-wide statistics and run once per monitored
 connection:
 
 - `pg_stat_activity` - Current database activity
-- `pg_stat_replication` - Replication status
-- `pg_stat_bgwriter` - Background writer statistics
-- And 11 more server-wide probes
+- `pg_stat_replication` - Replication status and WAL receiver stats
+- `pg_stat_checkpointer` - Checkpointer and background writer statistics
+- And 23 more server-wide probes
 
 #### Database-Scoped Probes
 
@@ -78,9 +78,9 @@ These probes collect per-database statistics and run once for each database
 on a monitored server:
 
 - `pg_stat_database` - Database-wide statistics
-- `pg_stat_all_tables` - Table statistics
-- `pg_stat_all_indexes` - Index statistics
-- And 6 more database-specific probes
+- `pg_stat_all_tables` - Table access and I/O statistics
+- `pg_stat_all_indexes` - Index usage and I/O statistics
+- And 5 more database-specific probes
 
 ### Scheduling
 
@@ -134,9 +134,10 @@ algorithms.
 
 - The system uses AES-256-GCM encryption for password protection.
 - Encryption keys are derived using PBKDF2 with SHA256 and 100,000 iterations.
-- The key derivation combines the server secret with the username as salt.
+- Each password uses a cryptographically random 16-byte salt for key derivation.
 - Encrypted passwords are stored in the datastore's `connections` table.
 - The Collector decrypts passwords only when establishing connections.
+- Users do not need to manually encrypt passwords; use the MCP server API.
 
 ## Component Architecture
 
@@ -154,14 +155,15 @@ The Collector consists of several key components:
 - Datastore connection management (`datastore.go`, `datastore_pool.go`)
 - Monitored connection pools (`monitored_pool.go`)
 - Schema migrations (`schema.go`)
-- Password encryption/decryption (`crypto.go`)
 - Connection string building (`connstring.go`)
 - Type definitions (`types.go`)
+
+Password encryption is handled by the shared `pkg/crypto` package.
 
 ### Probes Package
 
 - Base probe interface and utilities (`base.go`)
-- 24 individual probe implementations (one file each)
+- 34 individual probe implementations (one file each)
 - Probe constants (`constants.go`)
 
 ### Scheduler Package

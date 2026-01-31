@@ -99,6 +99,8 @@ func (h *TimelineHandler) handleTimelineEvents(w http.ResponseWriter, r *http.Re
 			database.EventTypeAlertCleared:      true,
 			database.EventTypeAlertAcknowledged: true,
 			database.EventTypeExtensionChange:   true,
+			database.EventTypeBlackoutStarted:   true,
+			database.EventTypeBlackoutEnded:     true,
 		}
 		if !ValidateStringsInSet(w, eventTypes, "event_type", validTypes) {
 			return

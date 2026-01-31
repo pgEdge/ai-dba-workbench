@@ -10,8 +10,13 @@
 
 import React from 'react';
 import { render, screen, fireEvent, within } from '@testing-library/react';
+import { ThemeProvider } from '@mui/material/styles';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import ClusterNavigator from '../ClusterNavigator';
+import { createPgedgeTheme } from '../../theme/pgedgeTheme';
+
+const lightTheme = createPgedgeTheme('light');
+const darkTheme = createPgedgeTheme('dark');
 
 // Mock the AuthContext
 vi.mock('../../contexts/AuthContext', () => ({
@@ -39,6 +44,22 @@ vi.mock('../../contexts/AlertsContext', () => ({
         fetchAlerts: vi.fn(),
         getServerAlertCount: () => 0,
         getTotalAlertCount: () => 0,
+    }),
+}));
+
+// Mock the BlackoutContext
+vi.mock('../../contexts/BlackoutContext', () => ({
+    useBlackouts: () => ({
+        blackouts: [],
+        loading: false,
+        error: null,
+        isServerBlackedOut: () => false,
+        isClusterBlackedOut: () => false,
+        isGroupBlackedOut: () => false,
+        getEffectiveBlackout: () => null,
+        createBlackout: vi.fn(),
+        deleteBlackout: vi.fn(),
+        fetchBlackouts: vi.fn(),
     }),
 }));
 
@@ -81,6 +102,9 @@ const mockClusterData = [
     },
 ];
 
+const renderWithTheme = (ui: React.ReactElement, theme = lightTheme) =>
+    render(<ThemeProvider theme={theme}>{ui}</ThemeProvider>);
+
 describe('ClusterNavigator', () => {
     let onSelectServer;
     let onRefresh;
@@ -91,7 +115,7 @@ describe('ClusterNavigator', () => {
     });
 
     it('renders the component with header', () => {
-        render(
+        renderWithTheme(
             <ClusterNavigator
                 data={mockClusterData}
                 onSelectServer={onSelectServer}
@@ -103,7 +127,7 @@ describe('ClusterNavigator', () => {
     });
 
     it('displays server count summary', () => {
-        render(
+        renderWithTheme(
             <ClusterNavigator
                 data={mockClusterData}
                 onSelectServer={onSelectServer}
@@ -118,7 +142,7 @@ describe('ClusterNavigator', () => {
     });
 
     it('renders cluster groups', () => {
-        render(
+        renderWithTheme(
             <ClusterNavigator
                 data={mockClusterData}
                 onSelectServer={onSelectServer}
@@ -131,7 +155,7 @@ describe('ClusterNavigator', () => {
     });
 
     it('renders clusters within groups', () => {
-        render(
+        renderWithTheme(
             <ClusterNavigator
                 data={mockClusterData}
                 onSelectServer={onSelectServer}
@@ -145,7 +169,7 @@ describe('ClusterNavigator', () => {
     });
 
     it('renders servers within clusters', () => {
-        render(
+        renderWithTheme(
             <ClusterNavigator
                 data={mockClusterData}
                 onSelectServer={onSelectServer}
@@ -159,7 +183,7 @@ describe('ClusterNavigator', () => {
     });
 
     it('calls onSelectServer when a server is clicked', () => {
-        render(
+        renderWithTheme(
             <ClusterNavigator
                 data={mockClusterData}
                 onSelectServer={onSelectServer}
@@ -178,7 +202,7 @@ describe('ClusterNavigator', () => {
     });
 
     it('highlights the selected server', () => {
-        render(
+        renderWithTheme(
             <ClusterNavigator
                 data={mockClusterData}
                 selectedServerId={1}
@@ -193,7 +217,7 @@ describe('ClusterNavigator', () => {
     });
 
     it('filters servers based on search query', () => {
-        render(
+        renderWithTheme(
             <ClusterNavigator
                 data={mockClusterData}
                 onSelectServer={onSelectServer}
@@ -214,7 +238,7 @@ describe('ClusterNavigator', () => {
     });
 
     it('shows empty state when no servers match search', () => {
-        render(
+        renderWithTheme(
             <ClusterNavigator
                 data={mockClusterData}
                 onSelectServer={onSelectServer}
@@ -229,7 +253,7 @@ describe('ClusterNavigator', () => {
     });
 
     it('shows empty state when data is empty', () => {
-        render(
+        renderWithTheme(
             <ClusterNavigator
                 data={[]}
                 onSelectServer={onSelectServer}
@@ -241,7 +265,7 @@ describe('ClusterNavigator', () => {
     });
 
     it('calls onRefresh when refresh button is clicked', () => {
-        render(
+        renderWithTheme(
             <ClusterNavigator
                 data={mockClusterData}
                 onSelectServer={onSelectServer}
@@ -256,7 +280,7 @@ describe('ClusterNavigator', () => {
     });
 
     it('shows loading state', () => {
-        render(
+        renderWithTheme(
             <ClusterNavigator
                 data={[]}
                 onSelectServer={onSelectServer}
@@ -271,7 +295,7 @@ describe('ClusterNavigator', () => {
     });
 
     it('displays server roles', () => {
-        render(
+        renderWithTheme(
             <ClusterNavigator
                 data={mockClusterData}
                 onSelectServer={onSelectServer}
@@ -285,20 +309,21 @@ describe('ClusterNavigator', () => {
     });
 
     it('renders in dark mode', () => {
-        render(
+        renderWithTheme(
             <ClusterNavigator
                 data={mockClusterData}
                 onSelectServer={onSelectServer}
                 onRefresh={onRefresh}
                 mode="dark"
-            />
+            />,
+            darkTheme
         );
 
         expect(screen.getByText('Database Servers')).toBeInTheDocument();
     });
 
     it('displays footer with group and cluster counts', () => {
-        render(
+        renderWithTheme(
             <ClusterNavigator
                 data={mockClusterData}
                 onSelectServer={onSelectServer}
@@ -311,7 +336,7 @@ describe('ClusterNavigator', () => {
     });
 
     it('preserves selection when data is updated with same content', () => {
-        const { rerender } = render(
+        const { rerender } = renderWithTheme(
             <ClusterNavigator
                 data={mockClusterData}
                 selectedServerId={1}
@@ -325,12 +350,12 @@ describe('ClusterNavigator', () => {
 
         // Rerender with same data (simulating refresh with no changes)
         rerender(
-            <ClusterNavigator
+            <ThemeProvider theme={lightTheme}><ClusterNavigator
                 data={mockClusterData}
                 selectedServerId={1}
                 onSelectServer={onSelectServer}
                 onRefresh={onRefresh}
-            />
+            /></ThemeProvider>
         );
 
         // Server should still be visible and selection preserved
@@ -338,7 +363,7 @@ describe('ClusterNavigator', () => {
     });
 
     it('maintains expanded state after data update', () => {
-        const { rerender } = render(
+        const { rerender } = renderWithTheme(
             <ClusterNavigator
                 data={mockClusterData}
                 onSelectServer={onSelectServer}
@@ -356,11 +381,11 @@ describe('ClusterNavigator', () => {
         updatedData[0].clusters[0].servers[0].status = 'warning';
 
         rerender(
-            <ClusterNavigator
+            <ThemeProvider theme={lightTheme}><ClusterNavigator
                 data={updatedData}
                 onSelectServer={onSelectServer}
                 onRefresh={onRefresh}
-            />
+            /></ThemeProvider>
         );
 
         // All servers should still be visible (expanded state preserved)
@@ -370,7 +395,7 @@ describe('ClusterNavigator', () => {
     });
 
     it('attaches scroll handler to navigation tree container', () => {
-        render(
+        renderWithTheme(
             <ClusterNavigator
                 data={mockClusterData}
                 onSelectServer={onSelectServer}

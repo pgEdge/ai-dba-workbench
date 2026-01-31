@@ -57,6 +57,8 @@ const (
 	EventTypeAlertCleared      = "alert_cleared"
 	EventTypeAlertAcknowledged = "alert_acknowledged"
 	EventTypeExtensionChange   = "extension_change"
+	EventTypeBlackoutStarted   = "blackout_started"
+	EventTypeBlackoutEnded     = "blackout_ended"
 )
 
 // GetTimelineEvents retrieves timeline events matching the filter criteria
@@ -216,6 +218,8 @@ func buildUnionQuery(connCondition, timeCondition, typeCondition string, filter 
 		includeTypes[EventTypeAlertCleared] = true
 		includeTypes[EventTypeAlertAcknowledged] = true
 		includeTypes[EventTypeExtensionChange] = true
+		includeTypes[EventTypeBlackoutStarted] = true
+		includeTypes[EventTypeBlackoutEnded] = true
 	}
 
 	var subqueries []string
@@ -260,6 +264,16 @@ func buildUnionQuery(connCondition, timeCondition, typeCondition string, filter 
 		subqueries = append(subqueries, buildExtensionChangeQuery(whereClause))
 	}
 
+	// Blackout started
+	if includeTypes[EventTypeBlackoutStarted] {
+		subqueries = append(subqueries, buildBlackoutStartedQuery(whereClause))
+	}
+
+	// Blackout ended
+	if includeTypes[EventTypeBlackoutEnded] {
+		subqueries = append(subqueries, buildBlackoutEndedQuery(whereClause))
+	}
+
 	if len(subqueries) == 0 {
 		// Return an empty result query if no types are selected
 		return `SELECT '' AS id, '' AS event_type, 0 AS connection_id, '' AS server_name,
@@ -300,6 +314,8 @@ func buildCountQuery(connCondition, timeCondition, typeCondition string, filter 
 		includeTypes[EventTypeAlertCleared] = true
 		includeTypes[EventTypeAlertAcknowledged] = true
 		includeTypes[EventTypeExtensionChange] = true
+		includeTypes[EventTypeBlackoutStarted] = true
+		includeTypes[EventTypeBlackoutEnded] = true
 	}
 
 	var countQueries []string
@@ -327,6 +343,12 @@ func buildCountQuery(connCondition, timeCondition, typeCondition string, filter 
 	}
 	if includeTypes[EventTypeExtensionChange] {
 		countQueries = append(countQueries, buildExtensionChangeCountQuery(whereClause))
+	}
+	if includeTypes[EventTypeBlackoutStarted] {
+		countQueries = append(countQueries, buildBlackoutStartedCountQuery(whereClause))
+	}
+	if includeTypes[EventTypeBlackoutEnded] {
+		countQueries = append(countQueries, buildBlackoutEndedCountQuery(whereClause))
 	}
 
 	if len(countQueries) == 0 {
@@ -837,4 +859,121 @@ func buildExtensionChangeCountQuery(whereClause string) string {
 		}
 		return strings.ReplaceAll(tableWhere, "connection_id", "e.connection_id")
 	}())
+}
+
+// buildBlackoutStartedQuery creates the subquery for blackout started events
+func buildBlackoutStartedQuery(whereClause string) string {
+	tableWhere := strings.ReplaceAll(whereClause, "event_time", "b.start_time")
+	tableWhere = strings.ReplaceAll(tableWhere, "connection_id", "COALESCE(b.connection_id, c.id)")
+
+	return fmt.Sprintf(`
+        SELECT
+            'blackout-start-' || b.id::TEXT AS id,
+            '%s' AS event_type,
+            COALESCE(b.connection_id, c.id) AS connection_id,
+            COALESCE(c.name, 'Unknown') AS server_name,
+            b.start_time AS event_time,
+            'info' AS severity,
+            'Blackout Started' AS title,
+            COALESCE(b.reason, '') AS summary,
+            jsonb_build_object(
+                'blackout_id', b.id,
+                'scope', b.scope,
+                'reason', b.reason,
+                'created_by', b.created_by,
+                'end_time', b.end_time
+            )::TEXT AS details
+        FROM blackouts b
+        JOIN connections c ON (
+            CASE
+                WHEN b.connection_id IS NOT NULL THEN c.id = b.connection_id
+                ELSE TRUE
+            END
+        )
+        %s
+    `, EventTypeBlackoutStarted, tableWhere)
+}
+
+// buildBlackoutStartedCountQuery creates the count query for blackout started events
+func buildBlackoutStartedCountQuery(whereClause string) string {
+	tableWhere := strings.ReplaceAll(whereClause, "event_time", "b.start_time")
+	tableWhere = strings.ReplaceAll(tableWhere, "connection_id", "COALESCE(b.connection_id, c.id)")
+
+	return fmt.Sprintf(`
+        SELECT COUNT(*)
+        FROM blackouts b
+        JOIN connections c ON (
+            CASE
+                WHEN b.connection_id IS NOT NULL THEN c.id = b.connection_id
+                ELSE TRUE
+            END
+        )
+        %s
+    `, tableWhere)
+}
+
+// buildBlackoutEndedQuery creates the subquery for blackout ended events
+func buildBlackoutEndedQuery(whereClause string) string {
+	tableWhere := strings.ReplaceAll(whereClause, "event_time", "b.end_time")
+	tableWhere = strings.ReplaceAll(tableWhere, "connection_id", "COALESCE(b.connection_id, c.id)")
+
+	// Add the end_time IS NOT NULL condition
+	endedCondition := "b.end_time IS NOT NULL"
+	if tableWhere != "" {
+		tableWhere = tableWhere + " AND " + endedCondition
+	} else {
+		tableWhere = "WHERE " + endedCondition
+	}
+
+	return fmt.Sprintf(`
+        SELECT
+            'blackout-end-' || b.id::TEXT AS id,
+            '%s' AS event_type,
+            COALESCE(b.connection_id, c.id) AS connection_id,
+            COALESCE(c.name, 'Unknown') AS server_name,
+            b.end_time AS event_time,
+            'info' AS severity,
+            'Blackout Ended' AS title,
+            COALESCE(b.reason, '') AS summary,
+            jsonb_build_object(
+                'blackout_id', b.id,
+                'scope', b.scope,
+                'reason', b.reason,
+                'created_by', b.created_by,
+                'end_time', b.end_time
+            )::TEXT AS details
+        FROM blackouts b
+        JOIN connections c ON (
+            CASE
+                WHEN b.connection_id IS NOT NULL THEN c.id = b.connection_id
+                ELSE TRUE
+            END
+        )
+        %s
+    `, EventTypeBlackoutEnded, tableWhere)
+}
+
+// buildBlackoutEndedCountQuery creates the count query for blackout ended events
+func buildBlackoutEndedCountQuery(whereClause string) string {
+	tableWhere := strings.ReplaceAll(whereClause, "event_time", "b.end_time")
+	tableWhere = strings.ReplaceAll(tableWhere, "connection_id", "COALESCE(b.connection_id, c.id)")
+
+	endedCondition := "b.end_time IS NOT NULL"
+	if tableWhere != "" {
+		tableWhere = tableWhere + " AND " + endedCondition
+	} else {
+		tableWhere = "WHERE " + endedCondition
+	}
+
+	return fmt.Sprintf(`
+        SELECT COUNT(*)
+        FROM blackouts b
+        JOIN connections c ON (
+            CASE
+                WHEN b.connection_id IS NOT NULL THEN c.id = b.connection_id
+                ELSE TRUE
+            END
+        )
+        %s
+    `, tableWhere)
 }

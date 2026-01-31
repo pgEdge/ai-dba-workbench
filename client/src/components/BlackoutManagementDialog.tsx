@@ -10,22 +10,20 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
     Box,
+    Stack,
     Typography,
     Chip,
     alpha,
     IconButton,
     Tooltip,
     Button,
-    ButtonGroup,
     Dialog,
     DialogTitle,
     DialogContent,
     DialogActions,
-    Menu,
-    MenuItem,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import {
@@ -42,7 +40,6 @@ import {
     Repeat as RepeatIcon,
     Close as CloseIcon,
     Add as AddIcon,
-    ArrowDropDown as ArrowDropDownIcon,
 } from '@mui/icons-material';
 import { useBlackouts } from '../contexts/BlackoutContext';
 import BlackoutDialog from './BlackoutDialog';
@@ -196,8 +193,6 @@ const BlackoutManagementDialog: React.FC<BlackoutManagementDialogProps> = ({
 
     const [blackoutDialogOpen, setBlackoutDialogOpen] = useState(false);
     const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false);
-    const [menuAnchorEl, setMenuAnchorEl] = useState<null | HTMLElement>(null);
-    const menuOpen = Boolean(menuAnchorEl);
 
     // Filter non-active blackouts
     const nonActiveBlackouts = useMemo(() => {
@@ -299,16 +294,7 @@ const BlackoutManagementDialog: React.FC<BlackoutManagementDialogProps> = ({
         fontWeight: 600,
     }), []);
 
-    const handleMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
-        setMenuAnchorEl(event.currentTarget);
-    };
-
-    const handleMenuClose = () => {
-        setMenuAnchorEl(null);
-    };
-
     const handleStartBlackout = () => {
-        handleMenuClose();
         setBlackoutDialogOpen(true);
     };
 
@@ -507,35 +493,26 @@ const BlackoutManagementDialog: React.FC<BlackoutManagementDialogProps> = ({
 
                 <DialogActions sx={{ px: 3, py: 1.5 }}>
                     <Box sx={{ flex: 1 }} />
-                    <ButtonGroup variant="contained" size="small" disableElevation>
+                    <Stack direction="row" spacing={1}>
                         <Button
+                            variant="contained"
+                            size="small"
+                            startIcon={<AddIcon sx={ICON_14_SX} />}
+                            onClick={handleStartBlackout}
+                            sx={splitButtonSx}
+                        >
+                            New One Time Blackout
+                        </Button>
+                        <Button
+                            variant="contained"
+                            size="small"
                             startIcon={<AddIcon sx={ICON_14_SX} />}
                             onClick={() => setScheduleDialogOpen(true)}
                             sx={splitButtonSx}
                         >
-                            New Schedule
+                            New Scheduled Blackout
                         </Button>
-                        <Button
-                            size="small"
-                            aria-label="more options"
-                            aria-haspopup="menu"
-                            onClick={handleMenuOpen}
-                            sx={{ px: 0.5, minWidth: 0 }}
-                        >
-                            <ArrowDropDownIcon />
-                        </Button>
-                    </ButtonGroup>
-                    <Menu
-                        anchorEl={menuAnchorEl}
-                        open={menuOpen}
-                        onClose={handleMenuClose}
-                        anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
-                        transformOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-                    >
-                        <MenuItem onClick={handleStartBlackout}>
-                            Start Blackout Now
-                        </MenuItem>
-                    </Menu>
+                    </Stack>
                 </DialogActions>
             </Dialog>
 

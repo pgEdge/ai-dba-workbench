@@ -178,6 +178,8 @@ export const useTimelineEvents = ({
             console.error('Error fetching timeline events:', err);
             if (isMountedRef.current) {
                 setError((err as Error).message || 'Failed to fetch timeline events');
+                setEvents([]);
+                setTotalCount(0);
             }
         } finally {
             if (isMountedRef.current) {

@@ -38,6 +38,8 @@ import {
     Timeline as TimelineIcon,
     EventNote as EventNoteIcon,
     Close as CloseIcon,
+    DoNotDisturb as DoNotDisturbIcon,
+    DoNotDisturbOff as DoNotDisturbOffIcon,
 } from '@mui/icons-material';
 import { useTimelineEvents } from '../hooks/useTimelineEvents';
 
@@ -89,10 +91,35 @@ const EVENT_TYPE_CONFIG = {
         colorKey: 'custom.status.cyan',
         label: 'Extension',
     },
+    blackout_started: {
+        icon: DoNotDisturbIcon,
+        colorKey: 'warning.main',
+        label: 'Blackout',
+    },
+    blackout_ended: {
+        icon: DoNotDisturbOffIcon,
+        colorKey: 'success.main',
+        label: 'Blk End',
+    },
 };
 
 // All event types for filter
 const ALL_EVENT_TYPES = Object.keys(EVENT_TYPE_CONFIG);
+
+// Filter chip definitions — groups related event types under a single chip.
+// Each entry maps a chip key to its display label, theme color key, and
+// the underlying event types it controls.
+const FILTER_CHIPS: Record<string, { label: string; colorKey: string; types: string[] }> = {
+    config_change: { label: 'Config', colorKey: 'primary.main', types: ['config_change'] },
+    hba_change: { label: 'HBA', colorKey: 'info.main', types: ['hba_change'] },
+    ident_change: { label: 'Ident', colorKey: 'info.main', types: ['ident_change'] },
+    restart: { label: 'Restart', colorKey: 'warning.main', types: ['restart'] },
+    alert_fired: { label: 'Alert', colorKey: 'warning.main', types: ['alert_fired'] },
+    alert_cleared: { label: 'Cleared', colorKey: 'success.main', types: ['alert_cleared'] },
+    alert_acknowledged: { label: 'Acked', colorKey: 'custom.status.purple', types: ['alert_acknowledged'] },
+    extension_change: { label: 'Extension', colorKey: 'custom.status.cyan', types: ['extension_change'] },
+    blackouts: { label: 'Blackouts', colorKey: 'warning.main', types: ['blackout_started', 'blackout_ended'] },
+};
 
 // Time range options
 const TIME_RANGE_OPTIONS = [
@@ -122,13 +149,13 @@ const getInitialTimeRange = () => {
 /**
  * Resolve a dotted path like 'primary.main' from the theme palette
  */
-const resolveColor = (palette, colorKey) => {
+const resolveColor = (palette, colorKey: string): string => {
     const parts = colorKey.split('.');
     let value = palette;
     for (const part of parts) {
         value = value?.[part];
     }
-    return value;
+    return typeof value === 'string' ? value : palette?.primary?.main ?? '#1976d2';
 };
 
 /**
@@ -1241,6 +1268,58 @@ const RestartDetails = memo(({ details }) => {
 RestartDetails.displayName = 'RestartDetails';
 
 /**
+ * BlackoutDetails - Shows blackout started/ended details
+ */
+const BlackoutDetails = memo(({ details, eventType }) => {
+    return (
+        <Box sx={{ mt: 1 }}>
+            {details?.scope && (
+                <Box sx={{ mb: 1 }}>
+                    <Typography sx={sectionLabelShortSx}>
+                        Scope
+                    </Typography>
+                    <Typography sx={ackNameSx}>
+                        {details.scope}
+                    </Typography>
+                </Box>
+            )}
+            {details?.reason && (
+                <Box sx={{ mb: 1 }}>
+                    <Typography sx={sectionLabelShortSx}>
+                        Reason
+                    </Typography>
+                    <Typography sx={{ fontSize: '0.75rem', color: 'text.secondary' }}>
+                        {details.reason}
+                    </Typography>
+                </Box>
+            )}
+            {details?.created_by && (
+                <Box sx={{ mb: 1 }}>
+                    <Typography sx={sectionLabelShortSx}>
+                        Created By
+                    </Typography>
+                    <Typography sx={ackNameSx}>
+                        {details.created_by}
+                    </Typography>
+                </Box>
+            )}
+            {eventType === 'blackout_started' && details?.end_time && (
+                <Box sx={{ mb: 1 }}>
+                    <Typography sx={sectionLabelShortSx}>
+                        End Time
+                    </Typography>
+                    <Typography sx={{ fontSize: '0.75rem', color: 'text.secondary' }}>
+                        {formatFullTime(details.end_time)}
+                    </Typography>
+                </Box>
+            )}
+        </Box>
+    );
+});
+
+BlackoutDetails.displayName = 'BlackoutDetails';
+
+/**
  * EventDetails - Renders the appropriate details component based on event type
  */
 const EventDetails = memo(({ event, config }) => {
@@ -1261,6 +1340,9 @@ const EventDetails = memo(({ event, config }) => {
             return <AlertDetails details={event.details} config={config} />;
         case 'restart':
             return <RestartDetails details={event.details} />;
+        case 'blackout_started':
+        case 'blackout_ended':
+            return <BlackoutDetails details={event.details} eventType={event.event_type} />;
         default:
             return null;
     }
@@ -1628,28 +1710,33 @@ const TimelineHeader = memo(({
 
             {/* Event type filter chips */}
             <Box sx={filterChipsSx}>
-                {Object.entries(EVENT_TYPE_CONFIG).map(([type, typeConfig]) => {
-                    const isSelected = eventTypes.includes('all') || eventTypes.includes(type);
-                    const color = resolveColor(theme.palette, typeConfig.colorKey);
+                {Object.entries(FILTER_CHIPS).map(([chipKey, chipConfig]) => {
+                    const chipTypes = chipConfig.types;
+                    const isSelected = eventTypes.includes('all') ||
+                        chipTypes.every(t => eventTypes.includes(t));
+                    const color = resolveColor(theme.palette, chipConfig.colorKey);
                     return (
                         <Chip
-                            key={type}
-                            label={typeConfig.label}
+                            key={chipKey}
+                            label={chipConfig.label}
                             size="small"
                             onClick={() => {
                                 if (eventTypes.includes('all')) {
-                                    // Switching from 'all' - select only this type
-                                    onEventTypesChange([type]);
-                                } else if (isSelected && eventTypes.length === 1) {
-                                    // Last one selected - switch back to all
-                                    onEventTypesChange(['all']);
+                                    // Switching from 'all' - select only this chip's types
+                                    onEventTypesChange([...chipTypes]);
                                 } else if (isSelected) {
-                                    // Deselect this type
-                                    onEventTypesChange(eventTypes.filter(t => t !== type));
+                                    // Deselect this chip's types
+                                    const remaining = eventTypes.filter(t => !chipTypes.includes(t));
+                                    if (remaining.length === 0) {
+                                        // Last chip selected - switch back to all
+                                        onEventTypesChange(['all']);
+                                    } else {
+                                        onEventTypesChange(remaining);
+                                    }
                                 } else {
-                                    // Select this type
-                                    const newTypes = [...eventTypes, type];
-                                    if (newTypes.length === ALL_EVENT_TYPES.length) {
+                                    // Select this chip's types
+                                    const newTypes = [...eventTypes, ...chipTypes];
+                                    if (newTypes.length >= ALL_EVENT_TYPES.length) {
                                         onEventTypesChange(['all']);
                                     } else {
                                         onEventTypesChange(newTypes);

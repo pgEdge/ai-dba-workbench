@@ -119,6 +119,7 @@ describe('EventTimeline Component', () => {
             expect(screen.getByText('Restart')).toBeInTheDocument();
             expect(screen.getByText('Alert')).toBeInTheDocument();
             expect(screen.getByText('Cleared')).toBeInTheDocument();
+            expect(screen.getByText('Blackouts')).toBeInTheDocument();
         });
 
         it('does not render when selection is null', () => {
@@ -256,6 +257,18 @@ describe('EventTimeline Component', () => {
             expect(useTimelineEventsModule.useTimelineEvents).toHaveBeenCalledWith(
                 expect.objectContaining({
                     eventTypes: ['config_change'],
+                })
+            );
+        });
+
+        it('sends both blackout types when Blackouts chip is clicked', () => {
+            render(<EventTimeline selection={mockServerSelection} mode="light" />);
+
+            fireEvent.click(screen.getByText('Blackouts'));
+
+            expect(useTimelineEventsModule.useTimelineEvents).toHaveBeenLastCalledWith(
+                expect.objectContaining({
+                    eventTypes: expect.arrayContaining(['blackout_started', 'blackout_ended']),
                 })
             );
         });

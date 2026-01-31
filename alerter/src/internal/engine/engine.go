@@ -223,6 +223,13 @@ func (e *Engine) Run(ctx context.Context) error {
 		e.runBlackoutScheduler(ctx)
 	}()
 
+	// Connection error evaluator
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		e.runConnectionErrorEvaluator(ctx)
+	}()
+
 	// Alert cleaner (auto-clear resolved alerts)
 	wg.Add(1)
 	go func() {
@@ -454,6 +461,92 @@ func (e *Engine) runReminderWorker(ctx context.Context) {
 			if e.notificationMgr != nil {
 				if err := e.notificationMgr.ProcessReminders(ctx); err != nil {
 					e.log("ERROR: Failed to process reminders: %v", err)
+				}
+			}
+		}
+	}
+}
+
+// runConnectionErrorEvaluator monitors connections for error states
+func (e *Engine) runConnectionErrorEvaluator(ctx context.Context) {
+	ticker := time.NewTicker(AlertCleanerInterval)
+	defer ticker.Stop()
+
+	e.log("Connection error evaluator started (interval: %v)", AlertCleanerInterval)
+
+	// Run immediately on start
+	e.evaluateConnectionErrors(ctx)
+
+	for {
+		select {
+		case <-ctx.Done():
+			e.log("Connection error evaluator stopping")
+			return
+		case <-ticker.C:
+			e.evaluateConnectionErrors(ctx)
+		}
+	}
+}
+
+// evaluateConnectionErrors checks monitored connections for error states
+func (e *Engine) evaluateConnectionErrors(ctx context.Context) {
+	e.debug_log("Evaluating connection errors...")
+
+	connections, err := e.datastore.GetMonitoredConnectionErrors(ctx)
+	if err != nil {
+		e.log("ERROR: Failed to get monitored connection errors: %v", err)
+		return
+	}
+
+	for _, conn := range connections {
+		if ctx.Err() != nil {
+			return
+		}
+
+		if conn.ConnectionError != nil {
+			// Connection has an error - create or update alert
+			alertID, desc, found, err := e.datastore.GetActiveConnectionAlert(ctx, conn.ConnectionID)
+			if err != nil {
+				e.log("ERROR: Failed to check active connection alert for connection %d: %v", conn.ConnectionID, err)
+				continue
+			}
+
+			if !found {
+				alert, err := e.datastore.CreateConnectionAlert(ctx, conn.ConnectionID, conn.Name, *conn.ConnectionError)
+				if err != nil {
+					e.log("ERROR: Failed to create connection alert for connection %d: %v", conn.ConnectionID, err)
+					continue
+				}
+				e.log("Connection error alert created for %s: %s", conn.Name, *conn.ConnectionError)
+
+				// Queue notification for async processing
+				e.queueNotification(alert, database.NotificationTypeAlertFire)
+			} else if desc != *conn.ConnectionError {
+				if err := e.datastore.UpdateConnectionAlertDescription(ctx, alertID, *conn.ConnectionError); err != nil {
+					e.log("ERROR: Failed to update connection alert description for connection %d: %v", conn.ConnectionID, err)
+				} else {
+					e.debug_log("Updated connection error description for %s", conn.Name)
+				}
+			}
+		} else {
+			// No error - clear any active connection alert
+			alertID, _, found, err := e.datastore.GetActiveConnectionAlert(ctx, conn.ConnectionID)
+			if err != nil {
+				e.log("ERROR: Failed to check active connection alert for connection %d: %v", conn.ConnectionID, err)
+				continue
+			}
+
+			if found {
+				if err := e.datastore.ClearAlert(ctx, alertID); err != nil {
+					e.log("ERROR: Failed to clear connection alert for connection %d: %v", conn.ConnectionID, err)
+					continue
+				}
+				e.log("Connection error alert cleared for %s", conn.Name)
+
+				// Queue clear notification
+				alert, err := e.datastore.GetAlert(ctx, alertID)
+				if err == nil {
+					e.queueNotification(alert, database.NotificationTypeAlertClear)
 				}
 			}
 		}

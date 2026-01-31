@@ -89,6 +89,10 @@ const FRIENDLY_ALERT_TITLES = {
 // Get friendly title for an alert
 const getFriendlyTitle = (title) => {
     if (!title) return 'Alert';
+    // Connection error alerts: preserve hostname as-is
+    if (title.toLowerCase().startsWith('connection error:')) {
+        return 'Connection Error:' + title.substring('connection error:'.length);
+    }
     // Check for exact match first (alert rule names are typically lowercase with underscores)
     const normalizedTitle = title.toLowerCase().trim();
     if (FRIENDLY_ALERT_TITLES[normalizedTitle]) {
@@ -560,9 +564,7 @@ const AlertItem = ({ alert, isDark, showServer = false, onAcknowledge, onUnackno
                             color: 'text.secondary',
                             fontSize: '0.6875rem',
                             mt: 0.25,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
+                            wordBreak: 'break-word',
                         }}
                     >
                         {alert.description}

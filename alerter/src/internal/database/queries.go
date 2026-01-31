@@ -16,6 +16,84 @@ import (
 	"time"
 )
 
+// MonitoredConnection represents a connection and its error status
+type MonitoredConnection struct {
+	ConnectionID    int
+	Name            string
+	ConnectionError *string
+}
+
+// GetMonitoredConnectionErrors retrieves all monitored connections and their error status
+func (d *Datastore) GetMonitoredConnectionErrors(ctx context.Context) ([]MonitoredConnection, error) {
+	rows, err := d.pool.Query(ctx, `
+		SELECT id, name, connection_error
+		FROM connections
+		WHERE is_monitored = true
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get monitored connection errors: %w", err)
+	}
+	defer rows.Close()
+
+	var connections []MonitoredConnection
+	for rows.Next() {
+		var conn MonitoredConnection
+		if err := rows.Scan(&conn.ConnectionID, &conn.Name, &conn.ConnectionError); err != nil {
+			return nil, fmt.Errorf("failed to scan monitored connection: %w", err)
+		}
+		connections = append(connections, conn)
+	}
+
+	return connections, nil
+}
+
+// GetActiveConnectionAlert checks if there's an existing active connection alert
+func (d *Datastore) GetActiveConnectionAlert(ctx context.Context, connectionID int) (alertID int64, description string, found bool, err error) {
+	err = d.pool.QueryRow(ctx, `
+		SELECT id, description FROM alerts
+		WHERE alert_type = 'connection' AND connection_id = $1 AND status = 'active'
+		LIMIT 1
+	`, connectionID).Scan(&alertID, &description)
+
+	if err != nil {
+		// No rows found is not an error, just means no active alert
+		return 0, "", false, nil
+	}
+	return alertID, description, true, nil
+}
+
+// CreateConnectionAlert creates a new connection error alert
+func (d *Datastore) CreateConnectionAlert(ctx context.Context, connectionID int, name string, errorMsg string) (*Alert, error) {
+	alert := &Alert{
+		AlertType:    "connection",
+		ConnectionID: connectionID,
+		Severity:     "critical",
+		Title:        fmt.Sprintf("Connection error: %s", name),
+		Description:  errorMsg,
+		Status:       "active",
+		TriggeredAt:  time.Now(),
+	}
+
+	err := d.pool.QueryRow(ctx, `
+		INSERT INTO alerts (alert_type, connection_id, severity, title, description, status, triggered_at)
+		VALUES ('connection', $1, 'critical', $2, $3, 'active', NOW())
+		RETURNING id
+	`, connectionID, alert.Title, errorMsg).Scan(&alert.ID)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to create connection alert: %w", err)
+	}
+	return alert, nil
+}
+
+// UpdateConnectionAlertDescription updates the description of a connection alert
+func (d *Datastore) UpdateConnectionAlertDescription(ctx context.Context, alertID int64, description string) error {
+	_, err := d.pool.Exec(ctx, `
+		UPDATE alerts SET description = $1, last_updated = NOW() WHERE id = $2
+	`, description, alertID)
+	return err
+}
+
 // GetAlerterSettings retrieves the global alerter settings
 func (d *Datastore) GetAlerterSettings(ctx context.Context) (*AlerterSettings, error) {
 	var settings AlerterSettings

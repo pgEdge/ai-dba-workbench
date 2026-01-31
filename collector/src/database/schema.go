@@ -2226,6 +2226,25 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration #3: Add connection alert type
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     3,
+		Description: "Add connection alert type",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				ALTER TABLE alerts DROP CONSTRAINT IF EXISTS alerts_alert_type_check;
+				ALTER TABLE alerts ADD CONSTRAINT alerts_alert_type_check CHECK (alert_type IN ('threshold', 'anomaly', 'connection'));
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to add connection alert type: %w", err)
+			}
+
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations

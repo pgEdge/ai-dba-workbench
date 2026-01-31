@@ -62,6 +62,12 @@ and this project adheres to
 - New consolidated `pg_stat_connection_security` probe combining SSL and GSSAPI
   connection security metrics into a single collection
 
+- Migrated the React client from JavaScript to TypeScript for
+  improved type safety:
+  - Converted all ~50 source, context, hook, and test files with
+    proper type interfaces
+  - Removed the `prop-types` dependency
+
 ### Changed
 
 - Probe consolidation reduces database round-trips by ~20%:

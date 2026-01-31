@@ -409,7 +409,7 @@ const ClusterNavigator = ({
     );
     const onlineServers = data.reduce(
         (acc, g) => acc + (g.clusters?.reduce(
-            (a, c) => a + countServersRecursive(c.servers, s => s.status === 'online'), 0
+            (a, c) => a + countServersRecursive(c.servers, s => s.status !== 'offline'), 0
         ) || 0),
         0
     );
@@ -419,7 +419,8 @@ const ClusterNavigator = ({
         ) || 0),
         0
     );
-    const estateStatus = offlineServers > 0 ? 'offline' : 'online';
+    const warningServers = totalServers - onlineServers - offlineServers;
+    const estateStatus = offlineServers > 0 ? 'offline' : (warningServers > 0 ? 'warning' : 'online');
 
     return (
         <DndContext

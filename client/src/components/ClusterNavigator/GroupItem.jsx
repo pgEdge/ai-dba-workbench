@@ -65,7 +65,7 @@ const GroupItem = memo(({
         0
     ) || 0;
     const onlineServers = group.clusters?.reduce(
-        (acc, c) => acc + countServersRecursive(c.servers, s => s.status === 'online'),
+        (acc, c) => acc + countServersRecursive(c.servers, s => s.status !== 'offline'),
         0
     ) || 0;
 

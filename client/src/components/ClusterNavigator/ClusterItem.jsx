@@ -60,11 +60,12 @@ const ClusterItem = memo(({
     const isAutoDetectedCluster = cluster.auto_cluster_key ? true : false;
     const canEditCluster = user?.isSuperuser && (isDbBackedCluster || isAutoDetectedCluster);
     const totalCount = countServersRecursive(cluster.servers);
-    const onlineCount = countServersRecursive(cluster.servers, s => s.status === 'online');
-    const hasWarning = countServersRecursive(cluster.servers, s => s.status === 'warning') > 0;
-    const allOffline = totalCount > 0 && onlineCount === 0;
+    const offlineCount = countServersRecursive(cluster.servers, s => s.status === 'offline');
+    const onlineCount = countServersRecursive(cluster.servers, s => s.status !== 'offline');
+    const warningCount = totalCount - offlineCount - onlineCount;
+    const allOffline = totalCount > 0 && offlineCount === totalCount;
 
-    const clusterStatus = allOffline ? 'offline' : (hasWarning ? 'warning' : 'online');
+    const clusterStatus = allOffline ? 'offline' : (warningCount > 0 || offlineCount > 0 ? 'warning' : 'online');
     const clusterType = getClusterType(cluster);
     const isSelected = selectedClusterId === cluster.id;
 

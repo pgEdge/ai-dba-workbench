@@ -208,7 +208,7 @@ func (ds *Datastore) GetMonitoredConnections() ([]MonitoredConnection, error) {
 	rows, err := conn.Query(ctx, `
         SELECT id, name, host, hostaddr, port, database_name, username,
                password_encrypted, sslmode, sslcert, sslkey, sslrootcert,
-               owner_username, owner_token, updated_at
+               owner_username, owner_token, updated_at, connection_error
         FROM connections
         WHERE is_monitored = TRUE
     `)
@@ -225,6 +225,7 @@ func (ds *Datastore) GetMonitoredConnections() ([]MonitoredConnection, error) {
 			&c.DatabaseName, &c.Username, &c.PasswordEncrypted,
 			&c.SSLMode, &c.SSLCert, &c.SSLKey, &c.SSLRootCert,
 			&c.OwnerUsername, &c.OwnerToken, &c.UpdatedAt,
+			&c.ConnectionError,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan connection row: %w", err)
 		}
@@ -232,6 +233,36 @@ func (ds *Datastore) GetMonitoredConnections() ([]MonitoredConnection, error) {
 	}
 
 	return connections, rows.Err()
+}
+
+// GetMonitoredConnectionByID returns a single monitored connection by its ID
+func (ds *Datastore) GetMonitoredConnectionByID(connectionID int) (MonitoredConnection, error) {
+	conn, err := ds.GetConnection()
+	if err != nil {
+		return MonitoredConnection{}, fmt.Errorf("failed to get connection: %w", err)
+	}
+	defer ds.ReturnConnection(conn)
+
+	ctx := context.Background()
+	var c MonitoredConnection
+	err = conn.QueryRow(ctx, `
+        SELECT id, name, host, hostaddr, port, database_name, username,
+               password_encrypted, sslmode, sslcert, sslkey, sslrootcert,
+               owner_username, owner_token, updated_at, connection_error
+        FROM connections
+        WHERE id = $1 AND is_monitored = TRUE
+    `, connectionID).Scan(
+		&c.ID, &c.Name, &c.Host, &c.HostAddr, &c.Port,
+		&c.DatabaseName, &c.Username, &c.PasswordEncrypted,
+		&c.SSLMode, &c.SSLCert, &c.SSLKey, &c.SSLRootCert,
+		&c.OwnerUsername, &c.OwnerToken, &c.UpdatedAt,
+		&c.ConnectionError,
+	)
+	if err != nil {
+		return MonitoredConnection{}, fmt.Errorf("failed to get monitored connection %d: %w", connectionID, err)
+	}
+
+	return c, nil
 }
 
 // SetConnectionError updates the connection_error column for a connection.

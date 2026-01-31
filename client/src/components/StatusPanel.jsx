@@ -1454,17 +1454,21 @@ const StatusPanel = ({
         if (!selection) return null;
 
         if (selection.type === 'server') {
+            const isOffline = selection.status === 'offline';
+            const hasAlerts = selection.active_alert_count > 0;
+            const effectiveStatus = isOffline ? 'offline' : (hasAlerts ? 'warning' : 'online');
+
             return {
-                status: selection.status,
-                servers: { total: 1, online: selection.status === 'online' ? 1 : 0 },
+                status: effectiveStatus,
+                servers: { total: 1, online: effectiveStatus === 'online' ? 1 : 0 },
             };
         }
 
         if (selection.type === 'cluster') {
             const servers = selection.servers || [];
-            const online = servers.filter(s => s.status === 'online').length;
-            const warning = servers.filter(s => s.status === 'warning').length;
             const offline = servers.filter(s => s.status === 'offline').length;
+            const warning = servers.filter(s => s.status !== 'offline' && s.active_alert_count > 0).length;
+            const online = servers.filter(s => s.status !== 'offline' && !s.active_alert_count).length;
 
             return {
                 status: offline === servers.length ? 'offline' : (warning > 0 || offline > 0 ? 'warning' : 'online'),
@@ -1491,9 +1495,9 @@ const StatusPanel = ({
                 });
             });
 
-            const online = allServers.filter(s => s.status === 'online').length;
-            const warning = allServers.filter(s => s.status === 'warning').length;
             const offline = allServers.filter(s => s.status === 'offline').length;
+            const warning = allServers.filter(s => s.status !== 'offline' && s.active_alert_count > 0).length;
+            const online = allServers.filter(s => s.status !== 'offline' && !s.active_alert_count).length;
 
             return {
                 status: offline === allServers.length && allServers.length > 0 ? 'offline' : (warning > 0 || offline > 0 ? 'warning' : 'online'),

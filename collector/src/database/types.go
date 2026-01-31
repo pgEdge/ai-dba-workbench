@@ -32,6 +32,7 @@ type MonitoredConnection struct {
 	OwnerUsername     sql.NullString
 	OwnerToken        sql.NullString
 	UpdatedAt         time.Time
+	ConnectionError   *string
 }
 
 // ApplicationName identifies monitoring connections

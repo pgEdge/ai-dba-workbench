@@ -1516,23 +1516,24 @@ func (d *Datastore) AssignConnectionToCluster(ctx context.Context, connectionID 
 
 // TopologyServerInfo extends ServerInfo with topology and child servers
 type TopologyServerInfo struct {
-	ID              int                  `json:"id"`
-	Name            string               `json:"name"`
-	Host            string               `json:"host"`
-	Port            int                  `json:"port"`
-	Status          string               `json:"status"`
-	ConnectionError string               `json:"connection_error,omitempty"`
-	Role            string               `json:"role,omitempty"`
-	PrimaryRole     string               `json:"primary_role"`
-	IsExpandable    bool                 `json:"is_expandable"`
-	OwnerUsername   string               `json:"owner_username,omitempty"`
-	Version         string               `json:"version,omitempty"`
-	OS              string               `json:"os,omitempty"`
-	SpockNodeName   string               `json:"spock_node_name,omitempty"`
-	SpockVersion    string               `json:"spock_version,omitempty"`
-	DatabaseName    string               `json:"database_name,omitempty"`
-	Username        string               `json:"username,omitempty"`
-	Children        []TopologyServerInfo `json:"children,omitempty"`
+	ID               int                  `json:"id"`
+	Name             string               `json:"name"`
+	Host             string               `json:"host"`
+	Port             int                  `json:"port"`
+	Status           string               `json:"status"`
+	ConnectionError  string               `json:"connection_error,omitempty"`
+	ActiveAlertCount int                  `json:"active_alert_count"`
+	Role             string               `json:"role,omitempty"`
+	PrimaryRole      string               `json:"primary_role"`
+	IsExpandable     bool                 `json:"is_expandable"`
+	OwnerUsername    string               `json:"owner_username,omitempty"`
+	Version          string               `json:"version,omitempty"`
+	OS               string               `json:"os,omitempty"`
+	SpockNodeName    string               `json:"spock_node_name,omitempty"`
+	SpockVersion     string               `json:"spock_version,omitempty"`
+	DatabaseName     string               `json:"database_name,omitempty"`
+	Username         string               `json:"username,omitempty"`
+	Children         []TopologyServerInfo `json:"children,omitempty"`
 }
 
 // TopologyCluster represents a replication-aware cluster
@@ -1576,6 +1577,7 @@ type connectionWithRole struct {
 	IsStreamingStandby bool
 	Status             string
 	ConnectionError    sql.NullString
+	ActiveAlertCount   int
 }
 
 // GetClusterTopology returns the combined topology including manually-created
@@ -1678,21 +1680,18 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
                     END, 'unknown'
                 ) as status
             FROM metrics.pg_node_role
-            WHERE collected_at > NOW() - INTERVAL '15 minutes'
             ORDER BY connection_id, collected_at DESC
         ),
         latest_server_info AS (
             SELECT DISTINCT ON (connection_id)
                 connection_id, server_version
             FROM metrics.pg_server_info
-            WHERE collected_at > NOW() - INTERVAL '15 minutes'
             ORDER BY connection_id, collected_at DESC
         ),
         latest_os_info AS (
             SELECT DISTINCT ON (connection_id)
                 connection_id, name as os_name
             FROM metrics.pg_sys_os_info
-            WHERE collected_at > NOW() - INTERVAL '15 minutes'
             ORDER BY connection_id, collected_at DESC
         ),
         latest_spock_version AS (
@@ -1701,6 +1700,12 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
             FROM metrics.pg_extension
             WHERE extname = 'spock'
             ORDER BY connection_id, collected_at DESC
+        ),
+        active_alerts AS (
+            SELECT connection_id, COUNT(*) as alert_count
+            FROM alerts
+            WHERE status = 'active'
+            GROUP BY connection_id
         )
         SELECT c.id, c.name, c.host, c.port, c.owner_username,
                c.database_name, c.username,
@@ -1721,12 +1726,14 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
                    THEN 'initialising'
                    ELSE COALESCE(lr.status, 'unknown')
                END as status,
-               c.connection_error
+               c.connection_error,
+               COALESCE(aa.alert_count, 0) as active_alert_count
         FROM connections c
         LEFT JOIN latest_roles lr ON c.id = lr.connection_id
         LEFT JOIN latest_server_info lsi ON c.id = lsi.connection_id
         LEFT JOIN latest_os_info loi ON c.id = loi.connection_id
         LEFT JOIN latest_spock_version lsv ON c.id = lsv.connection_id
+        LEFT JOIN active_alerts aa ON c.id = aa.connection_id
         ORDER BY c.name
     `
 
@@ -1751,6 +1758,7 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
 			&conn.PublisherHost, &conn.PublisherPort,
 			&conn.Status,
 			&conn.ConnectionError,
+			&conn.ActiveAlertCount,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan connection: %w", err)
 		}
@@ -2017,22 +2025,25 @@ func (d *Datastore) getServersInClusterWithRolesInternal(ctx context.Context, cl
                     END, 'unknown'
                 ) as status
             FROM metrics.pg_node_role
-            WHERE collected_at > NOW() - INTERVAL '15 minutes'
             ORDER BY connection_id, collected_at DESC
         ),
         latest_server_info AS (
             SELECT DISTINCT ON (connection_id)
                 connection_id, server_version
             FROM metrics.pg_server_info
-            WHERE collected_at > NOW() - INTERVAL '15 minutes'
             ORDER BY connection_id, collected_at DESC
         ),
         latest_os_info AS (
             SELECT DISTINCT ON (connection_id)
                 connection_id, name as os_name
             FROM metrics.pg_sys_os_info
-            WHERE collected_at > NOW() - INTERVAL '15 minutes'
             ORDER BY connection_id, collected_at DESC
+        ),
+        active_alerts AS (
+            SELECT connection_id, COUNT(*) as alert_count
+            FROM alerts
+            WHERE status = 'active'
+            GROUP BY connection_id
         )
         SELECT c.id, c.name, c.host, c.port, c.owner_username, c.role,
                c.database_name, c.username,
@@ -2040,11 +2051,13 @@ func (d *Datastore) getServersInClusterWithRolesInternal(ctx context.Context, cl
                loi.os_name,
                lr.spock_node_name,
                COALESCE(lr.primary_role, 'unknown') as primary_role,
-               COALESCE(lr.status, 'unknown') as status
+               COALESCE(lr.status, 'unknown') as status,
+               COALESCE(aa.alert_count, 0) as active_alert_count
         FROM connections c
         LEFT JOIN latest_roles lr ON c.id = lr.connection_id
         LEFT JOIN latest_server_info lsi ON c.id = lsi.connection_id
         LEFT JOIN latest_os_info loi ON c.id = loi.connection_id
+        LEFT JOIN active_alerts aa ON c.id = aa.connection_id
         WHERE c.cluster_id = $1
         ORDER BY
             CASE WHEN c.role = 'primary' THEN 0 ELSE 1 END,
@@ -2063,7 +2076,7 @@ func (d *Datastore) getServersInClusterWithRolesInternal(ctx context.Context, cl
 		var ownerUsername, role, version, osName, spockNodeName sql.NullString
 		if err := rows.Scan(&s.ID, &s.Name, &s.Host, &s.Port, &ownerUsername, &role,
 			&s.DatabaseName, &s.Username, &version, &osName, &spockNodeName,
-			&s.PrimaryRole, &s.Status); err != nil {
+			&s.PrimaryRole, &s.Status, &s.ActiveAlertCount); err != nil {
 			return nil, fmt.Errorf("failed to scan server: %w", err)
 		}
 		if ownerUsername.Valid {
@@ -2388,22 +2401,23 @@ func (d *Datastore) groupLogicalReplicationByPublisher(
 			pubSpockVersion = publisher.SpockVersion.String
 		}
 		pubServer := TopologyServerInfo{
-			ID:            publisher.ID,
-			Name:          publisher.Name,
-			Host:          publisher.Host,
-			Port:          publisher.Port,
-			Status:        publisher.Status,
-			Role:          d.mapPrimaryRoleToDisplayRole(publisher.PrimaryRole),
-			PrimaryRole:   publisher.PrimaryRole,
-			IsExpandable:  true,
-			OwnerUsername: pubOwner,
-			Version:       pubVersion,
-			OS:            pubOS,
-			SpockNodeName: pubSpockNodeName,
-			SpockVersion:  pubSpockVersion,
-			DatabaseName:  publisher.DatabaseName,
-			Username:      publisher.Username,
-			Children:      make([]TopologyServerInfo, 0, len(subscribers)),
+			ID:               publisher.ID,
+			Name:             publisher.Name,
+			Host:             publisher.Host,
+			Port:             publisher.Port,
+			Status:           publisher.Status,
+			Role:             d.mapPrimaryRoleToDisplayRole(publisher.PrimaryRole),
+			PrimaryRole:      publisher.PrimaryRole,
+			IsExpandable:     true,
+			OwnerUsername:    pubOwner,
+			Version:          pubVersion,
+			OS:               pubOS,
+			SpockNodeName:    pubSpockNodeName,
+			SpockVersion:     pubSpockVersion,
+			DatabaseName:     publisher.DatabaseName,
+			Username:         publisher.Username,
+			ActiveAlertCount: publisher.ActiveAlertCount,
+			Children:         make([]TopologyServerInfo, 0, len(subscribers)),
 		}
 
 		// Add subscribers as children
@@ -2430,22 +2444,23 @@ func (d *Datastore) groupLogicalReplicationByPublisher(
 				subSpockVersion = sub.SpockVersion.String
 			}
 			subServer := TopologyServerInfo{
-				ID:            sub.ID,
-				Name:          sub.Name,
-				Host:          sub.Host,
-				Port:          sub.Port,
-				Status:        sub.Status,
-				Role:          d.mapPrimaryRoleToDisplayRole(sub.PrimaryRole),
-				PrimaryRole:   sub.PrimaryRole,
-				IsExpandable:  false,
-				OwnerUsername: subOwner,
-				Version:       subVersion,
-				OS:            subOS,
-				SpockNodeName: subSpockNodeName,
-				SpockVersion:  subSpockVersion,
-				DatabaseName:  sub.DatabaseName,
-				Username:      sub.Username,
-				Children:      nil,
+				ID:               sub.ID,
+				Name:             sub.Name,
+				Host:             sub.Host,
+				Port:             sub.Port,
+				Status:           sub.Status,
+				Role:             d.mapPrimaryRoleToDisplayRole(sub.PrimaryRole),
+				PrimaryRole:      sub.PrimaryRole,
+				IsExpandable:     false,
+				OwnerUsername:    subOwner,
+				Version:          subVersion,
+				OS:               subOS,
+				SpockNodeName:    subSpockNodeName,
+				SpockVersion:     subSpockVersion,
+				DatabaseName:     sub.DatabaseName,
+				Username:         sub.Username,
+				ActiveAlertCount: sub.ActiveAlertCount,
+				Children:         nil,
 			}
 			pubServer.Children = append(pubServer.Children, subServer)
 		}
@@ -2519,22 +2534,23 @@ func (d *Datastore) buildServerWithChildren(
 	}
 
 	server := TopologyServerInfo{
-		ID:            conn.ID,
-		Name:          conn.Name,
-		Host:          conn.Host,
-		Port:          conn.Port,
-		Status:        conn.Status,
-		Role:          d.mapPrimaryRoleToDisplayRole(conn.PrimaryRole),
-		PrimaryRole:   conn.PrimaryRole,
-		IsExpandable:  len(childrenMap[conn.ID]) > 0,
-		OwnerUsername: ownerUsername,
-		Version:       version,
-		OS:            os,
-		SpockNodeName: spockNodeName,
-		SpockVersion:  spockVersion,
-		DatabaseName:  conn.DatabaseName,
-		Username:      conn.Username,
-		Children:      make([]TopologyServerInfo, 0),
+		ID:               conn.ID,
+		Name:             conn.Name,
+		Host:             conn.Host,
+		Port:             conn.Port,
+		Status:           conn.Status,
+		Role:             d.mapPrimaryRoleToDisplayRole(conn.PrimaryRole),
+		PrimaryRole:      conn.PrimaryRole,
+		IsExpandable:     len(childrenMap[conn.ID]) > 0,
+		OwnerUsername:    ownerUsername,
+		Version:          version,
+		OS:               os,
+		SpockNodeName:    spockNodeName,
+		SpockVersion:     spockVersion,
+		DatabaseName:     conn.DatabaseName,
+		Username:         conn.Username,
+		ActiveAlertCount: conn.ActiveAlertCount,
+		Children:         make([]TopologyServerInfo, 0),
 	}
 
 	if conn.ConnectionError.Valid {

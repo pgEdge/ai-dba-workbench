@@ -261,24 +261,9 @@ func (ps *ProbeScheduler) scheduleProbeForConnection(probe probes.MetricsProbe, 
 	defer ticker.Stop()
 
 	// Get connection info
-	connections, err := ps.datastore.GetMonitoredConnections()
+	conn, err := ps.getMonitoredConnectionByID(connectionID)
 	if err != nil {
-		logger.Errorf("Error getting monitored connections for probe %s: %v", config.Name, err)
-		return
-	}
-
-	var conn database.MonitoredConnection
-	found := false
-	for _, c := range connections {
-		if c.ID == connectionID {
-			conn = c
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		logger.Errorf("Connection %d not found for probe %s", connectionID, config.Name)
+		logger.Errorf("Connection %d not found for probe %s: %v", connectionID, config.Name, err)
 		return
 	}
 
@@ -346,16 +331,7 @@ func (ps *ProbeScheduler) scheduleProbeForConnection(probe probes.MetricsProbe, 
 // getMonitoredConnectionByID retrieves a single monitored connection by its ID.
 // This is used to refresh connection metadata (e.g. updated_at) each probe cycle.
 func (ps *ProbeScheduler) getMonitoredConnectionByID(connectionID int) (database.MonitoredConnection, error) {
-	connections, err := ps.datastore.GetMonitoredConnections()
-	if err != nil {
-		return database.MonitoredConnection{}, fmt.Errorf("failed to get monitored connections: %w", err)
-	}
-	for _, c := range connections {
-		if c.ID == connectionID {
-			return c, nil
-		}
-	}
-	return database.MonitoredConnection{}, fmt.Errorf("connection %d not found or no longer monitored", connectionID)
+	return ps.datastore.GetMonitoredConnectionByID(connectionID)
 }
 
 // executeProbeForConnection executes a probe against a single monitored connection
@@ -426,29 +402,43 @@ func (ps *ProbeScheduler) executeProbeForConnection(ctx context.Context, probe p
 			config.Name, conn.Name, float64(duration.Microseconds())/1000.0)
 	}
 
-	// Update connection_error column on the connections table
-	dsCtx, dsCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer dsCancel()
-
-	dsConn, dsErr := ps.datastore.GetConnectionWithContext(dsCtx)
-	if dsErr != nil {
-		logger.Errorf("Failed to get datastore connection for connection error update: %v", dsErr)
-	} else {
-		if connectionError {
-			if setErr := database.SetConnectionError(dsCtx, dsConn, conn.ID, &connectionErrorMsg); setErr != nil {
-				logger.Errorf("Failed to set connection error for connection %d: %v", conn.ID, setErr)
-			}
-			// Remove the cached pool so the next probe cycle creates a fresh one
-			// with potentially updated credentials
-			if removeErr := ps.poolManager.RemovePool(conn.ID); removeErr != nil {
-				logger.Errorf("Failed to remove cached pool for connection %d: %v", conn.ID, removeErr)
-			}
-		} else {
-			if setErr := database.SetConnectionError(dsCtx, dsConn, conn.ID, nil); setErr != nil {
-				logger.Errorf("Failed to clear connection error for connection %d: %v", conn.ID, setErr)
-			}
+	// Update connection_error column only when state changes
+	errorChanged := false
+	if connectionError {
+		// Error occurred: update if new or message changed
+		if conn.ConnectionError == nil || *conn.ConnectionError != connectionErrorMsg {
+			errorChanged = true
 		}
-		ps.datastore.ReturnConnection(dsConn)
+	} else {
+		// No error: clear if previously had one
+		if conn.ConnectionError != nil {
+			errorChanged = true
+		}
+	}
+
+	if errorChanged {
+		dsCtx, dsCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer dsCancel()
+
+		dsConn, dsErr := ps.datastore.GetConnectionWithContext(dsCtx)
+		if dsErr != nil {
+			logger.Errorf("Failed to get datastore connection for connection error update: %v", dsErr)
+		} else {
+			if connectionError {
+				if setErr := database.SetConnectionError(dsCtx, dsConn, conn.ID, &connectionErrorMsg); setErr != nil {
+					logger.Errorf("Failed to set connection error for connection %d: %v", conn.ID, setErr)
+				}
+				// Remove the cached pool so the next probe cycle creates a fresh one
+				if removeErr := ps.poolManager.RemovePool(conn.ID); removeErr != nil {
+					logger.Errorf("Failed to remove cached pool for connection %d: %v", conn.ID, removeErr)
+				}
+			} else {
+				if setErr := database.SetConnectionError(dsCtx, dsConn, conn.ID, nil); setErr != nil {
+					logger.Errorf("Failed to clear connection error for connection %d: %v", conn.ID, setErr)
+				}
+			}
+			ps.datastore.ReturnConnection(dsConn)
+		}
 	}
 
 	// Record probe availability (skip if we already recorded a connection error)

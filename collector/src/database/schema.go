@@ -2245,6 +2245,85 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration #4: Add scope columns to blackouts and blackout_schedules
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     4,
+		Description: "Add hierarchical scope to blackouts and blackout_schedules",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			// Add scope columns and foreign keys to blackouts
+			_, err := tx.Exec(ctx, `
+				ALTER TABLE blackouts
+					ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'server',
+					ADD COLUMN IF NOT EXISTS group_id INTEGER REFERENCES cluster_groups(id) ON DELETE CASCADE,
+					ADD COLUMN IF NOT EXISTS cluster_id INTEGER REFERENCES clusters(id) ON DELETE CASCADE;
+
+				ALTER TABLE blackouts DROP CONSTRAINT IF EXISTS blackouts_scope_check;
+				ALTER TABLE blackouts ADD CONSTRAINT blackouts_scope_check
+					CHECK (scope IN ('estate', 'group', 'cluster', 'server'));
+
+				ALTER TABLE blackouts DROP CONSTRAINT IF EXISTS blackouts_scope_ids_check;
+				ALTER TABLE blackouts ADD CONSTRAINT blackouts_scope_ids_check CHECK (
+					(scope = 'estate' AND connection_id IS NULL AND group_id IS NULL AND cluster_id IS NULL)
+					OR (scope = 'group' AND group_id IS NOT NULL AND connection_id IS NULL AND cluster_id IS NULL)
+					OR (scope = 'cluster' AND cluster_id IS NOT NULL AND connection_id IS NULL AND group_id IS NULL)
+					OR (scope = 'server')
+				);
+
+				CREATE INDEX IF NOT EXISTS idx_blackouts_scope ON blackouts(scope);
+				CREATE INDEX IF NOT EXISTS idx_blackouts_group_id ON blackouts(group_id);
+				CREATE INDEX IF NOT EXISTS idx_blackouts_cluster_id ON blackouts(cluster_id);
+
+				COMMENT ON COLUMN blackouts.scope IS
+					'Blackout scope level: estate, group, cluster, or server';
+				COMMENT ON COLUMN blackouts.group_id IS
+					'Cluster group targeted when scope is group';
+				COMMENT ON COLUMN blackouts.cluster_id IS
+					'Cluster targeted when scope is cluster';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to add scope columns to blackouts: %w", err)
+			}
+
+			// Add scope columns and foreign keys to blackout_schedules
+			_, err = tx.Exec(ctx, `
+				ALTER TABLE blackout_schedules
+					ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'server',
+					ADD COLUMN IF NOT EXISTS group_id INTEGER REFERENCES cluster_groups(id) ON DELETE CASCADE,
+					ADD COLUMN IF NOT EXISTS cluster_id INTEGER REFERENCES clusters(id) ON DELETE CASCADE;
+
+				ALTER TABLE blackout_schedules DROP CONSTRAINT IF EXISTS blackout_schedules_scope_check;
+				ALTER TABLE blackout_schedules ADD CONSTRAINT blackout_schedules_scope_check
+					CHECK (scope IN ('estate', 'group', 'cluster', 'server'));
+
+				ALTER TABLE blackout_schedules DROP CONSTRAINT IF EXISTS blackout_schedules_scope_ids_check;
+				ALTER TABLE blackout_schedules ADD CONSTRAINT blackout_schedules_scope_ids_check CHECK (
+					(scope = 'estate' AND connection_id IS NULL AND group_id IS NULL AND cluster_id IS NULL)
+					OR (scope = 'group' AND group_id IS NOT NULL AND connection_id IS NULL AND cluster_id IS NULL)
+					OR (scope = 'cluster' AND cluster_id IS NOT NULL AND connection_id IS NULL AND group_id IS NULL)
+					OR (scope = 'server')
+				);
+
+				CREATE INDEX IF NOT EXISTS idx_blackout_schedules_scope ON blackout_schedules(scope);
+				CREATE INDEX IF NOT EXISTS idx_blackout_schedules_group_id ON blackout_schedules(group_id);
+				CREATE INDEX IF NOT EXISTS idx_blackout_schedules_cluster_id ON blackout_schedules(cluster_id);
+
+				COMMENT ON COLUMN blackout_schedules.scope IS
+					'Blackout scope level: estate, group, cluster, or server';
+				COMMENT ON COLUMN blackout_schedules.group_id IS
+					'Cluster group targeted when scope is group';
+				COMMENT ON COLUMN blackout_schedules.cluster_id IS
+					'Cluster targeted when scope is cluster';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to add scope columns to blackout_schedules: %w", err)
+			}
+
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations

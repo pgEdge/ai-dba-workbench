@@ -47,10 +47,13 @@ import {
     Undo as UnackIcon,
     Psychology as AnalyzeIcon,
     TableChart as TableIcon,
+    DarkMode as BlackoutIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import EventTimeline from './EventTimeline';
+import BlackoutPanel from './BlackoutPanel';
 import AlertAnalysisDialog from './AlertAnalysisDialog';
+import BlackoutManagementDialog from './BlackoutManagementDialog';
 
 // Map internal alert rule names to friendly display names
 const FRIENDLY_ALERT_TITLES = {
@@ -1452,7 +1455,7 @@ const AlertsSection = ({ alerts, loading, showServer = false, onAcknowledge, onU
 /**
  * SelectionHeader - Header showing what's currently selected
  */
-const SelectionHeader = ({ selection, alertCount = 0 }) => {
+const SelectionHeader = ({ selection, alertCount = 0, onBlackoutClick }) => {
     const theme = useTheme();
 
     const getIcon = () => {
@@ -1501,6 +1504,15 @@ const SelectionHeader = ({ selection, alertCount = 0 }) => {
                     {selection.name}
                 </Typography>
             </Box>
+            <Tooltip title="Blackout management" placement="bottom">
+                <IconButton
+                    size="small"
+                    onClick={onBlackoutClick}
+                    sx={{ color: 'text.secondary', mr: 1 }}
+                >
+                    <BlackoutIcon sx={{ fontSize: 20 }} />
+                </IconButton>
+            </Tooltip>
             <HeaderStatusIndicator
                 status={selection.status}
                 alertCount={alertCount}
@@ -1527,6 +1539,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
     const [alerts, setAlerts] = useState([]);
     const [loading, setLoading] = useState(false);
     const initialLoadDoneRef = React.useRef(false);
+    const [blackoutMgmtOpen, setBlackoutMgmtOpen] = useState(false);
     const [ackDialogOpen, setAckDialogOpen] = useState(false);
     const [selectedAlertForAck, setSelectedAlertForAck] = useState(null);
     const [analysisDialogOpen, setAnalysisDialogOpen] = useState(false);
@@ -1819,7 +1832,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
             {/* Content Container */}
             <Box>
                 {/* Selection Header */}
-                <SelectionHeader selection={selection} alertCount={activeAlertCount} />
+                <SelectionHeader selection={selection} alertCount={activeAlertCount} onBlackoutClick={() => setBlackoutMgmtOpen(true)} />
 
                 {/* Divider with gradient */}
                 <Box sx={dividerSx} />
@@ -1875,6 +1888,9 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                     mode={isDark ? 'dark' : 'light'}
                 />
 
+                {/* Blackout Management */}
+                <BlackoutPanel selection={selection} />
+
                 {/* Alerts Section */}
                 <AlertsSection
                     alerts={alerts}
@@ -1906,6 +1922,13 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                     setAnalysisAlert(null);
                 }}
                 isDark={isDark}
+            />
+
+            {/* Blackout Management Dialog */}
+            <BlackoutManagementDialog
+                open={blackoutMgmtOpen}
+                onClose={() => setBlackoutMgmtOpen(false)}
+                selection={selection}
             />
         </Box>
     );

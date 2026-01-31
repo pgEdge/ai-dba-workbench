@@ -14,6 +14,7 @@ import { Box, CircularProgress, CssBaseline } from '@mui/material';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ClusterProvider, useCluster } from './contexts/ClusterContext';
 import { AlertsProvider } from './contexts/AlertsContext';
+import { BlackoutProvider } from './contexts/BlackoutContext';
 import ErrorBoundary from './components/ErrorBoundary';
 import Header from './components/Header';
 import Login from './components/Login';
@@ -195,36 +196,38 @@ const MainLayout: React.FC<MainLayoutProps> = ({ mode, onToggleTheme }) => {
     }, [selectionType, selectedServer, selectedCluster, clusterData]);
 
     return (
-        <Box sx={styles.mainLayoutRoot}>
-            <Header
-                onToggleTheme={onToggleTheme}
-                mode={mode}
-                helpContext={helpContext}
-            />
-            <Box sx={styles.mainLayoutBody}>
-                {/* Cluster Navigator */}
-                <ClusterNavigator
-                    data={clusterData}
-                    selectedServerId={selectedServer?.id}
-                    selectedClusterId={selectedCluster?.id}
-                    selectionType={selectionType}
-                    onSelectServer={selectServer}
-                    onSelectCluster={selectCluster}
-                    onSelectEstate={selectEstate}
-                    onRefresh={fetchClusterData}
-                    loading={loading}
+        <BlackoutProvider selection={selection}>
+            <Box sx={styles.mainLayoutRoot}>
+                <Header
+                    onToggleTheme={onToggleTheme}
                     mode={mode}
+                    helpContext={helpContext}
                 />
-
-                {/* Main content area */}
-                <Box sx={styles.contentArea}>
-                    <StatusPanel
-                        selection={selection}
+                <Box sx={styles.mainLayoutBody}>
+                    {/* Cluster Navigator */}
+                    <ClusterNavigator
+                        data={clusterData}
+                        selectedServerId={selectedServer?.id}
+                        selectedClusterId={selectedCluster?.id}
+                        selectionType={selectionType}
+                        onSelectServer={selectServer}
+                        onSelectCluster={selectCluster}
+                        onSelectEstate={selectEstate}
+                        onRefresh={fetchClusterData}
+                        loading={loading}
                         mode={mode}
                     />
+
+                    {/* Main content area */}
+                    <Box sx={styles.contentArea}>
+                        <StatusPanel
+                            selection={selection}
+                            mode={mode}
+                        />
+                    </Box>
                 </Box>
             </Box>
-        </Box>
+        </BlackoutProvider>
     );
 };
 

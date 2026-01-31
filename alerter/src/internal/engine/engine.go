@@ -1407,10 +1407,13 @@ func (e *Engine) checkScheduledBlackouts(ctx context.Context) {
 				continue
 			}
 
-			// Create a new blackout entry
+			// Create a new blackout entry, inheriting scope from the schedule
 			endTime := now.Add(time.Duration(schedule.DurationMinutes) * time.Minute)
 			blackout := &database.Blackout{
+				Scope:        schedule.Scope,
 				ConnectionID: schedule.ConnectionID,
+				GroupID:      schedule.GroupID,
+				ClusterID:    schedule.ClusterID,
 				DatabaseName: schedule.DatabaseName,
 				Reason:       fmt.Sprintf("Scheduled: %s", schedule.Name),
 				StartTime:    now,

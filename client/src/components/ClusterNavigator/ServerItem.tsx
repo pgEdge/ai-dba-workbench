@@ -173,6 +173,8 @@ interface ServerItemProps {
     onDeleteServer?: (server: ExtendedServer) => void;
     alertCount?: number;
     getServerAlertCount?: (serverId: number) => number;
+    getServerBlackoutStatus?: (serverId: number) => { active: boolean; inherited: boolean };
+    getClusterBlackoutStatus?: (clusterId: string) => { active: boolean; inherited: boolean };
 }
 
 const ServerItem = memo<ServerItemProps>(({
@@ -193,6 +195,8 @@ const ServerItem = memo<ServerItemProps>(({
     onDeleteServer,
     alertCount = 0,
     getServerAlertCount,
+    getServerBlackoutStatus,
+    getClusterBlackoutStatus,
 }) => {
     const theme = useTheme();
     const ROLE_CONFIGS = getRoleConfigs(theme);
@@ -284,7 +288,13 @@ const ServerItem = memo<ServerItemProps>(({
                         )}
                     </IconButton>
                 )}
-                <StatusIndicator status={server.status} alertCount={alertCount} connectionError={server.connection_error} />
+                <StatusIndicator
+                    status={server.status}
+                    alertCount={alertCount}
+                    connectionError={server.connection_error}
+                    blackoutActive={getServerBlackoutStatus?.(server.id)?.active}
+                    blackoutInherited={getServerBlackoutStatus?.(server.id)?.inherited}
+                />
                 <ServerIcon sx={getServerIconSx(isSelected, server.status === 'offline')} />
                 <Box sx={flexContainerSx}>
                     <InlineEditText
@@ -362,6 +372,8 @@ const ServerItem = memo<ServerItemProps>(({
                                 onDeleteServer={onDeleteServer}
                                 alertCount={getServerAlertCount ? getServerAlertCount(childServer.id) : 0}
                                 getServerAlertCount={getServerAlertCount}
+                                getServerBlackoutStatus={getServerBlackoutStatus}
+                                getClusterBlackoutStatus={getClusterBlackoutStatus}
                             />
                         ))}
                     </Box>

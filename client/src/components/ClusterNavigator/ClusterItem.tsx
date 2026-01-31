@@ -125,6 +125,8 @@ interface ClusterItemProps {
     onEditServer?: (server: Server) => void;
     onDeleteServer?: (server: Server) => void;
     getServerAlertCount?: (serverId: number) => number;
+    getServerBlackoutStatus?: (serverId: number) => { active: boolean; inherited: boolean };
+    getClusterBlackoutStatus?: (clusterId: string) => { active: boolean; inherited: boolean };
 }
 
 const ClusterItem = memo<ClusterItemProps>(({
@@ -147,6 +149,8 @@ const ClusterItem = memo<ClusterItemProps>(({
     onEditServer,
     onDeleteServer,
     getServerAlertCount,
+    getServerBlackoutStatus,
+    getClusterBlackoutStatus,
 }) => {
     const theme = useTheme();
 
@@ -212,7 +216,12 @@ const ClusterItem = memo<ClusterItemProps>(({
                         <CollapseIcon sx={expandIcon18Sx} />
                     )}
                 </IconButton>
-                <StatusIndicator status={clusterStatus} alertCount={clusterAlertCount} />
+                <StatusIndicator
+                    status={clusterStatus}
+                    alertCount={clusterAlertCount}
+                    blackoutActive={getClusterBlackoutStatus?.(cluster.id)?.active}
+                    blackoutInherited={getClusterBlackoutStatus?.(cluster.id)?.inherited}
+                />
                 <ClusterIcon sx={getClusterIconSx(isSelected)} />
                 <Box sx={flexMinWidthSx}>
                     <InlineEditText
@@ -256,6 +265,8 @@ const ClusterItem = memo<ClusterItemProps>(({
                             onDeleteServer={onDeleteServer}
                             alertCount={getServerAlertCount ? getServerAlertCount(server.id) : 0}
                             getServerAlertCount={getServerAlertCount}
+                            getServerBlackoutStatus={getServerBlackoutStatus}
+                            getClusterBlackoutStatus={getClusterBlackoutStatus}
                         />
                     ))}
                 </Box>

@@ -105,7 +105,10 @@ type AlertAcknowledgment struct {
 // Blackout represents a manual blackout period
 type Blackout struct {
 	ID           int64     `json:"id"`
+	Scope        string    `json:"scope"`
 	ConnectionID *int      `json:"connection_id,omitempty"`
+	GroupID      *int      `json:"group_id,omitempty"`
+	ClusterID    *int      `json:"cluster_id,omitempty"`
 	DatabaseName *string   `json:"database_name,omitempty"`
 	Reason       string    `json:"reason"`
 	StartTime    time.Time `json:"start_time"`
@@ -117,7 +120,10 @@ type Blackout struct {
 // BlackoutSchedule represents a recurring blackout schedule
 type BlackoutSchedule struct {
 	ID              int64     `json:"id"`
+	Scope           string    `json:"scope"`
 	ConnectionID    *int      `json:"connection_id,omitempty"`
+	GroupID         *int      `json:"group_id,omitempty"`
+	ClusterID       *int      `json:"cluster_id,omitempty"`
 	DatabaseName    *string   `json:"database_name,omitempty"`
 	Name            string    `json:"name"`
 	CronExpression  string    `json:"cron_expression"`

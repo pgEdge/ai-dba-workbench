@@ -11,6 +11,13 @@ and this project adheres to
 
 ### Added
 
+- Blackout management for suppressing alerts during maintenance:
+  - Management UI supports estate, group, cluster, and server scopes
+  - REST API endpoints for CRUD operations on blackouts and schedules
+  - Hierarchical cascading from estate to group to cluster to server
+  - Cron-based recurring blackout schedules for regular maintenance
+  - RBAC integration with the `manage_blackouts` permission
+  - ClusterNavigator displays blackout status indicators
 - Grouped alert display on the dashboard:
   - Alerts of the same type are grouped into single panels
   - Each group shows individual instances by server, database, and table

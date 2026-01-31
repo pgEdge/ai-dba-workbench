@@ -142,6 +142,8 @@ interface GroupItemProps {
     onDeleteServer?: (server: Server) => void;
     onDeleteGroup?: (group: GroupData) => void;
     getServerAlertCount?: (serverId: number) => number;
+    getServerBlackoutStatus?: (serverId: number) => { active: boolean; inherited: boolean };
+    getClusterBlackoutStatus?: (clusterId: string) => { active: boolean; inherited: boolean };
 }
 
 const GroupItem = memo<GroupItemProps>(({
@@ -165,6 +167,8 @@ const GroupItem = memo<GroupItemProps>(({
     onDeleteServer,
     onDeleteGroup,
     getServerAlertCount,
+    getServerBlackoutStatus,
+    getClusterBlackoutStatus,
 }) => {
     const theme = useTheme();
 
@@ -281,6 +285,8 @@ const GroupItem = memo<GroupItemProps>(({
                                             onDeleteServer={onDeleteServer}
                                             alertCount={getServerAlertCount ? getServerAlertCount(server.id) : 0}
                                             getServerAlertCount={getServerAlertCount}
+                                            getServerBlackoutStatus={getServerBlackoutStatus}
+                                            getClusterBlackoutStatus={getClusterBlackoutStatus}
                                         />
                                     </DraggableCluster>
                                 );
@@ -352,6 +358,8 @@ const GroupItem = memo<GroupItemProps>(({
                                     onEditServer={onEditServer}
                                     onDeleteServer={onDeleteServer}
                                     getServerAlertCount={getServerAlertCount}
+                                    getServerBlackoutStatus={getServerBlackoutStatus}
+                                    getClusterBlackoutStatus={getClusterBlackoutStatus}
                                 />
                             </DraggableCluster>
                         );

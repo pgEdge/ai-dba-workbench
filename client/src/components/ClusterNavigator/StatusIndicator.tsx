@@ -16,6 +16,7 @@ import {
     Warning as WarningIcon,
     Error as ErrorIcon,
     HourglassEmpty,
+    PauseCircle as PauseCircleIcon,
 } from '@mui/icons-material';
 import { SxProps } from '@mui/material/styles';
 
@@ -48,6 +49,22 @@ const alertBadgeBase: SxProps<Theme> = {
 };
 
 const alertContainerSx = { position: 'relative', display: 'flex', alignItems: 'center' };
+
+const blackoutOverlayBase: SxProps<Theme> = {
+    position: 'absolute',
+    bottom: -3,
+    right: -4,
+    fontSize: 10,
+    borderRadius: '50%',
+    bgcolor: 'background.paper',
+    lineHeight: 0,
+};
+
+const getBlackoutOverlaySx = (theme: Theme, inherited: boolean) => ({
+    ...blackoutOverlayBase,
+    color: theme.palette.warning.dark,
+    opacity: inherited ? 0.5 : 1,
+});
 
 // -- Style-getter functions -----------------------------------------------
 
@@ -91,14 +108,35 @@ interface StatusIndicatorProps {
     status?: string;
     alertCount?: number;
     connectionError?: string;
+    blackoutActive?: boolean;
+    blackoutInherited?: boolean;
 }
 
-const StatusIndicator: React.FC<StatusIndicatorProps> = ({ status, alertCount = 0, connectionError }) => {
+const StatusIndicator: React.FC<StatusIndicatorProps> = ({
+    status,
+    alertCount = 0,
+    connectionError,
+    blackoutActive = false,
+    blackoutInherited = false,
+}) => {
     const theme = useTheme();
+
+    // Wrap any status icon with a blackout overlay when active
+    const withBlackoutOverlay = (icon: React.ReactElement) => {
+        if (!blackoutActive) return icon;
+        return (
+            <Box sx={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+                {icon}
+                <Tooltip title={blackoutInherited ? 'Blackout active (inherited)' : 'Blackout active'} placement="right">
+                    <PauseCircleIcon sx={getBlackoutOverlaySx(theme, blackoutInherited)} />
+                </Tooltip>
+            </Box>
+        );
+    };
 
     // Offline/down nodes - red error icon
     if (status === 'offline') {
-        return (
+        return withBlackoutOverlay(
             <Tooltip title={connectionError || "Offline"} placement="right">
                 <ErrorIcon sx={getOfflineIconSx(theme)} />
             </Tooltip>
@@ -107,7 +145,7 @@ const StatusIndicator: React.FC<StatusIndicatorProps> = ({ status, alertCount = 
 
     // Initialising nodes - blue hourglass icon with pulse
     if (status === 'initialising') {
-        return (
+        return withBlackoutOverlay(
             <Tooltip title="Initialising - waiting for first probe results" placement="right">
                 <HourglassEmpty sx={getInitialisingIconSx(theme)} />
             </Tooltip>
@@ -116,7 +154,7 @@ const StatusIndicator: React.FC<StatusIndicatorProps> = ({ status, alertCount = 
 
     // Nodes with alerts - yellow warning icon with count
     if (alertCount > 0) {
-        return (
+        return withBlackoutOverlay(
             <Tooltip title={`${alertCount} active alert${alertCount !== 1 ? 's' : ''}`} placement="right">
                 <Box sx={alertContainerSx}>
                     <WarningIcon sx={getWarningIconSx(theme)} />
@@ -129,7 +167,7 @@ const StatusIndicator: React.FC<StatusIndicatorProps> = ({ status, alertCount = 
     }
 
     // Healthy nodes - green checkmark
-    return (
+    return withBlackoutOverlay(
         <Tooltip title="Online" placement="right">
             <HealthyIcon sx={getHealthyIconSx(theme)} />
         </Tooltip>

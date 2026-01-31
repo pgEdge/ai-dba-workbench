@@ -107,6 +107,15 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 			fmt.Fprintf(os.Stderr, "Alert management: DISABLED (datastore not configured)\n")
 		}
 
+		// Blackout management endpoints (for alert suppression windows)
+		blackoutHandler := api.NewBlackoutHandler(deps.Datastore, deps.AuthStore, rbacChecker)
+		blackoutHandler.RegisterRoutes(mux, authWrapper)
+		if deps.Datastore != nil {
+			fmt.Fprintf(os.Stderr, "Blackout management: ENABLED\n")
+		} else {
+			fmt.Fprintf(os.Stderr, "Blackout management: DISABLED (datastore not configured)\n")
+		}
+
 		// Timeline endpoints (for EventTimeline component)
 		timelineHandler := api.NewTimelineHandler(deps.Datastore, deps.AuthStore)
 		timelineHandler.RegisterRoutes(mux, authWrapper)

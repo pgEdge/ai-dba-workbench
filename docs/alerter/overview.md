@@ -51,9 +51,53 @@ and maximum values. The alerter generates three types of baselines:
 
 ### Blackout Periods
 
-Blackout periods suppress alert generation during scheduled maintenance
-windows. You can create manual blackouts for specific time ranges or
-scheduled blackouts using cron expressions for recurring maintenance.
+Blackout periods suppress alert generation during scheduled
+maintenance windows. The blackout system supports both manual and
+scheduled blackouts across four hierarchical scope levels.
+
+#### Scope Levels
+
+Blackouts apply at four levels; each level cascades downward:
+
+- An estate blackout suppresses alerts for all infrastructure.
+- A group blackout suppresses alerts for every cluster in the group.
+- A cluster blackout suppresses alerts for all servers in the cluster.
+- A server blackout suppresses alerts for a single server only.
+
+A blackout at a higher scope automatically applies to all children.
+For example, a group-level blackout silences alerts for every
+cluster and server within the group.
+
+#### Manual Blackouts
+
+A manual blackout defines a fixed time range with explicit start
+and end timestamps. Administrators create manual blackouts for
+one-time maintenance events such as upgrades or migrations.
+
+#### Scheduled Blackouts
+
+A scheduled blackout uses a cron expression to define recurring
+maintenance windows. The blackout scheduler activates these
+windows automatically at the specified times. See the
+[Cron Expressions](cron-expressions.md) documentation for
+expression syntax details.
+
+#### REST API Endpoints
+
+The server exposes the following endpoints for blackout management:
+
+- `GET /api/v1/blackouts` retrieves all active blackouts.
+- `POST /api/v1/blackouts` creates a new manual blackout.
+- `DELETE /api/v1/blackouts/:id` removes an existing blackout.
+- `GET /api/v1/blackout-schedules` retrieves all schedules.
+- `POST /api/v1/blackout-schedules` creates a recurring schedule.
+- `DELETE /api/v1/blackout-schedules/:id` removes a schedule.
+
+#### RBAC Requirements
+
+The `manage_blackouts` permission controls access to blackout
+operations. Users without this permission can view blackout
+status but cannot create or delete blackouts.
 
 ### Alert Lifecycle
 

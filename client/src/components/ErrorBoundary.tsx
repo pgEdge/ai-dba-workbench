@@ -49,7 +49,7 @@ const styles = {
     detailsPaper: {
         p: 2,
         mb: 3,
-        bgcolor: 'grey.100',
+        bgcolor: 'background.default',
         textAlign: 'left',
         overflow: 'auto',
         maxHeight: 200,

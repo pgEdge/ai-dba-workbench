@@ -1239,18 +1239,29 @@ func (d *Datastore) ClearAlert(ctx context.Context, alertID int64) error {
 	return err
 }
 
-// IsBlackoutActive checks if any blackout is currently active
+// IsBlackoutActive checks if any blackout is currently active for a connection.
+// It resolves the full hierarchy: estate, group, cluster, and server scopes.
 func (d *Datastore) IsBlackoutActive(ctx context.Context, connectionID *int, dbName *string) (bool, error) {
 	now := time.Now()
 	var count int
 
-	// Check manual blackouts
+	// Check blackouts across all scope levels using the hierarchy:
+	// connections.cluster_id -> clusters.group_id
 	err := d.pool.QueryRow(ctx, `
-		SELECT COUNT(*)
-		FROM blackouts
-		WHERE start_time <= $1 AND end_time >= $1
-		  AND (connection_id IS NULL OR connection_id = $2)
-		  AND (database_name IS NULL OR database_name = $3)
+		SELECT COUNT(*) FROM blackouts b
+		WHERE b.start_time <= $1 AND b.end_time >= $1
+		AND (
+			b.scope = 'estate'
+			OR (b.scope = 'group' AND b.group_id = (
+				SELECT cl.group_id FROM clusters cl
+				JOIN connections c ON c.cluster_id = cl.id
+				WHERE c.id = $2))
+			OR (b.scope = 'cluster' AND b.cluster_id = (
+				SELECT c.cluster_id FROM connections c WHERE c.id = $2))
+			OR (b.scope = 'server'
+				AND (b.connection_id IS NULL OR b.connection_id = $2)
+				AND (b.database_name IS NULL OR b.database_name = $3))
+		)
 	`, now, connectionID, dbName).Scan(&count)
 
 	if err != nil {
@@ -1308,7 +1319,8 @@ func (d *Datastore) GetProbeAvailability(ctx context.Context, connectionID int, 
 // GetEnabledBlackoutSchedules retrieves all enabled blackout schedules
 func (d *Datastore) GetEnabledBlackoutSchedules(ctx context.Context) ([]*BlackoutSchedule, error) {
 	rows, err := d.pool.Query(ctx, `
-		SELECT id, connection_id, database_name, name, cron_expression,
+		SELECT id, scope, connection_id, group_id, cluster_id,
+		       database_name, name, cron_expression,
 		       duration_minutes, timezone, reason, enabled, created_by,
 		       created_at, updated_at
 		FROM blackout_schedules
@@ -1323,7 +1335,8 @@ func (d *Datastore) GetEnabledBlackoutSchedules(ctx context.Context) ([]*Blackou
 	var schedules []*BlackoutSchedule
 	for rows.Next() {
 		var s BlackoutSchedule
-		err := rows.Scan(&s.ID, &s.ConnectionID, &s.DatabaseName, &s.Name,
+		err := rows.Scan(&s.ID, &s.Scope, &s.ConnectionID, &s.GroupID,
+			&s.ClusterID, &s.DatabaseName, &s.Name,
 			&s.CronExpression, &s.DurationMinutes, &s.Timezone, &s.Reason,
 			&s.Enabled, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt)
 		if err != nil {
@@ -1338,11 +1351,13 @@ func (d *Datastore) GetEnabledBlackoutSchedules(ctx context.Context) ([]*Blackou
 // CreateBlackout creates a new blackout entry
 func (d *Datastore) CreateBlackout(ctx context.Context, blackout *Blackout) error {
 	return d.pool.QueryRow(ctx, `
-		INSERT INTO blackouts (connection_id, database_name, reason, start_time,
+		INSERT INTO blackouts (scope, connection_id, group_id, cluster_id,
+		                       database_name, reason, start_time,
 		                       end_time, created_by, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING id
-	`, blackout.ConnectionID, blackout.DatabaseName, blackout.Reason,
+	`, blackout.Scope, blackout.ConnectionID, blackout.GroupID,
+		blackout.ClusterID, blackout.DatabaseName, blackout.Reason,
 		blackout.StartTime, blackout.EndTime, blackout.CreatedBy,
 		blackout.CreatedAt).Scan(&blackout.ID)
 }

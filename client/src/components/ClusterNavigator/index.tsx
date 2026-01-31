@@ -14,6 +14,7 @@ import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { useAuth } from '../../contexts/AuthContext';
 import { useCluster } from '../../contexts/ClusterContext';
 import { useAlerts } from '../../contexts/AlertsContext';
+import { useBlackouts } from '../../contexts/BlackoutContext';
 import {
     DndContext,
     DragOverlay,
@@ -323,6 +324,62 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
 
     // Get alert counts from context
     const { getServerAlertCount, getTotalAlertCount } = useAlerts();
+
+    // Get blackout state from context
+    const { blackouts } = useBlackouts();
+    const activeBlackouts = useMemo(() => blackouts.filter(b => b.is_active), [blackouts]);
+
+    // Check if a blackout is active for estate scope
+    const isEstateBlackedOut = useMemo(
+        () => activeBlackouts.some(b => b.scope === 'estate'),
+        [activeBlackouts],
+    );
+
+    // Build server-to-cluster mapping for blackout inheritance
+    const serverToClusterMap = useMemo(() => {
+        const map = new Map<number, string>();
+        data.forEach(group => {
+            group.clusters?.forEach(cluster => {
+                const collectIds = (servers: Server[] | undefined) => {
+                    servers?.forEach(s => {
+                        map.set(s.id, cluster.id);
+                        if (s.children) collectIds(s.children);
+                    });
+                };
+                collectIds(cluster.servers);
+            });
+        });
+        return map;
+    }, [data]);
+
+    // Check if a cluster has a direct or inherited blackout
+    const getClusterBlackoutStatus = useCallback((clusterId: string): { active: boolean; inherited: boolean } => {
+        // Parse numeric ID from cluster-{id} format
+        const numericId = parseInt(clusterId.replace('cluster-', ''), 10);
+        const directBlackout = !isNaN(numericId) && activeBlackouts.some(
+            b => b.scope === 'cluster' && b.cluster_id === numericId,
+        );
+        if (directBlackout) return { active: true, inherited: false };
+        if (isEstateBlackedOut) return { active: true, inherited: true };
+        return { active: false, inherited: false };
+    }, [activeBlackouts, isEstateBlackedOut]);
+
+    // Check if a server has a direct or inherited blackout
+    const getServerBlackoutStatus = useCallback((serverId: number): { active: boolean; inherited: boolean } => {
+        const directBlackout = activeBlackouts.some(
+            b => b.scope === 'server' && b.connection_id === serverId,
+        );
+        if (directBlackout) return { active: true, inherited: false };
+        // Check cluster-level blackout inheritance
+        const clusterId = serverToClusterMap.get(serverId);
+        if (clusterId) {
+            const clusterStatus = getClusterBlackoutStatus(clusterId);
+            if (clusterStatus.active) return { active: true, inherited: true };
+        }
+        // Estate-level blackout cascades to servers
+        if (isEstateBlackedOut) return { active: true, inherited: true };
+        return { active: false, inherited: false };
+    }, [activeBlackouts, isEstateBlackedOut, serverToClusterMap, getClusterBlackoutStatus]);
 
     // Handle resize drag
     useEffect(() => {
@@ -694,7 +751,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
                         onClick={() => onSelectEstate?.()}
                         sx={getEstateSx(theme, isEstateSelected)}
                     >
-                        <StatusIndicator status={estateStatus} alertCount={getTotalAlertCount()} />
+                        <StatusIndicator status={estateStatus} alertCount={getTotalAlertCount()} blackoutActive={isEstateBlackedOut} />
                         <Typography
                             variant="caption"
                             sx={{
@@ -799,6 +856,8 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
                             onDeleteServer={handleDeleteServer}
                             onDeleteGroup={handleDeleteGroup}
                             getServerAlertCount={getServerAlertCount}
+                            getServerBlackoutStatus={getServerBlackoutStatus}
+                            getClusterBlackoutStatus={getClusterBlackoutStatus}
                         />
                     ))
                 )}

@@ -60,11 +60,12 @@ import {
 const API_BASE_URL = '/api/v1';
 
 const PERMISSION_TYPES = [
-    { value: 'manage_users', label: 'Manage Users' },
+    { value: 'manage_blackouts', label: 'Manage Blackouts' },
+    { value: 'manage_connections', label: 'Manage Connections' },
     { value: 'manage_groups', label: 'Manage Groups' },
     { value: 'manage_permissions', label: 'Manage Permissions' },
-    { value: 'manage_connections', label: 'Manage Connections' },
     { value: 'manage_token_scopes', label: 'Manage Token Scopes' },
+    { value: 'manage_users', label: 'Manage Users' },
 ];
 
 const mcpTypeLabel = (itemType) => {

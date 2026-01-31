@@ -21,11 +21,12 @@ import {
 import { categoryLabelSx } from './styles';
 
 const ADMIN_PERMISSION_LABELS: Record<string, string> = {
-    manage_users: 'Manage Users',
+    manage_blackouts: 'Manage Blackouts',
+    manage_connections: 'Manage Connections',
     manage_groups: 'Manage Groups',
     manage_permissions: 'Manage Permissions',
-    manage_connections: 'Manage Connections',
     manage_token_scopes: 'Manage Token Scopes',
+    manage_users: 'Manage Users',
 };
 
 interface CategoryCardProps {

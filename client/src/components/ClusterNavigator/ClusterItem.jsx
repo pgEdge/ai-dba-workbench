@@ -15,6 +15,7 @@ import {
     Collapse,
     Chip,
     alpha,
+    useTheme,
 } from '@mui/material';
 import {
     ExpandMore as ExpandIcon,
@@ -26,6 +27,70 @@ import { getClusterType, countServersRecursive } from './utils';
 import ClusterContainer from './ClusterContainer';
 import StatusIndicator from './StatusIndicator';
 import ServerItem from './ServerItem';
+
+// -- Static sx constants --------------------------------------------------
+
+const expandButtonSx = { p: 0.25, color: 'text.secondary' };
+const expandIcon18Sx = { fontSize: 18 };
+const flexMinWidthSx = { flex: 1, minWidth: 0 };
+const trailingSx = { ml: 'auto', flexShrink: 0 };
+const serverListSx = { pb: 0.5 };
+
+const clusterNameBase = {
+    fontSize: '0.8125rem',
+    lineHeight: 1.3,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+};
+
+const countChipBase = {
+    height: 18,
+    fontSize: '0.625rem',
+    fontWeight: 600,
+    '& .MuiChip-label': { px: 0.75 },
+};
+
+// -- Style-getter functions -----------------------------------------------
+
+const getHeaderSx = (theme, isSelected) => ({
+    display: 'flex',
+    alignItems: 'center',
+    gap: 0.75,
+    py: 0.75,
+    px: 1,
+    cursor: 'pointer',
+    borderRadius: 1,
+    mx: 0.5,
+    bgcolor: isSelected
+        ? alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.20 : 0.12)
+        : 'transparent',
+    borderLeft: isSelected ? '2px solid' : '2px solid transparent',
+    borderLeftColor: isSelected ? 'primary.main' : 'transparent',
+    transition: 'all 0.15s ease',
+    '&:hover': {
+        bgcolor: isSelected
+            ? alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.25 : 0.16)
+            : alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.08 : 0.04),
+    },
+});
+
+const getClusterIconSx = (isSelected) => ({
+    fontSize: 18,
+    color: isSelected ? 'primary.main' : 'text.secondary',
+});
+
+const getClusterNameSx = (isSelected) => ({
+    ...clusterNameBase,
+    fontWeight: isSelected ? 600 : 500,
+    color: 'text.primary',
+});
+
+const getCountChipSx = (theme) => ({
+    ...countChipBase,
+    bgcolor: alpha(theme.palette.grey[500], theme.palette.mode === 'dark' ? 0.2 : 0.1),
+    color: theme.palette.grey[theme.palette.mode === 'dark' ? 400 : 500],
+});
 
 /**
  * ClusterItem - Cluster entry that can be expanded to show member servers
@@ -53,6 +118,8 @@ const ClusterItem = memo(({
     onDeleteServer,
     getServerAlertCount,
 }) => {
+    const theme = useTheme();
+
     // Superusers can edit:
     // - Database-backed clusters (cluster-{id} format)
     // - Auto-detected clusters that have auto_cluster_key (binary, logical, spock)
@@ -99,91 +166,46 @@ const ClusterItem = memo(({
             {/* Cluster Header */}
             <Box
                 onClick={handleClusterClick}
-                sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 0.75,
-                    py: 0.75,
-                    px: 1,
-                    cursor: 'pointer',
-                    borderRadius: 1,
-                    mx: 0.5,
-                    bgcolor: isSelected
-                        ? (isDark ? alpha('#22B8CF', 0.20) : alpha('#15AABF', 0.12))
-                        : 'transparent',
-                    borderLeft: isSelected ? '2px solid' : '2px solid transparent',
-                    borderLeftColor: isSelected ? 'primary.main' : 'transparent',
-                    transition: 'all 0.15s ease',
-                    '&:hover': {
-                        bgcolor: isSelected
-                            ? (isDark ? alpha('#22B8CF', 0.25) : alpha('#15AABF', 0.16))
-                            : (isDark ? alpha('#22B8CF', 0.08) : alpha('#15AABF', 0.04)),
-                    },
-                }}
+                sx={getHeaderSx(theme, isSelected)}
             >
                 <IconButton
                     size="small"
-                    sx={{
-                        p: 0.25,
-                        color: 'text.secondary',
-                    }}
+                    sx={expandButtonSx}
                     onClick={(e) => {
                         e.stopPropagation();
                         onToggle();
                     }}
                 >
                     {isExpanded ? (
-                        <ExpandIcon sx={{ fontSize: 18 }} />
+                        <ExpandIcon sx={expandIcon18Sx} />
                     ) : (
-                        <CollapseIcon sx={{ fontSize: 18 }} />
+                        <CollapseIcon sx={expandIcon18Sx} />
                     )}
                 </IconButton>
-                <StatusIndicator status={clusterStatus} alertCount={clusterAlertCount} isDark={isDark} />
-                <ClusterIcon
-                    sx={{
-                        fontSize: 18,
-                        color: isSelected ? 'primary.main' : 'text.secondary',
-                    }}
-                />
-                <Box sx={{ flex: 1, minWidth: 0 }}>
+                <StatusIndicator status={clusterStatus} alertCount={clusterAlertCount} />
+                <ClusterIcon sx={getClusterIconSx(isSelected)} />
+                <Box sx={flexMinWidthSx}>
                     <InlineEditText
                         value={cluster.name}
                         onSave={(newName) => onUpdateCluster(cluster.id, newName, groupId, cluster.auto_cluster_key)}
                         canEdit={canEditCluster}
                         typographyProps={{
                             variant: 'body2',
-                            sx: {
-                                fontWeight: isSelected ? 600 : 500,
-                                color: isSelected ? 'text.primary' : 'text.primary',
-                                fontSize: '0.8125rem',
-                                lineHeight: 1.3,
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap',
-                            },
+                            sx: getClusterNameSx(isSelected),
                         }}
                     />
                 </Box>
-                <Box sx={{ ml: 'auto', flexShrink: 0 }}>
+                <Box sx={trailingSx}>
                     <Chip
                         label={`${onlineCount}/${totalCount}`}
                         size="small"
-                        sx={{
-                            height: 18,
-                            fontSize: '0.625rem',
-                            fontWeight: 600,
-                            bgcolor: isDark ? alpha('#64748B', 0.2) : alpha('#64748B', 0.1),
-                            color: isDark ? '#94A3B8' : '#64748B',
-                            '& .MuiChip-label': {
-                                px: 0.75,
-                            },
-                        }}
+                        sx={getCountChipSx(theme)}
                     />
                 </Box>
             </Box>
             {/* Server List */}
             <Collapse in={isExpanded} timeout="auto">
-                <Box sx={{ pb: 0.5 }}>
+                <Box sx={serverListSx}>
                     {cluster.servers?.map((server, index) => (
                         <ServerItem
                             key={server.id}

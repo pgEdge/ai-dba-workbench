@@ -20,6 +20,7 @@ import {
     alpha,
     ToggleButton,
     ToggleButtonGroup,
+    useTheme,
 } from '@mui/material';
 import {
     Settings as SettingsIcon,
@@ -39,34 +40,34 @@ import {
 } from '@mui/icons-material';
 import { useTimelineEvents } from '../hooks/useTimelineEvents';
 
-// Event type configuration with icons and colors
+// Event type configuration with icons and theme-based color keys
 const EVENT_TYPE_CONFIG = {
     config_change: {
         icon: SettingsIcon,
-        color: '#15AABF',
+        colorKey: 'primary.main',
         label: 'Config',
     },
     hba_change: {
         icon: SecurityIcon,
-        color: '#3B82F6',
+        colorKey: 'info.main',
         label: 'HBA',
     },
     ident_change: {
         icon: AccountCircleIcon,
-        color: '#3B82F6',
+        colorKey: 'info.main',
         label: 'Ident',
     },
     restart: {
         icon: PowerSettingsNewIcon,
-        color: '#F59E0B',
+        colorKey: 'warning.main',
         label: 'Restart',
     },
     alert_fired: {
         icon: WarningIcon,
-        color: '#F59E0B',
+        colorKey: 'warning.main',
         label: 'Alert',
-        getSeverityColor: (severity) => {
-            return severity === 'critical' ? '#EF4444' : '#F59E0B';
+        getSeverityColorKey: (severity) => {
+            return severity === 'critical' ? 'error.main' : 'warning.main';
         },
         getSeverityIcon: (severity) => {
             return severity === 'critical' ? ErrorIcon : WarningIcon;
@@ -74,17 +75,17 @@ const EVENT_TYPE_CONFIG = {
     },
     alert_cleared: {
         icon: CheckCircleIcon,
-        color: '#22C55E',
+        colorKey: 'success.main',
         label: 'Cleared',
     },
     alert_acknowledged: {
         icon: CheckCircleOutlineIcon,
-        color: '#8B5CF6',
+        colorKey: 'custom.status.purple',
         label: 'Acked',
     },
     extension_change: {
         icon: ExtensionIcon,
-        color: '#06B6D4',
+        colorKey: 'custom.status.cyan',
         label: 'Extension',
     },
 };
@@ -118,22 +119,39 @@ const getInitialTimeRange = () => {
 };
 
 /**
- * Get event configuration with potential severity override
+ * Resolve a dotted path like 'primary.main' from the theme palette
  */
-const getEventConfig = (event) => {
+const resolveColor = (palette, colorKey) => {
+    const parts = colorKey.split('.');
+    let value = palette;
+    for (const part of parts) {
+        value = value?.[part];
+    }
+    return value;
+};
+
+/**
+ * Get event configuration with potential severity override, resolved against theme
+ */
+const getEventConfig = (event, palette) => {
     const config = EVENT_TYPE_CONFIG[event.event_type] || EVENT_TYPE_CONFIG.config_change;
 
+    let colorKey = config.colorKey;
+    let icon = config.icon;
+
     // Handle severity-based color and icon for alerts
-    if (event.event_type === 'alert_fired' && config.getSeverityColor) {
+    if (event.event_type === 'alert_fired' && config.getSeverityColorKey) {
         const severity = event.details?.severity;
-        return {
-            ...config,
-            color: config.getSeverityColor(severity),
-            icon: config.getSeverityIcon(severity),
-        };
+        colorKey = config.getSeverityColorKey(severity);
+        icon = config.getSeverityIcon(severity);
     }
 
-    return config;
+    return {
+        ...config,
+        icon,
+        colorKey,
+        color: palette ? resolveColor(palette, colorKey) : colorKey,
+    };
 };
 
 /**
@@ -292,13 +310,493 @@ const generateTimeMarkers = (startTime, endTime, count = 5) => {
     return markers;
 };
 
+// ---- Extracted static style constants ----
+
+const tooltipPaddingSx = { p: 0.5 };
+
+const tooltipClusterTitleSx = { fontSize: '0.75rem', fontWeight: 600 };
+
+const tooltipClusterItemSx = { fontSize: '0.6875rem', color: 'grey.300' };
+
+const tooltipClusterMoreSx = { fontSize: '0.6875rem', color: 'grey.400' };
+
+const tooltipSingleTitleSx = { fontSize: '0.75rem', fontWeight: 600 };
+
+const tooltipSingleTimeSx = { fontSize: '0.6875rem', color: 'grey.300' };
+
+const tooltipSingleServerSx = { fontSize: '0.6875rem', color: 'grey.400' };
+
+const markerIconSx = { fontSize: 14 };
+
+const clusterBadgeBaseSx = {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    minWidth: 16,
+    height: 16,
+    px: 0.5,
+    borderRadius: '8px',
+    color: 'common.white',
+    fontSize: '0.5625rem',
+    fontWeight: 700,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    lineHeight: 1,
+};
+
+const getClusterBadgeSx = (theme) => ({
+    ...clusterBadgeBaseSx,
+    bgcolor: theme.palette.grey[600],
+});
+
+const sectionLabelSx = {
+    fontSize: '0.6875rem',
+    fontWeight: 600,
+    color: 'text.secondary',
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
+    mb: 0.5,
+};
+
+const sectionLabelShortSx = {
+    ...sectionLabelSx,
+    mb: 0.25,
+};
+
+const getCodeBlockSx = (theme) => ({
+    p: 1,
+    borderRadius: 1,
+    bgcolor: theme.palette.mode === 'dark'
+        ? alpha(theme.palette.grey[700], 0.5)
+        : theme.palette.grey[100],
+    fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+    fontSize: '0.75rem',
+    maxHeight: 300,
+    overflow: 'auto',
+});
+
+const getCodeBlockSmallSx = (theme) => ({
+    ...getCodeBlockSx(theme),
+    fontSize: '0.6875rem',
+});
+
+const settingNameSx = {
+    color: 'primary.main',
+    fontWeight: 600,
+    fontFamily: 'inherit',
+    fontSize: 'inherit',
+};
+
+const settingValueSx = {
+    color: 'text.secondary',
+    fontFamily: 'inherit',
+    fontSize: 'inherit',
+};
+
+const hbaRuleTextSx = {
+    fontFamily: 'inherit',
+    fontSize: 'inherit',
+    color: 'text.primary',
+};
+
+const falsePositiveChipSx = (theme) => ({
+    ml: 1,
+    height: 16,
+    fontSize: '0.5625rem',
+    fontWeight: 600,
+    textTransform: 'uppercase',
+    bgcolor: alpha(theme.palette.warning.main, 0.15),
+    color: theme.palette.warning.main,
+    '& .MuiChip-label': { px: 0.5 },
+});
+
+const metricValueMonoSx = {
+    fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+    fontSize: '0.875rem',
+    fontWeight: 600,
+};
+
+const metricUnitSx = {
+    fontWeight: 400,
+    color: 'text.secondary',
+    fontSize: '0.75rem',
+    ml: 0.5,
+};
+
+const thresholdSx = {
+    fontWeight: 400,
+    color: 'text.secondary',
+    fontSize: '0.75rem',
+};
+
+const severityChipSx = (color) => ({
+    height: 18,
+    fontSize: '0.5625rem',
+    fontWeight: 600,
+    textTransform: 'uppercase',
+    bgcolor: alpha(color, 0.15),
+    color: color,
+    '& .MuiChip-label': { px: 0.75 },
+});
+
+const restartCodeBlockSx = (theme) => ({
+    p: 1,
+    borderRadius: 1,
+    bgcolor: theme.palette.mode === 'dark'
+        ? alpha(theme.palette.grey[700], 0.5)
+        : theme.palette.grey[100],
+    fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+    fontSize: '0.75rem',
+});
+
+const databaseNameSx = (theme) => ({
+    fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+    fontSize: '0.8125rem',
+    fontWeight: 500,
+    color: theme.palette.secondary.main,
+});
+
+const ackNameSx = {
+    fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+    fontSize: '0.8125rem',
+    fontWeight: 500,
+    color: 'text.primary',
+};
+
+const ackMessageSx = {
+    fontSize: '0.75rem',
+    color: 'text.secondary',
+    mt: 0.5,
+    fontStyle: 'italic',
+};
+
+const expandableShowMoreBaseSx = {
+    mt: 0.5,
+    pt: 0.5,
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 0.5,
+    color: 'primary.main',
+    fontSize: '0.6875rem',
+    fontWeight: 500,
+    '&:hover': {
+        textDecoration: 'underline',
+    },
+};
+
+const expandIconSmallSx = { fontSize: 14 };
+
+const getCollapsibleCardSx = (theme) => ({
+    borderRadius: 1,
+    bgcolor: theme.palette.mode === 'dark'
+        ? alpha(theme.palette.grey[700], 0.3)
+        : alpha(theme.palette.grey[50], 0.8),
+    border: '1px solid',
+    borderColor: theme.palette.mode === 'dark'
+        ? alpha(theme.palette.grey[700], 0.5)
+        : theme.palette.divider,
+    flexShrink: 0,
+});
+
+const getCollapsibleHeaderHoverSx = (theme) => ({
+    display: 'flex',
+    alignItems: 'center',
+    gap: 1,
+    p: 1.5,
+    cursor: 'pointer',
+    '&:hover': {
+        bgcolor: theme.palette.mode === 'dark'
+            ? alpha(theme.palette.grey[700], 0.2)
+            : alpha(theme.palette.divider, 0.3),
+    },
+});
+
+const collapsibleTitleSx = {
+    fontWeight: 600,
+    fontSize: '0.8125rem',
+    color: 'text.primary',
+    lineHeight: 1.3,
+};
+
+const collapsibleTimeSx = {
+    fontSize: '0.6875rem',
+    color: 'text.secondary',
+};
+
+const serverDisabledSx = { color: 'text.disabled', fontSize: 'inherit' };
+
+const collapseToggleSx = {
+    p: 0.25,
+    color: 'text.secondary',
+};
+
+const collapseContentSx = { px: 1.5, pb: 1.5 };
+
+const summarySx = {
+    fontSize: '0.75rem',
+    color: 'text.secondary',
+    lineHeight: 1.4,
+    mb: 1,
+};
+
+const getDetailPanelSx = (theme) => ({
+    mt: 2,
+    p: 2,
+    borderRadius: 1.5,
+    bgcolor: theme.palette.mode === 'dark'
+        ? alpha(theme.palette.background.paper, 0.6)
+        : theme.palette.background.paper,
+    border: '1px solid',
+    borderColor: theme.palette.divider,
+    boxShadow: theme.palette.mode === 'dark'
+        ? 'inset 0 1px 2px rgba(0, 0, 0, 0.2)'
+        : 'inset 0 1px 2px rgba(0, 0, 0, 0.05)',
+});
+
+const getDetailPanelHeaderSx = (theme) => ({
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    mb: 2,
+    pb: 1.5,
+    borderBottom: '1px solid',
+    borderColor: theme.palette.divider,
+});
+
+const detailPanelTitleSx = {
+    fontWeight: 600,
+    fontSize: '0.875rem',
+    color: 'text.primary',
+};
+
+const detailPanelSubtitleSx = {
+    fontSize: '0.75rem',
+    color: 'text.secondary',
+    mt: 0.25,
+};
+
+const getCloseButtonSx = (theme) => ({
+    p: 0.5,
+    color: 'text.secondary',
+    '&:hover': {
+        bgcolor: theme.palette.mode === 'dark'
+            ? alpha(theme.palette.grey[700], 0.5)
+            : alpha(theme.palette.divider, 0.5),
+    },
+});
+
+const closeIconSx = { fontSize: 18 };
+
+const clusterListSx = {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 1.5,
+    maxHeight: 400,
+    overflow: 'auto',
+    pb: 0.5,
+};
+
+const timelineCanvasContainerSx = {
+    position: 'relative',
+    height: 80,
+    mt: 1,
+    mx: 1,
+};
+
+const timeAxisSx = {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 20,
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+};
+
+const getTickMarkSx = (theme) => ({
+    width: 1,
+    height: 4,
+    bgcolor: theme.palette.grey[theme.palette.mode === 'dark' ? 600 : 300],
+    mb: 0.25,
+});
+
+const tickLabelSx = {
+    fontSize: '0.5625rem',
+    color: 'text.secondary',
+    whiteSpace: 'nowrap',
+};
+
+const getTimelineTrackSx = (theme) => ({
+    position: 'absolute',
+    top: 24,
+    left: 0,
+    right: 0,
+    height: 32,
+    borderRadius: 2,
+    bgcolor: theme.palette.mode === 'dark'
+        ? alpha(theme.palette.grey[700], 0.3)
+        : alpha(theme.palette.divider, 0.5),
+    border: '1px solid',
+    borderColor: theme.palette.divider,
+});
+
+const headerContainerSx = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 1,
+    flexWrap: 'wrap',
+};
+
+const headerTitleGroupSx = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 0.75,
+    cursor: 'pointer',
+    '&:hover': { opacity: 0.8 },
+};
+
+const headerTitleIconSx = { fontSize: 16, color: 'primary.main' };
+
+const headerTitleTextSx = {
+    fontWeight: 600,
+    color: 'text.primary',
+    fontSize: '0.8125rem',
+};
+
+const headerExpandSx = { p: 0.25 };
+
+const expandIconMedSx = { fontSize: 16 };
+
+const filterChipsSx = { display: 'flex', gap: 0.5, flexWrap: 'wrap' };
+
+const getToggleGroupSx = (theme) => ({
+    height: 24,
+    border: '1px solid',
+    borderColor: theme.palette.divider,
+    borderRadius: 1,
+    '& .MuiToggleButton-root': {
+        px: 1,
+        py: 0,
+        fontSize: '0.625rem',
+        fontWeight: 600,
+        textTransform: 'none',
+        color: 'text.secondary',
+        border: 'none',
+        borderRadius: 0,
+        '&.Mui-selected': {
+            bgcolor: alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.15 : 0.1),
+            color: 'primary.main',
+            '&:hover': {
+                bgcolor: alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.2 : 0.15),
+            },
+        },
+        '&:hover': {
+            bgcolor: theme.palette.mode === 'dark'
+                ? alpha(theme.palette.grey[700], 0.5)
+                : alpha(theme.palette.divider, 0.5),
+        },
+        '&:first-of-type': {
+            borderTopLeftRadius: 3,
+            borderBottomLeftRadius: 3,
+        },
+        '&:last-of-type': {
+            borderTopRightRadius: 3,
+            borderBottomRightRadius: 3,
+        },
+    },
+});
+
+const getEventCountChipSx = (theme, eventCount) => ({
+    height: 18,
+    fontSize: '0.625rem',
+    fontWeight: 600,
+    bgcolor: eventCount > 0
+        ? alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.15 : 0.1)
+        : alpha(theme.palette.grey[500], theme.palette.mode === 'dark' ? 0.2 : 0.1),
+    color: eventCount > 0 ? 'primary.main' : 'text.secondary',
+    '& .MuiChip-label': { px: 0.5 },
+});
+
+const getFilterChipSx = (theme, isSelected, color) => ({
+    height: 20,
+    fontSize: '0.5625rem',
+    fontWeight: 500,
+    cursor: 'pointer',
+    bgcolor: isSelected
+        ? alpha(color, theme.palette.mode === 'dark' ? 0.2 : 0.15)
+        : 'transparent',
+    color: isSelected ? color : 'text.disabled',
+    border: '1px solid',
+    borderColor: isSelected
+        ? alpha(color, 0.4)
+        : theme.palette.divider,
+    '& .MuiChip-label': { px: 0.5 },
+    '&:hover': {
+        bgcolor: alpha(color, theme.palette.mode === 'dark' ? 0.15 : 0.1),
+    },
+});
+
+const loadingSkeletonRowSx = { display: 'flex', alignItems: 'center', gap: 1, mb: 1 };
+
+const loadingSkeletonBarSx = (theme) => ({
+    bgcolor: theme.palette.mode === 'dark'
+        ? theme.palette.grey[700]
+        : theme.palette.grey[200],
+});
+
+const loadingSkeletonTimeSx = { display: 'flex', justifyContent: 'space-between', mt: 0.5 };
+
+const getEmptyStateSx = (theme) => ({
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    py: 3,
+    borderRadius: 1,
+    bgcolor: theme.palette.mode === 'dark'
+        ? alpha(theme.palette.grey[700], 0.2)
+        : alpha(theme.palette.grey[100], 0.5),
+    border: '1px dashed',
+    borderColor: theme.palette.divider,
+    mt: 1,
+});
+
+const emptyStateTitleSx = {
+    color: 'text.secondary',
+    fontSize: '0.8125rem',
+    fontWeight: 500,
+};
+
+const emptyStateSubtitleSx = {
+    color: 'text.disabled',
+    fontSize: '0.75rem',
+};
+
+const getOuterContainerSx = (theme) => ({
+    mt: 2,
+    p: 1.5,
+    borderRadius: 1.5,
+    bgcolor: theme.palette.mode === 'dark'
+        ? alpha(theme.palette.background.paper, 0.4)
+        : alpha(theme.palette.grey[50], 0.8),
+    border: '1px solid',
+    borderColor: theme.palette.divider,
+});
+
+// ---- End extracted style constants ----
+
 /**
  * EventMarker - Single event or cluster marker on the timeline
  */
-const EventMarker = memo(({ cluster, isDark, showServer, onClick }) => {
+const EventMarker = memo(({ cluster, showServer, onClick }) => {
+    const theme = useTheme();
+    const isDark = theme.palette.mode === 'dark';
     const isCluster = cluster.events.length > 1;
     const primaryEvent = cluster.events[0];
-    const config = getEventConfig(primaryEvent);
+    const config = getEventConfig(primaryEvent, theme.palette);
     const EventIcon = config.icon;
 
     // For clusters, determine if there are mixed types or severities
@@ -307,38 +805,71 @@ const EventMarker = memo(({ cluster, isDark, showServer, onClick }) => {
         e => e.event_type === 'alert_fired' && e.details?.severity === 'critical'
     );
 
-    const markerColor = hasCritical ? '#EF4444' : config.color;
+    const markerColor = hasCritical ? theme.palette.error.main : config.color;
+
+    const markerOuterSx = useMemo(() => ({
+        position: 'absolute',
+        left: `${cluster.position}%`,
+        top: '50%',
+        transform: 'translate(-50%, -50%)',
+        cursor: 'pointer',
+        zIndex: 10,
+        '&:hover': {
+            zIndex: 20,
+            '& > div': {
+                transform: 'scale(1.2)',
+            },
+        },
+    }), [cluster.position]);
+
+    const markerInnerSx = useMemo(() => ({
+        position: 'relative',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: isCluster ? 28 : 24,
+        height: isCluster ? 28 : 24,
+        borderRadius: '50%',
+        bgcolor: alpha(markerColor, isDark ? 0.2 : 0.15),
+        border: '2px solid',
+        borderColor: markerColor,
+        transition: 'transform 0.15s ease',
+    }), [isCluster, markerColor, isDark]);
+
+    const iconColorSx = useMemo(() => ({ fontSize: 14, color: markerColor }), [markerColor]);
+
+    const badgeSx = useMemo(() => getClusterBadgeSx(theme), [theme]);
 
     return (
         <Tooltip
             title={
-                <Box sx={{ p: 0.5 }}>
+                <Box sx={tooltipPaddingSx}>
                     {isCluster ? (
                         <>
-                            <Typography sx={{ fontSize: '0.75rem', fontWeight: 600 }}>
+                            <Typography sx={tooltipClusterTitleSx}>
                                 {cluster.events.length} events
                             </Typography>
                             {cluster.events.slice(0, 3).map((e, i) => (
-                                <Typography key={i} sx={{ fontSize: '0.6875rem', color: 'grey.300' }}>
+                                <Typography key={i} sx={tooltipClusterItemSx}>
                                     {e.title}
                                 </Typography>
                             ))}
                             {cluster.events.length > 3 && (
-                                <Typography sx={{ fontSize: '0.6875rem', color: 'grey.400' }}>
+                                <Typography sx={tooltipClusterMoreSx}>
                                     +{cluster.events.length - 3} more
                                 </Typography>
                             )}
                         </>
                     ) : (
                         <>
-                            <Typography sx={{ fontSize: '0.75rem', fontWeight: 600 }}>
+                            <Typography sx={tooltipSingleTitleSx}>
                                 {primaryEvent.title}
                             </Typography>
-                            <Typography sx={{ fontSize: '0.6875rem', color: 'grey.300' }}>
+                            <Typography sx={tooltipSingleTimeSx}>
                                 {formatEventTime(primaryEvent.occurred_at)}
                             </Typography>
                             {showServer && primaryEvent.server_name && (
-                                <Typography sx={{ fontSize: '0.6875rem', color: 'grey.400' }}>
+                                <Typography sx={tooltipSingleServerSx}>
                                     {primaryEvent.server_name}
                                     {primaryEvent.details?.database_name && ` / ${primaryEvent.details.database_name}`}
                                 </Typography>
@@ -352,61 +883,16 @@ const EventMarker = memo(({ cluster, isDark, showServer, onClick }) => {
         >
             <Box
                 onClick={(e) => onClick(e, cluster)}
-                sx={{
-                    position: 'absolute',
-                    left: `${cluster.position}%`,
-                    top: '50%',
-                    transform: 'translate(-50%, -50%)',
-                    cursor: 'pointer',
-                    zIndex: 10,
-                    '&:hover': {
-                        zIndex: 20,
-                        '& > div': {
-                            transform: 'scale(1.2)',
-                        },
-                    },
-                }}
+                sx={markerOuterSx}
             >
-                <Box
-                    sx={{
-                        position: 'relative',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        width: isCluster ? 28 : 24,
-                        height: isCluster ? 28 : 24,
-                        borderRadius: '50%',
-                        bgcolor: isDark ? alpha(markerColor, 0.2) : alpha(markerColor, 0.15),
-                        border: '2px solid',
-                        borderColor: markerColor,
-                        transition: 'transform 0.15s ease',
-                    }}
-                >
+                <Box sx={markerInnerSx}>
                     {hasMixedTypes ? (
-                        <EventNoteIcon sx={{ fontSize: 14, color: markerColor }} />
+                        <EventNoteIcon sx={iconColorSx} />
                     ) : (
-                        <EventIcon sx={{ fontSize: 14, color: markerColor }} />
+                        <EventIcon sx={iconColorSx} />
                     )}
                     {isCluster && (
-                        <Box
-                            sx={{
-                                position: 'absolute',
-                                top: -6,
-                                right: -6,
-                                minWidth: 16,
-                                height: 16,
-                                px: 0.5,
-                                borderRadius: '8px',
-                                bgcolor: isDark ? '#475569' : '#64748B',
-                                color: '#FFF',
-                                fontSize: '0.5625rem',
-                                fontWeight: 700,
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                lineHeight: 1,
-                            }}
-                        >
+                        <Box sx={badgeSx}>
                             {cluster.events.length > 99 ? '99+' : cluster.events.length}
                         </Box>
                     )}
@@ -421,7 +907,7 @@ EventMarker.displayName = 'EventMarker';
 /**
  * ExpandableList - A list that can be expanded to show all items
  */
-const ExpandableList = memo(({ items, initialLimit, renderItem, isDark, emptyText }) => {
+const ExpandableList = memo(({ items, initialLimit, renderItem, emptyText }) => {
     const [showAll, setShowAll] = useState(false);
     const totalCount = items?.length || 0;
     const hasMore = totalCount > initialLimit;
@@ -441,29 +927,16 @@ const ExpandableList = memo(({ items, initialLimit, renderItem, isDark, emptyTex
             {hasMore && (
                 <Box
                     onClick={() => setShowAll(!showAll)}
-                    sx={{
-                        mt: 0.5,
-                        pt: 0.5,
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 0.5,
-                        color: 'primary.main',
-                        fontSize: '0.6875rem',
-                        fontWeight: 500,
-                        '&:hover': {
-                            textDecoration: 'underline',
-                        },
-                    }}
+                    sx={expandableShowMoreBaseSx}
                 >
                     {showAll ? (
                         <>
-                            <ExpandLessIcon sx={{ fontSize: 14 }} />
+                            <ExpandLessIcon sx={expandIconSmallSx} />
                             Show less
                         </>
                     ) : (
                         <>
-                            <ExpandMoreIcon sx={{ fontSize: 14 }} />
+                            <ExpandMoreIcon sx={expandIconSmallSx} />
                             Show all {totalCount} items (+{totalCount - initialLimit} more)
                         </>
                     )}
@@ -478,56 +951,34 @@ ExpandableList.displayName = 'ExpandableList';
 /**
  * ConfigChangeDetails - Shows configuration change details with expandable list
  */
-const ConfigChangeDetails = memo(({ details, isDark }) => {
+const ConfigChangeDetails = memo(({ details }) => {
+    const theme = useTheme();
     const settings = details?.settings || [];
     const count = details?.setting_count || settings.length || 0;
 
+    const codeBlockSx = useMemo(() => getCodeBlockSx(theme), [theme]);
+
     return (
         <Box sx={{ mt: 1 }}>
-            <Typography
-                sx={{
-                    fontSize: '0.6875rem',
-                    fontWeight: 600,
-                    color: 'text.secondary',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                    mb: 0.5,
-                }}
-            >
+            <Typography sx={sectionLabelSx}>
                 Settings ({count})
             </Typography>
-            <Box
-                sx={{
-                    p: 1,
-                    borderRadius: 1,
-                    bgcolor: isDark ? alpha('#334155', 0.5) : '#F3F4F6',
-                    fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-                    fontSize: '0.75rem',
-                    maxHeight: 300,
-                    overflow: 'auto',
-                }}
-            >
+            <Box sx={codeBlockSx}>
                 <ExpandableList
                     items={settings}
                     initialLimit={10}
-                    isDark={isDark}
                     emptyText={`${count} settings`}
                     renderItem={(setting, i, total) => (
                         <Box key={i} sx={{ mb: i < total - 1 ? 0.5 : 0 }}>
                             <Typography
                                 component="span"
-                                sx={{
-                                    color: 'primary.main',
-                                    fontWeight: 600,
-                                    fontFamily: 'inherit',
-                                    fontSize: 'inherit',
-                                }}
+                                sx={settingNameSx}
                             >
                                 {setting.name}
                             </Typography>
                             <Typography
                                 component="span"
-                                sx={{ color: 'text.secondary', fontFamily: 'inherit', fontSize: 'inherit' }}
+                                sx={settingValueSx}
                             >
                                 {' = '}{setting.value}
                             </Typography>
@@ -544,46 +995,29 @@ ConfigChangeDetails.displayName = 'ConfigChangeDetails';
 /**
  * ExtensionChangeDetails - Shows extension change details
  */
-const ExtensionChangeDetails = memo(({ details, isDark }) => {
+const ExtensionChangeDetails = memo(({ details }) => {
+    const theme = useTheme();
     const extensions = details?.extensions || [];
     const count = details?.extension_count || extensions.length || 0;
 
+    const codeBlockSx = useMemo(() => getCodeBlockSx(theme), [theme]);
+
     return (
         <Box sx={{ mt: 1 }}>
-            <Typography
-                sx={{
-                    fontSize: '0.6875rem',
-                    fontWeight: 600,
-                    color: 'text.secondary',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                    mb: 0.5,
-                }}
-            >
+            <Typography sx={sectionLabelSx}>
                 Extensions ({count})
             </Typography>
-            <Box
-                sx={{
-                    p: 1,
-                    borderRadius: 1,
-                    bgcolor: isDark ? alpha('#334155', 0.5) : '#F3F4F6',
-                    fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-                    fontSize: '0.75rem',
-                    maxHeight: 300,
-                    overflow: 'auto',
-                }}
-            >
+            <Box sx={codeBlockSx}>
                 <ExpandableList
                     items={extensions}
                     initialLimit={10}
-                    isDark={isDark}
                     emptyText={`${count} extensions`}
                     renderItem={(ext, i, total) => (
                         <Box key={i} sx={{ mb: i < total - 1 ? 0.5 : 0 }}>
                             <Typography
                                 component="span"
                                 sx={{
-                                    color: '#06B6D4',
+                                    color: theme.palette.custom.status.cyan,
                                     fontWeight: 600,
                                     fontFamily: 'inherit',
                                     fontSize: 'inherit',
@@ -593,7 +1027,7 @@ const ExtensionChangeDetails = memo(({ details, isDark }) => {
                             </Typography>
                             <Typography
                                 component="span"
-                                sx={{ color: 'text.secondary', fontFamily: 'inherit', fontSize: 'inherit' }}
+                                sx={settingValueSx}
                             >
                                 {' v'}{ext.version}
                             </Typography>
@@ -618,49 +1052,26 @@ ExtensionChangeDetails.displayName = 'ExtensionChangeDetails';
 /**
  * HbaChangeDetails - Shows HBA rule change details with expandable list
  */
-const HbaChangeDetails = memo(({ details, isDark }) => {
+const HbaChangeDetails = memo(({ details }) => {
+    const theme = useTheme();
     const rules = details?.rules || [];
     const count = details?.rule_count || rules.length || 0;
 
+    const codeBlockSx = useMemo(() => getCodeBlockSmallSx(theme), [theme]);
+
     return (
         <Box sx={{ mt: 1 }}>
-            <Typography
-                sx={{
-                    fontSize: '0.6875rem',
-                    fontWeight: 600,
-                    color: 'text.secondary',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                    mb: 0.5,
-                }}
-            >
+            <Typography sx={sectionLabelSx}>
                 HBA Rules ({count})
             </Typography>
-            <Box
-                sx={{
-                    p: 1,
-                    borderRadius: 1,
-                    bgcolor: isDark ? alpha('#334155', 0.5) : '#F3F4F6',
-                    fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-                    fontSize: '0.6875rem',
-                    maxHeight: 300,
-                    overflow: 'auto',
-                }}
-            >
+            <Box sx={codeBlockSx}>
                 <ExpandableList
                     items={rules}
                     initialLimit={8}
-                    isDark={isDark}
                     emptyText={`${count} rules`}
                     renderItem={(rule, i, total) => (
                         <Box key={i} sx={{ mb: i < total - 1 ? 0.25 : 0 }}>
-                            <Typography
-                                sx={{
-                                    fontFamily: 'inherit',
-                                    fontSize: 'inherit',
-                                    color: 'text.primary',
-                                }}
-                            >
+                            <Typography sx={hbaRuleTextSx}>
                                 {rule.type} {rule.database} {rule.user_name} {rule.address || ''} {rule.auth_method}
                             </Typography>
                         </Box>
@@ -676,49 +1087,26 @@ HbaChangeDetails.displayName = 'HbaChangeDetails';
 /**
  * IdentChangeDetails - Shows ident mapping change details with expandable list
  */
-const IdentChangeDetails = memo(({ details, isDark }) => {
+const IdentChangeDetails = memo(({ details }) => {
+    const theme = useTheme();
     const mappings = details?.mappings || [];
     const count = details?.mapping_count || mappings.length || 0;
 
+    const codeBlockSx = useMemo(() => getCodeBlockSmallSx(theme), [theme]);
+
     return (
         <Box sx={{ mt: 1 }}>
-            <Typography
-                sx={{
-                    fontSize: '0.6875rem',
-                    fontWeight: 600,
-                    color: 'text.secondary',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                    mb: 0.5,
-                }}
-            >
+            <Typography sx={sectionLabelSx}>
                 Ident Mappings ({count})
             </Typography>
-            <Box
-                sx={{
-                    p: 1,
-                    borderRadius: 1,
-                    bgcolor: isDark ? alpha('#334155', 0.5) : '#F3F4F6',
-                    fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-                    fontSize: '0.6875rem',
-                    maxHeight: 300,
-                    overflow: 'auto',
-                }}
-            >
+            <Box sx={codeBlockSx}>
                 <ExpandableList
                     items={mappings}
                     initialLimit={8}
-                    isDark={isDark}
                     emptyText={`${count} mappings`}
                     renderItem={(mapping, i, total) => (
                         <Box key={i} sx={{ mb: i < total - 1 ? 0.25 : 0 }}>
-                            <Typography
-                                sx={{
-                                    fontFamily: 'inherit',
-                                    fontSize: 'inherit',
-                                    color: 'text.primary',
-                                }}
-                            >
+                            <Typography sx={hbaRuleTextSx}>
                                 {mapping.map_name}: {mapping.sys_name} → {mapping.pg_username}
                             </Typography>
                         </Box>
@@ -734,32 +1122,22 @@ IdentChangeDetails.displayName = 'IdentChangeDetails';
 /**
  * AlertDetails - Shows alert fired/cleared/acknowledged details
  */
-const AlertDetails = memo(({ details, config, isDark }) => {
+const AlertDetails = memo(({ details, config }) => {
+    const theme = useTheme();
+
+    const dbNameSx = useMemo(() => databaseNameSx(theme), [theme]);
+    const fpChipSx = useMemo(() => falsePositiveChipSx(theme), [theme]);
+    const sevChipSx = useMemo(() => severityChipSx(config.color), [config.color]);
+
     return (
         <Box sx={{ mt: 1 }}>
             {/* Database name if present */}
             {details?.database_name && (
                 <Box sx={{ mb: 1 }}>
-                    <Typography
-                        sx={{
-                            fontSize: '0.6875rem',
-                            fontWeight: 600,
-                            color: 'text.secondary',
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.05em',
-                            mb: 0.25,
-                        }}
-                    >
+                    <Typography sx={sectionLabelShortSx}>
                         Database
                     </Typography>
-                    <Typography
-                        sx={{
-                            fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-                            fontSize: '0.8125rem',
-                            fontWeight: 500,
-                            color: isDark ? '#818CF8' : '#6366F1',
-                        }}
-                    >
+                    <Typography sx={dbNameSx}>
                         {details.database_name}
                     </Typography>
                 </Box>
@@ -767,53 +1145,21 @@ const AlertDetails = memo(({ details, config, isDark }) => {
             {/* Acknowledged by info */}
             {details?.acknowledged_by && (
                 <Box sx={{ mb: 1 }}>
-                    <Typography
-                        sx={{
-                            fontSize: '0.6875rem',
-                            fontWeight: 600,
-                            color: 'text.secondary',
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.05em',
-                            mb: 0.25,
-                        }}
-                    >
+                    <Typography sx={sectionLabelShortSx}>
                         Acknowledged By
                     </Typography>
-                    <Typography
-                        sx={{
-                            fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-                            fontSize: '0.8125rem',
-                            fontWeight: 500,
-                            color: 'text.primary',
-                        }}
-                    >
+                    <Typography sx={ackNameSx}>
                         {details.acknowledged_by}
                         {details.false_positive && (
                             <Chip
                                 label="False Positive"
                                 size="small"
-                                sx={{
-                                    ml: 1,
-                                    height: 16,
-                                    fontSize: '0.5625rem',
-                                    fontWeight: 600,
-                                    textTransform: 'uppercase',
-                                    bgcolor: alpha('#F59E0B', 0.15),
-                                    color: '#F59E0B',
-                                    '& .MuiChip-label': { px: 0.5 },
-                                }}
+                                sx={fpChipSx}
                             />
                         )}
                     </Typography>
                     {details.message && (
-                        <Typography
-                            sx={{
-                                fontSize: '0.75rem',
-                                color: 'text.secondary',
-                                mt: 0.5,
-                                fontStyle: 'italic',
-                            }}
-                        >
+                        <Typography sx={ackMessageSx}>
                             "{details.message}"
                         </Typography>
                     )}
@@ -821,23 +1167,12 @@ const AlertDetails = memo(({ details, config, isDark }) => {
             )}
             {details?.metric_value !== undefined && (
                 <Box sx={{ mb: 1 }}>
-                    <Typography
-                        sx={{
-                            fontSize: '0.6875rem',
-                            fontWeight: 600,
-                            color: 'text.secondary',
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.05em',
-                            mb: 0.25,
-                        }}
-                    >
+                    <Typography sx={sectionLabelShortSx}>
                         Metric Value
                     </Typography>
                     <Typography
                         sx={{
-                            fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-                            fontSize: '0.875rem',
-                            fontWeight: 600,
+                            ...metricValueMonoSx,
                             color: config.color,
                         }}
                     >
@@ -845,12 +1180,7 @@ const AlertDetails = memo(({ details, config, isDark }) => {
                         {details.metric_unit && (
                             <Typography
                                 component="span"
-                                sx={{
-                                    fontWeight: 400,
-                                    color: 'text.secondary',
-                                    fontSize: '0.75rem',
-                                    ml: 0.5,
-                                }}
+                                sx={metricUnitSx}
                             >
                                 {details.metric_unit}
                             </Typography>
@@ -858,11 +1188,7 @@ const AlertDetails = memo(({ details, config, isDark }) => {
                         {details.threshold_value !== undefined && (
                             <Typography
                                 component="span"
-                                sx={{
-                                    fontWeight: 400,
-                                    color: 'text.secondary',
-                                    fontSize: '0.75rem',
-                                }}
+                                sx={thresholdSx}
                             >
                                 {' '}/ threshold: {details.threshold_value}
                                 {details.metric_unit && ` ${details.metric_unit}`}
@@ -876,15 +1202,7 @@ const AlertDetails = memo(({ details, config, isDark }) => {
                 <Chip
                     label={details.original_severity || details.severity}
                     size="small"
-                    sx={{
-                        height: 18,
-                        fontSize: '0.5625rem',
-                        fontWeight: 600,
-                        textTransform: 'uppercase',
-                        bgcolor: alpha(config.color, 0.15),
-                        color: config.color,
-                        '& .MuiChip-label': { px: 0.75 },
-                    }}
+                    sx={sevChipSx}
                 />
             )}
         </Box>
@@ -896,22 +1214,18 @@ AlertDetails.displayName = 'AlertDetails';
 /**
  * RestartDetails - Shows server restart details
  */
-const RestartDetails = memo(({ details, isDark }) => {
+const RestartDetails = memo(({ details }) => {
+    const theme = useTheme();
+
     if (!details?.previous_timeline && !details?.old_timeline_id) {
         return null;
     }
 
+    const codeBlockSx = useMemo(() => restartCodeBlockSx(theme), [theme]);
+
     return (
         <Box sx={{ mt: 1 }}>
-            <Box
-                sx={{
-                    p: 1,
-                    borderRadius: 1,
-                    bgcolor: isDark ? alpha('#334155', 0.5) : '#F3F4F6',
-                    fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-                    fontSize: '0.75rem',
-                }}
-            >
+            <Box sx={codeBlockSx}>
                 <Typography sx={{ fontSize: '0.6875rem', color: 'text.secondary', mb: 0.25 }}>
                     Timeline ID
                 </Typography>
@@ -928,24 +1242,24 @@ RestartDetails.displayName = 'RestartDetails';
 /**
  * EventDetails - Renders the appropriate details component based on event type
  */
-const EventDetails = memo(({ event, config, isDark }) => {
+const EventDetails = memo(({ event, config }) => {
     if (!event.details) return null;
 
     switch (event.event_type) {
         case 'config_change':
-            return <ConfigChangeDetails details={event.details} isDark={isDark} />;
+            return <ConfigChangeDetails details={event.details} />;
         case 'extension_change':
-            return <ExtensionChangeDetails details={event.details} isDark={isDark} />;
+            return <ExtensionChangeDetails details={event.details} />;
         case 'hba_change':
-            return <HbaChangeDetails details={event.details} isDark={isDark} />;
+            return <HbaChangeDetails details={event.details} />;
         case 'ident_change':
-            return <IdentChangeDetails details={event.details} isDark={isDark} />;
+            return <IdentChangeDetails details={event.details} />;
         case 'alert_fired':
         case 'alert_cleared':
         case 'alert_acknowledged':
-            return <AlertDetails details={event.details} config={config} isDark={isDark} />;
+            return <AlertDetails details={event.details} config={config} />;
         case 'restart':
-            return <RestartDetails details={event.details} isDark={isDark} />;
+            return <RestartDetails details={event.details} />;
         default:
             return null;
     }
@@ -956,27 +1270,34 @@ EventDetails.displayName = 'EventDetails';
 /**
  * Single Event Card in the detail popover
  */
-const SingleEventCard = memo(({ event, isDark, isCompact = false }) => {
-    const config = getEventConfig(event);
+const SingleEventCard = memo(({ event, isCompact = false }) => {
+    const theme = useTheme();
+    const isDark = theme.palette.mode === 'dark';
+    const config = getEventConfig(event, theme.palette);
     const EventIcon = config.icon;
+
+    const iconBoxSx = useMemo(() => ({
+        width: isCompact ? 24 : 32,
+        height: isCompact ? 24 : 32,
+        borderRadius: 1,
+        bgcolor: alpha(config.color, isDark ? 0.15 : 0.1),
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexShrink: 0,
+    }), [isCompact, config.color, isDark]);
+
+    const iconSx = useMemo(
+        () => ({ fontSize: isCompact ? 14 : 18, color: config.color }),
+        [isCompact, config.color]
+    );
 
     return (
         <Box sx={{ mb: isCompact ? 1.5 : 0 }}>
             {/* Header */}
             <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                <Box
-                    sx={{
-                        width: isCompact ? 24 : 32,
-                        height: isCompact ? 24 : 32,
-                        borderRadius: 1,
-                        bgcolor: alpha(config.color, isDark ? 0.15 : 0.1),
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        flexShrink: 0,
-                    }}
-                >
-                    <EventIcon sx={{ fontSize: isCompact ? 14 : 18, color: config.color }} />
+                <Box sx={iconBoxSx}>
+                    <EventIcon sx={iconSx} />
                 </Box>
                 <Box sx={{ flex: 1, minWidth: 0 }}>
                     <Typography
@@ -1000,7 +1321,7 @@ const SingleEventCard = memo(({ event, isDark, isCompact = false }) => {
                         {event.server_name && (
                             <Typography
                                 component="span"
-                                sx={{ color: 'text.disabled', fontSize: 'inherit' }}
+                                sx={serverDisabledSx}
                             >
                                 {' · '}{event.server_name}
                                 {event.details?.database_name && ` / ${event.details.database_name}`}
@@ -1027,7 +1348,7 @@ const SingleEventCard = memo(({ event, isDark, isCompact = false }) => {
 
             {/* Type-specific details */}
             <Box sx={{ pl: isCompact ? 4 : 5.5 }}>
-                <EventDetails event={event} config={config} isDark={isDark} />
+                <EventDetails event={event} config={config} />
             </Box>
         </Box>
     );
@@ -1038,71 +1359,47 @@ SingleEventCard.displayName = 'SingleEventCard';
 /**
  * CollapsibleEventCard - A single event card that can be expanded/collapsed
  */
-const CollapsibleEventCard = memo(({ event, isDark, defaultExpanded = true }) => {
+const CollapsibleEventCard = memo(({ event, defaultExpanded = true }) => {
     const [expanded, setExpanded] = useState(defaultExpanded);
-    const config = getEventConfig(event);
+    const theme = useTheme();
+    const isDark = theme.palette.mode === 'dark';
+    const config = getEventConfig(event, theme.palette);
     const EventIcon = config.icon;
 
+    const cardSx = useMemo(() => getCollapsibleCardSx(theme), [theme]);
+    const headerSx = useMemo(() => getCollapsibleHeaderHoverSx(theme), [theme]);
+
+    const iconBoxSx = useMemo(() => ({
+        width: 28,
+        height: 28,
+        borderRadius: 1,
+        bgcolor: alpha(config.color, isDark ? 0.15 : 0.1),
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexShrink: 0,
+    }), [config.color, isDark]);
+
     return (
-        <Box
-            sx={{
-                borderRadius: 1,
-                bgcolor: isDark ? alpha('#334155', 0.3) : alpha('#F9FAFB', 0.8),
-                border: '1px solid',
-                borderColor: isDark ? alpha('#334155', 0.5) : '#E5E7EB',
-                flexShrink: 0,
-            }}
-        >
+        <Box sx={cardSx}>
             {/* Collapsible header */}
             <Box
                 onClick={() => setExpanded(!expanded)}
-                sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 1,
-                    p: 1.5,
-                    cursor: 'pointer',
-                    '&:hover': {
-                        bgcolor: isDark ? alpha('#334155', 0.2) : alpha('#E5E7EB', 0.3),
-                    },
-                }}
+                sx={headerSx}
             >
-                <Box
-                    sx={{
-                        width: 28,
-                        height: 28,
-                        borderRadius: 1,
-                        bgcolor: alpha(config.color, isDark ? 0.15 : 0.1),
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        flexShrink: 0,
-                    }}
-                >
+                <Box sx={iconBoxSx}>
                     <EventIcon sx={{ fontSize: 16, color: config.color }} />
                 </Box>
                 <Box sx={{ flex: 1, minWidth: 0 }}>
-                    <Typography
-                        sx={{
-                            fontWeight: 600,
-                            fontSize: '0.8125rem',
-                            color: 'text.primary',
-                            lineHeight: 1.3,
-                        }}
-                    >
+                    <Typography sx={collapsibleTitleSx}>
                         {event.title}
                     </Typography>
-                    <Typography
-                        sx={{
-                            fontSize: '0.6875rem',
-                            color: 'text.secondary',
-                        }}
-                    >
+                    <Typography sx={collapsibleTimeSx}>
                         {formatFullTime(event.occurred_at)}
                         {event.server_name && (
                             <Typography
                                 component="span"
-                                sx={{ color: 'text.disabled', fontSize: 'inherit' }}
+                                sx={serverDisabledSx}
                             >
                                 {' · '}{event.server_name}
                                 {event.details?.database_name && ` / ${event.details.database_name}`}
@@ -1112,10 +1409,7 @@ const CollapsibleEventCard = memo(({ event, isDark, defaultExpanded = true }) =>
                 </Box>
                 <IconButton
                     size="small"
-                    sx={{
-                        p: 0.25,
-                        color: 'text.secondary',
-                    }}
+                    sx={collapseToggleSx}
                 >
                     {expanded ? (
                         <ExpandLessIcon sx={{ fontSize: 18 }} />
@@ -1127,23 +1421,16 @@ const CollapsibleEventCard = memo(({ event, isDark, defaultExpanded = true }) =>
 
             {/* Collapsible content */}
             <Collapse in={expanded}>
-                <Box sx={{ px: 1.5, pb: 1.5 }}>
+                <Box sx={collapseContentSx}>
                     {/* Summary */}
                     {event.summary && (
-                        <Typography
-                            sx={{
-                                fontSize: '0.75rem',
-                                color: 'text.secondary',
-                                lineHeight: 1.4,
-                                mb: 1,
-                            }}
-                        >
+                        <Typography sx={summarySx}>
                             {event.summary}
                         </Typography>
                     )}
 
                     {/* Type-specific details */}
-                    <EventDetails event={event} config={config} isDark={isDark} />
+                    <EventDetails event={event} config={config} />
                 </Box>
             </Collapse>
         </Box>
@@ -1155,7 +1442,9 @@ CollapsibleEventCard.displayName = 'CollapsibleEventCard';
 /**
  * EventDetailPanel - Shows detailed information about an event or cluster in an inline panel
  */
-const EventDetailPanel = memo(({ events, onClose, isDark }) => {
+const EventDetailPanel = memo(({ events, onClose }) => {
+    const theme = useTheme();
+
     if (!events || events.length === 0) return null;
 
     const isCluster = events.length > 1;
@@ -1173,50 +1462,20 @@ const EventDetailPanel = memo(({ events, onClose, isDark }) => {
         return Object.entries(counts).map(([label, count]) => `${count} ${label}`).join(', ');
     }, [events, isCluster]);
 
+    const panelSx = useMemo(() => getDetailPanelSx(theme), [theme]);
+    const panelHeaderSx = useMemo(() => getDetailPanelHeaderSx(theme), [theme]);
+    const closeBtnSx = useMemo(() => getCloseButtonSx(theme), [theme]);
+
     return (
-        <Box
-            sx={{
-                mt: 2,
-                p: 2,
-                borderRadius: 1.5,
-                bgcolor: isDark ? alpha('#1E293B', 0.6) : '#FFFFFF',
-                border: '1px solid',
-                borderColor: isDark ? '#334155' : '#E5E7EB',
-                boxShadow: isDark
-                    ? 'inset 0 1px 2px rgba(0, 0, 0, 0.2)'
-                    : 'inset 0 1px 2px rgba(0, 0, 0, 0.05)',
-            }}
-        >
+        <Box sx={panelSx}>
             {/* Panel header with close button */}
-            <Box
-                sx={{
-                    display: 'flex',
-                    alignItems: 'flex-start',
-                    justifyContent: 'space-between',
-                    mb: 2,
-                    pb: 1.5,
-                    borderBottom: '1px solid',
-                    borderColor: isDark ? '#334155' : '#E5E7EB',
-                }}
-            >
+            <Box sx={panelHeaderSx}>
                 <Box>
-                    <Typography
-                        sx={{
-                            fontWeight: 600,
-                            fontSize: '0.875rem',
-                            color: 'text.primary',
-                        }}
-                    >
+                    <Typography sx={detailPanelTitleSx}>
                         {isCluster ? `${events.length} Events` : 'Event Details'}
                     </Typography>
                     {isCluster && (
-                        <Typography
-                            sx={{
-                                fontSize: '0.75rem',
-                                color: 'text.secondary',
-                                mt: 0.25,
-                            }}
-                        >
+                        <Typography sx={detailPanelSubtitleSx}>
                             {typeCounts}
                         </Typography>
                     )}
@@ -1224,41 +1483,25 @@ const EventDetailPanel = memo(({ events, onClose, isDark }) => {
                 <IconButton
                     size="small"
                     onClick={onClose}
-                    sx={{
-                        p: 0.5,
-                        color: 'text.secondary',
-                        '&:hover': {
-                            bgcolor: isDark ? alpha('#334155', 0.5) : alpha('#E5E7EB', 0.5),
-                        },
-                    }}
+                    sx={closeBtnSx}
                 >
-                    <CloseIcon sx={{ fontSize: 18 }} />
+                    <CloseIcon sx={closeIconSx} />
                 </IconButton>
             </Box>
 
             {/* Event content - stacked vertically */}
             {isCluster ? (
-                <Box
-                    sx={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 1.5,
-                        maxHeight: 400,
-                        overflow: 'auto',
-                        pb: 0.5,
-                    }}
-                >
+                <Box sx={clusterListSx}>
                     {events.map((event, index) => (
                         <CollapsibleEventCard
                             key={event.id || index}
                             event={event}
-                            isDark={isDark}
                             defaultExpanded={index === 0}
                         />
                     ))}
                 </Box>
             ) : (
-                <SingleEventCard event={primaryEvent} isDark={isDark} isCompact={false} />
+                <SingleEventCard event={primaryEvent} isCompact={false} />
             )}
         </Box>
     );
@@ -1269,7 +1512,8 @@ EventDetailPanel.displayName = 'EventDetailPanel';
 /**
  * TimelineCanvas - The actual timeline visualization
  */
-const TimelineCanvas = memo(({ events, timeRange, isDark, showServer, onEventClick }) => {
+const TimelineCanvas = memo(({ events, timeRange, showServer, onEventClick }) => {
+    const theme = useTheme();
     const { startTime, endTime } = useMemo(() => getTimeRangeBounds(timeRange), [timeRange]);
     const timeMarkers = useMemo(() => generateTimeMarkers(startTime, endTime), [startTime, endTime]);
     const eventClusters = useMemo(
@@ -1277,28 +1521,13 @@ const TimelineCanvas = memo(({ events, timeRange, isDark, showServer, onEventCli
         [events, startTime, endTime]
     );
 
+    const tickSx = useMemo(() => getTickMarkSx(theme), [theme]);
+    const trackSx = useMemo(() => getTimelineTrackSx(theme), [theme]);
+
     return (
-        <Box
-            sx={{
-                position: 'relative',
-                height: 80,
-                mt: 1,
-                mx: 1,
-            }}
-        >
+        <Box sx={timelineCanvasContainerSx}>
             {/* Time axis */}
-            <Box
-                sx={{
-                    position: 'absolute',
-                    bottom: 0,
-                    left: 0,
-                    right: 0,
-                    height: 20,
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'flex-end',
-                }}
-            >
+            <Box sx={timeAxisSx}>
                 {timeMarkers.map((marker, i) => (
                     <Box
                         key={i}
@@ -1311,21 +1540,8 @@ const TimelineCanvas = memo(({ events, timeRange, isDark, showServer, onEventCli
                             alignItems: 'center',
                         }}
                     >
-                        <Box
-                            sx={{
-                                width: 1,
-                                height: 4,
-                                bgcolor: isDark ? '#475569' : '#D1D5DB',
-                                mb: 0.25,
-                            }}
-                        />
-                        <Typography
-                            sx={{
-                                fontSize: '0.5625rem',
-                                color: 'text.secondary',
-                                whiteSpace: 'nowrap',
-                            }}
-                        >
+                        <Box sx={tickSx} />
+                        <Typography sx={tickLabelSx}>
                             {marker.label}
                         </Typography>
                     </Box>
@@ -1333,25 +1549,12 @@ const TimelineCanvas = memo(({ events, timeRange, isDark, showServer, onEventCli
             </Box>
 
             {/* Timeline track */}
-            <Box
-                sx={{
-                    position: 'absolute',
-                    top: 24,
-                    left: 0,
-                    right: 0,
-                    height: 32,
-                    borderRadius: 2,
-                    bgcolor: isDark ? alpha('#334155', 0.3) : alpha('#E5E7EB', 0.5),
-                    border: '1px solid',
-                    borderColor: isDark ? '#334155' : '#E5E7EB',
-                }}
-            >
+            <Box sx={trackSx}>
                 {/* Event markers */}
                 {eventClusters.map((cluster, i) => (
                     <EventMarker
                         key={i}
                         cluster={cluster}
-                        isDark={isDark}
                         showServer={showServer}
                         onClick={onEventClick}
                     />
@@ -1374,57 +1577,33 @@ const TimelineHeader = memo(({
     onTimeRangeChange,
     eventTypes,
     onEventTypesChange,
-    isDark,
 }) => {
+    const theme = useTheme();
+
+    const toggleGroupSx = useMemo(() => getToggleGroupSx(theme), [theme]);
+    const countChipSx = useMemo(() => getEventCountChipSx(theme, eventCount), [theme, eventCount]);
+
     return (
-        <Box
-            sx={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 1,
-                flexWrap: 'wrap',
-            }}
-        >
+        <Box sx={headerContainerSx}>
             {/* Title with expand toggle */}
             <Box
                 onClick={onExpandToggle}
-                sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 0.75,
-                    cursor: 'pointer',
-                    '&:hover': { opacity: 0.8 },
-                }}
+                sx={headerTitleGroupSx}
             >
-                <TimelineIcon sx={{ fontSize: 16, color: 'primary.main' }} />
-                <Typography
-                    sx={{
-                        fontWeight: 600,
-                        color: 'text.primary',
-                        fontSize: '0.8125rem',
-                    }}
-                >
+                <TimelineIcon sx={headerTitleIconSx} />
+                <Typography sx={headerTitleTextSx}>
                     Event Timeline
                 </Typography>
                 <Chip
                     label={eventCount}
                     size="small"
-                    sx={{
-                        height: 18,
-                        fontSize: '0.625rem',
-                        fontWeight: 600,
-                        bgcolor: eventCount > 0
-                            ? alpha('#15AABF', isDark ? 0.15 : 0.1)
-                            : (isDark ? alpha('#64748B', 0.2) : alpha('#64748B', 0.1)),
-                        color: eventCount > 0 ? 'primary.main' : 'text.secondary',
-                        '& .MuiChip-label': { px: 0.5 },
-                    }}
+                    sx={countChipSx}
                 />
-                <IconButton size="small" sx={{ p: 0.25 }}>
+                <IconButton size="small" sx={headerExpandSx}>
                     {expanded ? (
-                        <ExpandLessIcon sx={{ fontSize: 16 }} />
+                        <ExpandLessIcon sx={expandIconMedSx} />
                     ) : (
-                        <ExpandMoreIcon sx={{ fontSize: 16 }} />
+                        <ExpandMoreIcon sx={expandIconMedSx} />
                     )}
                 </IconButton>
             </Box>
@@ -1437,40 +1616,7 @@ const TimelineHeader = memo(({
                 exclusive
                 onChange={(e, value) => value && onTimeRangeChange(value)}
                 size="small"
-                sx={{
-                    height: 24,
-                    border: '1px solid',
-                    borderColor: isDark ? '#334155' : '#E5E7EB',
-                    borderRadius: 1,
-                    '& .MuiToggleButton-root': {
-                        px: 1,
-                        py: 0,
-                        fontSize: '0.625rem',
-                        fontWeight: 600,
-                        textTransform: 'none',
-                        color: 'text.secondary',
-                        border: 'none',
-                        borderRadius: 0,
-                        '&.Mui-selected': {
-                            bgcolor: isDark ? alpha('#22B8CF', 0.15) : alpha('#15AABF', 0.1),
-                            color: 'primary.main',
-                            '&:hover': {
-                                bgcolor: isDark ? alpha('#22B8CF', 0.2) : alpha('#15AABF', 0.15),
-                            },
-                        },
-                        '&:hover': {
-                            bgcolor: isDark ? alpha('#334155', 0.5) : alpha('#E5E7EB', 0.5),
-                        },
-                        '&:first-of-type': {
-                            borderTopLeftRadius: 3,
-                            borderBottomLeftRadius: 3,
-                        },
-                        '&:last-of-type': {
-                            borderTopRightRadius: 3,
-                            borderBottomRightRadius: 3,
-                        },
-                    },
-                }}
+                sx={toggleGroupSx}
             >
                 {TIME_RANGE_OPTIONS.map((option) => (
                     <ToggleButton key={option.value} value={option.value}>
@@ -1480,13 +1626,14 @@ const TimelineHeader = memo(({
             </ToggleButtonGroup>
 
             {/* Event type filter chips */}
-            <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
-                {Object.entries(EVENT_TYPE_CONFIG).map(([type, config]) => {
+            <Box sx={filterChipsSx}>
+                {Object.entries(EVENT_TYPE_CONFIG).map(([type, typeConfig]) => {
                     const isSelected = eventTypes.includes('all') || eventTypes.includes(type);
+                    const color = resolveColor(theme.palette, typeConfig.colorKey);
                     return (
                         <Chip
                             key={type}
-                            label={config.label}
+                            label={typeConfig.label}
                             size="small"
                             onClick={() => {
                                 if (eventTypes.includes('all')) {
@@ -1508,24 +1655,7 @@ const TimelineHeader = memo(({
                                     }
                                 }
                             }}
-                            sx={{
-                                height: 20,
-                                fontSize: '0.5625rem',
-                                fontWeight: 500,
-                                cursor: 'pointer',
-                                bgcolor: isSelected
-                                    ? alpha(config.color, isDark ? 0.2 : 0.15)
-                                    : 'transparent',
-                                color: isSelected ? config.color : 'text.disabled',
-                                border: '1px solid',
-                                borderColor: isSelected
-                                    ? alpha(config.color, 0.4)
-                                    : (isDark ? '#334155' : '#E5E7EB'),
-                                '& .MuiChip-label': { px: 0.5 },
-                                '&:hover': {
-                                    bgcolor: alpha(config.color, isDark ? 0.15 : 0.1),
-                                },
-                            }}
+                            sx={getFilterChipSx(theme, isSelected, color)}
                         />
                     );
                 })}
@@ -1539,70 +1669,56 @@ TimelineHeader.displayName = 'TimelineHeader';
 /**
  * LoadingSkeleton - Skeleton state while loading
  */
-const LoadingSkeleton = ({ isDark }) => (
-    <Box sx={{ mt: 1, mx: 1 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-            <Skeleton variant="circular" width={16} height={16} />
-            <Skeleton variant="text" width={100} height={20} />
-            <Skeleton variant="rounded" width={24} height={18} />
+const LoadingSkeleton = () => {
+    const theme = useTheme();
+    const barSx = useMemo(() => loadingSkeletonBarSx(theme), [theme]);
+
+    return (
+        <Box sx={{ mt: 1, mx: 1 }}>
+            <Box sx={loadingSkeletonRowSx}>
+                <Skeleton variant="circular" width={16} height={16} />
+                <Skeleton variant="text" width={100} height={20} />
+                <Skeleton variant="rounded" width={24} height={18} />
+            </Box>
+            <Skeleton
+                variant="rounded"
+                height={32}
+                sx={barSx}
+            />
+            <Box sx={loadingSkeletonTimeSx}>
+                {[1, 2, 3, 4, 5].map((i) => (
+                    <Skeleton key={i} variant="text" width={40} height={14} />
+                ))}
+            </Box>
         </Box>
-        <Skeleton
-            variant="rounded"
-            height={32}
-            sx={{ bgcolor: isDark ? '#334155' : '#E5E7EB' }}
-        />
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 0.5 }}>
-            {[1, 2, 3, 4, 5].map((i) => (
-                <Skeleton key={i} variant="text" width={40} height={14} />
-            ))}
-        </Box>
-    </Box>
-);
+    );
+};
 
 /**
  * EmptyState - Shown when no events found
  */
-const EmptyState = ({ isDark }) => (
-    <Box
-        sx={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            py: 3,
-            borderRadius: 1,
-            bgcolor: isDark ? alpha('#334155', 0.2) : alpha('#F3F4F6', 0.5),
-            border: '1px dashed',
-            borderColor: isDark ? '#334155' : '#E5E7EB',
-            mt: 1,
-        }}
-    >
-        <TimelineIcon sx={{ fontSize: 24, color: 'text.disabled', mb: 0.5 }} />
-        <Typography
-            sx={{
-                color: 'text.secondary',
-                fontSize: '0.8125rem',
-                fontWeight: 500,
-            }}
-        >
-            No events in this time range
-        </Typography>
-        <Typography
-            sx={{
-                color: 'text.disabled',
-                fontSize: '0.75rem',
-            }}
-        >
-            Try expanding the time range or adjusting filters
-        </Typography>
-    </Box>
-);
+const EmptyState = () => {
+    const theme = useTheme();
+    const containerSx = useMemo(() => getEmptyStateSx(theme), [theme]);
+
+    return (
+        <Box sx={containerSx}>
+            <TimelineIcon sx={{ fontSize: 24, color: 'text.disabled', mb: 0.5 }} />
+            <Typography sx={emptyStateTitleSx}>
+                No events in this time range
+            </Typography>
+            <Typography sx={emptyStateSubtitleSx}>
+                Try expanding the time range or adjusting filters
+            </Typography>
+        </Box>
+    );
+};
 
 /**
  * EventTimeline - Main component for displaying server events on a timeline
  */
 const EventTimeline = ({ selection, mode = 'light' }) => {
-    const isDark = mode === 'dark';
+    const theme = useTheme();
 
     // Internal state
     const [timeRange, setTimeRange] = useState(getInitialTimeRange);
@@ -1663,21 +1779,14 @@ const EventTimeline = ({ selection, mode = 'light' }) => {
     // Show server name when not viewing a single server
     const showServer = selection?.type !== 'server';
 
+    const outerSx = useMemo(() => getOuterContainerSx(theme), [theme]);
+
     if (!selection) {
         return null;
     }
 
     return (
-        <Box
-            sx={{
-                mt: 2,
-                p: 1.5,
-                borderRadius: 1.5,
-                bgcolor: isDark ? alpha('#1E293B', 0.4) : alpha('#F9FAFB', 0.8),
-                border: '1px solid',
-                borderColor: isDark ? '#334155' : '#E2E8F0',
-            }}
-        >
+        <Box sx={outerSx}>
             <TimelineHeader
                 expanded={expanded}
                 onExpandToggle={() => setExpanded(!expanded)}
@@ -1686,27 +1795,24 @@ const EventTimeline = ({ selection, mode = 'light' }) => {
                 onTimeRangeChange={setTimeRange}
                 eventTypes={eventTypes}
                 onEventTypesChange={setEventTypes}
-                isDark={isDark}
             />
 
             <Collapse in={expanded}>
                 {loading ? (
-                    <LoadingSkeleton isDark={isDark} />
+                    <LoadingSkeleton />
                 ) : events.length === 0 ? (
-                    <EmptyState isDark={isDark} />
+                    <EmptyState />
                 ) : (
                     <>
                         <TimelineCanvas
                             events={events}
                             timeRange={timeRange}
-                            isDark={isDark}
                             showServer={showServer}
                             onEventClick={handleEventClick}
                         />
                         <EventDetailPanel
                             events={selectedEvents}
                             onClose={handlePanelClose}
-                            isDark={isDark}
                         />
                     </>
                 )}

@@ -24,6 +24,7 @@ import {
     alpha,
     Skeleton,
     Fade,
+    useTheme,
 } from '@mui/material';
 import {
     Close as CloseIcon,
@@ -64,11 +65,16 @@ const createCleanTheme = (baseTheme, customBackground) => {
     return cleanTheme;
 };
 
-// Severity colors for indicators
-const SEVERITY_COLORS = {
-    critical: '#EF4444',
-    warning: '#F59E0B',
-    info: '#3B82F6',
+// Severity color getter using theme palette
+const getSeverityColor = (severity, theme) => {
+    switch (severity) {
+        case 'critical':
+            return theme.palette.error.main;
+        case 'warning':
+            return theme.palette.warning.main;
+        default:
+            return theme.palette.info.main;
+    }
 };
 
 // Get severity icon
@@ -83,105 +89,454 @@ const getSeverityIcon = (severity) => {
     }
 };
 
+// ---------------------------------------------------------------------------
+// Style constants and style-getter functions
+// ---------------------------------------------------------------------------
+
+const sxMonoFont = {
+    fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+};
+
+const sxH3 = {
+    fontWeight: 600,
+    color: 'text.primary',
+    fontSize: '0.9375rem',
+    mt: 2,
+    mb: 0.75,
+};
+
+const sxParagraph = {
+    color: 'text.primary',
+    fontSize: '0.875rem',
+    lineHeight: 1.7,
+    my: 1,
+};
+
+const sxList = {
+    pl: 2.5,
+    my: 1.5,
+    '& li': {
+        mb: 0.75,
+        fontSize: '0.875rem',
+        lineHeight: 1.6,
+        color: 'text.primary',
+    },
+};
+
+const sxUnorderedList = {
+    ...sxList,
+    listStyleType: 'disc',
+};
+
+const sxStrong = { fontWeight: 600 };
+const sxEm = { fontStyle: 'italic' };
+const sxSkeletonRow = { display: 'flex', alignItems: 'center', gap: 1, mb: 0.75 };
+const sxContentFadeBox = { mt: 3 };
+const sxSkeletonContainer = { py: 2 };
+const sxErrorFlexRow = { display: 'flex', alignItems: 'flex-start', gap: 1.5 };
+const sxTitleFlexBox = { flex: 1, minWidth: 0 };
+const sxCloseIconSize = { fontSize: 20 };
+
+const getHeadingSx = (theme) => ({
+    fontWeight: 600,
+    color: theme.palette.secondary.main,
+    pb: 0.5,
+    borderBottom: '1px solid',
+    borderColor: alpha(theme.palette.secondary.main, theme.palette.mode === 'dark' ? 0.2 : 0.15),
+});
+
+const sxH1 = (theme) => ({
+    ...getHeadingSx(theme),
+    fontSize: '1.125rem',
+    mt: 2,
+    mb: 1,
+});
+
+const sxH2 = (theme) => ({
+    ...getHeadingSx(theme),
+    fontSize: '1rem',
+    mt: 2.5,
+    mb: 1,
+});
+
+const getInlineCodeSx = (theme) => ({
+    ...sxMonoFont,
+    fontSize: '0.8125rem',
+    bgcolor: theme.palette.mode === 'dark'
+        ? alpha(theme.palette.grey[700], 0.6)
+        : alpha(theme.palette.grey[200], 0.8),
+    color: theme.palette.mode === 'dark'
+        ? theme.palette.grey[200]
+        : theme.palette.grey[700],
+    px: 0.75,
+    py: 0.25,
+    borderRadius: 0.5,
+});
+
+const getCodeBlockWrapperSx = (theme) => ({
+    my: 1.5,
+    borderRadius: 1,
+    overflow: 'hidden',
+    border: '1px solid',
+    borderColor: theme.palette.mode === 'dark'
+        ? theme.palette.grey[700]
+        : theme.palette.grey[200],
+    '& pre': {
+        margin: '0 !important',
+        borderRadius: '0 !important',
+    },
+});
+
+const getCodeBlockCustomStyle = (customBackground) => ({
+    margin: 0,
+    padding: '1rem',
+    fontSize: '0.8125rem',
+    fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+    background: customBackground,
+});
+
+const getLinkSx = (theme) => ({
+    color: theme.palette.mode === 'dark'
+        ? theme.palette.secondary.light
+        : theme.palette.secondary.dark,
+    textDecoration: 'none',
+    '&:hover': {
+        textDecoration: 'underline',
+    },
+});
+
+const getBlockquoteSx = (theme) => ({
+    borderLeft: '3px solid',
+    borderColor: theme.palette.secondary.main,
+    pl: 2,
+    ml: 0,
+    my: 1.5,
+    color: theme.palette.mode === 'dark'
+        ? theme.palette.grey[400]
+        : theme.palette.grey[500],
+    fontStyle: 'italic',
+});
+
+const getTableSx = (theme) => ({
+    width: '100%',
+    borderCollapse: 'collapse',
+    my: 1.5,
+    fontSize: '0.875rem',
+    '& th, & td': {
+        border: '1px solid',
+        borderColor: theme.palette.mode === 'dark'
+            ? theme.palette.grey[700]
+            : theme.palette.grey[200],
+        p: 1,
+        textAlign: 'left',
+    },
+    '& th': {
+        bgcolor: theme.palette.mode === 'dark'
+            ? alpha(theme.palette.grey[700], 0.5)
+            : alpha(theme.palette.grey[100], 0.8),
+        fontWeight: 600,
+    },
+});
+
+const getSkeletonBgSx = (theme) => ({
+    bgcolor: theme.palette.mode === 'dark'
+        ? theme.palette.grey[700]
+        : theme.palette.grey[200],
+});
+
+const getDialogPaperSx = (theme) => ({
+    bgcolor: theme.palette.mode === 'dark'
+        ? theme.palette.background.default
+        : theme.palette.grey[50],
+    backgroundImage: 'none',
+    borderRadius: 2,
+    border: '1px solid',
+    borderColor: theme.palette.mode === 'dark'
+        ? theme.palette.divider
+        : theme.palette.grey[200],
+    boxShadow: theme.palette.mode === 'dark'
+        ? '0 25px 50px -12px rgba(0, 0, 0, 0.5)'
+        : '0 25px 50px -12px rgba(0, 0, 0, 0.15)',
+});
+
+const getDialogTitleSx = (theme) => ({
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: 2,
+    pb: 2,
+    borderBottom: '1px solid',
+    borderColor: theme.palette.divider,
+    bgcolor: theme.palette.mode === 'dark'
+        ? alpha(theme.palette.background.paper, 0.5)
+        : theme.palette.background.paper,
+});
+
+const getIconBoxSx = (theme) => ({
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 48,
+    height: 48,
+    borderRadius: 1.5,
+    bgcolor: alpha(
+        theme.palette.secondary.main,
+        theme.palette.mode === 'dark' ? 0.15 : 0.1
+    ),
+    position: 'relative',
+    flexShrink: 0,
+});
+
+const getIconColorSx = (theme) => ({
+    fontSize: 28,
+    color: theme.palette.mode === 'dark'
+        ? theme.palette.secondary.light
+        : theme.palette.secondary.main,
+});
+
+const getSeverityDotSx = (severityColor, theme) => ({
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    width: 14,
+    height: 14,
+    borderRadius: '50%',
+    bgcolor: severityColor,
+    border: '2px solid',
+    borderColor: theme.palette.mode === 'dark'
+        ? theme.palette.background.default
+        : theme.palette.grey[50],
+    boxShadow: `0 0 8px ${alpha(severityColor, 0.5)}`,
+});
+
+const sxTitleTypography = {
+    fontWeight: 600,
+    color: 'text.primary',
+    fontSize: '1.125rem',
+    lineHeight: 1.3,
+};
+
+const sxMetadataRow = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 1.5,
+    mt: 0.5,
+    flexWrap: 'wrap',
+};
+
+const sxSeverityBadge = { display: 'flex', alignItems: 'center', gap: 0.5 };
+
+const getServerBadgeSx = (theme) => ({
+    display: 'flex',
+    alignItems: 'center',
+    gap: 0.5,
+    px: 0.75,
+    py: 0.25,
+    borderRadius: 0.5,
+    bgcolor: alpha(
+        theme.palette.grey[500],
+        theme.palette.mode === 'dark' ? 0.2 : 0.1
+    ),
+});
+
+const getDatabaseBadgeSx = (theme) => ({
+    display: 'flex',
+    alignItems: 'center',
+    gap: 0.5,
+    px: 0.75,
+    py: 0.25,
+    borderRadius: 0.5,
+    bgcolor: alpha(
+        theme.palette.secondary.main,
+        theme.palette.mode === 'dark' ? 0.2 : 0.1
+    ),
+});
+
+const getDatabaseTextSx = (theme) => ({
+    fontSize: '0.6875rem',
+    color: theme.palette.mode === 'dark'
+        ? theme.palette.secondary.light
+        : theme.palette.secondary.main,
+    ...sxMonoFont,
+});
+
+const getCloseButtonSx = (theme) => ({
+    color: 'text.secondary',
+    '&:hover': {
+        bgcolor: alpha(
+            theme.palette.grey[400],
+            0.1
+        ),
+    },
+});
+
+const getContentSx = (theme) => ({
+    p: 3,
+    pt: 0,
+    bgcolor: theme.palette.mode === 'dark'
+        ? theme.palette.background.default
+        : theme.palette.grey[50],
+});
+
+const getLoadingBannerSx = (theme) => ({
+    display: 'flex',
+    alignItems: 'center',
+    gap: 1.5,
+    mb: 2,
+    p: 1.5,
+    borderRadius: 1,
+    bgcolor: alpha(
+        theme.palette.secondary.main,
+        theme.palette.mode === 'dark' ? 0.1 : 0.05
+    ),
+    border: '1px solid',
+    borderColor: alpha(
+        theme.palette.secondary.main,
+        theme.palette.mode === 'dark' ? 0.2 : 0.15
+    ),
+});
+
+const getPulseDotSx = (theme) => ({
+    width: 8,
+    height: 8,
+    borderRadius: '50%',
+    bgcolor: theme.palette.secondary.main,
+    animation: 'pulse 1.5s ease-in-out infinite',
+    '@keyframes pulse': {
+        '0%, 100%': { opacity: 1 },
+        '50%': { opacity: 0.4 },
+    },
+});
+
+const getLoadingTextSx = (theme) => ({
+    fontSize: '0.8125rem',
+    color: theme.palette.mode === 'dark'
+        ? theme.palette.secondary.light
+        : theme.palette.secondary.main,
+    fontWeight: 500,
+});
+
+const getErrorBoxSx = (theme) => ({
+    p: 2.5,
+    borderRadius: 1.5,
+    bgcolor: alpha(
+        theme.palette.error.main,
+        theme.palette.mode === 'dark' ? 0.1 : 0.05
+    ),
+    border: '1px solid',
+    borderColor: alpha(
+        theme.palette.error.main,
+        theme.palette.mode === 'dark' ? 0.25 : 0.2
+    ),
+});
+
+const getErrorTitleSx = (theme) => ({
+    fontWeight: 600,
+    color: theme.palette.mode === 'dark'
+        ? theme.palette.error.light
+        : theme.palette.error.dark,
+    fontSize: '0.875rem',
+    mb: 0.5,
+});
+
+const getAnalysisBoxSx = (theme) => ({
+    p: 2.5,
+    borderRadius: 1.5,
+    bgcolor: theme.palette.mode === 'dark'
+        ? alpha(theme.palette.background.paper, 0.6)
+        : theme.palette.background.paper,
+    border: '1px solid',
+    borderColor: theme.palette.divider,
+    boxShadow: theme.palette.mode === 'dark'
+        ? '0 4px 6px -1px rgba(0, 0, 0, 0.2)'
+        : '0 1px 3px 0 rgba(0, 0, 0, 0.05)',
+});
+
+const getFooterSx = (theme) => ({
+    px: 3,
+    py: 2,
+    borderTop: '1px solid',
+    borderColor: theme.palette.divider,
+    bgcolor: theme.palette.mode === 'dark'
+        ? alpha(theme.palette.background.paper, 0.5)
+        : theme.palette.background.paper,
+});
+
+const getDownloadButtonSx = (theme) => ({
+    color: theme.palette.mode === 'dark'
+        ? theme.palette.grey[400]
+        : theme.palette.grey[500],
+    '&:hover': {
+        bgcolor: alpha(
+            theme.palette.grey[400],
+            0.1
+        ),
+    },
+    '&.Mui-disabled': {
+        color: theme.palette.mode === 'dark'
+            ? theme.palette.grey[600]
+            : theme.palette.grey[300],
+    },
+});
+
+const sxMetadataSecondRow = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 1,
+    mt: 0.75,
+    flexWrap: 'wrap',
+};
+
+const sxMonoSmall = {
+    fontSize: '0.6875rem',
+    color: 'text.secondary',
+    ...sxMonoFont,
+};
+
+const sxThresholdText = {
+    fontSize: '0.6875rem',
+    color: 'text.disabled',
+    ...sxMonoFont,
+};
+
+// ---------------------------------------------------------------------------
+// Components
+// ---------------------------------------------------------------------------
+
 /**
  * Styled markdown content component using react-markdown
  */
 const MarkdownContent = ({ content, isDark }) => {
+    const theme = useTheme();
+
     // Memoize markdown components to avoid re-creating on each render
     const components = useMemo(() => ({
         h1: ({ children }) => (
-            <Typography
-                variant="h5"
-                sx={{
-                    fontWeight: 600,
-                    color: isDark ? '#6366F1' : '#4F46E5',
-                    fontSize: '1.125rem',
-                    mt: 2,
-                    mb: 1,
-                    pb: 0.5,
-                    borderBottom: '1px solid',
-                    borderColor: isDark ? alpha('#6366F1', 0.2) : alpha('#4F46E5', 0.15),
-                }}
-            >
+            <Typography variant="h5" sx={sxH1(theme)}>
                 {children}
             </Typography>
         ),
         h2: ({ children }) => (
-            <Typography
-                variant="h6"
-                sx={{
-                    fontWeight: 600,
-                    color: isDark ? '#6366F1' : '#4F46E5',
-                    fontSize: '1rem',
-                    mt: 2.5,
-                    mb: 1,
-                    pb: 0.5,
-                    borderBottom: '1px solid',
-                    borderColor: isDark ? alpha('#6366F1', 0.2) : alpha('#4F46E5', 0.15),
-                }}
-            >
+            <Typography variant="h6" sx={sxH2(theme)}>
                 {children}
             </Typography>
         ),
         h3: ({ children }) => (
-            <Typography
-                variant="subtitle1"
-                sx={{
-                    fontWeight: 600,
-                    color: 'text.primary',
-                    fontSize: '0.9375rem',
-                    mt: 2,
-                    mb: 0.75,
-                }}
-            >
+            <Typography variant="subtitle1" sx={sxH3}>
                 {children}
             </Typography>
         ),
         p: ({ children }) => (
-            <Typography
-                variant="body2"
-                sx={{
-                    color: 'text.primary',
-                    fontSize: '0.875rem',
-                    lineHeight: 1.7,
-                    my: 1,
-                }}
-            >
+            <Typography variant="body2" sx={sxParagraph}>
                 {children}
             </Typography>
         ),
         ul: ({ children }) => (
-            <Box
-                component="ul"
-                sx={{
-                    pl: 2.5,
-                    my: 1.5,
-                    listStyleType: 'disc',
-                    '& li': {
-                        mb: 0.75,
-                        fontSize: '0.875rem',
-                        lineHeight: 1.6,
-                        color: 'text.primary',
-                    },
-                }}
-            >
+            <Box component="ul" sx={sxUnorderedList}>
                 {children}
             </Box>
         ),
         ol: ({ children }) => (
-            <Box
-                component="ol"
-                sx={{
-                    pl: 2.5,
-                    my: 1.5,
-                    '& li': {
-                        mb: 0.75,
-                        fontSize: '0.875rem',
-                        lineHeight: 1.6,
-                        color: 'text.primary',
-                    },
-                }}
-            >
+            <Box component="ol" sx={sxList}>
                 {children}
             </Box>
         ),
@@ -191,55 +546,26 @@ const MarkdownContent = ({ content, isDark }) => {
             const language = match ? match[1] : '';
 
             // Custom backgrounds for code blocks
-            const darkBackground = '#1E293B';
-            const lightBackground = '#F8FAFC';
-            const customBackground = isDark ? darkBackground : lightBackground;
+            const customBackground = isDark
+                ? theme.palette.background.paper
+                : theme.palette.grey[50];
 
             // Create clean themes without token background colors
             const cleanTheme = isDark
-                ? createCleanTheme(oneDark, darkBackground)
-                : createCleanTheme(oneLight, lightBackground);
+                ? createCleanTheme(oneDark, theme.palette.background.paper)
+                : createCleanTheme(oneLight, theme.palette.grey[50]);
 
             return inline ? (
-                <Box
-                    component="code"
-                    sx={{
-                        fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-                        fontSize: '0.8125rem',
-                        bgcolor: isDark ? alpha('#334155', 0.6) : alpha('#E5E7EB', 0.8),
-                        color: isDark ? '#E2E8F0' : '#374151',
-                        px: 0.75,
-                        py: 0.25,
-                        borderRadius: 0.5,
-                    }}
-                >
+                <Box component="code" sx={getInlineCodeSx(theme)}>
                     {children}
                 </Box>
             ) : (
-                <Box
-                    sx={{
-                        my: 1.5,
-                        borderRadius: 1,
-                        overflow: 'hidden',
-                        border: '1px solid',
-                        borderColor: isDark ? '#334155' : '#E2E8F0',
-                        '& pre': {
-                            margin: '0 !important',
-                            borderRadius: '0 !important',
-                        },
-                    }}
-                >
+                <Box sx={getCodeBlockWrapperSx(theme)}>
                     <SyntaxHighlighter
                         style={cleanTheme}
                         language={language || 'sql'}
                         PreTag="div"
-                        customStyle={{
-                            margin: 0,
-                            padding: '1rem',
-                            fontSize: '0.8125rem',
-                            fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-                            background: customBackground,
-                        }}
+                        customStyle={getCodeBlockCustomStyle(customBackground)}
                         {...props}
                     >
                         {String(children).replace(/\n$/, '')}
@@ -248,12 +574,12 @@ const MarkdownContent = ({ content, isDark }) => {
             );
         },
         strong: ({ children }) => (
-            <Box component="strong" sx={{ fontWeight: 600 }}>
+            <Box component="strong" sx={sxStrong}>
                 {children}
             </Box>
         ),
         em: ({ children }) => (
-            <Box component="em" sx={{ fontStyle: 'italic' }}>
+            <Box component="em" sx={sxEm}>
                 {children}
             </Box>
         ),
@@ -263,57 +589,22 @@ const MarkdownContent = ({ content, isDark }) => {
                 href={href}
                 target="_blank"
                 rel="noopener noreferrer"
-                sx={{
-                    color: isDark ? '#818CF8' : '#4F46E5',
-                    textDecoration: 'none',
-                    '&:hover': {
-                        textDecoration: 'underline',
-                    },
-                }}
+                sx={getLinkSx(theme)}
             >
                 {children}
             </Box>
         ),
         blockquote: ({ children }) => (
-            <Box
-                component="blockquote"
-                sx={{
-                    borderLeft: '3px solid',
-                    borderColor: isDark ? '#6366F1' : '#4F46E5',
-                    pl: 2,
-                    ml: 0,
-                    my: 1.5,
-                    color: isDark ? '#94A3B8' : '#64748B',
-                    fontStyle: 'italic',
-                }}
-            >
+            <Box component="blockquote" sx={getBlockquoteSx(theme)}>
                 {children}
             </Box>
         ),
         table: ({ children }) => (
-            <Box
-                component="table"
-                sx={{
-                    width: '100%',
-                    borderCollapse: 'collapse',
-                    my: 1.5,
-                    fontSize: '0.875rem',
-                    '& th, & td': {
-                        border: '1px solid',
-                        borderColor: isDark ? '#334155' : '#E2E8F0',
-                        p: 1,
-                        textAlign: 'left',
-                    },
-                    '& th': {
-                        bgcolor: isDark ? alpha('#334155', 0.5) : alpha('#F1F5F9', 0.8),
-                        fontWeight: 600,
-                    },
-                }}
-            >
+            <Box component="table" sx={getTableSx(theme)}>
                 {children}
             </Box>
         ),
-    }), [isDark]);
+    }), [isDark, theme]);
 
     if (!content) return null;
 
@@ -327,84 +618,40 @@ const MarkdownContent = ({ content, isDark }) => {
 /**
  * Loading skeleton for analysis content
  */
-const AnalysisSkeleton = ({ isDark }) => (
-    <Box sx={{ py: 2 }}>
-        {/* Summary section */}
-        <Skeleton
-            variant="text"
-            width="30%"
-            height={28}
-            sx={{ bgcolor: isDark ? '#334155' : '#E5E7EB', mb: 1 }}
-        />
-        <Skeleton
-            variant="text"
-            width="100%"
-            height={20}
-            sx={{ bgcolor: isDark ? '#334155' : '#E5E7EB' }}
-        />
-        <Skeleton
-            variant="text"
-            width="85%"
-            height={20}
-            sx={{ bgcolor: isDark ? '#334155' : '#E5E7EB', mb: 2.5 }}
-        />
+const AnalysisSkeleton = () => {
+    const theme = useTheme();
+    const skeletonBg = getSkeletonBgSx(theme);
 
-        {/* Analysis section */}
-        <Skeleton
-            variant="text"
-            width="25%"
-            height={28}
-            sx={{ bgcolor: isDark ? '#334155' : '#E5E7EB', mb: 1 }}
-        />
-        <Skeleton
-            variant="text"
-            width="100%"
-            height={20}
-            sx={{ bgcolor: isDark ? '#334155' : '#E5E7EB' }}
-        />
-        <Skeleton
-            variant="text"
-            width="90%"
-            height={20}
-            sx={{ bgcolor: isDark ? '#334155' : '#E5E7EB' }}
-        />
-        <Skeleton
-            variant="text"
-            width="75%"
-            height={20}
-            sx={{ bgcolor: isDark ? '#334155' : '#E5E7EB', mb: 2.5 }}
-        />
+    return (
+        <Box sx={sxSkeletonContainer}>
+            {/* Summary section */}
+            <Skeleton variant="text" width="30%" height={28} sx={{ ...skeletonBg, mb: 1 }} />
+            <Skeleton variant="text" width="100%" height={20} sx={skeletonBg} />
+            <Skeleton variant="text" width="85%" height={20} sx={{ ...skeletonBg, mb: 2.5 }} />
 
-        {/* Remediation section */}
-        <Skeleton
-            variant="text"
-            width="35%"
-            height={28}
-            sx={{ bgcolor: isDark ? '#334155' : '#E5E7EB', mb: 1 }}
-        />
-        {[1, 2, 3].map((i) => (
-            <Box key={i} sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.75 }}>
-                <Skeleton
-                    variant="circular"
-                    width={8}
-                    height={8}
-                    sx={{ bgcolor: isDark ? '#334155' : '#E5E7EB' }}
-                />
-                <Skeleton
-                    variant="text"
-                    width={`${85 - i * 10}%`}
-                    height={20}
-                    sx={{ bgcolor: isDark ? '#334155' : '#E5E7EB' }}
-                />
-            </Box>
-        ))}
-    </Box>
-);
+            {/* Analysis section */}
+            <Skeleton variant="text" width="25%" height={28} sx={{ ...skeletonBg, mb: 1 }} />
+            <Skeleton variant="text" width="100%" height={20} sx={skeletonBg} />
+            <Skeleton variant="text" width="90%" height={20} sx={skeletonBg} />
+            <Skeleton variant="text" width="75%" height={20} sx={{ ...skeletonBg, mb: 2.5 }} />
+
+            {/* Remediation section */}
+            <Skeleton variant="text" width="35%" height={28} sx={{ ...skeletonBg, mb: 1 }} />
+            {[1, 2, 3].map((i) => (
+                <Box key={i} sx={sxSkeletonRow}>
+                    <Skeleton variant="circular" width={8} height={8} sx={skeletonBg} />
+                    <Skeleton variant="text" width={`${85 - i * 10}%`} height={20} sx={skeletonBg} />
+                </Box>
+            ))}
+        </Box>
+    );
+};
 
 /**
  * AlertAnalysisDialog - Dialog for displaying AI-powered alert analysis
  */
 const AlertAnalysisDialog = ({ open, alert, onClose, isDark }) => {
+    const theme = useTheme();
     const { analysis, loading, error, analyze, reset } = useAlertAnalysis();
 
     // Trigger analysis when dialog opens with an alert
@@ -469,7 +716,7 @@ ${analysis}
         URL.revokeObjectURL(url);
     };
 
-    const severityColor = SEVERITY_COLORS[alert?.severity] || SEVERITY_COLORS.info;
+    const severityColor = getSeverityColor(alert?.severity, theme);
     const SeverityIcon = getSeverityIcon(alert?.severity);
 
     return (
@@ -479,83 +726,26 @@ ${analysis}
             maxWidth="md"
             fullWidth
             PaperProps={{
-                sx: {
-                    bgcolor: isDark ? '#0F172A' : '#F8FAFC',
-                    backgroundImage: 'none',
-                    borderRadius: 2,
-                    border: '1px solid',
-                    borderColor: isDark ? '#334155' : '#E2E8F0',
-                    boxShadow: isDark
-                        ? '0 25px 50px -12px rgba(0, 0, 0, 0.5)'
-                        : '0 25px 50px -12px rgba(0, 0, 0, 0.15)',
-                },
+                sx: getDialogPaperSx(theme),
             }}
         >
             {/* Header */}
-            <DialogTitle
-                sx={{
-                    display: 'flex',
-                    alignItems: 'flex-start',
-                    gap: 2,
-                    pb: 2,
-                    borderBottom: '1px solid',
-                    borderColor: isDark ? '#334155' : '#E2E8F0',
-                    bgcolor: isDark ? alpha('#1E293B', 0.5) : '#FFFFFF',
-                }}
-            >
+            <DialogTitle sx={getDialogTitleSx(theme)}>
                 {/* Icon with severity indicator */}
-                <Box
-                    sx={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        width: 48,
-                        height: 48,
-                        borderRadius: 1.5,
-                        bgcolor: isDark ? alpha('#6366F1', 0.15) : alpha('#6366F1', 0.1),
-                        position: 'relative',
-                        flexShrink: 0,
-                    }}
-                >
-                    <PsychologyIcon
-                        sx={{
-                            fontSize: 28,
-                            color: isDark ? '#818CF8' : '#6366F1',
-                        }}
-                    />
+                <Box sx={getIconBoxSx(theme)}>
+                    <PsychologyIcon sx={getIconColorSx(theme)} />
                     {/* Severity dot */}
-                    <Box
-                        sx={{
-                            position: 'absolute',
-                            top: -4,
-                            right: -4,
-                            width: 14,
-                            height: 14,
-                            borderRadius: '50%',
-                            bgcolor: severityColor,
-                            border: '2px solid',
-                            borderColor: isDark ? '#0F172A' : '#F8FAFC',
-                            boxShadow: `0 0 8px ${alpha(severityColor, 0.5)}`,
-                        }}
-                    />
+                    <Box sx={getSeverityDotSx(severityColor, theme)} />
                 </Box>
 
                 {/* Title and metadata */}
-                <Box sx={{ flex: 1, minWidth: 0 }}>
-                    <Typography
-                        variant="h6"
-                        sx={{
-                            fontWeight: 600,
-                            color: 'text.primary',
-                            fontSize: '1.125rem',
-                            lineHeight: 1.3,
-                        }}
-                    >
+                <Box sx={sxTitleFlexBox}>
+                    <Typography variant="h6" sx={sxTitleTypography}>
                         Alert Analysis
                     </Typography>
                     {/* First row: severity, title, time */}
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 0.5, flexWrap: 'wrap' }}>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <Box sx={sxMetadataRow}>
+                        <Box sx={sxSeverityBadge}>
                             <SeverityIcon sx={{ fontSize: 14, color: severityColor }} />
                             <Typography
                                 sx={{
@@ -568,81 +758,33 @@ ${analysis}
                                 {alert?.severity || 'Unknown'}
                             </Typography>
                         </Box>
-                        <Typography
-                            sx={{
-                                fontSize: '0.75rem',
-                                color: 'text.secondary',
-                            }}
-                        >
+                        <Typography sx={{ fontSize: '0.75rem', color: 'text.secondary' }}>
                             {alert?.title || 'Alert'}
                         </Typography>
                         {alert?.time && (
-                            <Typography
-                                sx={{
-                                    fontSize: '0.75rem',
-                                    color: 'text.disabled',
-                                }}
-                            >
+                            <Typography sx={{ fontSize: '0.75rem', color: 'text.disabled' }}>
                                 {alert.time}
                             </Typography>
                         )}
                     </Box>
                     {/* Second row: server, database, threshold info */}
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.75, flexWrap: 'wrap' }}>
+                    <Box sx={sxMetadataSecondRow}>
                         {alert?.server && (
-                            <Box
-                                sx={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: 0.5,
-                                    px: 0.75,
-                                    py: 0.25,
-                                    borderRadius: 0.5,
-                                    bgcolor: isDark ? alpha('#64748B', 0.2) : alpha('#64748B', 0.1),
-                                }}
-                            >
-                                <Typography
-                                    sx={{
-                                        fontSize: '0.6875rem',
-                                        color: 'text.secondary',
-                                        fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-                                    }}
-                                >
+                            <Box sx={getServerBadgeSx(theme)}>
+                                <Typography sx={sxMonoSmall}>
                                     {alert.server}
                                 </Typography>
                             </Box>
                         )}
                         {alert?.databaseName && (
-                            <Box
-                                sx={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: 0.5,
-                                    px: 0.75,
-                                    py: 0.25,
-                                    borderRadius: 0.5,
-                                    bgcolor: isDark ? alpha('#6366F1', 0.2) : alpha('#6366F1', 0.1),
-                                }}
-                            >
-                                <Typography
-                                    sx={{
-                                        fontSize: '0.6875rem',
-                                        color: isDark ? '#818CF8' : '#6366F1',
-                                        fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-                                    }}
-                                >
+                            <Box sx={getDatabaseBadgeSx(theme)}>
+                                <Typography sx={getDatabaseTextSx(theme)}>
                                     {alert.databaseName}
                                 </Typography>
                             </Box>
                         )}
                         {alert?.metricValue !== undefined && alert?.thresholdValue !== undefined && (
-                            <Typography
-                                sx={{
-                                    fontSize: '0.6875rem',
-                                    color: 'text.disabled',
-                                    fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-                                }}
-                            >
+                            <Typography sx={sxThresholdText}>
                                 {typeof alert.metricValue === 'number'
                                     ? alert.metricValue.toLocaleString(undefined, { maximumFractionDigits: 2 })
                                     : alert.metricValue}
@@ -661,90 +803,34 @@ ${analysis}
                 <IconButton
                     onClick={handleClose}
                     size="small"
-                    sx={{
-                        color: 'text.secondary',
-                        '&:hover': {
-                            bgcolor: isDark ? alpha('#94A3B8', 0.1) : alpha('#64748B', 0.1),
-                        },
-                    }}
+                    sx={getCloseButtonSx(theme)}
                 >
-                    <CloseIcon sx={{ fontSize: 20 }} />
+                    <CloseIcon sx={sxCloseIconSize} />
                 </IconButton>
             </DialogTitle>
 
             {/* Content */}
-            <DialogContent
-                sx={{
-                    p: 3,
-                    pt: 0,
-                    bgcolor: isDark ? '#0F172A' : '#F8FAFC',
-                }}
-            >
+            <DialogContent sx={getContentSx(theme)}>
                 <Fade in={true} timeout={300}>
-                    <Box sx={{ mt: 3 }}>
+                    <Box sx={sxContentFadeBox}>
                         {loading && (
                             <Box>
-                                <Box
-                                    sx={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: 1.5,
-                                        mb: 2,
-                                        p: 1.5,
-                                        borderRadius: 1,
-                                        bgcolor: isDark ? alpha('#6366F1', 0.1) : alpha('#6366F1', 0.05),
-                                        border: '1px solid',
-                                        borderColor: isDark ? alpha('#6366F1', 0.2) : alpha('#6366F1', 0.15),
-                                    }}
-                                >
-                                    <Box
-                                        sx={{
-                                            width: 8,
-                                            height: 8,
-                                            borderRadius: '50%',
-                                            bgcolor: '#6366F1',
-                                            animation: 'pulse 1.5s ease-in-out infinite',
-                                            '@keyframes pulse': {
-                                                '0%, 100%': { opacity: 1 },
-                                                '50%': { opacity: 0.4 },
-                                            },
-                                        }}
-                                    />
-                                    <Typography
-                                        sx={{
-                                            fontSize: '0.8125rem',
-                                            color: isDark ? '#818CF8' : '#6366F1',
-                                            fontWeight: 500,
-                                        }}
-                                    >
+                                <Box sx={getLoadingBannerSx(theme)}>
+                                    <Box sx={getPulseDotSx(theme)} />
+                                    <Typography sx={getLoadingTextSx(theme)}>
                                         Analyzing alert and gathering context...
                                     </Typography>
                                 </Box>
-                                <AnalysisSkeleton isDark={isDark} />
+                                <AnalysisSkeleton />
                             </Box>
                         )}
 
                         {error && !loading && (
-                            <Box
-                                sx={{
-                                    p: 2.5,
-                                    borderRadius: 1.5,
-                                    bgcolor: isDark ? alpha('#EF4444', 0.1) : alpha('#EF4444', 0.05),
-                                    border: '1px solid',
-                                    borderColor: isDark ? alpha('#EF4444', 0.25) : alpha('#EF4444', 0.2),
-                                }}
-                            >
-                                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1.5 }}>
-                                    <ErrorIcon sx={{ fontSize: 20, color: '#EF4444', mt: 0.25 }} />
+                            <Box sx={getErrorBoxSx(theme)}>
+                                <Box sx={sxErrorFlexRow}>
+                                    <ErrorIcon sx={{ fontSize: 20, color: theme.palette.error.main, mt: 0.25 }} />
                                     <Box>
-                                        <Typography
-                                            sx={{
-                                                fontWeight: 600,
-                                                color: isDark ? '#F87171' : '#DC2626',
-                                                fontSize: '0.875rem',
-                                                mb: 0.5,
-                                            }}
-                                        >
+                                        <Typography sx={getErrorTitleSx(theme)}>
                                             Analysis Failed
                                         </Typography>
                                         <Typography
@@ -761,18 +847,7 @@ ${analysis}
                         )}
 
                         {analysis && !loading && (
-                            <Box
-                                sx={{
-                                    p: 2.5,
-                                    borderRadius: 1.5,
-                                    bgcolor: isDark ? alpha('#1E293B', 0.6) : '#FFFFFF',
-                                    border: '1px solid',
-                                    borderColor: isDark ? '#334155' : '#E2E8F0',
-                                    boxShadow: isDark
-                                        ? '0 4px 6px -1px rgba(0, 0, 0, 0.2)'
-                                        : '0 1px 3px 0 rgba(0, 0, 0, 0.05)',
-                                }}
-                            >
+                            <Box sx={getAnalysisBoxSx(theme)}>
                                 <MarkdownContent content={analysis} isDark={isDark} />
                             </Box>
                         )}
@@ -781,29 +856,13 @@ ${analysis}
             </DialogContent>
 
             {/* Footer */}
-            <DialogActions
-                sx={{
-                    px: 3,
-                    py: 2,
-                    borderTop: '1px solid',
-                    borderColor: isDark ? '#334155' : '#E2E8F0',
-                    bgcolor: isDark ? alpha('#1E293B', 0.5) : '#FFFFFF',
-                }}
-            >
+            <DialogActions sx={getFooterSx(theme)}>
                 <Button
                     onClick={handleDownload}
                     startIcon={<DownloadIcon />}
                     disabled={!analysis || loading}
                     size="small"
-                    sx={{
-                        color: isDark ? '#94A3B8' : '#64748B',
-                        '&:hover': {
-                            bgcolor: isDark ? alpha('#94A3B8', 0.1) : alpha('#64748B', 0.1),
-                        },
-                        '&.Mui-disabled': {
-                            color: isDark ? '#475569' : '#CBD5E1',
-                        },
-                    }}
+                    sx={getDownloadButtonSx(theme)}
                 >
                     Download
                 </Button>

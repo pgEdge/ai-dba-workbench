@@ -41,6 +41,7 @@ import {
     FormControlLabel,
     Radio,
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import {
     Add as AddIcon,
     Edit as EditIcon,
@@ -52,26 +53,25 @@ import {
 import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
 import EffectivePermissionsPanel from './EffectivePermissionsPanel';
 import { useAuth } from '../../contexts/AuthContext';
+import {
+    tableHeaderCellSx,
+    dialogTitleSx,
+    dialogActionsSx,
+    pageHeadingSx,
+    loadingContainerSx,
+    subsectionLabelSx,
+    getContainedButtonSx,
+    getTextButtonSx,
+    getDeleteIconSx,
+    getTableContainerSx,
+    getRadioSx,
+    getFocusedLabelSx,
+} from './styles';
 
 const API_BASE_URL = '/api/v1';
 
-const ACCENT_COLOR = '#15AABF';
-const ACCENT_HOVER = '#0C8599';
-
-const textFieldSx = {
-    '& .MuiOutlinedInput-root': {
-        borderRadius: 1,
-        '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
-            borderColor: ACCENT_COLOR,
-            borderWidth: 2,
-        },
-    },
-    '& .MuiInputLabel-root.Mui-focused': {
-        color: ACCENT_COLOR,
-    },
-};
-
 const AdminGroups = ({ mode }) => {
+    const theme = useTheme();
     const isDark = mode === 'dark';
     const { user } = useAuth();
     const isSuperuser = !!user?.isSuperuser;
@@ -390,8 +390,8 @@ const AdminGroups = ({ mode }) => {
 
     if (loading) {
         return (
-            <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
-                <CircularProgress sx={{ color: ACCENT_COLOR }} />
+            <Box sx={loadingContainerSx}>
+                <CircularProgress />
             </Box>
         );
     }
@@ -400,10 +400,17 @@ const AdminGroups = ({ mode }) => {
         return <Alert severity="error" sx={{ borderRadius: 1 }}>{error}</Alert>;
     }
 
+    const containedButtonSx = getContainedButtonSx(theme);
+    const textButtonSx = getTextButtonSx(theme);
+    const deleteIconSx = getDeleteIconSx(theme);
+    const tableContainerSx = getTableContainerSx(theme);
+    const radioSx = getRadioSx(theme);
+    const focusedLabelSx = getFocusedLabelSx(theme);
+
     return (
         <Box>
             <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                <Typography variant="h6" sx={{ fontWeight: 600, flex: 1, color: 'text.primary' }}>
+                <Typography variant="h6" sx={pageHeadingSx}>
                     Groups
                 </Typography>
                 <Button
@@ -415,12 +422,7 @@ const AdminGroups = ({ mode }) => {
                         setCreateDesc('');
                         setCreateOpen(true);
                     }}
-                    sx={{
-                        textTransform: 'none',
-                        fontWeight: 600,
-                        bgcolor: ACCENT_COLOR,
-                        '&:hover': { bgcolor: ACCENT_HOVER },
-                    }}
+                    sx={containedButtonSx}
                 >
                     Create Group
                 </Button>
@@ -429,20 +431,16 @@ const AdminGroups = ({ mode }) => {
             <TableContainer
                 component={Paper}
                 elevation={0}
-                sx={{
-                    border: '1px solid',
-                    borderColor: isDark ? '#334155' : '#E5E7EB',
-                    borderRadius: 1,
-                }}
+                sx={tableContainerSx}
             >
                 <Table>
                     <TableHead>
                         <TableRow>
-                            <TableCell sx={{ fontWeight: 600, width: 40 }} />
-                            <TableCell sx={{ fontWeight: 600 }}>Name</TableCell>
-                            <TableCell sx={{ fontWeight: 600 }}>Description</TableCell>
-                            <TableCell sx={{ fontWeight: 600 }} align="center">Members</TableCell>
-                            <TableCell sx={{ fontWeight: 600 }} align="right">Actions</TableCell>
+                            <TableCell sx={{ ...tableHeaderCellSx, width: 40 }} />
+                            <TableCell sx={tableHeaderCellSx}>Name</TableCell>
+                            <TableCell sx={tableHeaderCellSx}>Description</TableCell>
+                            <TableCell sx={tableHeaderCellSx} align="center">Members</TableCell>
+                            <TableCell sx={tableHeaderCellSx} align="right">Actions</TableCell>
                         </TableRow>
                     </TableHead>
                     <TableBody>
@@ -474,7 +472,7 @@ const AdminGroups = ({ mode }) => {
                                             size="small"
                                             onClick={(e) => handleOpenDelete(e, group)}
                                             aria-label="delete group"
-                                            sx={{ color: '#EF4444' }}
+                                            sx={deleteIconSx}
                                         >
                                             <DeleteIcon fontSize="small" />
                                         </IconButton>
@@ -486,14 +484,14 @@ const AdminGroups = ({ mode }) => {
                                             <Box sx={{ py: 2, px: 2 }}>
                                                 {detailLoading ? (
                                                     <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
-                                                        <CircularProgress size={24} sx={{ color: ACCENT_COLOR }} />
+                                                        <CircularProgress size={24} />
                                                     </Box>
                                                 ) : groupDetail ? (
                                                     <Box>
                                                         <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
                                                             <Typography
                                                                 variant="subtitle2"
-                                                                sx={{ flex: 1, fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}
+                                                                sx={{ ...subsectionLabelSx, flex: 1 }}
                                                             >
                                                                 Members
                                                             </Typography>
@@ -501,7 +499,7 @@ const AdminGroups = ({ mode }) => {
                                                                 size="small"
                                                                 startIcon={<AddIcon />}
                                                                 onClick={handleOpenAddMember}
-                                                                sx={{ textTransform: 'none', color: ACCENT_COLOR }}
+                                                                sx={textButtonSx}
                                                             >
                                                                 Add Member
                                                             </Button>
@@ -522,7 +520,7 @@ const AdminGroups = ({ mode }) => {
                                                                                 size="small"
                                                                                 onClick={() => handleRemoveMemberByName(username, 'user')}
                                                                                 aria-label="remove member"
-                                                                                sx={{ color: '#EF4444' }}
+                                                                                sx={deleteIconSx}
                                                                             >
                                                                                 <RemoveIcon fontSize="small" />
                                                                             </IconButton>
@@ -543,7 +541,7 @@ const AdminGroups = ({ mode }) => {
                                                                                 size="small"
                                                                                 onClick={() => handleRemoveMemberByName(groupName, 'group')}
                                                                                 aria-label="remove member"
-                                                                                sx={{ color: '#EF4444' }}
+                                                                                sx={deleteIconSx}
                                                                             >
                                                                                 <RemoveIcon fontSize="small" />
                                                                             </IconButton>
@@ -558,13 +556,13 @@ const AdminGroups = ({ mode }) => {
                                                         )}
                                                         {effectivePermsLoading ? (
                                                             <Box sx={{ display: 'flex', justifyContent: 'center', py: 2, mt: 3 }}>
-                                                                <CircularProgress size={24} sx={{ color: ACCENT_COLOR }} />
+                                                                <CircularProgress size={24} />
                                                             </Box>
                                                         ) : effectivePerms ? (
                                                             <Box sx={{ mt: 3 }}>
                                                                 <Typography
                                                                     variant="subtitle2"
-                                                                    sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem', mb: 1 }}
+                                                                    sx={{ ...subsectionLabelSx, mb: 1 }}
                                                                 >
                                                                     Effective Permissions
                                                                 </Typography>
@@ -598,7 +596,7 @@ const AdminGroups = ({ mode }) => {
 
             {/* Create Group Dialog */}
             <Dialog open={createOpen} onClose={() => !createLoading && setCreateOpen(false)} maxWidth="xs" fullWidth>
-                <DialogTitle sx={{ fontWeight: 600 }}>Create Group</DialogTitle>
+                <DialogTitle sx={dialogTitleSx}>Create Group</DialogTitle>
                 <DialogContent>
                     {createError && (
                         <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }}>{createError}</Alert>
@@ -612,7 +610,6 @@ const AdminGroups = ({ mode }) => {
                         disabled={createLoading}
                         margin="dense"
                         required
-                        sx={textFieldSx}
                     />
                     <TextField
                         fullWidth
@@ -624,10 +621,9 @@ const AdminGroups = ({ mode }) => {
                         multiline
                         rows={2}
                         InputLabelProps={{ shrink: true }}
-                        sx={textFieldSx}
                     />
                 </DialogContent>
-                <DialogActions sx={{ px: 3, pb: 2 }}>
+                <DialogActions sx={dialogActionsSx}>
                     <Button onClick={() => setCreateOpen(false)} disabled={createLoading}>
                         Cancel
                     </Button>
@@ -635,7 +631,7 @@ const AdminGroups = ({ mode }) => {
                         onClick={handleCreateGroup}
                         variant="contained"
                         disabled={createLoading || !createName.trim()}
-                        sx={{ bgcolor: ACCENT_COLOR, '&:hover': { bgcolor: ACCENT_HOVER } }}
+                        sx={containedButtonSx}
                     >
                         {createLoading ? <CircularProgress size={20} color="inherit" /> : 'Create'}
                     </Button>
@@ -644,7 +640,7 @@ const AdminGroups = ({ mode }) => {
 
             {/* Edit Group Dialog */}
             <Dialog open={editOpen} onClose={() => !editLoading && setEditOpen(false)} maxWidth="xs" fullWidth>
-                <DialogTitle sx={{ fontWeight: 600 }}>Edit Group</DialogTitle>
+                <DialogTitle sx={dialogTitleSx}>Edit Group</DialogTitle>
                 <DialogContent>
                     {editError && (
                         <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }}>{editError}</Alert>
@@ -658,7 +654,6 @@ const AdminGroups = ({ mode }) => {
                         disabled={editLoading}
                         margin="dense"
                         required
-                        sx={textFieldSx}
                     />
                     <TextField
                         fullWidth
@@ -670,10 +665,9 @@ const AdminGroups = ({ mode }) => {
                         multiline
                         rows={2}
                         InputLabelProps={{ shrink: true }}
-                        sx={textFieldSx}
                     />
                 </DialogContent>
-                <DialogActions sx={{ px: 3, pb: 2 }}>
+                <DialogActions sx={dialogActionsSx}>
                     <Button onClick={() => setEditOpen(false)} disabled={editLoading}>
                         Cancel
                     </Button>
@@ -681,7 +675,7 @@ const AdminGroups = ({ mode }) => {
                         onClick={handleEditGroup}
                         variant="contained"
                         disabled={editLoading || !editName.trim()}
-                        sx={{ bgcolor: ACCENT_COLOR, '&:hover': { bgcolor: ACCENT_HOVER } }}
+                        sx={containedButtonSx}
                     >
                         {editLoading ? <CircularProgress size={20} color="inherit" /> : 'Save'}
                     </Button>
@@ -701,7 +695,7 @@ const AdminGroups = ({ mode }) => {
 
             {/* Add Member Dialog */}
             <Dialog open={addMemberOpen} onClose={() => !addMemberLoading && setAddMemberOpen(false)} maxWidth="xs" fullWidth>
-                <DialogTitle sx={{ fontWeight: 600 }}>Add Member</DialogTitle>
+                <DialogTitle sx={dialogTitleSx}>Add Member</DialogTitle>
                 <DialogContent>
                     {addMemberError && (
                         <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }}>{addMemberError}</Alert>
@@ -712,11 +706,11 @@ const AdminGroups = ({ mode }) => {
                         onChange={(e) => { setMemberType(e.target.value); setSelectedMemberId(''); }}
                         sx={{ mb: 1 }}
                     >
-                        <FormControlLabel value="user" control={<Radio sx={{ '&.Mui-checked': { color: ACCENT_COLOR } }} />} label="User" />
-                        <FormControlLabel value="group" control={<Radio sx={{ '&.Mui-checked': { color: ACCENT_COLOR } }} />} label="Group" />
+                        <FormControlLabel value="user" control={<Radio sx={radioSx} />} label="User" />
+                        <FormControlLabel value="group" control={<Radio sx={radioSx} />} label="Group" />
                     </RadioGroup>
-                    <FormControl fullWidth margin="dense" sx={textFieldSx}>
-                        <InputLabel sx={{ '&.Mui-focused': { color: ACCENT_COLOR } }}>
+                    <FormControl fullWidth margin="dense">
+                        <InputLabel sx={focusedLabelSx}>
                             {memberType === 'user' ? 'Select User' : 'Select Group'}
                         </InputLabel>
                         <Select
@@ -736,7 +730,7 @@ const AdminGroups = ({ mode }) => {
                         </Select>
                     </FormControl>
                 </DialogContent>
-                <DialogActions sx={{ px: 3, pb: 2 }}>
+                <DialogActions sx={dialogActionsSx}>
                     <Button onClick={() => setAddMemberOpen(false)} disabled={addMemberLoading}>
                         Cancel
                     </Button>
@@ -744,7 +738,7 @@ const AdminGroups = ({ mode }) => {
                         onClick={handleAddMember}
                         variant="contained"
                         disabled={addMemberLoading || !selectedMemberId}
-                        sx={{ bgcolor: ACCENT_COLOR, '&:hover': { bgcolor: ACCENT_HOVER } }}
+                        sx={containedButtonSx}
                     >
                         {addMemberLoading ? <CircularProgress size={20} color="inherit" /> : 'Add'}
                     </Button>

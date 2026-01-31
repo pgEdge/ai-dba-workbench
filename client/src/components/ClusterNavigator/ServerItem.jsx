@@ -23,11 +23,120 @@ import {
     Edit as EditIcon,
     Delete as DeleteIcon,
 } from '@mui/icons-material';
+import { useTheme } from '@mui/material/styles';
 import InlineEditText from '../InlineEditText';
-import { ROLE_CONFIGS } from './constants';
+import { getRoleConfigs } from './constants';
 import { getEffectiveRole } from './utils';
 import RolePill from './RolePill';
 import StatusIndicator from './StatusIndicator';
+
+// -- Static sx constants --------------------------------------------------
+
+const outerContainerSx = { position: 'relative' };
+const childrenContainerSx = { position: 'relative' };
+const expandButtonSx = { p: 0.25, color: 'text.secondary' };
+const expandIcon16Sx = { fontSize: 16 };
+const flexContainerSx = { flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 1 };
+const trailingSx = { ml: 'auto', flexShrink: 0 };
+const editButtonSx = { p: 0.25, color: 'text.disabled', '&:hover': { color: 'primary.main' } };
+const deleteButtonSx = { p: 0.25, color: 'text.disabled', '&:hover': { color: 'error.main' } };
+const editIconSx = { fontSize: 14 };
+const deleteIconSx = { fontSize: 14 };
+
+const initializingChipBase = {
+    height: 20,
+    fontSize: '0.625rem',
+    fontWeight: 600,
+    '& .MuiChip-label': { px: 1 },
+};
+
+const serverNameBase = {
+    fontSize: '0.8125rem',
+    lineHeight: 1.3,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+};
+
+// -- Style-getter functions -----------------------------------------------
+
+const getTreeLineSx = (lineLeftPos, isLast, rowCenterY, theme) => ({
+    position: 'absolute',
+    left: `${lineLeftPos}px`,
+    top: 0,
+    bottom: isLast ? `calc(100% - ${rowCenterY}px)` : '-2px',
+    width: '1px',
+    bgcolor: theme.palette.mode === 'dark' ? theme.palette.grey[600] : theme.palette.grey[300],
+});
+
+const getHorizontalLineSx = (lineLeftPos, rowCenterY, horizontalLineWidth, theme) => ({
+    position: 'absolute',
+    left: `${lineLeftPos}px`,
+    top: `${rowCenterY}px`,
+    width: `${horizontalLineWidth}px`,
+    height: '1px',
+    bgcolor: theme.palette.mode === 'dark' ? theme.palette.grey[600] : theme.palette.grey[300],
+});
+
+const getRowSx = (theme, isSelected, baseIndent, depthIndent, hasChildren, expanderWidth) => ({
+    position: 'relative',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 0.5,
+    py: 0.5,
+    px: 1,
+    pl: baseIndent + depthIndent + (hasChildren ? 0 : expanderWidth),
+    cursor: 'pointer',
+    borderRadius: 1,
+    mx: 0.5,
+    mb: 0.25,
+    bgcolor: isSelected
+        ? alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.20 : 0.12)
+        : 'transparent',
+    borderLeft: isSelected ? '2px solid' : '2px solid transparent',
+    borderLeftColor: isSelected ? 'primary.main' : 'transparent',
+    transition: 'all 0.15s ease',
+    '&:hover': {
+        bgcolor: isSelected
+            ? alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.25 : 0.16)
+            : alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.08 : 0.04),
+    },
+});
+
+const getServerIconSx = (isSelected, isOffline) => ({
+    fontSize: 16,
+    color: isSelected ? 'primary.main' : 'text.secondary',
+    opacity: isOffline ? 0.5 : 1,
+});
+
+const getServerNameSx = (isSelected, isOffline) => ({
+    ...serverNameBase,
+    fontWeight: isSelected ? 600 : 400,
+    color: isSelected ? 'text.primary' : 'text.secondary',
+    opacity: isOffline ? 0.6 : 1,
+});
+
+const getInitializingChipSx = (theme) => ({
+    ...initializingChipBase,
+    bgcolor: alpha(theme.palette.grey[500], theme.palette.mode === 'dark' ? 0.2 : 0.1),
+    color: theme.palette.grey[500],
+});
+
+const getActionButtonsSx = (theme) => ({
+    position: 'absolute',
+    right: 8,
+    top: '50%',
+    transform: 'translateY(-50%)',
+    display: 'flex',
+    gap: 0.25,
+    opacity: 0,
+    transition: 'opacity 0.15s',
+    bgcolor: alpha(theme.palette.background.paper, 0.95),
+    borderRadius: 1,
+    px: 0.5,
+    py: 0.25,
+    '.server-item-row:hover &': { opacity: 1 },
+});
 
 /**
  * ServerItem - Individual server entry in the navigation tree
@@ -53,13 +162,15 @@ const ServerItem = memo(({
     alertCount = 0,
     getServerAlertCount,
 }) => {
+    const theme = useTheme();
+    const ROLE_CONFIGS = getRoleConfigs(theme);
+
     // User can edit if they're superuser or the owner
     const canEditServer = user?.isSuperuser || server.owner_username === user?.username;
     const hasChildren = server.children?.length > 0 || server.is_expandable;
     const isExpanded = expandedServers?.has(server.id);
     const serverRole = server.primary_role || server.role;
     const effectiveRole = getEffectiveRole(serverRole, clusterType);
-    const lineColor = isDark ? '#475569' : '#C1C7CD';
 
     const handleToggle = (e) => {
         e.stopPropagation();
@@ -113,144 +224,64 @@ const ServerItem = memo(({
     const rowCenterY = 18;
 
     return (
-        <Box sx={{ position: 'relative' }}>
+        <Box sx={outerContainerSx}>
             {/* Tree lines for nested items */}
             {showTreeLines && depth > 0 && (
                 <>
                     {/* Vertical line from parent's expand icon */}
-                    <Box
-                        sx={{
-                            position: 'absolute',
-                            left: `${lineLeftPos}px`,
-                            top: 0,
-                            bottom: isLast ? `calc(100% - ${rowCenterY}px)` : '-2px',
-                            width: '1px',
-                            bgcolor: lineColor,
-                        }}
-                    />
+                    <Box sx={getTreeLineSx(lineLeftPos, isLast, rowCenterY, theme)} />
                     {/* Horizontal connector to this node */}
-                    <Box
-                        sx={{
-                            position: 'absolute',
-                            left: `${lineLeftPos}px`,
-                            top: `${rowCenterY}px`,
-                            width: `${horizontalLineWidth}px`,
-                            height: '1px',
-                            bgcolor: lineColor,
-                        }}
-                    />
+                    <Box sx={getHorizontalLineSx(lineLeftPos, rowCenterY, horizontalLineWidth, theme)} />
                 </>
             )}
             <Box
                 className="server-item-row"
                 onClick={handleSelect}
-                sx={{
-                    position: 'relative',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 0.5,
-                    py: 0.5,
-                    px: 1,
-                    pl: baseIndent + depthIndent + (hasChildren ? 0 : expanderWidth),
-                    cursor: 'pointer',
-                    borderRadius: 1,
-                    mx: 0.5,
-                    mb: 0.25,
-                    bgcolor: isSelected
-                        ? (isDark ? alpha('#22B8CF', 0.20) : alpha('#15AABF', 0.12))
-                        : 'transparent',
-                    borderLeft: isSelected ? '2px solid' : '2px solid transparent',
-                    borderLeftColor: isSelected ? 'primary.main' : 'transparent',
-                    transition: 'all 0.15s ease',
-                    '&:hover': {
-                        bgcolor: isSelected
-                            ? (isDark ? alpha('#22B8CF', 0.25) : alpha('#15AABF', 0.16))
-                            : (isDark ? alpha('#22B8CF', 0.08) : alpha('#15AABF', 0.04)),
-                    },
-                }}
+                sx={getRowSx(theme, isSelected, baseIndent, depthIndent, hasChildren, expanderWidth)}
             >
                 {hasChildren && (
                     <IconButton
                         size="small"
-                        sx={{
-                            p: 0.25,
-                            color: 'text.secondary',
-                        }}
+                        sx={expandButtonSx}
                         onClick={handleToggle}
                     >
                         {isExpanded ? (
-                            <ExpandIcon sx={{ fontSize: 16 }} />
+                            <ExpandIcon sx={expandIcon16Sx} />
                         ) : (
-                            <CollapseIcon sx={{ fontSize: 16 }} />
+                            <CollapseIcon sx={expandIcon16Sx} />
                         )}
                     </IconButton>
                 )}
-                <StatusIndicator status={server.status} alertCount={alertCount} isDark={isDark} connectionError={server.connection_error} />
-                <ServerIcon
-                    sx={{
-                        fontSize: 16,
-                        color: isSelected ? 'primary.main' : 'text.secondary',
-                        opacity: server.status === 'offline' ? 0.5 : 1,
-                    }}
-                />
-                <Box sx={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 1 }}>
+                <StatusIndicator status={server.status} alertCount={alertCount} connectionError={server.connection_error} />
+                <ServerIcon sx={getServerIconSx(isSelected, server.status === 'offline')} />
+                <Box sx={flexContainerSx}>
                     <InlineEditText
                         value={server.name}
                         onSave={(newName) => onUpdateServer(server.id, newName)}
                         canEdit={canEditServer}
                         typographyProps={{
                             variant: 'body2',
-                            sx: {
-                                fontWeight: isSelected ? 600 : 400,
-                                color: isSelected ? 'text.primary' : 'text.secondary',
-                                fontSize: '0.8125rem',
-                                lineHeight: 1.3,
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap',
-                                opacity: server.status === 'offline' ? 0.6 : 1,
-                            },
+                            sx: getServerNameSx(isSelected, server.status === 'offline'),
                         }}
                     />
                 </Box>
                 {server.status === 'unknown' ? (
-                    <Box sx={{ ml: 'auto', flexShrink: 0 }}>
+                    <Box sx={trailingSx}>
                         <Chip
                             label="Initializing"
                             size="small"
-                            sx={{
-                                height: 20,
-                                fontSize: '0.625rem',
-                                fontWeight: 600,
-                                bgcolor: isDark ? 'rgba(107, 114, 128, 0.2)' : 'rgba(107, 114, 128, 0.1)',
-                                color: isDark ? '#9CA3AF' : '#6B7280',
-                                '& .MuiChip-label': { px: 1 },
-                            }}
+                            sx={getInitializingChipSx(theme)}
                         />
                     </Box>
                 ) : effectiveRole && ROLE_CONFIGS[effectiveRole] ? (
-                    <Box sx={{ ml: 'auto', flexShrink: 0 }}>
+                    <Box sx={trailingSx}>
                         <RolePill role={effectiveRole} isDark={isDark} />
                     </Box>
                 ) : null}
                 {canEditServer && (
                     <Box
                         className="action-buttons"
-                        sx={{
-                            position: 'absolute',
-                            right: 8,
-                            top: '50%',
-                            transform: 'translateY(-50%)',
-                            display: 'flex',
-                            gap: 0.25,
-                            opacity: 0,
-                            transition: 'opacity 0.15s',
-                            bgcolor: isDark ? 'rgba(30, 41, 59, 0.95)' : 'rgba(255, 255, 255, 0.95)',
-                            borderRadius: 1,
-                            px: 0.5,
-                            py: 0.25,
-                            '.server-item-row:hover &': { opacity: 1 },
-                        }}
+                        sx={getActionButtonsSx(theme)}
                     >
                         <IconButton
                             size="small"
@@ -258,9 +289,9 @@ const ServerItem = memo(({
                                 e.stopPropagation();
                                 onEditServer?.(server);
                             }}
-                            sx={{ p: 0.25, color: 'text.disabled', '&:hover': { color: 'primary.main' } }}
+                            sx={editButtonSx}
                         >
-                            <EditIcon sx={{ fontSize: 14 }} />
+                            <EditIcon sx={editIconSx} />
                         </IconButton>
                         <IconButton
                             size="small"
@@ -268,9 +299,9 @@ const ServerItem = memo(({
                                 e.stopPropagation();
                                 onDeleteServer?.(server);
                             }}
-                            sx={{ p: 0.25, color: 'text.disabled', '&:hover': { color: 'error.main' } }}
+                            sx={deleteButtonSx}
                         >
-                            <DeleteIcon sx={{ fontSize: 14 }} />
+                            <DeleteIcon sx={deleteIconSx} />
                         </IconButton>
                     </Box>
                 )}
@@ -278,7 +309,7 @@ const ServerItem = memo(({
             {/* Render child servers recursively */}
             {hasChildren && server.children?.length > 0 && (
                 <Collapse in={isExpanded} timeout="auto">
-                    <Box sx={{ position: 'relative' }}>
+                    <Box sx={childrenContainerSx}>
                         {server.children.map((childServer, index) => (
                             <ServerItem
                                 key={childServer.id}

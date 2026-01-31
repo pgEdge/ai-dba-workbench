@@ -20,17 +20,18 @@ import {
 } from '@mui/icons-material';
 
 /**
- * Role configuration with colors and labels for server role display
+ * Role configuration with colors and labels for server role display.
+ * Returns a config object keyed by role; requires a MUI theme instance.
  */
-export const ROLE_CONFIGS = {
-    binary_primary: { label: 'Primary', color: '#15AABF', darkColor: '#22B8CF' },
-    binary_standby: { label: 'Standby', color: '#6366F1', darkColor: '#818CF8' },
-    binary_cascading: { label: 'Cascade', color: '#8B5CF6', darkColor: '#A78BFA' },
-    spock_node: { label: 'Spock', color: '#F59E0B', darkColor: '#FBBF24' },
-    standalone: { label: 'Standalone', color: '#6B7280', darkColor: '#94A3B8' },
-    logical_publisher: { label: 'Publisher', color: '#22C55E', darkColor: '#4ADE80' },
-    logical_subscriber: { label: 'Subscriber', color: '#3B82F6', darkColor: '#60A5FA' },
-};
+export const getRoleConfigs = (theme) => ({
+    binary_primary: { label: 'Primary', color: theme.palette.primary.main, darkColor: theme.palette.primary.light },
+    binary_standby: { label: 'Standby', color: theme.palette.secondary.main, darkColor: theme.palette.secondary.light },
+    binary_cascading: { label: 'Cascade', color: theme.palette.custom.status.purple, darkColor: theme.palette.custom.status.purpleLight },
+    spock_node: { label: 'Spock', color: theme.palette.warning.main, darkColor: theme.palette.warning.light },
+    standalone: { label: 'Standalone', color: theme.palette.grey[500], darkColor: theme.palette.grey[400] },
+    logical_publisher: { label: 'Publisher', color: theme.palette.success.main, darkColor: theme.palette.success.light },
+    logical_subscriber: { label: 'Subscriber', color: theme.palette.info.main, darkColor: theme.palette.info.light },
+});
 
 /**
  * Role to icon component mapping
@@ -46,26 +47,27 @@ export const ROLE_ICONS = {
 };
 
 /**
- * Cluster type color schemes for visual distinction
+ * Cluster type color schemes for visual distinction.
+ * Returns a config object keyed by cluster type; requires a MUI theme instance.
  */
-export const CLUSTER_TYPE_COLORS = {
+export const getClusterTypeColors = (theme) => ({
     spock: {
-        border: { dark: alpha('#F59E0B', 0.5), light: alpha('#F59E0B', 0.4) },
-        bg: { dark: alpha('#F59E0B', 0.08), light: alpha('#F59E0B', 0.05) },
+        border: { dark: alpha(theme.palette.warning.main, 0.5), light: alpha(theme.palette.warning.main, 0.4) },
+        bg: { dark: alpha(theme.palette.warning.main, 0.08), light: alpha(theme.palette.warning.main, 0.05) },
     },
     binary: {
-        border: { dark: alpha('#22B8CF', 0.4), light: alpha('#15AABF', 0.35) },
-        bg: { dark: alpha('#22B8CF', 0.06), light: alpha('#15AABF', 0.04) },
+        border: { dark: alpha(theme.palette.primary.light, 0.4), light: alpha(theme.palette.primary.main, 0.35) },
+        bg: { dark: alpha(theme.palette.primary.light, 0.06), light: alpha(theme.palette.primary.main, 0.04) },
     },
     logical: {
-        border: { dark: alpha('#8B5CF6', 0.4), light: alpha('#8B5CF6', 0.35) },
-        bg: { dark: alpha('#8B5CF6', 0.06), light: alpha('#8B5CF6', 0.04) },
+        border: { dark: alpha(theme.palette.custom.status.purple, 0.4), light: alpha(theme.palette.custom.status.purple, 0.35) },
+        bg: { dark: alpha(theme.palette.custom.status.purple, 0.06), light: alpha(theme.palette.custom.status.purple, 0.04) },
     },
     default: {
-        border: { dark: alpha('#475569', 0.5), light: alpha('#D1D5DB', 0.6) },
-        bg: { dark: alpha('#1E293B', 0.5), light: alpha('#F9FAFB', 0.5) },
+        border: { dark: alpha(theme.palette.grey[600], 0.5), light: alpha(theme.palette.grey[300], 0.6) },
+        bg: { dark: alpha(theme.palette.grey[800], 0.5), light: alpha(theme.palette.grey[50], 0.5) },
     },
-};
+});
 
 /**
  * localStorage keys for persisting navigator state

@@ -13,6 +13,48 @@ import { Box, Typography, Button, Paper, Container } from '@mui/material';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import RefreshIcon from '@mui/icons-material/Refresh';
 
+// Style constants
+const styles = {
+    outerContainer: {
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    errorPaper: {
+        p: 4,
+        textAlign: 'center',
+        maxWidth: 500,
+    },
+    errorIcon: {
+        fontSize: 64,
+        color: 'error.main',
+        mb: 2,
+    },
+    errorMessage: {
+        mb: 3,
+    },
+    detailsPaper: {
+        p: 2,
+        mb: 3,
+        bgcolor: 'grey.100',
+        textAlign: 'left',
+        overflow: 'auto',
+        maxHeight: 200,
+    },
+    detailsText: {
+        fontFamily: 'monospace',
+        whiteSpace: 'pre-wrap',
+        wordBreak: 'break-word',
+        m: 0,
+    },
+    buttonContainer: {
+        display: 'flex',
+        gap: 2,
+        justifyContent: 'center',
+    },
+};
+
 /**
  * ErrorBoundary catches JavaScript errors in its child component tree,
  * logs those errors, and displays a fallback UI instead of crashing.
@@ -78,29 +120,12 @@ class ErrorBoundary extends Component {
             // Default fallback UI
             return (
                 <Container maxWidth="sm">
-                    <Box
-                        sx={{
-                            minHeight: '100vh',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                        }}
-                    >
+                    <Box sx={styles.outerContainer}>
                         <Paper
                             elevation={3}
-                            sx={{
-                                p: 4,
-                                textAlign: 'center',
-                                maxWidth: 500,
-                            }}
+                            sx={styles.errorPaper}
                         >
-                            <ErrorOutlineIcon
-                                sx={{
-                                    fontSize: 64,
-                                    color: 'error.main',
-                                    mb: 2,
-                                }}
-                            />
+                            <ErrorOutlineIcon sx={styles.errorIcon} />
                             <Typography
                                 variant="h5"
                                 component="h1"
@@ -112,7 +137,7 @@ class ErrorBoundary extends Component {
                             <Typography
                                 variant="body1"
                                 color="text.secondary"
-                                sx={{ mb: 3 }}
+                                sx={styles.errorMessage}
                             >
                                 An unexpected error occurred. You can try
                                 refreshing the page or contact support if the
@@ -124,24 +149,12 @@ class ErrorBoundary extends Component {
                                 this.state.error && (
                                     <Paper
                                         variant="outlined"
-                                        sx={{
-                                            p: 2,
-                                            mb: 3,
-                                            bgcolor: 'grey.100',
-                                            textAlign: 'left',
-                                            overflow: 'auto',
-                                            maxHeight: 200,
-                                        }}
+                                        sx={styles.detailsPaper}
                                     >
                                         <Typography
                                             variant="caption"
                                             component="pre"
-                                            sx={{
-                                                fontFamily: 'monospace',
-                                                whiteSpace: 'pre-wrap',
-                                                wordBreak: 'break-word',
-                                                m: 0,
-                                            }}
+                                            sx={styles.detailsText}
                                         >
                                             {this.state.error.toString()}
                                             {this.state.errorInfo?.componentStack}
@@ -149,13 +162,7 @@ class ErrorBoundary extends Component {
                                     </Paper>
                                 )}
 
-                            <Box
-                                sx={{
-                                    display: 'flex',
-                                    gap: 2,
-                                    justifyContent: 'center',
-                                }}
-                            >
+                            <Box sx={styles.buttonContainer}>
                                 <Button
                                     variant="outlined"
                                     startIcon={<RefreshIcon />}

@@ -91,6 +91,21 @@ const lightPalette = {
         disabled: '#9CA3AF',
         disabledBackground: '#E5E7EB',
     },
+    custom: {
+        status: {
+            connected: '#059669',
+            online: '#10B981',
+            sky: '#0EA5E9',
+            skyDark: '#0284C7',
+            skyLight: '#38BDF8',
+            purple: '#8B5CF6',
+            purpleLight: '#A78BFA',
+            cyan: '#06B6D4',
+        },
+        accent: '#15AABF',
+        accentHover: '#0C8599',
+        accentLight: '#22B8CF',
+    },
 };
 
 // Dark mode palette
@@ -129,6 +144,21 @@ const darkPalette = {
         selected: alpha('#22B8CF', 0.16),
         disabled: '#94A3B8',    // Brightened to match text.disabled
         disabledBackground: '#334155',
+    },
+    custom: {
+        status: {
+            connected: '#10B981',
+            online: '#34D399',
+            sky: '#38BDF8',
+            skyDark: '#0EA5E9',
+            skyLight: '#7DD3FC',
+            purple: '#A78BFA',
+            purpleLight: '#C4B5FD',
+            cyan: '#22D3EE',
+        },
+        accent: '#22B8CF',
+        accentHover: '#15AABF',
+        accentLight: '#67E8F9',
     },
 };
 

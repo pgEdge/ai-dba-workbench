@@ -9,7 +9,7 @@
  */
 
 import React from 'react';
-import { Box, Tooltip } from '@mui/material';
+import { Box, Tooltip, useTheme } from '@mui/material';
 import {
     CheckCircle as HealthyIcon,
     Warning as WarningIcon,
@@ -17,24 +17,82 @@ import {
     HourglassEmpty,
 } from '@mui/icons-material';
 
+// -- Static sx constants --------------------------------------------------
+
+const iconFontSize = { fontSize: 14 };
+
+const pulseAnimation = {
+    animation: 'pulse 2s ease-in-out infinite',
+    '@keyframes pulse': {
+        '0%, 100%': { opacity: 1 },
+        '50%': { opacity: 0.4 },
+    },
+};
+
+const alertBadgeBase = {
+    position: 'absolute',
+    top: -4,
+    left: -6,
+    minWidth: 12,
+    height: 12,
+    px: 0.25,
+    borderRadius: '6px',
+    fontSize: '0.5rem',
+    fontWeight: 700,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    lineHeight: 1,
+};
+
+const alertContainerSx = { position: 'relative', display: 'flex', alignItems: 'center' };
+
+// -- Style-getter functions -----------------------------------------------
+
+const getOfflineIconSx = (theme) => ({
+    ...iconFontSize,
+    color: theme.palette.error.main,
+    filter: `drop-shadow(0 0 2px ${theme.palette.error.main})`,
+});
+
+const getInitialisingIconSx = (theme) => ({
+    ...iconFontSize,
+    color: theme.palette.info.main,
+    ...pulseAnimation,
+});
+
+const getWarningIconSx = (theme) => ({
+    ...iconFontSize,
+    color: theme.palette.warning.main,
+    filter: `drop-shadow(0 0 2px ${theme.palette.warning.main})`,
+});
+
+const getAlertBadgeSx = (theme) => ({
+    ...alertBadgeBase,
+    bgcolor: theme.palette.grey[500],
+    color: theme.palette.background.paper,
+});
+
+const getHealthyIconSx = (theme) => ({
+    ...iconFontSize,
+    color: theme.palette.success.main,
+    filter: `drop-shadow(0 0 2px ${theme.palette.success.main})`,
+});
+
 /**
  * StatusIndicator - Shows node health status with appropriate icon
  * - Red error icon for offline/down nodes
  * - Yellow warning icon with count for nodes with alerts
  * - Green checkmark for healthy nodes
  */
-const StatusIndicator = ({ status, alertCount = 0, isDark, connectionError }) => {
+const StatusIndicator = ({ status, alertCount = 0, connectionError }) => {
+    const theme = useTheme();
+
     // Offline/down nodes - red error icon
     if (status === 'offline') {
         return (
             <Tooltip title={connectionError || "Offline"} placement="right">
-                <ErrorIcon
-                    sx={{
-                        fontSize: 14,
-                        color: '#EF4444',
-                        filter: 'drop-shadow(0 0 2px #EF4444)',
-                    }}
-                />
+                <ErrorIcon sx={getOfflineIconSx(theme)} />
             </Tooltip>
         );
     }
@@ -43,17 +101,7 @@ const StatusIndicator = ({ status, alertCount = 0, isDark, connectionError }) =>
     if (status === 'initialising') {
         return (
             <Tooltip title="Initialising - waiting for first probe results" placement="right">
-                <HourglassEmpty
-                    sx={{
-                        fontSize: 14,
-                        color: '#3B82F6',
-                        animation: 'pulse 2s ease-in-out infinite',
-                        '@keyframes pulse': {
-                            '0%, 100%': { opacity: 1 },
-                            '50%': { opacity: 0.4 },
-                        },
-                    }}
-                />
+                <HourglassEmpty sx={getInitialisingIconSx(theme)} />
             </Tooltip>
         );
     }
@@ -62,33 +110,9 @@ const StatusIndicator = ({ status, alertCount = 0, isDark, connectionError }) =>
     if (alertCount > 0) {
         return (
             <Tooltip title={`${alertCount} active alert${alertCount !== 1 ? 's' : ''}`} placement="right">
-                <Box sx={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-                    <WarningIcon
-                        sx={{
-                            fontSize: 14,
-                            color: '#F59E0B',
-                            filter: 'drop-shadow(0 0 2px #F59E0B)',
-                        }}
-                    />
-                    <Box
-                        sx={{
-                            position: 'absolute',
-                            top: -4,
-                            left: -6,
-                            minWidth: 12,
-                            height: 12,
-                            px: 0.25,
-                            borderRadius: '6px',
-                            bgcolor: isDark ? '#64748B' : '#6B7280',
-                            color: '#FFF',
-                            fontSize: '0.5rem',
-                            fontWeight: 700,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            lineHeight: 1,
-                        }}
-                    >
+                <Box sx={alertContainerSx}>
+                    <WarningIcon sx={getWarningIconSx(theme)} />
+                    <Box sx={getAlertBadgeSx(theme)}>
                         {alertCount > 99 ? '99+' : alertCount}
                     </Box>
                 </Box>
@@ -99,13 +123,7 @@ const StatusIndicator = ({ status, alertCount = 0, isDark, connectionError }) =>
     // Healthy nodes - green checkmark
     return (
         <Tooltip title="Online" placement="right">
-            <HealthyIcon
-                sx={{
-                    fontSize: 14,
-                    color: '#22C55E',
-                    filter: 'drop-shadow(0 0 2px #22C55E)',
-                }}
-            />
+            <HealthyIcon sx={getHealthyIconSx(theme)} />
         </Tooltip>
     );
 };

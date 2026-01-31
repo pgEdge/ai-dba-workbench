@@ -30,33 +30,30 @@ import {
     Chip,
     Autocomplete,
     TextField,
-    alpha,
 } from '@mui/material';
+import { alpha, useTheme } from '@mui/material/styles';
 import {
     Edit as EditIcon,
     Delete as DeleteIcon,
     Close as CloseIcon,
 } from '@mui/icons-material';
+import {
+    tableHeaderCellSx,
+    dialogTitleSx,
+    dialogActionsSx,
+    loadingContainerSx,
+    pageHeadingSx,
+    subsectionLabelSx,
+    emptyRowTextSx,
+    getContainedButtonSx,
+    getDeleteIconSx,
+    getTableContainerSx,
+} from './styles';
 
 const API_BASE_URL = '/api/v1';
-const ACCENT_COLOR = '#15AABF';
-const ACCENT_HOVER = '#0C8599';
-
-const textFieldSx = {
-    '& .MuiOutlinedInput-root': {
-        borderRadius: 1,
-        '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
-            borderColor: ACCENT_COLOR,
-            borderWidth: 2,
-        },
-    },
-    '& .MuiInputLabel-root.Mui-focused': {
-        color: ACCENT_COLOR,
-    },
-};
 
 const AdminTokenScopes = ({ mode }) => {
-    const isDark = mode === 'dark';
+    const theme = useTheme();
     const [tokens, setTokens] = useState([]);
     const [connections, setConnections] = useState([]);
     const [mcpPrivileges, setMcpPrivileges] = useState([]);
@@ -171,15 +168,31 @@ const AdminTokenScopes = ({ mode }) => {
 
     if (loading) {
         return (
-            <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
-                <CircularProgress sx={{ color: ACCENT_COLOR }} />
+            <Box sx={loadingContainerSx}>
+                <CircularProgress />
             </Box>
         );
     }
 
+    const containedButtonSx = getContainedButtonSx(theme);
+    const deleteIconSx = getDeleteIconSx(theme);
+    const tableContainerSx = getTableContainerSx(theme);
+
+    const connectionChipSx = {
+        bgcolor: alpha(theme.palette.primary.main, 0.15),
+        color: theme.palette.primary.main,
+        fontSize: '0.75rem',
+    };
+
+    const mcpChipSx = {
+        bgcolor: alpha(theme.palette.custom.status.purple, 0.15),
+        color: theme.palette.custom.status.purple,
+        fontSize: '0.75rem',
+    };
+
     return (
         <Box>
-            <Typography variant="h6" sx={{ fontWeight: 600, mb: 2, color: 'text.primary' }}>
+            <Typography variant="h6" sx={{ ...pageHeadingSx, mb: 2 }}>
                 Token Scopes
             </Typography>
 
@@ -192,20 +205,16 @@ const AdminTokenScopes = ({ mode }) => {
             <TableContainer
                 component={Paper}
                 elevation={0}
-                sx={{
-                    border: '1px solid',
-                    borderColor: isDark ? '#334155' : '#E5E7EB',
-                    borderRadius: 1,
-                }}
+                sx={tableContainerSx}
             >
                 <Table>
                     <TableHead>
                         <TableRow>
-                            <TableCell sx={{ fontWeight: 600 }}>Token</TableCell>
-                            <TableCell sx={{ fontWeight: 600 }}>Token ID</TableCell>
-                            <TableCell sx={{ fontWeight: 600 }}>User</TableCell>
-                            <TableCell sx={{ fontWeight: 600 }}>Scope</TableCell>
-                            <TableCell sx={{ fontWeight: 600 }} align="right">Actions</TableCell>
+                            <TableCell sx={tableHeaderCellSx}>Token</TableCell>
+                            <TableCell sx={tableHeaderCellSx}>Token ID</TableCell>
+                            <TableCell sx={tableHeaderCellSx}>User</TableCell>
+                            <TableCell sx={tableHeaderCellSx}>Scope</TableCell>
+                            <TableCell sx={tableHeaderCellSx} align="right">Actions</TableCell>
                         </TableRow>
                     </TableHead>
                     <TableBody>
@@ -227,11 +236,7 @@ const AdminTokenScopes = ({ mode }) => {
                                                             key={`c-${i}`}
                                                             label={getConnectionName(id)}
                                                             size="small"
-                                                            sx={{
-                                                                bgcolor: alpha(ACCENT_COLOR, 0.15),
-                                                                color: ACCENT_COLOR,
-                                                                fontSize: '0.75rem',
-                                                            }}
+                                                            sx={connectionChipSx}
                                                         />
                                                     ))}
                                                     {token.scope.mcp_privileges?.map((id, i) => (
@@ -239,16 +244,12 @@ const AdminTokenScopes = ({ mode }) => {
                                                             key={`m-${i}`}
                                                             label={getMcpPrivilegeName(id)}
                                                             size="small"
-                                                            sx={{
-                                                                bgcolor: alpha('#8B5CF6', 0.15),
-                                                                color: '#8B5CF6',
-                                                                fontSize: '0.75rem',
-                                                            }}
+                                                            sx={mcpChipSx}
                                                         />
                                                     ))}
                                                 </Box>
                                             ) : (
-                                                <Typography color="text.secondary" sx={{ fontSize: '0.875rem' }}>
+                                                <Typography color="text.secondary" sx={emptyRowTextSx}>
                                                     Unrestricted
                                                 </Typography>
                                             )}
@@ -265,7 +266,7 @@ const AdminTokenScopes = ({ mode }) => {
                                                 <IconButton
                                                     size="small"
                                                     onClick={() => handleClearScope(token)}
-                                                    sx={{ color: '#EF4444' }}
+                                                    sx={deleteIconSx}
                                                     aria-label="clear scope"
                                                 >
                                                     <DeleteIcon fontSize="small" />
@@ -288,7 +289,7 @@ const AdminTokenScopes = ({ mode }) => {
 
             {/* Edit Scope Dialog */}
             <Dialog open={editOpen} onClose={() => !editLoading && setEditOpen(false)} maxWidth="sm" fullWidth>
-                <DialogTitle sx={{ fontWeight: 600, display: 'flex', alignItems: 'center' }}>
+                <DialogTitle sx={{ ...dialogTitleSx, display: 'flex', alignItems: 'center' }}>
                     <Box sx={{ flex: 1 }}>
                         Edit Scope for {editToken?.name || editToken?.token_prefix || 'Token'}
                     </Box>
@@ -302,7 +303,7 @@ const AdminTokenScopes = ({ mode }) => {
                     )}
                     <Typography
                         variant="subtitle2"
-                        sx={{ fontWeight: 600, mb: 1, mt: 1, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}
+                        sx={{ ...subsectionLabelSx, mb: 1, mt: 1 }}
                     >
                         Connections
                     </Typography>
@@ -318,14 +319,13 @@ const AdminTokenScopes = ({ mode }) => {
                                 {...params}
                                 label="Allowed Connections"
                                 margin="dense"
-                                sx={textFieldSx}
                             />
                         )}
                         disabled={editLoading}
                     />
                     <Typography
                         variant="subtitle2"
-                        sx={{ fontWeight: 600, mb: 1, mt: 2, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}
+                        sx={{ ...subsectionLabelSx, mb: 1, mt: 2 }}
                     >
                         MCP Privileges
                     </Typography>
@@ -341,13 +341,12 @@ const AdminTokenScopes = ({ mode }) => {
                                 {...params}
                                 label="Allowed MCP Privileges"
                                 margin="dense"
-                                sx={textFieldSx}
                             />
                         )}
                         disabled={editLoading}
                     />
                 </DialogContent>
-                <DialogActions sx={{ px: 3, pb: 2 }}>
+                <DialogActions sx={dialogActionsSx}>
                     <Button onClick={() => setEditOpen(false)} disabled={editLoading}>
                         Cancel
                     </Button>
@@ -355,7 +354,7 @@ const AdminTokenScopes = ({ mode }) => {
                         onClick={handleSaveScope}
                         variant="contained"
                         disabled={editLoading}
-                        sx={{ bgcolor: ACCENT_COLOR, '&:hover': { bgcolor: ACCENT_HOVER } }}
+                        sx={containedButtonSx}
                     >
                         {editLoading ? <CircularProgress size={20} color="inherit" /> : 'Save'}
                     </Button>

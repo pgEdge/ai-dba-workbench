@@ -31,6 +31,7 @@ import {
     FormControlLabel,
     Switch,
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import {
     Add as AddIcon,
     Edit as EditIcon,
@@ -42,35 +43,23 @@ import {
 import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
 import EffectivePermissionsPanel from './EffectivePermissionsPanel';
 import { useAuth } from '../../contexts/AuthContext';
+import {
+    tableHeaderCellSx,
+    dialogTitleSx,
+    dialogActionsSx,
+    pageHeadingSx,
+    loadingContainerSx,
+    getContainedButtonSx,
+    getDeleteIconSx,
+    getSuccessIconSx,
+    getInactiveIconSx,
+    getTableContainerSx,
+} from './styles';
 
 const API_BASE_URL = '/api/v1';
-const ACCENT_COLOR = '#15AABF';
-const ACCENT_HOVER = '#0C8599';
-
-const textFieldSx = {
-    '& .MuiOutlinedInput-root': {
-        borderRadius: 1,
-        '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
-            borderColor: ACCENT_COLOR,
-            borderWidth: 2,
-        },
-    },
-    '& .MuiInputLabel-root.Mui-focused': {
-        color: ACCENT_COLOR,
-    },
-};
-
-const switchSx = {
-    '& .MuiSwitch-switchBase.Mui-checked': {
-        color: ACCENT_COLOR,
-    },
-    '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': {
-        backgroundColor: ACCENT_COLOR,
-    },
-};
 
 const AdminUsers = ({ mode }) => {
-    const isDark = mode === 'dark';
+    const theme = useTheme();
     const { user: authUser } = useAuth();
     const [users, setUsers] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -305,8 +294,8 @@ const AdminUsers = ({ mode }) => {
 
     if (loading) {
         return (
-            <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
-                <CircularProgress sx={{ color: ACCENT_COLOR }} />
+            <Box sx={loadingContainerSx}>
+                <CircularProgress />
             </Box>
         );
     }
@@ -315,10 +304,17 @@ const AdminUsers = ({ mode }) => {
         return <Alert severity="error" sx={{ borderRadius: 1 }}>{error}</Alert>;
     }
 
+    const containedButtonSx = getContainedButtonSx(theme);
+    const deleteIconSx = getDeleteIconSx(theme);
+    const successIconSx = getSuccessIconSx(theme);
+    const inactiveIconSx = getInactiveIconSx(theme);
+    const tableContainerSx = getTableContainerSx(theme);
+    const isDark = mode === 'dark';
+
     return (
         <Box>
             <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                <Typography variant="h6" sx={{ fontWeight: 600, flex: 1, color: 'text.primary' }}>
+                <Typography variant="h6" sx={pageHeadingSx}>
                     Users
                 </Typography>
                 <Button
@@ -335,12 +331,7 @@ const AdminUsers = ({ mode }) => {
                         setCreateSuperuser(false);
                         setCreateOpen(true);
                     }}
-                    sx={{
-                        textTransform: 'none',
-                        fontWeight: 600,
-                        bgcolor: ACCENT_COLOR,
-                        '&:hover': { bgcolor: ACCENT_HOVER },
-                    }}
+                    sx={containedButtonSx}
                 >
                     Create User
                 </Button>
@@ -349,22 +340,18 @@ const AdminUsers = ({ mode }) => {
             <TableContainer
                 component={Paper}
                 elevation={0}
-                sx={{
-                    border: '1px solid',
-                    borderColor: isDark ? '#334155' : '#E5E7EB',
-                    borderRadius: 1,
-                }}
+                sx={tableContainerSx}
             >
                 <Table>
                     <TableHead>
                         <TableRow>
-                            <TableCell sx={{ fontWeight: 600 }}>Username</TableCell>
-                            <TableCell sx={{ fontWeight: 600 }}>Display Name</TableCell>
-                            <TableCell sx={{ fontWeight: 600 }}>Email</TableCell>
-                            <TableCell sx={{ fontWeight: 600 }}>Notes</TableCell>
-                            <TableCell sx={{ fontWeight: 600 }} align="center">Superuser</TableCell>
-                            <TableCell sx={{ fontWeight: 600 }} align="center">Enabled</TableCell>
-                            <TableCell sx={{ fontWeight: 600 }} align="right">Actions</TableCell>
+                            <TableCell sx={tableHeaderCellSx}>Username</TableCell>
+                            <TableCell sx={tableHeaderCellSx}>Display Name</TableCell>
+                            <TableCell sx={tableHeaderCellSx}>Email</TableCell>
+                            <TableCell sx={tableHeaderCellSx}>Notes</TableCell>
+                            <TableCell sx={tableHeaderCellSx} align="center">Superuser</TableCell>
+                            <TableCell sx={tableHeaderCellSx} align="center">Enabled</TableCell>
+                            <TableCell sx={tableHeaderCellSx} align="right">Actions</TableCell>
                         </TableRow>
                     </TableHead>
                     <TableBody>
@@ -381,16 +368,16 @@ const AdminUsers = ({ mode }) => {
                                 <TableCell>{user.annotation || '-'}</TableCell>
                                 <TableCell align="center">
                                     {user.is_superuser ? (
-                                        <CheckIcon sx={{ color: '#22C55E', fontSize: 20 }} />
+                                        <CheckIcon sx={successIconSx} />
                                     ) : (
-                                        <CancelIcon sx={{ color: '#94A3B8', fontSize: 20 }} />
+                                        <CancelIcon sx={inactiveIconSx} />
                                     )}
                                 </TableCell>
                                 <TableCell align="center">
                                     {user.enabled !== false ? (
-                                        <CheckIcon sx={{ color: '#22C55E', fontSize: 20 }} />
+                                        <CheckIcon sx={successIconSx} />
                                     ) : (
-                                        <CancelIcon sx={{ color: '#94A3B8', fontSize: 20 }} />
+                                        <CancelIcon sx={inactiveIconSx} />
                                     )}
                                 </TableCell>
                                 <TableCell align="right">
@@ -405,7 +392,7 @@ const AdminUsers = ({ mode }) => {
                                         size="small"
                                         onClick={(e) => handleOpenDelete(e, user)}
                                         aria-label="delete user"
-                                        sx={{ color: '#EF4444' }}
+                                        sx={deleteIconSx}
                                     >
                                         <DeleteIcon fontSize="small" />
                                     </IconButton>
@@ -430,7 +417,7 @@ const AdminUsers = ({ mode }) => {
                 maxWidth="sm"
                 fullWidth
             >
-                <DialogTitle sx={{ fontWeight: 600, display: 'flex', alignItems: 'center' }}>
+                <DialogTitle sx={{ ...dialogTitleSx, display: 'flex', alignItems: 'center' }}>
                     <Box sx={{ flex: 1 }}>
                         Permissions for {selectedUser?.username}
                     </Box>
@@ -441,7 +428,7 @@ const AdminUsers = ({ mode }) => {
                 <DialogContent>
                     {permissionsLoading && (
                         <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
-                            <CircularProgress sx={{ color: ACCENT_COLOR }} />
+                            <CircularProgress />
                         </Box>
                     )}
                     {permissionsError && (
@@ -464,7 +451,7 @@ const AdminUsers = ({ mode }) => {
 
             {/* Create User Dialog */}
             <Dialog open={createOpen} onClose={() => !createLoading && setCreateOpen(false)} maxWidth="xs" fullWidth>
-                <DialogTitle sx={{ fontWeight: 600 }}>Create User</DialogTitle>
+                <DialogTitle sx={dialogTitleSx}>Create User</DialogTitle>
                 <DialogContent>
                     {createError && (
                         <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }}>{createError}</Alert>
@@ -478,7 +465,6 @@ const AdminUsers = ({ mode }) => {
                         disabled={createLoading}
                         margin="dense"
                         required
-                        sx={textFieldSx}
                     />
                     <TextField
                         fullWidth
@@ -489,7 +475,6 @@ const AdminUsers = ({ mode }) => {
                         disabled={createLoading}
                         margin="dense"
                         required
-                        sx={textFieldSx}
                     />
                     <TextField
                         fullWidth
@@ -499,7 +484,6 @@ const AdminUsers = ({ mode }) => {
                         disabled={createLoading}
                         margin="dense"
                         InputLabelProps={{ shrink: true }}
-                        sx={textFieldSx}
                     />
                     <TextField
                         fullWidth
@@ -510,7 +494,6 @@ const AdminUsers = ({ mode }) => {
                         disabled={createLoading}
                         margin="dense"
                         InputLabelProps={{ shrink: true }}
-                        sx={textFieldSx}
                     />
                     <TextField
                         fullWidth
@@ -522,7 +505,6 @@ const AdminUsers = ({ mode }) => {
                         multiline
                         rows={2}
                         InputLabelProps={{ shrink: true }}
-                        sx={textFieldSx}
                     />
                     <Box sx={{ mt: 2 }}>
                         <FormControlLabel
@@ -531,7 +513,6 @@ const AdminUsers = ({ mode }) => {
                                     checked={createEnabled}
                                     onChange={(e) => setCreateEnabled(e.target.checked)}
                                     disabled={createLoading}
-                                    sx={switchSx}
                                 />
                             }
                             label="Enabled"
@@ -544,14 +525,13 @@ const AdminUsers = ({ mode }) => {
                                     checked={createSuperuser}
                                     onChange={(e) => setCreateSuperuser(e.target.checked)}
                                     disabled={createLoading}
-                                    sx={switchSx}
                                 />
                             }
                             label="Superuser"
                         />
                     </Box>
                 </DialogContent>
-                <DialogActions sx={{ px: 3, pb: 2 }}>
+                <DialogActions sx={dialogActionsSx}>
                     <Button onClick={() => setCreateOpen(false)} disabled={createLoading}>
                         Cancel
                     </Button>
@@ -559,7 +539,7 @@ const AdminUsers = ({ mode }) => {
                         onClick={handleCreateUser}
                         variant="contained"
                         disabled={createLoading || !createUsername.trim() || !createPassword}
-                        sx={{ bgcolor: ACCENT_COLOR, '&:hover': { bgcolor: ACCENT_HOVER } }}
+                        sx={containedButtonSx}
                     >
                         {createLoading ? <CircularProgress size={20} color="inherit" /> : 'Create'}
                     </Button>
@@ -568,7 +548,7 @@ const AdminUsers = ({ mode }) => {
 
             {/* Edit User Dialog */}
             <Dialog open={editOpen} onClose={() => !editLoading && setEditOpen(false)} maxWidth="xs" fullWidth>
-                <DialogTitle sx={{ fontWeight: 600 }}>Edit User: {editUser?.username}</DialogTitle>
+                <DialogTitle sx={dialogTitleSx}>Edit User: {editUser?.username}</DialogTitle>
                 <DialogContent>
                     {editError && (
                         <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }}>{editError}</Alert>
@@ -583,7 +563,6 @@ const AdminUsers = ({ mode }) => {
                         margin="dense"
                         placeholder="Leave blank to keep current"
                         InputLabelProps={{ shrink: true }}
-                        sx={textFieldSx}
                     />
                     <TextField
                         fullWidth
@@ -593,7 +572,6 @@ const AdminUsers = ({ mode }) => {
                         disabled={editLoading}
                         margin="dense"
                         InputLabelProps={{ shrink: true }}
-                        sx={textFieldSx}
                     />
                     <TextField
                         fullWidth
@@ -604,7 +582,6 @@ const AdminUsers = ({ mode }) => {
                         disabled={editLoading}
                         margin="dense"
                         InputLabelProps={{ shrink: true }}
-                        sx={textFieldSx}
                     />
                     <TextField
                         fullWidth
@@ -616,7 +593,6 @@ const AdminUsers = ({ mode }) => {
                         multiline
                         rows={2}
                         InputLabelProps={{ shrink: true }}
-                        sx={textFieldSx}
                     />
                     <Box sx={{ mt: 2 }}>
                         <FormControlLabel
@@ -625,7 +601,6 @@ const AdminUsers = ({ mode }) => {
                                     checked={editEnabled}
                                     onChange={(e) => setEditEnabled(e.target.checked)}
                                     disabled={editLoading}
-                                    sx={switchSx}
                                 />
                             }
                             label="Enabled"
@@ -638,14 +613,13 @@ const AdminUsers = ({ mode }) => {
                                     checked={editSuperuser}
                                     onChange={(e) => setEditSuperuser(e.target.checked)}
                                     disabled={editLoading}
-                                    sx={switchSx}
                                 />
                             }
                             label="Superuser"
                         />
                     </Box>
                 </DialogContent>
-                <DialogActions sx={{ px: 3, pb: 2 }}>
+                <DialogActions sx={dialogActionsSx}>
                     <Button onClick={() => setEditOpen(false)} disabled={editLoading}>
                         Cancel
                     </Button>
@@ -653,7 +627,7 @@ const AdminUsers = ({ mode }) => {
                         onClick={handleEditUser}
                         variant="contained"
                         disabled={editLoading}
-                        sx={{ bgcolor: ACCENT_COLOR, '&:hover': { bgcolor: ACCENT_HOVER } }}
+                        sx={containedButtonSx}
                     >
                         {editLoading ? <CircularProgress size={20} color="inherit" /> : 'Save'}
                     </Button>

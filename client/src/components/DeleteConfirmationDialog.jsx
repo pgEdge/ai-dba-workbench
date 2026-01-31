@@ -20,6 +20,43 @@ import {
 } from '@mui/material';
 import { Warning as WarningIcon } from '@mui/icons-material';
 
+// --- Style constants (Issue 23) ---
+
+const dialogContentSx = {
+    textAlign: 'center',
+    pt: 4,
+    pb: 2,
+};
+
+const iconContainerSx = {
+    display: 'flex',
+    justifyContent: 'center',
+    mb: 2,
+};
+
+const warningIconSx = {
+    fontSize: 56,
+    color: 'warning.main',
+};
+
+const titleSx = {
+    fontWeight: 600,
+    mb: 1.5,
+};
+
+const dialogActionsSx = {
+    justifyContent: 'center',
+    pb: 3,
+    px: 3,
+    gap: 1,
+};
+
+const buttonSx = {
+    minWidth: 100,
+};
+
+// --- Component ---
+
 /**
  * A confirmation dialog for delete operations with a warning icon.
  *
@@ -56,29 +93,15 @@ const DeleteConfirmationDialog = ({
             aria-labelledby="delete-dialog-title"
             aria-describedby="delete-dialog-description"
         >
-            <DialogContent sx={{ textAlign: 'center', pt: 4, pb: 2 }}>
-                <Box
-                    sx={{
-                        display: 'flex',
-                        justifyContent: 'center',
-                        mb: 2,
-                    }}
-                >
-                    <WarningIcon
-                        sx={{
-                            fontSize: 56,
-                            color: '#F59E0B',
-                        }}
-                    />
+            <DialogContent sx={dialogContentSx}>
+                <Box sx={iconContainerSx}>
+                    <WarningIcon sx={warningIconSx} />
                 </Box>
                 <Typography
                     id="delete-dialog-title"
                     variant="h6"
                     component="h2"
-                    sx={{
-                        fontWeight: 600,
-                        mb: 1.5,
-                    }}
+                    sx={titleSx}
                 >
                     {title}
                 </Typography>
@@ -98,18 +121,11 @@ const DeleteConfirmationDialog = ({
                     )}
                 </Typography>
             </DialogContent>
-            <DialogActions
-                sx={{
-                    justifyContent: 'center',
-                    pb: 3,
-                    px: 3,
-                    gap: 1,
-                }}
-            >
+            <DialogActions sx={dialogActionsSx}>
                 <Button
                     onClick={onClose}
                     disabled={loading}
-                    sx={{ minWidth: 100 }}
+                    sx={buttonSx}
                 >
                     Cancel
                 </Button>
@@ -118,7 +134,7 @@ const DeleteConfirmationDialog = ({
                     variant="contained"
                     color="error"
                     disabled={loading}
-                    sx={{ minWidth: 100 }}
+                    sx={buttonSx}
                     startIcon={
                         loading ? (
                             <CircularProgress size={16} color="inherit" />

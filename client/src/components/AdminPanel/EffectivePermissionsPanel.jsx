@@ -9,15 +9,15 @@
  */
 
 import React from 'react';
-import { Box, Typography, Chip, alpha } from '@mui/material';
+import { Box, Typography, Chip } from '@mui/material';
+import { alpha, useTheme } from '@mui/material/styles';
 import {
     Storage as ConnectionIcon,
     AdminPanelSettings as AdminIcon,
     SmartToy as McpIcon,
     Group as GroupIcon,
 } from '@mui/icons-material';
-
-const ACCENT_COLOR = '#15AABF';
+import { categoryLabelSx } from './styles';
 
 const ADMIN_PERMISSION_LABELS = {
     manage_users: 'Manage Users',
@@ -27,19 +27,11 @@ const ADMIN_PERMISSION_LABELS = {
     manage_token_scopes: 'Manage Token Scopes',
 };
 
-const chipSx = {
-    borderColor: alpha(ACCENT_COLOR, 0.3),
-    color: 'text.primary',
-    fontSize: '0.75rem',
-    height: 26,
-    '& .MuiChip-label': { px: 1 },
-};
-
 const CategoryCard = ({ icon: Icon, label, children }) => (
     <Box>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 1 }}>
             <Icon sx={{ fontSize: 16, color: 'text.secondary' }} />
-            <Typography sx={{ fontSize: '0.7rem', fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            <Typography sx={categoryLabelSx}>
                 {label}
             </Typography>
         </Box>
@@ -62,6 +54,16 @@ const EffectivePermissionsPanel = ({
     isDark,
     groups,
 }) => {
+    const theme = useTheme();
+
+    const chipSx = {
+        borderColor: alpha(theme.palette.primary.main, 0.3),
+        color: 'text.primary',
+        fontSize: '0.75rem',
+        height: 26,
+        '& .MuiChip-label': { px: 1 },
+    };
+
     // Normalize connectionPrivileges to array format
     let connArray = [];
     if (connectionPrivileges) {
@@ -89,7 +91,7 @@ const EffectivePermissionsPanel = ({
                 <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mr: 0.5 }}>
                         <GroupIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
-                        <Typography sx={{ fontSize: '0.7rem', fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        <Typography sx={categoryLabelSx}>
                             Groups:
                         </Typography>
                     </Box>

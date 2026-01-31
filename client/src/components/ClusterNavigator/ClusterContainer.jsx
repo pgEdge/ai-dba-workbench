@@ -10,7 +10,8 @@
 
 import React from 'react';
 import { Box } from '@mui/material';
-import { CLUSTER_TYPE_COLORS } from './constants';
+import { useTheme } from '@mui/material/styles';
+import { getClusterTypeColors } from './constants';
 import { getClusterType } from './utils';
 
 /**
@@ -18,8 +19,9 @@ import { getClusterType } from './utils';
  * Color varies by cluster type: spock (amber), binary (cyan), logical (purple), default (gray)
  */
 const ClusterContainer = ({ children, cluster, isDark }) => {
+    const theme = useTheme();
     const clusterType = getClusterType(cluster);
-    const colors = CLUSTER_TYPE_COLORS[clusterType];
+    const colors = getClusterTypeColors(theme)[clusterType];
     const borderColor = isDark ? colors.border.dark : colors.border.light;
     const bgColor = isDark ? colors.bg.dark : colors.bg.light;
 

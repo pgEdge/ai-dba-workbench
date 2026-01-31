@@ -13,6 +13,30 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Typography, TextField, CircularProgress, Box } from '@mui/material';
 
+// --- Style constants (Issue 23) ---
+
+const editContainerBaseSx = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 0.5,
+    minWidth: 0,
+    flex: 1,
+};
+
+const editTextFieldSx = {
+    flex: 1,
+    minWidth: 0,
+    '& .MuiInputBase-input': {
+        fontSize: '0.8125rem',
+        padding: '2px 4px',
+    },
+    '& .MuiInput-underline:before': {
+        borderBottomColor: 'primary.main',
+    },
+};
+
+// --- Component ---
+
 /**
  * InlineEditText - A component that displays text and allows inline editing
  *
@@ -117,11 +141,7 @@ const InlineEditText = ({
         return (
             <Box
                 sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 0.5,
-                    minWidth: 0,
-                    flex: 1,
+                    ...editContainerBaseSx,
                     ...sx,
                 }}
                 onClick={(e) => e.stopPropagation()}
@@ -137,17 +157,7 @@ const InlineEditText = ({
                     helperText={error}
                     size="small"
                     variant="standard"
-                    sx={{
-                        flex: 1,
-                        minWidth: 0,
-                        '& .MuiInputBase-input': {
-                            fontSize: '0.8125rem',
-                            padding: '2px 4px',
-                        },
-                        '& .MuiInput-underline:before': {
-                            borderBottomColor: 'primary.main',
-                        },
-                    }}
+                    sx={editTextFieldSx}
                     {...textFieldProps}
                 />
                 {isSaving && (

@@ -21,6 +21,36 @@ import ClusterNavigator from './components/ClusterNavigator';
 import StatusPanel from './components/StatusPanel';
 import { createPgedgeTheme, loginTheme } from './theme/pgedgeTheme';
 
+// Style constants
+const styles = {
+    loadingContainer: {
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        bgcolor: 'background.default',
+    },
+    mainLayoutRoot: {
+        height: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+        bgcolor: 'background.default',
+        overflow: 'hidden',
+    },
+    mainLayoutBody: {
+        flex: 1,
+        display: 'flex',
+        overflow: 'hidden',
+        position: 'relative',
+    },
+    contentArea: {
+        flex: 1,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+    },
+};
+
 const AppContent = () => {
     const [mode, setMode] = useState(() => {
         // Load theme preference from localStorage
@@ -45,15 +75,7 @@ const AppContent = () => {
         return (
             <ThemeProvider theme={theme}>
                 <CssBaseline />
-                <Box
-                    sx={{
-                        minHeight: '100vh',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        bgcolor: 'background.default',
-                    }}
-                >
+                <Box sx={styles.loadingContainer}>
                     <CircularProgress />
                 </Box>
             </ThemeProvider>
@@ -168,24 +190,13 @@ const MainLayout = ({ mode, onToggleTheme }) => {
     }, [selectionType, selectedServer, selectedCluster, clusterData]);
 
     return (
-        <Box sx={{
-            height: '100vh',
-            display: 'flex',
-            flexDirection: 'column',
-            bgcolor: 'background.default',
-            overflow: 'hidden'
-        }}>
+        <Box sx={styles.mainLayoutRoot}>
             <Header
                 onToggleTheme={onToggleTheme}
                 mode={mode}
                 helpContext={helpContext}
             />
-            <Box sx={{
-                flex: 1,
-                display: 'flex',
-                overflow: 'hidden',
-                position: 'relative'
-            }}>
+            <Box sx={styles.mainLayoutBody}>
                 {/* Cluster Navigator */}
                 <ClusterNavigator
                     data={clusterData}
@@ -201,12 +212,7 @@ const MainLayout = ({ mode, onToggleTheme }) => {
                 />
 
                 {/* Main content area */}
-                <Box sx={{
-                    flex: 1,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    overflow: 'hidden',
-                }}>
+                <Box sx={styles.contentArea}>
                     <StatusPanel
                         selection={selection}
                         mode={mode}

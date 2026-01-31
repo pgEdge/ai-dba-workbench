@@ -34,15 +34,30 @@ import {
     Autocomplete,
     TextField,
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import {
     Add as AddIcon,
     Delete as DeleteIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
+import {
+    tableHeaderCellSx,
+    dialogTitleSx,
+    dialogActionsSx,
+    pageHeadingSx,
+    sectionHeaderSx,
+    sectionTitleSx,
+    loadingContainerSx,
+    emptyRowSx,
+    emptyRowTextSx,
+    getContainedButtonSx,
+    getTextButtonSx,
+    getDeleteIconSx,
+    getTableContainerSx,
+    getFocusedLabelSx,
+} from './styles';
 
 const API_BASE_URL = '/api/v1';
-const ACCENT_COLOR = '#15AABF';
-const ACCENT_HOVER = '#0C8599';
 
 const PERMISSION_TYPES = [
     { value: 'manage_users', label: 'Manage Users' },
@@ -68,21 +83,8 @@ const formatMcpName = (permission) => {
     return name;
 };
 
-const textFieldSx = {
-    '& .MuiOutlinedInput-root': {
-        borderRadius: 1,
-        '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
-            borderColor: ACCENT_COLOR,
-            borderWidth: 2,
-        },
-    },
-    '& .MuiInputLabel-root.Mui-focused': {
-        color: ACCENT_COLOR,
-    },
-};
-
 const AdminPermissions = ({ mode }) => {
-    const isDark = mode === 'dark';
+    const theme = useTheme();
     const { user } = useAuth();
     const isSuperuser = !!user?.isSuperuser;
 
@@ -370,15 +372,21 @@ const AdminPermissions = ({ mode }) => {
 
     if (loading) {
         return (
-            <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
-                <CircularProgress sx={{ color: ACCENT_COLOR }} />
+            <Box sx={loadingContainerSx}>
+                <CircularProgress />
             </Box>
         );
     }
 
+    const containedButtonSx = getContainedButtonSx(theme);
+    const textButtonSx = getTextButtonSx(theme);
+    const deleteIconSx = getDeleteIconSx(theme);
+    const tableContainerSx = getTableContainerSx(theme);
+    const focusedLabelSx = getFocusedLabelSx(theme);
+
     return (
         <Box>
-            <Typography variant="h6" sx={{ fontWeight: 600, mb: 2, color: 'text.primary' }}>
+            <Typography variant="h6" sx={{ ...pageHeadingSx, mb: 2 }}>
                 Permissions
             </Typography>
 
@@ -389,8 +397,8 @@ const AdminPermissions = ({ mode }) => {
             )}
 
             {/* Group Selector */}
-            <FormControl fullWidth sx={{ mb: 3, ...textFieldSx }}>
-                <InputLabel sx={{ '&.Mui-focused': { color: ACCENT_COLOR } }}>
+            <FormControl fullWidth sx={{ mb: 3 }}>
+                <InputLabel sx={focusedLabelSx}>
                     Select Group
                 </InputLabel>
                 <Select
@@ -408,15 +416,15 @@ const AdminPermissions = ({ mode }) => {
                 <>
                     {/* Connection Permissions */}
                     <Box sx={{ mb: 4 }}>
-                        <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                            <Typography variant="subtitle1" sx={{ flex: 1, fontWeight: 600 }}>
+                        <Box sx={sectionHeaderSx}>
+                            <Typography variant="subtitle1" sx={sectionTitleSx}>
                                 Connection Permissions
                             </Typography>
                             <Button
                                 size="small"
                                 startIcon={<AddIcon />}
                                 onClick={handleOpenGrantConn}
-                                sx={{ textTransform: 'none', color: ACCENT_COLOR }}
+                                sx={textButtonSx}
                             >
                                 Grant
                             </Button>
@@ -424,25 +432,21 @@ const AdminPermissions = ({ mode }) => {
                         <TableContainer
                             component={Paper}
                             elevation={0}
-                            sx={{
-                                border: '1px solid',
-                                borderColor: isDark ? '#334155' : '#E5E7EB',
-                                borderRadius: 1,
-                            }}
+                            sx={tableContainerSx}
                         >
                             <Table size="small">
                                 <TableHead>
                                     <TableRow>
-                                        <TableCell sx={{ fontWeight: 600 }}>Connection</TableCell>
-                                        <TableCell sx={{ fontWeight: 600 }}>Access Level</TableCell>
-                                        <TableCell sx={{ fontWeight: 600 }} align="right">Actions</TableCell>
+                                        <TableCell sx={tableHeaderCellSx}>Connection</TableCell>
+                                        <TableCell sx={tableHeaderCellSx}>Access Level</TableCell>
+                                        <TableCell sx={tableHeaderCellSx} align="right">Actions</TableCell>
                                     </TableRow>
                                 </TableHead>
                                 <TableBody>
                                     {connLoading ? (
                                         <TableRow>
                                             <TableCell colSpan={3} align="center" sx={{ py: 3 }}>
-                                                <CircularProgress size={24} sx={{ color: ACCENT_COLOR }} />
+                                                <CircularProgress size={24} />
                                             </TableCell>
                                         </TableRow>
                                     ) : connPermissions.length > 0 ? (
@@ -454,7 +458,7 @@ const AdminPermissions = ({ mode }) => {
                                                     <IconButton
                                                         size="small"
                                                         onClick={() => handleRevokeConn(p)}
-                                                        sx={{ color: '#EF4444' }}
+                                                        sx={deleteIconSx}
                                                         aria-label="revoke permission"
                                                     >
                                                         <DeleteIcon fontSize="small" />
@@ -464,8 +468,8 @@ const AdminPermissions = ({ mode }) => {
                                         ))
                                     ) : (
                                         <TableRow>
-                                            <TableCell colSpan={3} align="center" sx={{ py: 2 }}>
-                                                <Typography color="text.secondary" sx={{ fontSize: '0.875rem' }}>
+                                            <TableCell colSpan={3} align="center" sx={emptyRowSx}>
+                                                <Typography color="text.secondary" sx={emptyRowTextSx}>
                                                     No connection permissions granted.
                                                 </Typography>
                                             </TableCell>
@@ -479,8 +483,8 @@ const AdminPermissions = ({ mode }) => {
                     {/* Admin Permissions - superuser only */}
                     {isSuperuser && (
                         <Box sx={{ mb: 4 }}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                                <Typography variant="subtitle1" sx={{ flex: 1, fontWeight: 600 }}>
+                            <Box sx={sectionHeaderSx}>
+                                <Typography variant="subtitle1" sx={sectionTitleSx}>
                                     Admin Permissions
                                 </Typography>
                                 <Button
@@ -491,7 +495,7 @@ const AdminPermissions = ({ mode }) => {
                                         setGrantAdminError(null);
                                         setGrantAdminOpen(true);
                                     }}
-                                    sx={{ textTransform: 'none', color: ACCENT_COLOR }}
+                                    sx={textButtonSx}
                                 >
                                     Grant Permission
                                 </Button>
@@ -499,24 +503,20 @@ const AdminPermissions = ({ mode }) => {
                             <TableContainer
                                 component={Paper}
                                 elevation={0}
-                                sx={{
-                                    border: '1px solid',
-                                    borderColor: isDark ? '#334155' : '#E5E7EB',
-                                    borderRadius: 1,
-                                }}
+                                sx={tableContainerSx}
                             >
                                 <Table size="small">
                                     <TableHead>
                                         <TableRow>
-                                            <TableCell sx={{ fontWeight: 600 }}>Permission</TableCell>
-                                            <TableCell sx={{ fontWeight: 600 }} align="right">Actions</TableCell>
+                                            <TableCell sx={tableHeaderCellSx}>Permission</TableCell>
+                                            <TableCell sx={tableHeaderCellSx} align="right">Actions</TableCell>
                                         </TableRow>
                                     </TableHead>
                                     <TableBody>
                                         {adminPermsLoading ? (
                                             <TableRow>
                                                 <TableCell colSpan={2} align="center" sx={{ py: 3 }}>
-                                                    <CircularProgress size={24} sx={{ color: ACCENT_COLOR }} />
+                                                    <CircularProgress size={24} />
                                                 </TableCell>
                                             </TableRow>
                                         ) : adminPermissions.length > 0 ? (
@@ -532,7 +532,7 @@ const AdminPermissions = ({ mode }) => {
                                                             <IconButton
                                                                 size="small"
                                                                 onClick={() => handleRevokeAdmin(p)}
-                                                                sx={{ color: '#EF4444' }}
+                                                                sx={deleteIconSx}
                                                                 aria-label="revoke permission"
                                                             >
                                                                 <DeleteIcon fontSize="small" />
@@ -543,8 +543,8 @@ const AdminPermissions = ({ mode }) => {
                                             })
                                         ) : (
                                             <TableRow>
-                                                <TableCell colSpan={2} align="center" sx={{ py: 2 }}>
-                                                    <Typography color="text.secondary" sx={{ fontSize: '0.875rem' }}>
+                                                <TableCell colSpan={2} align="center" sx={emptyRowSx}>
+                                                    <Typography color="text.secondary" sx={emptyRowTextSx}>
                                                         No admin permissions granted.
                                                     </Typography>
                                                 </TableCell>
@@ -558,15 +558,15 @@ const AdminPermissions = ({ mode }) => {
 
                     {/* MCP Permissions */}
                     <Box>
-                        <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                            <Typography variant="subtitle1" sx={{ flex: 1, fontWeight: 600 }}>
+                        <Box sx={sectionHeaderSx}>
+                            <Typography variant="subtitle1" sx={sectionTitleSx}>
                                 MCP Permissions
                             </Typography>
                             <Button
                                 size="small"
                                 startIcon={<AddIcon />}
                                 onClick={handleOpenGrantMcp}
-                                sx={{ textTransform: 'none', color: ACCENT_COLOR }}
+                                sx={textButtonSx}
                             >
                                 Grant
                             </Button>
@@ -574,24 +574,20 @@ const AdminPermissions = ({ mode }) => {
                         <TableContainer
                             component={Paper}
                             elevation={0}
-                            sx={{
-                                border: '1px solid',
-                                borderColor: isDark ? '#334155' : '#E5E7EB',
-                                borderRadius: 1,
-                            }}
+                            sx={tableContainerSx}
                         >
                             <Table size="small">
                                 <TableHead>
                                     <TableRow>
-                                        <TableCell sx={{ fontWeight: 600 }}>Permission</TableCell>
-                                        <TableCell sx={{ fontWeight: 600 }} align="right">Actions</TableCell>
+                                        <TableCell sx={tableHeaderCellSx}>Permission</TableCell>
+                                        <TableCell sx={tableHeaderCellSx} align="right">Actions</TableCell>
                                     </TableRow>
                                 </TableHead>
                                 <TableBody>
                                     {mcpLoading ? (
                                         <TableRow>
                                             <TableCell colSpan={2} align="center" sx={{ py: 3 }}>
-                                                <CircularProgress size={24} sx={{ color: ACCENT_COLOR }} />
+                                                <CircularProgress size={24} />
                                             </TableCell>
                                         </TableRow>
                                     ) : mcpPermissions.length > 0 ? (
@@ -602,7 +598,7 @@ const AdminPermissions = ({ mode }) => {
                                                     <IconButton
                                                         size="small"
                                                         onClick={() => handleRevokeMcp(p)}
-                                                        sx={{ color: '#EF4444' }}
+                                                        sx={deleteIconSx}
                                                         aria-label="revoke permission"
                                                     >
                                                         <DeleteIcon fontSize="small" />
@@ -612,8 +608,8 @@ const AdminPermissions = ({ mode }) => {
                                         ))
                                     ) : (
                                         <TableRow>
-                                            <TableCell colSpan={2} align="center" sx={{ py: 2 }}>
-                                                <Typography color="text.secondary" sx={{ fontSize: '0.875rem' }}>
+                                            <TableCell colSpan={2} align="center" sx={emptyRowSx}>
+                                                <Typography color="text.secondary" sx={emptyRowTextSx}>
                                                     No MCP permissions granted.
                                                 </Typography>
                                             </TableCell>
@@ -628,7 +624,7 @@ const AdminPermissions = ({ mode }) => {
 
             {/* Grant MCP Permission Dialog */}
             <Dialog open={grantMcpOpen} onClose={() => !grantMcpLoading && setGrantMcpOpen(false)} maxWidth="xs" fullWidth>
-                <DialogTitle sx={{ fontWeight: 600 }}>Grant MCP Permission</DialogTitle>
+                <DialogTitle sx={dialogTitleSx}>Grant MCP Permission</DialogTitle>
                 <DialogContent>
                     {grantMcpError && (
                         <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }}>{grantMcpError}</Alert>
@@ -643,14 +639,13 @@ const AdminPermissions = ({ mode }) => {
                                 {...params}
                                 label="Permission"
                                 margin="dense"
-                                sx={textFieldSx}
                             />
                         )}
                         disabled={grantMcpLoading}
                         sx={{ mt: 1 }}
                     />
                 </DialogContent>
-                <DialogActions sx={{ px: 3, pb: 2 }}>
+                <DialogActions sx={dialogActionsSx}>
                     <Button onClick={() => setGrantMcpOpen(false)} disabled={grantMcpLoading}>
                         Cancel
                     </Button>
@@ -658,7 +653,7 @@ const AdminPermissions = ({ mode }) => {
                         onClick={handleGrantMcp}
                         variant="contained"
                         disabled={grantMcpLoading || !selectedMcpPermission}
-                        sx={{ bgcolor: ACCENT_COLOR, '&:hover': { bgcolor: ACCENT_HOVER } }}
+                        sx={containedButtonSx}
                     >
                         {grantMcpLoading ? <CircularProgress size={20} color="inherit" /> : 'Grant'}
                     </Button>
@@ -667,13 +662,13 @@ const AdminPermissions = ({ mode }) => {
 
             {/* Grant Connection Permission Dialog */}
             <Dialog open={grantConnOpen} onClose={() => !grantConnLoading && setGrantConnOpen(false)} maxWidth="xs" fullWidth>
-                <DialogTitle sx={{ fontWeight: 600 }}>Grant Connection Permission</DialogTitle>
+                <DialogTitle sx={dialogTitleSx}>Grant Connection Permission</DialogTitle>
                 <DialogContent>
                     {grantConnError && (
                         <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }}>{grantConnError}</Alert>
                     )}
-                    <FormControl fullWidth margin="dense" sx={textFieldSx}>
-                        <InputLabel sx={{ '&.Mui-focused': { color: ACCENT_COLOR } }}>
+                    <FormControl fullWidth margin="dense">
+                        <InputLabel sx={focusedLabelSx}>
                             Connection
                         </InputLabel>
                         <Select
@@ -688,8 +683,8 @@ const AdminPermissions = ({ mode }) => {
                             ))}
                         </Select>
                     </FormControl>
-                    <FormControl fullWidth margin="dense" sx={textFieldSx}>
-                        <InputLabel sx={{ '&.Mui-focused': { color: ACCENT_COLOR } }}>
+                    <FormControl fullWidth margin="dense">
+                        <InputLabel sx={focusedLabelSx}>
                             Access Level
                         </InputLabel>
                         <Select
@@ -703,7 +698,7 @@ const AdminPermissions = ({ mode }) => {
                         </Select>
                     </FormControl>
                 </DialogContent>
-                <DialogActions sx={{ px: 3, pb: 2 }}>
+                <DialogActions sx={dialogActionsSx}>
                     <Button onClick={() => setGrantConnOpen(false)} disabled={grantConnLoading}>
                         Cancel
                     </Button>
@@ -711,7 +706,7 @@ const AdminPermissions = ({ mode }) => {
                         onClick={handleGrantConn}
                         variant="contained"
                         disabled={grantConnLoading || selectedConnectionId === ''}
-                        sx={{ bgcolor: ACCENT_COLOR, '&:hover': { bgcolor: ACCENT_HOVER } }}
+                        sx={containedButtonSx}
                     >
                         {grantConnLoading ? <CircularProgress size={20} color="inherit" /> : 'Grant'}
                     </Button>
@@ -720,13 +715,13 @@ const AdminPermissions = ({ mode }) => {
 
             {/* Grant Admin Permission Dialog */}
             <Dialog open={grantAdminOpen} onClose={() => !grantAdminLoading && setGrantAdminOpen(false)} maxWidth="xs" fullWidth>
-                <DialogTitle sx={{ fontWeight: 600 }}>Grant Admin Permission</DialogTitle>
+                <DialogTitle sx={dialogTitleSx}>Grant Admin Permission</DialogTitle>
                 <DialogContent>
                     {grantAdminError && (
                         <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }}>{grantAdminError}</Alert>
                     )}
-                    <FormControl fullWidth margin="dense" sx={textFieldSx}>
-                        <InputLabel sx={{ '&.Mui-focused': { color: ACCENT_COLOR } }}>
+                    <FormControl fullWidth margin="dense">
+                        <InputLabel sx={focusedLabelSx}>
                             Permission
                         </InputLabel>
                         <Select
@@ -741,7 +736,7 @@ const AdminPermissions = ({ mode }) => {
                         </Select>
                     </FormControl>
                 </DialogContent>
-                <DialogActions sx={{ px: 3, pb: 2 }}>
+                <DialogActions sx={dialogActionsSx}>
                     <Button onClick={() => setGrantAdminOpen(false)} disabled={grantAdminLoading}>
                         Cancel
                     </Button>
@@ -749,7 +744,7 @@ const AdminPermissions = ({ mode }) => {
                         onClick={handleGrantAdmin}
                         variant="contained"
                         disabled={grantAdminLoading || !selectedAdminPermission}
-                        sx={{ bgcolor: ACCENT_COLOR, '&:hover': { bgcolor: ACCENT_HOVER } }}
+                        sx={containedButtonSx}
                     >
                         {grantAdminLoading ? <CircularProgress size={20} color="inherit" /> : 'Grant'}
                     </Button>

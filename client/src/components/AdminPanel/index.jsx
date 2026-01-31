@@ -20,6 +20,7 @@ import {
     Box,
     Slide,
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import {
     Close as CloseIcon,
 } from '@mui/icons-material';
@@ -28,9 +29,6 @@ import AdminUsers from './AdminUsers';
 import AdminGroups from './AdminGroups';
 import AdminPermissions from './AdminPermissions';
 import AdminTokenScopes from './AdminTokenScopes';
-
-// Cyan accent color used throughout pgEdge UI
-const ACCENT_COLOR = '#15AABF';
 
 const Transition = React.forwardRef(function Transition(props, ref) {
     return <Slide direction="up" ref={ref} {...props} />;
@@ -45,8 +43,8 @@ const TAB_DEFS = [
 ];
 
 const AdminPanel = ({ open, onClose, mode }) => {
+    const theme = useTheme();
     const { user, hasPermission } = useAuth();
-    const isDark = mode === 'dark';
     const [activeTab, setActiveTab] = useState(0);
 
     // Filter tabs based on the user permissions
@@ -83,9 +81,9 @@ const AdminPanel = ({ open, onClose, mode }) => {
                 position="static"
                 elevation={0}
                 sx={{
-                    bgcolor: isDark ? '#1E293B' : '#FFFFFF',
+                    bgcolor: theme.palette.background.paper,
                     borderBottom: '1px solid',
-                    borderColor: isDark ? '#334155' : '#E5E7EB',
+                    borderColor: theme.palette.divider,
                 }}
             >
                 <Toolbar>
@@ -95,7 +93,7 @@ const AdminPanel = ({ open, onClose, mode }) => {
                         onClick={onClose}
                         aria-label="close administration"
                         sx={{
-                            color: isDark ? '#94A3B8' : '#6B7280',
+                            color: theme.palette.text.secondary,
                             mr: 2,
                         }}
                     >
@@ -107,7 +105,7 @@ const AdminPanel = ({ open, onClose, mode }) => {
                         sx={{
                             flexGrow: 1,
                             fontWeight: 600,
-                            color: isDark ? '#F1F5F9' : '#1F2937',
+                            color: theme.palette.text.primary,
                         }}
                     >
                         Administration
@@ -124,14 +122,14 @@ const AdminPanel = ({ open, onClose, mode }) => {
                             textTransform: 'none',
                             fontWeight: 500,
                             fontSize: '0.875rem',
-                            color: isDark ? '#94A3B8' : '#6B7280',
+                            color: theme.palette.text.secondary,
                             '&.Mui-selected': {
-                                color: ACCENT_COLOR,
+                                color: theme.palette.primary.main,
                                 fontWeight: 600,
                             },
                         },
                         '& .MuiTabs-indicator': {
-                            backgroundColor: ACCENT_COLOR,
+                            backgroundColor: theme.palette.primary.main,
                         },
                     }}
                 >
@@ -144,7 +142,7 @@ const AdminPanel = ({ open, onClose, mode }) => {
                 sx={{
                     flex: 1,
                     overflow: 'auto',
-                    bgcolor: isDark ? '#0F172A' : '#F8FAFC',
+                    bgcolor: theme.palette.background.default,
                     p: 3,
                 }}
             >

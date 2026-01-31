@@ -24,7 +24,91 @@ import {
     Box,
     CircularProgress,
     Typography,
+    alpha,
 } from '@mui/material';
+
+// --- Style constants (Issue 23) ---
+
+const dialogPaperSx = {
+    borderRadius: 2,
+};
+
+const dialogTitleSx = {
+    fontWeight: 600,
+    color: 'text.primary',
+    pb: 1,
+};
+
+const alertSx = {
+    mb: 2,
+    borderRadius: 1,
+};
+
+const textFieldSx = {
+    '& .MuiOutlinedInput-root': {
+        borderRadius: 1,
+        '&:hover .MuiOutlinedInput-notchedOutline': {
+            borderColor: 'grey.400',
+        },
+        '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
+            borderColor: 'primary.main',
+            borderWidth: 2,
+        },
+    },
+    '& .MuiInputLabel-root.Mui-focused': {
+        color: 'primary.main',
+    },
+};
+
+const descriptionFieldSx = {
+    mt: 2,
+    ...textFieldSx,
+};
+
+const checkboxSx = {
+    color: 'grey.400',
+    '&.Mui-checked': {
+        color: 'primary.main',
+    },
+};
+
+const sharedHelpTextSx = {
+    display: 'block',
+    color: 'text.secondary',
+    ml: 4,
+    mt: -0.5,
+};
+
+const cancelButtonSx = (theme) => ({
+    color: theme.palette.text.secondary,
+    '&:hover': {
+        backgroundColor: alpha(theme.palette.text.secondary, 0.08),
+    },
+});
+
+const getSaveButtonSx = (theme) => ({
+    minWidth: 80,
+    borderRadius: 1,
+    fontWeight: 600,
+    textTransform: 'none',
+    background: theme.palette.primary.main,
+    boxShadow: '0 4px 14px 0 rgba(14, 165, 233, 0.39)',
+    '&:hover': {
+        background: theme.palette.primary.dark,
+        boxShadow: '0 6px 20px 0 rgba(14, 165, 233, 0.5)',
+    },
+    '&.Mui-disabled': {
+        background: theme.palette.grey[200],
+        color: theme.palette.grey[400],
+    },
+});
+
+const dialogActionsSx = {
+    px: 3,
+    pb: 2,
+};
+
+// --- Component ---
 
 /**
  * GroupDialog - Dialog for creating and editing cluster groups
@@ -125,19 +209,11 @@ const GroupDialog = ({
             maxWidth="xs"
             fullWidth
             PaperProps={{
-                sx: {
-                    borderRadius: 2,
-                },
+                sx: dialogPaperSx,
             }}
         >
             <form onSubmit={handleSubmit} noValidate>
-                <DialogTitle
-                    sx={{
-                        fontWeight: 600,
-                        color: '#1F2937',
-                        pb: 1,
-                    }}
-                >
+                <DialogTitle sx={dialogTitleSx}>
                     {mode === 'create' ? 'Add Cluster Group' : 'Edit Cluster Group'}
                 </DialogTitle>
 
@@ -145,10 +221,7 @@ const GroupDialog = ({
                     {error && (
                         <Alert
                             severity="error"
-                            sx={{
-                                mb: 2,
-                                borderRadius: 1,
-                            }}
+                            sx={alertSx}
                         >
                             {error}
                         </Alert>
@@ -165,21 +238,7 @@ const GroupDialog = ({
                         required
                         disabled={isSaving}
                         margin="dense"
-                        sx={{
-                            '& .MuiOutlinedInput-root': {
-                                borderRadius: 1,
-                                '&:hover .MuiOutlinedInput-notchedOutline': {
-                                    borderColor: '#9CA3AF',
-                                },
-                                '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
-                                    borderColor: '#15AABF',
-                                    borderWidth: 2,
-                                },
-                            },
-                            '& .MuiInputLabel-root.Mui-focused': {
-                                color: '#15AABF',
-                            },
-                        }}
+                        sx={textFieldSx}
                     />
 
                     <TextField
@@ -191,22 +250,7 @@ const GroupDialog = ({
                         margin="dense"
                         multiline
                         rows={3}
-                        sx={{
-                            mt: 2,
-                            '& .MuiOutlinedInput-root': {
-                                borderRadius: 1,
-                                '&:hover .MuiOutlinedInput-notchedOutline': {
-                                    borderColor: '#9CA3AF',
-                                },
-                                '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
-                                    borderColor: '#15AABF',
-                                    borderWidth: 2,
-                                },
-                            },
-                            '& .MuiInputLabel-root.Mui-focused': {
-                                color: '#15AABF',
-                            },
-                        }}
+                        sx={descriptionFieldSx}
                     />
 
                     {isSuperuser && (
@@ -217,24 +261,14 @@ const GroupDialog = ({
                                         checked={isShared}
                                         onChange={(e) => setIsShared(e.target.checked)}
                                         disabled={isSaving}
-                                        sx={{
-                                            color: '#9CA3AF',
-                                            '&.Mui-checked': {
-                                                color: '#15AABF',
-                                            },
-                                        }}
+                                        sx={checkboxSx}
                                     />
                                 }
                                 label="Share with all users"
                             />
                             <Typography
                                 variant="caption"
-                                sx={{
-                                    display: 'block',
-                                    color: '#6B7280',
-                                    ml: 4,
-                                    mt: -0.5,
-                                }}
+                                sx={sharedHelpTextSx}
                             >
                                 Shared groups are visible to all users
                             </Typography>
@@ -242,16 +276,11 @@ const GroupDialog = ({
                     )}
                 </DialogContent>
 
-                <DialogActions sx={{ px: 3, pb: 2 }}>
+                <DialogActions sx={dialogActionsSx}>
                     <Button
                         onClick={handleClose}
                         disabled={isSaving}
-                        sx={{
-                            color: '#6B7280',
-                            '&:hover': {
-                                backgroundColor: 'rgba(107, 114, 128, 0.08)',
-                            },
-                        }}
+                        sx={cancelButtonSx}
                     >
                         Cancel
                     </Button>
@@ -259,22 +288,7 @@ const GroupDialog = ({
                         type="submit"
                         variant="contained"
                         disabled={isSaving}
-                        sx={{
-                            minWidth: 80,
-                            borderRadius: 1,
-                            fontWeight: 600,
-                            textTransform: 'none',
-                            background: '#15AABF',
-                            boxShadow: '0 4px 14px 0 rgba(14, 165, 233, 0.39)',
-                            '&:hover': {
-                                background: '#0C8599',
-                                boxShadow: '0 6px 20px 0 rgba(14, 165, 233, 0.5)',
-                            },
-                            '&.Mui-disabled': {
-                                background: '#E5E7EB',
-                                color: '#9CA3AF',
-                            },
-                        }}
+                        sx={getSaveButtonSx}
                     >
                         {isSaving ? (
                             <CircularProgress size={20} color="inherit" />

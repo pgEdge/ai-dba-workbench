@@ -32,10 +32,6 @@ import {
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 
-// Cyan accent color used throughout pgEdge UI
-const ACCENT_COLOR = '#15AABF';
-const ACCENT_HOVER = '#0C8599';
-
 // SSL mode options for PostgreSQL connections
 const SSL_MODES = [
     { value: 'disable', label: 'Disable' },
@@ -62,22 +58,113 @@ const getDefaultFormData = () => ({
     is_shared: false,
 });
 
-// Common TextField styling to match pgEdge aesthetic
+// --- Style constants (Issue 23) ---
+
 const textFieldSx = {
     '& .MuiOutlinedInput-root': {
         borderRadius: 1,
         '&:hover .MuiOutlinedInput-notchedOutline': {
-            borderColor: '#9CA3AF',
+            borderColor: 'grey.400',
         },
         '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
-            borderColor: ACCENT_COLOR,
+            borderColor: 'primary.main',
             borderWidth: 2,
         },
     },
     '& .MuiInputLabel-root.Mui-focused': {
-        color: ACCENT_COLOR,
+        color: 'primary.main',
     },
 };
+
+const dialogPaperSx = {
+    borderRadius: 2,
+};
+
+const dialogTitleSx = {
+    fontWeight: 600,
+    color: 'text.primary',
+    pb: 1,
+};
+
+const sectionLabelSx = {
+    color: 'text.secondary',
+    mb: 1,
+    mt: 1,
+    textTransform: 'uppercase',
+    fontSize: '0.75rem',
+    letterSpacing: '0.05em',
+};
+
+const optionsSectionLabelSx = {
+    ...sectionLabelSx,
+    mt: 2,
+};
+
+const sslAccordionSx = {
+    mt: 2,
+    '&:before': { display: 'none' },
+    border: '1px solid',
+    borderColor: 'grey.200',
+    borderRadius: '8px !important',
+};
+
+const accordionSummarySx = {
+    minHeight: 48,
+    '&.Mui-expanded': { minHeight: 48 },
+};
+
+const sslLabelSx = {
+    color: 'text.secondary',
+    textTransform: 'uppercase',
+    fontSize: '0.75rem',
+    letterSpacing: '0.05em',
+};
+
+const sslModeLabelSx = {
+    '&.Mui-focused': { color: 'primary.main' },
+};
+
+const checkboxSx = {
+    '&.Mui-checked': {
+        color: 'primary.main',
+    },
+};
+
+const formControlLabelSx = {
+    '& .MuiFormControlLabel-label': {
+        fontSize: '0.875rem',
+        color: 'text.primary',
+    },
+};
+
+const cancelButtonSx = {
+    color: 'text.secondary',
+    textTransform: 'none',
+    fontWeight: 500,
+};
+
+const getSaveButtonSx = (theme) => ({
+    textTransform: 'none',
+    fontWeight: 600,
+    minWidth: 80,
+    background: theme.palette.primary.main,
+    boxShadow: '0 4px 14px 0 rgba(14, 165, 233, 0.39)',
+    '&:hover': {
+        background: theme.palette.primary.dark,
+        boxShadow: '0 6px 20px 0 rgba(14, 165, 233, 0.5)',
+    },
+    '&.Mui-disabled': {
+        background: theme.palette.grey[200],
+        color: theme.palette.grey[400],
+    },
+});
+
+const dialogActionsSx = {
+    px: 3,
+    pb: 2,
+};
+
+// --- Component ---
 
 /**
  * ServerDialog - Dialog component for adding and editing server connections
@@ -250,19 +337,11 @@ const ServerDialog = ({
             maxWidth="sm"
             fullWidth
             PaperProps={{
-                sx: {
-                    borderRadius: 2,
-                },
+                sx: dialogPaperSx,
             }}
         >
             <form onSubmit={handleSubmit} noValidate>
-                <DialogTitle
-                    sx={{
-                        fontWeight: 600,
-                        color: 'text.primary',
-                        pb: 1,
-                    }}
-                >
+                <DialogTitle sx={dialogTitleSx}>
                     {dialogTitle}
                 </DialogTitle>
 
@@ -280,14 +359,7 @@ const ServerDialog = ({
                     {/* Connection Details Section */}
                     <Typography
                         variant="subtitle2"
-                        sx={{
-                            color: 'text.secondary',
-                            mb: 1,
-                            mt: 1,
-                            textTransform: 'uppercase',
-                            fontSize: '0.75rem',
-                            letterSpacing: '0.05em',
-                        }}
+                        sx={sectionLabelSx}
                     >
                         Connection Details
                     </Typography>
@@ -390,28 +462,15 @@ const ServerDialog = ({
                         expanded={sslExpanded}
                         onChange={(e, expanded) => setSslExpanded(expanded)}
                         elevation={0}
-                        sx={{
-                            mt: 2,
-                            '&:before': { display: 'none' },
-                            border: '1px solid #E5E7EB',
-                            borderRadius: '8px !important',
-                        }}
+                        sx={sslAccordionSx}
                     >
                         <AccordionSummary
                             expandIcon={<ExpandMoreIcon />}
-                            sx={{
-                                minHeight: 48,
-                                '&.Mui-expanded': { minHeight: 48 },
-                            }}
+                            sx={accordionSummarySx}
                         >
                             <Typography
                                 variant="subtitle2"
-                                sx={{
-                                    color: 'text.secondary',
-                                    textTransform: 'uppercase',
-                                    fontSize: '0.75rem',
-                                    letterSpacing: '0.05em',
-                                }}
+                                sx={sslLabelSx}
                             >
                                 SSL Settings
                             </Typography>
@@ -419,11 +478,7 @@ const ServerDialog = ({
                         <AccordionDetails sx={{ pt: 0 }}>
                             {/* SSL Mode */}
                             <FormControl fullWidth margin="dense" sx={textFieldSx}>
-                                <InputLabel
-                                    sx={{
-                                        '&.Mui-focused': { color: ACCENT_COLOR },
-                                    }}
-                                >
+                                <InputLabel sx={sslModeLabelSx}>
                                     SSL Mode
                                 </InputLabel>
                                 <Select
@@ -478,14 +533,7 @@ const ServerDialog = ({
                     {/* Options Section */}
                     <Typography
                         variant="subtitle2"
-                        sx={{
-                            color: 'text.secondary',
-                            mb: 1,
-                            mt: 2,
-                            textTransform: 'uppercase',
-                            fontSize: '0.75rem',
-                            letterSpacing: '0.05em',
-                        }}
+                        sx={optionsSectionLabelSx}
                     >
                         Options
                     </Typography>
@@ -497,20 +545,11 @@ const ServerDialog = ({
                                     checked={formData.is_monitored}
                                     onChange={(e) => handleFieldChange('is_monitored', e.target.checked)}
                                     disabled={isSaving}
-                                    sx={{
-                                        '&.Mui-checked': {
-                                            color: ACCENT_COLOR,
-                                        },
-                                    }}
+                                    sx={checkboxSx}
                                 />
                             }
                             label="Monitor this server"
-                            sx={{
-                                '& .MuiFormControlLabel-label': {
-                                    fontSize: '0.875rem',
-                                    color: 'text.primary',
-                                },
-                            }}
+                            sx={formControlLabelSx}
                         />
 
                         {isSuperuser && (
@@ -520,34 +559,21 @@ const ServerDialog = ({
                                         checked={formData.is_shared}
                                         onChange={(e) => handleFieldChange('is_shared', e.target.checked)}
                                         disabled={isSaving}
-                                        sx={{
-                                            '&.Mui-checked': {
-                                                color: ACCENT_COLOR,
-                                            },
-                                        }}
+                                        sx={checkboxSx}
                                     />
                                 }
                                 label="Share with all users"
-                                sx={{
-                                    '& .MuiFormControlLabel-label': {
-                                        fontSize: '0.875rem',
-                                        color: 'text.primary',
-                                    },
-                                }}
+                                sx={formControlLabelSx}
                             />
                         )}
                     </Box>
                 </DialogContent>
 
-                <DialogActions sx={{ px: 3, pb: 2 }}>
+                <DialogActions sx={dialogActionsSx}>
                     <Button
                         onClick={handleClose}
                         disabled={isSaving}
-                        sx={{
-                            color: '#6B7280',
-                            textTransform: 'none',
-                            fontWeight: 500,
-                        }}
+                        sx={cancelButtonSx}
                     >
                         Cancel
                     </Button>
@@ -555,21 +581,7 @@ const ServerDialog = ({
                         type="submit"
                         variant="contained"
                         disabled={isSaving}
-                        sx={{
-                            textTransform: 'none',
-                            fontWeight: 600,
-                            minWidth: 80,
-                            background: ACCENT_COLOR,
-                            boxShadow: '0 4px 14px 0 rgba(14, 165, 233, 0.39)',
-                            '&:hover': {
-                                background: ACCENT_HOVER,
-                                boxShadow: '0 6px 20px 0 rgba(14, 165, 233, 0.5)',
-                            },
-                            '&.Mui-disabled': {
-                                background: '#E5E7EB',
-                                color: '#9CA3AF',
-                            },
-                        }}
+                        sx={getSaveButtonSx}
                     >
                         {isSaving ? (
                             <CircularProgress size={20} sx={{ color: 'inherit' }} />

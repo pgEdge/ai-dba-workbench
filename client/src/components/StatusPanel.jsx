@@ -28,6 +28,7 @@ import {
     DialogActions,
     TextField,
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import {
     Storage as ServerIcon,
     Dns as ClusterIcon,
@@ -129,47 +130,363 @@ const formatThresholdInfo = (alert) => {
         : `${value} ${op} threshold of ${threshold}`;
 };
 
-// Status color mapping
-const STATUS_COLORS = {
-    online: '#22C55E',
-    warning: '#F59E0B',
-    offline: '#EF4444',
-    unknown: '#6B7280',
+// ---- Static style constants (Issue 23) ----
+
+// Shared small chip label style
+const CHIP_LABEL_SX = { px: 0.5 };
+const CHIP_LABEL_075_SX = { px: 0.75 };
+
+// HeaderStatusIndicator sizes
+const INDICATOR_SIZES = {
+    small: 14,
+    medium: 18,
+    large: 22,
 };
 
-// Severity colors for alerts
-const SEVERITY_COLORS = {
-    critical: '#EF4444',
-    warning: '#F59E0B',
-    info: '#3B82F6',
+// Static layout styles
+const FLEX_CENTER_SX = { display: 'flex', alignItems: 'center' };
+const FLEX_COL_SX = { display: 'flex', flexDirection: 'column' };
+const FLEX_1_MIN0_SX = { flex: 1, minWidth: 0 };
+const FLEX_SHRINK_0_SX = { flexShrink: 0 };
+const EXPAND_BUTTON_SX = { p: 0.25 };
+const ICON_16_SX = { fontSize: 16 };
+const ICON_14_SX = { fontSize: 14 };
+const ICON_10_SX = { fontSize: 10 };
+
+// MetricCard static styles
+const METRIC_LABEL_SX = {
+    color: 'text.secondary',
+    fontSize: '0.75rem',
+    fontWeight: 500,
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
 };
+
+const METRIC_VALUE_BASE_SX = {
+    fontWeight: 700,
+    fontSize: '1.75rem',
+    lineHeight: 1,
+    fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+};
+
+const METRIC_TREND_CONTAINER_SX = { display: 'flex', alignItems: 'center', gap: 0.25 };
+
+// ServerInfoCard static styles
+const SERVER_INFO_WRAPPER_SX = {
+    display: 'flex',
+    flexWrap: 'wrap',
+};
+
+const SERVER_INFO_LABEL_BASE_SX = {
+    fontSize: '0.5625rem',
+    fontWeight: 700,
+    textTransform: 'uppercase',
+    letterSpacing: '0.1em',
+    lineHeight: 1,
+};
+
+const SERVER_INFO_VALUE_BASE_SX = {
+    color: 'text.primary',
+    fontSize: '0.8125rem',
+    fontWeight: 500,
+    lineHeight: 1.2,
+    whiteSpace: 'nowrap',
+};
+
+const SPOCK_DOT_SX = {
+    width: 6,
+    height: 6,
+    borderRadius: '50%',
+};
+
+const SPOCK_LABEL_BASE_SX = {
+    fontSize: '0.6875rem',
+    fontWeight: 600,
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
+};
+
+const SPOCK_VERSION_SX = {
+    fontSize: '0.75rem',
+    fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+    color: 'text.secondary',
+};
+
+const SPOCK_NODE_SX = {
+    fontSize: '0.75rem',
+    fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+    color: 'text.primary',
+    fontWeight: 500,
+};
+
+// AlertItem static styles
+const ALERT_TITLE_BASE_SX = {
+    fontWeight: 600,
+    fontSize: '0.8125rem',
+    lineHeight: 1.2,
+};
+
+const ALERT_THRESHOLD_SX = {
+    color: 'text.secondary',
+    fontSize: '0.6875rem',
+    fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+    mt: 0.25,
+};
+
+const ALERT_DESCRIPTION_SX = {
+    color: 'text.secondary',
+    fontSize: '0.6875rem',
+    mt: 0.25,
+    wordBreak: 'break-word',
+};
+
+const ALERT_ACK_TEXT_SX = {
+    color: 'text.secondary',
+    fontSize: '0.625rem',
+    fontStyle: 'italic',
+};
+
+const ALERT_TIME_SX = {
+    color: 'text.disabled',
+    fontSize: '0.625rem',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 0.25,
+};
+
+const SEVERITY_CHIP_BASE_SX = {
+    height: 16,
+    fontSize: '0.5625rem',
+    fontWeight: 600,
+    textTransform: 'uppercase',
+};
+
+// GroupedAlertInstance static styles
+const INSTANCE_TIME_SX = {
+    color: 'text.disabled',
+    fontSize: '0.5625rem',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 0.25,
+    flexShrink: 0,
+};
+
+const INSTANCE_THRESHOLD_SX = {
+    color: 'text.secondary',
+    fontSize: '0.625rem',
+    fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+};
+
+// GroupedAlertItem static styles
+const GROUP_TITLE_SX = {
+    fontWeight: 600,
+    color: 'text.primary',
+    fontSize: '0.8125rem',
+    lineHeight: 1.2,
+    flex: 1,
+};
+
+const GROUP_INSTANCES_LIST_SX = {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 0.25,
+    px: 0.5,
+    py: 0.5,
+};
+
+// AcknowledgeDialog static styles
+const ACK_DIALOG_TITLE_SX = { pb: 1 };
+const ACK_DIALOG_ACTIONS_SX = { px: 3, pb: 2 };
+const ACK_FALSE_POSITIVE_TITLE_SX = { fontSize: '0.8125rem', fontWeight: 500, color: 'text.primary' };
+const ACK_FALSE_POSITIVE_DESC_SX = { fontSize: '0.6875rem', color: 'text.secondary' };
+
+// AlertsSection static styles
+const ALERTS_SECTION_MT_SX = { mt: 2 };
+const ALERTS_HEADER_SX = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 0.75,
+    cursor: 'pointer',
+    py: 0.25,
+    '&:hover': { opacity: 0.8 },
+};
+
+const ALERTS_TITLE_SX = {
+    fontWeight: 600,
+    color: 'text.primary',
+    fontSize: '0.8125rem',
+};
+
+const ALERTS_TYPE_COUNT_SX = {
+    color: 'text.disabled',
+    fontSize: '0.625rem',
+};
+
+const ACTIVE_LIST_SX = {
+    mt: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 0.5,
+};
+
+const NO_ALERTS_TEXT_BASE_SX = {
+    fontWeight: 500,
+    fontSize: '0.8125rem',
+};
+
+const ACK_HEADER_BASE_SX = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 0.75,
+    cursor: 'pointer',
+    py: 0.25,
+    mt: 1.5,
+    '&:hover': { opacity: 0.8 },
+};
+
+const ACK_TITLE_SX = {
+    fontWeight: 500,
+    color: 'text.secondary',
+    fontSize: '0.75rem',
+};
+
+const ACK_LIST_SX = {
+    mt: 0.75,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 0.5,
+};
+
+// SelectionHeader static styles
+const HEADER_CONTAINER_SX = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 2,
+    mb: 3,
+};
+
+const HEADER_ICON_BOX_BASE_SX = {
+    width: 48,
+    height: 48,
+    borderRadius: 2,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+};
+
+const HEADER_LABEL_SX = {
+    color: 'text.secondary',
+    fontSize: '0.6875rem',
+    fontWeight: 600,
+    letterSpacing: '0.08em',
+    lineHeight: 1,
+};
+
+const HEADER_NAME_SX = {
+    fontWeight: 600,
+    color: 'text.primary',
+    lineHeight: 1.2,
+    mt: 0.25,
+};
+
+// StatusPanel static styles
+const EMPTY_STATE_CONTAINER_SX = {
+    height: '100%',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    p: 4,
+};
+
+const EMPTY_STATE_TITLE_SX = {
+    color: 'text.secondary',
+    fontWeight: 500,
+    mb: 0.5,
+};
+
+const EMPTY_STATE_DESC_SX = {
+    color: 'text.disabled',
+    textAlign: 'center',
+    maxWidth: 300,
+};
+
+const PANEL_ROOT_SX = {
+    overflow: 'auto',
+    p: 3,
+};
+
+const METRICS_GRID_SX = {
+    display: 'flex',
+    gap: 2,
+    flexWrap: 'wrap',
+    mb: 2,
+};
+
+// ---- Theme-dependent style getters (Issue 22 + 23) ----
+
+const getStatusColors = (theme) => ({
+    online: theme.palette.success.main,
+    warning: theme.palette.warning.main,
+    offline: theme.palette.error.main,
+    unknown: theme.palette.grey[500],
+});
+
+const getSeverityColors = (theme) => ({
+    critical: theme.palette.error.main,
+    warning: theme.palette.warning.main,
+    info: theme.palette.info.main,
+});
 
 /**
  * HeaderStatusIndicator - Shows node health status with appropriate icon
  * Matches the ClusterNavigator's status indicator style but sized for header
- * - Red error icon for offline/down nodes
- * - Yellow warning icon with count for nodes with alerts
- * - Green checkmark for healthy nodes
  */
-const HeaderStatusIndicator = ({ status, alertCount = 0, size = 'large', isDark }) => {
-    const sizes = {
-        small: 14,
-        medium: 18,
-        large: 22,
-    };
-    const fontSize = sizes[size];
+const HeaderStatusIndicator = ({ status, alertCount = 0, size = 'large' }) => {
+    const theme = useTheme();
+    const fontSize = INDICATOR_SIZES[size];
+
+    const offlineIconSx = useMemo(() => ({
+        fontSize,
+        color: theme.palette.error.main,
+        filter: `drop-shadow(0 0 3px ${theme.palette.error.main})`,
+    }), [fontSize, theme.palette.error.main]);
+
+    const warningIconSx = useMemo(() => ({
+        fontSize,
+        color: theme.palette.warning.main,
+        filter: `drop-shadow(0 0 3px ${theme.palette.warning.main})`,
+    }), [fontSize, theme.palette.warning.main]);
+
+    const badgeSx = useMemo(() => ({
+        position: 'absolute',
+        top: -5,
+        left: -7,
+        minWidth: 14,
+        height: 14,
+        px: 0.25,
+        borderRadius: '7px',
+        bgcolor: theme.palette.grey[500],
+        color: 'common.white',
+        fontSize: '0.5625rem',
+        fontWeight: 700,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        lineHeight: 1,
+    }), [theme.palette.grey]);
+
+    const healthyIconSx = useMemo(() => ({
+        fontSize,
+        color: theme.palette.success.main,
+        filter: `drop-shadow(0 0 3px ${theme.palette.success.main})`,
+    }), [fontSize, theme.palette.success.main]);
 
     // Offline/down nodes - red error icon
     if (status === 'offline') {
         return (
             <Tooltip title="Offline" placement="left">
-                <ErrorIcon
-                    sx={{
-                        fontSize,
-                        color: '#EF4444',
-                        filter: 'drop-shadow(0 0 3px #EF4444)',
-                    }}
-                />
+                <ErrorIcon sx={offlineIconSx} />
             </Tooltip>
         );
     }
@@ -179,32 +496,8 @@ const HeaderStatusIndicator = ({ status, alertCount = 0, size = 'large', isDark 
         return (
             <Tooltip title={`${alertCount} active alert${alertCount !== 1 ? 's' : ''}`} placement="left">
                 <Box sx={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-                    <WarningIcon
-                        sx={{
-                            fontSize,
-                            color: '#F59E0B',
-                            filter: 'drop-shadow(0 0 3px #F59E0B)',
-                        }}
-                    />
-                    <Box
-                        sx={{
-                            position: 'absolute',
-                            top: -5,
-                            left: -7,
-                            minWidth: 14,
-                            height: 14,
-                            px: 0.25,
-                            borderRadius: '7px',
-                            bgcolor: isDark ? '#64748B' : '#6B7280',
-                            color: '#FFF',
-                            fontSize: '0.5625rem',
-                            fontWeight: 700,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            lineHeight: 1,
-                        }}
-                    >
+                    <WarningIcon sx={warningIconSx} />
+                    <Box sx={badgeSx}>
                         {alertCount > 99 ? '99+' : alertCount}
                     </Box>
                 </Box>
@@ -215,13 +508,7 @@ const HeaderStatusIndicator = ({ status, alertCount = 0, size = 'large', isDark 
     // Healthy nodes - green checkmark
     return (
         <Tooltip title="Online" placement="left">
-            <HealthyIcon
-                sx={{
-                    fontSize,
-                    color: '#22C55E',
-                    filter: 'drop-shadow(0 0 3px #22C55E)',
-                }}
-            />
+            <HealthyIcon sx={healthyIconSx} />
         </Tooltip>
     );
 };
@@ -229,60 +516,47 @@ const HeaderStatusIndicator = ({ status, alertCount = 0, size = 'large', isDark 
 /**
  * MetricCard - Display a key metric with trend indicator
  */
-const MetricCard = ({ label, value, trend, trendValue, icon: Icon, color, isDark }) => {
+const MetricCard = ({ label, value, trend, trendValue, icon: Icon, color }) => {
+    const theme = useTheme();
     const TrendIcon = trend === 'up' ? TrendingUpIcon : TrendingDownIcon;
-    const trendColor = trend === 'up' ? '#22C55E' : '#EF4444';
+    const trendColor = trend === 'up' ? theme.palette.success.main : theme.palette.error.main;
+
+    const paperSx = useMemo(() => ({
+        p: 2,
+        borderRadius: 2,
+        bgcolor: theme.palette.mode === 'dark'
+            ? alpha(theme.palette.grey[800], 0.8)
+            : alpha(theme.palette.grey[100], 0.8),
+        border: '1px solid',
+        borderColor: theme.palette.divider,
+        flex: 1,
+        minWidth: 120,
+    }), [theme]);
+
+    const iconSx = useMemo(() => ({
+        fontSize: 18,
+        color: color || theme.palette.grey[500],
+    }), [color, theme.palette.grey]);
+
+    const valueSx = useMemo(() => ({
+        ...METRIC_VALUE_BASE_SX,
+        color: color || 'text.primary',
+    }), [color]);
 
     return (
-        <Paper
-            elevation={0}
-            sx={{
-                p: 2,
-                borderRadius: 2,
-                bgcolor: isDark ? alpha('#334155', 0.5) : alpha('#F3F4F6', 0.8),
-                border: '1px solid',
-                borderColor: isDark ? '#475569' : '#E5E7EB',
-                flex: 1,
-                minWidth: 120,
-            }}
-        >
+        <Paper elevation={0} sx={paperSx}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-                {Icon && (
-                    <Icon
-                        sx={{
-                            fontSize: 18,
-                            color: color || (isDark ? '#94A3B8' : '#6B7280'),
-                        }}
-                    />
-                )}
-                <Typography
-                    variant="caption"
-                    sx={{
-                        color: 'text.secondary',
-                        fontSize: '0.75rem',
-                        fontWeight: 500,
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.05em',
-                    }}
-                >
+                {Icon && <Icon sx={iconSx} />}
+                <Typography variant="caption" sx={METRIC_LABEL_SX}>
                     {label}
                 </Typography>
             </Box>
             <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1 }}>
-                <Typography
-                    variant="h4"
-                    sx={{
-                        fontWeight: 700,
-                        color: color || 'text.primary',
-                        fontSize: '1.75rem',
-                        lineHeight: 1,
-                        fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-                    }}
-                >
+                <Typography variant="h4" sx={valueSx}>
                     {value}
                 </Typography>
                 {trend && (
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.25 }}>
+                    <Box sx={METRIC_TREND_CONTAINER_SX}>
                         <TrendIcon sx={{ fontSize: 14, color: trendColor }} />
                         <Typography
                             variant="caption"
@@ -299,9 +573,10 @@ const MetricCard = ({ label, value, trend, trendValue, icon: Icon, color, isDark
 
 /**
  * ServerInfoCard - Unified compact server information display
- * Combines connection details, server info, and replication status in a clean grid
  */
-const ServerInfoCard = ({ selection, isDark }) => {
+const ServerInfoCard = ({ selection }) => {
+    const theme = useTheme();
+
     // Combine all data items into a single array for the grid
     const allData = [
         { label: 'HOST', value: selection.host, mono: true },
@@ -318,23 +593,44 @@ const ServerInfoCard = ({ selection, isDark }) => {
         nodeName: selection.spockNodeName,
     } : null;
 
+    const containerSx = useMemo(() => ({
+        borderRadius: 1.5,
+        overflow: 'hidden',
+        border: '1px solid',
+        borderColor: theme.palette.divider,
+        bgcolor: theme.palette.background.paper,
+    }), [theme]);
+
+    const labelSx = useMemo(() => ({
+        ...SERVER_INFO_LABEL_BASE_SX,
+        color: theme.palette.grey[500],
+    }), [theme.palette.grey]);
+
+    const spockSectionSx = useMemo(() => ({
+        display: 'flex',
+        alignItems: 'center',
+        gap: 2,
+        px: 1.5,
+        py: 0.75,
+        bgcolor: alpha(theme.palette.custom.status.sky, 0.06),
+        borderTop: '1px solid',
+        borderColor: alpha(theme.palette.custom.status.sky, 0.18),
+    }), [theme]);
+
+    const spockDotSx = useMemo(() => ({
+        ...SPOCK_DOT_SX,
+        bgcolor: theme.palette.custom.status.sky,
+    }), [theme.palette.custom.status]);
+
+    const spockLabelSx = useMemo(() => ({
+        ...SPOCK_LABEL_BASE_SX,
+        color: theme.palette.custom.status.skyDark,
+    }), [theme.palette.custom.status]);
+
     return (
-        <Box
-            sx={{
-                borderRadius: 1.5,
-                overflow: 'hidden',
-                border: '1px solid',
-                borderColor: isDark ? '#334155' : '#E2E8F0',
-                bgcolor: isDark ? alpha('#1E293B', 0.4) : '#FFFFFF',
-            }}
-        >
-            {/* Data grid - single row that wraps if needed */}
-            <Box
-                sx={{
-                    display: 'flex',
-                    flexWrap: 'wrap',
-                }}
-            >
+        <Box sx={containerSx}>
+            {/* Data grid */}
+            <Box sx={SERVER_INFO_WRAPPER_SX}>
                 {allData.map((item, idx) => (
                     <Box
                         key={item.label}
@@ -345,31 +641,18 @@ const ServerInfoCard = ({ selection, isDark }) => {
                             px: 1.5,
                             py: 1,
                             borderRight: idx < allData.length - 1 ? '1px solid' : 'none',
-                            borderColor: isDark ? '#334155' : '#E2E8F0',
+                            borderColor: theme.palette.divider,
                             minWidth: item.label === 'OS' ? 180 : 'auto',
                         }}
                     >
-                        <Typography
-                            sx={{
-                                color: isDark ? '#64748B' : '#94A3B8',
-                                fontSize: '0.5625rem',
-                                fontWeight: 700,
-                                textTransform: 'uppercase',
-                                letterSpacing: '0.1em',
-                                lineHeight: 1,
-                            }}
-                        >
+                        <Typography sx={labelSx}>
                             {item.label}
                         </Typography>
                         <Typography
                             sx={{
-                                color: 'text.primary',
-                                fontSize: '0.8125rem',
-                                fontWeight: 500,
+                                ...SERVER_INFO_VALUE_BASE_SX,
                                 fontFamily: item.mono ? '"JetBrains Mono", "SF Mono", monospace' : 'inherit',
-                                lineHeight: 1.2,
                                 textTransform: item.capitalize ? 'capitalize' : 'none',
-                                whiteSpace: 'nowrap',
                             }}
                         >
                             {item.value}
@@ -378,67 +661,22 @@ const ServerInfoCard = ({ selection, isDark }) => {
                 ))}
             </Box>
 
-            {/* Spock replication section - only shown if Spock is installed */}
+            {/* Spock replication section */}
             {replicationData && (
-                <Box
-                    sx={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 2,
-                        px: 1.5,
-                        py: 0.75,
-                        bgcolor: isDark ? alpha('#0EA5E9', 0.08) : alpha('#0EA5E9', 0.04),
-                        borderTop: '1px solid',
-                        borderColor: isDark ? alpha('#0EA5E9', 0.2) : alpha('#0EA5E9', 0.15),
-                    }}
-                >
-                    <Box
-                        sx={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 0.75,
-                        }}
-                    >
-                        <Box
-                            sx={{
-                                width: 6,
-                                height: 6,
-                                borderRadius: '50%',
-                                bgcolor: '#0EA5E9',
-                            }}
-                        />
-                        <Typography
-                            sx={{
-                                fontSize: '0.6875rem',
-                                fontWeight: 600,
-                                color: isDark ? '#38BDF8' : '#0284C7',
-                                textTransform: 'uppercase',
-                                letterSpacing: '0.05em',
-                            }}
-                        >
+                <Box sx={spockSectionSx}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                        <Box sx={spockDotSx} />
+                        <Typography sx={spockLabelSx}>
                             Spock Replication
                         </Typography>
                     </Box>
                     {replicationData.version && (
-                        <Typography
-                            sx={{
-                                fontSize: '0.75rem',
-                                fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-                                color: 'text.secondary',
-                            }}
-                        >
+                        <Typography sx={SPOCK_VERSION_SX}>
                             v{replicationData.version}
                         </Typography>
                     )}
                     {replicationData.nodeName && (
-                        <Typography
-                            sx={{
-                                fontSize: '0.75rem',
-                                fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-                                color: 'text.primary',
-                                fontWeight: 500,
-                            }}
-                        >
+                        <Typography sx={SPOCK_NODE_SX}>
                             {replicationData.nodeName}
                         </Typography>
                     )}
@@ -451,122 +689,138 @@ const ServerInfoCard = ({ selection, isDark }) => {
 /**
  * AlertItem - Compact alert entry with severity indicator and ack functionality
  */
-const AlertItem = ({ alert, isDark, showServer = false, onAcknowledge, onUnacknowledge, onAnalyze }) => {
+const AlertItem = ({ alert, showServer = false, onAcknowledge, onUnacknowledge, onAnalyze }) => {
+    const theme = useTheme();
+    const severityColors = getSeverityColors(theme);
     const isAcknowledged = !!alert.acknowledgedAt;
-    const baseColor = isAcknowledged ? '#64748B' : (SEVERITY_COLORS[alert.severity] || SEVERITY_COLORS.info);
+    const baseColor = isAcknowledged ? theme.palette.grey[500] : (severityColors[alert.severity] || severityColors.info);
     const SeverityIcon = alert.severity === 'critical' ? ErrorIcon : WarningIcon;
     const thresholdInfo = formatThresholdInfo(alert);
     const friendlyTitle = getFriendlyTitle(alert.title);
 
+    const containerSx = useMemo(() => ({
+        display: 'flex',
+        alignItems: 'center',
+        gap: 1,
+        px: 1.25,
+        py: 0.75,
+        borderRadius: 1,
+        bgcolor: isAcknowledged
+            ? alpha(theme.palette.grey[500], 0.08)
+            : alpha(baseColor, 0.05),
+        border: '1px solid',
+        borderColor: isAcknowledged
+            ? alpha(theme.palette.grey[500], 0.22)
+            : alpha(baseColor, 0.18),
+    }), [isAcknowledged, baseColor, theme]);
+
+    const severityIconSx = useMemo(() => ({
+        fontSize: 16,
+        color: baseColor,
+        flexShrink: 0,
+    }), [baseColor]);
+
+    const dbChipSx = useMemo(() => ({
+        height: 16,
+        fontSize: '0.625rem',
+        bgcolor: alpha(theme.palette.secondary.main, 0.15),
+        color: theme.palette.secondary.main,
+        '& .MuiChip-label': CHIP_LABEL_SX,
+    }), [theme.palette.secondary]);
+
+    const objectChipSx = useMemo(() => ({
+        height: 16,
+        fontSize: '0.625rem',
+        bgcolor: alpha(theme.palette.custom.status.online, 0.15),
+        color: theme.palette.custom.status.connected,
+        '& .MuiChip-label': CHIP_LABEL_SX,
+        '& .MuiChip-icon': {
+            color: 'inherit',
+            ml: 0.25,
+            mr: -0.25,
+        },
+    }), [theme.palette.custom.status]);
+
+    const falsePositiveChipSx = useMemo(() => ({
+        height: 14,
+        fontSize: '0.5rem',
+        fontWeight: 600,
+        bgcolor: alpha(theme.palette.error.main, 0.12),
+        color: theme.palette.error.main,
+        '& .MuiChip-label': CHIP_LABEL_SX,
+    }), [theme.palette.error]);
+
+    const severityChipSx = useMemo(() => ({
+        ...SEVERITY_CHIP_BASE_SX,
+        bgcolor: alpha(baseColor, 0.15),
+        color: baseColor,
+        '& .MuiChip-label': CHIP_LABEL_SX,
+    }), [baseColor]);
+
+    const analyzeButtonSx = useMemo(() => ({
+        p: 0.5,
+        color: theme.palette.secondary.main,
+        '&:hover': {
+            bgcolor: alpha(theme.palette.secondary.main, 0.12),
+        },
+    }), [theme.palette.secondary]);
+
+    const ackButtonSx = useMemo(() => ({
+        p: 0.5,
+        color: isAcknowledged ? theme.palette.grey[500] : baseColor,
+        '&:hover': {
+            bgcolor: alpha(baseColor, 0.1),
+        },
+    }), [isAcknowledged, baseColor, theme.palette.grey]);
+
+    const serverChipSx = useMemo(() => ({
+        height: 16,
+        fontSize: '0.625rem',
+        bgcolor: alpha(theme.palette.grey[500], 0.15),
+        color: 'text.secondary',
+        '& .MuiChip-label': CHIP_LABEL_SX,
+    }), [theme.palette.grey]);
+
     return (
-        <Box
-            sx={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 1,
-                px: 1.25,
-                py: 0.75,
-                borderRadius: 1,
-                bgcolor: isAcknowledged
-                    ? (isDark ? alpha('#64748B', 0.12) : alpha('#64748B', 0.06))
-                    : (isDark ? alpha(baseColor, 0.08) : alpha(baseColor, 0.04)),
-                border: '1px solid',
-                borderColor: isAcknowledged
-                    ? (isDark ? alpha('#64748B', 0.25) : alpha('#64748B', 0.2))
-                    : alpha(baseColor, isDark ? 0.25 : 0.15),
-            }}
-        >
+        <Box sx={containerSx}>
             {/* Severity indicator */}
-            <SeverityIcon
-                sx={{
-                    fontSize: 16,
-                    color: baseColor,
-                    flexShrink: 0,
-                }}
-            />
+            <SeverityIcon sx={severityIconSx} />
 
             {/* Main content */}
-            <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Box sx={FLEX_1_MIN0_SX}>
                 {/* Title row */}
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
                     <Typography
                         sx={{
-                            fontWeight: 600,
+                            ...ALERT_TITLE_BASE_SX,
                             color: isAcknowledged ? 'text.secondary' : 'text.primary',
-                            fontSize: '0.8125rem',
-                            lineHeight: 1.2,
                         }}
                     >
                         {friendlyTitle}
                     </Typography>
                     {showServer && alert.server && (
-                        <Chip
-                            label={alert.server}
-                            size="small"
-                            sx={{
-                                height: 16,
-                                fontSize: '0.625rem',
-                                bgcolor: isDark ? alpha('#64748B', 0.2) : alpha('#64748B', 0.1),
-                                color: 'text.secondary',
-                                '& .MuiChip-label': { px: 0.5 },
-                            }}
-                        />
+                        <Chip label={alert.server} size="small" sx={serverChipSx} />
                     )}
                     {alert.databaseName && (
-                        <Chip
-                            label={alert.databaseName}
-                            size="small"
-                            sx={{
-                                height: 16,
-                                fontSize: '0.625rem',
-                                bgcolor: isDark ? alpha('#6366F1', 0.2) : alpha('#6366F1', 0.1),
-                                color: isDark ? '#818CF8' : '#6366F1',
-                                '& .MuiChip-label': { px: 0.5 },
-                            }}
-                        />
+                        <Chip label={alert.databaseName} size="small" sx={dbChipSx} />
                     )}
                     {alert.objectName && (
                         <Chip
                             icon={<TableIcon sx={{ fontSize: '0.625rem !important' }} />}
                             label={alert.objectName}
                             size="small"
-                            sx={{
-                                height: 16,
-                                fontSize: '0.625rem',
-                                bgcolor: isDark ? alpha('#10B981', 0.2) : alpha('#10B981', 0.1),
-                                color: isDark ? '#34D399' : '#059669',
-                                '& .MuiChip-label': { px: 0.5 },
-                                '& .MuiChip-icon': {
-                                    color: 'inherit',
-                                    ml: 0.25,
-                                    mr: -0.25,
-                                },
-                            }}
+                            sx={objectChipSx}
                         />
                     )}
                 </Box>
 
                 {/* Threshold info or description */}
                 {thresholdInfo ? (
-                    <Typography
-                        sx={{
-                            color: 'text.secondary',
-                            fontSize: '0.6875rem',
-                            fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-                            mt: 0.25,
-                        }}
-                    >
+                    <Typography sx={ALERT_THRESHOLD_SX}>
                         {thresholdInfo}
                     </Typography>
                 ) : alert.description && (
-                    <Typography
-                        sx={{
-                            color: 'text.secondary',
-                            fontSize: '0.6875rem',
-                            mt: 0.25,
-                            wordBreak: 'break-word',
-                        }}
-                    >
+                    <Typography sx={ALERT_DESCRIPTION_SX}>
                         {alert.description}
                     </Typography>
                 )}
@@ -574,28 +828,11 @@ const AlertItem = ({ alert, isDark, showServer = false, onAcknowledge, onUnackno
                 {/* Ack info if acknowledged */}
                 {isAcknowledged && (
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mt: 0.25 }}>
-                        <Typography
-                            sx={{
-                                color: 'text.secondary',
-                                fontSize: '0.625rem',
-                                fontStyle: 'italic',
-                            }}
-                        >
+                        <Typography sx={ALERT_ACK_TEXT_SX}>
                             Acked by {alert.acknowledgedBy}{alert.ackMessage ? `: ${alert.ackMessage}` : ''}
                         </Typography>
                         {alert.falsePositive && (
-                            <Chip
-                                label="False Positive"
-                                size="small"
-                                sx={{
-                                    height: 14,
-                                    fontSize: '0.5rem',
-                                    fontWeight: 600,
-                                    bgcolor: isDark ? alpha('#EF4444', 0.15) : alpha('#EF4444', 0.1),
-                                    color: '#EF4444',
-                                    '& .MuiChip-label': { px: 0.5 },
-                                }}
-                            />
+                            <Chip label="False Positive" size="small" sx={falsePositiveChipSx} />
                         )}
                     </Box>
                 )}
@@ -603,31 +840,11 @@ const AlertItem = ({ alert, isDark, showServer = false, onAcknowledge, onUnackno
 
             {/* Time and severity */}
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexShrink: 0 }}>
-                <Typography
-                    sx={{
-                        color: 'text.disabled',
-                        fontSize: '0.625rem',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 0.25,
-                    }}
-                >
-                    <ScheduleIcon sx={{ fontSize: 10 }} />
+                <Typography sx={ALERT_TIME_SX}>
+                    <ScheduleIcon sx={ICON_10_SX} />
                     {alert.time}
                 </Typography>
-                <Chip
-                    label={alert.severity}
-                    size="small"
-                    sx={{
-                        height: 16,
-                        fontSize: '0.5625rem',
-                        fontWeight: 600,
-                        textTransform: 'uppercase',
-                        bgcolor: alpha(baseColor, 0.15),
-                        color: baseColor,
-                        '& .MuiChip-label': { px: 0.5 },
-                    }}
-                />
+                <Chip label={alert.severity} size="small" sx={severityChipSx} />
             </Box>
 
             {/* Analyze button */}
@@ -638,15 +855,9 @@ const AlertItem = ({ alert, isDark, showServer = false, onAcknowledge, onUnackno
                         e.stopPropagation();
                         onAnalyze?.(alert);
                     }}
-                    sx={{
-                        p: 0.5,
-                        color: isDark ? '#818CF8' : '#6366F1',
-                        '&:hover': {
-                            bgcolor: isDark ? alpha('#6366F1', 0.15) : alpha('#6366F1', 0.1),
-                        },
-                    }}
+                    sx={analyzeButtonSx}
                 >
-                    <AnalyzeIcon sx={{ fontSize: 16 }} />
+                    <AnalyzeIcon sx={ICON_16_SX} />
                 </IconButton>
             </Tooltip>
 
@@ -662,18 +873,12 @@ const AlertItem = ({ alert, isDark, showServer = false, onAcknowledge, onUnackno
                             onAcknowledge?.(alert);
                         }
                     }}
-                    sx={{
-                        p: 0.5,
-                        color: isAcknowledged ? '#6B7280' : baseColor,
-                        '&:hover': {
-                            bgcolor: alpha(baseColor, 0.1),
-                        },
-                    }}
+                    sx={ackButtonSx}
                 >
                     {isAcknowledged ? (
-                        <UnackIcon sx={{ fontSize: 16 }} />
+                        <UnackIcon sx={ICON_16_SX} />
                     ) : (
-                        <AckIcon sx={{ fontSize: 16 }} />
+                        <AckIcon sx={ICON_16_SX} />
                     )}
                 </IconButton>
             </Tooltip>
@@ -684,101 +889,101 @@ const AlertItem = ({ alert, isDark, showServer = false, onAcknowledge, onUnackno
 /**
  * GroupedAlertInstance - A single instance row within a grouped alert panel
  */
-const GroupedAlertInstance = ({ alert, isDark, showServer, onAcknowledge, onUnacknowledge, onAnalyze }) => {
+const GroupedAlertInstance = ({ alert, showServer, onAcknowledge, onUnacknowledge, onAnalyze }) => {
+    const theme = useTheme();
+    const severityColors = getSeverityColors(theme);
     const isAcknowledged = !!alert.acknowledgedAt;
-    const baseColor = isAcknowledged ? '#64748B' : (SEVERITY_COLORS[alert.severity] || SEVERITY_COLORS.info);
+    const baseColor = isAcknowledged ? theme.palette.grey[500] : (severityColors[alert.severity] || severityColors.info);
     const thresholdInfo = formatThresholdInfo(alert);
 
+    const containerSx = useMemo(() => ({
+        display: 'flex',
+        alignItems: 'center',
+        gap: 1,
+        px: 1,
+        py: 0.5,
+        borderRadius: 0.5,
+        bgcolor: isAcknowledged
+            ? alpha(theme.palette.grey[500], 0.06)
+            : 'transparent',
+        '&:hover': {
+            bgcolor: alpha(theme.palette.grey[500], 0.08),
+        },
+    }), [isAcknowledged, theme]);
+
+    const serverChipSx = useMemo(() => ({
+        height: 16,
+        fontSize: '0.625rem',
+        bgcolor: alpha(theme.palette.grey[500], 0.15),
+        color: 'text.secondary',
+        '& .MuiChip-label': CHIP_LABEL_SX,
+    }), [theme.palette.grey]);
+
+    const dbChipSx = useMemo(() => ({
+        height: 16,
+        fontSize: '0.625rem',
+        bgcolor: alpha(theme.palette.secondary.main, 0.15),
+        color: theme.palette.secondary.main,
+        '& .MuiChip-label': CHIP_LABEL_SX,
+    }), [theme.palette.secondary]);
+
+    const objectChipSx = useMemo(() => ({
+        height: 16,
+        fontSize: '0.625rem',
+        bgcolor: alpha(theme.palette.custom.status.online, 0.15),
+        color: theme.palette.custom.status.connected,
+        '& .MuiChip-label': CHIP_LABEL_SX,
+        '& .MuiChip-icon': {
+            color: 'inherit',
+            ml: 0.25,
+            mr: -0.25,
+        },
+    }), [theme.palette.custom.status]);
+
+    const analyzeButtonSx = useMemo(() => ({
+        p: 0.25,
+        color: theme.palette.secondary.main,
+        '&:hover': {
+            bgcolor: alpha(theme.palette.secondary.main, 0.12),
+        },
+    }), [theme.palette.secondary]);
+
+    const ackButtonSx = useMemo(() => ({
+        p: 0.25,
+        color: isAcknowledged ? theme.palette.grey[500] : baseColor,
+        '&:hover': {
+            bgcolor: alpha(baseColor, 0.1),
+        },
+    }), [isAcknowledged, baseColor, theme.palette.grey]);
+
     return (
-        <Box
-            sx={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 1,
-                px: 1,
-                py: 0.5,
-                borderRadius: 0.5,
-                bgcolor: isAcknowledged
-                    ? (isDark ? alpha('#64748B', 0.08) : alpha('#64748B', 0.04))
-                    : 'transparent',
-                '&:hover': {
-                    bgcolor: isDark ? alpha('#64748B', 0.12) : alpha('#64748B', 0.06),
-                },
-            }}
-        >
-            {/* Context chips (server, database, object) */}
+        <Box sx={containerSx}>
+            {/* Context chips */}
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
                 {showServer && alert.server && (
-                    <Chip
-                        label={alert.server}
-                        size="small"
-                        sx={{
-                            height: 16,
-                            fontSize: '0.625rem',
-                            bgcolor: isDark ? alpha('#64748B', 0.2) : alpha('#64748B', 0.1),
-                            color: 'text.secondary',
-                            '& .MuiChip-label': { px: 0.5 },
-                        }}
-                    />
+                    <Chip label={alert.server} size="small" sx={serverChipSx} />
                 )}
                 {alert.databaseName && (
-                    <Chip
-                        label={alert.databaseName}
-                        size="small"
-                        sx={{
-                            height: 16,
-                            fontSize: '0.625rem',
-                            bgcolor: isDark ? alpha('#6366F1', 0.2) : alpha('#6366F1', 0.1),
-                            color: isDark ? '#818CF8' : '#6366F1',
-                            '& .MuiChip-label': { px: 0.5 },
-                        }}
-                    />
+                    <Chip label={alert.databaseName} size="small" sx={dbChipSx} />
                 )}
                 {alert.objectName && (
                     <Chip
                         icon={<TableIcon sx={{ fontSize: '0.625rem !important' }} />}
                         label={alert.objectName}
                         size="small"
-                        sx={{
-                            height: 16,
-                            fontSize: '0.625rem',
-                            bgcolor: isDark ? alpha('#10B981', 0.2) : alpha('#10B981', 0.1),
-                            color: isDark ? '#34D399' : '#059669',
-                            '& .MuiChip-label': { px: 0.5 },
-                            '& .MuiChip-icon': {
-                                color: 'inherit',
-                                ml: 0.25,
-                                mr: -0.25,
-                            },
-                        }}
+                        sx={objectChipSx}
                     />
                 )}
-                {/* Threshold info */}
                 {thresholdInfo && (
-                    <Typography
-                        sx={{
-                            color: 'text.secondary',
-                            fontSize: '0.625rem',
-                            fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-                        }}
-                    >
+                    <Typography sx={INSTANCE_THRESHOLD_SX}>
                         {thresholdInfo}
                     </Typography>
                 )}
             </Box>
 
             {/* Time */}
-            <Typography
-                sx={{
-                    color: 'text.disabled',
-                    fontSize: '0.5625rem',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 0.25,
-                    flexShrink: 0,
-                }}
-            >
-                <ScheduleIcon sx={{ fontSize: 10 }} />
+            <Typography sx={INSTANCE_TIME_SX}>
+                <ScheduleIcon sx={ICON_10_SX} />
                 {alert.time}
             </Typography>
 
@@ -790,15 +995,9 @@ const GroupedAlertInstance = ({ alert, isDark, showServer, onAcknowledge, onUnac
                         e.stopPropagation();
                         onAnalyze?.(alert);
                     }}
-                    sx={{
-                        p: 0.25,
-                        color: isDark ? '#818CF8' : '#6366F1',
-                        '&:hover': {
-                            bgcolor: isDark ? alpha('#6366F1', 0.15) : alpha('#6366F1', 0.1),
-                        },
-                    }}
+                    sx={analyzeButtonSx}
                 >
-                    <AnalyzeIcon sx={{ fontSize: 14 }} />
+                    <AnalyzeIcon sx={ICON_14_SX} />
                 </IconButton>
             </Tooltip>
 
@@ -814,18 +1013,12 @@ const GroupedAlertInstance = ({ alert, isDark, showServer, onAcknowledge, onUnac
                             onAcknowledge?.(alert);
                         }
                     }}
-                    sx={{
-                        p: 0.25,
-                        color: isAcknowledged ? '#6B7280' : baseColor,
-                        '&:hover': {
-                            bgcolor: alpha(baseColor, 0.1),
-                        },
-                    }}
+                    sx={ackButtonSx}
                 >
                     {isAcknowledged ? (
-                        <UnackIcon sx={{ fontSize: 14 }} />
+                        <UnackIcon sx={ICON_14_SX} />
                     ) : (
-                        <AckIcon sx={{ fontSize: 14 }} />
+                        <AckIcon sx={ICON_14_SX} />
                     )}
                 </IconButton>
             </Tooltip>
@@ -836,7 +1029,9 @@ const GroupedAlertInstance = ({ alert, isDark, showServer, onAcknowledge, onUnac
 /**
  * GroupedAlertItem - Display a group of alerts with the same title in a single panel
  */
-const GroupedAlertItem = ({ title, alerts, isDark, showServer = false, onAcknowledge, onUnacknowledge, onAnalyze }) => {
+const GroupedAlertItem = ({ title, alerts, showServer = false, onAcknowledge, onUnacknowledge, onAnalyze }) => {
+    const theme = useTheme();
+    const severityColors = getSeverityColors(theme);
     const [expanded, setExpanded] = useState(true);
 
     // Determine highest severity in the group
@@ -846,113 +1041,77 @@ const GroupedAlertItem = ({ title, alerts, isDark, showServer = false, onAcknowl
         return highest;
     }, 'info');
 
-    const baseColor = SEVERITY_COLORS[highestSeverity] || SEVERITY_COLORS.info;
+    const baseColor = severityColors[highestSeverity] || severityColors.info;
     const SeverityIcon = highestSeverity === 'critical' ? ErrorIcon : WarningIcon;
     const friendlyTitle = getFriendlyTitle(title);
 
-    return (
-        <Box
-            sx={{
-                borderRadius: 1,
-                bgcolor: isDark ? alpha(baseColor, 0.06) : alpha(baseColor, 0.03),
-                border: '1px solid',
-                borderColor: alpha(baseColor, isDark ? 0.2 : 0.12),
-                overflow: 'hidden',
-            }}
-        >
-            {/* Group header */}
-            <Box
-                onClick={() => setExpanded(!expanded)}
-                sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 1,
-                    px: 1.25,
-                    py: 0.75,
-                    cursor: 'pointer',
-                    bgcolor: isDark ? alpha(baseColor, 0.08) : alpha(baseColor, 0.05),
-                    '&:hover': {
-                        bgcolor: isDark ? alpha(baseColor, 0.12) : alpha(baseColor, 0.08),
-                    },
-                }}
-            >
-                {/* Severity indicator */}
-                <SeverityIcon
-                    sx={{
-                        fontSize: 16,
-                        color: baseColor,
-                        flexShrink: 0,
-                    }}
-                />
+    const containerSx = useMemo(() => ({
+        borderRadius: 1,
+        bgcolor: alpha(baseColor, 0.04),
+        border: '1px solid',
+        borderColor: alpha(baseColor, 0.15),
+        overflow: 'hidden',
+    }), [baseColor]);
 
-                {/* Title */}
-                <Typography
-                    sx={{
-                        fontWeight: 600,
-                        color: 'text.primary',
-                        fontSize: '0.8125rem',
-                        lineHeight: 1.2,
-                        flex: 1,
-                    }}
-                >
+    const headerSx = useMemo(() => ({
+        display: 'flex',
+        alignItems: 'center',
+        gap: 1,
+        px: 1.25,
+        py: 0.75,
+        cursor: 'pointer',
+        bgcolor: alpha(baseColor, 0.06),
+        '&:hover': {
+            bgcolor: alpha(baseColor, 0.1),
+        },
+    }), [baseColor]);
+
+    const countChipSx = useMemo(() => ({
+        height: 18,
+        fontSize: '0.625rem',
+        fontWeight: 600,
+        bgcolor: alpha(baseColor, 0.15),
+        color: baseColor,
+        '& .MuiChip-label': CHIP_LABEL_075_SX,
+    }), [baseColor]);
+
+    const severityChipSx = useMemo(() => ({
+        ...SEVERITY_CHIP_BASE_SX,
+        bgcolor: alpha(baseColor, 0.15),
+        color: baseColor,
+        '& .MuiChip-label': CHIP_LABEL_SX,
+    }), [baseColor]);
+
+    return (
+        <Box sx={containerSx}>
+            {/* Group header */}
+            <Box onClick={() => setExpanded(!expanded)} sx={headerSx}>
+                <SeverityIcon sx={{ fontSize: 16, color: baseColor, flexShrink: 0 }} />
+                <Typography sx={GROUP_TITLE_SX}>
                     {friendlyTitle}
                 </Typography>
-
-                {/* Instance count */}
                 <Chip
                     label={`${alerts.length} instance${alerts.length !== 1 ? 's' : ''}`}
                     size="small"
-                    sx={{
-                        height: 18,
-                        fontSize: '0.625rem',
-                        fontWeight: 600,
-                        bgcolor: alpha(baseColor, 0.15),
-                        color: baseColor,
-                        '& .MuiChip-label': { px: 0.75 },
-                    }}
+                    sx={countChipSx}
                 />
-
-                {/* Severity badge */}
-                <Chip
-                    label={highestSeverity}
-                    size="small"
-                    sx={{
-                        height: 16,
-                        fontSize: '0.5625rem',
-                        fontWeight: 600,
-                        textTransform: 'uppercase',
-                        bgcolor: alpha(baseColor, 0.15),
-                        color: baseColor,
-                        '& .MuiChip-label': { px: 0.5 },
-                    }}
-                />
-
-                {/* Expand/Collapse */}
-                <IconButton size="small" sx={{ p: 0.25 }}>
+                <Chip label={highestSeverity} size="small" sx={severityChipSx} />
+                <IconButton size="small" sx={EXPAND_BUTTON_SX}>
                     {expanded ? (
-                        <ExpandLessIcon sx={{ fontSize: 16 }} />
+                        <ExpandLessIcon sx={ICON_16_SX} />
                     ) : (
-                        <ExpandMoreIcon sx={{ fontSize: 16 }} />
+                        <ExpandMoreIcon sx={ICON_16_SX} />
                     )}
                 </IconButton>
             </Box>
 
             {/* Instances list */}
             <Collapse in={expanded}>
-                <Box
-                    sx={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 0.25,
-                        px: 0.5,
-                        py: 0.5,
-                    }}
-                >
+                <Box sx={GROUP_INSTANCES_LIST_SX}>
                     {alerts.map((alert) => (
                         <GroupedAlertInstance
                             key={alert.id}
                             alert={alert}
-                            isDark={isDark}
                             showServer={showServer}
                             onAcknowledge={onAcknowledge}
                             onUnacknowledge={onUnacknowledge}
@@ -968,7 +1127,8 @@ const GroupedAlertItem = ({ title, alerts, isDark, showServer = false, onAcknowl
 /**
  * AcknowledgeDialog - Dialog for entering ack reason and false positive flag
  */
-const AcknowledgeDialog = ({ open, alert, onClose, onConfirm, isDark }) => {
+const AcknowledgeDialog = ({ open, alert, onClose, onConfirm }) => {
+    const theme = useTheme();
     const [message, setMessage] = useState('');
     const [falsePositive, setFalsePositive] = useState(false);
 
@@ -984,20 +1144,46 @@ const AcknowledgeDialog = ({ open, alert, onClose, onConfirm, isDark }) => {
         onClose();
     };
 
+    const dialogPaperSx = useMemo(() => ({
+        bgcolor: theme.palette.background.paper,
+        backgroundImage: 'none',
+    }), [theme.palette.background.paper]);
+
+    const falsePositiveBoxSx = useMemo(() => ({
+        display: 'flex',
+        alignItems: 'center',
+        gap: 1,
+        p: 1.5,
+        borderRadius: 1,
+        bgcolor: alpha(theme.palette.error.main, 0.06),
+        border: '1px solid',
+        borderColor: alpha(theme.palette.error.main, 0.18),
+        cursor: 'pointer',
+    }), [theme.palette.error]);
+
+    const checkboxSx = useMemo(() => ({
+        width: 18,
+        height: 18,
+        borderRadius: 0.5,
+        border: '2px solid',
+        borderColor: falsePositive ? theme.palette.error.main : theme.palette.grey[400],
+        bgcolor: falsePositive ? theme.palette.error.main : 'transparent',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexShrink: 0,
+        transition: 'all 0.15s ease',
+    }), [falsePositive, theme]);
+
     return (
         <Dialog
             open={open}
             onClose={handleClose}
             maxWidth="sm"
             fullWidth
-            PaperProps={{
-                sx: {
-                    bgcolor: isDark ? '#1E293B' : '#FFFFFF',
-                    backgroundImage: 'none',
-                },
-            }}
+            PaperProps={{ sx: dialogPaperSx }}
         >
-            <DialogTitle sx={{ pb: 1 }}>
+            <DialogTitle sx={ACK_DIALOG_TITLE_SX}>
                 Acknowledge Alert
             </DialogTitle>
             <DialogContent>
@@ -1019,49 +1205,25 @@ const AcknowledgeDialog = ({ open, alert, onClose, onConfirm, isDark }) => {
                     sx={{ mb: 2 }}
                 />
                 <Box
-                    sx={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 1,
-                        p: 1.5,
-                        borderRadius: 1,
-                        bgcolor: isDark ? 'rgba(239, 68, 68, 0.08)' : 'rgba(239, 68, 68, 0.04)',
-                        border: '1px solid',
-                        borderColor: isDark ? 'rgba(239, 68, 68, 0.2)' : 'rgba(239, 68, 68, 0.15)',
-                        cursor: 'pointer',
-                    }}
+                    sx={falsePositiveBoxSx}
                     onClick={() => setFalsePositive(!falsePositive)}
                 >
-                    <Box
-                        sx={{
-                            width: 18,
-                            height: 18,
-                            borderRadius: 0.5,
-                            border: '2px solid',
-                            borderColor: falsePositive ? '#EF4444' : (isDark ? '#64748B' : '#94A3B8'),
-                            bgcolor: falsePositive ? '#EF4444' : 'transparent',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            flexShrink: 0,
-                            transition: 'all 0.15s ease',
-                        }}
-                    >
+                    <Box sx={checkboxSx}>
                         {falsePositive && (
-                            <HealthyIcon sx={{ fontSize: 14, color: '#FFF' }} />
+                            <HealthyIcon sx={{ fontSize: 14, color: 'common.white' }} />
                         )}
                     </Box>
                     <Box>
-                        <Typography sx={{ fontSize: '0.8125rem', fontWeight: 500, color: 'text.primary' }}>
+                        <Typography sx={ACK_FALSE_POSITIVE_TITLE_SX}>
                             Mark as false positive
                         </Typography>
-                        <Typography sx={{ fontSize: '0.6875rem', color: 'text.secondary' }}>
+                        <Typography sx={ACK_FALSE_POSITIVE_DESC_SX}>
                             This helps improve alert accuracy over time
                         </Typography>
                     </Box>
                 </Box>
             </DialogContent>
-            <DialogActions sx={{ px: 3, pb: 2 }}>
+            <DialogActions sx={ACK_DIALOG_ACTIONS_SX}>
                 <Button onClick={handleClose} color="inherit" size="small">
                     Cancel
                 </Button>
@@ -1094,9 +1256,10 @@ const groupAlertsByTitle = (alerts) => {
 
 /**
  * AlertsSection - Collapsible alerts list with active/acknowledged separation
- * Groups alerts by title and renders grouped panels for multiple instances
  */
-const AlertsSection = ({ alerts, isDark, loading, showServer = false, onAcknowledge, onUnacknowledge, onAnalyze }) => {
+const AlertsSection = ({ alerts, loading, showServer = false, onAcknowledge, onUnacknowledge, onAnalyze }) => {
+    const theme = useTheme();
+    const severityColors = getSeverityColors(theme);
     const [expanded, setExpanded] = useState(true);
     const [ackExpanded, setAckExpanded] = useState(false);
 
@@ -1111,7 +1274,6 @@ const AlertsSection = ({ alerts, isDark, loading, showServer = false, onAcknowle
     // Convert grouped object to sorted array of [title, alerts] pairs
     const sortedActiveGroups = useMemo(() => {
         return Object.entries(groupedActiveAlerts).sort((a, b) => {
-            // Sort by highest severity first, then by count
             const getSeverityWeight = (alerts) => {
                 if (alerts.some(a => a.severity === 'critical')) return 3;
                 if (alerts.some(a => a.severity === 'warning')) return 2;
@@ -1127,9 +1289,50 @@ const AlertsSection = ({ alerts, isDark, loading, showServer = false, onAcknowle
         return Object.entries(groupedAcknowledgedAlerts).sort((a, b) => b[1].length - a[1].length);
     }, [groupedAcknowledgedAlerts]);
 
+    const skeletonSx = useMemo(() => ({
+        bgcolor: theme.palette.divider,
+    }), [theme.palette.divider]);
+
+    const activeCountChipSx = useMemo(() => ({
+        height: 18,
+        fontSize: '0.625rem',
+        fontWeight: 600,
+        bgcolor: activeAlerts.length > 0
+            ? alpha(severityColors.warning, 0.15)
+            : alpha(theme.palette.success.main, 0.12),
+        color: activeAlerts.length > 0 ? severityColors.warning : theme.palette.success.main,
+        '& .MuiChip-label': CHIP_LABEL_SX,
+    }), [activeAlerts.length, severityColors, theme.palette.success]);
+
+    const noAlertsBoxSx = useMemo(() => ({
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 0.75,
+        py: 2,
+        borderRadius: 1,
+        bgcolor: alpha(theme.palette.success.main, 0.05),
+        border: '1px solid',
+        borderColor: alpha(theme.palette.success.main, 0.12),
+    }), [theme.palette.success]);
+
+    const noAlertsTextSx = useMemo(() => ({
+        ...NO_ALERTS_TEXT_BASE_SX,
+        color: theme.palette.success.main,
+    }), [theme.palette.success]);
+
+    const ackCountChipSx = useMemo(() => ({
+        height: 16,
+        fontSize: '0.5625rem',
+        fontWeight: 600,
+        bgcolor: alpha(theme.palette.grey[500], 0.15),
+        color: 'text.disabled',
+        '& .MuiChip-label': CHIP_LABEL_SX,
+    }), [theme.palette.grey]);
+
     if (loading) {
         return (
-            <Box sx={{ mt: 2 }}>
+            <Box sx={ALERTS_SECTION_MT_SX}>
                 <Skeleton variant="text" width={120} height={20} />
                 <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 0.75 }}>
                     {[1, 2].map((i) => (
@@ -1137,7 +1340,7 @@ const AlertsSection = ({ alerts, isDark, loading, showServer = false, onAcknowle
                             key={i}
                             variant="rounded"
                             height={48}
-                            sx={{ bgcolor: isDark ? '#334155' : '#E5E7EB' }}
+                            sx={skeletonSx}
                         />
                     ))}
                 </Box>
@@ -1148,12 +1351,10 @@ const AlertsSection = ({ alerts, isDark, loading, showServer = false, onAcknowle
     // Render either a single AlertItem or a GroupedAlertItem depending on count
     const renderAlertGroup = (title, alertsInGroup) => {
         if (alertsInGroup.length === 1) {
-            // Single alert - render as simple AlertItem
             return (
                 <AlertItem
                     key={alertsInGroup[0].id}
                     alert={alertsInGroup[0]}
-                    isDark={isDark}
                     showServer={showServer}
                     onAcknowledge={onAcknowledge}
                     onUnacknowledge={onUnacknowledge}
@@ -1161,13 +1362,11 @@ const AlertsSection = ({ alerts, isDark, loading, showServer = false, onAcknowle
                 />
             );
         }
-        // Multiple alerts - render as grouped panel
         return (
             <GroupedAlertItem
                 key={title}
                 title={title}
                 alerts={alertsInGroup}
-                isDark={isDark}
                 showServer={showServer}
                 onAcknowledge={onAcknowledge}
                 onUnacknowledge={onUnacknowledge}
@@ -1177,95 +1376,36 @@ const AlertsSection = ({ alerts, isDark, loading, showServer = false, onAcknowle
     };
 
     return (
-        <Box sx={{ mt: 2 }}>
+        <Box sx={ALERTS_SECTION_MT_SX}>
             {/* Active Alerts Header */}
-            <Box
-                onClick={() => setExpanded(!expanded)}
-                sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 0.75,
-                    cursor: 'pointer',
-                    py: 0.25,
-                    '&:hover': { opacity: 0.8 },
-                }}
-            >
+            <Box onClick={() => setExpanded(!expanded)} sx={ALERTS_HEADER_SX}>
                 <AlertIcon sx={{ fontSize: 16, color: 'primary.main' }} />
-                <Typography
-                    sx={{
-                        fontWeight: 600,
-                        color: 'text.primary',
-                        fontSize: '0.8125rem',
-                    }}
-                >
+                <Typography sx={ALERTS_TITLE_SX}>
                     Active Alerts
                 </Typography>
-                <Chip
-                    label={activeAlerts.length}
-                    size="small"
-                    sx={{
-                        height: 18,
-                        fontSize: '0.625rem',
-                        fontWeight: 600,
-                        bgcolor: activeAlerts.length > 0
-                            ? alpha(SEVERITY_COLORS.warning, 0.15)
-                            : (isDark ? alpha('#22C55E', 0.15) : alpha('#22C55E', 0.1)),
-                        color: activeAlerts.length > 0 ? SEVERITY_COLORS.warning : '#22C55E',
-                        '& .MuiChip-label': { px: 0.5 },
-                    }}
-                />
+                <Chip label={activeAlerts.length} size="small" sx={activeCountChipSx} />
                 {sortedActiveGroups.length > 0 && sortedActiveGroups.length !== activeAlerts.length && (
-                    <Typography
-                        sx={{
-                            color: 'text.disabled',
-                            fontSize: '0.625rem',
-                        }}
-                    >
+                    <Typography sx={ALERTS_TYPE_COUNT_SX}>
                         ({sortedActiveGroups.length} type{sortedActiveGroups.length !== 1 ? 's' : ''})
                     </Typography>
                 )}
                 <Box sx={{ flex: 1 }} />
-                <IconButton size="small" sx={{ p: 0.25 }}>
+                <IconButton size="small" sx={EXPAND_BUTTON_SX}>
                     {expanded ? (
-                        <ExpandLessIcon sx={{ fontSize: 16 }} />
+                        <ExpandLessIcon sx={ICON_16_SX} />
                     ) : (
-                        <ExpandMoreIcon sx={{ fontSize: 16 }} />
+                        <ExpandMoreIcon sx={ICON_16_SX} />
                     )}
                 </IconButton>
             </Box>
 
             {/* Active Alerts List */}
             <Collapse in={expanded}>
-                <Box
-                    sx={{
-                        mt: 1,
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 0.5,
-                    }}
-                >
+                <Box sx={ACTIVE_LIST_SX}>
                     {activeAlerts.length === 0 ? (
-                        <Box
-                            sx={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: 0.75,
-                                py: 2,
-                                borderRadius: 1,
-                                bgcolor: isDark ? alpha('#22C55E', 0.06) : alpha('#22C55E', 0.04),
-                                border: '1px solid',
-                                borderColor: isDark ? alpha('#22C55E', 0.15) : alpha('#22C55E', 0.1),
-                            }}
-                        >
-                            <HealthyIcon sx={{ fontSize: 16, color: '#22C55E' }} />
-                            <Typography
-                                sx={{
-                                    color: '#22C55E',
-                                    fontWeight: 500,
-                                    fontSize: '0.8125rem',
-                                }}
-                            >
+                        <Box sx={noAlertsBoxSx}>
+                            <HealthyIcon sx={{ fontSize: 16, color: theme.palette.success.main }} />
+                            <Typography sx={noAlertsTextSx}>
                                 No active alerts
                             </Typography>
                         </Box>
@@ -1280,42 +1420,14 @@ const AlertsSection = ({ alerts, isDark, loading, showServer = false, onAcknowle
             {/* Acknowledged Alerts Section */}
             {acknowledgedAlerts.length > 0 && (
                 <>
-                    <Box
-                        onClick={() => setAckExpanded(!ackExpanded)}
-                        sx={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 0.75,
-                            cursor: 'pointer',
-                            py: 0.25,
-                            mt: 1.5,
-                            '&:hover': { opacity: 0.8 },
-                        }}
-                    >
+                    <Box onClick={() => setAckExpanded(!ackExpanded)} sx={ACK_HEADER_BASE_SX}>
                         <AckIcon sx={{ fontSize: 16, color: 'text.disabled' }} />
-                        <Typography
-                            sx={{
-                                fontWeight: 500,
-                                color: 'text.secondary',
-                                fontSize: '0.75rem',
-                            }}
-                        >
+                        <Typography sx={ACK_TITLE_SX}>
                             Acknowledged
                         </Typography>
-                        <Chip
-                            label={acknowledgedAlerts.length}
-                            size="small"
-                            sx={{
-                                height: 16,
-                                fontSize: '0.5625rem',
-                                fontWeight: 600,
-                                bgcolor: isDark ? alpha('#64748B', 0.2) : alpha('#64748B', 0.1),
-                                color: 'text.disabled',
-                                '& .MuiChip-label': { px: 0.5 },
-                            }}
-                        />
+                        <Chip label={acknowledgedAlerts.length} size="small" sx={ackCountChipSx} />
                         <Box sx={{ flex: 1 }} />
-                        <IconButton size="small" sx={{ p: 0.25 }}>
+                        <IconButton size="small" sx={EXPAND_BUTTON_SX}>
                             {ackExpanded ? (
                                 <ExpandLessIcon sx={{ fontSize: 14, color: 'text.disabled' }} />
                             ) : (
@@ -1325,14 +1437,7 @@ const AlertsSection = ({ alerts, isDark, loading, showServer = false, onAcknowle
                     </Box>
 
                     <Collapse in={ackExpanded}>
-                        <Box
-                            sx={{
-                                mt: 0.75,
-                                display: 'flex',
-                                flexDirection: 'column',
-                                gap: 0.5,
-                            }}
-                        >
+                        <Box sx={ACK_LIST_SX}>
                             {sortedAcknowledgedGroups.map(([title, alertsInGroup]) =>
                                 renderAlertGroup(title, alertsInGroup)
                             )}
@@ -1347,7 +1452,9 @@ const AlertsSection = ({ alerts, isDark, loading, showServer = false, onAcknowle
 /**
  * SelectionHeader - Header showing what's currently selected
  */
-const SelectionHeader = ({ selection, alertCount = 0, isDark }) => {
+const SelectionHeader = ({ selection, alertCount = 0 }) => {
+    const theme = useTheme();
+
     const getIcon = () => {
         switch (selection.type) {
             case 'server':
@@ -1376,57 +1483,27 @@ const SelectionHeader = ({ selection, alertCount = 0, isDark }) => {
 
     const Icon = getIcon();
 
+    const iconBoxSx = useMemo(() => ({
+        ...HEADER_ICON_BOX_BASE_SX,
+        bgcolor: alpha(theme.palette.primary.main, 0.12),
+    }), [theme.palette.primary]);
+
     return (
-        <Box
-            sx={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 2,
-                mb: 3,
-            }}
-        >
-            <Box
-                sx={{
-                    width: 48,
-                    height: 48,
-                    borderRadius: 2,
-                    bgcolor: isDark ? alpha('#22B8CF', 0.15) : alpha('#15AABF', 0.1),
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                }}
-            >
+        <Box sx={HEADER_CONTAINER_SX}>
+            <Box sx={iconBoxSx}>
                 <Icon sx={{ fontSize: 24, color: 'primary.main' }} />
             </Box>
             <Box sx={{ flex: 1 }}>
-                <Typography
-                    variant="overline"
-                    sx={{
-                        color: 'text.secondary',
-                        fontSize: '0.6875rem',
-                        fontWeight: 600,
-                        letterSpacing: '0.08em',
-                        lineHeight: 1,
-                    }}
-                >
+                <Typography variant="overline" sx={HEADER_LABEL_SX}>
                     {getLabel()}
                 </Typography>
-                <Typography
-                    variant="h5"
-                    sx={{
-                        fontWeight: 600,
-                        color: 'text.primary',
-                        lineHeight: 1.2,
-                        mt: 0.25,
-                    }}
-                >
+                <Typography variant="h5" sx={HEADER_NAME_SX}>
                     {selection.name}
                 </Typography>
             </Box>
             <HeaderStatusIndicator
                 status={selection.status}
                 alertCount={alertCount}
-                isDark={isDark}
             />
         </Box>
     );
@@ -1439,6 +1516,7 @@ const StatusPanel = ({
     selection,
     mode = 'light',
 }) => {
+    const theme = useTheme();
     const isDark = mode === 'dark';
     const { user } = useAuth();
     const [alerts, setAlerts] = useState([]);
@@ -1448,6 +1526,8 @@ const StatusPanel = ({
     const [selectedAlertForAck, setSelectedAlertForAck] = useState(null);
     const [analysisDialogOpen, setAnalysisDialogOpen] = useState(false);
     const [analysisAlert, setAnalysisAlert] = useState(null);
+
+    const statusColors = useMemo(() => getStatusColors(theme), [theme]);
 
     // Calculate metrics based on selection type
     const metrics = useMemo(() => {
@@ -1694,50 +1774,35 @@ const StatusPanel = ({
         return alerts.filter(a => !a.acknowledgedAt).length;
     }, [alerts]);
 
+    const emptyStateIconBoxSx = useMemo(() => ({
+        width: 80,
+        height: 80,
+        borderRadius: 3,
+        bgcolor: theme.palette.mode === 'dark'
+            ? alpha(theme.palette.grey[800], 0.8)
+            : alpha(theme.palette.grey[100], 0.8),
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        mb: 2,
+    }), [theme]);
+
+    const dividerSx = useMemo(() => ({
+        height: 1,
+        background: `linear-gradient(90deg, transparent, ${theme.palette.divider} 20%, ${theme.palette.divider} 80%, transparent)`,
+        mb: 2,
+    }), [theme.palette.divider]);
+
     if (!selection) {
         return (
-            <Box
-                sx={{
-                    height: '100%',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    p: 4,
-                }}
-            >
-                <Box
-                    sx={{
-                        width: 80,
-                        height: 80,
-                        borderRadius: 3,
-                        bgcolor: isDark ? alpha('#334155', 0.5) : alpha('#F3F4F6', 0.8),
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        mb: 2,
-                    }}
-                >
+            <Box sx={EMPTY_STATE_CONTAINER_SX}>
+                <Box sx={emptyStateIconBoxSx}>
                     <ServerIcon sx={{ fontSize: 36, color: 'text.disabled' }} />
                 </Box>
-                <Typography
-                    variant="h6"
-                    sx={{
-                        color: 'text.secondary',
-                        fontWeight: 500,
-                        mb: 0.5,
-                    }}
-                >
+                <Typography variant="h6" sx={EMPTY_STATE_TITLE_SX}>
                     Select a server to get started
                 </Typography>
-                <Typography
-                    variant="body2"
-                    sx={{
-                        color: 'text.disabled',
-                        textAlign: 'center',
-                        maxWidth: 300,
-                    }}
-                >
+                <Typography variant="body2" sx={EMPTY_STATE_DESC_SX}>
                     Choose a database server, cluster, or view the entire estate from the navigation panel
                 </Typography>
             </Box>
@@ -1745,65 +1810,42 @@ const StatusPanel = ({
     }
 
     return (
-        <Box
-            sx={{
-                overflow: 'auto',
-                p: 3,
-            }}
-        >
+        <Box sx={PANEL_ROOT_SX}>
             {/* Content Container */}
             <Box>
                 {/* Selection Header */}
-                <SelectionHeader selection={selection} alertCount={activeAlertCount} isDark={isDark} />
+                <SelectionHeader selection={selection} alertCount={activeAlertCount} />
 
                 {/* Divider with gradient */}
-                <Box
-                    sx={{
-                        height: 1,
-                        background: isDark
-                            ? 'linear-gradient(90deg, transparent, #475569 20%, #475569 80%, transparent)'
-                            : 'linear-gradient(90deg, transparent, #E5E7EB 20%, #E5E7EB 80%, transparent)',
-                        mb: 2,
-                    }}
-                />
+                <Box sx={dividerSx} />
 
-                {/* Server Info Card - Unified display for single server */}
+                {/* Server Info Card */}
                 {selection.type === 'server' && (
                     <Box sx={{ mb: 2 }}>
-                        <ServerInfoCard selection={selection} isDark={isDark} />
+                        <ServerInfoCard selection={selection} />
                     </Box>
                 )}
 
                 {/* Metrics Grid for cluster/estate */}
                 {metrics && (selection.type === 'cluster' || selection.type === 'estate') && (
-                    <Box
-                        sx={{
-                            display: 'flex',
-                            gap: 2,
-                            flexWrap: 'wrap',
-                            mb: 2,
-                        }}
-                    >
+                    <Box sx={METRICS_GRID_SX}>
                         <MetricCard
                             label="Online"
                             value={metrics.servers.online}
                             icon={HealthyIcon}
-                            color={STATUS_COLORS.online}
-                            isDark={isDark}
+                            color={statusColors.online}
                         />
                         <MetricCard
                             label="Warning"
                             value={metrics.servers.warning || 0}
                             icon={WarningIcon}
-                            color={STATUS_COLORS.warning}
-                            isDark={isDark}
+                            color={statusColors.warning}
                         />
                         <MetricCard
                             label="Offline"
                             value={metrics.servers.offline || 0}
                             icon={ErrorIcon}
-                            color={STATUS_COLORS.offline}
-                            isDark={isDark}
+                            color={statusColors.offline}
                         />
                         {selection.type === 'estate' && (
                             <>
@@ -1811,13 +1853,11 @@ const StatusPanel = ({
                                     label="Clusters"
                                     value={metrics.clusters}
                                     icon={ClusterIcon}
-                                    isDark={isDark}
                                 />
                                 <MetricCard
                                     label="Groups"
                                     value={metrics.groups}
                                     icon={EstateIcon}
-                                    isDark={isDark}
                                 />
                             </>
                         )}
@@ -1833,7 +1873,6 @@ const StatusPanel = ({
                 {/* Alerts Section */}
                 <AlertsSection
                     alerts={alerts}
-                    isDark={isDark}
                     loading={loading}
                     showServer={selection.type !== 'server'}
                     onAcknowledge={handleAcknowledge}
@@ -1851,7 +1890,6 @@ const StatusPanel = ({
                     setSelectedAlertForAck(null);
                 }}
                 onConfirm={handleAckConfirm}
-                isDark={isDark}
             />
 
             {/* Alert Analysis Dialog */}

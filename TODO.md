@@ -10,12 +10,3 @@ functionality. They can be addressed incrementally over time.
 Migrate React client from JavaScript to TypeScript for improved type
 safety.
 
-### Issue 22: Hardcoded Colors
-
-Move hardcoded color values (e.g., `#22C55E`, `#EF4444`) to MUI theme
-configuration.
-
-### Issue 23: Inline Style Objects
-
-Extract inline style objects created in render methods to constants or
-styled components to prevent unnecessary re-renders.

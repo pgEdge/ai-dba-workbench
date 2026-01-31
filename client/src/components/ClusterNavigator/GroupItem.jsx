@@ -15,6 +15,7 @@ import {
     IconButton,
     Collapse,
     alpha,
+    useTheme,
 } from '@mui/material';
 import {
     ExpandMore as ExpandIcon,
@@ -29,6 +30,77 @@ import ClusterContainer from './ClusterContainer';
 import ClusterItem from './ClusterItem';
 import ServerItem from './ServerItem';
 import { DraggableCluster, DroppableGroup } from './DragDropComponents';
+
+// -- Static sx constants --------------------------------------------------
+
+const groupContainerSx = { mb: 0.5 };
+const clusterListSx = { pt: 0.5 };
+const expandButtonSx = { p: 0.25, color: 'text.secondary', ml: 0.5 };
+const expandIcon18Sx = { fontSize: 18 };
+const deleteIconSx = { fontSize: 14 };
+const deleteButtonSx = { p: 0.25, color: 'text.disabled', '&:hover': { color: 'error.main' } };
+const flexMinWidthSx = { flex: 1, minWidth: 0 };
+
+const groupNameSx = {
+    fontWeight: 600,
+    color: 'text.primary',
+    fontSize: '0.8125rem',
+    textTransform: 'uppercase',
+    letterSpacing: '0.04em',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+};
+
+const countTextSx = {
+    color: 'text.disabled',
+    fontSize: '0.6875rem',
+    ml: 'auto',
+    flexShrink: 0,
+};
+
+const folderIconExpandedSx = { fontSize: 18, color: 'primary.main' };
+const folderIconCollapsedSx = { fontSize: 18, color: 'text.secondary' };
+
+// -- Style-getter functions -----------------------------------------------
+
+const getGroupRowSx = (theme) => ({
+    position: 'relative',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 0.75,
+    py: 1,
+    px: 1.5,
+    cursor: 'pointer',
+    borderRadius: 1,
+    mx: 1,
+    bgcolor: alpha(
+        theme.palette.mode === 'dark' ? theme.palette.grey[700] : theme.palette.grey[100],
+        theme.palette.mode === 'dark' ? 0.4 : 0.8
+    ),
+    transition: 'all 0.15s ease',
+    '&:hover': {
+        bgcolor: alpha(
+            theme.palette.mode === 'dark' ? theme.palette.grey[700] : theme.palette.grey[200],
+            theme.palette.mode === 'dark' ? 0.6 : 0.8
+        ),
+    },
+});
+
+const getActionButtonsSx = (theme) => ({
+    position: 'absolute',
+    right: 40,
+    top: '50%',
+    transform: 'translateY(-50%)',
+    display: 'flex',
+    gap: 0.25,
+    opacity: 0,
+    transition: 'opacity 0.15s',
+    bgcolor: alpha(theme.palette.background.paper, 0.95),
+    borderRadius: 1,
+    px: 0.5,
+    '.group-item-row:hover &': { opacity: 1 },
+});
 
 /**
  * GroupItem - Cluster group that can be expanded to show clusters
@@ -56,6 +128,8 @@ const GroupItem = memo(({
     onDeleteGroup,
     getServerAlertCount,
 }) => {
+    const theme = useTheme();
+
     // Superusers can edit both database-backed groups (ID: group-{number})
     // and auto-detected groups (groups with auto_group_key)
     const isEditableGroup = /^group-\d+$/.test(group.id) || !!group.auto_group_key;
@@ -74,94 +148,48 @@ const GroupItem = memo(({
 
     return (
         <DroppableGroup groupId={group.id} isDark={isDark}>
-            <Box sx={{ mb: 0.5 }}>
+            <Box sx={groupContainerSx}>
                 <Box
                 className="group-item-row"
                 onClick={onToggle}
-                sx={{
-                    position: 'relative',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 0.75,
-                    py: 1,
-                    px: 1.5,
-                    cursor: 'pointer',
-                    borderRadius: 1,
-                    mx: 1,
-                    bgcolor: isDark ? alpha('#334155', 0.4) : alpha('#F3F4F6', 0.8),
-                    transition: 'all 0.15s ease',
-                    '&:hover': {
-                        bgcolor: isDark ? alpha('#334155', 0.6) : alpha('#E5E7EB', 0.8),
-                    },
-                }}
+                sx={getGroupRowSx(theme)}
             >
                 {isExpanded ? (
-                    <GroupOpenIcon sx={{ fontSize: 18, color: 'primary.main' }} />
+                    <GroupOpenIcon sx={folderIconExpandedSx} />
                 ) : (
-                    <GroupIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
+                    <GroupIcon sx={folderIconCollapsedSx} />
                 )}
-                <Box sx={{ flex: 1, minWidth: 0 }}>
+                <Box sx={flexMinWidthSx}>
                     <InlineEditText
                         value={group.name}
                         onSave={(newName) => onUpdateGroup(group.id, newName)}
                         canEdit={canEditGroup}
                         typographyProps={{
                             variant: 'body2',
-                            sx: {
-                                fontWeight: 600,
-                                color: 'text.primary',
-                                fontSize: '0.8125rem',
-                                textTransform: 'uppercase',
-                                letterSpacing: '0.04em',
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap',
-                            },
+                            sx: groupNameSx,
                         }}
                     />
                 </Box>
                 <Typography
                     variant="caption"
-                    sx={{
-                        color: 'text.disabled',
-                        fontSize: '0.6875rem',
-                        ml: 'auto',
-                        flexShrink: 0,
-                    }}
+                    sx={countTextSx}
                 >
                     {onlineServers}/{totalServers}
                 </Typography>
                 <IconButton
                     size="small"
-                    sx={{
-                        p: 0.25,
-                        color: 'text.secondary',
-                        ml: 0.5,
-                    }}
+                    sx={expandButtonSx}
                 >
                     {isExpanded ? (
-                        <ExpandIcon sx={{ fontSize: 18 }} />
+                        <ExpandIcon sx={expandIcon18Sx} />
                     ) : (
-                        <CollapseIcon sx={{ fontSize: 18 }} />
+                        <CollapseIcon sx={expandIcon18Sx} />
                     )}
                 </IconButton>
                 {canDeleteGroup && (
                     <Box
                         className="action-buttons"
-                        sx={{
-                            position: 'absolute',
-                            right: 40,
-                            top: '50%',
-                            transform: 'translateY(-50%)',
-                            display: 'flex',
-                            gap: 0.25,
-                            opacity: 0,
-                            transition: 'opacity 0.15s',
-                            bgcolor: isDark ? 'rgba(30, 41, 59, 0.95)' : 'rgba(255, 255, 255, 0.95)',
-                            borderRadius: 1,
-                            px: 0.5,
-                            '.group-item-row:hover &': { opacity: 1 },
-                        }}
+                        sx={getActionButtonsSx(theme)}
                     >
                         <IconButton
                             size="small"
@@ -169,15 +197,15 @@ const GroupItem = memo(({
                                 e.stopPropagation();
                                 onDeleteGroup?.(group);
                             }}
-                            sx={{ p: 0.25, color: 'text.disabled', '&:hover': { color: 'error.main' } }}
+                            sx={deleteButtonSx}
                         >
-                            <DeleteIcon sx={{ fontSize: 14 }} />
+                            <DeleteIcon sx={deleteIconSx} />
                         </IconButton>
                     </Box>
                 )}
             </Box>
             <Collapse in={isExpanded} timeout="auto">
-                <Box sx={{ pt: 0.5 }}>
+                <Box sx={clusterListSx}>
                     {group.clusters?.map((cluster, clusterIndex) => {
                         // For cluster_type "server", handle differently based on server count
                         if (cluster.cluster_type === 'server') {

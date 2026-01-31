@@ -28,6 +28,7 @@ import {
     InputAdornment,
     Skeleton,
     alpha,
+    useTheme,
 } from '@mui/material';
 import {
     Search as SearchIcon,
@@ -55,6 +56,187 @@ import StatusIndicator from './StatusIndicator';
 import GroupItem from './GroupItem';
 import { DragOverlayContent } from './DragDropComponents';
 
+// -- Static sx constants --------------------------------------------------
+
+const headerRowSx = {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    mb: 1.5,
+};
+
+const headerTitleSx = {
+    color: 'text.primary',
+    fontSize: '0.6875rem',
+    fontWeight: 600,
+    letterSpacing: '0.08em',
+};
+
+const headerButtonGroupSx = { display: 'flex', gap: 0.5 };
+const icon18Sx = { fontSize: 18 };
+const searchIconSx = { fontSize: 18, color: 'text.disabled' };
+
+const scrollContainerSx = { flex: 1, overflow: 'auto', py: 1 };
+const loadingContainerSx = { px: 2 };
+const loadingGroupSx = { mb: 2 };
+
+const emptyStateSx = {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    py: 4,
+    px: 2,
+    textAlign: 'center',
+};
+
+const emptyIconSx = { fontSize: 48, color: 'text.disabled', mb: 1.5 };
+const emptyTitleSx = { color: 'text.secondary', mb: 0.5 };
+const emptySubtitleSx = { color: 'text.disabled' };
+
+const footerCountSx = { color: 'text.disabled', fontSize: '0.625rem' };
+
+const addButtonBaseSx = {
+    p: 0.5,
+    '&:hover': { color: 'primary.main' },
+};
+
+const refreshButtonSx = {
+    p: 0.5,
+    color: 'text.secondary',
+    '&:hover': { color: 'primary.main' },
+};
+
+const searchInputSx = {
+    py: 0.875,
+    '&::placeholder': {
+        color: 'text.disabled',
+        opacity: 1,
+    },
+};
+
+// -- Style-getter functions -----------------------------------------------
+
+const getPanelSx = (theme, panelWidth) => ({
+    width: panelWidth,
+    height: '100%',
+    display: 'flex',
+    flexDirection: 'column',
+    bgcolor: 'background.paper',
+    borderRight: '1px solid',
+    borderColor: 'divider',
+    position: 'relative',
+    flexShrink: 0,
+});
+
+const getResizeHandleSx = (theme, isResizing) => ({
+    position: 'absolute',
+    top: 0,
+    right: -3,
+    bottom: 0,
+    width: 6,
+    cursor: 'col-resize',
+    zIndex: 10,
+    '&:hover': {
+        bgcolor: alpha(theme.palette.info.main, 0.3),
+    },
+    ...(isResizing && {
+        bgcolor: alpha(theme.palette.info.main, 0.5),
+    }),
+});
+
+const getHeaderSx = (theme) => ({
+    px: 2,
+    py: 1.5,
+    borderBottom: '1px solid',
+    borderColor: 'divider',
+});
+
+const getAddButtonSx = (theme) => ({
+    ...addButtonBaseSx,
+    color: theme.palette.mode === 'dark' ? alpha(theme.palette.common.white, 0.7) : 'text.secondary',
+});
+
+const getAutoRefreshSx = (theme, enabled) => ({
+    p: 0.5,
+    color: enabled
+        ? 'primary.main'
+        : (theme.palette.mode === 'dark' ? alpha(theme.palette.common.white, 0.4) : 'text.disabled'),
+});
+
+const getEstateSx = (theme, isSelected) => ({
+    display: 'flex',
+    alignItems: 'center',
+    gap: 1,
+    mb: 1.5,
+    py: 0.5,
+    px: 1,
+    mx: -1,
+    borderRadius: 1,
+    cursor: 'pointer',
+    bgcolor: isSelected
+        ? alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.20 : 0.12)
+        : 'transparent',
+    borderLeft: isSelected ? '2px solid' : '2px solid transparent',
+    borderLeftColor: isSelected ? 'primary.main' : 'transparent',
+    transition: 'all 0.15s ease',
+    '&:hover': {
+        bgcolor: isSelected
+            ? alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.25 : 0.16)
+            : alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.08 : 0.04),
+    },
+});
+
+const getSearchFieldSx = (theme) => ({
+    '& .MuiOutlinedInput-root': {
+        bgcolor: alpha(theme.palette.background.default, theme.palette.mode === 'dark' ? 0.5 : 0.8),
+        fontSize: '0.8125rem',
+        '& fieldset': {
+            borderColor: 'divider',
+        },
+        '&:hover fieldset': {
+            borderColor: theme.palette.mode === 'dark' ? theme.palette.grey[600] : theme.palette.grey[300],
+        },
+    },
+    '& .MuiOutlinedInput-input': searchInputSx,
+});
+
+const getSkeletonSx = (theme) => ({
+    mb: 1,
+    bgcolor: theme.palette.mode === 'dark' ? theme.palette.grey[700] : theme.palette.grey[200],
+});
+
+const getSkeletonChildSx = (theme) => ({
+    ml: 2,
+    mb: 0.5,
+    bgcolor: theme.palette.mode === 'dark' ? theme.palette.grey[700] : theme.palette.grey[200],
+});
+
+const getFooterSx = (theme) => ({
+    px: 2,
+    py: 1,
+    borderTop: '1px solid',
+    borderColor: 'divider',
+    bgcolor: alpha(theme.palette.background.default, 0.5),
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+});
+
+const getLastRefreshSx = (theme) => ({
+    color: theme.palette.mode === 'dark' ? alpha(theme.palette.common.white, 0.5) : 'text.disabled',
+    fontSize: '0.625rem',
+});
+
+const getSpinnerSx = (loading) => ({
+    fontSize: 18,
+    animation: loading ? 'spin 1s linear infinite' : 'none',
+    '@keyframes spin': {
+        '0%': { transform: 'rotate(0deg)' },
+        '100%': { transform: 'rotate(360deg)' },
+    },
+});
+
 /**
  * ClusterNavigator - Main navigation panel component
  */
@@ -73,6 +255,7 @@ const ClusterNavigator = ({
     minWidth = 200,
     maxWidth = 500,
 }) => {
+    const theme = useTheme();
     const [searchQuery, setSearchQuery] = useState('');
     const [expandedGroups, setExpandedGroups] = useState(new Set());
     // Initialize expandedClusters from localStorage (default to empty = all collapsed)
@@ -422,97 +605,47 @@ const ClusterNavigator = ({
     const warningServers = totalServers - onlineServers - offlineServers;
     const estateStatus = offlineServers > 0 ? 'offline' : (warningServers > 0 ? 'warning' : 'online');
 
+    const isEstateSelected = selectionType === 'estate';
+
     return (
         <DndContext
             collisionDetection={pointerWithin}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
         >
-            <Box
-                sx={{
-                    width: panelWidth,
-                    height: '100%',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    bgcolor: isDark ? '#1E293B' : '#FFFFFF',
-                    borderRight: '1px solid',
-                    borderColor: isDark ? '#334155' : '#E5E7EB',
-                    position: 'relative',
-                    flexShrink: 0,
-                }}
-            >
+            <Box sx={getPanelSx(theme, panelWidth)}>
                 {/* Resize handle */}
             <Box
                 ref={resizeRef}
                 onMouseDown={handleResizeStart}
-                sx={{
-                    position: 'absolute',
-                    top: 0,
-                    right: -3,
-                    bottom: 0,
-                    width: 6,
-                    cursor: 'col-resize',
-                    zIndex: 10,
-                    '&:hover': {
-                        bgcolor: alpha(isDark ? '#60A5FA' : '#3B82F6', 0.3),
-                    },
-                    ...(isResizing && {
-                        bgcolor: alpha(isDark ? '#60A5FA' : '#3B82F6', 0.5),
-                    }),
-                }}
+                sx={getResizeHandleSx(theme, isResizing)}
             />
             {/* Header */}
-            <Box
-                sx={{
-                    px: 2,
-                    py: 1.5,
-                    borderBottom: '1px solid',
-                    borderColor: isDark ? '#334155' : '#E5E7EB',
-                }}
-            >
-                <Box sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    mb: 1.5,
-                }}>
+            <Box sx={getHeaderSx(theme)}>
+                <Box sx={headerRowSx}>
                     <Typography
                         variant="overline"
-                        sx={{
-                            color: 'text.primary',
-                            fontSize: '0.6875rem',
-                            fontWeight: 600,
-                            letterSpacing: '0.08em',
-                        }}
+                        sx={headerTitleSx}
                     >
                         Database Servers
                     </Typography>
-                    <Box sx={{ display: 'flex', gap: 0.5 }}>
+                    <Box sx={headerButtonGroupSx}>
                         <Tooltip title="Add server or group">
                             <IconButton
                                 size="small"
                                 onClick={(e) => setAddMenuAnchor(e.currentTarget)}
-                                sx={{
-                                    p: 0.5,
-                                    color: isDark ? 'rgba(255,255,255,0.7)' : 'text.secondary',
-                                    '&:hover': { color: 'primary.main' },
-                                }}
+                                sx={getAddButtonSx(theme)}
                             >
-                                <AddIcon sx={{ fontSize: 18 }} />
+                                <AddIcon sx={icon18Sx} />
                             </IconButton>
                         </Tooltip>
                         <Tooltip title={autoRefreshEnabled ? 'Auto-refresh enabled' : 'Auto-refresh disabled'}>
                             <IconButton
                                 size="small"
                                 onClick={() => setAutoRefreshEnabled(!autoRefreshEnabled)}
-                                sx={{
-                                    p: 0.5,
-                                    color: autoRefreshEnabled
-                                        ? (isDark ? '#22B8CF' : '#15AABF')
-                                        : (isDark ? 'rgba(255,255,255,0.4)' : 'text.disabled'),
-                                }}
+                                sx={getAutoRefreshSx(theme, autoRefreshEnabled)}
                             >
-                                <AutorenewIcon sx={{ fontSize: 18 }} />
+                                <AutorenewIcon sx={icon18Sx} />
                             </IconButton>
                         </Tooltip>
                         <Tooltip title="Refresh">
@@ -520,22 +653,9 @@ const ClusterNavigator = ({
                                 size="small"
                                 onClick={onRefresh}
                                 disabled={loading}
-                                sx={{
-                                    p: 0.5,
-                                    color: 'text.secondary',
-                                    '&:hover': { color: 'primary.main' },
-                                }}
+                                sx={refreshButtonSx}
                             >
-                                <RefreshIcon
-                                    sx={{
-                                        fontSize: 18,
-                                        animation: loading ? 'spin 1s linear infinite' : 'none',
-                                        '@keyframes spin': {
-                                            '0%': { transform: 'rotate(0deg)' },
-                                            '100%': { transform: 'rotate(360deg)' },
-                                        },
-                                    }}
-                                />
+                                <RefreshIcon sx={getSpinnerSx(loading)} />
                             </IconButton>
                         </Tooltip>
                     </Box>
@@ -545,36 +665,15 @@ const ClusterNavigator = ({
                 <Tooltip title="View estate overview" placement="right">
                     <Box
                         onClick={() => onSelectEstate?.()}
-                        sx={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 1,
-                            mb: 1.5,
-                            py: 0.5,
-                            px: 1,
-                            mx: -1,
-                            borderRadius: 1,
-                            cursor: 'pointer',
-                            bgcolor: selectionType === 'estate'
-                                ? (isDark ? alpha('#22B8CF', 0.20) : alpha('#15AABF', 0.12))
-                                : 'transparent',
-                            borderLeft: selectionType === 'estate' ? '2px solid' : '2px solid transparent',
-                            borderLeftColor: selectionType === 'estate' ? 'primary.main' : 'transparent',
-                            transition: 'all 0.15s ease',
-                            '&:hover': {
-                                bgcolor: selectionType === 'estate'
-                                    ? (isDark ? alpha('#22B8CF', 0.25) : alpha('#15AABF', 0.16))
-                                    : (isDark ? alpha('#22B8CF', 0.08) : alpha('#15AABF', 0.04)),
-                            },
-                        }}
+                        sx={getEstateSx(theme, isEstateSelected)}
                     >
-                        <StatusIndicator status={estateStatus} alertCount={getTotalAlertCount()} isDark={isDark} />
+                        <StatusIndicator status={estateStatus} alertCount={getTotalAlertCount()} />
                         <Typography
                             variant="caption"
                             sx={{
-                                color: selectionType === 'estate' ? 'text.primary' : 'text.secondary',
+                                color: isEstateSelected ? 'text.primary' : 'text.secondary',
                                 fontSize: '0.6875rem',
-                                fontWeight: selectionType === 'estate' ? 600 : 400,
+                                fontWeight: isEstateSelected ? 600 : 400,
                                 flex: 1,
                             }}
                         >
@@ -593,29 +692,11 @@ const ClusterNavigator = ({
                     InputProps={{
                         startAdornment: (
                             <InputAdornment position="start">
-                                <SearchIcon sx={{ fontSize: 18, color: 'text.disabled' }} />
+                                <SearchIcon sx={searchIconSx} />
                             </InputAdornment>
                         ),
                     }}
-                    sx={{
-                        '& .MuiOutlinedInput-root': {
-                            bgcolor: isDark ? alpha('#0F172A', 0.5) : alpha('#F9FAFB', 0.8),
-                            fontSize: '0.8125rem',
-                            '& fieldset': {
-                                borderColor: isDark ? '#334155' : '#E5E7EB',
-                            },
-                            '&:hover fieldset': {
-                                borderColor: isDark ? '#475569' : '#D1D5DB',
-                            },
-                        },
-                        '& .MuiOutlinedInput-input': {
-                            py: 0.875,
-                            '&::placeholder': {
-                                color: 'text.disabled',
-                                opacity: 1,
-                            },
-                        },
-                    }}
+                    sx={getSearchFieldSx(theme)}
                 />
             </Box>
 
@@ -623,35 +704,24 @@ const ClusterNavigator = ({
             <Box
                 ref={scrollContainerRef}
                 onScroll={handleScroll}
-                sx={{
-                    flex: 1,
-                    overflow: 'auto',
-                    py: 1,
-                }}
+                sx={scrollContainerSx}
             >
                 {loading ? (
                     // Loading skeletons
-                    <Box sx={{ px: 2 }}>
+                    <Box sx={loadingContainerSx}>
                         {[1, 2, 3].map((i) => (
-                            <Box key={i} sx={{ mb: 2 }}>
+                            <Box key={i} sx={loadingGroupSx}>
                                 <Skeleton
                                     variant="rounded"
                                     height={36}
-                                    sx={{
-                                        mb: 1,
-                                        bgcolor: isDark ? '#334155' : '#E5E7EB',
-                                    }}
+                                    sx={getSkeletonSx(theme)}
                                 />
                                 {[1, 2].map((j) => (
                                     <Skeleton
                                         key={j}
                                         variant="rounded"
                                         height={28}
-                                        sx={{
-                                            ml: 2,
-                                            mb: 0.5,
-                                            bgcolor: isDark ? '#334155' : '#E5E7EB',
-                                        }}
+                                        sx={getSkeletonChildSx(theme)}
                                     />
                                 ))}
                             </Box>
@@ -659,36 +729,17 @@ const ClusterNavigator = ({
                     </Box>
                 ) : filteredData.length === 0 ? (
                     // Empty state
-                    <Box
-                        sx={{
-                            display: 'flex',
-                            flexDirection: 'column',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            py: 4,
-                            px: 2,
-                            textAlign: 'center',
-                        }}
-                    >
-                        <ServerIcon
-                            sx={{
-                                fontSize: 48,
-                                color: 'text.disabled',
-                                mb: 1.5,
-                            }}
-                        />
+                    <Box sx={emptyStateSx}>
+                        <ServerIcon sx={emptyIconSx} />
                         <Typography
                             variant="body2"
-                            sx={{
-                                color: 'text.secondary',
-                                mb: 0.5,
-                            }}
+                            sx={emptyTitleSx}
                         >
                             {searchQuery ? 'No servers found' : 'No servers configured'}
                         </Typography>
                         <Typography
                             variant="caption"
-                            sx={{ color: 'text.disabled' }}
+                            sx={emptySubtitleSx}
                         >
                             {searchQuery
                                 ? 'Try a different search term'
@@ -727,24 +778,10 @@ const ClusterNavigator = ({
             </Box>
 
             {/* Footer */}
-            <Box
-                sx={{
-                    px: 2,
-                    py: 1,
-                    borderTop: '1px solid',
-                    borderColor: isDark ? '#334155' : '#E5E7EB',
-                    bgcolor: isDark ? alpha('#0F172A', 0.5) : alpha('#F9FAFB', 0.5),
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                }}
-            >
+            <Box sx={getFooterSx(theme)}>
                 <Typography
                     variant="caption"
-                    sx={{
-                        color: 'text.disabled',
-                        fontSize: '0.625rem',
-                    }}
+                    sx={footerCountSx}
                 >
                     {filteredData.length} groups • {
                         filteredData.reduce((a, g) => a + (g.clusters?.length || 0), 0)
@@ -753,10 +790,7 @@ const ClusterNavigator = ({
                 {lastRefresh && (
                     <Typography
                         variant="caption"
-                        sx={{
-                            color: isDark ? 'rgba(255,255,255,0.5)' : 'text.disabled',
-                            fontSize: '0.625rem',
-                        }}
+                        sx={getLastRefreshSx(theme)}
                     >
                         Updated {formatRelativeTime(lastRefresh)}
                     </Typography>

@@ -40,6 +40,123 @@ import { useMenu } from '../hooks/useMenu';
 import HelpPanel from './HelpPanel';
 import AdminPanel from './AdminPanel';
 
+// ---------------------------------------------------------------------------
+// Style constants and style-getter functions
+// ---------------------------------------------------------------------------
+
+const toolbarSx = { minHeight: { xs: 56, sm: 64 } };
+
+const logoContainerSx = {
+    display: 'flex',
+    alignItems: 'center',
+    flexGrow: 1,
+    gap: 1.5,
+};
+
+const logoImgSx = { height: 28, width: 'auto' };
+
+const actionsContainerSx = { display: 'flex', alignItems: 'center', gap: 0.5 };
+
+const menuInfoBoxSx = { px: 2, py: 1.5 };
+
+const getAppBarSx = (theme) => ({
+    bgcolor: theme.palette.background.paper,
+    borderBottom: '1px solid',
+    borderColor: theme.palette.divider,
+});
+
+const getDividerSx = (theme) => ({
+    height: 24,
+    alignSelf: 'center',
+    borderColor: theme.palette.mode === 'dark'
+        ? theme.palette.grey[600]
+        : theme.palette.grey[200],
+});
+
+const getTitleSx = (theme) => ({
+    fontWeight: 500,
+    color: theme.palette.text.primary,
+    letterSpacing: '-0.01em',
+});
+
+const getIconButtonSx = (theme) => ({
+    color: theme.palette.mode === 'dark'
+        ? theme.palette.grey[400]
+        : theme.palette.grey[500],
+    '&:hover': {
+        bgcolor: theme.palette.mode === 'dark'
+            ? alpha(theme.palette.primary.main, 0.08)
+            : alpha(theme.palette.primary.main, 0.04),
+        color: theme.palette.primary.main,
+    },
+});
+
+const getUserAvatarButtonSx = (theme) => ({
+    ml: 0.5,
+    p: 0.5,
+    '&:hover': {
+        bgcolor: theme.palette.mode === 'dark'
+            ? alpha(theme.palette.primary.main, 0.08)
+            : alpha(theme.palette.primary.main, 0.04),
+    },
+});
+
+const getAvatarSx = (theme) => ({
+    width: 32,
+    height: 32,
+    bgcolor: theme.palette.primary.main,
+    fontSize: '0.875rem',
+    fontWeight: 600,
+});
+
+const getMenuPaperSx = (theme) => ({
+    minWidth: 180,
+    mt: 1,
+    borderRadius: 1,
+    border: '1px solid',
+    borderColor: theme.palette.divider,
+    boxShadow: theme.palette.mode === 'dark'
+        ? '0 10px 15px -3px rgba(0, 0, 0, 0.3)'
+        : '0 10px 15px -3px rgba(0, 0, 0, 0.1)',
+});
+
+const getSignedInLabelSx = (theme) => ({
+    color: theme.palette.mode === 'dark'
+        ? theme.palette.grey[500]
+        : theme.palette.text.disabled,
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
+    fontWeight: 600,
+    fontSize: '0.65rem',
+});
+
+const getUsernameSx = (theme) => ({
+    fontWeight: 500,
+    color: theme.palette.text.primary,
+    mt: 0.25,
+});
+
+const getLogoutMenuItemSx = (theme) => ({
+    mx: 1,
+    my: 0.5,
+    borderRadius: 1,
+    color: theme.palette.error.main,
+    '&:hover': {
+        bgcolor: alpha(theme.palette.error.main, 0.08),
+    },
+});
+
+const listItemIconSx = { color: 'inherit' };
+
+const signOutTypographyProps = {
+    fontSize: '0.875rem',
+    fontWeight: 500,
+};
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+
 const Header = ({ onToggleTheme, mode, helpContext }) => {
     const { user, logout, hasAnyAdminAccess } = useAuth();
     const userMenu = useMenu();
@@ -73,60 +190,39 @@ const Header = ({ onToggleTheme, mode, helpContext }) => {
             <AppBar
                 position="static"
                 elevation={0}
-                sx={{
-                    bgcolor: isDark ? '#1E293B' : '#FFFFFF',
-                    borderBottom: '1px solid',
-                    borderColor: isDark ? '#334155' : '#E5E7EB',
-                }}
+                sx={getAppBarSx}
             >
-                <Toolbar sx={{ minHeight: { xs: 56, sm: 64 } }}>
+                <Toolbar sx={toolbarSx}>
                     {/* Logo and Title */}
-                    <Box sx={{ display: 'flex', alignItems: 'center', flexGrow: 1, gap: 1.5 }}>
+                    <Box sx={logoContainerSx}>
                         <Box
                             component="img"
                             src={isDark ? logoDark : logoLight}
                             alt="pgEdge"
-                            sx={{
-                                height: 28,
-                                width: 'auto',
-                            }}
+                            sx={logoImgSx}
                         />
                         <Divider
                             orientation="vertical"
                             flexItem
-                            sx={{
-                                height: 24,
-                                alignSelf: 'center',
-                                borderColor: isDark ? '#475569' : '#E5E7EB',
-                            }}
+                            sx={getDividerSx}
                         />
                         <Typography
                             variant="subtitle1"
                             component="div"
-                            sx={{
-                                fontWeight: 500,
-                                color: isDark ? '#F1F5F9' : '#1F2937',
-                                letterSpacing: '-0.01em',
-                            }}
+                            sx={getTitleSx}
                         >
                             AI DBA Workbench
                         </Typography>
                     </Box>
 
                     {/* Action Icons */}
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <Box sx={actionsContainerSx}>
                         {/* Theme Toggle */}
                         <Tooltip title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}>
                             <IconButton
                                 onClick={onToggleTheme}
                                 aria-label="toggle theme"
-                                sx={{
-                                    color: isDark ? '#94A3B8' : '#6B7280',
-                                    '&:hover': {
-                                        bgcolor: isDark ? alpha('#22B8CF', 0.08) : alpha('#15AABF', 0.04),
-                                        color: '#15AABF',
-                                    },
-                                }}
+                                sx={getIconButtonSx}
                             >
                                 {isDark ? <LightModeIcon /> : <DarkModeIcon />}
                             </IconButton>
@@ -138,13 +234,7 @@ const Header = ({ onToggleTheme, mode, helpContext }) => {
                                 <IconButton
                                     onClick={() => setAdminOpen(true)}
                                     aria-label="open administration"
-                                    sx={{
-                                        color: isDark ? '#94A3B8' : '#6B7280',
-                                        '&:hover': {
-                                            bgcolor: isDark ? alpha('#22B8CF', 0.08) : alpha('#15AABF', 0.04),
-                                            color: '#15AABF',
-                                        },
-                                    }}
+                                    sx={getIconButtonSx}
                                 >
                                     <SettingsIcon />
                                 </IconButton>
@@ -156,13 +246,7 @@ const Header = ({ onToggleTheme, mode, helpContext }) => {
                             <IconButton
                                 onClick={handleHelpOpen}
                                 aria-label="open help"
-                                sx={{
-                                    color: isDark ? '#94A3B8' : '#6B7280',
-                                    '&:hover': {
-                                        bgcolor: isDark ? alpha('#22B8CF', 0.08) : alpha('#15AABF', 0.04),
-                                        color: '#15AABF',
-                                    },
-                                }}
+                                sx={getIconButtonSx}
                             >
                                 <HelpIcon />
                             </IconButton>
@@ -177,23 +261,9 @@ const Header = ({ onToggleTheme, mode, helpContext }) => {
                                     aria-label="user menu"
                                     aria-controls="user-menu"
                                     aria-haspopup="true"
-                                    sx={{
-                                        ml: 0.5,
-                                        p: 0.5,
-                                        '&:hover': {
-                                            bgcolor: isDark ? alpha('#22B8CF', 0.08) : alpha('#15AABF', 0.04),
-                                        },
-                                    }}
+                                    sx={getUserAvatarButtonSx}
                                 >
-                                    <Avatar
-                                        sx={{
-                                            width: 32,
-                                            height: 32,
-                                            bgcolor: '#15AABF',
-                                            fontSize: '0.875rem',
-                                            fontWeight: 600,
-                                        }}
-                                    >
+                                    <Avatar sx={getAvatarSx}>
                                         {getInitials(user.username)}
                                     </Avatar>
                                 </IconButton>
@@ -218,64 +288,34 @@ const Header = ({ onToggleTheme, mode, helpContext }) => {
                     horizontal: 'right',
                 }}
                 PaperProps={{
-                    sx: {
-                        minWidth: 180,
-                        mt: 1,
-                        borderRadius: 1,
-                        border: '1px solid',
-                        borderColor: isDark ? '#334155' : '#E5E7EB',
-                        boxShadow: isDark
-                            ? '0 10px 15px -3px rgba(0, 0, 0, 0.3)'
-                            : '0 10px 15px -3px rgba(0, 0, 0, 0.1)',
-                    },
+                    sx: getMenuPaperSx,
                 }}
             >
-                <Box sx={{ px: 2, py: 1.5 }}>
+                <Box sx={menuInfoBoxSx}>
                     <Typography
                         variant="caption"
-                        sx={{
-                            color: isDark ? '#64748B' : '#9CA3AF',
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.05em',
-                            fontWeight: 600,
-                            fontSize: '0.65rem',
-                        }}
+                        sx={getSignedInLabelSx}
                     >
                         Signed in as
                     </Typography>
                     <Typography
                         variant="body2"
-                        sx={{
-                            fontWeight: 500,
-                            color: isDark ? '#F1F5F9' : '#1F2937',
-                            mt: 0.25,
-                        }}
+                        sx={getUsernameSx}
                     >
                         {user?.username}
                     </Typography>
                 </Box>
-                <Divider sx={{ borderColor: isDark ? '#334155' : '#E5E7EB' }} />
+                <Divider />
                 <MenuItem
                     onClick={handleLogout}
-                    sx={{
-                        mx: 1,
-                        my: 0.5,
-                        borderRadius: 1,
-                        color: '#EF4444',
-                        '&:hover': {
-                            bgcolor: alpha('#EF4444', 0.08),
-                        },
-                    }}
+                    sx={getLogoutMenuItemSx}
                 >
-                    <ListItemIcon sx={{ color: 'inherit' }}>
+                    <ListItemIcon sx={listItemIconSx}>
                         <LogoutIcon fontSize="small" />
                     </ListItemIcon>
                     <ListItemText
                         primary="Sign out"
-                        primaryTypographyProps={{
-                            fontSize: '0.875rem',
-                            fontWeight: 500,
-                        }}
+                        primaryTypographyProps={signOutTypographyProps}
                     />
                 </MenuItem>
             </Menu>

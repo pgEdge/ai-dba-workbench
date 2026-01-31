@@ -62,14 +62,14 @@ func TestMigration_PgSettings(t *testing.T) {
 		t.Fatalf("Migration failed: %v", err)
 	}
 
-	// Verify schema version is 1 (single squashed migration)
+	// Verify schema version is 2 (latest migration)
 	var version int
 	err = conn.QueryRow(ctx, "SELECT MAX(version) FROM schema_version").Scan(&version)
 	if err != nil {
 		t.Fatalf("Failed to query schema version: %v", err)
 	}
-	if version != 1 {
-		t.Errorf("Expected schema version 1, got %d", version)
+	if version != 2 {
+		t.Errorf("Expected schema version 2, got %d", version)
 	}
 
 	// Verify pg_settings table exists

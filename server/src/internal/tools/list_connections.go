@@ -21,11 +21,11 @@ import (
 
 // MonitoredConnectionInfo represents a connection from the datastore
 type MonitoredConnectionInfo struct {
-	ID           int    `json:"id"`
-	Name         string `json:"name"`
-	Host         string `json:"host"`
-	Port         int    `json:"port"`
-	DatabaseName string `json:"database_name"`
+	ID              int    `json:"id"`
+	Name            string `json:"name"`
+	Host            string `json:"host"`
+	Port            int    `json:"port"`
+	DatabaseName    string `json:"database_name"`
 	IsMonitored     bool   `json:"is_monitored"`
 	Status          string `json:"status"`
 	ConnectionError string `json:"connection_error,omitempty"`

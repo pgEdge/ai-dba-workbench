@@ -1516,23 +1516,23 @@ func (d *Datastore) AssignConnectionToCluster(ctx context.Context, connectionID 
 
 // TopologyServerInfo extends ServerInfo with topology and child servers
 type TopologyServerInfo struct {
-	ID            int                  `json:"id"`
-	Name          string               `json:"name"`
-	Host          string               `json:"host"`
-	Port          int                  `json:"port"`
+	ID              int                  `json:"id"`
+	Name            string               `json:"name"`
+	Host            string               `json:"host"`
+	Port            int                  `json:"port"`
 	Status          string               `json:"status"`
 	ConnectionError string               `json:"connection_error,omitempty"`
 	Role            string               `json:"role,omitempty"`
-	PrimaryRole   string               `json:"primary_role"`
-	IsExpandable  bool                 `json:"is_expandable"`
-	OwnerUsername string               `json:"owner_username,omitempty"`
-	Version       string               `json:"version,omitempty"`
-	OS            string               `json:"os,omitempty"`
-	SpockNodeName string               `json:"spock_node_name,omitempty"`
-	SpockVersion  string               `json:"spock_version,omitempty"`
-	DatabaseName  string               `json:"database_name,omitempty"`
-	Username      string               `json:"username,omitempty"`
-	Children      []TopologyServerInfo `json:"children,omitempty"`
+	PrimaryRole     string               `json:"primary_role"`
+	IsExpandable    bool                 `json:"is_expandable"`
+	OwnerUsername   string               `json:"owner_username,omitempty"`
+	Version         string               `json:"version,omitempty"`
+	OS              string               `json:"os,omitempty"`
+	SpockNodeName   string               `json:"spock_node_name,omitempty"`
+	SpockVersion    string               `json:"spock_version,omitempty"`
+	DatabaseName    string               `json:"database_name,omitempty"`
+	Username        string               `json:"username,omitempty"`
+	Children        []TopologyServerInfo `json:"children,omitempty"`
 }
 
 // TopologyCluster represents a replication-aware cluster

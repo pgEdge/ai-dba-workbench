@@ -14,6 +14,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"hash/fnv"
 	"sync"
 	"time"
 
@@ -139,13 +140,15 @@ func (m *MonitoredConnectionPoolManager) GetConnectionForDatabase(ctx context.Co
 	if err := m.acquireSlot(ctx, conn.ID); err != nil {
 		return nil, fmt.Errorf("failed to acquire connection slot: %w", err)
 	}
-	// Generate a unique pool key based on connection ID and database name
+	// Generate a unique pool key based on connection ID and database name.
+	// Server-level pools use the positive conn.ID. Database-specific pools
+	// use a deterministic negative key derived from conn.ID and databaseName
+	// to avoid collisions with server-level keys.
 	poolKey := conn.ID
 	if databaseName != "" {
-		// Use a hash or composite key for database-specific pools
-		// For simplicity, we'll use negative IDs for database-specific pools
-		// This is a temporary solution - a better approach would use a struct key
-		poolKey = -(conn.ID * 10000) // Negative to distinguish from regular connections
+		h := fnv.New32a()
+		fmt.Fprintf(h, "%d:%s", conn.ID, databaseName)
+		poolKey = -int(h.Sum32())
 	}
 
 	m.mu.RLock()

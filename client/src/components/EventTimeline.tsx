@@ -52,7 +52,7 @@ const EVENT_TYPE_CONFIG = {
     },
     hba_change: {
         icon: SecurityIcon,
-        colorKey: 'info.main',
+        colorKey: 'custom.status.sky',
         label: 'HBA',
     },
     ident_change: {
@@ -67,7 +67,7 @@ const EVENT_TYPE_CONFIG = {
     },
     alert_fired: {
         icon: WarningIcon,
-        colorKey: 'warning.main',
+        colorKey: 'error.main',
         label: 'Alert',
         getSeverityColorKey: (severity) => {
             return severity === 'critical' ? 'error.main' : 'warning.main';
@@ -93,12 +93,12 @@ const EVENT_TYPE_CONFIG = {
     },
     blackout_started: {
         icon: DoNotDisturbIcon,
-        colorKey: 'warning.main',
+        colorKey: 'custom.status.skyDark',
         label: 'Blackout',
     },
     blackout_ended: {
         icon: DoNotDisturbOffIcon,
-        colorKey: 'success.main',
+        colorKey: 'custom.status.skyDark',
         label: 'Blk End',
     },
 };
@@ -111,14 +111,14 @@ const ALL_EVENT_TYPES = Object.keys(EVENT_TYPE_CONFIG);
 // the underlying event types it controls.
 const FILTER_CHIPS: Record<string, { label: string; colorKey: string; types: string[] }> = {
     config_change: { label: 'Config', colorKey: 'primary.main', types: ['config_change'] },
-    hba_change: { label: 'HBA', colorKey: 'info.main', types: ['hba_change'] },
+    hba_change: { label: 'HBA', colorKey: 'custom.status.sky', types: ['hba_change'] },
     ident_change: { label: 'Ident', colorKey: 'info.main', types: ['ident_change'] },
     restart: { label: 'Restart', colorKey: 'warning.main', types: ['restart'] },
-    alert_fired: { label: 'Alert', colorKey: 'warning.main', types: ['alert_fired'] },
+    alert_fired: { label: 'Alert', colorKey: 'error.main', types: ['alert_fired'] },
     alert_cleared: { label: 'Cleared', colorKey: 'success.main', types: ['alert_cleared'] },
     alert_acknowledged: { label: 'Acked', colorKey: 'custom.status.purple', types: ['alert_acknowledged'] },
     extension_change: { label: 'Extension', colorKey: 'custom.status.cyan', types: ['extension_change'] },
-    blackouts: { label: 'Blackouts', colorKey: 'warning.main', types: ['blackout_started', 'blackout_ended'] },
+    blackouts: { label: 'Blackouts', colorKey: 'custom.status.skyDark', types: ['blackout_started', 'blackout_ended'] },
 };
 
 // Time range options

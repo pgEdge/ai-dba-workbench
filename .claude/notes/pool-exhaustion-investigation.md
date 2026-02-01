@@ -130,6 +130,77 @@ monitored server. This is acceptable for the default PostgreSQL
 `max_connections` value of 100; the team should monitor
 connection counts on heavily probed servers.
 
+## Second Hang: Pool Manager Mutex Deadlock (2026-02-01)
+
+### Symptoms
+
+The collector hung again approximately 10 minutes after
+restart. The SIGABRT goroutine dump revealed the following
+critical state:
+
+- 18+ goroutines blocked on `probesMutex.RLock()` at
+  scheduler.go:327 for 27+ minutes
+- 10 goroutines blocked on `m.mu.Lock()` (pool manager
+  mutex) at monitored_pool.go:278 for 31 minutes
+- 1 goroutine blocked on `puddle.Pool.Close()` →
+  `WaitGroup.Wait` for 31 minutes
+- The configReloadLoop goroutine was not visible; it was
+  blocked inside `loadConfigs` which called `SyncPools` or
+  `InvalidateChangedPools`
+
+### Root Cause
+
+The issue was a classic lock-ordering deadlock between the
+pool manager mutex (`m.mu`) and pgx pool close operations:
+
+1. `configReloadLoop` → `loadConfigs` takes
+   `probesMutex.Lock()` then calls `SyncPools` or
+   `InvalidateChangedPools`
+
+2. `SyncPools` or `InvalidateChangedPools` takes
+   `m.mu.Lock()` then calls `pool.Close()`
+
+3. `pool.Close()` blocks on `WaitGroup.Wait` until all
+   borrowed connections are returned
+
+4. Probe goroutines holding borrowed connections call
+   `CheckConnectionUpdated` → tries `m.mu.Lock()` →
+   deadlocked
+
+5. Those probes cannot return connections → `pool.Close()`
+   never completes → `loadConfigs` never releases
+   `probesMutex` → all other probes blocked
+
+This circular wait creates an unbreakable deadlock where
+the configuration reload and all probe operations stall
+indefinitely.
+
+### Fix
+
+The fix collects pools to close while holding `m.mu`,
+releases the lock, then closes pools outside the lock. This
+breaks the deadlock cycle since `pool.Close()` no longer
+runs under `m.mu`. The collector can now return borrowed
+connections even while configuration reload operations
+progress.
+
+Apply this pattern to three methods in `monitored_pool.go`:
+
+- `SyncPools`
+- `InvalidateChangedPools`
+- `CheckConnectionUpdated`
+
+Specifically, each method should:
+
+1. Build a list of pools to close while holding `m.mu`
+2. Release `m.mu`
+3. Close the collected pools outside the lock
+
+### Files Modified
+
+- `collector/src/database/monitored_pool.go` — `SyncPools`,
+  `InvalidateChangedPools`, `CheckConnectionUpdated`
+
 ## Verification
 
 After deploying the fix, the team confirmed the following

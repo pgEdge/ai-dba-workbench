@@ -276,18 +276,19 @@ func (m *MonitoredConnectionPoolManager) RemovePool(connectionID int) error {
 // changes to take effect within one probe cycle.
 func (m *MonitoredConnectionPoolManager) CheckConnectionUpdated(connectionID int, updatedAt time.Time) bool {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	stored, exists := m.poolUpdatedAt[connectionID]
 	if !exists || stored.Equal(updatedAt) {
+		m.mu.Unlock()
 		return false
 	}
 
-	// Connection was updated, invalidate all pools for this connection
+	// Connection was updated, collect pools to close and remove map entries
+	var poolsToClose []*pgxpool.Pool
 	for poolKey := range m.pools {
 		connID := m.poolKeyToConnID[poolKey]
 		if connID == connectionID {
-			m.pools[poolKey].Close()
+			poolsToClose = append(poolsToClose, m.pools[poolKey])
 			delete(m.pools, poolKey)
 			delete(m.poolHashes, poolKey)
 			delete(m.poolKeyToConnID, poolKey)
@@ -296,6 +297,13 @@ func (m *MonitoredConnectionPoolManager) CheckConnectionUpdated(connectionID int
 	delete(m.poolUpdatedAt, connectionID)
 	delete(m.versions, connectionID)
 
+	m.mu.Unlock()
+
+	// Close pools outside the lock to avoid deadlock with borrowed connections
+	for _, pool := range poolsToClose {
+		pool.Close()
+	}
+
 	return true
 }
 
@@ -303,7 +311,6 @@ func (m *MonitoredConnectionPoolManager) CheckConnectionUpdated(connectionID int
 // Closes and removes pools for connections that are no longer monitored
 func (m *MonitoredConnectionPoolManager) SyncPools(activeConnectionIDs []int) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	// Build a set of active connection IDs for fast lookup
 	activeSet := make(map[int]bool)
@@ -311,23 +318,25 @@ func (m *MonitoredConnectionPoolManager) SyncPools(activeConnectionIDs []int) {
 		activeSet[id] = true
 	}
 
-	// Find and close pools for connections that are no longer monitored
+	// Find pools for connections that are no longer monitored
 	var toRemove []int
 	for poolKey := range m.pools {
-		// Look up the connection ID from the pool key mapping
 		connID := m.poolKeyToConnID[poolKey]
-
-		// If this connection is no longer in the active set, mark for removal
 		if !activeSet[connID] {
 			toRemove = append(toRemove, poolKey)
 		}
 	}
 
-	// Close and remove pools that are no longer needed
+	// Collect pools to close and remove map entries while holding the lock
+	type removedPool struct {
+		pool   *pgxpool.Pool
+		connID int
+	}
+	var poolsToClose []removedPool
 	for _, poolKey := range toRemove {
 		pool := m.pools[poolKey]
-		pool.Close()
 		connID := m.poolKeyToConnID[poolKey]
+		poolsToClose = append(poolsToClose, removedPool{pool: pool, connID: connID})
 		delete(m.pools, poolKey)
 		delete(m.poolHashes, poolKey)
 		delete(m.poolKeyToConnID, poolKey)
@@ -343,8 +352,15 @@ func (m *MonitoredConnectionPoolManager) SyncPools(activeConnectionIDs []int) {
 		if !hasOtherPools {
 			delete(m.semaphores, connID)
 			delete(m.poolUpdatedAt, connID)
-			logger.Infof("Removed connection pool for connection %d (no longer monitored)", connID)
 		}
+	}
+
+	m.mu.Unlock()
+
+	// Close pools outside the lock to avoid deadlock with borrowed connections
+	for _, rp := range poolsToClose {
+		rp.pool.Close()
+		logger.Infof("Removed connection pool for connection %d (no longer monitored)", rp.connID)
 	}
 }
 
@@ -371,12 +387,10 @@ func (m *MonitoredConnectionPoolManager) InvalidateChangedPools(connections []Mo
 	}
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	// Identify pool keys whose connection parameters have changed
 	var toRemove []int
 	for poolKey, storedHash := range m.poolHashes {
-		// Look up the connection ID from the pool key mapping
 		connID := m.poolKeyToConnID[poolKey]
 
 		currentHash, exists := currentHashes[connID]
@@ -390,13 +404,19 @@ func (m *MonitoredConnectionPoolManager) InvalidateChangedPools(connections []Mo
 		}
 	}
 
-	// Close and remove invalidated pools
+	// Collect pools to close and remove map entries while holding the lock
+	type removedPool struct {
+		pool    *pgxpool.Pool
+		poolKey int
+		connID  int
+	}
+	var poolsToClose []removedPool
 	for _, poolKey := range toRemove {
 		connID := m.poolKeyToConnID[poolKey]
 
 		pool := m.pools[poolKey]
 		if pool != nil {
-			pool.Close()
+			poolsToClose = append(poolsToClose, removedPool{pool: pool, poolKey: poolKey, connID: connID})
 		}
 		delete(m.pools, poolKey)
 		delete(m.poolHashes, poolKey)
@@ -404,8 +424,14 @@ func (m *MonitoredConnectionPoolManager) InvalidateChangedPools(connections []Mo
 
 		// Also clear the cached version for this connection
 		delete(m.versions, connID)
+	}
 
-		logger.Infof("Invalidated connection pool (key %d) for connection %d due to changed connection parameters", poolKey, connID)
+	m.mu.Unlock()
+
+	// Close pools outside the lock to avoid deadlock with borrowed connections
+	for _, rp := range poolsToClose {
+		rp.pool.Close()
+		logger.Infof("Invalidated connection pool (key %d) for connection %d due to changed connection parameters", rp.poolKey, rp.connID)
 	}
 }
 

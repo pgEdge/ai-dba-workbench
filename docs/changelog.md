@@ -11,6 +11,20 @@ and this project adheres to
 
 ### Added
 
+- Configurable probe settings via the REST API and admin panel;
+  administrators can adjust frequency, retention, and enabled
+  state for each probe.
+- Configurable alert rule defaults via the REST API and admin
+  panel; administrators can set threshold, operator, severity,
+  and enabled state for each rule.
+- Per-connection alert threshold overrides that allow fine-tuned
+  alerting for individual monitored database connections.
+- New RBAC permissions `manage_probes` and `manage_alert_rules`
+  for controlling access to probe and alert configuration.
+- Probes and Alert Rules tabs in the administration panel for
+  managing probe settings and alert rule defaults.
+- Auth database migration v10 that adds the `manage_probes` and
+  `manage_alert_rules` permissions to the role system.
 - Blackout management for suppressing alerts during maintenance:
   - Management UI supports estate, group, cluster, and server scopes
   - REST API endpoints for CRUD operations on blackouts and schedules

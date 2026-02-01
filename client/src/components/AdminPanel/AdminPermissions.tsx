@@ -66,6 +66,8 @@ const PERMISSION_TYPES = [
     { value: 'manage_permissions', label: 'Manage Permissions' },
     { value: 'manage_token_scopes', label: 'Manage Token Scopes' },
     { value: 'manage_users', label: 'Manage Users' },
+    { value: 'manage_probes', label: 'Manage Probes' },
+    { value: 'manage_alert_rules', label: 'Manage Alert Rules' },
 ];
 
 const mcpTypeLabel = (itemType) => {

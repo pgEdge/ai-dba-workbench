@@ -54,11 +54,7 @@ interface ProbeConfig {
     connection_id: number | null;
 }
 
-interface AdminProbesProps {
-    mode?: string;
-}
-
-const AdminProbes: React.FC<AdminProbesProps> = () => {
+const AdminProbes: React.FC = () => {
     const theme = useTheme();
 
     const [probes, setProbes] = useState<ProbeConfig[]>([]);

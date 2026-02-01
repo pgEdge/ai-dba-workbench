@@ -240,7 +240,7 @@ func (h *AlertRuleHandler) updateThreshold(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	threshold, err := h.datastore.UpdateAlertThreshold(r.Context(), thresholdID, req)
+	threshold, err := h.datastore.UpdateAlertThreshold(r.Context(), ruleID, thresholdID, req)
 	if err != nil {
 		if errors.Is(err, database.ErrAlertThresholdNotFound) {
 			RespondError(w, http.StatusNotFound, "Alert threshold not found")
@@ -259,7 +259,7 @@ func (h *AlertRuleHandler) deleteThreshold(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := h.datastore.DeleteAlertThreshold(r.Context(), thresholdID); err != nil {
+	if err := h.datastore.DeleteAlertThreshold(r.Context(), ruleID, thresholdID); err != nil {
 		if errors.Is(err, database.ErrAlertThresholdNotFound) {
 			RespondError(w, http.StatusNotFound, "Alert threshold not found")
 			return

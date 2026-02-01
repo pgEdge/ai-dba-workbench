@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -145,7 +146,7 @@ func (d *Datastore) GetProbeConfigs(ctx context.Context, connectionID *int) ([]P
 }
 
 // GetProbeConfig returns a single probe config by ID.
-func (d *Datastore) GetProbeConfig(ctx context.Context, id int) (*ProbeConfig, error) {
+func (d *Datastore) GetProbeConfig(ctx context.Context, id int64) (*ProbeConfig, error) {
 	var c ProbeConfig
 	err := d.pool.QueryRow(ctx,
 		`SELECT id, connection_id, is_enabled, name, description,
@@ -163,7 +164,7 @@ func (d *Datastore) GetProbeConfig(ctx context.Context, id int) (*ProbeConfig, e
 }
 
 // UpdateProbeConfig applies a partial update to a probe config.
-func (d *Datastore) UpdateProbeConfig(ctx context.Context, id int, update ProbeConfigUpdate) (*ProbeConfig, error) {
+func (d *Datastore) UpdateProbeConfig(ctx context.Context, id int64, update ProbeConfigUpdate) (*ProbeConfig, error) {
 	if update.CollectionIntervalSeconds != nil && *update.CollectionIntervalSeconds <= 0 {
 		return nil, fmt.Errorf("collection_interval_seconds must be greater than 0")
 	}
@@ -339,6 +340,9 @@ func (d *Datastore) GetAlertThresholds(ctx context.Context, ruleID int64) ([]Ale
 
 // CreateAlertThreshold creates a new threshold override for a rule.
 func (d *Datastore) CreateAlertThreshold(ctx context.Context, ruleID int64, req AlertThresholdCreateUpdate) (*AlertThreshold, error) {
+	if math.IsNaN(req.Threshold) || math.IsInf(req.Threshold, 0) {
+		return nil, fmt.Errorf("threshold value must be a finite number")
+	}
 	if !validOperators[req.Operator] {
 		return nil, fmt.Errorf("invalid operator: %s", req.Operator)
 	}
@@ -372,7 +376,11 @@ func (d *Datastore) CreateAlertThreshold(ctx context.Context, ruleID int64, req 
 }
 
 // UpdateAlertThreshold updates an existing threshold.
-func (d *Datastore) UpdateAlertThreshold(ctx context.Context, id int64, req AlertThresholdCreateUpdate) (*AlertThreshold, error) {
+// The ruleID parameter ensures the threshold belongs to the specified rule.
+func (d *Datastore) UpdateAlertThreshold(ctx context.Context, ruleID int64, id int64, req AlertThresholdCreateUpdate) (*AlertThreshold, error) {
+	if math.IsNaN(req.Threshold) || math.IsInf(req.Threshold, 0) {
+		return nil, fmt.Errorf("threshold value must be a finite number")
+	}
 	if !validOperators[req.Operator] {
 		return nil, fmt.Errorf("invalid operator: %s", req.Operator)
 	}
@@ -388,11 +396,11 @@ func (d *Datastore) UpdateAlertThreshold(ctx context.Context, id int64, req Aler
 	var t AlertThreshold
 	err := d.pool.QueryRow(ctx,
 		`UPDATE alert_thresholds
-         SET connection_id = $2, database_name = $3, operator = $4, threshold = $5,
-             severity = $6, enabled = $7, updated_at = NOW()
-         WHERE id = $1
+         SET connection_id = $3, database_name = $4, operator = $5, threshold = $6,
+             severity = $7, enabled = $8, updated_at = NOW()
+         WHERE id = $1 AND rule_id = $2
          RETURNING id, rule_id, connection_id, database_name, operator, threshold, severity, enabled, created_at, updated_at`,
-		id, req.ConnectionID, req.DatabaseName, req.Operator, req.Threshold, req.Severity, enabled).
+		id, ruleID, req.ConnectionID, req.DatabaseName, req.Operator, req.Threshold, req.Severity, enabled).
 		Scan(&t.ID, &t.RuleID, &t.ConnectionID, &t.DatabaseName,
 			&t.Operator, &t.Threshold, &t.Severity, &t.Enabled, &t.CreatedAt, &t.UpdatedAt)
 	if err != nil {
@@ -405,8 +413,9 @@ func (d *Datastore) UpdateAlertThreshold(ctx context.Context, id int64, req Aler
 }
 
 // DeleteAlertThreshold deletes a threshold override by ID.
-func (d *Datastore) DeleteAlertThreshold(ctx context.Context, id int64) error {
-	tag, err := d.pool.Exec(ctx, `DELETE FROM alert_thresholds WHERE id = $1`, id)
+// The ruleID parameter ensures the threshold belongs to the specified rule.
+func (d *Datastore) DeleteAlertThreshold(ctx context.Context, ruleID int64, id int64) error {
+	tag, err := d.pool.Exec(ctx, `DELETE FROM alert_thresholds WHERE id = $1 AND rule_id = $2`, id, ruleID)
 	if err != nil {
 		return fmt.Errorf("failed to delete alert threshold: %w", err)
 	}

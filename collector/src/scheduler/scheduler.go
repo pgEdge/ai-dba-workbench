@@ -18,7 +18,6 @@ import (
 
 	"context"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
@@ -355,12 +354,6 @@ func (ps *ProbeScheduler) getMonitoredConnectionByID(connectionID int) (database
 // executeProbeForConnection executes a probe against a single monitored connection
 func (ps *ProbeScheduler) executeProbeForConnection(ctx context.Context, probe probes.MetricsProbe, conn database.MonitoredConnection) {
 	config := probe.GetConfig()
-	execStart := time.Now()
-	log.Printf("[PROBE DEBUG] connID=%d probe=%s starting execution", conn.ID, config.Name)
-	defer func() {
-		log.Printf("[PROBE DEBUG] connID=%d probe=%s completed (duration=%v)", conn.ID, config.Name, time.Since(execStart))
-	}()
-
 	// Check if connection details have been updated since the pool was created
 	if ps.poolManager.CheckConnectionUpdated(conn.ID, conn.UpdatedAt) {
 		logger.Infof("Connection %d (%s) was updated, invalidated cached pool", conn.ID, conn.Name)
@@ -561,7 +554,6 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 
 	// Query pg_database to get list of databases
 	databases, err = ps.getDatabaseList(ctx, monitoredDB)
-	log.Printf("[PROBE DEBUG] connID=%d probe=%s found %d databases", conn.ID, config.Name, len(databases))
 	if err != nil {
 		// Return connection before returning
 		ps.poolManager.ReturnConnection(conn.ID, monitoredDB)
@@ -677,11 +669,6 @@ func (ps *ProbeScheduler) getDatabaseList(ctx context.Context, conn *pgxpool.Con
 func (ps *ProbeScheduler) executeProbeForServerWide(ctx context.Context, probe probes.MetricsProbe, conn database.MonitoredConnection) ([]map[string]interface{}, bool, string) {
 	config := probe.GetConfig()
 	var metrics []map[string]interface{}
-
-	log.Printf("[PROBE DEBUG] connID=%d probe=%s server-wide start", conn.ID, config.Name)
-	defer func() {
-		log.Printf("[PROBE DEBUG] connID=%d probe=%s server-wide end", conn.ID, config.Name)
-	}()
 
 	// Check if context is already canceled
 	if ctx.Err() != nil {

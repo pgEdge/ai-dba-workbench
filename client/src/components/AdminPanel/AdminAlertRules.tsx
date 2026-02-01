@@ -61,7 +61,7 @@ import {
 
 const API_BASE_URL = '/api/v1';
 
-const OPERATORS = ['>', '>=', '<', '<=', '==', '!='];
+const OPERATORS = ['>', '>=', '<', '<=', '=', '!='];
 const SEVERITIES = ['info', 'warning', 'critical'];
 
 interface AlertRule {
@@ -86,10 +86,6 @@ interface ThresholdOverride {
     enabled: boolean;
 }
 
-interface AdminAlertRulesProps {
-    mode?: string;
-}
-
 const severityColor = (severity: string): 'default' | 'info' | 'warning' | 'error' => {
     switch (severity) {
         case 'critical': return 'error';
@@ -99,7 +95,7 @@ const severityColor = (severity: string): 'default' | 'info' | 'warning' | 'erro
     }
 };
 
-const AdminAlertRules: React.FC<AdminAlertRulesProps> = () => {
+const AdminAlertRules: React.FC = () => {
     const theme = useTheme();
 
     const [rules, setRules] = useState<AlertRule[]>([]);
@@ -191,6 +187,11 @@ const AdminAlertRules: React.FC<AdminAlertRulesProps> = () => {
 
     const handleSaveRule = async () => {
         if (!editRule) return;
+        const thresholdNum = parseFloat(editThreshold);
+        if (isNaN(thresholdNum)) {
+            setError('Threshold must be a valid number.');
+            return;
+        }
         try {
             setSaving(true);
             setError(null);
@@ -203,7 +204,7 @@ const AdminAlertRules: React.FC<AdminAlertRulesProps> = () => {
                     body: JSON.stringify({
                         default_enabled: editEnabled,
                         default_operator: editOperator,
-                        default_threshold: parseFloat(editThreshold),
+                        default_threshold: thresholdNum,
                         default_severity: editSeverity,
                     }),
                 }
@@ -245,13 +246,18 @@ const AdminAlertRules: React.FC<AdminAlertRulesProps> = () => {
 
     const handleSaveThreshold = async () => {
         if (!selectedRule) return;
+        const thresholdNum = parseFloat(thresholdValue);
+        if (isNaN(thresholdNum)) {
+            setError('Threshold must be a valid number.');
+            return;
+        }
         try {
             setThresholdSaving(true);
             setError(null);
             const body = {
                 connection_id: parseInt(thresholdConnectionId, 10),
                 operator: thresholdOperator,
-                threshold: parseFloat(thresholdValue),
+                threshold: thresholdNum,
                 severity: thresholdSeverity,
                 enabled: thresholdEnabled,
             };

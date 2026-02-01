@@ -15,7 +15,6 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"hash/fnv"
-	"log"
 	"sync"
 	"time"
 
@@ -127,13 +126,10 @@ func (m *MonitoredConnectionPoolManager) getSemaphore(connectionID int) chan str
 // acquireSlot acquires a slot from the semaphore, blocking if all slots are in use
 func (m *MonitoredConnectionPoolManager) acquireSlot(ctx context.Context, connectionID int) error {
 	sem := m.getSemaphore(connectionID)
-	log.Printf("[POOL DEBUG] connID=%d acquiring semaphore slot (capacity=%d, %d/%d in use)", connectionID, cap(sem), len(sem), cap(sem))
 	select {
 	case sem <- struct{}{}:
-		log.Printf("[POOL DEBUG] connID=%d acquired semaphore slot (%d/%d in use)", connectionID, len(sem), cap(sem))
 		return nil
 	case <-ctx.Done():
-		log.Printf("[POOL DEBUG] connID=%d TIMEOUT waiting for semaphore slot (%d/%d in use)", connectionID, len(sem), cap(sem))
 		return ctx.Err()
 	}
 }
@@ -146,13 +142,11 @@ func (m *MonitoredConnectionPoolManager) releaseSlot(connectionID int) {
 
 	if exists {
 		<-sem
-		log.Printf("[POOL DEBUG] connID=%d released semaphore slot (%d/%d in use)", connectionID, len(sem), cap(sem))
 	}
 }
 
 // GetConnection retrieves a connection for a monitored database
 func (m *MonitoredConnectionPoolManager) GetConnection(ctx context.Context, conn MonitoredConnection, serverSecret string) (*pgxpool.Conn, error) {
-	log.Printf("[POOL DEBUG] connID=%d GetConnection poolKey=%d", conn.ID, conn.ID)
 	return m.GetConnectionForDatabase(ctx, conn, "", serverSecret)
 }
 
@@ -173,8 +167,6 @@ func (m *MonitoredConnectionPoolManager) GetConnectionForDatabase(ctx context.Co
 		fmt.Fprintf(h, "%d:%s", conn.ID, databaseName)
 		poolKey = -int(h.Sum32())
 	}
-
-	log.Printf("[POOL DEBUG] connID=%d GetConnectionForDatabase db=%s poolKey=%d", conn.ID, databaseName, poolKey)
 
 	m.mu.RLock()
 	pool, exists := m.pools[poolKey]
@@ -244,7 +236,6 @@ func (m *MonitoredConnectionPoolManager) GetConnectionForDatabase(ctx context.Co
 
 // ReturnConnection returns a connection to the pool and releases the semaphore slot
 func (m *MonitoredConnectionPoolManager) ReturnConnection(connectionID int, conn *pgxpool.Conn) {
-	log.Printf("[POOL DEBUG] connID=%d ReturnConnection", connectionID)
 	// Simply release the connection back to its pool
 	conn.Release()
 	// Release the semaphore slot

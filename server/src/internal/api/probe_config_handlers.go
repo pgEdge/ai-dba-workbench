@@ -83,7 +83,7 @@ func (h *ProbeConfigHandler) handleProbeConfigSubpath(w http.ResponseWriter, r *
 		return
 	}
 
-	id, err := strconv.Atoi(path)
+	id, err := strconv.ParseInt(path, 10, 64)
 	if err != nil {
 		RespondError(w, http.StatusBadRequest, "Invalid probe config ID")
 		return
@@ -122,7 +122,7 @@ func (h *ProbeConfigHandler) listProbeConfigs(w http.ResponseWriter, r *http.Req
 }
 
 // getProbeConfig handles GET /api/v1/probe-configs/{id}
-func (h *ProbeConfigHandler) getProbeConfig(w http.ResponseWriter, r *http.Request, id int) {
+func (h *ProbeConfigHandler) getProbeConfig(w http.ResponseWriter, r *http.Request, id int64) {
 	config, err := h.datastore.GetProbeConfig(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, database.ErrProbeConfigNotFound) {
@@ -137,7 +137,7 @@ func (h *ProbeConfigHandler) getProbeConfig(w http.ResponseWriter, r *http.Reque
 }
 
 // updateProbeConfig handles PUT /api/v1/probe-configs/{id}
-func (h *ProbeConfigHandler) updateProbeConfig(w http.ResponseWriter, r *http.Request, id int) {
+func (h *ProbeConfigHandler) updateProbeConfig(w http.ResponseWriter, r *http.Request, id int64) {
 	if !h.requireProbePermission(w, r) {
 		return
 	}

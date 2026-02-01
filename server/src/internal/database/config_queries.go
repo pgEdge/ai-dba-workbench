@@ -14,7 +14,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -24,7 +23,6 @@ import (
 var (
 	ErrProbeConfigNotFound    = errors.New("probe config not found")
 	ErrAlertRuleNotFound      = errors.New("alert rule not found")
-	ErrAlertThresholdNotFound = errors.New("alert threshold not found")
 )
 
 // ProbeConfig represents a probe configuration row
@@ -70,30 +68,6 @@ type AlertRuleUpdate struct {
 	DefaultThreshold *float64 `json:"default_threshold,omitempty"`
 	DefaultSeverity  *string  `json:"default_severity,omitempty"`
 	DefaultEnabled   *bool    `json:"default_enabled,omitempty"`
-}
-
-// AlertThreshold represents a per-connection threshold override
-type AlertThreshold struct {
-	ID           int64     `json:"id"`
-	RuleID       int64     `json:"rule_id"`
-	ConnectionID *int      `json:"connection_id"`
-	DatabaseName *string   `json:"database_name"`
-	Operator     string    `json:"operator"`
-	Threshold    float64   `json:"threshold"`
-	Severity     string    `json:"severity"`
-	Enabled      bool      `json:"enabled"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-}
-
-// AlertThresholdCreateUpdate represents data for creating or updating a threshold
-type AlertThresholdCreateUpdate struct {
-	ConnectionID *int    `json:"connection_id,omitempty"`
-	DatabaseName *string `json:"database_name,omitempty"`
-	Operator     string  `json:"operator"`
-	Threshold    float64 `json:"threshold"`
-	Severity     string  `json:"severity"`
-	Enabled      *bool   `json:"enabled,omitempty"`
 }
 
 // Valid operators for alert rules
@@ -310,117 +284,3 @@ func (d *Datastore) UpdateAlertRule(ctx context.Context, id int64, update AlertR
 	return &r, nil
 }
 
-// GetAlertThresholds returns all thresholds for a given rule ID.
-func (d *Datastore) GetAlertThresholds(ctx context.Context, ruleID int64) ([]AlertThreshold, error) {
-	rows, err := d.pool.Query(ctx,
-		`SELECT id, rule_id, connection_id, database_name, operator,
-                threshold, severity, enabled, created_at, updated_at
-         FROM alert_thresholds WHERE rule_id = $1
-         ORDER BY id`, ruleID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query alert thresholds: %w", err)
-	}
-	defer rows.Close()
-
-	var thresholds []AlertThreshold
-	for rows.Next() {
-		var t AlertThreshold
-		if err := rows.Scan(&t.ID, &t.RuleID, &t.ConnectionID, &t.DatabaseName,
-			&t.Operator, &t.Threshold, &t.Severity, &t.Enabled,
-			&t.CreatedAt, &t.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("failed to scan alert threshold: %w", err)
-		}
-		thresholds = append(thresholds, t)
-	}
-	if thresholds == nil {
-		thresholds = []AlertThreshold{}
-	}
-	return thresholds, rows.Err()
-}
-
-// CreateAlertThreshold creates a new threshold override for a rule.
-func (d *Datastore) CreateAlertThreshold(ctx context.Context, ruleID int64, req AlertThresholdCreateUpdate) (*AlertThreshold, error) {
-	if math.IsNaN(req.Threshold) || math.IsInf(req.Threshold, 0) {
-		return nil, fmt.Errorf("threshold value must be a finite number")
-	}
-	if !validOperators[req.Operator] {
-		return nil, fmt.Errorf("invalid operator: %s", req.Operator)
-	}
-	if !validSeverities[req.Severity] {
-		return nil, fmt.Errorf("invalid severity: %s", req.Severity)
-	}
-
-	// Verify the rule exists
-	_, err := d.GetAlertRule(ctx, ruleID)
-	if err != nil {
-		return nil, err
-	}
-
-	enabled := true
-	if req.Enabled != nil {
-		enabled = *req.Enabled
-	}
-
-	var t AlertThreshold
-	err = d.pool.QueryRow(ctx,
-		`INSERT INTO alert_thresholds (rule_id, connection_id, database_name, operator, threshold, severity, enabled)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         RETURNING id, rule_id, connection_id, database_name, operator, threshold, severity, enabled, created_at, updated_at`,
-		ruleID, req.ConnectionID, req.DatabaseName, req.Operator, req.Threshold, req.Severity, enabled).
-		Scan(&t.ID, &t.RuleID, &t.ConnectionID, &t.DatabaseName,
-			&t.Operator, &t.Threshold, &t.Severity, &t.Enabled, &t.CreatedAt, &t.UpdatedAt)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create alert threshold: %w", err)
-	}
-	return &t, nil
-}
-
-// UpdateAlertThreshold updates an existing threshold.
-// The ruleID parameter ensures the threshold belongs to the specified rule.
-func (d *Datastore) UpdateAlertThreshold(ctx context.Context, ruleID int64, id int64, req AlertThresholdCreateUpdate) (*AlertThreshold, error) {
-	if math.IsNaN(req.Threshold) || math.IsInf(req.Threshold, 0) {
-		return nil, fmt.Errorf("threshold value must be a finite number")
-	}
-	if !validOperators[req.Operator] {
-		return nil, fmt.Errorf("invalid operator: %s", req.Operator)
-	}
-	if !validSeverities[req.Severity] {
-		return nil, fmt.Errorf("invalid severity: %s", req.Severity)
-	}
-
-	enabled := true
-	if req.Enabled != nil {
-		enabled = *req.Enabled
-	}
-
-	var t AlertThreshold
-	err := d.pool.QueryRow(ctx,
-		`UPDATE alert_thresholds
-         SET connection_id = $3, database_name = $4, operator = $5, threshold = $6,
-             severity = $7, enabled = $8, updated_at = NOW()
-         WHERE id = $1 AND rule_id = $2
-         RETURNING id, rule_id, connection_id, database_name, operator, threshold, severity, enabled, created_at, updated_at`,
-		id, ruleID, req.ConnectionID, req.DatabaseName, req.Operator, req.Threshold, req.Severity, enabled).
-		Scan(&t.ID, &t.RuleID, &t.ConnectionID, &t.DatabaseName,
-			&t.Operator, &t.Threshold, &t.Severity, &t.Enabled, &t.CreatedAt, &t.UpdatedAt)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrAlertThresholdNotFound
-		}
-		return nil, fmt.Errorf("failed to update alert threshold: %w", err)
-	}
-	return &t, nil
-}
-
-// DeleteAlertThreshold deletes a threshold override by ID.
-// The ruleID parameter ensures the threshold belongs to the specified rule.
-func (d *Datastore) DeleteAlertThreshold(ctx context.Context, ruleID int64, id int64) error {
-	tag, err := d.pool.Exec(ctx, `DELETE FROM alert_thresholds WHERE id = $1 AND rule_id = $2`, id, ruleID)
-	if err != nil {
-		return fmt.Errorf("failed to delete alert threshold: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrAlertThresholdNotFound
-	}
-	return nil
-}

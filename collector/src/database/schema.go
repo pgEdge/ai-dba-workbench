@@ -2155,7 +2155,7 @@ func (sm *SchemaManager) registerMigrations() {
 				VALUES
 					-- Connection alerts
 					('high_connection_count', 'Active connections exceed threshold', 'connections', 'pg_stat_activity.count', 'connections', '>', 100, 'warning', TRUE, NULL, TRUE),
-					('connection_utilization', 'Connection utilization above threshold', 'connections', 'connection_utilization_percent', 'percent', '>', 80, 'warning', TRUE, NULL, TRUE),
+					('connection_utilization', 'Connection utilization above threshold', 'connections', 'pg_stat_activity.connection_utilization_percent', 'percent', '>', 80, 'warning', TRUE, NULL, TRUE),
 
 					-- Replication alerts
 					('replication_lag_bytes', 'Replication lag in bytes exceeds threshold', 'replication', 'pg_stat_replication.lag_bytes', 'bytes', '>', 104857600, 'warning', TRUE, NULL, TRUE),
@@ -2164,7 +2164,7 @@ func (sm *SchemaManager) registerMigrations() {
 					-- Storage alerts
 					('disk_usage_percent', 'Disk usage exceeds threshold', 'storage', 'pg_sys_disk_info.used_percent', 'percent', '>', 80, 'warning', TRUE, 'system_stats', TRUE),
 					('disk_usage_critical', 'Disk usage critically high', 'storage', 'pg_sys_disk_info.used_percent', 'percent', '>', 95, 'critical', TRUE, 'system_stats', TRUE),
-					('table_bloat_ratio', 'Table bloat ratio exceeds threshold', 'storage', 'table_bloat_ratio', 'percent', '>', 50, 'warning', TRUE, NULL, TRUE),
+					('table_bloat_ratio', 'Table bloat ratio exceeds threshold', 'storage', 'pg_stat_all_tables.bloat_ratio', 'percent', '>', 50, 'warning', TRUE, NULL, TRUE),
 
 					-- Performance alerts
 					('cpu_usage_high', 'CPU usage exceeds threshold', 'performance', 'pg_sys_cpu_usage_info.processor_time_percent', 'percent', '>', 80, 'warning', TRUE, 'system_stats', TRUE),
@@ -2176,7 +2176,7 @@ func (sm *SchemaManager) registerMigrations() {
 					-- Transaction alerts
 					('long_running_transaction', 'Transaction running too long', 'transactions', 'pg_stat_activity.max_xact_duration_seconds', 'seconds', '>', 3600, 'warning', TRUE, NULL, TRUE),
 					('idle_in_transaction', 'Connection idle in transaction too long', 'transactions', 'pg_stat_activity.idle_in_transaction_seconds', 'seconds', '>', 300, 'warning', TRUE, NULL, TRUE),
-					('transaction_wraparound', 'Transaction ID wraparound approaching', 'transactions', 'age_percent', 'percent', '>', 75, 'critical', TRUE, NULL, TRUE),
+					('transaction_wraparound', 'Transaction ID wraparound approaching', 'transactions', 'pg_class.age_percent', 'percent', '>', 75, 'critical', TRUE, NULL, TRUE),
 
 					-- Lock alerts
 					('deadlocks_detected', 'Deadlocks detected', 'locks', 'pg_stat_database.deadlocks_delta', 'deadlocks', '>', 0, 'warning', TRUE, NULL, TRUE),
@@ -2187,7 +2187,7 @@ func (sm *SchemaManager) registerMigrations() {
 					('wal_archive_failed', 'WAL archiving failures detected', 'wal', 'pg_stat_wal.failed_count_delta', 'failures', '>', 0, 'critical', TRUE, NULL, TRUE),
 
 					-- Vacuum alerts
-					('autovacuum_not_running', 'Autovacuum has not run recently', 'maintenance', 'table_last_autovacuum_hours', 'hours', '>', 24, 'warning', TRUE, NULL, TRUE),
+					('autovacuum_not_running', 'Autovacuum has not run recently', 'maintenance', 'pg_stat_all_tables.last_autovacuum_hours', 'hours', '>', 24, 'warning', TRUE, NULL, TRUE),
 					('dead_tuple_ratio', 'Dead tuple ratio too high', 'maintenance', 'pg_stat_all_tables.dead_tuple_percent', 'percent', '>', 20, 'warning', TRUE, NULL, TRUE),
 
 					-- Statement alerts

@@ -20,6 +20,7 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/database"
 )
 
+
 // AlertRuleHandler handles REST API requests for alert rule management
 type AlertRuleHandler struct {
 	datastore   *database.Datastore
@@ -75,7 +76,7 @@ func (h *AlertRuleHandler) handleAlertRules(w http.ResponseWriter, r *http.Reque
 	}
 }
 
-// handleAlertRuleSubpath handles /api/v1/alert-rules/{id} and nested paths
+// handleAlertRuleSubpath handles /api/v1/alert-rules/{id}
 func (h *AlertRuleHandler) handleAlertRuleSubpath(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/alert-rules/")
 	parts := strings.Split(path, "/")
@@ -87,43 +88,6 @@ func (h *AlertRuleHandler) handleAlertRuleSubpath(w http.ResponseWriter, r *http
 	id, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil {
 		RespondError(w, http.StatusBadRequest, "Invalid alert rule ID")
-		return
-	}
-
-	// Handle /api/v1/alert-rules/{id}/thresholds and /api/v1/alert-rules/{id}/thresholds/{tid}
-	if len(parts) >= 2 && parts[1] == "thresholds" {
-		if len(parts) == 2 {
-			// /api/v1/alert-rules/{id}/thresholds
-			switch r.Method {
-			case http.MethodGet:
-				h.listThresholds(w, r, id)
-			case http.MethodPost:
-				h.createThreshold(w, r, id)
-			default:
-				w.Header().Set("Allow", "GET, POST")
-				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			}
-			return
-		}
-		if len(parts) == 3 {
-			// /api/v1/alert-rules/{id}/thresholds/{threshold_id}
-			thresholdID, err := strconv.ParseInt(parts[2], 10, 64)
-			if err != nil {
-				RespondError(w, http.StatusBadRequest, "Invalid threshold ID")
-				return
-			}
-			switch r.Method {
-			case http.MethodPut:
-				h.updateThreshold(w, r, id, thresholdID)
-			case http.MethodDelete:
-				h.deleteThreshold(w, r, id, thresholdID)
-			default:
-				w.Header().Set("Allow", "PUT, DELETE")
-				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			}
-			return
-		}
-		http.NotFound(w, r)
 		return
 	}
 
@@ -194,79 +158,3 @@ func (h *AlertRuleHandler) updateAlertRule(w http.ResponseWriter, r *http.Reques
 	RespondJSON(w, http.StatusOK, updated)
 }
 
-// listThresholds handles GET /api/v1/alert-rules/{id}/thresholds
-func (h *AlertRuleHandler) listThresholds(w http.ResponseWriter, r *http.Request, ruleID int64) {
-	thresholds, err := h.datastore.GetAlertThresholds(r.Context(), ruleID)
-	if err != nil {
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch thresholds: "+err.Error())
-		return
-	}
-
-	RespondJSON(w, http.StatusOK, thresholds)
-}
-
-// createThreshold handles POST /api/v1/alert-rules/{id}/thresholds
-func (h *AlertRuleHandler) createThreshold(w http.ResponseWriter, r *http.Request, ruleID int64) {
-	if !h.requireAlertRulePermission(w, r) {
-		return
-	}
-
-	var req database.AlertThresholdCreateUpdate
-	if !DecodeJSONBody(w, r, &req) {
-		return
-	}
-
-	threshold, err := h.datastore.CreateAlertThreshold(r.Context(), ruleID, req)
-	if err != nil {
-		if errors.Is(err, database.ErrAlertRuleNotFound) {
-			RespondError(w, http.StatusNotFound, "Alert rule not found")
-			return
-		}
-		RespondError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	RespondJSON(w, http.StatusCreated, threshold)
-}
-
-// updateThreshold handles PUT /api/v1/alert-rules/{id}/thresholds/{threshold_id}
-func (h *AlertRuleHandler) updateThreshold(w http.ResponseWriter, r *http.Request, ruleID int64, thresholdID int64) {
-	if !h.requireAlertRulePermission(w, r) {
-		return
-	}
-
-	var req database.AlertThresholdCreateUpdate
-	if !DecodeJSONBody(w, r, &req) {
-		return
-	}
-
-	threshold, err := h.datastore.UpdateAlertThreshold(r.Context(), ruleID, thresholdID, req)
-	if err != nil {
-		if errors.Is(err, database.ErrAlertThresholdNotFound) {
-			RespondError(w, http.StatusNotFound, "Alert threshold not found")
-			return
-		}
-		RespondError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	RespondJSON(w, http.StatusOK, threshold)
-}
-
-// deleteThreshold handles DELETE /api/v1/alert-rules/{id}/thresholds/{threshold_id}
-func (h *AlertRuleHandler) deleteThreshold(w http.ResponseWriter, r *http.Request, ruleID int64, thresholdID int64) {
-	if !h.requireAlertRulePermission(w, r) {
-		return
-	}
-
-	if err := h.datastore.DeleteAlertThreshold(r.Context(), ruleID, thresholdID); err != nil {
-		if errors.Is(err, database.ErrAlertThresholdNotFound) {
-			RespondError(w, http.StatusNotFound, "Alert threshold not found")
-			return
-		}
-		RespondError(w, http.StatusInternalServerError, "Failed to delete threshold: "+err.Error())
-		return
-	}
-
-	RespondJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
-}

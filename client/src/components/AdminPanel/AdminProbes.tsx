@@ -20,6 +20,7 @@ import {
     TableRow,
     Paper,
     Button,
+    IconButton,
     Switch,
     TextField,
     CircularProgress,
@@ -30,6 +31,9 @@ import {
     DialogActions,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
+import {
+    Edit as EditIcon,
+} from '@mui/icons-material';
 import {
     tableHeaderCellSx,
     dialogTitleSx,
@@ -90,7 +94,7 @@ const AdminProbes: React.FC = () => {
         fetchProbes();
     }, [fetchProbes]);
 
-    const handleRowClick = (probe: ProbeConfig) => {
+    const handleEditProbe = (probe: ProbeConfig) => {
         setEditProbe(probe);
         setEditEnabled(probe.is_enabled);
         setEditInterval(String(probe.collection_interval_seconds));
@@ -145,7 +149,7 @@ const AdminProbes: React.FC = () => {
     return (
         <Box>
             <Typography variant="h6" sx={{ ...pageHeadingSx, mb: 2 }}>
-                Probe Configuration
+                Probe Defaults
             </Typography>
 
             {error && (
@@ -172,6 +176,7 @@ const AdminProbes: React.FC = () => {
                             <TableCell sx={tableHeaderCellSx}>Enabled</TableCell>
                             <TableCell sx={tableHeaderCellSx}>Interval</TableCell>
                             <TableCell sx={tableHeaderCellSx}>Retention (days)</TableCell>
+                            <TableCell sx={tableHeaderCellSx} align="right">Actions</TableCell>
                         </TableRow>
                     </TableHead>
                     <TableBody>
@@ -180,8 +185,6 @@ const AdminProbes: React.FC = () => {
                                 <TableRow
                                     key={probe.id}
                                     hover
-                                    onClick={() => handleRowClick(probe)}
-                                    sx={{ cursor: 'pointer' }}
                                 >
                                     <TableCell>{probe.name}</TableCell>
                                     <TableCell>{probe.description}</TableCell>
@@ -190,16 +193,24 @@ const AdminProbes: React.FC = () => {
                                             checked={probe.is_enabled}
                                             size="small"
                                             disabled
-                                            onClick={(e) => e.stopPropagation()}
                                         />
                                     </TableCell>
                                     <TableCell>{probe.collection_interval_seconds}s</TableCell>
                                     <TableCell>{probe.retention_days}</TableCell>
+                                    <TableCell align="right">
+                                        <IconButton
+                                            size="small"
+                                            onClick={() => handleEditProbe(probe)}
+                                            aria-label="edit probe"
+                                        >
+                                            <EditIcon fontSize="small" />
+                                        </IconButton>
+                                    </TableCell>
                                 </TableRow>
                             ))
                         ) : (
                             <TableRow>
-                                <TableCell colSpan={5} align="center" sx={emptyRowSx}>
+                                <TableCell colSpan={6} align="center" sx={emptyRowSx}>
                                     <Typography color="text.secondary" sx={emptyRowTextSx}>
                                         No probe configurations found.
                                     </Typography>
@@ -238,6 +249,11 @@ const AdminProbes: React.FC = () => {
                         onChange={(e) => setEditInterval(e.target.value)}
                         disabled={saving}
                         inputProps={{ min: 1 }}
+                        sx={(sxTheme) => ({
+                            '& input[type=number]': {
+                                colorScheme: sxTheme.palette.mode === 'dark' ? 'dark' : 'light',
+                            },
+                        })}
                     />
                     <TextField
                         label="Retention Days"
@@ -248,6 +264,11 @@ const AdminProbes: React.FC = () => {
                         onChange={(e) => setEditRetention(e.target.value)}
                         disabled={saving}
                         inputProps={{ min: 1 }}
+                        sx={(sxTheme) => ({
+                            '& input[type=number]': {
+                                colorScheme: sxTheme.palette.mode === 'dark' ? 'dark' : 'light',
+                            },
+                        })}
                     />
                 </DialogContent>
                 <DialogActions sx={dialogActionsSx}>

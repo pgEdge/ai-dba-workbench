@@ -37,8 +37,6 @@ import {
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import {
-    Add as AddIcon,
-    Delete as DeleteIcon,
     Edit as EditIcon,
 } from '@mui/icons-material';
 import {
@@ -46,15 +44,11 @@ import {
     dialogTitleSx,
     dialogActionsSx,
     pageHeadingSx,
-    sectionHeaderSx,
-    sectionTitleSx,
     loadingContainerSx,
     emptyRowSx,
     emptyRowTextSx,
     categoryLabelSx,
     getContainedButtonSx,
-    getTextButtonSx,
-    getDeleteIconSx,
     getTableContainerSx,
     getFocusedLabelSx,
 } from './styles';
@@ -68,22 +62,11 @@ interface AlertRule {
     id: number;
     name: string;
     category: string;
-    metric: string;
+    metric_name: string;
     default_operator: string;
     default_threshold: number;
     default_severity: string;
     default_enabled: boolean;
-}
-
-interface ThresholdOverride {
-    id: number;
-    alert_rule_id: number;
-    connection_id: number;
-    connection_name?: string;
-    operator: string;
-    threshold: number;
-    severity: string;
-    enabled: boolean;
 }
 
 const severityColor = (severity: string): 'default' | 'info' | 'warning' | 'error' => {
@@ -112,26 +95,6 @@ const AdminAlertRules: React.FC = () => {
     const [editSeverity, setEditSeverity] = useState('');
     const [saving, setSaving] = useState(false);
 
-    // Selected rule for threshold overrides
-    const [selectedRule, setSelectedRule] = useState<AlertRule | null>(null);
-    const [thresholds, setThresholds] = useState<ThresholdOverride[]>([]);
-    const [thresholdsLoading, setThresholdsLoading] = useState(false);
-
-    // Threshold edit/create dialog
-    const [thresholdDialogOpen, setThresholdDialogOpen] = useState(false);
-    const [editingThreshold, setEditingThreshold] = useState<ThresholdOverride | null>(null);
-    const [thresholdConnectionId, setThresholdConnectionId] = useState('');
-    const [thresholdOperator, setThresholdOperator] = useState('>');
-    const [thresholdValue, setThresholdValue] = useState('');
-    const [thresholdSeverity, setThresholdSeverity] = useState('warning');
-    const [thresholdEnabled, setThresholdEnabled] = useState(true);
-    const [thresholdSaving, setThresholdSaving] = useState(false);
-
-    // Delete confirmation
-    const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-    const [deletingThreshold, setDeletingThreshold] = useState<ThresholdOverride | null>(null);
-    const [deleting, setDeleting] = useState(false);
-
     const fetchRules = useCallback(async () => {
         try {
             setLoading(true);
@@ -151,28 +114,6 @@ const AdminAlertRules: React.FC = () => {
     useEffect(() => {
         fetchRules();
     }, [fetchRules]);
-
-    const fetchThresholds = useCallback(async (ruleId: number) => {
-        try {
-            setThresholdsLoading(true);
-            const response = await fetch(
-                `${API_BASE_URL}/alert-rules/${ruleId}/thresholds`,
-                { credentials: 'include' }
-            );
-            if (!response.ok) throw new Error('Failed to fetch thresholds');
-            const data = await response.json();
-            setThresholds(data.thresholds || data || []);
-        } catch (err: any) {
-            setError(err.message);
-        } finally {
-            setThresholdsLoading(false);
-        }
-    }, []);
-
-    const handleRowClick = (rule: AlertRule) => {
-        setSelectedRule(rule);
-        fetchThresholds(rule.id);
-    };
 
     const handleEditRule = (rule: AlertRule, e: React.MouseEvent) => {
         e.stopPropagation();
@@ -223,96 +164,6 @@ const AdminAlertRules: React.FC = () => {
         }
     };
 
-    // Threshold CRUD
-    const handleAddThreshold = () => {
-        setEditingThreshold(null);
-        setThresholdConnectionId('');
-        setThresholdOperator(selectedRule?.default_operator || '>');
-        setThresholdValue(String(selectedRule?.default_threshold || ''));
-        setThresholdSeverity(selectedRule?.default_severity || 'warning');
-        setThresholdEnabled(true);
-        setThresholdDialogOpen(true);
-    };
-
-    const handleEditThreshold = (t: ThresholdOverride) => {
-        setEditingThreshold(t);
-        setThresholdConnectionId(String(t.connection_id));
-        setThresholdOperator(t.operator);
-        setThresholdValue(String(t.threshold));
-        setThresholdSeverity(t.severity);
-        setThresholdEnabled(t.enabled);
-        setThresholdDialogOpen(true);
-    };
-
-    const handleSaveThreshold = async () => {
-        if (!selectedRule) return;
-        const thresholdNum = parseFloat(thresholdValue);
-        if (isNaN(thresholdNum)) {
-            setError('Threshold must be a valid number.');
-            return;
-        }
-        try {
-            setThresholdSaving(true);
-            setError(null);
-            const body = {
-                connection_id: parseInt(thresholdConnectionId, 10),
-                operator: thresholdOperator,
-                threshold: thresholdNum,
-                severity: thresholdSeverity,
-                enabled: thresholdEnabled,
-            };
-            const url = editingThreshold
-                ? `${API_BASE_URL}/alert-rules/${selectedRule.id}/thresholds/${editingThreshold.id}`
-                : `${API_BASE_URL}/alert-rules/${selectedRule.id}/thresholds`;
-            const method = editingThreshold ? 'PUT' : 'POST';
-            const response = await fetch(url, {
-                method,
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify(body),
-            });
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.error || 'Failed to save threshold override');
-            }
-            setThresholdDialogOpen(false);
-            setSuccess('Threshold override saved successfully.');
-            fetchThresholds(selectedRule.id);
-        } catch (err: any) {
-            setError(err.message);
-        } finally {
-            setThresholdSaving(false);
-        }
-    };
-
-    const handleConfirmDelete = (t: ThresholdOverride) => {
-        setDeletingThreshold(t);
-        setDeleteDialogOpen(true);
-    };
-
-    const handleDeleteThreshold = async () => {
-        if (!selectedRule || !deletingThreshold) return;
-        try {
-            setDeleting(true);
-            setError(null);
-            const response = await fetch(
-                `${API_BASE_URL}/alert-rules/${selectedRule.id}/thresholds/${deletingThreshold.id}`,
-                {
-                    method: 'DELETE',
-                    credentials: 'include',
-                }
-            );
-            if (!response.ok) throw new Error('Failed to delete threshold override');
-            setDeleteDialogOpen(false);
-            setSuccess('Threshold override deleted.');
-            fetchThresholds(selectedRule.id);
-        } catch (err: any) {
-            setError(err.message);
-        } finally {
-            setDeleting(false);
-        }
-    };
-
     if (loading) {
         return (
             <Box sx={loadingContainerSx}>
@@ -322,8 +173,6 @@ const AdminAlertRules: React.FC = () => {
     }
 
     const containedButtonSx = getContainedButtonSx(theme);
-    const textButtonSx = getTextButtonSx(theme);
-    const deleteIconSx = getDeleteIconSx(theme);
     const tableContainerSx = getTableContainerSx(theme);
     const focusedLabelSx = getFocusedLabelSx(theme);
 
@@ -333,7 +182,7 @@ const AdminAlertRules: React.FC = () => {
     return (
         <Box>
             <Typography variant="h6" sx={{ ...pageHeadingSx, mb: 2 }}>
-                Alert Rules
+                Alert Defaults
             </Typography>
 
             {error && (
@@ -356,8 +205,7 @@ const AdminAlertRules: React.FC = () => {
                     <TableHead>
                         <TableRow>
                             <TableCell sx={tableHeaderCellSx}>Name</TableCell>
-                            <TableCell sx={tableHeaderCellSx}>Category</TableCell>
-                            <TableCell sx={tableHeaderCellSx}>Metric</TableCell>
+<TableCell sx={tableHeaderCellSx}>Metric</TableCell>
                             <TableCell sx={tableHeaderCellSx}>Condition</TableCell>
                             <TableCell sx={tableHeaderCellSx}>Severity</TableCell>
                             <TableCell sx={tableHeaderCellSx}>Enabled</TableCell>
@@ -370,7 +218,7 @@ const AdminAlertRules: React.FC = () => {
                                 <React.Fragment key={category}>
                                     <TableRow>
                                         <TableCell
-                                            colSpan={7}
+                                            colSpan={6}
                                             sx={{
                                                 ...categoryLabelSx,
                                                 bgcolor: theme.palette.action.hover,
@@ -386,19 +234,9 @@ const AdminAlertRules: React.FC = () => {
                                             <TableRow
                                                 key={rule.id}
                                                 hover
-                                                selected={selectedRule?.id === rule.id}
-                                                onClick={() => handleRowClick(rule)}
-                                                sx={{ cursor: 'pointer' }}
                                             >
                                                 <TableCell>{rule.name}</TableCell>
-                                                <TableCell>
-                                                    <Chip
-                                                        label={rule.category}
-                                                        size="small"
-                                                        variant="outlined"
-                                                    />
-                                                </TableCell>
-                                                <TableCell>{rule.metric}</TableCell>
+                                                <TableCell>{rule.metric_name}</TableCell>
                                                 <TableCell>
                                                     {rule.default_operator} {rule.default_threshold}
                                                 </TableCell>
@@ -414,7 +252,6 @@ const AdminAlertRules: React.FC = () => {
                                                         checked={rule.default_enabled}
                                                         size="small"
                                                         disabled
-                                                        onClick={(e) => e.stopPropagation()}
                                                     />
                                                 </TableCell>
                                                 <TableCell align="right">
@@ -432,7 +269,7 @@ const AdminAlertRules: React.FC = () => {
                             ))
                         ) : (
                             <TableRow>
-                                <TableCell colSpan={7} align="center" sx={emptyRowSx}>
+                                <TableCell colSpan={6} align="center" sx={emptyRowSx}>
                                     <Typography color="text.secondary" sx={emptyRowTextSx}>
                                         No alert rules found.
                                     </Typography>
@@ -442,101 +279,6 @@ const AdminAlertRules: React.FC = () => {
                     </TableBody>
                 </Table>
             </TableContainer>
-
-            {/* Threshold Overrides Section */}
-            {selectedRule && (
-                <Box sx={{ mt: 4 }}>
-                    <Box sx={sectionHeaderSx}>
-                        <Typography variant="subtitle1" sx={sectionTitleSx}>
-                            Threshold Overrides: {selectedRule.name}
-                        </Typography>
-                        <Button
-                            size="small"
-                            startIcon={<AddIcon />}
-                            onClick={handleAddThreshold}
-                            sx={textButtonSx}
-                        >
-                            Add Override
-                        </Button>
-                    </Box>
-                    <TableContainer
-                        component={Paper}
-                        elevation={0}
-                        sx={tableContainerSx}
-                    >
-                        <Table size="small">
-                            <TableHead>
-                                <TableRow>
-                                    <TableCell sx={tableHeaderCellSx}>Connection</TableCell>
-                                    <TableCell sx={tableHeaderCellSx}>Condition</TableCell>
-                                    <TableCell sx={tableHeaderCellSx}>Severity</TableCell>
-                                    <TableCell sx={tableHeaderCellSx}>Enabled</TableCell>
-                                    <TableCell sx={tableHeaderCellSx} align="right">Actions</TableCell>
-                                </TableRow>
-                            </TableHead>
-                            <TableBody>
-                                {thresholdsLoading ? (
-                                    <TableRow>
-                                        <TableCell colSpan={5} align="center" sx={{ py: 3 }}>
-                                            <CircularProgress size={24} />
-                                        </TableCell>
-                                    </TableRow>
-                                ) : thresholds.length > 0 ? (
-                                    thresholds.map((t) => (
-                                        <TableRow key={t.id}>
-                                            <TableCell>
-                                                {t.connection_name || `Connection ${t.connection_id}`}
-                                            </TableCell>
-                                            <TableCell>
-                                                {t.operator} {t.threshold}
-                                            </TableCell>
-                                            <TableCell>
-                                                <Chip
-                                                    label={t.severity}
-                                                    size="small"
-                                                    color={severityColor(t.severity)}
-                                                />
-                                            </TableCell>
-                                            <TableCell>
-                                                <Switch
-                                                    checked={t.enabled}
-                                                    size="small"
-                                                    disabled
-                                                />
-                                            </TableCell>
-                                            <TableCell align="right">
-                                                <IconButton
-                                                    size="small"
-                                                    onClick={() => handleEditThreshold(t)}
-                                                    aria-label="edit threshold"
-                                                >
-                                                    <EditIcon fontSize="small" />
-                                                </IconButton>
-                                                <IconButton
-                                                    size="small"
-                                                    onClick={() => handleConfirmDelete(t)}
-                                                    sx={deleteIconSx}
-                                                    aria-label="delete threshold"
-                                                >
-                                                    <DeleteIcon fontSize="small" />
-                                                </IconButton>
-                                            </TableCell>
-                                        </TableRow>
-                                    ))
-                                ) : (
-                                    <TableRow>
-                                        <TableCell colSpan={5} align="center" sx={emptyRowSx}>
-                                            <Typography color="text.secondary" sx={emptyRowTextSx}>
-                                                No threshold overrides for this rule.
-                                            </Typography>
-                                        </TableCell>
-                                    </TableRow>
-                                )}
-                            </TableBody>
-                        </Table>
-                    </TableContainer>
-                </Box>
-            )}
 
             {/* Edit Rule Dialog */}
             <Dialog
@@ -578,6 +320,11 @@ const AdminAlertRules: React.FC = () => {
                         value={editThreshold}
                         onChange={(e) => setEditThreshold(e.target.value)}
                         disabled={saving}
+                        sx={(sxTheme) => ({
+                            '& input[type=number]': {
+                                colorScheme: sxTheme.palette.mode === 'dark' ? 'dark' : 'light',
+                            },
+                        })}
                     />
                     <FormControl fullWidth margin="dense">
                         <InputLabel sx={focusedLabelSx}>Severity</InputLabel>
@@ -604,123 +351,6 @@ const AdminAlertRules: React.FC = () => {
                         sx={containedButtonSx}
                     >
                         {saving ? <CircularProgress size={20} color="inherit" /> : 'Save'}
-                    </Button>
-                </DialogActions>
-            </Dialog>
-
-            {/* Threshold Override Dialog */}
-            <Dialog
-                open={thresholdDialogOpen}
-                onClose={() => !thresholdSaving && setThresholdDialogOpen(false)}
-                maxWidth="xs"
-                fullWidth
-            >
-                <DialogTitle sx={dialogTitleSx}>
-                    {editingThreshold ? 'Edit Threshold Override' : 'Add Threshold Override'}
-                </DialogTitle>
-                <DialogContent>
-                    <TextField
-                        label="Connection ID"
-                        type="number"
-                        fullWidth
-                        margin="dense"
-                        value={thresholdConnectionId}
-                        onChange={(e) => setThresholdConnectionId(e.target.value)}
-                        disabled={thresholdSaving || !!editingThreshold}
-                        inputProps={{ min: 1 }}
-                    />
-                    <FormControl fullWidth margin="dense">
-                        <InputLabel sx={focusedLabelSx}>Operator</InputLabel>
-                        <Select
-                            value={thresholdOperator}
-                            label="Operator"
-                            onChange={(e) => setThresholdOperator(e.target.value)}
-                            disabled={thresholdSaving}
-                        >
-                            {OPERATORS.map((op) => (
-                                <MenuItem key={op} value={op}>{op}</MenuItem>
-                            ))}
-                        </Select>
-                    </FormControl>
-                    <TextField
-                        label="Threshold"
-                        type="number"
-                        fullWidth
-                        margin="dense"
-                        value={thresholdValue}
-                        onChange={(e) => setThresholdValue(e.target.value)}
-                        disabled={thresholdSaving}
-                    />
-                    <FormControl fullWidth margin="dense">
-                        <InputLabel sx={focusedLabelSx}>Severity</InputLabel>
-                        <Select
-                            value={thresholdSeverity}
-                            label="Severity"
-                            onChange={(e) => setThresholdSeverity(e.target.value)}
-                            disabled={thresholdSaving}
-                        >
-                            {SEVERITIES.map((s) => (
-                                <MenuItem key={s} value={s}>{s}</MenuItem>
-                            ))}
-                        </Select>
-                    </FormControl>
-                    <Box sx={{ display: 'flex', alignItems: 'center', mt: 1 }}>
-                        <Typography sx={{ flex: 1 }}>Enabled</Typography>
-                        <Switch
-                            checked={thresholdEnabled}
-                            onChange={(e) => setThresholdEnabled(e.target.checked)}
-                            disabled={thresholdSaving}
-                        />
-                    </Box>
-                </DialogContent>
-                <DialogActions sx={dialogActionsSx}>
-                    <Button
-                        onClick={() => setThresholdDialogOpen(false)}
-                        disabled={thresholdSaving}
-                    >
-                        Cancel
-                    </Button>
-                    <Button
-                        onClick={handleSaveThreshold}
-                        variant="contained"
-                        disabled={thresholdSaving || !thresholdConnectionId}
-                        sx={containedButtonSx}
-                    >
-                        {thresholdSaving ? <CircularProgress size={20} color="inherit" /> : 'Save'}
-                    </Button>
-                </DialogActions>
-            </Dialog>
-
-            {/* Delete Confirmation Dialog */}
-            <Dialog
-                open={deleteDialogOpen}
-                onClose={() => !deleting && setDeleteDialogOpen(false)}
-                maxWidth="xs"
-            >
-                <DialogTitle sx={dialogTitleSx}>
-                    Delete Threshold Override
-                </DialogTitle>
-                <DialogContent>
-                    <Typography>
-                        Are you sure you want to delete the threshold override for{' '}
-                        {deletingThreshold?.connection_name ||
-                            `Connection ${deletingThreshold?.connection_id}`}?
-                    </Typography>
-                </DialogContent>
-                <DialogActions sx={dialogActionsSx}>
-                    <Button
-                        onClick={() => setDeleteDialogOpen(false)}
-                        disabled={deleting}
-                    >
-                        Cancel
-                    </Button>
-                    <Button
-                        onClick={handleDeleteThreshold}
-                        variant="contained"
-                        color="error"
-                        disabled={deleting}
-                    >
-                        {deleting ? <CircularProgress size={20} color="inherit" /> : 'Delete'}
                     </Button>
                 </DialogActions>
             </Dialog>

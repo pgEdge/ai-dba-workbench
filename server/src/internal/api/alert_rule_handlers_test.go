@@ -154,87 +154,6 @@ func TestAlertRuleHandler_UpdateRequiresPermission(t *testing.T) {
 	}
 }
 
-func TestAlertRuleHandler_ThresholdCreateRequiresPermission(t *testing.T) {
-	authStore, cleanup := createTestAuthStoreForAlertRules(t)
-	defer cleanup()
-
-	rbac := auth.NewRBACChecker(authStore, true)
-	handler := NewAlertRuleHandler(nil, nil, rbac)
-
-	body, _ := json.Marshal(map[string]interface{}{
-		"operator":  ">",
-		"threshold": 90.0,
-		"severity":  "critical",
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/alert-rules/1/thresholds", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-
-	handler.handleAlertRuleSubpath(rec, req)
-
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("Expected status %d, got %d", http.StatusForbidden, rec.Code)
-	}
-}
-
-func TestAlertRuleHandler_ThresholdSubpath_InvalidThresholdID(t *testing.T) {
-	handler := NewAlertRuleHandler(nil, nil, nil)
-
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/alert-rules/1/thresholds/abc", nil)
-	rec := httptest.NewRecorder()
-
-	handler.handleAlertRuleSubpath(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, rec.Code)
-	}
-
-	var response ErrorResponse
-	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
-		t.Fatalf("Failed to decode response: %v", err)
-	}
-
-	if response.Error != "Invalid threshold ID" {
-		t.Errorf("Expected error 'Invalid threshold ID', got %q", response.Error)
-	}
-}
-
-func TestAlertRuleHandler_ThresholdSubpath_MethodNotAllowed(t *testing.T) {
-	handler := NewAlertRuleHandler(nil, nil, nil)
-
-	req := httptest.NewRequest(http.MethodPatch, "/api/v1/alert-rules/1/thresholds/1", nil)
-	rec := httptest.NewRecorder()
-
-	handler.handleAlertRuleSubpath(rec, req)
-
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("Expected status %d, got %d", http.StatusMethodNotAllowed, rec.Code)
-	}
-
-	allowed := rec.Header().Get("Allow")
-	if allowed != "PUT, DELETE" {
-		t.Errorf("Expected Allow header 'PUT, DELETE', got %q", allowed)
-	}
-}
-
-func TestAlertRuleHandler_ThresholdsCollection_MethodNotAllowed(t *testing.T) {
-	handler := NewAlertRuleHandler(nil, nil, nil)
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/alert-rules/1/thresholds", nil)
-	rec := httptest.NewRecorder()
-
-	handler.handleAlertRuleSubpath(rec, req)
-
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("Expected status %d, got %d", http.StatusMethodNotAllowed, rec.Code)
-	}
-
-	allowed := rec.Header().Get("Allow")
-	if allowed != "GET, POST" {
-		t.Errorf("Expected Allow header 'GET, POST', got %q", allowed)
-	}
-}
-
 func TestAlertRuleHandler_RegisterRoutes_NotConfigured(t *testing.T) {
 	handler := NewAlertRuleHandler(nil, nil, nil)
 	mux := http.NewServeMux()
@@ -245,7 +164,6 @@ func TestAlertRuleHandler_RegisterRoutes_NotConfigured(t *testing.T) {
 	paths := []string{
 		"/api/v1/alert-rules",
 		"/api/v1/alert-rules/1",
-		"/api/v1/alert-rules/1/thresholds",
 	}
 
 	for _, path := range paths {

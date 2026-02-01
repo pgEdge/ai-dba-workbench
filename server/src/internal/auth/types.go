@@ -57,9 +57,9 @@ const (
 	PermManagePermissions = "manage_permissions"
 	PermManageUsers       = "manage_users"
 	PermManageTokenScopes = "manage_token_scopes"
-	PermManageBlackouts    = "manage_blackouts"
-	PermManageProbes       = "manage_probes"
-	PermManageAlertRules   = "manage_alert_rules"
+	PermManageBlackouts   = "manage_blackouts"
+	PermManageProbes      = "manage_probes"
+	PermManageAlertRules  = "manage_alert_rules"
 )
 
 // AdminPermissionGrant represents a granted admin permission for a group

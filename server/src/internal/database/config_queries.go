@@ -21,8 +21,8 @@ import (
 
 // Sentinel errors for config operations
 var (
-	ErrProbeConfigNotFound    = errors.New("probe config not found")
-	ErrAlertRuleNotFound      = errors.New("alert rule not found")
+	ErrProbeConfigNotFound = errors.New("probe config not found")
+	ErrAlertRuleNotFound   = errors.New("alert rule not found")
 )
 
 // ProbeConfig represents a probe configuration row
@@ -283,4 +283,3 @@ func (d *Datastore) UpdateAlertRule(ctx context.Context, id int64, update AlertR
 	}
 	return &r, nil
 }
-

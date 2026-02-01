@@ -20,7 +20,6 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/database"
 )
 
-
 // AlertRuleHandler handles REST API requests for alert rule management
 type AlertRuleHandler struct {
 	datastore   *database.Datastore
@@ -157,4 +156,3 @@ func (h *AlertRuleHandler) updateAlertRule(w http.ResponseWriter, r *http.Reques
 
 	RespondJSON(w, http.StatusOK, updated)
 }
-

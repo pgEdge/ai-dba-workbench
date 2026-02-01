@@ -35,7 +35,7 @@ const (
 	TokenTypeUser    = "user"    // User-created tokens
 
 	// Schema version for migrations
-	schemaVersion = 9
+	schemaVersion = 10
 )
 
 // AuthStore manages users and tokens in SQLite
@@ -423,6 +423,37 @@ func (s *AuthStore) initSchema() error {
 		_, err = s.db.Exec(migrationV9)
 		if err != nil {
 			return fmt.Errorf("failed to apply schema migration v9: %w", err)
+		}
+	}
+
+	// Apply migrations for schema version 10 (add manage_probes and manage_alert_rules permissions)
+	if currentVersion < 10 {
+		migrationV10 := `
+        -- Recreate table with updated CHECK constraint including manage_probes and manage_alert_rules
+        CREATE TABLE IF NOT EXISTS group_admin_permissions_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER NOT NULL
+                REFERENCES user_groups(id) ON DELETE CASCADE,
+            permission TEXT NOT NULL CHECK (permission IN (
+                'manage_connections', 'manage_groups',
+                'manage_permissions', 'manage_users',
+                'manage_token_scopes', 'manage_blackouts',
+                'manage_probes', 'manage_alert_rules'
+            )),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(group_id, permission)
+        );
+        INSERT INTO group_admin_permissions_new (id, group_id, permission, created_at)
+            SELECT id, group_id, permission, created_at
+            FROM group_admin_permissions;
+        DROP TABLE group_admin_permissions;
+        ALTER TABLE group_admin_permissions_new RENAME TO group_admin_permissions;
+        CREATE INDEX IF NOT EXISTS idx_admin_perms_group ON group_admin_permissions(group_id);
+        CREATE INDEX IF NOT EXISTS idx_admin_perms_perm ON group_admin_permissions(permission);
+        `
+		_, err = s.db.Exec(migrationV10)
+		if err != nil {
+			return fmt.Errorf("failed to apply schema migration v10: %w", err)
 		}
 	}
 

@@ -30,6 +30,8 @@ import AdminUsers from './AdminUsers';
 import AdminGroups from './AdminGroups';
 import AdminPermissions from './AdminPermissions';
 import AdminTokenScopes from './AdminTokenScopes';
+import AdminProbes from './AdminProbes';
+import AdminAlertRules from './AdminAlertRules';
 
 const Transition = React.forwardRef(function Transition(
     props: TransitionProps & { children: React.ReactElement },
@@ -44,6 +46,8 @@ const TAB_DEFS = [
     { id: 'groups', label: 'Groups', permission: 'manage_groups', Component: AdminGroups },
     { id: 'permissions', label: 'Permissions', permission: 'manage_permissions', Component: AdminPermissions },
     { id: 'token_scopes', label: 'Token Scopes', permission: 'manage_token_scopes', Component: AdminTokenScopes },
+    { id: 'probes', label: 'Probes', permission: 'manage_probes', Component: AdminProbes },
+    { id: 'alert_rules', label: 'Alert Rules', permission: 'manage_alert_rules', Component: AdminAlertRules },
 ];
 
 interface AdminPanelProps {

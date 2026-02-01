@@ -116,6 +116,24 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 			fmt.Fprintf(os.Stderr, "Blackout management: DISABLED (datastore not configured)\n")
 		}
 
+		// Probe configuration endpoints (for configurable collection intervals)
+		probeConfigHandler := api.NewProbeConfigHandler(deps.Datastore, deps.AuthStore, rbacChecker)
+		probeConfigHandler.RegisterRoutes(mux, authWrapper)
+		if deps.Datastore != nil {
+			fmt.Fprintf(os.Stderr, "Probe configuration: ENABLED\n")
+		} else {
+			fmt.Fprintf(os.Stderr, "Probe configuration: DISABLED (datastore not configured)\n")
+		}
+
+		// Alert rule configuration endpoints (for configurable alert thresholds)
+		alertRuleHandler := api.NewAlertRuleHandler(deps.Datastore, deps.AuthStore, rbacChecker)
+		alertRuleHandler.RegisterRoutes(mux, authWrapper)
+		if deps.Datastore != nil {
+			fmt.Fprintf(os.Stderr, "Alert rule configuration: ENABLED\n")
+		} else {
+			fmt.Fprintf(os.Stderr, "Alert rule configuration: DISABLED (datastore not configured)\n")
+		}
+
 		// Timeline endpoints (for EventTimeline component)
 		timelineHandler := api.NewTimelineHandler(deps.Datastore, deps.AuthStore)
 		timelineHandler.RegisterRoutes(mux, authWrapper)

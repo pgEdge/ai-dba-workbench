@@ -187,6 +187,8 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
     const dataFingerprintRef = useRef<string>('');
     // Track if this is the initial load (to show loading state)
     const isInitialLoadRef = useRef<boolean>(true);
+    // Stable ref for fetchClusterData to avoid resetting the interval
+    const fetchRef = useRef<() => Promise<void>>(() => Promise.resolve());
 
     /**
      * Fetch cluster hierarchy from the API.
@@ -257,6 +259,11 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
         }
     }, [user]);
 
+    // Keep the ref updated with the latest fetchClusterData
+    useEffect(() => {
+        fetchRef.current = fetchClusterData;
+    }, [fetchClusterData]);
+
     // Fetch cluster data when user changes
     useEffect(() => {
         if (user) {
@@ -266,16 +273,17 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
         }
     }, [user, fetchClusterData]);
 
-    // Auto-refresh effect
+    // Auto-refresh effect - uses fetchRef to avoid resetting the
+    // interval when fetchClusterData's reference changes
     useEffect(() => {
         if (!autoRefreshEnabled || !user) return;
 
         const intervalId = setInterval(() => {
-            fetchClusterData();
+            fetchRef.current();
         }, autoRefreshInterval);
 
         return () => clearInterval(intervalId);
-    }, [autoRefreshEnabled, user, fetchClusterData]);
+    }, [autoRefreshEnabled, user]);
 
     const value: ClusterDataContextValue = {
         // Data

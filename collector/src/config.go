@@ -227,9 +227,6 @@ func (c *Config) Validate() error {
 	if c.Pool.DatastoreMaxIdleSeconds < 0 {
 		return fmt.Errorf("pool.datastore_max_idle_seconds must be non-negative")
 	}
-	if c.Pool.MonitoredMaxConnections <= 0 {
-		return fmt.Errorf("pool.monitored_max_connections must be greater than 0")
-	}
 	if c.Pool.MonitoredMaxIdleSeconds < 0 {
 		return fmt.Errorf("pool.monitored_max_idle_seconds must be non-negative")
 	}

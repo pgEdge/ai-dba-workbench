@@ -71,9 +71,14 @@ func main() {
 	ctx := context.Background()
 
 	// Initialize monitored connection pool manager
-	logger.Infof("Creating monitored pool manager with max %d connections per server, idle timeout %ds",
-		config.Pool.MonitoredMaxConnections, config.Pool.MonitoredMaxIdleSeconds)
-	poolManager := database.NewMonitoredConnectionPoolManager(config.Pool.MonitoredMaxConnections, config.Pool.MonitoredMaxIdleSeconds)
+	// The semaphore size is auto-derived from the number of probes per
+	// connection; pass 0 here as a placeholder until the scheduler sets it.
+	if config.Pool.MonitoredMaxConnections != 5 && config.Pool.MonitoredMaxConnections != 0 {
+		logger.Infof("pool.monitored_max_connections is deprecated and ignored; the semaphore size is now auto-derived from the probe count")
+	}
+	logger.Infof("Creating monitored pool manager with idle timeout %ds",
+		config.Pool.MonitoredMaxIdleSeconds)
+	poolManager := database.NewMonitoredConnectionPoolManager(0, config.Pool.MonitoredMaxIdleSeconds)
 
 	// Initialize probe scheduler
 	probeScheduler := scheduler.NewProbeScheduler(ds, poolManager, config, config.GetServerSecret())

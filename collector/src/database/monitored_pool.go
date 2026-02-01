@@ -15,6 +15,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"hash/fnv"
+	"log"
 	"sync"
 	"time"
 
@@ -25,26 +26,28 @@ import (
 
 // MonitoredConnectionPoolManager manages connection pools for monitored databases
 type MonitoredConnectionPoolManager struct {
-	pools          map[int]*pgxpool.Pool
-	semaphores     map[int]chan struct{} // Per-connection semaphores for limiting concurrent connections
-	versions       map[int]int           // Per-connection PostgreSQL major version cache
-	poolHashes     map[int]string        // Pool key -> hash of connection params used to create pool
-	poolUpdatedAt  map[int]time.Time     // Connection ID -> updated_at when pool was created
-	maxConnections int                   // Maximum concurrent connections per monitored server
-	maxIdleSeconds int                   // Maximum idle time (seconds) before closing idle connections
-	mu             sync.RWMutex
+	pools           map[int]*pgxpool.Pool
+	semaphores      map[int]chan struct{} // Per-connection semaphores for limiting concurrent connections
+	versions        map[int]int           // Per-connection PostgreSQL major version cache
+	poolHashes      map[int]string        // Pool key -> hash of connection params used to create pool
+	poolUpdatedAt   map[int]time.Time     // Connection ID -> updated_at when pool was created
+	poolKeyToConnID map[int]int           // Pool key -> connection ID (for reverse lookup)
+	maxConnections  int                   // Maximum concurrent connections per monitored server
+	maxIdleSeconds  int                   // Maximum idle time (seconds) before closing idle connections
+	mu              sync.RWMutex
 }
 
 // NewMonitoredConnectionPoolManager creates a new pool manager
 func NewMonitoredConnectionPoolManager(maxConnectionsPerServer int, maxIdleSeconds int) *MonitoredConnectionPoolManager {
 	return &MonitoredConnectionPoolManager{
-		pools:          make(map[int]*pgxpool.Pool),
-		semaphores:     make(map[int]chan struct{}),
-		versions:       make(map[int]int),
-		poolHashes:     make(map[int]string),
-		poolUpdatedAt:  make(map[int]time.Time),
-		maxConnections: maxConnectionsPerServer,
-		maxIdleSeconds: maxIdleSeconds,
+		pools:           make(map[int]*pgxpool.Pool),
+		semaphores:      make(map[int]chan struct{}),
+		versions:        make(map[int]int),
+		poolHashes:      make(map[int]string),
+		poolUpdatedAt:   make(map[int]time.Time),
+		poolKeyToConnID: make(map[int]int),
+		maxConnections:  maxConnectionsPerServer,
+		maxIdleSeconds:  maxIdleSeconds,
 	}
 }
 
@@ -91,6 +94,21 @@ func (m *MonitoredConnectionPoolManager) DetectAndCacheVersion(ctx context.Conte
 	return serverVersion, nil
 }
 
+// SetMaxConnections updates the maximum concurrent connections per server.
+// New semaphores will be created with this size. Existing semaphores are
+// replaced; this is only safe when no probes are actively running (e.g.
+// during initialization or config reload).
+func (m *MonitoredConnectionPoolManager) SetMaxConnections(n int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.maxConnections = n
+	// Replace all existing semaphores with the new size
+	for id := range m.semaphores {
+		m.semaphores[id] = make(chan struct{}, n)
+		logger.Infof("Resized semaphore for connection %d to %d slots", id, n)
+	}
+}
+
 // getSemaphore gets or creates a semaphore for a connection ID
 func (m *MonitoredConnectionPoolManager) getSemaphore(connectionID int) chan struct{} {
 	m.mu.Lock()
@@ -109,10 +127,13 @@ func (m *MonitoredConnectionPoolManager) getSemaphore(connectionID int) chan str
 // acquireSlot acquires a slot from the semaphore, blocking if all slots are in use
 func (m *MonitoredConnectionPoolManager) acquireSlot(ctx context.Context, connectionID int) error {
 	sem := m.getSemaphore(connectionID)
+	log.Printf("[POOL DEBUG] connID=%d acquiring semaphore slot (capacity=%d, %d/%d in use)", connectionID, cap(sem), len(sem), cap(sem))
 	select {
 	case sem <- struct{}{}:
+		log.Printf("[POOL DEBUG] connID=%d acquired semaphore slot (%d/%d in use)", connectionID, len(sem), cap(sem))
 		return nil
 	case <-ctx.Done():
+		log.Printf("[POOL DEBUG] connID=%d TIMEOUT waiting for semaphore slot (%d/%d in use)", connectionID, len(sem), cap(sem))
 		return ctx.Err()
 	}
 }
@@ -125,11 +146,13 @@ func (m *MonitoredConnectionPoolManager) releaseSlot(connectionID int) {
 
 	if exists {
 		<-sem
+		log.Printf("[POOL DEBUG] connID=%d released semaphore slot (%d/%d in use)", connectionID, len(sem), cap(sem))
 	}
 }
 
 // GetConnection retrieves a connection for a monitored database
 func (m *MonitoredConnectionPoolManager) GetConnection(ctx context.Context, conn MonitoredConnection, serverSecret string) (*pgxpool.Conn, error) {
+	log.Printf("[POOL DEBUG] connID=%d GetConnection poolKey=%d", conn.ID, conn.ID)
 	return m.GetConnectionForDatabase(ctx, conn, "", serverSecret)
 }
 
@@ -150,6 +173,8 @@ func (m *MonitoredConnectionPoolManager) GetConnectionForDatabase(ctx context.Co
 		fmt.Fprintf(h, "%d:%s", conn.ID, databaseName)
 		poolKey = -int(h.Sum32())
 	}
+
+	log.Printf("[POOL DEBUG] connID=%d GetConnectionForDatabase db=%s poolKey=%d", conn.ID, databaseName, poolKey)
 
 	m.mu.RLock()
 	pool, exists := m.pools[poolKey]
@@ -198,6 +223,7 @@ func (m *MonitoredConnectionPoolManager) GetConnectionForDatabase(ctx context.Co
 	// Add our new pool to the map and store the connection string hash
 	m.pools[poolKey] = newPool
 	m.poolHashes[poolKey] = hashConnString(connStr)
+	m.poolKeyToConnID[poolKey] = conn.ID
 	m.poolUpdatedAt[conn.ID] = conn.UpdatedAt
 	m.mu.Unlock()
 
@@ -218,6 +244,7 @@ func (m *MonitoredConnectionPoolManager) GetConnectionForDatabase(ctx context.Co
 
 // ReturnConnection returns a connection to the pool and releases the semaphore slot
 func (m *MonitoredConnectionPoolManager) ReturnConnection(connectionID int, conn *pgxpool.Conn) {
+	log.Printf("[POOL DEBUG] connID=%d ReturnConnection", connectionID)
 	// Simply release the connection back to its pool
 	conn.Release()
 	// Release the semaphore slot
@@ -237,6 +264,7 @@ func (m *MonitoredConnectionPoolManager) RemovePool(connectionID int) error {
 	pool.Close()
 	delete(m.pools, connectionID)
 	delete(m.poolHashes, connectionID)
+	delete(m.poolKeyToConnID, connectionID)
 	delete(m.poolUpdatedAt, connectionID)
 	logger.Infof("Removed connection pool for monitored connection %d", connectionID)
 
@@ -258,14 +286,12 @@ func (m *MonitoredConnectionPoolManager) CheckConnectionUpdated(connectionID int
 
 	// Connection was updated, invalidate all pools for this connection
 	for poolKey := range m.pools {
-		connID := poolKey
-		if poolKey < 0 {
-			connID = -(poolKey / 10000)
-		}
+		connID := m.poolKeyToConnID[poolKey]
 		if connID == connectionID {
 			m.pools[poolKey].Close()
 			delete(m.pools, poolKey)
 			delete(m.poolHashes, poolKey)
+			delete(m.poolKeyToConnID, poolKey)
 		}
 	}
 	delete(m.poolUpdatedAt, connectionID)
@@ -289,13 +315,8 @@ func (m *MonitoredConnectionPoolManager) SyncPools(activeConnectionIDs []int) {
 	// Find and close pools for connections that are no longer monitored
 	var toRemove []int
 	for poolKey := range m.pools {
-		// Extract the actual connection ID from the pool key
-		// Positive keys are regular connections, negative keys are database-specific pools
-		connID := poolKey
-		if poolKey < 0 {
-			// Database-specific pool - extract connection ID
-			connID = -(poolKey / 10000)
-		}
+		// Look up the connection ID from the pool key mapping
+		connID := m.poolKeyToConnID[poolKey]
 
 		// If this connection is no longer in the active set, mark for removal
 		if !activeSet[connID] {
@@ -307,22 +328,15 @@ func (m *MonitoredConnectionPoolManager) SyncPools(activeConnectionIDs []int) {
 	for _, poolKey := range toRemove {
 		pool := m.pools[poolKey]
 		pool.Close()
+		connID := m.poolKeyToConnID[poolKey]
 		delete(m.pools, poolKey)
 		delete(m.poolHashes, poolKey)
+		delete(m.poolKeyToConnID, poolKey)
 
-		// Also remove the semaphore for regular connections
-		connID := poolKey
-		if poolKey < 0 {
-			connID = -(poolKey / 10000)
-		}
 		// Only remove semaphore if there are no more pools for this connection
 		hasOtherPools := false
 		for pk := range m.pools {
-			pkConnID := pk
-			if pk < 0 {
-				pkConnID = -(pk / 10000)
-			}
-			if pkConnID == connID {
+			if m.poolKeyToConnID[pk] == connID {
 				hasOtherPools = true
 				break
 			}
@@ -363,11 +377,8 @@ func (m *MonitoredConnectionPoolManager) InvalidateChangedPools(connections []Mo
 	// Identify pool keys whose connection parameters have changed
 	var toRemove []int
 	for poolKey, storedHash := range m.poolHashes {
-		// Derive the connection ID from the pool key
-		connID := poolKey
-		if poolKey < 0 {
-			connID = -(poolKey / 10000)
-		}
+		// Look up the connection ID from the pool key mapping
+		connID := m.poolKeyToConnID[poolKey]
 
 		currentHash, exists := currentHashes[connID]
 		if !exists {
@@ -382,10 +393,7 @@ func (m *MonitoredConnectionPoolManager) InvalidateChangedPools(connections []Mo
 
 	// Close and remove invalidated pools
 	for _, poolKey := range toRemove {
-		connID := poolKey
-		if poolKey < 0 {
-			connID = -(poolKey / 10000)
-		}
+		connID := m.poolKeyToConnID[poolKey]
 
 		pool := m.pools[poolKey]
 		if pool != nil {
@@ -393,6 +401,7 @@ func (m *MonitoredConnectionPoolManager) InvalidateChangedPools(connections []Mo
 		}
 		delete(m.pools, poolKey)
 		delete(m.poolHashes, poolKey)
+		delete(m.poolKeyToConnID, poolKey)
 
 		// Also clear the cached version for this connection
 		delete(m.versions, connID)

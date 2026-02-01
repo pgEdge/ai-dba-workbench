@@ -68,8 +68,8 @@ func TestMigration_PgSettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to query schema version: %v", err)
 	}
-	if version != 2 {
-		t.Errorf("Expected schema version 2, got %d", version)
+	if version != 4 {
+		t.Errorf("Expected schema version 4, got %d", version)
 	}
 
 	// Verify pg_settings table exists

@@ -312,6 +312,10 @@ At the end of each README:
 
 - Do not skip database tests when testing changes.
 
+- **After any code change, always run `gofmt` (for Go) and all relevant
+  linters before considering the task complete.** A task is not finished
+  until formatting and linting pass with no errors or warnings.
+
 - Run `make test-all` in the top-level directory before completing a task.
 
 ## Security

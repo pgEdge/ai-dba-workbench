@@ -253,18 +253,22 @@ func (m *MonitoredConnectionPoolManager) ReturnConnection(connectionID int, conn
 // RemovePool removes a pool for a monitored connection
 func (m *MonitoredConnectionPoolManager) RemovePool(connectionID int) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	pool, exists := m.pools[connectionID]
 	if !exists {
+		m.mu.Unlock()
 		return nil // Already removed
 	}
 
-	pool.Close()
 	delete(m.pools, connectionID)
 	delete(m.poolHashes, connectionID)
 	delete(m.poolKeyToConnID, connectionID)
 	delete(m.poolUpdatedAt, connectionID)
+
+	m.mu.Unlock()
+
+	// Close pool outside the lock to avoid deadlock with borrowed connections
+	pool.Close()
 	logger.Infof("Removed connection pool for monitored connection %d", connectionID)
 
 	return nil
@@ -438,24 +442,33 @@ func (m *MonitoredConnectionPoolManager) InvalidateChangedPools(connections []Mo
 // Close closes all pools
 func (m *MonitoredConnectionPoolManager) Close() error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	poolCount := len(m.pools)
 	if poolCount == 0 {
+		m.mu.Unlock()
 		logger.Info("No monitored connection pools to close")
 		return nil
 	}
 
 	logger.Infof("Closing %d monitored connection pool(s)...", poolCount)
 
+	// Collect pools to close
+	poolsToClose := make(map[int]*pgxpool.Pool, poolCount)
 	for id, pool := range m.pools {
+		poolsToClose[id] = pool
+	}
+	m.pools = make(map[int]*pgxpool.Pool)
+
+	m.mu.Unlock()
+
+	// Close pools outside the lock to avoid deadlock with borrowed connections
+	for id, pool := range poolsToClose {
 		pool.Close()
 		logger.Infof("Closed pool for connection %d", id)
 	}
 
 	logger.Infof("Closed %d monitored connection pool(s)", poolCount)
 
-	m.pools = make(map[int]*pgxpool.Pool)
 	return nil
 }
 

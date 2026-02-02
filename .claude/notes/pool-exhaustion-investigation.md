@@ -201,6 +201,59 @@ Specifically, each method should:
 - `collector/src/database/monitored_pool.go` — `SyncPools`,
   `InvalidateChangedPools`, `CheckConnectionUpdated`
 
+## Third Hang: RemovePool and Close Deadlock (2026-02-02)
+
+### Symptoms
+
+The collector hung again approximately 40 minutes after
+restart on 2026-02-02. The goroutine dump revealed the
+following critical state:
+
+- 175 goroutines blocked on `sync.Mutex.Lock` at
+  `CheckConnectionUpdated` (monitored_pool.go:278) for
+  422 minutes
+- 386 goroutines blocked on `sync.RWMutex.RLock` at
+  `scheduleProbeForConnection` (scheduler.go:327) for
+  407 minutes
+- 1 goroutine (477) blocked on `sync.WaitGroup.Wait`
+  inside `puddle.Pool.Close` for 426 minutes, called from
+  `RemovePool` at monitored_pool.go:263
+
+### Root Cause
+
+Two methods were missed in the previous deadlock fix:
+`RemovePool` and `Close`. Both called `pool.Close()`
+while holding `m.mu.Lock()` via `defer m.mu.Unlock()`.
+The deadlock cycle was identical to the second hang:
+
+1. A probe goroutine calls `RemovePool` which takes
+   `m.mu.Lock()` then calls `pool.Close()`
+
+2. `pool.Close()` blocks on `WaitGroup.Wait` until all
+   borrowed connections return
+
+3. Other probe goroutines holding borrowed connections
+   call `CheckConnectionUpdated` which tries
+   `m.mu.Lock()` — deadlocked
+
+4. Those probes cannot return connections, so
+   `pool.Close()` never completes
+
+### Fix
+
+The fix applied the same pattern as the previous
+deadlock resolution to both `RemovePool` and `Close`:
+
+1. Collect pool references while holding `m.mu`
+2. Delete map entries while holding `m.mu`
+3. Release `m.mu`
+4. Close collected pools outside the lock
+
+### Files Modified
+
+- `collector/src/database/monitored_pool.go` —
+  `RemovePool`, `Close`
+
 ## Verification
 
 After deploying the fix, the team confirmed the following

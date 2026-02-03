@@ -68,14 +68,30 @@ func TestAuthHandler_HandleLogin(t *testing.T) {
 				if !resp.Success {
 					t.Error("Expected success to be true")
 				}
-				if resp.SessionToken == "" {
-					t.Error("Expected non-empty session token")
-				}
 				if resp.ExpiresAt == "" {
 					t.Error("Expected non-empty expiration time")
 				}
 				if resp.Message != "Authentication successful" {
 					t.Errorf("Expected message 'Authentication successful', got '%s'", resp.Message)
+				}
+				// Verify session token is in httpOnly cookie, not response body
+				cookies := w.Result().Cookies()
+				var sessionCookie *http.Cookie
+				for _, c := range cookies {
+					if c.Name == SessionCookieName {
+						sessionCookie = c
+						break
+					}
+				}
+				if sessionCookie == nil {
+					t.Error("Expected session_token cookie to be set")
+				} else {
+					if sessionCookie.Value == "" {
+						t.Error("Expected non-empty session token in cookie")
+					}
+					if !sessionCookie.HttpOnly {
+						t.Error("Expected session cookie to be httpOnly")
+					}
 				}
 			},
 		},

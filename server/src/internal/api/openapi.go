@@ -171,12 +171,12 @@ func buildSchemas() map[string]*OpenAPISchema {
 			Required: []string{"username", "password"},
 		},
 		"LoginResponse": {
-			Type: "object",
+			Type:        "object",
+			Description: "The session token is transmitted via httpOnly cookie, not in the response body",
 			Properties: map[string]*OpenAPISchema{
-				"success":       {Type: "boolean", Description: "Whether login succeeded"},
-				"session_token": {Type: "string", Description: "Session token for authenticated requests"},
-				"expires_at":    {Type: "string", Format: "date-time", Description: "Token expiration time"},
-				"message":       {Type: "string", Description: "Status message"},
+				"success":    {Type: "boolean", Description: "Whether login succeeded"},
+				"expires_at": {Type: "string", Format: "date-time", Description: "Token expiration time"},
+				"message":    {Type: "string", Description: "Status message"},
 			},
 		},
 		"UserInfoResponse": {

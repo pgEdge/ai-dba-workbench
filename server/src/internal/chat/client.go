@@ -342,21 +342,33 @@ func (c *Client) authenticateUser(ctx context.Context, username, password string
 
 	// Parse the success response
 	var authResult struct {
-		Success      bool   `json:"success"`
-		SessionToken string `json:"session_token"`
-		ExpiresAt    string `json:"expires_at"`
-		Message      string `json:"message"`
+		Success   bool   `json:"success"`
+		ExpiresAt string `json:"expires_at"`
+		Message   string `json:"message"`
 	}
 
 	if err := json.Unmarshal(body, &authResult); err != nil {
 		return "", fmt.Errorf("failed to parse authentication response: %w", err)
 	}
 
-	if !authResult.Success || authResult.SessionToken == "" {
+	if !authResult.Success {
 		return "", fmt.Errorf("authentication failed: %s", authResult.Message)
 	}
 
-	return authResult.SessionToken, nil
+	// Extract session token from httpOnly cookie (secure approach)
+	var sessionToken string
+	for _, cookie := range resp.Cookies() {
+		if cookie.Name == "session_token" {
+			sessionToken = cookie.Value
+			break
+		}
+	}
+
+	if sessionToken == "" {
+		return "", fmt.Errorf("authentication succeeded but no session cookie received")
+	}
+
+	return sessionToken, nil
 }
 
 // initializeLLM creates the LLM client with model validation and auto-selection

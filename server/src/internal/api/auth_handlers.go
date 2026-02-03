@@ -55,12 +55,13 @@ type LoginRequest struct {
 	Password string `json:"password"`
 }
 
-// LoginResponse is the response body for successful login
+// LoginResponse is the response body for successful login.
+// Note: The session token is transmitted ONLY via httpOnly cookie, never in the
+// response body. This prevents XSS attacks from stealing the token.
 type LoginResponse struct {
-	Success      bool   `json:"success"`
-	SessionToken string `json:"session_token"`
-	ExpiresAt    string `json:"expires_at"`
-	Message      string `json:"message"`
+	Success   bool   `json:"success"`
+	ExpiresAt string `json:"expires_at"`
+	Message   string `json:"message"`
 }
 
 // RegisterRoutes registers authentication routes on the mux
@@ -143,12 +144,11 @@ func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode, // CSRF protection (Lax works with proxies)
 	})
 
-	// Return success response (token also in body for backwards compatibility)
+	// Return success response (session token is in httpOnly cookie only)
 	RespondJSON(w, http.StatusOK, LoginResponse{
-		Success:      true,
-		SessionToken: token,
-		ExpiresAt:    expiration.Format(time.RFC3339),
-		Message:      "Authentication successful",
+		Success:   true,
+		ExpiresAt: expiration.Format(time.RFC3339),
+		Message:   "Authentication successful",
 	})
 }
 

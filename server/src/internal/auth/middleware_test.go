@@ -607,3 +607,490 @@ func TestExtractIPAddress_Deprecated(t *testing.T) {
 		}
 	})
 }
+
+// =============================================================================
+// Additional Context Helper Tests
+// =============================================================================
+
+func TestGetIPAddressFromContext(t *testing.T) {
+	t.Run("with IP address", func(t *testing.T) {
+		ctx := context.WithValue(context.Background(), IPAddressContextKey, "192.168.1.100")
+		ip := GetIPAddressFromContext(ctx)
+		if ip != "192.168.1.100" {
+			t.Errorf("Expected '192.168.1.100', got %q", ip)
+		}
+	})
+
+	t.Run("without IP address", func(t *testing.T) {
+		ctx := context.Background()
+		ip := GetIPAddressFromContext(ctx)
+		if ip != "" {
+			t.Errorf("Expected empty string for missing IP, got %q", ip)
+		}
+	})
+
+	t.Run("with wrong type", func(t *testing.T) {
+		ctx := context.WithValue(context.Background(), IPAddressContextKey, 12345)
+		ip := GetIPAddressFromContext(ctx)
+		if ip != "" {
+			t.Errorf("Expected empty string for wrong type, got %q", ip)
+		}
+	})
+}
+
+func TestGetUsernameFromContext(t *testing.T) {
+	t.Run("with username", func(t *testing.T) {
+		ctx := context.WithValue(context.Background(), UsernameContextKey, "testuser")
+		username := GetUsernameFromContext(ctx)
+		if username != "testuser" {
+			t.Errorf("Expected 'testuser', got %q", username)
+		}
+	})
+
+	t.Run("without username", func(t *testing.T) {
+		ctx := context.Background()
+		username := GetUsernameFromContext(ctx)
+		if username != "" {
+			t.Errorf("Expected empty string for missing username, got %q", username)
+		}
+	})
+
+	t.Run("with wrong type", func(t *testing.T) {
+		ctx := context.WithValue(context.Background(), UsernameContextKey, 12345)
+		username := GetUsernameFromContext(ctx)
+		if username != "" {
+			t.Errorf("Expected empty string for wrong type, got %q", username)
+		}
+	})
+}
+
+func TestIsAPITokenFromContext(t *testing.T) {
+	t.Run("true value", func(t *testing.T) {
+		ctx := context.WithValue(context.Background(), IsAPITokenContextKey, true)
+		if !IsAPITokenFromContext(ctx) {
+			t.Error("Expected true")
+		}
+	})
+
+	t.Run("false value", func(t *testing.T) {
+		ctx := context.WithValue(context.Background(), IsAPITokenContextKey, false)
+		if IsAPITokenFromContext(ctx) {
+			t.Error("Expected false")
+		}
+	})
+
+	t.Run("not set", func(t *testing.T) {
+		ctx := context.Background()
+		if IsAPITokenFromContext(ctx) {
+			t.Error("Expected false when not set")
+		}
+	})
+
+	t.Run("wrong type", func(t *testing.T) {
+		ctx := context.WithValue(context.Background(), IsAPITokenContextKey, "true")
+		if IsAPITokenFromContext(ctx) {
+			t.Error("Expected false for wrong type")
+		}
+	})
+}
+
+func TestGetUserIDFromContext(t *testing.T) {
+	t.Run("with user ID", func(t *testing.T) {
+		ctx := context.WithValue(context.Background(), UserIDContextKey, int64(42))
+		userID := GetUserIDFromContext(ctx)
+		if userID != 42 {
+			t.Errorf("Expected 42, got %d", userID)
+		}
+	})
+
+	t.Run("without user ID", func(t *testing.T) {
+		ctx := context.Background()
+		userID := GetUserIDFromContext(ctx)
+		if userID != 0 {
+			t.Errorf("Expected 0 for missing user ID, got %d", userID)
+		}
+	})
+
+	t.Run("with wrong type", func(t *testing.T) {
+		ctx := context.WithValue(context.Background(), UserIDContextKey, 42) // int, not int64
+		userID := GetUserIDFromContext(ctx)
+		if userID != 0 {
+			t.Errorf("Expected 0 for wrong type, got %d", userID)
+		}
+	})
+}
+
+func TestGetTokenIDFromContext(t *testing.T) {
+	t.Run("with token ID", func(t *testing.T) {
+		ctx := context.WithValue(context.Background(), TokenIDContextKey, int64(123))
+		tokenID := GetTokenIDFromContext(ctx)
+		if tokenID != 123 {
+			t.Errorf("Expected 123, got %d", tokenID)
+		}
+	})
+
+	t.Run("without token ID", func(t *testing.T) {
+		ctx := context.Background()
+		tokenID := GetTokenIDFromContext(ctx)
+		if tokenID != 0 {
+			t.Errorf("Expected 0 for missing token ID, got %d", tokenID)
+		}
+	})
+
+	t.Run("with wrong type", func(t *testing.T) {
+		ctx := context.WithValue(context.Background(), TokenIDContextKey, "123")
+		tokenID := GetTokenIDFromContext(ctx)
+		if tokenID != 0 {
+			t.Errorf("Expected 0 for wrong type, got %d", tokenID)
+		}
+	})
+}
+
+func TestIsSuperuserFromContext(t *testing.T) {
+	t.Run("true value", func(t *testing.T) {
+		ctx := context.WithValue(context.Background(), IsSuperuserContextKey, true)
+		if !IsSuperuserFromContext(ctx) {
+			t.Error("Expected true")
+		}
+	})
+
+	t.Run("false value", func(t *testing.T) {
+		ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+		if IsSuperuserFromContext(ctx) {
+			t.Error("Expected false")
+		}
+	})
+
+	t.Run("not set", func(t *testing.T) {
+		ctx := context.Background()
+		if IsSuperuserFromContext(ctx) {
+			t.Error("Expected false when not set")
+		}
+	})
+
+	t.Run("wrong type", func(t *testing.T) {
+		ctx := context.WithValue(context.Background(), IsSuperuserContextKey, 1)
+		if IsSuperuserFromContext(ctx) {
+			t.Error("Expected false for wrong type")
+		}
+	})
+}
+
+// =============================================================================
+// Additional Middleware Tests
+// =============================================================================
+
+func TestAuthMiddleware_NilAuthStore(t *testing.T) {
+	middleware := AuthMiddleware(nil, true)
+
+	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("success"))
+	}))
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	// Should pass through when auth store is nil
+	if rr.Code != http.StatusOK {
+		t.Errorf("Expected status OK when auth store is nil, got %d", rr.Code)
+	}
+}
+
+func TestAuthMiddleware_PublicEndpoints(t *testing.T) {
+	store, cleanup := createTestAuthStore(t)
+	defer cleanup()
+
+	middleware := AuthMiddleware(store, true)
+
+	publicPaths := []string{
+		HealthCheckPath,
+		UserInfoPath,
+		"/api/v1/auth/login",
+		"/api/v1/auth/logout",
+		LLMProvidersPath,
+		LLMModelsPath,
+	}
+
+	for _, path := range publicPaths {
+		t.Run(path, func(t *testing.T) {
+			handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}))
+
+			req := httptest.NewRequest("GET", path, nil)
+			rr := httptest.NewRecorder()
+
+			handler.ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusOK {
+				t.Errorf("Expected status OK for public endpoint %s, got %d", path, rr.Code)
+			}
+		})
+	}
+}
+
+func TestAuthMiddleware_SessionCookie(t *testing.T) {
+	tmpDir := filepath.Join(os.TempDir(), "auth-cookie-test")
+	os.MkdirAll(tmpDir, 0750)
+	defer os.RemoveAll(tmpDir)
+
+	store, err := NewAuthStore(tmpDir, 0, 0)
+	if err != nil {
+		t.Fatalf("Failed to create auth store: %v", err)
+	}
+	defer store.Close()
+
+	// Create a user and get session token
+	store.CreateUser("testuser", "testpass123", "Test user", "", "")
+	sessionToken, _, err := store.AuthenticateUser("testuser", "testpass123")
+	if err != nil {
+		t.Fatalf("Failed to authenticate user: %v", err)
+	}
+
+	middleware := AuthMiddleware(store, true)
+
+	var capturedContext context.Context
+	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedContext = r.Context()
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("POST", "/mcp/v1", nil)
+	req.AddCookie(&http.Cookie{
+		Name:  "session_token",
+		Value: sessionToken,
+	})
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("Expected status OK for valid session cookie, got %d", rr.Code)
+	}
+
+	// Verify context values
+	username := GetUsernameFromContext(capturedContext)
+	if username != "testuser" {
+		t.Errorf("Expected username 'testuser', got %q", username)
+	}
+
+	isAPIToken := IsAPITokenFromContext(capturedContext)
+	if isAPIToken {
+		t.Error("Expected IsAPIToken to be false for session token")
+	}
+}
+
+func TestAuthMiddleware_EmptySessionCookie(t *testing.T) {
+	store, cleanup := createTestAuthStore(t)
+	defer cleanup()
+
+	middleware := AuthMiddleware(store, true)
+
+	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("Handler should not be called for empty session cookie")
+	}))
+
+	req := httptest.NewRequest("POST", "/mcp/v1", nil)
+	req.AddCookie(&http.Cookie{
+		Name:  "session_token",
+		Value: "",
+	})
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("Expected status Unauthorized for empty cookie, got %d", rr.Code)
+	}
+}
+
+func TestAuthMiddleware_APITokenWithOwner(t *testing.T) {
+	tmpDir := filepath.Join(os.TempDir(), "auth-owner-test")
+	os.MkdirAll(tmpDir, 0750)
+	defer os.RemoveAll(tmpDir)
+
+	store, err := NewAuthStore(tmpDir, 0, 0)
+	if err != nil {
+		t.Fatalf("Failed to create auth store: %v", err)
+	}
+	defer store.Close()
+
+	// Create a user and a user token
+	store.CreateUser("testuser", "testpass123", "Test user", "", "")
+	rawToken, _, err := store.CreateUserToken("testuser", "User API token", 30)
+	if err != nil {
+		t.Fatalf("Failed to create user token: %v", err)
+	}
+
+	middleware := AuthMiddleware(store, true)
+
+	var capturedContext context.Context
+	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedContext = r.Context()
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("POST", "/mcp/v1", nil)
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("Expected status OK for valid user token, got %d", rr.Code)
+	}
+
+	// Verify context values
+	isAPIToken := IsAPITokenFromContext(capturedContext)
+	if !isAPIToken {
+		t.Error("Expected IsAPIToken to be true for user token")
+	}
+
+	userID := GetUserIDFromContext(capturedContext)
+	if userID == 0 {
+		t.Error("Expected non-zero user ID for user-owned token")
+	}
+}
+
+func TestAuthMiddleware_SuperuserToken(t *testing.T) {
+	tmpDir := filepath.Join(os.TempDir(), "auth-superuser-test")
+	os.MkdirAll(tmpDir, 0750)
+	defer os.RemoveAll(tmpDir)
+
+	store, err := NewAuthStore(tmpDir, 0, 0)
+	if err != nil {
+		t.Fatalf("Failed to create auth store: %v", err)
+	}
+	defer store.Close()
+
+	// Create a superuser service token
+	rawToken, _, err := store.CreateServiceToken("Superuser token", nil, "", true)
+	if err != nil {
+		t.Fatalf("Failed to create service token: %v", err)
+	}
+
+	middleware := AuthMiddleware(store, true)
+
+	var capturedContext context.Context
+	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedContext = r.Context()
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("POST", "/mcp/v1", nil)
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("Expected status OK for valid superuser token, got %d", rr.Code)
+	}
+
+	// Verify superuser context
+	isSuperuser := IsSuperuserFromContext(capturedContext)
+	if !isSuperuser {
+		t.Error("Expected IsSuperuser to be true for superuser token")
+	}
+}
+
+func TestAuthMiddleware_SuperuserSessionUser(t *testing.T) {
+	tmpDir := filepath.Join(os.TempDir(), "auth-superuser-session-test")
+	os.MkdirAll(tmpDir, 0750)
+	defer os.RemoveAll(tmpDir)
+
+	store, err := NewAuthStore(tmpDir, 0, 0)
+	if err != nil {
+		t.Fatalf("Failed to create auth store: %v", err)
+	}
+	defer store.Close()
+
+	// Create a superuser
+	store.CreateUser("superuser", "testpass123", "Superuser", "", "")
+	store.SetUserSuperuser("superuser", true)
+
+	sessionToken, _, err := store.AuthenticateUser("superuser", "testpass123")
+	if err != nil {
+		t.Fatalf("Failed to authenticate user: %v", err)
+	}
+
+	middleware := AuthMiddleware(store, true)
+
+	var capturedContext context.Context
+	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedContext = r.Context()
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("POST", "/mcp/v1", nil)
+	req.Header.Set("Authorization", "Bearer "+sessionToken)
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("Expected status OK for superuser session, got %d", rr.Code)
+	}
+
+	// Verify superuser context
+	isSuperuser := IsSuperuserFromContext(capturedContext)
+	if !isSuperuser {
+		t.Error("Expected IsSuperuser to be true for superuser session")
+	}
+}
+
+// =============================================================================
+// IPv6 IPExtractor Tests
+// =============================================================================
+
+func TestNewIPExtractor_IPv6(t *testing.T) {
+	t.Run("valid IPv6 CIDR", func(t *testing.T) {
+		extractor := NewIPExtractor([]string{"2001:db8::/32"})
+		if len(extractor.TrustedProxies) != 1 {
+			t.Errorf("Expected 1 trusted proxy, got %d", len(extractor.TrustedProxies))
+		}
+	})
+
+	t.Run("valid IPv6 single address", func(t *testing.T) {
+		extractor := NewIPExtractor([]string{"2001:db8::1"})
+		if len(extractor.TrustedProxies) != 1 {
+			t.Errorf("Expected 1 trusted proxy from IPv6 address, got %d", len(extractor.TrustedProxies))
+		}
+	})
+}
+
+func TestIPExtractor_ExtractIP_EdgeCases(t *testing.T) {
+	t.Run("empty X-Forwarded-For header", func(t *testing.T) {
+		extractor := NewIPExtractor([]string{"10.0.0.0/8"})
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "10.0.0.1:12345"
+		req.Header.Set("X-Forwarded-For", "")
+
+		ip := extractor.ExtractIP(req)
+		if ip != "10.0.0.1" {
+			t.Errorf("Expected '10.0.0.1', got %q", ip)
+		}
+	})
+
+	t.Run("invalid IP in RemoteAddr", func(t *testing.T) {
+		extractor := NewIPExtractor(nil)
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "invalid-address"
+
+		ip := extractor.ExtractIP(req)
+		// Should return the raw RemoteAddr when it cannot be parsed
+		if ip != "invalid-address" {
+			t.Errorf("Expected 'invalid-address', got %q", ip)
+		}
+	})
+
+	t.Run("nil IP check in isTrustedProxy", func(t *testing.T) {
+		extractor := NewIPExtractor([]string{"10.0.0.0/8"})
+		if extractor.isTrustedProxy(nil) {
+			t.Error("Expected false for nil IP")
+		}
+	})
+}

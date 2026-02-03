@@ -526,3 +526,265 @@ func TestGetAccessibleConnections(t *testing.T) {
 		t.Error("Expected nil for superuser (all connections)")
 	}
 }
+
+// =============================================================================
+// DatabaseAccessChecker Tests
+// =============================================================================
+
+func TestNewDatabaseAccessChecker(t *testing.T) {
+	tokenStore := InitializeTokenStore()
+	checker := NewDatabaseAccessChecker(tokenStore, true, false)
+
+	if checker == nil {
+		t.Fatal("Expected non-nil checker")
+	}
+}
+
+func TestDatabaseAccessChecker_AuthDisabled(t *testing.T) {
+	tokenStore := InitializeTokenStore()
+	checker := NewDatabaseAccessChecker(tokenStore, false, false)
+	ctx := context.Background()
+
+	if !checker.CanAccessDatabase(ctx) {
+		t.Error("Expected database access when auth disabled")
+	}
+}
+
+func TestDatabaseAccessChecker_APIToken(t *testing.T) {
+	tokenStore := InitializeTokenStore()
+	checker := NewDatabaseAccessChecker(tokenStore, true, false)
+
+	ctx := context.WithValue(context.Background(), IsAPITokenContextKey, true)
+
+	if !checker.CanAccessDatabase(ctx) {
+		t.Error("Expected database access with API token")
+	}
+}
+
+func TestDatabaseAccessChecker_SessionUser(t *testing.T) {
+	tokenStore := InitializeTokenStore()
+	checker := NewDatabaseAccessChecker(tokenStore, true, false)
+
+	// With username in context
+	ctx := context.WithValue(context.Background(), UsernameContextKey, "testuser")
+	if !checker.CanAccessDatabase(ctx) {
+		t.Error("Expected database access with session user")
+	}
+
+	// Without username in context
+	ctx = context.Background()
+	if checker.CanAccessDatabase(ctx) {
+		t.Error("Expected no database access without authentication")
+	}
+}
+
+func TestDatabaseAccessChecker_GetBoundDatabase(t *testing.T) {
+	tokenStore := InitializeTokenStore()
+	checker := NewDatabaseAccessChecker(tokenStore, true, false)
+	ctx := context.Background()
+
+	// Should always return empty string (single database mode)
+	if db := checker.GetBoundDatabase(ctx); db != "" {
+		t.Errorf("Expected empty string, got %q", db)
+	}
+}
+
+// =============================================================================
+// RBACChecker Nil Store Tests
+// =============================================================================
+
+func TestRBACCheckerNilStore(t *testing.T) {
+	checker := NewRBACChecker(nil, true)
+	ctx := context.Background()
+
+	// Should act as superuser when store is nil
+	if !checker.IsSuperuser(ctx) {
+		t.Error("Expected superuser when store is nil")
+	}
+
+	if !checker.CanAccessMCPItem(ctx, "any_tool") {
+		t.Error("Expected MCP access when store is nil")
+	}
+
+	canAccess, level := checker.CanAccessConnection(ctx, 99)
+	if !canAccess || level != AccessLevelReadWrite {
+		t.Error("Expected full connection access when store is nil")
+	}
+
+	if !checker.HasAdminPermission(ctx, PermManageUsers) {
+		t.Error("Expected admin permission when store is nil")
+	}
+}
+
+// =============================================================================
+// Connection Access with "All Connections" Grant Tests
+// =============================================================================
+
+func TestRBACCheckerAllConnectionsGrant(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store, true)
+
+	// Create user with "all connections" privilege
+	store.CreateUser("testuser", "password", "Test user", "", "")
+	userID, _ := store.GetUserID("testuser")
+	groupID, _ := store.CreateGroup("test-group", "Test")
+	store.AddUserToGroup(groupID, userID)
+
+	// Grant access to all connections (connection ID 0 = all)
+	store.GrantConnectionPrivilege(groupID, ConnectionIDAll, AccessLevelRead)
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+
+	// Should have access to any connection through "all" grant
+	canAccess, level := checker.CanAccessConnection(ctx, 999)
+	if !canAccess {
+		t.Error("Expected access through 'all connections' grant")
+	}
+	if level != AccessLevelRead {
+		t.Errorf("Expected 'read' access level, got %q", level)
+	}
+}
+
+func TestRBACCheckerAllConnectionsHigherLevel(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store, true)
+
+	// Create user with mixed privileges
+	store.CreateUser("testuser", "password", "Test user", "", "")
+	userID, _ := store.GetUserID("testuser")
+	groupID, _ := store.CreateGroup("test-group", "Test")
+	store.AddUserToGroup(groupID, userID)
+
+	// Grant read to all connections, read_write to specific connection
+	store.GrantConnectionPrivilege(groupID, ConnectionIDAll, AccessLevelRead)
+	store.GrantConnectionPrivilege(groupID, 1, AccessLevelReadWrite)
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+
+	// Connection 1 should have read_write (specific grant wins)
+	canAccess, level := checker.CanAccessConnection(ctx, 1)
+	if !canAccess || level != AccessLevelReadWrite {
+		t.Errorf("Expected read_write for connection 1, got canAccess=%v level=%q", canAccess, level)
+	}
+
+	// Other connections should have read (from "all" grant)
+	canAccess, level = checker.CanAccessConnection(ctx, 2)
+	if !canAccess || level != AccessLevelRead {
+		t.Errorf("Expected read for connection 2, got canAccess=%v level=%q", canAccess, level)
+	}
+}
+
+// =============================================================================
+// GetEffectivePrivileges with Token Scoping Tests
+// =============================================================================
+
+func TestGetEffectivePrivilegesWithTokenScope(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store, true)
+
+	// Create user with privileges
+	store.CreateUser("testuser", "password", "Test user", "", "")
+	userID, _ := store.GetUserID("testuser")
+	groupID, _ := store.CreateGroup("test-group", "Test")
+	store.AddUserToGroup(groupID, userID)
+
+	// Grant multiple privileges
+	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A")
+	store.RegisterMCPPrivilege("tool_b", MCPPrivilegeTypeTool, "Tool B")
+	store.GrantMCPPrivilegeByName(groupID, "tool_a")
+	store.GrantMCPPrivilegeByName(groupID, "tool_b")
+	store.GrantConnectionPrivilege(groupID, 1, AccessLevelReadWrite)
+	store.GrantConnectionPrivilege(groupID, 2, AccessLevelReadWrite)
+
+	// Create token with scope limiting to tool_a and connection 1
+	_, storedToken, _ := store.CreateServiceToken("Scoped token", nil, "", false)
+	store.SetTokenMCPScopeByNames(storedToken.ID, []string{"tool_a"})
+	store.SetTokenConnectionScope(storedToken.ID, []int{1})
+
+	// Create context with user and scoped token
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+	ctx = context.WithValue(ctx, TokenIDContextKey, storedToken.ID)
+
+	privs := checker.GetEffectivePrivileges(ctx)
+
+	// Should only have tool_a (scoped)
+	if len(privs.MCPPrivileges) != 1 || !privs.MCPPrivileges["tool_a"] {
+		t.Error("Expected only tool_a in scoped privileges")
+	}
+
+	// Should only have connection 1 (scoped)
+	if len(privs.ConnectionPrivileges) != 1 {
+		t.Errorf("Expected 1 connection in scoped privileges, got %d", len(privs.ConnectionPrivileges))
+	}
+}
+
+// =============================================================================
+// GetEffectivePrivileges No User Tests
+// =============================================================================
+
+func TestGetEffectivePrivilegesNoUser(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store, true)
+
+	// Context without user ID
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+
+	privs := checker.GetEffectivePrivileges(ctx)
+
+	if privs.IsSuperuser {
+		t.Error("Expected non-superuser")
+	}
+
+	if len(privs.MCPPrivileges) != 0 {
+		t.Errorf("Expected 0 MCP privileges without user, got %d", len(privs.MCPPrivileges))
+	}
+
+	if len(privs.ConnectionPrivileges) != 0 {
+		t.Errorf("Expected 0 connection privileges without user, got %d", len(privs.ConnectionPrivileges))
+	}
+}
+
+// =============================================================================
+// Admin Permission Edge Cases
+// =============================================================================
+
+func TestHasAdminPermissionInheritedFromNestedGroup(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store, true)
+
+	// Create user and group hierarchy
+	store.CreateUser("testuser", "password", "Test user", "", "")
+	userID, _ := store.GetUserID("testuser")
+	parentID, _ := store.CreateGroup("parent-group", "Parent")
+	childID, _ := store.CreateGroup("child-group", "Child")
+	grandchildID, _ := store.CreateGroup("grandchild-group", "Grandchild")
+
+	// Build hierarchy: parent -> child -> grandchild -> user
+	store.AddGroupToGroup(parentID, childID)
+	store.AddGroupToGroup(childID, grandchildID)
+	store.AddUserToGroup(grandchildID, userID)
+
+	// Grant permission to parent only
+	store.GrantAdminPermission(parentID, PermManageUsers)
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+
+	// User should inherit permission through nested group hierarchy
+	if !checker.HasAdminPermission(ctx, PermManageUsers) {
+		t.Error("Expected user to inherit admin permission from parent through nested groups")
+	}
+}

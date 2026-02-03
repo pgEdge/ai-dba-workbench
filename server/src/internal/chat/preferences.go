@@ -2,12 +2,11 @@
  *
  * pgEdge AI DBA Workbench
  *
- * Portions copyright (c) 2025 - 2026, pgEdge, Inc.
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
  *-------------------------------------------------------------------------
  */
-
 // Package chat provides the interactive chat client functionality.
 // This file re-exports the shared preferences types and functions from pkg/chat.
 package chat

@@ -1,13 +1,12 @@
-/*-----------------------------------------------------------
+/*-------------------------------------------------------------------------
  *
  * pgEdge AI DBA Workbench
  *
- * Portions copyright (c) 2025 - 2026, pgEdge, Inc.
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
- *-----------------------------------------------------------
+ *-------------------------------------------------------------------------
  */
-
 // Package api provides HTTP handlers for the REST API.
 // This file contains response helpers implementing RFC 8631 for API discovery.
 package api

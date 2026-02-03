@@ -2,7 +2,7 @@
  *
  * pgEdge AI DBA Workbench - Status Panel Component
  *
- * Portions copyright (c) 2025 - 2026, pgEdge, Inc.
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
  * Main content panel showing status and alerts for the current selection

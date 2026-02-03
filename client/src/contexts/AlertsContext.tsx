@@ -2,7 +2,7 @@
  *
  * pgEdge AI DBA Workbench - Alerts Context
  *
- * Portions copyright (c) 2025 - 2026, pgEdge, Inc.
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
  * Context for managing alert counts and data across components

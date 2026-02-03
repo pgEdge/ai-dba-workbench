@@ -2,12 +2,11 @@
  *
  * pgEdge AI DBA Workbench
  *
- * Portions copyright (c) 2025 - 2026, pgEdge, Inc.
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
  *-------------------------------------------------------------------------
  */
-
 // Package engine provides the core alerter engine that runs background
 // processing for threshold evaluation, anomaly detection, and baseline
 // calculation.

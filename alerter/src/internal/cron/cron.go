@@ -2,12 +2,11 @@
  *
  * pgEdge AI DBA Workbench
  *
- * Portions copyright (c) 2025 - 2026, pgEdge, Inc.
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
  *-------------------------------------------------------------------------
  */
-
 // Package cron provides utilities for parsing and evaluating cron expressions.
 // It uses the robfig/cron/v3 library for reliable cron parsing that supports
 // all standard cron features including wildcards, ranges, lists, and steps.

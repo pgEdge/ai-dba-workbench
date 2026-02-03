@@ -2,12 +2,11 @@
  *
  * pgEdge AI DBA Workbench
  *
- * Portions copyright (c) 2025 - 2026, pgEdge, Inc.
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
  *-------------------------------------------------------------------------
  */
-
 // Package mcp provides MCP protocol types and helpers for the CLI.
 // This package re-exports types from the shared pkg/mcp package.
 package mcp

@@ -7,6 +7,7 @@
  *
  *-------------------------------------------------------------------------
  */
+
 package llm
 
 import (
@@ -21,88 +22,8 @@ import (
 
 const (
 	openaiBaseURL               = "https://api.openai.com/v1"
-	openaiDefaultEmbeddingModel = "text-embedding-3-small"
 	openaiDefaultReasoningModel = "gpt-4o-mini"
 )
-
-// OpenAIEmbedding implements EmbeddingProvider using OpenAI's API.
-type OpenAIEmbedding struct {
-	apiKey string
-	model  string
-	client *http.Client
-}
-
-// NewOpenAIEmbedding creates a new OpenAI embedding provider.
-func NewOpenAIEmbedding(apiKey, model string) *OpenAIEmbedding {
-	if model == "" {
-		model = openaiDefaultEmbeddingModel
-	}
-	return &OpenAIEmbedding{
-		apiKey: apiKey,
-		model:  model,
-		client: &http.Client{
-			Timeout: 30 * time.Second,
-		},
-	}
-}
-
-// GenerateEmbedding generates an embedding using OpenAI's API.
-func (o *OpenAIEmbedding) GenerateEmbedding(ctx context.Context, text string) ([]float32, error) {
-	requestBody := openaiEmbeddingRequest{
-		Model: o.model,
-		Input: text,
-	}
-
-	jsonBody, err := json.Marshal(requestBody)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", openaiBaseURL+"/embeddings", bytes.NewReader(jsonBody))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+o.apiKey)
-
-	resp, err := o.doRequestWithRetry(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("openai API error (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	var response openaiEmbeddingResponse
-	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	if len(response.Data) == 0 {
-		return nil, ErrInvalidResponse
-	}
-
-	// Convert float64 to float32
-	embedding := make([]float32, len(response.Data[0].Embedding))
-	for i, v := range response.Data[0].Embedding {
-		embedding[i] = float32(v)
-	}
-
-	return embedding, nil
-}
-
-// ModelName returns the model name.
-func (o *OpenAIEmbedding) ModelName() string {
-	return o.model
-}
 
 // OpenAIReasoning implements ReasoningProvider using OpenAI's API.
 type OpenAIReasoning struct {
@@ -189,27 +110,11 @@ func (o *OpenAIReasoning) ModelName() string {
 }
 
 // doRequestWithRetry executes an HTTP request with retry on rate limiting.
-func (o *OpenAIEmbedding) doRequestWithRetry(ctx context.Context, req *http.Request) (*http.Response, error) {
-	return doRequestWithRetry(ctx, o.client, req)
-}
-
-// doRequestWithRetry executes an HTTP request with retry on rate limiting.
 func (o *OpenAIReasoning) doRequestWithRetry(ctx context.Context, req *http.Request) (*http.Response, error) {
 	return doRequestWithRetry(ctx, o.client, req)
 }
 
 // OpenAI API types
-type openaiEmbeddingRequest struct {
-	Model string `json:"model"`
-	Input string `json:"input"`
-}
-
-type openaiEmbeddingResponse struct {
-	Data []struct {
-		Embedding []float64 `json:"embedding"`
-	} `json:"data"`
-}
-
 type openaiChatRequest struct {
 	Model       string          `json:"model"`
 	Messages    []openaiMessage `json:"messages"`

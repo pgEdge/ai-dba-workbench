@@ -7,6 +7,7 @@
  *
  *-------------------------------------------------------------------------
  */
+
 // Package llm provides interfaces and implementations for LLM-based
 // embedding generation and reasoning for anomaly detection.
 package llm
@@ -17,6 +18,7 @@ import (
 	"fmt"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
+	"github.com/pgedge/ai-workbench/pkg/embedding"
 )
 
 // EmbeddingDimension is the standard dimension for embeddings (1536 for OpenAI/Voyage)
@@ -51,8 +53,48 @@ type ReasoningProvider interface {
 	ModelName() string
 }
 
+// embeddingAdapter wraps pkg/embedding.Provider to implement the alerter's
+// EmbeddingProvider interface. It converts between float64 (pkg/embedding)
+// and float32 (alerter) and handles dimension normalization.
+type embeddingAdapter struct {
+	provider embedding.Provider
+}
+
+// GenerateEmbedding generates a vector embedding for the given text.
+// It converts the float64 embedding from pkg/embedding to float32 and
+// normalizes the dimensions to EmbeddingDimension if needed.
+func (a *embeddingAdapter) GenerateEmbedding(ctx context.Context, text string) ([]float32, error) {
+	// Call the underlying provider
+	emb64, err := a.provider.Embed(ctx, text)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert float64 to float32
+	emb32 := make([]float32, len(emb64))
+	for i, v := range emb64 {
+		emb32[i] = float32(v)
+	}
+
+	// Resize to standard dimension if needed
+	if len(emb32) != EmbeddingDimension {
+		emb32 = resizeEmbedding(emb32, EmbeddingDimension)
+	}
+
+	// Normalize the embedding
+	emb32 = normalizeEmbedding(emb32)
+
+	return emb32, nil
+}
+
+// ModelName returns the name of the embedding model being used.
+func (a *embeddingAdapter) ModelName() string {
+	return a.provider.ModelName()
+}
+
 // NewEmbeddingProvider creates an embedding provider based on configuration.
 // Returns nil and no error if embedding is disabled or provider is not configured.
+// This function uses pkg/embedding for the underlying implementation.
 func NewEmbeddingProvider(cfg *config.Config) (EmbeddingProvider, error) {
 	if cfg == nil {
 		return nil, nil
@@ -64,14 +106,22 @@ func NewEmbeddingProvider(cfg *config.Config) (EmbeddingProvider, error) {
 		if apiKey == "" {
 			return nil, fmt.Errorf("openai: %w", ErrAPIKeyMissing)
 		}
-		return NewOpenAIEmbedding(apiKey, cfg.LLM.OpenAI.EmbeddingModel), nil
+		provider, err := embedding.NewOpenAIProvider(apiKey, cfg.LLM.OpenAI.EmbeddingModel)
+		if err != nil {
+			return nil, fmt.Errorf("openai: %w", err)
+		}
+		return &embeddingAdapter{provider: provider}, nil
 
 	case "voyage":
 		apiKey := cfg.GetVoyageAPIKey()
 		if apiKey == "" {
 			return nil, fmt.Errorf("voyage: %w", ErrAPIKeyMissing)
 		}
-		return NewVoyageEmbedding(apiKey, cfg.LLM.Voyage.EmbeddingModel), nil
+		provider, err := embedding.NewVoyageProvider(apiKey, cfg.LLM.Voyage.EmbeddingModel)
+		if err != nil {
+			return nil, fmt.Errorf("voyage: %w", err)
+		}
+		return &embeddingAdapter{provider: provider}, nil
 
 	case "ollama":
 		baseURL := cfg.LLM.Ollama.BaseURL
@@ -82,7 +132,11 @@ func NewEmbeddingProvider(cfg *config.Config) (EmbeddingProvider, error) {
 		if model == "" {
 			model = "nomic-embed-text"
 		}
-		return NewOllamaEmbedding(baseURL, model), nil
+		provider, err := embedding.NewOllamaProvider(baseURL, model)
+		if err != nil {
+			return nil, fmt.Errorf("ollama: %w", err)
+		}
+		return &embeddingAdapter{provider: provider}, nil
 
 	case "", "none", "disabled":
 		return nil, nil

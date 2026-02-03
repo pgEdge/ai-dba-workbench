@@ -16,6 +16,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -756,7 +757,10 @@ func (s *AuthStore) AuthenticateUser(username, password string) (string, time.Ti
 	}
 
 	if !user.Enabled {
-		return "", time.Time{}, fmt.Errorf("user account is disabled")
+		// Log the actual reason for audit purposes, but return generic error
+		// to prevent user enumeration attacks
+		log.Printf("[AUTH] Authentication failed for user %s: account is disabled", username)
+		return "", time.Time{}, fmt.Errorf("invalid username or password")
 	}
 
 	// Verify password
@@ -820,18 +824,21 @@ func (s *AuthStore) ValidateSessionToken(token string) (string, error) {
 	}
 	if session.ExpiresAt.Before(time.Now()) {
 		s.sessions.Delete(tokenHash)
-		return "", fmt.Errorf("session has expired")
+		return "", fmt.Errorf("invalid session token")
 	}
 
 	// Verify user is still enabled
 	user, err := s.GetUser(session.Username)
 	if err != nil || user == nil {
 		s.sessions.Delete(tokenHash)
-		return "", fmt.Errorf("user not found")
+		return "", fmt.Errorf("invalid session token")
 	}
 	if !user.Enabled {
+		// Log the actual reason for audit purposes, but return generic error
+		// to prevent user enumeration attacks
+		log.Printf("[AUTH] Session validation failed for user %s: account is disabled", session.Username)
 		s.sessions.Delete(tokenHash)
-		return "", fmt.Errorf("user account is disabled")
+		return "", fmt.Errorf("invalid session token")
 	}
 
 	return session.Username, nil

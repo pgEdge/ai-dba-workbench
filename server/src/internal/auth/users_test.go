@@ -754,8 +754,9 @@ func TestAuthenticateUser_WithAccountLockout(t *testing.T) {
 			t.Fatal("Expected authentication to fail for locked account")
 		}
 
-		if err.Error() != "user account is disabled" {
-			t.Errorf("Expected 'user account is disabled' error, got: %v", err)
+		// Error message should be generic to prevent user enumeration attacks
+		if err.Error() != "invalid username or password" {
+			t.Errorf("Expected 'invalid username or password' error, got: %v", err)
 		}
 	})
 }

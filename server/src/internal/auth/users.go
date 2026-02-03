@@ -14,6 +14,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -272,7 +273,10 @@ func (s *UserStore) AuthenticateUser(username, password string, maxFailedAttempt
 	}
 
 	if !user.Enabled {
-		return "", time.Time{}, fmt.Errorf("user account is disabled")
+		// Log the actual reason for audit purposes, but return generic error
+		// to prevent user enumeration attacks
+		log.Printf("[AUTH] Authentication failed for user %s: account is disabled", username)
+		return "", time.Time{}, fmt.Errorf("invalid username or password")
 	}
 
 	// Verify password
@@ -352,11 +356,14 @@ func (s *UserStore) ValidateSessionToken(token string) (string, error) {
 		if user.SessionToken == token {
 			// Check if token has expired
 			if user.SessionExpires == nil || user.SessionExpires.Before(time.Now()) {
-				return "", fmt.Errorf("session has expired")
+				return "", fmt.Errorf("invalid session token")
 			}
 
 			if !user.Enabled {
-				return "", fmt.Errorf("user account is disabled")
+				// Log the actual reason for audit purposes, but return generic error
+				// to prevent user enumeration attacks
+				log.Printf("[AUTH] Session validation failed for user %s: account is disabled", username)
+				return "", fmt.Errorf("invalid session token")
 			}
 
 			return username, nil

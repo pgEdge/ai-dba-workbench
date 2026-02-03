@@ -12,7 +12,7 @@ package api
 import (
 	"context"
 	"errors"
-	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -98,8 +98,8 @@ func (h *ClusterHandler) handleClusters(w http.ResponseWriter, r *http.Request) 
 
 	topology, err := h.datastore.GetClusterTopology(ctx)
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Failed to get cluster topology: %v", err))
+		log.Printf("[ERROR] Failed to get cluster topology: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to get cluster topology")
 		return
 	}
 
@@ -240,8 +240,8 @@ func (h *ClusterHandler) listClusterGroups(w http.ResponseWriter, r *http.Reques
 
 	groups, err := h.datastore.GetClusterGroups(ctx)
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Failed to list cluster groups: %v", err))
+		log.Printf("[ERROR] Failed to list cluster groups: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to list cluster groups")
 		return
 	}
 
@@ -254,8 +254,8 @@ func (h *ClusterHandler) getClusterGroup(w http.ResponseWriter, r *http.Request,
 
 	group, err := h.datastore.GetClusterGroup(ctx, id)
 	if err != nil {
-		RespondError(w, http.StatusNotFound,
-			fmt.Sprintf("Cluster group not found: %v", err))
+		log.Printf("[ERROR] Cluster group not found (id=%d): %v", id, err)
+		RespondError(w, http.StatusNotFound, "Cluster group not found")
 		return
 	}
 
@@ -278,8 +278,8 @@ func (h *ClusterHandler) createClusterGroup(w http.ResponseWriter, r *http.Reque
 
 	group, err := h.datastore.CreateClusterGroup(ctx, req.Name, req.Description)
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Failed to create cluster group: %v", err))
+		log.Printf("[ERROR] Failed to create cluster group %s: %v", req.Name, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to create cluster group")
 		return
 	}
 
@@ -302,8 +302,8 @@ func (h *ClusterHandler) updateClusterGroup(w http.ResponseWriter, r *http.Reque
 	// Get group to check ownership
 	existingGroup, err := h.datastore.GetClusterGroup(ctx, id)
 	if err != nil {
-		RespondError(w, http.StatusNotFound,
-			fmt.Sprintf("Cluster group not found: %v", err))
+		log.Printf("[ERROR] Cluster group not found for update (id=%d): %v", id, err)
+		RespondError(w, http.StatusNotFound, "Cluster group not found")
 		return
 	}
 
@@ -327,8 +327,8 @@ func (h *ClusterHandler) updateClusterGroup(w http.ResponseWriter, r *http.Reque
 
 	group, err := h.datastore.UpdateClusterGroup(ctx, id, req.Name, req.Description)
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Failed to update cluster group: %v", err))
+		log.Printf("[ERROR] Failed to update cluster group (id=%d): %v", id, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to update cluster group")
 		return
 	}
 
@@ -348,12 +348,11 @@ func (h *ClusterHandler) deleteClusterGroup(w http.ResponseWriter, r *http.Reque
 
 	err = h.datastore.DeleteClusterGroup(ctx, id)
 	if err != nil {
+		log.Printf("[ERROR] Failed to delete cluster group (id=%d): %v", id, err)
 		if errors.Is(err, database.ErrClusterGroupNotFound) {
-			RespondError(w, http.StatusNotFound,
-				fmt.Sprintf("Failed to delete cluster group: %v", err))
+			RespondError(w, http.StatusNotFound, "Cluster group not found")
 		} else {
-			RespondError(w, http.StatusInternalServerError,
-				fmt.Sprintf("Failed to delete cluster group: %v", err))
+			RespondError(w, http.StatusInternalServerError, "Failed to delete cluster group")
 		}
 		return
 	}
@@ -381,8 +380,8 @@ func (h *ClusterHandler) listClustersInGroup(w http.ResponseWriter, r *http.Requ
 
 	clusters, err := h.datastore.GetClustersInGroup(ctx, groupID)
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Failed to list clusters: %v", err))
+		log.Printf("[ERROR] Failed to list clusters in group %d: %v", groupID, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to list clusters")
 		return
 	}
 
@@ -405,8 +404,8 @@ func (h *ClusterHandler) createClusterInGroup(w http.ResponseWriter, r *http.Req
 
 	cluster, err := h.datastore.CreateCluster(ctx, groupID, req.Name, req.Description)
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Failed to create cluster: %v", err))
+		log.Printf("[ERROR] Failed to create cluster %s in group %d: %v", req.Name, groupID, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to create cluster")
 		return
 	}
 
@@ -419,8 +418,8 @@ func (h *ClusterHandler) getCluster(w http.ResponseWriter, r *http.Request, id i
 
 	cluster, err := h.datastore.GetCluster(ctx, id)
 	if err != nil {
-		RespondError(w, http.StatusNotFound,
-			fmt.Sprintf("Cluster not found: %v", err))
+		log.Printf("[ERROR] Cluster not found (id=%d): %v", id, err)
+		RespondError(w, http.StatusNotFound, "Cluster not found")
 		return
 	}
 
@@ -444,8 +443,8 @@ func (h *ClusterHandler) updateCluster(w http.ResponseWriter, r *http.Request, i
 
 	cluster, err := h.datastore.UpdateClusterPartial(ctx, id, req.GroupID, req.Name, req.Description)
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Failed to update cluster: %v", err))
+		log.Printf("[ERROR] Failed to update cluster (id=%d): %v", id, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to update cluster")
 		return
 	}
 
@@ -458,12 +457,11 @@ func (h *ClusterHandler) deleteCluster(w http.ResponseWriter, r *http.Request, i
 
 	err := h.datastore.DeleteCluster(ctx, id)
 	if err != nil {
+		log.Printf("[ERROR] Failed to delete cluster (id=%d): %v", id, err)
 		if errors.Is(err, database.ErrClusterNotFound) {
-			RespondError(w, http.StatusNotFound,
-				fmt.Sprintf("Failed to delete cluster: %v", err))
+			RespondError(w, http.StatusNotFound, "Cluster not found")
 		} else {
-			RespondError(w, http.StatusInternalServerError,
-				fmt.Sprintf("Failed to delete cluster: %v", err))
+			RespondError(w, http.StatusInternalServerError, "Failed to delete cluster")
 		}
 		return
 	}
@@ -517,8 +515,8 @@ func (h *ClusterHandler) updateAutoDetectedCluster(w http.ResponseWriter, r *htt
 	// Update cluster record (name and/or group_id)
 	cluster, err := h.datastore.UpsertAutoDetectedCluster(ctx, autoKey, req.Name, req.GroupID)
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Failed to update auto-detected cluster: %v", err))
+		log.Printf("[ERROR] Failed to update auto-detected cluster %s: %v", clusterID, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to update auto-detected cluster")
 		return
 	}
 
@@ -577,8 +575,8 @@ func (h *ClusterHandler) updateAutoDetectedGroup(w http.ResponseWriter, r *http.
 	// Upsert group record with custom name
 	group, err := h.datastore.UpsertGroupByAutoKey(ctx, autoKey, req.Name)
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Failed to update auto-detected group: %v", err))
+		log.Printf("[ERROR] Failed to update auto-detected group %s: %v", groupID, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to update auto-detected group")
 		return
 	}
 
@@ -603,8 +601,8 @@ func (h *ClusterHandler) listServersInCluster(w http.ResponseWriter, r *http.Req
 
 	servers, err := h.datastore.GetServersInCluster(ctx, clusterID)
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Failed to list servers: %v", err))
+		log.Printf("[ERROR] Failed to list servers in cluster %d: %v", clusterID, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to list servers")
 		return
 	}
 

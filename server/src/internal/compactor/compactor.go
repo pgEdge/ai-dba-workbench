@@ -109,8 +109,8 @@ func (c *Compactor) Compact(ctx context.Context, messages []Message) CompactResp
 	// Use provider-specific token estimation if available
 	originalTokens := c.estimateTokens(messages)
 
-	// If already within limits, no compaction needed
-	if len(messages) <= c.recentWindow+1 || originalTokens <= c.maxTokens {
+	// If already within limits or no messages, no compaction needed
+	if len(messages) == 0 || len(messages) <= c.recentWindow+1 || originalTokens <= c.maxTokens {
 		result := CompactResponse{
 			Messages:      messages,
 			TokenEstimate: originalTokens,
@@ -133,6 +133,7 @@ func (c *Compactor) Compact(ctx context.Context, messages []Message) CompactResp
 	}
 
 	// Always keep first message (original context)
+	// At this point, len(messages) > recentWindow+1 >= 2, so index 0 is safe
 	anchors := []Message{messages[0]}
 
 	// Calculate recent window start, ensuring we don't break tool_use/tool_result pairs
@@ -144,22 +145,29 @@ func (c *Compactor) Compact(ctx context.Context, messages []Message) CompactResp
 	recentStart = c.adjustStartForToolPairs(messages, recentStart)
 
 	// Classify middle messages
+	// middleStart=1 is safe since len(messages) >= 2 (checked above)
 	middleStart := 1
 	middleEnd := recentStart
 	if middleEnd <= middleStart {
 		middleEnd = middleStart
 	}
 
-	middle := messages[middleStart:middleEnd]
+	// Bounds check for slice safety (middleEnd cannot exceed len(messages))
+	if middleEnd > len(messages) {
+		middleEnd = len(messages)
+	}
+
+	middle := messages[middleStart:middleEnd] //nolint:gosec // G602: bounds verified above
 	important := c.classifyAndKeepImportant(middle)
 
 	// Ensure tool pairs are preserved in important messages
 	important = c.ensureToolPairsInSlice(middle, important, middleStart)
 
 	// Always keep recent messages
+	// recentStart is guaranteed to be >= 1 from earlier checks
 	recent := messages[recentStart:]
-	if len(messages) < c.recentWindow {
-		recent = messages[1:]
+	if len(messages) < c.recentWindow && len(messages) > 1 {
+		recent = messages[1:] //nolint:gosec // G602: len(messages) > 1 verified
 	}
 
 	// Build compacted message list

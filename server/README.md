@@ -1,7 +1,21 @@
 # pgEdge AI DBA Workbench MCP Server
 
+[![Build Server](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/build-server.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/build-server.yml)
+[![Test Server](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/test-server.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/test-server.yml)
+[![Lint Server](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/lint-server.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/lint-server.yml)
+
 The MCP (Model Context Protocol) Server provides AI assistants with standardized
 access to PostgreSQL systems through HTTP/HTTPS endpoints with authentication.
+
+For complete documentation, visit [docs.pgedge.com](https://docs.pgedge.com).
+
+## Table of Contents
+
+- [Features](#features)
+- [Building](#building)
+- [Quick Start](#quick-start)
+- [Configuration](#configuration)
+- [Documentation](#documentation)
 
 ## Features
 
@@ -247,3 +261,15 @@ database:
 ## Documentation
 
 See the [Server Documentation](../docs/server/index.md) for detailed information.
+
+---
+
+To report an issue with the software, visit:
+[GitHub Issues](https://github.com/pgEdge/ai-dba-workbench/issues)
+
+We welcome your project contributions; for more information, see
+[docs/developers.md](../docs/developers.md).
+
+For more information, visit [docs.pgedge.com](https://docs.pgedge.com)
+
+This project is licensed under the [PostgreSQL License](../LICENSE.md).

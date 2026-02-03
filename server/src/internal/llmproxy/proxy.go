@@ -184,7 +184,8 @@ func HandleModels(w http.ResponseWriter, r *http.Request, config *Config) {
 	// List models
 	modelNames, err := client.ListModels(r.Context())
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to list models: %v", err), http.StatusInternalServerError)
+		fmt.Fprintf(os.Stderr, "ERROR: Failed to list models: %v\n", err)
+		http.Error(w, "Failed to list models", http.StatusInternalServerError)
 		return
 	}
 
@@ -297,10 +298,11 @@ func HandleChat(w http.ResponseWriter, r *http.Request, config *Config) {
 	// The chat client will access tool fields which are structurally identical to mcp.Tool
 	llmResponse, err := client.Chat(ctx, chatMessages, req.Tools)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: LLM chat request failed: %v\n", err)
 		if tracing.IsEnabled() {
 			tracing.LogError(sessionID, tokenHash, requestID, "llm_chat", err)
 		}
-		http.Error(w, fmt.Sprintf("LLM error: %v", err), http.StatusInternalServerError)
+		http.Error(w, "LLM request failed", http.StatusInternalServerError)
 		return
 	}
 

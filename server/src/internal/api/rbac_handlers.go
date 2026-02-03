@@ -11,6 +11,7 @@ package api
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -67,8 +68,8 @@ func (h *RBACHandler) listUsers(w http.ResponseWriter, r *http.Request) {
 
 	users, err := h.authStore.ListUsers()
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Failed to list users: %v", err))
+		log.Printf("[ERROR] Failed to list users: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to list users")
 		return
 	}
 
@@ -127,23 +128,23 @@ func (h *RBACHandler) createUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.authStore.CreateUser(req.Username, req.Password, req.Annotation, req.DisplayName, req.Email); err != nil {
-		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Failed to create user: %v", err))
+		log.Printf("[ERROR] Failed to create user %s: %v", req.Username, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to create user")
 		return
 	}
 
 	if req.Enabled != nil && !*req.Enabled {
 		if err := h.authStore.DisableUser(req.Username); err != nil {
-			RespondError(w, http.StatusInternalServerError,
-				fmt.Sprintf("Failed to disable user: %v", err))
+			log.Printf("[ERROR] Failed to disable user %s: %v", req.Username, err)
+			RespondError(w, http.StatusInternalServerError, "Failed to disable user")
 			return
 		}
 	}
 
 	if req.IsSuperuser != nil && *req.IsSuperuser {
 		if err := h.authStore.SetUserSuperuser(req.Username, true); err != nil {
-			RespondError(w, http.StatusInternalServerError,
-				fmt.Sprintf("Failed to set superuser status: %v", err))
+			log.Printf("[ERROR] Failed to set superuser status for %s: %v", req.Username, err)
+			RespondError(w, http.StatusInternalServerError, "Failed to set superuser status")
 			return
 		}
 	}
@@ -176,49 +177,20 @@ func (h *RBACHandler) updateUser(w http.ResponseWriter, r *http.Request, userID 
 		return
 	}
 
-	if req.Password != nil || req.Annotation != nil || req.DisplayName != nil || req.Email != nil {
-		newPassword := ""
-		if req.Password != nil {
-			newPassword = *req.Password
-		}
-		newAnnotation := user.Annotation
-		if req.Annotation != nil {
-			newAnnotation = *req.Annotation
-		}
-		newDisplayName := user.DisplayName
-		if req.DisplayName != nil {
-			newDisplayName = *req.DisplayName
-		}
-		newEmail := user.Email
-		if req.Email != nil {
-			newEmail = *req.Email
-		}
-		if err := h.authStore.UpdateUser(user.Username, newPassword, newAnnotation, newDisplayName, newEmail); err != nil {
-			RespondError(w, http.StatusInternalServerError,
-				fmt.Sprintf("Failed to update user: %v", err))
-			return
-		}
+	// Use atomic update to ensure all changes succeed or fail together
+	update := auth.UserUpdate{
+		Password:    req.Password,
+		Annotation:  req.Annotation,
+		DisplayName: req.DisplayName,
+		Email:       req.Email,
+		Enabled:     req.Enabled,
+		IsSuperuser: req.IsSuperuser,
 	}
 
-	if req.Enabled != nil {
-		if *req.Enabled {
-			err = h.authStore.EnableUser(user.Username)
-		} else {
-			err = h.authStore.DisableUser(user.Username)
-		}
-		if err != nil {
-			RespondError(w, http.StatusInternalServerError,
-				fmt.Sprintf("Failed to update user enabled status: %v", err))
-			return
-		}
-	}
-
-	if req.IsSuperuser != nil {
-		if err := h.authStore.SetUserSuperuser(user.Username, *req.IsSuperuser); err != nil {
-			RespondError(w, http.StatusInternalServerError,
-				fmt.Sprintf("Failed to update user superuser status: %v", err))
-			return
-		}
+	if err := h.authStore.UpdateUserAtomic(user.Username, update); err != nil {
+		log.Printf("[ERROR] Failed to update user %s: %v", user.Username, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to update user")
+		return
 	}
 
 	RespondJSON(w, http.StatusOK, map[string]string{
@@ -238,8 +210,8 @@ func (h *RBACHandler) deleteUser(w http.ResponseWriter, r *http.Request, userID 
 	}
 
 	if err := h.authStore.DeleteUser(user.Username); err != nil {
-		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Failed to delete user: %v", err))
+		log.Printf("[ERROR] Failed to delete user %s: %v", user.Username, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to delete user")
 		return
 	}
 
@@ -383,8 +355,8 @@ func (h *RBACHandler) listGroups(w http.ResponseWriter, r *http.Request) {
 
 	groups, err := h.authStore.ListGroupsWithMemberCount()
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Failed to list groups: %v", err))
+		log.Printf("[ERROR] Failed to list groups: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to list groups")
 		return
 	}
 
@@ -411,8 +383,8 @@ func (h *RBACHandler) createGroup(w http.ResponseWriter, r *http.Request) {
 
 	groupID, err := h.authStore.CreateGroup(req.Name, req.Description)
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Failed to create group: %v", err))
+		log.Printf("[ERROR] Failed to create group %s: %v", req.Name, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to create group")
 		return
 	}
 
@@ -605,15 +577,15 @@ func (h *RBACHandler) updateGroup(w http.ResponseWriter, r *http.Request, groupI
 	}
 
 	if err := h.authStore.UpdateGroup(groupID, req.Name, req.Description); err != nil {
-		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Failed to update group: %v", err))
+		log.Printf("[ERROR] Failed to update group %d: %v", groupID, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to update group")
 		return
 	}
 
 	group, err := h.authStore.GetGroup(groupID)
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Group updated but failed to retrieve: %v", err))
+		log.Printf("[ERROR] Group %d updated but failed to retrieve: %v", groupID, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to retrieve updated group")
 		return
 	}
 	RespondJSON(w, http.StatusOK, group)
@@ -625,8 +597,8 @@ func (h *RBACHandler) deleteGroup(w http.ResponseWriter, r *http.Request, groupI
 	}
 
 	if err := h.authStore.DeleteGroup(groupID); err != nil {
-		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Failed to delete group: %v", err))
+		log.Printf("[ERROR] Failed to delete group %d: %v", groupID, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to delete group")
 		return
 	}
 
@@ -695,14 +667,14 @@ func (h *RBACHandler) addGroupMember(w http.ResponseWriter, r *http.Request, gro
 
 	if req.UserID != nil {
 		if err := h.authStore.AddUserToGroup(groupID, *req.UserID); err != nil {
-			RespondError(w, http.StatusInternalServerError,
-				fmt.Sprintf("Failed to add user to group: %v", err))
+			log.Printf("[ERROR] Failed to add user %d to group %d: %v", *req.UserID, groupID, err)
+			RespondError(w, http.StatusInternalServerError, "Failed to add user to group")
 			return
 		}
 	} else {
 		if err := h.authStore.AddGroupToGroup(groupID, *req.GroupID); err != nil {
-			RespondError(w, http.StatusInternalServerError,
-				fmt.Sprintf("Failed to add group to group: %v", err))
+			log.Printf("[ERROR] Failed to add group %d to group %d: %v", *req.GroupID, groupID, err)
+			RespondError(w, http.StatusInternalServerError, "Failed to add group to group")
 			return
 		}
 	}
@@ -714,14 +686,14 @@ func (h *RBACHandler) removeGroupMember(w http.ResponseWriter, r *http.Request, 
 	switch memberType {
 	case "user":
 		if err := h.authStore.RemoveUserFromGroup(groupID, memberID); err != nil {
-			RespondError(w, http.StatusInternalServerError,
-				fmt.Sprintf("Failed to remove user from group: %v", err))
+			log.Printf("[ERROR] Failed to remove user %d from group %d: %v", memberID, groupID, err)
+			RespondError(w, http.StatusInternalServerError, "Failed to remove user from group")
 			return
 		}
 	case "group":
 		if err := h.authStore.RemoveGroupFromGroup(groupID, memberID); err != nil {
-			RespondError(w, http.StatusInternalServerError,
-				fmt.Sprintf("Failed to remove group from group: %v", err))
+			log.Printf("[ERROR] Failed to remove group %d from group %d: %v", memberID, groupID, err)
+			RespondError(w, http.StatusInternalServerError, "Failed to remove group from group")
 			return
 		}
 	default:
@@ -775,8 +747,8 @@ func (h *RBACHandler) handleGroupMCPPrivileges(w http.ResponseWriter, r *http.Re
 			}
 
 			if err := h.authStore.GrantMCPPrivilegeByName(groupID, req.Privilege); err != nil {
-				RespondError(w, http.StatusInternalServerError,
-					fmt.Sprintf("Failed to grant MCP privilege: %v", err))
+				log.Printf("[ERROR] Failed to grant MCP privilege %s to group %d: %v", req.Privilege, groupID, err)
+				RespondError(w, http.StatusInternalServerError, "Failed to grant MCP privilege")
 				return
 			}
 			w.WriteHeader(http.StatusNoContent)
@@ -789,8 +761,8 @@ func (h *RBACHandler) handleGroupMCPPrivileges(w http.ResponseWriter, r *http.Re
 			}
 
 			if err := h.authStore.RevokeMCPPrivilegeByName(groupID, privilege); err != nil {
-				RespondError(w, http.StatusInternalServerError,
-					fmt.Sprintf("Failed to revoke MCP privilege: %v", err))
+				log.Printf("[ERROR] Failed to revoke MCP privilege %s from group %d: %v", privilege, groupID, err)
+				RespondError(w, http.StatusInternalServerError, "Failed to revoke MCP privilege")
 				return
 			}
 			w.WriteHeader(http.StatusNoContent)
@@ -832,8 +804,8 @@ func (h *RBACHandler) handleGroupConnectionPrivileges(w http.ResponseWriter, r *
 		}
 
 		if err := h.authStore.GrantConnectionPrivilege(groupID, req.ConnectionID, req.AccessLevel); err != nil {
-			RespondError(w, http.StatusInternalServerError,
-				fmt.Sprintf("Failed to grant connection privilege: %v", err))
+			log.Printf("[ERROR] Failed to grant connection privilege for conn %d to group %d: %v", req.ConnectionID, groupID, err)
+			RespondError(w, http.StatusInternalServerError, "Failed to grant connection privilege")
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -855,8 +827,8 @@ func (h *RBACHandler) handleGroupConnectionPrivileges(w http.ResponseWriter, r *
 		}
 
 		if err := h.authStore.RevokeConnectionPrivilege(groupID, connID); err != nil {
-			RespondError(w, http.StatusInternalServerError,
-				fmt.Sprintf("Failed to revoke connection privilege: %v", err))
+			log.Printf("[ERROR] Failed to revoke connection privilege for conn %d from group %d: %v", connID, groupID, err)
+			RespondError(w, http.StatusInternalServerError, "Failed to revoke connection privilege")
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -884,8 +856,8 @@ func (h *RBACHandler) handleMCPPrivileges(w http.ResponseWriter, r *http.Request
 
 	privileges, err := h.authStore.ListMCPPrivileges()
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Failed to list MCP privileges: %v", err))
+		log.Printf("[ERROR] Failed to list MCP privileges: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to list MCP privileges")
 		return
 	}
 
@@ -932,8 +904,8 @@ func (h *RBACHandler) handleGroupPermissions(w http.ResponseWriter, r *http.Requ
 func (h *RBACHandler) listGroupPermissions(w http.ResponseWriter, r *http.Request, groupID int64) {
 	perms, err := h.authStore.ListGroupAdminPermissions(groupID)
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Failed to list permissions: %v", err))
+		log.Printf("[ERROR] Failed to list permissions for group %d: %v", groupID, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to list permissions")
 		return
 	}
 	if perms == nil {
@@ -959,8 +931,8 @@ func (h *RBACHandler) grantGroupPermission(w http.ResponseWriter, r *http.Reques
 	}
 
 	if err := h.authStore.GrantAdminPermission(groupID, req.Permission); err != nil {
-		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Failed to grant permission: %v", err))
+		log.Printf("[ERROR] Failed to grant permission %s to group %d: %v", req.Permission, groupID, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to grant permission")
 		return
 	}
 
@@ -969,8 +941,8 @@ func (h *RBACHandler) grantGroupPermission(w http.ResponseWriter, r *http.Reques
 
 func (h *RBACHandler) revokeGroupPermission(w http.ResponseWriter, r *http.Request, groupID int64, permission string) {
 	if err := h.authStore.RevokeAdminPermission(groupID, permission); err != nil {
-		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Failed to revoke permission: %v", err))
+		log.Printf("[ERROR] Failed to revoke permission %s from group %d: %v", permission, groupID, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to revoke permission")
 		return
 	}
 
@@ -995,8 +967,8 @@ func (h *RBACHandler) handleTokens(w http.ResponseWriter, r *http.Request) {
 
 	tokens, err := h.authStore.ListAllTokens()
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Failed to list tokens: %v", err))
+		log.Printf("[ERROR] Failed to list tokens: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to list tokens")
 		return
 	}
 
@@ -1088,8 +1060,8 @@ func (h *RBACHandler) handleTokenSubpath(w http.ResponseWriter, r *http.Request)
 func (h *RBACHandler) getTokenScope(w http.ResponseWriter, r *http.Request, tokenID int64) {
 	scope, err := h.authStore.GetTokenScope(tokenID)
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Failed to get token scope: %v", err))
+		log.Printf("[ERROR] Failed to get token scope for token %d: %v", tokenID, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to get token scope")
 		return
 	}
 
@@ -1120,16 +1092,16 @@ func (h *RBACHandler) setTokenScope(w http.ResponseWriter, r *http.Request, toke
 
 	if req.ConnectionIDs != nil {
 		if err := h.authStore.SetTokenConnectionScope(tokenID, req.ConnectionIDs); err != nil {
-			RespondError(w, http.StatusInternalServerError,
-				fmt.Sprintf("Failed to set connection scope: %v", err))
+			log.Printf("[ERROR] Failed to set connection scope for token %d: %v", tokenID, err)
+			RespondError(w, http.StatusInternalServerError, "Failed to set connection scope")
 			return
 		}
 	}
 
 	if req.MCPPrivileges != nil {
 		if err := h.authStore.SetTokenMCPScopeByNames(tokenID, req.MCPPrivileges); err != nil {
-			RespondError(w, http.StatusInternalServerError,
-				fmt.Sprintf("Failed to set MCP scope: %v", err))
+			log.Printf("[ERROR] Failed to set MCP scope for token %d: %v", tokenID, err)
+			RespondError(w, http.StatusInternalServerError, "Failed to set MCP scope")
 			return
 		}
 	}
@@ -1139,8 +1111,8 @@ func (h *RBACHandler) setTokenScope(w http.ResponseWriter, r *http.Request, toke
 
 func (h *RBACHandler) clearTokenScope(w http.ResponseWriter, r *http.Request, tokenID int64) {
 	if err := h.authStore.ClearTokenScope(tokenID); err != nil {
-		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Failed to clear token scope: %v", err))
+		log.Printf("[ERROR] Failed to clear token scope for token %d: %v", tokenID, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to clear token scope")
 		return
 	}
 

@@ -47,6 +47,7 @@ linters:
     - unused
     - misspell
     - gocritic
+    - gosec         # Inspects source code for security problems
 
 issues:
   exclude-rules:
@@ -57,6 +58,7 @@ issues:
         - goconst
         - errcheck
         - gocritic
+        - gosec
     - path: test/
       linters:
         - gocyclo

@@ -14,6 +14,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"strings"
 	"sync"
@@ -105,12 +106,12 @@ func NewDatastore(cfg *config.DatabaseConfig, serverSecret string) (*Datastore, 
 	}
 	poolConfig.ConnConfig.RuntimeParams["application_name"] = "pgEdge AI DBA Workbench - Server"
 
-	// Apply pool settings
-	if cfg.PoolMaxConns > 0 {
-		poolConfig.MaxConns = int32(cfg.PoolMaxConns)
+	// Apply pool settings with bounds checking to prevent overflow
+	if cfg.PoolMaxConns > 0 && cfg.PoolMaxConns <= math.MaxInt32 {
+		poolConfig.MaxConns = int32(cfg.PoolMaxConns) //nolint:gosec // G115: bounds checked above
 	}
-	if cfg.PoolMinConns > 0 {
-		poolConfig.MinConns = int32(cfg.PoolMinConns)
+	if cfg.PoolMinConns > 0 && cfg.PoolMinConns <= math.MaxInt32 {
+		poolConfig.MinConns = int32(cfg.PoolMinConns) //nolint:gosec // G115: bounds checked above
 	}
 	if cfg.PoolMaxConnIdleTime != "" {
 		idleTime, err := time.ParseDuration(cfg.PoolMaxConnIdleTime)

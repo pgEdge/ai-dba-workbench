@@ -55,7 +55,7 @@ const (
 	PermManageGroups      = "manage_groups"
 	PermManagePermissions = "manage_permissions"
 	PermManageUsers       = "manage_users"
-	PermManageTokenScopes = "manage_token_scopes"
+	PermManageTokenScopes = "manage_token_scopes" //nolint:gosec // G101: This is a permission name, not a credential
 	PermManageBlackouts   = "manage_blackouts"
 	PermManageProbes      = "manage_probes"
 	PermManageAlertRules  = "manage_alert_rules"

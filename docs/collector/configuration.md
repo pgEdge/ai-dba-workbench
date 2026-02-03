@@ -62,7 +62,7 @@ pool:
 ### Sample Configuration
 
 See the complete example configuration file:
-[ai-dba-collector.yaml](https://github.com/pgEdge/ai-workbench/blob/main/examples/ai-dba-collector.yaml)
+[ai-dba-collector.yaml](https://github.com/pgEdge/ai-dba-workbench/blob/main/examples/ai-dba-collector.yaml)
 
 ## Configuration Options
 

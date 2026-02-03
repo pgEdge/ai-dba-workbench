@@ -247,7 +247,7 @@ The project follows Go conventions:
 - Comprehensive unit tests
 - Code coverage reporting
 
-See [CLAUDE.md](https://github.com/pgEdge/ai-workbench/blob/main/CLAUDE.md)
+See [CLAUDE.md](https://github.com/pgEdge/ai-dba-workbench/blob/main/CLAUDE.md)
 for detailed coding standards.
 
 ## Integration Examples
@@ -277,7 +277,7 @@ See [Collector Quick Start](collector/quickstart.md) for detailed steps.
 - Check component-specific documentation
 - Review example configuration files in `/examples`
 - Examine test files for usage examples
-- Consult [DESIGN.md](https://github.com/pgEdge/ai-workbench/blob/main/DESIGN.md)
+- Consult [DESIGN.md](https://github.com/pgEdge/ai-dba-workbench/blob/main/DESIGN.md)
   for architecture details
 
 ## Version Information
@@ -292,11 +292,11 @@ This software is released under The PostgreSQL License.
 
 ## Additional Resources
 
-- [Project README](https://github.com/pgEdge/ai-workbench/blob/main/README.md) -
+- [Project README](https://github.com/pgEdge/ai-dba-workbench/blob/main/README.md) -
   Quick overview
-- [Design Document](https://github.com/pgEdge/ai-workbench/blob/main/DESIGN.md) -
+- [Design Document](https://github.com/pgEdge/ai-dba-workbench/blob/main/DESIGN.md) -
   System architecture
-- [Example Configurations](https://github.com/pgEdge/ai-workbench/tree/main/examples) -
+- [Example Configurations](https://github.com/pgEdge/ai-dba-workbench/tree/main/examples) -
   Example configs
-- [Standing Instructions](https://github.com/pgEdge/ai-workbench/blob/main/CLAUDE.md) -
+- [Standing Instructions](https://github.com/pgEdge/ai-dba-workbench/blob/main/CLAUDE.md) -
   Development guidelines

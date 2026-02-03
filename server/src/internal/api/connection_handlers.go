@@ -11,7 +11,7 @@ package api
 
 import (
 	"context"
-	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -150,8 +150,9 @@ func (h *ConnectionHandler) listConnections(w http.ResponseWriter, r *http.Reque
 
 	connections, err := h.datastore.GetAllConnections(ctx)
 	if err != nil {
+		log.Printf("[ERROR] Failed to list connections: %v", err)
 		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Failed to list connections: %v", err))
+			"Failed to list connections")
 		return
 	}
 
@@ -201,13 +202,15 @@ func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Requ
 
 	// Validate host to prevent SSRF attacks
 	if err := h.hostValidator.ValidateHost(req.Host); err != nil {
-		RespondError(w, http.StatusBadRequest, fmt.Sprintf("Invalid host: %v", err))
+		log.Printf("[ERROR] Invalid host validation: %v", err)
+		RespondError(w, http.StatusBadRequest, "Invalid host")
 		return
 	}
 
 	// Validate port
 	if err := h.hostValidator.ValidatePort(req.Port); err != nil {
-		RespondError(w, http.StatusBadRequest, fmt.Sprintf("Invalid port: %v", err))
+		log.Printf("[ERROR] Invalid port validation: %v", err)
+		RespondError(w, http.StatusBadRequest, "Invalid port")
 		return
 	}
 
@@ -241,8 +244,9 @@ func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Requ
 
 	conn, err := h.datastore.CreateConnection(ctx, params)
 	if err != nil {
+		log.Printf("[ERROR] Failed to create connection: %v", err)
 		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Failed to create connection: %v", err))
+			"Failed to create connection")
 		return
 	}
 
@@ -310,8 +314,8 @@ func (h *ConnectionHandler) getConnection(w http.ResponseWriter, r *http.Request
 
 	conn, err := h.datastore.GetConnection(ctx, id)
 	if err != nil {
-		RespondError(w, http.StatusNotFound,
-			fmt.Sprintf("Connection not found: %v", err))
+		log.Printf("[ERROR] Connection not found (id=%d): %v", id, err)
+		RespondError(w, http.StatusNotFound, "Connection not found")
 		return
 	}
 
@@ -335,8 +339,8 @@ func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Requ
 	// Get connection to check ownership
 	conn, err := h.datastore.GetConnection(ctx, id)
 	if err != nil {
-		RespondError(w, http.StatusNotFound,
-			fmt.Sprintf("Connection not found: %v", err))
+		log.Printf("[ERROR] Connection not found for update (id=%d): %v", id, err)
+		RespondError(w, http.StatusNotFound, "Connection not found")
 		return
 	}
 
@@ -370,7 +374,8 @@ func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Requ
 	// Validate host if being updated (SSRF protection)
 	if req.Host != nil {
 		if err := h.hostValidator.ValidateHost(*req.Host); err != nil {
-			RespondError(w, http.StatusBadRequest, fmt.Sprintf("Invalid host: %v", err))
+			log.Printf("[ERROR] Invalid host validation on update: %v", err)
+			RespondError(w, http.StatusBadRequest, "Invalid host")
 			return
 		}
 	}
@@ -378,7 +383,8 @@ func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Requ
 	// Validate port if being updated
 	if req.Port != nil {
 		if err := h.hostValidator.ValidatePort(*req.Port); err != nil {
-			RespondError(w, http.StatusBadRequest, fmt.Sprintf("Invalid port: %v", err))
+			log.Printf("[ERROR] Invalid port validation on update: %v", err)
+			RespondError(w, http.StatusBadRequest, "Invalid port")
 			return
 		}
 	}
@@ -402,8 +408,9 @@ func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Requ
 
 	conn, err = h.datastore.UpdateConnectionFull(ctx, id, params)
 	if err != nil {
+		log.Printf("[ERROR] Failed to update connection (id=%d): %v", id, err)
 		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Failed to update connection: %v", err))
+			"Failed to update connection")
 		return
 	}
 
@@ -427,8 +434,8 @@ func (h *ConnectionHandler) deleteConnection(w http.ResponseWriter, r *http.Requ
 	// Get connection to check ownership
 	conn, err := h.datastore.GetConnection(ctx, id)
 	if err != nil {
-		RespondError(w, http.StatusNotFound,
-			fmt.Sprintf("Connection not found: %v", err))
+		log.Printf("[ERROR] Connection not found for delete (id=%d): %v", id, err)
+		RespondError(w, http.StatusNotFound, "Connection not found")
 		return
 	}
 
@@ -442,8 +449,9 @@ func (h *ConnectionHandler) deleteConnection(w http.ResponseWriter, r *http.Requ
 
 	// Delete the connection
 	if err := h.datastore.DeleteConnection(ctx, id); err != nil {
+		log.Printf("[ERROR] Failed to delete connection (id=%d): %v", id, err)
 		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Failed to delete connection: %v", err))
+			"Failed to delete connection")
 		return
 	}
 
@@ -457,8 +465,9 @@ func (h *ConnectionHandler) listDatabases(w http.ResponseWriter, r *http.Request
 
 	databases, err := h.datastore.ListDatabases(ctx, connectionID)
 	if err != nil {
+		log.Printf("[ERROR] Failed to list databases for connection %d: %v", connectionID, err)
 		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Failed to list databases: %v", err))
+			"Failed to list databases")
 		return
 	}
 
@@ -501,8 +510,9 @@ func (h *ConnectionHandler) handleCurrentConnection(w http.ResponseWriter, r *ht
 func (h *ConnectionHandler) getCurrentConnection(w http.ResponseWriter, r *http.Request, tokenHash string) {
 	session, err := h.authStore.GetConnectionSession(tokenHash)
 	if err != nil {
+		log.Printf("[ERROR] Failed to get current connection session: %v", err)
 		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Failed to get current connection: %v", err))
+			"Failed to get current connection")
 		return
 	}
 
@@ -517,8 +527,9 @@ func (h *ConnectionHandler) getCurrentConnection(w http.ResponseWriter, r *http.
 
 	conn, err := h.datastore.GetConnection(ctx, session.ConnectionID)
 	if err != nil {
+		log.Printf("[ERROR] Failed to get connection details (id=%d): %v", session.ConnectionID, err)
 		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Failed to get connection details: %v", err))
+			"Failed to get connection details")
 		return
 	}
 
@@ -551,15 +562,16 @@ func (h *ConnectionHandler) setCurrentConnection(w http.ResponseWriter, r *http.
 
 	conn, err := h.datastore.GetConnection(ctx, req.ConnectionID)
 	if err != nil {
-		RespondError(w, http.StatusBadRequest,
-			fmt.Sprintf("Connection not found: %v", err))
+		log.Printf("[ERROR] Connection not found for set current (id=%d): %v", req.ConnectionID, err)
+		RespondError(w, http.StatusBadRequest, "Connection not found")
 		return
 	}
 
 	// Save the selection
 	if err := h.authStore.SetConnectionSession(tokenHash, req.ConnectionID, req.DatabaseName); err != nil {
+		log.Printf("[ERROR] Failed to save connection selection: %v", err)
 		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Failed to save connection selection: %v", err))
+			"Failed to save connection selection")
 		return
 	}
 
@@ -578,8 +590,9 @@ func (h *ConnectionHandler) setCurrentConnection(w http.ResponseWriter, r *http.
 // clearCurrentConnection handles DELETE /api/v1/connections/current
 func (h *ConnectionHandler) clearCurrentConnection(w http.ResponseWriter, r *http.Request, tokenHash string) {
 	if err := h.authStore.ClearConnectionSession(tokenHash); err != nil {
+		log.Printf("[ERROR] Failed to clear connection selection: %v", err)
 		RespondError(w, http.StatusInternalServerError,
-			fmt.Sprintf("Failed to clear connection selection: %v", err))
+			"Failed to clear connection selection")
 		return
 	}
 

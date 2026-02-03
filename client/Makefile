@@ -7,7 +7,7 @@
 #
 #-------------------------------------------------------------------------
 
-.PHONY: all build test test-all coverage lint clean help
+.PHONY: all build test test-all coverage lint format clean help
 
 # Default target - build the client
 all: build
@@ -30,10 +30,15 @@ coverage:
 	@echo "Running tests with coverage..."
 	npm run test:coverage
 
-# Run linter (TypeScript type checking)
+# Run linter (ESLint)
 lint:
-	@echo "Running TypeScript type check..."
-	npx tsc --noEmit
+	@echo "Running ESLint..."
+	npm run lint
+
+# Format code with Prettier
+format:
+	@echo "Formatting code with Prettier..."
+	npm run format
 
 # Clean build artifacts
 clean:
@@ -51,7 +56,8 @@ help:
 	@echo "  test             - Run tests"
 	@echo "  test-all         - Run all tests"
 	@echo "  coverage         - Run tests with coverage"
-	@echo "  lint             - Run TypeScript type check"
+	@echo "  lint             - Run ESLint"
+	@echo "  format           - Format code with Prettier"
 	@echo "  clean            - Clean build artifacts"
 	@echo "  help             - Show this help message"
 	@echo ""
@@ -60,3 +66,5 @@ help:
 	@echo "  npm run preview  - Preview production build"
 	@echo "  npm run test:watch - Run tests in watch mode"
 	@echo "  npm run test:ui  - Run tests with UI"
+	@echo "  npm run lint:fix - Run ESLint with auto-fix"
+	@echo "  npm run format:check - Check formatting without changes"

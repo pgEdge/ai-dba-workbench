@@ -800,8 +800,8 @@ func SaveConfig(path string, cfg *Config) error {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
-	// Write with appropriate permissions
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	// Write with restrictive permissions (owner read/write only)
+	if err := os.WriteFile(path, data, 0600); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 

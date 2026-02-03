@@ -7,7 +7,7 @@
 #
 #-------------------------------------------------------------------------
 
-.PHONY: all build test lint clean vet fmt help killall test-all
+.PHONY: all build test lint clean vet fmt fmt-check help killall test-all
 
 # Binary output directory (can be overridden by parent Makefile)
 BIN_DIR ?= .
@@ -48,6 +48,11 @@ fmt:
 	@echo "Formatting code..."
 	cd src && go fmt ./...
 
+# Check code formatting (fails if files are not formatted)
+fmt-check:
+	@echo "Checking code formatting..."
+	@test -z "$$(cd src && gofmt -l .)" || (echo "Files not formatted:"; cd src && gofmt -l .; exit 1)
+
 # Run tests with coverage
 coverage:
 	@echo "Running tests with coverage..."
@@ -71,8 +76,8 @@ deps:
 check: fmt vet test lint
 	@echo "All checks passed!"
 
-# Run all tests (test, coverage, lint)
-test-all: test coverage lint
+# Run all tests (fmt-check, test, coverage, lint)
+test-all: fmt-check test coverage lint
 	@echo "All tests passed!"
 
 # Help target
@@ -84,8 +89,9 @@ help:
 	@echo "  lint      - Run golangci-lint"
 	@echo "  vet       - Run go vet"
 	@echo "  fmt       - Format code with gofmt"
+	@echo "  fmt-check - Check code formatting (fails if not formatted)"
 	@echo "  coverage  - Generate test coverage report"
-	@echo "  test-all  - Run test, coverage, and lint"
+	@echo "  test-all  - Run fmt-check, test, coverage, and lint"
 	@echo "  clean     - Remove build artifacts"
 	@echo "  deps      - Install/update dependencies"
 	@echo "  check     - Run all checks (fmt, vet, test, lint)"

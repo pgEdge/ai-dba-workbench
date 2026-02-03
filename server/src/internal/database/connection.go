@@ -13,6 +13,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"regexp"
@@ -132,12 +133,12 @@ func (c *Client) ConnectTo(connStr string) error {
 
 	// Apply pool configuration if available
 	if c.dbConfig != nil {
-		// Set pool size limits
-		if c.dbConfig.PoolMaxConns > 0 {
-			poolConfig.MaxConns = int32(c.dbConfig.PoolMaxConns)
+		// Set pool size limits with bounds checking to prevent overflow
+		if c.dbConfig.PoolMaxConns > 0 && c.dbConfig.PoolMaxConns <= math.MaxInt32 {
+			poolConfig.MaxConns = int32(c.dbConfig.PoolMaxConns) //nolint:gosec // G115: bounds checked above
 		}
-		if c.dbConfig.PoolMinConns > 0 {
-			poolConfig.MinConns = int32(c.dbConfig.PoolMinConns)
+		if c.dbConfig.PoolMinConns > 0 && c.dbConfig.PoolMinConns <= math.MaxInt32 {
+			poolConfig.MinConns = int32(c.dbConfig.PoolMinConns) //nolint:gosec // G115: bounds checked above
 		}
 
 		// Set idle timeout

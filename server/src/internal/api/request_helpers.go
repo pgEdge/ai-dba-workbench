@@ -12,6 +12,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -107,8 +108,8 @@ func ParseQueryInt(w http.ResponseWriter, r *http.Request, paramName string) (in
 
 	value, err := strconv.Atoi(valueStr)
 	if err != nil {
-		RespondError(w, http.StatusBadRequest,
-			fmt.Sprintf("Invalid %s: %v", paramName, err))
+		log.Printf("[ERROR] Invalid %s parameter: %v", paramName, err)
+		RespondError(w, http.StatusBadRequest, "Invalid "+paramName)
 		return 0, false
 	}
 	return value, true
@@ -141,8 +142,8 @@ func ParseQueryInt64(w http.ResponseWriter, r *http.Request, paramName string) (
 
 	value, err := strconv.ParseInt(valueStr, 10, 64)
 	if err != nil {
-		RespondError(w, http.StatusBadRequest,
-			fmt.Sprintf("Invalid %s: %v", paramName, err))
+		log.Printf("[ERROR] Invalid %s parameter: %v", paramName, err)
+		RespondError(w, http.StatusBadRequest, "Invalid "+paramName)
 		return 0, false
 	}
 	return value, true
@@ -162,8 +163,8 @@ func ParseQueryIntList(w http.ResponseWriter, r *http.Request, paramName string)
 	for _, part := range parts {
 		value, err := strconv.Atoi(strings.TrimSpace(part))
 		if err != nil {
-			RespondError(w, http.StatusBadRequest,
-				fmt.Sprintf("Invalid %s: %v", paramName, err))
+			log.Printf("[ERROR] Invalid %s parameter list: %v", paramName, err)
+			RespondError(w, http.StatusBadRequest, "Invalid "+paramName)
 			return nil, false
 		}
 		result = append(result, value)
@@ -201,8 +202,8 @@ func ParseQueryTime(w http.ResponseWriter, r *http.Request, paramName string) (t
 
 	value, err := time.Parse(time.RFC3339, valueStr)
 	if err != nil {
-		RespondError(w, http.StatusBadRequest,
-			fmt.Sprintf("Invalid %s format, expected RFC3339: %v", paramName, err))
+		log.Printf("[ERROR] Invalid %s format (expected RFC3339): %v", paramName, err)
+		RespondError(w, http.StatusBadRequest, "Invalid "+paramName+" format, expected RFC3339")
 		return time.Time{}, false
 	}
 	return value, true
@@ -270,8 +271,8 @@ func RequireQueryTime(w http.ResponseWriter, r *http.Request, paramName string) 
 
 	value, err := time.Parse(time.RFC3339, valueStr)
 	if err != nil {
-		RespondError(w, http.StatusBadRequest,
-			fmt.Sprintf("Invalid %s format, expected RFC3339: %v", paramName, err))
+		log.Printf("[ERROR] Invalid %s format (expected RFC3339): %v", paramName, err)
+		RespondError(w, http.StatusBadRequest, "Invalid "+paramName+" format, expected RFC3339")
 		return time.Time{}, false
 	}
 	return value, true

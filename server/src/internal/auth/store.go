@@ -581,6 +581,114 @@ func (s *AuthStore) UpdateUser(username, newPassword, newAnnotation, newDisplayN
 	return nil
 }
 
+// UserUpdate contains all fields that can be updated atomically for a user.
+// Pointer fields are used to distinguish between "not provided" (nil) and
+// "set to empty/zero value".
+type UserUpdate struct {
+	Password    *string // New password (will be hashed), nil = no change
+	Annotation  *string // New annotation, nil = no change
+	DisplayName *string // New display name, nil = no change
+	Email       *string // New email, nil = no change
+	Enabled     *bool   // New enabled status, nil = no change
+	IsSuperuser *bool   // New superuser status, nil = no change
+}
+
+// UpdateUserAtomic updates multiple user fields in a single atomic transaction.
+// This ensures that either all changes are applied or none are, preventing
+// partial updates that could leave the user in an inconsistent state.
+func (s *AuthStore) UpdateUserAtomic(username string, update UserUpdate) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Start transaction
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			//nolint:errcheck // Rollback error is not critical, transaction already failed
+			tx.Rollback()
+		}
+	}()
+
+	// Update password if provided
+	if update.Password != nil && *update.Password != "" {
+		hash, hashErr := bcrypt.GenerateFromPassword([]byte(*update.Password), 12)
+		if hashErr != nil {
+			err = fmt.Errorf("failed to hash password: %w", hashErr)
+			return err
+		}
+		_, execErr := tx.Exec("UPDATE users SET password_hash = ? WHERE username = ?", string(hash), username)
+		if execErr != nil {
+			err = fmt.Errorf("failed to update password: %w", execErr)
+			return err
+		}
+	}
+
+	// Update annotation, display name, and email if any are provided
+	if update.Annotation != nil || update.DisplayName != nil || update.Email != nil {
+		// Get current values to preserve unchanged fields
+		var currentAnnotation, currentDisplayName, currentEmail sql.NullString
+		queryErr := tx.QueryRow(
+			"SELECT annotation, display_name, email FROM users WHERE username = ?",
+			username,
+		).Scan(&currentAnnotation, &currentDisplayName, &currentEmail)
+		if queryErr != nil {
+			err = fmt.Errorf("failed to get current user values: %w", queryErr)
+			return err
+		}
+
+		newAnnotation := currentAnnotation.String
+		if update.Annotation != nil {
+			newAnnotation = *update.Annotation
+		}
+		newDisplayName := currentDisplayName.String
+		if update.DisplayName != nil {
+			newDisplayName = *update.DisplayName
+		}
+		newEmail := currentEmail.String
+		if update.Email != nil {
+			newEmail = *update.Email
+		}
+
+		_, execErr := tx.Exec(
+			"UPDATE users SET annotation = ?, display_name = ?, email = ? WHERE username = ?",
+			newAnnotation, newDisplayName, newEmail, username,
+		)
+		if execErr != nil {
+			err = fmt.Errorf("failed to update user fields: %w", execErr)
+			return err
+		}
+	}
+
+	// Update enabled status if provided
+	if update.Enabled != nil {
+		_, execErr := tx.Exec("UPDATE users SET enabled = ? WHERE username = ?", *update.Enabled, username)
+		if execErr != nil {
+			err = fmt.Errorf("failed to update enabled status: %w", execErr)
+			return err
+		}
+	}
+
+	// Update superuser status if provided
+	if update.IsSuperuser != nil {
+		_, execErr := tx.Exec("UPDATE users SET is_superuser = ? WHERE username = ?", *update.IsSuperuser, username)
+		if execErr != nil {
+			err = fmt.Errorf("failed to update superuser status: %w", execErr)
+			return err
+		}
+	}
+
+	// Commit transaction
+	if commitErr := tx.Commit(); commitErr != nil {
+		err = fmt.Errorf("failed to commit transaction: %w", commitErr)
+		return err
+	}
+
+	return nil
+}
+
 // UpdateUserDisplayName updates a user's display name
 func (s *AuthStore) UpdateUserDisplayName(username, displayName string) error {
 	s.mu.Lock()

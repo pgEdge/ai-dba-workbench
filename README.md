@@ -1,9 +1,9 @@
 # pgEdge AI DBA Workbench
 
-[![CI - Collector](https://github.com/pgEdge/ai-workbench/actions/workflows/ci-collector.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/ci-collector.yml)
-[![CI - Server](https://github.com/pgEdge/ai-workbench/actions/workflows/ci-server.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/ci-server.yml)
-[![CI - CLI](https://github.com/pgEdge/ai-workbench/actions/workflows/ci-cli.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/ci-cli.yml)
-[![CI - Docs](https://github.com/pgEdge/ai-workbench/actions/workflows/ci-docs.yml/badge.svg)](https://github.com/pgEdge/ai-workbench/actions/workflows/ci-docs.yml)
+[![CI - Collector](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-collector.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-collector.yml)
+[![CI - Server](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-server.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-server.yml)
+[![CI - CLI](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-cli.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-cli.yml)
+[![CI - Docs](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-docs.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-docs.yml)
 
 The pgEdge AI DBA Workbench is a unified environment for interacting with pgEdge's
 distributed and non-distributed PostgreSQL systems through artificial
@@ -122,7 +122,7 @@ For information on getting started with each component, please refer to:
 ## Issues
 
 To report an issue with the software, visit:
-[GitHub Issues](https://github.com/pgEdge/ai-workbench/issues)
+[GitHub Issues](https://github.com/pgEdge/ai-dba-workbench/issues)
 
 ## Contributing
 

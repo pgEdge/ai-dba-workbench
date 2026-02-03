@@ -39,10 +39,10 @@ the AI DBA Workbench system.
 ## Quick Links
 
 - [Main Documentation](../index.md) - Return to main documentation index
-- [Main README](https://github.com/pgEdge/ai-workbench/blob/main/README.md) -
+- [Main README](https://github.com/pgEdge/ai-dba-workbench/blob/main/README.md) -
   Quick start and basic information
-- [Example Configuration](https://github.com/pgEdge/ai-workbench/blob/main/examples/ai-dba-collector.yaml)
-- [Project Design Document](https://github.com/pgEdge/ai-workbench/blob/main/DESIGN.md)
+- [Example Configuration](https://github.com/pgEdge/ai-dba-workbench/blob/main/examples/ai-dba-collector.yaml)
+- [Project Design Document](https://github.com/pgEdge/ai-dba-workbench/blob/main/DESIGN.md)
 
 ## Key Features
 

@@ -987,3 +987,237 @@ func TestResetFailedAttemptsStore(t *testing.T) {
 		t.Errorf("Expected 0 failed attempts after reset, got %d", user.FailedAttempts)
 	}
 }
+
+// =============================================================================
+// UpdateUserAtomic Tests
+// =============================================================================
+
+func TestUpdateUserAtomic_AllFields(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	// Create a user
+	err := store.CreateUser("testuser", "oldpass", "old annotation", "Old Name", "old@example.com")
+	if err != nil {
+		t.Fatalf("Failed to create user: %v", err)
+	}
+
+	// Update all fields atomically
+	newPass := "newpass123"
+	newAnnotation := "new annotation"
+	newDisplayName := "New Name"
+	newEmail := "new@example.com"
+	enabled := false
+	superuser := true
+
+	update := UserUpdate{
+		Password:    &newPass,
+		Annotation:  &newAnnotation,
+		DisplayName: &newDisplayName,
+		Email:       &newEmail,
+		Enabled:     &enabled,
+		IsSuperuser: &superuser,
+	}
+
+	err = store.UpdateUserAtomic("testuser", update)
+	if err != nil {
+		t.Fatalf("Failed to update user atomically: %v", err)
+	}
+
+	// Verify all fields were updated
+	user, err := store.GetUser("testuser")
+	if err != nil {
+		t.Fatalf("Failed to get user: %v", err)
+	}
+
+	if user.Annotation != newAnnotation {
+		t.Errorf("Expected annotation %q, got %q", newAnnotation, user.Annotation)
+	}
+	if user.DisplayName != newDisplayName {
+		t.Errorf("Expected display name %q, got %q", newDisplayName, user.DisplayName)
+	}
+	if user.Email != newEmail {
+		t.Errorf("Expected email %q, got %q", newEmail, user.Email)
+	}
+	if user.Enabled != false {
+		t.Error("Expected user to be disabled")
+	}
+	if user.IsSuperuser != true {
+		t.Error("Expected user to be superuser")
+	}
+
+	// Verify password was changed by authenticating with new password
+	_, _, err = store.AuthenticateUser("testuser", "newpass123")
+	// Authentication should fail because user is disabled
+	if err == nil {
+		t.Error("Expected authentication to fail for disabled user")
+	}
+
+	// Enable user and try again
+	store.EnableUser("testuser")
+	_, _, err = store.AuthenticateUser("testuser", "newpass123")
+	if err != nil {
+		t.Errorf("Expected authentication with new password to succeed: %v", err)
+	}
+}
+
+func TestUpdateUserAtomic_PartialUpdate(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	// Create a user with all fields
+	err := store.CreateUser("testuser", "password", "original annotation", "Original Name", "original@example.com")
+	if err != nil {
+		t.Fatalf("Failed to create user: %v", err)
+	}
+
+	// Update only annotation
+	newAnnotation := "updated annotation"
+	update := UserUpdate{
+		Annotation: &newAnnotation,
+	}
+
+	err = store.UpdateUserAtomic("testuser", update)
+	if err != nil {
+		t.Fatalf("Failed to update user: %v", err)
+	}
+
+	user, _ := store.GetUser("testuser")
+	if user.Annotation != newAnnotation {
+		t.Errorf("Expected annotation %q, got %q", newAnnotation, user.Annotation)
+	}
+	// Other fields should remain unchanged
+	if user.DisplayName != "Original Name" {
+		t.Errorf("Expected display name to remain 'Original Name', got %q", user.DisplayName)
+	}
+	if user.Email != "original@example.com" {
+		t.Errorf("Expected email to remain 'original@example.com', got %q", user.Email)
+	}
+}
+
+func TestUpdateUserAtomic_OnlyEnabledStatus(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	err := store.CreateUser("testuser", "password", "", "", "")
+	if err != nil {
+		t.Fatalf("Failed to create user: %v", err)
+	}
+
+	// Disable user
+	enabled := false
+	update := UserUpdate{
+		Enabled: &enabled,
+	}
+
+	err = store.UpdateUserAtomic("testuser", update)
+	if err != nil {
+		t.Fatalf("Failed to update user: %v", err)
+	}
+
+	user, _ := store.GetUser("testuser")
+	if user.Enabled {
+		t.Error("Expected user to be disabled")
+	}
+
+	// Re-enable user
+	enabled = true
+	update = UserUpdate{
+		Enabled: &enabled,
+	}
+
+	err = store.UpdateUserAtomic("testuser", update)
+	if err != nil {
+		t.Fatalf("Failed to update user: %v", err)
+	}
+
+	user, _ = store.GetUser("testuser")
+	if !user.Enabled {
+		t.Error("Expected user to be enabled")
+	}
+}
+
+func TestUpdateUserAtomic_OnlySuperuserStatus(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	err := store.CreateUser("testuser", "password", "", "", "")
+	if err != nil {
+		t.Fatalf("Failed to create user: %v", err)
+	}
+
+	// Make superuser
+	superuser := true
+	update := UserUpdate{
+		IsSuperuser: &superuser,
+	}
+
+	err = store.UpdateUserAtomic("testuser", update)
+	if err != nil {
+		t.Fatalf("Failed to update user: %v", err)
+	}
+
+	user, _ := store.GetUser("testuser")
+	if !user.IsSuperuser {
+		t.Error("Expected user to be superuser")
+	}
+
+	// Remove superuser
+	superuser = false
+	update = UserUpdate{
+		IsSuperuser: &superuser,
+	}
+
+	err = store.UpdateUserAtomic("testuser", update)
+	if err != nil {
+		t.Fatalf("Failed to update user: %v", err)
+	}
+
+	user, _ = store.GetUser("testuser")
+	if user.IsSuperuser {
+		t.Error("Expected user to not be superuser")
+	}
+}
+
+func TestUpdateUserAtomic_EmptyUpdate(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	err := store.CreateUser("testuser", "password", "annotation", "Name", "email@example.com")
+	if err != nil {
+		t.Fatalf("Failed to create user: %v", err)
+	}
+
+	// Empty update (no fields set)
+	update := UserUpdate{}
+
+	err = store.UpdateUserAtomic("testuser", update)
+	if err != nil {
+		t.Fatalf("Empty update should succeed: %v", err)
+	}
+
+	// Verify nothing changed
+	user, _ := store.GetUser("testuser")
+	if user.Annotation != "annotation" {
+		t.Errorf("Expected annotation unchanged, got %q", user.Annotation)
+	}
+	if user.DisplayName != "Name" {
+		t.Errorf("Expected display name unchanged, got %q", user.DisplayName)
+	}
+}
+
+func TestUpdateUserAtomic_NonExistentUser(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	newAnnotation := "new annotation"
+	update := UserUpdate{
+		Annotation: &newAnnotation,
+	}
+
+	// Update non-existent user - should fail when trying to get current values
+	err := store.UpdateUserAtomic("nonexistent", update)
+	if err == nil {
+		t.Error("Expected error when updating non-existent user")
+	}
+}

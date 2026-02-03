@@ -8,9 +8,5 @@
  *-------------------------------------------------------------------------
  */
 
-/**
- * Re-export ServerDialog from the modular directory structure.
- * This maintains backward compatibility with existing imports.
- */
-export { default } from './ServerDialog/index';
-export * from './ServerDialog/ServerDialog.types';
+export { default } from './ServerDialog';
+export * from './ServerDialog.types';

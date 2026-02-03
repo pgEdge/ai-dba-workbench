@@ -91,10 +91,13 @@ func (s *Server) RunHTTP(config *HTTPConfig) error {
 	// Apply security headers middleware (outermost to ensure headers on all responses)
 	handler = SecurityHeadersMiddleware(handler)
 
-	// Configure server
+	// Configure server with timeouts to prevent slowloris DoS attacks
 	httpServer := &http.Server{
-		Addr:    config.Addr,
-		Handler: handler,
+		Addr:         config.Addr,
+		Handler:      handler,
+		ReadTimeout:  30 * time.Second,  // Prevents slow request body attacks
+		WriteTimeout: 60 * time.Second,  // Prevents slow response reading attacks
+		IdleTimeout:  120 * time.Second, // Limits keep-alive connection duration
 	}
 
 	// Start server with or without TLS

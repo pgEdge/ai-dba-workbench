@@ -38,6 +38,8 @@ test:
 	@cd cli && $(MAKE) test
 	@echo "Testing alerter..."
 	@cd alerter && $(MAKE) test
+	@echo "Testing client..."
+	@cd client && $(MAKE) test
 	@echo "All sub-project tests passed!"
 
 # Run coverage for all sub-projects
@@ -51,6 +53,8 @@ coverage:
 	@cd cli && $(MAKE) coverage
 	@echo "Running coverage for alerter..."
 	@cd alerter && $(MAKE) coverage
+	@echo "Running coverage for client..."
+	@cd client && $(MAKE) coverage
 	@echo "Coverage reports generated for all sub-projects!"
 
 # Run linting for all sub-projects
@@ -64,6 +68,8 @@ lint:
 	@cd cli && $(MAKE) lint
 	@echo "Linting alerter..."
 	@cd alerter && $(MAKE) lint
+	@echo "Linting client..."
+	@cd client && $(MAKE) lint
 	@echo "Linting completed for all sub-projects!"
 
 # Run all tests (sub-project test-all)
@@ -77,6 +83,8 @@ test-all:
 	@cd cli && $(MAKE) test-all
 	@echo "Running all tests for alerter..."
 	@cd alerter && $(MAKE) test-all
+	@echo "Running all tests for client..."
+	@cd client && $(MAKE) test-all
 	@echo "All tests passed!"
 
 # Clean all sub-projects
@@ -90,6 +98,8 @@ clean:
 	@cd cli && $(MAKE) clean BIN_DIR=../$(BIN_DIR)
 	@echo "Cleaning alerter..."
 	@cd alerter && $(MAKE) clean BIN_DIR=../$(BIN_DIR)
+	@echo "Cleaning client..."
+	@cd client && $(MAKE) clean
 	@echo "Removing bin directory..."
 	@rm -rf $(BIN_DIR)
 	@echo "All sub-projects cleaned!"
@@ -126,6 +136,7 @@ help:
 	@echo "  server           - MCP server"
 	@echo "  cli              - AI CLI client"
 	@echo "  alerter          - Alert monitoring service"
+	@echo "  client           - Web client application"
 	@echo ""
 	@echo "Binaries are built to the bin/ directory."
 	@echo ""

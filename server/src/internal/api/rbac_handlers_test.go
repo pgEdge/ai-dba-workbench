@@ -405,6 +405,470 @@ func TestRBACHandler_HandleUsers_MethodNotAllowed(t *testing.T) {
 }
 
 // =============================================================================
+// User Subpath Tests
+// =============================================================================
+
+func TestRBACHandler_HandleUserSubpath_InvalidID(t *testing.T) {
+	handler, _, cleanup := createTestRBACHandler(t, true)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/users/abc", nil)
+	req = withSuperuser(req)
+	rec := httptest.NewRecorder()
+
+	handler.handleUserSubpath(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if response.Error != "Invalid user ID" {
+		t.Errorf("Expected 'Invalid user ID', got %q", response.Error)
+	}
+}
+
+func TestRBACHandler_HandleUserSubpath_EmptyPath(t *testing.T) {
+	handler, _, cleanup := createTestRBACHandler(t, true)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/users/", nil)
+	req = withSuperuser(req)
+	rec := httptest.NewRecorder()
+
+	handler.handleUserSubpath(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("Expected status %d, got %d", http.StatusNotFound, rec.Code)
+	}
+}
+
+func TestRBACHandler_HandleUserSubpath_MethodNotAllowed(t *testing.T) {
+	handler, _, cleanup := createTestRBACHandler(t, true)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/rbac/users/1", nil)
+	req = withSuperuser(req)
+	rec := httptest.NewRecorder()
+
+	handler.handleUserSubpath(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("Expected status %d, got %d", http.StatusMethodNotAllowed, rec.Code)
+	}
+
+	allowed := rec.Header().Get("Allow")
+	if allowed != "PUT, DELETE" {
+		t.Errorf("Expected Allow header 'PUT, DELETE', got %q", allowed)
+	}
+}
+
+func TestRBACHandler_HandleUserSubpath_UnknownSubpath(t *testing.T) {
+	handler, _, cleanup := createTestRBACHandler(t, true)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/users/1/unknown", nil)
+	req = withSuperuser(req)
+	rec := httptest.NewRecorder()
+
+	handler.handleUserSubpath(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("Expected status %d, got %d", http.StatusNotFound, rec.Code)
+	}
+}
+
+func TestRBACHandler_HandleUserSubpath_Privileges_MethodNotAllowed(t *testing.T) {
+	handler, _, cleanup := createTestRBACHandler(t, true)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/rbac/users/1/privileges", nil)
+	req = withSuperuser(req)
+	rec := httptest.NewRecorder()
+
+	handler.handleUserSubpath(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("Expected status %d, got %d", http.StatusMethodNotAllowed, rec.Code)
+	}
+
+	allowed := rec.Header().Get("Allow")
+	if allowed != "GET" {
+		t.Errorf("Expected Allow header 'GET', got %q", allowed)
+	}
+}
+
+// =============================================================================
+// Group Subpath Tests
+// =============================================================================
+
+func TestRBACHandler_HandleGroupSubpath_InvalidID(t *testing.T) {
+	handler, _, cleanup := createTestRBACHandler(t, true)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/groups/abc", nil)
+	req = withSuperuser(req)
+	rec := httptest.NewRecorder()
+
+	handler.handleGroupSubpath(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+}
+
+func TestRBACHandler_HandleGroupSubpath_EmptyPath(t *testing.T) {
+	handler, _, cleanup := createTestRBACHandler(t, true)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/groups/", nil)
+	req = withSuperuser(req)
+	rec := httptest.NewRecorder()
+
+	handler.handleGroupSubpath(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("Expected status %d, got %d", http.StatusNotFound, rec.Code)
+	}
+}
+
+func TestRBACHandler_HandleGroupSubpath_UnknownSubpath(t *testing.T) {
+	handler, _, cleanup := createTestRBACHandler(t, true)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/groups/1/unknown", nil)
+	req = withSuperuser(req)
+	rec := httptest.NewRecorder()
+
+	handler.handleGroupSubpath(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("Expected status %d, got %d", http.StatusNotFound, rec.Code)
+	}
+}
+
+// =============================================================================
+// MCP Privileges Tests
+// =============================================================================
+
+func TestRBACHandler_HandleMCPPrivileges_MethodNotAllowed(t *testing.T) {
+	handler, _, cleanup := createTestRBACHandler(t, true)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/rbac/privileges/mcp", nil)
+	req = withSuperuser(req)
+	rec := httptest.NewRecorder()
+
+	handler.handleMCPPrivileges(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("Expected status %d, got %d", http.StatusMethodNotAllowed, rec.Code)
+	}
+
+	allowed := rec.Header().Get("Allow")
+	if allowed != "GET" {
+		t.Errorf("Expected Allow header 'GET', got %q", allowed)
+	}
+}
+
+// =============================================================================
+// Token Tests
+// =============================================================================
+
+func TestRBACHandler_HandleTokens_MethodNotAllowed(t *testing.T) {
+	handler, _, cleanup := createTestRBACHandler(t, true)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/rbac/tokens", nil)
+	req = withSuperuser(req)
+	rec := httptest.NewRecorder()
+
+	handler.handleTokens(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("Expected status %d, got %d", http.StatusMethodNotAllowed, rec.Code)
+	}
+
+	allowed := rec.Header().Get("Allow")
+	if allowed != "GET" {
+		t.Errorf("Expected Allow header 'GET', got %q", allowed)
+	}
+}
+
+func TestRBACHandler_HandleTokenSubpath_InvalidID(t *testing.T) {
+	handler, _, cleanup := createTestRBACHandler(t, true)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/tokens/abc/scope", nil)
+	req = withSuperuser(req)
+	rec := httptest.NewRecorder()
+
+	handler.handleTokenSubpath(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+}
+
+func TestRBACHandler_HandleTokenSubpath_NotScope(t *testing.T) {
+	handler, _, cleanup := createTestRBACHandler(t, true)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/tokens/1/unknown", nil)
+	req = withSuperuser(req)
+	rec := httptest.NewRecorder()
+
+	handler.handleTokenSubpath(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("Expected status %d, got %d", http.StatusNotFound, rec.Code)
+	}
+}
+
+func TestRBACHandler_HandleTokenSubpath_Scope_MethodNotAllowed(t *testing.T) {
+	handler, store, cleanup := createTestRBACHandler(t, true)
+	defer cleanup()
+
+	// Grant manage_token_scopes permission
+	store.CreateUser("admin", "password", "Admin", "", "")
+	adminID, _ := store.GetUserID("admin")
+	gID, _ := store.CreateGroup("admins", "Admins")
+	store.AddUserToGroup(gID, adminID)
+	store.GrantAdminPermission(gID, auth.PermManageTokenScopes)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/rbac/tokens/1/scope", nil)
+	req = withUser(req, adminID)
+	rec := httptest.NewRecorder()
+
+	handler.handleTokenSubpath(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("Expected status %d, got %d", http.StatusMethodNotAllowed, rec.Code)
+	}
+
+	allowed := rec.Header().Get("Allow")
+	if allowed != "GET, PUT, DELETE" {
+		t.Errorf("Expected Allow header 'GET, PUT, DELETE', got %q", allowed)
+	}
+}
+
+// =============================================================================
+// User Create Tests
+// =============================================================================
+
+func TestRBACHandler_CreateUser_MissingUsername(t *testing.T) {
+	handler, store, cleanup := createTestRBACHandler(t, true)
+	defer cleanup()
+
+	store.CreateUser("admin", "password", "Admin", "", "")
+	adminID, _ := store.GetUserID("admin")
+	gID, _ := store.CreateGroup("admins", "Admins")
+	store.AddUserToGroup(gID, adminID)
+	store.GrantAdminPermission(gID, auth.PermManageUsers)
+
+	body := `{"password": "secret123"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/rbac/users",
+		bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withUser(req, adminID)
+	rec := httptest.NewRecorder()
+
+	handler.handleUsers(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if response.Error != "Username is required" {
+		t.Errorf("Expected 'Username is required', got %q", response.Error)
+	}
+}
+
+func TestRBACHandler_CreateUser_MissingPassword(t *testing.T) {
+	handler, store, cleanup := createTestRBACHandler(t, true)
+	defer cleanup()
+
+	store.CreateUser("admin", "password", "Admin", "", "")
+	adminID, _ := store.GetUserID("admin")
+	gID, _ := store.CreateGroup("admins", "Admins")
+	store.AddUserToGroup(gID, adminID)
+	store.GrantAdminPermission(gID, auth.PermManageUsers)
+
+	body := `{"username": "newuser"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/rbac/users",
+		bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withUser(req, adminID)
+	rec := httptest.NewRecorder()
+
+	handler.handleUsers(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if response.Error != "Password is required" {
+		t.Errorf("Expected 'Password is required', got %q", response.Error)
+	}
+}
+
+// =============================================================================
+// Group Update Tests
+// =============================================================================
+
+func TestRBACHandler_UpdateGroup_EmptyUpdate(t *testing.T) {
+	handler, store, cleanup := createTestRBACHandler(t, true)
+	defer cleanup()
+
+	store.CreateUser("admin", "password", "Admin", "", "")
+	adminID, _ := store.GetUserID("admin")
+	gID, _ := store.CreateGroup("admins", "Admins")
+	store.AddUserToGroup(gID, adminID)
+	store.GrantAdminPermission(gID, auth.PermManageGroups)
+
+	body := `{}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/rbac/groups/1",
+		bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withUser(req, adminID)
+	rec := httptest.NewRecorder()
+
+	handler.updateGroup(rec, req, gID)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	expected := "At least one of name or description is required"
+	if response.Error != expected {
+		t.Errorf("Expected %q, got %q", expected, response.Error)
+	}
+}
+
+// =============================================================================
+// Group Members Tests
+// =============================================================================
+
+func TestRBACHandler_AddGroupMember_MissingBothIDs(t *testing.T) {
+	handler, store, cleanup := createTestRBACHandler(t, true)
+	defer cleanup()
+
+	store.CreateUser("admin", "password", "Admin", "", "")
+	adminID, _ := store.GetUserID("admin")
+	gID, _ := store.CreateGroup("admins", "Admins")
+	store.AddUserToGroup(gID, adminID)
+	store.GrantAdminPermission(gID, auth.PermManageGroups)
+
+	body := `{}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/rbac/groups/1/members",
+		bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withUser(req, adminID)
+	rec := httptest.NewRecorder()
+
+	handler.addGroupMember(rec, req, gID)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	expected := "Either user_id or group_id is required"
+	if response.Error != expected {
+		t.Errorf("Expected %q, got %q", expected, response.Error)
+	}
+}
+
+func TestRBACHandler_AddGroupMember_BothIDsProvided(t *testing.T) {
+	handler, store, cleanup := createTestRBACHandler(t, true)
+	defer cleanup()
+
+	store.CreateUser("admin", "password", "Admin", "", "")
+	adminID, _ := store.GetUserID("admin")
+	gID, _ := store.CreateGroup("admins", "Admins")
+	store.AddUserToGroup(gID, adminID)
+	store.GrantAdminPermission(gID, auth.PermManageGroups)
+
+	body := `{"user_id": 1, "group_id": 2}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/rbac/groups/1/members",
+		bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withUser(req, adminID)
+	rec := httptest.NewRecorder()
+
+	handler.addGroupMember(rec, req, gID)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	expected := "Only one of user_id or group_id may be specified"
+	if response.Error != expected {
+		t.Errorf("Expected %q, got %q", expected, response.Error)
+	}
+}
+
+func TestRBACHandler_RemoveGroupMember_InvalidType(t *testing.T) {
+	handler, store, cleanup := createTestRBACHandler(t, true)
+	defer cleanup()
+
+	store.CreateUser("admin", "password", "Admin", "", "")
+	adminID, _ := store.GetUserID("admin")
+	gID, _ := store.CreateGroup("admins", "Admins")
+	store.AddUserToGroup(gID, adminID)
+	store.GrantAdminPermission(gID, auth.PermManageGroups)
+
+	req := httptest.NewRequest(http.MethodDelete,
+		"/api/v1/rbac/groups/1/members/invalid/1", nil)
+	req = withUser(req, adminID)
+	rec := httptest.NewRecorder()
+
+	handler.removeGroupMember(rec, req, gID, "invalid", 1)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	expected := "Invalid member type: must be 'user' or 'group'"
+	if response.Error != expected {
+		t.Errorf("Expected %q, got %q", expected, response.Error)
+	}
+}
+
+// =============================================================================
 // Helpers
 // =============================================================================
 

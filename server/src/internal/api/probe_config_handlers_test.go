@@ -168,3 +168,110 @@ func TestProbeConfigHandler_RegisterRoutes_NotConfigured(t *testing.T) {
 		}
 	}
 }
+
+func TestProbeConfigHandler_HandleSubpath_EmptyPath(t *testing.T) {
+	handler := NewProbeConfigHandler(nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/probe-configs/", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleProbeConfigSubpath(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("Expected status %d, got %d", http.StatusNotFound, rec.Code)
+	}
+}
+
+func TestProbeConfigHandler_HandleProbeConfigs_Methods(t *testing.T) {
+	handler := NewProbeConfigHandler(nil, nil, nil)
+
+	methods := []string{
+		http.MethodPost,
+		http.MethodPut,
+		http.MethodPatch,
+	}
+
+	for _, method := range methods {
+		t.Run(method+" not allowed", func(t *testing.T) {
+			req := httptest.NewRequest(method, "/api/v1/probe-configs", nil)
+			rec := httptest.NewRecorder()
+
+			handler.handleProbeConfigs(rec, req)
+
+			if rec.Code != http.StatusMethodNotAllowed {
+				t.Errorf("Expected status %d, got %d",
+					http.StatusMethodNotAllowed, rec.Code)
+			}
+
+			allowed := rec.Header().Get("Allow")
+			if allowed != "GET" {
+				t.Errorf("Expected Allow header 'GET', got %q", allowed)
+			}
+		})
+	}
+}
+
+func TestProbeConfigHandler_HandleSubpath_Delete_MethodNotAllowed(t *testing.T) {
+	handler := NewProbeConfigHandler(nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/probe-configs/1", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleProbeConfigSubpath(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("Expected status %d, got %d", http.StatusMethodNotAllowed, rec.Code)
+	}
+
+	allowed := rec.Header().Get("Allow")
+	if allowed != "GET, PUT" {
+		t.Errorf("Expected Allow header 'GET, PUT', got %q", allowed)
+	}
+}
+
+func TestProbeConfigHandler_ListProbeConfigs_InvalidConnectionID(t *testing.T) {
+	handler := NewProbeConfigHandler(nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/probe-configs?connection_id=abc", nil)
+	rec := httptest.NewRecorder()
+
+	handler.listProbeConfigs(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if response.Error != "Invalid connection_id parameter" {
+		t.Errorf("Expected error 'Invalid connection_id parameter', got %q", response.Error)
+	}
+}
+
+func TestProbeConfigHandler_UpdateProbeConfig_InvalidJSON(t *testing.T) {
+	rbac := auth.NewRBACChecker(nil, false)
+	handler := NewProbeConfigHandler(nil, nil, rbac)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/probe-configs/1",
+		bytes.NewBufferString("invalid json"))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.updateProbeConfig(rec, req, 1)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if response.Error != "Invalid request body" {
+		t.Errorf("Expected error 'Invalid request body', got %q", response.Error)
+	}
+}

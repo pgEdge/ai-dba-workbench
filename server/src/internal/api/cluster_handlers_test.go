@@ -331,3 +331,220 @@ func TestClusterHandler_HandleClusterServers_MethodNotAllowed(t *testing.T) {
 		t.Errorf("Expected Allow header 'GET', got %q", allowed)
 	}
 }
+
+func TestClusterHandler_HandleClusterSubpath_EmptyPath(t *testing.T) {
+	handler := NewClusterHandler(nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/clusters/", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterSubpath(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("Expected status %d, got %d", http.StatusNotFound, rec.Code)
+	}
+}
+
+func TestClusterHandler_HandleClusterGroupSubpath_EmptyPath(t *testing.T) {
+	handler := NewClusterHandler(nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cluster-groups/", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterGroupSubpath(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("Expected status %d, got %d", http.StatusNotFound, rec.Code)
+	}
+}
+
+func TestClusterHandler_HandleClusterSubpath_Servers_InvalidID(t *testing.T) {
+	handler := NewClusterHandler(nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/clusters/abc/servers", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterSubpath(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if response.Error != "Invalid cluster ID" {
+		t.Errorf("Expected 'Invalid cluster ID', got %q", response.Error)
+	}
+}
+
+func TestClusterHandler_HandleClusterSubpath_MethodNotAllowed(t *testing.T) {
+	handler := NewClusterHandler(nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/clusters/1", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterSubpath(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("Expected status %d, got %d", http.StatusMethodNotAllowed, rec.Code)
+	}
+
+	allowed := rec.Header().Get("Allow")
+	if allowed != "GET, PUT, DELETE" {
+		t.Errorf("Expected Allow header 'GET, PUT, DELETE', got %q", allowed)
+	}
+}
+
+func TestClusterHandler_HandleClusterGroupSubpath_MethodNotAllowed(t *testing.T) {
+	handler := NewClusterHandler(nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/cluster-groups/1", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterGroupSubpath(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("Expected status %d, got %d", http.StatusMethodNotAllowed, rec.Code)
+	}
+
+	allowed := rec.Header().Get("Allow")
+	if allowed != "GET, PUT, DELETE" {
+		t.Errorf("Expected Allow header 'GET, PUT, DELETE', got %q", allowed)
+	}
+}
+
+func TestClusterHandler_HandleClusterGroupSubpath_Clusters_InvalidID(t *testing.T) {
+	handler := NewClusterHandler(nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cluster-groups/abc/clusters", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterGroupSubpath(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if response.Error != "Invalid group ID" {
+		t.Errorf("Expected 'Invalid group ID', got %q", response.Error)
+	}
+}
+
+func TestClusterHandler_HandleGroupClusters_MethodNotAllowed(t *testing.T) {
+	handler := NewClusterHandler(nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/cluster-groups/1/clusters", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleGroupClusters(rec, req, 1)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("Expected status %d, got %d", http.StatusMethodNotAllowed, rec.Code)
+	}
+
+	allowed := rec.Header().Get("Allow")
+	if allowed != "GET, POST" {
+		t.Errorf("Expected Allow header 'GET, POST', got %q", allowed)
+	}
+}
+
+func TestClusterHandler_CreateClusterInGroup_MissingName(t *testing.T) {
+	handler := NewClusterHandler(nil, nil, nil)
+
+	body := `{"description": "Test"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups/1/clusters",
+		bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.createClusterInGroup(rec, req, 1)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if response.Error != "Name is required" {
+		t.Errorf("Expected 'Name is required', got %q", response.Error)
+	}
+}
+
+func TestComputeAutoClusterKey(t *testing.T) {
+	tests := []struct {
+		name      string
+		clusterID string
+		expected  string
+	}{
+		{
+			name:      "spock cluster",
+			clusterID: "cluster-spock-abc123",
+			expected:  "spock:abc123",
+		},
+		{
+			name:      "server standalone",
+			clusterID: "server-42",
+			expected:  "standalone:42",
+		},
+		{
+			name:      "unknown format",
+			clusterID: "unknown-format",
+			expected:  "",
+		},
+		{
+			name:      "numeric ID",
+			clusterID: "123",
+			expected:  "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := computeAutoClusterKey(tt.clusterID)
+			if result != tt.expected {
+				t.Errorf("computeAutoClusterKey(%q) = %q, want %q",
+					tt.clusterID, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestAutoDetectedClusterRequest_JSON(t *testing.T) {
+	groupID := 1
+	req := AutoDetectedClusterRequest{
+		Name:           "My Cluster",
+		AutoClusterKey: "spock:abc",
+		GroupID:        &groupID,
+	}
+
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("Failed to marshal: %v", err)
+	}
+
+	var decoded AutoDetectedClusterRequest
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("Failed to unmarshal: %v", err)
+	}
+
+	if decoded.Name != req.Name {
+		t.Errorf("Name = %q, want %q", decoded.Name, req.Name)
+	}
+	if decoded.AutoClusterKey != req.AutoClusterKey {
+		t.Errorf("AutoClusterKey = %q, want %q", decoded.AutoClusterKey, req.AutoClusterKey)
+	}
+	if decoded.GroupID == nil || *decoded.GroupID != *req.GroupID {
+		t.Error("GroupID mismatch")
+	}
+}

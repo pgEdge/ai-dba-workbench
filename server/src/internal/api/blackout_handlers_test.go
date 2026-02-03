@@ -522,6 +522,199 @@ func TestBlackoutTypes(t *testing.T) {
 	}
 }
 
+func TestBlackoutHandler_HandleBlackoutSubpath_EmptyPath(t *testing.T) {
+	handler := NewBlackoutHandler(nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/blackouts/", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleBlackoutSubpath(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("Expected status %d, got %d", http.StatusNotFound, rec.Code)
+	}
+}
+
+func TestBlackoutHandler_HandleBlackoutSubpath_UnknownSubpath(t *testing.T) {
+	handler := NewBlackoutHandler(nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/blackouts/1/unknown", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleBlackoutSubpath(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("Expected status %d, got %d", http.StatusNotFound, rec.Code)
+	}
+}
+
+func TestBlackoutHandler_HandleBlackoutScheduleSubpath_EmptyPath(t *testing.T) {
+	handler := NewBlackoutHandler(nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/blackout-schedules/", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleBlackoutScheduleSubpath(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("Expected status %d, got %d", http.StatusNotFound, rec.Code)
+	}
+}
+
+func TestBlackoutUpdateRequest_JSON(t *testing.T) {
+	reason := "Extended maintenance"
+	endTime := "2026-01-31T04:00:00Z"
+	req := BlackoutUpdateRequest{
+		Reason:  &reason,
+		EndTime: &endTime,
+	}
+
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("Failed to marshal: %v", err)
+	}
+
+	var decoded BlackoutUpdateRequest
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("Failed to unmarshal: %v", err)
+	}
+
+	if decoded.Reason == nil || *decoded.Reason != reason {
+		t.Error("Reason mismatch")
+	}
+	if decoded.EndTime == nil || *decoded.EndTime != endTime {
+		t.Error("EndTime mismatch")
+	}
+
+	// Test JSON keys
+	var rawJSON map[string]interface{}
+	if err := json.Unmarshal(data, &rawJSON); err != nil {
+		t.Fatalf("Failed to unmarshal to map: %v", err)
+	}
+
+	if _, ok := rawJSON["reason"]; !ok {
+		t.Error("Expected 'reason' key in JSON")
+	}
+	if _, ok := rawJSON["end_time"]; !ok {
+		t.Error("Expected 'end_time' key in JSON")
+	}
+}
+
+func TestBlackoutHandler_CreateBlackout_InvalidEndTime(t *testing.T) {
+	rbac := auth.NewRBACChecker(nil, false)
+	handler := NewBlackoutHandler(nil, nil, rbac)
+
+	body := BlackoutCreateRequest{
+		Scope:     "estate",
+		Reason:    "test",
+		StartTime: "2026-01-31T00:00:00Z",
+		EndTime:   "not-a-time",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/blackouts",
+		bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.createBlackout(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if !contains(response.Error, "end_time") {
+		t.Errorf("Expected error about end_time, got %q", response.Error)
+	}
+}
+
+func TestBlackoutHandler_UpdateSchedule_ValidationErrors(t *testing.T) {
+	rbac := auth.NewRBACChecker(nil, false)
+	handler := NewBlackoutHandler(nil, nil, rbac)
+
+	tests := []struct {
+		name        string
+		body        interface{}
+		wantStatus  int
+		errContains string
+	}{
+		{
+			name: "missing name",
+			body: BlackoutScheduleRequest{
+				Scope:           "estate",
+				CronExpression:  "0 2 * * 0",
+				DurationMinutes: 120,
+				Reason:          "test",
+			},
+			wantStatus:  http.StatusBadRequest,
+			errContains: "Name is required",
+		},
+		{
+			name: "missing cron expression",
+			body: BlackoutScheduleRequest{
+				Scope:           "estate",
+				Name:            "test",
+				DurationMinutes: 120,
+				Reason:          "test",
+			},
+			wantStatus:  http.StatusBadRequest,
+			errContains: "Cron expression is required",
+		},
+		{
+			name: "negative duration",
+			body: BlackoutScheduleRequest{
+				Scope:           "estate",
+				Name:            "test",
+				CronExpression:  "0 2 * * 0",
+				DurationMinutes: -1,
+				Reason:          "test",
+			},
+			wantStatus:  http.StatusBadRequest,
+			errContains: "Duration minutes must be positive",
+		},
+		{
+			name: "invalid scope",
+			body: BlackoutScheduleRequest{
+				Scope:           "invalid",
+				Name:            "test",
+				CronExpression:  "0 2 * * 0",
+				DurationMinutes: 120,
+				Reason:          "test",
+			},
+			wantStatus:  http.StatusBadRequest,
+			errContains: "invalid scope",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, _ := json.Marshal(tt.body)
+			req := httptest.NewRequest(http.MethodPut, "/api/v1/blackout-schedules/1",
+				bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+
+			handler.updateBlackoutSchedule(rec, req, 1)
+
+			if rec.Code != tt.wantStatus {
+				t.Errorf("Expected status %d, got %d", tt.wantStatus, rec.Code)
+			}
+
+			var response ErrorResponse
+			if err := json.NewDecoder(rec.Body).Decode(&response); err == nil {
+				if tt.errContains != "" && !contains(response.Error, tt.errContains) {
+					t.Errorf("Expected error containing %q, got %q",
+						tt.errContains, response.Error)
+				}
+			}
+		})
+	}
+}
+
 // Helper functions
 
 func intPtr(v int) *int {

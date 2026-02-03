@@ -19,12 +19,12 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/chzyer/readline"
 	"github.com/pgedge/ai-workbench/cli/internal/mcp"
+	pkgchat "github.com/pgedge/ai-workbench/pkg/chat"
 )
 
 // Client is the main chat client
@@ -367,22 +367,22 @@ func (c *Client) initializeLLM() error {
 
 	// Select the best model to use
 	selection := c.selectModel(provider, availableModels)
-	c.config.LLM.Model = selection.model
+	c.config.LLM.Model = selection.Model
 
 	// Log if we used a family match (newer version of saved model)
-	if selection.usedFamilyMatch && c.config.UI.Debug {
+	if selection.UsedFamilyMatch && c.config.UI.Debug {
 		savedModel := c.preferences.GetModelForProvider(provider)
-		fmt.Fprintf(os.Stderr, "[DEBUG] Model updated: %s → %s (newer version available)\n",
-			savedModel, selection.model)
+		fmt.Fprintf(os.Stderr, "[DEBUG] Model updated: %s -> %s (newer version available)\n",
+			savedModel, selection.Model)
 	}
 
 	// Only save preferences if:
 	// 1. There was no saved preference (first time using this provider)
 	// 2. We used a family match (update to newer version)
 	// Do NOT save if we fell back to default/first available - that would corrupt user's preference
-	shouldSave := !selection.hadSavedPref || selection.usedFamilyMatch
+	shouldSave := !selection.HadSavedPref || selection.UsedFamilyMatch
 	if shouldSave {
-		c.preferences.SetModelForProvider(provider, selection.model)
+		c.preferences.SetModelForProvider(provider, selection.Model)
 		if err := SavePreferences(c.preferences); err != nil {
 			if c.config.UI.Debug {
 				fmt.Fprintf(os.Stderr, "Warning: Failed to save preferences: %v\n", err)
@@ -515,30 +515,6 @@ func getBriefDescription(desc string) string {
 		}
 	}
 	return desc
-}
-
-// CompactionRequest represents a request to compact chat history.
-type CompactionRequest struct {
-	Messages     []Message `json:"messages"`
-	MaxTokens    int       `json:"max_tokens,omitempty"`
-	RecentWindow int       `json:"recent_window,omitempty"`
-	KeepAnchors  bool      `json:"keep_anchors"`
-}
-
-// CompactionResponse contains the compacted messages and statistics.
-type CompactionResponse struct {
-	Messages       []Message      `json:"messages"`
-	TokenEstimate  int            `json:"token_estimate"`
-	CompactionInfo CompactionInfo `json:"compaction_info"`
-}
-
-// CompactionInfo provides statistics about the compaction operation.
-type CompactionInfo struct {
-	OriginalCount    int     `json:"original_count"`
-	CompactedCount   int     `json:"compacted_count"`
-	DroppedCount     int     `json:"dropped_count"`
-	TokensSaved      int     `json:"tokens_saved"`
-	CompressionRatio float64 `json:"compression_ratio"`
 }
 
 // estimateTokens estimates the number of tokens in a string.
@@ -993,21 +969,13 @@ func (c *Client) SavePreferences() error {
 	return SavePreferences(c.preferences)
 }
 
-// modelSelectionResult contains the result of model selection
-type modelSelectionResult struct {
-	model           string
-	fromSavedPref   bool // true if selected from saved preference (exact or family match)
-	hadSavedPref    bool // true if there was a saved preference for this provider
-	usedFamilyMatch bool // true if a newer version in the same family was selected
-}
-
 // selectModel determines the best model to use based on:
 // 1. Command-line flag (if set via config)
 // 2. Saved preference - exact match
-// 3. Saved preference - family match (e.g., claude-opus-4-5-20251101 → claude-opus-4-5-20251217)
+// 3. Saved preference - family match (e.g., claude-opus-4-5-20251101 -> claude-opus-4-5-20251217)
 // 4. Default for provider (if available)
 // 5. First available model from provider's list
-func (c *Client) selectModel(provider string, availableModels []string) modelSelectionResult {
+func (c *Client) selectModel(provider string, availableModels []string) pkgchat.ModelSelectionResult {
 	debug := c.config.UI.Debug
 
 	// If model was already set (via flag), use it (trust the user)
@@ -1015,7 +983,7 @@ func (c *Client) selectModel(provider string, availableModels []string) modelSel
 		if debug {
 			fmt.Fprintf(os.Stderr, "[DEBUG] Model set via flag: %s\n", c.config.LLM.Model)
 		}
-		return modelSelectionResult{model: c.config.LLM.Model, fromSavedPref: false, hadSavedPref: false}
+		return pkgchat.ModelSelectionResult{Model: c.config.LLM.Model, FromSavedPref: false, HadSavedPref: false}
 	}
 
 	// Check saved preference for this provider
@@ -1029,159 +997,30 @@ func (c *Client) selectModel(provider string, availableModels []string) modelSel
 		}
 	}
 
-	if savedModel != "" {
-		// Try exact match first
-		if isModelAvailable(savedModel, availableModels) {
-			if debug {
-				fmt.Fprintf(os.Stderr, "[DEBUG] Using saved model (exact match): %s\n", savedModel)
-			}
-			return modelSelectionResult{model: savedModel, fromSavedPref: true, hadSavedPref: true}
-		}
+	// Use shared model selection logic
+	result := pkgchat.SelectModelFromPreferences(provider, savedModel, availableModels)
 
-		if debug {
-			fmt.Fprintf(os.Stderr, "[DEBUG] Saved model %q not in available models, trying family match\n", savedModel)
-		}
-
-		// Try family match (e.g., claude-opus-4-5-* when saved is claude-opus-4-5-20251101)
-		// This handles Anthropic releasing newer versions of the same model
-		if familyMatch := findModelFamilyMatch(savedModel, availableModels); familyMatch != "" {
-			if debug {
-				fmt.Fprintf(os.Stderr, "[DEBUG] Family match found: %s → %s\n", savedModel, familyMatch)
-			}
-			return modelSelectionResult{
-				model:           familyMatch,
-				fromSavedPref:   true,
-				hadSavedPref:    true,
-				usedFamilyMatch: true,
-			}
-		}
-
-		if debug {
-			family := extractModelFamily(savedModel)
-			fmt.Fprintf(os.Stderr, "[DEBUG] No family match found for %q (family: %q)\n", savedModel, family)
-		}
-
-		// Saved preference exists but couldn't be matched
-		// Fall through to defaults, but remember we had a saved pref
-	}
-
-	hadSaved := savedModel != ""
-
-	// Use default for provider
-	defaultModel := getDefaultModelForProvider(provider)
-	if isModelAvailable(defaultModel, availableModels) {
-		if debug && hadSaved {
-			fmt.Fprintf(os.Stderr, "[DEBUG] Falling back to provider default: %s (saved preference %q not available)\n",
-				defaultModel, savedModel)
-		}
-		return modelSelectionResult{model: defaultModel, fromSavedPref: false, hadSavedPref: hadSaved}
-	}
-
-	// Fall back to first available model
-	if len(availableModels) > 0 {
-		if debug {
-			fmt.Fprintf(os.Stderr, "[DEBUG] Falling back to first available model: %s (default %q also not available)\n",
-				availableModels[0], defaultModel)
-		}
-		return modelSelectionResult{model: availableModels[0], fromSavedPref: false, hadSavedPref: hadSaved}
-	}
-
-	// Last resort: use default even if not validated
 	if debug {
-		fmt.Fprintf(os.Stderr, "[DEBUG] No models available, using default: %s\n", defaultModel)
-	}
-	return modelSelectionResult{model: defaultModel, fromSavedPref: false, hadSavedPref: hadSaved}
-}
-
-// findModelFamilyMatch finds a model in availableModels that matches the family of savedModel.
-// Family matching: "claude-opus-4-5-20251101" matches "claude-opus-4-5-*"
-// Returns the latest (by date suffix) matching model, or empty string if no match.
-func findModelFamilyMatch(savedModel string, availableModels []string) string {
-	if len(availableModels) == 0 {
-		return ""
-	}
-
-	// Extract family prefix (everything before the last date segment)
-	// e.g., "claude-opus-4-5-20251101" → "claude-opus-4-5-"
-	family := extractModelFamily(savedModel)
-	if family == "" {
-		return ""
-	}
-
-	// Find all models with the SAME family (exact family match, not prefix)
-	// e.g., claude-opus-4-5- should not match claude-opus-4- or claude-opus-4-5-1-
-	var matches []string
-	for _, m := range availableModels {
-		modelFamily := extractModelFamily(m)
-		if modelFamily == family {
-			matches = append(matches, m)
+		if result.FromSavedPref {
+			if result.UsedFamilyMatch {
+				fmt.Fprintf(os.Stderr, "[DEBUG] Family match found: %s -> %s\n", savedModel, result.Model)
+			} else {
+				fmt.Fprintf(os.Stderr, "[DEBUG] Using saved model (exact match): %s\n", result.Model)
+			}
+		} else if result.HadSavedPref {
+			fmt.Fprintf(os.Stderr, "[DEBUG] Saved preference %q not available, using: %s\n", savedModel, result.Model)
+		} else {
+			fmt.Fprintf(os.Stderr, "[DEBUG] No saved preference, using: %s\n", result.Model)
 		}
 	}
 
-	if len(matches) == 0 {
-		return ""
-	}
-
-	// Return the latest version (highest date suffix)
-	// Models are typically returned sorted, but sort to be safe
-	sort.Strings(matches)
-	return matches[len(matches)-1]
+	return result
 }
 
-// extractModelFamily extracts the model family prefix from a model ID.
-// Returns the prefix including trailing hyphen, or empty string if not parseable.
-// Examples:
-//   - "claude-opus-4-5-20251101" → "claude-opus-4-5-"
-//   - "claude-sonnet-4-20250514" → "claude-sonnet-4-"
-//   - "gpt-4o-mini" → "" (no date suffix pattern)
-func extractModelFamily(model string) string {
-	// Look for a date suffix pattern: -YYYYMMDD at the end
-	// The date is 8 digits after a hyphen
-	if len(model) < 9 {
-		return ""
-	}
-
-	// Check if last 8 chars are digits (date)
-	suffix := model[len(model)-8:]
-	for _, c := range suffix {
-		if c < '0' || c > '9' {
-			return "" // Not a date suffix
-		}
-	}
-
-	// Check there's a hyphen before the date
-	if len(model) < 10 || model[len(model)-9] != '-' {
-		return ""
-	}
-
-	// Return everything up to and including the hyphen before the date
-	return model[:len(model)-8]
-}
-
-// isModelAvailable checks if model is in the available list
-// Returns true if availableModels is nil (couldn't fetch) for graceful degradation
-func isModelAvailable(model string, availableModels []string) bool {
-	if availableModels == nil {
-		return true // Can't validate, assume available
-	}
-	for _, m := range availableModels {
-		if m == model {
-			return true
-		}
-	}
-	return false
-}
-
-// getDefaultModelForProvider returns the default model for a provider
-func getDefaultModelForProvider(provider string) string {
-	switch provider {
-	case "anthropic":
-		return "claude-sonnet-4-5-20250929"
-	case "openai":
-		return "gpt-4o"
-	case "ollama":
-		return "qwen3-coder:latest"
-	default:
-		return ""
-	}
-}
+// Re-export model selection functions from pkg/chat for local use and tests
+var (
+	findModelFamilyMatch       = pkgchat.FindModelFamilyMatch
+	extractModelFamily         = pkgchat.ExtractModelFamily
+	isModelAvailable           = pkgchat.IsModelAvailable
+	getDefaultModelForProvider = pkgchat.GetDefaultModelForProvider
+)

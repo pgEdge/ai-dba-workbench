@@ -255,8 +255,9 @@ func TestSaveAndLoadPreferences(t *testing.T) {
 	tmpDir := t.TempDir()
 	os.Setenv("HOME", tmpDir)
 
-	// Create preferences to save
+	// Create preferences to save (use current version to avoid migration)
 	prefs := &Preferences{
+		Version: CurrentPreferencesVersion,
 		UI: UIPreferences{
 			DisplayStatusMessages: false,
 			RenderMarkdown:        false,
@@ -279,7 +280,7 @@ func TestSaveAndLoadPreferences(t *testing.T) {
 	}
 
 	// Verify file was created
-	prefsPath := filepath.Join(tmpDir, ".pgedge-nla-cli-prefs")
+	prefsPath := filepath.Join(tmpDir, ".ai-dba-workbench-cli-prefs")
 	if _, err := os.Stat(prefsPath); os.IsNotExist(err) {
 		t.Fatal("Preferences file was not created")
 	}
@@ -324,7 +325,7 @@ func TestLoadPreferences_InvalidYAML(t *testing.T) {
 	os.Setenv("HOME", tmpDir)
 
 	// Create invalid YAML file
-	prefsPath := filepath.Join(tmpDir, ".pgedge-nla-cli-prefs")
+	prefsPath := filepath.Join(tmpDir, ".ai-dba-workbench-cli-prefs")
 	if err := os.WriteFile(prefsPath, []byte("invalid: yaml: content: ["), 0600); err != nil {
 		t.Fatalf("Failed to write invalid YAML: %v", err)
 	}
@@ -345,7 +346,7 @@ func TestGetPreferencesPath(t *testing.T) {
 	os.Setenv("HOME", "/test/home")
 
 	path := GetPreferencesPath()
-	expected := "/test/home/.pgedge-nla-cli-prefs"
+	expected := "/test/home/.ai-dba-workbench-cli-prefs"
 	if path != expected {
 		t.Errorf("GetPreferencesPath() = %q, want %q", path, expected)
 	}

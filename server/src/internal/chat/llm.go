@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	pkgchat "github.com/pgedge/ai-workbench/pkg/chat"
 	"github.com/pgedge/ai-workbench/pkg/embedding"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
 )
@@ -121,55 +122,43 @@ func logTokenUsage(provider string, promptTokens, completionTokens, totalTokens 
 }
 
 // -------------------------------------------------------------------------
-// Types
+// Types - Re-exported from pkg/chat for backward compatibility
 // -------------------------------------------------------------------------
 
 // Message represents a chat message
-type Message struct {
-	Role         string                 `json:"role"`
-	Content      interface{}            `json:"content"`
-	CacheControl map[string]interface{} `json:"cache_control,omitempty"`
-}
+type Message = pkgchat.Message
 
 // ToolUse represents a tool invocation in a message
-type ToolUse struct {
-	Type  string                 `json:"type"`
-	ID    string                 `json:"id"`
-	Name  string                 `json:"name"`
-	Input map[string]interface{} `json:"input"`
-}
+type ToolUse = pkgchat.ToolUse
 
 // TextContent represents text content in a message
-type TextContent struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
+type TextContent = pkgchat.TextContent
 
 // ToolResult represents the result of a tool execution
-type ToolResult struct {
-	Type      string      `json:"type"`
-	ToolUseID string      `json:"tool_use_id"`
-	Content   interface{} `json:"content"`
-	IsError   bool        `json:"is_error,omitempty"`
-}
+type ToolResult = pkgchat.ToolResult
 
 // LLMResponse represents a response from the LLM
-type LLMResponse struct {
-	Content    []interface{} // Can be TextContent or ToolUse
-	StopReason string
-	TokenUsage *TokenUsage `json:"token_usage,omitempty"` // Optional token usage information (only when debug enabled)
-}
+type LLMResponse = pkgchat.LLMResponse
 
 // TokenUsage holds token usage information for debug purposes
-type TokenUsage struct {
-	Provider               string  `json:"provider"`
-	PromptTokens           int     `json:"prompt_tokens,omitempty"`
-	CompletionTokens       int     `json:"completion_tokens,omitempty"`
-	TotalTokens            int     `json:"total_tokens,omitempty"`
-	CacheCreationTokens    int     `json:"cache_creation_tokens,omitempty"`
-	CacheReadTokens        int     `json:"cache_read_tokens,omitempty"`
-	CacheSavingsPercentage float64 `json:"cache_savings_percentage,omitempty"`
-}
+type TokenUsage = pkgchat.TokenUsage
+
+// CompactionRequest represents a request to compact chat history
+type CompactionRequest = pkgchat.CompactionRequest
+
+// CompactionResponse contains the compacted messages and statistics
+type CompactionResponse = pkgchat.CompactionResponse
+
+// CompactionInfo provides statistics about the compaction operation
+type CompactionInfo = pkgchat.CompactionInfo
+
+// Re-export helper functions from pkg/chat
+var (
+	EstimateTokens      = pkgchat.EstimateTokens
+	EstimateTotalTokens = pkgchat.EstimateTotalTokens
+	HasToolResults      = pkgchat.HasToolResults
+	GetBriefDescription = pkgchat.GetBriefDescription
+)
 
 // LLMClient provides a unified interface for different LLM providers
 type LLMClient interface {

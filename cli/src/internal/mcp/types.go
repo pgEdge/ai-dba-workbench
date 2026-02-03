@@ -8,152 +8,81 @@
  *-------------------------------------------------------------------------
  */
 
+// Package mcp provides MCP protocol types and helpers for the CLI.
+// This package re-exports types from the shared pkg/mcp package.
 package mcp
 
+import (
+	pkgmcp "github.com/pgedge/ai-workbench/pkg/mcp"
+)
+
+// Re-export all types from the shared MCP package
+
 // JSONRPCRequest represents an incoming JSON-RPC 2.0 request
-type JSONRPCRequest struct {
-	JSONRPC string      `json:"jsonrpc"`
-	ID      interface{} `json:"id,omitempty"`
-	Method  string      `json:"method"`
-	Params  interface{} `json:"params,omitempty"`
-}
+type JSONRPCRequest = pkgmcp.JSONRPCRequest
 
 // JSONRPCResponse represents an outgoing JSON-RPC 2.0 response
-type JSONRPCResponse struct {
-	JSONRPC string      `json:"jsonrpc"`
-	ID      interface{} `json:"id,omitempty"`
-	Result  interface{} `json:"result,omitempty"`
-	Error   *RPCError   `json:"error,omitempty"`
-}
+type JSONRPCResponse = pkgmcp.JSONRPCResponse
 
 // RPCError represents a JSON-RPC error
-type RPCError struct {
-	Code    int         `json:"code"`
-	Message string      `json:"message"`
-	Data    interface{} `json:"data,omitempty"`
-}
+type RPCError = pkgmcp.RPCError
 
 // InitializeParams represents the parameters for the initialize request
-type InitializeParams struct {
-	ProtocolVersion string                 `json:"protocolVersion"`
-	Capabilities    map[string]interface{} `json:"capabilities"`
-	ClientInfo      ClientInfo             `json:"clientInfo"`
-}
+type InitializeParams = pkgmcp.InitializeParams
 
 // ClientInfo contains information about the MCP client
-type ClientInfo struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
-}
+type ClientInfo = pkgmcp.ClientInfo
 
 // Implementation contains server implementation details
-type Implementation struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
-}
+type Implementation = pkgmcp.Implementation
 
 // InitializeResult is the response to an initialize request
-type InitializeResult struct {
-	ProtocolVersion string                 `json:"protocolVersion"`
-	Capabilities    map[string]interface{} `json:"capabilities"`
-	ServerInfo      Implementation         `json:"serverInfo"`
-}
+type InitializeResult = pkgmcp.InitializeResult
 
 // Tool represents an MCP tool definition
-type Tool struct {
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	InputSchema InputSchema `json:"inputSchema"`
-}
+type Tool = pkgmcp.Tool
 
 // InputSchema defines the JSON schema for tool input
-type InputSchema struct {
-	Type       string                 `json:"type"`
-	Properties map[string]interface{} `json:"properties"`
-	Required   []string               `json:"required,omitempty"`
-}
+type InputSchema = pkgmcp.InputSchema
 
 // ToolCallParams represents parameters for calling a tool
-type ToolCallParams struct {
-	Name      string                 `json:"name"`
-	Arguments map[string]interface{} `json:"arguments,omitempty"`
-}
+type ToolCallParams = pkgmcp.ToolCallParams
 
 // ToolResponse represents the response from a tool execution
-type ToolResponse struct {
-	Content []ContentItem `json:"content"`
-	IsError bool          `json:"isError,omitempty"`
-}
+type ToolResponse = pkgmcp.ToolResponse
 
 // ContentItem represents a piece of content in a tool response
-type ContentItem struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
+type ContentItem = pkgmcp.ContentItem
 
 // Resource represents an MCP resource definition
-type Resource struct {
-	URI         string `json:"uri"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	MimeType    string `json:"mimeType,omitempty"`
-}
+type Resource = pkgmcp.Resource
 
 // ResourceReadParams represents parameters for reading a resource
-type ResourceReadParams struct {
-	URI string `json:"uri"`
-}
+type ResourceReadParams = pkgmcp.ResourceReadParams
 
 // ResourceContent represents the content of a resource
-type ResourceContent struct {
-	URI      string        `json:"uri"`
-	MimeType string        `json:"mimeType,omitempty"`
-	Contents []ContentItem `json:"contents"`
-}
+type ResourceContent = pkgmcp.ResourceContent
 
 // ToolsListResult represents the result of tools/list request
-type ToolsListResult struct {
-	Tools []Tool `json:"tools"`
-}
+type ToolsListResult = pkgmcp.ToolsListResult
 
 // ResourcesListResult represents the result of resources/list request
-type ResourcesListResult struct {
-	Resources []Resource `json:"resources"`
-}
+type ResourcesListResult = pkgmcp.ResourcesListResult
 
 // Prompt represents an MCP prompt definition
-type Prompt struct {
-	Name        string           `json:"name"`
-	Description string           `json:"description,omitempty"`
-	Arguments   []PromptArgument `json:"arguments,omitempty"`
-}
+type Prompt = pkgmcp.Prompt
 
 // PromptArgument represents an argument for a prompt
-type PromptArgument struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Required    bool   `json:"required,omitempty"`
-}
+type PromptArgument = pkgmcp.PromptArgument
 
 // PromptGetParams represents parameters for getting a prompt
-type PromptGetParams struct {
-	Name      string            `json:"name"`
-	Arguments map[string]string `json:"arguments,omitempty"`
-}
+type PromptGetParams = pkgmcp.PromptGetParams
 
 // PromptResult represents the result of getting a prompt
-type PromptResult struct {
-	Description string          `json:"description,omitempty"`
-	Messages    []PromptMessage `json:"messages"`
-}
+type PromptResult = pkgmcp.PromptResult
 
 // PromptMessage represents a message in a prompt template
-type PromptMessage struct {
-	Role    string      `json:"role"` // "user" or "assistant"
-	Content ContentItem `json:"content"`
-}
+type PromptMessage = pkgmcp.PromptMessage
 
 // PromptsListResult represents the result of prompts/list request
-type PromptsListResult struct {
-	Prompts []Prompt `json:"prompts"`
-}
+type PromptsListResult = pkgmcp.PromptsListResult

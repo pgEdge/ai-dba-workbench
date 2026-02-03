@@ -52,11 +52,11 @@ func TestNewConversationsClient(t *testing.T) {
 			if client == nil {
 				t.Fatal("Expected non-nil client")
 			}
-			if client.baseURL != tt.expectedBaseURL {
-				t.Errorf("baseURL = %q, want %q", client.baseURL, tt.expectedBaseURL)
+			if client.BaseURL() != tt.expectedBaseURL {
+				t.Errorf("baseURL = %q, want %q", client.BaseURL(), tt.expectedBaseURL)
 			}
-			if client.token != tt.token {
-				t.Errorf("token = %q, want %q", client.token, tt.token)
+			if client.Token() != tt.token {
+				t.Errorf("token = %q, want %q", client.Token(), tt.token)
 			}
 		})
 	}

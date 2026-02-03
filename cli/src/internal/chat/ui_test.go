@@ -23,7 +23,7 @@ import (
 func TestUI_Colorize_WithColor(t *testing.T) {
 	ui := NewUI(false, false) // Enable colors, disable markdown
 
-	colored := ui.colorize(ColorRed, "test")
+	colored := ui.Colorize(ColorRed, "test")
 	expected := ColorRed + "test" + ColorReset
 
 	if colored != expected {
@@ -34,7 +34,7 @@ func TestUI_Colorize_WithColor(t *testing.T) {
 func TestUI_Colorize_NoColor(t *testing.T) {
 	ui := NewUI(true, false) // Disable colors
 
-	colored := ui.colorize(ColorRed, "test")
+	colored := ui.Colorize(ColorRed, "test")
 
 	if colored != "test" {
 		t.Errorf("Expected 'test', got '%s'", colored)
@@ -383,19 +383,11 @@ func TestUI_ClearScreen(t *testing.T) {
 func TestUI_GetThinkingMaxWidth(t *testing.T) {
 	ui := NewUI(true, false)
 
-	maxWidth := ui.getThinkingMaxWidth()
+	maxWidth := ui.GetThinkingMaxWidth()
 
 	// Verify it's a reasonable width
 	if maxWidth < 40 {
 		t.Errorf("Expected max width to be at least 40, got %d", maxWidth)
-	}
-
-	// Verify it's at least as wide as the longest action
-	for _, action := range elephantActions {
-		expectedWidth := len(action) + 5 // frame + space + action + "..."
-		if maxWidth < expectedWidth {
-			t.Errorf("Max width %d is less than required for action '%s' (%d)", maxWidth, action, expectedWidth)
-		}
 	}
 }
 
@@ -591,7 +583,7 @@ func TestUI_SetNoColor_AffectsOutput(t *testing.T) {
 	ui := NewUI(false, false) // Start with colors enabled
 
 	// Verify colored output
-	coloredOutput := ui.colorize(ColorRed, "test")
+	coloredOutput := ui.Colorize(ColorRed, "test")
 	if coloredOutput == "test" {
 		t.Error("With colors enabled, colorize should add color codes")
 	}
@@ -603,7 +595,7 @@ func TestUI_SetNoColor_AffectsOutput(t *testing.T) {
 	ui.SetNoColor(true)
 
 	// Verify plain output
-	plainOutput := ui.colorize(ColorRed, "test")
+	plainOutput := ui.Colorize(ColorRed, "test")
 	if plainOutput != "test" {
 		t.Errorf("With colors disabled, colorize should return plain text, got '%s'", plainOutput)
 	}
@@ -612,7 +604,7 @@ func TestUI_SetNoColor_AffectsOutput(t *testing.T) {
 	ui.SetNoColor(false)
 
 	// Verify colored output again
-	coloredAgain := ui.colorize(ColorRed, "test")
+	coloredAgain := ui.Colorize(ColorRed, "test")
 	if coloredAgain == "test" {
 		t.Error("After re-enabling colors, colorize should add color codes")
 	}

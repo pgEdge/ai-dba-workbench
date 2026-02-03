@@ -17,14 +17,18 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/pgedge/ai-workbench/pkg/mcp"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
 
+// Server-specific constants
 const (
-	ProtocolVersion = "2024-11-05"
-	ServerName      = "pgedge-postgres-mcp"
-	ServerVersion   = "1.0.0-alpha1"
+	ServerName    = "pgedge-postgres-mcp"
+	ServerVersion = "1.0.0-alpha1"
 )
+
+// ProtocolVersion is re-exported from the shared MCP package
+const ProtocolVersion = mcp.ProtocolVersion
 
 // ToolProvider is an interface for listing and executing tools
 type ToolProvider interface {

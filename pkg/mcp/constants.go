@@ -10,19 +10,18 @@
 
 package mcp
 
-import (
-	pkgmcp "github.com/pgedge/ai-workbench/pkg/mcp"
+// Protocol constants
+const (
+	ProtocolVersion = "2024-11-05"
 )
-
-// Re-export constants from the shared MCP package
 
 // Scanner buffer size constants for JSON-RPC message processing
 const (
 	// ScannerInitialBufferSize is the initial buffer size (64KB)
 	// This should be large enough for most MCP messages
-	ScannerInitialBufferSize = pkgmcp.ScannerInitialBufferSize
+	ScannerInitialBufferSize = 64 * 1024
 
 	// ScannerMaxBufferSize is the maximum buffer size (1MB)
 	// This prevents unbounded memory growth from malicious or malformed messages
-	ScannerMaxBufferSize = pkgmcp.ScannerMaxBufferSize
+	ScannerMaxBufferSize = 1024 * 1024
 )

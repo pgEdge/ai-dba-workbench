@@ -17,6 +17,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	pkgchat "github.com/pgedge/ai-workbench/pkg/chat"
 )
 
 // SlashCommand represents a parsed slash command
@@ -476,7 +478,7 @@ func (c *Client) handleSetLLMModel(model string) bool {
 		// If we can't validate, warn but allow the change
 		c.ui.PrintSystemMessage(fmt.Sprintf(
 			"Warning: Could not validate model (error: %v)", err))
-	} else if !isModelAvailable(model, availableModels) {
+	} else if !pkgchat.IsModelAvailable(model, availableModels) {
 		c.ui.PrintError(fmt.Sprintf(
 			"Model '%s' not available from %s", model, c.config.LLM.Provider))
 		c.ui.PrintSystemMessage("Use /list models to see available models")

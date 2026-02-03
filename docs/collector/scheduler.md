@@ -316,8 +316,8 @@ func (ps *ProbeScheduler) Stop() {
 
 ### Connection Pool Limits
 
-- **Datastore**: Global limit (e.g., 25 connections)
-- **Monitored Servers**: Per-server limit (e.g., 5 connections each)
+- Datastore uses a global limit (e.g., 25 connections).
+- Monitored servers use a per-server limit (e.g., 5 connections each).
 
 ### Semaphores
 

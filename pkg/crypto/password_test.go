@@ -179,3 +179,179 @@ func TestVariousPasswordLengths(t *testing.T) {
 		})
 	}
 }
+
+func TestEncryptedOutputFormat(t *testing.T) {
+	// Test that encrypted output is valid base64 and has expected minimum length
+	encrypted, err := EncryptPassword("test", testSecret)
+	if err != nil {
+		t.Fatalf("EncryptPassword failed: %v", err)
+	}
+
+	// Should be valid base64
+	data, err := base64.StdEncoding.DecodeString(encrypted)
+	if err != nil {
+		t.Fatalf("encrypted output is not valid base64: %v", err)
+	}
+
+	// Minimum length: salt (16) + nonce (12) + ciphertext (at least 1) + auth tag (16)
+	minLen := saltSize + gcmNonceSize + 1 + 16
+	if len(data) < minLen {
+		t.Errorf("encrypted data too short: got %d bytes, want at least %d", len(data), minLen)
+	}
+}
+
+func TestCiphertextTooShortAfterNonce(t *testing.T) {
+	// Create data that passes the first length check but fails the nonce check
+	// salt (16) + minimal data that won't satisfy nonce extraction
+	data := make([]byte, saltSize+gcmNonceSize)
+	encoded := base64.StdEncoding.EncodeToString(data)
+
+	_, err := DecryptPassword(encoded, testSecret)
+	if err == nil {
+		t.Error("DecryptPassword should fail when ciphertext is empty after nonce")
+	}
+}
+
+func TestVariousServerSecretLengths(t *testing.T) {
+	tests := []struct {
+		name   string
+		secret string
+	}{
+		{"single_char", "a"},
+		{"short", "short"},
+		{"medium", "medium-length-secret-key"},
+		{"long", strings.Repeat("long-secret-", 100)},
+		{"unicode_secret", "\u00e4\u00f6\u00fc-secret-\U0001F511"},
+	}
+
+	password := "test-password"
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			encrypted, err := EncryptPassword(password, tc.secret)
+			if err != nil {
+				t.Fatalf("EncryptPassword failed: %v", err)
+			}
+
+			decrypted, err := DecryptPassword(encrypted, tc.secret)
+			if err != nil {
+				t.Fatalf("DecryptPassword failed: %v", err)
+			}
+
+			if decrypted != password {
+				t.Errorf("got %q, want %q", decrypted, password)
+			}
+		})
+	}
+}
+
+func TestSaltExtraction(t *testing.T) {
+	// Encrypt the same password twice
+	password := "test-password"
+
+	enc1, err := EncryptPassword(password, testSecret)
+	if err != nil {
+		t.Fatalf("first encryption failed: %v", err)
+	}
+
+	enc2, err := EncryptPassword(password, testSecret)
+	if err != nil {
+		t.Fatalf("second encryption failed: %v", err)
+	}
+
+	// Decode and extract salts
+	data1, _ := base64.StdEncoding.DecodeString(enc1)
+	data2, _ := base64.StdEncoding.DecodeString(enc2)
+
+	salt1 := data1[:saltSize]
+	salt2 := data2[:saltSize]
+
+	// Salts should be different (random)
+	if string(salt1) == string(salt2) {
+		t.Error("different encryptions should use different salts")
+	}
+}
+
+func TestDecryptWithModifiedSalt(t *testing.T) {
+	encrypted, err := EncryptPassword("password", testSecret)
+	if err != nil {
+		t.Fatalf("EncryptPassword failed: %v", err)
+	}
+
+	data, err := base64.StdEncoding.DecodeString(encrypted)
+	if err != nil {
+		t.Fatalf("base64 decode failed: %v", err)
+	}
+
+	// Modify the salt (first 16 bytes)
+	data[0] ^= 0xFF
+
+	modified := base64.StdEncoding.EncodeToString(data)
+
+	// Should fail because the derived key will be wrong
+	_, err = DecryptPassword(modified, testSecret)
+	if err == nil {
+		t.Error("DecryptPassword should fail with modified salt")
+	}
+}
+
+func TestDecryptWithModifiedNonce(t *testing.T) {
+	encrypted, err := EncryptPassword("password", testSecret)
+	if err != nil {
+		t.Fatalf("EncryptPassword failed: %v", err)
+	}
+
+	data, err := base64.StdEncoding.DecodeString(encrypted)
+	if err != nil {
+		t.Fatalf("base64 decode failed: %v", err)
+	}
+
+	// Modify the nonce (bytes 16-27)
+	data[saltSize] ^= 0xFF
+
+	modified := base64.StdEncoding.EncodeToString(data)
+
+	// Should fail because GCM authentication will fail
+	_, err = DecryptPassword(modified, testSecret)
+	if err == nil {
+		t.Error("DecryptPassword should fail with modified nonce")
+	}
+}
+
+func TestNullBytesInPassword(t *testing.T) {
+	// Test that passwords containing null bytes work correctly
+	password := "pass\x00word\x00with\x00nulls"
+
+	encrypted, err := EncryptPassword(password, testSecret)
+	if err != nil {
+		t.Fatalf("EncryptPassword failed: %v", err)
+	}
+
+	decrypted, err := DecryptPassword(encrypted, testSecret)
+	if err != nil {
+		t.Fatalf("DecryptPassword failed: %v", err)
+	}
+
+	if decrypted != password {
+		t.Errorf("got %q, want %q", decrypted, password)
+	}
+}
+
+func TestBinaryDataAsPassword(t *testing.T) {
+	// Test with binary data that might contain problematic bytes
+	password := string([]byte{0x00, 0x01, 0x02, 0xFF, 0xFE, 0xFD})
+
+	encrypted, err := EncryptPassword(password, testSecret)
+	if err != nil {
+		t.Fatalf("EncryptPassword failed: %v", err)
+	}
+
+	decrypted, err := DecryptPassword(encrypted, testSecret)
+	if err != nil {
+		t.Fatalf("DecryptPassword failed: %v", err)
+	}
+
+	if decrypted != password {
+		t.Errorf("binary data round-trip failed")
+	}
+}

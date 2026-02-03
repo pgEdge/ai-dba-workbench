@@ -47,7 +47,9 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		// Authentication endpoint (does NOT require auth - it IS the login endpoint)
 		// IPExtractor provides secure IP extraction that only trusts X-Forwarded-For
 		// from configured trusted proxies, preventing rate limit bypass via IP spoofing
-		authHandler := api.NewAuthHandler(deps.AuthStore, deps.RateLimiter, deps.IPExtractor)
+		// The TLS enabled flag ensures cookies are marked Secure when using HTTPS
+		tlsEnabled := deps.Config != nil && deps.Config.HTTP.TLS.Enabled
+		authHandler := api.NewAuthHandler(deps.AuthStore, deps.RateLimiter, deps.IPExtractor, tlsEnabled)
 		authHandler.RegisterRoutes(mux)
 
 		// Chat history compaction endpoint

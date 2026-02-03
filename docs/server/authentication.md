@@ -1,21 +1,21 @@
 # Authentication Guide
 
-The MCP server includes built-in authentication with two methods: service tokens
-for machine-to-machine communication and user accounts for interactive
+The MCP server includes built-in authentication with two methods: service
+tokens for machine-to-machine communication and user accounts for interactive
 authentication.
 
 ## Overview
 
-- **Service Tokens**: Long-lived tokens for machine-to-machine communication
-  (direct HTTP/HTTPS access)
-- **User Accounts**: Interactive authentication with session tokens
-- **Authentication is required** in HTTP/HTTPS mode
-- **SHA256/Bcrypt hashing** for secure credential storage
-- **Token expiration** with automatic cleanup
-- **Per-token connection isolation** for multi-user security
-- **Bearer token authentication** using HTTP Authorization header
-- **Rate limiting**: Per-IP protection against brute force attacks
-- **Account lockout**: Automatic account disabling after failed attempts
+- Service tokens are long-lived tokens for machine-to-machine communication
+  via direct HTTP/HTTPS access.
+- User accounts provide interactive authentication with session tokens.
+- Authentication is required in HTTP/HTTPS mode.
+- SHA256 and Bcrypt hashing provides secure credential storage.
+- Token expiration with automatic cleanup manages token lifecycle.
+- Per-token connection isolation ensures multi-user security.
+- Bearer token authentication uses the HTTP Authorization header.
+- Per-IP rate limiting protects against brute force attacks.
+- Automatic account lockout disables accounts after failed attempts.
 
 ## Authentication Storage
 
@@ -24,10 +24,10 @@ directory. By default, this is `./data/auth.db` relative to the server binary.
 
 The auth store contains:
 
-- **Users table**: Usernames, bcrypt password hashes, status, and metadata
-- **Service tokens table**: Token hashes, expiry dates, and annotations
-- **User tokens table**: Personal API tokens created by users
-- **Session tokens**: In-memory storage for 24-hour session validity
+- The users table stores usernames, bcrypt password hashes, and metadata.
+- The service tokens table stores token hashes, expiry dates, and annotations.
+- The user tokens table stores personal API tokens created by users.
+- Session tokens use in-memory storage for 24-hour session validity.
 
 ## User Account Management
 
@@ -210,7 +210,7 @@ ID     Hash Prefix        Expires              Status     Annotation
 
 ### For Interactive Applications (User Authentication)
 
-1. **Authenticate with username/password** using the login API:
+1. Authenticate with username and password using the login API:
 
    ```bash
    curl -X POST http://localhost:8080/api/v1/auth/login \
@@ -221,7 +221,7 @@ ID     Hash Prefix        Expires              Status     Annotation
      }'
    ```
 
-2. **Receive session token** in the response:
+2. Receive the session token in the response:
 
    ```json
    {
@@ -232,7 +232,7 @@ ID     Hash Prefix        Expires              Status     Annotation
    }
    ```
 
-3. **Use session token** for subsequent requests:
+3. Use the session token for subsequent requests:
 
    ```bash
    curl -X POST http://localhost:8080/mcp/v1 \
@@ -258,7 +258,7 @@ curl -X POST http://localhost:8080/mcp/v1 \
 
 The server tracks failed authentication attempts per IP address:
 
-- **Default**: 10 failed attempts per 15-minute window
+- The default is 10 failed attempts per 15-minute window.
 - Applies to all authentication endpoints
 - Automatic cleanup of old attempt records
 
@@ -266,7 +266,7 @@ The server tracks failed authentication attempts per IP address:
 
 When a valid username is provided, the server tracks failed login attempts:
 
-- **Default**: Disabled (0 = no lockout)
+- The default is disabled (0 = no lockout).
 - Configurable via `max_failed_attempts_before_lockout`
 - Locked accounts must be re-enabled by an administrator
 

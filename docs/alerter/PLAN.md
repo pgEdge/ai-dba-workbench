@@ -9,11 +9,11 @@ The alerter is a **standalone service** (`ai-dba-alerter`) that provides
 continuous monitoring of collected metrics with two complementary detection
 mechanisms:
 
-1. **Traditional threshold-based alerts** - deterministic rules for common
-   conditions (server down, disk space low, replication lag, etc.)
+1. Traditional threshold-based alerts provide deterministic rules for common
+   conditions (server down, disk space low, replication lag, etc.).
 
-2. **AI-powered anomaly detection** - tiered statistical and LLM-based
-   detection for complex patterns that threshold rules cannot capture
+2. AI-powered anomaly detection provides tiered statistical and LLM-based
+   detection for complex patterns that threshold rules cannot capture.
 
 The alerter exposes a **REST API** for management operations with **RBAC**
 permission checks. It is designed as a separate binary to enable independent
@@ -1104,7 +1104,7 @@ The following 22 built-in alert rules will be provided:
 
 ### Required PostgreSQL Extensions
 
-- **pgvector** - For embedding similarity search in Tier 2
+- pgvector provides embedding similarity search in Tier 2.
   - Must be installed on the datastore database
   - Will be checked during migration 9
 
@@ -1119,23 +1119,23 @@ gopkg.in/yaml.v3                 # YAML config (existing)
 
 ## Security Considerations
 
-1. **Alert access control** - Alerts inherit connection ownership; users see
-   only alerts for connections they have permission to access
+1. Alert access control means alerts inherit connection ownership; users see
+   only alerts for connections they have permission to access.
 
-2. **Blackout permissions** - Only connection owners (or superusers) can
-   create blackouts for connections
+2. Blackout permissions mean only connection owners (or superusers) can create
+   blackouts for connections.
 
-3. **LLM API keys** - Store in files with restricted permissions, never in
-   config or database
+3. LLM API keys are stored in files with restricted permissions, never in
+   config or database.
 
-4. **Acknowledgment audit** - All acknowledgments logged with username and
-   timestamp for accountability
+4. Acknowledgment audit ensures all acknowledgments are logged with username
+   and timestamp for accountability.
 
-5. **No metric data to LLM** - Raw metric values are not sent to external
-   LLMs; only aggregated context and patterns
+5. No metric data goes to LLM; raw metric values are not sent to external
+   LLMs; only aggregated context and patterns.
 
-6. **Shared auth store** - Uses the same auth.db as the server for consistent
-   RBAC enforcement
+6. Shared auth store uses the same auth.db as the server for consistent RBAC
+   enforcement.
 
 ## Testing Strategy
 
@@ -1168,12 +1168,12 @@ gopkg.in/yaml.v3                 # YAML config (existing)
 
 Based on review feedback:
 
-1. **Alert retention**: 90 days default, configurable via `alerter_settings`
-2. **pgvector**: Required for anomaly detection Tier 2
-3. **Multi-tenancy**: Global rules with per-connection threshold overrides
-4. **LLM fallback**: Alert after timeout; track that LLM failed via
-   `llm_failed` and `llm_failure_reason` columns
-5. **Correlation window**: Configurable via `alerter_settings`, default 120s
+1. Alert retention is 90 days default, configurable via `alerter_settings`.
+2. The pgvector extension is required for anomaly detection Tier 2.
+3. Multi-tenancy uses global rules with per-connection threshold overrides.
+4. LLM fallback alerts after timeout; the system tracks that LLM failed via
+   `llm_failed` and `llm_failure_reason` columns.
+5. Correlation window is configurable via `alerter_settings`, default 120s.
 
 ---
 

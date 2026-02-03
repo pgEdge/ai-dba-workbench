@@ -139,7 +139,7 @@ type MonitoredConnection struct {
 
 **Connection Flow**:
 
-1. **Datastore Connection**:
+1. The datastore connection flow:
    ```
    Request → Datastore.GetConnection()
           → pgxpool.Acquire() (may block if pool full)
@@ -149,7 +149,7 @@ type MonitoredConnection struct {
           → Connection returned to pool
    ```
 
-2. **Monitored Connection**:
+2. The monitored connection flow:
    ```
    Request → MonitoredConnectionPoolManager.GetConnection()
           → acquireSlot() (blocks if concurrency limit hit)
@@ -584,14 +584,14 @@ The scheduler can be extended to support:
 
 Potential architectural improvements:
 
-1. **Distributed Collection**: Multiple collector instances with work
-   distribution
-2. **Metrics Aggregation**: Pre-aggregate metrics before storage
-3. **Compression**: Compress old metrics data
-4. **External Storage**: Support for time-series databases
-5. **Push Model**: Support for monitored servers pushing metrics
-6. **Caching**: Cache probe results to reduce query frequency
-7. **Dynamic Configuration**: Hot reload of configuration without restart
+1. Distributed collection would enable multiple collector instances with work
+   distribution.
+2. Metrics aggregation would pre-aggregate metrics before storage.
+3. Compression would compress old metrics data.
+4. External storage would support time-series databases.
+5. Push model would support monitored servers pushing metrics.
+6. Caching would cache probe results to reduce query frequency.
+7. Dynamic configuration would hot reload configuration without restart.
 
 ## See Also
 

@@ -32,7 +32,7 @@ const ProtocolVersion = mcp.ProtocolVersion
 // ToolProvider is an interface for listing and executing tools
 type ToolProvider interface {
 	List() []Tool
-	Execute(ctx context.Context, name string, args map[string]interface{}) (ToolResponse, error)
+	Execute(ctx context.Context, name string, args map[string]any) (ToolResponse, error)
 }
 
 // ResourceProvider is an interface for listing and reading resources
@@ -143,18 +143,18 @@ func (s *Server) handleInitialize(req JSONRPCRequest) {
 		protocolVersion = ProtocolVersion
 	}
 
-	capabilities := map[string]interface{}{
-		"tools": map[string]interface{}{},
+	capabilities := map[string]any{
+		"tools": map[string]any{},
 	}
 
 	// Add resources capability if resource provider is set
 	if s.resources != nil {
-		capabilities["resources"] = map[string]interface{}{}
+		capabilities["resources"] = map[string]any{}
 	}
 
 	// Add prompts capability if prompt provider is set
 	if s.prompts != nil {
-		capabilities["prompts"] = map[string]interface{}{}
+		capabilities["prompts"] = map[string]any{}
 	}
 
 	result := InitializeResult{
@@ -172,7 +172,7 @@ func (s *Server) handleInitialize(req JSONRPCRequest) {
 func (s *Server) handleToolsList(req JSONRPCRequest) {
 	tools := s.tools.List()
 
-	result := map[string]interface{}{
+	result := map[string]any{
 		"tools": tools,
 	}
 
@@ -209,7 +209,7 @@ func (s *Server) handleResourcesList(req JSONRPCRequest) {
 
 	resources := s.resources.List()
 
-	result := map[string]interface{}{
+	result := map[string]any{
 		"resources": resources,
 	}
 
@@ -284,7 +284,7 @@ func (s *Server) handlePromptsGet(req JSONRPCRequest) {
 	sendResponse(req.ID, result)
 }
 
-func sendResponse(id, result interface{}) {
+func sendResponse(id, result any) {
 	resp := JSONRPCResponse{
 		JSONRPC: "2.0",
 		ID:      id,
@@ -300,7 +300,7 @@ func sendResponse(id, result interface{}) {
 	_ = os.Stdout.Sync()
 }
 
-func sendError(id interface{}, code int, message string, data interface{}) {
+func sendError(id any, code int, message string, data any) {
 	resp := JSONRPCResponse{
 		JSONRPC: "2.0",
 		ID:      id,

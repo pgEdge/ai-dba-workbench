@@ -12,6 +12,7 @@ package tools
 import (
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
 )
@@ -151,4 +152,22 @@ func ValidatePositiveNumber(value float64, name string) *mcp.ToolResponse {
 		return &resp
 	}
 	return nil
+}
+
+// quoteIdentifier quotes a SQL identifier to prevent injection
+func quoteIdentifier(name string) string {
+	// Double any existing double quotes and wrap in double quotes
+	escaped := strings.ReplaceAll(name, `"`, `""`)
+	return `"` + escaped + `"`
+}
+
+// quoteQualifiedTableName quotes a table name that may include a schema prefix.
+// For "schema.table", it quotes each part separately: "schema"."table"
+// For simple "table", it just quotes the table name: "table"
+func quoteQualifiedTableName(name string) string {
+	parts := strings.Split(name, ".")
+	if len(parts) == 2 {
+		return quoteIdentifier(parts[0]) + "." + quoteIdentifier(parts[1])
+	}
+	return quoteIdentifier(name)
 }

@@ -4,8 +4,8 @@ Complete reference for all built-in probes in the Collector.
 
 ## Probe Categories
 
-- **Server-Scoped**: Collect server-wide statistics (26 probes)
-- **Database-Scoped**: Collect per-database statistics (8 probes)
+- Server-Scoped: Collect server-wide statistics (26 probes)
+- Database-Scoped: Collect per-database statistics (8 probes)
 
 ## Server-Scoped Probes
 
@@ -15,11 +15,11 @@ These probes execute once per monitored connection.
 
 Monitors current database activity and backend processes.
 
-- **Source View**: `pg_stat_activity`
-- **Default Interval**: 60 seconds
-- **Default Retention**: 7 days
-- **Key Metrics**: Active connections, query states, wait events
-- **Use Cases**: Connection monitoring, identifying long-running queries,
+- Source View: `pg_stat_activity`
+- Default Interval: 60 seconds
+- Default Retention: 7 days
+- Key Metrics: Active connections, query states, wait events
+- Use Cases: Connection monitoring, identifying long-running queries,
   detecting locks
 
 **Columns Collected**: datid, datname, pid, leader_pid, usesysid, usename,
@@ -33,13 +33,13 @@ Monitors checkpointer process statistics. This probe consolidates data from
 the `pg_stat_checkpointer` view and includes background writer statistics
 that were previously collected separately from `pg_stat_bgwriter`.
 
-- **Source View**: `pg_stat_checkpointer` (with bgwriter stats)
-- **Default Interval**: 600 seconds (10 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: Checkpoints, buffers written, sync times, background writer
+- Source View: `pg_stat_checkpointer` (with bgwriter stats)
+- Default Interval: 600 seconds (10 minutes)
+- Default Retention: 7 days
+- Key Metrics: Checkpoints, buffers written, sync times, background writer
   activity
-- **Use Cases**: Checkpoint performance analysis, I/O tuning, buffer management
-- **Version Notes**: PostgreSQL 15+ uses `pg_stat_checkpointer`; earlier
+- Use Cases: Checkpoint performance analysis, I/O tuning, buffer management
+- Version Notes: PostgreSQL 15+ uses `pg_stat_checkpointer`; earlier
   versions collect from `pg_stat_bgwriter`
 
 **Columns Collected**: num_timed, num_requested, restartpoints_timed,
@@ -53,12 +53,12 @@ Monitors SSL and GSSAPI connection security information. This probe
 consolidates data from both `pg_stat_ssl` and `pg_stat_gssapi` views to
 provide a unified view of connection security.
 
-- **Source Views**: `pg_stat_ssl`, `pg_stat_gssapi`
-- **Default Interval**: 300 seconds (5 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: SSL version, cipher, GSSAPI authentication status,
+- Source Views: `pg_stat_ssl`, `pg_stat_gssapi`
+- Default Interval: 300 seconds (5 minutes)
+- Default Retention: 7 days
+- Key Metrics: SSL version, cipher, GSSAPI authentication status,
   principals, encryption
-- **Use Cases**: SSL/TLS security monitoring, Kerberos authentication
+- Use Cases: SSL/TLS security monitoring, Kerberos authentication
   monitoring, connection security auditing
 
 **Columns Collected**: pid, ssl, ssl_version, ssl_cipher, ssl_bits,
@@ -71,12 +71,12 @@ Monitors I/O statistics by backend type and context. This probe consolidates
 data from `pg_stat_io` and includes SLRU cache statistics that were previously
 collected separately from `pg_stat_slru`.
 
-- **Source Views**: `pg_stat_io`, `pg_stat_slru`
-- **Default Interval**: 900 seconds (15 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: Reads, writes, extends, hits by context, SLRU cache
+- Source Views: `pg_stat_io`, `pg_stat_slru`
+- Default Interval: 900 seconds (15 minutes)
+- Default Retention: 7 days
+- Key Metrics: Reads, writes, extends, hits by context, SLRU cache
   performance
-- **Use Cases**: Detailed I/O analysis, cache efficiency, SLRU performance
+- Use Cases: Detailed I/O analysis, cache efficiency, SLRU performance
 
 **Columns Collected**: backend_type, context, reads, read_time, writes,
 write_time, writebacks, writeback_time, extends, extend_time, op_bytes, hits,
@@ -87,11 +87,11 @@ blks_read, blks_written, blks_exists, flushes, truncates, stats_reset
 
 Monitors recovery prefetch statistics.
 
-- **Source View**: `pg_stat_recovery_prefetch`
-- **Default Interval**: 600 seconds (10 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: Prefetch operations, hit rate, distance
-- **Use Cases**: Recovery performance tuning
+- Source View: `pg_stat_recovery_prefetch`
+- Default Interval: 600 seconds (10 minutes)
+- Default Retention: 7 days
+- Key Metrics: Prefetch operations, hit rate, distance
+- Use Cases: Recovery performance tuning
 
 **Columns Collected**: stats_reset, prefetch, hit, skip_init, skip_new,
 skip_fpw, skip_rep, wal_distance, block_distance, io_depth
@@ -102,12 +102,12 @@ Monitors replication status and lag. This probe consolidates data from
 `pg_stat_replication` and includes WAL receiver statistics that were
 previously collected separately from `pg_stat_wal_receiver`.
 
-- **Source Views**: `pg_stat_replication`, `pg_stat_wal_receiver`
-- **Default Interval**: 30 seconds
-- **Default Retention**: 7 days
-- **Key Metrics**: Replication lag, sync state, sent/received LSN, WAL receiver
+- Source Views: `pg_stat_replication`, `pg_stat_wal_receiver`
+- Default Interval: 30 seconds
+- Default Retention: 7 days
+- Key Metrics: Replication lag, sync state, sent/received LSN, WAL receiver
   status
-- **Use Cases**: Replication monitoring, lag alerting, replica health
+- Use Cases: Replication monitoring, lag alerting, replica health
 
 **Columns Collected**: pid, usesysid, usename, application_name, client_addr,
 client_hostname, client_port, backend_start, backend_xmin, state, sent_lsn,
@@ -123,14 +123,14 @@ the current WAL position and each slot's restart LSN. This probe consolidates
 data from `pg_replication_slots` and includes slot statistics that were
 previously collected separately from `pg_stat_replication_slots`.
 
-- **Source Views**: `pg_replication_slots`, `pg_stat_replication_slots`
-- **Default Interval**: 300 seconds (5 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: Retained WAL bytes per slot, slot activity, WAL status,
+- Source Views: `pg_replication_slots`, `pg_stat_replication_slots`
+- Default Interval: 300 seconds (5 minutes)
+- Default Retention: 7 days
+- Key Metrics: Retained WAL bytes per slot, slot activity, WAL status,
   spill statistics
-- **Use Cases**: WAL accumulation monitoring, disk usage prevention, inactive
+- Use Cases: WAL accumulation monitoring, disk usage prevention, inactive
   slot detection, slot performance analysis
-- **Version Notes**: The `wal_status` and `safe_wal_size` columns require
+- Version Notes: The `wal_status` and `safe_wal_size` columns require
   PostgreSQL 13 or later; older versions return NULL.
 
 **Columns Collected**: slot_name, slot_type, active, wal_status,
@@ -143,12 +143,12 @@ Monitors logical replication subscriptions. This probe consolidates data from
 `pg_stat_subscription` and includes subscription statistics that were
 previously collected separately from `pg_stat_subscription_stats`.
 
-- **Source Views**: `pg_stat_subscription`, `pg_stat_subscription_stats`
-- **Default Interval**: 300 seconds (5 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: Subscription state, worker info, LSN positions, apply
+- Source Views: `pg_stat_subscription`, `pg_stat_subscription_stats`
+- Default Interval: 300 seconds (5 minutes)
+- Default Retention: 7 days
+- Key Metrics: Subscription state, worker info, LSN positions, apply
   errors, sync errors
-- **Use Cases**: Logical replication monitoring, subscription health tracking
+- Use Cases: Logical replication monitoring, subscription health tracking
 
 **Columns Collected**: subid, subname, pid, leader_pid, relid, received_lsn,
 last_msg_send_time, last_msg_receipt_time, latest_end_lsn, latest_end_time,
@@ -160,12 +160,12 @@ Monitors WAL generation statistics. This probe consolidates data from
 `pg_stat_wal` and includes archiver statistics that were previously collected
 separately from `pg_stat_archiver`.
 
-- **Source Views**: `pg_stat_wal`, `pg_stat_archiver`
-- **Default Interval**: 600 seconds (10 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: WAL records, bytes, sync operations, archived WAL count,
+- Source Views: `pg_stat_wal`, `pg_stat_archiver`
+- Default Interval: 600 seconds (10 minutes)
+- Default Retention: 7 days
+- Key Metrics: WAL records, bytes, sync operations, archived WAL count,
   archive failures
-- **Use Cases**: WAL generation analysis, write load monitoring, archive health
+- Use Cases: WAL generation analysis, write load monitoring, archive health
 
 **Columns Collected**: wal_records, wal_fpi, wal_bytes, wal_buffers_full,
 wal_write, wal_sync, wal_write_time, wal_sync_time, archived_count,
@@ -178,13 +178,13 @@ Monitors PostgreSQL configuration settings with change detection. This probe
 only stores data when configuration changes are detected, making it ideal for
 tracking configuration drift and historical changes over long periods.
 
-- **Source View**: `pg_settings`
-- **Default Interval**: 3600 seconds (1 hour)
-- **Default Retention**: 365 days (1 year)
-- **Key Metrics**: PostgreSQL configuration parameters and their sources
-- **Use Cases**: Configuration change tracking, configuration drift detection,
+- Source View: `pg_settings`
+- Default Interval: 3600 seconds (1 hour)
+- Default Retention: 365 days (1 year)
+- Key Metrics: PostgreSQL configuration parameters and their sources
+- Use Cases: Configuration change tracking, configuration drift detection,
     historical configuration analysis, compliance auditing
-- **Special Behavior**: Uses SHA256 hash comparison to detect changes. Data is
+- Special Behavior: Uses SHA256 hash comparison to detect changes. Data is
     only stored when configuration differs from the most recent snapshot. The
     garbage collector ensures the most recent snapshot for each server is never
     deleted, regardless of age.
@@ -202,13 +202,13 @@ Monitors PostgreSQL pg_hba.conf authentication configuration with change
 detection. This probe only stores data when HBA rules change, making it ideal
 for tracking authentication policy changes over time.
 
-- **Source View**: `pg_hba_file_rules`
-- **Default Interval**: 3600 seconds (1 hour)
-- **Default Retention**: 365 days (1 year)
-- **Key Metrics**: Authentication rules, methods, databases, users, addresses
-- **Use Cases**: Authentication policy tracking, security audit compliance,
+- Source View: `pg_hba_file_rules`
+- Default Interval: 3600 seconds (1 hour)
+- Default Retention: 365 days (1 year)
+- Key Metrics: Authentication rules, methods, databases, users, addresses
+- Use Cases: Authentication policy tracking, security audit compliance,
     HBA configuration drift detection, forensic analysis
-- **Special Behavior**: Uses SHA256 hash comparison to detect changes. Data is
+- Special Behavior: Uses SHA256 hash comparison to detect changes. Data is
     only stored when configuration differs from the most recent snapshot. The
     garbage collector ensures the most recent snapshot for each server is never
     deleted, regardless of age.
@@ -222,13 +222,13 @@ Monitors PostgreSQL pg_ident.conf user mapping configuration with change
 detection. This probe only stores data when ident mappings change, enabling
 tracking of user mapping changes for audit and compliance purposes.
 
-- **Source View**: `pg_ident_file_mappings`
-- **Default Interval**: 3600 seconds (1 hour)
-- **Default Retention**: 365 days (1 year)
-- **Key Metrics**: Ident map names, system usernames, PostgreSQL usernames
-- **Use Cases**: User mapping audit tracking, compliance verification, mapping
+- Source View: `pg_ident_file_mappings`
+- Default Interval: 3600 seconds (1 hour)
+- Default Retention: 365 days (1 year)
+- Key Metrics: Ident map names, system usernames, PostgreSQL usernames
+- Use Cases: User mapping audit tracking, compliance verification, mapping
     drift detection, security policy enforcement
-- **Special Behavior**: Uses SHA256 hash comparison to detect changes. Data is
+- Special Behavior: Uses SHA256 hash comparison to detect changes. Data is
     only stored when configuration differs from the most recent snapshot. The
     garbage collector ensures the most recent snapshot for each server is never
     deleted, regardless of age.
@@ -242,14 +242,14 @@ Monitors PostgreSQL server identification and configuration with change
 detection. This probe only stores data when server configuration changes,
 making it ideal for tracking server upgrades and configuration changes.
 
-- **Source**: Various system functions and pg_extension
-- **Default Interval**: 3600 seconds (1 hour)
-- **Default Retention**: 365 days (1 year)
-- **Key Metrics**: Server version, system identifier, replication settings,
+- Source: Various system functions and pg_extension
+- Default Interval: 3600 seconds (1 hour)
+- Default Retention: 365 days (1 year)
+- Key Metrics: Server version, system identifier, replication settings,
     installed extensions
-- **Use Cases**: Server inventory tracking, upgrade verification, extension
+- Use Cases: Server inventory tracking, upgrade verification, extension
     monitoring, capacity planning
-- **Special Behavior**: Uses SHA256 hash comparison to detect changes. Data is
+- Special Behavior: Uses SHA256 hash comparison to detect changes. Data is
     only stored when configuration differs from the most recent snapshot. The
     garbage collector ensures the most recent snapshot for each server is never
     deleted, regardless of age.
@@ -264,11 +264,11 @@ Detects and tracks PostgreSQL node roles within various cluster topologies.
 This probe identifies how each node participates in replication configurations
 including binary replication, logical replication, Spock multi-master, and BDR.
 
-- **Source**: Multiple system views and extension catalogs
-- **Default Interval**: 300 seconds (5 minutes)
-- **Default Retention**: 30 days
-- **Key Metrics**: Primary role, role flags, replication status, standby info
-- **Use Cases**: Cluster topology monitoring, failover detection, replication
+- Source: Multiple system views and extension catalogs
+- Default Interval: 300 seconds (5 minutes)
+- Default Retention: 30 days
+- Key Metrics: Primary role, role flags, replication status, standby info
+- Use Cases: Cluster topology monitoring, failover detection, replication
     health tracking, Spock/BDR node status
 
 **Primary Roles Detected**:
@@ -304,12 +304,12 @@ architecture and detection algorithms.
 Monitors the `pg_database` catalog including transaction ID
 wraparound indicators and database size.
 
-- **Source**: `pg_database` catalog
-- **Default Interval**: 300 seconds (5 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: Transaction ID age, multixact age, database
+- Source: `pg_database` catalog
+- Default Interval: 300 seconds (5 minutes)
+- Default Retention: 7 days
+- Key Metrics: Transaction ID age, multixact age, database
   size
-- **Use Cases**: XID wraparound monitoring, database size
+- Use Cases: XID wraparound monitoring, database size
   tracking, capacity planning
 
 **Columns Collected**: datname, datdba, encoding,
@@ -325,11 +325,11 @@ These probes execute once for each database on a monitored server.
 
 Monitors database-wide statistics.
 
-- **Source View**: `pg_stat_database`
-- **Default Interval**: 300 seconds (5 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: Transaction counts, buffer hits, tuples, deadlocks
-- **Use Cases**: Database activity monitoring, cache hit ratio analysis
+- Source View: `pg_stat_database`
+- Default Interval: 300 seconds (5 minutes)
+- Default Retention: 7 days
+- Key Metrics: Transaction counts, buffer hits, tuples, deadlocks
+- Use Cases: Database activity monitoring, cache hit ratio analysis
 
 **Columns Collected**: datid, datname, numbackends, xact_commit,
 xact_rollback, blks_read, blks_hit, tup_returned, tup_fetched, tup_inserted,
@@ -342,11 +342,11 @@ sessions_abandoned, sessions_fatal, sessions_killed, stats_reset
 
 Monitors recovery conflicts on replicas.
 
-- **Source View**: `pg_stat_database_conflicts`
-- **Default Interval**: 300 seconds (5 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: Conflict counts by type
-- **Use Cases**: Replica conflict monitoring
+- Source View: `pg_stat_database_conflicts`
+- Default Interval: 300 seconds (5 minutes)
+- Default Retention: 7 days
+- Key Metrics: Conflict counts by type
+- Use Cases: Replica conflict monitoring
 
 **Columns Collected**: datid, datname, confl_tablespace, confl_lock,
 confl_snapshot, confl_bufferpin, confl_deadlock
@@ -357,12 +357,12 @@ Monitors table access and I/O statistics. This probe consolidates data from
 `pg_stat_all_tables` and includes I/O statistics that were previously
 collected separately from `pg_statio_all_tables`.
 
-- **Source Views**: `pg_stat_all_tables`, `pg_statio_all_tables`
-- **Default Interval**: 300 seconds (5 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: Sequential/index scans, tuples read/written, vacuum/analyze,
+- Source Views: `pg_stat_all_tables`, `pg_statio_all_tables`
+- Default Interval: 300 seconds (5 minutes)
+- Default Retention: 7 days
+- Key Metrics: Sequential/index scans, tuples read/written, vacuum/analyze,
   heap/index/toast blocks read/hit
-- **Use Cases**: Table usage analysis, vacuum monitoring, I/O analysis, cache
+- Use Cases: Table usage analysis, vacuum monitoring, I/O analysis, cache
   effectiveness
 
 **Columns Collected**: relid, schemaname, relname, seq_scan, seq_tup_read,
@@ -379,11 +379,11 @@ Monitors index usage and I/O statistics. This probe consolidates data from
 `pg_stat_all_indexes` and includes I/O statistics that were previously
 collected separately from `pg_statio_all_indexes`.
 
-- **Source Views**: `pg_stat_all_indexes`, `pg_statio_all_indexes`
-- **Default Interval**: 300 seconds (5 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: Index scans, tuples read/fetched, index blocks read/hit
-- **Use Cases**: Index usage analysis, unused index detection, I/O analysis
+- Source Views: `pg_stat_all_indexes`, `pg_statio_all_indexes`
+- Default Interval: 300 seconds (5 minutes)
+- Default Retention: 7 days
+- Key Metrics: Index scans, tuples read/fetched, index blocks read/hit
+- Use Cases: Index usage analysis, unused index detection, I/O analysis
 
 **Columns Collected**: relid, indexrelid, schemaname, relname, indexrelname,
 idx_scan, idx_tup_read, idx_tup_fetch, idx_blks_read, idx_blks_hit
@@ -392,11 +392,11 @@ idx_scan, idx_tup_read, idx_tup_fetch, idx_blks_read, idx_blks_hit
 
 Monitors sequence I/O statistics.
 
-- **Source View**: `pg_statio_all_sequences`
-- **Default Interval**: 300 seconds (5 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: Sequence blocks read/hit
-- **Use Cases**: Sequence performance analysis
+- Source View: `pg_statio_all_sequences`
+- Default Interval: 300 seconds (5 minutes)
+- Default Retention: 7 days
+- Key Metrics: Sequence blocks read/hit
+- Use Cases: Sequence performance analysis
 
 **Columns Collected**: relid, schemaname, relname, blks_read, blks_hit
 
@@ -404,11 +404,11 @@ Monitors sequence I/O statistics.
 
 Monitors user-defined function statistics.
 
-- **Source View**: `pg_stat_user_functions`
-- **Default Interval**: 300 seconds (5 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: Function calls, total/self time
-- **Use Cases**: Function performance analysis
+- Source View: `pg_stat_user_functions`
+- Default Interval: 300 seconds (5 minutes)
+- Default Retention: 7 days
+- Key Metrics: Function calls, total/self time
+- Use Cases: Function performance analysis
 
 **Columns Collected**: funcid, schemaname, funcname, calls, total_time,
 self_time
@@ -417,19 +417,20 @@ self_time
 
 Monitors query performance statistics (requires pg_stat_statements extension).
 
-- **Source View**: `pg_stat_statements`
-- **Default Interval**: 300 seconds (5 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: Query execution times, calls, rows, I/O, planning
-- **Use Cases**: Query performance analysis, slow query identification
-- **Query Limit**: Top 1000 queries by total execution time
+- Source View: `pg_stat_statements`
+- Default Interval: 300 seconds (5 minutes)
+- Default Retention: 7 days
+- Key Metrics: Query execution times, calls, rows, I/O, planning
+- Use Cases: Query performance analysis, slow query identification
+- Query Limit: Top 1000 queries by total execution time
 
-**Important**: This probe collects only the **top 1000 queries** ordered by total
-execution time to prevent excessive data collection on busy systems. Queries with
-NULL queryid (utility statements like VACUUM, ANALYZE) are automatically filtered
-out. If your database tracks more than 1000 queries, lower-impact queries will
-not be collected. This limit is hard-coded in the probe implementation. Focus on
-optimizing the highest-impact queries first.
+**Important**: This probe collects only the **top 1000 queries** ordered by
+total execution time to prevent excessive data collection on busy systems.
+Queries with NULL queryid (utility statements like VACUUM, ANALYZE) are
+automatically filtered
+out. If your database tracks more than 1000 queries, lower-impact queries
+will not be collected. This limit is hard-coded in the probe implementation.
+Focus on optimizing the highest-impact queries first.
 
 **Columns Collected**: userid, dbid, toplevel, queryid, query, plans,
 total_plan_time, min_plan_time, max_plan_time, mean_plan_time,
@@ -449,13 +450,13 @@ This probe only stores data when installed extensions change,
 making it ideal for tracking extension installations and
 upgrades.
 
-- **Source**: `pg_extension` catalog joined with `pg_namespace`
-- **Default Interval**: 300 seconds (5 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: Extension names, versions, schemas
-- **Use Cases**: Extension inventory tracking, upgrade
+- Source: `pg_extension` catalog joined with `pg_namespace`
+- Default Interval: 300 seconds (5 minutes)
+- Default Retention: 7 days
+- Key Metrics: Extension names, versions, schemas
+- Use Cases: Extension inventory tracking, upgrade
   verification, compliance auditing
-- **Special Behavior**: Uses SHA256 hash comparison to detect
+- Special Behavior: Uses SHA256 hash comparison to detect
   changes. Data is only stored when extensions differ from the
   most recent snapshot. The garbage collector ensures the most
   recent snapshot for each server is never deleted, regardless
@@ -474,103 +475,103 @@ to be installed on the monitored server.
 
 Monitors operating system identification information.
 
-- **Source**: `pg_sys_os_info()` function
-- **Default Interval**: 300 seconds (5 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: OS name, version, architecture
-- **Use Cases**: Server inventory, OS upgrade tracking
+- Source: `pg_sys_os_info()` function
+- Default Interval: 300 seconds (5 minutes)
+- Default Retention: 7 days
+- Key Metrics: OS name, version, architecture
+- Use Cases: Server inventory, OS upgrade tracking
 
 ### pg_sys_cpu_info
 
 Monitors CPU hardware information.
 
-- **Source**: `pg_sys_cpu_info()` function
-- **Default Interval**: 300 seconds (5 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: CPU model, cores, speed
-- **Use Cases**: Hardware inventory, capacity planning
+- Source: `pg_sys_cpu_info()` function
+- Default Interval: 300 seconds (5 minutes)
+- Default Retention: 7 days
+- Key Metrics: CPU model, cores, speed
+- Use Cases: Hardware inventory, capacity planning
 
 ### pg_sys_cpu_usage_info
 
 Monitors real-time CPU utilization.
 
-- **Source**: `pg_sys_cpu_usage_info()` function
-- **Default Interval**: 300 seconds (5 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: CPU utilization percentages (user, system,
+- Source: `pg_sys_cpu_usage_info()` function
+- Default Interval: 300 seconds (5 minutes)
+- Default Retention: 7 days
+- Key Metrics: CPU utilization percentages (user, system,
   idle)
-- **Use Cases**: CPU load monitoring, alerting on high usage
+- Use Cases: CPU load monitoring, alerting on high usage
 
 ### pg_sys_memory_info
 
 Monitors system memory usage.
 
-- **Source**: `pg_sys_memory_info()` function
-- **Default Interval**: 300 seconds (5 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: Total, used, free, cached memory
-- **Use Cases**: Memory utilization monitoring, capacity planning
+- Source: `pg_sys_memory_info()` function
+- Default Interval: 300 seconds (5 minutes)
+- Default Retention: 7 days
+- Key Metrics: Total, used, free, cached memory
+- Use Cases: Memory utilization monitoring, capacity planning
 
 ### pg_sys_io_analysis_info
 
 Monitors disk I/O statistics.
 
-- **Source**: `pg_sys_io_analysis_info()` function
-- **Default Interval**: 300 seconds (5 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: Read/write operations, throughput, latency
-- **Use Cases**: I/O performance analysis, bottleneck detection
+- Source: `pg_sys_io_analysis_info()` function
+- Default Interval: 300 seconds (5 minutes)
+- Default Retention: 7 days
+- Key Metrics: Read/write operations, throughput, latency
+- Use Cases: I/O performance analysis, bottleneck detection
 
 ### pg_sys_disk_info
 
 Monitors disk space usage.
 
-- **Source**: `pg_sys_disk_info()` function
-- **Default Interval**: 300 seconds (5 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: Disk capacity, used space, usage percentage
-- **Use Cases**: Disk space monitoring, capacity planning,
+- Source: `pg_sys_disk_info()` function
+- Default Interval: 300 seconds (5 minutes)
+- Default Retention: 7 days
+- Key Metrics: Disk capacity, used space, usage percentage
+- Use Cases: Disk space monitoring, capacity planning,
   alerting
 
 ### pg_sys_load_avg_info
 
 Monitors system load averages.
 
-- **Source**: `pg_sys_load_avg_info()` function
-- **Default Interval**: 300 seconds (5 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: 1-minute, 5-minute, 15-minute load averages
-- **Use Cases**: System load monitoring, trend analysis
+- Source: `pg_sys_load_avg_info()` function
+- Default Interval: 300 seconds (5 minutes)
+- Default Retention: 7 days
+- Key Metrics: 1-minute, 5-minute, 15-minute load averages
+- Use Cases: System load monitoring, trend analysis
 
 ### pg_sys_process_info
 
 Monitors system process statistics.
 
-- **Source**: `pg_sys_process_info()` function
-- **Default Interval**: 300 seconds (5 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: Process counts, states
-- **Use Cases**: Process monitoring, resource usage tracking
+- Source: `pg_sys_process_info()` function
+- Default Interval: 300 seconds (5 minutes)
+- Default Retention: 7 days
+- Key Metrics: Process counts, states
+- Use Cases: Process monitoring, resource usage tracking
 
 ### pg_sys_network_info
 
 Monitors network interface statistics.
 
-- **Source**: `pg_sys_network_info()` function
-- **Default Interval**: 300 seconds (5 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: Network throughput, packets, errors
-- **Use Cases**: Network performance monitoring, error detection
+- Source: `pg_sys_network_info()` function
+- Default Interval: 300 seconds (5 minutes)
+- Default Retention: 7 days
+- Key Metrics: Network throughput, packets, errors
+- Use Cases: Network performance monitoring, error detection
 
 ### pg_sys_cpu_memory_by_process
 
 Monitors per-process CPU and memory usage.
 
-- **Source**: `pg_sys_cpu_memory_by_process()` function
-- **Default Interval**: 300 seconds (5 minutes)
-- **Default Retention**: 7 days
-- **Key Metrics**: Per-process CPU percentage, memory usage
-- **Use Cases**: Process-level resource analysis, identifying
+- Source: `pg_sys_cpu_memory_by_process()` function
+- Default Interval: 300 seconds (5 minutes)
+- Default Retention: 7 days
+- Key Metrics: Per-process CPU percentage, memory usage
+- Use Cases: Process-level resource analysis, identifying
   resource-intensive processes
 
 ## Configuring Probes
@@ -683,7 +684,8 @@ resource exhaustion. These limits are hard-coded in the implementation.
 - Defined in: `src/constants.go`
 - Constant: `DatastoreWaitTimeout = 5 * time.Second`
 - Applies to: Waiting for datastore connection from pool
-- Behavior: Returns error if datastore connection not available within 5 seconds
+- Behavior: Returns error if datastore connection not available within 5
+  seconds
 - Configurable via: `datastore_pool_max_wait_seconds` in configuration file
 
 **Monitored Pool Wait Timeout: 120 seconds (2 minutes)**

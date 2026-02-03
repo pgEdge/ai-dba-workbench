@@ -193,24 +193,6 @@ Use count_rows to efficiently determine data volume:
 	}
 }
 
-// quoteIdentifier quotes a SQL identifier to prevent injection
-func quoteIdentifier(name string) string {
-	// Double any existing double quotes and wrap in double quotes
-	escaped := strings.ReplaceAll(name, `"`, `""`)
-	return `"` + escaped + `"`
-}
-
-// quoteQualifiedTableName quotes a table name that may include a schema prefix.
-// For "schema.table", it quotes each part separately: "schema"."table"
-// For simple "table", it just quotes the table name: "table"
-func quoteQualifiedTableName(name string) string {
-	parts := strings.Split(name, ".")
-	if len(parts) == 2 {
-		return quoteIdentifier(parts[0]) + "." + quoteIdentifier(parts[1])
-	}
-	return quoteIdentifier(name)
-}
-
 // validateWhereClause checks a WHERE clause for dangerous SQL patterns.
 // While this tool intentionally allows arbitrary SQL for DBA use cases,
 // we block patterns that could be used for denial of service or file access.

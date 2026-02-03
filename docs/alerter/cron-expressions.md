@@ -83,7 +83,8 @@ triggers every other hour from 8 AM to 6 PM:
 ## Timezone Handling
 
 Each blackout schedule includes a `timezone` field that specifies the timezone
-for the cron expression. The timezone uses IANA format such as `America/New_York`
+for the cron expression. The timezone uses IANA format such as
+`America/New_York`
 or `Europe/London`. When no timezone is specified, the alerter uses UTC.
 
 The alerter converts the current time to the specified timezone before

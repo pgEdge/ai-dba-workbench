@@ -205,11 +205,11 @@ Use 4 spaces, not tabs (configured in .editorconfig).
 
 ### Naming Conventions
 
-- **Packages**: Lowercase, single word (database, probes, scheduler)
-- **Types**: PascalCase (ProbeScheduler, Datastore)
-- **Functions**: PascalCase for exported, camelCase for private
-- **Variables**: camelCase
-- **Constants**: PascalCase or SCREAMING_SNAKE_CASE
+- Packages use lowercase, single word names (database, probes, scheduler).
+- Types use PascalCase names (ProbeScheduler, Datastore).
+- Functions use PascalCase for exported, camelCase for private.
+- Variables use camelCase names.
+- Constants use PascalCase or SCREAMING_SNAKE_CASE names.
 
 ### Comments
 
@@ -489,15 +489,23 @@ go mod verify
 
 ### Go Resources
 
-- [Effective Go](https://golang.org/doc/effective_go.html)
-- [Go Code Review Comments](https://github.com/golang/go/wiki/CodeReviewComments)
-- [pgx Documentation](https://pkg.go.dev/github.com/jackc/pgx/v5)
+- [Effective Go][effective-go] provides best practices for Go programming.
+- [Go Code Review Comments][go-review] provides community-maintained guidelines.
+- [pgx Documentation][pgx] covers the PostgreSQL driver library.
+
+[effective-go]: https://golang.org/doc/effective_go.html
+[go-review]: https://github.com/golang/go/wiki/CodeReviewComments
+[pgx]: https://pkg.go.dev/github.com/jackc/pgx/v5
 
 ### PostgreSQL Resources
 
-- [PostgreSQL Documentation](https://www.postgresql.org/docs/)
-- [Statistics Views](https://www.postgresql.org/docs/current/monitoring-stats.html)
-- [Partitioning](https://www.postgresql.org/docs/current/ddl-partitioning.html)
+- [PostgreSQL Documentation][pg-docs] provides the official reference.
+- [Statistics Views][pg-stats] describes monitoring statistics.
+- [Partitioning][pg-part] explains table partitioning.
+
+[pg-docs]: https://www.postgresql.org/docs/
+[pg-stats]: https://www.postgresql.org/docs/current/monitoring-stats.html
+[pg-part]: https://www.postgresql.org/docs/current/ddl-partitioning.html
 
 ### Project Resources
 

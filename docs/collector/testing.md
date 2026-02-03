@@ -290,9 +290,9 @@ go tool cover -html=coverage.out
 
 Aim for:
 
-- **Overall**: >80% coverage
-- **Core packages** (database, scheduler): >90%
-- **Critical functions** (encryption, storage): 100%
+- Overall coverage should exceed 80 percent.
+- Core packages (database, scheduler) should exceed 90 percent.
+- Critical functions (encryption, storage) should have 100 percent coverage.
 
 ## Continuous Integration
 

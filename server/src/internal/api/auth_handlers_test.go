@@ -45,8 +45,8 @@ func TestAuthHandler_HandleLogin(t *testing.T) {
 	rateLimiter := auth.NewRateLimiter(15, 5) // 15 minute window, 5 max attempts
 	defer rateLimiter.Stop()
 
-	// Create handler
-	handler := NewAuthHandler(authStore, rateLimiter, nil)
+	// Create handler (tlsEnabled=false for tests)
+	handler := NewAuthHandler(authStore, rateLimiter, nil, false)
 
 	tests := []struct {
 		name           string
@@ -209,8 +209,8 @@ func TestAuthHandler_HandleLogin(t *testing.T) {
 }
 
 func TestAuthHandler_NilAuthStore(t *testing.T) {
-	// Create handler with nil auth store
-	handler := NewAuthHandler(nil, nil, nil)
+	// Create handler with nil auth store (tlsEnabled=false for tests)
+	handler := NewAuthHandler(nil, nil, nil, false)
 
 	body, _ := json.Marshal(LoginRequest{Username: "test", Password: "test"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
@@ -233,7 +233,7 @@ func TestAuthHandler_NilAuthStore(t *testing.T) {
 }
 
 func TestAuthHandler_RegisterRoutes(t *testing.T) {
-	handler := NewAuthHandler(nil, nil, nil)
+	handler := NewAuthHandler(nil, nil, nil, false)
 	mux := http.NewServeMux()
 
 	handler.RegisterRoutes(mux)
@@ -256,7 +256,7 @@ func TestAuthHandler_ExtractIPFromRequest(t *testing.T) {
 	// - With an IPExtractor that has trusted proxies, it should extract from headers when appropriate
 
 	t.Run("without IPExtractor - uses RemoteAddr directly", func(t *testing.T) {
-		handler := NewAuthHandler(nil, nil, nil)
+		handler := NewAuthHandler(nil, nil, nil, false)
 
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		req.RemoteAddr = "10.0.0.1:12345"
@@ -272,7 +272,7 @@ func TestAuthHandler_ExtractIPFromRequest(t *testing.T) {
 	t.Run("with IPExtractor and trusted proxy", func(t *testing.T) {
 		// Create IPExtractor that trusts 10.0.0.0/8 range
 		extractor := auth.NewIPExtractor([]string{"10.0.0.0/8"})
-		handler := NewAuthHandler(nil, nil, extractor)
+		handler := NewAuthHandler(nil, nil, extractor, false)
 
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		req.RemoteAddr = "10.0.0.1:12345" // From trusted proxy
@@ -288,7 +288,7 @@ func TestAuthHandler_ExtractIPFromRequest(t *testing.T) {
 	t.Run("with IPExtractor but untrusted proxy", func(t *testing.T) {
 		// Create IPExtractor that trusts a different range
 		extractor := auth.NewIPExtractor([]string{"172.16.0.0/12"})
-		handler := NewAuthHandler(nil, nil, extractor)
+		handler := NewAuthHandler(nil, nil, extractor, false)
 
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		req.RemoteAddr = "10.0.0.1:12345" // Not a trusted proxy
@@ -326,7 +326,7 @@ func TestAuthHandler_RateLimiting(t *testing.T) {
 	rateLimiter := auth.NewRateLimiter(15, 2) // 2 max attempts
 	defer rateLimiter.Stop()
 
-	handler := NewAuthHandler(authStore, rateLimiter, nil)
+	handler := NewAuthHandler(authStore, rateLimiter, nil, false)
 
 	// Make failed attempts to trigger rate limit
 	for i := 0; i < 3; i++ {
@@ -364,5 +364,245 @@ func TestAuthHandler_RateLimiting(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("After reset: expected status %d, got %d", http.StatusOK, w.Code)
+	}
+}
+
+func TestAuthHandler_SecureCookieFlag(t *testing.T) {
+	// Create temp directory for auth store
+	tmpDir, err := os.MkdirTemp("", "auth-secure-cookie-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create auth store
+	authStore, err := auth.NewAuthStore(tmpDir, 30, 0)
+	if err != nil {
+		t.Fatalf("Failed to create auth store: %v", err)
+	}
+	defer authStore.Close()
+
+	// Create a test user
+	if err := authStore.CreateUser("testuser", "testpass123", "Test user", "", ""); err != nil {
+		t.Fatalf("Failed to create test user: %v", err)
+	}
+
+	tests := []struct {
+		name         string
+		tlsEnabled   bool
+		expectSecure bool
+	}{
+		{
+			name:         "TLS disabled - cookie should not be secure",
+			tlsEnabled:   false,
+			expectSecure: false,
+		},
+		{
+			name:         "TLS enabled - cookie should be secure",
+			tlsEnabled:   true,
+			expectSecure: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := NewAuthHandler(authStore, nil, nil, tt.tlsEnabled)
+
+			body, _ := json.Marshal(LoginRequest{Username: "testuser", Password: "testpass123"})
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			handler.handleLogin(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("Expected status %d, got %d. Body: %s", http.StatusOK, w.Code, w.Body.String())
+			}
+
+			// Check the session cookie's Secure flag
+			cookies := w.Result().Cookies()
+			var sessionCookie *http.Cookie
+			for _, c := range cookies {
+				if c.Name == SessionCookieName {
+					sessionCookie = c
+					break
+				}
+			}
+
+			if sessionCookie == nil {
+				t.Fatal("Expected session_token cookie to be set")
+			}
+
+			if sessionCookie.Secure != tt.expectSecure {
+				t.Errorf("Expected cookie Secure=%v, got %v", tt.expectSecure, sessionCookie.Secure)
+			}
+		})
+	}
+}
+
+func TestAuthHandler_SecureCookieAutoDetect(t *testing.T) {
+	// Test auto-detection of secure requests via X-Forwarded-Proto header
+	// This simulates a reverse proxy that terminates TLS and forwards requests
+	tmpDir, err := os.MkdirTemp("", "auth-secure-auto-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	authStore, err := auth.NewAuthStore(tmpDir, 30, 0)
+	if err != nil {
+		t.Fatalf("Failed to create auth store: %v", err)
+	}
+	defer authStore.Close()
+
+	if err := authStore.CreateUser("testuser", "testpass123", "Test user", "", ""); err != nil {
+		t.Fatalf("Failed to create test user: %v", err)
+	}
+
+	tests := []struct {
+		name           string
+		tlsEnabled     bool
+		useIPExtractor bool
+		forwardedProto string
+		expectSecure   bool
+	}{
+		{
+			name:           "TLS disabled, no proxy, no header - not secure",
+			tlsEnabled:     false,
+			useIPExtractor: false,
+			forwardedProto: "",
+			expectSecure:   false,
+		},
+		{
+			name:           "TLS disabled, no proxy, https header ignored - not secure",
+			tlsEnabled:     false,
+			useIPExtractor: false,
+			forwardedProto: "https",
+			expectSecure:   false, // Header ignored without IPExtractor
+		},
+		{
+			name:           "TLS disabled, with proxy, https header - secure",
+			tlsEnabled:     false,
+			useIPExtractor: true,
+			forwardedProto: "https",
+			expectSecure:   true,
+		},
+		{
+			name:           "TLS disabled, with proxy, http header - not secure",
+			tlsEnabled:     false,
+			useIPExtractor: true,
+			forwardedProto: "http",
+			expectSecure:   false,
+		},
+		{
+			name:           "TLS disabled, with proxy, no header - not secure",
+			tlsEnabled:     false,
+			useIPExtractor: true,
+			forwardedProto: "",
+			expectSecure:   false,
+		},
+		{
+			name:           "TLS enabled - always secure regardless of header",
+			tlsEnabled:     true,
+			useIPExtractor: false,
+			forwardedProto: "",
+			expectSecure:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var ipExtractor *auth.IPExtractor
+			if tt.useIPExtractor {
+				// Create an IPExtractor - its presence indicates we trust proxy headers
+				ipExtractor = auth.NewIPExtractor([]string{"10.0.0.0/8"})
+			}
+
+			handler := NewAuthHandler(authStore, nil, ipExtractor, tt.tlsEnabled)
+
+			body, _ := json.Marshal(LoginRequest{Username: "testuser", Password: "testpass123"})
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			if tt.forwardedProto != "" {
+				req.Header.Set("X-Forwarded-Proto", tt.forwardedProto)
+			}
+			w := httptest.NewRecorder()
+
+			handler.handleLogin(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("Expected status %d, got %d. Body: %s", http.StatusOK, w.Code, w.Body.String())
+			}
+
+			cookies := w.Result().Cookies()
+			var sessionCookie *http.Cookie
+			for _, c := range cookies {
+				if c.Name == SessionCookieName {
+					sessionCookie = c
+					break
+				}
+			}
+
+			if sessionCookie == nil {
+				t.Fatal("Expected session_token cookie to be set")
+			}
+
+			if sessionCookie.Secure != tt.expectSecure {
+				t.Errorf("Expected cookie Secure=%v, got %v", tt.expectSecure, sessionCookie.Secure)
+			}
+		})
+	}
+}
+
+func TestAuthHandler_SecureCookieLogout(t *testing.T) {
+	// Test that logout also respects the secure cookie flag
+	tests := []struct {
+		name         string
+		tlsEnabled   bool
+		expectSecure bool
+	}{
+		{
+			name:         "TLS disabled - logout cookie should not be secure",
+			tlsEnabled:   false,
+			expectSecure: false,
+		},
+		{
+			name:         "TLS enabled - logout cookie should be secure",
+			tlsEnabled:   true,
+			expectSecure: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := NewAuthHandler(nil, nil, nil, tt.tlsEnabled)
+
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+			w := httptest.NewRecorder()
+
+			handler.handleLogout(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("Expected status %d, got %d", http.StatusOK, w.Code)
+			}
+
+			// Check the session cookie's Secure flag on the cleared cookie
+			cookies := w.Result().Cookies()
+			var sessionCookie *http.Cookie
+			for _, c := range cookies {
+				if c.Name == SessionCookieName {
+					sessionCookie = c
+					break
+				}
+			}
+
+			if sessionCookie == nil {
+				t.Fatal("Expected session_token cookie to be set (for clearing)")
+			}
+
+			if sessionCookie.Secure != tt.expectSecure {
+				t.Errorf("Expected cookie Secure=%v, got %v", tt.expectSecure, sessionCookie.Secure)
+			}
+		})
 	}
 }

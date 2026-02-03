@@ -26,7 +26,7 @@ const (
 
 	DefaultSlackAlertClearTemplate = `{"text":"✅ Resolved: {{.AlertTitle}}","attachments":[{"color":"#28a745","fields":[{"title":"Server","value":"{{.ServerName}}","short":true},{"title":"Duration","value":"{{.Duration}}","short":true}]}]}`
 
-	DefaultSlackReminderTemplate = `{"text":"⏰ Reminder: {{.AlertTitle}} is still active","attachments":[{"color":"{{.SeverityColor}}","fields":[{"title":"Server","value":"{{.ServerName}}","short":true},{"title":"Active Since","value":"{{.TriggeredAt.Format \"2006-01-02 15:04 MST\"}}","short":true},{"title":"Reminder #","value":"{{.ReminderCount}}","short":true}]}]}`
+	DefaultSlackReminderTemplate = `{"text":"⏰ Reminder: {{.AlertTitle}} is still active","attachments":[{"color":"{{.SeverityColor}}","fields":[{"title":"Server","value":"{{.ServerName}}","short":true},{"title":"Active Since","value":"{{.TriggeredAt.Format "2006-01-02 15:04 MST"}}","short":true},{"title":"Reminder #","value":"{{.ReminderCount}}","short":true}]}]}`
 )
 
 // Default email templates (HTML)

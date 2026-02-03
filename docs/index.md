@@ -7,9 +7,9 @@ traditional methods.
 
 ## Overview
 
-The pgEdge AI DBA Workbench combines a Model Context Protocol (MCP) Server with a
-web-based user interface and data collector, enabling users to query, analyze,
-and manage distributed clusters using natural language and intelligent
+The pgEdge AI DBA Workbench combines a Model Context Protocol (MCP) Server
+with a web-based user interface and data collector, enabling users to query,
+analyze, and manage distributed clusters using natural language and intelligent
 automation. The Workbench exposes pgEdge tools and data sources — such as
 Spock replication status, cluster configuration, and operational metrics — to
 either hosted or both hosted and locally running language models.
@@ -132,10 +132,10 @@ pg_sslmode = prefer
 
 The system uses several security mechanisms:
 
-- **Encryption**: AES-256-GCM for password storage
-- **SSL/TLS**: Full support for encrypted connections
-- **Authentication**: User and service token management
-- **Isolation**: Session and connection isolation
+- The system uses AES-256-GCM encryption for password storage.
+- Full support for SSL/TLS encrypted connections is available.
+- User and service token management handles authentication.
+- Session and connection isolation protects user data.
 
 See component-specific documentation for additional security configuration.
 
@@ -277,8 +277,9 @@ See [Collector Quick Start](collector/quickstart.md) for detailed steps.
 - Check component-specific documentation
 - Review example configuration files in `/examples`
 - Examine test files for usage examples
-- Consult [DESIGN.md](https://github.com/pgEdge/ai-dba-workbench/blob/main/DESIGN.md)
-  for architecture details
+- Consult the [DESIGN.md][design] document for architecture details
+
+[design]: https://github.com/pgEdge/ai-dba-workbench/blob/main/DESIGN.md
 
 ## Version Information
 
@@ -292,11 +293,11 @@ This software is released under The PostgreSQL License.
 
 ## Additional Resources
 
-- [Project README](https://github.com/pgEdge/ai-dba-workbench/blob/main/README.md) -
-  Quick overview
-- [Design Document](https://github.com/pgEdge/ai-dba-workbench/blob/main/DESIGN.md) -
-  System architecture
-- [Example Configurations](https://github.com/pgEdge/ai-dba-workbench/tree/main/examples) -
-  Example configs
-- [Standing Instructions](https://github.com/pgEdge/ai-dba-workbench/blob/main/CLAUDE.md) -
-  Development guidelines
+- [Project README][readme] provides a quick overview of the project.
+- [Design Document][design] describes the system architecture.
+- [Example Configurations][examples] provides sample configuration files.
+- [Standing Instructions][claude] contains the development guidelines.
+
+[readme]: https://github.com/pgEdge/ai-dba-workbench/blob/main/README.md
+[examples]: https://github.com/pgEdge/ai-dba-workbench/tree/main/examples
+[claude]: https://github.com/pgEdge/ai-dba-workbench/blob/main/CLAUDE.md

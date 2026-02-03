@@ -19,7 +19,7 @@ the API structure.
 
 The OpenAPI 3.0.3 specification is available at runtime:
 
-- **JSON**: `GET /api/v1/openapi.json`
+- JSON format is available at `GET /api/v1/openapi.json`.
 
 You can use this specification with tools like Postman, Insomnia, or any
 OpenAPI-compatible client.
@@ -28,8 +28,8 @@ OpenAPI-compatible client.
 
 All REST API endpoints use version prefixes:
 
-- **Current version**: `/api/v1/`
-- **MCP protocol**: `/mcp/v1` (separate versioning)
+- The current version is `/api/v1/`.
+- The MCP protocol uses `/mcp/v1` with separate versioning.
 
 Version changes follow semantic versioning principles. Breaking changes
 result in a new major version.
@@ -46,8 +46,8 @@ curl -H "Authorization: Bearer YOUR_TOKEN" \
 
 Tokens can be:
 
-- **Session tokens**: Obtained via `/api/v1/auth/login`
-- **Service tokens**: Created via CLI for programmatic access
+- Session tokens are obtained via `/api/v1/auth/login`.
+- Service tokens are created via CLI for programmatic access.
 
 ## Interactive API Browser
 

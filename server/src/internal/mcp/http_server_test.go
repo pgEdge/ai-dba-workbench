@@ -109,9 +109,9 @@ func TestHandleInitializeHTTP(t *testing.T) {
 		JSONRPC: "2.0",
 		ID:      1,
 		Method:  "initialize",
-		Params: map[string]interface{}{
+		Params: map[string]any{
 			"protocolVersion": "2024-11-05",
-			"clientInfo": map[string]interface{}{
+			"clientInfo": map[string]any{
 				"name":    "test-client",
 				"version": "1.0.0",
 			},
@@ -133,12 +133,12 @@ func TestHandleInitializeHTTP(t *testing.T) {
 		t.Fatalf("unexpected error: %v", response.Error)
 	}
 
-	result, ok := response.Result.(map[string]interface{})
+	result, ok := response.Result.(map[string]any)
 	if !ok {
 		t.Fatalf("expected result to be a map, got %T", response.Result)
 	}
 
-	serverInfo, ok := result["serverInfo"].(map[string]interface{})
+	serverInfo, ok := result["serverInfo"].(map[string]any)
 	if !ok {
 		t.Fatal("expected serverInfo in result")
 	}
@@ -171,12 +171,12 @@ func TestHandleInitializeHTTP_WithProviders(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	result, ok := response.Result.(map[string]interface{})
+	result, ok := response.Result.(map[string]any)
 	if !ok {
 		t.Fatal("expected result to be a map")
 	}
 
-	capabilities, ok := result["capabilities"].(map[string]interface{})
+	capabilities, ok := result["capabilities"].(map[string]any)
 	if !ok {
 		t.Fatal("expected capabilities in result")
 	}
@@ -223,12 +223,12 @@ func TestHandleToolsListHTTP(t *testing.T) {
 		t.Fatalf("unexpected error: %v", response.Error)
 	}
 
-	result, ok := response.Result.(map[string]interface{})
+	result, ok := response.Result.(map[string]any)
 	if !ok {
 		t.Fatalf("expected result to be a map, got %T", response.Result)
 	}
 
-	toolsList, ok := result["tools"].([]interface{})
+	toolsList, ok := result["tools"].([]any)
 	if !ok {
 		t.Fatal("expected tools array in result")
 	}
@@ -240,7 +240,7 @@ func TestHandleToolsListHTTP(t *testing.T) {
 
 func TestHandleToolCallHTTP_Success(t *testing.T) {
 	tools := &mockToolProvider{
-		executeFunc: func(ctx context.Context, name string, args map[string]interface{}) (ToolResponse, error) {
+		executeFunc: func(ctx context.Context, name string, args map[string]any) (ToolResponse, error) {
 			return NewToolSuccess("executed " + name)
 		},
 	}
@@ -250,9 +250,9 @@ func TestHandleToolCallHTTP_Success(t *testing.T) {
 		JSONRPC: "2.0",
 		ID:      1,
 		Method:  "tools/call",
-		Params: map[string]interface{}{
+		Params: map[string]any{
 			"name":      "test_tool",
-			"arguments": map[string]interface{}{"key": "value"},
+			"arguments": map[string]any{"key": "value"},
 		},
 	}
 
@@ -274,7 +274,7 @@ func TestHandleToolCallHTTP_Success(t *testing.T) {
 
 func TestHandleToolCallHTTP_ExecutionError(t *testing.T) {
 	tools := &mockToolProvider{
-		executeFunc: func(ctx context.Context, name string, args map[string]interface{}) (ToolResponse, error) {
+		executeFunc: func(ctx context.Context, name string, args map[string]any) (ToolResponse, error) {
 			return ToolResponse{}, errors.New("execution failed")
 		},
 	}
@@ -284,7 +284,7 @@ func TestHandleToolCallHTTP_ExecutionError(t *testing.T) {
 		JSONRPC: "2.0",
 		ID:      1,
 		Method:  "tools/call",
-		Params: map[string]interface{}{
+		Params: map[string]any{
 			"name": "failing_tool",
 		},
 	}
@@ -381,7 +381,7 @@ func TestHandleResourceReadHTTP_Success(t *testing.T) {
 		JSONRPC: "2.0",
 		ID:      1,
 		Method:  "resources/read",
-		Params: map[string]interface{}{
+		Params: map[string]any{
 			"uri": "pg://schema",
 		},
 	}
@@ -416,7 +416,7 @@ func TestHandleResourceReadHTTP_Error(t *testing.T) {
 		JSONRPC: "2.0",
 		ID:      1,
 		Method:  "resources/read",
-		Params: map[string]interface{}{
+		Params: map[string]any{
 			"uri": "pg://invalid",
 		},
 	}
@@ -514,7 +514,7 @@ func TestHandlePromptGetHTTP_Success(t *testing.T) {
 		JSONRPC: "2.0",
 		ID:      1,
 		Method:  "prompts/get",
-		Params: map[string]interface{}{
+		Params: map[string]any{
 			"name":      "test_prompt",
 			"arguments": map[string]string{"key": "value"},
 		},
@@ -550,7 +550,7 @@ func TestHandlePromptGetHTTP_Error(t *testing.T) {
 		JSONRPC: "2.0",
 		ID:      1,
 		Method:  "prompts/get",
-		Params: map[string]interface{}{
+		Params: map[string]any{
 			"name": "invalid",
 		},
 	}
@@ -630,10 +630,10 @@ func TestHandleUnknownMethod(t *testing.T) {
 func TestCreateErrorResponse(t *testing.T) {
 	tests := []struct {
 		name    string
-		id      interface{}
+		id      any
 		code    int
 		message string
-		data    interface{}
+		data    any
 	}{
 		{
 			name:    "basic error",

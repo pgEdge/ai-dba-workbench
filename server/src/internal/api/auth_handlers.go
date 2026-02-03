@@ -25,28 +25,65 @@ const SessionCookieName = "session_token"
 
 // AuthHandler handles authentication-related HTTP requests
 type AuthHandler struct {
-	authStore    *auth.AuthStore
-	rateLimiter  *auth.RateLimiter
-	ipExtractor  *auth.IPExtractor
-	secureCookie bool // Whether to set Secure flag on cookies (true for HTTPS)
+	authStore         *auth.AuthStore
+	rateLimiter       *auth.RateLimiter
+	ipExtractor       *auth.IPExtractor
+	tlsEnabled        bool // Whether the server itself has TLS enabled
+	trustProxyHeaders bool // Whether to trust X-Forwarded-Proto for secure detection
 }
 
 // NewAuthHandler creates a new authentication handler.
 // The ipExtractor parameter is optional; if nil, RemoteAddr will be used directly.
-// The secureCookie parameter should be true when serving over HTTPS.
-func NewAuthHandler(authStore *auth.AuthStore, rateLimiter *auth.RateLimiter, ipExtractor *auth.IPExtractor) *AuthHandler {
+// The tlsEnabled parameter indicates whether the server itself has TLS enabled.
+// When behind a reverse proxy that terminates TLS, set tlsEnabled to false but ensure
+// the proxy passes X-Forwarded-Proto header, which will be used to auto-detect HTTPS.
+func NewAuthHandler(authStore *auth.AuthStore, rateLimiter *auth.RateLimiter, ipExtractor *auth.IPExtractor, tlsEnabled bool) *AuthHandler {
+	// If an IP extractor is configured, it means we're behind a trusted proxy,
+	// so we should also trust X-Forwarded-Proto for secure cookie detection.
+	trustProxyHeaders := ipExtractor != nil
+
 	return &AuthHandler{
-		authStore:    authStore,
-		rateLimiter:  rateLimiter,
-		ipExtractor:  ipExtractor,
-		secureCookie: false, // Default to false for development; set via SetSecureCookie for production
+		authStore:         authStore,
+		rateLimiter:       rateLimiter,
+		ipExtractor:       ipExtractor,
+		tlsEnabled:        tlsEnabled,
+		trustProxyHeaders: trustProxyHeaders,
 	}
 }
 
-// SetSecureCookie configures whether cookies should have the Secure flag.
-// This should be set to true when serving over HTTPS in production.
-func (h *AuthHandler) SetSecureCookie(secure bool) {
-	h.secureCookie = secure
+// SetTrustProxyHeaders configures whether to trust X-Forwarded-Proto header
+// for determining if the connection is secure. This should be true when
+// behind a trusted reverse proxy that terminates TLS.
+func (h *AuthHandler) SetTrustProxyHeaders(trust bool) {
+	h.trustProxyHeaders = trust
+}
+
+// isSecureRequest determines if a request came over a secure (HTTPS) connection.
+// It checks multiple indicators:
+// 1. If the server has TLS enabled directly
+// 2. If the request URL scheme is HTTPS
+// 3. If trusted proxy headers indicate HTTPS (X-Forwarded-Proto)
+// This ensures cookies are marked Secure when appropriate, even behind reverse proxies.
+func (h *AuthHandler) isSecureRequest(r *http.Request) bool {
+	// Server has TLS enabled directly
+	if h.tlsEnabled {
+		return true
+	}
+
+	// Check the request TLS state (set by Go's http server when TLS is used)
+	if r.TLS != nil {
+		return true
+	}
+
+	// Check X-Forwarded-Proto header if we trust proxy headers
+	if h.trustProxyHeaders {
+		proto := r.Header.Get("X-Forwarded-Proto")
+		if proto == "https" {
+			return true
+		}
+	}
+
+	return false
 }
 
 // LoginRequest is the request body for the login endpoint
@@ -134,13 +171,15 @@ func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// Set httpOnly cookie for secure session management.
 	// This prevents XSS attacks from accessing the session token.
+	// Auto-detect if this is a secure request (HTTPS or behind TLS-terminating proxy)
+	secureCookie := h.isSecureRequest(r)
 	http.SetCookie(w, &http.Cookie{
 		Name:     SessionCookieName,
 		Value:    token,
 		Path:     "/",
 		Expires:  expiration,
 		HttpOnly: true,                 // Prevents JavaScript access (XSS protection)
-		Secure:   h.secureCookie,       // Only send over HTTPS in production
+		Secure:   secureCookie,         // Auto-detected: only send over HTTPS
 		SameSite: http.SameSiteLaxMode, // CSRF protection (Lax works with proxies)
 	})
 
@@ -162,13 +201,15 @@ func (h *AuthHandler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Clear the session cookie by setting it to expire immediately
+	// Auto-detect if this is a secure request (HTTPS or behind TLS-terminating proxy)
+	secureCookie := h.isSecureRequest(r)
 	http.SetCookie(w, &http.Cookie{
 		Name:     SessionCookieName,
 		Value:    "",
 		Path:     "/",
 		MaxAge:   -1, // Expire immediately
 		HttpOnly: true,
-		Secure:   h.secureCookie,
+		Secure:   secureCookie,
 		SameSite: http.SameSiteLaxMode,
 	})
 

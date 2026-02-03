@@ -10,12 +10,12 @@ The MCP server acts as a bridge between AI language models and PostgreSQL
 databases, enabling natural language interaction with your data. Key features
 include:
 
-- **MCP Protocol**: Full JSON-RPC 2.0 implementation over HTTP/HTTPS
-- **Authentication**: SQLite-based user management with session and service
-  tokens
-- **Database Tools**: Query execution, schema introspection, and analysis
-- **LLM Proxy**: Optional server-side LLM integration for web clients
-- **Conversation History**: Persistent storage for chat sessions
+- Full JSON-RPC 2.0 implementation over HTTP/HTTPS for MCP protocol.
+- SQLite-based user management with session and service tokens for
+  authentication.
+- Query execution, schema introspection, and analysis through database tools.
+- Optional server-side LLM integration for web clients via LLM proxy.
+- Persistent storage for chat sessions provides conversation history.
 
 ## Getting Started
 
@@ -38,23 +38,23 @@ The binary is created at `bin/ai-dba-server`.
 
 ### First Run
 
-1. **Create a user account**:
+1. Create a user account:
 
    ```bash
    ./bin/ai-dba-server -add-user -username admin
    ```
 
-   You'll be prompted for a password.
+   The system prompts you for a password.
 
-2. **Create a service token** (optional, for API access):
+2. Create a service token (optional, for API access):
 
    ```bash
    ./bin/ai-dba-server -add-token -token-note "My API Token" -token-expiry "90d"
    ```
 
-   Save the displayed token - it won't be shown again.
+   Save the displayed token because the system will not show it again.
 
-3. **Start the server**:
+3. Start the server:
 
    ```bash
    ./bin/ai-dba-server
@@ -62,7 +62,7 @@ The binary is created at `bin/ai-dba-server`.
 
    The server starts on port 8080 by default.
 
-4. **Test the connection**:
+4. Test the connection:
 
    ```bash
    # Using a service token
@@ -146,13 +146,13 @@ The MCP server is built with the following components:
 
 ### Key Components
 
-- **HTTP Server**: Handles incoming requests and routes to appropriate handlers
-- **MCP Server**: Implements the Model Context Protocol with tools, resources,
-  and prompts
-- **Auth Store**: SQLite database managing users, sessions, and service tokens
-- **LLM Proxy**: Optional feature to proxy LLM requests for web clients
-- **Conversation Store**: SQLite database for persistent chat history
-- **Database Pool**: Per-session connection management for security isolation
+- The HTTP server handles incoming requests and routes them to handlers.
+- The MCP server implements Model Context Protocol with tools, resources,
+  and prompts.
+- The auth store is a SQLite database managing users, sessions, and tokens.
+- The LLM proxy is an optional feature to proxy LLM requests for web clients.
+- The conversation store is a SQLite database for persistent chat history.
+- The database pool provides per-session connection management for isolation.
 
 ## Available Tools
 
@@ -215,12 +215,12 @@ Resources can be disabled in configuration; see
 
 The server implements multiple security layers:
 
-- **Authentication required**: All MCP endpoints require valid tokens
-- **Password hashing**: Bcrypt with cost factor 12
-- **Token hashing**: SHA256 for secure storage
-- **Rate limiting**: Per-IP protection against brute force attacks
-- **Account lockout**: Automatic disabling after failed login attempts
-- **Session isolation**: Each token gets its own database connection pool
+- All MCP endpoints require valid tokens for authentication.
+- Password hashing uses Bcrypt with cost factor 12.
+- Token hashing uses SHA256 for secure storage.
+- Per-IP rate limiting protects against brute force attacks.
+- Automatic account lockout occurs after failed login attempts.
+- Each token gets its own database connection pool for session isolation.
 
 ## License
 

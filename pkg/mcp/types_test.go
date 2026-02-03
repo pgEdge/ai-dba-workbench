@@ -54,7 +54,7 @@ func TestJSONRPCRequestWithNilParams(t *testing.T) {
 	}
 
 	// Should not include "params" in JSON when nil
-	var raw map[string]interface{}
+	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatalf("failed to unmarshal to map: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestRPCErrorMarshal(t *testing.T) {
 func TestInitializeParamsMarshal(t *testing.T) {
 	params := InitializeParams{
 		ProtocolVersion: "2024-11-05",
-		Capabilities:    map[string]interface{}{"tools": true},
+		Capabilities:    map[string]any{"tools": true},
 		ClientInfo: ClientInfo{
 			Name:    "test-client",
 			Version: "1.0.0",
@@ -178,8 +178,8 @@ func TestToolMarshal(t *testing.T) {
 		Description: "A test tool",
 		InputSchema: InputSchema{
 			Type: "object",
-			Properties: map[string]interface{}{
-				"query": map[string]interface{}{
+			Properties: map[string]any{
+				"query": map[string]any{
 					"type":        "string",
 					"description": "The query to execute",
 				},
@@ -430,7 +430,7 @@ func TestResourceContentMarshal(t *testing.T) {
 func TestToolCallParamsMarshal(t *testing.T) {
 	params := ToolCallParams{
 		Name: "query_database",
-		Arguments: map[string]interface{}{
+		Arguments: map[string]any{
 			"query":    "SELECT * FROM users",
 			"readonly": true,
 		},

@@ -38,10 +38,10 @@ cd ai-dba-workbench
 
 The project consists of four main components:
 
-- **collector** - Data collection service written in Go.
-- **server** - MCP server written in Go.
-- **cli** - Command-line interface written in Go.
-- **client** - Web client written in React/TypeScript.
+- The collector is a data collection service written in Go.
+- The server is an MCP server written in Go.
+- The cli is a command-line interface written in Go.
+- The client is a web client written in React/TypeScript.
 
 Each component has its own directory with source code, tests, and a Makefile.
 
@@ -295,8 +295,9 @@ Include the following information in bug reports:
 
 ## License
 
-This project is licensed under the
-[PostgreSQL License](https://github.com/pgEdge/ai-dba-workbench/blob/main/LICENSE.md).
+This project is licensed under the [PostgreSQL License][license].
+
+[license]: https://github.com/pgEdge/ai-dba-workbench/blob/main/LICENSE.md
 
 By contributing to the project, you agree that your contributions will be
 licensed under the same license.

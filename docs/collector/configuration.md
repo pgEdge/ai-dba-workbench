@@ -7,8 +7,8 @@ your environment.
 
 The Collector supports configuration through two sources:
 
-1. **Configuration File**: A YAML file with hierarchical settings
-2. **Command-Line Flags**: Override config file settings
+1. A configuration file in YAML format with hierarchical settings
+2. Command-line flags that override config file settings
 
 Priority (highest to lowest): Command-line flags > Config file > Defaults.
 
@@ -61,8 +61,8 @@ pool:
 
 ### Sample Configuration
 
-See the complete example configuration file:
-[ai-dba-collector.yaml](https://github.com/pgEdge/ai-dba-workbench/blob/main/examples/ai-dba-collector.yaml)
+See the complete example configuration file at
+[ai-dba-collector.yaml](https://github.com/pgEdge/ai-dba-workbench/blob/main/examples/ai-dba-collector.yaml).
 
 ## Configuration Options
 
@@ -76,48 +76,48 @@ section.
 
 PostgreSQL server hostname or IP address.
 
-- **Type**: string
-- **Default**: `localhost`
-- **Example**: `host: prod-db.example.com`
-- **Command-line**: `-pg-host`
+- Type: string
+- Default: `localhost`
+- Example: `host: prod-db.example.com`
+- Command-line: `-pg-host`
 
 #### datastore.hostaddr
 
 PostgreSQL server IP address (optional, bypasses DNS lookup).
 
-- **Type**: string
-- **Default**: none
-- **Example**: `hostaddr: 192.168.1.100`
-- **Command-line**: `-pg-hostaddr`
-- **Note**: If set, used instead of `host` for connection
+- Type: string
+- Default: none
+- Example: `hostaddr: 192.168.1.100`
+- Command-line: `-pg-hostaddr`
+- Note: If set, used instead of `host` for connection
 
 #### datastore.database
 
 Database name for the Collector's datastore.
 
-- **Type**: string
-- **Default**: `ai_workbench`
-- **Example**: `database: metrics_db`
-- **Command-line**: `-pg-database`
+- Type: string
+- Default: `ai_workbench`
+- Example: `database: metrics_db`
+- Command-line: `-pg-database`
 
 #### datastore.username
 
 Username for datastore connection.
 
-- **Type**: string
-- **Default**: `postgres`
-- **Example**: `username: collector`
-- **Command-line**: `-pg-username`
+- Type: string
+- Default: `postgres`
+- Example: `username: collector`
+- Command-line: `-pg-username`
 
 #### datastore.password_file
 
 Path to file containing the datastore password.
 
-- **Type**: string (file path)
-- **Default**: none
-- **Example**: `password_file: /etc/ai-workbench/password.txt`
-- **Command-line**: `-pg-password-file`
-- **Note**: File should contain only the password, no extra whitespace
+- Type: string (file path)
+- Default: none
+- Example: `password_file: /etc/ai-workbench/password.txt`
+- Command-line: `-pg-password-file`
+- Note: File should contain only the password, no extra whitespace
 
 **Example password file:**
 
@@ -131,22 +131,22 @@ chmod 600 /etc/ai-workbench/password.txt
 
 PostgreSQL server port number.
 
-- **Type**: integer
-- **Default**: `5432`
-- **Range**: 1-65535
-- **Example**: `port: 5433`
-- **Command-line**: `-pg-port`
+- Type: integer
+- Default: `5432`
+- Range: 1-65535
+- Example: `port: 5433`
+- Command-line: `-pg-port`
 
 #### datastore.sslmode
 
 SSL/TLS mode for datastore connection.
 
-- **Type**: string
-- **Default**: `prefer`
-- **Options**: `disable`, `allow`, `prefer`, `require`, `verify-ca`,
+- Type: string
+- Default: `prefer`
+- Options: `disable`, `allow`, `prefer`, `require`, `verify-ca`,
   `verify-full`
-- **Example**: `sslmode: require`
-- **Command-line**: `-pg-sslmode`
+- Example: `sslmode: require`
+- Command-line: `-pg-sslmode`
 
 **SSL Modes:**
 
@@ -161,31 +161,31 @@ SSL/TLS mode for datastore connection.
 
 Path to client SSL certificate file.
 
-- **Type**: string (file path)
-- **Default**: none
-- **Example**: `sslcert: /etc/ai-workbench/client-cert.pem`
-- **Command-line**: `-pg-sslcert`
-- **Note**: Used with `sslmode: verify-ca` or `verify-full`
+- Type: string (file path)
+- Default: none
+- Example: `sslcert: /etc/ai-workbench/client-cert.pem`
+- Command-line: `-pg-sslcert`
+- Note: Used with `sslmode: verify-ca` or `verify-full`
 
 #### datastore.sslkey
 
 Path to client SSL private key file.
 
-- **Type**: string (file path)
-- **Default**: none
-- **Example**: `sslkey: /etc/ai-workbench/client-key.pem`
-- **Command-line**: `-pg-sslkey`
-- **Note**: Used with client certificates
+- Type: string (file path)
+- Default: none
+- Example: `sslkey: /etc/ai-workbench/client-key.pem`
+- Command-line: `-pg-sslkey`
+- Note: Used with client certificates
 
 #### datastore.sslrootcert
 
 Path to root CA certificate file.
 
-- **Type**: string (file path)
-- **Default**: none
-- **Example**: `sslrootcert: /etc/ai-workbench/ca-cert.pem`
-- **Command-line**: `-pg-sslrootcert`
-- **Note**: Used to verify server certificate
+- Type: string (file path)
+- Default: none
+- Example: `sslrootcert: /etc/ai-workbench/ca-cert.pem`
+- Command-line: `-pg-sslrootcert`
+- Note: Used to verify server certificate
 
 ### Connection Pool Settings
 
@@ -196,55 +196,55 @@ monitored connections. All pool settings are under the `pool:` section.
 
 Maximum number of concurrent connections to the datastore.
 
-- **Type**: integer
-- **Default**: `25`
-- **Example**: `datastore_max_connections: 50`
-- **Note**: Higher values allow more concurrent probe storage operations
+- Type: integer
+- Default: `25`
+- Example: `datastore_max_connections: 50`
+- Note: Higher values allow more concurrent probe storage operations
 
 #### pool.datastore_max_idle_seconds
 
 Maximum idle time (seconds) before closing idle datastore connections.
 
-- **Type**: integer
-- **Default**: `300` (5 minutes)
-- **Example**: `datastore_max_idle_seconds: 600`
-- **Note**: Set to 0 to disable idle connection cleanup
+- Type: integer
+- Default: `300` (5 minutes)
+- Example: `datastore_max_idle_seconds: 600`
+- Note: Set to 0 to disable idle connection cleanup
 
 #### pool.datastore_max_wait_seconds
 
 Maximum time (seconds) to wait for an available datastore connection.
 
-- **Type**: integer
-- **Default**: `60`
-- **Example**: `datastore_max_wait_seconds: 120`
-- **Note**: Probe storage operations will fail if timeout is exceeded
+- Type: integer
+- Default: `60`
+- Example: `datastore_max_wait_seconds: 120`
+- Note: Probe storage operations will fail if timeout is exceeded
 
 #### pool.monitored_max_connections
 
 Maximum concurrent connections PER monitored database server.
 
-- **Type**: integer
-- **Default**: `5`
-- **Example**: `monitored_max_connections: 10`
-- **Note**: This is per-server, not total. 10 servers with limit 5 = 50 max
+- Type: integer
+- Default: `5`
+- Example: `monitored_max_connections: 10`
+- Note: This is per-server, not total. 10 servers with limit 5 = 50 max
   connections
 
 #### pool.monitored_max_idle_seconds
 
 Maximum idle time (seconds) before closing idle monitored connections.
 
-- **Type**: integer
-- **Default**: `300` (5 minutes)
-- **Example**: `monitored_max_idle_seconds: 600`
+- Type: integer
+- Default: `300` (5 minutes)
+- Example: `monitored_max_idle_seconds: 600`
 
 #### pool.monitored_max_wait_seconds
 
 Maximum time (seconds) to wait for an available monitored connection.
 
-- **Type**: integer
-- **Default**: `60`
-- **Example**: `monitored_max_wait_seconds: 120`
-- **Note**: Probe execution will fail if timeout is exceeded
+- Type: integer
+- Default: `60`
+- Example: `monitored_max_wait_seconds: 120`
+- Note: Probe execution will fail if timeout is exceeded
 
 ### Security Settings
 
@@ -253,15 +253,15 @@ Maximum time (seconds) to wait for an available monitored connection.
 The `secret_file` option specifies the path to a file containing
 per-installation secret for encryption.
 
-- **Type**: string (file path)
-- **Default**: Searches in order:
+- Type: string (file path)
+- Default: Searches in order:
     1. `/etc/pgedge/ai-dba-collector.secret`
     2. `<binary-directory>/ai-dba-collector.secret`
     3. `./ai-dba-collector.secret`
-- **Example**: `secret_file: /etc/pgedge/ai-dba-collector.secret`
-- **Note**: The Collector uses this secret to encrypt/decrypt passwords for
+- Example: `secret_file: /etc/pgedge/ai-dba-collector.secret`
+- Note: The Collector uses this secret to encrypt/decrypt passwords for
   monitored connections.
-- **Important**: Keep this file secure (chmod 600). If the file is lost, you
+- Important: Keep this file secure (chmod 600). If the file is lost, you
   must re-enter all monitored connection passwords.
 
 The following command generates a secure secret file:
@@ -399,9 +399,9 @@ secret_file: /etc/pgedge/ai-dba-collector.secret
 
 Choose `datastore_max_connections` based on:
 
-- **Number of probes**: Each probe may need a connection to store metrics
-- **Collection frequency**: More frequent collections need more connections
-- **Datastore capacity**: Don't exceed the server's max connections
+- Each probe may need a connection to store metrics.
+- More frequent collections need more connections.
+- Do not exceed the server's max_connections setting.
 
 **Formula**: `(number of probes × concurrent monitored servers) / 2`
 
@@ -411,9 +411,9 @@ Choose `datastore_max_connections` based on:
 
 Choose `monitored_max_connections` based on:
 
-- **Probe concurrency**: How many probes might run simultaneously
-- **Monitored server capacity**: Don't overwhelm monitored servers
-- **Network latency**: Higher latency may need more connections
+- Consider how many probes might run simultaneously.
+- Do not overwhelm monitored servers with too many connections.
+- Higher network latency may require more connections.
 
 **Recommendation**: Start with 5, increase if you see timeout errors
 
@@ -421,9 +421,9 @@ Choose `monitored_max_connections` based on:
 
 Choose `*_max_idle_seconds` based on:
 
-- **Connection cost**: Longer timeout if connections are expensive to create
-- **Resource constraints**: Shorter timeout if resources are limited
-- **Activity patterns**: Longer timeout for constant activity
+- Use longer timeout if connections are expensive to create.
+- Use shorter timeout if resources are limited.
+- Use longer timeout for constant activity patterns.
 
 **Recommendation**: 300 seconds (5 minutes) is a good default
 
@@ -431,9 +431,9 @@ Choose `*_max_idle_seconds` based on:
 
 Choose `*_max_wait_seconds` based on:
 
-- **Expected wait time**: How long is acceptable to wait
-- **Failure strategy**: Shorter timeout fails faster
-- **Load patterns**: Longer timeout for burst loads
+- Consider how long is acceptable to wait for a connection.
+- Shorter timeout causes faster failure for probes.
+- Use longer timeout for burst load patterns.
 
 **Recommendation**: 60 seconds for datastore, 120 seconds for monitored
 
@@ -475,22 +475,22 @@ Choose `*_max_wait_seconds` based on:
 
 ### Protecting Secrets
 
-1. **File Permissions**: Set restrictive permissions on config files
+1. Set restrictive file permissions on config files.
 
    ```bash
    chmod 600 /etc/pgedge/ai-dba-collector.yaml
    chmod 600 /etc/ai-workbench/password.txt
    ```
 
-2. **Password Files**: Use dedicated password files, not inline passwords
+2. Use dedicated password files rather than inline passwords.
 
-3. **Server Secret**: Generate strong random secrets
+3. Generate strong random secrets for the server secret.
 
    ```bash
    openssl rand -base64 32
    ```
 
-4. **Version Control**: Never commit configs with real secrets
+4. Never commit configs with real secrets to version control.
 
 ### SSL/TLS Configuration
 
@@ -522,11 +522,10 @@ collection intervals and retention periods per connection.
 
 Probe settings use a three-level fallback hierarchy:
 
-1. **Connection-Specific**: Settings in `probe_configs` where `connection_id`
+1. Connection-specific settings in `probe_configs` where `connection_id`
    matches the monitored connection
-2. **Global Default**: Settings in `probe_configs` where `connection_id IS
-   NULL`
-3. **Hardcoded Default**: Built-in values defined in the Collector source code
+2. Global default settings in `probe_configs` where `connection_id IS NULL`
+3. Hardcoded default values defined in the Collector source code
 
 ### Automatic Configuration
 

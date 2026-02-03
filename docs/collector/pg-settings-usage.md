@@ -13,14 +13,15 @@ without excessive storage costs.
 
 ### Key Features
 
-- **Change Detection**: Uses SHA256 hash comparison to detect configuration
-    changes
-- **Selective Storage**: Only stores data when configuration differs from the
-    most recent snapshot
-- **Long Retention**: Default 365-day retention for year-over-year analysis
-- **Protected Data**: Garbage collector preserves the most recent snapshot for
-    each server regardless of age
-- **Hourly Checks**: Runs every hour by default to detect changes promptly
+- Change detection uses SHA256 hash comparison to detect configuration
+  changes.
+- Selective storage only stores data when configuration differs from the
+  most recent snapshot.
+- Long retention provides default 365-day retention for year-over-year
+  analysis.
+- The garbage collector preserves the most recent snapshot for each server
+  regardless of age.
+- Hourly checks run every hour by default to detect changes promptly.
 
 ## Common Queries
 
@@ -173,7 +174,9 @@ WITH numbered_changes AS (
     setting,
     source,
     collected_at,
-    LAG(source) OVER (PARTITION BY connection_id, name ORDER BY collected_at) AS prev_source
+    LAG(source) OVER (
+        PARTITION BY connection_id, name ORDER BY collected_at
+    ) AS prev_source
   FROM metrics.pg_settings
   WHERE connection_id = 1
 )

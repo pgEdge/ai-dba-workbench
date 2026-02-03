@@ -1,7 +1,7 @@
 # pgEdge AI DBA Workbench Collector Documentation
 
-Welcome to the pgEdge AI DBA Workbench Collector documentation. The Collector is
-a standalone monitoring service that continuously collects metrics from
+Welcome to the pgEdge AI DBA Workbench Collector documentation. The Collector
+is a standalone monitoring service that continuously collects metrics from
 PostgreSQL servers and stores them in a centralized datastore for analysis by
 the AI DBA Workbench system.
 
@@ -38,11 +38,14 @@ the AI DBA Workbench system.
 
 ## Quick Links
 
-- [Main Documentation](../index.md) - Return to main documentation index
-- [Main README](https://github.com/pgEdge/ai-dba-workbench/blob/main/README.md) -
-  Quick start and basic information
-- [Example Configuration](https://github.com/pgEdge/ai-dba-workbench/blob/main/examples/ai-dba-collector.yaml)
-- [Project Design Document](https://github.com/pgEdge/ai-dba-workbench/blob/main/DESIGN.md)
+- [Main Documentation](../index.md) returns to the main documentation index.
+- [Main README][readme] provides quick start and basic information.
+- [Example Configuration][example] shows a sample collector configuration file.
+- [Project Design Document][design] describes the overall system architecture.
+
+[readme]: https://github.com/pgEdge/ai-dba-workbench/blob/main/README.md
+[example]: https://github.com/pgEdge/ai-dba-workbench/blob/main/examples/ai-dba-collector.yaml
+[design]: https://github.com/pgEdge/ai-dba-workbench/blob/main/DESIGN.md
 
 ## Key Features
 

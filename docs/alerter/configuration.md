@@ -146,7 +146,7 @@ The `threshold` section configures threshold-based alert evaluation:
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `evaluation_interval_seconds` | integer | `60` | Interval between evaluations |
+| `evaluation_interval_seconds` | integer | `60` | Evaluation interval |
 
 ### Anomaly Detection
 

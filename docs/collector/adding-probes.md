@@ -86,8 +86,9 @@ func (p *PgStatCustomProbe) GetQuery() string {
 }
 
 // Execute runs the probe against a monitored connection
-func (p *PgStatCustomProbe) Execute(ctx context.Context,
-                                   monitoredConn *pgxpool.Conn) ([]map[string]interface{}, error) {
+func (p *PgStatCustomProbe) Execute(
+    ctx context.Context,
+    monitoredConn *pgxpool.Conn) ([]map[string]interface{}, error) {
     rows, err := monitoredConn.Query(ctx, p.GetQuery())
     if err != nil {
         return nil, fmt.Errorf("failed to execute query: %w", err)
@@ -165,7 +166,8 @@ Add probe creation to `/collector/src/scheduler/scheduler.go` in the
 `createProbe` method:
 
 ```go
-func (ps *ProbeScheduler) createProbe(config *probes.ProbeConfig) probes.MetricsProbe {
+func (ps *ProbeScheduler) createProbe(
+    config *probes.ProbeConfig) probes.MetricsProbe {
     switch config.Name {
     // ... existing cases ...
     case probes.ProbeNamePgStatCustom:
@@ -286,29 +288,31 @@ The scheduler will automatically:
 
 ### Query Design
 
-1. **Limit result set size**: Use WHERE clauses to filter
-2. **Avoid expensive operations**: No sorts or aggregates if possible
-3. **Handle NULL values**: Use COALESCE where appropriate
-4. **Use appropriate types**: Match PostgreSQL types
+1. Limit result set size by using WHERE clauses to filter.
+2. Avoid expensive operations by minimizing sorts or aggregates if possible.
+3. Handle NULL values by using COALESCE where appropriate.
+4. Use appropriate types by matching PostgreSQL types.
 
 ### Performance
 
-1. **Set appropriate intervals**: Balance freshness vs. load
-2. **Consider result set size**: Large results = more memory
-3. **Test query performance**: Run EXPLAIN on your query
-4. **Index appropriately**: Ensure views have good indexes
+1. Set appropriate intervals to balance freshness against load.
+2. Consider result set size because large results require more memory.
+3. Test query performance by running EXPLAIN on your query.
+4. Index appropriately to ensure views have good indexes.
 
 ### Error Handling
 
-1. **Handle missing tables/views**: Check if extension is installed
-2. **Graceful degradation**: Don't fail if extension missing
-3. **Log errors clearly**: Include probe name and connection
+1. Handle missing tables or views by checking if the extension is installed.
+2. Implement graceful degradation so the probe does not fail if the extension
+   is missing.
+3. Log errors clearly by including probe name and connection.
 
 ### Storage
 
-1. **Match column order**: Columns list must match values order
-2. **Handle all data types**: Test with various data
-3. **Consider partition size**: Retention × interval × result size
+1. Match column order because the columns list must match values order.
+2. Handle all data types by testing with various data.
+3. Consider partition size which is retention multiplied by interval and result
+   size.
 
 ## Example: Extension Monitoring
 

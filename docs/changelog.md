@@ -113,10 +113,11 @@ and this project adheres to
 - Context propagation added to MCP tools for better request handling.
 - Full 5-field cron parser implementation replaces the limited parser.
 - CLI commands refactored for consistency:
-  - Removed `llm-` prefix: `/set provider`, `/show provider` (was `llm-provider`)
+  - Removed `llm-` prefix: `/set provider`, `/show provider`
+    (was `llm-provider`)
   - Removed `llm-` prefix: `/set model`, `/show model` (was `llm-model`)
-  - Moved `/tools`, `/resources`, `/prompts` to `/list tools`, `/list resources`,
-    `/list prompts`
+  - Moved `/tools`, `/resources`, `/prompts` to `/list tools`,
+    `/list resources`, `/list prompts`
   - Added `/list providers` to list available LLM providers
   - Replaced `/connect` and `/disconnect` with `/set connection <id>`
     (use `/set connection none` to disconnect)
@@ -154,7 +155,7 @@ and this project adheres to
 
 ### Breaking Changes
 
-- **Collector schema completely redesigned.** The datastore database must be
+- Collector schema completely redesigned. The datastore database must be
   dropped and recreated. All historical metrics data will be lost. Changes
   include: probe consolidations (43 probes reduced to 34), standardized indexes
   on all tables, and TIMESTAMPTZ for all timestamp columns.

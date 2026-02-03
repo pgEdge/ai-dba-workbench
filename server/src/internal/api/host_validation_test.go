@@ -195,6 +195,14 @@ func TestHostValidator_ValidateHost(t *testing.T) {
 			errContains:  "blocked range",
 		},
 
+		// Unresolvable hostname (DNS failure)
+		{
+			name:        "unresolvable hostname blocked",
+			host:        "this-hostname-definitely-does-not-exist-xyz123.invalid",
+			wantErr:     true,
+			errContains: "cannot resolve hostname",
+		},
+
 		// Hostname normalization
 		{
 			name:    "trailing dot removed",

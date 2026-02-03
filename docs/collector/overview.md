@@ -1,7 +1,8 @@
 # Collector Overview
 
-The pgEdge AI DBA Workbench Collector is a standalone monitoring service written
-in Go that continuously collects PostgreSQL metrics and stores them in a
+The pgEdge AI DBA Workbench Collector is a standalone monitoring service
+written in Go that continuously collects PostgreSQL metrics and stores them in
+a
 centralized datastore. It is designed to monitor multiple PostgreSQL servers
 simultaneously, collecting comprehensive statistics through a flexible probe
 system.
@@ -133,8 +134,10 @@ All passwords for monitored connections are encrypted using industry-standard
 algorithms.
 
 - The system uses AES-256-GCM encryption for password protection.
-- Encryption keys are derived using PBKDF2 with SHA256 and 100,000 iterations.
-- Each password uses a cryptographically random 16-byte salt for key derivation.
+- Encryption keys are derived using PBKDF2 with SHA256 and 100,000
+  iterations.
+- Each password uses a cryptographically random 16-byte salt for key
+  derivation.
 - Encrypted passwords are stored in the datastore's `connections` table.
 - The Collector decrypts passwords only when establishing connections.
 - Users do not need to manually encrypt passwords; use the MCP server API.
@@ -181,14 +184,14 @@ Password encryption is handled by the shared `pkg/crypto` package.
 
 The typical data flow through the Collector is:
 
-1. **Startup**
+1. During startup, the Collector performs the following actions:
    - Load configuration from file and command-line flags
    - Connect to datastore and verify/migrate schema
    - Initialize connection pool managers
    - Load probe configurations from datastore
    - Load monitored connections from datastore
 
-2. **Normal Operation**
+2. During normal operation, the Collector processes probes continuously:
    - Each probe runs on its own schedule
    - When a probe timer fires:
      - Query monitored connections from datastore
@@ -199,14 +202,13 @@ The typical data flow through the Collector is:
      - Store metrics using COPY protocol
      - Release connections back to pools
 
-3. **Garbage Collection**
-   - Runs every 24 hours (first run after 5 minutes)
+3. Garbage collection runs every 24 hours (first run after 5 minutes):
    - For each probe:
      - Calculate cutoff date based on retention days
      - Find partitions older than cutoff
      - Drop expired partitions
 
-4. **Shutdown**
+4. During shutdown, the Collector performs a graceful cleanup:
    - Stop accepting new probe executions
    - Wait for in-progress probes to complete
    - Stop garbage collector
@@ -255,11 +257,11 @@ The Collector is designed with several key principles:
 
 The Collector is designed to be lightweight and efficient:
 
-- **Memory**: Minimal memory footprint, primarily for connection pools
-- **CPU**: Low CPU usage, spikes during probe execution
-- **Disk I/O**: Moderate writes to datastore during metric collection
-- **Network**: Depends on number of monitored servers and probe frequency
-- **Concurrency**: Parallel probe execution with configurable limits
+- Memory footprint is minimal, primarily for connection pools.
+- CPU usage is low, with spikes during probe execution.
+- Disk I/O involves moderate writes to datastore during metric collection.
+- Network usage depends on monitored servers and probe frequency.
+- Parallel probe execution uses configurable concurrency limits.
 
 ## Next Steps
 

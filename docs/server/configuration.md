@@ -8,10 +8,10 @@ flags, or environment variables.
 Configuration values are applied in the following order (highest to lowest
 priority):
 
-1. **Command-line flags** (highest priority)
-2. **Environment variables**
-3. **Configuration file**
-4. **Built-in defaults** (lowest priority)
+1. Command-line flags (highest priority)
+2. Environment variables
+3. Configuration file
+4. Built-in defaults (lowest priority)
 
 ## Configuration File
 

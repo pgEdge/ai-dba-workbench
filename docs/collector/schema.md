@@ -7,8 +7,8 @@ configuration and metrics data.
 
 The Collector uses two PostgreSQL schemas:
 
-- **public**: Core configuration tables
-- **metrics**: Time-series metrics tables (partitioned)
+- The public schema contains core configuration tables.
+- The metrics schema contains time-series metrics tables (partitioned).
 
 For detailed information about schema migrations, see [Schema
 Management](schema-management.md).
@@ -122,11 +122,12 @@ CREATE TABLE probe_configs (
 
 The Collector uses a fallback hierarchy for probe settings:
 
-1. **Per-Server Config**: If a probe_configs row exists with the specific
-   `connection_id`, use those settings
-2. **Global Default**: If no per-server config exists, use the probe_configs
-   row where `connection_id IS NULL`
-3. **Hardcoded Default**: If no database config exists, use built-in defaults
+1. Per-server config applies if a probe_configs row exists with the specific
+   `connection_id`; use those settings.
+2. Global default applies if no per-server config exists; use the probe_configs
+   row where `connection_id IS NULL`.
+3. Hardcoded default applies if no database config exists; use built-in
+   defaults.
 
 **Indexes:**
 
@@ -262,20 +263,22 @@ and retention.
 
 ### Partitioning Benefits
 
-1. **Query Performance**: Queries filtering by time only scan relevant
-   partitions
-2. **Data Management**: Drop old partitions instead of DELETE operations
-3. **Index Maintenance**: Smaller indexes per partition
-4. **Parallel Operations**: PostgreSQL can operate on partitions in parallel
+1. Query performance improves because queries filtering by time only scan
+   relevant partitions.
+2. Data management is simpler because you can drop old partitions instead of
+   running DELETE operations.
+3. Index maintenance is easier because smaller indexes per partition reduce
+   overhead.
+4. Parallel operations are possible because PostgreSQL can operate on
+   partitions in parallel.
 
 ### Storage Optimization
 
-- **Partition by week**: Balance between too many partitions and partition
-  size
-- **No indexes on metrics tables**: Rely on partition pruning (indexes can
-  be added if needed)
-- **Efficient data types**: Use appropriate types (INTEGER vs BIGINT, TEXT
-  vs VARCHAR)
+- Partition by week to balance partition count and partition size.
+- No indexes on metrics tables; rely on partition pruning (indexes can be
+  added if needed).
+- Use efficient data types; use appropriate types (INTEGER vs BIGINT, TEXT
+  vs VARCHAR).
 
 ## Data Retention
 

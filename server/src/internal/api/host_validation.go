@@ -71,52 +71,41 @@ func init() {
 	}
 }
 
+// parseHostsToCIDR parses a slice of host strings into CIDR networks.
+// It handles both CIDR notation (e.g., "10.0.0.0/8") and single IP addresses
+// (which are converted to /32 for IPv4 or /128 for IPv6). Hostnames are
+// skipped since they are checked by exact match elsewhere.
+func parseHostsToCIDR(hosts []string) []*net.IPNet {
+	result := make([]*net.IPNet, 0, len(hosts))
+	for _, host := range hosts {
+		if _, ipNet, err := net.ParseCIDR(host); err == nil {
+			result = append(result, ipNet)
+		} else if ip := net.ParseIP(host); ip != nil {
+			// Single IP - convert to CIDR
+			var ipNet *net.IPNet
+			if ip.To4() != nil {
+				_, ipNet, _ = net.ParseCIDR(host + "/32") //nolint:errcheck // IP already validated
+			} else {
+				_, ipNet, _ = net.ParseCIDR(host + "/128") //nolint:errcheck // IP already validated
+			}
+			if ipNet != nil {
+				result = append(result, ipNet)
+			}
+		}
+		// Hostnames are checked by exact match, not added to result
+	}
+	return result
+}
+
 // NewHostValidator creates a new HostValidator with the given configuration.
 func NewHostValidator(allowInternal bool, allowedHosts, blockedHosts []string) *HostValidator {
-	v := &HostValidator{
+	return &HostValidator{
 		AllowInternalNetworks: allowInternal,
 		AllowedHosts:          allowedHosts,
 		BlockedHosts:          blockedHosts,
-		parsedAllowed:         make([]*net.IPNet, 0),
-		parsedBlocked:         make([]*net.IPNet, 0),
+		parsedAllowed:         parseHostsToCIDR(allowedHosts),
+		parsedBlocked:         parseHostsToCIDR(blockedHosts),
 	}
-
-	// Parse allowed hosts
-	for _, host := range allowedHosts {
-		if _, ipNet, err := net.ParseCIDR(host); err == nil {
-			v.parsedAllowed = append(v.parsedAllowed, ipNet)
-		} else if ip := net.ParseIP(host); ip != nil {
-			// Single IP - convert to CIDR
-			if ip.To4() != nil {
-				_, ipNet, _ = net.ParseCIDR(host + "/32") //nolint:errcheck // IP already validated
-			} else {
-				_, ipNet, _ = net.ParseCIDR(host + "/128") //nolint:errcheck // IP already validated
-			}
-			if ipNet != nil {
-				v.parsedAllowed = append(v.parsedAllowed, ipNet)
-			}
-		}
-		// Hostnames are checked by exact match, not added to parsedAllowed
-	}
-
-	// Parse blocked hosts
-	for _, host := range blockedHosts {
-		if _, ipNet, err := net.ParseCIDR(host); err == nil {
-			v.parsedBlocked = append(v.parsedBlocked, ipNet)
-		} else if ip := net.ParseIP(host); ip != nil {
-			// Single IP - convert to CIDR
-			if ip.To4() != nil {
-				_, ipNet, _ = net.ParseCIDR(host + "/32") //nolint:errcheck // IP already validated
-			} else {
-				_, ipNet, _ = net.ParseCIDR(host + "/128") //nolint:errcheck // IP already validated
-			}
-			if ipNet != nil {
-				v.parsedBlocked = append(v.parsedBlocked, ipNet)
-			}
-		}
-	}
-
-	return v
 }
 
 // ValidateHost checks if a host is allowed for database connections.
@@ -177,9 +166,10 @@ func (v *HostValidator) ValidateHost(host string) error {
 	// This prevents DNS rebinding attacks where a hostname resolves to internal IPs
 	ips, err := net.LookupIP(host)
 	if err != nil {
-		// Can't resolve - allow it (the connection will fail later if invalid)
-		// This handles cases like internal DNS that this server can't resolve
-		return nil
+		// Can't resolve - block it for security. Allowing unresolvable hosts could
+		// enable SSRF attacks where an attacker uses a hostname that this server
+		// cannot resolve but the target database server can (via internal DNS).
+		return fmt.Errorf("cannot resolve hostname '%s': DNS lookup failed", host)
 	}
 
 	for _, resolvedIP := range ips {

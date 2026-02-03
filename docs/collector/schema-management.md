@@ -71,7 +71,8 @@ Creates the `schema_version` table used to track migrations.
 
 **Objects created:**
 
-- `schema_version` table with `version`, `description`, and `applied_at` columns
+- `schema_version` table with `version`, `description`, and `applied_at`
+  columns
 
 ### Migration 2: Create monitored_connections Table
 
@@ -189,19 +190,18 @@ inserting per-server configs.
 
 To add a new migration:
 
-1. **Edit schema.go**: Add a new migration to the `registerMigrations()`
-    method in `schema.go`
+1. Edit schema.go by adding a new migration to the `registerMigrations()`
+   method in `schema.go`.
 
-2. **Increment version**: Use the next sequential version number (current max
-    version + 1)
+2. Increment the version using the next sequential version number (current max
+   version + 1).
 
-3. **Provide description**: Write a clear, concise description of what the
-    migration does
+3. Provide a clear, concise description of what the migration does.
 
-4. **Implement Up function**: Write the function that applies the migration
+4. Implement the Up function that applies the migration.
 
-5. **Make it idempotent**: Use `IF NOT EXISTS` clauses where possible so the
-    migration can be run multiple times safely
+5. Make the migration idempotent by using `IF NOT EXISTS` clauses where
+   possible so the migration can be run multiple times safely.
 
 ### Example: Adding a New Table
 
@@ -328,34 +328,34 @@ sm.migrations = append(sm.migrations, Migration{
 
 ### Migration Design
 
-1. **One logical change per migration**: Each migration should represent a
-    single logical schema change (e.g., creating one table, adding one set of
-    related indexes)
+1. Include one logical change per migration; each migration should represent a
+   single logical schema change (e.g., creating one table, adding one set of
+   related indexes).
 
-2. **Never modify applied migrations**: Once a migration has been applied in
-    production, never modify it. Create a new migration instead.
+2. Never modify applied migrations; once a migration has been applied in
+   production, create a new migration instead.
 
-3. **Make migrations idempotent**: Use `IF NOT EXISTS`, `IF EXISTS`, and
-    existence checks to ensure migrations can be run multiple times safely
+3. Make migrations idempotent; use `IF NOT EXISTS`, `IF EXISTS`, and existence
+   checks to ensure migrations can be run multiple times safely.
 
-4. **Use transactions**: The SchemaManager wraps each migration in a
-    transaction that will be rolled back on error
+4. Use transactions; the SchemaManager wraps each migration in a transaction
+   that will be rolled back on error.
 
-5. **Test migrations thoroughly**: Always test migrations on a development
-    database before deploying to production
+5. Test migrations thoroughly; always test migrations on a development database
+   before deploying to production.
 
 ### Schema Design
 
-1. **Use constraints**: Define constraints (CHECK, NOT NULL, UNIQUE, FOREIGN
-    KEY) to enforce data integrity at the database level
+1. Use constraints by defining CHECK, NOT NULL, UNIQUE, and FOREIGN KEY to
+   enforce data integrity at the database level.
 
-2. **Create indexes strategically**: Add indexes for:
+2. Create indexes strategically by adding indexes for:
    - Foreign key columns
    - Columns used in WHERE clauses
    - Columns used in ORDER BY clauses
    - Columns used in JOIN conditions
 
-3. **Use appropriate data types**: Choose the right data type for each column:
+3. Use appropriate data types by choosing the right data type for each column:
    - `SERIAL` or `BIGSERIAL` for auto-incrementing IDs
    - `TIMESTAMP` for date/time values
    - `BOOLEAN` for true/false values
@@ -363,11 +363,11 @@ sm.migrations = append(sm.migrations, Migration{
    - `VARCHAR(n)` for limited-length strings
    - `INTEGER` or `BIGINT` for numbers
 
-4. **Include audit columns**: Add `created_at` and `updated_at` columns to
-    track when records are created and modified
+4. Include audit columns by adding `created_at` and `updated_at` columns to
+   track when records are created and modified.
 
-5. **Plan for partitioning**: For large tables (like metrics), consider
-    partitioning strategies early in the design
+5. Plan for partitioning; for large tables (like metrics), consider
+   partitioning strategies early in the design.
 
 ## Testing
 
@@ -404,15 +404,15 @@ export SKIP_DB_TESTS=1
 
 When adding a new migration, add corresponding tests:
 
-1. **Test migration applies successfully**: Verify the migration runs without
-    errors
+1. Test that the migration applies successfully by verifying the migration runs
+   without errors.
 
-2. **Test idempotency**: Verify running the migration twice doesn't cause
-    errors
+2. Test idempotency by verifying that running the migration twice does not
+   cause errors.
 
-3. **Test constraints**: Verify constraints work as expected
+3. Test constraints by verifying constraints work as expected.
 
-4. **Test indexes**: Verify indexes are created
+4. Test indexes by verifying indexes are created.
 
 Example test:
 
@@ -464,64 +464,64 @@ func TestMigration6Metrics(t *testing.T) {
 
 If a migration fails:
 
-1. **Check the error message**: The error will indicate what went wrong
-2. **Verify database connection**: Ensure the database is accessible
-3. **Check migration logic**: Review the migration code for errors
-4. **Check for conflicts**: Ensure no manual schema changes conflict with the
-    migration
+1. Check the error message; the error will indicate what went wrong.
+2. Verify the database connection by ensuring the database is accessible.
+3. Check migration logic by reviewing the migration code for errors.
+4. Check for conflicts by ensuring no manual schema changes conflict with the
+   migration.
 
 ### Migration Applied but Schema Incorrect
 
 If a migration was applied but the schema is not as expected:
 
-1. **Verify the migration version**: Check `schema_version` table to see which
-    migrations were applied
-2. **Check for partial application**: The migration may have partially applied
-    before failing
-3. **Create a fix-up migration**: Add a new migration to correct the schema
+1. Verify the migration version by checking the `schema_version` table to see
+   which migrations were applied.
+2. Check for partial application because the migration may have partially
+   applied before failing.
+3. Create a fix-up migration by adding a new migration to correct the schema.
 
 ### Rolling Back Migrations
 
 The current system does not support automatic rollback of applied migrations.
 To roll back:
 
-1. **Manually revert changes**: Use SQL to undo the migration changes
-2. **Update schema_version**: Remove the migration record from `schema_version`
-3. **Consider forward-only approach**: Instead of rolling back, create a new
-    migration that reverts the changes
+1. Manually revert changes by using SQL to undo the migration changes.
+2. Update schema_version by removing the migration record from `schema_version`.
+3. Consider a forward-only approach; instead of rolling back, create a new
+   migration that reverts the changes.
 
 ## Security Considerations
 
 ### Secure Migration Practices
 
-1. **Validate inputs**: If migrations use any configuration values, validate
-    them first
-2. **Use parameterized queries**: When migration logic includes dynamic values,
-    use parameterized queries
-3. **Limit permissions**: Run migrations with a database user that has only
-    the necessary privileges
-4. **Review carefully**: Always review migrations for security implications
-    before applying
+1. Validate inputs if migrations use any configuration values; validate them
+   first.
+2. Use parameterized queries when migration logic includes dynamic values.
+3. Limit permissions by running migrations with a database user that has only
+   the necessary privileges.
+4. Review carefully by always reviewing migrations for security implications
+   before applying.
 
 ### Data Protection
 
-1. **Backup before migrating**: Always backup the database before applying
-    migrations in production
-2. **Test on copy**: Test migrations on a copy of production data before
-    applying to production
-3. **Avoid data exposure**: Ensure migrations don't inadvertently expose
-    sensitive data
+1. Backup before migrating; always backup the database before applying
+   migrations in production.
+2. Test on a copy by testing migrations on a copy of production data before
+   applying to production.
+3. Avoid data exposure by ensuring migrations do not inadvertently expose
+   sensitive data.
 
 ## Future Enhancements
 
 Potential future improvements to the schema management system:
 
-1. **Rollback support**: Add down migrations to support rollback
-2. **Migration verification**: Add checksum verification to detect modified
-    migrations
-3. **Dry run mode**: Add ability to preview migrations without applying them
-4. **Parallel migrations**: Support applying independent migrations in parallel
-5. **Migration dependencies**: Allow migrations to declare dependencies on
-    other migrations
-6. **External migration files**: Support loading migrations from external SQL
-    files
+1. Rollback support would add down migrations to support rollback.
+2. Migration verification would add checksum verification to detect modified
+   migrations.
+3. Dry run mode would add ability to preview migrations without applying them.
+4. Parallel migrations would support applying independent migrations in
+   parallel.
+5. Migration dependencies would allow migrations to declare dependencies on
+   other migrations.
+6. External migration files would support loading migrations from external SQL
+   files.

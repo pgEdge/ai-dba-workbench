@@ -9,12 +9,13 @@ servers.
 
 The AI DBA Workbench uses a two-tier database architecture:
 
-1. **Datastore Database**: Contains metrics collected by the collector over
-   time. This is where `list_probes`, `describe_probe`, and `query_metrics`
-   query data.
+1. The datastore database contains metrics collected by the collector over
+   time. The `list_probes`, `describe_probe`, and `query_metrics` tools query
+   this database.
 
-2. **Monitored Databases**: Live PostgreSQL servers being monitored. These are
-   accessed by `query_database`, `get_schema_info`, `execute_explain`, etc.
+2. The monitored databases are live PostgreSQL servers being monitored. The
+   `query_database`, `get_schema_info`, and `execute_explain` tools access
+   these databases.
 
 ## Available Tools
 
@@ -198,22 +199,22 @@ Track system resource usage:
 
 ## Best Practices
 
-1. **Start with `list_probes`**: Discover what metrics are being collected
+1. Start with `list_probes` to discover what metrics are being collected
    before querying.
 
-2. **Use `describe_probe`**: Understand available columns before constructing
+2. Use `describe_probe` to understand available columns before constructing
    queries.
 
-3. **Limit metrics**: Specify only the metrics you need to reduce response
+3. Limit metrics by specifying only the metrics you need to reduce response
    size.
 
-4. **Appropriate bucket count**: Use 50-150 buckets for overview, fewer for
-   quick checks.
+4. Choose an appropriate bucket count; use 50-150 buckets for overview, fewer
+   for quick checks.
 
-5. **Time range selection**: Start with shorter ranges (1h, 6h) and expand as
-   needed.
+5. Select time ranges carefully; start with shorter ranges (1h, 6h) and expand
+   as needed.
 
-6. **Aggregation choice**:
+6. Choose the right aggregation:
 
    - `avg`: Best for rates and averages over time
    - `sum`: Best for cumulative metrics like transaction counts

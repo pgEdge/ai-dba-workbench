@@ -19,14 +19,14 @@ import (
 
 type mockToolProvider struct {
 	tools       []Tool
-	executeFunc func(ctx context.Context, name string, args map[string]interface{}) (ToolResponse, error)
+	executeFunc func(ctx context.Context, name string, args map[string]any) (ToolResponse, error)
 }
 
 func (m *mockToolProvider) List() []Tool {
 	return m.tools
 }
 
-func (m *mockToolProvider) Execute(ctx context.Context, name string, args map[string]interface{}) (ToolResponse, error) {
+func (m *mockToolProvider) Execute(ctx context.Context, name string, args map[string]any) (ToolResponse, error) {
 	if m.executeFunc != nil {
 		return m.executeFunc(ctx, name, args)
 	}
@@ -166,7 +166,7 @@ func TestMockToolProvider(t *testing.T) {
 	}
 
 	// Test execute with custom function
-	provider.executeFunc = func(ctx context.Context, name string, args map[string]interface{}) (ToolResponse, error) {
+	provider.executeFunc = func(ctx context.Context, name string, args map[string]any) (ToolResponse, error) {
 		if name == "fail" {
 			return NewToolError("failed")
 		}

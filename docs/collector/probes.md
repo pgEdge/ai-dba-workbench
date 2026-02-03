@@ -174,21 +174,21 @@ ORDER BY name;
 Different probe types have different default collection intervals based on
 how frequently their data changes:
 
-- **Fast**: 30-60 seconds (replication, activity)
-- **Normal**: 300 seconds / 5 minutes (most probes)
-- **Slow**: 600 seconds / 10 minutes (checkpointer, WAL)
-- **Very Slow**: 900 seconds / 15 minutes (I/O statistics)
-- **Change-Tracked**: 3600 seconds / 1 hour (pg_settings - only stored when
-    changes detected)
+- Fast: 30-60 seconds (replication, activity)
+- Normal: 300 seconds / 5 minutes (most probes)
+- Slow: 600 seconds / 10 minutes (checkpointer, WAL)
+- Very Slow: 900 seconds / 15 minutes (I/O statistics)
+- Change-Tracked: 3600 seconds / 1 hour (pg_settings - only stored when
+  changes detected)
 
 ### Per-Server Configuration
 
 The Collector supports customizing probe settings for individual monitored
 connections. The configuration hierarchy is:
 
-1. **Connection-Specific**: Override for a specific connection
-2. **Global Default**: Default settings when `connection_id IS NULL`
-3. **Hardcoded Default**: Built-in values if no database config exists
+1. Connection-specific settings override for a specific connection.
+2. Global default settings apply when `connection_id IS NULL`.
+3. Hardcoded default values apply if no database config exists.
 
 When a new monitored connection is added, the Collector automatically creates
 per-server probe configurations based on the global defaults.
@@ -395,9 +395,9 @@ Probe queries should:
 
 Balance between:
 
-- **Data freshness**: More frequent = more current data
-- **System load**: More frequent = more queries
-- **Storage size**: More frequent = more data points
+- More frequent collection provides more current data.
+- More frequent collection generates more queries.
+- More frequent collection produces more data points.
 
 Guidelines:
 

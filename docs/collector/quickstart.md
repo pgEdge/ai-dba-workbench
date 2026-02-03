@@ -357,28 +357,21 @@ launchctl load ~/Library/LaunchAgents/com.pgedge.ai-workbench-collector.plist
 
 For production deployments:
 
-1. **Use Strong Credentials**
-   - Generate strong passwords for database users
-   - Use a cryptographically random server secret
+1. Use strong credentials by generating strong passwords for database users and
+   using a cryptographically random server secret.
 
-2. **Enable SSL/TLS**
-   - Configure SSL for the datastore connection
-   - Configure SSL for monitored connections
+2. Enable SSL/TLS by configuring SSL for both the datastore connection and
+   monitored connections.
 
-3. **Limit Permissions**
-   - Grant only necessary database privileges
-   - Use a dedicated monitoring user with read-only access
+3. Limit permissions by granting only necessary database privileges and using
+   a dedicated monitoring user with read-only access.
 
-4. **Secure Configuration Files**
-   - Set appropriate file permissions (600 or 640)
-   - Store password files securely
-   - Never commit secrets to version control
+4. Secure configuration files by setting appropriate file permissions (600 or
+   640), storing password files securely, and never committing secrets to
+   version control.
 
-5. **Network Security**
-   - Use firewalls to restrict database access
-   - Consider using SSH tunnels or VPNs for remote connections
+5. Implement network security by using firewalls to restrict database access
+   and considering SSH tunnels or VPNs for remote connections.
 
-6. **Regular Updates**
-   - Keep the Collector updated
-   - Monitor for security advisories
-   - Update dependencies regularly
+6. Keep the system updated by maintaining the Collector, monitoring for
+   security advisories, and updating dependencies regularly.

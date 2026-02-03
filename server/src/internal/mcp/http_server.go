@@ -195,7 +195,7 @@ func (s *Server) handleHTTPRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Trace incoming request
 	if tracing.IsEnabled() {
-		var params interface{}
+		var params any
 		if req.Params != nil {
 			params = req.Params
 		}
@@ -228,9 +228,9 @@ func (s *Server) handleHTTPRequest(w http.ResponseWriter, r *http.Request) {
 	// Trace outgoing response
 	if tracing.IsEnabled() {
 		duration := time.Since(startTime)
-		var result interface{}
+		var result any
 		if response.Error != nil {
-			result = map[string]interface{}{
+			result = map[string]any{
 				"error": response.Error,
 			}
 		} else {
@@ -280,18 +280,18 @@ func (s *Server) handleRequestHTTP(ctx context.Context, req JSONRPCRequest) JSON
 // HTTP-specific handlers that return responses instead of sending them
 
 func (s *Server) handleInitializeHTTP(req JSONRPCRequest) JSONRPCResponse {
-	capabilities := map[string]interface{}{
-		"tools": map[string]interface{}{},
+	capabilities := map[string]any{
+		"tools": map[string]any{},
 	}
 
 	// Add resources capability if resource provider is set
 	if s.resources != nil {
-		capabilities["resources"] = map[string]interface{}{}
+		capabilities["resources"] = map[string]any{}
 	}
 
 	// Add prompts capability if prompt provider is set
 	if s.prompts != nil {
-		capabilities["prompts"] = map[string]interface{}{}
+		capabilities["prompts"] = map[string]any{}
 	}
 
 	result := InitializeResult{
@@ -324,7 +324,7 @@ func (s *Server) handleToolsListHTTP(req JSONRPCRequest) JSONRPCResponse {
 func (s *Server) handleToolCallHTTP(ctx context.Context, req JSONRPCRequest) JSONRPCResponse {
 	var params ToolCallParams
 
-	// Convert interface{} to JSON bytes first
+	// Convert any to JSON bytes first
 	paramsJSON, err := json.Marshal(req.Params)
 	if err != nil {
 		return createErrorResponse(req.ID, -32602, "Invalid params", err.Error())
@@ -369,7 +369,7 @@ func (s *Server) handleResourceReadHTTP(ctx context.Context, req JSONRPCRequest)
 
 	var params ResourceReadParams
 
-	// Convert interface{} to JSON bytes first
+	// Convert any to JSON bytes first
 	paramsJSON, err := json.Marshal(req.Params)
 	if err != nil {
 		return createErrorResponse(req.ID, -32602, "Invalid params", err.Error())
@@ -413,7 +413,7 @@ func (s *Server) handlePromptGetHTTP(req JSONRPCRequest) JSONRPCResponse {
 
 	var params PromptGetParams
 
-	// Convert interface{} to JSON bytes first
+	// Convert any to JSON bytes first
 	paramsJSON, err := json.Marshal(req.Params)
 	if err != nil {
 		return createErrorResponse(req.ID, -32602, "Invalid params", err.Error())
@@ -446,7 +446,7 @@ func (s *Server) handleHealthCheck(w http.ResponseWriter, r *http.Request) {
 
 // Helper functions
 
-func sendHTTPError(w http.ResponseWriter, id interface{}, code int, message string, data interface{}) {
+func sendHTTPError(w http.ResponseWriter, id any, code int, message string, data any) {
 	response := createErrorResponse(id, code, message, data)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK) // JSON-RPC errors are still HTTP 200
@@ -455,7 +455,7 @@ func sendHTTPError(w http.ResponseWriter, id interface{}, code int, message stri
 	}
 }
 
-func createErrorResponse(id interface{}, code int, message string, data interface{}) JSONRPCResponse {
+func createErrorResponse(id any, code int, message string, data any) JSONRPCResponse {
 	errResp := RPCError{
 		Code:    code,
 		Message: message,

@@ -519,6 +519,10 @@ func buildMetricsQuery(probeName string, metricCols []string, connectionID int, 
 	// Build final query
 	// Note: time_bucket is a PostgreSQL function available with pg_partman or timescaledb
 	// We'll use a fallback approach with date_trunc for broader compatibility
+	//
+	// Security: All identifiers (probe name, column names) are quoted using
+	// quoteIdentifier() to prevent SQL injection from malicious column names
+	// that could come from a compromised monitored database.
 	query := fmt.Sprintf(`
 		WITH buckets AS (
 			SELECT
@@ -535,23 +539,35 @@ func buildMetricsQuery(probeName string, metricCols []string, connectionID int, 
 		ORDER BY bucket_time
 	`,
 		strings.Join(getAggSelectCols(metricCols, aggregation), ", "),
-		probeName,
+		quoteIdentifier(probeName),
 		strings.Join(whereClauses, " AND "),
-		strings.Join(metricCols, ", "),
+		strings.Join(getQuotedSelectCols(metricCols), ", "),
 	)
 
 	return query, queryArgs, nil
 }
 
-// getAggSelectCols returns the aggregated select columns
+// getAggSelectCols returns the aggregated select columns with quoted identifiers
+// to prevent SQL injection from malicious column names.
 func getAggSelectCols(metricCols []string, aggregation string) []string {
 	var cols []string
 	for _, col := range metricCols {
+		quotedCol := quoteIdentifier(col)
 		if aggregation == "last" {
-			cols = append(cols, fmt.Sprintf("(array_agg(%s ORDER BY collected_at DESC))[1] AS %s", col, col))
+			cols = append(cols, fmt.Sprintf("(array_agg(%s ORDER BY collected_at DESC))[1] AS %s", quotedCol, quotedCol))
 		} else {
-			cols = append(cols, fmt.Sprintf("%s(%s) AS %s", aggregation, col, col))
+			cols = append(cols, fmt.Sprintf("%s(%s) AS %s", aggregation, quotedCol, quotedCol))
 		}
+	}
+	return cols
+}
+
+// getQuotedSelectCols returns column names with quoted identifiers
+// for use in SELECT clauses.
+func getQuotedSelectCols(metricCols []string) []string {
+	var cols []string
+	for _, col := range metricCols {
+		cols = append(cols, quoteIdentifier(col))
 	}
 	return cols
 }

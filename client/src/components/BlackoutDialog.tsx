@@ -37,7 +37,7 @@ import {
     Dns as ClusterIcon,
     Storage as ServerIcon,
 } from '@mui/icons-material';
-import { useBlackouts } from '../contexts/BlackoutContext';
+import { useBlackouts, CreateBlackoutRequest } from '../contexts/BlackoutContext';
 
 // ---- Style constants ----
 
@@ -237,18 +237,18 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
                 endTime = new Date(endDateTime).toISOString();
             }
 
-            const payload: Record<string, unknown> = {
-                scope,
+            const entityId = extractNumericId(selection?.id as string | number | undefined);
+            const payload: CreateBlackoutRequest = {
+                scope: scope as CreateBlackoutRequest['scope'],
                 start_time: startTime,
                 end_time: endTime,
                 reason: reason.trim(),
+                ...(scope === 'group' && entityId != null && { group_id: entityId }),
+                ...(scope === 'cluster' && entityId != null && { cluster_id: entityId }),
+                ...(scope === 'server' && entityId != null && { connection_id: entityId }),
             };
-            const entityId = extractNumericId(selection?.id as string | number | undefined);
-            if (scope === 'group' && entityId != null) payload.group_id = entityId;
-            if (scope === 'cluster' && entityId != null) payload.cluster_id = entityId;
-            if (scope === 'server' && entityId != null) payload.connection_id = entityId;
 
-            await createBlackout(payload as any);
+            await createBlackout(payload);
 
             onSuccess?.();
             onClose();

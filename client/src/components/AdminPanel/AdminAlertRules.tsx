@@ -104,8 +104,12 @@ const AdminAlertRules: React.FC = () => {
             if (!response.ok) throw new Error('Failed to fetch alert rules');
             const data = await response.json();
             setRules(data.alert_rules || data || []);
-        } catch (err: any) {
-            setError(err.message);
+        } catch (err: unknown) {
+            if (err instanceof Error) {
+                setError(err.message);
+            } else {
+                setError('An unexpected error occurred');
+            }
         } finally {
             setLoading(false);
         }
@@ -157,8 +161,12 @@ const AdminAlertRules: React.FC = () => {
             setEditOpen(false);
             setSuccess(`Alert rule "${editRule.name}" updated successfully.`);
             fetchRules();
-        } catch (err: any) {
-            setError(err.message);
+        } catch (err: unknown) {
+            if (err instanceof Error) {
+                setError(err.message);
+            } else {
+                setError('An unexpected error occurred');
+            }
         } finally {
             setSaving(false);
         }

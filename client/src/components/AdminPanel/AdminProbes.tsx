@@ -83,8 +83,12 @@ const AdminProbes: React.FC = () => {
             if (!response.ok) throw new Error('Failed to fetch probe configurations');
             const data = await response.json();
             setProbes(data.probe_configs || data || []);
-        } catch (err: any) {
-            setError(err.message);
+        } catch (err: unknown) {
+            if (err instanceof Error) {
+                setError(err.message);
+            } else {
+                setError('An unexpected error occurred');
+            }
         } finally {
             setLoading(false);
         }
@@ -128,8 +132,12 @@ const AdminProbes: React.FC = () => {
             setEditOpen(false);
             setSuccess(`Probe "${editProbe.name}" updated successfully.`);
             fetchProbes();
-        } catch (err: any) {
-            setError(err.message);
+        } catch (err: unknown) {
+            if (err instanceof Error) {
+                setError(err.message);
+            } else {
+                setError('An unexpected error occurred');
+            }
         } finally {
             setSaving(false);
         }

@@ -100,7 +100,14 @@ type TokenConnectionScope struct {
 	ID           int64     `json:"id"`
 	TokenID      int64     `json:"token_id"`
 	ConnectionID int       `json:"connection_id"`
+	AccessLevel  string    `json:"access_level"` // "read" or "read_write"
 	CreatedAt    time.Time `json:"created_at"`
+}
+
+// ScopedConnection represents a connection with its access level in a token's scope.
+type ScopedConnection struct {
+	ConnectionID int    `json:"connection_id"`
+	AccessLevel  string `json:"access_level"`
 }
 
 // TokenMCPScope represents a token's restriction to specific MCP privileges
@@ -113,9 +120,10 @@ type TokenMCPScope struct {
 
 // TokenScope represents all scope restrictions for a token
 type TokenScope struct {
-	TokenID       int64   `json:"token_id"`
-	ConnectionIDs []int   `json:"connection_ids,omitempty"`
-	MCPPrivileges []int64 `json:"mcp_privileges,omitempty"`
+	TokenID          int64              `json:"token_id"`
+	Connections      []ScopedConnection `json:"connections,omitempty"`
+	MCPPrivileges    []int64            `json:"mcp_privileges,omitempty"`
+	AdminPermissions []string           `json:"admin_permissions,omitempty"`
 }
 
 // EffectivePrivileges represents the computed privileges for a user/token

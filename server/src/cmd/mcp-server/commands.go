@@ -94,6 +94,14 @@ func RunCLICommands(f *Flags, dataDir string) bool {
 			}
 			return true
 		}
+
+		if f.AddServiceAccountCmd {
+			if err := addServiceAccountCommand(dataDir, f.Username, f.UserNote, f.FullName, f.Email); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+				os.Exit(1)
+			}
+			return true
+		}
 	}
 
 	// Handle group management commands
@@ -268,5 +276,5 @@ func runAddTokenCommand(f *Flags, dataDir string) error {
 		expiry = -1 // Never expires
 	}
 
-	return addTokenCommand(dataDir, f.TokenNote, expiry, f.TokenSuperuser)
+	return addTokenCommand(dataDir, f.TokenUser, f.TokenNote, expiry)
 }

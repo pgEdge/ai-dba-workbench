@@ -23,6 +23,7 @@ import {
     IconButton,
     CircularProgress,
     Alert,
+    Collapse,
     Dialog,
     DialogTitle,
     DialogContent,
@@ -30,25 +31,27 @@ import {
     TextField,
     FormControlLabel,
     Switch,
+    Chip,
 } from '@mui/material';
-import { useTheme } from '@mui/material/styles';
+import { alpha, useTheme } from '@mui/material/styles';
 import {
     Add as AddIcon,
     Edit as EditIcon,
     Delete as DeleteIcon,
-    Close as CloseIcon,
     CheckCircle as CheckIcon,
     Cancel as CancelIcon,
+    ExpandMore as ExpandMoreIcon,
+    ExpandLess as ExpandLessIcon,
 } from '@mui/icons-material';
 import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
 import EffectivePermissionsPanel from './EffectivePermissionsPanel';
-import { useAuth } from '../../contexts/AuthContext';
 import {
     tableHeaderCellSx,
     dialogTitleSx,
     dialogActionsSx,
     pageHeadingSx,
     loadingContainerSx,
+    subsectionLabelSx,
     getContainedButtonSx,
     getDeleteIconSx,
     getSuccessIconSx,
@@ -64,11 +67,11 @@ interface AdminUsersProps {
 
 const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
     const theme = useTheme();
-    const { user: authUser } = useAuth();
     const [users, setUsers] = useState([]);
+    const [connections, setConnections] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
-    const [selectedUser, setSelectedUser] = useState(null);
+    const [expandedUser, setExpandedUser] = useState<number | null>(null);
     const [permissions, setPermissions] = useState(null);
     const [permissionsLoading, setPermissionsLoading] = useState(false);
     const [permissionsError, setPermissionsError] = useState(null);
@@ -80,6 +83,7 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
     const [createDisplayName, setCreateDisplayName] = useState('');
     const [createEmail, setCreateEmail] = useState('');
     const [createAnnotation, setCreateAnnotation] = useState('');
+    const [createServiceAccount, setCreateServiceAccount] = useState(false);
     const [createEnabled, setCreateEnabled] = useState(true);
     const [createSuperuser, setCreateSuperuser] = useState(false);
     const [createLoading, setCreateLoading] = useState(false);
@@ -106,14 +110,19 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
         try {
             setLoading(true);
             setError(null);
-            const response = await fetch(`${API_BASE_URL}/rbac/users`, {
-                credentials: 'include',
-            });
-            if (!response.ok) {
+            const [usersRes, connRes] = await Promise.all([
+                fetch(`${API_BASE_URL}/rbac/users`, { credentials: 'include' }),
+                fetch(`${API_BASE_URL}/connections`, { credentials: 'include' }),
+            ]);
+            if (!usersRes.ok) {
                 throw new Error('Failed to fetch users');
             }
-            const data = await response.json();
+            const data = await usersRes.json();
             setUsers(data.users || []);
+            if (connRes.ok) {
+                const connData = await connRes.json();
+                setConnections(connData.connections || connData || []);
+            }
         } catch (err) {
             setError(err.message);
         } finally {
@@ -126,7 +135,12 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
     }, [fetchUsers]);
 
     const handleRowClick = async (user) => {
-        setSelectedUser(user);
+        if (expandedUser === user.id) {
+            setExpandedUser(null);
+            setPermissions(null);
+            return;
+        }
+        setExpandedUser(user.id);
         setPermissions(null);
         setPermissionsError(null);
         setPermissionsLoading(true);
@@ -147,21 +161,20 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
         }
     };
 
-    const handleClosePermissions = () => {
-        setSelectedUser(null);
-        setPermissions(null);
-    };
-
     // Create user
     const handleCreateUser = async () => {
-        if (!createUsername.trim() || !createPassword) return;
+        if (!createUsername.trim() || (!createServiceAccount && !createPassword)) return;
         try {
             setCreateLoading(true);
             setCreateError(null);
             const body = {
                 username: createUsername.trim(),
-                password: createPassword,
             };
+            if (createServiceAccount) {
+                body.is_service_account = true;
+            } else {
+                body.password = createPassword;
+            }
             if (createDisplayName.trim()) {
                 body.display_name = createDisplayName.trim();
             }
@@ -193,6 +206,7 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
             setCreateDisplayName('');
             setCreateEmail('');
             setCreateAnnotation('');
+            setCreateServiceAccount(false);
             setCreateEnabled(true);
             setCreateSuperuser(false);
             fetchUsers();
@@ -331,6 +345,7 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
                         setCreateDisplayName('');
                         setCreateEmail('');
                         setCreateAnnotation('');
+                        setCreateServiceAccount(false);
                         setCreateEnabled(true);
                         setCreateSuperuser(false);
                         setCreateOpen(true);
@@ -349,7 +364,9 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
                 <Table>
                     <TableHead>
                         <TableRow>
+                            <TableCell sx={{ ...tableHeaderCellSx, width: 40 }} />
                             <TableCell sx={tableHeaderCellSx}>Username</TableCell>
+                            <TableCell sx={tableHeaderCellSx}>Type</TableCell>
                             <TableCell sx={tableHeaderCellSx}>Display Name</TableCell>
                             <TableCell sx={tableHeaderCellSx}>Email</TableCell>
                             <TableCell sx={tableHeaderCellSx}>Notes</TableCell>
@@ -360,52 +377,109 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
                     </TableHead>
                     <TableBody>
                         {users.map((user) => (
-                            <TableRow
-                                key={user.id}
-                                hover
-                                onClick={() => handleRowClick(user)}
-                                sx={{ cursor: 'pointer' }}
-                            >
-                                <TableCell>{user.username}</TableCell>
-                                <TableCell>{user.display_name || '-'}</TableCell>
-                                <TableCell>{user.email || '-'}</TableCell>
-                                <TableCell>{user.annotation || '-'}</TableCell>
-                                <TableCell align="center">
-                                    {user.is_superuser ? (
-                                        <CheckIcon sx={successIconSx} />
-                                    ) : (
-                                        <CancelIcon sx={inactiveIconSx} />
-                                    )}
-                                </TableCell>
-                                <TableCell align="center">
-                                    {user.enabled !== false ? (
-                                        <CheckIcon sx={successIconSx} />
-                                    ) : (
-                                        <CancelIcon sx={inactiveIconSx} />
-                                    )}
-                                </TableCell>
-                                <TableCell align="right">
-                                    <IconButton
-                                        size="small"
-                                        onClick={(e) => handleOpenEdit(e, user)}
-                                        aria-label="edit user"
-                                    >
-                                        <EditIcon fontSize="small" />
-                                    </IconButton>
-                                    <IconButton
-                                        size="small"
-                                        onClick={(e) => handleOpenDelete(e, user)}
-                                        aria-label="delete user"
-                                        sx={deleteIconSx}
-                                    >
-                                        <DeleteIcon fontSize="small" />
-                                    </IconButton>
-                                </TableCell>
-                            </TableRow>
+                            <React.Fragment key={user.id}>
+                                <TableRow
+                                    hover
+                                    onClick={() => handleRowClick(user)}
+                                    sx={{ cursor: 'pointer' }}
+                                >
+                                    <TableCell sx={{ px: 1 }}>
+                                        {expandedUser === user.id
+                                            ? <ExpandLessIcon sx={{ color: 'text.secondary' }} />
+                                            : <ExpandMoreIcon sx={{ color: 'text.secondary' }} />
+                                        }
+                                    </TableCell>
+                                    <TableCell>{user.username}</TableCell>
+                                    <TableCell>
+                                        {user.is_service_account ? (
+                                            <Chip
+                                                label="Service Account"
+                                                size="small"
+                                                sx={{
+                                                    bgcolor: alpha(theme.palette.info.main, 0.15),
+                                                    color: theme.palette.info.main,
+                                                    fontSize: '0.75rem',
+                                                }}
+                                            />
+                                        ) : (
+                                            <Typography variant="body2">User</Typography>
+                                        )}
+                                    </TableCell>
+                                    <TableCell>{user.display_name || '-'}</TableCell>
+                                    <TableCell>{user.email || '-'}</TableCell>
+                                    <TableCell>{user.annotation || '-'}</TableCell>
+                                    <TableCell align="center">
+                                        {user.is_superuser ? (
+                                            <CheckIcon sx={successIconSx} />
+                                        ) : (
+                                            <CancelIcon sx={inactiveIconSx} />
+                                        )}
+                                    </TableCell>
+                                    <TableCell align="center">
+                                        {user.enabled !== false ? (
+                                            <CheckIcon sx={successIconSx} />
+                                        ) : (
+                                            <CancelIcon sx={inactiveIconSx} />
+                                        )}
+                                    </TableCell>
+                                    <TableCell align="right">
+                                        <IconButton
+                                            size="small"
+                                            onClick={(e) => handleOpenEdit(e, user)}
+                                            aria-label="edit user"
+                                        >
+                                            <EditIcon fontSize="small" />
+                                        </IconButton>
+                                        <IconButton
+                                            size="small"
+                                            onClick={(e) => handleOpenDelete(e, user)}
+                                            aria-label="delete user"
+                                            sx={deleteIconSx}
+                                        >
+                                            <DeleteIcon fontSize="small" />
+                                        </IconButton>
+                                    </TableCell>
+                                </TableRow>
+                                <TableRow>
+                                    <TableCell colSpan={9} sx={{ py: 0, borderBottom: expandedUser === user.id ? undefined : 'none' }}>
+                                        <Collapse in={expandedUser === user.id} timeout="auto" unmountOnExit>
+                                            <Box sx={{ py: 2, px: 2 }}>
+                                                {permissionsLoading ? (
+                                                    <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+                                                        <CircularProgress size={24} />
+                                                    </Box>
+                                                ) : permissionsError ? (
+                                                    <Alert severity="error" sx={{ borderRadius: 1 }}>
+                                                        {permissionsError}
+                                                    </Alert>
+                                                ) : permissions ? (
+                                                    <Box>
+                                                        <Typography
+                                                            variant="subtitle2"
+                                                            sx={{ ...subsectionLabelSx, mb: 1 }}
+                                                        >
+                                                            Effective Permissions
+                                                        </Typography>
+                                                        <EffectivePermissionsPanel
+                                                            connectionPrivileges={permissions.connection_privileges}
+                                                            adminPermissions={permissions.admin_permissions}
+                                                            mcpPrivileges={permissions.mcp_privileges}
+                                                            isSuperuser={true}
+                                                            isDark={isDark}
+                                                            groups={permissions.groups}
+                                                            connections={connections}
+                                                        />
+                                                    </Box>
+                                                ) : null}
+                                            </Box>
+                                        </Collapse>
+                                    </TableCell>
+                                </TableRow>
+                            </React.Fragment>
                         ))}
                         {users.length === 0 && (
                             <TableRow>
-                                <TableCell colSpan={7} align="center" sx={{ py: 4 }}>
+                                <TableCell colSpan={9} align="center" sx={{ py: 4 }}>
                                     <Typography color="text.secondary">No users found.</Typography>
                                 </TableCell>
                             </TableRow>
@@ -413,45 +487,6 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
                     </TableBody>
                 </Table>
             </TableContainer>
-
-            {/* User Permissions Dialog */}
-            <Dialog
-                open={!!selectedUser}
-                onClose={handleClosePermissions}
-                maxWidth="sm"
-                fullWidth
-            >
-                <DialogTitle sx={{ ...dialogTitleSx, display: 'flex', alignItems: 'center' }}>
-                    <Box sx={{ flex: 1 }}>
-                        Permissions for {selectedUser?.username}
-                    </Box>
-                    <IconButton onClick={handleClosePermissions} size="small">
-                        <CloseIcon />
-                    </IconButton>
-                </DialogTitle>
-                <DialogContent>
-                    {permissionsLoading && (
-                        <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
-                            <CircularProgress />
-                        </Box>
-                    )}
-                    {permissionsError && (
-                        <Alert severity="error" sx={{ borderRadius: 1 }}>
-                            {permissionsError}
-                        </Alert>
-                    )}
-                    {permissions && !permissionsLoading && (
-                        <EffectivePermissionsPanel
-                            connectionPrivileges={permissions.connection_privileges}
-                            adminPermissions={permissions.admin_permissions}
-                            mcpPrivileges={permissions.mcp_privileges}
-                            isSuperuser={!!authUser?.isSuperuser}
-                            isDark={isDark}
-                            groups={permissions.groups}
-                        />
-                    )}
-                </DialogContent>
-            </Dialog>
 
             {/* Create User Dialog */}
             <Dialog open={createOpen} onClose={() => !createLoading && setCreateOpen(false)} maxWidth="xs" fullWidth>
@@ -470,16 +505,18 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
                         margin="dense"
                         required
                     />
-                    <TextField
-                        fullWidth
-                        label="Password"
-                        type="password"
-                        value={createPassword}
-                        onChange={(e) => setCreatePassword(e.target.value)}
-                        disabled={createLoading}
-                        margin="dense"
-                        required
-                    />
+                    {!createServiceAccount && (
+                        <TextField
+                            fullWidth
+                            label="Password"
+                            type="password"
+                            value={createPassword}
+                            onChange={(e) => setCreatePassword(e.target.value)}
+                            disabled={createLoading}
+                            margin="dense"
+                            required
+                        />
+                    )}
                     <TextField
                         fullWidth
                         label="Display Name"
@@ -514,6 +551,18 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
                         <FormControlLabel
                             control={
                                 <Switch
+                                    checked={createServiceAccount}
+                                    onChange={(e) => setCreateServiceAccount(e.target.checked)}
+                                    disabled={createLoading}
+                                />
+                            }
+                            label="Service Account"
+                        />
+                    </Box>
+                    <Box>
+                        <FormControlLabel
+                            control={
+                                <Switch
                                     checked={createEnabled}
                                     onChange={(e) => setCreateEnabled(e.target.checked)}
                                     disabled={createLoading}
@@ -542,7 +591,7 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
                     <Button
                         onClick={handleCreateUser}
                         variant="contained"
-                        disabled={createLoading || !createUsername.trim() || !createPassword}
+                        disabled={createLoading || !createUsername.trim() || (!createServiceAccount && !createPassword)}
                         sx={containedButtonSx}
                     >
                         {createLoading ? <CircularProgress size={20} color="inherit" /> : 'Create'}
@@ -557,17 +606,19 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
                     {editError && (
                         <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }}>{editError}</Alert>
                     )}
-                    <TextField
-                        fullWidth
-                        label="Password"
-                        type="password"
-                        value={editPassword}
-                        onChange={(e) => setEditPassword(e.target.value)}
-                        disabled={editLoading}
-                        margin="dense"
-                        placeholder="Leave blank to keep current"
-                        InputLabelProps={{ shrink: true }}
-                    />
+                    {!editUser?.is_service_account && (
+                        <TextField
+                            fullWidth
+                            label="Password"
+                            type="password"
+                            value={editPassword}
+                            onChange={(e) => setEditPassword(e.target.value)}
+                            disabled={editLoading}
+                            margin="dense"
+                            placeholder="Leave blank to keep current"
+                            InputLabelProps={{ shrink: true }}
+                        />
+                    )}
                     <TextField
                         fullWidth
                         label="Display Name"

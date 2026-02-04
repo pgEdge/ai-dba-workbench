@@ -10,12 +10,20 @@ The MCP server acts as a bridge between AI language models and PostgreSQL
 databases, enabling natural language interaction with your data. Key features
 include:
 
-- Full JSON-RPC 2.0 implementation over HTTP/HTTPS for MCP protocol.
-- SQLite-based user management with session and service tokens for
-  authentication.
-- Query execution, schema introspection, and analysis through database tools.
-- Optional server-side LLM integration for web clients via LLM proxy.
-- Persistent storage for chat sessions provides conversation history.
+- Full JSON-RPC 2.0 implementation over HTTP/HTTPS for MCP
+  protocol.
+- SQLite-based user management with session and API tokens
+  for authentication.
+- Role-based access control with groups, privileges, and
+  token scopes for fine-grained authorization.
+- Admin panel for managing users, groups, and tokens through
+  the web client.
+- Query execution, schema introspection, and analysis through
+  database tools.
+- Optional server-side LLM integration for web clients via
+  LLM proxy.
+- Persistent storage for chat sessions provides conversation
+  history.
 
 ## Getting Started
 
@@ -127,7 +135,7 @@ The MCP server is built with the following components:
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │                   Auth Store (SQLite)                     │   │
 │  │  ┌──────────┐  ┌─────────────────┐  ┌────────────────┐   │   │
-│  │  │  Users   │  │ Session Tokens  │  │ Service Tokens │   │   │
+│  │  │  Users   │  │ Session Tokens  │  │    Tokens      │   │   │
 │  │  └──────────┘  └─────────────────┘  └────────────────┘   │   │
 │  └──────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
@@ -149,8 +157,12 @@ The MCP server is built with the following components:
 - The HTTP server handles incoming requests and routes them to handlers.
 - The MCP server implements Model Context Protocol with tools, resources,
   and prompts.
-- The auth store is a SQLite database managing users, sessions, and tokens.
-- The LLM proxy is an optional feature to proxy LLM requests for web clients.
+- The auth store is a SQLite database managing users, sessions,
+  tokens, groups, and token scopes.
+- The RBAC system enforces access control through group
+  memberships, privileges, and token scope restrictions.
+- The LLM proxy is an optional feature to proxy LLM requests
+  for web clients.
 - The conversation store is a SQLite database for persistent chat history.
 - The database pool provides per-session connection management for isolation.
 

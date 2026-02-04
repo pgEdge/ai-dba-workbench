@@ -199,10 +199,11 @@ func TestAuthMiddleware_ValidToken(t *testing.T) {
 	store, cleanup := createTestAuthStore(t)
 	defer cleanup()
 
-	// Create a service token
-	rawToken, _, err := store.CreateServiceToken("Test token", nil, "", false)
+	// Create a user and token
+	store.CreateUser("tokenuser", "password", "", "", "")
+	rawToken, _, err := store.CreateToken("tokenuser", "Test token", nil)
 	if err != nil {
-		t.Fatalf("Failed to create service token: %v", err)
+		t.Fatalf("Failed to create token: %v", err)
 	}
 
 	middleware := AuthMiddleware(store, true)
@@ -250,11 +251,12 @@ func TestAuthMiddleware_ExpiredToken(t *testing.T) {
 	}
 	defer store.Close()
 
-	// Create a token that expires immediately
+	// Create a user and a token that expires immediately
+	store.CreateUser("tokenuser", "password", "", "", "")
 	expiryTime := time.Now().Add(1 * time.Millisecond)
-	rawToken, _, err := store.CreateServiceToken("Test expired token", &expiryTime, "", false)
+	rawToken, _, err := store.CreateToken("tokenuser", "Test expired token", &expiryTime)
 	if err != nil {
-		t.Fatalf("Failed to create service token: %v", err)
+		t.Fatalf("Failed to create token: %v", err)
 	}
 
 	// Wait for token to expire
@@ -918,11 +920,11 @@ func TestAuthMiddleware_APITokenWithOwner(t *testing.T) {
 	}
 	defer store.Close()
 
-	// Create a user and a user token
+	// Create a user and a token
 	store.CreateUser("testuser", "testpass123", "Test user", "", "")
-	rawToken, _, err := store.CreateUserToken("testuser", "User API token", 30)
+	rawToken, _, err := store.CreateToken("testuser", "User API token", nil)
 	if err != nil {
-		t.Fatalf("Failed to create user token: %v", err)
+		t.Fatalf("Failed to create token: %v", err)
 	}
 
 	middleware := AuthMiddleware(store, true)
@@ -966,10 +968,12 @@ func TestAuthMiddleware_SuperuserToken(t *testing.T) {
 	}
 	defer store.Close()
 
-	// Create a superuser service token
-	rawToken, _, err := store.CreateServiceToken("Superuser token", nil, "", true)
+	// Create a superuser and a token for them
+	store.CreateUser("superuser-svc", "testpass123", "Superuser service", "", "")
+	store.SetUserSuperuser("superuser-svc", true)
+	rawToken, _, err := store.CreateToken("superuser-svc", "Superuser token", nil)
 	if err != nil {
-		t.Fatalf("Failed to create service token: %v", err)
+		t.Fatalf("Failed to create token: %v", err)
 	}
 
 	middleware := AuthMiddleware(store, true)

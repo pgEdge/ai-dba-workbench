@@ -19,14 +19,18 @@ For complete documentation, visit [docs.pgedge.com](https://docs.pgedge.com).
 
 ## Features
 
-- HTTP/HTTPS transport with JSON-RPC 2.0
-- SQLite-based authentication with users, sessions, and service tokens
-- Multi-database support with access control
-- MCP tools for database operations
-- MCP resources for schema and data access
-- MCP prompts for common workflows
-- LLM proxy support for Anthropic, OpenAI, and Ollama
-- Conversation history management
+- HTTP/HTTPS transport with JSON-RPC 2.0.
+- SQLite-based authentication with users, sessions, and API
+  tokens.
+- Role-based access control with groups, privileges, and
+  token scopes.
+- Admin panel for managing users, groups, and tokens.
+- Multi-database support with per-connection access levels.
+- MCP tools for database operations.
+- MCP resources for schema and data access.
+- MCP prompts for common workflows.
+- LLM proxy support for Anthropic, OpenAI, and Ollama.
+- Conversation history management.
 
 ## Building
 
@@ -103,10 +107,14 @@ directory. By default, this is `./data/auth.db` relative to the server binary.
 
 The auth store contains:
 
-- **Users**: Username/password accounts for interactive authentication
-- **Session tokens**: Temporary tokens issued after user authentication (24h
-  validity)
-- **Service tokens**: Long-lived tokens for machine-to-machine communication
+- Users and service accounts with password hashes,
+  superuser flags, and group memberships.
+- API tokens with expiry dates, owner references, and
+  optional scope restrictions.
+- Groups with nested membership and assigned connection,
+  MCP, and admin privileges.
+- Token scopes that restrict tokens to specific
+  connections, MCP privileges, and admin permissions.
 
 ### User Management
 
@@ -136,16 +144,19 @@ The auth store contains:
 ### Token Management
 
 ```bash
-# Add a new service token (interactive)
+# Add a new token (interactive)
 ./bin/ai-dba-server -add-token
 
-# Add a new service token (non-interactive)
-./bin/ai-dba-server -add-token -token-note "Production API" -token-expiry "90d"
+# Add a new token (non-interactive, specifying owner)
+./bin/ai-dba-server -add-token \
+  -user alice \
+  -token-note "Production API" \
+  -token-expiry "90d"
 
-# List all service tokens
+# List all tokens
 ./bin/ai-dba-server -list-tokens
 
-# Remove a service token by ID or hash prefix
+# Remove a token by ID or hash prefix
 ./bin/ai-dba-server -remove-token <token-id-or-hash>
 ```
 
@@ -204,6 +215,11 @@ The auth store contains:
 
 ### Token Scope Management
 
+Token scopes restrict a token to a subset of the owner's
+permissions. The system supports three scope types:
+connections (with access levels), MCP privileges, and admin
+permissions.
+
 ```bash
 # Show current scope for a token
 ./bin/ai-dba-server -show-token-scope -token-id 1
@@ -212,7 +228,7 @@ The auth store contains:
 ./bin/ai-dba-server -scope-token-connections -token-id 1 \
   -scope-connections "1,2,3"
 
-# Restrict token to specific tools
+# Restrict token to specific MCP tools
 ./bin/ai-dba-server -scope-token-tools -token-id 1 \
   -scope-tools "query_database,get_schema_info"
 

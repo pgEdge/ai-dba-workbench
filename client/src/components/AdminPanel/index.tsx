@@ -45,7 +45,7 @@ const TAB_DEFS = [
     { id: 'users', label: 'Users', permission: 'manage_users', Component: AdminUsers },
     { id: 'groups', label: 'Groups', permission: 'manage_groups', Component: AdminGroups },
     { id: 'permissions', label: 'Permissions', permission: 'manage_permissions', Component: AdminPermissions },
-    { id: 'token_scopes', label: 'Token Scopes', permission: 'manage_token_scopes', Component: AdminTokenScopes },
+    { id: 'token_scopes', label: 'Tokens', permission: 'manage_token_scopes', Component: AdminTokenScopes },
     { id: 'probes', label: 'Probe Defaults', permission: 'manage_probes', Component: AdminProbes },
     { id: 'alert_rules', label: 'Alert Defaults', permission: 'manage_alert_rules', Component: AdminAlertRules },
 ];

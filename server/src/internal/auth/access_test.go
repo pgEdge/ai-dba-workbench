@@ -268,11 +268,13 @@ func TestRBACCheckerTokenScoping(t *testing.T) {
 	store.GrantConnectionPrivilege(groupID, 2, AccessLevelReadWrite)
 
 	// Create token for user
-	_, storedToken, _ := store.CreateServiceToken("User token", nil, "", false)
+	_, storedToken, _ := store.CreateToken("testuser", "User token", nil)
 
 	// Scope token to only tool_a and connection 1
 	store.SetTokenMCPScopeByNames(storedToken.ID, []string{"tool_a"})
-	store.SetTokenConnectionScope(storedToken.ID, []int{1})
+	store.SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
+		{ConnectionID: 1, AccessLevel: AccessLevelReadWrite},
+	})
 
 	// Create context with user and scoped token
 	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
@@ -705,9 +707,11 @@ func TestGetEffectivePrivilegesWithTokenScope(t *testing.T) {
 	store.GrantConnectionPrivilege(groupID, 2, AccessLevelReadWrite)
 
 	// Create token with scope limiting to tool_a and connection 1
-	_, storedToken, _ := store.CreateServiceToken("Scoped token", nil, "", false)
+	_, storedToken, _ := store.CreateToken("testuser", "Scoped token", nil)
 	store.SetTokenMCPScopeByNames(storedToken.ID, []string{"tool_a"})
-	store.SetTokenConnectionScope(storedToken.ID, []int{1})
+	store.SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
+		{ConnectionID: 1, AccessLevel: AccessLevelReadWrite},
+	})
 
 	// Create context with user and scoped token
 	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
@@ -724,6 +728,159 @@ func TestGetEffectivePrivilegesWithTokenScope(t *testing.T) {
 	// Should only have connection 1 (scoped)
 	if len(privs.ConnectionPrivileges) != 1 {
 		t.Errorf("Expected 1 connection in scoped privileges, got %d", len(privs.ConnectionPrivileges))
+	}
+}
+
+// =============================================================================
+// Wildcard Token Scope Tests
+// =============================================================================
+
+func TestRBACCheckerTokenScopingMCPWildcard(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store, true)
+
+	// Create user with privileges
+	store.CreateUser("testuser", "password", "Test user", "", "")
+	userID, _ := store.GetUserID("testuser")
+	groupID, _ := store.CreateGroup("test-group", "Test")
+	store.AddUserToGroup(groupID, userID)
+
+	// Grant multiple privileges
+	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A")
+	store.RegisterMCPPrivilege("tool_b", MCPPrivilegeTypeTool, "Tool B")
+	store.GrantMCPPrivilegeByName(groupID, "tool_a")
+	store.GrantMCPPrivilegeByName(groupID, "tool_b")
+
+	// Create token with wildcard MCP scope
+	_, storedToken, _ := store.CreateToken("testuser", "Wildcard token", nil)
+	store.SetTokenMCPScopeByNames(storedToken.ID, []string{"*"})
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+	ctx = context.WithValue(ctx, TokenIDContextKey, storedToken.ID)
+
+	// Both tools should be accessible with wildcard
+	if !checker.CanAccessMCPItem(ctx, "tool_a") {
+		t.Error("Expected wildcard to allow access to tool_a")
+	}
+	if !checker.CanAccessMCPItem(ctx, "tool_b") {
+		t.Error("Expected wildcard to allow access to tool_b")
+	}
+}
+
+func TestRBACCheckerTokenScopingAdminWildcard(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store, true)
+
+	// Create user with admin permissions
+	store.CreateUser("testuser", "password", "Test user", "", "")
+	userID, _ := store.GetUserID("testuser")
+	groupID, _ := store.CreateGroup("test-group", "Test")
+	store.AddUserToGroup(groupID, userID)
+	store.GrantAdminPermission(groupID, PermManageUsers)
+	store.GrantAdminPermission(groupID, PermManageConnections)
+
+	// Create token with wildcard admin scope
+	_, storedToken, _ := store.CreateToken("testuser", "Wildcard token", nil)
+	store.SetTokenAdminScope(storedToken.ID, []string{"*"})
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+	ctx = context.WithValue(ctx, TokenIDContextKey, storedToken.ID)
+
+	// Both admin permissions should be accessible with wildcard
+	if !checker.HasAdminPermission(ctx, PermManageUsers) {
+		t.Error("Expected wildcard to allow manage_users")
+	}
+	if !checker.HasAdminPermission(ctx, PermManageConnections) {
+		t.Error("Expected wildcard to allow manage_connections")
+	}
+}
+
+func TestRBACCheckerTokenScopingConnectionWildcard(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store, true)
+
+	// Create user with connection privileges
+	store.CreateUser("testuser", "password", "Test user", "", "")
+	userID, _ := store.GetUserID("testuser")
+	groupID, _ := store.CreateGroup("test-group", "Test")
+	store.AddUserToGroup(groupID, userID)
+	store.GrantConnectionPrivilege(groupID, 1, AccessLevelReadWrite)
+	store.GrantConnectionPrivilege(groupID, 2, AccessLevelReadWrite)
+
+	// Create token with wildcard connection scope
+	_, storedToken, _ := store.CreateToken("testuser", "Wildcard token", nil)
+	store.SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
+		{ConnectionID: ConnectionIDAll, AccessLevel: AccessLevelReadWrite},
+	})
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+	ctx = context.WithValue(ctx, TokenIDContextKey, storedToken.ID)
+
+	// Both connections should be accessible with wildcard
+	canAccess, level := checker.CanAccessConnection(ctx, 1)
+	if !canAccess || level != AccessLevelReadWrite {
+		t.Errorf("Expected read_write for connection 1, got canAccess=%v level=%q", canAccess, level)
+	}
+
+	canAccess, level = checker.CanAccessConnection(ctx, 2)
+	if !canAccess || level != AccessLevelReadWrite {
+		t.Errorf("Expected read_write for connection 2, got canAccess=%v level=%q", canAccess, level)
+	}
+}
+
+func TestGetEffectivePrivilegesWithMCPWildcard(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store, true)
+
+	// Create user with privileges
+	store.CreateUser("testuser", "password", "Test user", "", "")
+	userID, _ := store.GetUserID("testuser")
+	groupID, _ := store.CreateGroup("test-group", "Test")
+	store.AddUserToGroup(groupID, userID)
+
+	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A")
+	store.RegisterMCPPrivilege("tool_b", MCPPrivilegeTypeTool, "Tool B")
+	store.GrantMCPPrivilegeByName(groupID, "tool_a")
+	store.GrantMCPPrivilegeByName(groupID, "tool_b")
+	store.GrantAdminPermission(groupID, PermManageUsers)
+	store.GrantAdminPermission(groupID, PermManageConnections)
+
+	// Create token with wildcard MCP and admin scopes
+	_, storedToken, _ := store.CreateToken("testuser", "Wildcard token", nil)
+	store.SetTokenMCPScopeByNames(storedToken.ID, []string{"*"})
+	store.SetTokenAdminScope(storedToken.ID, []string{"*"})
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+	ctx = context.WithValue(ctx, TokenIDContextKey, storedToken.ID)
+
+	privs := checker.GetEffectivePrivileges(ctx)
+
+	// Wildcard MCP scope should keep all user's MCP privileges
+	if len(privs.MCPPrivileges) != 2 {
+		t.Errorf("Expected 2 MCP privileges with wildcard, got %d", len(privs.MCPPrivileges))
+	}
+	if !privs.MCPPrivileges["tool_a"] || !privs.MCPPrivileges["tool_b"] {
+		t.Error("Expected both tool_a and tool_b with wildcard")
+	}
+
+	// Wildcard admin scope should keep all user's admin permissions
+	if len(privs.AdminPermissions) != 2 {
+		t.Errorf("Expected 2 admin permissions with wildcard, got %d", len(privs.AdminPermissions))
+	}
+	if !privs.AdminPermissions[PermManageUsers] || !privs.AdminPermissions[PermManageConnections] {
+		t.Error("Expected both manage_users and manage_connections with wildcard")
 	}
 }
 

@@ -389,6 +389,80 @@ func enableUserCommand(dataDir, username string) error {
 	return nil
 }
 
+// addServiceAccountCommand handles the add-service-account command
+func addServiceAccountCommand(dataDir, username, annotation, fullName, email string) error {
+	// Open auth store
+	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	if err != nil {
+		return fmt.Errorf("failed to open auth store: %w", err)
+	}
+	defer store.Close()
+
+	reader := bufio.NewReader(os.Stdin)
+
+	// Prompt for username if not provided
+	if username == "" {
+		fmt.Print("Enter service account username: ")
+		if input, err := reader.ReadString('\n'); err == nil {
+			username = strings.TrimSpace(input)
+		}
+		if username == "" {
+			return fmt.Errorf("username is required")
+		}
+	}
+
+	// Prompt for full name if not provided
+	if fullName == "" {
+		fmt.Print("Enter full name (optional): ")
+		if input, err := reader.ReadString('\n'); err == nil {
+			fullName = strings.TrimSpace(input)
+		}
+	}
+
+	// Prompt for email if not provided
+	if email == "" {
+		fmt.Print("Enter email address (optional): ")
+		if input, err := reader.ReadString('\n'); err == nil {
+			email = strings.TrimSpace(input)
+		}
+	}
+
+	// Prompt for notes if not provided
+	if annotation == "" {
+		fmt.Print("Enter notes for this service account (optional): ")
+		if input, err := reader.ReadString('\n'); err == nil {
+			annotation = strings.TrimSpace(input)
+		}
+	}
+
+	// Create service account
+	if err := store.CreateServiceAccount(username, annotation, fullName, email); err != nil {
+		return fmt.Errorf("failed to create service account: %w", err)
+	}
+
+	// Display results
+	fmt.Println("\n" + strings.Repeat("=", 70))
+	fmt.Println("Service account created successfully!")
+	fmt.Println(strings.Repeat("=", 70))
+	fmt.Printf("\nUsername:  %s\n", username)
+	fmt.Println("Type:     Service Account (no password login)")
+	if fullName != "" {
+		fmt.Printf("Full Name: %s\n", fullName)
+	}
+	if email != "" {
+		fmt.Printf("Email:    %s\n", email)
+	}
+	if annotation != "" {
+		fmt.Printf("Notes:    %s\n", annotation)
+	}
+	fmt.Printf("Status:   Enabled\n")
+	fmt.Println(strings.Repeat("=", 70))
+	fmt.Println("\nUse -add-token -user " + username + " to create a token for this service account.")
+	fmt.Println(strings.Repeat("=", 70) + "\n")
+
+	return nil
+}
+
 // disableUserCommand handles the disable-user command
 func disableUserCommand(dataDir, username string) error {
 	// Open auth store

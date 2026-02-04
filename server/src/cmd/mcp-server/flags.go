@@ -46,20 +46,21 @@ type Flags struct {
 	ListTokensCmd  bool
 	TokenNote      string
 	TokenExpiry    string
-	TokenSuperuser bool
+	TokenUser      string
 
 	// User management commands
-	AddUserCmd     bool
-	UpdateUserCmd  bool
-	DeleteUserCmd  bool
-	ListUsersCmd   bool
-	EnableUserCmd  bool
-	DisableUserCmd bool
-	Username       string
-	UserPassword   string
-	UserNote       string
-	FullName       string
-	Email          string
+	AddUserCmd           bool
+	UpdateUserCmd        bool
+	DeleteUserCmd        bool
+	ListUsersCmd         bool
+	EnableUserCmd        bool
+	DisableUserCmd       bool
+	AddServiceAccountCmd bool
+	Username             string
+	UserPassword         string
+	UserNote             string
+	FullName             string
+	Email                string
 
 	// Group management commands
 	AddGroupCmd       bool
@@ -125,7 +126,7 @@ func ParseFlags(defaultConfigPath string) *Flags {
 	flag.BoolVar(&f.ListTokensCmd, "list-tokens", false, "List all service tokens")
 	flag.StringVar(&f.TokenNote, "token-note", "", "Annotation for the new token (used with -add-token)")
 	flag.StringVar(&f.TokenExpiry, "token-expiry", "", "Token expiry duration: '30d', '1y', '2w', '12h', 'never' (used with -add-token)")
-	flag.BoolVar(&f.TokenSuperuser, "superuser", false, "Grant superuser privileges to the token (bypasses all access checks)")
+	flag.StringVar(&f.TokenUser, "user", "", "Owner username for the new token (used with -add-token)")
 
 	// User management commands
 	flag.BoolVar(&f.AddUserCmd, "add-user", false, "Add a new user")
@@ -134,6 +135,7 @@ func ParseFlags(defaultConfigPath string) *Flags {
 	flag.BoolVar(&f.ListUsersCmd, "list-users", false, "List all users")
 	flag.BoolVar(&f.EnableUserCmd, "enable-user", false, "Enable a user account")
 	flag.BoolVar(&f.DisableUserCmd, "disable-user", false, "Disable a user account")
+	flag.BoolVar(&f.AddServiceAccountCmd, "add-service-account", false, "Add a new service account")
 	flag.StringVar(&f.Username, "username", "", "Username for user management commands")
 	flag.StringVar(&f.UserPassword, "password", "", "Password for user management commands (prompted if not provided)")
 	flag.StringVar(&f.UserNote, "user-note", "", "Notes for the user (used with -add-user, -update-user)")
@@ -261,7 +263,8 @@ func (f *Flags) HasTokenCommand() bool {
 // HasUserCommand returns true if any user management command was specified
 func (f *Flags) HasUserCommand() bool {
 	return f.AddUserCmd || f.UpdateUserCmd || f.DeleteUserCmd ||
-		f.ListUsersCmd || f.EnableUserCmd || f.DisableUserCmd
+		f.ListUsersCmd || f.EnableUserCmd || f.DisableUserCmd ||
+		f.AddServiceAccountCmd
 }
 
 // HasGroupCommand returns true if any group management command was specified

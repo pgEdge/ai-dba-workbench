@@ -29,6 +29,9 @@ func createTestAuthStoreForTokenScope(t *testing.T) (*AuthStore, func()) {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
 
+	// Create a default user for token tests
+	store.CreateUser("testuser", "password", "", "", "")
+
 	cleanup := func() {
 		store.Close()
 		os.RemoveAll(tmpDir)
@@ -45,14 +48,18 @@ func TestSetTokenConnectionScope(t *testing.T) {
 	store, cleanup := createTestAuthStoreForTokenScope(t)
 	defer cleanup()
 
-	// Create a service token
-	_, storedToken, err := store.CreateServiceToken("Test token", nil, "", false)
+	// Create a token
+	_, storedToken, err := store.CreateToken("testuser", "Test token", nil)
 	if err != nil {
 		t.Fatalf("Failed to create token: %v", err)
 	}
 
 	// Set connection scope
-	err = store.SetTokenConnectionScope(storedToken.ID, []int{1, 2, 3})
+	err = store.SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
+		{ConnectionID: 1, AccessLevel: AccessLevelReadWrite},
+		{ConnectionID: 2, AccessLevel: AccessLevelRead},
+		{ConnectionID: 3, AccessLevel: AccessLevelReadWrite},
+	})
 	if err != nil {
 		t.Fatalf("Failed to set connection scope: %v", err)
 	}
@@ -72,14 +79,18 @@ func TestSetTokenConnectionScopeClear(t *testing.T) {
 	store, cleanup := createTestAuthStoreForTokenScope(t)
 	defer cleanup()
 
-	// Create a service token
-	_, storedToken, _ := store.CreateServiceToken("Test token", nil, "", false)
+	// Create a token
+	_, storedToken, _ := store.CreateToken("testuser", "Test token", nil)
 
 	// Set connection scope
-	store.SetTokenConnectionScope(storedToken.ID, []int{1, 2, 3})
+	store.SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
+		{ConnectionID: 1, AccessLevel: AccessLevelReadWrite},
+		{ConnectionID: 2, AccessLevel: AccessLevelRead},
+		{ConnectionID: 3, AccessLevel: AccessLevelReadWrite},
+	})
 
 	// Clear scope by setting empty list
-	err := store.SetTokenConnectionScope(storedToken.ID, []int{})
+	err := store.SetTokenConnectionScope(storedToken.ID, []ScopedConnection{})
 	if err != nil {
 		t.Fatalf("Failed to clear connection scope: %v", err)
 	}
@@ -95,29 +106,48 @@ func TestIsConnectionInTokenScope(t *testing.T) {
 	store, cleanup := createTestAuthStoreForTokenScope(t)
 	defer cleanup()
 
-	// Create a service token
-	_, storedToken, _ := store.CreateServiceToken("Test token", nil, "", false)
+	// Create a token
+	_, storedToken, _ := store.CreateToken("testuser", "Test token", nil)
 
-	// No scope defined - should return true for any connection
-	inScope, err := store.IsConnectionInTokenScope(storedToken.ID, 99)
+	// No scope defined - should return true for any connection with empty access level
+	inScope, accessLevel, err := store.IsConnectionInTokenScope(storedToken.ID, 99)
 	if err != nil {
 		t.Fatalf("Failed to check scope: %v", err)
 	}
 	if !inScope {
 		t.Error("Expected connection to be in scope when no scope defined")
 	}
+	if accessLevel != "" {
+		t.Errorf("Expected empty access level for unrestricted, got %q", accessLevel)
+	}
 
-	// Set specific scope
-	store.SetTokenConnectionScope(storedToken.ID, []int{1, 2, 3})
+	// Set specific scope with different access levels
+	store.SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
+		{ConnectionID: 1, AccessLevel: AccessLevelReadWrite},
+		{ConnectionID: 2, AccessLevel: AccessLevelRead},
+		{ConnectionID: 3, AccessLevel: AccessLevelReadWrite},
+	})
 
-	// Connection in scope
-	inScope, _ = store.IsConnectionInTokenScope(storedToken.ID, 2)
+	// Connection in scope with read access
+	inScope, accessLevel, _ = store.IsConnectionInTokenScope(storedToken.ID, 2)
 	if !inScope {
 		t.Error("Expected connection 2 to be in scope")
 	}
+	if accessLevel != AccessLevelRead {
+		t.Errorf("Expected access level %q, got %q", AccessLevelRead, accessLevel)
+	}
+
+	// Connection in scope with read_write access
+	inScope, accessLevel, _ = store.IsConnectionInTokenScope(storedToken.ID, 1)
+	if !inScope {
+		t.Error("Expected connection 1 to be in scope")
+	}
+	if accessLevel != AccessLevelReadWrite {
+		t.Errorf("Expected access level %q, got %q", AccessLevelReadWrite, accessLevel)
+	}
 
 	// Connection not in scope
-	inScope, _ = store.IsConnectionInTokenScope(storedToken.ID, 99)
+	inScope, _, _ = store.IsConnectionInTokenScope(storedToken.ID, 99)
 	if inScope {
 		t.Error("Expected connection 99 to NOT be in scope")
 	}
@@ -132,7 +162,7 @@ func TestSetTokenMCPScope(t *testing.T) {
 	defer cleanup()
 
 	// Create token and privileges
-	_, storedToken, _ := store.CreateServiceToken("Test token", nil, "", false)
+	_, storedToken, _ := store.CreateToken("testuser", "Test token", nil)
 	priv1ID, _ := store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A")
 	priv2ID, _ := store.RegisterMCPPrivilege("tool_b", MCPPrivilegeTypeTool, "Tool B")
 
@@ -158,7 +188,7 @@ func TestSetTokenMCPScopeByNames(t *testing.T) {
 	defer cleanup()
 
 	// Create token and privileges
-	_, storedToken, _ := store.CreateServiceToken("Test token", nil, "", false)
+	_, storedToken, _ := store.CreateToken("testuser", "Test token", nil)
 	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A")
 	store.RegisterMCPPrivilege("tool_b", MCPPrivilegeTypeTool, "Tool B")
 
@@ -180,7 +210,7 @@ func TestIsMCPItemInTokenScope(t *testing.T) {
 	defer cleanup()
 
 	// Create token and privileges
-	_, storedToken, _ := store.CreateServiceToken("Test token", nil, "", false)
+	_, storedToken, _ := store.CreateToken("testuser", "Test token", nil)
 	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A")
 	store.RegisterMCPPrivilege("tool_b", MCPPrivilegeTypeTool, "Tool B")
 
@@ -218,7 +248,7 @@ func TestGetTokenScope(t *testing.T) {
 	defer cleanup()
 
 	// Create token
-	_, storedToken, _ := store.CreateServiceToken("Test token", nil, "", false)
+	_, storedToken, _ := store.CreateToken("testuser", "Test token", nil)
 
 	// No scope defined - should return nil
 	scope, err := store.GetTokenScope(storedToken.ID)
@@ -231,7 +261,10 @@ func TestGetTokenScope(t *testing.T) {
 
 	// Set both scopes
 	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A")
-	store.SetTokenConnectionScope(storedToken.ID, []int{1, 2})
+	store.SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
+		{ConnectionID: 1, AccessLevel: AccessLevelReadWrite},
+		{ConnectionID: 2, AccessLevel: AccessLevelRead},
+	})
 	store.SetTokenMCPScopeByNames(storedToken.ID, []string{"tool_a"})
 
 	// Get complete scope
@@ -244,8 +277,8 @@ func TestGetTokenScope(t *testing.T) {
 		t.Fatal("Expected scope to be defined")
 	}
 
-	if len(scope.ConnectionIDs) != 2 {
-		t.Errorf("Expected 2 connections, got %d", len(scope.ConnectionIDs))
+	if len(scope.Connections) != 2 {
+		t.Errorf("Expected 2 connections, got %d", len(scope.Connections))
 	}
 
 	if len(scope.MCPPrivileges) != 1 {
@@ -258,9 +291,12 @@ func TestClearTokenScope(t *testing.T) {
 	defer cleanup()
 
 	// Create token with scope
-	_, storedToken, _ := store.CreateServiceToken("Test token", nil, "", false)
+	_, storedToken, _ := store.CreateToken("testuser", "Test token", nil)
 	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A")
-	store.SetTokenConnectionScope(storedToken.ID, []int{1, 2})
+	store.SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
+		{ConnectionID: 1, AccessLevel: AccessLevelReadWrite},
+		{ConnectionID: 2, AccessLevel: AccessLevelRead},
+	})
 	store.SetTokenMCPScopeByNames(storedToken.ID, []string{"tool_a"})
 
 	// Clear all scope
@@ -276,12 +312,243 @@ func TestClearTokenScope(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// Wildcard MCP Scope Tests
+// =============================================================================
+
+func TestSetTokenMCPScopeByNamesWildcard(t *testing.T) {
+	store, cleanup := createTestAuthStoreForTokenScope(t)
+	defer cleanup()
+
+	// Create token and privileges
+	_, storedToken, _ := store.CreateToken("testuser", "Test token", nil)
+	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A")
+	store.RegisterMCPPrivilege("tool_b", MCPPrivilegeTypeTool, "Tool B")
+
+	// Set MCP scope with wildcard
+	err := store.SetTokenMCPScopeByNames(storedToken.ID, []string{"*"})
+	if err != nil {
+		t.Fatalf("Failed to set wildcard MCP scope: %v", err)
+	}
+
+	// GetTokenMCPScope should return ["*"]
+	identifiers, err := store.GetTokenMCPScope(storedToken.ID)
+	if err != nil {
+		t.Fatalf("Failed to get MCP scope: %v", err)
+	}
+	if len(identifiers) != 1 || identifiers[0] != "*" {
+		t.Errorf("Expected [\"*\"], got %v", identifiers)
+	}
+
+	// IsMCPItemInTokenScope should return true for any item
+	inScope, err := store.IsMCPItemInTokenScope(storedToken.ID, "tool_a")
+	if err != nil {
+		t.Fatalf("Failed to check scope: %v", err)
+	}
+	if !inScope {
+		t.Error("Expected wildcard to match tool_a")
+	}
+
+	inScope, err = store.IsMCPItemInTokenScope(storedToken.ID, "tool_b")
+	if err != nil {
+		t.Fatalf("Failed to check scope: %v", err)
+	}
+	if !inScope {
+		t.Error("Expected wildcard to match tool_b")
+	}
+
+	inScope, err = store.IsMCPItemInTokenScope(storedToken.ID, "nonexistent_tool")
+	if err != nil {
+		t.Fatalf("Failed to check scope: %v", err)
+	}
+	if !inScope {
+		t.Error("Expected wildcard to match nonexistent_tool")
+	}
+}
+
+func TestSetTokenMCPScopeByNamesWildcardSkipsRemainder(t *testing.T) {
+	store, cleanup := createTestAuthStoreForTokenScope(t)
+	defer cleanup()
+
+	// Create token and privileges
+	_, storedToken, _ := store.CreateToken("testuser", "Test token", nil)
+	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A")
+
+	// Set MCP scope with wildcard before other identifiers
+	err := store.SetTokenMCPScopeByNames(storedToken.ID, []string{"*", "tool_a"})
+	if err != nil {
+		t.Fatalf("Failed to set wildcard MCP scope: %v", err)
+	}
+
+	// Should only have the wildcard entry, not tool_a separately
+	identifiers, _ := store.GetTokenMCPScope(storedToken.ID)
+	if len(identifiers) != 1 || identifiers[0] != "*" {
+		t.Errorf("Expected only wildcard, got %v", identifiers)
+	}
+}
+
+// =============================================================================
+// Wildcard Admin Scope Tests
+// =============================================================================
+
+func TestSetTokenAdminScopeWildcard(t *testing.T) {
+	store, cleanup := createTestAuthStoreForTokenScope(t)
+	defer cleanup()
+
+	_, storedToken, _ := store.CreateToken("testuser", "Test token", nil)
+
+	// Set admin scope with wildcard
+	err := store.SetTokenAdminScope(storedToken.ID, []string{"*"})
+	if err != nil {
+		t.Fatalf("Failed to set wildcard admin scope: %v", err)
+	}
+
+	// GetTokenAdminScope should return ["*"]
+	perms, err := store.GetTokenAdminScope(storedToken.ID)
+	if err != nil {
+		t.Fatalf("Failed to get admin scope: %v", err)
+	}
+	if len(perms) != 1 || perms[0] != "*" {
+		t.Errorf("Expected [\"*\"], got %v", perms)
+	}
+
+	// IsAdminPermissionInTokenScope should return true for any permission
+	inScope, err := store.IsAdminPermissionInTokenScope(storedToken.ID, PermManageUsers)
+	if err != nil {
+		t.Fatalf("Failed to check admin scope: %v", err)
+	}
+	if !inScope {
+		t.Error("Expected wildcard to match manage_users")
+	}
+
+	inScope, err = store.IsAdminPermissionInTokenScope(storedToken.ID, PermManageConnections)
+	if err != nil {
+		t.Fatalf("Failed to check admin scope: %v", err)
+	}
+	if !inScope {
+		t.Error("Expected wildcard to match manage_connections")
+	}
+}
+
+func TestSetTokenAdminScopeWildcardSkipsRemainder(t *testing.T) {
+	store, cleanup := createTestAuthStoreForTokenScope(t)
+	defer cleanup()
+
+	_, storedToken, _ := store.CreateToken("testuser", "Test token", nil)
+
+	// Set admin scope with wildcard before other permissions
+	err := store.SetTokenAdminScope(storedToken.ID, []string{"*", PermManageUsers})
+	if err != nil {
+		t.Fatalf("Failed to set wildcard admin scope: %v", err)
+	}
+
+	// Should only have the wildcard entry
+	perms, _ := store.GetTokenAdminScope(storedToken.ID)
+	if len(perms) != 1 || perms[0] != "*" {
+		t.Errorf("Expected only wildcard, got %v", perms)
+	}
+}
+
+// =============================================================================
+// Wildcard Connection Scope Tests
+// =============================================================================
+
+func TestIsConnectionInTokenScopeWildcard(t *testing.T) {
+	store, cleanup := createTestAuthStoreForTokenScope(t)
+	defer cleanup()
+
+	_, storedToken, _ := store.CreateToken("testuser", "Test token", nil)
+
+	// Set connection scope with wildcard (connection_id = 0 = ConnectionIDAll)
+	err := store.SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
+		{ConnectionID: ConnectionIDAll, AccessLevel: AccessLevelReadWrite},
+	})
+	if err != nil {
+		t.Fatalf("Failed to set wildcard connection scope: %v", err)
+	}
+
+	// Any connection should be in scope
+	inScope, accessLevel, err := store.IsConnectionInTokenScope(storedToken.ID, 1)
+	if err != nil {
+		t.Fatalf("Failed to check scope: %v", err)
+	}
+	if !inScope {
+		t.Error("Expected wildcard to match connection 1")
+	}
+	if accessLevel != AccessLevelReadWrite {
+		t.Errorf("Expected read_write, got %q", accessLevel)
+	}
+
+	inScope, accessLevel, err = store.IsConnectionInTokenScope(storedToken.ID, 999)
+	if err != nil {
+		t.Fatalf("Failed to check scope: %v", err)
+	}
+	if !inScope {
+		t.Error("Expected wildcard to match connection 999")
+	}
+	if accessLevel != AccessLevelReadWrite {
+		t.Errorf("Expected read_write, got %q", accessLevel)
+	}
+}
+
+func TestIsConnectionInTokenScopeWildcardReadOnly(t *testing.T) {
+	store, cleanup := createTestAuthStoreForTokenScope(t)
+	defer cleanup()
+
+	_, storedToken, _ := store.CreateToken("testuser", "Test token", nil)
+
+	// Set wildcard connection scope with read-only
+	store.SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
+		{ConnectionID: ConnectionIDAll, AccessLevel: AccessLevelRead},
+	})
+
+	// Any connection should be in scope with read access
+	inScope, accessLevel, _ := store.IsConnectionInTokenScope(storedToken.ID, 42)
+	if !inScope {
+		t.Error("Expected wildcard to match connection 42")
+	}
+	if accessLevel != AccessLevelRead {
+		t.Errorf("Expected read, got %q", accessLevel)
+	}
+}
+
+func TestIsConnectionInTokenScopeSpecificOverridesWildcard(t *testing.T) {
+	store, cleanup := createTestAuthStoreForTokenScope(t)
+	defer cleanup()
+
+	_, storedToken, _ := store.CreateToken("testuser", "Test token", nil)
+
+	// Set both specific and wildcard connection scope
+	store.SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
+		{ConnectionID: ConnectionIDAll, AccessLevel: AccessLevelRead},
+		{ConnectionID: 1, AccessLevel: AccessLevelReadWrite},
+	})
+
+	// Specific connection should use its own access level
+	inScope, accessLevel, _ := store.IsConnectionInTokenScope(storedToken.ID, 1)
+	if !inScope {
+		t.Error("Expected connection 1 to be in scope")
+	}
+	if accessLevel != AccessLevelReadWrite {
+		t.Errorf("Expected read_write for specific connection, got %q", accessLevel)
+	}
+
+	// Other connections should fall back to wildcard
+	inScope, accessLevel, _ = store.IsConnectionInTokenScope(storedToken.ID, 99)
+	if !inScope {
+		t.Error("Expected wildcard to match connection 99")
+	}
+	if accessLevel != AccessLevelRead {
+		t.Errorf("Expected read for wildcard connection, got %q", accessLevel)
+	}
+}
+
 func TestHasTokenScope(t *testing.T) {
 	store, cleanup := createTestAuthStoreForTokenScope(t)
 	defer cleanup()
 
 	// Create token
-	_, storedToken, _ := store.CreateServiceToken("Test token", nil, "", false)
+	_, storedToken, _ := store.CreateToken("testuser", "Test token", nil)
 
 	// No scope
 	hasScope, err := store.HasTokenScope(storedToken.ID)
@@ -293,7 +560,9 @@ func TestHasTokenScope(t *testing.T) {
 	}
 
 	// Add connection scope
-	store.SetTokenConnectionScope(storedToken.ID, []int{1})
+	store.SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
+		{ConnectionID: 1, AccessLevel: AccessLevelReadWrite},
+	})
 
 	hasScope, _ = store.HasTokenScope(storedToken.ID)
 	if !hasScope {

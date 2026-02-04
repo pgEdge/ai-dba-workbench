@@ -1,16 +1,20 @@
 # MCP Authentication and Authorization
 
-This document describes the authentication and authorization mechanisms in the pgEdge AI DBA Workbench MCP server.
+This document describes the authentication and authorization
+mechanisms in the pgEdge AI DBA Workbench MCP server.
 
 ## Overview
 
-The MCP server implements a comprehensive multi-tier authentication and authorization system:
+The MCP server implements a multi-tier authentication and
+authorization system.
 
-1. **Token-based authentication** - Via bearer tokens
-2. **Multi-source token validation** - Service tokens, user tokens, and session tokens
-3. **Role-based access control (RBAC)** - Superusers vs. regular users
-4. **Group-based privileges** - Fine-grained access via group membership
-5. **Token scoping** - Additional restrictions on token capabilities
+The system includes the following features:
+
+- Token-based authentication via bearer tokens.
+- Two-source token validation for API tokens and session tokens.
+- Role-based access control with superusers and regular users.
+- Group-based privileges for fine-grained access control.
+- Token scoping for additional capability restrictions.
 
 ---
 
@@ -18,7 +22,11 @@ The MCP server implements a comprehensive multi-tier authentication and authoriz
 
 ### 1. Token Transmission
 
-All authenticated requests must include a bearer token in the Authorization header:
+All authenticated requests must include a bearer token in the
+Authorization header.
+
+In the following example, the request includes a bearer token
+for authentication:
 
 ```http
 POST /mcp HTTP/1.1
@@ -37,7 +45,10 @@ Content-Type: application/json
 }
 ```
 
-The server extracts the token using:
+The server extracts the token from the Authorization header.
+
+In the following example, the `extractBearerToken` function
+parses the header value:
 
 ```go
 func extractBearerToken(r *http.Request) string {
@@ -58,75 +69,80 @@ func extractBearerToken(r *http.Request) string {
 
 ### 2. Authentication Exemptions
 
-The following operations do **not** require authentication:
+The following operations do not require authentication:
 
-- `initialize` - Protocol handshake
-- `ping` - Health check
-- `POST /api/auth/login` - HTTP API for initial login
+- The `initialize` method handles the protocol handshake.
+- The `ping` method provides a health check endpoint.
+- The `POST /api/auth/login` endpoint handles initial login.
 
 All other operations require a valid bearer token.
 
 ### 3. Token Validation
 
-The `validateToken()` function checks tokens against three sources:
+The `validateToken()` function checks tokens against two sources:
+API tokens and session tokens.
 
 ```go
-func (h *Handler) validateToken(token string) (*UserInfo, error)
+func (h *Handler) validateToken(
+    token string,
+) (*UserInfo, error)
 ```
 
-**Validation Sources (checked in order):**
+#### a. API Tokens
 
-#### a. Service Tokens
+The server stores all API tokens in a unified `tokens` table.
+Each token references an owning user via `owner_id`.
 
-- Table: `service_tokens`
+- Table: `tokens`
 - Token storage: Hashed via `usermgmt.HashPassword()`
 - Expiration: Optional `expires_at` timestamp
-- Identity: Token name (no specific user)
-- Privileges: Can have superuser status
+- Identity: The owning user provides the identity.
+- Privileges: The owning user determines superuser status.
+
+In the following example, the server validates an API token
+and retrieves the owner's privileges:
 
 ```go
 tokenHash := usermgmt.HashPassword(token)
-var expiresAt interface{}
-var isSuperuser bool
-err := h.dbPool.QueryRow(ctx, `
-    SELECT expires_at, is_superuser
-    FROM service_tokens
-    WHERE token_hash = $1
-`, tokenHash).Scan(&expiresAt, &isSuperuser)
-```
-
-#### b. User Tokens
-
-- Table: `user_tokens`
-- Token storage: Hashed via `usermgmt.HashPassword()`
-- Expiration: Optional `expires_at` timestamp
-- Identity: Associated with specific user account
-- Privileges: Inherits user's superuser status and group memberships
-
-```go
+var ownerID int
 var username string
-err = h.dbPool.QueryRow(ctx, `
-    SELECT ua.username, ut.expires_at, ua.is_superuser
-    FROM user_tokens ut
-    JOIN user_accounts ua ON ut.user_id = ua.id
-    WHERE ut.token_hash = $1
-`, tokenHash).Scan(&username, &expiresAt, &isSuperuser)
+var isSuperuser bool
+var isEnabled bool
+var expiresAt interface{}
+err := h.dbPool.QueryRow(ctx, `
+    SELECT t.expires_at, u.id, u.username,
+           u.is_superuser, u.is_enabled
+    FROM tokens t
+    JOIN users u ON t.owner_id = u.id
+    WHERE t.token_hash = $1
+`, tokenHash).Scan(
+    &expiresAt, &ownerID, &username,
+    &isSuperuser, &isEnabled,
+)
 ```
 
-#### c. User Sessions
+Service accounts are users with `is_service_account = TRUE`
+and an empty `password_hash`. These accounts authenticate
+exclusively through API tokens.
+
+#### b. User Sessions
+
+The server also validates session tokens for interactive users.
 
 - Table: `user_sessions`
-- Token storage: **Plaintext** (not hashed)
-- Expiration: Required `expires_at` timestamp (default 24 hours)
-- Identity: Associated with username
-- Privileges: Inherits user's superuser status and group memberships
-- Side effect: Updates `last_used_at` on successful validation
+- Token storage: Plaintext (not hashed)
+- Expiration: Required `expires_at` (default 24 hours)
+- Identity: The session references a username.
+- Privileges: The associated user determines superuser status.
+- Side effect: The server updates `last_used_at` on success.
+
+In the following example, the server validates a session token:
 
 ```go
 err = h.dbPool.QueryRow(ctx, `
-    SELECT us.username, us.expires_at, ua.is_superuser
+    SELECT us.username, us.expires_at, u.is_superuser
     FROM user_sessions us
-    JOIN user_accounts ua ON us.username = ua.username
+    JOIN users u ON us.username = u.username
     WHERE us.session_token = $1
 `, token).Scan(&username, &expiresAt, &isSuperuser)
 
@@ -140,18 +156,17 @@ _, err = h.dbPool.Exec(ctx, `
 
 ### 4. UserInfo Structure
 
-Successful validation returns a `UserInfo` struct:
+Successful validation returns a `UserInfo` struct.
 
 ```go
 type UserInfo struct {
     IsAuthenticated bool
     IsSuperuser     bool
-    Username        string      // Empty for service tokens
-    IsServiceToken  bool
+    Username        string
 }
 ```
 
-This struct is stored in the handler for use by tool handlers:
+The handler stores this struct for use by tool handlers:
 
 ```go
 h.userInfo = userInfo
@@ -163,38 +178,36 @@ h.userInfo = userInfo
 
 ### Level 1: Unauthenticated
 
-**Allowed Operations:**
-- `initialize`
-- `ping`
-- `POST /api/auth/login` (HTTP API)
+The following operations require no authentication:
 
-**Access:** Public
+- The `initialize` method handles the protocol handshake.
+- The `ping` method provides a health check endpoint.
+- The `POST /api/auth/login` endpoint handles initial login.
 
 ### Level 2: Authenticated User
 
-**Allowed Operations:**
-- All resource reads
-- Self-service operations:
-    - `create_user_token` (own tokens only)
-    - `list_user_tokens` (own tokens only)
-    - `delete_user_token` (own tokens only)
+An authenticated user can perform the following operations:
 
-**Access:** Any valid bearer token
+- All resource reads are available to authenticated users.
+- The `create_token` tool creates tokens for the user.
+- The `list_tokens` tool lists tokens owned by the user.
+- The `delete_token` tool deletes tokens owned by the user.
+
+Any valid bearer token grants this access level.
 
 ### Level 3: Privileged User (via Groups)
 
-**Allowed Operations:**
-- Operations granted via group membership
-- Checked via `privileges.CanAccessMCPItem()`
-
-**Access:** Regular user + group membership with specific MCP privileges
+Group membership grants access to additional operations.
+The `privileges.CanAccessMCPItem()` function checks access.
 
 ### Level 4: Superuser
 
-**Allowed Operations:**
-- All operations (bypasses all privilege checks)
+Superusers can perform all operations; they bypass all
+privilege checks. Superuser status always comes from the
+owning user account, never from the token itself.
 
-**Access:** User account or service token with `is_superuser = true`
+A user with `is_superuser = TRUE` in the `users` table
+grants superuser privileges to all tokens that user owns.
 
 ---
 
@@ -202,93 +215,94 @@ h.userInfo = userInfo
 
 ### Privilege Architecture
 
-1. **MCP Privilege Identifiers** (`mcp_privilege_identifiers` table)
-    - Pre-registered at server startup via `privileges.SeedMCPPrivileges()`
-    - One entry per tool, resource, or prompt
-    - Includes identifier, item_type, and description
+The privilege system consists of the following components:
 
-2. **User Groups** (`user_groups` table)
-    - Named collections of users and nested groups
-    - Hierarchical (groups can contain groups)
-
-3. **Group Memberships** (`group_memberships` table)
-    - Links users or groups to parent groups
-    - Supports recursive resolution
-
-4. **Group MCP Privileges** (`group_mcp_privileges` table)
-    - Grants specific MCP privileges to groups
-    - All group members inherit the privilege
+- The `mcp_privilege_identifiers` table stores registered
+  privileges; the server seeds these at startup via
+  `privileges.SeedMCPPrivileges()`.
+- The `user_groups` table defines named collections of users
+  and nested groups in a hierarchical structure.
+- The `group_memberships` table links users or groups to parent
+  groups and supports recursive resolution.
+- The `group_mcp_privileges` table grants specific MCP
+  privileges to groups; all group members inherit them.
 
 ### Privilege Resolution
 
-The `CanAccessMCPItem()` function determines if a user can access an MCP item:
+The `CanAccessMCPItem()` function determines whether a user
+can access an MCP item.
 
 ```go
-func CanAccessMCPItem(ctx context.Context, pool *pgxpool.Pool,
-    userID int, itemIdentifier string) (bool, error)
+func CanAccessMCPItem(
+    ctx context.Context,
+    pool *pgxpool.Pool,
+    userID int,
+    itemIdentifier string,
+) (bool, error)
 ```
 
-**Algorithm:**
+The function follows this algorithm:
 
-1. **Check if user is superuser**
-    - If yes, return `true` (superusers bypass all checks)
-
-2. **Verify privilege identifier exists**
-    - Look up identifier in `mcp_privilege_identifiers` table
-    - If not found, return `false` (deny by default)
-
-3. **Check if any groups have been granted the privilege**
-    - Count groups in `group_mcp_privileges` for this identifier
-    - If count is 0, return `false` (deny by default for security)
-
-4. **Get all groups the user belongs to**
-    - Use recursive CTE to resolve nested group memberships
-    - Returns array of group IDs
-
-5. **Check if user's groups have the privilege**
-    - Query if any of user's groups have been granted the privilege
-    - Return `true` if match found, `false` otherwise
+1. Check whether the user is a superuser; if so, return
+   `true` because superusers bypass all checks.
+2. Verify the privilege identifier exists in the
+   `mcp_privilege_identifiers` table; return `false` if
+   the identifier is not found.
+3. Count groups in `group_mcp_privileges` for the identifier;
+   return `false` if no groups hold the privilege.
+4. Use a recursive CTE to resolve all groups the user belongs
+   to; the query returns an array of group IDs.
+5. Check whether any of the user's groups hold the privilege;
+   return `true` if a match exists.
 
 ### Group Membership Resolution
 
-The `GetUserGroups()` function recursively resolves group membership:
+The `GetUserGroups()` function recursively resolves group
+membership.
+
+In the following example, the recursive CTE resolves all
+group memberships for a user:
 
 ```sql
 WITH RECURSIVE user_groups_recursive AS (
     -- Base case: direct group memberships for this user
-    SELECT parent_group_id as group_id
+    SELECT parent_group_id AS group_id
     FROM group_memberships
     WHERE member_user_id = $1
 
     UNION
 
-    -- Recursive case: groups that contain groups we're already in
+    -- Recursive case: groups containing our groups
     SELECT gm.parent_group_id
     FROM group_memberships gm
-    INNER JOIN user_groups_recursive ugr ON gm.member_group_id = ugr.group_id
+    INNER JOIN user_groups_recursive ugr
+        ON gm.member_group_id = ugr.group_id
 )
 SELECT DISTINCT group_id
 FROM user_groups_recursive
 ORDER BY group_id;
 ```
 
-This allows hierarchical group structures like:
+This query allows hierarchical group structures.
+
+In the following example, the hierarchy shows nested groups:
 
 ```
 Administrators Group
-├── DB Admins Group
-│   └── Alice (user)
-└── Bob (user)
++-- DB Admins Group
+|   +-- Alice (user)
++-- Bob (user)
 
 Operations Group
-├── DB Admins Group (nested)
-└── Charlie (user)
++-- DB Admins Group (nested)
++-- Charlie (user)
 ```
 
-In this example:
-- Alice belongs to: DB Admins Group, Administrators Group, Operations Group
-- Bob belongs to: Administrators Group
-- Charlie belongs to: Operations Group
+In this example, the resolved memberships are:
+
+- Alice belongs to DB Admins, Administrators, and Operations.
+- Bob belongs to Administrators only.
+- Charlie belongs to Operations only.
 
 ---
 
@@ -296,10 +310,15 @@ In this example:
 
 ### Pattern 1: Superuser Only
 
-Used for highly privileged operations:
+This pattern restricts operations to superusers.
+
+In the following example, the handler requires superuser
+privileges:
 
 ```go
-func (h *Handler) handleSensitiveOperation(args map[string]interface{}) (interface{}, error) {
+func (h *Handler) handleSensitiveOperation(
+    args map[string]interface{},
+) (interface{}, error) {
     // Check authentication
     if h.userInfo == nil || !h.userInfo.IsAuthenticated {
         return nil, fmt.Errorf("authentication required")
@@ -307,7 +326,9 @@ func (h *Handler) handleSensitiveOperation(args map[string]interface{}) (interfa
 
     // Require superuser
     if !h.userInfo.IsSuperuser {
-        return nil, fmt.Errorf("permission denied: superuser privileges required")
+        return nil, fmt.Errorf(
+            "permission denied: superuser privileges required",
+        )
     }
 
     // Execute operation
@@ -315,52 +336,59 @@ func (h *Handler) handleSensitiveOperation(args map[string]interface{}) (interfa
 }
 ```
 
-**Used by:**
-- Token scope management tools (by default)
+Token scope management tools use this pattern by default.
 
 ### Pattern 2: Superuser or Privilege Check
 
-Most common pattern for administrative tools:
+This pattern allows access via superuser status or group
+membership.
+
+In the following example, the handler checks privileges via
+group membership for non-superuser users:
 
 ```go
-func (h *Handler) handleAdminOperation(args map[string]interface{}) (interface{}, error) {
-    // Check authentication
+func (h *Handler) handleAdminOperation(
+    args map[string]interface{},
+) (interface{}, error) {
     if h.userInfo == nil || !h.userInfo.IsAuthenticated {
-        return nil, fmt.Errorf("permission denied: superuser privileges required")
+        return nil, fmt.Errorf(
+            "permission denied: superuser privileges required",
+        )
     }
 
     // Superusers bypass all privilege checks
     if !h.userInfo.IsSuperuser {
-        // If no database pool (test mode), require superuser
         if h.dbPool == nil {
-            return nil, fmt.Errorf("permission denied: superuser privileges required")
+            return nil, fmt.Errorf(
+                "permission denied: superuser privileges required",
+            )
         }
 
-        // Service tokens must be superusers for this operation
-        if h.userInfo.IsServiceToken {
-            return nil, fmt.Errorf("permission denied: superuser privileges required")
-        }
-
-        // For non-superuser users, check privileges via group membership
+        // Check privileges via group membership
         ctx := context.Background()
 
-        // Get user ID from username
         var userID int
         err := h.dbPool.QueryRow(ctx,
-            "SELECT id FROM user_accounts WHERE username = $1",
+            "SELECT id FROM users WHERE username = $1",
             h.userInfo.Username).Scan(&userID)
         if err != nil {
-            return nil, fmt.Errorf("failed to get user ID: %w", err)
+            return nil, fmt.Errorf(
+                "failed to get user ID: %w", err,
+            )
         }
 
-        // Check if user has privilege
-        canAccess, err := privileges.CanAccessMCPItem(ctx, h.dbPool,
-            userID, "operation_name")
+        canAccess, err := privileges.CanAccessMCPItem(
+            ctx, h.dbPool, userID, "operation_name",
+        )
         if err != nil {
-            return nil, fmt.Errorf("failed to check privileges: %w", err)
+            return nil, fmt.Errorf(
+                "failed to check privileges: %w", err,
+            )
         }
         if !canAccess {
-            return nil, fmt.Errorf("permission denied: insufficient privileges")
+            return nil, fmt.Errorf(
+                "permission denied: insufficient privileges",
+            )
         }
     }
 
@@ -369,28 +397,36 @@ func (h *Handler) handleAdminOperation(args map[string]interface{}) (interface{}
 }
 ```
 
-**Used by:**
-- User management tools
-- Service token management tools
-- Group management tools
-- Privilege management tools
+The following tool categories use this pattern:
+
+- User management tools check group-based privileges.
+- Token management tools check group-based privileges.
+- Group management tools check group-based privileges.
+- Privilege management tools check group-based privileges.
 
 ### Pattern 3: Self-Service or Superuser
 
-Used for user-specific operations:
+This pattern allows users to manage their own resources.
+
+In the following example, the handler permits access to the
+user's own data or to superusers:
 
 ```go
-func (h *Handler) handleSelfServiceOperation(args map[string]interface{}) (interface{}, error) {
-    // Check authentication
+func (h *Handler) handleSelfServiceOperation(
+    args map[string]interface{},
+) (interface{}, error) {
     if h.userInfo == nil || !h.userInfo.IsAuthenticated {
         return nil, fmt.Errorf("authentication required")
     }
 
     username, _ := args["username"].(string)
 
-    // Check authorization: users can only access their own data unless superuser
-    if h.userInfo.Username != username && !h.userInfo.IsSuperuser {
-        return nil, fmt.Errorf("permission denied: can only access your own data")
+    // Users can only access their own data
+    if h.userInfo.Username != username &&
+       !h.userInfo.IsSuperuser {
+        return nil, fmt.Errorf(
+            "permission denied: can only access your own data",
+        )
     }
 
     // Execute operation
@@ -398,51 +434,56 @@ func (h *Handler) handleSelfServiceOperation(args map[string]interface{}) (inter
 }
 ```
 
-**Used by:**
-- User token management (create, list, delete)
+Token management operations use this pattern; users create,
+list, and delete their own tokens.
 
 ---
 
 ## Token Scoping (Advanced)
 
-Token scoping provides additional restrictions beyond user privileges.
+Token scoping provides additional restrictions beyond user
+privileges.
 
 ### Scope Types
 
-1. **Connection Scope** - Limit token to specific database connections
-2. **MCP Scope** - Limit token to specific MCP tools
+The system supports two scope types:
+
+- Connection scope limits a token to specific database
+  connections.
+- MCP scope limits a token to specific MCP tools.
 
 ### Scope Tables
 
-- `user_token_connection_scope` - Connection restrictions for user tokens
-- `service_token_connection_scope` - Connection restrictions for service tokens
-- `user_token_mcp_scope` - MCP restrictions for user tokens
-- `service_token_mcp_scope` - MCP restrictions for service tokens
+The system uses two unified scope tables:
+
+- The `token_connection_scope` table stores connection
+  restrictions for tokens.
+- The `token_mcp_scope` table stores MCP restrictions
+  for tokens.
 
 ### Scope Enforcement
 
-Scope enforcement must be implemented in the relevant handlers (future work):
+Scope enforcement checks the following conditions:
 
-1. **For connection operations:**
-    - Check if token has connection scope defined
-    - If yes, verify requested connection is in scope
-    - If not in scope, deny access
-
-2. **For MCP tool calls:**
-    - Check if token has MCP scope defined
-    - If yes, verify requested tool is in scope
-    - If not in scope, deny access
+1. For connection operations, the handler checks whether
+   the token has a connection scope defined; if the
+   requested connection falls outside the scope, the
+   handler denies access.
+2. For MCP tool calls, the handler checks whether the
+   token has an MCP scope defined; if the requested tool
+   falls outside the scope, the handler denies access.
 
 ### Scope Management
 
-Scopes are managed via tools:
+The following tools manage token scopes:
 
-- `set_token_connection_scope` - Define connection restrictions
-- `set_token_mcp_scope` - Define MCP restrictions
-- `get_token_scope` - View current restrictions
-- `clear_token_scope` - Remove all restrictions
+- The `set_token_connection_scope` tool defines connection
+  restrictions.
+- The `set_token_mcp_scope` tool defines MCP restrictions.
+- The `get_token_scope` tool displays current restrictions.
+- The `clear_token_scope` tool removes all restrictions.
 
-**Note:** Currently only superusers can manage token scopes.
+Only superusers can manage token scopes.
 
 ---
 
@@ -450,37 +491,52 @@ Scopes are managed via tools:
 
 ### Token Management
 
-1. **Service tokens** - Use for automation, not interactive use
-2. **User tokens** - Use for CLI/API access, set expiration
-3. **Session tokens** - Use for web UI, short lifetime (24 hours)
+The system supports the following token categories:
+
+- API tokens owned by regular users provide CLI and API
+  access; these tokens should have a set expiration.
+- API tokens owned by service accounts provide automated
+  access; service accounts cannot log in with a password.
+- Session tokens provide web UI access with a short
+  lifetime of 24 hours.
 
 ### Token Storage
 
-1. **Service tokens** - Hashed with secure algorithm
-2. **User tokens** - Hashed with secure algorithm
-3. **Session tokens** - Stored plaintext but with mandatory expiration
+The system stores tokens with the following methods:
+
+- API tokens use a secure hashing algorithm for storage.
+- Session tokens use plaintext storage with mandatory
+  expiration.
 
 ### Token Transmission
 
-1. **Always use HTTPS** in production
-2. **Never log token values** (log only hashes or IDs)
-3. **Use bearer token scheme** per HTTP spec
-4. **Implement rate limiting** to prevent brute force (future work)
+The following practices apply to token transmission:
+
+- Always use HTTPS in production environments.
+- Never log token values; log only hashes or IDs.
+- Use the bearer token scheme per the HTTP specification.
+- Implement rate limiting to prevent brute force attacks.
 
 ### Privilege Design
 
-1. **Default deny** - No privileges granted unless explicitly assigned
-2. **Least privilege** - Grant minimum necessary permissions
-3. **Group-based** - Use groups rather than individual user grants
-4. **Hierarchical** - Use nested groups for organizational structure
-5. **Audit trail** - Log privilege changes (future work)
+The following principles guide privilege design:
+
+- Default deny grants no privileges unless explicitly
+  assigned.
+- Least privilege grants the minimum necessary permissions.
+- Group-based access uses groups rather than individual
+  user grants.
+- Hierarchical groups support organizational structure.
+- Audit trails log privilege changes for accountability.
 
 ### Password Management
 
-1. **Hash all passwords** using bcrypt or similar
-2. **Support password expiry** for compliance
-3. **Enforce password complexity** (future work)
-4. **Prevent password reuse** (future work)
+The following requirements apply to password management:
+
+- Hash all passwords using bcrypt or a similar algorithm.
+- Support password expiry for compliance requirements.
+- Enforce password complexity rules in future releases.
+- Prevent password reuse in future releases.
 
 ---
 
@@ -488,28 +544,33 @@ Scopes are managed via tools:
 
 ### Test Mode
 
-When `dbPool` is nil (unit tests), authentication is bypassed:
+When `dbPool` is nil during unit tests, the server bypasses
+authentication.
+
+In the following example, the handler skips authentication
+in test mode:
 
 ```go
 requiresAuth := true
 if h.dbPool == nil {
-    // No database pool, skip authentication (unit test mode)
+    // No database pool; skip authentication
     requiresAuth = false
 }
 ```
 
-This allows testing tool logic without database dependencies.
+This approach allows testing tool logic without database
+dependencies.
 
 ### Integration Tests
 
-Integration tests should:
+Integration tests should follow these steps:
 
-1. Create test users with known passwords
-2. Authenticate to obtain session tokens
-3. Use tokens in subsequent requests
-4. Test both authorized and unauthorized access
-5. Verify privilege enforcement
-6. Clean up test users and tokens
+1. Create test users with known passwords.
+2. Authenticate to obtain session tokens.
+3. Use the tokens in subsequent requests.
+4. Test both authorized and unauthorized access.
+5. Verify privilege enforcement.
+6. Clean up test users and tokens.
 
 ---
 
@@ -517,45 +578,46 @@ Integration tests should:
 
 ### "Authentication required"
 
-**Cause:** No bearer token provided for protected endpoint
-
-**Solution:** Include `Authorization: Bearer <token>` header
+This error occurs when no bearer token is provided for a
+protected endpoint. Include an `Authorization: Bearer`
+header with a valid token.
 
 ### "Authentication failed"
 
-**Cause:** Invalid or expired token
-
-**Solution:** Obtain a new token via `POST /api/auth/login` HTTP API
+This error occurs when a token is invalid or expired.
+Obtain a new token via the `POST /api/auth/login` endpoint.
 
 ### "Permission denied: superuser privileges required"
 
-**Cause:** Operation requires superuser, but user is not superuser
-
-**Solution:** Use a superuser account or service token
+This error occurs when an operation requires superuser
+privileges. Use an account with `is_superuser = TRUE` or
+a token owned by a superuser.
 
 ### "Permission denied: insufficient privileges"
 
-**Cause:** User lacks required MCP privilege via group membership
-
-**Solution:** Grant privilege to user's group or make user a member of privileged group
+This error occurs when a user lacks the required MCP
+privilege. Grant the privilege to the user's group or add
+the user to a privileged group.
 
 ### "Password has expired"
 
-**Cause:** User account's password_expiry has passed
-
-**Solution:** Update user password (requires admin or self-service)
+This error occurs when the user's `password_expiry` has
+passed. Update the user password through an admin or
+self-service operation.
 
 ---
 
 ## Future Enhancements
 
-1. **OAuth 2.0 support** - Integration with external identity providers
-2. **SAML support** - Enterprise SSO
-3. **Multi-factor authentication (MFA)** - Additional security layer
-4. **API key rotation** - Automatic token renewal
-5. **Session management UI** - View and revoke active sessions
-6. **Audit logging** - Track all authentication events
-7. **Rate limiting** - Prevent brute force attacks
-8. **IP allowlisting** - Restrict token usage by source IP
-9. **Token scope enforcement** - Implement scope checks in handlers
-10. **Resource-level authorization** - Control resource access per user/group
+The following enhancements are planned:
+
+- OAuth 2.0 support for external identity providers.
+- SAML support for enterprise SSO integration.
+- Multi-factor authentication for additional security.
+- API key rotation for automatic token renewal.
+- Session management UI for viewing and revoking sessions.
+- Audit logging for tracking all authentication events.
+- Rate limiting for preventing brute force attacks.
+- IP allowlisting for restricting token usage by source.
+- Token scope enforcement in handler implementations.
+- Resource-level authorization for per-user access control.

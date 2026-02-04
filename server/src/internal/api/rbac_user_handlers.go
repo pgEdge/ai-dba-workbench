@@ -49,25 +49,27 @@ func (h *RBACHandler) listUsers(w http.ResponseWriter, r *http.Request) {
 
 	// Build response without password hashes
 	type userResponse struct {
-		ID          int64  `json:"id"`
-		Username    string `json:"username"`
-		DisplayName string `json:"display_name"`
-		Email       string `json:"email"`
-		Enabled     bool   `json:"enabled"`
-		IsSuperuser bool   `json:"is_superuser"`
-		Annotation  string `json:"annotation,omitempty"`
+		ID               int64  `json:"id"`
+		Username         string `json:"username"`
+		DisplayName      string `json:"display_name"`
+		Email            string `json:"email"`
+		Enabled          bool   `json:"enabled"`
+		IsSuperuser      bool   `json:"is_superuser"`
+		IsServiceAccount bool   `json:"is_service_account"`
+		Annotation       string `json:"annotation,omitempty"`
 	}
 
 	result := make([]userResponse, len(users))
 	for i, u := range users {
 		result[i] = userResponse{
-			ID:          u.ID,
-			Username:    u.Username,
-			DisplayName: u.DisplayName,
-			Email:       u.Email,
-			Enabled:     u.Enabled,
-			IsSuperuser: u.IsSuperuser,
-			Annotation:  u.Annotation,
+			ID:               u.ID,
+			Username:         u.Username,
+			DisplayName:      u.DisplayName,
+			Email:            u.Email,
+			Enabled:          u.Enabled,
+			IsSuperuser:      u.IsSuperuser,
+			IsServiceAccount: u.IsServiceAccount,
+			Annotation:       u.Annotation,
 		}
 	}
 
@@ -80,13 +82,14 @@ func (h *RBACHandler) createUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Username    string `json:"username"`
-		Password    string `json:"password"`
-		DisplayName string `json:"display_name"`
-		Email       string `json:"email"`
-		Annotation  string `json:"annotation"`
-		Enabled     *bool  `json:"enabled"`
-		IsSuperuser *bool  `json:"is_superuser"`
+		Username         string `json:"username"`
+		Password         string `json:"password"`
+		DisplayName      string `json:"display_name"`
+		Email            string `json:"email"`
+		Annotation       string `json:"annotation"`
+		Enabled          *bool  `json:"enabled"`
+		IsSuperuser      *bool  `json:"is_superuser"`
+		IsServiceAccount *bool  `json:"is_service_account"`
 	}
 	if !DecodeJSONBody(w, r, &req) {
 		return
@@ -96,15 +99,25 @@ func (h *RBACHandler) createUser(w http.ResponseWriter, r *http.Request) {
 		RespondError(w, http.StatusBadRequest, "Username is required")
 		return
 	}
-	if req.Password == "" {
-		RespondError(w, http.StatusBadRequest, "Password is required")
-		return
-	}
 
-	if err := h.authStore.CreateUser(req.Username, req.Password, req.Annotation, req.DisplayName, req.Email); err != nil {
-		log.Printf("[ERROR] Failed to create user %s: %v", req.Username, err)
-		RespondError(w, http.StatusInternalServerError, "Failed to create user")
-		return
+	isServiceAccount := req.IsServiceAccount != nil && *req.IsServiceAccount
+
+	if isServiceAccount {
+		if err := h.authStore.CreateServiceAccount(req.Username, req.Annotation, req.DisplayName, req.Email); err != nil {
+			log.Printf("[ERROR] Failed to create service account %s: %v", req.Username, err)
+			RespondError(w, http.StatusInternalServerError, "Failed to create service account")
+			return
+		}
+	} else {
+		if req.Password == "" {
+			RespondError(w, http.StatusBadRequest, "Password is required")
+			return
+		}
+		if err := h.authStore.CreateUser(req.Username, req.Password, req.Annotation, req.DisplayName, req.Email); err != nil {
+			log.Printf("[ERROR] Failed to create user %s: %v", req.Username, err)
+			RespondError(w, http.StatusInternalServerError, "Failed to create user")
+			return
+		}
 	}
 
 	if req.Enabled != nil && !*req.Enabled {

@@ -88,8 +88,50 @@ and this project adheres to
   - Converted all ~50 source, context, hook, and test files with
     proper type interfaces
   - Removed the `prop-types` dependency
+- Service account support for non-interactive users that authenticate
+  only via API tokens; service accounts cannot log in with a password.
+- CLI flag `-add-service-account` for creating service accounts from
+  the command line.
+- CLI flag `-user` for the `-add-token` command to specify the token
+  owner.
+- Token scope system with three restriction types: connection
+  access (with per-connection read or read/write levels), MCP
+  privilege restrictions, and admin permission restrictions.
+- Wildcard scope options for tokens: "All Connections",
+  "All MCP Privileges", and "All Admin Permissions" allow
+  broad scope without listing individual items.
+- Per-connection access levels in token scopes; tokens can
+  restrict access to read-only even when the owner has
+  read/write access.
+- Admin panel token management with create, edit scope, and
+  delete operations; includes owner-based scope filtering.
+- API usage examples section in the admin panel token tab
+  showing sample `curl` commands for common operations.
+- Expandable permission panels on all three admin panel tabs
+  (Users, Groups, Tokens) for consistent privilege display.
 
 ### Changed
+
+- Unified the token model; all tokens now have a mandatory owner and
+  inherit superuser status from the owning user instead of storing it
+  on the token.
+- Auth database migration v11 that consolidates service tokens and user
+  tokens into a single tokens table, adds the `is_service_account`
+  column to the users table, and removes the `token_type` and
+  `is_superuser` columns from tokens.
+- Replaced the `-superuser` flag on `-add-token` with user-level
+  superuser status; tokens created for superuser accounts automatically
+  inherit superuser privileges.
+- Updated the admin panel token scopes view to display owner username
+  with service account and superuser badges.
+- Updated the admin panel users view to display account type
+  and support creating service accounts.
+- Admin panel permissions display unified across Users,
+  Groups, and Tokens tabs using expandable rows with the
+  shared EffectivePermissionsPanel component.
+- Auth database migrations v12 and v13 add token admin
+  permission scope and per-connection access levels
+  respectively.
 
 - Probe consolidation reduces database round-trips by ~20%:
   - `pg_stat_replication_slots` merged into `pg_replication_slots`

@@ -30,12 +30,8 @@ const (
 	// DefaultSessionExpiry is the default duration for session tokens
 	DefaultSessionExpiry = 24 * time.Hour
 
-	// Token types
-	TokenTypeService = "service" // Admin-created service tokens
-	TokenTypeUser    = "user"    // User-created tokens
-
 	// Schema version for migrations
-	schemaVersion = 10
+	schemaVersion = 13
 )
 
 // AuthStore manages users and tokens in SQLite
@@ -63,30 +59,29 @@ type ConnectionSession struct {
 
 // StoredUser represents a user in the database
 type StoredUser struct {
-	ID             int64
-	Username       string
-	PasswordHash   string
-	CreatedAt      time.Time
-	LastLogin      *time.Time
-	Enabled        bool
-	Annotation     string
-	DisplayName    string
-	Email          string
-	FailedAttempts int
-	IsSuperuser    bool
+	ID               int64
+	Username         string
+	PasswordHash     string
+	CreatedAt        time.Time
+	LastLogin        *time.Time
+	Enabled          bool
+	Annotation       string
+	DisplayName      string
+	Email            string
+	FailedAttempts   int
+	IsSuperuser      bool
+	IsServiceAccount bool
 }
 
 // StoredToken represents a token in the database
 type StoredToken struct {
-	ID          int64
-	TokenHash   string     // SHA256 hash of the actual token
-	TokenType   string     // "service" or "user"
-	OwnerID     *int64     // NULL for service tokens, user ID for user tokens
-	ExpiresAt   *time.Time // NULL for never expires
-	Annotation  string
-	CreatedAt   time.Time
-	Database    string // Bound database name (empty = first configured database)
-	IsSuperuser bool   // Superuser status (bypasses all privilege checks)
+	ID         int64
+	TokenHash  string     // SHA256 hash of the actual token
+	OwnerID    int64      // User ID of the token owner
+	ExpiresAt  *time.Time // NULL for never expires
+	Annotation string
+	CreatedAt  time.Time
+	Database   string // Bound database name (empty = first configured database)
 }
 
 // NewAuthStore creates a new SQLite-based auth store
@@ -143,16 +138,19 @@ func (s *AuthStore) initSchema() error {
         last_login TIMESTAMP,
         enabled BOOLEAN DEFAULT TRUE,
         annotation TEXT DEFAULT '',
-        failed_attempts INTEGER DEFAULT 0
+        failed_attempts INTEGER DEFAULT 0,
+        is_superuser BOOLEAN DEFAULT FALSE,
+        display_name TEXT DEFAULT '',
+        email TEXT DEFAULT '',
+        is_service_account BOOLEAN DEFAULT FALSE
     );
     CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 
-    -- Tokens table (both service and user tokens)
+    -- Tokens table
     CREATE TABLE IF NOT EXISTS tokens (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         token_hash TEXT UNIQUE NOT NULL,
-        token_type TEXT NOT NULL CHECK(token_type IN ('service', 'user')),
-        owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         expires_at TIMESTAMP,
         annotation TEXT DEFAULT '',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -160,7 +158,6 @@ func (s *AuthStore) initSchema() error {
     );
     CREATE INDEX IF NOT EXISTS idx_tokens_hash ON tokens(token_hash);
     CREATE INDEX IF NOT EXISTS idx_tokens_owner ON tokens(owner_id);
-    CREATE INDEX IF NOT EXISTS idx_tokens_type ON tokens(token_type);
     `
 
 	_, err = s.db.Exec(schema)
@@ -259,6 +256,7 @@ func (s *AuthStore) initSchema() error {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             token_id INTEGER NOT NULL REFERENCES tokens(id) ON DELETE CASCADE,
             connection_id INTEGER NOT NULL,
+            access_level TEXT NOT NULL DEFAULT 'read_write' CHECK(access_level IN ('read', 'read_write')),
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(token_id, connection_id)
         );
@@ -274,6 +272,16 @@ func (s *AuthStore) initSchema() error {
             UNIQUE(token_id, privilege_identifier_id)
         );
         CREATE INDEX IF NOT EXISTS idx_token_mcp_scope_token ON token_mcp_scope(token_id);
+
+        -- Token admin permission scope
+        CREATE TABLE IF NOT EXISTS token_admin_scope (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token_id INTEGER NOT NULL REFERENCES tokens(id) ON DELETE CASCADE,
+            permission TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(token_id, permission)
+        );
+        CREATE INDEX IF NOT EXISTS idx_token_admin_scope_token ON token_admin_scope(token_id);
         `
 		// Execute each statement separately for SQLite (ALTER TABLE doesn't combine well)
 		statements := []string{
@@ -457,6 +465,68 @@ func (s *AuthStore) initSchema() error {
 		}
 	}
 
+	// Apply migrations for schema version 11 (unify service and user tokens)
+	if currentVersion < 11 {
+		// Add is_service_account column to users
+		//nolint:errcheck // Intentionally ignoring error - column may already exist
+		s.db.Exec("ALTER TABLE users ADD COLUMN is_service_account BOOLEAN DEFAULT FALSE")
+
+		// Delete orphaned service tokens (tokens without an owner)
+		_, err = s.db.Exec("DELETE FROM tokens WHERE owner_id IS NULL")
+		if err != nil {
+			return fmt.Errorf("failed to clean orphaned tokens in migration v11: %w", err)
+		}
+
+		migrationV11 := `
+        -- Recreate tokens table without token_type and is_superuser columns,
+        -- with owner_id as NOT NULL
+        CREATE TABLE tokens_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token_hash TEXT UNIQUE NOT NULL,
+            owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            expires_at TIMESTAMP,
+            annotation TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            database TEXT DEFAULT ''
+        );
+        INSERT INTO tokens_new (id, token_hash, owner_id, expires_at, annotation, created_at, database)
+            SELECT id, token_hash, owner_id, expires_at, annotation, created_at, database
+            FROM tokens;
+        DROP TABLE tokens;
+        ALTER TABLE tokens_new RENAME TO tokens;
+        CREATE INDEX IF NOT EXISTS idx_tokens_hash ON tokens(token_hash);
+        CREATE INDEX IF NOT EXISTS idx_tokens_owner ON tokens(owner_id);
+        `
+		_, err = s.db.Exec(migrationV11)
+		if err != nil {
+			return fmt.Errorf("failed to apply schema migration v11: %w", err)
+		}
+	}
+
+	// Apply migrations for schema version 12 (token admin scope)
+	if currentVersion < 12 {
+		migrationV12 := `
+        CREATE TABLE IF NOT EXISTS token_admin_scope (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token_id INTEGER NOT NULL REFERENCES tokens(id) ON DELETE CASCADE,
+            permission TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(token_id, permission)
+        );
+        CREATE INDEX IF NOT EXISTS idx_token_admin_scope_token ON token_admin_scope(token_id);
+        `
+		_, err = s.db.Exec(migrationV12)
+		if err != nil {
+			return fmt.Errorf("failed to apply schema migration v12: %w", err)
+		}
+	}
+
+	// Apply migrations for schema version 13 (per-connection access level in token scope)
+	if currentVersion < 13 {
+		//nolint:errcheck // Column may already exist
+		s.db.Exec("ALTER TABLE token_connection_scope ADD COLUMN access_level TEXT NOT NULL DEFAULT 'read_write'")
+	}
+
 	// Set schema version
 	_, err = s.db.Exec("INSERT OR REPLACE INTO schema_version (version) VALUES (?)", schemaVersion)
 	return err
@@ -501,11 +571,11 @@ func (s *AuthStore) GetUser(username string) (*StoredUser, error) {
 	var displayName sql.NullString
 	var email sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, username, password_hash, created_at, last_login, enabled, annotation, display_name, email, failed_attempts, is_superuser
+		`SELECT id, username, password_hash, created_at, last_login, enabled, annotation, display_name, email, failed_attempts, is_superuser, is_service_account
          FROM users WHERE username = ?`,
 		username,
 	).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.CreatedAt,
-		&user.LastLogin, &user.Enabled, &user.Annotation, &displayName, &email, &user.FailedAttempts, &user.IsSuperuser)
+		&user.LastLogin, &user.Enabled, &user.Annotation, &displayName, &email, &user.FailedAttempts, &user.IsSuperuser, &user.IsServiceAccount)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -533,11 +603,11 @@ func (s *AuthStore) GetUserByID(id int64) (*StoredUser, error) {
 	var displayName sql.NullString
 	var email sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, username, password_hash, created_at, last_login, enabled, annotation, display_name, email, failed_attempts, is_superuser
+		`SELECT id, username, password_hash, created_at, last_login, enabled, annotation, display_name, email, failed_attempts, is_superuser, is_service_account
          FROM users WHERE id = ?`,
 		id,
 	).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.CreatedAt,
-		&user.LastLogin, &user.Enabled, &user.Annotation, &displayName, &email, &user.FailedAttempts, &user.IsSuperuser)
+		&user.LastLogin, &user.Enabled, &user.Annotation, &displayName, &email, &user.FailedAttempts, &user.IsSuperuser, &user.IsServiceAccount)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -800,7 +870,7 @@ func (s *AuthStore) ListUsers() ([]*StoredUser, error) {
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.Query(
-		`SELECT id, username, password_hash, created_at, last_login, enabled, annotation, display_name, email, failed_attempts, is_superuser
+		`SELECT id, username, password_hash, created_at, last_login, enabled, annotation, display_name, email, failed_attempts, is_superuser, is_service_account
          FROM users ORDER BY username`,
 	)
 	if err != nil {
@@ -814,7 +884,7 @@ func (s *AuthStore) ListUsers() ([]*StoredUser, error) {
 		var displayName sql.NullString
 		var email sql.NullString
 		if err := rows.Scan(&user.ID, &user.Username, &user.PasswordHash, &user.CreatedAt,
-			&user.LastLogin, &user.Enabled, &user.Annotation, &displayName, &email, &user.FailedAttempts, &user.IsSuperuser); err != nil {
+			&user.LastLogin, &user.Enabled, &user.Annotation, &displayName, &email, &user.FailedAttempts, &user.IsSuperuser, &user.IsServiceAccount); err != nil {
 			return nil, fmt.Errorf("failed to scan user: %w", err)
 		}
 		if displayName.Valid {
@@ -853,15 +923,21 @@ func (s *AuthStore) AuthenticateUser(username, password string) (string, time.Ti
 
 	var user StoredUser
 	err := s.db.QueryRow(
-		`SELECT id, username, password_hash, enabled, failed_attempts FROM users WHERE username = ?`,
+		`SELECT id, username, password_hash, enabled, failed_attempts, is_service_account FROM users WHERE username = ?`,
 		username,
-	).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.Enabled, &user.FailedAttempts)
+	).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.Enabled, &user.FailedAttempts, &user.IsServiceAccount)
 
 	if err == sql.ErrNoRows {
 		return "", time.Time{}, fmt.Errorf("invalid username or password")
 	}
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("authentication error: %w", err)
+	}
+
+	// Service accounts cannot authenticate with password
+	if user.IsServiceAccount {
+		log.Printf("[AUTH] Authentication failed for user %s: service account cannot use password login", username)
+		return "", time.Time{}, fmt.Errorf("invalid username or password")
 	}
 
 	if !user.Enabled {
@@ -958,67 +1034,26 @@ func (s *AuthStore) InvalidateSession(token string) {
 }
 
 // =============================================================================
-// Service Token Management (Admin-created)
+// Token Management
 // =============================================================================
 
-// CreateServiceToken creates a new service token
-// Returns the raw token (only shown once) and the stored token info
-func (s *AuthStore) CreateServiceToken(annotation string, expiry *time.Time, database string, isSuperuser bool) (string, *StoredToken, error) {
+// CreateToken creates a new token owned by the specified user.
+// Returns the raw token (only shown once) and the stored token info.
+// If requestedExpiry is nil, superusers get no expiry while non-superusers
+// are subject to the configured maxUserTokenDays limit.
+func (s *AuthStore) CreateToken(ownerUsername, annotation string, requestedExpiry *time.Time) (string, *StoredToken, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Generate random token
-	tokenBytes := make([]byte, 32)
-	if _, err := rand.Read(tokenBytes); err != nil {
-		return "", nil, fmt.Errorf("failed to generate token: %w", err)
-	}
-	rawToken := base64.URLEncoding.EncodeToString(tokenBytes)
-
-	// Hash the token for storage
-	hash := sha256.Sum256([]byte(rawToken))
-	tokenHash := hex.EncodeToString(hash[:])
-
-	// Insert into database
-	result, err := s.db.Exec(
-		`INSERT INTO tokens (token_hash, token_type, expires_at, annotation, database, is_superuser)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-		tokenHash, TokenTypeService, expiry, annotation, database, isSuperuser,
-	)
-	if err != nil {
-		return "", nil, fmt.Errorf("failed to create token: %w", err)
-	}
-
-	//nolint:errcheck // SQLite always supports LastInsertId
-	id, _ := result.LastInsertId()
-	token := &StoredToken{
-		ID:          id,
-		TokenHash:   tokenHash,
-		TokenType:   TokenTypeService,
-		ExpiresAt:   expiry,
-		Annotation:  annotation,
-		CreatedAt:   time.Now(),
-		Database:    database,
-		IsSuperuser: isSuperuser,
-	}
-
-	return rawToken, token, nil
-}
-
-// =============================================================================
-// User Token Management (User-created)
-// =============================================================================
-
-// CreateUserToken creates a new user token
-// Returns the raw token (only shown once) and the stored token info
-func (s *AuthStore) CreateUserToken(username, annotation string, requestedDays int) (string, *StoredToken, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// Get user ID
+	// Look up the user to get their ID and superuser status
 	var userID int64
-	err := s.db.QueryRow("SELECT id FROM users WHERE username = ?", username).Scan(&userID)
+	var isSuperuser bool
+	err := s.db.QueryRow(
+		"SELECT id, is_superuser FROM users WHERE username = ?",
+		ownerUsername,
+	).Scan(&userID, &isSuperuser)
 	if err == sql.ErrNoRows {
-		return "", nil, fmt.Errorf("user '%s' not found", username)
+		return "", nil, fmt.Errorf("user '%s' not found", ownerUsername)
 	}
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to get user: %w", err)
@@ -1026,20 +1061,14 @@ func (s *AuthStore) CreateUserToken(username, annotation string, requestedDays i
 
 	// Calculate expiry
 	var expiry *time.Time
-	if s.maxUserTokenDays > 0 {
-		// Apply max limit
-		days := requestedDays
-		if days <= 0 || days > s.maxUserTokenDays {
-			days = s.maxUserTokenDays
-		}
-		exp := time.Now().AddDate(0, 0, days)
-		expiry = &exp
-	} else if requestedDays > 0 {
-		// No max limit, use requested days
-		exp := time.Now().AddDate(0, 0, requestedDays)
+	if requestedExpiry != nil {
+		expiry = requestedExpiry
+	} else if !isSuperuser && s.maxUserTokenDays > 0 {
+		// Non-superuser with no explicit expiry: enforce max token lifetime
+		exp := time.Now().AddDate(0, 0, s.maxUserTokenDays)
 		expiry = &exp
 	}
-	// else: no expiry (unlimited)
+	// else: superuser with no explicit expiry gets no expiry (unlimited)
 
 	// Generate random token
 	tokenBytes := make([]byte, 32)
@@ -1054,9 +1083,9 @@ func (s *AuthStore) CreateUserToken(username, annotation string, requestedDays i
 
 	// Insert into database
 	result, err := s.db.Exec(
-		`INSERT INTO tokens (token_hash, token_type, owner_id, expires_at, annotation)
-         VALUES (?, ?, ?, ?, ?)`,
-		tokenHash, TokenTypeUser, userID, expiry, annotation,
+		`INSERT INTO tokens (token_hash, owner_id, expires_at, annotation)
+         VALUES (?, ?, ?, ?)`,
+		tokenHash, userID, expiry, annotation,
 	)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to create token: %w", err)
@@ -1067,8 +1096,7 @@ func (s *AuthStore) CreateUserToken(username, annotation string, requestedDays i
 	token := &StoredToken{
 		ID:         id,
 		TokenHash:  tokenHash,
-		TokenType:  TokenTypeUser,
-		OwnerID:    &userID,
+		OwnerID:    userID,
 		ExpiresAt:  expiry,
 		Annotation: annotation,
 		CreatedAt:  time.Now(),
@@ -1077,18 +1105,36 @@ func (s *AuthStore) CreateUserToken(username, annotation string, requestedDays i
 	return rawToken, token, nil
 }
 
+// CreateServiceAccount creates a new service account user.
+// Service accounts have no password and cannot authenticate via login.
+// They can only be used via API tokens.
+func (s *AuthStore) CreateServiceAccount(username, annotation, displayName, email string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec(
+		"INSERT INTO users (username, password_hash, annotation, display_name, email, is_service_account, enabled) VALUES (?, '', ?, ?, ?, TRUE, TRUE)",
+		username, annotation, displayName, email,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create service account: %w", err)
+	}
+
+	return nil
+}
+
 // ListUserTokens lists all tokens owned by a user
 func (s *AuthStore) ListUserTokens(username string) ([]*StoredToken, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.Query(
-		`SELECT t.id, t.token_hash, t.token_type, t.owner_id, t.expires_at, t.annotation, t.created_at, t.database, t.is_superuser
+		`SELECT t.id, t.token_hash, t.owner_id, t.expires_at, t.annotation, t.created_at, t.database
          FROM tokens t
          JOIN users u ON t.owner_id = u.id
-         WHERE u.username = ? AND t.token_type = ?
+         WHERE u.username = ?
          ORDER BY t.created_at DESC`,
-		username, TokenTypeUser,
+		username,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list user tokens: %w", err)
@@ -1098,15 +1144,15 @@ func (s *AuthStore) ListUserTokens(username string) ([]*StoredToken, error) {
 	return s.scanTokens(rows)
 }
 
-// DeleteUserToken deletes a user token (only if owned by the user)
+// DeleteUserToken deletes a token (only if owned by the specified user)
 func (s *AuthStore) DeleteUserToken(username string, tokenID int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	result, err := s.db.Exec(
 		`DELETE FROM tokens
-         WHERE id = ? AND token_type = ? AND owner_id = (SELECT id FROM users WHERE username = ?)`,
-		tokenID, TokenTypeUser, username,
+         WHERE id = ? AND owner_id = (SELECT id FROM users WHERE username = ?)`,
+		tokenID, username,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to delete token: %w", err)
@@ -1127,8 +1173,8 @@ func (s *AuthStore) DeleteUserToken(username string, tokenID int64) error {
 // Token Validation (all token types)
 // =============================================================================
 
-// ValidateToken checks if a token (service or user) is valid
-// Returns the token info if valid
+// ValidateToken checks if a token is valid.
+// Returns the token info if valid.
 func (s *AuthStore) ValidateToken(rawToken string) (*StoredToken, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -1140,13 +1186,12 @@ func (s *AuthStore) ValidateToken(rawToken string) (*StoredToken, error) {
 	var token StoredToken
 	var annotation sql.NullString
 	var database sql.NullString
-	var isSuperuser sql.NullBool
 	err := s.db.QueryRow(
-		`SELECT id, token_hash, token_type, owner_id, expires_at, annotation, created_at, database, is_superuser
+		`SELECT id, token_hash, owner_id, expires_at, annotation, created_at, database
          FROM tokens WHERE token_hash = ?`,
 		tokenHash,
-	).Scan(&token.ID, &token.TokenHash, &token.TokenType, &token.OwnerID,
-		&token.ExpiresAt, &annotation, &token.CreatedAt, &database, &isSuperuser)
+	).Scan(&token.ID, &token.TokenHash, &token.OwnerID,
+		&token.ExpiresAt, &annotation, &token.CreatedAt, &database)
 
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("invalid token")
@@ -1160,38 +1205,33 @@ func (s *AuthStore) ValidateToken(rawToken string) (*StoredToken, error) {
 	if database.Valid {
 		token.Database = database.String
 	}
-	if isSuperuser.Valid {
-		token.IsSuperuser = isSuperuser.Bool
-	}
 
 	// Check expiration
 	if token.ExpiresAt != nil && token.ExpiresAt.Before(time.Now()) {
 		return nil, fmt.Errorf("token has expired")
 	}
 
-	// For user tokens, verify the owning user is still enabled
-	if token.TokenType == TokenTypeUser && token.OwnerID != nil {
-		var enabled bool
-		err := s.db.QueryRow("SELECT enabled FROM users WHERE id = ?", *token.OwnerID).Scan(&enabled)
-		if err != nil || !enabled {
-			return nil, fmt.Errorf("token owner is disabled")
-		}
+	// Verify the owning user is still enabled
+	var enabled bool
+	err = s.db.QueryRow("SELECT enabled FROM users WHERE id = ?", token.OwnerID).Scan(&enabled)
+	if err != nil || !enabled {
+		return nil, fmt.Errorf("token owner is disabled")
 	}
 
 	return &token, nil
 }
 
 // =============================================================================
-// Service Token Management (for CLI commands)
+// Token Management (for CLI commands)
 // =============================================================================
 
-// ListAllTokens lists all tokens regardless of type
+// ListAllTokens lists all tokens
 func (s *AuthStore) ListAllTokens() ([]*StoredToken, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.Query(
-		`SELECT id, token_hash, token_type, owner_id, expires_at, annotation, created_at, database, is_superuser
+		`SELECT id, token_hash, owner_id, expires_at, annotation, created_at, database
          FROM tokens ORDER BY created_at DESC`,
 	)
 	if err != nil {
@@ -1202,34 +1242,15 @@ func (s *AuthStore) ListAllTokens() ([]*StoredToken, error) {
 	return s.scanTokens(rows)
 }
 
-// ListServiceTokens lists all service tokens
-func (s *AuthStore) ListServiceTokens() ([]*StoredToken, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	rows, err := s.db.Query(
-		`SELECT id, token_hash, token_type, owner_id, expires_at, annotation, created_at, database, is_superuser
-         FROM tokens WHERE token_type = ?
-         ORDER BY created_at DESC`,
-		TokenTypeService,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list service tokens: %w", err)
-	}
-	defer rows.Close()
-
-	return s.scanTokens(rows)
-}
-
-// DeleteServiceToken deletes a service token by ID or hash prefix
-func (s *AuthStore) DeleteServiceToken(identifier string) error {
+// DeleteToken deletes a token by ID or hash prefix (admin use, no owner check)
+func (s *AuthStore) DeleteToken(identifier string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	// Try by ID first
 	result, err := s.db.Exec(
-		"DELETE FROM tokens WHERE id = ? AND token_type = ?",
-		identifier, TokenTypeService,
+		"DELETE FROM tokens WHERE id = ?",
+		identifier,
 	)
 	if err == nil {
 		//nolint:errcheck // RowsAffected error non-critical, we try hash prefix next
@@ -1241,8 +1262,8 @@ func (s *AuthStore) DeleteServiceToken(identifier string) error {
 	// Try by hash prefix
 	if len(identifier) >= 8 {
 		result, err = s.db.Exec(
-			"DELETE FROM tokens WHERE token_hash LIKE ? AND token_type = ?",
-			identifier+"%", TokenTypeService,
+			"DELETE FROM tokens WHERE token_hash LIKE ?",
+			identifier+"%",
 		)
 		if err != nil {
 			return fmt.Errorf("failed to delete token: %w", err)
@@ -1303,9 +1324,8 @@ func (s *AuthStore) scanTokens(rows *sql.Rows) ([]*StoredToken, error) {
 		var token StoredToken
 		var annotation sql.NullString
 		var database sql.NullString
-		var isSuperuser sql.NullBool
-		if err := rows.Scan(&token.ID, &token.TokenHash, &token.TokenType, &token.OwnerID,
-			&token.ExpiresAt, &annotation, &token.CreatedAt, &database, &isSuperuser); err != nil {
+		if err := rows.Scan(&token.ID, &token.TokenHash, &token.OwnerID,
+			&token.ExpiresAt, &annotation, &token.CreatedAt, &database); err != nil {
 			return nil, fmt.Errorf("failed to scan token: %w", err)
 		}
 		if annotation.Valid {
@@ -1313,9 +1333,6 @@ func (s *AuthStore) scanTokens(rows *sql.Rows) ([]*StoredToken, error) {
 		}
 		if database.Valid {
 			token.Database = database.String
-		}
-		if isSuperuser.Valid {
-			token.IsSuperuser = isSuperuser.Bool
 		}
 		tokens = append(tokens, &token)
 	}
@@ -1346,14 +1363,6 @@ func (s *AuthStore) TokenCount() int {
 	var count int
 	//nolint:errcheck // Returns 0 on error, which is acceptable
 	s.db.QueryRow("SELECT COUNT(*) FROM tokens").Scan(&count)
-	return count
-}
-
-// ServiceTokenCount returns the number of service tokens
-func (s *AuthStore) ServiceTokenCount() int {
-	var count int
-	//nolint:errcheck // Returns 0 on error, which is acceptable
-	s.db.QueryRow("SELECT COUNT(*) FROM tokens WHERE token_type = ?", TokenTypeService).Scan(&count)
 	return count
 }
 

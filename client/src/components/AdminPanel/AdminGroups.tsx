@@ -80,6 +80,7 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
     const { user } = useAuth();
     const isSuperuser = !!user?.isSuperuser;
     const [groups, setGroups] = useState([]);
+    const [connections, setConnections] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [expandedGroup, setExpandedGroup] = useState(null);
@@ -121,14 +122,19 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
         try {
             setLoading(true);
             setError(null);
-            const response = await fetch(`${API_BASE_URL}/rbac/groups`, {
-                credentials: 'include',
-            });
-            if (!response.ok) {
+            const [groupsRes, connRes] = await Promise.all([
+                fetch(`${API_BASE_URL}/rbac/groups`, { credentials: 'include' }),
+                fetch(`${API_BASE_URL}/connections`, { credentials: 'include' }),
+            ]);
+            if (!groupsRes.ok) {
                 throw new Error('Failed to fetch groups');
             }
-            const data = await response.json();
+            const data = await groupsRes.json();
             setGroups(data.groups || []);
+            if (connRes.ok) {
+                const connData = await connRes.json();
+                setConnections(connData.connections || connData || []);
+            }
         } catch (err) {
             setError(err.message);
         } finally {
@@ -576,6 +582,7 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
                                                                     mcpPrivileges={effectivePerms.mcp_privileges}
                                                                     isSuperuser={isSuperuser}
                                                                     isDark={isDark}
+                                                                    connections={connections}
                                                                 />
                                                             </Box>
                                                         ) : null}

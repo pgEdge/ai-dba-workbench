@@ -114,8 +114,7 @@ func (rc *RBACChecker) CanAccessMCPItem(ctx context.Context, identifier string) 
 	// Get user ID from context
 	userID := GetUserIDFromContext(ctx)
 	if userID == 0 {
-		// No user ID - check if it's an API token without user ownership
-		// Service tokens without superuser flag can't access restricted items
+		// Defensive check - all tokens now have owners
 		return false
 	}
 
@@ -174,7 +173,7 @@ func (rc *RBACChecker) CanAccessConnection(ctx context.Context, connectionID int
 	// Get user ID from context
 	userID := GetUserIDFromContext(ctx)
 	if userID == 0 {
-		// No user ID - service tokens without superuser flag can't access restricted connections
+		// Defensive check - all tokens now have owners
 		return false, ""
 	}
 
@@ -199,12 +198,16 @@ func (rc *RBACChecker) CanAccessConnection(ctx context.Context, connectionID int
 	tokenID := GetTokenIDFromContext(ctx)
 	if tokenID > 0 {
 		// Token-based access - check if token is scoped to this connection
-		inScope, err := rc.authStore.IsConnectionInTokenScope(tokenID, connectionID)
+		inScope, scopeAccessLevel, err := rc.authStore.IsConnectionInTokenScope(tokenID, connectionID)
 		if err != nil {
 			return false, ""
 		}
 		if !inScope {
 			return false, ""
+		}
+		// Apply minimum access level: token scope can restrict but not elevate
+		if scopeAccessLevel != "" && scopeAccessLevel == AccessLevelRead {
+			accessLevel = AccessLevelRead
 		}
 	}
 
@@ -265,28 +268,90 @@ func (rc *RBACChecker) GetEffectivePrivileges(ctx context.Context) *EffectivePri
 			result.TokenScope = scope
 
 			// If token has connection scope, filter connection privileges
-			if len(scope.ConnectionIDs) > 0 {
-				scopedConnPrivs := make(map[int]string)
-				for _, connID := range scope.ConnectionIDs {
-					if level, ok := result.ConnectionPrivileges[connID]; ok {
-						scopedConnPrivs[connID] = level
+			if len(scope.Connections) > 0 {
+				// Check for wildcard connection (connection_id = 0)
+				hasWildcard := false
+				wildcardLevel := ""
+				for _, sc := range scope.Connections {
+					if sc.ConnectionID == ConnectionIDAll {
+						hasWildcard = true
+						wildcardLevel = sc.AccessLevel
+						break
 					}
 				}
-				result.ConnectionPrivileges = scopedConnPrivs
+
+				if hasWildcard {
+					// Wildcard: keep all user connections but apply the
+					// wildcard access level as a ceiling
+					if wildcardLevel == AccessLevelRead {
+						for connID := range result.ConnectionPrivileges {
+							result.ConnectionPrivileges[connID] = AccessLevelRead
+						}
+					}
+					// read_write wildcard: no further filtering needed
+				} else {
+					scopedConnPrivs := make(map[int]string)
+					for _, sc := range scope.Connections {
+						if userLevel, ok := result.ConnectionPrivileges[sc.ConnectionID]; ok {
+							// Take minimum access level
+							if sc.AccessLevel == AccessLevelRead || userLevel == AccessLevelRead {
+								scopedConnPrivs[sc.ConnectionID] = AccessLevelRead
+							} else {
+								scopedConnPrivs[sc.ConnectionID] = userLevel
+							}
+						}
+					}
+					result.ConnectionPrivileges = scopedConnPrivs
+				}
 			}
 
 			// If token has MCP scope, filter MCP privileges
 			if len(scope.MCPPrivileges) > 0 {
-				scopedMCPPrivs := make(map[string]bool)
+				// Check for wildcard sentinel (privilege_identifier_id = 0)
+				hasWildcard := false
 				for _, privID := range scope.MCPPrivileges {
-					priv, err := rc.authStore.GetMCPPrivilegeByID(privID)
-					if err == nil && priv != nil {
-						if result.MCPPrivileges[priv.Identifier] {
-							scopedMCPPrivs[priv.Identifier] = true
-						}
+					if privID == MCPPrivilegeIDWildcard {
+						hasWildcard = true
+						break
 					}
 				}
-				result.MCPPrivileges = scopedMCPPrivs
+
+				if !hasWildcard {
+					scopedMCPPrivs := make(map[string]bool)
+					for _, privID := range scope.MCPPrivileges {
+						priv, err := rc.authStore.GetMCPPrivilegeByID(privID)
+						if err == nil && priv != nil {
+							if result.MCPPrivileges[priv.Identifier] {
+								scopedMCPPrivs[priv.Identifier] = true
+							}
+						}
+					}
+					result.MCPPrivileges = scopedMCPPrivs
+				}
+				// Wildcard: keep all user MCP privileges unfiltered
+			}
+
+			// If token has admin scope, filter admin permissions
+			if len(scope.AdminPermissions) > 0 {
+				// Check for wildcard ("*")
+				hasWildcard := false
+				for _, perm := range scope.AdminPermissions {
+					if perm == AdminPermissionWildcard {
+						hasWildcard = true
+						break
+					}
+				}
+
+				if !hasWildcard {
+					scopedAdminPerms := make(map[string]bool)
+					for _, perm := range scope.AdminPermissions {
+						if result.AdminPermissions[perm] {
+							scopedAdminPerms[perm] = true
+						}
+					}
+					result.AdminPermissions = scopedAdminPerms
+				}
+				// Wildcard: keep all user admin permissions unfiltered
 			}
 		}
 	}
@@ -334,7 +399,22 @@ func (rc *RBACChecker) HasAdminPermission(ctx context.Context, permission string
 		return false
 	}
 
-	return perms[permission]
+	// Check if user has the permission via groups
+	if !perms[permission] {
+		return false
+	}
+
+	// Check token scoping (if applicable)
+	tokenID := GetTokenIDFromContext(ctx)
+	if tokenID > 0 {
+		inScope, scopeErr := rc.authStore.IsAdminPermissionInTokenScope(tokenID, permission)
+		if scopeErr != nil {
+			return false
+		}
+		return inScope
+	}
+
+	return true
 }
 
 // HasWriteAccess checks if the current context has write access to a connection

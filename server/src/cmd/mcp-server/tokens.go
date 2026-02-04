@@ -20,7 +20,7 @@ import (
 )
 
 // addTokenCommand handles the add-token command
-func addTokenCommand(dataDir, annotation string, expiresIn time.Duration, isSuperuser bool) error {
+func addTokenCommand(dataDir, username, annotation string, expiresIn time.Duration) error {
 	// Open auth store
 	store, err := auth.NewAuthStore(dataDir, 0, 0)
 	if err != nil {
@@ -29,6 +29,17 @@ func addTokenCommand(dataDir, annotation string, expiresIn time.Duration, isSupe
 	defer store.Close()
 
 	reader := bufio.NewReader(os.Stdin)
+
+	// Prompt for username if not provided
+	if username == "" {
+		fmt.Print("Enter owner username: ")
+		if input, err := reader.ReadString('\n'); err == nil {
+			username = strings.TrimSpace(input)
+		}
+		if username == "" {
+			return fmt.Errorf("owner username is required")
+		}
+	}
 
 	// Prompt for annotation if not provided
 	if annotation == "" {
@@ -61,8 +72,8 @@ func addTokenCommand(dataDir, annotation string, expiresIn time.Duration, isSupe
 		}
 	}
 
-	// Create service token (empty database = uses configured single database)
-	rawToken, storedToken, err := store.CreateServiceToken(annotation, expiresAt, "", isSuperuser)
+	// Create token owned by the specified user
+	rawToken, storedToken, err := store.CreateToken(username, annotation, expiresAt)
 	if err != nil {
 		return fmt.Errorf("failed to create token: %w", err)
 	}
@@ -74,14 +85,12 @@ func addTokenCommand(dataDir, annotation string, expiresIn time.Duration, isSupe
 	fmt.Printf("\nToken: %s\n", rawToken)
 	fmt.Printf("Hash:  %s...\n", storedToken.TokenHash[:16])
 	fmt.Printf("ID:    %d\n", storedToken.ID)
+	fmt.Printf("Owner: %s\n", username)
 	if annotation != "" {
 		fmt.Printf("Note:  %s\n", annotation)
 	}
-	if isSuperuser {
-		fmt.Println("Superuser: Yes (bypasses all privilege checks)")
-	}
-	if expiresAt != nil {
-		fmt.Printf("Expires: %s\n", expiresAt.Format(time.RFC3339))
+	if storedToken.ExpiresAt != nil {
+		fmt.Printf("Expires: %s\n", storedToken.ExpiresAt.Format(time.RFC3339))
 	} else {
 		fmt.Println("Expires: Never")
 	}
@@ -103,7 +112,7 @@ func removeTokenCommand(dataDir, identifier string) error {
 	defer store.Close()
 
 	// Remove token
-	if err := store.DeleteServiceToken(identifier); err != nil {
+	if err := store.DeleteToken(identifier); err != nil {
 		return fmt.Errorf("failed to remove token: %w", err)
 	}
 
@@ -120,20 +129,21 @@ func listTokensCommand(dataDir string) error {
 	}
 	defer store.Close()
 
-	tokens, err := store.ListServiceTokens()
+	tokens, err := store.ListAllTokens()
 	if err != nil {
 		return fmt.Errorf("failed to list tokens: %w", err)
 	}
 
 	if len(tokens) == 0 {
-		fmt.Println("No service tokens found.")
+		fmt.Println("No tokens found.")
 		return nil
 	}
 
-	fmt.Println("\nService Tokens:")
-	fmt.Println(strings.Repeat("=", 100))
-	fmt.Printf("%-6s %-18s %-20s %-10s %-10s %s\n", "ID", "Hash Prefix", "Expires", "Status", "Superuser", "Notes")
-	fmt.Println(strings.Repeat("-", 100))
+	fmt.Println("\nTokens:")
+	fmt.Println(strings.Repeat("=", 130))
+	fmt.Printf("%-6s %-18s %-16s %-10s %-10s %-20s %-10s %s\n",
+		"ID", "Hash Prefix", "Owner", "Superuser", "Service", "Expires", "Status", "Notes")
+	fmt.Println(strings.Repeat("-", 130))
 
 	now := time.Now()
 	for _, token := range tokens {
@@ -147,9 +157,19 @@ func listTokensCommand(dataDir string) error {
 			expiryStr = token.ExpiresAt.Format("2006-01-02 15:04")
 		}
 
+		// Look up owner information
+		ownerName := "unknown"
 		superuserStr := "No"
-		if token.IsSuperuser {
-			superuserStr = "Yes"
+		serviceStr := "No"
+		owner, ownerErr := store.GetUserByID(token.OwnerID)
+		if ownerErr == nil && owner != nil {
+			ownerName = owner.Username
+			if owner.IsSuperuser {
+				superuserStr = "Yes"
+			}
+			if owner.IsServiceAccount {
+				serviceStr = "Yes"
+			}
 		}
 
 		annotation := token.Annotation
@@ -162,15 +182,17 @@ func listTokensCommand(dataDir string) error {
 			hashPrefix = hashPrefix[:16]
 		}
 
-		fmt.Printf("%-6d %-18s %-20s %-10s %-10s %s\n",
+		fmt.Printf("%-6d %-18s %-16s %-10s %-10s %-20s %-10s %s\n",
 			token.ID,
 			hashPrefix,
+			ownerName,
+			superuserStr,
+			serviceStr,
 			expiryStr,
 			status,
-			superuserStr,
 			annotation)
 	}
-	fmt.Println(strings.Repeat("=", 100) + "\n")
+	fmt.Println(strings.Repeat("=", 130) + "\n")
 
 	return nil
 }

@@ -187,18 +187,15 @@ func createAuthWrapper(authStore *auth.AuthStore) func(http.HandlerFunc) http.Ha
 			tokenHash := auth.GetTokenHashByRawToken(token)
 			ctx := context.WithValue(r.Context(), auth.TokenHashContextKey, tokenHash)
 
-			// Try API/service token first, then session token
+			// Try API token first, then session token
 			// Populate RBAC context values (UserID, IsSuperuser) for permission checks
 			storedToken, err := authStore.ValidateToken(token)
 			if err == nil && storedToken != nil {
-				ctx = context.WithValue(ctx, auth.IsSuperuserContextKey, storedToken.IsSuperuser)
-				if storedToken.OwnerID != nil {
-					ctx = context.WithValue(ctx, auth.UserIDContextKey, *storedToken.OwnerID)
-					// Check if the owning user is a superuser
-					user, userErr := authStore.GetUserByID(*storedToken.OwnerID)
-					if userErr == nil && user != nil && user.IsSuperuser {
-						ctx = context.WithValue(ctx, auth.IsSuperuserContextKey, true)
-					}
+				ctx = context.WithValue(ctx, auth.UserIDContextKey, storedToken.OwnerID)
+				// Look up user to determine superuser status
+				user, userErr := authStore.GetUserByID(storedToken.OwnerID)
+				if userErr == nil && user != nil {
+					ctx = context.WithValue(ctx, auth.IsSuperuserContextKey, user.IsSuperuser)
 				}
 			} else {
 				// Try session token

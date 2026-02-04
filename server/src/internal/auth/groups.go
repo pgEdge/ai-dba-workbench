@@ -586,18 +586,27 @@ func (s *AuthStore) GetTokenByID(tokenID int64) (*StoredToken, error) {
 	defer s.mu.RUnlock()
 
 	var token StoredToken
+	var annotation sql.NullString
+	var database sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, token_hash, token_type, owner_id, expires_at, annotation, created_at, database, is_superuser
+		`SELECT id, token_hash, owner_id, expires_at, annotation, created_at, database
          FROM tokens WHERE id = ?`,
 		tokenID,
-	).Scan(&token.ID, &token.TokenHash, &token.TokenType, &token.OwnerID,
-		&token.ExpiresAt, &token.Annotation, &token.CreatedAt, &token.Database, &token.IsSuperuser)
+	).Scan(&token.ID, &token.TokenHash, &token.OwnerID,
+		&token.ExpiresAt, &annotation, &token.CreatedAt, &database)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get token: %w", err)
+	}
+
+	if annotation.Valid {
+		token.Annotation = annotation.String
+	}
+	if database.Valid {
+		token.Database = database.String
 	}
 
 	return &token, nil

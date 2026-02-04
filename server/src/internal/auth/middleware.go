@@ -338,7 +338,7 @@ func AuthMiddleware(authStore *AuthStore, enabled bool) func(http.Handler) http.
 				token = cookie.Value
 			}
 
-			// Try to validate as API token (service token or user token) first
+			// Try to validate as API token first
 			storedToken, err := authStore.ValidateToken(token)
 			if err == nil && storedToken != nil {
 				// Valid API token - use token hash for connection isolation
@@ -346,16 +346,12 @@ func AuthMiddleware(authStore *AuthStore, enabled bool) func(http.Handler) http.
 				ctx := context.WithValue(r.Context(), TokenHashContextKey, tokenHash)
 				ctx = context.WithValue(ctx, IsAPITokenContextKey, true)
 				ctx = context.WithValue(ctx, TokenIDContextKey, storedToken.ID)
-				ctx = context.WithValue(ctx, IsSuperuserContextKey, storedToken.IsSuperuser)
+				ctx = context.WithValue(ctx, UserIDContextKey, storedToken.OwnerID)
 
-				// If token is owned by a user, add the user ID for group-based privileges
-				if storedToken.OwnerID != nil {
-					ctx = context.WithValue(ctx, UserIDContextKey, *storedToken.OwnerID)
-					// Look up user to check if they are superuser
-					user, userErr := authStore.GetUserByID(*storedToken.OwnerID)
-					if userErr == nil && user != nil && user.IsSuperuser {
-						ctx = context.WithValue(ctx, IsSuperuserContextKey, true)
-					}
+				// Look up user to determine superuser status
+				user, userErr := authStore.GetUserByID(storedToken.OwnerID)
+				if userErr == nil && user != nil {
+					ctx = context.WithValue(ctx, IsSuperuserContextKey, user.IsSuperuser)
 				}
 
 				r = r.WithContext(ctx)

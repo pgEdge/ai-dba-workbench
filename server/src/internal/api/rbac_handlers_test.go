@@ -583,7 +583,7 @@ func TestRBACHandler_HandleTokens_MethodNotAllowed(t *testing.T) {
 	handler, _, cleanup := createTestRBACHandler(t, true)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/rbac/tokens", nil)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/rbac/tokens", nil)
 	req = withSuperuser(req)
 	rec := httptest.NewRecorder()
 
@@ -594,8 +594,8 @@ func TestRBACHandler_HandleTokens_MethodNotAllowed(t *testing.T) {
 	}
 
 	allowed := rec.Header().Get("Allow")
-	if allowed != "GET" {
-		t.Errorf("Expected Allow header 'GET', got %q", allowed)
+	if allowed != "GET, POST" {
+		t.Errorf("Expected Allow header 'GET, POST', got %q", allowed)
 	}
 }
 

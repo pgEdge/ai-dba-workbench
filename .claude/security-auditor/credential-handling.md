@@ -1,59 +1,81 @@
 # Credential Handling
 
-This document describes how credentials and secrets are managed in the AI DBA
-Workbench.
+This document describes how credentials and secrets are
+managed in the AI DBA Workbench.
 
 ## Password Storage
 
 ### User Passwords
 
-**Location:** `/server/src/auth/` and `/server/src/database/users.go`
+The server stores user passwords in the `users` table.
 
-**Approach:**
+The password storage implementation resides in
+`/server/src/auth/` and `/server/src/database/users.go`.
 
-- Passwords hashed before storage
-- Hash algorithm: bcrypt or SHA256 (verify current implementation)
-- Salt: Included in bcrypt; separate for SHA256
-- Never stored in plaintext
+The system uses the following approach:
 
-**Verification flow:**
+- The server hashes passwords before storage.
+- The hash algorithm is bcrypt or SHA256; verify the
+  current implementation for the active algorithm.
+- Bcrypt includes a salt; SHA256 uses a separate salt.
+- The system never stores passwords in plaintext.
+
+The verification flow follows these steps:
 
 ```
 User submits password
-        │
-        ▼
+        |
+        v
 Hash submitted password
-        │
-        ▼
+        |
+        v
 Compare with stored hash
 (constant-time comparison)
-        │
-        ▼
+        |
+        v
 Return success/failure
 (no timing difference)
 ```
 
-**Security requirements:**
+The following security requirements apply:
 
-- [ ] Use bcrypt with cost factor >= 10
-- [ ] Or use SHA256 with unique salt per password
-- [ ] Comparison must be constant-time
-- [ ] Failed attempts must not reveal valid usernames
+- Use bcrypt with a cost factor of 10 or higher.
+- Alternatively, use SHA256 with a unique salt per password.
+- Comparison must use constant-time operations.
+- Failed attempts must not reveal valid usernames.
 
 ## Token Management
 
-### Service Tokens
+### API Tokens
 
-**Location:** Database table `service_tokens`
+The server stores all API tokens in a unified `tokens`
+table. Each token has an `owner_id` that references a user
+in the `users` table; the `owner_id` column is `NOT NULL`.
 
-**Properties:**
+The token management implementation resides in the database
+layer.
 
-- Long-lived tokens for automated access
-- Generated with crypto/rand
-- Stored as SHA256 hash (not plaintext)
-- Associated with specific privileges
+The system supports the following token properties:
 
-**Generation:**
+- All tokens are stored as SHA256 hashes, never in
+  plaintext.
+- Each token references an owning user or service account
+  via `owner_id`.
+- Tokens support optional expiration via `expires_at`.
+- The `annotation` field describes the token's purpose.
+- Superuser status comes from the owning user account,
+  never from the token itself.
+
+Service accounts are users with `is_service_account = TRUE`
+and an empty `password_hash`. These accounts cannot log in
+with a password; tokens are their only authentication
+method.
+
+The `CreateToken` function generates a new API token for
+a specified owner.
+
+In the following example, the function creates a token
+with cryptographically secure random bytes:
 
 ```go
 // Expected pattern
@@ -62,81 +84,82 @@ _, err := crypto_rand.Read(token)
 // Store SHA256(token), return hex(token) to user
 ```
 
-### User Tokens
+The following scope tables restrict token capabilities:
 
-**Location:** Database table `user_tokens`
-
-**Properties:**
-
-- May be time-limited
-- Scoped to specific connections/MCP items
-- Stored as SHA256 hash
-
-**Scoping tables:**
-
-- `user_token_connection_scope` - Limits connection access
-- `user_token_mcp_scope` - Limits MCP tool/resource access
+- The `token_connection_scope` table limits which database
+  connections a token can access.
+- The `token_mcp_scope` table limits which MCP tools and
+  resources a token can use.
 
 ### Session Tokens
 
-**Location:** `/server/src/auth/sessions.go`
+The server manages session tokens for interactive users.
 
-**Properties:**
+The session token implementation resides in
+`/server/src/auth/sessions.go`.
 
-- Short-lived (session duration)
-- Invalidated on logout
-- Associated with user account
+The system supports the following session properties:
+
+- Session tokens are short-lived for the session duration.
+- The server invalidates session tokens on logout.
+- Each session token references a user account.
 
 ## Database Connection Credentials
 
 ### Storage
 
-**Location:** Database table `connections`, `/collector/src/database/`
+The server stores database connection credentials in the
+`connections` table. The collector stores credentials in
+`/collector/src/database/`.
 
-**Approach:**
+The system uses the following approach:
 
-- Connection passwords encrypted at rest
-- Encryption key from configuration/environment
-- Decrypted only when connection is established
+- Connection passwords are encrypted at rest.
+- The encryption key comes from configuration or the
+  environment.
+- The server decrypts passwords only when establishing
+  a connection.
 
-**Flow:**
+The encryption flow follows these steps:
 
 ```
 Password provided
-        │
-        ▼
+        |
+        v
 Encrypt with AES/similar
-        │
-        ▼
+        |
+        v
 Store encrypted blob
-        │
-        ▼
+        |
+        v
 (On connection)
-        │
-        ▼
+        |
+        v
 Decrypt with key
-        │
-        ▼
+        |
+        v
 Use for PostgreSQL auth
-        │
-        ▼
+        |
+        v
 Clear from memory
 ```
 
 ### Connection Strings
 
-**Security requirements:**
+The following security requirements apply to connection
+strings:
 
-- [ ] Never log full connection strings
-- [ ] Sanitize connection errors (remove password)
-- [ ] Clear credentials from memory after use
-- [ ] Encryption key not in source code
+- Never log full connection strings.
+- Sanitize connection errors to remove passwords.
+- Clear credentials from memory after use.
+- Store encryption keys outside of source code.
 
 ## Secret Configuration
 
 ### Environment Variables
 
-**Preferred method for secrets:**
+Environment variables are the preferred method for storing
+secrets.
 
 ```bash
 # Server configuration
@@ -149,41 +172,49 @@ JWT_SECRET=...
 
 ### Configuration Files
 
-**If secrets must be in files:**
+The following requirements apply when secrets must reside
+in configuration files:
 
-- [ ] File permissions restricted (600 or 400)
-- [ ] Not committed to version control
-- [ ] Encrypted if possible
-- [ ] Loaded once at startup
+- Restrict file permissions to 600 or 400.
+- Do not commit secret files to version control.
+- Encrypt configuration files when possible.
+- Load secrets once at startup.
 
 ## Logging Safety
 
-### What Must NOT Be Logged
+### What Must Not Be Logged
+
+The following items must never appear in log output:
 
 ```go
 // NEVER log these:
 log.Printf("Password: %s", password)
 log.Printf("Token: %s", token)
-log.Printf("Connection: %s", connectionString)  // Contains password
-log.Printf("Request body: %v", request)  // May contain credentials
+log.Printf("Connection: %s", connectionString)
+log.Printf("Request body: %v", request)
 ```
 
 ### Safe Logging Patterns
 
+The following patterns demonstrate safe logging practices:
+
 ```go
 // Log sanitized versions:
 log.Printf("Auth attempt for user: %s", username)
-log.Printf("Connection to host: %s", hostname)  // No password
-log.Printf("Token prefix: %s...", token[:8])  // Partial only for debugging
+log.Printf("Connection to host: %s", hostname)
+log.Printf("Token prefix: %s...", token[:8])
 ```
 
 ### Connection String Sanitization
+
+The server sanitizes connection strings before logging.
 
 ```go
 // Before logging connection errors:
 func sanitizeConnString(conn string) string {
     // Remove password portion
-    // postgres://user:PASSWORD@host/db -> postgres://user:***@host/db
+    // postgres://user:PASSWORD@host/db
+    //   -> postgres://user:***@host/db
 }
 ```
 
@@ -191,11 +222,17 @@ func sanitizeConnString(conn string) string {
 
 ### External Error Messages
 
+The following examples show safe and unsafe error messages:
+
 ```go
 // BAD - Leaks information
 return fmt.Errorf("user '%s' not found", username)
-return fmt.Errorf("invalid password for user '%s'", username)
-return fmt.Errorf("connection to %s failed: %v", connStr, err)
+return fmt.Errorf(
+    "invalid password for user '%s'", username,
+)
+return fmt.Errorf(
+    "connection to %s failed: %v", connStr, err,
+)
 
 // GOOD - Generic messages
 return errors.New("invalid credentials")
@@ -204,6 +241,9 @@ return errors.New("connection failed")
 ```
 
 ### Internal vs External
+
+The server separates internal logging from external error
+messages.
 
 ```go
 // Log detailed error internally
@@ -217,34 +257,49 @@ return errors.New("authentication failed")
 
 ### Token Rotation
 
-- User tokens: User can regenerate
-- Service tokens: Admin can regenerate
-- Old tokens invalidated immediately
+The unified token model supports the following rotation
+capabilities:
+
+- Token owners can regenerate their own API tokens.
+- Superusers can regenerate tokens for any user or service
+  account.
+- The server invalidates old tokens immediately upon
+  rotation.
 
 ### Encryption Key Rotation
 
-- Requires re-encryption of all stored credentials
-- Process should be documented
-- Zero-downtime rotation preferred
+The following requirements apply to encryption key
+rotation:
+
+- Key rotation requires re-encryption of all stored
+  credentials.
+- The rotation process should be documented.
+- The system should support zero-downtime rotation.
 
 ## Audit Requirements
 
 ### What to Audit
 
-- [ ] Token creation/deletion
-- [ ] Failed authentication attempts
-- [ ] Privilege changes
-- [ ] Connection credential changes
-- [ ] Admin operations
+The following events require audit logging:
+
+- Token creation and deletion events.
+- Failed authentication attempts.
+- Privilege changes for users and groups.
+- Connection credential changes.
+- Administrative operations.
 
 ### Audit Log Location
 
-- Database audit tables (if implemented)
-- Application logs (sanitized)
+The system stores audit logs in the following locations:
+
+- Database audit tables store structured audit records.
+- Application logs store sanitized event records.
 
 ## Security Testing
 
 ### Credential Tests
+
+The following tests verify credential handling:
 
 ```go
 // Test that passwords are hashed

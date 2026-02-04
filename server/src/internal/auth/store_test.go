@@ -397,47 +397,43 @@ func TestInvalidateSession(t *testing.T) {
 }
 
 // =============================================================================
-// Service Token Tests
+// Token Tests
 // =============================================================================
 
-func TestCreateServiceToken(t *testing.T) {
+func TestCreateToken(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	rawToken, storedToken, err := store.CreateServiceToken("Test token", nil, "testdb", true)
+	store.CreateUser("testuser", "password", "", "", "")
+
+	rawToken, storedToken, err := store.CreateToken("testuser", "Test token", nil)
 	if err != nil {
-		t.Fatalf("Failed to create service token: %v", err)
+		t.Fatalf("Failed to create token: %v", err)
 	}
 
 	if rawToken == "" {
 		t.Error("Expected non-empty raw token")
 	}
 
-	if storedToken.TokenType != TokenTypeService {
-		t.Errorf("Expected token type 'service', got %q", storedToken.TokenType)
+	if storedToken.OwnerID == 0 {
+		t.Error("Expected non-zero owner ID")
 	}
 
-	if storedToken.Database != "testdb" {
-		t.Errorf("Expected database 'testdb', got %q", storedToken.Database)
-	}
-
-	if !storedToken.IsSuperuser {
-		t.Error("Expected superuser flag to be true")
-	}
-
-	if storedToken.OwnerID != nil {
-		t.Error("Expected nil owner ID for service token")
+	if storedToken.Annotation != "Test token" {
+		t.Errorf("Expected annotation 'Test token', got %q", storedToken.Annotation)
 	}
 }
 
-func TestCreateServiceTokenWithExpiry(t *testing.T) {
+func TestCreateTokenWithExpiry(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
+	store.CreateUser("testuser", "password", "", "", "")
+
 	expiry := time.Now().Add(24 * time.Hour)
-	rawToken, storedToken, err := store.CreateServiceToken("Test token", &expiry, "", false)
+	rawToken, storedToken, err := store.CreateToken("testuser", "Test token", &expiry)
 	if err != nil {
-		t.Fatalf("Failed to create service token: %v", err)
+		t.Fatalf("Failed to create token: %v", err)
 	}
 
 	if storedToken.ExpiresAt == nil {
@@ -459,10 +455,12 @@ func TestValidateTokenExpired(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
+	store.CreateUser("testuser", "password", "", "", "")
+
 	expiry := time.Now().Add(-1 * time.Hour) // Already expired
-	rawToken, _, err := store.CreateServiceToken("Test token", &expiry, "", false)
+	rawToken, _, err := store.CreateToken("testuser", "Test token", &expiry)
 	if err != nil {
-		t.Fatalf("Failed to create service token: %v", err)
+		t.Fatalf("Failed to create token: %v", err)
 	}
 
 	_, err = store.ValidateToken(rawToken)
@@ -481,49 +479,17 @@ func TestValidateTokenInvalid(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// User Token Tests
-// =============================================================================
-
-func TestCreateUserToken(t *testing.T) {
+func TestCreateTokenNonExistentUser(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	store.CreateUser("testuser", "password", "", "", "")
-
-	rawToken, storedToken, err := store.CreateUserToken("testuser", "My API token", 30)
-	if err != nil {
-		t.Fatalf("Failed to create user token: %v", err)
-	}
-
-	if rawToken == "" {
-		t.Error("Expected non-empty raw token")
-	}
-
-	if storedToken.TokenType != TokenTypeUser {
-		t.Errorf("Expected token type 'user', got %q", storedToken.TokenType)
-	}
-
-	if storedToken.OwnerID == nil {
-		t.Fatal("Expected non-nil owner ID for user token")
-	}
-
-	if storedToken.Annotation != "My API token" {
-		t.Errorf("Expected annotation 'My API token', got %q", storedToken.Annotation)
-	}
-}
-
-func TestCreateUserTokenNonExistentUser(t *testing.T) {
-	store, cleanup := createTestAuthStoreForStore(t)
-	defer cleanup()
-
-	_, _, err := store.CreateUserToken("nonexistent", "Token", 30)
+	_, _, err := store.CreateToken("nonexistent", "Token", nil)
 	if err == nil {
 		t.Error("Expected error for non-existent user")
 	}
 }
 
-func TestCreateUserTokenWithMaxDays(t *testing.T) {
+func TestCreateTokenWithMaxDays(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "auth-max-days-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
@@ -539,14 +505,14 @@ func TestCreateUserTokenWithMaxDays(t *testing.T) {
 
 	store.CreateUser("testuser", "password", "", "", "")
 
-	// Request 90 days, should be limited to 30
-	_, storedToken, err := store.CreateUserToken("testuser", "Token", 90)
+	// Non-superuser with nil expiry should get maxDays applied
+	_, storedToken, err := store.CreateToken("testuser", "Token", nil)
 	if err != nil {
 		t.Fatalf("Failed to create token: %v", err)
 	}
 
 	if storedToken.ExpiresAt == nil {
-		t.Fatal("Expected expiry to be set")
+		t.Fatal("Expected expiry to be set for non-superuser")
 	}
 
 	// Check expiry is approximately maxDays from now
@@ -557,12 +523,30 @@ func TestCreateUserTokenWithMaxDays(t *testing.T) {
 	}
 }
 
-func TestValidateUserTokenDisabledOwner(t *testing.T) {
+func TestCreateTokenSuperuserNoExpiry(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	store.CreateUser("superuser", "password", "", "", "")
+	store.SetUserSuperuser("superuser", true)
+
+	// Superuser with nil expiry should get no expiry
+	_, storedToken, err := store.CreateToken("superuser", "Token", nil)
+	if err != nil {
+		t.Fatalf("Failed to create token: %v", err)
+	}
+
+	if storedToken.ExpiresAt != nil {
+		t.Error("Expected no expiry for superuser token with nil requestedExpiry")
+	}
+}
+
+func TestValidateTokenDisabledOwner(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
 	store.CreateUser("testuser", "password", "", "", "")
-	rawToken, _, err := store.CreateUserToken("testuser", "Token", 30)
+	rawToken, _, err := store.CreateToken("testuser", "Token", nil)
 	if err != nil {
 		t.Fatalf("Failed to create token: %v", err)
 	}
@@ -582,8 +566,8 @@ func TestListUserTokens(t *testing.T) {
 	defer cleanup()
 
 	store.CreateUser("testuser", "password", "", "", "")
-	store.CreateUserToken("testuser", "Token 1", 30)
-	store.CreateUserToken("testuser", "Token 2", 30)
+	store.CreateToken("testuser", "Token 1", nil)
+	store.CreateToken("testuser", "Token 2", nil)
 
 	tokens, err := store.ListUserTokens("testuser")
 	if err != nil {
@@ -600,7 +584,7 @@ func TestDeleteUserToken(t *testing.T) {
 	defer cleanup()
 
 	store.CreateUser("testuser", "password", "", "", "")
-	_, storedToken, _ := store.CreateUserToken("testuser", "Token", 30)
+	_, storedToken, _ := store.CreateToken("testuser", "Token", nil)
 
 	err := store.DeleteUserToken("testuser", storedToken.ID)
 	if err != nil {
@@ -619,7 +603,7 @@ func TestDeleteUserTokenNotOwned(t *testing.T) {
 
 	store.CreateUser("user1", "password", "", "", "")
 	store.CreateUser("user2", "password", "", "", "")
-	_, storedToken, _ := store.CreateUserToken("user1", "Token", 30)
+	_, storedToken, _ := store.CreateToken("user1", "Token", nil)
 
 	// Try to delete user1's token as user2
 	err := store.DeleteUserToken("user2", storedToken.ID)
@@ -629,36 +613,16 @@ func TestDeleteUserTokenNotOwned(t *testing.T) {
 }
 
 // =============================================================================
-// Service Token Management Tests
+// Token Management Tests
 // =============================================================================
-
-func TestListServiceTokens(t *testing.T) {
-	store, cleanup := createTestAuthStoreForStore(t)
-	defer cleanup()
-
-	store.CreateServiceToken("Token 1", nil, "", false)
-	store.CreateServiceToken("Token 2", nil, "", false)
-	store.CreateUser("testuser", "password", "", "", "")
-	store.CreateUserToken("testuser", "User Token", 30)
-
-	tokens, err := store.ListServiceTokens()
-	if err != nil {
-		t.Fatalf("Failed to list service tokens: %v", err)
-	}
-
-	// Should only include service tokens, not user tokens
-	if len(tokens) != 2 {
-		t.Errorf("Expected 2 service tokens, got %d", len(tokens))
-	}
-}
 
 func TestListAllTokens(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	store.CreateServiceToken("Service Token", nil, "", false)
 	store.CreateUser("testuser", "password", "", "", "")
-	store.CreateUserToken("testuser", "User Token", 30)
+	store.CreateToken("testuser", "Token 1", nil)
+	store.CreateToken("testuser", "Token 2", nil)
 
 	tokens, err := store.ListAllTokens()
 	if err != nil {
@@ -670,41 +634,43 @@ func TestListAllTokens(t *testing.T) {
 	}
 }
 
-func TestDeleteServiceTokenByID(t *testing.T) {
+func TestDeleteTokenByID(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	_, storedToken, _ := store.CreateServiceToken("Token", nil, "", false)
+	store.CreateUser("testuser", "password", "", "", "")
+	_, storedToken, _ := store.CreateToken("testuser", "Token", nil)
 
-	// Deletion by ID requires the ID as a string - this test just confirms the code path
-	_ = store.DeleteServiceToken("1")
+	// Deletion by ID requires the ID as a string
+	_ = store.DeleteToken("1")
 	_ = storedToken // Use the variable
 }
 
-func TestDeleteServiceTokenByHashPrefix(t *testing.T) {
+func TestDeleteTokenByHashPrefix(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	_, storedToken, _ := store.CreateServiceToken("Token", nil, "", false)
+	store.CreateUser("testuser", "password", "", "", "")
+	_, storedToken, _ := store.CreateToken("testuser", "Token", nil)
 
 	// Use first 8 characters of hash
 	prefix := storedToken.TokenHash[:8]
-	err := store.DeleteServiceToken(prefix)
+	err := store.DeleteToken(prefix)
 	if err != nil {
 		t.Fatalf("Failed to delete token by hash prefix: %v", err)
 	}
 
-	tokens, _ := store.ListServiceTokens()
+	tokens, _ := store.ListAllTokens()
 	if len(tokens) != 0 {
 		t.Errorf("Expected 0 tokens after deletion, got %d", len(tokens))
 	}
 }
 
-func TestDeleteServiceTokenNotFound(t *testing.T) {
+func TestDeleteTokenNotFound(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	err := store.DeleteServiceToken("nonexistent")
+	err := store.DeleteToken("nonexistent")
 	if err == nil {
 		t.Error("Expected error for non-existent token")
 	}
@@ -718,16 +684,18 @@ func TestCleanupExpiredTokensStore(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
+	store.CreateUser("testuser", "password", "", "", "")
+
 	// Create expired token
 	expiredTime := time.Now().Add(-1 * time.Hour)
-	store.CreateServiceToken("Expired", &expiredTime, "", false)
+	store.CreateToken("testuser", "Expired", &expiredTime)
 
 	// Create valid token
 	validTime := time.Now().Add(24 * time.Hour)
-	store.CreateServiceToken("Valid", &validTime, "", false)
+	store.CreateToken("testuser", "Valid", &validTime)
 
 	// Create never-expiring token
-	store.CreateServiceToken("Never Expires", nil, "", false)
+	store.CreateToken("testuser", "Never Expires", nil)
 
 	count, hashes := store.CleanupExpiredTokens()
 	if count != 1 {
@@ -738,9 +706,53 @@ func TestCleanupExpiredTokensStore(t *testing.T) {
 		t.Errorf("Expected 1 hash returned, got %d", len(hashes))
 	}
 
-	tokens, _ := store.ListServiceTokens()
+	tokens, _ := store.ListAllTokens()
 	if len(tokens) != 2 {
 		t.Errorf("Expected 2 tokens remaining, got %d", len(tokens))
+	}
+}
+
+// =============================================================================
+// Service Account Tests
+// =============================================================================
+
+func TestCreateServiceAccount(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	err := store.CreateServiceAccount("svc-bot", "CI/CD bot", "Bot Account", "bot@example.com")
+	if err != nil {
+		t.Fatalf("Failed to create service account: %v", err)
+	}
+
+	user, err := store.GetUser("svc-bot")
+	if err != nil {
+		t.Fatalf("Failed to get service account: %v", err)
+	}
+
+	if !user.IsServiceAccount {
+		t.Error("Expected IsServiceAccount to be true")
+	}
+
+	if !user.Enabled {
+		t.Error("Expected service account to be enabled")
+	}
+
+	if user.PasswordHash != "" {
+		t.Error("Expected empty password hash for service account")
+	}
+}
+
+func TestServiceAccountCannotLogin(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	store.CreateServiceAccount("svc-bot", "CI/CD bot", "", "")
+
+	// Service accounts cannot authenticate with password
+	_, _, err := store.AuthenticateUser("svc-bot", "")
+	if err == nil {
+		t.Error("Expected error when authenticating service account")
 	}
 }
 
@@ -877,25 +889,12 @@ func TestTokenCount(t *testing.T) {
 		t.Errorf("Expected 0 tokens initially, got %d", count)
 	}
 
-	store.CreateServiceToken("Token 1", nil, "", false)
-	store.CreateServiceToken("Token 2", nil, "", false)
+	store.CreateUser("testuser", "password", "", "", "")
+	store.CreateToken("testuser", "Token 1", nil)
+	store.CreateToken("testuser", "Token 2", nil)
 
 	if count := store.TokenCount(); count != 2 {
 		t.Errorf("Expected 2 tokens, got %d", count)
-	}
-}
-
-func TestServiceTokenCount(t *testing.T) {
-	store, cleanup := createTestAuthStoreForStore(t)
-	defer cleanup()
-
-	store.CreateServiceToken("Service 1", nil, "", false)
-	store.CreateServiceToken("Service 2", nil, "", false)
-	store.CreateUser("testuser", "password", "", "", "")
-	store.CreateUserToken("testuser", "User Token", 30)
-
-	if count := store.ServiceTokenCount(); count != 2 {
-		t.Errorf("Expected 2 service tokens, got %d", count)
 	}
 }
 
@@ -904,7 +903,7 @@ func TestGetCounts(t *testing.T) {
 	defer cleanup()
 
 	store.CreateUser("user1", "pass", "", "", "")
-	store.CreateServiceToken("Token", nil, "", false)
+	store.CreateToken("user1", "Token", nil)
 
 	users, tokens := store.GetCounts()
 	if users != 1 {

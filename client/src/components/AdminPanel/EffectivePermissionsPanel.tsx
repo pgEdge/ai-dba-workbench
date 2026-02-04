@@ -25,6 +25,8 @@ const ADMIN_PERMISSION_LABELS: Record<string, string> = {
     manage_connections: 'Manage Connections',
     manage_groups: 'Manage Groups',
     manage_permissions: 'Manage Permissions',
+    manage_probes: 'Manage Probes',
+    manage_alert_rules: 'Manage Alert Rules',
     manage_token_scopes: 'Manage Token Scopes',
     manage_users: 'Manage Users',
 };

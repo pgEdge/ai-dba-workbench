@@ -180,6 +180,32 @@ The API provides endpoints in the following categories:
 | GET | `/api/v1/llm/models` | List available models |
 | POST | `/api/v1/llm/chat` | Send chat message |
 
+### RBAC Management
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/rbac/users` | List all users |
+| POST | `/api/v1/rbac/users` | Create a user |
+| GET | `/api/v1/rbac/users/{id}` | Get a user by ID |
+| PUT | `/api/v1/rbac/users/{id}` | Update a user |
+| DELETE | `/api/v1/rbac/users/{id}` | Delete a user |
+| GET | `/api/v1/rbac/users/{id}/privileges` | Get effective privileges |
+| GET | `/api/v1/rbac/groups` | List all groups |
+| POST | `/api/v1/rbac/groups` | Create a group |
+| GET | `/api/v1/rbac/groups/{id}` | Get a group by ID |
+| PUT | `/api/v1/rbac/groups/{id}` | Update a group |
+| DELETE | `/api/v1/rbac/groups/{id}` | Delete a group |
+| POST | `/api/v1/rbac/groups/{id}/members` | Add a group member |
+| DELETE | `/api/v1/rbac/groups/{id}/members/{type}/{member_id}` | Remove a group member |
+| GET | `/api/v1/rbac/groups/{id}/effective-privileges` | Get group privileges |
+| GET | `/api/v1/rbac/tokens` | List all tokens |
+| POST | `/api/v1/rbac/tokens` | Create a token |
+| DELETE | `/api/v1/rbac/tokens/{id}` | Delete a token |
+| GET | `/api/v1/rbac/tokens/{id}/scope` | Get token scope |
+| PUT | `/api/v1/rbac/tokens/{id}/scope` | Set token scope |
+| DELETE | `/api/v1/rbac/tokens/{id}/scope` | Clear token scope |
+| GET | `/api/v1/rbac/privileges/mcp` | List MCP privileges |
+
 ### Utilities
 
 | Method | Endpoint | Description |

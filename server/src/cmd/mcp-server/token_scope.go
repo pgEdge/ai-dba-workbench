@@ -35,12 +35,21 @@ func scopeTokenConnectionsCommand(dataDir string, tokenID int64, connectionIDs s
 		return fmt.Errorf("failed to parse connection IDs: %w", err)
 	}
 
+	// Build scoped connections with default read_write access
+	conns := make([]auth.ScopedConnection, len(ids))
+	for i, id := range ids {
+		conns[i] = auth.ScopedConnection{
+			ConnectionID: id,
+			AccessLevel:  auth.AccessLevelReadWrite,
+		}
+	}
+
 	// Set token connection scope
-	if err := store.SetTokenConnectionScope(tokenID, ids); err != nil {
+	if err := store.SetTokenConnectionScope(tokenID, conns); err != nil {
 		return fmt.Errorf("failed to set token connection scope: %w", err)
 	}
 
-	if len(ids) == 0 {
+	if len(conns) == 0 {
 		fmt.Printf("Cleared connection scope for token %d (no restrictions)\n", tokenID)
 	} else {
 		fmt.Printf("Set connection scope for token %d: %v\n", tokenID, ids)
@@ -135,10 +144,10 @@ func showTokenScopeCommand(dataDir string, tokenID int64) error {
 		fmt.Println("No scope restrictions (full access to user's privileges)")
 	} else {
 		// Connection scope
-		if len(scope.ConnectionIDs) > 0 {
+		if len(scope.Connections) > 0 {
 			fmt.Println("\nConnection Scope (restricted to):")
-			for _, connID := range scope.ConnectionIDs {
-				fmt.Printf("  - Connection %d\n", connID)
+			for _, conn := range scope.Connections {
+				fmt.Printf("  - Connection %d (%s)\n", conn.ConnectionID, conn.AccessLevel)
 			}
 		} else {
 			fmt.Println("\nConnection Scope: Unrestricted")

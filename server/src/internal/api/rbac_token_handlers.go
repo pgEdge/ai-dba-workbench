@@ -10,10 +10,12 @@
 package api
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
@@ -22,14 +24,21 @@ import (
 // Token Scopes
 // =============================================================================
 
-// handleTokens handles GET /api/v1/rbac/tokens
+// handleTokens handles GET/POST /api/v1/rbac/tokens
 func (h *RBACHandler) handleTokens(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", "GET")
+	switch r.Method {
+	case http.MethodGet:
+		h.listTokens(w, r)
+	case http.MethodPost:
+		h.createToken(w, r)
+	default:
+		w.Header().Set("Allow", "GET, POST")
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
 	}
+}
 
+// listTokens returns all tokens with their scope information.
+func (h *RBACHandler) listTokens(w http.ResponseWriter, r *http.Request) {
 	if !h.requirePermission(w, r, auth.PermManageTokenScopes) {
 		return
 	}
@@ -41,20 +50,28 @@ func (h *RBACHandler) handleTokens(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	type tokenConnectionScope struct {
+		ConnectionID int    `json:"connection_id"`
+		AccessLevel  string `json:"access_level"`
+	}
+
 	type tokenScope struct {
-		Scoped        bool    `json:"scoped"`
-		ConnectionIDs []int   `json:"connection_ids,omitempty"`
-		MCPPrivileges []int64 `json:"mcp_privileges,omitempty"`
+		Scoped           bool                   `json:"scoped"`
+		Connections      []tokenConnectionScope `json:"connections,omitempty"`
+		MCPPrivileges    []int64                `json:"mcp_privileges,omitempty"`
+		AdminPermissions []string               `json:"admin_permissions,omitempty"`
 	}
 
 	type tokenResponse struct {
-		ID          int64       `json:"id"`
-		Name        string      `json:"name"`
-		TokenPrefix string      `json:"token_prefix"`
-		TokenType   string      `json:"token_type"`
-		UserID      *int64      `json:"user_id,omitempty"`
-		Username    string      `json:"username,omitempty"`
-		Scope       *tokenScope `json:"scope,omitempty"`
+		ID               int64       `json:"id"`
+		Name             string      `json:"name"`
+		TokenPrefix      string      `json:"token_prefix"`
+		UserID           int64       `json:"user_id"`
+		Username         string      `json:"username,omitempty"`
+		IsServiceAccount bool        `json:"is_service_account"`
+		IsSuperuser      bool        `json:"is_superuser"`
+		ExpiresAt        *time.Time  `json:"expires_at"`
+		Scope            *tokenScope `json:"scope,omitempty"`
 	}
 
 	result := make([]tokenResponse, 0, len(tokens))
@@ -67,21 +84,29 @@ func (h *RBACHandler) handleTokens(w http.ResponseWriter, r *http.Request) {
 			ID:          t.ID,
 			Name:        t.Annotation,
 			TokenPrefix: prefix,
-			TokenType:   t.TokenType,
 			UserID:      t.OwnerID,
+			ExpiresAt:   t.ExpiresAt,
 		}
-		if t.OwnerID != nil {
-			user, err := h.authStore.GetUserByID(*t.OwnerID)
-			if err == nil && user != nil {
-				tr.Username = user.Username
-			}
+		user, err := h.authStore.GetUserByID(t.OwnerID)
+		if err == nil && user != nil {
+			tr.Username = user.Username
+			tr.IsServiceAccount = user.IsServiceAccount
+			tr.IsSuperuser = user.IsSuperuser
 		}
 		scope, err := h.authStore.GetTokenScope(t.ID)
 		if err == nil && scope != nil {
+			conns := make([]tokenConnectionScope, len(scope.Connections))
+			for i, c := range scope.Connections {
+				conns[i] = tokenConnectionScope{
+					ConnectionID: c.ConnectionID,
+					AccessLevel:  c.AccessLevel,
+				}
+			}
 			tr.Scope = &tokenScope{
-				Scoped:        true,
-				ConnectionIDs: scope.ConnectionIDs,
-				MCPPrivileges: scope.MCPPrivileges,
+				Scoped:           true,
+				Connections:      conns,
+				MCPPrivileges:    scope.MCPPrivileges,
+				AdminPermissions: scope.AdminPermissions,
 			}
 		}
 		result = append(result, tr)
@@ -90,7 +115,88 @@ func (h *RBACHandler) handleTokens(w http.ResponseWriter, r *http.Request) {
 	RespondJSON(w, http.StatusOK, map[string]any{"tokens": result})
 }
 
-// handleTokenSubpath handles /api/v1/rbac/tokens/{id}/scope
+// createToken creates a new token for the specified user.
+func (h *RBACHandler) createToken(w http.ResponseWriter, r *http.Request) {
+	if !h.requirePermission(w, r, auth.PermManageTokenScopes) {
+		return
+	}
+
+	var req struct {
+		OwnerUsername string  `json:"owner_username"`
+		Annotation    string  `json:"annotation"`
+		ExpiresIn     *string `json:"expires_in"`
+	}
+	if !DecodeJSONBody(w, r, &req) {
+		return
+	}
+
+	if req.OwnerUsername == "" {
+		RespondError(w, http.StatusBadRequest, "Owner username is required")
+		return
+	}
+
+	var expiry *time.Time
+	if req.ExpiresIn != nil && *req.ExpiresIn != "" && *req.ExpiresIn != "never" {
+		duration, err := parseTokenExpiry(*req.ExpiresIn)
+		if err != nil {
+			RespondError(w, http.StatusBadRequest,
+				fmt.Sprintf("Invalid expires_in: %s", err.Error()))
+			return
+		}
+		exp := time.Now().Add(duration)
+		expiry = &exp
+	}
+
+	rawToken, storedToken, err := h.authStore.CreateToken(
+		req.OwnerUsername, req.Annotation, expiry)
+	if err != nil {
+		log.Printf("[ERROR] Failed to create token for %s: %v",
+			req.OwnerUsername, err)
+		RespondError(w, http.StatusInternalServerError,
+			"Failed to create token")
+		return
+	}
+
+	RespondJSON(w, http.StatusCreated, map[string]interface{}{
+		"token":      rawToken,
+		"id":         storedToken.ID,
+		"owner":      req.OwnerUsername,
+		"annotation": storedToken.Annotation,
+		"expires_at": storedToken.ExpiresAt,
+		"message":    "Token created. Save this token securely - it will not be shown again.",
+	})
+}
+
+// parseTokenExpiry parses a human-readable expiry string into a duration.
+// Supported formats: "24h", "30d", "4w", "6m", "1y".
+func parseTokenExpiry(s string) (time.Duration, error) {
+	if len(s) < 2 {
+		return 0, fmt.Errorf("invalid format")
+	}
+	numStr := s[:len(s)-1]
+	unit := s[len(s)-1:]
+	num, err := strconv.Atoi(numStr)
+	if err != nil {
+		return 0, fmt.Errorf("invalid number: %s", numStr)
+	}
+	switch unit {
+	case "h":
+		return time.Duration(num) * time.Hour, nil
+	case "d":
+		return time.Duration(num) * 24 * time.Hour, nil
+	case "w":
+		return time.Duration(num) * 7 * 24 * time.Hour, nil
+	case "m":
+		return time.Duration(num) * 30 * 24 * time.Hour, nil
+	case "y":
+		return time.Duration(num) * 365 * 24 * time.Hour, nil
+	default:
+		return 0, fmt.Errorf("invalid unit: %s (use h, d, w, m, y)", unit)
+	}
+}
+
+// handleTokenSubpath handles /api/v1/rbac/tokens/{id} and
+// /api/v1/rbac/tokens/{id}/scope
 func (h *RBACHandler) handleTokenSubpath(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/rbac/tokens/")
 	if path == "" {
@@ -98,10 +204,6 @@ func (h *RBACHandler) handleTokenSubpath(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	parts := strings.Split(path, "/")
-	if len(parts) != 2 || parts[1] != "scope" {
-		http.NotFound(w, r)
-		return
-	}
 
 	tokenID, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil {
@@ -113,17 +215,47 @@ func (h *RBACHandler) handleTokenSubpath(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	switch r.Method {
-	case http.MethodGet:
-		h.getTokenScope(w, r, tokenID)
-	case http.MethodPut:
-		h.setTokenScope(w, r, tokenID)
-	case http.MethodDelete:
-		h.clearTokenScope(w, r, tokenID)
-	default:
-		w.Header().Set("Allow", "GET, PUT, DELETE")
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	// /api/v1/rbac/tokens/{id}
+	if len(parts) == 1 {
+		switch r.Method {
+		case http.MethodDelete:
+			h.deleteToken(w, r, tokenID)
+		default:
+			w.Header().Set("Allow", "DELETE")
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+		return
 	}
+
+	// /api/v1/rbac/tokens/{id}/scope
+	if len(parts) == 2 && parts[1] == "scope" {
+		switch r.Method {
+		case http.MethodGet:
+			h.getTokenScope(w, r, tokenID)
+		case http.MethodPut:
+			h.setTokenScope(w, r, tokenID)
+		case http.MethodDelete:
+			h.clearTokenScope(w, r, tokenID)
+		default:
+			w.Header().Set("Allow", "GET, PUT, DELETE")
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+		return
+	}
+
+	http.NotFound(w, r)
+}
+
+// deleteToken deletes a token by its ID.
+func (h *RBACHandler) deleteToken(w http.ResponseWriter, r *http.Request, tokenID int64) {
+	if err := h.authStore.DeleteToken(strconv.FormatInt(tokenID, 10)); err != nil {
+		log.Printf("[ERROR] Failed to delete token %d: %v", tokenID, err)
+		RespondError(w, http.StatusInternalServerError,
+			"Failed to delete token")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *RBACHandler) getTokenScope(w http.ResponseWriter, r *http.Request, tokenID int64) {
@@ -143,24 +275,26 @@ func (h *RBACHandler) getTokenScope(w http.ResponseWriter, r *http.Request, toke
 	}
 
 	RespondJSON(w, http.StatusOK, map[string]interface{}{
-		"token_id":       tokenID,
-		"scoped":         true,
-		"connection_ids": scope.ConnectionIDs,
-		"mcp_privileges": scope.MCPPrivileges,
+		"token_id":          tokenID,
+		"scoped":            true,
+		"connections":       scope.Connections,
+		"mcp_privileges":    scope.MCPPrivileges,
+		"admin_permissions": scope.AdminPermissions,
 	})
 }
 
 func (h *RBACHandler) setTokenScope(w http.ResponseWriter, r *http.Request, tokenID int64) {
 	var req struct {
-		ConnectionIDs []int    `json:"connection_ids"`
-		MCPPrivileges []string `json:"mcp_privileges"`
+		Connections      []auth.ScopedConnection `json:"connections"`
+		MCPPrivileges    []string                `json:"mcp_privileges"`
+		AdminPermissions []string                `json:"admin_permissions"`
 	}
 	if !DecodeJSONBody(w, r, &req) {
 		return
 	}
 
-	if req.ConnectionIDs != nil {
-		if err := h.authStore.SetTokenConnectionScope(tokenID, req.ConnectionIDs); err != nil {
+	if req.Connections != nil {
+		if err := h.authStore.SetTokenConnectionScope(tokenID, req.Connections); err != nil {
 			log.Printf("[ERROR] Failed to set connection scope for token %d: %v", tokenID, err)
 			RespondError(w, http.StatusInternalServerError, "Failed to set connection scope")
 			return
@@ -171,6 +305,14 @@ func (h *RBACHandler) setTokenScope(w http.ResponseWriter, r *http.Request, toke
 		if err := h.authStore.SetTokenMCPScopeByNames(tokenID, req.MCPPrivileges); err != nil {
 			log.Printf("[ERROR] Failed to set MCP scope for token %d: %v", tokenID, err)
 			RespondError(w, http.StatusInternalServerError, "Failed to set MCP scope")
+			return
+		}
+	}
+
+	if req.AdminPermissions != nil {
+		if err := h.authStore.SetTokenAdminScope(tokenID, req.AdminPermissions); err != nil {
+			log.Printf("[ERROR] Failed to set admin scope for token %d: %v", tokenID, err)
+			RespondError(w, http.StatusInternalServerError, "Failed to set admin scope")
 			return
 		}
 	}

@@ -17,6 +17,7 @@ import (
 
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -518,6 +519,17 @@ func (ps *ProbeScheduler) recordAvailability(connectionID int, probeName string,
 	ps.availMutex.Unlock()
 }
 
+// isClosedPoolError checks whether the error is a "closed pool" error from
+// pgxpool. When one probe detects a real connection failure and calls
+// RemovePool, the pool is closed. Other concurrent probes that already
+// held a reference to that pool will then receive a "closed pool" error
+// when they try to acquire a connection. These secondary errors are not
+// genuine connection failures and must not be reported as such; the probe
+// that detected the real error has already handled it.
+func isClosedPoolError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "closed pool")
+}
+
 // executeProbeForAllDatabases executes a database-scoped probe for all databases and returns all collected metrics and database list
 func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe probes.MetricsProbe, conn database.MonitoredConnection) ([]map[string]interface{}, []string, bool, string) {
 	config := probe.GetConfig()
@@ -534,6 +546,16 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 	// Get connection to query pg_database (connects to default database)
 	monitoredDB, err := ps.poolManager.GetConnection(ctx, conn, ps.serverSecret)
 	if err != nil {
+		// A "closed pool" error means another concurrent probe already
+		// detected a real connection failure and called RemovePool. Do
+		// not report this as a connection error; the original probe
+		// already recorded the meaningful error message.
+		if isClosedPoolError(err) {
+			logger.Debugf("Skipping closed pool error for probe %s on %s (another probe already reported the connection failure)",
+				config.Name, conn.Name)
+			return allMetrics, databases, false, ""
+		}
+
 		// Check if this was a timeout/cancellation
 		if ctx.Err() != nil {
 			logger.Errorf("Error getting connection to %s for probe %s: timed out after %d seconds while waiting for a connection from the monitored connection pool",
@@ -602,6 +624,14 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 		// Get connection for this specific database
 		db, err := ps.poolManager.GetConnectionForDatabase(ctx, conn, dbName, ps.serverSecret)
 		if err != nil {
+			// Skip closed pool errors; the original probe already
+			// reported the real connection failure.
+			if isClosedPoolError(err) {
+				logger.Debugf("Skipping closed pool error for probe %s on %s/%s (another probe already reported the connection failure)",
+					config.Name, conn.Name, dbName)
+				continue
+			}
+
 			if ctx.Err() != nil {
 				logger.Errorf("Error getting connection to %s/%s for probe %s: timed out after %d seconds while waiting for a connection from the monitored connection pool",
 					conn.Name, dbName, config.Name, ps.config.GetMonitoredPoolMaxWaitSeconds())
@@ -681,6 +711,16 @@ func (ps *ProbeScheduler) executeProbeForServerWide(ctx context.Context, probe p
 	// Get connection to the monitored server
 	monitoredDB, err := ps.poolManager.GetConnection(ctx, conn, ps.serverSecret)
 	if err != nil {
+		// A "closed pool" error means another concurrent probe already
+		// detected a real connection failure and called RemovePool. Do
+		// not report this as a connection error; the original probe
+		// already recorded the meaningful error message.
+		if isClosedPoolError(err) {
+			logger.Debugf("Skipping closed pool error for probe %s on %s (another probe already reported the connection failure)",
+				config.Name, conn.Name)
+			return metrics, false, ""
+		}
+
 		// Check if this was a timeout/cancellation
 		if ctx.Err() != nil {
 			logger.Errorf("Error getting connection to %s for probe %s: timed out after %d seconds while waiting for a connection from the monitored connection pool",

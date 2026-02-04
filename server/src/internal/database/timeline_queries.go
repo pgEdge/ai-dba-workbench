@@ -265,12 +265,12 @@ func buildUnionQuery(connCondition, timeCondition, typeCondition string, filter 
 
 	// Blackout started
 	if includeTypes[EventTypeBlackoutStarted] {
-		subqueries = append(subqueries, buildBlackoutStartedQuery(whereClause))
+		subqueries = append(subqueries, buildBlackoutStartedQuery(connCondition, timeCondition))
 	}
 
 	// Blackout ended
 	if includeTypes[EventTypeBlackoutEnded] {
-		subqueries = append(subqueries, buildBlackoutEndedQuery(whereClause))
+		subqueries = append(subqueries, buildBlackoutEndedQuery(connCondition, timeCondition))
 	}
 
 	if len(subqueries) == 0 {
@@ -344,10 +344,10 @@ func buildCountQuery(connCondition, timeCondition, typeCondition string, filter 
 		countQueries = append(countQueries, buildExtensionChangeCountQuery(whereClause))
 	}
 	if includeTypes[EventTypeBlackoutStarted] {
-		countQueries = append(countQueries, buildBlackoutStartedCountQuery(whereClause))
+		countQueries = append(countQueries, buildBlackoutStartedCountQuery(connCondition, timeCondition))
 	}
 	if includeTypes[EventTypeBlackoutEnded] {
-		countQueries = append(countQueries, buildBlackoutEndedCountQuery(whereClause))
+		countQueries = append(countQueries, buildBlackoutEndedCountQuery(connCondition, timeCondition))
 	}
 
 	if len(countQueries) == 0 {
@@ -860,17 +860,64 @@ func buildExtensionChangeCountQuery(whereClause string) string {
 	}())
 }
 
-// buildBlackoutStartedQuery creates the subquery for blackout started events
-func buildBlackoutStartedQuery(whereClause string) string {
-	tableWhere := strings.ReplaceAll(whereClause, "event_time", "b.start_time")
-	tableWhere = strings.ReplaceAll(tableWhere, "connection_id", "COALESCE(b.connection_id, c.id)")
+// buildBlackoutScopeFilter builds a scope-aware connection filter for blackout
+// queries. When connCondition is empty (no connection filter), all blackouts
+// are returned. When connCondition is provided, it matches blackouts whose
+// scope encompasses at least one of the filtered connections: server-scoped
+// blackouts match directly, cluster-scoped blackouts match if any connection
+// in the cluster matches, group-scoped blackouts match if any connection in
+// any cluster within the group matches, and estate-scoped blackouts always
+// match.
+func buildBlackoutScopeFilter(connCondition string) string {
+	if connCondition == "" {
+		return ""
+	}
+
+	serverMatch := strings.ReplaceAll(connCondition, "connection_id", "b.connection_id")
+	clusterMatch := strings.ReplaceAll(connCondition, "connection_id", "sc.id")
+	groupMatch := strings.ReplaceAll(connCondition, "connection_id", "gc.id")
+
+	return fmt.Sprintf(`AND (
+            (b.scope = 'server' AND %s)
+            OR (b.scope = 'cluster' AND EXISTS (
+                SELECT 1 FROM connections sc
+                WHERE sc.cluster_id = b.cluster_id AND %s
+            ))
+            OR (b.scope = 'group' AND EXISTS (
+                SELECT 1 FROM connections gc
+                JOIN clusters gcl ON gc.cluster_id = gcl.id
+                WHERE gcl.group_id = b.group_id AND %s
+            ))
+            OR (b.scope = 'estate')
+        )`, serverMatch, clusterMatch, groupMatch)
+}
+
+// buildBlackoutStartedQuery creates the subquery for blackout started events.
+// It produces exactly one row per blackout by using scalar subqueries for
+// server_name instead of joining to connections.
+func buildBlackoutStartedQuery(connCondition, timeCondition string) string {
+	timeFilter := ""
+	if timeCondition != "" {
+		timeFilter = "AND " + strings.ReplaceAll(timeCondition, "event_time", "b.start_time")
+	}
+
+	scopeFilter := buildBlackoutScopeFilter(connCondition)
 
 	return fmt.Sprintf(`
         SELECT
             'blackout-start-' || b.id::TEXT AS id,
             '%s' AS event_type,
-            COALESCE(b.connection_id, c.id) AS connection_id,
-            COALESCE(c.name, 'Unknown') AS server_name,
+            CASE b.scope
+                WHEN 'server' THEN b.connection_id
+                ELSE 0
+            END AS connection_id,
+            CASE b.scope
+                WHEN 'server' THEN COALESCE((SELECT name FROM connections WHERE id = b.connection_id), 'Unknown')
+                WHEN 'cluster' THEN COALESCE((SELECT name FROM clusters WHERE id = b.cluster_id), 'Unknown Cluster')
+                WHEN 'group' THEN COALESCE((SELECT name FROM cluster_groups WHERE id = b.group_id), 'Unknown Group')
+                WHEN 'estate' THEN 'All Servers'
+                ELSE 'Unknown'
+            END AS server_name,
             b.start_time AS event_time,
             'info' AS severity,
             'Blackout Started' AS title,
@@ -883,53 +930,57 @@ func buildBlackoutStartedQuery(whereClause string) string {
                 'end_time', b.end_time
             )::TEXT AS details
         FROM blackouts b
-        JOIN connections c ON (
-            CASE
-                WHEN b.connection_id IS NOT NULL THEN c.id = b.connection_id
-                ELSE TRUE
-            END
-        )
-        %s
-    `, EventTypeBlackoutStarted, tableWhere)
+        WHERE TRUE
+            %s
+            %s
+    `, EventTypeBlackoutStarted, timeFilter, scopeFilter)
 }
 
-// buildBlackoutStartedCountQuery creates the count query for blackout started events
-func buildBlackoutStartedCountQuery(whereClause string) string {
-	tableWhere := strings.ReplaceAll(whereClause, "event_time", "b.start_time")
-	tableWhere = strings.ReplaceAll(tableWhere, "connection_id", "COALESCE(b.connection_id, c.id)")
+// buildBlackoutStartedCountQuery creates the count query for blackout started
+// events, producing exactly one count per blackout.
+func buildBlackoutStartedCountQuery(connCondition, timeCondition string) string {
+	timeFilter := ""
+	if timeCondition != "" {
+		timeFilter = "AND " + strings.ReplaceAll(timeCondition, "event_time", "b.start_time")
+	}
+
+	scopeFilter := buildBlackoutScopeFilter(connCondition)
 
 	return fmt.Sprintf(`
         SELECT COUNT(*)
         FROM blackouts b
-        JOIN connections c ON (
-            CASE
-                WHEN b.connection_id IS NOT NULL THEN c.id = b.connection_id
-                ELSE TRUE
-            END
-        )
-        %s
-    `, tableWhere)
+        WHERE TRUE
+            %s
+            %s
+    `, timeFilter, scopeFilter)
 }
 
-// buildBlackoutEndedQuery creates the subquery for blackout ended events
-func buildBlackoutEndedQuery(whereClause string) string {
-	tableWhere := strings.ReplaceAll(whereClause, "event_time", "b.end_time")
-	tableWhere = strings.ReplaceAll(tableWhere, "connection_id", "COALESCE(b.connection_id, c.id)")
-
-	// Add the end_time IS NOT NULL condition
-	endedCondition := "b.end_time IS NOT NULL"
-	if tableWhere != "" {
-		tableWhere = tableWhere + " AND " + endedCondition
-	} else {
-		tableWhere = "WHERE " + endedCondition
+// buildBlackoutEndedQuery creates the subquery for blackout ended events.
+// It produces exactly one row per blackout by using scalar subqueries for
+// server_name instead of joining to connections.
+func buildBlackoutEndedQuery(connCondition, timeCondition string) string {
+	timeFilter := ""
+	if timeCondition != "" {
+		timeFilter = "AND " + strings.ReplaceAll(timeCondition, "event_time", "b.end_time")
 	}
+
+	scopeFilter := buildBlackoutScopeFilter(connCondition)
 
 	return fmt.Sprintf(`
         SELECT
             'blackout-end-' || b.id::TEXT AS id,
             '%s' AS event_type,
-            COALESCE(b.connection_id, c.id) AS connection_id,
-            COALESCE(c.name, 'Unknown') AS server_name,
+            CASE b.scope
+                WHEN 'server' THEN b.connection_id
+                ELSE 0
+            END AS connection_id,
+            CASE b.scope
+                WHEN 'server' THEN COALESCE((SELECT name FROM connections WHERE id = b.connection_id), 'Unknown')
+                WHEN 'cluster' THEN COALESCE((SELECT name FROM clusters WHERE id = b.cluster_id), 'Unknown Cluster')
+                WHEN 'group' THEN COALESCE((SELECT name FROM cluster_groups WHERE id = b.group_id), 'Unknown Group')
+                WHEN 'estate' THEN 'All Servers'
+                ELSE 'Unknown'
+            END AS server_name,
             b.end_time AS event_time,
             'info' AS severity,
             'Blackout Ended' AS title,
@@ -942,37 +993,27 @@ func buildBlackoutEndedQuery(whereClause string) string {
                 'end_time', b.end_time
             )::TEXT AS details
         FROM blackouts b
-        JOIN connections c ON (
-            CASE
-                WHEN b.connection_id IS NOT NULL THEN c.id = b.connection_id
-                ELSE TRUE
-            END
-        )
-        %s
-    `, EventTypeBlackoutEnded, tableWhere)
+        WHERE b.end_time IS NOT NULL
+            %s
+            %s
+    `, EventTypeBlackoutEnded, timeFilter, scopeFilter)
 }
 
-// buildBlackoutEndedCountQuery creates the count query for blackout ended events
-func buildBlackoutEndedCountQuery(whereClause string) string {
-	tableWhere := strings.ReplaceAll(whereClause, "event_time", "b.end_time")
-	tableWhere = strings.ReplaceAll(tableWhere, "connection_id", "COALESCE(b.connection_id, c.id)")
-
-	endedCondition := "b.end_time IS NOT NULL"
-	if tableWhere != "" {
-		tableWhere = tableWhere + " AND " + endedCondition
-	} else {
-		tableWhere = "WHERE " + endedCondition
+// buildBlackoutEndedCountQuery creates the count query for blackout ended
+// events, producing exactly one count per blackout.
+func buildBlackoutEndedCountQuery(connCondition, timeCondition string) string {
+	timeFilter := ""
+	if timeCondition != "" {
+		timeFilter = "AND " + strings.ReplaceAll(timeCondition, "event_time", "b.end_time")
 	}
+
+	scopeFilter := buildBlackoutScopeFilter(connCondition)
 
 	return fmt.Sprintf(`
         SELECT COUNT(*)
         FROM blackouts b
-        JOIN connections c ON (
-            CASE
-                WHEN b.connection_id IS NOT NULL THEN c.id = b.connection_id
-                ELSE TRUE
-            END
-        )
-        %s
-    `, tableWhere)
+        WHERE b.end_time IS NOT NULL
+            %s
+            %s
+    `, timeFilter, scopeFilter)
 }

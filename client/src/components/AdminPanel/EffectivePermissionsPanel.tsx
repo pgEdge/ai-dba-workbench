@@ -28,6 +28,7 @@ const ADMIN_PERMISSION_LABELS: Record<string, string> = {
     manage_probes: 'Manage Probes',
     manage_alert_rules: 'Manage Alert Rules',
     manage_token_scopes: 'Manage Token Scopes',
+    manage_notification_channels: 'Manage Notification Channels',
     manage_users: 'Manage Users',
 };
 

@@ -44,7 +44,7 @@ const OptionsSection: React.FC<OptionsSectionProps> = ({
                 Options
             </Typography>
 
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                 <FormControlLabel
                     control={
                         <Checkbox

@@ -115,6 +115,8 @@ export const checkboxSx: SxProps<Theme> = {
  * Form control label styling.
  */
 export const formControlLabelSx: SxProps<Theme> = {
+    ml: 0,
+    gap: 1,
     '& .MuiFormControlLabel-label': {
         fontSize: '0.875rem',
         color: 'text.primary',

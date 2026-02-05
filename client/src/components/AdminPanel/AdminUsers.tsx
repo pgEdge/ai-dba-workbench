@@ -547,7 +547,7 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
                         rows={2}
                         InputLabelProps={{ shrink: true }}
                     />
-                    <Box sx={{ mt: 2 }}>
+                    <Box sx={{ mt: 2, display: 'flex', flexDirection: 'column', gap: 1 }}>
                         <FormControlLabel
                             control={
                                 <Switch
@@ -557,9 +557,8 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
                                 />
                             }
                             label="Service Account"
+                            sx={{ ml: 0, gap: 1 }}
                         />
-                    </Box>
-                    <Box>
                         <FormControlLabel
                             control={
                                 <Switch
@@ -569,9 +568,8 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
                                 />
                             }
                             label="Enabled"
+                            sx={{ ml: 0, gap: 1 }}
                         />
-                    </Box>
-                    <Box>
                         <FormControlLabel
                             control={
                                 <Switch
@@ -581,6 +579,7 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
                                 />
                             }
                             label="Superuser"
+                            sx={{ ml: 0, gap: 1 }}
                         />
                     </Box>
                 </DialogContent>
@@ -649,7 +648,7 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
                         rows={2}
                         InputLabelProps={{ shrink: true }}
                     />
-                    <Box sx={{ mt: 2 }}>
+                    <Box sx={{ mt: 2, display: 'flex', flexDirection: 'column', gap: 1 }}>
                         <FormControlLabel
                             control={
                                 <Switch
@@ -659,9 +658,8 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
                                 />
                             }
                             label="Enabled"
+                            sx={{ ml: 0, gap: 1 }}
                         />
-                    </Box>
-                    <Box>
                         <FormControlLabel
                             control={
                                 <Switch
@@ -671,6 +669,7 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
                                 />
                             }
                             label="Superuser"
+                            sx={{ ml: 0, gap: 1 }}
                         />
                     </Box>
                 </DialogContent>

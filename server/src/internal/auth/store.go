@@ -31,7 +31,7 @@ const (
 	DefaultSessionExpiry = 24 * time.Hour
 
 	// Schema version for migrations
-	schemaVersion = 13
+	schemaVersion = 14
 )
 
 // AuthStore manages users and tokens in SQLite
@@ -525,6 +525,38 @@ func (s *AuthStore) initSchema() error {
 	if currentVersion < 13 {
 		//nolint:errcheck // Column may already exist
 		s.db.Exec("ALTER TABLE token_connection_scope ADD COLUMN access_level TEXT NOT NULL DEFAULT 'read_write'")
+	}
+
+	// Apply migrations for schema version 14 (add manage_notification_channels permission)
+	if currentVersion < 14 {
+		migrationV14 := `
+        -- Recreate table with updated CHECK constraint including manage_notification_channels
+        CREATE TABLE IF NOT EXISTS group_admin_permissions_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER NOT NULL
+                REFERENCES user_groups(id) ON DELETE CASCADE,
+            permission TEXT NOT NULL CHECK (permission IN (
+                'manage_connections', 'manage_groups',
+                'manage_permissions', 'manage_users',
+                'manage_token_scopes', 'manage_blackouts',
+                'manage_probes', 'manage_alert_rules',
+                'manage_notification_channels'
+            )),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(group_id, permission)
+        );
+        INSERT INTO group_admin_permissions_new (id, group_id, permission, created_at)
+            SELECT id, group_id, permission, created_at
+            FROM group_admin_permissions;
+        DROP TABLE group_admin_permissions;
+        ALTER TABLE group_admin_permissions_new RENAME TO group_admin_permissions;
+        CREATE INDEX IF NOT EXISTS idx_admin_perms_group ON group_admin_permissions(group_id);
+        CREATE INDEX IF NOT EXISTS idx_admin_perms_perm ON group_admin_permissions(permission);
+        `
+		_, err = s.db.Exec(migrationV14)
+		if err != nil {
+			return fmt.Errorf("failed to apply schema migration v14: %w", err)
+		}
 	}
 
 	// Set schema version

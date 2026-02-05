@@ -135,6 +135,15 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 			fmt.Fprintf(os.Stderr, "Alert rule configuration: DISABLED (datastore not configured)\n")
 		}
 
+		// Notification channel management endpoints (for alert channel configuration)
+		notificationChannelHandler := api.NewNotificationChannelHandler(deps.Datastore, deps.AuthStore, rbacChecker)
+		notificationChannelHandler.RegisterRoutes(mux, authWrapper)
+		if deps.Datastore != nil {
+			fmt.Fprintf(os.Stderr, "Notification channel management: ENABLED\n")
+		} else {
+			fmt.Fprintf(os.Stderr, "Notification channel management: DISABLED (datastore not configured)\n")
+		}
+
 		// Timeline endpoints (for EventTimeline component)
 		timelineHandler := api.NewTimelineHandler(deps.Datastore, deps.AuthStore)
 		timelineHandler.RegisterRoutes(mux, authWrapper)

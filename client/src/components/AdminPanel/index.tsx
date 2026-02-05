@@ -15,23 +15,24 @@ import {
     Toolbar,
     IconButton,
     Typography,
-    Tabs,
-    Tab,
     Box,
     Slide,
+    List,
+    ListItemButton,
+    ListItemText,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import { TransitionProps } from '@mui/material/transitions';
-import {
-    Close as CloseIcon,
-} from '@mui/icons-material';
+import { Close as CloseIcon } from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
+import { subsectionLabelSx } from './styles';
 import AdminUsers from './AdminUsers';
 import AdminGroups from './AdminGroups';
 import AdminPermissions from './AdminPermissions';
 import AdminTokenScopes from './AdminTokenScopes';
 import AdminProbes from './AdminProbes';
 import AdminAlertRules from './AdminAlertRules';
+import AdminEmailChannels from './AdminEmailChannels';
 
 const Transition = React.forwardRef(function Transition(
     props: TransitionProps & { children: React.ReactElement },
@@ -40,14 +41,41 @@ const Transition = React.forwardRef(function Transition(
     return <Slide direction="up" ref={ref} {...props} />;
 });
 
-// Tab definitions with permission requirements
-const TAB_DEFS = [
-    { id: 'users', label: 'Users', permission: 'manage_users', Component: AdminUsers },
-    { id: 'groups', label: 'Groups', permission: 'manage_groups', Component: AdminGroups },
-    { id: 'permissions', label: 'Permissions', permission: 'manage_permissions', Component: AdminPermissions },
-    { id: 'token_scopes', label: 'Tokens', permission: 'manage_token_scopes', Component: AdminTokenScopes },
-    { id: 'probes', label: 'Probe Defaults', permission: 'manage_probes', Component: AdminProbes },
-    { id: 'alert_rules', label: 'Alert Defaults', permission: 'manage_alert_rules', Component: AdminAlertRules },
+interface NavItem {
+    id: string;
+    label: string;
+    permission: string;
+    Component: React.FC<any>;
+}
+
+interface NavSection {
+    category: string;
+    items: NavItem[];
+}
+
+const NAV_SECTIONS: NavSection[] = [
+    {
+        category: 'Security',
+        items: [
+            { id: 'users', label: 'Users', permission: 'manage_users', Component: AdminUsers },
+            { id: 'groups', label: 'Groups', permission: 'manage_groups', Component: AdminGroups },
+            { id: 'permissions', label: 'Permissions', permission: 'manage_permissions', Component: AdminPermissions },
+            { id: 'token_scopes', label: 'Tokens', permission: 'manage_token_scopes', Component: AdminTokenScopes },
+        ],
+    },
+    {
+        category: 'Monitoring',
+        items: [
+            { id: 'probes', label: 'Probe Defaults', permission: 'manage_probes', Component: AdminProbes },
+            { id: 'alert_rules', label: 'Alert Defaults', permission: 'manage_alert_rules', Component: AdminAlertRules },
+        ],
+    },
+    {
+        category: 'Notifications',
+        items: [
+            { id: 'email_channels', label: 'Email Channels', permission: 'manage_notification_channels', Component: AdminEmailChannels },
+        ],
+    },
 ];
 
 interface AdminPanelProps {
@@ -59,29 +87,36 @@ interface AdminPanelProps {
 const AdminPanel: React.FC<AdminPanelProps> = ({ open, onClose, mode }) => {
     const theme = useTheme();
     const { user, hasPermission } = useAuth();
-    const [activeTab, setActiveTab] = useState(0);
+    const [activeId, setActiveId] = useState<string>('');
 
-    // Filter tabs based on the user permissions
-    const visibleTabs = useMemo(() => {
-        return TAB_DEFS.filter((tab) => {
-            // The permissions tab is superuser-only
-            if (tab.permission === null) {
-                return !!user?.isSuperuser;
-            }
-            return hasPermission(tab.permission);
-        });
+    // Filter sections and items based on user permissions
+    const visibleSections = useMemo(() => {
+        return NAV_SECTIONS.map((section) => ({
+            ...section,
+            items: section.items.filter((item) => {
+                if (item.permission === null) {
+                    return !!user?.isSuperuser;
+                }
+                return hasPermission(item.permission);
+            }),
+        })).filter((section) => section.items.length > 0);
     }, [user?.isSuperuser, hasPermission]);
 
-    // Reset to first tab when reopened
+    // Flat list of all visible items for lookup
+    const allVisibleItems = useMemo(() => {
+        return visibleSections.flatMap((section) => section.items);
+    }, [visibleSections]);
+
+    // Reset to first visible item when reopened
     const handleEnter = () => {
-        setActiveTab(0);
+        if (allVisibleItems.length > 0) {
+            setActiveId(allVisibleItems[0].id);
+        }
     };
 
-    const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
-        setActiveTab(newValue);
-    };
-
-    const ActiveComponent = visibleTabs[activeTab]?.Component;
+    // Find the active component based on the selected id
+    const activeItem = allVisibleItems.find((item) => item.id === activeId);
+    const ActiveComponent = activeItem?.Component;
 
     return (
         <Dialog
@@ -125,42 +160,71 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ open, onClose, mode }) => {
                         Administration
                     </Typography>
                 </Toolbar>
-                <Tabs
-                    value={activeTab}
-                    onChange={handleTabChange}
-                    variant="scrollable"
-                    scrollButtons="auto"
+            </AppBar>
+            <Box sx={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+                {/* Sidebar navigation */}
+                <Box
                     sx={{
-                        px: 2,
-                        '& .MuiTab-root': {
-                            textTransform: 'none',
-                            fontWeight: 500,
-                            fontSize: '0.875rem',
-                            color: theme.palette.text.secondary,
-                            '&.Mui-selected': {
-                                color: theme.palette.primary.main,
-                                fontWeight: 600,
-                            },
-                        },
-                        '& .MuiTabs-indicator': {
-                            backgroundColor: theme.palette.primary.main,
-                        },
+                        width: 240,
+                        flexShrink: 0,
+                        borderRight: '1px solid',
+                        borderColor: theme.palette.divider,
+                        bgcolor: theme.palette.background.paper,
+                        overflowY: 'auto',
                     }}
                 >
-                    {visibleTabs.map((tab) => (
-                        <Tab key={tab.id} label={tab.label} />
-                    ))}
-                </Tabs>
-            </AppBar>
-            <Box
-                sx={{
-                    flex: 1,
-                    overflow: 'auto',
-                    bgcolor: theme.palette.background.default,
-                    p: 3,
-                }}
-            >
-                {ActiveComponent && <ActiveComponent mode={mode} />}
+                    <List component="nav" disablePadding sx={{ py: 1 }}>
+                        {visibleSections.map((section) => (
+                            <React.Fragment key={section.category}>
+                                <Typography
+                                    sx={{
+                                        ...subsectionLabelSx,
+                                        px: 2,
+                                        pt: 2,
+                                        pb: 0.5,
+                                    }}
+                                >
+                                    {section.category}
+                                </Typography>
+                                {section.items.map((item) => {
+                                    const isSelected = item.id === activeId;
+                                    return (
+                                        <ListItemButton
+                                            key={item.id}
+                                            selected={isSelected}
+                                            onClick={() => setActiveId(item.id)}
+                                            sx={{
+                                                borderRadius: 1,
+                                                mx: 1,
+                                                bgcolor: isSelected
+                                                    ? theme.palette.action.selected
+                                                    : 'transparent',
+                                            }}
+                                        >
+                                            <ListItemText
+                                                primary={item.label}
+                                                primaryTypographyProps={{
+                                                    fontSize: '0.875rem',
+                                                }}
+                                            />
+                                        </ListItemButton>
+                                    );
+                                })}
+                            </React.Fragment>
+                        ))}
+                    </List>
+                </Box>
+                {/* Content area */}
+                <Box
+                    sx={{
+                        flex: 1,
+                        overflow: 'auto',
+                        bgcolor: theme.palette.background.default,
+                        p: 3,
+                    }}
+                >
+                    {ActiveComponent && <ActiveComponent mode={mode} />}
+                </Box>
             </Box>
         </Dialog>
     );

@@ -76,6 +76,7 @@ const ADMIN_PERMISSIONS = [
     { id: 'manage_blackouts', label: 'Manage Blackouts' },
     { id: 'manage_probes', label: 'Manage Probes' },
     { id: 'manage_alert_rules', label: 'Manage Alert Rules' },
+    { id: 'manage_notification_channels', label: 'Manage Notification Channels' },
 ];
 
 const ALL_MCP_OPTION = { id: -1, identifier: '*', _isAll: true };

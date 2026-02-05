@@ -48,7 +48,6 @@ type NotificationChannel struct {
 	ID            int64                   `json:"id"`
 	OwnerUsername *string                 `json:"owner_username,omitempty"`
 	OwnerToken    *string                 `json:"owner_token,omitempty"`
-	IsShared      bool                    `json:"is_shared"`
 	Enabled       bool                    `json:"enabled"`
 	ChannelType   NotificationChannelType `json:"channel_type"`
 	Name          string                  `json:"name"`
@@ -106,7 +105,7 @@ func (d *Datastore) ListNotificationChannels(ctx context.Context) ([]*Notificati
 	defer d.mu.RUnlock()
 
 	rows, err := d.pool.Query(ctx, `
-        SELECT id, owner_username, owner_token, is_shared, enabled, channel_type,
+        SELECT id, owner_username, owner_token, enabled, channel_type,
                name, description, webhook_url_encrypted, endpoint_url, http_method,
                headers_json, auth_type, auth_credentials_encrypted, smtp_host,
                smtp_port, smtp_username, smtp_password_encrypted, smtp_use_tls,
@@ -157,7 +156,7 @@ func (d *Datastore) GetNotificationChannel(ctx context.Context, id int64) (*Noti
 	defer d.mu.RUnlock()
 
 	row := d.pool.QueryRow(ctx, `
-        SELECT id, owner_username, owner_token, is_shared, enabled, channel_type,
+        SELECT id, owner_username, owner_token, enabled, channel_type,
                name, description, webhook_url_encrypted, endpoint_url, http_method,
                headers_json, auth_type, auth_credentials_encrypted, smtp_host,
                smtp_port, smtp_username, smtp_password_encrypted, smtp_use_tls,
@@ -205,17 +204,17 @@ func (d *Datastore) CreateNotificationChannel(ctx context.Context, channel *Noti
 
 	err = d.pool.QueryRow(ctx, `
         INSERT INTO notification_channels (
-            owner_username, owner_token, is_shared, enabled, channel_type, name,
+            owner_username, owner_token, enabled, channel_type, name,
             description, webhook_url_encrypted, endpoint_url, http_method,
             headers_json, auth_type, auth_credentials_encrypted, smtp_host,
             smtp_port, smtp_username, smtp_password_encrypted, smtp_use_tls,
             from_address, from_name, template_alert_fire, template_alert_clear,
             template_reminder, reminder_enabled, reminder_interval_hours,
             created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-                  $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+                  $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
         RETURNING id, created_at, updated_at
-    `, channel.OwnerUsername, channel.OwnerToken, channel.IsShared, channel.Enabled,
+    `, channel.OwnerUsername, channel.OwnerToken, channel.Enabled,
 		channel.ChannelType, channel.Name, channel.Description, channel.WebhookURL,
 		channel.EndpointURL, channel.HTTPMethod, headersJSON, channel.AuthType,
 		channel.AuthCredentials, channel.SMTPHost, channel.SMTPPort, channel.SMTPUsername,
@@ -242,19 +241,19 @@ func (d *Datastore) UpdateNotificationChannel(ctx context.Context, channel *Noti
 
 	err = d.pool.QueryRow(ctx, `
         UPDATE notification_channels
-        SET owner_username = $2, owner_token = $3, is_shared = $4, enabled = $5,
-            channel_type = $6, name = $7, description = $8,
-            webhook_url_encrypted = $9, endpoint_url = $10, http_method = $11,
-            headers_json = $12, auth_type = $13,
-            auth_credentials_encrypted = $14, smtp_host = $15, smtp_port = $16,
-            smtp_username = $17, smtp_password_encrypted = $18,
-            smtp_use_tls = $19, from_address = $20, from_name = $21,
-            template_alert_fire = $22, template_alert_clear = $23,
-            template_reminder = $24, reminder_enabled = $25,
-            reminder_interval_hours = $26, updated_at = CURRENT_TIMESTAMP
+        SET owner_username = $2, owner_token = $3, enabled = $4,
+            channel_type = $5, name = $6, description = $7,
+            webhook_url_encrypted = $8, endpoint_url = $9, http_method = $10,
+            headers_json = $11, auth_type = $12,
+            auth_credentials_encrypted = $13, smtp_host = $14, smtp_port = $15,
+            smtp_username = $16, smtp_password_encrypted = $17,
+            smtp_use_tls = $18, from_address = $19, from_name = $20,
+            template_alert_fire = $21, template_alert_clear = $22,
+            template_reminder = $23, reminder_enabled = $24,
+            reminder_interval_hours = $25, updated_at = CURRENT_TIMESTAMP
         WHERE id = $1
         RETURNING updated_at
-    `, channel.ID, channel.OwnerUsername, channel.OwnerToken, channel.IsShared,
+    `, channel.ID, channel.OwnerUsername, channel.OwnerToken,
 		channel.Enabled, channel.ChannelType, channel.Name, channel.Description,
 		channel.WebhookURL, channel.EndpointURL, channel.HTTPMethod, headersJSON,
 		channel.AuthType, channel.AuthCredentials, channel.SMTPHost, channel.SMTPPort,
@@ -394,7 +393,7 @@ func scanNotificationChannel(rows pgx.Rows) (*NotificationChannel, error) {
 	var c NotificationChannel
 	var headersJSON []byte
 	err := rows.Scan(
-		&c.ID, &c.OwnerUsername, &c.OwnerToken, &c.IsShared,
+		&c.ID, &c.OwnerUsername, &c.OwnerToken,
 		&c.Enabled, &c.ChannelType, &c.Name, &c.Description,
 		&c.WebhookURL, &c.EndpointURL, &c.HTTPMethod, &headersJSON,
 		&c.AuthType, &c.AuthCredentials, &c.SMTPHost, &c.SMTPPort,
@@ -420,7 +419,7 @@ func scanNotificationChannelRow(row pgx.Row) (*NotificationChannel, error) {
 	var c NotificationChannel
 	var headersJSON []byte
 	err := row.Scan(
-		&c.ID, &c.OwnerUsername, &c.OwnerToken, &c.IsShared,
+		&c.ID, &c.OwnerUsername, &c.OwnerToken,
 		&c.Enabled, &c.ChannelType, &c.Name, &c.Description,
 		&c.WebhookURL, &c.EndpointURL, &c.HTTPMethod, &headersJSON,
 		&c.AuthType, &c.AuthCredentials, &c.SMTPHost, &c.SMTPPort,

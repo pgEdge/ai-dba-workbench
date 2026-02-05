@@ -33,6 +33,9 @@ import AdminTokenScopes from './AdminTokenScopes';
 import AdminProbes from './AdminProbes';
 import AdminAlertRules from './AdminAlertRules';
 import AdminEmailChannels from './AdminEmailChannels';
+import AdminSlackChannels from './AdminSlackChannels';
+import AdminMattermostChannels from './AdminMattermostChannels';
+import AdminWebhookChannels from './AdminWebhookChannels';
 
 const Transition = React.forwardRef(function Transition(
     props: TransitionProps & { children: React.ReactElement },
@@ -74,6 +77,9 @@ const NAV_SECTIONS: NavSection[] = [
         category: 'Notifications',
         items: [
             { id: 'email_channels', label: 'Email Channels', permission: 'manage_notification_channels', Component: AdminEmailChannels },
+            { id: 'slack_channels', label: 'Slack Channels', permission: 'manage_notification_channels', Component: AdminSlackChannels },
+            { id: 'mattermost_channels', label: 'Mattermost Channels', permission: 'manage_notification_channels', Component: AdminMattermostChannels },
+            { id: 'webhook_channels', label: 'Webhook Channels', permission: 'manage_notification_channels', Component: AdminWebhookChannels },
         ],
     },
 ];

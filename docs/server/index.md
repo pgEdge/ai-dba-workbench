@@ -24,6 +24,8 @@ include:
   LLM proxy.
 - Persistent storage for chat sessions provides conversation
   history.
+- Notification channel management for configuring alert delivery
+  through Email, Slack, Mattermost, and Webhook channels.
 
 ## Getting Started
 
@@ -101,6 +103,12 @@ The binary is created at `bin/ai-dba-server`.
 
 - [Connection Management](connections.md) - Managing database connections from
   the datastore
+
+### Notification Channels
+
+- [Notification Channels](notification-channels.md) - Configure
+  alert delivery through Email, Slack, Mattermost, and Webhook
+  channels
 
 ## Architecture
 

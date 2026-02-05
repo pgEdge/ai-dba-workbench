@@ -45,7 +45,6 @@ type NotificationChannel struct {
 	ID            int64                   `json:"id"`
 	OwnerUsername *string                 `json:"owner_username,omitempty"`
 	OwnerToken    *string                 `json:"owner_token,omitempty"`
-	IsShared      bool                    `json:"is_shared"`
 	Enabled       bool                    `json:"enabled"`
 	ChannelType   NotificationChannelType `json:"channel_type"`
 	Name          string                  `json:"name"`

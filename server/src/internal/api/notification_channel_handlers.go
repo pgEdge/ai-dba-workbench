@@ -61,7 +61,6 @@ type NotificationChannelCreateRequest struct {
 	Name        string  `json:"name"`
 	Description *string `json:"description,omitempty"`
 	Enabled     *bool   `json:"enabled,omitempty"`
-	IsShared    *bool   `json:"is_shared,omitempty"`
 
 	// Slack/Mattermost
 	WebhookURL *string `json:"webhook_url,omitempty"`
@@ -295,11 +294,6 @@ func (h *NotificationChannelHandler) createChannel(w http.ResponseWriter, r *htt
 		enabled = *req.Enabled
 	}
 
-	isShared := false
-	if req.IsShared != nil {
-		isShared = *req.IsShared
-	}
-
 	smtpPort := 587
 	if req.SMTPPort != nil {
 		smtpPort = *req.SMTPPort
@@ -332,7 +326,6 @@ func (h *NotificationChannelHandler) createChannel(w http.ResponseWriter, r *htt
 
 	channel := &database.NotificationChannel{
 		OwnerUsername:         &username,
-		IsShared:              isShared,
 		Enabled:               enabled,
 		ChannelType:           database.NotificationChannelType(req.ChannelType),
 		Name:                  req.Name,
@@ -430,9 +423,6 @@ func (h *NotificationChannelHandler) updateChannel(w http.ResponseWriter, r *htt
 	}
 	if req.Enabled != nil {
 		existing.Enabled = *req.Enabled
-	}
-	if req.IsShared != nil {
-		existing.IsShared = *req.IsShared
 	}
 	if req.WebhookURL != nil {
 		existing.WebhookURL = req.WebhookURL
@@ -685,59 +675,91 @@ func (h *NotificationChannelHandler) testChannel(w http.ResponseWriter, r *http.
 		return
 	}
 
-	if channel.ChannelType != database.ChannelTypeEmail {
-		RespondError(w, http.StatusBadRequest, "Test sending is only supported for email channels")
-		return
-	}
-
-	if channel.SMTPHost == nil || *channel.SMTPHost == "" {
-		RespondError(w, http.StatusBadRequest, "SMTP host is not configured for this channel")
-		return
-	}
-	if channel.FromAddress == nil || *channel.FromAddress == "" {
-		RespondError(w, http.StatusBadRequest, "From address is not configured for this channel")
-		return
-	}
-
-	// Optionally decode recipient_email from the request body
-	var req TestChannelRequest
-	if r.Body != nil {
-		dec := json.NewDecoder(r.Body)
-		if decErr := dec.Decode(&req); decErr != nil && !errors.Is(decErr, io.EOF) {
-			RespondError(w, http.StatusBadRequest, "Invalid request body: "+decErr.Error())
+	switch channel.ChannelType {
+	case database.ChannelTypeEmail:
+		if channel.SMTPHost == nil || *channel.SMTPHost == "" {
+			RespondError(w, http.StatusBadRequest, "SMTP host is not configured for this channel")
 			return
 		}
-	}
+		if channel.FromAddress == nil || *channel.FromAddress == "" {
+			RespondError(w, http.StatusBadRequest, "From address is not configured for this channel")
+			return
+		}
 
-	// Determine recipient list
-	var toAddresses []string
-	if req.RecipientEmail != nil && *req.RecipientEmail != "" {
-		toAddresses = []string{*req.RecipientEmail}
-	} else {
-		for _, rcpt := range channel.Recipients {
-			if rcpt.Enabled {
-				toAddresses = append(toAddresses, rcpt.EmailAddress)
+		// Optionally decode recipient_email from the request body
+		var req TestChannelRequest
+		if r.Body != nil {
+			dec := json.NewDecoder(r.Body)
+			if decErr := dec.Decode(&req); decErr != nil && !errors.Is(decErr, io.EOF) {
+				RespondError(w, http.StatusBadRequest, "Invalid request body: "+decErr.Error())
+				return
 			}
 		}
-	}
 
-	if len(toAddresses) == 0 {
-		RespondError(w, http.StatusBadRequest,
-			"No recipients available. Provide a recipient_email or add enabled recipients to the channel.")
-		return
-	}
+		// Determine recipient list
+		var toAddresses []string
+		if req.RecipientEmail != nil && *req.RecipientEmail != "" {
+			toAddresses = []string{*req.RecipientEmail}
+		} else {
+			for _, rcpt := range channel.Recipients {
+				if rcpt.Enabled {
+					toAddresses = append(toAddresses, rcpt.EmailAddress)
+				}
+			}
+		}
 
-	if err := sendTestEmail(
-		*channel.SMTPHost,
-		channel.SMTPPort,
-		derefStr(channel.SMTPUsername),
-		derefStr(channel.SMTPPassword),
-		channel.SMTPUseTLS,
-		*channel.FromAddress,
-		derefStr(channel.FromName),
-		toAddresses,
-	); err != nil {
-		RespondError(w, http.StatusBadGateway, "Failed to send test email: "+err.Error())
+		if len(toAddresses) == 0 {
+			RespondError(w, http.StatusBadRequest,
+				"No recipients available. Provide a recipient_email or add enabled recipients to the channel.")
+			return
+		}
+
+		if err := sendTestEmail(
+			*channel.SMTPHost,
+			channel.SMTPPort,
+			derefStr(channel.SMTPUsername),
+			derefStr(channel.SMTPPassword),
+			channel.SMTPUseTLS,
+			*channel.FromAddress,
+			derefStr(channel.FromName),
+			toAddresses,
+		); err != nil {
+			RespondError(w, http.StatusBadGateway, "Failed to send test email: "+err.Error())
+			return
+		}
+
+	case database.ChannelTypeSlack, database.ChannelTypeMattermost:
+		if channel.WebhookURL == nil || *channel.WebhookURL == "" {
+			RespondError(w, http.StatusBadRequest, "Webhook URL is not configured for this channel")
+			return
+		}
+		displayType := "Slack"
+		if channel.ChannelType == database.ChannelTypeMattermost {
+			displayType = "Mattermost"
+		}
+		if err := sendTestWebhook(*channel.WebhookURL, displayType); err != nil {
+			RespondError(w, http.StatusBadGateway, "Failed to send test webhook: "+err.Error())
+			return
+		}
+
+	case database.ChannelTypeWebhook:
+		if channel.EndpointURL == nil || *channel.EndpointURL == "" {
+			RespondError(w, http.StatusBadRequest, "Endpoint URL is not configured for this channel")
+			return
+		}
+		if err := sendTestGenericWebhook(
+			*channel.EndpointURL,
+			channel.HTTPMethod,
+			channel.Headers,
+			derefStr(channel.AuthType),
+			derefStr(channel.AuthCredentials),
+		); err != nil {
+			RespondError(w, http.StatusBadGateway, "Failed to send test webhook: "+err.Error())
+			return
+		}
+
+	default:
+		RespondError(w, http.StatusBadRequest, "Test sending is not supported for this channel type")
 		return
 	}
 

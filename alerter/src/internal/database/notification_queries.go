@@ -28,7 +28,7 @@ type DueReminder struct {
 func (d *Datastore) GetNotificationChannel(ctx context.Context, id int64) (*NotificationChannel, error) {
 	var channel NotificationChannel
 	err := d.pool.QueryRow(ctx, `
-        SELECT id, owner_username, owner_token, is_shared, enabled, channel_type,
+        SELECT id, owner_username, owner_token, enabled, channel_type,
                name, description, webhook_url, endpoint_url, http_method, headers,
                auth_type, auth_credentials, smtp_host, smtp_port, smtp_username,
                smtp_password, smtp_use_tls, from_address, from_name,
@@ -37,7 +37,7 @@ func (d *Datastore) GetNotificationChannel(ctx context.Context, id int64) (*Noti
         FROM notification_channels
         WHERE id = $1
     `, id).Scan(
-		&channel.ID, &channel.OwnerUsername, &channel.OwnerToken, &channel.IsShared,
+		&channel.ID, &channel.OwnerUsername, &channel.OwnerToken,
 		&channel.Enabled, &channel.ChannelType, &channel.Name, &channel.Description,
 		&channel.WebhookURL, &channel.EndpointURL, &channel.HTTPMethod, &channel.Headers,
 		&channel.AuthType, &channel.AuthCredentials, &channel.SMTPHost, &channel.SMTPPort,
@@ -58,7 +58,7 @@ func (d *Datastore) GetNotificationChannel(ctx context.Context, id int64) (*Noti
 // GetNotificationChannelsForConnection retrieves all enabled channels linked to a connection
 func (d *Datastore) GetNotificationChannelsForConnection(ctx context.Context, connectionID int) ([]*NotificationChannel, error) {
 	rows, err := d.pool.Query(ctx, `
-        SELECT nc.id, nc.owner_username, nc.owner_token, nc.is_shared, nc.enabled,
+        SELECT nc.id, nc.owner_username, nc.owner_token, nc.enabled,
                nc.channel_type, nc.name, nc.description, nc.webhook_url, nc.endpoint_url,
                nc.http_method, nc.headers, nc.auth_type, nc.auth_credentials,
                nc.smtp_host, nc.smtp_port, nc.smtp_username, nc.smtp_password,
@@ -79,7 +79,7 @@ func (d *Datastore) GetNotificationChannelsForConnection(ctx context.Context, co
 	for rows.Next() {
 		var channel NotificationChannel
 		err := rows.Scan(
-			&channel.ID, &channel.OwnerUsername, &channel.OwnerToken, &channel.IsShared,
+			&channel.ID, &channel.OwnerUsername, &channel.OwnerToken,
 			&channel.Enabled, &channel.ChannelType, &channel.Name, &channel.Description,
 			&channel.WebhookURL, &channel.EndpointURL, &channel.HTTPMethod, &channel.Headers,
 			&channel.AuthType, &channel.AuthCredentials, &channel.SMTPHost, &channel.SMTPPort,
@@ -100,16 +100,16 @@ func (d *Datastore) GetNotificationChannelsForConnection(ctx context.Context, co
 func (d *Datastore) CreateNotificationChannel(ctx context.Context, channel *NotificationChannel) error {
 	return d.pool.QueryRow(ctx, `
         INSERT INTO notification_channels (
-            owner_username, owner_token, is_shared, enabled, channel_type, name,
+            owner_username, owner_token, enabled, channel_type, name,
             description, webhook_url, endpoint_url, http_method, headers, auth_type,
             auth_credentials, smtp_host, smtp_port, smtp_username, smtp_password,
             smtp_use_tls, from_address, from_name, template_alert_fire,
             template_alert_clear, template_reminder, reminder_enabled,
             reminder_interval_hours, created_at, updated_at
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-                  $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
+                  $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
         RETURNING id
-    `, channel.OwnerUsername, channel.OwnerToken, channel.IsShared, channel.Enabled,
+    `, channel.OwnerUsername, channel.OwnerToken, channel.Enabled,
 		channel.ChannelType, channel.Name, channel.Description, channel.WebhookURL,
 		channel.EndpointURL, channel.HTTPMethod, channel.Headers, channel.AuthType,
 		channel.AuthCredentials, channel.SMTPHost, channel.SMTPPort, channel.SMTPUsername,
@@ -123,16 +123,16 @@ func (d *Datastore) CreateNotificationChannel(ctx context.Context, channel *Noti
 func (d *Datastore) UpdateNotificationChannel(ctx context.Context, channel *NotificationChannel) error {
 	_, err := d.pool.Exec(ctx, `
         UPDATE notification_channels
-        SET owner_username = $2, owner_token = $3, is_shared = $4, enabled = $5,
-            channel_type = $6, name = $7, description = $8, webhook_url = $9,
-            endpoint_url = $10, http_method = $11, headers = $12, auth_type = $13,
-            auth_credentials = $14, smtp_host = $15, smtp_port = $16,
-            smtp_username = $17, smtp_password = $18, smtp_use_tls = $19,
-            from_address = $20, from_name = $21, template_alert_fire = $22,
-            template_alert_clear = $23, template_reminder = $24,
-            reminder_enabled = $25, reminder_interval_hours = $26, updated_at = $27
+        SET owner_username = $2, owner_token = $3, enabled = $4,
+            channel_type = $5, name = $6, description = $7, webhook_url = $8,
+            endpoint_url = $9, http_method = $10, headers = $11, auth_type = $12,
+            auth_credentials = $13, smtp_host = $14, smtp_port = $15,
+            smtp_username = $16, smtp_password = $17, smtp_use_tls = $18,
+            from_address = $19, from_name = $20, template_alert_fire = $21,
+            template_alert_clear = $22, template_reminder = $23,
+            reminder_enabled = $24, reminder_interval_hours = $25, updated_at = $26
         WHERE id = $1
-    `, channel.ID, channel.OwnerUsername, channel.OwnerToken, channel.IsShared,
+    `, channel.ID, channel.OwnerUsername, channel.OwnerToken,
 		channel.Enabled, channel.ChannelType, channel.Name, channel.Description,
 		channel.WebhookURL, channel.EndpointURL, channel.HTTPMethod, channel.Headers,
 		channel.AuthType, channel.AuthCredentials, channel.SMTPHost, channel.SMTPPort,
@@ -402,7 +402,7 @@ func (d *Datastore) GetDueReminders(ctx context.Context) ([]DueReminder, error) 
             a.operator, a.severity, a.title, a.description, a.correlation_id,
             a.status, a.triggered_at, a.cleared_at, a.anomaly_score, a.anomaly_details,
             -- Channel fields
-            nc.id, nc.owner_username, nc.owner_token, nc.is_shared, nc.enabled,
+            nc.id, nc.owner_username, nc.owner_token, nc.enabled,
             nc.channel_type, nc.name, nc.description, nc.webhook_url, nc.endpoint_url,
             nc.http_method, nc.headers, nc.auth_type, nc.auth_credentials,
             nc.smtp_host, nc.smtp_port, nc.smtp_username, nc.smtp_password,
@@ -454,7 +454,7 @@ func (d *Datastore) GetDueReminders(ctx context.Context) ([]DueReminder, error) 
 			&alert.Description, &alert.CorrelationID, &alert.Status, &alert.TriggeredAt,
 			&alert.ClearedAt, &alert.AnomalyScore, &alert.AnomalyDetails,
 			// Channel fields
-			&channel.ID, &channel.OwnerUsername, &channel.OwnerToken, &channel.IsShared,
+			&channel.ID, &channel.OwnerUsername, &channel.OwnerToken,
 			&channel.Enabled, &channel.ChannelType, &channel.Name, &channel.Description,
 			&channel.WebhookURL, &channel.EndpointURL, &channel.HTTPMethod, &channel.Headers,
 			&channel.AuthType, &channel.AuthCredentials, &channel.SMTPHost, &channel.SMTPPort,

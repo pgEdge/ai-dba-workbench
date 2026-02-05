@@ -1957,7 +1957,6 @@ func (sm *SchemaManager) registerMigrations() {
 					id BIGSERIAL PRIMARY KEY,
 					owner_username VARCHAR(255),
 					owner_token VARCHAR(255),
-					is_shared BOOLEAN NOT NULL DEFAULT FALSE,
 					enabled BOOLEAN NOT NULL DEFAULT TRUE,
 					channel_type TEXT NOT NULL CHECK (channel_type IN ('slack', 'mattermost', 'webhook', 'email')),
 					name TEXT NOT NULL,
@@ -2318,6 +2317,24 @@ func (sm *SchemaManager) registerMigrations() {
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to add scope columns to blackout_schedules: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration #5: Remove is_shared from notification_channels
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     5,
+		Description: "Remove is_shared from notification_channels (all channels are shared)",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				ALTER TABLE notification_channels DROP COLUMN IF EXISTS is_shared;
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to drop is_shared from notification_channels: %w", err)
 			}
 
 			return nil

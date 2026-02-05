@@ -68,6 +68,7 @@ const PERMISSION_TYPES = [
     { value: 'manage_users', label: 'Manage Users' },
     { value: 'manage_probes', label: 'Manage Probes' },
     { value: 'manage_alert_rules', label: 'Manage Alert Rules' },
+    { value: 'manage_notification_channels', label: 'Manage Notification Channels' },
 ];
 
 const mcpTypeLabel = (itemType) => {

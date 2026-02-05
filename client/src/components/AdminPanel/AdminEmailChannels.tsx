@@ -64,7 +64,6 @@ interface EmailChannel {
     name: string;
     description: string;
     enabled: boolean;
-    shared: boolean;
     smtp_host: string;
     smtp_port: number;
     smtp_username: string;
@@ -85,7 +84,6 @@ interface ChannelFormState {
     name: string;
     description: string;
     enabled: boolean;
-    shared: boolean;
     smtp_host: string;
     smtp_port: string;
     smtp_username: string;
@@ -99,7 +97,6 @@ const DEFAULT_FORM_STATE: ChannelFormState = {
     name: '',
     description: '',
     enabled: true,
-    shared: false,
     smtp_host: '',
     smtp_port: '587',
     smtp_username: '',
@@ -161,7 +158,6 @@ const AdminEmailChannels: React.FC = () => {
                     name: ch.name as string,
                     description: (ch.description as string) || '',
                     enabled: ch.enabled as boolean,
-                    shared: ch.is_shared as boolean,
                     smtp_host: (ch.smtp_host as string) || '',
                     smtp_port: (ch.smtp_port as number) || 587,
                     smtp_username: (ch.smtp_username as string) || '',
@@ -239,7 +235,6 @@ const AdminEmailChannels: React.FC = () => {
             name: channel.name,
             description: channel.description,
             enabled: channel.enabled,
-            shared: channel.shared,
             smtp_host: channel.smtp_host,
             smtp_port: String(channel.smtp_port),
             smtp_username: channel.smtp_username,
@@ -303,9 +298,6 @@ const AdminEmailChannels: React.FC = () => {
                 if (form.enabled !== editingChannel.enabled) {
                     body.enabled = form.enabled;
                 }
-                if (form.shared !== editingChannel.shared) {
-                    body.is_shared = form.shared;
-                }
                 if (form.smtp_host.trim() !== editingChannel.smtp_host) {
                     body.smtp_host = form.smtp_host.trim();
                 }
@@ -349,7 +341,6 @@ const AdminEmailChannels: React.FC = () => {
                     name: form.name.trim(),
                     description: form.description.trim(),
                     enabled: form.enabled,
-                    is_shared: form.shared,
                     smtp_host: form.smtp_host.trim(),
                     smtp_port: portNum,
                     smtp_username: form.smtp_username.trim(),
@@ -612,6 +603,15 @@ const AdminEmailChannels: React.FC = () => {
         }
     };
 
+    // --- Helpers ---
+
+    const truncateDescription = (desc: string): string => {
+        if (!desc) return '';
+        const firstLine = desc.split('\n')[0];
+        if (firstLine.length <= 60) return firstLine;
+        return firstLine.substring(0, 60) + '...';
+    };
+
     // --- Render ---
 
     if (loading) {
@@ -663,8 +663,7 @@ const AdminEmailChannels: React.FC = () => {
                     <TableHead>
                         <TableRow>
                             <TableCell sx={tableHeaderCellSx}>Name</TableCell>
-                            <TableCell sx={tableHeaderCellSx}>SMTP Host</TableCell>
-                            <TableCell sx={tableHeaderCellSx}>From Address</TableCell>
+                            <TableCell sx={tableHeaderCellSx}>Description</TableCell>
                             <TableCell sx={tableHeaderCellSx}>Recipients</TableCell>
                             <TableCell sx={tableHeaderCellSx}>Enabled</TableCell>
                             <TableCell sx={tableHeaderCellSx} align="right">Actions</TableCell>
@@ -675,19 +674,11 @@ const AdminEmailChannels: React.FC = () => {
                             channels.map((channel) => (
                                 <TableRow key={channel.id} hover>
                                     <TableCell>
-                                        <Box>
-                                            {channel.name}
-                                            {channel.shared && (
-                                                <Chip
-                                                    label="Shared"
-                                                    size="small"
-                                                    sx={{ ml: 1, fontSize: '0.7rem' }}
-                                                />
-                                            )}
-                                        </Box>
+                                        {channel.name}
                                     </TableCell>
-                                    <TableCell>{channel.smtp_host}</TableCell>
-                                    <TableCell>{channel.from_address}</TableCell>
+                                    <TableCell>
+                                        {truncateDescription(channel.description)}
+                                    </TableCell>
                                     <TableCell>
                                         <Chip
                                             label={channel.recipient_count}
@@ -743,7 +734,7 @@ const AdminEmailChannels: React.FC = () => {
                             ))
                         ) : (
                             <TableRow>
-                                <TableCell colSpan={6} align="center" sx={emptyRowSx}>
+                                <TableCell colSpan={5} align="center" sx={emptyRowSx}>
                                     <Typography color="text.secondary" sx={emptyRowTextSx}>
                                         No email channels configured.
                                     </Typography>
@@ -890,17 +881,6 @@ const AdminEmailChannels: React.FC = () => {
                                     />
                                 }
                                 label="Enabled"
-                            />
-                            <FormControlLabel
-                                sx={{ ml: 0, gap: 1 }}
-                                control={
-                                    <Switch
-                                        checked={form.shared}
-                                        onChange={(e) => handleFormChange('shared', e.target.checked)}
-                                        disabled={saving}
-                                    />
-                                }
-                                label="Shared"
                             />
                         </Box>
                     </Box>

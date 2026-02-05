@@ -110,6 +110,7 @@ nav:
       - Configuration: server/configuration.md
       - Connections: server/connections.md
       - Metrics: server/metrics.md
+      - Notification Channels: server/notification-channels.md
   - CLI:
       - Overview: cli/index.md
   - Changelog: changelog.md

@@ -47,6 +47,9 @@ import {
     Dns as ClusterIcon,
     Star as PrimaryIcon,
     Hub as SpockIcon,
+    AdminPanelSettings as AdminIcon,
+    Email as EmailIcon,
+    Notifications as NotificationsIcon,
 } from '@mui/icons-material';
 import { CLIENT_VERSION } from '../lib/version';
 
@@ -58,6 +61,7 @@ const HELP_PAGES = {
     alerts: 'alerts',
     serverManagement: 'serverManagement',
     settings: 'settings',
+    administration: 'administration',
 };
 
 // Map context to help page
@@ -82,6 +86,9 @@ const contextToPage = (context) => {
         case 'settings':
         case 'theme':
             return HELP_PAGES.settings;
+        case 'administration':
+        case 'admin':
+            return HELP_PAGES.administration;
         default:
             return HELP_PAGES.overview;
     }
@@ -764,6 +771,106 @@ const SettingsPage = () => (
 );
 
 /**
+ * Administration Page - Admin panel help
+ */
+const AdministrationPage = () => (
+    <Box>
+        <Typography variant="h5" sx={styles.pageHeading}>
+            Administration
+        </Typography>
+        <Typography sx={styles.bodyTextMb3}>
+            The Administration panel provides tools for managing security,
+            monitoring configuration, and notification channels. Access the
+            admin panel from the settings icon in the header. Available
+            sections depend on your assigned permissions.
+        </Typography>
+
+        <SectionTitle icon={SettingsIcon}>Security</SectionTitle>
+        <Typography sx={styles.bodyTextMb2}>
+            Manage users, groups, and access control for the workbench:
+        </Typography>
+        <Box sx={styles.indentedBlock}>
+            <FeatureItem
+                title="Users"
+                description="Create and manage user accounts, set passwords, and assign superuser status."
+            />
+            <FeatureItem
+                title="Groups"
+                description="Organize users into groups for role-based access control."
+            />
+            <FeatureItem
+                title="Permissions"
+                description="Grant admin permissions, MCP privileges, and connection access to groups."
+            />
+            <FeatureItem
+                title="Tokens"
+                description="Manage API tokens with scoped access for service accounts and integrations."
+            />
+        </Box>
+
+        <SectionTitle icon={AlertsIcon}>Monitoring</SectionTitle>
+        <Typography sx={styles.bodyTextMb2}>
+            Configure default settings for data collection and alerting:
+        </Typography>
+        <Box sx={styles.indentedBlock}>
+            <FeatureItem
+                title="Probe Defaults"
+                description="Configure data collection frequency, retention periods, and enabled state for each monitoring probe."
+            />
+            <FeatureItem
+                title="Alert Defaults"
+                description="Set default thresholds, operators, severity levels, and enabled state for each alert rule."
+            />
+        </Box>
+
+        <SectionTitle icon={NotificationsIcon}>Notification Channels</SectionTitle>
+        <Typography sx={styles.bodyTextMb2}>
+            Configure how alert notifications are delivered. Four channel
+            types are available:
+        </Typography>
+        <Box sx={styles.indentedBlock}>
+            <FeatureItem
+                title="Email Channels"
+                description="Send alerts via SMTP to configured recipients. Supports TLS, authentication, and per-channel recipient management."
+            />
+            <FeatureItem
+                title="Slack Channels"
+                description="Send alerts to Slack channels via incoming webhook URLs."
+            />
+            <FeatureItem
+                title="Mattermost Channels"
+                description="Send alerts to Mattermost channels via incoming webhook URLs."
+            />
+            <FeatureItem
+                title="Webhook Channels"
+                description="Send alerts to arbitrary HTTP endpoints with configurable methods, headers, authentication, and JSON payload templates."
+            />
+        </Box>
+
+        <SectionTitle>Webhook Templates</SectionTitle>
+        <Typography sx={styles.bodyTextMb2}>
+            Webhook channels support customizable JSON payload templates
+            using Go template syntax. Three templates can be configured for
+            each channel: Alert Fire (when an alert triggers), Alert Clear
+            (when an alert resolves), and Reminder (for periodic reminders
+            of active alerts). Leave templates blank to use sensible defaults.
+        </Typography>
+        <Typography sx={styles.bodyText}>
+            Templates have access to alert context variables including
+            AlertTitle, AlertDescription, Severity, ServerName, ServerHost,
+            DatabaseName, MetricName, MetricValue, ThresholdValue, and more.
+            Use conditional blocks like {'{{if .MetricName}}...{{end}}'} for
+            optional fields.
+        </Typography>
+
+        <HelpTip>
+            Use the test button on any channel to send a test notification
+            and verify your configuration.
+        </HelpTip>
+    </Box>
+);
+
+/**
  * HelpPanel - Main help panel component
  */
 interface HelpPanelProps {
@@ -816,6 +923,8 @@ const HelpPanel: React.FC<HelpPanelProps> = ({ open, onClose, helpContext, mode 
                 return <ServerManagementPage />;
             case HELP_PAGES.settings:
                 return <SettingsPage />;
+            case HELP_PAGES.administration:
+                return <AdministrationPage />;
             default:
                 return <OverviewPage />;
         }
@@ -833,6 +942,8 @@ const HelpPanel: React.FC<HelpPanelProps> = ({ open, onClose, helpContext, mode 
                 return 'Server Management';
             case HELP_PAGES.settings:
                 return 'Settings';
+            case HELP_PAGES.administration:
+                return 'Administration';
             default:
                 return 'Overview';
         }
@@ -925,6 +1036,13 @@ const HelpPanel: React.FC<HelpPanelProps> = ({ open, onClose, helpContext, mode 
                                 icon={SettingsIcon}
                                 label="Settings"
                                 pageId={HELP_PAGES.settings}
+                                currentPage={currentPage}
+                                onClick={setCurrentPage}
+                            />
+                            <HelpNavItem
+                                icon={AdminIcon}
+                                label="Administration"
+                                pageId={HELP_PAGES.administration}
                                 currentPage={currentPage}
                                 onClick={setCurrentPage}
                             />

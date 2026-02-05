@@ -109,6 +109,17 @@ and this project adheres to
   showing sample `curl` commands for common operations.
 - Expandable permission panels on all three admin panel tabs
   (Users, Groups, Tokens) for consistent privilege display.
+- Notification channel management through the admin panel with
+  support for Email, Slack, Mattermost, and Webhook channels.
+- Webhook channels with configurable HTTP methods, custom headers,
+  authentication (Basic, Bearer, API Key), and customizable JSON
+  payload templates using Go template syntax.
+- Test notification button for all channel types to verify
+  configuration before use.
+- Email channel recipient management with per-recipient enable
+  and display name.
+- REST API endpoints for notification channel CRUD, testing, and
+  email recipient management.
 
 ### Changed
 

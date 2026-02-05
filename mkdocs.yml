@@ -111,6 +111,7 @@ nav:
       - Connections: server/connections.md
       - Metrics: server/metrics.md
       - Notification Channels: server/notification-channels.md
+      - Blackout Management: server/blackouts.md
   - CLI:
       - Overview: cli/index.md
   - Changelog: changelog.md

@@ -26,6 +26,9 @@ include:
   history.
 - Notification channel management for configuring alert delivery
   through Email, Slack, Mattermost, and Webhook channels.
+- Blackout management for suppressing alerts during planned
+  maintenance with support for hierarchical scopes and
+  recurring schedules.
 
 ## Getting Started
 
@@ -109,6 +112,11 @@ The binary is created at `bin/ai-dba-server`.
 - [Notification Channels](notification-channels.md) - Configure
   alert delivery through Email, Slack, Mattermost, and Webhook
   channels
+
+### Blackout Management
+
+- [Blackout Management](blackouts.md) - Suppress alerts during
+  maintenance with one-time blackouts and recurring schedules
 
 ## Architecture
 

@@ -119,15 +119,22 @@ knowledgebase:
 #=========================================================================
 builtins:
   tools:
+    # Database tools
     query_database: true
     get_schema_info: true
     similarity_search: true
     execute_explain: true
     count_rows: true
+    # Datastore/metrics tools
     list_probes: true
     describe_probe: true
     query_metrics: true
     list_connections: true
+    # Alert tools
+    get_alert_history: true
+    get_alert_rules: true
+    get_metric_baselines: true
+    # Utility tools
     generate_embedding: true
     search_knowledgebase: true
   resources:
@@ -280,7 +287,6 @@ user-created database connections.
 | `database` | string | `postgres` | Database name |
 | `user` | string | | Database user (required) |
 | `password` | string | | Database password |
-| `password_file` | string | | Path to password file |
 | `sslmode` | string | `prefer` | SSL mode |
 | `pool_max_conns` | int | `4` | Max pool connections |
 | `pool_min_conns` | int | `0` | Min pool connections |
@@ -339,6 +345,10 @@ builtins:
     describe_probe: true
     query_metrics: true
     list_connections: true
+    # Alert tools
+    get_alert_history: true
+    get_alert_rules: true
+    get_metric_baselines: true
     # Utility tools
     generate_embedding: true
     search_knowledgebase: true

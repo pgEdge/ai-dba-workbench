@@ -192,6 +192,7 @@ The `baselines` section configures baseline metric calculation:
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `refresh_interval_seconds` | integer | `3600` | Baseline refresh interval |
+| `lookback_days` | integer | `7` | Historical data lookback period in days |
 
 ### Correlation
 
@@ -247,6 +248,39 @@ The `llm.voyage` section configures the Voyage provider for embeddings:
 |--------|------|---------|-------------|
 | `api_key_file` | string | None | Path to API key file |
 | `embedding_model` | string | `voyage-3-lite` | Embedding model |
+
+### Notifications
+
+The `notifications` section configures the notification delivery
+system for sending alerts via external channels:
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | boolean | `false` | Enable notification delivery |
+| `secret_file` | string | None | Path to encryption key file |
+| `process_interval_seconds` | integer | `30` | Processing interval for pending notifications |
+| `reminder_check_interval_minutes` | integer | `60` | Interval for checking due reminders |
+| `max_retry_attempts` | integer | `3` | Maximum retries for failed notifications |
+| `retry_backoff_minutes` | list | `[5, 15, 60]` | Backoff schedule for retries in minutes |
+| `http_timeout_seconds` | integer | `30` | HTTP request timeout for webhooks |
+| `http_max_idle_conns` | integer | `10` | Maximum idle HTTP connections |
+
+The `secret_file` option specifies a file containing a
+hex-encoded 32-byte key for encrypting sensitive notification
+channel credentials.
+
+In the following example, the `notifications` section enables
+delivery with custom retry settings:
+
+```yaml
+notifications:
+  enabled: true
+  secret_file: /etc/ai-workbench/notifications.key
+  process_interval_seconds: 30
+  max_retry_attempts: 5
+  retry_backoff_minutes: [5, 15, 30]
+  http_timeout_seconds: 60
+```
 
 ## API Key Management
 

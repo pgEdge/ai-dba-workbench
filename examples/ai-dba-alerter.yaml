@@ -223,6 +223,11 @@ baselines:
   # Default: 3600 (1 hour)
   refresh_interval_seconds: 3600
 
+  # Number of days of historical data to use for baseline calculation
+  # Longer lookback periods produce more stable baselines
+  # Default: 7
+  lookback_days: 7
+
 #=========================================================================
 # CORRELATION SETTINGS
 #=========================================================================
@@ -317,71 +322,62 @@ llm:
     embedding_model: voyage-3-lite
 
 #=========================================================================
-# BLACKOUT PERIOD SETTINGS
+# NOTIFICATION DELIVERY SETTINGS
 #=========================================================================
 #
-# Blackout periods suppress alerts during maintenance windows.
-# Supports both manual (one-time) and scheduled (recurring) blackouts.
+# Configure how the alerter delivers notifications through external
+# channels such as email, Slack, Mattermost, and webhooks.
 #
 
-blackout:
-  # Enable blackout period enforcement
-  # Default: true
-  enabled: true
+notifications:
+  # Enable notification delivery
+  # Default: false
+  enabled: false
 
-  # Default duration for manual blackouts in minutes
-  # Used when duration is not specified in the API request
-  # Default: 60
-  default_duration_minutes: 60
-
-  # Maximum allowed blackout duration in minutes
-  # Prevents accidentally long blackout periods
-  # Default: 1440 (24 hours)
-  max_duration_minutes: 1440
-
-  # Timezone for scheduled blackouts (IANA format)
-  # Default: UTC
-  timezone: UTC
-
-  #-------------------------------------------------------------------------
-  # Scheduled Blackouts
-  #-------------------------------------------------------------------------
-  # Define recurring blackout periods using cron syntax.
-  # Format: "minute hour day-of-month month day-of-week"
+  # Path to file containing the encryption key for channel credentials
+  # The file should contain a hex-encoded 32-byte key (64 hex characters)
+  # Default: none
   #
-  # Example: Every Sunday 2:00-4:00 AM for maintenance
-  # schedules:
-  #   - name: sunday_maintenance
-  #     cron: "0 2 * * 0"
-  #     duration_minutes: 120
-  #     connections: []  # Empty means all connections
-  #     rules: []        # Empty means all rules
+  # Generate a secure key file:
+  #   openssl rand -hex 32 > /etc/ai-workbench/notifications.key
+  #   chmod 600 /etc/ai-workbench/notifications.key
+  #
+  # secret_file: /etc/ai-workbench/notifications.key
 
-  schedules: []
-
-#=========================================================================
-# RETENTION SETTINGS
-#=========================================================================
-#
-# Configure how long alert data is retained in the datastore.
-#
-
-retention:
-  # Number of days to retain triggered alerts
-  # Default: 90
-  alert_days: 90
-
-  # Number of days to retain cleared alerts
+  # How often to process pending notifications (in seconds)
   # Default: 30
-  cleared_alert_days: 30
+  process_interval_seconds: 30
 
-  # Number of days to retain alert history (state changes)
-  # Default: 180
-  history_days: 180
+  # How often to check for due reminders (in minutes)
+  # Default: 60
+  reminder_check_interval_minutes: 60
 
-  # Hour of day (0-23) to run retention cleanup
-  # Default: 4 (4:00 AM)
-  cleanup_hour: 4
+  # Maximum number of retry attempts for failed notifications
+  # Default: 3
+  max_retry_attempts: 3
+
+  # Backoff schedule for retries (array of minutes between attempts)
+  # Default: [5, 15, 60]
+  retry_backoff_minutes: [5, 15, 60]
+
+  # HTTP request timeout for webhooks, Slack, and Mattermost (in seconds)
+  # Default: 30
+  http_timeout_seconds: 30
+
+  # Maximum number of idle HTTP connections in the connection pool
+  # Default: 10
+  http_max_idle_conns: 10
+
+#=========================================================================
+# BLACKOUT AND RETENTION MANAGEMENT
+#=========================================================================
+#
+# Blackout periods and data retention policies are managed through the
+# admin API, not through this configuration file. See the documentation
+# for details:
+#   - docs/server/blackouts.md
+#   - docs/alerter/index.md
+#
 
 #=========================================================================
 # SECURITY SETTINGS
@@ -490,13 +486,12 @@ retention:
 #     embedding_model: voyage-3-lite
 # baselines:
 #   refresh_interval_seconds: 3600
+#   lookback_days: 7
 # correlation:
 #   window_seconds: 180
-# blackout:
+# notifications:
 #   enabled: true
-#   timezone: America/New_York
-#   schedules:
-#     - name: sunday_maintenance
-#       cron: "0 2 * * 0"
-#       duration_minutes: 120
+#   secret_file: /var/secrets/ai-workbench/notifications.key
+#   process_interval_seconds: 30
+#   max_retry_attempts: 3
 # secret_file: /var/secrets/ai-workbench/alerter.secret

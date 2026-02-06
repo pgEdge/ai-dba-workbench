@@ -11,7 +11,10 @@
 import React from 'react';
 import { TextField, Box, Typography } from '@mui/material';
 import { ServerFormData, FormErrors, FieldChangeHandler } from './ServerDialog.types';
-import { textFieldSx, sectionLabelSx } from './ServerDialog.styles';
+import {
+    textFieldSx,
+    sectionLabelSx,
+} from './ServerDialog.styles';
 
 interface ConnectionFieldsProps {
     formData: ServerFormData;
@@ -32,13 +35,8 @@ const ConnectionFields: React.FC<ConnectionFieldsProps> = ({
     isSaving,
     onFieldChange,
 }) => {
-    return (
+    const fields = (
         <>
-            {/* Connection Details Section Label */}
-            <Typography variant="subtitle2" sx={sectionLabelSx}>
-                Connection Details
-            </Typography>
-
             {/* Name field */}
             <TextField
                 autoFocus
@@ -131,6 +129,16 @@ const ConnectionFields: React.FC<ConnectionFieldsProps> = ({
                     sx={{ flex: 1, ...textFieldSx }}
                 />
             </Box>
+        </>
+    );
+
+    return (
+        <>
+            {/* Connection Details Section Label */}
+            <Typography variant="subtitle2" sx={sectionLabelSx}>
+                Connection Details
+            </Typography>
+            {fields}
         </>
     );
 };

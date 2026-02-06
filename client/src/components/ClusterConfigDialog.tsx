@@ -95,7 +95,7 @@ const ClusterConfigDialog: React.FC<ClusterConfigDialogProps> = ({
                 <Tab label="Probe Configuration" />
                 <Tab label="Notification Channels" />
             </Tabs>
-            <Box sx={{ flex: 1, overflow: 'auto', p: 3 }}>
+            <Box sx={{ flex: 1, overflow: 'auto', p: 3, bgcolor: 'background.default' }}>
                 {activeTab === 0 && (
                     <AlertOverridesPanel scope="cluster" scopeId={clusterId} />
                 )}

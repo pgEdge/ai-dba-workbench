@@ -73,7 +73,7 @@ export const sslAccordionSx: SxProps<Theme> = {
     mt: 2,
     '&:before': { display: 'none' },
     border: '1px solid',
-    borderColor: 'grey.200',
+    borderColor: 'divider',
     borderRadius: '8px !important',
 };
 
@@ -157,4 +157,40 @@ export const getSaveButtonSx = (theme: Theme): SxProps<Theme> => ({
 export const dialogActionsSx: SxProps<Theme> = {
     px: 3,
     pb: 2,
+};
+
+/* -----------------------------------------------------------------------
+ * Edit mode fullscreen layout styles
+ * -----------------------------------------------------------------------
+ */
+
+/**
+ * Centered form container for the edit mode Connection tab.
+ * Centers content horizontally with a comfortable max-width.
+ */
+export const editFormContainerSx: SxProps<Theme> = {
+    maxWidth: 800,
+    mx: 'auto',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 2.5,
+};
+
+/**
+ * Sticky footer for the Save/Cancel buttons in edit mode.
+ * Stays visible at the bottom of the scrollable area.
+ */
+export const stickyFooterSx: SxProps<Theme> = {
+    position: 'sticky',
+    bottom: -24,
+    bgcolor: 'background.default',
+    pt: 2,
+    pb: 1,
+    mt: 1,
+    display: 'flex',
+    gap: 1,
+    justifyContent: 'flex-end',
+    borderTop: '1px solid',
+    borderColor: 'divider',
+    zIndex: 1,
 };

@@ -182,7 +182,7 @@ const ChannelOverridesPanel: React.FC<ChannelOverridesPanelProps> = ({ scope, sc
                 elevation={0}
                 sx={tableContainerSx}
             >
-                <Table size="small">
+                <Table>
                     <TableHead>
                         <TableRow>
                             <TableCell sx={tableHeaderCellSx}>Name</TableCell>
@@ -205,14 +205,6 @@ const ChannelOverridesPanel: React.FC<ChannelOverridesPanelProps> = ({ scope, sc
                                     <TableRow
                                         key={item.channel_id}
                                         hover
-                                        sx={
-                                            item.has_override
-                                                ? {
-                                                    borderLeft: '2px solid',
-                                                    borderLeftColor: theme.palette.primary.main,
-                                                }
-                                                : undefined
-                                        }
                                     >
                                         <TableCell sx={cellSx}>{item.channel_name}</TableCell>
                                         <TableCell>

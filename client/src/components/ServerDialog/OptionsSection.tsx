@@ -38,41 +38,44 @@ const OptionsSection: React.FC<OptionsSectionProps> = ({
     isSuperuser,
     onFieldChange,
 }) => {
+    const checkboxes = (
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <FormControlLabel
+                control={
+                    <Checkbox
+                        checked={formData.is_monitored}
+                        onChange={(e) => onFieldChange('is_monitored', e.target.checked)}
+                        disabled={isSaving}
+                        sx={checkboxSx}
+                    />
+                }
+                label="Monitor this server"
+                sx={formControlLabelSx}
+            />
+
+            {isSuperuser && (
+                <FormControlLabel
+                    control={
+                        <Checkbox
+                            checked={formData.is_shared}
+                            onChange={(e) => onFieldChange('is_shared', e.target.checked)}
+                            disabled={isSaving}
+                            sx={checkboxSx}
+                        />
+                    }
+                    label="Share with all users"
+                    sx={formControlLabelSx}
+                />
+            )}
+        </Box>
+    );
+
     return (
         <>
             <Typography variant="subtitle2" sx={optionsSectionLabelSx}>
                 Options
             </Typography>
-
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                <FormControlLabel
-                    control={
-                        <Checkbox
-                            checked={formData.is_monitored}
-                            onChange={(e) => onFieldChange('is_monitored', e.target.checked)}
-                            disabled={isSaving}
-                            sx={checkboxSx}
-                        />
-                    }
-                    label="Monitor this server"
-                    sx={formControlLabelSx}
-                />
-
-                {isSuperuser && (
-                    <FormControlLabel
-                        control={
-                            <Checkbox
-                                checked={formData.is_shared}
-                                onChange={(e) => onFieldChange('is_shared', e.target.checked)}
-                                disabled={isSaving}
-                                sx={checkboxSx}
-                            />
-                        }
-                        label="Share with all users"
-                        sx={formControlLabelSx}
-                    />
-                )}
-            </Box>
+            {checkboxes}
         </>
     );
 };

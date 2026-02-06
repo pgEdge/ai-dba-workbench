@@ -491,7 +491,8 @@ type ProbeOverrideUpdate struct {
 func (d *Datastore) GetProbeOverridesForServer(ctx context.Context, connectionID int) ([]ProbeOverride, error) {
 	rows, err := d.pool.Query(ctx, `
 		SELECT g.name, g.description, g.is_enabled, g.collection_interval_seconds, g.retention_days,
-		       o.is_enabled, o.collection_interval_seconds, o.retention_days
+		       o.is_enabled, o.collection_interval_seconds, o.retention_days,
+		       COALESCE(o.user_modified, FALSE)
 		FROM probe_configs g
 		LEFT JOIN probe_configs o ON o.name = g.name AND o.scope = 'server' AND o.connection_id = $1
 		WHERE g.scope = 'global'
@@ -508,7 +509,8 @@ func (d *Datastore) GetProbeOverridesForServer(ctx context.Context, connectionID
 func (d *Datastore) GetProbeOverridesForCluster(ctx context.Context, clusterID int) ([]ProbeOverride, error) {
 	rows, err := d.pool.Query(ctx, `
 		SELECT g.name, g.description, g.is_enabled, g.collection_interval_seconds, g.retention_days,
-		       o.is_enabled, o.collection_interval_seconds, o.retention_days
+		       o.is_enabled, o.collection_interval_seconds, o.retention_days,
+		       COALESCE(o.user_modified, FALSE)
 		FROM probe_configs g
 		LEFT JOIN probe_configs o ON o.name = g.name AND o.scope = 'cluster' AND o.cluster_id = $1
 		WHERE g.scope = 'global'
@@ -525,7 +527,8 @@ func (d *Datastore) GetProbeOverridesForCluster(ctx context.Context, clusterID i
 func (d *Datastore) GetProbeOverridesForGroup(ctx context.Context, groupID int) ([]ProbeOverride, error) {
 	rows, err := d.pool.Query(ctx, `
 		SELECT g.name, g.description, g.is_enabled, g.collection_interval_seconds, g.retention_days,
-		       o.is_enabled, o.collection_interval_seconds, o.retention_days
+		       o.is_enabled, o.collection_interval_seconds, o.retention_days,
+		       COALESCE(o.user_modified, FALSE)
 		FROM probe_configs g
 		LEFT JOIN probe_configs o ON o.name = g.name AND o.scope = 'group' AND o.group_id = $1
 		WHERE g.scope = 'global'
@@ -545,13 +548,15 @@ func scanProbeOverrides(rows pgx.Rows) ([]ProbeOverride, error) {
 		var o ProbeOverride
 		var overrideEnabled *bool
 		var overrideInterval, overrideRetention *int
+		var userModified bool
 		if err := rows.Scan(
 			&o.Name, &o.Description, &o.DefaultEnabled, &o.DefaultIntervalSeconds, &o.DefaultRetentionDays,
 			&overrideEnabled, &overrideInterval, &overrideRetention,
+			&userModified,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan probe override: %w", err)
 		}
-		o.HasOverride = overrideEnabled != nil
+		o.HasOverride = userModified
 		o.OverrideEnabled = overrideEnabled
 		o.OverrideIntervalSeconds = overrideInterval
 		o.OverrideRetentionDays = overrideRetention
@@ -578,24 +583,24 @@ func (d *Datastore) UpsertProbeOverride(ctx context.Context, scope string, scope
 	switch scope {
 	case "server":
 		query = `
-			INSERT INTO probe_configs (name, description, scope, connection_id, is_enabled, collection_interval_seconds, retention_days)
-			VALUES ($1, (SELECT description FROM probe_configs WHERE name = $1 AND scope = 'global'), 'server', $2, $3, $4, $5)
+			INSERT INTO probe_configs (name, description, scope, connection_id, is_enabled, collection_interval_seconds, retention_days, user_modified)
+			VALUES ($1, (SELECT description FROM probe_configs WHERE name = $1 AND scope = 'global'), 'server', $2, $3, $4, $5, TRUE)
 			ON CONFLICT (name, connection_id) WHERE scope = 'server'
-			DO UPDATE SET is_enabled = $3, collection_interval_seconds = $4, retention_days = $5, updated_at = NOW()`
+			DO UPDATE SET is_enabled = $3, collection_interval_seconds = $4, retention_days = $5, user_modified = TRUE, updated_at = NOW()`
 		args = []interface{}{probeName, scopeID, update.IsEnabled, update.CollectionIntervalSeconds, update.RetentionDays}
 	case "cluster":
 		query = `
-			INSERT INTO probe_configs (name, description, scope, cluster_id, is_enabled, collection_interval_seconds, retention_days)
-			VALUES ($1, (SELECT description FROM probe_configs WHERE name = $1 AND scope = 'global'), 'cluster', $2, $3, $4, $5)
+			INSERT INTO probe_configs (name, description, scope, cluster_id, is_enabled, collection_interval_seconds, retention_days, user_modified)
+			VALUES ($1, (SELECT description FROM probe_configs WHERE name = $1 AND scope = 'global'), 'cluster', $2, $3, $4, $5, TRUE)
 			ON CONFLICT (name, cluster_id) WHERE scope = 'cluster'
-			DO UPDATE SET is_enabled = $3, collection_interval_seconds = $4, retention_days = $5, updated_at = NOW()`
+			DO UPDATE SET is_enabled = $3, collection_interval_seconds = $4, retention_days = $5, user_modified = TRUE, updated_at = NOW()`
 		args = []interface{}{probeName, scopeID, update.IsEnabled, update.CollectionIntervalSeconds, update.RetentionDays}
 	case "group":
 		query = `
-			INSERT INTO probe_configs (name, description, scope, group_id, is_enabled, collection_interval_seconds, retention_days)
-			VALUES ($1, (SELECT description FROM probe_configs WHERE name = $1 AND scope = 'global'), 'group', $2, $3, $4, $5)
+			INSERT INTO probe_configs (name, description, scope, group_id, is_enabled, collection_interval_seconds, retention_days, user_modified)
+			VALUES ($1, (SELECT description FROM probe_configs WHERE name = $1 AND scope = 'global'), 'group', $2, $3, $4, $5, TRUE)
 			ON CONFLICT (name, group_id) WHERE scope = 'group'
-			DO UPDATE SET is_enabled = $3, collection_interval_seconds = $4, retention_days = $5, updated_at = NOW()`
+			DO UPDATE SET is_enabled = $3, collection_interval_seconds = $4, retention_days = $5, user_modified = TRUE, updated_at = NOW()`
 		args = []interface{}{probeName, scopeID, update.IsEnabled, update.CollectionIntervalSeconds, update.RetentionDays}
 	default:
 		return fmt.Errorf("invalid scope: %s", scope)

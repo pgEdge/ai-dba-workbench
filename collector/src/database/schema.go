@@ -2584,6 +2584,31 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration #11: Add user_modified flag to probe_configs
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     11,
+		Description: "Add user_modified flag to probe_configs",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+			_, err := tx.Exec(ctx, `
+				ALTER TABLE probe_configs
+					ADD COLUMN IF NOT EXISTS user_modified BOOLEAN NOT NULL DEFAULT FALSE;
+
+				UPDATE probe_configs s SET user_modified = TRUE
+				FROM probe_configs g
+				WHERE s.scope IN ('server', 'cluster', 'group')
+					AND g.scope = 'global' AND g.name = s.name
+					AND (s.is_enabled != g.is_enabled
+						 OR s.collection_interval_seconds != g.collection_interval_seconds
+						 OR s.retention_days != g.retention_days);
+
+				COMMENT ON COLUMN probe_configs.user_modified IS
+					'Whether this config was explicitly modified by a user via the UI';
+			`)
+			return err
+		},
+	})
 }
 
 // Migrate applies all pending migrations

@@ -245,7 +245,7 @@ const ProbeOverridesPanel: React.FC<ProbeOverridesPanelProps> = ({ scope, scopeI
                 elevation={0}
                 sx={tableContainerSx}
             >
-                <Table size="small">
+                <Table>
                     <TableHead>
                         <TableRow>
                             <TableCell sx={tableHeaderCellSx}>Name</TableCell>
@@ -266,14 +266,6 @@ const ProbeOverridesPanel: React.FC<ProbeOverridesPanelProps> = ({ scope, scopeI
                                     <TableRow
                                         key={item.name}
                                         hover
-                                        sx={
-                                            item.has_override
-                                                ? {
-                                                    borderLeft: '2px solid',
-                                                    borderLeftColor: theme.palette.primary.main,
-                                                }
-                                                : undefined
-                                        }
                                     >
                                         <TableCell sx={cellSx}>{item.name}</TableCell>
                                         <TableCell sx={cellSx}>{item.description}</TableCell>

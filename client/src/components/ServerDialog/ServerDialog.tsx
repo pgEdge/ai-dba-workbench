@@ -41,6 +41,8 @@ import {
     cancelButtonSx,
     getSaveButtonSx,
     dialogActionsSx,
+    editFormContainerSx,
+    stickyFooterSx,
 } from './ServerDialog.styles';
 import { validateServerForm, prepareSaveData } from './ServerDialog.validation';
 import ConnectionFields from './ConnectionFields';
@@ -216,14 +218,14 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
                     <Tab label="Probe Configuration" />
                     <Tab label="Notification Channels" />
                 </Tabs>
-                <Box sx={{ flex: 1, overflow: 'auto', p: 3 }}>
+                <Box sx={{ flex: 1, overflow: 'auto', p: 3, bgcolor: 'background.default' }}>
                     {activeTab === 0 && (
-                        <Box sx={{ maxWidth: 600 }}>
+                        <Box sx={editFormContainerSx}>
                             <form onSubmit={handleSubmit} noValidate>
                                 {submitError && (
                                     <Alert
                                         severity="error"
-                                        sx={{ mb: 2, borderRadius: 1 }}
+                                        sx={{ mb: 0.5, borderRadius: 1 }}
                                         onClose={() => setSubmitError(null)}
                                     >
                                         {submitError}
@@ -253,12 +255,7 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
                                     onFieldChange={handleFieldChange}
                                 />
 
-                                <Box sx={{
-                                    mt: 3,
-                                    display: 'flex',
-                                    gap: 1,
-                                    justifyContent: 'flex-end',
-                                }}>
+                                <Box sx={stickyFooterSx}>
                                     <Button
                                         onClick={handleClose}
                                         disabled={isSaving}

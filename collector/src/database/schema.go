@@ -2340,6 +2340,24 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration #6: Add postmaster_start_time to pg_node_role
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     6,
+		Description: "Add postmaster_start_time to pg_node_role for restart detection",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				ALTER TABLE metrics.pg_node_role
+					ADD COLUMN IF NOT EXISTS postmaster_start_time TIMESTAMPTZ;
+
+				COMMENT ON COLUMN metrics.pg_node_role.postmaster_start_time IS
+					'PostgreSQL postmaster start time for restart detection';
+			`)
+			return err
+		},
+	})
 }
 
 // Migrate applies all pending migrations

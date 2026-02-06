@@ -238,7 +238,7 @@ func buildUnionQuery(connCondition, timeCondition, typeCondition string, filter 
 		subqueries = append(subqueries, buildIdentChangeQuery(whereClause))
 	}
 
-	// Server restarts from pg_node_role (timeline_id changes)
+	// Server restarts from pg_node_role (postmaster_start_time changes)
 	if includeTypes[EventTypeRestart] {
 		subqueries = append(subqueries, buildRestartQuery(whereClause))
 	}
@@ -574,11 +574,11 @@ func buildIdentChangeCountQuery(whereClause string) string {
 	}())
 }
 
-// buildRestartQuery creates the subquery for server restarts (timeline_id changes)
+// buildRestartQuery creates the subquery for server restarts (postmaster_start_time changes)
 func buildRestartQuery(whereClause string) string {
 	tableWhere := strings.ReplaceAll(whereClause, "event_time", "collected_at")
 
-	// Use window function to detect timeline_id changes between consecutive rows
+	// Use window function to detect postmaster_start_time changes between consecutive rows
 	return fmt.Sprintf(`
         SELECT
             'restart-' || r.connection_id || '-' || r.collected_at::TEXT AS id,
@@ -588,30 +588,31 @@ func buildRestartQuery(whereClause string) string {
             r.collected_at AS event_time,
             'warning' AS severity,
             'Server Restart Detected' AS title,
-            'Timeline changed from ' || r.prev_timeline || ' to ' || r.timeline_id AS summary,
+            'Server started at ' || r.postmaster_start_time || '; previous start was ' || r.prev_start_time AS summary,
             jsonb_build_object(
-                'previous_timeline', r.prev_timeline,
-                'new_timeline', r.timeline_id,
+                'previous_start_time', r.prev_start_time,
+                'new_start_time', r.postmaster_start_time,
                 'is_in_recovery', r.is_in_recovery,
                 'primary_role', r.primary_role
             )::TEXT AS details
         FROM (
             SELECT
                 connection_id,
-                timeline_id,
+                postmaster_start_time,
                 is_in_recovery,
                 primary_role,
                 collected_at,
-                LAG(timeline_id) OVER (
+                LAG(postmaster_start_time) OVER (
                     PARTITION BY connection_id
                     ORDER BY collected_at
-                ) AS prev_timeline
+                ) AS prev_start_time
             FROM metrics.pg_node_role
+            WHERE postmaster_start_time IS NOT NULL
         ) r
         JOIN connections c ON r.connection_id = c.id
-        WHERE r.prev_timeline IS NOT NULL
-          AND r.timeline_id IS NOT NULL
-          AND r.prev_timeline != r.timeline_id
+        WHERE r.prev_start_time IS NOT NULL
+          AND r.postmaster_start_time IS NOT NULL
+          AND r.prev_start_time != r.postmaster_start_time
           %s
     `, EventTypeRestart, func() string {
 		if tableWhere == "" {
@@ -631,17 +632,18 @@ func buildRestartCountQuery(whereClause string) string {
         FROM (
             SELECT
                 connection_id,
-                timeline_id,
+                postmaster_start_time,
                 collected_at,
-                LAG(timeline_id) OVER (
+                LAG(postmaster_start_time) OVER (
                     PARTITION BY connection_id
                     ORDER BY collected_at
-                ) AS prev_timeline
+                ) AS prev_start_time
             FROM metrics.pg_node_role
+            WHERE postmaster_start_time IS NOT NULL
         ) r
-        WHERE r.prev_timeline IS NOT NULL
-          AND r.timeline_id IS NOT NULL
-          AND r.prev_timeline != r.timeline_id
+        WHERE r.prev_start_time IS NOT NULL
+          AND r.postmaster_start_time IS NOT NULL
+          AND r.prev_start_time != r.postmaster_start_time
           %s
     `, func() string {
 		if tableWhere == "" {

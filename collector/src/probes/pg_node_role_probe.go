@@ -104,8 +104,9 @@ func (p *PgNodeRoleProbe) GetQuery() string {
 // NodeRoleInfo holds all the collected node role information
 type NodeRoleInfo struct {
 	// Fundamental status
-	IsInRecovery bool
-	TimelineID   *int
+	IsInRecovery        bool
+	TimelineID          *int
+	PostmasterStartTime *time.Time
 
 	// Binary replication
 	HasBinaryStandbys  bool
@@ -190,10 +191,11 @@ func (p *PgNodeRoleProbe) getFundamentalStatus(ctx context.Context, conn *pgxpoo
 	query := `
         SELECT
             pg_is_in_recovery() as is_in_recovery,
-            (SELECT timeline_id FROM pg_control_checkpoint()) as timeline_id
+            (SELECT timeline_id FROM pg_control_checkpoint()) as timeline_id,
+            pg_postmaster_start_time() as postmaster_start_time
     `
 	row := conn.QueryRow(ctx, query)
-	return row.Scan(&info.IsInRecovery, &info.TimelineID)
+	return row.Scan(&info.IsInRecovery, &info.TimelineID, &info.PostmasterStartTime)
 }
 
 // getBinaryReplicationStatus gets physical replication information
@@ -494,6 +496,7 @@ func (p *PgNodeRoleProbe) infoToMap(info *NodeRoleInfo) map[string]interface{} {
 	return map[string]interface{}{
 		"is_in_recovery":            info.IsInRecovery,
 		"timeline_id":               info.TimelineID,
+		"postmaster_start_time":     info.PostmasterStartTime,
 		"has_binary_standbys":       info.HasBinaryStandbys,
 		"binary_standby_count":      info.BinaryStandbyCount,
 		"is_streaming_standby":      info.IsStreamingStandby,
@@ -537,7 +540,7 @@ func (p *PgNodeRoleProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn
 	// Define columns in order
 	columns := []string{
 		"connection_id", "collected_at",
-		"is_in_recovery", "timeline_id",
+		"is_in_recovery", "timeline_id", "postmaster_start_time",
 		"has_binary_standbys", "binary_standby_count",
 		"is_streaming_standby", "upstream_host", "upstream_port",
 		"received_lsn", "replayed_lsn",
@@ -567,6 +570,7 @@ func (p *PgNodeRoleProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn
 			timestamp,
 			metric["is_in_recovery"],
 			metric["timeline_id"],
+			metric["postmaster_start_time"],
 			metric["has_binary_standbys"],
 			metric["binary_standby_count"],
 			metric["is_streaming_standby"],

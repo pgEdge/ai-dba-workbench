@@ -386,6 +386,7 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			FROM metrics.pg_stat_activity
 			WHERE collected_at > NOW() - INTERVAL '5 minutes'
 			  AND wait_event_type = 'Lock'
+			  AND backend_type = 'client backend'
 			GROUP BY connection_id
 		`)
 		if err != nil {
@@ -411,6 +412,7 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			WHERE collected_at > NOW() - INTERVAL '5 minutes'
 			  AND state = 'idle in transaction'
 			  AND xact_start IS NOT NULL
+			  AND backend_type = 'client backend'
 			GROUP BY connection_id
 		`)
 		if err != nil {
@@ -436,6 +438,7 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			WHERE collected_at > NOW() - INTERVAL '5 minutes'
 			  AND wait_event_type = 'Lock'
 			  AND query_start IS NOT NULL
+			  AND backend_type = 'client backend'
 			GROUP BY connection_id
 		`)
 		if err != nil {
@@ -461,6 +464,7 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			WHERE collected_at > NOW() - INTERVAL '5 minutes'
 			  AND state = 'active'
 			  AND query_start IS NOT NULL
+			  AND backend_type = 'client backend'
 			GROUP BY connection_id
 		`)
 		if err != nil {
@@ -485,6 +489,7 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			FROM metrics.pg_stat_activity
 			WHERE collected_at > NOW() - INTERVAL '5 minutes'
 			  AND xact_start IS NOT NULL
+			  AND backend_type = 'client backend'
 			GROUP BY connection_id
 		`)
 		if err != nil {

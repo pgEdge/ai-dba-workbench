@@ -24,9 +24,27 @@ import {
     Box,
     CircularProgress,
     Typography,
+    Tabs,
+    Tab,
+    AppBar,
+    Toolbar,
+    IconButton,
+    Slide,
     alpha,
 } from '@mui/material';
 import { Theme } from '@mui/material/styles';
+import { TransitionProps } from '@mui/material/transitions';
+import { Close as CloseIcon } from '@mui/icons-material';
+import AlertOverridesPanel from './AlertOverridesPanel';
+
+// --- Slide transition for fullScreen dialog ---
+
+const Transition = React.forwardRef(function Transition(
+    props: TransitionProps & { children: React.ReactElement },
+    ref: React.Ref<unknown>,
+) {
+    return <Slide direction="up" ref={ref} {...props} />;
+});
 
 // --- Style constants (Issue 23) ---
 
@@ -122,8 +140,9 @@ interface GroupDialogProps {
     onClose: () => void;
     onSave: (data: GroupData) => Promise<void>;
     mode?: 'create' | 'edit';
-    group?: { name?: string; description?: string; is_shared?: boolean } | null;
+    group?: { id?: number; name?: string; description?: string; is_shared?: boolean } | null;
     isSuperuser?: boolean;
+    initialTab?: number;
 }
 
 /**
@@ -136,6 +155,7 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
     mode = 'create',
     group = null,
     isSuperuser = false,
+    initialTab = 0,
 }) => {
     const [name, setName] = useState('');
     const [description, setDescription] = useState('');
@@ -143,6 +163,7 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
     const [error, setError] = useState('');
     const [nameError, setNameError] = useState('');
     const [isSaving, setIsSaving] = useState(false);
+    const [activeTab, setActiveTab] = useState(0);
 
     // Reset form when dialog opens or group changes
     useEffect(() => {
@@ -158,8 +179,9 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
             }
             setError('');
             setNameError('');
+            setActiveTab(initialTab);
         }
-    }, [open, mode, group]);
+    }, [open, mode, group, initialTab]);
 
     const validateForm = () => {
         let isValid = true;
@@ -211,6 +233,161 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
         }
     };
 
+    const formContent = (
+        <>
+            {error && (
+                <Alert
+                    severity="error"
+                    sx={alertSx}
+                >
+                    {error}
+                </Alert>
+            )}
+
+            <TextField
+                autoFocus
+                fullWidth
+                label="Name"
+                value={name}
+                onChange={handleNameChange}
+                error={!!nameError}
+                helperText={nameError}
+                required
+                disabled={isSaving}
+                margin="dense"
+                sx={textFieldSx}
+            />
+
+            <TextField
+                fullWidth
+                label="Description"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                disabled={isSaving}
+                margin="dense"
+                multiline
+                rows={3}
+                sx={descriptionFieldSx}
+            />
+
+            {isSuperuser && (
+                <Box sx={{ mt: 2 }}>
+                    <FormControlLabel
+                        control={
+                            <Checkbox
+                                checked={isShared}
+                                onChange={(e) => setIsShared(e.target.checked)}
+                                disabled={isSaving}
+                                sx={checkboxSx}
+                            />
+                        }
+                        label="Share with all users"
+                    />
+                    <Typography
+                        variant="caption"
+                        sx={sharedHelpTextSx}
+                    >
+                        Shared groups are visible to all users
+                    </Typography>
+                </Box>
+            )}
+        </>
+    );
+
+    if (mode === 'edit') {
+        return (
+            <Dialog
+                fullScreen
+                open={open}
+                onClose={handleClose}
+                TransitionComponent={Transition}
+            >
+                <AppBar
+                    position="static"
+                    elevation={0}
+                    sx={{
+                        bgcolor: 'background.paper',
+                        borderBottom: '1px solid',
+                        borderColor: 'divider',
+                    }}
+                >
+                    <Toolbar>
+                        <IconButton
+                            edge="start"
+                            onClick={handleClose}
+                            aria-label="close edit group"
+                            sx={{ color: 'text.secondary', mr: 2 }}
+                        >
+                            <CloseIcon />
+                        </IconButton>
+                        <Typography
+                            variant="h6"
+                            component="div"
+                            sx={{
+                                flexGrow: 1,
+                                fontWeight: 600,
+                                color: 'text.primary',
+                            }}
+                        >
+                            Edit Cluster Group
+                        </Typography>
+                    </Toolbar>
+                </AppBar>
+                <Tabs
+                    value={activeTab}
+                    onChange={(_, v) => setActiveTab(v)}
+                    sx={{ px: 3, borderBottom: 1, borderColor: 'divider' }}
+                >
+                    <Tab label="Details" />
+                    <Tab label="Alert Overrides" />
+                </Tabs>
+                <Box sx={{ flex: 1, overflow: 'auto', p: 3 }}>
+                    {activeTab === 0 ? (
+                        <Box sx={{ maxWidth: 600 }}>
+                            <form onSubmit={handleSubmit} noValidate>
+                                {formContent}
+                                <Box sx={{
+                                    mt: 3,
+                                    display: 'flex',
+                                    gap: 1,
+                                    justifyContent: 'flex-end',
+                                }}>
+                                    <Button
+                                        onClick={handleClose}
+                                        disabled={isSaving}
+                                        sx={cancelButtonSx}
+                                    >
+                                        Cancel
+                                    </Button>
+                                    <Button
+                                        type="submit"
+                                        variant="contained"
+                                        disabled={isSaving}
+                                        sx={getSaveButtonSx}
+                                    >
+                                        {isSaving ? (
+                                            <CircularProgress
+                                                size={20}
+                                                color="inherit"
+                                            />
+                                        ) : (
+                                            'Save'
+                                        )}
+                                    </Button>
+                                </Box>
+                            </form>
+                        </Box>
+                    ) : (
+                        <AlertOverridesPanel
+                            scope="group"
+                            scopeId={group?.id as number}
+                        />
+                    )}
+                </Box>
+            </Dialog>
+        );
+    }
+
     return (
         <Dialog
             open={open}
@@ -221,70 +398,13 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
                 sx: dialogPaperSx,
             }}
         >
+            <DialogTitle sx={dialogTitleSx}>
+                Add Cluster Group
+            </DialogTitle>
             <form onSubmit={handleSubmit} noValidate>
-                <DialogTitle sx={dialogTitleSx}>
-                    {mode === 'create' ? 'Add Cluster Group' : 'Edit Cluster Group'}
-                </DialogTitle>
-
                 <DialogContent>
-                    {error && (
-                        <Alert
-                            severity="error"
-                            sx={alertSx}
-                        >
-                            {error}
-                        </Alert>
-                    )}
-
-                    <TextField
-                        autoFocus
-                        fullWidth
-                        label="Name"
-                        value={name}
-                        onChange={handleNameChange}
-                        error={!!nameError}
-                        helperText={nameError}
-                        required
-                        disabled={isSaving}
-                        margin="dense"
-                        sx={textFieldSx}
-                    />
-
-                    <TextField
-                        fullWidth
-                        label="Description"
-                        value={description}
-                        onChange={(e) => setDescription(e.target.value)}
-                        disabled={isSaving}
-                        margin="dense"
-                        multiline
-                        rows={3}
-                        sx={descriptionFieldSx}
-                    />
-
-                    {isSuperuser && (
-                        <Box sx={{ mt: 2 }}>
-                            <FormControlLabel
-                                control={
-                                    <Checkbox
-                                        checked={isShared}
-                                        onChange={(e) => setIsShared(e.target.checked)}
-                                        disabled={isSaving}
-                                        sx={checkboxSx}
-                                    />
-                                }
-                                label="Share with all users"
-                            />
-                            <Typography
-                                variant="caption"
-                                sx={sharedHelpTextSx}
-                            >
-                                Shared groups are visible to all users
-                            </Typography>
-                        </Box>
-                    )}
+                    {formContent}
                 </DialogContent>
-
                 <DialogActions sx={dialogActionsSx}>
                     <Button
                         onClick={handleClose}

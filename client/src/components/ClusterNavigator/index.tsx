@@ -44,6 +44,7 @@ import {
 } from '@mui/icons-material';
 import ServerDialog from '../ServerDialog';
 import GroupDialog from '../GroupDialog';
+import ClusterConfigDialog from '../ClusterConfigDialog';
 import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
 import AddMenu from '../AddMenu';
 
@@ -313,9 +314,12 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
     const [groupDialogOpen, setGroupDialogOpen] = useState(false);
     const [groupDialogMode, setGroupDialogMode] = useState<'create' | 'edit'>('create');
     const [editingGroup, setEditingGroup] = useState<Record<string, unknown> | null>(null);
+    const [groupDialogInitialTab, setGroupDialogInitialTab] = useState(0);
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
     const [deleteTarget, setDeleteTarget] = useState<{ type: string; item: { id: number | string; name?: string } } | null>(null);
     const [deleteLoading, setDeleteLoading] = useState(false);
+    const [clusterConfigOpen, setClusterConfigOpen] = useState(false);
+    const [configCluster, setConfigCluster] = useState<{ id: number; name: string } | null>(null);
 
     // Drag and drop state
     const [activeDragItem, setActiveDragItem] = useState<Cluster | null>(null);
@@ -480,6 +484,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
         setAddMenuAnchor(null);
         setEditingGroup(null);
         setGroupDialogMode('create');
+        setGroupDialogInitialTab(0);
         setGroupDialogOpen(true);
     };
 
@@ -487,6 +492,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
     const handleEditGroup = (group: Record<string, unknown>) => {
         setEditingGroup(group);
         setGroupDialogMode('edit');
+        setGroupDialogInitialTab(0);
         setGroupDialogOpen(true);
     };
 
@@ -505,6 +511,25 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
     const handleDeleteGroup = (group: { id: string; name?: string }) => {
         setDeleteTarget({ type: 'group', item: group });
         setDeleteDialogOpen(true);
+    };
+
+    // Handler for configuring a group (opens edit dialog on Alert Overrides tab)
+    const handleConfigureGroup = (group: Record<string, unknown>) => {
+        const groupId = group.id as string;
+        const numericId = parseInt(groupId.replace('group-', ''), 10);
+        setEditingGroup({ ...group, id: numericId });
+        setGroupDialogMode('edit');
+        setGroupDialogInitialTab(1);
+        setGroupDialogOpen(true);
+    };
+
+    // Handler for configuring a cluster (opens cluster config dialog)
+    const handleConfigureCluster = (cluster: Cluster) => {
+        const numericId = parseInt(cluster.id.replace('cluster-', ''), 10);
+        if (!isNaN(numericId)) {
+            setConfigCluster({ id: numericId, name: cluster.name });
+            setClusterConfigOpen(true);
+        }
     };
 
     // Handler for confirming delete
@@ -855,6 +880,8 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
                             onEditServer={handleEditServer}
                             onDeleteServer={handleDeleteServer}
                             onDeleteGroup={handleDeleteGroup}
+                            onConfigureGroup={handleConfigureGroup}
+                            onConfigureCluster={handleConfigureCluster}
                             getServerAlertCount={getServerAlertCount}
                             getServerBlackoutStatus={getServerBlackoutStatus}
                             getClusterBlackoutStatus={getClusterBlackoutStatus}
@@ -910,7 +937,21 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
                 mode={groupDialogMode}
                 group={editingGroup}
                 isSuperuser={user?.isSuperuser}
+                initialTab={groupDialogInitialTab}
             />
+
+            {/* Cluster Config Dialog */}
+            {configCluster && (
+                <ClusterConfigDialog
+                    open={clusterConfigOpen}
+                    onClose={() => {
+                        setClusterConfigOpen(false);
+                        setConfigCluster(null);
+                    }}
+                    clusterId={configCluster.id}
+                    clusterName={configCluster.name}
+                />
+            )}
 
             {/* Delete Confirmation Dialog */}
             <DeleteConfirmationDialog

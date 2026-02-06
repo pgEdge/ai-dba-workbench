@@ -135,6 +135,15 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 			fmt.Fprintf(os.Stderr, "Alert rule configuration: DISABLED (datastore not configured)\n")
 		}
 
+		// Alert override endpoints (for hierarchical threshold configuration)
+		alertOverrideHandler := api.NewAlertOverrideHandler(deps.Datastore, deps.AuthStore, rbacChecker)
+		alertOverrideHandler.RegisterRoutes(mux, authWrapper)
+		if deps.Datastore != nil {
+			fmt.Fprintf(os.Stderr, "Alert override configuration: ENABLED\n")
+		} else {
+			fmt.Fprintf(os.Stderr, "Alert override configuration: DISABLED (datastore not configured)\n")
+		}
+
 		// Notification channel management endpoints (for alert channel configuration)
 		notificationChannelHandler := api.NewNotificationChannelHandler(deps.Datastore, deps.AuthStore, rbacChecker)
 		notificationChannelHandler.RegisterRoutes(mux, authWrapper)

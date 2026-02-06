@@ -24,6 +24,7 @@ import {
     ExpandMore as ExpandIcon,
     ChevronRight as CollapseIcon,
     Dns as ClusterIcon,
+    Settings as SettingsIcon,
 } from '@mui/icons-material';
 import InlineEditText from '../InlineEditText';
 import { getClusterType, countServersRecursive } from './utils';
@@ -53,6 +54,9 @@ const countChipBase = {
     fontWeight: 600,
     '& .MuiChip-label': { px: 0.75 },
 };
+
+const settingsIconSx = { fontSize: 14 };
+const settingsButtonSx = { p: 0.25, color: 'text.disabled', '&:hover': { color: 'primary.main' } };
 
 // -- Style-getter functions -----------------------------------------------
 
@@ -87,6 +91,21 @@ const getClusterNameSx = (isSelected) => ({
     ...clusterNameBase,
     fontWeight: isSelected ? 600 : 500,
     color: 'text.primary',
+});
+
+const getClusterActionsSx = (theme: Theme) => ({
+    position: 'absolute',
+    right: 40,
+    top: '50%',
+    transform: 'translateY(-50%)',
+    display: 'flex',
+    gap: 0.25,
+    opacity: 0,
+    transition: 'opacity 0.15s',
+    bgcolor: alpha(theme.palette.background.paper, 0.95),
+    borderRadius: 1,
+    px: 0.5,
+    '.cluster-header:hover &': { opacity: 1 },
 });
 
 const getCountChipSx = (theme: Theme) => ({
@@ -124,6 +143,7 @@ interface ClusterItemProps {
     onUpdateServer: (serverId: number, newName: string) => Promise<void>;
     onEditServer?: (server: Server) => void;
     onDeleteServer?: (server: Server) => void;
+    onConfigureCluster?: (cluster: Cluster) => void;
     getServerAlertCount?: (serverId: number) => number;
     getServerBlackoutStatus?: (serverId: number) => { active: boolean; inherited: boolean };
     getClusterBlackoutStatus?: (clusterId: string) => { active: boolean; inherited: boolean };
@@ -148,6 +168,7 @@ const ClusterItem = memo<ClusterItemProps>(({
     onUpdateServer,
     onEditServer,
     onDeleteServer,
+    onConfigureCluster,
     getServerAlertCount,
     getServerBlackoutStatus,
     getClusterBlackoutStatus,
@@ -199,8 +220,9 @@ const ClusterItem = memo<ClusterItemProps>(({
         <ClusterContainer cluster={cluster} isDark={isDark}>
             {/* Cluster Header */}
             <Box
+                className="cluster-header"
                 onClick={handleClusterClick}
-                sx={getHeaderSx(theme, isSelected)}
+                sx={{ ...getHeaderSx(theme, isSelected), position: 'relative' }}
             >
                 <IconButton
                     size="small"
@@ -241,6 +263,20 @@ const ClusterItem = memo<ClusterItemProps>(({
                         sx={getCountChipSx(theme)}
                     />
                 </Box>
+                {canEditCluster && onConfigureCluster && (
+                    <Box sx={getClusterActionsSx(theme)}>
+                        <IconButton
+                            size="small"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onConfigureCluster(cluster);
+                            }}
+                            sx={settingsButtonSx}
+                        >
+                            <SettingsIcon sx={settingsIconSx} />
+                        </IconButton>
+                    </Box>
+                )}
             </Box>
             {/* Server List */}
             <Collapse in={isExpanded} timeout="auto">

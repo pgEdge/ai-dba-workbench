@@ -143,34 +143,49 @@ func (d *Datastore) GetEnabledAlertRules(ctx context.Context) ([]*AlertRule, err
 }
 
 // GetEffectiveThreshold returns the threshold settings for a rule/connection
-// Returns the per-connection override if it exists, otherwise global defaults
+// Resolution order: server override > cluster override > group override > estate defaults
 func (d *Datastore) GetEffectiveThreshold(ctx context.Context, ruleID int64, connectionID int, dbName *string) (threshold float64, operator string, severity string, enabled bool) {
-	// First try per-connection override
-	var found bool
+	// 1. Try server-level override
 	err := d.pool.QueryRow(ctx, `
 		SELECT threshold, operator, severity, enabled
 		FROM alert_thresholds
-		WHERE rule_id = $1 AND connection_id = $2
+		WHERE scope = 'server' AND rule_id = $1 AND connection_id = $2
 		  AND (database_name = $3 OR ($3 IS NULL AND database_name IS NULL))
 	`, ruleID, connectionID, dbName).Scan(&threshold, &operator, &severity, &enabled)
-
 	if err == nil {
-		found = true
-	}
-
-	if found {
 		return threshold, operator, severity, enabled
 	}
 
-	// Fall back to rule defaults
+	// 2. Try cluster-level override
+	err = d.pool.QueryRow(ctx, `
+		SELECT at.threshold, at.operator, at.severity, at.enabled
+		FROM alert_thresholds at
+		JOIN connections c ON c.cluster_id = at.cluster_id
+		WHERE at.scope = 'cluster' AND at.rule_id = $1 AND c.id = $2
+	`, ruleID, connectionID).Scan(&threshold, &operator, &severity, &enabled)
+	if err == nil {
+		return threshold, operator, severity, enabled
+	}
+
+	// 3. Try group-level override
+	err = d.pool.QueryRow(ctx, `
+		SELECT at.threshold, at.operator, at.severity, at.enabled
+		FROM alert_thresholds at
+		JOIN clusters cl ON cl.group_id = at.group_id
+		JOIN connections c ON c.cluster_id = cl.id
+		WHERE at.scope = 'group' AND at.rule_id = $1 AND c.id = $2
+	`, ruleID, connectionID).Scan(&threshold, &operator, &severity, &enabled)
+	if err == nil {
+		return threshold, operator, severity, enabled
+	}
+
+	// 4. Fall back to estate defaults from alert_rules
 	err = d.pool.QueryRow(ctx, `
 		SELECT default_threshold, default_operator, default_severity, default_enabled
 		FROM alert_rules
 		WHERE id = $1
 	`, ruleID).Scan(&threshold, &operator, &severity, &enabled)
-
 	if err != nil {
-		// Return disabled if rule not found
 		return 0, "", "", false
 	}
 

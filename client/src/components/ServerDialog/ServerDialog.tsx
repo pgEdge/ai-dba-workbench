@@ -17,7 +17,17 @@ import {
     Button,
     Alert,
     CircularProgress,
+    Tabs,
+    Tab,
+    AppBar,
+    Toolbar,
+    IconButton,
+    Typography,
+    Box,
+    Slide,
 } from '@mui/material';
+import { TransitionProps } from '@mui/material/transitions';
+import { Close as CloseIcon } from '@mui/icons-material';
 
 import {
     ServerFormData,
@@ -36,6 +46,14 @@ import { validateServerForm, prepareSaveData } from './ServerDialog.validation';
 import ConnectionFields from './ConnectionFields';
 import SSLSettings from './SSLSettings';
 import OptionsSection from './OptionsSection';
+import AlertOverridesPanel from '../AlertOverridesPanel';
+
+const Transition = React.forwardRef(function Transition(
+    props: TransitionProps & { children: React.ReactElement },
+    ref: React.Ref<unknown>,
+) {
+    return <Slide direction="up" ref={ref} {...props} />;
+});
 
 /**
  * ServerDialog - Dialog component for adding and editing server connections.
@@ -53,12 +71,14 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
     const [submitError, setSubmitError] = useState<string | null>(null);
     const [isSaving, setIsSaving] = useState(false);
     const [sslExpanded, setSslExpanded] = useState(false);
+    const [activeTab, setActiveTab] = useState(0);
 
     const isEditMode = mode === 'edit';
 
     // Reset form when dialog opens or server changes
     useEffect(() => {
         if (open) {
+            setActiveTab(0);
             if (isEditMode && server) {
                 setFormData({
                     name: server.name || '',
@@ -141,7 +161,135 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
         }
     };
 
-    const dialogTitle = isEditMode ? 'Edit Server' : 'Add Server';
+    if (isEditMode) {
+        return (
+            <Dialog
+                fullScreen
+                open={open}
+                onClose={handleClose}
+                TransitionComponent={Transition}
+            >
+                <AppBar
+                    position="static"
+                    elevation={0}
+                    sx={{
+                        bgcolor: 'background.paper',
+                        borderBottom: '1px solid',
+                        borderColor: 'divider',
+                    }}
+                >
+                    <Toolbar>
+                        <IconButton
+                            edge="start"
+                            onClick={handleClose}
+                            aria-label="close edit server"
+                            sx={{ color: 'text.secondary', mr: 2 }}
+                        >
+                            <CloseIcon />
+                        </IconButton>
+                        <Typography
+                            variant="h6"
+                            component="div"
+                            sx={{
+                                flexGrow: 1,
+                                fontWeight: 600,
+                                color: 'text.primary',
+                            }}
+                        >
+                            Edit Server
+                        </Typography>
+                    </Toolbar>
+                </AppBar>
+                <Tabs
+                    value={activeTab}
+                    onChange={(_, v) => setActiveTab(v)}
+                    sx={{
+                        px: 3,
+                        borderBottom: 1,
+                        borderColor: 'divider',
+                    }}
+                >
+                    <Tab label="Connection" />
+                    <Tab label="Alert Overrides" />
+                </Tabs>
+                <Box sx={{ flex: 1, overflow: 'auto', p: 3 }}>
+                    {activeTab === 0 ? (
+                        <Box sx={{ maxWidth: 600 }}>
+                            <form onSubmit={handleSubmit} noValidate>
+                                {submitError && (
+                                    <Alert
+                                        severity="error"
+                                        sx={{ mb: 2, borderRadius: 1 }}
+                                        onClose={() => setSubmitError(null)}
+                                    >
+                                        {submitError}
+                                    </Alert>
+                                )}
+
+                                <ConnectionFields
+                                    formData={formData}
+                                    errors={errors}
+                                    isEditMode={isEditMode}
+                                    isSaving={isSaving}
+                                    onFieldChange={handleFieldChange}
+                                />
+
+                                <SSLSettings
+                                    formData={formData}
+                                    isSaving={isSaving}
+                                    expanded={sslExpanded}
+                                    onExpandedChange={setSslExpanded}
+                                    onFieldChange={handleFieldChange}
+                                />
+
+                                <OptionsSection
+                                    formData={formData}
+                                    isSaving={isSaving}
+                                    isSuperuser={isSuperuser}
+                                    onFieldChange={handleFieldChange}
+                                />
+
+                                <Box sx={{
+                                    mt: 3,
+                                    display: 'flex',
+                                    gap: 1,
+                                    justifyContent: 'flex-end',
+                                }}>
+                                    <Button
+                                        onClick={handleClose}
+                                        disabled={isSaving}
+                                        sx={cancelButtonSx}
+                                    >
+                                        Cancel
+                                    </Button>
+                                    <Button
+                                        type="submit"
+                                        variant="contained"
+                                        disabled={isSaving}
+                                        sx={getSaveButtonSx}
+                                    >
+                                        {isSaving ? (
+                                            <CircularProgress
+                                                size={20}
+                                                sx={{ color: 'inherit' }}
+                                            />
+                                        ) : (
+                                            'Save'
+                                        )}
+                                    </Button>
+                                </Box>
+                            </form>
+                        </Box>
+                    ) : (
+                        <AlertOverridesPanel
+                            scope="server"
+                            scopeId={server?.id as number}
+                        />
+                    )}
+                </Box>
+            </Dialog>
+        );
+    }
 
     return (
         <Dialog
@@ -153,9 +301,8 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
                 sx: dialogPaperSx,
             }}
         >
+            <DialogTitle sx={dialogTitleSx}>Add Server</DialogTitle>
             <form onSubmit={handleSubmit} noValidate>
-                <DialogTitle sx={dialogTitleSx}>{dialogTitle}</DialogTitle>
-
                 <DialogContent>
                     {submitError && (
                         <Alert
@@ -206,7 +353,10 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
                         sx={getSaveButtonSx}
                     >
                         {isSaving ? (
-                            <CircularProgress size={20} sx={{ color: 'inherit' }} />
+                            <CircularProgress
+                                size={20}
+                                sx={{ color: 'inherit' }}
+                            />
                         ) : (
                             'Save'
                         )}

@@ -14,6 +14,15 @@ import userEvent from '@testing-library/user-event';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import ServerDialog from '../ServerDialog';
 
+// Mock AlertOverridesPanel to avoid fetch calls during ServerDialog tests
+vi.mock('../AlertOverridesPanel', () => ({
+    default: ({ scope, scopeId }: { scope: string; scopeId: number }) => (
+        <div data-testid="alert-overrides-panel">
+            AlertOverridesPanel: {scope} {scopeId}
+        </div>
+    ),
+}));
+
 // Helper functions to get form fields reliably
 const getNameField = () => screen.getByRole('textbox', { name: /^name/i });
 const getHostField = () => screen.getByRole('textbox', { name: /^host/i });
@@ -507,6 +516,81 @@ describe('ServerDialog', () => {
                     })
                 );
             });
+        });
+    });
+
+    describe('tabs and alert overrides', () => {
+        const editServer = {
+            id: 42,
+            name: 'Production DB',
+            host: 'prod.example.com',
+            port: 5433,
+            database_name: 'mydb',
+            username: 'admin',
+        };
+
+        it('does not render tabs in create mode', () => {
+            render(<ServerDialog {...defaultProps} mode="create" />);
+
+            expect(screen.queryByRole('tab', { name: /connection/i })).not.toBeInTheDocument();
+            expect(screen.queryByRole('tab', { name: /alert overrides/i })).not.toBeInTheDocument();
+        });
+
+        it('renders Connection and Alert Overrides tabs in edit mode', () => {
+            render(
+                <ServerDialog
+                    {...defaultProps}
+                    mode="edit"
+                    server={editServer}
+                />
+            );
+
+            expect(screen.getByRole('tab', { name: /connection/i })).toBeInTheDocument();
+            expect(screen.getByRole('tab', { name: /alert overrides/i })).toBeInTheDocument();
+        });
+
+        it('renders AlertOverridesPanel when Alert Overrides tab is clicked', async () => {
+            const user = userEvent.setup();
+            render(
+                <ServerDialog
+                    {...defaultProps}
+                    mode="edit"
+                    server={editServer}
+                />
+            );
+
+            await user.click(screen.getByRole('tab', { name: /alert overrides/i }));
+
+            await waitFor(() => {
+                expect(screen.getByTestId('alert-overrides-panel')).toBeInTheDocument();
+            });
+            expect(screen.getByText(/AlertOverridesPanel: server 42/)).toBeInTheDocument();
+        });
+
+        it('shows Save button on Connection tab and Close button on Alert Overrides tab', async () => {
+            const user = userEvent.setup();
+            render(
+                <ServerDialog
+                    {...defaultProps}
+                    mode="edit"
+                    server={editServer}
+                />
+            );
+
+            // On the Connection tab, Save and Cancel buttons should be present
+            expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
+            expect(screen.getByRole('button', { name: /cancel/i })).toBeInTheDocument();
+
+            // Switch to Alert Overrides tab
+            await user.click(screen.getByRole('tab', { name: /alert overrides/i }));
+
+            await waitFor(() => {
+                expect(screen.getByTestId('alert-overrides-panel')).toBeInTheDocument();
+            });
+
+            // Save button should not be visible; Close button should be present
+            expect(screen.queryByRole('button', { name: /save/i })).not.toBeInTheDocument();
+            expect(screen.getByRole('button', { name: /close/i })).toBeInTheDocument();
         });
     });
 });

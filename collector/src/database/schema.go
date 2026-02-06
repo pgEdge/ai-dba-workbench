@@ -2381,6 +2381,54 @@ func (sm *SchemaManager) registerMigrations() {
 			return err
 		},
 	})
+
+	// Migration #8: Add hierarchical scope to alert_thresholds
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     8,
+		Description: "Add hierarchical scope to alert_thresholds",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				ALTER TABLE alert_thresholds
+					ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'server',
+					ADD COLUMN IF NOT EXISTS group_id INTEGER REFERENCES cluster_groups(id) ON DELETE CASCADE,
+					ADD COLUMN IF NOT EXISTS cluster_id INTEGER REFERENCES clusters(id) ON DELETE CASCADE;
+
+				ALTER TABLE alert_thresholds DROP CONSTRAINT IF EXISTS alert_thresholds_scope_check;
+				ALTER TABLE alert_thresholds ADD CONSTRAINT alert_thresholds_scope_check
+					CHECK (scope IN ('group', 'cluster', 'server'));
+
+				ALTER TABLE alert_thresholds DROP CONSTRAINT IF EXISTS alert_thresholds_scope_ids_check;
+				ALTER TABLE alert_thresholds ADD CONSTRAINT alert_thresholds_scope_ids_check CHECK (
+					(scope = 'group' AND group_id IS NOT NULL AND connection_id IS NULL AND cluster_id IS NULL)
+					OR (scope = 'cluster' AND cluster_id IS NOT NULL AND connection_id IS NULL AND group_id IS NULL)
+					OR (scope = 'server' AND connection_id IS NOT NULL AND group_id IS NULL AND cluster_id IS NULL)
+				);
+
+				ALTER TABLE alert_thresholds DROP CONSTRAINT IF EXISTS alert_thresholds_rule_id_connection_id_database_name_key;
+
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_alert_thresholds_unique_server
+					ON alert_thresholds(rule_id, connection_id, database_name) WHERE scope = 'server';
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_alert_thresholds_unique_cluster
+					ON alert_thresholds(rule_id, cluster_id) WHERE scope = 'cluster';
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_alert_thresholds_unique_group
+					ON alert_thresholds(rule_id, group_id) WHERE scope = 'group';
+
+				CREATE INDEX IF NOT EXISTS idx_alert_thresholds_scope ON alert_thresholds(scope);
+				CREATE INDEX IF NOT EXISTS idx_alert_thresholds_group_id ON alert_thresholds(group_id);
+				CREATE INDEX IF NOT EXISTS idx_alert_thresholds_cluster_id ON alert_thresholds(cluster_id);
+
+				COMMENT ON COLUMN alert_thresholds.scope IS
+					'Threshold scope level: group, cluster, or server';
+				COMMENT ON COLUMN alert_thresholds.group_id IS
+					'Cluster group targeted when scope is group';
+				COMMENT ON COLUMN alert_thresholds.cluster_id IS
+					'Cluster targeted when scope is cluster';
+			`)
+			return err
+		},
+	})
 }
 
 // Migrate applies all pending migrations

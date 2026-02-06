@@ -69,6 +69,35 @@ type AlertRuleUpdate struct {
 	DefaultEnabled   *bool    `json:"default_enabled,omitempty"`
 }
 
+// AlertOverride represents a rule with its optional scope-level override
+type AlertOverride struct {
+	// Rule fields
+	RuleID           int64   `json:"rule_id"`
+	Name             string  `json:"name"`
+	Description      string  `json:"description"`
+	Category         string  `json:"category"`
+	MetricName       string  `json:"metric_name"`
+	MetricUnit       *string `json:"metric_unit"`
+	DefaultOperator  string  `json:"default_operator"`
+	DefaultThreshold float64 `json:"default_threshold"`
+	DefaultSeverity  string  `json:"default_severity"`
+	DefaultEnabled   bool    `json:"default_enabled"`
+	// Override fields (nil if no override at this scope)
+	HasOverride       bool     `json:"has_override"`
+	OverrideOperator  *string  `json:"override_operator"`
+	OverrideThreshold *float64 `json:"override_threshold"`
+	OverrideSeverity  *string  `json:"override_severity"`
+	OverrideEnabled   *bool    `json:"override_enabled"`
+}
+
+// AlertThresholdUpdate represents data for creating/updating a threshold override
+type AlertThresholdUpdate struct {
+	Operator  string  `json:"operator"`
+	Threshold float64 `json:"threshold"`
+	Severity  string  `json:"severity"`
+	Enabled   bool    `json:"enabled"`
+}
+
 // Valid operators for alert rules
 var validOperators = map[string]bool{
 	">": true, ">=": true, "<": true, "<=": true, "=": true, "!=": true,
@@ -281,4 +310,157 @@ func (d *Datastore) UpdateAlertRule(ctx context.Context, id int64, update AlertR
 		return nil, fmt.Errorf("failed to update alert rule: %w", err)
 	}
 	return &r, nil
+}
+
+// GetAlertOverridesForServer returns all alert rules with their server-level overrides.
+func (d *Datastore) GetAlertOverridesForServer(ctx context.Context, connectionID int) ([]AlertOverride, error) {
+	rows, err := d.pool.Query(ctx, `
+		SELECT ar.id, ar.name, ar.description, ar.category, ar.metric_name, ar.metric_unit,
+		       ar.default_operator, ar.default_threshold, ar.default_severity, ar.default_enabled,
+		       at.operator, at.threshold, at.severity, at.enabled
+		FROM alert_rules ar
+		LEFT JOIN alert_thresholds at ON at.rule_id = ar.id
+		    AND at.scope = 'server' AND at.connection_id = $1
+		ORDER BY ar.category, ar.name`, connectionID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query server alert overrides: %w", err)
+	}
+	defer rows.Close()
+
+	return scanAlertOverrides(rows)
+}
+
+// GetAlertOverridesForCluster returns all alert rules with their cluster-level overrides.
+func (d *Datastore) GetAlertOverridesForCluster(ctx context.Context, clusterID int) ([]AlertOverride, error) {
+	rows, err := d.pool.Query(ctx, `
+		SELECT ar.id, ar.name, ar.description, ar.category, ar.metric_name, ar.metric_unit,
+		       ar.default_operator, ar.default_threshold, ar.default_severity, ar.default_enabled,
+		       at.operator, at.threshold, at.severity, at.enabled
+		FROM alert_rules ar
+		LEFT JOIN alert_thresholds at ON at.rule_id = ar.id
+		    AND at.scope = 'cluster' AND at.cluster_id = $1
+		ORDER BY ar.category, ar.name`, clusterID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query cluster alert overrides: %w", err)
+	}
+	defer rows.Close()
+
+	return scanAlertOverrides(rows)
+}
+
+// GetAlertOverridesForGroup returns all alert rules with their group-level overrides.
+func (d *Datastore) GetAlertOverridesForGroup(ctx context.Context, groupID int) ([]AlertOverride, error) {
+	rows, err := d.pool.Query(ctx, `
+		SELECT ar.id, ar.name, ar.description, ar.category, ar.metric_name, ar.metric_unit,
+		       ar.default_operator, ar.default_threshold, ar.default_severity, ar.default_enabled,
+		       at.operator, at.threshold, at.severity, at.enabled
+		FROM alert_rules ar
+		LEFT JOIN alert_thresholds at ON at.rule_id = ar.id
+		    AND at.scope = 'group' AND at.group_id = $1
+		ORDER BY ar.category, ar.name`, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query group alert overrides: %w", err)
+	}
+	defer rows.Close()
+
+	return scanAlertOverrides(rows)
+}
+
+// scanAlertOverrides is a helper that scans rows from an alert overrides query.
+func scanAlertOverrides(rows pgx.Rows) ([]AlertOverride, error) {
+	var overrides []AlertOverride
+	for rows.Next() {
+		var o AlertOverride
+		var overrideOp, overrideSev *string
+		var overrideThresh *float64
+		var overrideEnabled *bool
+		if err := rows.Scan(
+			&o.RuleID, &o.Name, &o.Description, &o.Category, &o.MetricName, &o.MetricUnit,
+			&o.DefaultOperator, &o.DefaultThreshold, &o.DefaultSeverity, &o.DefaultEnabled,
+			&overrideOp, &overrideThresh, &overrideSev, &overrideEnabled,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan alert override: %w", err)
+		}
+		o.HasOverride = overrideOp != nil
+		o.OverrideOperator = overrideOp
+		o.OverrideThreshold = overrideThresh
+		o.OverrideSeverity = overrideSev
+		o.OverrideEnabled = overrideEnabled
+		overrides = append(overrides, o)
+	}
+	if overrides == nil {
+		overrides = []AlertOverride{}
+	}
+	return overrides, rows.Err()
+}
+
+// UpsertAlertThreshold creates or updates an alert threshold override at the specified scope.
+func (d *Datastore) UpsertAlertThreshold(ctx context.Context, scope string, scopeID int, ruleID int64, update AlertThresholdUpdate) error {
+	if !validOperators[update.Operator] {
+		return fmt.Errorf("invalid operator: %s", update.Operator)
+	}
+	if !validSeverities[update.Severity] {
+		return fmt.Errorf("invalid severity: %s", update.Severity)
+	}
+
+	var query string
+	var args []interface{}
+
+	switch scope {
+	case "server":
+		query = `
+			INSERT INTO alert_thresholds (rule_id, connection_id, scope, operator, threshold, severity, enabled)
+			VALUES ($1, $2, 'server', $3, $4, $5, $6)
+			ON CONFLICT (rule_id, connection_id, database_name) WHERE scope = 'server'
+			DO UPDATE SET operator = $3, threshold = $4, severity = $5, enabled = $6, updated_at = NOW()`
+		args = []interface{}{ruleID, scopeID, update.Operator, update.Threshold, update.Severity, update.Enabled}
+	case "cluster":
+		query = `
+			INSERT INTO alert_thresholds (rule_id, cluster_id, scope, operator, threshold, severity, enabled)
+			VALUES ($1, $2, 'cluster', $3, $4, $5, $6)
+			ON CONFLICT (rule_id, cluster_id) WHERE scope = 'cluster'
+			DO UPDATE SET operator = $3, threshold = $4, severity = $5, enabled = $6, updated_at = NOW()`
+		args = []interface{}{ruleID, scopeID, update.Operator, update.Threshold, update.Severity, update.Enabled}
+	case "group":
+		query = `
+			INSERT INTO alert_thresholds (rule_id, group_id, scope, operator, threshold, severity, enabled)
+			VALUES ($1, $2, 'group', $3, $4, $5, $6)
+			ON CONFLICT (rule_id, group_id) WHERE scope = 'group'
+			DO UPDATE SET operator = $3, threshold = $4, severity = $5, enabled = $6, updated_at = NOW()`
+		args = []interface{}{ruleID, scopeID, update.Operator, update.Threshold, update.Severity, update.Enabled}
+	default:
+		return fmt.Errorf("invalid scope: %s", scope)
+	}
+
+	_, err := d.pool.Exec(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to upsert alert threshold: %w", err)
+	}
+	return nil
+}
+
+// DeleteAlertThreshold removes an alert threshold override at the specified scope.
+func (d *Datastore) DeleteAlertThreshold(ctx context.Context, scope string, scopeID int, ruleID int64) error {
+	var query string
+	var args []interface{}
+
+	switch scope {
+	case "server":
+		query = `DELETE FROM alert_thresholds WHERE scope = 'server' AND rule_id = $1 AND connection_id = $2`
+		args = []interface{}{ruleID, scopeID}
+	case "cluster":
+		query = `DELETE FROM alert_thresholds WHERE scope = 'cluster' AND rule_id = $1 AND cluster_id = $2`
+		args = []interface{}{ruleID, scopeID}
+	case "group":
+		query = `DELETE FROM alert_thresholds WHERE scope = 'group' AND rule_id = $1 AND group_id = $2`
+		args = []interface{}{ruleID, scopeID}
+	default:
+		return fmt.Errorf("invalid scope: %s", scope)
+	}
+
+	_, err := d.pool.Exec(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to delete alert threshold: %w", err)
+	}
+	return nil
 }

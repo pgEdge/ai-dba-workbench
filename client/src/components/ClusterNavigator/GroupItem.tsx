@@ -25,6 +25,7 @@ import {
     FolderOpen as GroupOpenIcon,
     Folder as GroupIcon,
     Delete as DeleteIcon,
+    Settings as SettingsIcon,
 } from '@mui/icons-material';
 import InlineEditText from '../InlineEditText';
 import { getClusterType, countServersRecursive } from './utils';
@@ -41,6 +42,8 @@ const expandButtonSx = { p: 0.25, color: 'text.secondary', ml: 0.5 };
 const expandIcon18Sx = { fontSize: 18 };
 const deleteIconSx = { fontSize: 14 };
 const deleteButtonSx = { p: 0.25, color: 'text.disabled', '&:hover': { color: 'error.main' } };
+const settingsIconSx = { fontSize: 14 };
+const settingsButtonSx = { p: 0.25, color: 'text.disabled', '&:hover': { color: 'primary.main' } };
 const flexMinWidthSx = { flex: 1, minWidth: 0 };
 
 const groupNameSx = {
@@ -141,6 +144,8 @@ interface GroupItemProps {
     onEditServer?: (server: Server) => void;
     onDeleteServer?: (server: Server) => void;
     onDeleteGroup?: (group: GroupData) => void;
+    onConfigureGroup?: (group: GroupData) => void;
+    onConfigureCluster?: (cluster: Cluster) => void;
     getServerAlertCount?: (serverId: number) => number;
     getServerBlackoutStatus?: (serverId: number) => { active: boolean; inherited: boolean };
     getClusterBlackoutStatus?: (clusterId: string) => { active: boolean; inherited: boolean };
@@ -166,6 +171,8 @@ const GroupItem = memo<GroupItemProps>(({
     onEditServer,
     onDeleteServer,
     onDeleteGroup,
+    onConfigureGroup,
+    onConfigureCluster,
     getServerAlertCount,
     getServerBlackoutStatus,
     getClusterBlackoutStatus,
@@ -228,7 +235,7 @@ const GroupItem = memo<GroupItemProps>(({
                         <CollapseIcon sx={expandIcon18Sx} />
                     )}
                 </IconButton>
-                {canDeleteGroup && (
+                {canEditGroup && (
                     <Box
                         className="action-buttons"
                         sx={getActionButtonsSx(theme)}
@@ -237,12 +244,24 @@ const GroupItem = memo<GroupItemProps>(({
                             size="small"
                             onClick={(e) => {
                                 e.stopPropagation();
-                                onDeleteGroup?.(group);
+                                onConfigureGroup?.(group);
                             }}
-                            sx={deleteButtonSx}
+                            sx={settingsButtonSx}
                         >
-                            <DeleteIcon sx={deleteIconSx} />
+                            <SettingsIcon sx={settingsIconSx} />
                         </IconButton>
+                        {canDeleteGroup && (
+                            <IconButton
+                                size="small"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    onDeleteGroup?.(group);
+                                }}
+                                sx={deleteButtonSx}
+                            >
+                                <DeleteIcon sx={deleteIconSx} />
+                            </IconButton>
+                        )}
                     </Box>
                 )}
             </Box>
@@ -357,6 +376,7 @@ const GroupItem = memo<GroupItemProps>(({
                                     onUpdateServer={onUpdateServer}
                                     onEditServer={onEditServer}
                                     onDeleteServer={onDeleteServer}
+                                    onConfigureCluster={onConfigureCluster}
                                     getServerAlertCount={getServerAlertCount}
                                     getServerBlackoutStatus={getServerBlackoutStatus}
                                     getClusterBlackoutStatus={getClusterBlackoutStatus}

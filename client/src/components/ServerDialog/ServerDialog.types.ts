@@ -42,6 +42,7 @@ export interface ServerFormData {
  * Server data structure received when editing an existing server.
  */
 export interface ServerEditData {
+    id?: number;
     name?: string;
     host?: string;
     port?: number;

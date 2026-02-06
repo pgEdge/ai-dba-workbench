@@ -11,7 +11,13 @@
 import { useState, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 
+// Module-level cache for analysis results (persists across dialog open/close)
+const analysisCache = new Map<number, { analysis: string; metricValue: number }>();
+
 export interface AlertInput {
+    id?: number;
+    aiAnalysis?: string | null;
+    aiAnalysisMetricValue?: number | null;
     alertType?: string;
     severity: string;
     title: string;
@@ -172,6 +178,24 @@ export const useAlertAnalysis = (): UseAlertAnalysisReturn => {
         setError(null);
         setAnalysis(null);
 
+        // Check server-side cache (from alert object)
+        if (alert.aiAnalysis && alert.aiAnalysisMetricValue != null &&
+            alert.metricValue != null && alert.aiAnalysisMetricValue === Number(alert.metricValue)) {
+            setAnalysis(alert.aiAnalysis);
+            setLoading(false);
+            return;
+        }
+
+        // Check client-side cache (from previous analysis in this session)
+        if (alert.id != null && alert.metricValue != null) {
+            const cached = analysisCache.get(alert.id);
+            if (cached && cached.metricValue === Number(alert.metricValue)) {
+                setAnalysis(cached.analysis);
+                setLoading(false);
+                return;
+            }
+        }
+
         // Build user message with alert context
         const userMessage = `Analyze this alert:
 
@@ -196,6 +220,7 @@ Provide remediation recommendations and any threshold tuning suggestions.`;
             const maxIterations = 10;
             let iterations = 0;
             let gotResponse = false; // Track completion with local variable (not state) to avoid stale closure
+            let analysisText = '';
 
             while (iterations < maxIterations) {
                 iterations++;
@@ -229,6 +254,7 @@ Provide remediation recommendations and any threshold tuning suggestions.`;
                         .map(c => c.text)
                         .join('\n') || '';
                     setAnalysis(textContent);
+                    analysisText = textContent;
                     gotResponse = true;
                     break;
                 }
@@ -272,6 +298,29 @@ Provide remediation recommendations and any threshold tuning suggestions.`;
                 }
 
                 messages.push({ role: 'user', content: toolResults });
+            }
+
+            // Save successful analysis to cache
+            if (gotResponse && alert.id) {
+                const metricVal = Number(alert.metricValue ?? 0);
+
+                // Update client-side cache
+                analysisCache.set(alert.id, {
+                    analysis: analysisText,
+                    metricValue: metricVal,
+                });
+
+                // Save to server (fire-and-forget)
+                fetch('/api/v1/alerts/analysis', {
+                    method: 'PUT',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        alert_id: alert.id,
+                        analysis: analysisText,
+                        metric_value: metricVal,
+                    }),
+                }).catch(() => {});
             }
 
             if (iterations >= maxIterations && !gotResponse) {

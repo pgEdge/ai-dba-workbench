@@ -1151,7 +1151,9 @@ func (d *Datastore) GetActiveThresholdAlert(ctx context.Context, ruleID int64, c
 func (d *Datastore) UpdateAlertMetricValue(ctx context.Context, alertID int64, metricValue float64) error {
 	_, err := d.pool.Exec(ctx, `
 		UPDATE alerts
-		SET metric_value = $2, last_updated = $3
+		SET metric_value = $2, last_updated = $3,
+		    ai_analysis = CASE WHEN metric_value IS DISTINCT FROM $2 THEN NULL ELSE ai_analysis END,
+		    ai_analysis_metric_value = CASE WHEN metric_value IS DISTINCT FROM $2 THEN NULL ELSE ai_analysis_metric_value END
 		WHERE id = $1
 	`, alertID, metricValue, time.Now())
 	return err

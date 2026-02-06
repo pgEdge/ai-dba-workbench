@@ -2625,6 +2625,9 @@ type Alert struct {
 	AcknowledgedBy *string    `json:"acknowledged_by,omitempty"`
 	AckMessage     *string    `json:"ack_message,omitempty"`
 	FalsePositive  *bool      `json:"false_positive,omitempty"`
+	// AI analysis cache fields
+	AIAnalysis            *string  `json:"ai_analysis,omitempty"`
+	AIAnalysisMetricValue *float64 `json:"ai_analysis_metric_value,omitempty"`
 }
 
 // AlertListFilter holds filter options for listing alerts
@@ -2745,7 +2748,8 @@ func (d *Datastore) GetAlerts(ctx context.Context, filter AlertListFilter) (*Ale
 		       a.correlation_id, a.status, a.triggered_at, a.cleared_at,
 		       a.anomaly_score, a.anomaly_details,
 		       COALESCE(c.name, 'Unknown') as server_name,
-		       ack.acknowledged_at, ack.acknowledged_by, ack.message, ack.false_positive
+		       ack.acknowledged_at, ack.acknowledged_by, ack.message, ack.false_positive,
+		       a.ai_analysis, a.ai_analysis_metric_value
 		FROM alerts a
 		LEFT JOIN connections c ON a.connection_id = c.id
 		LEFT JOIN alert_rules r ON a.rule_id = r.id
@@ -2782,6 +2786,7 @@ func (d *Datastore) GetAlerts(ctx context.Context, filter AlertListFilter) (*Ale
 			&alert.ServerName,
 			&alert.AcknowledgedAt, &alert.AcknowledgedBy, &alert.AckMessage,
 			&alert.FalsePositive,
+			&alert.AIAnalysis, &alert.AIAnalysisMetricValue,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan alert: %w", err)
@@ -2847,6 +2852,19 @@ func (d *Datastore) GetAlertCounts(ctx context.Context) (*AlertCountsResult, err
 		Total:    total,
 		ByServer: byServer,
 	}, nil
+}
+
+// SaveAlertAnalysis saves an AI analysis result for an alert
+func (d *Datastore) SaveAlertAnalysis(ctx context.Context, alertID int64, analysis string, metricValue float64) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	_, err := d.pool.Exec(ctx, `
+		UPDATE alerts
+		SET ai_analysis = $2, ai_analysis_metric_value = $3
+		WHERE id = $1
+	`, alertID, analysis, metricValue)
+	return err
 }
 
 // AcknowledgeAlertRequest contains the data for acknowledging an alert

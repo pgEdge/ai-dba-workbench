@@ -37,12 +37,14 @@ func (h *AlertHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(http.
 		mux.HandleFunc("/api/v1/alerts", authWrapper(h.handleNotConfigured))
 		mux.HandleFunc("/api/v1/alerts/counts", authWrapper(h.handleNotConfigured))
 		mux.HandleFunc("/api/v1/alerts/acknowledge", authWrapper(h.handleNotConfigured))
+		mux.HandleFunc("/api/v1/alerts/analysis", authWrapper(h.handleNotConfigured))
 		return
 	}
 
 	mux.HandleFunc("/api/v1/alerts", authWrapper(h.handleAlerts))
 	mux.HandleFunc("/api/v1/alerts/counts", authWrapper(h.handleAlertCounts))
 	mux.HandleFunc("/api/v1/alerts/acknowledge", authWrapper(h.handleAcknowledge))
+	mux.HandleFunc("/api/v1/alerts/analysis", authWrapper(h.handleSaveAnalysis))
 }
 
 // handleNotConfigured returns a 503 when the datastore is not configured
@@ -201,4 +203,40 @@ func (h *AlertHandler) unacknowledgeAlert(w http.ResponseWriter, r *http.Request
 	}
 
 	RespondJSON(w, http.StatusOK, map[string]string{"status": "active"})
+}
+
+// SaveAnalysisRequest represents the request body for saving an AI analysis
+type SaveAnalysisRequest struct {
+	AlertID     int64   `json:"alert_id"`
+	Analysis    string  `json:"analysis"`
+	MetricValue float64 `json:"metric_value"`
+}
+
+// handleSaveAnalysis handles PUT /api/v1/alerts/analysis
+func (h *AlertHandler) handleSaveAnalysis(w http.ResponseWriter, r *http.Request) {
+	if !RequireMethod(w, r, http.MethodPut) {
+		return
+	}
+
+	var req SaveAnalysisRequest
+	if !DecodeJSONBody(w, r, &req) {
+		return
+	}
+
+	if req.AlertID == 0 {
+		RespondError(w, http.StatusBadRequest, "alert_id is required")
+		return
+	}
+
+	if req.Analysis == "" {
+		RespondError(w, http.StatusBadRequest, "analysis is required")
+		return
+	}
+
+	if err := h.datastore.SaveAlertAnalysis(r.Context(), req.AlertID, req.Analysis, req.MetricValue); err != nil {
+		RespondError(w, http.StatusInternalServerError, "Failed to save analysis: "+err.Error())
+		return
+	}
+
+	RespondJSON(w, http.StatusOK, map[string]string{"status": "saved"})
 }

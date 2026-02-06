@@ -2358,6 +2358,29 @@ func (sm *SchemaManager) registerMigrations() {
 			return err
 		},
 	})
+
+	// Migration #7: Add AI analysis cache columns to alerts
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     7,
+		Description: "Add AI analysis cache columns to alerts",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				ALTER TABLE alerts
+					ADD COLUMN IF NOT EXISTS ai_analysis TEXT;
+
+				ALTER TABLE alerts
+					ADD COLUMN IF NOT EXISTS ai_analysis_metric_value REAL;
+
+				COMMENT ON COLUMN alerts.ai_analysis IS
+					'Cached AI analysis markdown report';
+				COMMENT ON COLUMN alerts.ai_analysis_metric_value IS
+					'The metric_value when the AI analysis was generated';
+			`)
+			return err
+		},
+	})
 }
 
 // Migrate applies all pending migrations

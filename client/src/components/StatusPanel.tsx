@@ -851,7 +851,7 @@ const AlertItem = ({ alert, showServer = false, onAcknowledge, onUnacknowledge, 
             </Box>
 
             {/* Analyze button */}
-            <Tooltip title="Analyze with AI" placement="left">
+            <Tooltip title={alert.aiAnalysis ? "View cached analysis" : "Analyze with AI"} placement="left">
                 <IconButton
                     size="small"
                     onClick={(e) => {
@@ -860,7 +860,7 @@ const AlertItem = ({ alert, showServer = false, onAcknowledge, onUnacknowledge, 
                     }}
                     sx={analyzeButtonSx}
                 >
-                    <AnalyzeIcon sx={ICON_16_SX} />
+                    <AnalyzeIcon sx={{ ...ICON_16_SX, ...(alert.aiAnalysis && { color: 'success.main' }) }} />
                 </IconButton>
             </Tooltip>
 
@@ -991,7 +991,7 @@ const GroupedAlertInstance = ({ alert, showServer, onAcknowledge, onUnacknowledg
             </Typography>
 
             {/* Analyze button */}
-            <Tooltip title="Analyze with AI" placement="left">
+            <Tooltip title={alert.aiAnalysis ? "View cached analysis" : "Analyze with AI"} placement="left">
                 <IconButton
                     size="small"
                     onClick={(e) => {
@@ -1000,7 +1000,7 @@ const GroupedAlertInstance = ({ alert, showServer, onAcknowledge, onUnacknowledg
                     }}
                     sx={analyzeButtonSx}
                 >
-                    <AnalyzeIcon sx={ICON_14_SX} />
+                    <AnalyzeIcon sx={{ ...ICON_14_SX, ...(alert.aiAnalysis && { color: 'success.main' }) }} />
                 </IconButton>
             </Tooltip>
 
@@ -1654,6 +1654,9 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
             acknowledgedBy: alert.acknowledged_by,
             ackMessage: alert.ack_message,
             falsePositive: alert.false_positive,
+            // AI analysis cache
+            aiAnalysis: alert.ai_analysis,
+            aiAnalysisMetricValue: alert.ai_analysis_metric_value,
         }));
     };
 

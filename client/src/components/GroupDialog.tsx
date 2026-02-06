@@ -37,6 +37,7 @@ import { TransitionProps } from '@mui/material/transitions';
 import { Close as CloseIcon } from '@mui/icons-material';
 import AlertOverridesPanel from './AlertOverridesPanel';
 import ProbeOverridesPanel from './ProbeOverridesPanel';
+import ChannelOverridesPanel from './ChannelOverridesPanel';
 
 // --- Slide transition for fullScreen dialog ---
 
@@ -342,6 +343,7 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
                     <Tab label="Details" />
                     <Tab label="Alert Overrides" />
                     <Tab label="Probe Configuration" />
+                    <Tab label="Notification Channels" />
                 </Tabs>
                 <Box sx={{ flex: 1, overflow: 'auto', p: 3 }}>
                     {activeTab === 0 && (
@@ -388,6 +390,12 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
                     )}
                     {activeTab === 2 && (
                         <ProbeOverridesPanel
+                            scope="group"
+                            scopeId={group?.id as number}
+                        />
+                    )}
+                    {activeTab === 3 && (
+                        <ChannelOverridesPanel
                             scope="group"
                             scopeId={group?.id as number}
                         />

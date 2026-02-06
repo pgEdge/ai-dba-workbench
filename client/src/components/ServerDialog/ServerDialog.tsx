@@ -48,6 +48,7 @@ import SSLSettings from './SSLSettings';
 import OptionsSection from './OptionsSection';
 import AlertOverridesPanel from '../AlertOverridesPanel';
 import ProbeOverridesPanel from '../ProbeOverridesPanel';
+import ChannelOverridesPanel from '../ChannelOverridesPanel';
 
 const Transition = React.forwardRef(function Transition(
     props: TransitionProps & { children: React.ReactElement },
@@ -213,6 +214,7 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
                     <Tab label="Connection" />
                     <Tab label="Alert Overrides" />
                     <Tab label="Probe Configuration" />
+                    <Tab label="Notification Channels" />
                 </Tabs>
                 <Box sx={{ flex: 1, overflow: 'auto', p: 3 }}>
                     {activeTab === 0 && (
@@ -291,6 +293,12 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
                     )}
                     {activeTab === 2 && (
                         <ProbeOverridesPanel
+                            scope="server"
+                            scopeId={server?.id as number}
+                        />
+                    )}
+                    {activeTab === 3 && (
+                        <ChannelOverridesPanel
                             scope="server"
                             scopeId={server?.id as number}
                         />

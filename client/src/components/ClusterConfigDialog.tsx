@@ -24,6 +24,7 @@ import { TransitionProps } from '@mui/material/transitions';
 import { Close as CloseIcon } from '@mui/icons-material';
 import AlertOverridesPanel from './AlertOverridesPanel';
 import ProbeOverridesPanel from './ProbeOverridesPanel';
+import ChannelOverridesPanel from './ChannelOverridesPanel';
 
 const Transition = React.forwardRef(function Transition(
     props: TransitionProps & { children: React.ReactElement },
@@ -92,6 +93,7 @@ const ClusterConfigDialog: React.FC<ClusterConfigDialogProps> = ({
             >
                 <Tab label="Alert Overrides" />
                 <Tab label="Probe Configuration" />
+                <Tab label="Notification Channels" />
             </Tabs>
             <Box sx={{ flex: 1, overflow: 'auto', p: 3 }}>
                 {activeTab === 0 && (
@@ -99,6 +101,9 @@ const ClusterConfigDialog: React.FC<ClusterConfigDialogProps> = ({
                 )}
                 {activeTab === 1 && (
                     <ProbeOverridesPanel scope="cluster" scopeId={clusterId} />
+                )}
+                {activeTab === 2 && (
+                    <ChannelOverridesPanel scope="cluster" scopeId={clusterId} />
                 )}
             </Box>
         </Dialog>

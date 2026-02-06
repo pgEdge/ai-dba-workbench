@@ -64,6 +64,7 @@ interface EmailChannel {
     name: string;
     description: string;
     enabled: boolean;
+    is_estate_default: boolean;
     smtp_host: string;
     smtp_port: number;
     smtp_username: string;
@@ -84,6 +85,7 @@ interface ChannelFormState {
     name: string;
     description: string;
     enabled: boolean;
+    is_estate_default: boolean;
     smtp_host: string;
     smtp_port: string;
     smtp_username: string;
@@ -97,6 +99,7 @@ const DEFAULT_FORM_STATE: ChannelFormState = {
     name: '',
     description: '',
     enabled: true,
+    is_estate_default: false,
     smtp_host: '',
     smtp_port: '587',
     smtp_username: '',
@@ -158,6 +161,7 @@ const AdminEmailChannels: React.FC = () => {
                     name: ch.name as string,
                     description: (ch.description as string) || '',
                     enabled: ch.enabled as boolean,
+                    is_estate_default: ch.is_estate_default as boolean,
                     smtp_host: (ch.smtp_host as string) || '',
                     smtp_port: (ch.smtp_port as number) || 587,
                     smtp_username: (ch.smtp_username as string) || '',
@@ -235,6 +239,7 @@ const AdminEmailChannels: React.FC = () => {
             name: channel.name,
             description: channel.description,
             enabled: channel.enabled,
+            is_estate_default: channel.is_estate_default,
             smtp_host: channel.smtp_host,
             smtp_port: String(channel.smtp_port),
             smtp_username: channel.smtp_username,
@@ -298,6 +303,9 @@ const AdminEmailChannels: React.FC = () => {
                 if (form.enabled !== editingChannel.enabled) {
                     body.enabled = form.enabled;
                 }
+                if (form.is_estate_default !== editingChannel.is_estate_default) {
+                    body.is_estate_default = form.is_estate_default;
+                }
                 if (form.smtp_host.trim() !== editingChannel.smtp_host) {
                     body.smtp_host = form.smtp_host.trim();
                 }
@@ -341,6 +349,7 @@ const AdminEmailChannels: React.FC = () => {
                     name: form.name.trim(),
                     description: form.description.trim(),
                     enabled: form.enabled,
+                    is_estate_default: form.is_estate_default,
                     smtp_host: form.smtp_host.trim(),
                     smtp_port: portNum,
                     smtp_username: form.smtp_username.trim(),
@@ -666,6 +675,7 @@ const AdminEmailChannels: React.FC = () => {
                             <TableCell sx={tableHeaderCellSx}>Description</TableCell>
                             <TableCell sx={tableHeaderCellSx}>Recipients</TableCell>
                             <TableCell sx={tableHeaderCellSx}>Enabled</TableCell>
+                            <TableCell sx={tableHeaderCellSx}>Estate Default</TableCell>
                             <TableCell sx={tableHeaderCellSx} align="right">Actions</TableCell>
                         </TableRow>
                     </TableHead>
@@ -691,6 +701,13 @@ const AdminEmailChannels: React.FC = () => {
                                             checked={channel.enabled}
                                             size="small"
                                             onChange={() => handleToggleEnabled(channel)}
+                                        />
+                                    </TableCell>
+                                    <TableCell>
+                                        <Switch
+                                            checked={channel.is_estate_default}
+                                            size="small"
+                                            disabled
                                         />
                                     </TableCell>
                                     <TableCell align="right">
@@ -734,7 +751,7 @@ const AdminEmailChannels: React.FC = () => {
                             ))
                         ) : (
                             <TableRow>
-                                <TableCell colSpan={5} align="center" sx={emptyRowSx}>
+                                <TableCell colSpan={6} align="center" sx={emptyRowSx}>
                                     <Typography color="text.secondary" sx={emptyRowTextSx}>
                                         No email channels configured.
                                     </Typography>
@@ -881,6 +898,24 @@ const AdminEmailChannels: React.FC = () => {
                                     />
                                 }
                                 label="Enabled"
+                            />
+                            <FormControlLabel
+                                sx={{ ml: 0, gap: 1 }}
+                                control={
+                                    <Switch
+                                        checked={form.is_estate_default}
+                                        onChange={(e) => handleFormChange('is_estate_default', e.target.checked)}
+                                        disabled={saving}
+                                    />
+                                }
+                                label={
+                                    <Box>
+                                        <Typography variant="body1">Estate Default</Typography>
+                                        <Typography variant="caption" color="text.secondary">
+                                            When enabled, this channel is active for all servers by default
+                                        </Typography>
+                                    </Box>
+                                }
                             />
                         </Box>
                     </Box>

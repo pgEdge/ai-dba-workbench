@@ -60,6 +60,7 @@ interface MattermostChannel {
     name: string;
     description: string;
     enabled: boolean;
+    is_estate_default: boolean;
     webhook_url: string;
 }
 
@@ -68,6 +69,7 @@ interface ChannelFormState {
     description: string;
     webhook_url: string;
     enabled: boolean;
+    is_estate_default: boolean;
 }
 
 const DEFAULT_FORM_STATE: ChannelFormState = {
@@ -75,6 +77,7 @@ const DEFAULT_FORM_STATE: ChannelFormState = {
     description: '',
     webhook_url: '',
     enabled: true,
+    is_estate_default: false,
 };
 
 const AdminMattermostChannels: React.FC = () => {
@@ -118,6 +121,7 @@ const AdminMattermostChannels: React.FC = () => {
                     name: ch.name as string,
                     description: (ch.description as string) || '',
                     enabled: ch.enabled as boolean,
+                    is_estate_default: ch.is_estate_default as boolean,
                     webhook_url: (ch.webhook_url as string) || '',
                 }));
             setChannels(mattermostChannels);
@@ -153,6 +157,7 @@ const AdminMattermostChannels: React.FC = () => {
             description: channel.description,
             webhook_url: channel.webhook_url,
             enabled: channel.enabled,
+            is_estate_default: channel.is_estate_default,
         });
         setDialogError(null);
         setDialogOpen(true);
@@ -194,6 +199,9 @@ const AdminMattermostChannels: React.FC = () => {
                 if (form.enabled !== editingChannel.enabled) {
                     body.enabled = form.enabled;
                 }
+                if (form.is_estate_default !== editingChannel.is_estate_default) {
+                    body.is_estate_default = form.is_estate_default;
+                }
                 if (form.webhook_url.trim() !== editingChannel.webhook_url) {
                     body.webhook_url = form.webhook_url.trim();
                 }
@@ -219,6 +227,7 @@ const AdminMattermostChannels: React.FC = () => {
                     name: form.name.trim(),
                     description: form.description.trim(),
                     enabled: form.enabled,
+                    is_estate_default: form.is_estate_default,
                     webhook_url: form.webhook_url.trim(),
                 };
                 const response = await fetch(
@@ -404,6 +413,7 @@ const AdminMattermostChannels: React.FC = () => {
                             <TableCell sx={tableHeaderCellSx}>Name</TableCell>
                             <TableCell sx={tableHeaderCellSx}>Description</TableCell>
                             <TableCell sx={tableHeaderCellSx}>Enabled</TableCell>
+                            <TableCell sx={tableHeaderCellSx}>Estate Default</TableCell>
                             <TableCell sx={tableHeaderCellSx} align="right">Actions</TableCell>
                         </TableRow>
                     </TableHead>
@@ -422,6 +432,13 @@ const AdminMattermostChannels: React.FC = () => {
                                             checked={channel.enabled}
                                             size="small"
                                             onChange={() => handleToggleEnabled(channel)}
+                                        />
+                                    </TableCell>
+                                    <TableCell>
+                                        <Switch
+                                            checked={channel.is_estate_default}
+                                            size="small"
+                                            disabled
                                         />
                                     </TableCell>
                                     <TableCell align="right">
@@ -465,7 +482,7 @@ const AdminMattermostChannels: React.FC = () => {
                             ))
                         ) : (
                             <TableRow>
-                                <TableCell colSpan={4} align="center" sx={emptyRowSx}>
+                                <TableCell colSpan={5} align="center" sx={emptyRowSx}>
                                     <Typography color="text.secondary" sx={emptyRowTextSx}>
                                         No Mattermost channels configured.
                                     </Typography>
@@ -535,6 +552,24 @@ const AdminMattermostChannels: React.FC = () => {
                                 />
                             }
                             label="Enabled"
+                        />
+                        <FormControlLabel
+                            sx={{ ml: 0, gap: 1 }}
+                            control={
+                                <Switch
+                                    checked={form.is_estate_default}
+                                    onChange={(e) => handleFormChange('is_estate_default', e.target.checked)}
+                                    disabled={saving}
+                                />
+                            }
+                            label={
+                                <Box>
+                                    <Typography variant="body1">Estate Default</Typography>
+                                    <Typography variant="caption" color="text.secondary">
+                                        When enabled, this channel is active for all servers by default
+                                    </Typography>
+                                </Box>
+                            }
                         />
                     </Box>
                 </DialogContent>

@@ -77,6 +77,7 @@ type NotificationChannel struct {
 	// Reminder settings
 	ReminderEnabled       bool `json:"reminder_enabled"`
 	ReminderIntervalHours int  `json:"reminder_interval_hours"`
+	IsEstateDefault       bool `json:"is_estate_default"`
 
 	// Recipients - populated for email channels by the notification manager
 	Recipients []*EmailRecipient `json:"recipients,omitempty"`

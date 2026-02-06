@@ -81,6 +81,8 @@ type NotificationChannel struct {
 	ReminderEnabled       bool `json:"reminder_enabled"`
 	ReminderIntervalHours int  `json:"reminder_interval_hours"`
 
+	IsEstateDefault bool `json:"is_estate_default"`
+
 	// Recipients - populated for email channels
 	Recipients []*EmailRecipient `json:"recipients,omitempty"`
 
@@ -111,7 +113,7 @@ func (d *Datastore) ListNotificationChannels(ctx context.Context) ([]*Notificati
                smtp_port, smtp_username, smtp_password_encrypted, smtp_use_tls,
                from_address, from_name, template_alert_fire, template_alert_clear,
                template_reminder, reminder_enabled, reminder_interval_hours,
-               created_at, updated_at
+               is_estate_default, created_at, updated_at
         FROM notification_channels
         ORDER BY name
     `)
@@ -162,7 +164,7 @@ func (d *Datastore) GetNotificationChannel(ctx context.Context, id int64) (*Noti
                smtp_port, smtp_username, smtp_password_encrypted, smtp_use_tls,
                from_address, from_name, template_alert_fire, template_alert_clear,
                template_reminder, reminder_enabled, reminder_interval_hours,
-               created_at, updated_at
+               is_estate_default, created_at, updated_at
         FROM notification_channels
         WHERE id = $1
     `, id)
@@ -210,9 +212,9 @@ func (d *Datastore) CreateNotificationChannel(ctx context.Context, channel *Noti
             smtp_port, smtp_username, smtp_password_encrypted, smtp_use_tls,
             from_address, from_name, template_alert_fire, template_alert_clear,
             template_reminder, reminder_enabled, reminder_interval_hours,
-            created_at, updated_at
+            is_estate_default, created_at, updated_at
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-                  $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
+                  $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
         RETURNING id, created_at, updated_at
     `, channel.OwnerUsername, channel.OwnerToken, channel.Enabled,
 		channel.ChannelType, channel.Name, channel.Description, channel.WebhookURL,
@@ -220,8 +222,8 @@ func (d *Datastore) CreateNotificationChannel(ctx context.Context, channel *Noti
 		channel.AuthCredentials, channel.SMTPHost, channel.SMTPPort, channel.SMTPUsername,
 		channel.SMTPPassword, channel.SMTPUseTLS, channel.FromAddress, channel.FromName,
 		channel.TemplateAlertFire, channel.TemplateAlertClear, channel.TemplateReminder,
-		channel.ReminderEnabled, channel.ReminderIntervalHours, channel.CreatedAt,
-		channel.UpdatedAt).Scan(&channel.ID, &channel.CreatedAt, &channel.UpdatedAt)
+		channel.ReminderEnabled, channel.ReminderIntervalHours, channel.IsEstateDefault,
+		channel.CreatedAt, channel.UpdatedAt).Scan(&channel.ID, &channel.CreatedAt, &channel.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to create notification channel: %w", err)
 	}
@@ -250,7 +252,8 @@ func (d *Datastore) UpdateNotificationChannel(ctx context.Context, channel *Noti
             smtp_use_tls = $18, from_address = $19, from_name = $20,
             template_alert_fire = $21, template_alert_clear = $22,
             template_reminder = $23, reminder_enabled = $24,
-            reminder_interval_hours = $25, updated_at = CURRENT_TIMESTAMP
+            reminder_interval_hours = $25, is_estate_default = $26,
+            updated_at = CURRENT_TIMESTAMP
         WHERE id = $1
         RETURNING updated_at
     `, channel.ID, channel.OwnerUsername, channel.OwnerToken,
@@ -260,7 +263,7 @@ func (d *Datastore) UpdateNotificationChannel(ctx context.Context, channel *Noti
 		channel.SMTPUsername, channel.SMTPPassword, channel.SMTPUseTLS,
 		channel.FromAddress, channel.FromName, channel.TemplateAlertFire,
 		channel.TemplateAlertClear, channel.TemplateReminder, channel.ReminderEnabled,
-		channel.ReminderIntervalHours).Scan(&channel.UpdatedAt)
+		channel.ReminderIntervalHours, channel.IsEstateDefault).Scan(&channel.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotificationChannelNotFound
@@ -400,7 +403,7 @@ func scanNotificationChannel(rows pgx.Rows) (*NotificationChannel, error) {
 		&c.SMTPUsername, &c.SMTPPassword, &c.SMTPUseTLS,
 		&c.FromAddress, &c.FromName, &c.TemplateAlertFire,
 		&c.TemplateAlertClear, &c.TemplateReminder, &c.ReminderEnabled,
-		&c.ReminderIntervalHours, &c.CreatedAt, &c.UpdatedAt)
+		&c.ReminderIntervalHours, &c.IsEstateDefault, &c.CreatedAt, &c.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -426,7 +429,7 @@ func scanNotificationChannelRow(row pgx.Row) (*NotificationChannel, error) {
 		&c.SMTPUsername, &c.SMTPPassword, &c.SMTPUseTLS,
 		&c.FromAddress, &c.FromName, &c.TemplateAlertFire,
 		&c.TemplateAlertClear, &c.TemplateReminder, &c.ReminderEnabled,
-		&c.ReminderIntervalHours, &c.CreatedAt, &c.UpdatedAt)
+		&c.ReminderIntervalHours, &c.IsEstateDefault, &c.CreatedAt, &c.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -438,6 +441,177 @@ func scanNotificationChannelRow(row pgx.Row) (*NotificationChannel, error) {
 	}
 
 	return &c, nil
+}
+
+// ChannelOverride represents a notification channel with its scope-level override status
+type ChannelOverride struct {
+	ChannelID       int64   `json:"channel_id"`
+	ChannelName     string  `json:"channel_name"`
+	ChannelType     string  `json:"channel_type"`
+	Description     *string `json:"description"`
+	IsEstateDefault bool    `json:"is_estate_default"`
+	HasOverride     bool    `json:"has_override"`
+	OverrideEnabled *bool   `json:"override_enabled"`
+}
+
+// ChannelOverrideUpdate represents data for creating/updating a channel override
+type ChannelOverrideUpdate struct {
+	Enabled bool `json:"enabled"`
+}
+
+// GetChannelOverridesForServer returns all enabled channels with their server-level overrides.
+func (d *Datastore) GetChannelOverridesForServer(ctx context.Context, connectionID int) ([]ChannelOverride, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	rows, err := d.pool.Query(ctx, `
+		SELECT nc.id, nc.name, nc.channel_type, nc.description, nc.is_estate_default,
+		       nco.enabled
+		FROM notification_channels nc
+		LEFT JOIN notification_channel_overrides nco ON nco.channel_id = nc.id
+		    AND nco.scope = 'server' AND nco.connection_id = $1
+		WHERE nc.enabled = true
+		ORDER BY nc.name`, connectionID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query server channel overrides: %w", err)
+	}
+	defer rows.Close()
+
+	return scanChannelOverrides(rows)
+}
+
+// GetChannelOverridesForCluster returns all enabled channels with their cluster-level overrides.
+func (d *Datastore) GetChannelOverridesForCluster(ctx context.Context, clusterID int) ([]ChannelOverride, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	rows, err := d.pool.Query(ctx, `
+		SELECT nc.id, nc.name, nc.channel_type, nc.description, nc.is_estate_default,
+		       nco.enabled
+		FROM notification_channels nc
+		LEFT JOIN notification_channel_overrides nco ON nco.channel_id = nc.id
+		    AND nco.scope = 'cluster' AND nco.cluster_id = $1
+		WHERE nc.enabled = true
+		ORDER BY nc.name`, clusterID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query cluster channel overrides: %w", err)
+	}
+	defer rows.Close()
+
+	return scanChannelOverrides(rows)
+}
+
+// GetChannelOverridesForGroup returns all enabled channels with their group-level overrides.
+func (d *Datastore) GetChannelOverridesForGroup(ctx context.Context, groupID int) ([]ChannelOverride, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	rows, err := d.pool.Query(ctx, `
+		SELECT nc.id, nc.name, nc.channel_type, nc.description, nc.is_estate_default,
+		       nco.enabled
+		FROM notification_channels nc
+		LEFT JOIN notification_channel_overrides nco ON nco.channel_id = nc.id
+		    AND nco.scope = 'group' AND nco.group_id = $1
+		WHERE nc.enabled = true
+		ORDER BY nc.name`, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query group channel overrides: %w", err)
+	}
+	defer rows.Close()
+
+	return scanChannelOverrides(rows)
+}
+
+// scanChannelOverrides is a helper that scans rows from a channel overrides query.
+func scanChannelOverrides(rows pgx.Rows) ([]ChannelOverride, error) {
+	var overrides []ChannelOverride
+	for rows.Next() {
+		var o ChannelOverride
+		var overrideEnabled *bool
+		if err := rows.Scan(
+			&o.ChannelID, &o.ChannelName, &o.ChannelType, &o.Description,
+			&o.IsEstateDefault, &overrideEnabled,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan channel override: %w", err)
+		}
+		o.HasOverride = overrideEnabled != nil
+		o.OverrideEnabled = overrideEnabled
+		overrides = append(overrides, o)
+	}
+	if overrides == nil {
+		overrides = []ChannelOverride{}
+	}
+	return overrides, rows.Err()
+}
+
+// UpsertChannelOverride creates or updates a notification channel override at the specified scope.
+func (d *Datastore) UpsertChannelOverride(ctx context.Context, scope string, scopeID int, channelID int64, update ChannelOverrideUpdate) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	var query string
+	var args []interface{}
+
+	switch scope {
+	case "server":
+		query = `
+			INSERT INTO notification_channel_overrides (channel_id, scope, connection_id, enabled)
+			VALUES ($1, 'server', $2, $3)
+			ON CONFLICT (channel_id, connection_id) WHERE scope = 'server'
+			DO UPDATE SET enabled = $3`
+		args = []interface{}{channelID, scopeID, update.Enabled}
+	case "cluster":
+		query = `
+			INSERT INTO notification_channel_overrides (channel_id, scope, cluster_id, enabled)
+			VALUES ($1, 'cluster', $2, $3)
+			ON CONFLICT (channel_id, cluster_id) WHERE scope = 'cluster'
+			DO UPDATE SET enabled = $3`
+		args = []interface{}{channelID, scopeID, update.Enabled}
+	case "group":
+		query = `
+			INSERT INTO notification_channel_overrides (channel_id, scope, group_id, enabled)
+			VALUES ($1, 'group', $2, $3)
+			ON CONFLICT (channel_id, group_id) WHERE scope = 'group'
+			DO UPDATE SET enabled = $3`
+		args = []interface{}{channelID, scopeID, update.Enabled}
+	default:
+		return fmt.Errorf("invalid scope: %s", scope)
+	}
+
+	_, err := d.pool.Exec(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to upsert channel override: %w", err)
+	}
+	return nil
+}
+
+// DeleteChannelOverride removes a notification channel override at the specified scope.
+func (d *Datastore) DeleteChannelOverride(ctx context.Context, scope string, scopeID int, channelID int64) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	var query string
+	var args []interface{}
+
+	switch scope {
+	case "server":
+		query = `DELETE FROM notification_channel_overrides WHERE scope = 'server' AND channel_id = $1 AND connection_id = $2`
+		args = []interface{}{channelID, scopeID}
+	case "cluster":
+		query = `DELETE FROM notification_channel_overrides WHERE scope = 'cluster' AND channel_id = $1 AND cluster_id = $2`
+		args = []interface{}{channelID, scopeID}
+	case "group":
+		query = `DELETE FROM notification_channel_overrides WHERE scope = 'group' AND channel_id = $1 AND group_id = $2`
+		args = []interface{}{channelID, scopeID}
+	default:
+		return fmt.Errorf("invalid scope: %s", scope)
+	}
+
+	_, err := d.pool.Exec(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to delete channel override: %w", err)
+	}
+	return nil
 }
 
 // marshalHeaders converts the headers map to JSON bytes for database storage.

@@ -57,10 +57,11 @@ func (h *NotificationChannelHandler) handleNotConfigured(w http.ResponseWriter, 
 
 // NotificationChannelCreateRequest is the request body for creating a notification channel
 type NotificationChannelCreateRequest struct {
-	ChannelType string  `json:"channel_type"`
-	Name        string  `json:"name"`
-	Description *string `json:"description,omitempty"`
-	Enabled     *bool   `json:"enabled,omitempty"`
+	ChannelType     string  `json:"channel_type"`
+	Name            string  `json:"name"`
+	Description     *string `json:"description,omitempty"`
+	Enabled         *bool   `json:"enabled,omitempty"`
+	IsEstateDefault *bool   `json:"is_estate_default,omitempty"`
 
 	// Slack/Mattermost
 	WebhookURL *string `json:"webhook_url,omitempty"`
@@ -319,6 +320,11 @@ func (h *NotificationChannelHandler) createChannel(w http.ResponseWriter, r *htt
 		reminderIntervalHours = *req.ReminderIntervalHours
 	}
 
+	isEstateDefault := false
+	if req.IsEstateDefault != nil {
+		isEstateDefault = *req.IsEstateDefault
+	}
+
 	var headers map[string]string
 	if req.Headers != nil {
 		headers = *req.Headers
@@ -348,6 +354,7 @@ func (h *NotificationChannelHandler) createChannel(w http.ResponseWriter, r *htt
 		TemplateReminder:      req.TemplateReminder,
 		ReminderEnabled:       reminderEnabled,
 		ReminderIntervalHours: reminderIntervalHours,
+		IsEstateDefault:       isEstateDefault,
 	}
 
 	if err := h.datastore.CreateNotificationChannel(r.Context(), channel); err != nil {
@@ -477,6 +484,9 @@ func (h *NotificationChannelHandler) updateChannel(w http.ResponseWriter, r *htt
 	}
 	if req.ReminderIntervalHours != nil {
 		existing.ReminderIntervalHours = *req.ReminderIntervalHours
+	}
+	if req.IsEstateDefault != nil {
+		existing.IsEstateDefault = *req.IsEstateDefault
 	}
 
 	existing.ChannelType = database.NotificationChannelType(channelType)

@@ -2483,6 +2483,107 @@ func (sm *SchemaManager) registerMigrations() {
 			return err
 		},
 	})
+
+	// Migration #10: Add estate default and hierarchical notification channel overrides
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     10,
+		Description: "Add estate default and hierarchical notification channel overrides",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			// Add is_estate_default column to notification_channels
+			_, err := tx.Exec(ctx, `
+				ALTER TABLE notification_channels
+					ADD COLUMN IF NOT EXISTS is_estate_default BOOLEAN NOT NULL DEFAULT FALSE;
+
+				COMMENT ON COLUMN notification_channels.is_estate_default IS
+					'When true, this channel is enabled by default for all servers in the estate';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to add is_estate_default column: %w", err)
+			}
+
+			// Create notification_channel_overrides table
+			_, err = tx.Exec(ctx, `
+				CREATE TABLE IF NOT EXISTS notification_channel_overrides (
+					id BIGSERIAL PRIMARY KEY,
+					channel_id BIGINT NOT NULL
+						REFERENCES notification_channels(id) ON DELETE CASCADE,
+					scope TEXT NOT NULL
+						CHECK (scope IN ('group', 'cluster', 'server')),
+					connection_id INTEGER
+						REFERENCES connections(id) ON DELETE CASCADE,
+					group_id INTEGER
+						REFERENCES cluster_groups(id) ON DELETE CASCADE,
+					cluster_id INTEGER
+						REFERENCES clusters(id) ON DELETE CASCADE,
+					enabled BOOLEAN NOT NULL DEFAULT TRUE,
+					created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+					CONSTRAINT nco_scope_ids_check CHECK (
+						(scope = 'group' AND group_id IS NOT NULL
+						 AND connection_id IS NULL AND cluster_id IS NULL)
+						OR (scope = 'cluster' AND cluster_id IS NOT NULL
+							AND connection_id IS NULL AND group_id IS NULL)
+						OR (scope = 'server' AND connection_id IS NOT NULL
+							AND group_id IS NULL AND cluster_id IS NULL)
+					)
+				);
+
+				COMMENT ON TABLE notification_channel_overrides IS
+					'Hierarchical overrides for notification channels at group, cluster, or server level';
+				COMMENT ON COLUMN notification_channel_overrides.channel_id IS
+					'The notification channel being overridden';
+				COMMENT ON COLUMN notification_channel_overrides.scope IS
+					'Override scope level: group, cluster, or server';
+				COMMENT ON COLUMN notification_channel_overrides.connection_id IS
+					'Server connection when scope is server';
+				COMMENT ON COLUMN notification_channel_overrides.group_id IS
+					'Cluster group when scope is group';
+				COMMENT ON COLUMN notification_channel_overrides.cluster_id IS
+					'Cluster when scope is cluster';
+				COMMENT ON COLUMN notification_channel_overrides.enabled IS
+					'Whether the channel is enabled at this scope level';
+
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_nco_unique_server
+					ON notification_channel_overrides(channel_id, connection_id)
+					WHERE scope = 'server';
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_nco_unique_cluster
+					ON notification_channel_overrides(channel_id, cluster_id)
+					WHERE scope = 'cluster';
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_nco_unique_group
+					ON notification_channel_overrides(channel_id, group_id)
+					WHERE scope = 'group';
+
+				CREATE INDEX IF NOT EXISTS idx_nco_scope
+					ON notification_channel_overrides(scope);
+				CREATE INDEX IF NOT EXISTS idx_nco_channel_id
+					ON notification_channel_overrides(channel_id);
+				CREATE INDEX IF NOT EXISTS idx_nco_connection_id
+					ON notification_channel_overrides(connection_id);
+				CREATE INDEX IF NOT EXISTS idx_nco_group_id
+					ON notification_channel_overrides(group_id);
+				CREATE INDEX IF NOT EXISTS idx_nco_cluster_id
+					ON notification_channel_overrides(cluster_id);
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to create notification_channel_overrides table: %w", err)
+			}
+
+			// Migrate existing connection_notification_channels rows
+			_, err = tx.Exec(ctx, `
+				INSERT INTO notification_channel_overrides
+					(channel_id, scope, connection_id, enabled)
+				SELECT channel_id, 'server', connection_id, enabled
+				FROM connection_notification_channels
+				ON CONFLICT DO NOTHING;
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to migrate connection_notification_channels: %w", err)
+			}
+
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations

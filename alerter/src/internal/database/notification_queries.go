@@ -33,7 +33,8 @@ func (d *Datastore) GetNotificationChannel(ctx context.Context, id int64) (*Noti
                auth_type, auth_credentials, smtp_host, smtp_port, smtp_username,
                smtp_password, smtp_use_tls, from_address, from_name,
                template_alert_fire, template_alert_clear, template_reminder,
-               reminder_enabled, reminder_interval_hours, created_at, updated_at
+               reminder_enabled, reminder_interval_hours, is_estate_default,
+               created_at, updated_at
         FROM notification_channels
         WHERE id = $1
     `, id).Scan(
@@ -44,7 +45,8 @@ func (d *Datastore) GetNotificationChannel(ctx context.Context, id int64) (*Noti
 		&channel.SMTPUsername, &channel.SMTPPassword, &channel.SMTPUseTLS,
 		&channel.FromAddress, &channel.FromName, &channel.TemplateAlertFire,
 		&channel.TemplateAlertClear, &channel.TemplateReminder, &channel.ReminderEnabled,
-		&channel.ReminderIntervalHours, &channel.CreatedAt, &channel.UpdatedAt)
+		&channel.ReminderIntervalHours, &channel.IsEstateDefault, &channel.CreatedAt,
+		&channel.UpdatedAt)
 
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -55,7 +57,8 @@ func (d *Datastore) GetNotificationChannel(ctx context.Context, id int64) (*Noti
 	return &channel, nil
 }
 
-// GetNotificationChannelsForConnection retrieves all enabled channels linked to a connection
+// GetNotificationChannelsForConnection retrieves all enabled channels for a connection
+// using hierarchical resolution: server override > cluster override > group override > estate default
 func (d *Datastore) GetNotificationChannelsForConnection(ctx context.Context, connectionID int) ([]*NotificationChannel, error) {
 	rows, err := d.pool.Query(ctx, `
         SELECT nc.id, nc.owner_username, nc.owner_token, nc.enabled,
@@ -64,10 +67,26 @@ func (d *Datastore) GetNotificationChannelsForConnection(ctx context.Context, co
                nc.smtp_host, nc.smtp_port, nc.smtp_username, nc.smtp_password,
                nc.smtp_use_tls, nc.from_address, nc.from_name, nc.template_alert_fire,
                nc.template_alert_clear, nc.template_reminder, nc.reminder_enabled,
-               nc.reminder_interval_hours, nc.created_at, nc.updated_at
+               nc.reminder_interval_hours, nc.is_estate_default, nc.created_at, nc.updated_at
         FROM notification_channels nc
-        JOIN connection_notification_channels cnc ON nc.id = cnc.channel_id
-        WHERE cnc.connection_id = $1 AND cnc.enabled = true AND nc.enabled = true
+        LEFT JOIN notification_channel_overrides svr
+            ON svr.channel_id = nc.id
+            AND svr.scope = 'server' AND svr.connection_id = $1
+        LEFT JOIN notification_channel_overrides cls
+            ON cls.channel_id = nc.id
+            AND cls.scope = 'cluster'
+            AND cls.cluster_id = (
+                SELECT cluster_id FROM connections WHERE id = $1)
+        LEFT JOIN notification_channel_overrides grp
+            ON grp.channel_id = nc.id
+            AND grp.scope = 'group'
+            AND grp.group_id = (
+                SELECT cl.group_id FROM connections c
+                JOIN clusters cl ON c.cluster_id = cl.id
+                WHERE c.id = $1)
+        WHERE nc.enabled = true
+          AND COALESCE(svr.enabled, cls.enabled,
+                       grp.enabled, nc.is_estate_default) = true
         ORDER BY nc.name
     `, connectionID)
 	if err != nil {
@@ -86,7 +105,8 @@ func (d *Datastore) GetNotificationChannelsForConnection(ctx context.Context, co
 			&channel.SMTPUsername, &channel.SMTPPassword, &channel.SMTPUseTLS,
 			&channel.FromAddress, &channel.FromName, &channel.TemplateAlertFire,
 			&channel.TemplateAlertClear, &channel.TemplateReminder, &channel.ReminderEnabled,
-			&channel.ReminderIntervalHours, &channel.CreatedAt, &channel.UpdatedAt)
+			&channel.ReminderIntervalHours, &channel.IsEstateDefault, &channel.CreatedAt,
+			&channel.UpdatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan notification channel: %w", err)
 		}
@@ -105,9 +125,9 @@ func (d *Datastore) CreateNotificationChannel(ctx context.Context, channel *Noti
             auth_credentials, smtp_host, smtp_port, smtp_username, smtp_password,
             smtp_use_tls, from_address, from_name, template_alert_fire,
             template_alert_clear, template_reminder, reminder_enabled,
-            reminder_interval_hours, created_at, updated_at
+            reminder_interval_hours, is_estate_default, created_at, updated_at
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-                  $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
+                  $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
         RETURNING id
     `, channel.OwnerUsername, channel.OwnerToken, channel.Enabled,
 		channel.ChannelType, channel.Name, channel.Description, channel.WebhookURL,
@@ -115,8 +135,8 @@ func (d *Datastore) CreateNotificationChannel(ctx context.Context, channel *Noti
 		channel.AuthCredentials, channel.SMTPHost, channel.SMTPPort, channel.SMTPUsername,
 		channel.SMTPPassword, channel.SMTPUseTLS, channel.FromAddress, channel.FromName,
 		channel.TemplateAlertFire, channel.TemplateAlertClear, channel.TemplateReminder,
-		channel.ReminderEnabled, channel.ReminderIntervalHours, channel.CreatedAt,
-		channel.UpdatedAt).Scan(&channel.ID)
+		channel.ReminderEnabled, channel.ReminderIntervalHours, channel.IsEstateDefault,
+		channel.CreatedAt, channel.UpdatedAt).Scan(&channel.ID)
 }
 
 // UpdateNotificationChannel updates an existing notification channel
@@ -130,7 +150,8 @@ func (d *Datastore) UpdateNotificationChannel(ctx context.Context, channel *Noti
             smtp_username = $16, smtp_password = $17, smtp_use_tls = $18,
             from_address = $19, from_name = $20, template_alert_fire = $21,
             template_alert_clear = $22, template_reminder = $23,
-            reminder_enabled = $24, reminder_interval_hours = $25, updated_at = $26
+            reminder_enabled = $24, reminder_interval_hours = $25,
+            is_estate_default = $26, updated_at = $27
         WHERE id = $1
     `, channel.ID, channel.OwnerUsername, channel.OwnerToken,
 		channel.Enabled, channel.ChannelType, channel.Name, channel.Description,
@@ -139,7 +160,7 @@ func (d *Datastore) UpdateNotificationChannel(ctx context.Context, channel *Noti
 		channel.SMTPUsername, channel.SMTPPassword, channel.SMTPUseTLS,
 		channel.FromAddress, channel.FromName, channel.TemplateAlertFire,
 		channel.TemplateAlertClear, channel.TemplateReminder, channel.ReminderEnabled,
-		channel.ReminderIntervalHours, channel.UpdatedAt)
+		channel.ReminderIntervalHours, channel.IsEstateDefault, channel.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to update notification channel: %w", err)
 	}
@@ -408,28 +429,39 @@ func (d *Datastore) GetDueReminders(ctx context.Context) ([]DueReminder, error) 
             nc.smtp_host, nc.smtp_port, nc.smtp_username, nc.smtp_password,
             nc.smtp_use_tls, nc.from_address, nc.from_name, nc.template_alert_fire,
             nc.template_alert_clear, nc.template_reminder, nc.reminder_enabled,
-            nc.reminder_interval_hours, nc.created_at, nc.updated_at,
+            nc.reminder_interval_hours, nc.is_estate_default, nc.created_at, nc.updated_at,
             -- Reminder state fields (may be NULL for first reminder)
             nrs.id, nrs.alert_id, nrs.channel_id, nrs.last_reminder_at, nrs.reminder_count
         FROM alerts a
-        JOIN connection_notification_channels cnc ON a.connection_id = cnc.connection_id
-        JOIN notification_channels nc ON cnc.channel_id = nc.id
+        JOIN notification_channels nc ON nc.enabled = true
+        LEFT JOIN notification_channel_overrides svr
+            ON svr.channel_id = nc.id
+            AND svr.scope = 'server' AND svr.connection_id = a.connection_id
+        LEFT JOIN notification_channel_overrides cls
+            ON cls.channel_id = nc.id
+            AND cls.scope = 'cluster'
+            AND cls.cluster_id = (
+                SELECT cluster_id FROM connections WHERE id = a.connection_id)
+        LEFT JOIN notification_channel_overrides grp
+            ON grp.channel_id = nc.id
+            AND grp.scope = 'group'
+            AND grp.group_id = (
+                SELECT cl.group_id FROM connections c
+                JOIN clusters cl ON c.cluster_id = cl.id
+                WHERE c.id = a.connection_id)
         LEFT JOIN notification_reminder_state nrs ON a.id = nrs.alert_id AND nc.id = nrs.channel_id
         WHERE a.status = 'active'
-          AND cnc.enabled = true
           AND nc.enabled = true
+          AND COALESCE(svr.enabled, cls.enabled,
+                       grp.enabled, nc.is_estate_default) = true
+          AND nc.reminder_enabled = true
           AND (
-              -- Channel-level reminder enabled OR per-connection override enabled
-              (cnc.reminder_enabled_override IS NULL AND nc.reminder_enabled = true)
-              OR cnc.reminder_enabled_override = true
-          )
-          AND (
-              -- No reminder sent yet (state is NULL) and alert is old enough for first reminder
+              -- No reminder sent yet and alert is old enough
               (nrs.id IS NULL AND a.triggered_at <= NOW() - INTERVAL '1 hour' *
-                  COALESCE(cnc.reminder_interval_hours_override, nc.reminder_interval_hours))
+                  nc.reminder_interval_hours)
               -- Or last reminder was long enough ago
               OR (nrs.last_reminder_at <= NOW() - INTERVAL '1 hour' *
-                  COALESCE(cnc.reminder_interval_hours_override, nc.reminder_interval_hours))
+                  nc.reminder_interval_hours)
           )
         ORDER BY a.triggered_at ASC
     `)
@@ -461,7 +493,8 @@ func (d *Datastore) GetDueReminders(ctx context.Context) ([]DueReminder, error) 
 			&channel.SMTPUsername, &channel.SMTPPassword, &channel.SMTPUseTLS,
 			&channel.FromAddress, &channel.FromName, &channel.TemplateAlertFire,
 			&channel.TemplateAlertClear, &channel.TemplateReminder, &channel.ReminderEnabled,
-			&channel.ReminderIntervalHours, &channel.CreatedAt, &channel.UpdatedAt,
+			&channel.ReminderIntervalHours, &channel.IsEstateDefault, &channel.CreatedAt,
+			&channel.UpdatedAt,
 			// Reminder state fields
 			&stateID, &stateAlertID, &stateChannelID, &stateLastReminderAt, &stateReminderCount,
 		)

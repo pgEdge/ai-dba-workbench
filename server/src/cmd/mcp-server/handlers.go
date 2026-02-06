@@ -162,6 +162,15 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 			fmt.Fprintf(os.Stderr, "Notification channel management: DISABLED (datastore not configured)\n")
 		}
 
+		// Channel override endpoints (for hierarchical notification channel configuration)
+		channelOverrideHandler := api.NewChannelOverrideHandler(deps.Datastore, deps.AuthStore, rbacChecker)
+		channelOverrideHandler.RegisterRoutes(mux, authWrapper)
+		if deps.Datastore != nil {
+			fmt.Fprintf(os.Stderr, "Channel override configuration: ENABLED\n")
+		} else {
+			fmt.Fprintf(os.Stderr, "Channel override configuration: DISABLED (datastore not configured)\n")
+		}
+
 		// Timeline endpoints (for EventTimeline component)
 		timelineHandler := api.NewTimelineHandler(deps.Datastore, deps.AuthStore)
 		timelineHandler.RegisterRoutes(mux, authWrapper)

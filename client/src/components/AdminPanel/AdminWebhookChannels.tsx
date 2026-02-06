@@ -63,6 +63,7 @@ interface WebhookChannel {
     name: string;
     description: string;
     enabled: boolean;
+    is_estate_default: boolean;
     endpoint_url: string;
     http_method: string;
     headers: Record<string, string>;
@@ -82,6 +83,7 @@ interface ChannelFormState {
     auth_type: string;
     auth_credentials: string;
     enabled: boolean;
+    is_estate_default: boolean;
     template_alert_fire: string;
     template_alert_clear: string;
     template_reminder: string;
@@ -152,6 +154,7 @@ const DEFAULT_FORM_STATE: ChannelFormState = {
     auth_type: 'none',
     auth_credentials: '',
     enabled: true,
+    is_estate_default: false,
     template_alert_fire: '',
     template_alert_clear: '',
     template_reminder: '',
@@ -253,6 +256,7 @@ const AdminWebhookChannels: React.FC = () => {
                     name: ch.name as string,
                     description: (ch.description as string) || '',
                     enabled: ch.enabled as boolean,
+                    is_estate_default: ch.is_estate_default as boolean,
                     endpoint_url: (ch.endpoint_url as string) || '',
                     http_method: (ch.http_method as string) || 'POST',
                     headers: (ch.headers as Record<string, string>) || {},
@@ -324,6 +328,7 @@ const AdminWebhookChannels: React.FC = () => {
             auth_type: channel.auth_type || 'none',
             auth_credentials: channel.auth_credentials,
             enabled: channel.enabled,
+            is_estate_default: channel.is_estate_default,
             template_alert_fire: channel.template_alert_fire || '',
             template_alert_clear: channel.template_alert_clear || '',
             template_reminder: channel.template_reminder || '',
@@ -408,6 +413,9 @@ const AdminWebhookChannels: React.FC = () => {
                 if (form.enabled !== editingChannel.enabled) {
                     body.enabled = form.enabled;
                 }
+                if (form.is_estate_default !== editingChannel.is_estate_default) {
+                    body.is_estate_default = form.is_estate_default;
+                }
                 if (form.endpoint_url.trim() !== editingChannel.endpoint_url) {
                     body.endpoint_url = form.endpoint_url.trim();
                 }
@@ -459,6 +467,7 @@ const AdminWebhookChannels: React.FC = () => {
                     auth_type: form.auth_type,
                     auth_credentials: authCredentials,
                     enabled: form.enabled,
+                    is_estate_default: form.is_estate_default,
                     ...(form.template_alert_fire.trim() ? { template_alert_fire: form.template_alert_fire.trim() } : {}),
                     ...(form.template_alert_clear.trim() ? { template_alert_clear: form.template_alert_clear.trim() } : {}),
                     ...(form.template_reminder.trim() ? { template_reminder: form.template_reminder.trim() } : {}),
@@ -637,6 +646,7 @@ const AdminWebhookChannels: React.FC = () => {
                             <TableCell sx={tableHeaderCellSx}>Name</TableCell>
                             <TableCell sx={tableHeaderCellSx}>Description</TableCell>
                             <TableCell sx={tableHeaderCellSx}>Enabled</TableCell>
+                            <TableCell sx={tableHeaderCellSx}>Estate Default</TableCell>
                             <TableCell sx={tableHeaderCellSx} align="right">Actions</TableCell>
                         </TableRow>
                     </TableHead>
@@ -655,6 +665,13 @@ const AdminWebhookChannels: React.FC = () => {
                                             checked={channel.enabled}
                                             size="small"
                                             onChange={() => handleToggleEnabled(channel)}
+                                        />
+                                    </TableCell>
+                                    <TableCell>
+                                        <Switch
+                                            checked={channel.is_estate_default}
+                                            size="small"
+                                            disabled
                                         />
                                     </TableCell>
                                     <TableCell align="right">
@@ -698,7 +715,7 @@ const AdminWebhookChannels: React.FC = () => {
                             ))
                         ) : (
                             <TableRow>
-                                <TableCell colSpan={4} align="center" sx={emptyRowSx}>
+                                <TableCell colSpan={5} align="center" sx={emptyRowSx}>
                                     <Typography color="text.secondary" sx={emptyRowTextSx}>
                                         No webhook channels configured.
                                     </Typography>
@@ -797,6 +814,24 @@ const AdminWebhookChannels: React.FC = () => {
                                     />
                                 }
                                 label="Enabled"
+                            />
+                            <FormControlLabel
+                                sx={{ ml: 0, gap: 1 }}
+                                control={
+                                    <Switch
+                                        checked={form.is_estate_default}
+                                        onChange={(e) => handleFormChange('is_estate_default', e.target.checked)}
+                                        disabled={saving}
+                                    />
+                                }
+                                label={
+                                    <Box>
+                                        <Typography variant="body1">Estate Default</Typography>
+                                        <Typography variant="caption" color="text.secondary">
+                                            When enabled, this channel is active for all servers by default
+                                        </Typography>
+                                    </Box>
+                                }
                             />
                         </Box>
                     </Box>

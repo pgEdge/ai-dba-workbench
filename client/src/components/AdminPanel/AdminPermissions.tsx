@@ -82,6 +82,7 @@ const mcpTypeLabel = (itemType) => {
 
 const formatMcpName = (permission) => {
     const name = permission.identifier || permission.privilege || permission;
+    if (name === '*') return 'All MCP Privileges';
     const type = permission.item_type;
     if (type) return `${mcpTypeLabel(type)}: ${name}`;
     return name;
@@ -219,7 +220,19 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode }) => {
             });
             if (response.ok) {
                 const data = await response.json();
-                setAvailableMcpPermissions(data || []);
+                const assignedIdentifiers = new Set(
+                    mcpPermissions.map(p => p.identifier || p.privilege || p)
+                );
+                const hasWildcard = assignedIdentifiers.has('*');
+                if (!hasWildcard) {
+                    const filtered = (data || []).filter(
+                        p => !assignedIdentifiers.has(p.identifier)
+                    );
+                    const allOption = { identifier: '*', item_type: null, _isAll: true };
+                    setAvailableMcpPermissions([allOption, ...filtered]);
+                } else {
+                    setAvailableMcpPermissions([]);
+                }
             }
         } catch (err) {
             setGrantMcpError('Failed to load available permissions');
@@ -428,14 +441,16 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode }) => {
                             <Typography variant="subtitle1" sx={sectionTitleSx}>
                                 Connection Permissions
                             </Typography>
-                            <Button
-                                size="small"
-                                startIcon={<AddIcon />}
-                                onClick={handleOpenGrantConn}
-                                sx={textButtonSx}
-                            >
-                                Grant
-                            </Button>
+                            {!connPermissions.some(p => p.connection_id === 0) && (
+                                <Button
+                                    size="small"
+                                    startIcon={<AddIcon />}
+                                    onClick={handleOpenGrantConn}
+                                    sx={textButtonSx}
+                                >
+                                    Grant
+                                </Button>
+                            )}
                         </Box>
                         <TableContainer
                             component={Paper}
@@ -495,18 +510,20 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode }) => {
                                 <Typography variant="subtitle1" sx={sectionTitleSx}>
                                     Admin Permissions
                                 </Typography>
-                                <Button
-                                    size="small"
-                                    startIcon={<AddIcon />}
-                                    onClick={() => {
-                                        setSelectedAdminPermission('');
-                                        setGrantAdminError(null);
-                                        setGrantAdminOpen(true);
-                                    }}
-                                    sx={textButtonSx}
-                                >
-                                    Grant Permission
-                                </Button>
+                                {!adminPermissions.some(p => (p.permission || p.name || p) === '*') && (
+                                    <Button
+                                        size="small"
+                                        startIcon={<AddIcon />}
+                                        onClick={() => {
+                                            setSelectedAdminPermission('');
+                                            setGrantAdminError(null);
+                                            setGrantAdminOpen(true);
+                                        }}
+                                        sx={textButtonSx}
+                                    >
+                                        Grant Permission
+                                    </Button>
+                                )}
                             </Box>
                             <TableContainer
                                 component={Paper}
@@ -530,9 +547,11 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode }) => {
                                         ) : adminPermissions.length > 0 ? (
                                             adminPermissions.map((p, i) => {
                                                 const permValue = p.permission || p.name || p;
-                                                const permLabel = PERMISSION_TYPES.find(
-                                                    (pt) => pt.value === permValue
-                                                )?.label || permValue;
+                                                const permLabel = permValue === '*'
+                                                    ? 'All Admin Permissions'
+                                                    : PERMISSION_TYPES.find(
+                                                        (pt) => pt.value === permValue
+                                                    )?.label || permValue;
                                                 return (
                                                     <TableRow key={i}>
                                                         <TableCell>{permLabel}</TableCell>
@@ -570,14 +589,16 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode }) => {
                             <Typography variant="subtitle1" sx={sectionTitleSx}>
                                 MCP Permissions
                             </Typography>
-                            <Button
-                                size="small"
-                                startIcon={<AddIcon />}
-                                onClick={handleOpenGrantMcp}
-                                sx={textButtonSx}
-                            >
-                                Grant
-                            </Button>
+                            {!mcpPermissions.some(p => (p.identifier || p.privilege || p) === '*') && (
+                                <Button
+                                    size="small"
+                                    startIcon={<AddIcon />}
+                                    onClick={handleOpenGrantMcp}
+                                    sx={textButtonSx}
+                                >
+                                    Grant
+                                </Button>
+                            )}
                         </Box>
                         <TableContainer
                             component={Paper}
@@ -685,10 +706,16 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode }) => {
                             onChange={(e) => setSelectedConnectionId(e.target.value)}
                             disabled={grantConnLoading}
                         >
-                            <MenuItem value={0}>All Connections</MenuItem>
-                            {availableConnections.map((c) => (
-                                <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>
-                            ))}
+                            {!connPermissions.some(p => p.connection_id === 0) && (
+                                [
+                                    <MenuItem key="all" value={0}>All Connections</MenuItem>,
+                                    ...availableConnections
+                                        .filter(c => !connPermissions.some(p => p.connection_id === c.id))
+                                        .map((c) => (
+                                            <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>
+                                        ))
+                                ]
+                            )}
                         </Select>
                     </FormControl>
                     <FormControl fullWidth margin="dense">
@@ -738,9 +765,18 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode }) => {
                             onChange={(e) => setSelectedAdminPermission(e.target.value)}
                             disabled={grantAdminLoading}
                         >
-                            {PERMISSION_TYPES.map((pt) => (
-                                <MenuItem key={pt.value} value={pt.value}>{pt.label}</MenuItem>
-                            ))}
+                            {!adminPermissions.some(p => (p.permission || p.name || p) === '*') && (
+                                [
+                                    <MenuItem key="*" value="*">All Admin Permissions</MenuItem>,
+                                    ...PERMISSION_TYPES
+                                        .filter(pt => !adminPermissions.some(p =>
+                                            (p.permission || p.name || p) === pt.value
+                                        ))
+                                        .map((pt) => (
+                                            <MenuItem key={pt.value} value={pt.value}>{pt.label}</MenuItem>
+                                        ))
+                                ]
+                            )}
                         </Select>
                     </FormControl>
                 </DialogContent>

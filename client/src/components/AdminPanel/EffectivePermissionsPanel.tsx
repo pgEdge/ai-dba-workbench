@@ -21,6 +21,7 @@ import {
 import { categoryLabelSx } from './styles';
 
 const ADMIN_PERMISSION_LABELS: Record<string, string> = {
+    '*': 'All Admin Permissions',
     manage_blackouts: 'Manage Blackouts',
     manage_connections: 'Manage Connections',
     manage_groups: 'Manage Groups',
@@ -165,9 +166,12 @@ const EffectivePermissionsPanel: React.FC<EffectivePermissionsPanelProps> = ({
                     {mcpPrivileges && mcpPrivileges.length > 0 ? (
                         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
                             {mcpPrivileges.map((priv, i) => {
-                                const label = typeof priv === 'string'
-                                    ? priv.replace(/_/g, ' ')
-                                    : (priv.privilege || priv.name || String(priv)).replace(/_/g, ' ');
+                                const rawValue = typeof priv === 'string'
+                                    ? priv
+                                    : (priv.privilege || priv.name || String(priv));
+                                const label = rawValue === '*'
+                                    ? 'All MCP Privileges'
+                                    : rawValue.replace(/_/g, ' ');
                                 return (
                                     <Chip
                                         key={i}

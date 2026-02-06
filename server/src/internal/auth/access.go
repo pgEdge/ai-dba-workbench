@@ -124,8 +124,8 @@ func (rc *RBACChecker) CanAccessMCPItem(ctx context.Context, identifier string) 
 		return false
 	}
 
-	// Check if user has this privilege
-	if !privileges[identifier] {
+	// Check if user has this privilege (specific or wildcard)
+	if !privileges[identifier] && !privileges["*"] {
 		return false
 	}
 
@@ -399,8 +399,8 @@ func (rc *RBACChecker) HasAdminPermission(ctx context.Context, permission string
 		return false
 	}
 
-	// Check if user has the permission via groups
-	if !perms[permission] {
+	// Check if user has the permission via groups (specific or wildcard)
+	if !perms[permission] && !perms[AdminPermissionWildcard] {
 		return false
 	}
 

@@ -192,31 +192,47 @@ func (s *AuthStore) GrantMCPPrivilege(groupID, privilegeID int64) error {
 	return nil
 }
 
-// GrantMCPPrivilegeByName grants an MCP privilege to a group by identifier name
+// GrantMCPPrivilegeByName grants an MCP privilege to a group by identifier name.
+// When identifier is "*", it stores MCPPrivilegeIDWildcard (0) directly
+// instead of looking up a privilege identifier row.
 func (s *AuthStore) GrantMCPPrivilegeByName(groupID int64, identifier string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Get privilege ID
 	var privilegeID int64
-	err := s.db.QueryRow(
-		"SELECT id FROM mcp_privilege_identifiers WHERE identifier = ?",
-		identifier,
-	).Scan(&privilegeID)
-	if err == sql.ErrNoRows {
-		return fmt.Errorf("privilege not found: %s", identifier)
-	}
-	if err != nil {
-		return fmt.Errorf("failed to get privilege: %w", err)
+	if identifier == "*" {
+		privilegeID = MCPPrivilegeIDWildcard
+	} else {
+		err := s.db.QueryRow(
+			"SELECT id FROM mcp_privilege_identifiers WHERE identifier = ?",
+			identifier,
+		).Scan(&privilegeID)
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("privilege not found: %s", identifier)
+		}
+		if err != nil {
+			return fmt.Errorf("failed to get privilege: %w", err)
+		}
 	}
 
-	_, err = s.db.Exec(
+	_, err := s.db.Exec(
 		`INSERT OR IGNORE INTO group_mcp_privileges (group_id, privilege_identifier_id)
          VALUES (?, ?)`,
 		groupID, privilegeID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to grant MCP privilege: %w", err)
+	}
+
+	// If granting "All MCP Privileges", remove individual privilege grants
+	if identifier == "*" {
+		_, err = s.db.Exec(
+			"DELETE FROM group_mcp_privileges WHERE group_id = ? AND privilege_identifier_id != ?",
+			groupID, MCPPrivilegeIDWildcard,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to clean up individual MCP privileges: %w", err)
+		}
 	}
 
 	return nil
@@ -246,17 +262,28 @@ func (s *AuthStore) RevokeMCPPrivilege(groupID, privilegeID int64) error {
 	return nil
 }
 
-// RevokeMCPPrivilegeByName revokes an MCP privilege from a group by identifier name
+// RevokeMCPPrivilegeByName revokes an MCP privilege from a group by identifier name.
+// When identifier is "*", it deletes the wildcard row (privilege_identifier_id = 0)
+// directly instead of looking up a privilege identifier row.
 func (s *AuthStore) RevokeMCPPrivilegeByName(groupID int64, identifier string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	result, err := s.db.Exec(
-		`DELETE FROM group_mcp_privileges
-         WHERE group_id = ?
-         AND privilege_identifier_id = (SELECT id FROM mcp_privilege_identifiers WHERE identifier = ?)`,
-		groupID, identifier,
-	)
+	var result sql.Result
+	var err error
+	if identifier == "*" {
+		result, err = s.db.Exec(
+			"DELETE FROM group_mcp_privileges WHERE group_id = ? AND privilege_identifier_id = ?",
+			groupID, MCPPrivilegeIDWildcard,
+		)
+	} else {
+		result, err = s.db.Exec(
+			`DELETE FROM group_mcp_privileges
+             WHERE group_id = ?
+             AND privilege_identifier_id = (SELECT id FROM mcp_privilege_identifiers WHERE identifier = ?)`,
+			groupID, identifier,
+		)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to revoke MCP privilege: %w", err)
 	}
@@ -294,6 +321,17 @@ func (s *AuthStore) GrantConnectionPrivilege(groupID int64, connectionID int, ac
 	)
 	if err != nil {
 		return fmt.Errorf("failed to grant connection privilege: %w", err)
+	}
+
+	// If granting "All Connections", remove individual connection grants
+	if connectionID == ConnectionIDAll {
+		_, err = s.db.Exec(
+			"DELETE FROM connection_privileges WHERE group_id = ? AND connection_id != ?",
+			groupID, ConnectionIDAll,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to clean up individual connection privileges: %w", err)
+		}
 	}
 
 	return nil
@@ -350,7 +388,9 @@ func (s *AuthStore) GetConnectionPrivilege(groupID int64, connectionID int) (*Co
 // Group Privilege Queries
 // =============================================================================
 
-// ListGroupMCPPrivileges returns all MCP privileges granted to a group
+// ListGroupMCPPrivileges returns all MCP privileges granted to a group.
+// If the group has the wildcard grant (privilege_identifier_id = 0), a
+// synthetic MCPPrivilege with Identifier "*" is prepended to the result.
 func (s *AuthStore) ListGroupMCPPrivileges(groupID int64) ([]*MCPPrivilege, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -379,6 +419,17 @@ func (s *AuthStore) ListGroupMCPPrivileges(groupID int64) ([]*MCPPrivilege, erro
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating group MCP privileges: %w", err)
+	}
+
+	// Check for wildcard (All MCP Privileges) grant
+	var wildcardCount int
+	//nolint:errcheck // Best effort; zero on error is acceptable
+	s.db.QueryRow(
+		"SELECT COUNT(*) FROM group_mcp_privileges WHERE group_id = ? AND privilege_identifier_id = ?",
+		groupID, MCPPrivilegeIDWildcard,
+	).Scan(&wildcardCount)
+	if wildcardCount > 0 {
+		privileges = append([]*MCPPrivilege{{Identifier: "*"}}, privileges...)
 	}
 
 	return privileges, nil
@@ -517,6 +568,16 @@ func (s *AuthStore) GetUserMCPPrivileges(userID int64) (map[string]bool, error) 
 			return nil, fmt.Errorf("error iterating user privileges: %w", err)
 		}
 		rows.Close()
+
+		// Check for wildcard MCP privilege (privilege_identifier_id = 0)
+		var wildcardCount int
+		err = s.db.QueryRow(
+			"SELECT COUNT(*) FROM group_mcp_privileges WHERE group_id = ? AND privilege_identifier_id = ?",
+			groupID, MCPPrivilegeIDWildcard,
+		).Scan(&wildcardCount)
+		if err == nil && wildcardCount > 0 {
+			privileges["*"] = true
+		}
 	}
 
 	return privileges, nil
@@ -611,6 +672,17 @@ func (s *AuthStore) GrantAdminPermission(groupID int64, permission string) error
 	)
 	if err != nil {
 		return fmt.Errorf("failed to grant admin permission: %w", err)
+	}
+
+	// If granting "All Admin Permissions", remove individual permission grants
+	if permission == AdminPermissionWildcard {
+		_, err = s.db.Exec(
+			"DELETE FROM group_admin_permissions WHERE group_id = ? AND permission != ?",
+			groupID, AdminPermissionWildcard,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to clean up individual admin permissions: %w", err)
+		}
 	}
 
 	return nil
@@ -722,6 +794,8 @@ func (s *AuthStore) GetUserAdminPermissions(userID int64) (map[string]bool, erro
 
 // GetGroupEffectiveMCPPrivileges returns all MCP privilege identifiers accessible
 // to a group through its own grants and all ancestor groups in the hierarchy.
+// If any group in the hierarchy has the wildcard grant (privilege_identifier_id = 0),
+// "*" is prepended to the result.
 func (s *AuthStore) GetGroupEffectiveMCPPrivileges(groupID int64) ([]string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -759,6 +833,28 @@ func (s *AuthStore) GetGroupEffectiveMCPPrivileges(groupID int64) ([]string, err
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating group effective MCP privileges: %w", err)
+	}
+
+	// Check for wildcard (All MCP Privileges) in any ancestor group
+	var wildcardCount int
+	wildcardQuery := `
+        WITH RECURSIVE ancestor_groups AS (
+            SELECT ? as group_id
+            UNION
+            SELECT gm.parent_group_id
+            FROM group_memberships gm
+            INNER JOIN ancestor_groups ag ON gm.member_group_id = ag.group_id
+            WHERE gm.member_group_id IS NOT NULL
+        )
+        SELECT COUNT(*)
+        FROM group_mcp_privileges gmp
+        JOIN ancestor_groups ag ON gmp.group_id = ag.group_id
+        WHERE gmp.privilege_identifier_id = ?
+    `
+	//nolint:errcheck // Best effort; zero on error is acceptable
+	s.db.QueryRow(wildcardQuery, groupID, MCPPrivilegeIDWildcard).Scan(&wildcardCount)
+	if wildcardCount > 0 {
+		privileges = append([]string{"*"}, privileges...)
 	}
 
 	return privileges, nil

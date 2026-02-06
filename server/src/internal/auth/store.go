@@ -31,7 +31,7 @@ const (
 	DefaultSessionExpiry = 24 * time.Hour
 
 	// Schema version for migrations
-	schemaVersion = 14
+	schemaVersion = 15
 )
 
 // AuthStore manages users and tokens in SQLite
@@ -117,8 +117,8 @@ func NewAuthStore(dataDir string, maxUserTokenDays, maxFailedAttempts int) (*Aut
 func (s *AuthStore) initSchema() error {
 	// Check current schema version
 	var currentVersion int
-	err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&currentVersion)
-	if err != nil && err != sql.ErrNoRows {
+	err := s.db.QueryRow("SELECT COALESCE(MAX(version), 0) FROM schema_version").Scan(&currentVersion)
+	if err != nil {
 		// Table might not exist yet, that's fine
 		currentVersion = 0
 	}
@@ -559,8 +559,43 @@ func (s *AuthStore) initSchema() error {
 		}
 	}
 
+	// Apply migrations for schema version 15 (add wildcard '*' to admin permissions CHECK constraint)
+	if currentVersion < 15 {
+		migrationV15 := `
+        CREATE TABLE IF NOT EXISTS group_admin_permissions_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER NOT NULL
+                REFERENCES user_groups(id) ON DELETE CASCADE,
+            permission TEXT NOT NULL CHECK (permission IN (
+                'manage_connections', 'manage_groups',
+                'manage_permissions', 'manage_users',
+                'manage_token_scopes', 'manage_blackouts',
+                'manage_probes', 'manage_alert_rules',
+                'manage_notification_channels', '*'
+            )),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(group_id, permission)
+        );
+        INSERT INTO group_admin_permissions_new (id, group_id, permission, created_at)
+            SELECT id, group_id, permission, created_at
+            FROM group_admin_permissions;
+        DROP TABLE group_admin_permissions;
+        ALTER TABLE group_admin_permissions_new RENAME TO group_admin_permissions;
+        CREATE INDEX IF NOT EXISTS idx_admin_perms_group ON group_admin_permissions(group_id);
+        CREATE INDEX IF NOT EXISTS idx_admin_perms_perm ON group_admin_permissions(permission);
+        `
+		_, err = s.db.Exec(migrationV15)
+		if err != nil {
+			return fmt.Errorf("failed to apply schema migration v15: %w", err)
+		}
+	}
+
 	// Set schema version
-	_, err = s.db.Exec("INSERT OR REPLACE INTO schema_version (version) VALUES (?)", schemaVersion)
+	_, err = s.db.Exec("DELETE FROM schema_version")
+	if err != nil {
+		return fmt.Errorf("failed to clean schema version: %w", err)
+	}
+	_, err = s.db.Exec("INSERT INTO schema_version (version) VALUES (?)", schemaVersion)
 	return err
 }
 

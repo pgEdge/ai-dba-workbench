@@ -20,7 +20,7 @@ import {
     ExpandMore as ExpandIcon,
     ChevronRight as CollapseIcon,
     Storage as ServerIcon,
-    Edit as EditIcon,
+    Settings as SettingsIcon,
     Delete as DeleteIcon,
 } from '@mui/icons-material';
 import { useTheme, Theme } from '@mui/material/styles';
@@ -333,7 +333,7 @@ const ServerItem = memo<ServerItemProps>(({
                             }}
                             sx={editButtonSx}
                         >
-                            <EditIcon sx={editIconSx} />
+                            <SettingsIcon sx={editIconSx} />
                         </IconButton>
                         <IconButton
                             size="small"

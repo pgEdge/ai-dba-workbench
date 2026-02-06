@@ -2429,6 +2429,60 @@ func (sm *SchemaManager) registerMigrations() {
 			return err
 		},
 	})
+
+	// Migration #9: Add hierarchical scope to probe_configs
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     9,
+		Description: "Add hierarchical scope to probe_configs",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				ALTER TABLE probe_configs
+					ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'global',
+					ADD COLUMN IF NOT EXISTS group_id INTEGER REFERENCES cluster_groups(id) ON DELETE CASCADE,
+					ADD COLUMN IF NOT EXISTS cluster_id INTEGER REFERENCES clusters(id) ON DELETE CASCADE;
+
+				UPDATE probe_configs SET scope = 'server' WHERE connection_id IS NOT NULL;
+
+				ALTER TABLE probe_configs DROP CONSTRAINT IF EXISTS probe_configs_scope_check;
+				ALTER TABLE probe_configs ADD CONSTRAINT probe_configs_scope_check
+					CHECK (scope IN ('global', 'group', 'cluster', 'server'));
+
+				ALTER TABLE probe_configs DROP CONSTRAINT IF EXISTS probe_configs_scope_ids_check;
+				ALTER TABLE probe_configs ADD CONSTRAINT probe_configs_scope_ids_check CHECK (
+					(scope = 'global' AND connection_id IS NULL AND group_id IS NULL AND cluster_id IS NULL)
+					OR (scope = 'group' AND group_id IS NOT NULL AND connection_id IS NULL AND cluster_id IS NULL)
+					OR (scope = 'cluster' AND cluster_id IS NOT NULL AND connection_id IS NULL AND group_id IS NULL)
+					OR (scope = 'server' AND connection_id IS NOT NULL AND group_id IS NULL AND cluster_id IS NULL)
+				);
+
+				DROP INDEX IF EXISTS probe_configs_name_global_key;
+				DROP INDEX IF EXISTS probe_configs_name_connection_key;
+
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_probe_configs_unique_global
+					ON probe_configs(name) WHERE scope = 'global';
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_probe_configs_unique_server
+					ON probe_configs(name, connection_id) WHERE scope = 'server';
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_probe_configs_unique_cluster
+					ON probe_configs(name, cluster_id) WHERE scope = 'cluster';
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_probe_configs_unique_group
+					ON probe_configs(name, group_id) WHERE scope = 'group';
+
+				CREATE INDEX IF NOT EXISTS idx_probe_configs_scope ON probe_configs(scope);
+				CREATE INDEX IF NOT EXISTS idx_probe_configs_group_id ON probe_configs(group_id);
+				CREATE INDEX IF NOT EXISTS idx_probe_configs_cluster_id ON probe_configs(cluster_id);
+
+				COMMENT ON COLUMN probe_configs.scope IS
+					'Configuration scope level: global, group, cluster, or server';
+				COMMENT ON COLUMN probe_configs.group_id IS
+					'Cluster group targeted when scope is group';
+				COMMENT ON COLUMN probe_configs.cluster_id IS
+					'Cluster targeted when scope is cluster';
+			`)
+			return err
+		},
+	})
 }
 
 // Migrate applies all pending migrations

@@ -464,3 +464,172 @@ func (d *Datastore) DeleteAlertThreshold(ctx context.Context, scope string, scop
 	}
 	return nil
 }
+
+// ProbeOverride represents a global probe default with its optional scope-level override
+type ProbeOverride struct {
+	// Global default fields
+	Name                   string `json:"name"`
+	Description            string `json:"description"`
+	DefaultEnabled         bool   `json:"default_enabled"`
+	DefaultIntervalSeconds int    `json:"default_interval_seconds"`
+	DefaultRetentionDays   int    `json:"default_retention_days"`
+	// Override fields (nil if no override at this scope)
+	HasOverride             bool  `json:"has_override"`
+	OverrideEnabled         *bool `json:"override_enabled"`
+	OverrideIntervalSeconds *int  `json:"override_interval_seconds"`
+	OverrideRetentionDays   *int  `json:"override_retention_days"`
+}
+
+// ProbeOverrideUpdate represents data for creating/updating a probe config override
+type ProbeOverrideUpdate struct {
+	IsEnabled                 bool `json:"is_enabled"`
+	CollectionIntervalSeconds int  `json:"collection_interval_seconds"`
+	RetentionDays             int  `json:"retention_days"`
+}
+
+// GetProbeOverridesForServer returns all probes with their server-level overrides.
+func (d *Datastore) GetProbeOverridesForServer(ctx context.Context, connectionID int) ([]ProbeOverride, error) {
+	rows, err := d.pool.Query(ctx, `
+		SELECT g.name, g.description, g.is_enabled, g.collection_interval_seconds, g.retention_days,
+		       o.is_enabled, o.collection_interval_seconds, o.retention_days
+		FROM probe_configs g
+		LEFT JOIN probe_configs o ON o.name = g.name AND o.scope = 'server' AND o.connection_id = $1
+		WHERE g.scope = 'global'
+		ORDER BY g.name`, connectionID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query server probe overrides: %w", err)
+	}
+	defer rows.Close()
+
+	return scanProbeOverrides(rows)
+}
+
+// GetProbeOverridesForCluster returns all probes with their cluster-level overrides.
+func (d *Datastore) GetProbeOverridesForCluster(ctx context.Context, clusterID int) ([]ProbeOverride, error) {
+	rows, err := d.pool.Query(ctx, `
+		SELECT g.name, g.description, g.is_enabled, g.collection_interval_seconds, g.retention_days,
+		       o.is_enabled, o.collection_interval_seconds, o.retention_days
+		FROM probe_configs g
+		LEFT JOIN probe_configs o ON o.name = g.name AND o.scope = 'cluster' AND o.cluster_id = $1
+		WHERE g.scope = 'global'
+		ORDER BY g.name`, clusterID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query cluster probe overrides: %w", err)
+	}
+	defer rows.Close()
+
+	return scanProbeOverrides(rows)
+}
+
+// GetProbeOverridesForGroup returns all probes with their group-level overrides.
+func (d *Datastore) GetProbeOverridesForGroup(ctx context.Context, groupID int) ([]ProbeOverride, error) {
+	rows, err := d.pool.Query(ctx, `
+		SELECT g.name, g.description, g.is_enabled, g.collection_interval_seconds, g.retention_days,
+		       o.is_enabled, o.collection_interval_seconds, o.retention_days
+		FROM probe_configs g
+		LEFT JOIN probe_configs o ON o.name = g.name AND o.scope = 'group' AND o.group_id = $1
+		WHERE g.scope = 'global'
+		ORDER BY g.name`, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query group probe overrides: %w", err)
+	}
+	defer rows.Close()
+
+	return scanProbeOverrides(rows)
+}
+
+// scanProbeOverrides is a helper that scans rows from a probe overrides query.
+func scanProbeOverrides(rows pgx.Rows) ([]ProbeOverride, error) {
+	var overrides []ProbeOverride
+	for rows.Next() {
+		var o ProbeOverride
+		var overrideEnabled *bool
+		var overrideInterval, overrideRetention *int
+		if err := rows.Scan(
+			&o.Name, &o.Description, &o.DefaultEnabled, &o.DefaultIntervalSeconds, &o.DefaultRetentionDays,
+			&overrideEnabled, &overrideInterval, &overrideRetention,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan probe override: %w", err)
+		}
+		o.HasOverride = overrideEnabled != nil
+		o.OverrideEnabled = overrideEnabled
+		o.OverrideIntervalSeconds = overrideInterval
+		o.OverrideRetentionDays = overrideRetention
+		overrides = append(overrides, o)
+	}
+	if overrides == nil {
+		overrides = []ProbeOverride{}
+	}
+	return overrides, rows.Err()
+}
+
+// UpsertProbeOverride creates or updates a probe config override at the specified scope.
+func (d *Datastore) UpsertProbeOverride(ctx context.Context, scope string, scopeID int, probeName string, update ProbeOverrideUpdate) error {
+	if update.CollectionIntervalSeconds <= 0 {
+		return fmt.Errorf("collection_interval_seconds must be greater than 0")
+	}
+	if update.RetentionDays <= 0 {
+		return fmt.Errorf("retention_days must be greater than 0")
+	}
+
+	var query string
+	var args []interface{}
+
+	switch scope {
+	case "server":
+		query = `
+			INSERT INTO probe_configs (name, description, scope, connection_id, is_enabled, collection_interval_seconds, retention_days)
+			VALUES ($1, (SELECT description FROM probe_configs WHERE name = $1 AND scope = 'global'), 'server', $2, $3, $4, $5)
+			ON CONFLICT (name, connection_id) WHERE scope = 'server'
+			DO UPDATE SET is_enabled = $3, collection_interval_seconds = $4, retention_days = $5, updated_at = NOW()`
+		args = []interface{}{probeName, scopeID, update.IsEnabled, update.CollectionIntervalSeconds, update.RetentionDays}
+	case "cluster":
+		query = `
+			INSERT INTO probe_configs (name, description, scope, cluster_id, is_enabled, collection_interval_seconds, retention_days)
+			VALUES ($1, (SELECT description FROM probe_configs WHERE name = $1 AND scope = 'global'), 'cluster', $2, $3, $4, $5)
+			ON CONFLICT (name, cluster_id) WHERE scope = 'cluster'
+			DO UPDATE SET is_enabled = $3, collection_interval_seconds = $4, retention_days = $5, updated_at = NOW()`
+		args = []interface{}{probeName, scopeID, update.IsEnabled, update.CollectionIntervalSeconds, update.RetentionDays}
+	case "group":
+		query = `
+			INSERT INTO probe_configs (name, description, scope, group_id, is_enabled, collection_interval_seconds, retention_days)
+			VALUES ($1, (SELECT description FROM probe_configs WHERE name = $1 AND scope = 'global'), 'group', $2, $3, $4, $5)
+			ON CONFLICT (name, group_id) WHERE scope = 'group'
+			DO UPDATE SET is_enabled = $3, collection_interval_seconds = $4, retention_days = $5, updated_at = NOW()`
+		args = []interface{}{probeName, scopeID, update.IsEnabled, update.CollectionIntervalSeconds, update.RetentionDays}
+	default:
+		return fmt.Errorf("invalid scope: %s", scope)
+	}
+
+	_, err := d.pool.Exec(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to upsert probe override: %w", err)
+	}
+	return nil
+}
+
+// DeleteProbeOverride removes a probe config override at the specified scope.
+func (d *Datastore) DeleteProbeOverride(ctx context.Context, scope string, scopeID int, probeName string) error {
+	var query string
+	var args []interface{}
+
+	switch scope {
+	case "server":
+		query = `DELETE FROM probe_configs WHERE scope = 'server' AND name = $1 AND connection_id = $2`
+		args = []interface{}{probeName, scopeID}
+	case "cluster":
+		query = `DELETE FROM probe_configs WHERE scope = 'cluster' AND name = $1 AND cluster_id = $2`
+		args = []interface{}{probeName, scopeID}
+	case "group":
+		query = `DELETE FROM probe_configs WHERE scope = 'group' AND name = $1 AND group_id = $2`
+		args = []interface{}{probeName, scopeID}
+	default:
+		return fmt.Errorf("invalid scope: %s", scope)
+	}
+
+	_, err := d.pool.Exec(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to delete probe override: %w", err)
+	}
+	return nil
+}

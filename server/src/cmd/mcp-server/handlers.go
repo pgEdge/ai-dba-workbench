@@ -144,6 +144,15 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 			fmt.Fprintf(os.Stderr, "Alert override configuration: DISABLED (datastore not configured)\n")
 		}
 
+		// Probe override endpoints (for hierarchical probe configuration)
+		probeOverrideHandler := api.NewProbeOverrideHandler(deps.Datastore, deps.AuthStore, rbacChecker)
+		probeOverrideHandler.RegisterRoutes(mux, authWrapper)
+		if deps.Datastore != nil {
+			fmt.Fprintf(os.Stderr, "Probe override configuration: ENABLED\n")
+		} else {
+			fmt.Fprintf(os.Stderr, "Probe override configuration: DISABLED (datastore not configured)\n")
+		}
+
 		// Notification channel management endpoints (for alert channel configuration)
 		notificationChannelHandler := api.NewNotificationChannelHandler(deps.Datastore, deps.AuthStore, rbacChecker)
 		notificationChannelHandler.RegisterRoutes(mux, authWrapper)

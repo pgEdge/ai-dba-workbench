@@ -427,57 +427,107 @@ func LoadProbeConfigs(ctx context.Context, conn *pgxpool.Conn) (map[int][]ProbeC
 	return configsByConnection, nil
 }
 
-// EnsureProbeConfig ensures a probe configuration exists for the given connection and probe
-// If no config exists, it creates one with default values based on the probe name
+// EnsureProbeConfig ensures a probe configuration exists for the given connection and probe.
+// Resolution priority: server -> cluster -> group -> global -> hardcoded defaults.
+// If no server-level config exists, the function creates one by copying values
+// from the first parent scope that resolves.
 func EnsureProbeConfig(ctx context.Context, conn *pgxpool.Conn, connectionID int, probeName string) (*ProbeConfig, error) {
-	// First, try to find an existing config for this connection and probe
+	// Step 1: Check for server-level config (scope='server' AND connection_id matches)
 	var config ProbeConfig
 	err := conn.QueryRow(ctx, `
 		SELECT id, name, description, collection_interval_seconds, retention_days, is_enabled, connection_id
 		FROM probe_configs
-		WHERE name = $1 AND connection_id = $2
+		WHERE scope = 'server' AND name = $1 AND connection_id = $2
 	`, probeName, connectionID).Scan(
 		&config.ID, &config.Name, &config.Description,
 		&config.CollectionIntervalSeconds, &config.RetentionDays, &config.IsEnabled,
 		&config.ConnectionID)
 
 	if err == nil {
-		// Config exists
 		return &config, nil
 	}
 
-	// If error is not "no rows", return the error
 	if err.Error() != "no rows in result set" {
-		return nil, fmt.Errorf("failed to query probe config: %w", err)
+		return nil, fmt.Errorf("failed to query server probe config: %w", err)
 	}
 
-	// Config doesn't exist, check if there's a global default
-	var defaultConfig ProbeConfig
+	// Step 2: Check for cluster-level config (via connection -> cluster join)
+	var parentConfig ProbeConfig
+	found := false
+
 	err = conn.QueryRow(ctx, `
-		SELECT id, name, description, collection_interval_seconds, retention_days, is_enabled, connection_id
-		FROM probe_configs
-		WHERE name = $1 AND connection_id IS NULL
-	`, probeName).Scan(
-		&defaultConfig.ID, &defaultConfig.Name, &defaultConfig.Description,
-		&defaultConfig.CollectionIntervalSeconds, &defaultConfig.RetentionDays, &defaultConfig.IsEnabled,
-		&defaultConfig.ConnectionID)
+		SELECT pc.id, pc.name, pc.description, pc.collection_interval_seconds, pc.retention_days, pc.is_enabled, pc.connection_id
+		FROM probe_configs pc
+		JOIN connections c ON c.cluster_id = pc.cluster_id
+		WHERE pc.scope = 'cluster' AND c.id = $1 AND pc.name = $2
+	`, connectionID, probeName).Scan(
+		&parentConfig.ID, &parentConfig.Name, &parentConfig.Description,
+		&parentConfig.CollectionIntervalSeconds, &parentConfig.RetentionDays, &parentConfig.IsEnabled,
+		&parentConfig.ConnectionID)
 
-	// If no global default exists either, we'll use hardcoded defaults
-	interval := defaultConfig.CollectionIntervalSeconds
-	retention := defaultConfig.RetentionDays
-	description := defaultConfig.Description
+	if err == nil {
+		found = true
+	} else if err.Error() != "no rows in result set" {
+		return nil, fmt.Errorf("failed to query cluster probe config: %w", err)
+	}
 
-	if err != nil {
-		// No global default exists, use hardcoded defaults from constants
+	// Step 3: Check for group-level config (via connection -> cluster -> group join)
+	if !found {
+		err = conn.QueryRow(ctx, `
+			SELECT pc.id, pc.name, pc.description, pc.collection_interval_seconds, pc.retention_days, pc.is_enabled, pc.connection_id
+			FROM probe_configs pc
+			JOIN clusters cl ON cl.group_id = pc.group_id
+			JOIN connections c ON c.cluster_id = cl.id
+			WHERE pc.scope = 'group' AND c.id = $1 AND pc.name = $2
+		`, connectionID, probeName).Scan(
+			&parentConfig.ID, &parentConfig.Name, &parentConfig.Description,
+			&parentConfig.CollectionIntervalSeconds, &parentConfig.RetentionDays, &parentConfig.IsEnabled,
+			&parentConfig.ConnectionID)
+
+		if err == nil {
+			found = true
+		} else if err.Error() != "no rows in result set" {
+			return nil, fmt.Errorf("failed to query group probe config: %w", err)
+		}
+	}
+
+	// Step 4: Check for global config (scope='global' AND connection_id IS NULL)
+	if !found {
+		err = conn.QueryRow(ctx, `
+			SELECT id, name, description, collection_interval_seconds, retention_days, is_enabled, connection_id
+			FROM probe_configs
+			WHERE scope = 'global' AND name = $1 AND connection_id IS NULL
+		`, probeName).Scan(
+			&parentConfig.ID, &parentConfig.Name, &parentConfig.Description,
+			&parentConfig.CollectionIntervalSeconds, &parentConfig.RetentionDays, &parentConfig.IsEnabled,
+			&parentConfig.ConnectionID)
+
+		if err == nil {
+			found = true
+		} else if err.Error() != "no rows in result set" {
+			return nil, fmt.Errorf("failed to query global probe config: %w", err)
+		}
+	}
+
+	// Determine values for the new server-level config
+	var interval, retention int
+	var description string
+
+	if found {
+		interval = parentConfig.CollectionIntervalSeconds
+		retention = parentConfig.RetentionDays
+		description = parentConfig.Description
+	} else {
+		// Step 5: No parent config found; use hardcoded defaults
 		interval = getDefaultInterval(probeName)
-		retention = 28 // Default retention
+		retention = 28
 		description = fmt.Sprintf("Configuration for %s probe", probeName)
 	}
 
-	// Insert a new config for this connection
+	// Insert a new server-level config for this connection
 	err = conn.QueryRow(ctx, `
-		INSERT INTO probe_configs (name, description, collection_interval_seconds, retention_days, is_enabled, connection_id)
-		VALUES ($1, $2, $3, $4, TRUE, $5)
+		INSERT INTO probe_configs (name, description, collection_interval_seconds, retention_days, is_enabled, connection_id, scope)
+		VALUES ($1, $2, $3, $4, TRUE, $5, 'server')
 		RETURNING id, name, description, collection_interval_seconds, retention_days, is_enabled, connection_id
 	`, probeName, description, interval, retention, connectionID).Scan(
 		&config.ID, &config.Name, &config.Description,

@@ -47,6 +47,7 @@ import ConnectionFields from './ConnectionFields';
 import SSLSettings from './SSLSettings';
 import OptionsSection from './OptionsSection';
 import AlertOverridesPanel from '../AlertOverridesPanel';
+import ProbeOverridesPanel from '../ProbeOverridesPanel';
 
 const Transition = React.forwardRef(function Transition(
     props: TransitionProps & { children: React.ReactElement },
@@ -211,9 +212,10 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
                 >
                     <Tab label="Connection" />
                     <Tab label="Alert Overrides" />
+                    <Tab label="Probe Configuration" />
                 </Tabs>
                 <Box sx={{ flex: 1, overflow: 'auto', p: 3 }}>
-                    {activeTab === 0 ? (
+                    {activeTab === 0 && (
                         <Box sx={{ maxWidth: 600 }}>
                             <form onSubmit={handleSubmit} noValidate>
                                 {submitError && (
@@ -280,8 +282,15 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
                                 </Box>
                             </form>
                         </Box>
-                    ) : (
+                    )}
+                    {activeTab === 1 && (
                         <AlertOverridesPanel
+                            scope="server"
+                            scopeId={server?.id as number}
+                        />
+                    )}
+                    {activeTab === 2 && (
+                        <ProbeOverridesPanel
                             scope="server"
                             scopeId={server?.id as number}
                         />

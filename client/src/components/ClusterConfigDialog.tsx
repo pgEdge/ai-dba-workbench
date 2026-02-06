@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
     Dialog,
     AppBar,
@@ -17,10 +17,13 @@ import {
     Typography,
     Box,
     Slide,
+    Tabs,
+    Tab,
 } from '@mui/material';
 import { TransitionProps } from '@mui/material/transitions';
 import { Close as CloseIcon } from '@mui/icons-material';
 import AlertOverridesPanel from './AlertOverridesPanel';
+import ProbeOverridesPanel from './ProbeOverridesPanel';
 
 const Transition = React.forwardRef(function Transition(
     props: TransitionProps & { children: React.ReactElement },
@@ -42,6 +45,8 @@ const ClusterConfigDialog: React.FC<ClusterConfigDialogProps> = ({
     clusterId,
     clusterName,
 }) => {
+    const [activeTab, setActiveTab] = useState(0);
+
     return (
         <Dialog
             fullScreen
@@ -80,8 +85,21 @@ const ClusterConfigDialog: React.FC<ClusterConfigDialogProps> = ({
                     </Typography>
                 </Toolbar>
             </AppBar>
+            <Tabs
+                value={activeTab}
+                onChange={(_, v) => setActiveTab(v)}
+                sx={{ px: 3, borderBottom: 1, borderColor: 'divider' }}
+            >
+                <Tab label="Alert Overrides" />
+                <Tab label="Probe Configuration" />
+            </Tabs>
             <Box sx={{ flex: 1, overflow: 'auto', p: 3 }}>
-                <AlertOverridesPanel scope="cluster" scopeId={clusterId} />
+                {activeTab === 0 && (
+                    <AlertOverridesPanel scope="cluster" scopeId={clusterId} />
+                )}
+                {activeTab === 1 && (
+                    <ProbeOverridesPanel scope="cluster" scopeId={clusterId} />
+                )}
             </Box>
         </Dialog>
     );

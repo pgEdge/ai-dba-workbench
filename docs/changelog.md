@@ -120,6 +120,27 @@ and this project adheres to
   and display name.
 - REST API endpoints for notification channel CRUD, testing, and
   email recipient management.
+- Hierarchical alert threshold overrides at group, cluster, and
+  server levels; the alerter resolves thresholds using server
+  first, then cluster, then group, then the global default.
+- Hierarchical probe configuration overrides at group, cluster,
+  and server levels; probe settings at lower levels take
+  precedence over higher levels.
+- Estate default flag for notification channels; channels marked
+  as estate defaults are active for all servers unless
+  overridden.
+- Hierarchical notification channel overrides at group, cluster,
+  and server levels; administrators can enable or disable
+  individual channels at each level of the hierarchy.
+- Notification Channels tab in server, cluster, and group edit
+  dialogs for managing channel override settings.
+- Alert Overrides and Probe Configuration tabs in server,
+  cluster, and group edit dialogs for managing per-scope
+  overrides.
+- REST API endpoints for channel overrides
+  (`/api/v1/channel-overrides/{scope}/{scopeId}`).
+- Collector schema migration v10 that adds the estate default
+  column and notification channel overrides table.
 
 ### Changed
 

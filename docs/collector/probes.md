@@ -181,23 +181,35 @@ how frequently their data changes:
 - Change-Tracked: 3600 seconds / 1 hour (pg_settings - only stored when
   changes detected)
 
-### Per-Server Configuration
+### Hierarchical Probe Overrides
 
-The Collector supports customizing probe settings for individual monitored
-connections. The configuration hierarchy is:
+Probe settings can be customized at multiple levels of the
+server hierarchy. The override system uses the following
+precedence order:
 
-1. Connection-specific settings override for a specific connection.
-2. Global default settings apply when `connection_id IS NULL`.
-3. Hardcoded default values apply if no database config exists.
+1. Server overrides apply to a specific connection.
+2. Cluster overrides apply to all servers in a cluster.
+3. Group overrides apply to all clusters in a group.
+4. Global default settings apply when no override exists.
+5. Hardcoded default values apply if no database
+   configuration exists.
 
-When a new monitored connection is added, the Collector automatically creates
-per-server probe configurations based on the global defaults.
+Overrides are managed through the Probe Configuration tab
+in the server, cluster, or group edit dialogs. The override
+panel shows all probes with their current settings. Probes
+without an override at the current level appear dimmed to
+indicate the setting is inherited.
+
+When a new monitored connection is added, the Collector
+automatically creates probe configurations based on the
+global defaults.
 
 ### Automatic Configuration Reload
 
-**Important**: The Collector automatically reloads probe configurations from
-the database every 5 minutes. Changes to `collection_interval_seconds`,
-`retention_days`, or `is_enabled` take effect within 5 minutes without
+The Collector automatically reloads probe configurations
+from the database every 5 minutes. Changes to
+`collection_interval_seconds`, `retention_days`, or
+`is_enabled` take effect within 5 minutes without
 requiring a restart.
 
 ### Adjusting Collection Interval

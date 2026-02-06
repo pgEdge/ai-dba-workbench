@@ -623,11 +623,29 @@ const AlertsPage = () => (
         </Typography>
 
         <SectionTitle>Threshold Information</SectionTitle>
-        <Typography sx={styles.bodyText}>
-            For threshold-based alerts, you'll see the current value and the
+        <Typography sx={styles.bodyTextMb2}>
+            For threshold-based alerts, you will see the current value and the
             threshold that was exceeded (e.g., "108 exceeds threshold of 100").
-            This helps you understand the severity of the issue.
+            Alert thresholds follow a hierarchical override system:
         </Typography>
+        <Box sx={styles.indentedBlock}>
+            <FeatureItem
+                title="Server Override"
+                description="Thresholds set on a specific server take highest priority."
+            />
+            <FeatureItem
+                title="Cluster Override"
+                description="Thresholds set on a cluster apply to all servers in that cluster."
+            />
+            <FeatureItem
+                title="Group Override"
+                description="Thresholds set on a group apply to all clusters in that group."
+            />
+            <FeatureItem
+                title="Global Default"
+                description="The default threshold applies when no override exists at any level."
+            />
+        </Box>
 
         <HelpTip>
             Acknowledged alerts remain visible but are separated from active
@@ -679,11 +697,29 @@ const ServerManagementPage = () => (
         </Box>
 
         <SectionTitle icon={EditIcon}>Editing Servers</SectionTitle>
-        <Typography sx={styles.bodyText}>
-            Click the pencil icon that appears when hovering over a server name
-            in the navigator to edit its configuration. You can modify connection
-            details, move it to a different cluster, or update credentials.
+        <Typography sx={styles.bodyTextMb2}>
+            Click the gear icon that appears when hovering over a server name
+            in the navigator to edit its configuration. The edit dialog provides
+            four tabs:
         </Typography>
+        <Box sx={styles.indentedBlock}>
+            <FeatureItem
+                title="Connection"
+                description="Modify host, port, database, credentials, SSL settings, and monitoring options."
+            />
+            <FeatureItem
+                title="Alert Overrides"
+                description="Customize alert thresholds for this specific server."
+            />
+            <FeatureItem
+                title="Probe Configuration"
+                description="Customize data collection settings for this specific server."
+            />
+            <FeatureItem
+                title="Notification Channels"
+                description="Enable or disable notification channels for this specific server."
+            />
+        </Box>
 
         <SectionTitle icon={DeleteIcon}>Deleting Servers</SectionTitle>
         <Typography sx={styles.bodyText}>
@@ -693,11 +729,29 @@ const ServerManagementPage = () => (
         </Typography>
 
         <SectionTitle icon={GroupIcon}>Managing Groups</SectionTitle>
-        <Typography sx={styles.bodyText}>
+        <Typography sx={styles.bodyTextMb2}>
             Groups can be created from the + menu in the navigator header. Edit
-            group names by clicking the pencil icon on the group header. Groups
-            can contain multiple clusters.
+            a group by clicking the gear icon on the group header. The group edit
+            dialog provides four tabs:
         </Typography>
+        <Box sx={styles.indentedBlock}>
+            <FeatureItem
+                title="Details"
+                description="Modify the group name, description, and sharing options."
+            />
+            <FeatureItem
+                title="Alert Overrides"
+                description="Set default alert thresholds for all servers in this group."
+            />
+            <FeatureItem
+                title="Probe Configuration"
+                description="Set default probe settings for all servers in this group."
+            />
+            <FeatureItem
+                title="Notification Channels"
+                description="Enable or disable notification channels for all servers in this group."
+            />
+        </Box>
 
         <SectionTitle icon={PrimaryIcon}>Server Roles</SectionTitle>
         <Typography sx={styles.bodyTextMb2}>
@@ -829,6 +883,10 @@ const AdministrationPage = () => (
                 title="Alert Defaults"
                 description="Set default thresholds, operators, severity levels, and enabled state for each alert rule."
             />
+            <FeatureItem
+                title="Hierarchical Overrides"
+                description="Customize alert thresholds, probe settings, and notification channels at group, cluster, or server level. Settings at lower levels override higher levels (Server > Cluster > Group > Defaults)."
+            />
         </Box>
 
         <SectionTitle icon={NotificationsIcon}>Notification Channels</SectionTitle>
@@ -853,6 +911,10 @@ const AdministrationPage = () => (
                 title="Webhook Channels"
                 description="Send alerts to arbitrary HTTP endpoints with configurable methods, headers, authentication, and JSON payload templates."
             />
+            <FeatureItem
+                title="Estate Defaults"
+                description="Channels marked as estate defaults are active for all servers. Override the default at group, cluster, or server level to enable or disable specific channels."
+            />
         </Box>
 
         <SectionTitle>Webhook Templates</SectionTitle>
@@ -869,6 +931,34 @@ const AdministrationPage = () => (
             DatabaseName, MetricName, MetricValue, ThresholdValue, and more.
             Use conditional blocks like {'{{if .MetricName}}...{{end}}'} for
             optional fields.
+        </Typography>
+
+        <SectionTitle icon={SettingsIcon}>Configuration Overrides</SectionTitle>
+        <Typography sx={styles.bodyTextMb2}>
+            Alert thresholds, probe settings, and notification channels
+            can be customized at each level of the server hierarchy.
+            Override settings are managed through tabs in the server,
+            cluster, and group edit dialogs:
+        </Typography>
+        <Box sx={styles.indentedBlock}>
+            <FeatureItem
+                title="Alert Overrides"
+                description="Customize alert rule thresholds, operators, severity levels, and enabled state for a specific group, cluster, or server."
+            />
+            <FeatureItem
+                title="Probe Overrides"
+                description="Customize data collection frequency, retention period, and enabled state for probes at a specific group, cluster, or server."
+            />
+            <FeatureItem
+                title="Channel Overrides"
+                description="Enable or disable notification channels for a specific group, cluster, or server. Channels inherit their estate default unless overridden."
+            />
+        </Box>
+        <Typography sx={styles.bodyTextMb2}>
+            The override precedence from highest to lowest priority is:
+            Server, Cluster, Group, then global defaults. Items without
+            an override at a given level appear dimmed to show they
+            inherit from a higher level.
         </Typography>
 
         <HelpTip>

@@ -308,6 +308,69 @@ The following template handles reminder notifications:
 }
 ```
 
+## Estate Defaults
+
+Notification channels can be designated as estate defaults.
+A channel marked as an estate default is active for all
+monitored servers unless explicitly overridden at a lower
+level. Administrators toggle the estate default flag in the
+channel create or edit dialog.
+
+The estate default flag provides a convenient way to enable
+a channel across the entire monitoring estate without
+creating individual overrides for each server, cluster, or
+group.
+
+## Channel Overrides
+
+Channel overrides control which notification channels are
+active at each level of the server hierarchy. The override
+system uses the following precedence order, from highest to
+lowest priority:
+
+1. Server overrides apply to a specific server connection.
+2. Cluster overrides apply to all servers in a cluster.
+3. Group overrides apply to all clusters in a group.
+4. Estate defaults apply when no override exists.
+
+When the alerter resolves notification channels for a
+server, the system checks for a server-level override
+first. If none exists, the system checks the cluster level,
+then the group level, and finally falls back to the
+channel's estate default setting.
+
+### Managing Overrides
+
+Overrides are managed through the Notification Channels tab
+in the server, cluster, or group edit dialogs. The override
+panel displays all enabled channels with their current
+state:
+
+- Channels without an override inherit the estate default
+  and appear with dimmed styling.
+- Channels with an override display at normal opacity with
+  a highlight indicator.
+- The Enabled switch toggles the channel on or off at the
+  current scope level.
+- The Reset button removes the override, reverting to the
+  inherited value.
+
+### Override Resolution Example
+
+Consider a Slack channel marked as an estate default. A
+group override disables the channel for a development
+group. A server override re-enables the channel for one
+server in that group. The alerter resolves notifications as
+follows:
+
+- Servers in other groups receive notifications because the
+  estate default applies.
+- Servers in the development group do not receive
+  notifications because the group override applies.
+- The one server with a server override does receive
+  notifications because the server override takes
+  precedence.
+
 ## REST API
 
 The notification channel REST API provides endpoints for
@@ -329,3 +392,39 @@ The following table lists the available endpoints:
 | `POST` | `/api/v1/notification-channels/{id}/recipients` | Add a recipient. |
 | `PUT` | `/api/v1/notification-channels/{id}/recipients/{rid}` | Update a recipient. |
 | `DELETE` | `/api/v1/notification-channels/{id}/recipients/{rid}` | Delete a recipient. |
+
+### Channel Override Endpoints
+
+The channel override REST API manages per-scope channel
+settings. Write operations require the
+`manage_notification_channels` permission.
+
+The following table lists the available endpoints:
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/v1/channel-overrides/{scope}/{scopeId}` | List channel overrides for a scope. |
+| `PUT` | `/api/v1/channel-overrides/{scope}/{scopeId}/{channelId}` | Create or update a channel override. |
+| `DELETE` | `/api/v1/channel-overrides/{scope}/{scopeId}/{channelId}` | Remove a channel override. |
+
+The `scope` parameter accepts `server`, `cluster`, or
+`group`. The `scopeId` parameter is the numeric identifier
+for the server connection, cluster, or group. The PUT
+request body contains a single field:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `enabled` | boolean | Whether the channel is active at this scope. |
+
+The GET response returns an array of channel override
+objects:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `channel_id` | integer | The notification channel identifier. |
+| `channel_name` | string | The channel display name. |
+| `channel_type` | string | The channel type (email, slack, mattermost, webhook). |
+| `description` | string | The channel description; may be null. |
+| `is_estate_default` | boolean | Whether the channel is an estate default. |
+| `has_override` | boolean | Whether an override exists at this scope. |
+| `override_enabled` | boolean | The override enabled state; null when no override exists. |

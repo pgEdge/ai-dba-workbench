@@ -51,37 +51,57 @@ Built-in rules are organized into categories:
 - Storage rules monitor disk usage and table maintenance.
 - System rules monitor CPU, memory, and system resources.
 
-## Per-Connection Overrides
+## Hierarchical Overrides
 
-You can customize threshold values for specific connections or databases.
-Per-connection overrides allow you to set different thresholds based on
-the workload characteristics of each monitored instance.
+Alert thresholds can be customized at multiple levels of
+the server hierarchy. The alerter resolves the effective
+threshold using the following precedence order:
+
+1. Server overrides apply to a specific connection.
+2. Cluster overrides apply to all servers in a cluster.
+3. Group overrides apply to all clusters in a group.
+4. Global defaults apply when no override exists.
 
 An override specifies:
 
 | Field | Description |
 |-------|-------------|
-| `rule_id` | The alert rule to override |
-| `connection_id` | The connection to apply the override to |
-| `database_name` | Optional database within the connection |
-| `operator` | The comparison operator for this override |
-| `threshold` | The threshold value for this override |
-| `severity` | The severity level for this override |
-| `enabled` | Whether the rule is enabled for this connection |
+| `rule_id` | The alert rule to override. |
+| `scope` | The override level: server, cluster, or group. |
+| `scope_id` | The identifier for the connection, cluster, or group. |
+| `database_name` | Optional database within the connection. |
+| `operator` | The comparison operator for this override. |
+| `threshold` | The threshold value for this override. |
+| `severity` | The severity level for this override. |
+| `enabled` | Whether the rule is enabled at this scope. |
 
-When evaluating a rule, the alerter checks for a per-connection override
-first. If no override exists, the alerter uses the rule's default values.
+When evaluating a rule for a server, the alerter checks for
+a server-level override first. If none exists, the alerter
+checks the cluster that contains the server, then the group
+that contains the cluster. If no override exists at any
+level, the alerter uses the global default values.
+
+### Managing Overrides
+
+Overrides are managed through the Alert Overrides tab in
+the server, cluster, or group edit dialogs. The override
+panel shows all alert rules with their current effective
+settings. Rules without an override at the current level
+appear dimmed to indicate that the setting is inherited
+from a higher level or the global default.
 
 ## Enabling and Disabling Rules
 
-Rules can be enabled or disabled globally or per-connection. A disabled
-rule is not evaluated during threshold checks. You can disable built-in
-rules that do not apply to your environment or enable rules that require
+Rules can be enabled or disabled globally or at any level
+of the hierarchy. A disabled rule is not evaluated during
+threshold checks. You can disable built-in rules that do
+not apply to your environment or enable rules that require
 specific PostgreSQL extensions.
 
-To disable a rule globally, set `default_enabled` to `false` in the rule
-definition. To disable a rule for a specific connection, create an override
-with `enabled` set to `false`.
+To disable a rule globally, set `default_enabled` to
+`false` in the rule definition. To disable a rule for a
+specific scope, create an override with `enabled` set to
+`false`.
 
 ## Creating Custom Rules
 
@@ -139,12 +159,27 @@ default_severity: warning
 default_enabled: true
 ```
 
-In the following example, a per-connection override increases the
-threshold for a production database with higher connection requirements:
+In the following example, a group-level override adjusts
+the threshold for all servers in a development group:
 
 ```yaml
 rule_id: 1
-connection_id: 5
+scope: group
+scope_id: 3
+operator: ">"
+threshold: 95.0
+severity: info
+enabled: true
+```
+
+In the following example, a server-level override further
+customizes the threshold for one production server with
+higher connection requirements:
+
+```yaml
+rule_id: 1
+scope: server
+scope_id: 5
 operator: ">"
 threshold: 90.0
 severity: warning

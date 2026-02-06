@@ -154,6 +154,68 @@ The API provides endpoints in the following categories:
 | POST | `/api/v1/alerts/acknowledge` | Acknowledge an alert |
 | DELETE | `/api/v1/alerts/acknowledge` | Unacknowledge an alert |
 
+### Notification Channels
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/notification-channels` | List all channels |
+| POST | `/api/v1/notification-channels` | Create a channel |
+| GET | `/api/v1/notification-channels/{id}` | Get channel by ID |
+| PUT | `/api/v1/notification-channels/{id}` | Update channel |
+| DELETE | `/api/v1/notification-channels/{id}` | Delete channel |
+| POST | `/api/v1/notification-channels/{id}/test` | Test channel |
+
+### Blackouts
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/blackouts` | List blackouts |
+| POST | `/api/v1/blackouts` | Create blackout |
+| DELETE | `/api/v1/blackouts/{id}` | Delete blackout |
+| POST | `/api/v1/blackouts/{id}/stop` | Stop active blackout |
+| GET | `/api/v1/blackout-schedules` | List schedules |
+| POST | `/api/v1/blackout-schedules` | Create schedule |
+| PUT | `/api/v1/blackout-schedules/{id}` | Update schedule |
+| DELETE | `/api/v1/blackout-schedules/{id}` | Delete schedule |
+
+### Probe Configuration
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/probe-configs` | List probe configs |
+| PUT | `/api/v1/probe-configs/{id}` | Update probe config |
+
+### Alert Rules
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/alert-rules` | List alert rules |
+| PUT | `/api/v1/alert-rules/{id}` | Update alert rule |
+
+### Alert Overrides
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/alert-overrides/{scope}/{scopeId}` | List overrides |
+| PUT | `/api/v1/alert-overrides/{scope}/{scopeId}/{ruleId}` | Upsert override |
+| DELETE | `/api/v1/alert-overrides/{scope}/{scopeId}/{ruleId}` | Remove override |
+
+### Probe Overrides
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/probe-overrides/{scope}/{scopeId}` | List overrides |
+| PUT | `/api/v1/probe-overrides/{scope}/{scopeId}/{probeId}` | Upsert override |
+| DELETE | `/api/v1/probe-overrides/{scope}/{scopeId}/{probeId}` | Remove override |
+
+### Channel Overrides
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/channel-overrides/{scope}/{scopeId}` | List overrides |
+| PUT | `/api/v1/channel-overrides/{scope}/{scopeId}/{channelId}` | Upsert override |
+| DELETE | `/api/v1/channel-overrides/{scope}/{scopeId}/{channelId}` | Remove override |
+
 ### Timeline
 
 | Method | Endpoint | Description |

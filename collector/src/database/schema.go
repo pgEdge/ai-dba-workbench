@@ -2190,7 +2190,7 @@ func (sm *SchemaManager) registerMigrations() {
 
 					-- Statement alerts
 					('slow_query_count', 'High number of slow queries', 'queries', 'pg_stat_statements.slow_query_count', 'queries', '>', 10, 'warning', TRUE, 'pg_stat_statements', TRUE),
-					('cache_hit_ratio_low', 'Buffer cache hit ratio below threshold', 'queries', 'pg_stat_database.cache_hit_ratio', 'percent', '<', 95, 'warning', TRUE, NULL, TRUE),
+					('cache_hit_ratio_low', 'Buffer cache hit ratio below threshold', 'queries', 'pg_stat_database.cache_hit_ratio', 'percent', '<', 90, 'warning', TRUE, NULL, TRUE),
 
 					-- Error alerts
 					('temp_files_created', 'Temporary files being created', 'performance', 'pg_stat_database.temp_files_delta', 'files', '>', 100, 'warning', TRUE, NULL, TRUE)
@@ -2631,6 +2631,22 @@ func (sm *SchemaManager) registerMigrations() {
 				INSERT INTO alert_rules (name, description, category, metric_name, metric_unit, default_operator, default_threshold, default_severity, default_enabled, required_extension, is_built_in)
 				VALUES ('high_max_connections', 'max_connections setting is very high; consider using a connection pooler', 'connections', 'pg_settings.max_connections', 'connections', '>', 500, 'warning', TRUE, NULL, TRUE)
 				ON CONFLICT (name) DO NOTHING;
+			`)
+			return err
+		},
+	})
+
+	// Migration #13: Update cache_hit_ratio_low default threshold
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     13,
+		Description: "Update cache_hit_ratio_low default threshold to 90",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+			_, err := tx.Exec(ctx, `
+				UPDATE alert_rules
+				SET default_threshold = 90
+				WHERE name = 'cache_hit_ratio_low'
+				  AND default_threshold = 95;
 			`)
 			return err
 		},

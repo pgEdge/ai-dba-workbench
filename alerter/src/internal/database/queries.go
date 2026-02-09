@@ -648,33 +648,47 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 		}
 
 	case "pg_stat_database.cache_hit_ratio":
-		// Buffer cache hit ratio per database
+		// Buffer cache hit ratio per database (delta-based)
+		// Uses the change in blks_hit/blks_read between snapshots
 		rows, err := d.pool.Query(ctx, `
-			WITH recent_db_stats AS (
+			WITH db_blocks AS (
 				SELECT connection_id,
 				       database_name,
 				       blks_hit,
 				       blks_read,
 				       collected_at,
-				       ROW_NUMBER() OVER (
+				       LAG(blks_hit) OVER (
 				           PARTITION BY connection_id, database_name
-				           ORDER BY collected_at DESC
-				       ) as rn
+				           ORDER BY collected_at
+				       ) as prev_blks_hit,
+				       LAG(blks_read) OVER (
+				           PARTITION BY connection_id, database_name
+				           ORDER BY collected_at
+				       ) as prev_blks_read
 				FROM metrics.pg_stat_database
 				WHERE collected_at > NOW() - INTERVAL '15 minutes'
 				  AND datname IS NOT NULL
 				  AND datname NOT LIKE 'template%'
+			),
+			deltas AS (
+				SELECT connection_id,
+				       database_name,
+				       (blks_hit - prev_blks_hit) as delta_hit,
+				       (blks_read - prev_blks_read) as delta_read,
+				       collected_at
+				FROM db_blocks
+				WHERE prev_blks_hit IS NOT NULL
+				  AND (blks_hit - prev_blks_hit + blks_read - prev_blks_read) >= 10000
 			)
 			SELECT connection_id,
 			       database_name,
 			       CASE
-			           WHEN (blks_hit + blks_read) > 0
-			           THEN (blks_hit::float / (blks_hit + blks_read)) * 100
+			           WHEN (delta_hit + delta_read) > 0
+			           THEN (delta_hit::float / (delta_hit + delta_read)) * 100
 			           ELSE 100
 			       END as value,
 			       collected_at
-			FROM recent_db_stats
-			WHERE rn = 1
+			FROM deltas
 		`)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
@@ -1774,17 +1788,44 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 
 	case "pg_stat_database.cache_hit_ratio":
 		rows, err := d.pool.Query(ctx, `
-			SELECT connection_id, database_name,
+			WITH db_blocks AS (
+				SELECT connection_id,
+				       database_name,
+				       blks_hit,
+				       blks_read,
+				       collected_at,
+				       LAG(blks_hit) OVER (
+				           PARTITION BY connection_id, database_name
+				           ORDER BY collected_at
+				       ) as prev_blks_hit,
+				       LAG(blks_read) OVER (
+				           PARTITION BY connection_id, database_name
+				           ORDER BY collected_at
+				       ) as prev_blks_read
+				FROM metrics.pg_stat_database
+				WHERE collected_at > NOW() - INTERVAL '1 day' * $1
+				  AND datname IS NOT NULL
+				  AND datname NOT LIKE 'template%'
+			),
+			deltas AS (
+				SELECT connection_id,
+				       database_name,
+				       (blks_hit - prev_blks_hit) as delta_hit,
+				       (blks_read - prev_blks_read) as delta_read,
+				       collected_at
+				FROM db_blocks
+				WHERE prev_blks_hit IS NOT NULL
+				  AND (blks_hit - prev_blks_hit + blks_read - prev_blks_read) >= 10000
+			)
+			SELECT connection_id,
+			       database_name,
 			       CASE
-			           WHEN (blks_hit + blks_read) > 0
-			           THEN (blks_hit::float / (blks_hit + blks_read)) * 100
+			           WHEN (delta_hit + delta_read) > 0
+			           THEN (delta_hit::float / (delta_hit + delta_read)) * 100
 			           ELSE 100
 			       END as value,
 			       collected_at
-			FROM metrics.pg_stat_database
-			WHERE collected_at > NOW() - INTERVAL '1 day' * $1
-			  AND datname IS NOT NULL
-			  AND datname NOT LIKE 'template%'
+			FROM deltas
 			ORDER BY connection_id, database_name, collected_at
 		`, lookbackDays)
 		if err != nil {

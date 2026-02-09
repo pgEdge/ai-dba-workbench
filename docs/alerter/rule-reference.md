@@ -287,8 +287,14 @@ Alerts when the buffer cache hit ratio falls below the threshold.
 | Default Threshold | 90 |
 | Default Severity | warning |
 
-A low cache hit ratio indicates the database needs more memory for
-shared_buffers or the working set is too large.
+A low cache hit ratio indicates the database needs more
+memory for `shared_buffers`; the working set may also be
+too large. The alerter calculates the ratio from the change
+in block reads between collection intervals. This
+delta-based approach reflects recent performance rather than
+cumulative counters. The alerter excludes databases with
+fewer than 10,000 total block operations in an interval to
+avoid noise from idle databases.
 
 ### Deadlocks Detected
 

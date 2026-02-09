@@ -17,7 +17,7 @@ import { Theme } from '@mui/material/styles';
 // Map internal alert rule names to friendly display names
 export const FRIENDLY_ALERT_TITLES = {
     // Connection alerts
-    'high_connection_count': 'High Connection Count',
+    'high_max_connections': 'High Max Connections',
     'connection_utilization': 'Connection Utilization',
     // Replication alerts
     'replication_lag_bytes': 'Replication Lag',

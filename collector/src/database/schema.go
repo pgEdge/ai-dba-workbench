@@ -2152,7 +2152,7 @@ func (sm *SchemaManager) registerMigrations() {
 				INSERT INTO alert_rules (name, description, category, metric_name, metric_unit, default_operator, default_threshold, default_severity, default_enabled, required_extension, is_built_in)
 				VALUES
 					-- Connection alerts
-					('high_connection_count', 'Active connections exceed threshold', 'connections', 'pg_stat_activity.count', 'connections', '>', 100, 'warning', TRUE, NULL, TRUE),
+					('high_max_connections', 'max_connections setting is very high; consider using a connection pooler', 'connections', 'pg_settings.max_connections', 'connections', '>', 500, 'warning', TRUE, NULL, TRUE),
 					('connection_utilization', 'Connection utilization above threshold', 'connections', 'pg_stat_activity.connection_utilization_percent', 'percent', '>', 80, 'warning', TRUE, NULL, TRUE),
 
 					-- Replication alerts
@@ -2605,6 +2605,32 @@ func (sm *SchemaManager) registerMigrations() {
 
 				COMMENT ON COLUMN probe_configs.user_modified IS
 					'Whether this config was explicitly modified by a user via the UI';
+			`)
+			return err
+		},
+	})
+
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     12,
+		Description: "Replace high_connection_count with high_max_connections alert rule",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+			_, err := tx.Exec(ctx, `
+				-- Remove thresholds for the old rule
+				DELETE FROM alert_thresholds
+				WHERE rule_id IN (SELECT id FROM alert_rules WHERE name = 'high_connection_count');
+
+				-- Remove alerts for the old rule
+				DELETE FROM alerts
+				WHERE rule_id IN (SELECT id FROM alert_rules WHERE name = 'high_connection_count');
+
+				-- Remove the old rule
+				DELETE FROM alert_rules WHERE name = 'high_connection_count';
+
+				-- Add the new rule
+				INSERT INTO alert_rules (name, description, category, metric_name, metric_unit, default_operator, default_threshold, default_severity, default_enabled, required_extension, is_built_in)
+				VALUES ('high_max_connections', 'max_connections setting is very high; consider using a connection pooler', 'connections', 'pg_settings.max_connections', 'connections', '>', 500, 'warning', TRUE, NULL, TRUE)
+				ON CONFLICT (name) DO NOTHING;
 			`)
 			return err
 		},

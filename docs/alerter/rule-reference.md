@@ -21,19 +21,20 @@ A high connection utilization indicates the database may run out of
 available connections. Consider increasing `max_connections` or
 implementing connection pooling.
 
-### High Active Connection Count
+### High Max Connections
 
-Alerts when the number of active connections exceeds a threshold.
+Alerts when the `max_connections` setting exceeds a threshold.
 
 | Property | Value |
 |----------|-------|
-| Metric | `pg_stat_activity.count` |
+| Metric | `pg_settings.max_connections` |
 | Operator | `>` |
-| Default Threshold | 100 |
+| Default Threshold | 500 |
 | Default Severity | warning |
 
-Monitor this metric to detect connection leaks or unexpected load
-increases.
+A very high `max_connections` setting can degrade performance. Consider
+using a connection pooler such as PgBouncer instead of increasing the
+connection limit.
 
 ### Blocked Sessions
 

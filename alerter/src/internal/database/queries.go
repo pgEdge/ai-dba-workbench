@@ -209,13 +209,15 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 	// Parse metric name to determine table and column/aggregation
 	// Format: table_name.column_name or computed_metric_name
 	switch metricName {
-	case "pg_stat_activity.count":
-		// Count active connections per connection_id
+	case "pg_settings.max_connections":
+		// Get max_connections setting value per connection
 		rows, err := d.pool.Query(ctx, `
-			SELECT connection_id, COUNT(*) as value, MAX(collected_at) as collected_at
-			FROM metrics.pg_stat_activity
-			WHERE collected_at > NOW() - INTERVAL '5 minutes'
-			GROUP BY connection_id
+			SELECT DISTINCT ON (connection_id)
+			       connection_id, setting::float as value, collected_at
+			FROM metrics.pg_settings
+			WHERE name = 'max_connections'
+			  AND collected_at > NOW() - INTERVAL '1 hour'
+			ORDER BY connection_id, collected_at DESC
 		`)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
@@ -1518,14 +1520,15 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 
 	// Parse metric name to determine table and aggregation
 	switch metricName {
-	case "pg_stat_activity.count":
+	case "pg_settings.max_connections":
 		rows, err := d.pool.Query(ctx, `
-			SELECT connection_id, NULL::text as database_name,
-			       COUNT(*)::float as value, collected_at
-			FROM metrics.pg_stat_activity
-			WHERE collected_at > NOW() - INTERVAL '1 day' * $1
-			GROUP BY connection_id, collected_at
-			ORDER BY connection_id, collected_at
+			SELECT DISTINCT ON (connection_id)
+			       connection_id, NULL::text as database_name,
+			       setting::float as value, collected_at
+			FROM metrics.pg_settings
+			WHERE name = 'max_connections'
+			  AND collected_at > NOW() - INTERVAL '1 day' * $1
+			ORDER BY connection_id, collected_at DESC
 		`, lookbackDays)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query historical %s: %w", metricName, err)

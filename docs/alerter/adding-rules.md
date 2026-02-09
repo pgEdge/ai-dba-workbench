@@ -68,7 +68,7 @@ alerter supports the following metric name patterns:
 
 ### Connection Metrics
 
-- `pg_stat_activity.count` - Number of active connections.
+- `pg_settings.max_connections` - The max_connections setting value.
 - `connection_utilization_percent` - Connection usage percentage.
 - `pg_stat_activity.blocked_count` - Number of blocked sessions.
 - `pg_stat_activity.idle_in_transaction_seconds` - Idle transaction time.

@@ -10,6 +10,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from './AuthContext';
+import { apiGet, apiPost, apiPut, apiDelete } from '../utils/apiClient';
 
 export interface Blackout {
     id: number;
@@ -132,26 +133,10 @@ export const BlackoutProvider = ({ selection, children }: BlackoutProviderProps)
         setError(null);
 
         try {
-            const [blackoutsResponse, schedulesResponse] = await Promise.all([
-                fetch('/api/v1/blackouts', {
-                    credentials: 'include',
-                    headers: { 'Content-Type': 'application/json' },
-                }),
-                fetch('/api/v1/blackout-schedules', {
-                    credentials: 'include',
-                    headers: { 'Content-Type': 'application/json' },
-                }),
+            const [blackoutsData, schedulesData] = await Promise.all([
+                apiGet<{ blackouts?: Blackout[] }>('/api/v1/blackouts'),
+                apiGet<{ schedules?: BlackoutSchedule[] }>('/api/v1/blackout-schedules'),
             ]);
-
-            if (!blackoutsResponse.ok) {
-                throw new Error('Failed to fetch blackouts');
-            }
-            if (!schedulesResponse.ok) {
-                throw new Error('Failed to fetch blackout schedules');
-            }
-
-            const blackoutsData = await blackoutsResponse.json();
-            const schedulesData = await schedulesResponse.json();
 
             setBlackouts(blackoutsData.blackouts || []);
             setSchedules(schedulesData.schedules || []);
@@ -170,18 +155,7 @@ export const BlackoutProvider = ({ selection, children }: BlackoutProviderProps)
      * Create a new blackout window.
      */
     const createBlackout = useCallback(async (data: CreateBlackoutRequest): Promise<void> => {
-        const response = await fetch('/api/v1/blackouts', {
-            method: 'POST',
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data),
-        });
-
-        if (!response.ok) {
-            const errorBody = await response.text();
-            throw new Error(errorBody || 'Failed to create blackout');
-        }
-
+        await apiPost('/api/v1/blackouts', data);
         await fetchBlackouts();
     }, [fetchBlackouts]);
 
@@ -189,17 +163,7 @@ export const BlackoutProvider = ({ selection, children }: BlackoutProviderProps)
      * Stop an active blackout by setting its end time to now.
      */
     const stopBlackout = useCallback(async (id: number): Promise<void> => {
-        const response = await fetch(`/api/v1/blackouts/${id}/stop`, {
-            method: 'POST',
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-        });
-
-        if (!response.ok) {
-            const errorBody = await response.text();
-            throw new Error(errorBody || 'Failed to stop blackout');
-        }
-
+        await apiPost(`/api/v1/blackouts/${id}/stop`);
         await fetchBlackouts();
     }, [fetchBlackouts]);
 
@@ -207,17 +171,7 @@ export const BlackoutProvider = ({ selection, children }: BlackoutProviderProps)
      * Delete a blackout record.
      */
     const deleteBlackout = useCallback(async (id: number): Promise<void> => {
-        const response = await fetch(`/api/v1/blackouts/${id}`, {
-            method: 'DELETE',
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-        });
-
-        if (!response.ok) {
-            const errorBody = await response.text();
-            throw new Error(errorBody || 'Failed to delete blackout');
-        }
-
+        await apiDelete(`/api/v1/blackouts/${id}`);
         await fetchBlackouts();
     }, [fetchBlackouts]);
 
@@ -225,18 +179,7 @@ export const BlackoutProvider = ({ selection, children }: BlackoutProviderProps)
      * Create a new blackout schedule.
      */
     const createSchedule = useCallback(async (data: CreateScheduleRequest): Promise<void> => {
-        const response = await fetch('/api/v1/blackout-schedules', {
-            method: 'POST',
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data),
-        });
-
-        if (!response.ok) {
-            const errorBody = await response.text();
-            throw new Error(errorBody || 'Failed to create schedule');
-        }
-
+        await apiPost('/api/v1/blackout-schedules', data);
         await fetchBlackouts();
     }, [fetchBlackouts]);
 
@@ -244,18 +187,7 @@ export const BlackoutProvider = ({ selection, children }: BlackoutProviderProps)
      * Update an existing blackout schedule.
      */
     const updateSchedule = useCallback(async (id: number, data: UpdateScheduleRequest): Promise<void> => {
-        const response = await fetch(`/api/v1/blackout-schedules/${id}`, {
-            method: 'PUT',
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data),
-        });
-
-        if (!response.ok) {
-            const errorBody = await response.text();
-            throw new Error(errorBody || 'Failed to update schedule');
-        }
-
+        await apiPut(`/api/v1/blackout-schedules/${id}`, data);
         await fetchBlackouts();
     }, [fetchBlackouts]);
 
@@ -263,17 +195,7 @@ export const BlackoutProvider = ({ selection, children }: BlackoutProviderProps)
      * Delete a blackout schedule.
      */
     const deleteSchedule = useCallback(async (id: number): Promise<void> => {
-        const response = await fetch(`/api/v1/blackout-schedules/${id}`, {
-            method: 'DELETE',
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-        });
-
-        if (!response.ok) {
-            const errorBody = await response.text();
-            throw new Error(errorBody || 'Failed to delete schedule');
-        }
-
+        await apiDelete(`/api/v1/blackout-schedules/${id}`);
         await fetchBlackouts();
     }, [fetchBlackouts]);
 

@@ -37,12 +37,10 @@ func TestNewBlackoutHandler(t *testing.T) {
 }
 
 func TestBlackoutHandler_HandleNotConfigured(t *testing.T) {
-	handler := NewBlackoutHandler(nil, nil, nil)
-
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/blackouts", nil)
 	rec := httptest.NewRecorder()
 
-	handler.handleNotConfigured(rec, req)
+	HandleNotConfigured("Blackout management")(rec, req)
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("Expected status %d, got %d", http.StatusServiceUnavailable, rec.Code)

@@ -13,6 +13,7 @@
 
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { useAuth } from './AuthContext';
+import { apiGet } from '../utils/apiClient';
 
 export interface AlertCounts {
     total: number;
@@ -62,12 +63,9 @@ export const AlertsProvider = ({ children }: AlertsProviderProps): React.ReactEl
 
         setLoading(true);
         try {
-            const response = await fetch('/api/v1/alerts/counts', {
-                credentials: 'include',
-            });
+            const data = await apiGet<AlertCountsApiResponse>('/api/v1/alerts/counts');
 
-            if (response.ok && isMountedRef.current) {
-                const data: AlertCountsApiResponse = await response.json();
+            if (isMountedRef.current) {
                 setAlertCounts({
                     total: data.total || 0,
                     byServer: data.by_server || {},

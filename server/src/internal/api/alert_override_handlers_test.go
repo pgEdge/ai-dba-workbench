@@ -37,12 +37,10 @@ func TestNewAlertOverrideHandler(t *testing.T) {
 }
 
 func TestAlertOverrideHandler_HandleNotConfigured(t *testing.T) {
-	handler := NewAlertOverrideHandler(nil, nil, nil)
-
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/alert-overrides/server/1", nil)
 	rec := httptest.NewRecorder()
 
-	handler.handleNotConfigured(rec, req)
+	HandleNotConfigured("Alert override management")(rec, req)
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("Expected status %d, got %d", http.StatusServiceUnavailable, rec.Code)

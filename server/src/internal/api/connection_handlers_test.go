@@ -52,12 +52,10 @@ func TestNewConnectionHandlerWithSecurity(t *testing.T) {
 }
 
 func TestConnectionHandler_HandleNotConfigured(t *testing.T) {
-	handler := NewConnectionHandler(nil, nil, nil)
-
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections", nil)
 	rec := httptest.NewRecorder()
 
-	handler.handleNotConfigured(rec, req)
+	HandleNotConfigured("Database connection management")(rec, req)
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("Expected status %d, got %d", http.StatusServiceUnavailable, rec.Code)

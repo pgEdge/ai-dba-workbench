@@ -32,14 +32,12 @@ func TestNewClusterHandler(t *testing.T) {
 }
 
 func TestClusterHandler_HandleNotConfigured(t *testing.T) {
-	handler := NewClusterHandler(nil, nil, nil)
-
 	// Create a test request
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/clusters", nil)
 	rec := httptest.NewRecorder()
 
 	// Call the handler
-	handler.handleNotConfigured(rec, req)
+	HandleNotConfigured("Cluster management")(rec, req)
 
 	// Check status code
 	if rec.Code != http.StatusServiceUnavailable {

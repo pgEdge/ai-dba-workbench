@@ -22,46 +22,36 @@ import (
 
 // AlertRuleHandler handles REST API requests for alert rule management
 type AlertRuleHandler struct {
-	datastore   *database.Datastore
-	authStore   *auth.AuthStore
-	rbacChecker *auth.RBACChecker
+	datastore       *database.Datastore
+	authStore       *auth.AuthStore
+	rbacChecker     *auth.RBACChecker
+	checkPermission func(http.ResponseWriter, *http.Request) bool
 }
 
 // NewAlertRuleHandler creates a new alert rule handler
 func NewAlertRuleHandler(datastore *database.Datastore, authStore *auth.AuthStore, rbacChecker *auth.RBACChecker) *AlertRuleHandler {
-	return &AlertRuleHandler{
+	h := &AlertRuleHandler{
 		datastore:   datastore,
 		authStore:   authStore,
 		rbacChecker: rbacChecker,
 	}
+	if rbacChecker != nil {
+		h.checkPermission = RequireAdminPermission(rbacChecker, auth.PermManageAlertRules, "manage alert rules")
+	}
+	return h
 }
 
 // RegisterRoutes registers alert rule management routes on the mux
 func (h *AlertRuleHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(http.HandlerFunc) http.HandlerFunc) {
 	if h.datastore == nil {
-		mux.HandleFunc("/api/v1/alert-rules", authWrapper(h.handleNotConfigured))
-		mux.HandleFunc("/api/v1/alert-rules/", authWrapper(h.handleNotConfigured))
+		notConfigured := HandleNotConfigured("Alert rule management")
+		mux.HandleFunc("/api/v1/alert-rules", authWrapper(notConfigured))
+		mux.HandleFunc("/api/v1/alert-rules/", authWrapper(notConfigured))
 		return
 	}
 
 	mux.HandleFunc("/api/v1/alert-rules", authWrapper(h.handleAlertRules))
 	mux.HandleFunc("/api/v1/alert-rules/", authWrapper(h.handleAlertRuleSubpath))
-}
-
-// handleNotConfigured returns a 503 when the datastore is not configured
-func (h *AlertRuleHandler) handleNotConfigured(w http.ResponseWriter, r *http.Request) {
-	RespondError(w, http.StatusServiceUnavailable,
-		"Alert rule management is not available. The datastore is not configured.")
-}
-
-// requireAlertRulePermission checks that the user has manage_alert_rules permission
-func (h *AlertRuleHandler) requireAlertRulePermission(w http.ResponseWriter, r *http.Request) bool {
-	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageAlertRules) {
-		RespondError(w, http.StatusForbidden,
-			"Permission denied: you do not have permission to manage alert rules")
-		return false
-	}
-	return true
 }
 
 // handleAlertRules handles GET /api/v1/alert-rules
@@ -137,7 +127,7 @@ func (h *AlertRuleHandler) getAlertRule(w http.ResponseWriter, r *http.Request, 
 
 // updateAlertRule handles PUT /api/v1/alert-rules/{id}
 func (h *AlertRuleHandler) updateAlertRule(w http.ResponseWriter, r *http.Request, id int64) {
-	if !h.requireAlertRulePermission(w, r) {
+	if !h.checkPermission(w, r) {
 		return
 	}
 

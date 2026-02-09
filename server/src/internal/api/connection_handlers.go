@@ -108,9 +108,10 @@ type CurrentConnectionResponse struct {
 func (h *ConnectionHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(http.HandlerFunc) http.HandlerFunc) {
 	if h.datastore == nil {
 		// Datastore not configured, register handlers that return appropriate errors
-		mux.HandleFunc("/api/v1/connections", authWrapper(h.handleNotConfigured))
-		mux.HandleFunc("/api/v1/connections/", authWrapper(h.handleNotConfigured))
-		mux.HandleFunc("/api/v1/connections/current", authWrapper(h.handleNotConfigured))
+		notConfigured := HandleNotConfigured("Database connection management")
+		mux.HandleFunc("/api/v1/connections", authWrapper(notConfigured))
+		mux.HandleFunc("/api/v1/connections/", authWrapper(notConfigured))
+		mux.HandleFunc("/api/v1/connections/current", authWrapper(notConfigured))
 		return
 	}
 
@@ -122,12 +123,6 @@ func (h *ConnectionHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(
 
 	// Current connection selection
 	mux.HandleFunc("/api/v1/connections/current", authWrapper(h.handleCurrentConnection))
-}
-
-// handleNotConfigured returns an error when datastore is not configured
-func (h *ConnectionHandler) handleNotConfigured(w http.ResponseWriter, r *http.Request) {
-	RespondError(w, http.StatusServiceUnavailable,
-		"Database connection management is not available. The datastore is not configured.")
 }
 
 // handleConnections handles GET/POST /api/connections

@@ -37,12 +37,10 @@ func TestNewProbeConfigHandler(t *testing.T) {
 }
 
 func TestProbeConfigHandler_HandleNotConfigured(t *testing.T) {
-	handler := NewProbeConfigHandler(nil, nil, nil)
-
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/probe-configs", nil)
 	rec := httptest.NewRecorder()
 
-	handler.handleNotConfigured(rec, req)
+	HandleNotConfigured("Probe configuration")(rec, req)
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("Expected status %d, got %d", http.StatusServiceUnavailable, rec.Code)

@@ -21,44 +21,33 @@ import (
 
 // ProbeOverrideHandler handles REST API requests for probe config overrides
 type ProbeOverrideHandler struct {
-	datastore   *database.Datastore
-	authStore   *auth.AuthStore
-	rbacChecker *auth.RBACChecker
+	datastore       *database.Datastore
+	authStore       *auth.AuthStore
+	rbacChecker     *auth.RBACChecker
+	checkPermission func(http.ResponseWriter, *http.Request) bool
 }
 
 // NewProbeOverrideHandler creates a new probe override handler
 func NewProbeOverrideHandler(datastore *database.Datastore, authStore *auth.AuthStore, rbacChecker *auth.RBACChecker) *ProbeOverrideHandler {
-	return &ProbeOverrideHandler{
+	h := &ProbeOverrideHandler{
 		datastore:   datastore,
 		authStore:   authStore,
 		rbacChecker: rbacChecker,
 	}
+	if rbacChecker != nil {
+		h.checkPermission = RequireAdminPermission(rbacChecker, auth.PermManageProbes, "manage probes")
+	}
+	return h
 }
 
 // RegisterRoutes registers probe override management routes on the mux
 func (h *ProbeOverrideHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(http.HandlerFunc) http.HandlerFunc) {
 	if h.datastore == nil {
-		mux.HandleFunc("/api/v1/probe-overrides/", authWrapper(h.handleNotConfigured))
+		mux.HandleFunc("/api/v1/probe-overrides/", authWrapper(HandleNotConfigured("Probe override management")))
 		return
 	}
 
 	mux.HandleFunc("/api/v1/probe-overrides/", authWrapper(h.handleProbeOverrides))
-}
-
-// handleNotConfigured returns a 503 when the datastore is not configured
-func (h *ProbeOverrideHandler) handleNotConfigured(w http.ResponseWriter, r *http.Request) {
-	RespondError(w, http.StatusServiceUnavailable,
-		"Probe override management is not available. The datastore is not configured.")
-}
-
-// requirePermission checks that the user has manage_probes permission
-func (h *ProbeOverrideHandler) requirePermission(w http.ResponseWriter, r *http.Request) bool {
-	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageProbes) {
-		RespondError(w, http.StatusForbidden,
-			"Permission denied: you do not have permission to manage probes")
-		return false
-	}
-	return true
 }
 
 // handleProbeOverrides routes requests to the appropriate handler based on the URL path.
@@ -147,7 +136,7 @@ func (h *ProbeOverrideHandler) listOverrides(w http.ResponseWriter, r *http.Requ
 
 // upsertOverride handles PUT /api/v1/probe-overrides/{scope}/{scopeId}/{probeName}
 func (h *ProbeOverrideHandler) upsertOverride(w http.ResponseWriter, r *http.Request, scope string, scopeID int, probeName string) {
-	if !h.requirePermission(w, r) {
+	if !h.checkPermission(w, r) {
 		return
 	}
 
@@ -168,7 +157,7 @@ func (h *ProbeOverrideHandler) upsertOverride(w http.ResponseWriter, r *http.Req
 
 // deleteOverride handles DELETE /api/v1/probe-overrides/{scope}/{scopeId}/{probeName}
 func (h *ProbeOverrideHandler) deleteOverride(w http.ResponseWriter, r *http.Request, scope string, scopeID int, probeName string) {
-	if !h.requirePermission(w, r) {
+	if !h.checkPermission(w, r) {
 		return
 	}
 

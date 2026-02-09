@@ -52,8 +52,7 @@ import {
     getTableContainerSx,
     getFocusedLabelSx,
 } from './styles';
-
-const API_BASE_URL = '/api/v1';
+import { apiGet, apiPut } from '../../utils/apiClient';
 
 const OPERATORS = ['>', '>=', '<', '<=', '=', '!='];
 const SEVERITIES = ['info', 'warning', 'critical'];
@@ -98,12 +97,14 @@ const AdminAlertRules: React.FC = () => {
     const fetchRules = useCallback(async () => {
         try {
             setLoading(true);
-            const response = await fetch(`${API_BASE_URL}/alert-rules`, {
-                credentials: 'include',
-            });
-            if (!response.ok) {throw new Error('Failed to fetch alert rules');}
-            const data = await response.json();
-            setRules(data.alert_rules || data || []);
+            const data = await apiGet<{ alert_rules?: AlertRule[] } | AlertRule[]>(
+                '/api/v1/alert-rules',
+            );
+            if (Array.isArray(data)) {
+                setRules(data);
+            } else {
+                setRules(data.alert_rules || []);
+            }
         } catch (err: unknown) {
             if (err instanceof Error) {
                 setError(err.message);
@@ -140,24 +141,12 @@ const AdminAlertRules: React.FC = () => {
         try {
             setSaving(true);
             setError(null);
-            const response = await fetch(
-                `${API_BASE_URL}/alert-rules/${editRule.id}`,
-                {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'include',
-                    body: JSON.stringify({
-                        default_enabled: editEnabled,
-                        default_operator: editOperator,
-                        default_threshold: thresholdNum,
-                        default_severity: editSeverity,
-                    }),
-                }
-            );
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.error || 'Failed to update alert rule');
-            }
+            await apiPut(`/api/v1/alert-rules/${editRule.id}`, {
+                default_enabled: editEnabled,
+                default_operator: editOperator,
+                default_threshold: thresholdNum,
+                default_severity: editSeverity,
+            });
             setEditOpen(false);
             setSuccess(`Alert rule "${editRule.name}" updated successfully.`);
             fetchRules();

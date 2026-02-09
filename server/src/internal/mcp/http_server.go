@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"time"
@@ -160,7 +161,12 @@ func (s *Server) handleHTTPRequest(w http.ResponseWriter, r *http.Request) {
 		ipAddress = s.ipExtractor.ExtractIP(r)
 	} else {
 		// Fallback to direct connection IP if extractor not configured
-		ipAddress = auth.ExtractIPAddress(r) //nolint:staticcheck // Intentional fallback for backwards compatibility
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			ipAddress = r.RemoteAddr
+		} else {
+			ipAddress = host
+		}
 	}
 	ctx := context.WithValue(r.Context(), auth.IPAddressContextKey, ipAddress)
 

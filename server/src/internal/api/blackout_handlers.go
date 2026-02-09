@@ -24,27 +24,33 @@ import (
 
 // BlackoutHandler handles REST API requests for blackout management
 type BlackoutHandler struct {
-	datastore   *database.Datastore
-	authStore   *auth.AuthStore
-	rbacChecker *auth.RBACChecker
+	datastore       *database.Datastore
+	authStore       *auth.AuthStore
+	rbacChecker     *auth.RBACChecker
+	checkPermission func(http.ResponseWriter, *http.Request) bool
 }
 
 // NewBlackoutHandler creates a new blackout handler
 func NewBlackoutHandler(datastore *database.Datastore, authStore *auth.AuthStore, rbacChecker *auth.RBACChecker) *BlackoutHandler {
-	return &BlackoutHandler{
+	h := &BlackoutHandler{
 		datastore:   datastore,
 		authStore:   authStore,
 		rbacChecker: rbacChecker,
 	}
+	if rbacChecker != nil {
+		h.checkPermission = RequireAdminPermission(rbacChecker, auth.PermManageBlackouts, "manage blackouts")
+	}
+	return h
 }
 
 // RegisterRoutes registers blackout management routes on the mux
 func (h *BlackoutHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(http.HandlerFunc) http.HandlerFunc) {
 	if h.datastore == nil {
-		mux.HandleFunc("/api/v1/blackouts", authWrapper(h.handleNotConfigured))
-		mux.HandleFunc("/api/v1/blackouts/", authWrapper(h.handleNotConfigured))
-		mux.HandleFunc("/api/v1/blackout-schedules", authWrapper(h.handleNotConfigured))
-		mux.HandleFunc("/api/v1/blackout-schedules/", authWrapper(h.handleNotConfigured))
+		notConfigured := HandleNotConfigured("Blackout management")
+		mux.HandleFunc("/api/v1/blackouts", authWrapper(notConfigured))
+		mux.HandleFunc("/api/v1/blackouts/", authWrapper(notConfigured))
+		mux.HandleFunc("/api/v1/blackout-schedules", authWrapper(notConfigured))
+		mux.HandleFunc("/api/v1/blackout-schedules/", authWrapper(notConfigured))
 		return
 	}
 
@@ -52,12 +58,6 @@ func (h *BlackoutHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(ht
 	mux.HandleFunc("/api/v1/blackouts/", authWrapper(h.handleBlackoutSubpath))
 	mux.HandleFunc("/api/v1/blackout-schedules", authWrapper(h.handleBlackoutSchedules))
 	mux.HandleFunc("/api/v1/blackout-schedules/", authWrapper(h.handleBlackoutScheduleSubpath))
-}
-
-// handleNotConfigured returns a 503 when the datastore is not configured
-func (h *BlackoutHandler) handleNotConfigured(w http.ResponseWriter, r *http.Request) {
-	RespondError(w, http.StatusServiceUnavailable,
-		"Blackout management is not available. The datastore is not configured.")
 }
 
 // BlackoutCreateRequest is the request body for creating a blackout
@@ -189,16 +189,6 @@ func (h *BlackoutHandler) handleBlackoutScheduleSubpath(w http.ResponseWriter, r
 	}
 }
 
-// requireBlackoutPermission checks that the user has manage_blackouts permission
-func (h *BlackoutHandler) requireBlackoutPermission(w http.ResponseWriter, r *http.Request) bool {
-	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageBlackouts) {
-		RespondError(w, http.StatusForbidden,
-			"Permission denied: you do not have permission to manage blackouts")
-		return false
-	}
-	return true
-}
-
 // validateBlackoutScope validates that the scope and associated IDs are consistent
 func validateBlackoutScope(scope string, groupID, clusterID, connectionID *int) error {
 	if !database.ValidBlackoutScopes[scope] {
@@ -288,7 +278,7 @@ func (h *BlackoutHandler) getBlackout(w http.ResponseWriter, r *http.Request, id
 
 // createBlackout handles POST /api/v1/blackouts
 func (h *BlackoutHandler) createBlackout(w http.ResponseWriter, r *http.Request) {
-	if !h.requireBlackoutPermission(w, r) {
+	if !h.checkPermission(w, r) {
 		return
 	}
 
@@ -353,7 +343,7 @@ func (h *BlackoutHandler) createBlackout(w http.ResponseWriter, r *http.Request)
 
 // updateBlackout handles PUT /api/v1/blackouts/{id}
 func (h *BlackoutHandler) updateBlackout(w http.ResponseWriter, r *http.Request, id int64) {
-	if !h.requireBlackoutPermission(w, r) {
+	if !h.checkPermission(w, r) {
 		return
 	}
 
@@ -416,7 +406,7 @@ func (h *BlackoutHandler) updateBlackout(w http.ResponseWriter, r *http.Request,
 
 // deleteBlackout handles DELETE /api/v1/blackouts/{id}
 func (h *BlackoutHandler) deleteBlackout(w http.ResponseWriter, r *http.Request, id int64) {
-	if !h.requireBlackoutPermission(w, r) {
+	if !h.checkPermission(w, r) {
 		return
 	}
 
@@ -435,7 +425,7 @@ func (h *BlackoutHandler) deleteBlackout(w http.ResponseWriter, r *http.Request,
 
 // stopBlackout handles POST /api/v1/blackouts/{id}/stop
 func (h *BlackoutHandler) stopBlackout(w http.ResponseWriter, r *http.Request, id int64) {
-	if !h.requireBlackoutPermission(w, r) {
+	if !h.checkPermission(w, r) {
 		return
 	}
 
@@ -512,7 +502,7 @@ func (h *BlackoutHandler) getBlackoutSchedule(w http.ResponseWriter, r *http.Req
 
 // createBlackoutSchedule handles POST /api/v1/blackout-schedules
 func (h *BlackoutHandler) createBlackoutSchedule(w http.ResponseWriter, r *http.Request) {
-	if !h.requireBlackoutPermission(w, r) {
+	if !h.checkPermission(w, r) {
 		return
 	}
 
@@ -584,7 +574,7 @@ func (h *BlackoutHandler) createBlackoutSchedule(w http.ResponseWriter, r *http.
 
 // updateBlackoutSchedule handles PUT /api/v1/blackout-schedules/{id}
 func (h *BlackoutHandler) updateBlackoutSchedule(w http.ResponseWriter, r *http.Request, id int64) {
-	if !h.requireBlackoutPermission(w, r) {
+	if !h.checkPermission(w, r) {
 		return
 	}
 
@@ -654,7 +644,7 @@ func (h *BlackoutHandler) updateBlackoutSchedule(w http.ResponseWriter, r *http.
 
 // deleteBlackoutSchedule handles DELETE /api/v1/blackout-schedules/{id}
 func (h *BlackoutHandler) deleteBlackoutSchedule(w http.ResponseWriter, r *http.Request, id int64) {
-	if !h.requireBlackoutPermission(w, r) {
+	if !h.checkPermission(w, r) {
 		return
 	}
 

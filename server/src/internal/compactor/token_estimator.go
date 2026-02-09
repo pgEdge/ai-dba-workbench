@@ -165,14 +165,7 @@ func (te *TokenEstimator) getContentMultiplier(text string) float64 {
 
 // containsSQL checks if text contains SQL keywords.
 func (te *TokenEstimator) containsSQL(text string) bool {
-	sqlKeywords := []string{
-		"select ", "from ", "where ", "join ",
-		"create table", "alter table", "drop table",
-		"insert into", "update ", "delete from",
-		"group by", "order by", "having ",
-	}
-
-	for _, keyword := range sqlKeywords {
+	for _, keyword := range sqlKeywordPhrases {
 		if strings.Contains(text, keyword) {
 			return true
 		}
@@ -189,11 +182,6 @@ func (te *TokenEstimator) containsJSON(text string) bool {
 
 // containsCode checks if text contains code patterns.
 func (te *TokenEstimator) containsCode(text string) bool {
-	codePatterns := []string{
-		"```", "function ", "const ", "let ", "var ",
-		"def ", "class ", "import ", "package ",
-	}
-
 	for _, pattern := range codePatterns {
 		if strings.Contains(text, pattern) {
 			return true

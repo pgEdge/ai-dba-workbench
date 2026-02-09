@@ -37,12 +37,10 @@ func TestNewAlertRuleHandler(t *testing.T) {
 }
 
 func TestAlertRuleHandler_HandleNotConfigured(t *testing.T) {
-	handler := NewAlertRuleHandler(nil, nil, nil)
-
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/alert-rules", nil)
 	rec := httptest.NewRecorder()
 
-	handler.handleNotConfigured(rec, req)
+	HandleNotConfigured("Alert rule management")(rec, req)
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("Expected status %d, got %d", http.StatusServiceUnavailable, rec.Code)

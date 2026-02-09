@@ -35,16 +35,11 @@ func NewTimelineHandler(datastore *database.Datastore, authStore *auth.AuthStore
 func (h *TimelineHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(http.HandlerFunc) http.HandlerFunc) {
 	// Check if datastore is configured
 	if h.datastore == nil {
-		mux.HandleFunc("/api/v1/timeline/events", authWrapper(h.handleNotConfigured))
+		mux.HandleFunc("/api/v1/timeline/events", authWrapper(HandleNotConfigured("Timeline")))
 		return
 	}
 
 	mux.HandleFunc("/api/v1/timeline/events", authWrapper(h.handleTimelineEvents))
-}
-
-// handleNotConfigured returns a 503 when the datastore is not configured
-func (h *TimelineHandler) handleNotConfigured(w http.ResponseWriter, r *http.Request) {
-	RespondError(w, http.StatusServiceUnavailable, "Datastore not configured")
 }
 
 // handleTimelineEvents handles GET /api/v1/timeline/events

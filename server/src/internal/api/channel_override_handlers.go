@@ -21,44 +21,33 @@ import (
 
 // ChannelOverrideHandler handles REST API requests for notification channel overrides
 type ChannelOverrideHandler struct {
-	datastore   *database.Datastore
-	authStore   *auth.AuthStore
-	rbacChecker *auth.RBACChecker
+	datastore       *database.Datastore
+	authStore       *auth.AuthStore
+	rbacChecker     *auth.RBACChecker
+	checkPermission func(http.ResponseWriter, *http.Request) bool
 }
 
 // NewChannelOverrideHandler creates a new channel override handler
 func NewChannelOverrideHandler(datastore *database.Datastore, authStore *auth.AuthStore, rbacChecker *auth.RBACChecker) *ChannelOverrideHandler {
-	return &ChannelOverrideHandler{
+	h := &ChannelOverrideHandler{
 		datastore:   datastore,
 		authStore:   authStore,
 		rbacChecker: rbacChecker,
 	}
+	if rbacChecker != nil {
+		h.checkPermission = RequireAdminPermission(rbacChecker, auth.PermManageNotificationChannels, "manage notification channels")
+	}
+	return h
 }
 
 // RegisterRoutes registers channel override management routes on the mux
 func (h *ChannelOverrideHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(http.HandlerFunc) http.HandlerFunc) {
 	if h.datastore == nil {
-		mux.HandleFunc("/api/v1/channel-overrides/", authWrapper(h.handleNotConfigured))
+		mux.HandleFunc("/api/v1/channel-overrides/", authWrapper(HandleNotConfigured("Channel override management")))
 		return
 	}
 
 	mux.HandleFunc("/api/v1/channel-overrides/", authWrapper(h.handleChannelOverrides))
-}
-
-// handleNotConfigured returns a 503 when the datastore is not configured
-func (h *ChannelOverrideHandler) handleNotConfigured(w http.ResponseWriter, r *http.Request) {
-	RespondError(w, http.StatusServiceUnavailable,
-		"Channel override management is not available. The datastore is not configured.")
-}
-
-// requirePermission checks that the user has manage_notification_channels permission
-func (h *ChannelOverrideHandler) requirePermission(w http.ResponseWriter, r *http.Request) bool {
-	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageNotificationChannels) {
-		RespondError(w, http.StatusForbidden,
-			"Permission denied: you do not have permission to manage notification channels")
-		return false
-	}
-	return true
 }
 
 // handleChannelOverrides routes requests based on URL path.
@@ -147,7 +136,7 @@ func (h *ChannelOverrideHandler) listOverrides(w http.ResponseWriter, r *http.Re
 
 // upsertOverride handles PUT /api/v1/channel-overrides/{scope}/{scopeId}/{channelId}
 func (h *ChannelOverrideHandler) upsertOverride(w http.ResponseWriter, r *http.Request, scope string, scopeID int, channelID int64) {
-	if !h.requirePermission(w, r) {
+	if !h.checkPermission(w, r) {
 		return
 	}
 
@@ -168,7 +157,7 @@ func (h *ChannelOverrideHandler) upsertOverride(w http.ResponseWriter, r *http.R
 
 // deleteOverride handles DELETE /api/v1/channel-overrides/{scope}/{scopeId}/{channelId}
 func (h *ChannelOverrideHandler) deleteOverride(w http.ResponseWriter, r *http.Request, scope string, scopeID int, channelID int64) {
-	if !h.requirePermission(w, r) {
+	if !h.checkPermission(w, r) {
 		return
 	}
 

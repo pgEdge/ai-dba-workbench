@@ -35,10 +35,11 @@ func NewAlertHandler(datastore *database.Datastore, authStore *auth.AuthStore) *
 func (h *AlertHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(http.HandlerFunc) http.HandlerFunc) {
 	// Check if datastore is configured
 	if h.datastore == nil {
-		mux.HandleFunc("/api/v1/alerts", authWrapper(h.handleNotConfigured))
-		mux.HandleFunc("/api/v1/alerts/counts", authWrapper(h.handleNotConfigured))
-		mux.HandleFunc("/api/v1/alerts/acknowledge", authWrapper(h.handleNotConfigured))
-		mux.HandleFunc("/api/v1/alerts/analysis", authWrapper(h.handleNotConfigured))
+		notConfigured := HandleNotConfigured("Alert management")
+		mux.HandleFunc("/api/v1/alerts", authWrapper(notConfigured))
+		mux.HandleFunc("/api/v1/alerts/counts", authWrapper(notConfigured))
+		mux.HandleFunc("/api/v1/alerts/acknowledge", authWrapper(notConfigured))
+		mux.HandleFunc("/api/v1/alerts/analysis", authWrapper(notConfigured))
 		return
 	}
 
@@ -46,11 +47,6 @@ func (h *AlertHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(http.
 	mux.HandleFunc("/api/v1/alerts/counts", authWrapper(h.handleAlertCounts))
 	mux.HandleFunc("/api/v1/alerts/acknowledge", authWrapper(h.handleAcknowledge))
 	mux.HandleFunc("/api/v1/alerts/analysis", authWrapper(h.handleSaveAnalysis))
-}
-
-// handleNotConfigured returns a 503 when the datastore is not configured
-func (h *AlertHandler) handleNotConfigured(w http.ResponseWriter, r *http.Request) {
-	RespondError(w, http.StatusServiceUnavailable, "Datastore not configured")
 }
 
 // handleAlerts handles GET /api/v1/alerts

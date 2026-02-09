@@ -268,34 +268,6 @@ func extractIPFromRemoteAddr(remoteAddr string) string {
 	return host
 }
 
-// ExtractIPAddress extracts the client IP address from an HTTP request.
-//
-// Deprecated: This function blindly trusts X-Forwarded-For headers and is
-// vulnerable to IP spoofing. Use IPExtractor.ExtractIP() instead for secure
-// IP extraction when behind trusted proxies.
-//
-// This function is kept for backwards compatibility but should not be used
-// for security-sensitive operations like rate limiting.
-func ExtractIPAddress(r *http.Request) string {
-	// Check X-Forwarded-For header first (used by proxies/load balancers)
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// X-Forwarded-For can contain multiple IPs (client, proxy1, proxy2, ...)
-		// Use the first one (original client IP)
-		parts := strings.Split(xff, ",")
-		if len(parts) > 0 {
-			return strings.TrimSpace(parts[0])
-		}
-	}
-
-	// Check X-Real-IP header (used by some proxies)
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return strings.TrimSpace(xri)
-	}
-
-	// Fall back to RemoteAddr
-	return extractIPFromRemoteAddr(r.RemoteAddr)
-}
-
 // AuthMiddleware creates an HTTP middleware that validates API tokens and session tokens
 // Uses the new AuthStore for all authentication
 func AuthMiddleware(authStore *AuthStore, enabled bool) func(http.Handler) http.Handler {

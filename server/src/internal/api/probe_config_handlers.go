@@ -22,46 +22,36 @@ import (
 
 // ProbeConfigHandler handles REST API requests for probe configuration management
 type ProbeConfigHandler struct {
-	datastore   *database.Datastore
-	authStore   *auth.AuthStore
-	rbacChecker *auth.RBACChecker
+	datastore       *database.Datastore
+	authStore       *auth.AuthStore
+	rbacChecker     *auth.RBACChecker
+	checkPermission func(http.ResponseWriter, *http.Request) bool
 }
 
 // NewProbeConfigHandler creates a new probe config handler
 func NewProbeConfigHandler(datastore *database.Datastore, authStore *auth.AuthStore, rbacChecker *auth.RBACChecker) *ProbeConfigHandler {
-	return &ProbeConfigHandler{
+	h := &ProbeConfigHandler{
 		datastore:   datastore,
 		authStore:   authStore,
 		rbacChecker: rbacChecker,
 	}
+	if rbacChecker != nil {
+		h.checkPermission = RequireAdminPermission(rbacChecker, auth.PermManageProbes, "manage probes")
+	}
+	return h
 }
 
 // RegisterRoutes registers probe config management routes on the mux
 func (h *ProbeConfigHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(http.HandlerFunc) http.HandlerFunc) {
 	if h.datastore == nil {
-		mux.HandleFunc("/api/v1/probe-configs", authWrapper(h.handleNotConfigured))
-		mux.HandleFunc("/api/v1/probe-configs/", authWrapper(h.handleNotConfigured))
+		notConfigured := HandleNotConfigured("Probe configuration")
+		mux.HandleFunc("/api/v1/probe-configs", authWrapper(notConfigured))
+		mux.HandleFunc("/api/v1/probe-configs/", authWrapper(notConfigured))
 		return
 	}
 
 	mux.HandleFunc("/api/v1/probe-configs", authWrapper(h.handleProbeConfigs))
 	mux.HandleFunc("/api/v1/probe-configs/", authWrapper(h.handleProbeConfigSubpath))
-}
-
-// handleNotConfigured returns a 503 when the datastore is not configured
-func (h *ProbeConfigHandler) handleNotConfigured(w http.ResponseWriter, r *http.Request) {
-	RespondError(w, http.StatusServiceUnavailable,
-		"Probe configuration is not available. The datastore is not configured.")
-}
-
-// requireProbePermission checks that the user has manage_probes permission
-func (h *ProbeConfigHandler) requireProbePermission(w http.ResponseWriter, r *http.Request) bool {
-	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageProbes) {
-		RespondError(w, http.StatusForbidden,
-			"Permission denied: you do not have permission to manage probes")
-		return false
-	}
-	return true
 }
 
 // handleProbeConfigs handles GET /api/v1/probe-configs
@@ -140,7 +130,7 @@ func (h *ProbeConfigHandler) getProbeConfig(w http.ResponseWriter, r *http.Reque
 
 // updateProbeConfig handles PUT /api/v1/probe-configs/{id}
 func (h *ProbeConfigHandler) updateProbeConfig(w http.ResponseWriter, r *http.Request, id int64) {
-	if !h.requireProbePermission(w, r) {
+	if !h.checkPermission(w, r) {
 		return
 	}
 

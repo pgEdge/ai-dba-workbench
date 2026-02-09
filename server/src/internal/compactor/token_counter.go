@@ -163,17 +163,24 @@ func (pte *ProviderTokenEstimator) getProviderAdjustment(text string) float64 {
 	}
 }
 
+// sqlKeywordPhrases holds SQL keyword phrases used by token estimation.
+var sqlKeywordPhrases = []string{
+	"select ", "from ", "where ", "join ",
+	"create table", "alter table", "drop table",
+	"insert into", "update ", "delete from",
+	"group by", "order by", "having ",
+}
+
+// codePatterns holds code patterns used by token estimation.
+var codePatterns = []string{
+	"```", "function ", "const ", "let ", "var ",
+	"def ", "class ", "import ", "package ",
+}
+
 // Helper functions
 
 func containsSQL(text string) bool {
-	sqlKeywords := []string{
-		"select ", "from ", "where ", "join ",
-		"create table", "alter table", "drop table",
-		"insert into", "update ", "delete from",
-		"group by", "order by", "having ",
-	}
-
-	for _, keyword := range sqlKeywords {
+	for _, keyword := range sqlKeywordPhrases {
 		if strings.Contains(text, keyword) {
 			return true
 		}
@@ -188,11 +195,6 @@ func containsJSON(text string) bool {
 }
 
 func containsCode(text string) bool {
-	codePatterns := []string{
-		"```", "function ", "const ", "let ", "var ",
-		"def ", "class ", "import ", "package ",
-	}
-
 	for _, pattern := range codePatterns {
 		if strings.Contains(text, pattern) {
 			return true

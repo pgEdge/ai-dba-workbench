@@ -20,6 +20,14 @@ import (
 // reTableReference matches table name references in text (e.g., "users table")
 var reTableReference = regexp.MustCompile(`(?i)\b(\w+)\s+table`)
 
+// sqlKeywordMap holds SQL keywords for filtering table name references.
+var sqlKeywordMap = map[string]bool{
+	"select": true, "from": true, "where": true, "join": true,
+	"inner": true, "outer": true, "left": true, "right": true,
+	"create": true, "alter": true, "drop": true, "insert": true,
+	"update": true, "delete": true, "into": true, "values": true,
+}
+
 // Compactor performs smart chat history compaction.
 type Compactor struct {
 	classifier        *Classifier
@@ -374,13 +382,7 @@ func (c *Compactor) extractContext(messages []Message) ExtractedContext {
 
 // isSQLKeyword checks if a word is a SQL keyword.
 func (c *Compactor) isSQLKeyword(word string) bool {
-	keywords := map[string]bool{
-		"select": true, "from": true, "where": true, "join": true,
-		"inner": true, "outer": true, "left": true, "right": true,
-		"create": true, "alter": true, "drop": true, "insert": true,
-		"update": true, "delete": true, "into": true, "values": true,
-	}
-	return keywords[word]
+	return sqlKeywordMap[word]
 }
 
 // buildSummaryDescription creates a human-readable summary description.

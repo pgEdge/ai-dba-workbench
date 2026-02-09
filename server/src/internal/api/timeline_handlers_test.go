@@ -30,12 +30,10 @@ func TestNewTimelineHandler(t *testing.T) {
 }
 
 func TestTimelineHandler_HandleNotConfigured(t *testing.T) {
-	handler := NewTimelineHandler(nil, nil)
-
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/timeline/events", nil)
 	rec := httptest.NewRecorder()
 
-	handler.handleNotConfigured(rec, req)
+	HandleNotConfigured("Timeline")(rec, req)
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("Expected status %d, got %d", http.StatusServiceUnavailable, rec.Code)
@@ -51,8 +49,9 @@ func TestTimelineHandler_HandleNotConfigured(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	if response.Error != "Datastore not configured" {
-		t.Errorf("Expected error 'Datastore not configured', got %q", response.Error)
+	expectedError := "Timeline is not available. The datastore is not configured."
+	if response.Error != expectedError {
+		t.Errorf("Expected error %q, got %q", expectedError, response.Error)
 	}
 }
 

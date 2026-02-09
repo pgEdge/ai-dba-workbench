@@ -21,44 +21,33 @@ import (
 
 // AlertOverrideHandler handles REST API requests for alert threshold overrides
 type AlertOverrideHandler struct {
-	datastore   *database.Datastore
-	authStore   *auth.AuthStore
-	rbacChecker *auth.RBACChecker
+	datastore       *database.Datastore
+	authStore       *auth.AuthStore
+	rbacChecker     *auth.RBACChecker
+	checkPermission func(http.ResponseWriter, *http.Request) bool
 }
 
 // NewAlertOverrideHandler creates a new alert override handler
 func NewAlertOverrideHandler(datastore *database.Datastore, authStore *auth.AuthStore, rbacChecker *auth.RBACChecker) *AlertOverrideHandler {
-	return &AlertOverrideHandler{
+	h := &AlertOverrideHandler{
 		datastore:   datastore,
 		authStore:   authStore,
 		rbacChecker: rbacChecker,
 	}
+	if rbacChecker != nil {
+		h.checkPermission = RequireAdminPermission(rbacChecker, auth.PermManageAlertRules, "manage alert rules")
+	}
+	return h
 }
 
 // RegisterRoutes registers alert override management routes on the mux
 func (h *AlertOverrideHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(http.HandlerFunc) http.HandlerFunc) {
 	if h.datastore == nil {
-		mux.HandleFunc("/api/v1/alert-overrides/", authWrapper(h.handleNotConfigured))
+		mux.HandleFunc("/api/v1/alert-overrides/", authWrapper(HandleNotConfigured("Alert override management")))
 		return
 	}
 
 	mux.HandleFunc("/api/v1/alert-overrides/", authWrapper(h.handleAlertOverrides))
-}
-
-// handleNotConfigured returns a 503 when the datastore is not configured
-func (h *AlertOverrideHandler) handleNotConfigured(w http.ResponseWriter, r *http.Request) {
-	RespondError(w, http.StatusServiceUnavailable,
-		"Alert override management is not available. The datastore is not configured.")
-}
-
-// requirePermission checks that the user has manage_alert_rules permission
-func (h *AlertOverrideHandler) requirePermission(w http.ResponseWriter, r *http.Request) bool {
-	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageAlertRules) {
-		RespondError(w, http.StatusForbidden,
-			"Permission denied: you do not have permission to manage alert rules")
-		return false
-	}
-	return true
 }
 
 // handleAlertOverrides routes requests to the appropriate handler based on the URL path.
@@ -147,7 +136,7 @@ func (h *AlertOverrideHandler) listOverrides(w http.ResponseWriter, r *http.Requ
 
 // upsertOverride handles PUT /api/v1/alert-overrides/{scope}/{scopeId}/{ruleId}
 func (h *AlertOverrideHandler) upsertOverride(w http.ResponseWriter, r *http.Request, scope string, scopeID int, ruleID int64) {
-	if !h.requirePermission(w, r) {
+	if !h.checkPermission(w, r) {
 		return
 	}
 
@@ -168,7 +157,7 @@ func (h *AlertOverrideHandler) upsertOverride(w http.ResponseWriter, r *http.Req
 
 // deleteOverride handles DELETE /api/v1/alert-overrides/{scope}/{scopeId}/{ruleId}
 func (h *AlertOverrideHandler) deleteOverride(w http.ResponseWriter, r *http.Request, scope string, scopeID int, ruleID int64) {
-	if !h.requirePermission(w, r) {
+	if !h.checkPermission(w, r) {
 		return
 	}
 

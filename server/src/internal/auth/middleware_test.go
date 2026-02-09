@@ -575,41 +575,6 @@ func TestExtractIPFromRemoteAddr(t *testing.T) {
 	}
 }
 
-// TestExtractIPAddress_Deprecated tests the deprecated function still works
-func TestExtractIPAddress_Deprecated(t *testing.T) {
-	t.Run("uses X-Forwarded-For first", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/", nil)
-		req.RemoteAddr = "10.0.0.1:12345"
-		req.Header.Set("X-Forwarded-For", "203.0.113.50, 10.0.0.1")
-
-		ip := ExtractIPAddress(req)
-		if ip != "203.0.113.50" {
-			t.Errorf("Expected '203.0.113.50', got %q", ip)
-		}
-	})
-
-	t.Run("falls back to X-Real-IP", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/", nil)
-		req.RemoteAddr = "10.0.0.1:12345"
-		req.Header.Set("X-Real-IP", "203.0.113.50")
-
-		ip := ExtractIPAddress(req)
-		if ip != "203.0.113.50" {
-			t.Errorf("Expected '203.0.113.50', got %q", ip)
-		}
-	})
-
-	t.Run("falls back to RemoteAddr", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/", nil)
-		req.RemoteAddr = "10.0.0.1:12345"
-
-		ip := ExtractIPAddress(req)
-		if ip != "10.0.0.1" {
-			t.Errorf("Expected '10.0.0.1', got %q", ip)
-		}
-	})
-}
-
 // =============================================================================
 // Additional Context Helper Tests
 // =============================================================================

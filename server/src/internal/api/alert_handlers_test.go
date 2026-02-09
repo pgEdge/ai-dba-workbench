@@ -31,12 +31,10 @@ func TestNewAlertHandler(t *testing.T) {
 }
 
 func TestAlertHandler_HandleNotConfigured(t *testing.T) {
-	handler := NewAlertHandler(nil, nil)
-
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/alerts", nil)
 	rec := httptest.NewRecorder()
 
-	handler.handleNotConfigured(rec, req)
+	HandleNotConfigured("Alert management")(rec, req)
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("Expected status %d, got %d", http.StatusServiceUnavailable, rec.Code)
@@ -52,8 +50,9 @@ func TestAlertHandler_HandleNotConfigured(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	if response.Error != "Datastore not configured" {
-		t.Errorf("Expected error 'Datastore not configured', got %q", response.Error)
+	expectedError := "Alert management is not available. The datastore is not configured."
+	if response.Error != expectedError {
+		t.Errorf("Expected error %q, got %q", expectedError, response.Error)
 	}
 }
 

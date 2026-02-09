@@ -25,49 +25,53 @@ import (
 
 // NotificationChannelHandler handles REST API requests for notification channel management
 type NotificationChannelHandler struct {
-	datastore     *database.Datastore
-	authStore     *auth.AuthStore
-	rbacChecker   *auth.RBACChecker
-	hostValidator *HostValidator
+	datastore       *database.Datastore
+	authStore       *auth.AuthStore
+	rbacChecker     *auth.RBACChecker
+	hostValidator   *HostValidator
+	checkPermission func(http.ResponseWriter, *http.Request) bool
 }
 
 // NewNotificationChannelHandler creates a new notification channel handler
 func NewNotificationChannelHandler(datastore *database.Datastore, authStore *auth.AuthStore, rbacChecker *auth.RBACChecker) *NotificationChannelHandler {
-	return &NotificationChannelHandler{
+	h := &NotificationChannelHandler{
 		datastore:     datastore,
 		authStore:     authStore,
 		rbacChecker:   rbacChecker,
 		hostValidator: DefaultHostValidator(),
 	}
+	if rbacChecker != nil {
+		h.checkPermission = RequireAdminPermission(rbacChecker, auth.PermManageNotificationChannels, "manage notification channels")
+	}
+	return h
 }
 
 // NewNotificationChannelHandlerWithSecurity creates a new notification channel handler with custom security settings
 func NewNotificationChannelHandlerWithSecurity(datastore *database.Datastore, authStore *auth.AuthStore,
 	rbacChecker *auth.RBACChecker, allowInternal bool, allowedHosts, blockedHosts []string) *NotificationChannelHandler {
-	return &NotificationChannelHandler{
+	h := &NotificationChannelHandler{
 		datastore:     datastore,
 		authStore:     authStore,
 		rbacChecker:   rbacChecker,
 		hostValidator: NewHostValidator(allowInternal, allowedHosts, blockedHosts),
 	}
+	if rbacChecker != nil {
+		h.checkPermission = RequireAdminPermission(rbacChecker, auth.PermManageNotificationChannels, "manage notification channels")
+	}
+	return h
 }
 
 // RegisterRoutes registers notification channel management routes on the mux
 func (h *NotificationChannelHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(http.HandlerFunc) http.HandlerFunc) {
 	if h.datastore == nil {
-		mux.HandleFunc("/api/v1/notification-channels", authWrapper(h.handleNotConfigured))
-		mux.HandleFunc("/api/v1/notification-channels/", authWrapper(h.handleNotConfigured))
+		notConfigured := HandleNotConfigured("Notification channel management")
+		mux.HandleFunc("/api/v1/notification-channels", authWrapper(notConfigured))
+		mux.HandleFunc("/api/v1/notification-channels/", authWrapper(notConfigured))
 		return
 	}
 
 	mux.HandleFunc("/api/v1/notification-channels", authWrapper(h.handleChannels))
 	mux.HandleFunc("/api/v1/notification-channels/", authWrapper(h.handleChannelSubpath))
-}
-
-// handleNotConfigured returns a 503 when the datastore is not configured
-func (h *NotificationChannelHandler) handleNotConfigured(w http.ResponseWriter, r *http.Request) {
-	RespondError(w, http.StatusServiceUnavailable,
-		"Notification channel management is not available. The datastore is not configured.")
 }
 
 // NotificationChannelCreateRequest is the request body for creating a notification channel
@@ -217,20 +221,9 @@ func (h *NotificationChannelHandler) handleRecipientRoutes(w http.ResponseWriter
 	http.NotFound(w, r)
 }
 
-// requireNotificationChannelPermission checks that the user has the
-// manage_notification_channels permission
-func (h *NotificationChannelHandler) requireNotificationChannelPermission(w http.ResponseWriter, r *http.Request) bool {
-	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageNotificationChannels) {
-		RespondError(w, http.StatusForbidden,
-			"Permission denied: you do not have permission to manage notification channels")
-		return false
-	}
-	return true
-}
-
 // listChannels handles GET /api/v1/notification-channels
 func (h *NotificationChannelHandler) listChannels(w http.ResponseWriter, r *http.Request) {
-	if !h.requireNotificationChannelPermission(w, r) {
+	if !h.checkPermission(w, r) {
 		return
 	}
 
@@ -246,7 +239,7 @@ func (h *NotificationChannelHandler) listChannels(w http.ResponseWriter, r *http
 
 // getChannel handles GET /api/v1/notification-channels/{id}
 func (h *NotificationChannelHandler) getChannel(w http.ResponseWriter, r *http.Request, id int64) {
-	if !h.requireNotificationChannelPermission(w, r) {
+	if !h.checkPermission(w, r) {
 		return
 	}
 
@@ -266,7 +259,7 @@ func (h *NotificationChannelHandler) getChannel(w http.ResponseWriter, r *http.R
 
 // createChannel handles POST /api/v1/notification-channels
 func (h *NotificationChannelHandler) createChannel(w http.ResponseWriter, r *http.Request) {
-	if !h.requireNotificationChannelPermission(w, r) {
+	if !h.checkPermission(w, r) {
 		return
 	}
 
@@ -385,7 +378,7 @@ func (h *NotificationChannelHandler) createChannel(w http.ResponseWriter, r *htt
 
 // updateChannel handles PUT /api/v1/notification-channels/{id}
 func (h *NotificationChannelHandler) updateChannel(w http.ResponseWriter, r *http.Request, id int64) {
-	if !h.requireNotificationChannelPermission(w, r) {
+	if !h.checkPermission(w, r) {
 		return
 	}
 
@@ -526,7 +519,7 @@ func (h *NotificationChannelHandler) updateChannel(w http.ResponseWriter, r *htt
 
 // deleteChannel handles DELETE /api/v1/notification-channels/{id}
 func (h *NotificationChannelHandler) deleteChannel(w http.ResponseWriter, r *http.Request, id int64) {
-	if !h.requireNotificationChannelPermission(w, r) {
+	if !h.checkPermission(w, r) {
 		return
 	}
 
@@ -545,7 +538,7 @@ func (h *NotificationChannelHandler) deleteChannel(w http.ResponseWriter, r *htt
 
 // listRecipients handles GET /api/v1/notification-channels/{id}/recipients
 func (h *NotificationChannelHandler) listRecipients(w http.ResponseWriter, r *http.Request, channelID int64) {
-	if !h.requireNotificationChannelPermission(w, r) {
+	if !h.checkPermission(w, r) {
 		return
 	}
 
@@ -573,7 +566,7 @@ func (h *NotificationChannelHandler) listRecipients(w http.ResponseWriter, r *ht
 
 // createRecipient handles POST /api/v1/notification-channels/{id}/recipients
 func (h *NotificationChannelHandler) createRecipient(w http.ResponseWriter, r *http.Request, channelID int64) {
-	if !h.requireNotificationChannelPermission(w, r) {
+	if !h.checkPermission(w, r) {
 		return
 	}
 
@@ -623,7 +616,7 @@ func (h *NotificationChannelHandler) createRecipient(w http.ResponseWriter, r *h
 
 // updateRecipient handles PUT /api/v1/notification-channels/{id}/recipients/{recipientId}
 func (h *NotificationChannelHandler) updateRecipient(w http.ResponseWriter, r *http.Request, _ int64, recipientID int64) {
-	if !h.requireNotificationChannelPermission(w, r) {
+	if !h.checkPermission(w, r) {
 		return
 	}
 
@@ -665,7 +658,7 @@ func (h *NotificationChannelHandler) updateRecipient(w http.ResponseWriter, r *h
 
 // deleteRecipient handles DELETE /api/v1/notification-channels/{id}/recipients/{recipientId}
 func (h *NotificationChannelHandler) deleteRecipient(w http.ResponseWriter, r *http.Request, recipientID int64) {
-	if !h.requireNotificationChannelPermission(w, r) {
+	if !h.checkPermission(w, r) {
 		return
 	}
 
@@ -698,7 +691,7 @@ type TestChannelRequest struct {
 
 // testChannel handles POST /api/v1/notification-channels/{id}/test
 func (h *NotificationChannelHandler) testChannel(w http.ResponseWriter, r *http.Request, channelID int64) {
-	if !h.requireNotificationChannelPermission(w, r) {
+	if !h.checkPermission(w, r) {
 		return
 	}
 

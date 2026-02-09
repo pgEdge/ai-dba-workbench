@@ -37,12 +37,10 @@ func TestNewChannelOverrideHandler(t *testing.T) {
 }
 
 func TestChannelOverrideHandler_HandleNotConfigured(t *testing.T) {
-	handler := NewChannelOverrideHandler(nil, nil, nil)
-
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/channel-overrides/server/1", nil)
 	rec := httptest.NewRecorder()
 
-	handler.handleNotConfigured(rec, req)
+	HandleNotConfigured("Channel override management")(rec, req)
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("Expected status %d, got %d", http.StatusServiceUnavailable, rec.Code)

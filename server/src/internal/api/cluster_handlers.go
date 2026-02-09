@@ -61,10 +61,11 @@ type AssignServerRequest struct {
 func (h *ClusterHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(http.HandlerFunc) http.HandlerFunc) {
 	if h.datastore == nil {
 		// Datastore not configured, register handlers that return appropriate errors
-		mux.HandleFunc("/api/v1/clusters", authWrapper(h.handleNotConfigured))
-		mux.HandleFunc("/api/v1/clusters/", authWrapper(h.handleNotConfigured))
-		mux.HandleFunc("/api/v1/cluster-groups", authWrapper(h.handleNotConfigured))
-		mux.HandleFunc("/api/v1/cluster-groups/", authWrapper(h.handleNotConfigured))
+		notConfigured := HandleNotConfigured("Cluster management")
+		mux.HandleFunc("/api/v1/clusters", authWrapper(notConfigured))
+		mux.HandleFunc("/api/v1/clusters/", authWrapper(notConfigured))
+		mux.HandleFunc("/api/v1/cluster-groups", authWrapper(notConfigured))
+		mux.HandleFunc("/api/v1/cluster-groups/", authWrapper(notConfigured))
 		return
 	}
 
@@ -77,12 +78,6 @@ func (h *ClusterHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(htt
 	// Cluster group endpoints
 	mux.HandleFunc("/api/v1/cluster-groups", authWrapper(h.handleClusterGroups))
 	mux.HandleFunc("/api/v1/cluster-groups/", authWrapper(h.handleClusterGroupSubpath))
-}
-
-// handleNotConfigured returns an error when datastore is not configured
-func (h *ClusterHandler) handleNotConfigured(w http.ResponseWriter, r *http.Request) {
-	RespondError(w, http.StatusServiceUnavailable,
-		"Cluster management is not available. The datastore is not configured.")
 }
 
 // handleClusters handles GET /api/v1/clusters (returns topology with manual groups and auto-detected servers)

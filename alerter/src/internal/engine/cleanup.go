@@ -44,30 +44,56 @@ func (e *Engine) checkAlertResolved(ctx context.Context, alert *database.Alert) 
 		return
 	}
 
-	// Get current metric value
-	value, connectionID, _, err := e.datastore.GetLatestMetricValue(ctx, *alert.MetricName)
+	// Get current metric values for all connections/databases
+	values, err := e.datastore.GetLatestMetricValues(ctx, *alert.MetricName)
 	if err != nil {
+		// No data returned for this metric at all — the condition
+		// no longer exists (e.g. all values filtered out), so clear
+		e.clearResolvedAlert(ctx, alert, 0)
 		return
 	}
 
-	// Only check if it's the same connection
-	if connectionID != alert.ConnectionID {
+	// Find the metric value matching this alert's connection and database
+	var found bool
+	var value float64
+	for _, mv := range values {
+		if mv.ConnectionID != alert.ConnectionID {
+			continue
+		}
+		// Match database name if the alert has one
+		if alert.DatabaseName != nil {
+			if mv.DatabaseName == nil || *mv.DatabaseName != *alert.DatabaseName {
+				continue
+			}
+		}
+		found = true
+		value = mv.Value
+		break
+	}
+
+	if !found {
+		// Metric no longer reports for this connection/database — clear
+		e.clearResolvedAlert(ctx, alert, 0)
 		return
 	}
 
 	// Check if threshold is still violated
 	stillViolated := e.checkThreshold(value, *alert.Operator, *alert.ThresholdValue)
-
 	if !stillViolated {
-		e.log("Alert resolved: %s (%.2f no longer %s %.2f)", alert.Title, value, *alert.Operator, *alert.ThresholdValue)
-		if err := e.datastore.ClearAlert(ctx, alert.ID); err != nil {
-			e.log("ERROR: Failed to clear alert: %v", err)
-			return
-		}
-
-		// Queue clear notification for async processing by worker pool
-		e.queueNotification(alert, database.NotificationTypeAlertClear)
+		e.clearResolvedAlert(ctx, alert, value)
 	}
+}
+
+// clearResolvedAlert clears an alert and queues a notification
+func (e *Engine) clearResolvedAlert(ctx context.Context, alert *database.Alert, value float64) {
+	e.log("Alert resolved: %s (%.2f no longer %s %.2f)", alert.Title, value, *alert.Operator, *alert.ThresholdValue)
+	if err := e.datastore.ClearAlert(ctx, alert.ID); err != nil {
+		e.log("ERROR: Failed to clear alert: %v", err)
+		return
+	}
+
+	// Queue clear notification for async processing by worker pool
+	e.queueNotification(alert, database.NotificationTypeAlertClear)
 }
 
 // cleanupOldData removes data older than retention period

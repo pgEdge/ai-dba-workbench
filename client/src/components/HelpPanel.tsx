@@ -9,6 +9,7 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
+import { ThemeMode } from '../types/theme';
 import {
     Drawer,
     Box,
@@ -1056,7 +1057,7 @@ interface HelpPanelProps {
     open: boolean;
     onClose: () => void;
     helpContext: string | null;
-    mode: string;
+    mode: ThemeMode;
 }
 
 const HelpPanel: React.FC<HelpPanelProps> = ({ open, onClose, helpContext, mode: _mode }) => {

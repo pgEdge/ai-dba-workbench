@@ -9,6 +9,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { ThemeMode } from '../../types/theme';
 import {
     Box,
     Typography,
@@ -154,7 +155,7 @@ interface UserPrivilegesResponse {
 }
 
 interface AdminTokenScopesProps {
-    mode: string;
+    mode: ThemeMode;
 }
 
 const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {

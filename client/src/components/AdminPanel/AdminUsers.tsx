@@ -9,6 +9,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { ThemeMode } from '../../types/theme';
 import {
     Box,
     Typography,
@@ -62,7 +63,7 @@ import {
 const API_BASE_URL = '/api/v1';
 
 interface AdminUsersProps {
-    mode: string;
+    mode: ThemeMode;
 }
 
 const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {

@@ -11,6 +11,7 @@
  */
 
 import React, { useState } from 'react';
+import { ThemeMode } from '../types/theme';
 import {
     AppBar,
     Toolbar,
@@ -160,7 +161,7 @@ const signOutTypographyProps = {
 
 interface HeaderProps {
     onToggleTheme: () => void;
-    mode: string;
+    mode: ThemeMode;
     helpContext: string | null;
 }
 

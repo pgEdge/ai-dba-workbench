@@ -11,6 +11,7 @@
  */
 
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
+import { ThemeMode } from '../../types/theme';
 import { useAuth } from '../../contexts/AuthContext';
 import { useCluster } from '../../contexts/ClusterContext';
 import { useAlerts } from '../../contexts/AlertsContext';
@@ -263,7 +264,7 @@ interface ClusterNavigatorProps {
     onSelectEstate?: () => void;
     onRefresh?: () => void;
     loading?: boolean;
-    mode?: string;
+    mode?: ThemeMode;
     defaultWidth?: number;
     minWidth?: number;
     maxWidth?: number;

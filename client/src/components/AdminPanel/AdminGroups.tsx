@@ -9,6 +9,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { ThemeMode } from '../../types/theme';
 import {
     Box,
     Typography,
@@ -71,7 +72,7 @@ import {
 const API_BASE_URL = '/api/v1';
 
 interface AdminGroupsProps {
-    mode: string;
+    mode: ThemeMode;
 }
 
 const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {

@@ -9,6 +9,7 @@
  */
 
 import React, { useState, useMemo } from 'react';
+import { ThemeMode } from '../../types/theme';
 import {
     Dialog,
     AppBar,
@@ -48,7 +49,7 @@ interface NavItem {
     id: string;
     label: string;
     permission: string;
-    Component: React.FC<{ mode: string }>;
+    Component: React.FC<{ mode: ThemeMode }>;
 }
 
 interface NavSection {
@@ -87,7 +88,7 @@ const NAV_SECTIONS: NavSection[] = [
 interface AdminPanelProps {
     open: boolean;
     onClose: () => void;
-    mode: string;
+    mode: ThemeMode;
 }
 
 const AdminPanel: React.FC<AdminPanelProps> = ({ open, onClose, mode }) => {

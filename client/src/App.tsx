@@ -20,6 +20,7 @@ import Login from './components/Login';
 import ClusterNavigator from './components/ClusterNavigator';
 import StatusPanel from './components/StatusPanel';
 import { createPgedgeTheme, loginTheme } from './theme/pgedgeTheme';
+import { ThemeMode } from './types/theme';
 
 // Style constants
 const styles = {
@@ -106,7 +107,7 @@ const AppContent = () => {
 };
 
 interface MainLayoutProps {
-    mode: string;
+    mode: ThemeMode;
     onToggleTheme: () => void;
 }
 

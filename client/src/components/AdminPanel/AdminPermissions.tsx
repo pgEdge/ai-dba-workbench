@@ -9,6 +9,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { ThemeMode } from '../../types/theme';
 import {
     Box,
     Typography,
@@ -89,7 +90,7 @@ const formatMcpName = (permission) => {
 };
 
 interface AdminPermissionsProps {
-    mode: string;
+    mode: ThemeMode;
 }
 
 const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode: _mode }) => {

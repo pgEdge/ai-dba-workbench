@@ -29,6 +29,7 @@ import {
     Undo as UnackIcon,
     Psychology as AnalyzeIcon,
     TableChart as TableIcon,
+    TuneRounded,
 } from '@mui/icons-material';
 import {
     getSeverityColors,
@@ -50,7 +51,7 @@ import {
 /**
  * GroupedAlertInstance - A single instance row within a grouped alert panel
  */
-const GroupedAlertInstance = ({ alert, showServer, onAcknowledge, onUnacknowledge, onAnalyze }) => {
+const GroupedAlertInstance = ({ alert, showServer, onAcknowledge, onUnacknowledge, onAnalyze, onEditOverride }) => {
     const theme = useTheme();
     const severityColors = getSeverityColors(theme);
     const isAcknowledged = !!alert.acknowledgedAt;
@@ -109,6 +110,14 @@ const GroupedAlertInstance = ({ alert, showServer, onAcknowledge, onUnacknowledg
         },
     }), [theme.palette.secondary]);
 
+    const overrideButtonSx = useMemo(() => ({
+        p: 0.25,
+        color: theme.palette.info.main,
+        '&:hover': {
+            bgcolor: alpha(theme.palette.info.main, 0.12),
+        },
+    }), [theme.palette.info]);
+
     const ackButtonSx = useMemo(() => ({
         p: 0.25,
         color: isAcknowledged ? theme.palette.grey[500] : baseColor,
@@ -162,6 +171,22 @@ const GroupedAlertInstance = ({ alert, showServer, onAcknowledge, onUnacknowledg
                 </IconButton>
             </Tooltip>
 
+            {/* Edit override button */}
+            {alert.ruleId && (
+                <Tooltip title="Edit alert override" placement="left">
+                    <IconButton
+                        size="small"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onEditOverride?.(alert);
+                        }}
+                        sx={overrideButtonSx}
+                    >
+                        <TuneRounded sx={ICON_14_SX} />
+                    </IconButton>
+                </Tooltip>
+            )}
+
             {/* Ack/Unack button */}
             <Tooltip title={isAcknowledged ? 'Restore to active' : 'Acknowledge'} placement="left">
                 <IconButton
@@ -190,7 +215,7 @@ const GroupedAlertInstance = ({ alert, showServer, onAcknowledge, onUnacknowledg
 /**
  * GroupedAlertItem - Display a group of alerts with the same title in a single panel
  */
-const GroupedAlertItem = ({ title, alerts, showServer = false, onAcknowledge, onUnacknowledge, onAnalyze }) => {
+const GroupedAlertItem = ({ title, alerts, showServer = false, onAcknowledge, onUnacknowledge, onAnalyze, onEditOverride }) => {
     const theme = useTheme();
     const severityColors = getSeverityColors(theme);
     const [expanded, setExpanded] = useState(true);
@@ -277,6 +302,7 @@ const GroupedAlertItem = ({ title, alerts, showServer = false, onAcknowledge, on
                             onAcknowledge={onAcknowledge}
                             onUnacknowledge={onUnacknowledge}
                             onAnalyze={onAnalyze}
+                            onEditOverride={onEditOverride}
                         />
                     ))}
                 </Box>

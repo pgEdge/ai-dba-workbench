@@ -26,6 +26,7 @@ import {
     Undo as UnackIcon,
     Psychology as AnalyzeIcon,
     TableChart as TableIcon,
+    TuneRounded,
 } from '@mui/icons-material';
 import {
     getSeverityColors,
@@ -46,7 +47,7 @@ import {
 /**
  * AlertItem - Compact alert entry with severity indicator and ack functionality
  */
-const AlertItem = ({ alert, showServer = false, onAcknowledge, onUnacknowledge, onAnalyze }) => {
+const AlertItem = ({ alert, showServer = false, onAcknowledge, onUnacknowledge, onAnalyze, onEditOverride }) => {
     const theme = useTheme();
     const severityColors = getSeverityColors(theme);
     const isAcknowledged = !!alert.acknowledgedAt;
@@ -121,6 +122,14 @@ const AlertItem = ({ alert, showServer = false, onAcknowledge, onUnacknowledge, 
             bgcolor: alpha(theme.palette.secondary.main, 0.12),
         },
     }), [theme.palette.secondary]);
+
+    const overrideButtonSx = useMemo(() => ({
+        p: 0.5,
+        color: theme.palette.info.main,
+        '&:hover': {
+            bgcolor: alpha(theme.palette.info.main, 0.12),
+        },
+    }), [theme.palette.info]);
 
     const ackButtonSx = useMemo(() => ({
         p: 0.5,
@@ -217,6 +226,22 @@ const AlertItem = ({ alert, showServer = false, onAcknowledge, onUnacknowledge, 
                     <AnalyzeIcon sx={{ ...ICON_16_SX, ...(alert.aiAnalysis && { color: 'success.main' }) }} />
                 </IconButton>
             </Tooltip>
+
+            {/* Edit override button */}
+            {alert.ruleId && (
+                <Tooltip title="Edit alert override" placement="left">
+                    <IconButton
+                        size="small"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onEditOverride?.(alert);
+                        }}
+                        sx={overrideButtonSx}
+                    >
+                        <TuneRounded sx={ICON_16_SX} />
+                    </IconButton>
+                </Tooltip>
+            )}
 
             {/* Ack/Unack button */}
             <Tooltip title={isAcknowledged ? 'Restore to active' : 'Acknowledge'} placement="left">

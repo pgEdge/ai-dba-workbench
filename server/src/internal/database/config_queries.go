@@ -98,6 +98,32 @@ type AlertThresholdUpdate struct {
 	Enabled   bool    `json:"enabled"`
 }
 
+// OverrideContextHierarchy contains the IDs needed to resolve override scope.
+type OverrideContextHierarchy struct {
+	ConnectionID int     `json:"connection_id"`
+	ClusterID    *int    `json:"cluster_id"`
+	GroupID      *int    `json:"group_id"`
+	ServerName   string  `json:"server_name"`
+	ClusterName  *string `json:"cluster_name"`
+	GroupName    *string `json:"group_name"`
+}
+
+// OverrideDetail holds the values for a single scope override.
+type OverrideDetail struct {
+	Operator  string  `json:"operator"`
+	Threshold float64 `json:"threshold"`
+	Severity  string  `json:"severity"`
+	Enabled   bool    `json:"enabled"`
+}
+
+// OverrideContext contains the full context for editing an alert override
+// from an alert instance.
+type OverrideContext struct {
+	Hierarchy OverrideContextHierarchy   `json:"hierarchy"`
+	Rule      AlertRule                  `json:"rule"`
+	Overrides map[string]*OverrideDetail `json:"overrides"`
+}
+
 // Valid operators for alert rules
 var validOperators = map[string]bool{
 	">": true, ">=": true, "<": true, "<=": true, "=": true, "!=": true,
@@ -463,6 +489,104 @@ func (d *Datastore) DeleteAlertThreshold(ctx context.Context, scope string, scop
 		return fmt.Errorf("failed to delete alert threshold: %w", err)
 	}
 	return nil
+}
+
+// GetOverrideContext returns the hierarchy, rule defaults, and existing
+// overrides at all scopes for a given connection and rule. The frontend
+// uses this data to populate the alert override edit dialog.
+func (d *Datastore) GetOverrideContext(ctx context.Context, connectionID int, ruleID int64) (*OverrideContext, error) {
+	// 1. Get hierarchy: connection -> cluster -> group
+	var hierarchy OverrideContextHierarchy
+	err := d.pool.QueryRow(ctx, `
+		SELECT c.id, cl.id, cg.id,
+		       COALESCE(c.name, ''), COALESCE(cl.name, ''), COALESCE(cg.name, '')
+		FROM connections c
+		LEFT JOIN clusters cl ON c.cluster_id = cl.id
+		LEFT JOIN cluster_groups cg ON cl.group_id = cg.id
+		WHERE c.id = $1`, connectionID).Scan(
+		&hierarchy.ConnectionID, &hierarchy.ClusterID, &hierarchy.GroupID,
+		&hierarchy.ServerName, &hierarchy.ClusterName, &hierarchy.GroupName,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get connection hierarchy: %w", err)
+	}
+
+	// 2. Get rule defaults
+	rule, err := d.GetAlertRule(ctx, ruleID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get alert rule: %w", err)
+	}
+
+	// 3. Get overrides at all applicable scopes
+	result := &OverrideContext{
+		Hierarchy: hierarchy,
+		Rule:      *rule,
+		Overrides: map[string]*OverrideDetail{
+			"server":  nil,
+			"cluster": nil,
+			"group":   nil,
+		},
+	}
+
+	// Server-level override
+	var sOp, sSev *string
+	var sThresh *float64
+	var sEnabled *bool
+	err = d.pool.QueryRow(ctx, `
+		SELECT operator, threshold, severity, enabled
+		FROM alert_thresholds
+		WHERE scope = 'server' AND rule_id = $1 AND connection_id = $2`,
+		ruleID, connectionID).Scan(&sOp, &sThresh, &sSev, &sEnabled)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("failed to get server override: %w", err)
+	}
+	if err == nil && sOp != nil {
+		result.Overrides["server"] = &OverrideDetail{
+			Operator: *sOp, Threshold: *sThresh, Severity: *sSev, Enabled: *sEnabled,
+		}
+	}
+
+	// Cluster-level override (only if connection belongs to a cluster)
+	if hierarchy.ClusterID != nil {
+		var cOp, cSev *string
+		var cThresh *float64
+		var cEnabled *bool
+		err = d.pool.QueryRow(ctx, `
+			SELECT operator, threshold, severity, enabled
+			FROM alert_thresholds
+			WHERE scope = 'cluster' AND rule_id = $1 AND cluster_id = $2`,
+			ruleID, *hierarchy.ClusterID).Scan(&cOp, &cThresh, &cSev, &cEnabled)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("failed to get cluster override: %w", err)
+		}
+		if err == nil && cOp != nil {
+			result.Overrides["cluster"] = &OverrideDetail{
+				Operator: *cOp, Threshold: *cThresh, Severity: *cSev, Enabled: *cEnabled,
+			}
+		}
+	}
+
+	// Group-level override (only if cluster belongs to a group)
+	if hierarchy.GroupID != nil {
+		var gOp, gSev *string
+		var gThresh *float64
+		var gEnabled *bool
+		err = d.pool.QueryRow(ctx, `
+			SELECT operator, threshold, severity, enabled
+			FROM alert_thresholds
+			WHERE scope = 'group' AND rule_id = $1 AND group_id = $2`,
+			ruleID, *hierarchy.GroupID).Scan(&gOp, &gThresh, &gSev, &gEnabled)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("failed to get group override: %w", err)
+		}
+		if err == nil && gOp != nil {
+			result.Overrides["group"] = &OverrideDetail{
+				Operator: *gOp, Threshold: *gThresh, Severity: *gSev, Enabled: *gEnabled,
+			}
+		}
+	}
+
+	return result, nil
 }
 
 // ProbeOverride represents a global probe default with its optional scope-level override

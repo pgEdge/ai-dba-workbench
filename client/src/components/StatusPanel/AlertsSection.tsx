@@ -48,7 +48,7 @@ import {
 /**
  * AlertsSection - Collapsible alerts list with active/acknowledged separation
  */
-const AlertsSection = ({ alerts, loading, showServer = false, onAcknowledge, onUnacknowledge, onAnalyze }) => {
+const AlertsSection = ({ alerts, loading, showServer = false, onAcknowledge, onUnacknowledge, onAnalyze, onEditOverride }) => {
     const theme = useTheme();
     const severityColors = getSeverityColors(theme);
     const [expanded, setExpanded] = useState(true);
@@ -150,6 +150,7 @@ const AlertsSection = ({ alerts, loading, showServer = false, onAcknowledge, onU
                     onAcknowledge={onAcknowledge}
                     onUnacknowledge={onUnacknowledge}
                     onAnalyze={onAnalyze}
+                    onEditOverride={onEditOverride}
                 />
             );
         }
@@ -162,6 +163,7 @@ const AlertsSection = ({ alerts, loading, showServer = false, onAcknowledge, onU
                 onAcknowledge={onAcknowledge}
                 onUnacknowledge={onUnacknowledge}
                 onAnalyze={onAnalyze}
+                onEditOverride={onEditOverride}
             />
         );
     };

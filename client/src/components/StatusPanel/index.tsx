@@ -29,6 +29,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import EventTimeline from '../EventTimeline';
 import BlackoutPanel from '../BlackoutPanel';
 import AlertAnalysisDialog from '../AlertAnalysisDialog';
+import AlertOverrideEditDialog from '../AlertOverrideEditDialog';
 import BlackoutManagementDialog from '../BlackoutManagementDialog';
 import SelectionHeader from './SelectionHeader';
 import ServerInfoCard from './ServerInfoCard';
@@ -63,6 +64,8 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
     const [selectedAlertForAck, setSelectedAlertForAck] = useState(null);
     const [analysisDialogOpen, setAnalysisDialogOpen] = useState(false);
     const [analysisAlert, setAnalysisAlert] = useState(null);
+    const [overrideDialogOpen, setOverrideDialogOpen] = useState(false);
+    const [overrideAlert, setOverrideAlert] = useState(null);
 
     const statusColors = useMemo(() => getStatusColors(theme), [theme]);
 
@@ -164,6 +167,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
             objectName: alert.object_name,
             // Threshold info
             alertType: alert.alert_type,
+            ruleId: alert.rule_id,
             metricValue: alert.metric_value,
             metricUnit: alert.metric_unit,
             thresholdValue: alert.threshold_value,
@@ -189,6 +193,12 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
     const handleAnalyze = (alert) => {
         setAnalysisAlert(alert);
         setAnalysisDialogOpen(true);
+    };
+
+    // Handle opening override edit dialog
+    const handleEditOverride = (alert) => {
+        setOverrideAlert(alert);
+        setOverrideDialogOpen(true);
     };
 
     // Handle confirming acknowledgment
@@ -421,6 +431,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                     onAcknowledge={handleAcknowledge}
                     onUnacknowledge={handleUnacknowledge}
                     onAnalyze={handleAnalyze}
+                    onEditOverride={handleEditOverride}
                 />
             </Box>
 
@@ -444,6 +455,16 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                     setAnalysisAlert(null);
                 }}
                 isDark={isDark}
+            />
+
+            {/* Alert Override Edit Dialog */}
+            <AlertOverrideEditDialog
+                open={overrideDialogOpen}
+                alert={overrideAlert}
+                onClose={() => {
+                    setOverrideDialogOpen(false);
+                    setOverrideAlert(null);
+                }}
             />
 
             {/* Blackout Management Dialog */}

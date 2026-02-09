@@ -61,14 +61,21 @@ func TestMigration_PgSettings(t *testing.T) {
 		t.Fatalf("Migration failed: %v", err)
 	}
 
-	// Verify schema version is 2 (latest migration)
+	// Verify schema version matches the latest registered migration
+	expectedVersion := 0
+	for _, m := range sm.migrations {
+		if m.Version > expectedVersion {
+			expectedVersion = m.Version
+		}
+	}
+
 	var version int
 	err = conn.QueryRow(ctx, "SELECT MAX(version) FROM schema_version").Scan(&version)
 	if err != nil {
 		t.Fatalf("Failed to query schema version: %v", err)
 	}
-	if version != 4 {
-		t.Errorf("Expected schema version 4, got %d", version)
+	if version != expectedVersion {
+		t.Errorf("Expected schema version %d, got %d", expectedVersion, version)
 	}
 
 	// Verify pg_settings table exists

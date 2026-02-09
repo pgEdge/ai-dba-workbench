@@ -540,7 +540,7 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 				       ) as rn
 				FROM metrics.pg_stat_all_tables
 				WHERE collected_at > NOW() - INTERVAL '15 minutes'
-				  AND (n_live_tup + n_dead_tup) > 0
+				  AND (n_live_tup + n_dead_tup) >= 1000
 			),
 			calculated AS (
 				SELECT connection_id,

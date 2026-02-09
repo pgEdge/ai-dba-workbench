@@ -226,8 +226,11 @@ Alerts when tables have accumulated too many dead tuples.
 | Default Threshold | 10 |
 | Default Severity | warning |
 
-Dead tuples indicate vacuum is not keeping up with updates. Check
-vacuum settings and consider running manual vacuum.
+Dead tuples indicate vacuum is not keeping up with updates.
+Check vacuum settings and consider running manual vacuum.
+The alerter excludes tables with fewer than 1,000 total tuples
+from evaluation. This filter reduces noise from small catalog
+and system tables.
 
 ### High Table Bloat
 

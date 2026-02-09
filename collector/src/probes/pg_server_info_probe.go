@@ -11,9 +11,11 @@ package probes
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/pkg/logger"
 )
@@ -211,7 +213,7 @@ func (p *PgServerInfoProbe) hasDataChanged(ctx context.Context, datastoreConn *p
 	)
 	if err != nil {
 		// If no rows found, this is the first collection
-		if err.Error() == "no rows in result set" {
+		if errors.Is(err, pgx.ErrNoRows) {
 			logger.Infof("No previous pg_server_info data found for connection %d", connectionID)
 			return true, nil
 		}

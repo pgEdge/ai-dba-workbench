@@ -12,6 +12,7 @@ package api
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -261,7 +262,8 @@ func (h *BlackoutHandler) listBlackouts(w http.ResponseWriter, r *http.Request) 
 
 	result, err := h.datastore.ListBlackouts(r.Context(), filter)
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch blackouts: "+err.Error())
+		log.Printf("[ERROR] Failed to fetch blackouts: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch blackouts")
 		return
 	}
 
@@ -276,7 +278,8 @@ func (h *BlackoutHandler) getBlackout(w http.ResponseWriter, r *http.Request, id
 			RespondError(w, http.StatusNotFound, "Blackout not found")
 			return
 		}
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch blackout: "+err.Error())
+		log.Printf("[ERROR] Failed to fetch blackout: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch blackout")
 		return
 	}
 
@@ -296,6 +299,7 @@ func (h *BlackoutHandler) createBlackout(w http.ResponseWriter, r *http.Request)
 
 	// Validate scope
 	if err := validateBlackoutScope(req.Scope, req.GroupID, req.ClusterID, req.ConnectionID); err != nil {
+		log.Printf("[ERROR] Request error: %v", err)
 		RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -335,7 +339,8 @@ func (h *BlackoutHandler) createBlackout(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := h.datastore.CreateBlackout(r.Context(), blackout); err != nil {
-		RespondError(w, http.StatusInternalServerError, "Failed to create blackout: "+err.Error())
+		log.Printf("[ERROR] Failed to create blackout: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to create blackout")
 		return
 	}
 
@@ -364,7 +369,8 @@ func (h *BlackoutHandler) updateBlackout(w http.ResponseWriter, r *http.Request,
 			RespondError(w, http.StatusNotFound, "Blackout not found")
 			return
 		}
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch blackout: "+err.Error())
+		log.Printf("[ERROR] Failed to fetch blackout: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch blackout")
 		return
 	}
 
@@ -392,14 +398,16 @@ func (h *BlackoutHandler) updateBlackout(w http.ResponseWriter, r *http.Request,
 			RespondError(w, http.StatusNotFound, "Blackout not found")
 			return
 		}
-		RespondError(w, http.StatusInternalServerError, "Failed to update blackout: "+err.Error())
+		log.Printf("[ERROR] Failed to update blackout: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to update blackout")
 		return
 	}
 
 	// Return updated blackout
 	updated, err := h.datastore.GetBlackout(r.Context(), id)
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch updated blackout: "+err.Error())
+		log.Printf("[ERROR] Failed to fetch updated blackout: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch updated blackout")
 		return
 	}
 
@@ -417,7 +425,8 @@ func (h *BlackoutHandler) deleteBlackout(w http.ResponseWriter, r *http.Request,
 			RespondError(w, http.StatusNotFound, "Blackout not found")
 			return
 		}
-		RespondError(w, http.StatusInternalServerError, "Failed to delete blackout: "+err.Error())
+		log.Printf("[ERROR] Failed to delete blackout: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to delete blackout")
 		return
 	}
 
@@ -435,14 +444,16 @@ func (h *BlackoutHandler) stopBlackout(w http.ResponseWriter, r *http.Request, i
 			RespondError(w, http.StatusNotFound, "Blackout not found or not currently active")
 			return
 		}
-		RespondError(w, http.StatusInternalServerError, "Failed to stop blackout: "+err.Error())
+		log.Printf("[ERROR] Failed to stop blackout: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to stop blackout")
 		return
 	}
 
 	// Return the stopped blackout
 	stopped, err := h.datastore.GetBlackout(r.Context(), id)
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch stopped blackout: "+err.Error())
+		log.Printf("[ERROR] Failed to fetch stopped blackout: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch stopped blackout")
 		return
 	}
 
@@ -475,7 +486,8 @@ func (h *BlackoutHandler) listBlackoutSchedules(w http.ResponseWriter, r *http.R
 
 	result, err := h.datastore.ListBlackoutSchedules(r.Context(), filter)
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch blackout schedules: "+err.Error())
+		log.Printf("[ERROR] Failed to fetch blackout schedules: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch blackout schedules")
 		return
 	}
 
@@ -490,7 +502,8 @@ func (h *BlackoutHandler) getBlackoutSchedule(w http.ResponseWriter, r *http.Req
 			RespondError(w, http.StatusNotFound, "Blackout schedule not found")
 			return
 		}
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch blackout schedule: "+err.Error())
+		log.Printf("[ERROR] Failed to fetch blackout schedule: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch blackout schedule")
 		return
 	}
 
@@ -510,6 +523,7 @@ func (h *BlackoutHandler) createBlackoutSchedule(w http.ResponseWriter, r *http.
 
 	// Validate scope
 	if err := validateBlackoutScope(req.Scope, req.GroupID, req.ClusterID, req.ConnectionID); err != nil {
+		log.Printf("[ERROR] Request error: %v", err)
 		RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -560,7 +574,8 @@ func (h *BlackoutHandler) createBlackoutSchedule(w http.ResponseWriter, r *http.
 	}
 
 	if err := h.datastore.CreateBlackoutSchedule(r.Context(), schedule); err != nil {
-		RespondError(w, http.StatusInternalServerError, "Failed to create blackout schedule: "+err.Error())
+		log.Printf("[ERROR] Failed to create blackout schedule: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to create blackout schedule")
 		return
 	}
 
@@ -580,6 +595,7 @@ func (h *BlackoutHandler) updateBlackoutSchedule(w http.ResponseWriter, r *http.
 
 	// Validate scope
 	if err := validateBlackoutScope(req.Scope, req.GroupID, req.ClusterID, req.ConnectionID); err != nil {
+		log.Printf("[ERROR] Request error: %v", err)
 		RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -628,7 +644,8 @@ func (h *BlackoutHandler) updateBlackoutSchedule(w http.ResponseWriter, r *http.
 			RespondError(w, http.StatusNotFound, "Blackout schedule not found")
 			return
 		}
-		RespondError(w, http.StatusInternalServerError, "Failed to update blackout schedule: "+err.Error())
+		log.Printf("[ERROR] Failed to update blackout schedule: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to update blackout schedule")
 		return
 	}
 
@@ -646,7 +663,8 @@ func (h *BlackoutHandler) deleteBlackoutSchedule(w http.ResponseWriter, r *http.
 			RespondError(w, http.StatusNotFound, "Blackout schedule not found")
 			return
 		}
-		RespondError(w, http.StatusInternalServerError, "Failed to delete blackout schedule: "+err.Error())
+		log.Printf("[ERROR] Failed to delete blackout schedule: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to delete blackout schedule")
 		return
 	}
 

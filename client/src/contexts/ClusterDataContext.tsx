@@ -7,6 +7,7 @@
  *
  *-------------------------------------------------------------------------
  */
+/* eslint-disable react-refresh/only-export-components */
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { useAuth } from './AuthContext';
 
@@ -81,7 +82,7 @@ const ClusterDataContext = createContext<ClusterDataContextValue | null>(null);
  * This allows us to skip re-renders when the data hasn't changed.
  */
 export const generateDataFingerprint = (data: ClusterGroup[]): string => {
-    if (!data || data.length === 0) return '';
+    if (!data || data.length === 0) {return '';}
 
     // Create a fingerprint that captures the essential structure and values
     const fingerprint = data.map(group => {
@@ -99,7 +100,7 @@ export const generateDataFingerprint = (data: ClusterGroup[]): string => {
  * Recursively collect server fingerprints including nested children
  */
 export const collectServerFingerprints = (servers: ClusterServer[]): string => {
-    if (!servers || servers.length === 0) return '';
+    if (!servers || servers.length === 0) {return '';}
     return servers.map(server => {
         const childFingerprints = collectServerFingerprints(server.children || []);
         return `${server.id}:${server.name}:${server.status}:${server.connection_error || ''}:${server.primary_role || server.role || ''}${childFingerprints ? ':' + childFingerprints : ''}`;
@@ -126,7 +127,7 @@ export const transformConnectionsToHierarchy = (connections: ConnectionRecord[])
             });
         }
 
-        const group = groups.get(groupName)!;
+        const group = groups.get(groupName) as GroupBuildEntry;
 
         if (clusterName) {
             // Server belongs to a cluster
@@ -137,15 +138,18 @@ export const transformConnectionsToHierarchy = (connections: ConnectionRecord[])
                     servers: [],
                 });
             }
-            group.clusters.get(clusterName)!.servers.push({
-                id: conn.id,
-                name: conn.name,
-                host: conn.host,
-                port: conn.port,
-                status: conn.status || 'unknown',
-                role: conn.role || null,
-                version: conn.version || null,
-            });
+            const cluster = group.clusters.get(clusterName);
+            if (cluster) {
+                cluster.servers.push({
+                    id: conn.id,
+                    name: conn.name,
+                    host: conn.host,
+                    port: conn.port,
+                    status: conn.status || 'unknown',
+                    role: conn.role || null,
+                    version: conn.version || null,
+                });
+            }
         } else {
             // Standalone server - create a "cluster" with just this server
             const standaloneClusterId = `standalone-${conn.id}`;
@@ -195,7 +199,7 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
      * Only shows loading state on initial load, not during auto-refresh.
      */
     const fetchClusterData = useCallback(async (): Promise<void> => {
-        if (!user) return;
+        if (!user) {return;}
 
         // Only show loading spinner on initial load
         if (isInitialLoadRef.current) {
@@ -237,12 +241,12 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
             }
 
             // Generate fingerprint for the new data
-            const newFingerprint = generateDataFingerprint(newData!);
+            const newFingerprint = generateDataFingerprint(newData ?? []);
 
             // Only update state if data has actually changed
             if (newFingerprint !== dataFingerprintRef.current) {
                 dataFingerprintRef.current = newFingerprint;
-                setClusterData(newData!);
+                setClusterData(newData ?? []);
             }
 
             // Always update last refresh time
@@ -275,7 +279,7 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
     // Auto-refresh effect - uses fetchRef to avoid resetting the
     // interval when fetchClusterData's reference changes
     useEffect(() => {
-        if (!autoRefreshEnabled || !user) return;
+        if (!autoRefreshEnabled || !user) {return;}
 
         const intervalId = setInterval(() => {
             fetchRef.current();

@@ -51,7 +51,6 @@ import {
     loadingContainerSx,
     emptyRowSx,
     emptyRowTextSx,
-    subsectionLabelSx,
     getContainedButtonSx,
     getDeleteIconSx,
     getTableContainerSx,
@@ -151,7 +150,7 @@ const AdminEmailChannels: React.FC = () => {
             const response = await fetch(`${API_BASE_URL}/notification-channels`, {
                 credentials: 'include',
             });
-            if (!response.ok) throw new Error('Failed to fetch notification channels');
+            if (!response.ok) {throw new Error('Failed to fetch notification channels');}
             const data = await response.json();
             const allChannels = data.notification_channels || data || [];
             const emailChannels: EmailChannel[] = allChannels
@@ -195,7 +194,7 @@ const AdminEmailChannels: React.FC = () => {
                 `${API_BASE_URL}/notification-channels/${channelId}/recipients`,
                 { credentials: 'include' }
             );
-            if (!response.ok) throw new Error('Failed to fetch recipients');
+            if (!response.ok) {throw new Error('Failed to fetch recipients');}
             const data = await response.json();
             const raw = data.recipients || data || [];
             const mapped: EmailRecipient[] = raw.map(
@@ -257,7 +256,7 @@ const AdminEmailChannels: React.FC = () => {
     };
 
     const handleCloseDialog = () => {
-        if (saving || recipientSaving) return;
+        if (saving || recipientSaving) {return;}
         setDialogOpen(false);
         setEditingChannel(null);
         setRecipients([]);
@@ -424,7 +423,7 @@ const AdminEmailChannels: React.FC = () => {
     };
 
     const handleDeleteChannel = async () => {
-        if (!deleteChannel) return;
+        if (!deleteChannel) {return;}
         try {
             setDeleteLoading(true);
             const response = await fetch(
@@ -509,7 +508,7 @@ const AdminEmailChannels: React.FC = () => {
     // --- Recipients management ---
 
     const handleAddRecipient = async () => {
-        if (!newRecipientEmail.trim()) return;
+        if (!newRecipientEmail.trim()) {return;}
 
         // In create mode, add to pending recipients locally
         if (!editingChannel) {
@@ -558,7 +557,7 @@ const AdminEmailChannels: React.FC = () => {
     };
 
     const handleToggleRecipientEnabled = async (recipient: EmailRecipient) => {
-        if (!editingChannel) return;
+        if (!editingChannel) {return;}
         try {
             setRecipientSaving(true);
             const response = await fetch(
@@ -587,7 +586,7 @@ const AdminEmailChannels: React.FC = () => {
     };
 
     const handleDeleteRecipient = async (recipient: EmailRecipient) => {
-        if (!editingChannel) return;
+        if (!editingChannel) {return;}
         try {
             setRecipientSaving(true);
             const response = await fetch(
@@ -615,9 +614,9 @@ const AdminEmailChannels: React.FC = () => {
     // --- Helpers ---
 
     const truncateDescription = (desc: string): string => {
-        if (!desc) return '';
+        if (!desc) {return '';}
         const firstLine = desc.split('\n')[0];
-        if (firstLine.length <= 60) return firstLine;
+        if (firstLine.length <= 60) {return firstLine;}
         return firstLine.substring(0, 60) + '...';
     };
 

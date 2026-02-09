@@ -168,7 +168,7 @@ const ANALYSIS_TOOLS: AnalysisTool[] = [
  * Implements an agentic loop to gather context via tools before providing recommendations
  */
 export const useAlertAnalysis = (): UseAlertAnalysisReturn => {
-    const { user } = useAuth();
+    const { user: _user } = useAuth();
     const [analysis, setAnalysis] = useState<string | null>(null);
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
@@ -284,13 +284,13 @@ Provide remediation recommendations and any threshold tuning suggestions.`;
 
                         toolResults.push({
                             type: 'tool_result',
-                            tool_use_id: toolUse.id!,
+                            tool_use_id: toolUse.id ?? '',
                             content: resultText,
                         });
                     } catch (toolErr) {
                         toolResults.push({
                             type: 'tool_result',
-                            tool_use_id: toolUse.id!,
+                            tool_use_id: toolUse.id ?? '',
                             content: `Tool execution error: ${(toolErr as Error).message}`,
                             is_error: true,
                         });
@@ -333,7 +333,7 @@ Provide remediation recommendations and any threshold tuning suggestions.`;
         } finally {
             setLoading(false);
         }
-    }, [user]);
+    }, []);
 
     const reset = useCallback((): void => {
         setAnalysis(null);

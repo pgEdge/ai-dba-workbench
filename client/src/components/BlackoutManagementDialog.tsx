@@ -142,7 +142,7 @@ const formatTimeRemaining = (endTime: string): string => {
     const now = new Date();
     const diffMs = end.getTime() - now.getTime();
 
-    if (diffMs <= 0) return 'Ending...';
+    if (diffMs <= 0) {return 'Ending...';}
 
     const diffMins = Math.floor(diffMs / 60000);
     const diffHours = Math.floor(diffMins / 60);

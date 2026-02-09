@@ -82,9 +82,9 @@ const mcpTypeLabel = (itemType) => {
 
 const formatMcpName = (permission) => {
     const name = permission.identifier || permission.privilege || permission;
-    if (name === '*') return 'All MCP Privileges';
+    if (name === '*') {return 'All MCP Privileges';}
     const type = permission.item_type;
-    if (type) return `${mcpTypeLabel(type)}: ${name}`;
+    if (type) {return `${mcpTypeLabel(type)}: ${name}`;}
     return name;
 };
 
@@ -92,7 +92,7 @@ interface AdminPermissionsProps {
     mode: string;
 }
 
-const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode }) => {
+const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode: _mode }) => {
     const theme = useTheme();
     const { user } = useAuth();
     const isSuperuser = !!user?.isSuperuser;
@@ -137,7 +137,7 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode }) => {
                 const response = await fetch(`${API_BASE_URL}/rbac/groups`, {
                     credentials: 'include',
                 });
-                if (!response.ok) throw new Error('Failed to fetch groups');
+                if (!response.ok) {throw new Error('Failed to fetch groups');}
                 const data = await response.json();
                 setGroups(data.groups || []);
             } catch (err) {
@@ -151,7 +151,7 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode }) => {
 
     // Fetch MCP and connection permissions when group changes
     const fetchPermissions = useCallback(async (groupId) => {
-        if (!groupId) return;
+        if (!groupId) {return;}
         try {
             setMcpLoading(true);
             setConnLoading(true);
@@ -163,7 +163,7 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode }) => {
                     credentials: 'include',
                 }),
             ]);
-            if (!groupResponse.ok) throw new Error('Failed to fetch permissions');
+            if (!groupResponse.ok) {throw new Error('Failed to fetch permissions');}
             const data = await groupResponse.json();
             setMcpPermissions(data.mcp_privileges || []);
             setConnPermissions(data.connection_privileges || []);
@@ -181,14 +181,14 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode }) => {
 
     // Fetch admin permissions when group changes
     const fetchAdminPermissions = useCallback(async (groupId) => {
-        if (!groupId || !isSuperuser) return;
+        if (!groupId || !isSuperuser) {return;}
         try {
             setAdminPermsLoading(true);
             const response = await fetch(
                 `${API_BASE_URL}/rbac/groups/${groupId}/permissions`,
                 { credentials: 'include' }
             );
-            if (!response.ok) throw new Error('Failed to fetch admin permissions');
+            if (!response.ok) {throw new Error('Failed to fetch admin permissions');}
             const data = await response.json();
             setAdminPermissions(data.permissions || []);
         } catch (err) {
@@ -234,13 +234,13 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode }) => {
                     setAvailableMcpPermissions([]);
                 }
             }
-        } catch (err) {
+        } catch {
             setGrantMcpError('Failed to load available permissions');
         }
     };
 
     const handleGrantMcp = async () => {
-        if (!selectedMcpPermission || !selectedGroupId) return;
+        if (!selectedMcpPermission || !selectedGroupId) {return;}
         try {
             setGrantMcpLoading(true);
             setGrantMcpError(null);
@@ -278,7 +278,7 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode }) => {
                     credentials: 'include',
                 }
             );
-            if (!response.ok) throw new Error('Failed to revoke permission');
+            if (!response.ok) {throw new Error('Failed to revoke permission');}
             fetchPermissions(selectedGroupId);
         } catch (err) {
             setError(err.message);
@@ -286,7 +286,7 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode }) => {
     };
 
     const getConnectionName = (id) => {
-        if (id === 0) return 'All Connections';
+        if (id === 0) {return 'All Connections';}
         const conn = connections.find((c) => c.id === id);
         return conn ? conn.name : id;
     };
@@ -301,7 +301,7 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode }) => {
     };
 
     const handleGrantConn = async () => {
-        if (selectedConnectionId === '' || !selectedGroupId) return;
+        if (selectedConnectionId === '' || !selectedGroupId) {return;}
         try {
             setGrantConnLoading(true);
             setGrantConnError(null);
@@ -339,7 +339,7 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode }) => {
                     credentials: 'include',
                 }
             );
-            if (!response.ok) throw new Error('Failed to revoke permission');
+            if (!response.ok) {throw new Error('Failed to revoke permission');}
             fetchPermissions(selectedGroupId);
         } catch (err) {
             setError(err.message);
@@ -348,7 +348,7 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode }) => {
 
     // Grant admin permission
     const handleGrantAdmin = async () => {
-        if (!selectedAdminPermission || !selectedGroupId) return;
+        if (!selectedAdminPermission || !selectedGroupId) {return;}
         try {
             setGrantAdminLoading(true);
             setGrantAdminError(null);
@@ -384,7 +384,7 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode }) => {
                     credentials: 'include',
                 }
             );
-            if (!response.ok) throw new Error('Failed to revoke permission');
+            if (!response.ok) {throw new Error('Failed to revoke permission');}
             fetchAdminPermissions(selectedGroupId);
         } catch (err) {
             setError(err.message);

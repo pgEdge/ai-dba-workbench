@@ -123,7 +123,7 @@ const StatusIndicator: React.FC<StatusIndicatorProps> = ({
 
     // Wrap any status icon with a blackout overlay when active
     const withBlackoutOverlay = (icon: React.ReactElement) => {
-        if (!blackoutActive) return icon;
+        if (!blackoutActive) {return icon;}
         return (
             <Box sx={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
                 {icon}

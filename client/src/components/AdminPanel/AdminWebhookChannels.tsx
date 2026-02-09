@@ -176,7 +176,7 @@ const parseAuthCredentials = (authType: string, credentials: string): Record<str
     switch (authType) {
         case 'basic': {
             const separatorIndex = credentials.indexOf(':');
-            if (separatorIndex === -1) return { username: credentials, password: '' };
+            if (separatorIndex === -1) {return { username: credentials, password: '' };}
             return {
                 username: credentials.substring(0, separatorIndex),
                 password: credentials.substring(separatorIndex + 1),
@@ -186,7 +186,7 @@ const parseAuthCredentials = (authType: string, credentials: string): Record<str
             return { token: credentials };
         case 'api_key': {
             const separatorIndex = credentials.indexOf(':');
-            if (separatorIndex === -1) return { headerName: credentials, apiKeyValue: '' };
+            if (separatorIndex === -1) {return { headerName: credentials, apiKeyValue: '' };}
             return {
                 headerName: credentials.substring(0, separatorIndex),
                 apiKeyValue: credentials.substring(separatorIndex + 1),
@@ -246,7 +246,7 @@ const AdminWebhookChannels: React.FC = () => {
             const response = await fetch(`${API_BASE_URL}/notification-channels`, {
                 credentials: 'include',
             });
-            if (!response.ok) throw new Error('Failed to fetch notification channels');
+            if (!response.ok) {throw new Error('Failed to fetch notification channels');}
             const data = await response.json();
             const allChannels = data.notification_channels || data || [];
             const webhookChannels: WebhookChannel[] = allChannels
@@ -286,21 +286,21 @@ const AdminWebhookChannels: React.FC = () => {
 
     const headersObjectToArray = (headers: Record<string, string>): { key: string; value: string }[] => {
         const entries = Object.entries(headers);
-        if (entries.length === 0) return [];
+        if (entries.length === 0) {return [];}
         return entries.map(([key, value]) => ({ key, value }));
     };
 
     const headersArrayToObject = (headers: { key: string; value: string }[]): Record<string, string> => {
         return headers.reduce<Record<string, string>>((acc, h) => {
-            if (h.key.trim()) acc[h.key.trim()] = h.value;
+            if (h.key.trim()) {acc[h.key.trim()] = h.value;}
             return acc;
         }, {});
     };
 
     const truncateDescription = (desc: string): string => {
-        if (!desc) return '';
+        if (!desc) {return '';}
         const firstLine = desc.split('\n')[0];
-        if (firstLine.length <= 60) return firstLine;
+        if (firstLine.length <= 60) {return firstLine;}
         return firstLine.substring(0, 60) + '...';
     };
 
@@ -340,7 +340,7 @@ const AdminWebhookChannels: React.FC = () => {
     };
 
     const handleCloseDialog = () => {
-        if (saving) return;
+        if (saving) {return;}
         setDialogOpen(false);
         setEditingChannel(null);
     };
@@ -511,7 +511,7 @@ const AdminWebhookChannels: React.FC = () => {
     };
 
     const handleDeleteChannel = async () => {
-        if (!deleteChannel) return;
+        if (!deleteChannel) {return;}
         try {
             setDeleteLoading(true);
             const response = await fetch(

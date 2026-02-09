@@ -12,7 +12,10 @@ package auth
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"os"
@@ -301,8 +304,9 @@ func (s *UserStore) AuthenticateUser(username, password string, maxFailedAttempt
 	// Session valid for the default duration
 	expiration := time.Now().Add(DefaultSessionExpiration)
 
-	// Update user's session info (in memory only, not persisted)
-	user.SessionToken = token
+	// Hash session token before storing (in memory only, not persisted)
+	sessionHash := sha256.Sum256([]byte(token))
+	user.SessionToken = hex.EncodeToString(sessionHash[:])
 	user.SessionExpires = &expiration
 
 	// Update last login time (this will be persisted)
@@ -351,9 +355,13 @@ func (s *UserStore) ValidateSessionToken(token string) (string, error) {
 		return "", fmt.Errorf("invalid session token")
 	}
 
+	// Hash the provided token for constant-time comparison
+	tokenHash := sha256.Sum256([]byte(token))
+	tokenHashHex := hex.EncodeToString(tokenHash[:])
+
 	// Find user with this session token
 	for username, user := range s.Users {
-		if user.SessionToken == token {
+		if subtle.ConstantTimeCompare([]byte(user.SessionToken), []byte(tokenHashHex)) == 1 {
 			// Check if token has expired
 			if user.SessionExpires == nil || user.SessionExpires.Before(time.Now()) {
 				return "", fmt.Errorf("invalid session token")

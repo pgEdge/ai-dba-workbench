@@ -142,7 +142,7 @@ export const DraggableCluster: React.FC<DraggableClusterProps> = ({
     cluster,
     groupId,
     children,
-    isDark,
+    isDark: _isDark,
     canDrag = true,
 }) => {
     const theme = useTheme();
@@ -199,7 +199,7 @@ interface DroppableGroupProps {
 export const DroppableGroup: React.FC<DroppableGroupProps> = ({
     groupId,
     children,
-    isDark,
+    isDark: _isDark,
 }) => {
     const theme = useTheme();
     const { isOver, setNodeRef } = useDroppable({
@@ -231,9 +231,9 @@ interface DragOverlayContentProps {
     isDark: boolean;
 }
 
-export const DragOverlayContent: React.FC<DragOverlayContentProps> = ({ cluster, isDark }) => {
+export const DragOverlayContent: React.FC<DragOverlayContentProps> = ({ cluster, isDark: _isDark }) => {
     const theme = useTheme();
-    if (!cluster) return null;
+    if (!cluster) {return null;}
 
     const totalCount = countServersRecursive(cluster.servers);
     const onlineCount = countServersRecursive(cluster.servers, s => s.status === 'online');

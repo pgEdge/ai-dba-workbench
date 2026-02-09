@@ -146,9 +146,9 @@ const buildCron = (template: string, hour: string, minute: string): string => {
  * Describe a cron expression in human-readable form.
  */
 const describeCron = (cron: string): string => {
-    if (!cron || !cron.trim()) return '';
+    if (!cron || !cron.trim()) {return '';}
     const parts = cron.trim().split(/\s+/);
-    if (parts.length !== 5) return 'Invalid cron expression';
+    if (parts.length !== 5) {return 'Invalid cron expression';}
 
     const [min, hour, dom, , dow] = parts;
 
@@ -163,18 +163,18 @@ const describeCron = (cron: string): string => {
         timeStr = `at ${hour}:${min}`;
     }
 
-    if (dow === '1-5') return `Weekdays ${timeStr}`;
-    if (dow === '0,6') return `Weekends ${timeStr}`;
-    if (dow === '0') return `Every Sunday ${timeStr}`;
-    if (dom === '1' && dow === '*') return `First of each month ${timeStr}`;
-    if (dom === '*' && dow === '*') return `Daily ${timeStr}`;
+    if (dow === '1-5') {return `Weekdays ${timeStr}`;}
+    if (dow === '0,6') {return `Weekends ${timeStr}`;}
+    if (dow === '0') {return `Every Sunday ${timeStr}`;}
+    if (dom === '1' && dow === '*') {return `First of each month ${timeStr}`;}
+    if (dom === '*' && dow === '*') {return `Daily ${timeStr}`;}
 
     return `${cron} (${timeStr})`;
 };
 
 const extractNumericId = (prefixedId: string | number | undefined | null): number | undefined => {
-    if (prefixedId == null) return undefined;
-    if (typeof prefixedId === 'number') return prefixedId;
+    if (prefixedId == null) {return undefined;}
+    if (typeof prefixedId === 'number') {return prefixedId;}
     const match = prefixedId.match(/(\d+)$/);
     return match ? parseInt(match[1], 10) : undefined;
 };
@@ -279,10 +279,10 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
 
     // Compute the final cron expression
     const cronExpression = useMemo(() => {
-        if (isCustom) return customCron;
-        if (!selectedPreset) return '';
+        if (isCustom) {return customCron;}
+        if (!selectedPreset) {return '';}
         const preset = CRON_PRESETS.find((p) => p.label === selectedPreset);
-        if (!preset) return '';
+        if (!preset) {return '';}
         return buildCron(preset.cron, hour, minute);
     }, [isCustom, customCron, selectedPreset, hour, minute]);
 
@@ -299,11 +299,11 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
 
     // Validation
     const isValid = useMemo(() => {
-        if (!name.trim()) return false;
-        if (!cronExpression.trim()) return false;
-        if (effectiveDuration <= 0) return false;
+        if (!name.trim()) {return false;}
+        if (!cronExpression.trim()) {return false;}
+        if (effectiveDuration <= 0) {return false;}
         return true;
-    }, [name, cronExpression, reason, effectiveDuration]);
+    }, [name, cronExpression, effectiveDuration]);
 
     const handlePresetClick = (presetLabel: string) => {
         setSelectedPreset(presetLabel);
@@ -346,9 +346,9 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
                 enabled,
             };
             const entityId = extractNumericId(selection?.id as string | number | undefined);
-            if (scope === 'group' && entityId != null) payload.group_id = entityId;
-            if (scope === 'cluster' && entityId != null) payload.cluster_id = entityId;
-            if (scope === 'server' && entityId != null) payload.connection_id = entityId;
+            if (scope === 'group' && entityId != null) {payload.group_id = entityId;}
+            if (scope === 'cluster' && entityId != null) {payload.cluster_id = entityId;}
+            if (scope === 'server' && entityId != null) {payload.connection_id = entityId;}
 
             if (isEdit && schedule?.id) {
                 await updateSchedule(schedule.id, payload);
@@ -366,7 +366,7 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
     };
 
     const handleClose = () => {
-        if (!isSaving) onClose();
+        if (!isSaving) {onClose();}
     };
 
     // Styles
@@ -474,7 +474,7 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
                     value={name}
                     onChange={(e) => {
                         setName(e.target.value);
-                        if (nameError) setNameError('');
+                        if (nameError) {setNameError('');}
                     }}
                     error={!!nameError}
                     helperText={nameError}

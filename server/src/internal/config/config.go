@@ -11,6 +11,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 
@@ -209,13 +210,13 @@ type ConnectionSecurityConfig struct {
 // BuildConnectionString creates a PostgreSQL connection string from DatabaseConfig
 // If password is not set, pgx will automatically look it up from .pgpass file
 func (cfg *DatabaseConfig) BuildConnectionString() string {
-	// Build connection string components
-	connStr := fmt.Sprintf("postgres://%s", cfg.User)
+	// Build connection string components with URL-encoded user/password
+	connStr := fmt.Sprintf("postgres://%s", url.PathEscape(cfg.User))
 
 	// Add password only if explicitly set
 	// If not set, pgx will use .pgpass file automatically
 	if cfg.Password != "" {
-		connStr += ":" + cfg.Password
+		connStr += ":" + url.PathEscape(cfg.Password)
 	}
 
 	connStr += fmt.Sprintf("@%s:%d/%s", cfg.Host, cfg.Port, cfg.Database)

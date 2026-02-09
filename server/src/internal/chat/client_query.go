@@ -64,16 +64,12 @@ func (c *Client) processQuery(ctx context.Context, query string) error {
 
 		// Check if LLM wants to use tools
 		if response.StopReason == "tool_use" {
-			// Extract tool uses and text content
+			// Extract tool uses from the response
 			var toolUses []ToolUse
-			var textParts []string
 
 			for _, item := range response.Content {
-				switch v := item.(type) {
-				case ToolUse:
+				if v, ok := item.(ToolUse); ok {
 					toolUses = append(toolUses, v)
-				case TextContent:
-					_ = append(textParts, v.Text) // Not used in this context, just checking type
 				}
 			}
 

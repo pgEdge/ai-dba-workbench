@@ -13,4 +13,5 @@
  * This maintains backward compatibility with existing imports.
  */
 export { default } from './ServerDialog/index';
+// eslint-disable-next-line react-refresh/only-export-components
 export * from './ServerDialog/ServerDialog.types';

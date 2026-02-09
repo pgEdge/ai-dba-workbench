@@ -10,6 +10,7 @@
 package api
 
 import (
+	"log"
 	"net/http"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
@@ -113,7 +114,8 @@ func (h *TimelineHandler) handleTimelineEvents(w http.ResponseWriter, r *http.Re
 	// Fetch timeline events
 	result, err := h.datastore.GetTimelineEvents(r.Context(), filter)
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch timeline events: "+err.Error())
+		log.Printf("[ERROR] Failed to fetch timeline events: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch timeline events")
 		return
 	}
 

@@ -19,7 +19,6 @@ import {
 } from '@mui/material';
 import { Theme } from '@mui/material/styles';
 import type { Cluster, Server } from './utils';
-import type { ClusterType } from './constants';
 import {
     ExpandMore as ExpandIcon,
     ChevronRight as CollapseIcon,
@@ -158,11 +157,11 @@ const ClusterItem = memo<ClusterItemProps>(({
     selectedClusterId,
     onSelectServer,
     onSelectCluster,
-    depth = 0,
+    depth: _depth = 0,
     isDark,
     expandedServers,
     onToggleServer,
-    isLast = false,
+    isLast: _isLast = false,
     user,
     onUpdateCluster,
     onUpdateServer,
@@ -193,12 +192,12 @@ const ClusterItem = memo<ClusterItemProps>(({
 
     // Calculate total alert count for the cluster
     const clusterAlertCount = useMemo(() => {
-        if (!getServerAlertCount) return 0;
+        if (!getServerAlertCount) {return 0;}
         const collectServerIds = (servers: Server[] | undefined): number[] => {
             const ids: number[] = [];
             servers?.forEach(s => {
                 ids.push(s.id);
-                if (s.children) ids.push(...collectServerIds(s.children));
+                if (s.children) {ids.push(...collectServerIds(s.children));}
             });
             return ids;
         };

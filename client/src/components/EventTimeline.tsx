@@ -186,7 +186,7 @@ const getEventConfig = (event, palette) => {
  * Format timestamp for display
  */
 const formatEventTime = (timestamp) => {
-    if (!timestamp) return '';
+    if (!timestamp) {return '';}
     const date = new Date(timestamp);
     const now = new Date();
     const diffMs = now - date;
@@ -194,10 +194,10 @@ const formatEventTime = (timestamp) => {
     const diffHours = Math.floor(diffMins / 60);
     const diffDays = Math.floor(diffHours / 24);
 
-    if (diffMins < 1) return 'just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
+    if (diffMins < 1) {return 'just now';}
+    if (diffMins < 60) {return `${diffMins}m ago`;}
+    if (diffHours < 24) {return `${diffHours}h ago`;}
+    if (diffDays < 7) {return `${diffDays}d ago`;}
 
     return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 };
@@ -206,7 +206,7 @@ const formatEventTime = (timestamp) => {
  * Format full timestamp for detail view
  */
 const formatFullTime = (timestamp) => {
-    if (!timestamp) return '';
+    if (!timestamp) {return '';}
     const date = new Date(timestamp);
     return date.toLocaleString(undefined, {
         month: 'short',
@@ -226,7 +226,7 @@ const calculatePosition = (eventTime, startTime, endTime) => {
     const startTs = startTime.getTime();
     const endTs = endTime.getTime();
     const range = endTs - startTs;
-    if (range <= 0) return 0;
+    if (range <= 0) {return 0;}
     const position = ((eventTs - startTs) / range) * 100;
     return Math.max(0, Math.min(100, position));
 };
@@ -265,7 +265,7 @@ const getTimeRangeBounds = (timeRange) => {
  * Cluster nearby events
  */
 const clusterEvents = (events, startTime, endTime, minDistancePercent = 2) => {
-    if (!events || events.length === 0) return [];
+    if (!events || events.length === 0) {return [];}
 
     // Sort by timestamp
     const sorted = [...events].sort(
@@ -353,8 +353,6 @@ const tooltipSingleTitleSx = { fontSize: '0.75rem', fontWeight: 600 };
 const tooltipSingleTimeSx = { fontSize: '0.6875rem', color: 'grey.300' };
 
 const tooltipSingleServerSx = { fontSize: '0.6875rem', color: 'grey.400' };
-
-const markerIconSx = { fontSize: 14 };
 
 const clusterBadgeBaseSx = {
     position: 'absolute',
@@ -1244,12 +1242,11 @@ AlertDetails.displayName = 'AlertDetails';
  */
 const RestartDetails = memo(({ details }) => {
     const theme = useTheme();
+    const codeBlockSx = useMemo(() => restartCodeBlockSx(theme), [theme]);
 
     if (!details?.previous_timeline && !details?.old_timeline_id) {
         return null;
     }
-
-    const codeBlockSx = useMemo(() => restartCodeBlockSx(theme), [theme]);
 
     return (
         <Box sx={{ mt: 1 }}>
@@ -1323,7 +1320,7 @@ BlackoutDetails.displayName = 'BlackoutDetails';
  * EventDetails - Renders the appropriate details component based on event type
  */
 const EventDetails = memo(({ event, config }) => {
-    if (!event.details) return null;
+    if (!event.details) {return null;}
 
     switch (event.event_type) {
         case 'config_change':
@@ -1528,14 +1525,11 @@ CollapsibleEventCard.displayName = 'CollapsibleEventCard';
 const EventDetailPanel = memo(({ events, onClose }) => {
     const theme = useTheme();
 
-    if (!events || events.length === 0) return null;
-
-    const isCluster = events.length > 1;
-    const primaryEvent = events[0];
+    const isCluster = events && events.length > 1;
 
     // Count events by type for cluster header
     const typeCounts = useMemo(() => {
-        if (!isCluster) return null;
+        if (!isCluster || !events) {return null;}
         const counts = {};
         events.forEach(e => {
             const typeConfig = EVENT_TYPE_CONFIG[e.event_type];
@@ -1548,6 +1542,10 @@ const EventDetailPanel = memo(({ events, onClose }) => {
     const panelSx = useMemo(() => getDetailPanelSx(theme), [theme]);
     const panelHeaderSx = useMemo(() => getDetailPanelHeaderSx(theme), [theme]);
     const closeBtnSx = useMemo(() => getCloseButtonSx(theme), [theme]);
+
+    if (!events || events.length === 0) {return null;}
+
+    const primaryEvent = events[0];
 
     return (
         <Box sx={panelSx}>
@@ -1810,7 +1808,7 @@ interface EventTimelineProps {
     mode?: string;
 }
 
-const EventTimeline: React.FC<EventTimelineProps> = ({ selection, mode = 'light' }) => {
+const EventTimeline: React.FC<EventTimelineProps> = ({ selection, mode: _mode = 'light' }) => {
     const theme = useTheme();
 
     // Internal state
@@ -1828,10 +1826,13 @@ const EventTimeline: React.FC<EventTimelineProps> = ({ selection, mode = 'light'
         }
     }, [timeRange]);
 
+    // Stable string key for serverIds to use in dependency arrays
+    const serverIdsKey = selection?.serverIds?.join(',');
+
     // Close detail panel when selection changes
     useEffect(() => {
         setSelectedEvents(null);
-    }, [selection?.type, selection?.id, selection?.serverIds?.join(',')]);
+    }, [selection?.type, selection?.id, serverIdsKey]);
 
     // Determine connection ID(s) based on selection - memoize to prevent unnecessary re-fetches
     const connectionId = selection?.type === 'server' ? selection.id : null;
@@ -1839,7 +1840,7 @@ const EventTimeline: React.FC<EventTimelineProps> = ({ selection, mode = 'light'
         () => (selection?.type !== 'server' ? selection?.serverIds : null),
         // Only recreate when serverIds actually changes (by value, not reference)
         // eslint-disable-next-line react-hooks/exhaustive-deps
-        [selection?.type, selection?.serverIds?.join(',')]
+        [selection?.type, serverIdsKey]
     );
 
     // Memoize the eventTypes array to prevent creating new references on each render

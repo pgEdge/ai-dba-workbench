@@ -26,6 +26,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// reVectorDimensions matches vector column type with dimensions, e.g. "vector(1536)"
+var reVectorDimensions = regexp.MustCompile(`vector\((\d+)\)`)
+
 // ConnectionInfo holds a connection pool and its metadata
 type ConnectionInfo struct {
 	ConnString     string
@@ -444,8 +447,7 @@ func (c *Client) LoadMetadataFor(connStr string) error {
 			if typeName.Valid && typeName.String == "vector" {
 				isVector = true
 				// Parse dimensions from data_type (e.g., "vector(1536)")
-				re := regexp.MustCompile(`vector\((\d+)\)`)
-				if matches := re.FindStringSubmatch(dataType); len(matches) > 1 {
+				if matches := reVectorDimensions.FindStringSubmatch(dataType); len(matches) > 1 {
 					if dim, err := strconv.Atoi(matches[1]); err == nil {
 						dimensions = dim
 					}

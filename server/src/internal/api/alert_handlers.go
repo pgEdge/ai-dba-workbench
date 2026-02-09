@@ -10,6 +10,7 @@
 package api
 
 import (
+	"log"
 	"net/http"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
@@ -103,7 +104,8 @@ func (h *AlertHandler) handleAlerts(w http.ResponseWriter, r *http.Request) {
 	// Fetch alerts
 	result, err := h.datastore.GetAlerts(r.Context(), filter)
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch alerts: "+err.Error())
+		log.Printf("[ERROR] Failed to fetch alerts: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch alerts")
 		return
 	}
 
@@ -120,7 +122,8 @@ func (h *AlertHandler) handleAlertCounts(w http.ResponseWriter, r *http.Request)
 	// Fetch alert counts
 	counts, err := h.datastore.GetAlertCounts(r.Context())
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch alert counts: "+err.Error())
+		log.Printf("[ERROR] Failed to fetch alert counts: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch alert counts")
 		return
 	}
 
@@ -175,7 +178,8 @@ func (h *AlertHandler) acknowledgeAlert(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := h.datastore.AcknowledgeAlert(r.Context(), ackReq); err != nil {
-		RespondError(w, http.StatusInternalServerError, "Failed to acknowledge alert: "+err.Error())
+		log.Printf("[ERROR] Failed to acknowledge alert: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to acknowledge alert")
 		return
 	}
 
@@ -198,7 +202,8 @@ func (h *AlertHandler) unacknowledgeAlert(w http.ResponseWriter, r *http.Request
 
 	// Unacknowledge the alert
 	if err := h.datastore.UnacknowledgeAlert(r.Context(), alertID); err != nil {
-		RespondError(w, http.StatusInternalServerError, "Failed to unacknowledge alert: "+err.Error())
+		log.Printf("[ERROR] Failed to unacknowledge alert: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to unacknowledge alert")
 		return
 	}
 
@@ -234,7 +239,8 @@ func (h *AlertHandler) handleSaveAnalysis(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := h.datastore.SaveAlertAnalysis(r.Context(), req.AlertID, req.Analysis, req.MetricValue); err != nil {
-		RespondError(w, http.StatusInternalServerError, "Failed to save analysis: "+err.Error())
+		log.Printf("[ERROR] Failed to save analysis: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to save analysis")
 		return
 	}
 

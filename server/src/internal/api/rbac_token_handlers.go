@@ -169,6 +169,7 @@ func (h *RBACHandler) createToken(w http.ResponseWriter, r *http.Request) {
 
 // parseTokenExpiry parses a human-readable expiry string into a duration.
 // Supported formats: "24h", "30d", "4w", "6m", "1y".
+// Maximum allowed duration is 10 years (3650 days equivalent).
 func parseTokenExpiry(s string) (time.Duration, error) {
 	if len(s) < 2 {
 		return 0, fmt.Errorf("invalid format")
@@ -179,20 +180,35 @@ func parseTokenExpiry(s string) (time.Duration, error) {
 	if err != nil {
 		return 0, fmt.Errorf("invalid number: %s", numStr)
 	}
+	if num <= 0 {
+		return 0, fmt.Errorf("value must be positive")
+	}
+
+	// Convert to days equivalent for bounds checking (max 3650 days = ~10 years)
+	var days int
 	switch unit {
 	case "h":
+		// Allow up to 3650*24 = 87600 hours
+		if num > 87600 {
+			return 0, fmt.Errorf("value exceeds maximum of 87600 hours (~10 years)")
+		}
 		return time.Duration(num) * time.Hour, nil
 	case "d":
-		return time.Duration(num) * 24 * time.Hour, nil
+		days = num
 	case "w":
-		return time.Duration(num) * 7 * 24 * time.Hour, nil
+		days = num * 7
 	case "m":
-		return time.Duration(num) * 30 * 24 * time.Hour, nil
+		days = num * 30
 	case "y":
-		return time.Duration(num) * 365 * 24 * time.Hour, nil
+		days = num * 365
 	default:
 		return 0, fmt.Errorf("invalid unit: %s (use h, d, w, m, y)", unit)
 	}
+
+	if days > 3650 {
+		return 0, fmt.Errorf("value exceeds maximum of 3650 days (~10 years)")
+	}
+	return time.Duration(days) * 24 * time.Hour, nil
 }
 
 // handleTokenSubpath handles /api/v1/rbac/tokens/{id} and

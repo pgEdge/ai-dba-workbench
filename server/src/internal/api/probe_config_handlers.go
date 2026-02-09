@@ -11,6 +11,7 @@ package api
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -113,7 +114,8 @@ func (h *ProbeConfigHandler) listProbeConfigs(w http.ResponseWriter, r *http.Req
 
 	configs, err := h.datastore.GetProbeConfigs(r.Context(), connectionID)
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch probe configs: "+err.Error())
+		log.Printf("[ERROR] Failed to fetch probe configs: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch probe configs")
 		return
 	}
 
@@ -128,7 +130,8 @@ func (h *ProbeConfigHandler) getProbeConfig(w http.ResponseWriter, r *http.Reque
 			RespondError(w, http.StatusNotFound, "Probe config not found")
 			return
 		}
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch probe config: "+err.Error())
+		log.Printf("[ERROR] Failed to fetch probe config: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch probe config")
 		return
 	}
 
@@ -152,7 +155,8 @@ func (h *ProbeConfigHandler) updateProbeConfig(w http.ResponseWriter, r *http.Re
 			RespondError(w, http.StatusNotFound, "Probe config not found")
 			return
 		}
-		RespondError(w, http.StatusBadRequest, err.Error())
+		log.Printf("[ERROR] Request error: %v", err)
+		RespondError(w, http.StatusBadRequest, "Request failed")
 		return
 	}
 

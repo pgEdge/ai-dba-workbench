@@ -15,6 +15,9 @@ import (
 	"strings"
 )
 
+// reWord matches word characters for counting words
+var reWord = regexp.MustCompile(`\w+`)
+
 // TokenEstimator provides utilities for estimating token counts in messages.
 type TokenEstimator struct {
 	// charsPerToken is the average characters per token ratio
@@ -201,8 +204,7 @@ func (te *TokenEstimator) containsCode(text string) bool {
 
 // CountWords counts words in a string for rough estimation.
 func CountWords(text string) int {
-	wordRegex := regexp.MustCompile(`\w+`)
-	return len(wordRegex.FindAllString(text, -1))
+	return len(reWord.FindAllString(text, -1))
 }
 
 // TruncateText truncates text to approximately maxTokens.

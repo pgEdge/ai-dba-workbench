@@ -7,6 +7,7 @@
  *
  *-------------------------------------------------------------------------
  */
+/* eslint-disable react-refresh/only-export-components */
 
 import React, { createContext, useState, useContext, useEffect, useCallback, useMemo } from 'react';
 
@@ -166,7 +167,7 @@ export const AuthProvider = ({ children }: AuthProviderProps): React.ReactElemen
 
     // Check if the user has a specific admin permission
     const hasPermission = useCallback((perm: string): boolean => {
-        if (user?.isSuperuser) return true;
+        if (user?.isSuperuser) {return true;}
         return adminPermissions.includes(perm);
     }, [user?.isSuperuser, adminPermissions]);
 
@@ -182,7 +183,7 @@ export const AuthProvider = ({ children }: AuthProviderProps): React.ReactElemen
                 method: 'POST',
                 credentials: 'include'
             });
-        } catch (_error) {
+        } catch {
             // Ignore errors during force logout
         }
         setUser(null);

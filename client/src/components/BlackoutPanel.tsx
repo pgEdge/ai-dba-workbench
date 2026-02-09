@@ -73,7 +73,7 @@ const formatTimeRemaining = (endTime: string): string => {
     const now = new Date();
     const diffMs = end.getTime() - now.getTime();
 
-    if (diffMs <= 0) return 'Ending...';
+    if (diffMs <= 0) {return 'Ending...';}
 
     const diffMins = Math.floor(diffMs / 60000);
     const diffHours = Math.floor(diffMins / 60);
@@ -195,10 +195,10 @@ interface BlackoutPanelProps {
 const BlackoutPanel: React.FC<BlackoutPanelProps> = ({ selection }) => {
     const { activeBlackoutsForSelection, stopBlackout } = useBlackouts();
 
-    if (!selection) return null;
+    if (!selection) {return null;}
 
     const activeCount = (activeBlackoutsForSelection || []).length;
-    if (activeCount === 0) return null;
+    if (activeCount === 0) {return null;}
 
     return (
         <Box sx={{ mt: 2, display: 'flex', flexDirection: 'column', gap: 0.5 }}>

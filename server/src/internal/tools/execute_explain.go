@@ -124,9 +124,31 @@ READ ONLY transaction to prevent side effects. However, be cautious with:
 				format = val
 			}
 
-			// Validate query is a SELECT
+			// Validate query is a SELECT (or a WITH/CTE that resolves to a SELECT)
 			trimmedQuery := strings.TrimSpace(query)
-			if !strings.HasPrefix(strings.ToUpper(trimmedQuery), "SELECT") {
+			upper := strings.ToUpper(trimmedQuery)
+
+			if strings.HasPrefix(upper, "SELECT") {
+				// Simple SELECT query; allowed
+			} else if strings.HasPrefix(upper, "WITH") {
+				// CTE query: reject if the body contains DML keywords,
+				// since CTEs can perform data modification (e.g.,
+				// WITH cte AS (DELETE FROM t RETURNING *) SELECT * FROM cte).
+				// The read-only transaction provides the real protection;
+				// this is defense-in-depth.
+				dmlKeywords := []string{
+					"INSERT", "UPDATE", "DELETE",
+					"DROP", "ALTER", "TRUNCATE", "CREATE",
+				}
+				for _, kw := range dmlKeywords {
+					if containsSQLKeyword(upper, kw) {
+						return mcp.NewToolError(fmt.Sprintf(
+							"CTE queries containing %s are not allowed. "+
+								"Only pure SELECT CTEs are supported for EXPLAIN.",
+							kw))
+					}
+				}
+			} else {
 				return mcp.NewToolError("Only SELECT queries are supported. EXPLAIN ANALYZE executes the query, which could have side effects for INSERT/UPDATE/DELETE/DDL statements.")
 			}
 
@@ -245,6 +267,14 @@ READ ONLY transaction to prevent side effects. However, be cautious with:
 	}
 }
 
+// Package-level compiled regexes for analyzeExplainOutput
+var (
+	reSeqScan    = regexp.MustCompile(`Seq Scan on (\w+)`)
+	reActualTime = regexp.MustCompile(`actual time=[\d.]+\.\.([\d.]+)`)
+	reBufferRead = regexp.MustCompile(`read=(\d+)`)
+	reBufferHit  = regexp.MustCompile(`hit=(\d+)`)
+)
+
 // analyzeExplainOutput extracts key metrics and provides recommendations
 func analyzeExplainOutput(explainText string) string {
 	var analysis strings.Builder
@@ -253,8 +283,7 @@ func analyzeExplainOutput(explainText string) string {
 
 	// Check for sequential scans
 	if strings.Contains(explainText, "Seq Scan") {
-		seqScanRegex := regexp.MustCompile(`Seq Scan on (\w+)`)
-		matches := seqScanRegex.FindAllStringSubmatch(explainText, -1)
+		matches := reSeqScan.FindAllStringSubmatch(explainText, -1)
 		if len(matches) > 0 {
 			tables := []string{}
 			for _, match := range matches {
@@ -270,8 +299,7 @@ func analyzeExplainOutput(explainText string) string {
 	}
 
 	// Check for high actual time
-	timeRegex := regexp.MustCompile(`actual time=[\d.]+\.\.(\d+\.\d+)`)
-	matches := timeRegex.FindAllStringSubmatch(explainText, -1)
+	matches := reActualTime.FindAllStringSubmatch(explainText, -1)
 	if len(matches) > 0 {
 		for _, match := range matches {
 			if len(match) > 1 {
@@ -301,11 +329,8 @@ func analyzeExplainOutput(explainText string) string {
 	}
 
 	// Check for high buffer reads vs hits
-	readRegex := regexp.MustCompile(`read=(\d+)`)
-	hitRegex := regexp.MustCompile(`hit=(\d+)`)
-
-	reads := readRegex.FindAllStringSubmatch(explainText, -1)
-	hits := hitRegex.FindAllStringSubmatch(explainText, -1)
+	reads := reBufferRead.FindAllStringSubmatch(explainText, -1)
+	hits := reBufferHit.FindAllStringSubmatch(explainText, -1)
 
 	if len(reads) > 0 && len(hits) > 0 {
 		// If we have reads and hits, check the ratio
@@ -333,4 +358,43 @@ func analyzeExplainOutput(explainText string) string {
 	}
 
 	return analysis.String()
+}
+
+// containsSQLKeyword checks whether a SQL keyword appears as a standalone word
+// in the given uppercase SQL string. This prevents false positives from table
+// or column names that happen to contain a keyword as a substring (e.g.,
+// "updated_at" should not match "UPDATE").
+func containsSQLKeyword(upperSQL, keyword string) bool {
+	idx := 0
+	for {
+		pos := strings.Index(upperSQL[idx:], keyword)
+		if pos < 0 {
+			return false
+		}
+		pos += idx
+		start := pos
+		end := pos + len(keyword)
+
+		// Check that the character before the keyword (if any) is not
+		// a letter, digit, or underscore.
+		startOK := start == 0 || !isIdentChar(upperSQL[start-1])
+		// Check that the character after the keyword (if any) is not
+		// a letter, digit, or underscore.
+		endOK := end >= len(upperSQL) || !isIdentChar(upperSQL[end])
+
+		if startOK && endOK {
+			return true
+		}
+
+		idx = end
+	}
+}
+
+// isIdentChar returns true if the byte is a valid SQL identifier character
+// (letter, digit, or underscore).
+func isIdentChar(b byte) bool {
+	return (b >= 'A' && b <= 'Z') ||
+		(b >= 'a' && b <= 'z') ||
+		(b >= '0' && b <= '9') ||
+		b == '_'
 }

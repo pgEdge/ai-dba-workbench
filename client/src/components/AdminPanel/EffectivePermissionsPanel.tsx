@@ -73,7 +73,7 @@ const EffectivePermissionsPanel: React.FC<EffectivePermissionsPanelProps> = ({
     mcpPrivileges,
     isSuperuser,
     connections,
-    isDark,
+    isDark: _isDark,
     groups,
 }) => {
     const theme = useTheme();
@@ -99,10 +99,10 @@ const EffectivePermissionsPanel: React.FC<EffectivePermissionsPanelProps> = ({
     }
 
     const getConnectionName = (id) => {
-        if (id === 0 || id === '0' || String(id) === '0') return 'All Connections';
+        if (id === 0 || id === '0' || String(id) === '0') {return 'All Connections';}
         if (connections) {
             const conn = connections.find((c) => String(c.id) === String(id));
-            if (conn) return conn.name;
+            if (conn) {return conn.name;}
         }
         return `Connection ${id}`;
     };

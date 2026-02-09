@@ -9,6 +9,7 @@
  *
  *-------------------------------------------------------------------------
  */
+/* eslint-disable react-refresh/only-export-components */
 
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { useAuth } from './AuthContext';
@@ -57,7 +58,7 @@ export const AlertsProvider = ({ children }: AlertsProviderProps): React.ReactEl
      * Fetch alert counts from the API
      */
     const fetchAlertCounts = useCallback(async (): Promise<void> => {
-        if (!user) return;
+        if (!user) {return;}
 
         setLoading(true);
         try {
@@ -94,7 +95,7 @@ export const AlertsProvider = ({ children }: AlertsProviderProps): React.ReactEl
      * Get alert count for a cluster (sum of all server alerts in cluster)
      */
     const getClusterAlertCount = useCallback((serverIds: number[]): number => {
-        if (!serverIds || serverIds.length === 0) return 0;
+        if (!serverIds || serverIds.length === 0) {return 0;}
         return serverIds.reduce((sum, id) => sum + (alertCounts.byServer[id] || 0), 0);
     }, [alertCounts.byServer]);
 
@@ -118,7 +119,7 @@ export const AlertsProvider = ({ children }: AlertsProviderProps): React.ReactEl
 
     // Auto-refresh
     useEffect(() => {
-        if (!user) return;
+        if (!user) {return;}
 
         const intervalId = setInterval(fetchAlertCounts, refreshInterval);
         return () => clearInterval(intervalId);

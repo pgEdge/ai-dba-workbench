@@ -92,7 +92,7 @@ const FRIENDLY_ALERT_TITLES = {
 
 // Get friendly title for an alert
 const getFriendlyTitle = (title) => {
-    if (!title) return 'Alert';
+    if (!title) {return 'Alert';}
     // Connection error alerts: preserve hostname as-is
     if (title.toLowerCase().startsWith('connection error:')) {
         return 'Connection Error:' + title.substring('connection error:'.length);
@@ -147,10 +147,7 @@ const INDICATOR_SIZES = {
 };
 
 // Static layout styles
-const FLEX_CENTER_SX = { display: 'flex', alignItems: 'center' };
-const FLEX_COL_SX = { display: 'flex', flexDirection: 'column' };
 const FLEX_1_MIN0_SX = { flex: 1, minWidth: 0 };
-const FLEX_SHRINK_0_SX = { flexShrink: 0 };
 const EXPAND_BUTTON_SX = { p: 0.25 };
 const ICON_16_SX = { fontSize: 16 };
 const ICON_14_SX = { fontSize: 14 };
@@ -1039,8 +1036,8 @@ const GroupedAlertItem = ({ title, alerts, showServer = false, onAcknowledge, on
 
     // Determine highest severity in the group
     const highestSeverity = alerts.reduce((highest, alert) => {
-        if (alert.severity === 'critical') return 'critical';
-        if (alert.severity === 'warning' && highest !== 'critical') return 'warning';
+        if (alert.severity === 'critical') {return 'critical';}
+        if (alert.severity === 'warning' && highest !== 'critical') {return 'warning';}
         return highest;
     }, 'info');
 
@@ -1278,12 +1275,12 @@ const AlertsSection = ({ alerts, loading, showServer = false, onAcknowledge, onU
     const sortedActiveGroups = useMemo(() => {
         return Object.entries(groupedActiveAlerts).sort((a, b) => {
             const getSeverityWeight = (alerts) => {
-                if (alerts.some(a => a.severity === 'critical')) return 3;
-                if (alerts.some(a => a.severity === 'warning')) return 2;
+                if (alerts.some(a => a.severity === 'critical')) {return 3;}
+                if (alerts.some(a => a.severity === 'warning')) {return 2;}
                 return 1;
             };
             const severityDiff = getSeverityWeight(b[1]) - getSeverityWeight(a[1]);
-            if (severityDiff !== 0) return severityDiff;
+            if (severityDiff !== 0) {return severityDiff;}
             return b[1].length - a[1].length;
         });
     }, [groupedActiveAlerts]);
@@ -1549,7 +1546,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
 
     // Calculate metrics based on selection type
     const metrics = useMemo(() => {
-        if (!selection) return null;
+        if (!selection) {return null;}
 
         if (selection.type === 'server') {
             const isOffline = selection.status === 'offline';
@@ -1586,7 +1583,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                     const collectServers = (servers) => {
                         servers?.forEach(s => {
                             allServers.push(s);
-                            if (s.children) collectServers(s.children);
+                            if (s.children) {collectServers(s.children);}
                         });
                     };
                     collectServers(cluster.servers);
@@ -1615,7 +1612,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
 
     // Format relative time from a date
     const formatRelativeTime = (date) => {
-        if (!date) return '';
+        if (!date) {return '';}
         const now = new Date();
         const then = new Date(date);
         const diffMs = now - then;
@@ -1624,15 +1621,15 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
         const diffHours = Math.floor(diffMins / 60);
         const diffDays = Math.floor(diffHours / 24);
 
-        if (diffSecs < 60) return 'just now';
-        if (diffMins < 60) return `${diffMins} min ago`;
-        if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
-        if (diffDays < 7) return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
+        if (diffSecs < 60) {return 'just now';}
+        if (diffMins < 60) {return `${diffMins} min ago`;}
+        if (diffHours < 24) {return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;}
+        if (diffDays < 7) {return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;}
         return then.toLocaleDateString();
     };
 
     // Transform API alerts to component format
-    const transformAlerts = (apiAlerts) => {
+    const transformAlerts = useCallback((apiAlerts) => {
         return apiAlerts.map(alert => ({
             id: alert.id,
             severity: alert.severity?.toLowerCase() || 'info',
@@ -1658,7 +1655,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
             aiAnalysis: alert.ai_analysis,
             aiAnalysisMetricValue: alert.ai_analysis_metric_value,
         }));
-    };
+    }, []);
 
     // Handle opening ack dialog
     const handleAcknowledge = (alert) => {
@@ -1674,7 +1671,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
 
     // Handle confirming acknowledgment
     const handleAckConfirm = async (alertId, message, falsePositive = false) => {
-        if (!user || !alertId) return;
+        if (!user || !alertId) {return;}
 
         try {
             const response = await fetch('/api/v1/alerts/acknowledge', {
@@ -1707,7 +1704,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
 
     // Handle unacknowledging an alert
     const handleUnacknowledge = async (alertId) => {
-        if (!user || !alertId) return;
+        if (!user || !alertId) {return;}
 
         try {
             const response = await fetch(`/api/v1/alerts/acknowledge?alert_id=${alertId}`, {
@@ -1778,7 +1775,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
         } finally {
             setLoading(false);
         }
-    }, [user, selection]);
+    }, [user, selection, transformAlerts]);
 
     // Reset initial load state when selection changes
     useEffect(() => {

@@ -101,7 +101,7 @@ const AdminAlertRules: React.FC = () => {
             const response = await fetch(`${API_BASE_URL}/alert-rules`, {
                 credentials: 'include',
             });
-            if (!response.ok) throw new Error('Failed to fetch alert rules');
+            if (!response.ok) {throw new Error('Failed to fetch alert rules');}
             const data = await response.json();
             setRules(data.alert_rules || data || []);
         } catch (err: unknown) {
@@ -131,7 +131,7 @@ const AdminAlertRules: React.FC = () => {
     };
 
     const handleSaveRule = async () => {
-        if (!editRule) return;
+        if (!editRule) {return;}
         const thresholdNum = parseFloat(editThreshold);
         if (isNaN(thresholdNum)) {
             setError('Threshold must be a valid number.');

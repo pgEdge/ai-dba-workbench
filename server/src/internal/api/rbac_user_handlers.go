@@ -102,6 +102,17 @@ func (h *RBACHandler) createUser(w http.ResponseWriter, r *http.Request) {
 
 	isServiceAccount := req.IsServiceAccount != nil && *req.IsServiceAccount
 
+	// Validate password for non-service accounts
+	if !isServiceAccount && req.Password == "" {
+		RespondError(w, http.StatusBadRequest, "Password is required")
+		return
+	}
+
+	if !isServiceAccount && len(req.Password) < 8 {
+		RespondError(w, http.StatusBadRequest, "Password must be at least 8 characters")
+		return
+	}
+
 	if isServiceAccount {
 		if err := h.authStore.CreateServiceAccount(req.Username, req.Annotation, req.DisplayName, req.Email); err != nil {
 			log.Printf("[ERROR] Failed to create service account %s: %v", req.Username, err)
@@ -109,10 +120,6 @@ func (h *RBACHandler) createUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		if req.Password == "" {
-			RespondError(w, http.StatusBadRequest, "Password is required")
-			return
-		}
 		if err := h.authStore.CreateUser(req.Username, req.Password, req.Annotation, req.DisplayName, req.Email); err != nil {
 			log.Printf("[ERROR] Failed to create user %s: %v", req.Username, err)
 			RespondError(w, http.StatusInternalServerError, "Failed to create user")
@@ -161,6 +168,12 @@ func (h *RBACHandler) updateUser(w http.ResponseWriter, r *http.Request, userID 
 	user, err := h.authStore.GetUserByID(userID)
 	if err != nil || user == nil {
 		RespondError(w, http.StatusNotFound, "User not found")
+		return
+	}
+
+	// Validate password complexity if being updated
+	if req.Password != nil && *req.Password != "" && len(*req.Password) < 8 {
+		RespondError(w, http.StatusBadRequest, "Password must be at least 8 characters")
 		return
 	}
 

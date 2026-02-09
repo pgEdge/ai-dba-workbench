@@ -25,7 +25,7 @@ import {
 } from '@mui/icons-material';
 import { useTheme, Theme } from '@mui/material/styles';
 import InlineEditText from '../InlineEditText';
-import { getRoleConfigs, ServerRole } from './constants';
+import { getRoleConfigs } from './constants';
 import type { ClusterType } from './constants';
 import { getEffectiveRole } from './utils';
 import type { Server } from './utils';

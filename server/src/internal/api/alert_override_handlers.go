@@ -10,6 +10,7 @@
 package api
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -136,7 +137,8 @@ func (h *AlertOverrideHandler) listOverrides(w http.ResponseWriter, r *http.Requ
 	}
 
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch alert overrides: "+err.Error())
+		log.Printf("[ERROR] Failed to fetch alert overrides: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch alert overrides")
 		return
 	}
 
@@ -156,7 +158,8 @@ func (h *AlertOverrideHandler) upsertOverride(w http.ResponseWriter, r *http.Req
 
 	err := h.datastore.UpsertAlertThreshold(r.Context(), scope, scopeID, ruleID, req)
 	if err != nil {
-		RespondError(w, http.StatusBadRequest, err.Error())
+		log.Printf("[ERROR] Request error: %v", err)
+		RespondError(w, http.StatusBadRequest, "Request failed")
 		return
 	}
 
@@ -171,7 +174,8 @@ func (h *AlertOverrideHandler) deleteOverride(w http.ResponseWriter, r *http.Req
 
 	err := h.datastore.DeleteAlertThreshold(r.Context(), scope, scopeID, ruleID)
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError, "Failed to delete alert override: "+err.Error())
+		log.Printf("[ERROR] Failed to delete alert override: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to delete alert override")
 		return
 	}
 

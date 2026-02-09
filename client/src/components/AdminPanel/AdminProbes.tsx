@@ -80,7 +80,7 @@ const AdminProbes: React.FC = () => {
             const response = await fetch(`${API_BASE_URL}/probe-configs`, {
                 credentials: 'include',
             });
-            if (!response.ok) throw new Error('Failed to fetch probe configurations');
+            if (!response.ok) {throw new Error('Failed to fetch probe configurations');}
             const data = await response.json();
             setProbes(data.probe_configs || data || []);
         } catch (err: unknown) {
@@ -108,7 +108,7 @@ const AdminProbes: React.FC = () => {
     };
 
     const handleSave = async () => {
-        if (!editProbe) return;
+        if (!editProbe) {return;}
         try {
             setSaving(true);
             setError(null);

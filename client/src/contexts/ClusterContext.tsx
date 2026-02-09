@@ -12,6 +12,7 @@
  *
  *-------------------------------------------------------------------------
  */
+/* eslint-disable react-refresh/only-export-components */
 
 import React, { createContext, useContext } from 'react';
 import { ClusterDataProvider, useClusterData, ClusterDataContextValue } from './ClusterDataContext';

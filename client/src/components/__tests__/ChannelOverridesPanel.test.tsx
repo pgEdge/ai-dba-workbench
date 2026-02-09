@@ -140,7 +140,8 @@ describe('ChannelOverridesPanel', () => {
 
         // The description column for Dev Webhook (null description) shows an em dash
         const devRow = screen.getByText('Dev Webhook').closest('tr');
-        const cells = devRow!.querySelectorAll('td');
+        expect(devRow).not.toBeNull();
+        const cells = (devRow as HTMLElement).querySelectorAll('td');
         expect(cells[2].textContent).toBe('\u2014');
     });
 
@@ -170,8 +171,10 @@ describe('ChannelOverridesPanel', () => {
         // Production Alerts: has_override=false, is_estate_default=true,
         // so effective enabled is true; toggling should send enabled=false
         const prodRow = screen.getByText('Production Alerts').closest('tr');
-        const prodCheckbox = prodRow!.querySelector('input[type="checkbox"]')!;
-        fireEvent.click(prodCheckbox);
+        expect(prodRow).not.toBeNull();
+        const prodCheckbox = (prodRow as HTMLElement).querySelector('input[type="checkbox"]');
+        expect(prodCheckbox).not.toBeNull();
+        fireEvent.click(prodCheckbox as HTMLElement);
 
         await waitFor(() => {
             expect(mockFetch).toHaveBeenCalledWith(
@@ -212,8 +215,10 @@ describe('ChannelOverridesPanel', () => {
         // Dev Webhook: has_override=true, override_enabled=true,
         // so toggling should send enabled=false
         const devRow = screen.getByText('Dev Webhook').closest('tr');
-        const devCheckbox = devRow!.querySelector('input[type="checkbox"]')!;
-        fireEvent.click(devCheckbox);
+        expect(devRow).not.toBeNull();
+        const devCheckbox = (devRow as HTMLElement).querySelector('input[type="checkbox"]');
+        expect(devCheckbox).not.toBeNull();
+        fireEvent.click(devCheckbox as HTMLElement);
 
         await waitFor(() => {
             expect(mockFetch).toHaveBeenCalledWith(
@@ -318,8 +323,10 @@ describe('ChannelOverridesPanel', () => {
         });
 
         const prodRow = screen.getByText('Production Alerts').closest('tr');
-        const prodCheckbox = prodRow!.querySelector('input[type="checkbox"]')!;
-        fireEvent.click(prodCheckbox);
+        expect(prodRow).not.toBeNull();
+        const prodCheckbox = (prodRow as HTMLElement).querySelector('input[type="checkbox"]');
+        expect(prodCheckbox).not.toBeNull();
+        fireEvent.click(prodCheckbox as HTMLElement);
 
         await waitFor(() => {
             expect(screen.getByText('Permission denied')).toBeInTheDocument();

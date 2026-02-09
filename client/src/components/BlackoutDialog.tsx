@@ -119,8 +119,8 @@ const SCOPE_OPTIONS = [
 ];
 
 const extractNumericId = (prefixedId: string | number | undefined | null): number | undefined => {
-    if (prefixedId == null) return undefined;
-    if (typeof prefixedId === 'number') return prefixedId;
+    if (prefixedId == null) {return undefined;}
+    if (typeof prefixedId === 'number') {return prefixedId;}
     const match = prefixedId.match(/(\d+)$/);
     return match ? parseInt(match[1], 10) : undefined;
 };
@@ -183,13 +183,13 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
             const m = parseInt(customMinutes, 10) || 0;
             totalMinutes = h * 60 + m;
         }
-        if (totalMinutes <= 0) return null;
+        if (totalMinutes <= 0) {return null;}
         const end = new Date(Date.now() + totalMinutes * 60000);
         return end;
     }, [selectedPreset, customHours, customMinutes]);
 
     const computedEndTimeLabel = useMemo(() => {
-        if (!computedEndTime) return '';
+        if (!computedEndTime) {return '';}
         return computedEndTime.toLocaleString(undefined, {
             month: 'short',
             day: 'numeric',
@@ -201,13 +201,13 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
     // Validate form
     const isValid = useMemo(() => {
         if (mode === 'now') {
-            if (selectedPreset !== null) return true;
+            if (selectedPreset !== null) {return true;}
             const h = parseInt(customHours, 10) || 0;
             const m = parseInt(customMinutes, 10) || 0;
             return (h * 60 + m) > 0;
         }
         return !!startDateTime && !!endDateTime;
-    }, [reason, mode, selectedPreset, customHours, customMinutes, startDateTime, endDateTime]);
+    }, [mode, selectedPreset, customHours, customMinutes, startDateTime, endDateTime]);
 
     const handlePresetClick = (minutes: number) => {
         setSelectedPreset(minutes);
@@ -217,8 +217,8 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
 
     const handleCustomChange = (field: 'hours' | 'minutes', value: string) => {
         setSelectedPreset(null);
-        if (field === 'hours') setCustomHours(value);
-        else setCustomMinutes(value);
+        if (field === 'hours') {setCustomHours(value);}
+        else {setCustomMinutes(value);}
     };
 
     const handleSubmit = async () => {
@@ -230,8 +230,13 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
             let endTime: string;
 
             if (mode === 'now') {
+                if (computedEndTime === null) {
+                    setError('Please select a valid duration.');
+                    setIsSaving(false);
+                    return;
+                }
                 startTime = new Date().toISOString();
-                endTime = computedEndTime!.toISOString();
+                endTime = computedEndTime.toISOString();
             } else {
                 startTime = new Date(startDateTime).toISOString();
                 endTime = new Date(endDateTime).toISOString();
@@ -260,7 +265,7 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
     };
 
     const handleClose = () => {
-        if (!isSaving) onClose();
+        if (!isSaving) {onClose();}
     };
 
     // Scope chip styles

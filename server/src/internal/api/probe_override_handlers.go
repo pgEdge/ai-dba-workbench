@@ -10,6 +10,7 @@
 package api
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -136,7 +137,8 @@ func (h *ProbeOverrideHandler) listOverrides(w http.ResponseWriter, r *http.Requ
 	}
 
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch probe overrides: "+err.Error())
+		log.Printf("[ERROR] Failed to fetch probe overrides: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch probe overrides")
 		return
 	}
 
@@ -156,7 +158,8 @@ func (h *ProbeOverrideHandler) upsertOverride(w http.ResponseWriter, r *http.Req
 
 	err := h.datastore.UpsertProbeOverride(r.Context(), scope, scopeID, probeName, req)
 	if err != nil {
-		RespondError(w, http.StatusBadRequest, err.Error())
+		log.Printf("[ERROR] Request error: %v", err)
+		RespondError(w, http.StatusBadRequest, "Request failed")
 		return
 	}
 
@@ -171,7 +174,8 @@ func (h *ProbeOverrideHandler) deleteOverride(w http.ResponseWriter, r *http.Req
 
 	err := h.datastore.DeleteProbeOverride(r.Context(), scope, scopeID, probeName)
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError, "Failed to delete probe override: "+err.Error())
+		log.Printf("[ERROR] Failed to delete probe override: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to delete probe override")
 		return
 	}
 

@@ -149,7 +149,7 @@ export const useTimelineEvents = ({
      * Fetch timeline events from the API
      */
     const fetchEvents = useCallback(async (): Promise<void> => {
-        if (!user || !enabled) return;
+        if (!user || !enabled) {return;}
 
         // Only show loading state on the very first fetch ever (use ref to avoid re-renders)
         if (!initialLoadDoneRef.current) {
@@ -217,7 +217,7 @@ export const useTimelineEvents = ({
 
     // Auto-refresh when enabled (no loading indicator)
     useEffect(() => {
-        if (!enabled || !user) return;
+        if (!enabled || !user) {return;}
 
         const intervalId = setInterval(fetchEvents, refreshInterval);
         return () => clearInterval(intervalId);

@@ -274,7 +274,7 @@ describe('EventTimeline Component', () => {
         });
 
         it('adds event type when another is clicked', () => {
-            const { rerender } = render(<EventTimeline selection={mockServerSelection} mode="light" />);
+            render(<EventTimeline selection={mockServerSelection} mode="light" />);
 
             // Click Config first
             fireEvent.click(screen.getByText('Config'));

@@ -25,6 +25,22 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/llmproxy"
 )
 
+// routeRegistrar is implemented by any handler that can register routes on a mux.
+type routeRegistrar interface {
+	RegisterRoutes(mux *http.ServeMux, authWrapper func(http.HandlerFunc) http.HandlerFunc)
+}
+
+// registerDatastoreHandler registers a handler that depends on the datastore and
+// logs its enabled/disabled status.  This eliminates the repeated if/else pattern.
+func registerDatastoreHandler(mux *http.ServeMux, handler routeRegistrar, authWrapper func(http.HandlerFunc) http.HandlerFunc, name string, datastore interface{}) {
+	handler.RegisterRoutes(mux, authWrapper)
+	if datastore != nil {
+		fmt.Fprintf(os.Stderr, "%s: ENABLED\n", name)
+	} else {
+		fmt.Fprintf(os.Stderr, "%s: DISABLED (datastore not configured)\n", name)
+	}
+}
+
 // HandlerDependencies holds all dependencies needed for HTTP handlers
 type HandlerDependencies struct {
 	AuthStore   *auth.AuthStore
@@ -83,102 +99,54 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 			deps.Config.ConnectionSecurity.AllowedHosts,
 			deps.Config.ConnectionSecurity.BlockedHosts,
 		)
-		connHandler.RegisterRoutes(mux, authWrapper)
-		if deps.Datastore != nil {
-			fmt.Fprintf(os.Stderr, "Connection management: ENABLED\n")
-		} else {
-			fmt.Fprintf(os.Stderr, "Connection management: DISABLED (datastore not configured)\n")
-		}
+		registerDatastoreHandler(mux, connHandler, authWrapper, "Connection management", deps.Datastore)
 
 		// Cluster hierarchy endpoints (for ClusterNavigator component)
 		clusterHandler := api.NewClusterHandler(deps.Datastore, deps.AuthStore, rbacChecker)
-		clusterHandler.RegisterRoutes(mux, authWrapper)
-		if deps.Datastore != nil {
-			fmt.Fprintf(os.Stderr, "Cluster management: ENABLED\n")
-		} else {
-			fmt.Fprintf(os.Stderr, "Cluster management: DISABLED (datastore not configured)\n")
-		}
+		registerDatastoreHandler(mux, clusterHandler, authWrapper, "Cluster management", deps.Datastore)
 
 		// Alert endpoints (for StatusPanel component)
 		alertHandler := api.NewAlertHandler(deps.Datastore, deps.AuthStore)
-		alertHandler.RegisterRoutes(mux, authWrapper)
-		if deps.Datastore != nil {
-			fmt.Fprintf(os.Stderr, "Alert management: ENABLED\n")
-		} else {
-			fmt.Fprintf(os.Stderr, "Alert management: DISABLED (datastore not configured)\n")
-		}
+		registerDatastoreHandler(mux, alertHandler, authWrapper, "Alert management", deps.Datastore)
 
 		// Blackout management endpoints (for alert suppression windows)
 		blackoutHandler := api.NewBlackoutHandler(deps.Datastore, deps.AuthStore, rbacChecker)
-		blackoutHandler.RegisterRoutes(mux, authWrapper)
-		if deps.Datastore != nil {
-			fmt.Fprintf(os.Stderr, "Blackout management: ENABLED\n")
-		} else {
-			fmt.Fprintf(os.Stderr, "Blackout management: DISABLED (datastore not configured)\n")
-		}
+		registerDatastoreHandler(mux, blackoutHandler, authWrapper, "Blackout management", deps.Datastore)
 
 		// Probe configuration endpoints (for configurable collection intervals)
 		probeConfigHandler := api.NewProbeConfigHandler(deps.Datastore, deps.AuthStore, rbacChecker)
-		probeConfigHandler.RegisterRoutes(mux, authWrapper)
-		if deps.Datastore != nil {
-			fmt.Fprintf(os.Stderr, "Probe configuration: ENABLED\n")
-		} else {
-			fmt.Fprintf(os.Stderr, "Probe configuration: DISABLED (datastore not configured)\n")
-		}
+		registerDatastoreHandler(mux, probeConfigHandler, authWrapper, "Probe configuration", deps.Datastore)
 
 		// Alert rule configuration endpoints (for configurable alert thresholds)
 		alertRuleHandler := api.NewAlertRuleHandler(deps.Datastore, deps.AuthStore, rbacChecker)
-		alertRuleHandler.RegisterRoutes(mux, authWrapper)
-		if deps.Datastore != nil {
-			fmt.Fprintf(os.Stderr, "Alert rule configuration: ENABLED\n")
-		} else {
-			fmt.Fprintf(os.Stderr, "Alert rule configuration: DISABLED (datastore not configured)\n")
-		}
+		registerDatastoreHandler(mux, alertRuleHandler, authWrapper, "Alert rule configuration", deps.Datastore)
 
 		// Alert override endpoints (for hierarchical threshold configuration)
 		alertOverrideHandler := api.NewAlertOverrideHandler(deps.Datastore, deps.AuthStore, rbacChecker)
-		alertOverrideHandler.RegisterRoutes(mux, authWrapper)
-		if deps.Datastore != nil {
-			fmt.Fprintf(os.Stderr, "Alert override configuration: ENABLED\n")
-		} else {
-			fmt.Fprintf(os.Stderr, "Alert override configuration: DISABLED (datastore not configured)\n")
-		}
+		registerDatastoreHandler(mux, alertOverrideHandler, authWrapper, "Alert override configuration", deps.Datastore)
 
 		// Probe override endpoints (for hierarchical probe configuration)
 		probeOverrideHandler := api.NewProbeOverrideHandler(deps.Datastore, deps.AuthStore, rbacChecker)
-		probeOverrideHandler.RegisterRoutes(mux, authWrapper)
-		if deps.Datastore != nil {
-			fmt.Fprintf(os.Stderr, "Probe override configuration: ENABLED\n")
-		} else {
-			fmt.Fprintf(os.Stderr, "Probe override configuration: DISABLED (datastore not configured)\n")
-		}
+		registerDatastoreHandler(mux, probeOverrideHandler, authWrapper, "Probe override configuration", deps.Datastore)
 
 		// Notification channel management endpoints (for alert channel configuration)
-		notificationChannelHandler := api.NewNotificationChannelHandler(deps.Datastore, deps.AuthStore, rbacChecker)
-		notificationChannelHandler.RegisterRoutes(mux, authWrapper)
-		if deps.Datastore != nil {
-			fmt.Fprintf(os.Stderr, "Notification channel management: ENABLED\n")
-		} else {
-			fmt.Fprintf(os.Stderr, "Notification channel management: DISABLED (datastore not configured)\n")
-		}
+		notificationChannelHandler := api.NewNotificationChannelHandlerWithSecurity(
+			deps.Datastore,
+			deps.AuthStore,
+			rbacChecker,
+			deps.Config.ConnectionSecurity.AllowInternalNetworks,
+			deps.Config.ConnectionSecurity.AllowedHosts,
+			deps.Config.ConnectionSecurity.BlockedHosts,
+		)
+		registerDatastoreHandler(mux, notificationChannelHandler, authWrapper, "Notification channel management", deps.Datastore)
 
 		// Channel override endpoints (for hierarchical notification channel configuration)
 		channelOverrideHandler := api.NewChannelOverrideHandler(deps.Datastore, deps.AuthStore, rbacChecker)
-		channelOverrideHandler.RegisterRoutes(mux, authWrapper)
-		if deps.Datastore != nil {
-			fmt.Fprintf(os.Stderr, "Channel override configuration: ENABLED\n")
-		} else {
-			fmt.Fprintf(os.Stderr, "Channel override configuration: DISABLED (datastore not configured)\n")
-		}
+		registerDatastoreHandler(mux, channelOverrideHandler, authWrapper, "Channel override configuration", deps.Datastore)
 
 		// Timeline endpoints (for EventTimeline component)
 		timelineHandler := api.NewTimelineHandler(deps.Datastore, deps.AuthStore)
-		timelineHandler.RegisterRoutes(mux, authWrapper)
-		if deps.Datastore != nil {
-			fmt.Fprintf(os.Stderr, "Timeline events: ENABLED\n")
-		} else {
-			fmt.Fprintf(os.Stderr, "Timeline events: DISABLED (datastore not configured)\n")
-		}
+		registerDatastoreHandler(mux, timelineHandler, authWrapper, "Timeline events", deps.Datastore)
 
 		// RBAC management endpoints
 		if deps.AuthStore != nil {
@@ -191,32 +159,39 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 	}
 }
 
+// extractToken extracts a bearer or session token from the request.
+// It checks the Authorization header first (Bearer token), then falls
+// back to the session_token cookie.  Returns the raw token string and
+// a boolean indicating whether extraction succeeded plus an error
+// message suitable for the client when it fails.
+func extractToken(r *http.Request) (string, bool, string) {
+	// Try Authorization header first (for API tokens and backwards compatibility)
+	authHeader := r.Header.Get("Authorization")
+	if authHeader != "" {
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+		if token == authHeader {
+			return "", false, "Invalid Authorization header format"
+		}
+		return token, true, ""
+	}
+
+	// Try to get token from httpOnly session cookie
+	cookie, err := r.Cookie("session_token")
+	if err != nil || cookie.Value == "" {
+		return "", false, "Missing authentication credentials"
+	}
+	return cookie.Value, true, ""
+}
+
 // createAuthWrapper creates a handler wrapper that enforces authentication
 // Supports both Authorization header (for API tokens) and session cookies (for browser sessions)
 func createAuthWrapper(authStore *auth.AuthStore) func(http.HandlerFunc) http.HandlerFunc {
 	return func(handler http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			var token string
-
-			// Try Authorization header first (for API tokens and backwards compatibility)
-			authHeader := r.Header.Get("Authorization")
-			if authHeader != "" {
-				// Extract Bearer token
-				token = strings.TrimPrefix(authHeader, "Bearer ")
-				if token == authHeader {
-					http.Error(w, "Invalid Authorization header format",
-						http.StatusUnauthorized)
-					return
-				}
-			} else {
-				// Try to get token from httpOnly session cookie
-				cookie, err := r.Cookie("session_token")
-				if err != nil || cookie.Value == "" {
-					http.Error(w, "Missing authentication credentials",
-						http.StatusUnauthorized)
-					return
-				}
-				token = cookie.Value
+			token, ok, errMsg := extractToken(r)
+			if !ok {
+				http.Error(w, errMsg, http.StatusUnauthorized)
+				return
 			}
 
 			// Token valid - add token hash to context for tracing and isolation
@@ -260,53 +235,59 @@ func createAuthWrapper(authStore *auth.AuthStore) func(http.HandlerFunc) http.Ha
 // createUserInfoHandler creates a handler for the user info endpoint
 func createUserInfoHandler(authStore *auth.AuthStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var token string
-
-		// Try Authorization header first (for API tokens and backwards compatibility)
-		authHeader := r.Header.Get("Authorization")
-		if authHeader != "" {
-			// Extract Bearer token
-			token = strings.TrimPrefix(authHeader, "Bearer ")
-			if token == authHeader {
-				api.RespondJSON(w, http.StatusOK, map[string]interface{}{
-					"authenticated": false,
-					"error":         "Invalid Authorization header format",
-				})
-				return
+		token, ok, errMsg := extractToken(r)
+		if !ok {
+			// For auth header format errors, report the issue;
+			// for missing credentials just report unauthenticated.
+			resp := map[string]interface{}{"authenticated": false}
+			if errMsg == "Invalid Authorization header format" {
+				resp["error"] = errMsg
 			}
-		} else {
-			// Try to get token from httpOnly session cookie
-			cookie, err := r.Cookie("session_token")
-			if err != nil || cookie.Value == "" {
-				api.RespondJSON(w, http.StatusOK, map[string]interface{}{
-					"authenticated": false,
-				})
-				return
-			}
-			token = cookie.Value
-		}
-
-		// Validate session token and get username
-		username, err := authStore.ValidateSessionToken(token)
-		if err != nil {
-			api.RespondJSON(w, http.StatusOK, map[string]interface{}{
-				"authenticated": false,
-				"error":         "Invalid or expired session",
-			})
+			api.RespondJSON(w, http.StatusOK, resp)
 			return
 		}
 
-		// Look up user to get superuser status
-		isSuperuser := false
-		user, userErr := authStore.GetUser(username)
-		if userErr == nil && user != nil {
-			isSuperuser = user.IsSuperuser
+		// Try API token first, then fall back to session token
+		var username string
+		var isSuperuser bool
+		var userID int64
+
+		storedToken, tokenErr := authStore.ValidateToken(token)
+		if tokenErr == nil && storedToken != nil {
+			// Valid API token - look up the owner user
+			owner, ownerErr := authStore.GetUserByID(storedToken.OwnerID)
+			if ownerErr != nil || owner == nil {
+				api.RespondJSON(w, http.StatusOK, map[string]interface{}{
+					"authenticated": false,
+					"error":         "Invalid or expired token",
+				})
+				return
+			}
+			username = owner.Username
+			isSuperuser = owner.IsSuperuser
+			userID = owner.ID
+		} else {
+			// Try session token
+			sessionUsername, sessionErr := authStore.ValidateSessionToken(token)
+			if sessionErr != nil {
+				api.RespondJSON(w, http.StatusOK, map[string]interface{}{
+					"authenticated": false,
+					"error":         "Invalid or expired session",
+				})
+				return
+			}
+			username = sessionUsername
+			user, userErr := authStore.GetUser(username)
+			if userErr == nil && user != nil {
+				isSuperuser = user.IsSuperuser
+				userID = user.ID
+			}
 		}
 
 		// Get admin permissions for the user
 		var adminPermissions []string
-		if user != nil {
-			perms, permErr := authStore.GetUserAdminPermissions(user.ID)
+		if userID > 0 {
+			perms, permErr := authStore.GetUserAdminPermissions(userID)
 			if permErr == nil {
 				for perm := range perms {
 					adminPermissions = append(adminPermissions, perm)

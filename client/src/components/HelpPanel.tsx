@@ -14,7 +14,6 @@ import {
     Box,
     Typography,
     IconButton,
-    Divider,
     List,
     ListItemButton,
     ListItemIcon,
@@ -46,9 +45,7 @@ import {
     Folder as GroupIcon,
     Dns as ClusterIcon,
     Star as PrimaryIcon,
-    Hub as SpockIcon,
     AdminPanelSettings as AdminIcon,
-    Email as EmailIcon,
     Notifications as NotificationsIcon,
     PauseCircle as BlackoutIcon,
     Schedule as ScheduleIcon,
@@ -70,7 +67,7 @@ const HELP_PAGES = {
 
 // Map context to help page
 const contextToPage = (context) => {
-    if (!context) return HELP_PAGES.overview;
+    if (!context) {return HELP_PAGES.overview;}
 
     switch (context) {
         case 'navigator':
@@ -262,12 +259,6 @@ const getHelpTipSx = (theme: Theme) => ({
     borderColor: alpha(theme.palette.primary.main, 0.2),
 });
 
-const getShortcutKeySx = (theme: Theme) => ({
-    ...styles.shortcutKeyBase,
-    bgcolor: alpha(theme.palette.grey[500], 0.2),
-    borderColor: theme.palette.divider,
-});
-
 const getSeverityChipSx = (paletteKey) => (theme) => ({
     ...styles.severityChipBase,
     bgcolor: alpha(theme.palette[paletteKey].main, 0.15),
@@ -342,24 +333,6 @@ const FeatureItem = ({ title, description }) => (
             {title}
         </Typography>
         <Typography sx={styles.featureDescription}>
-            {description}
-        </Typography>
-    </Box>
-);
-
-/**
- * KeyboardShortcut - Display a keyboard shortcut
- */
-const KeyboardShortcut = ({ keys, description }) => (
-    <Box sx={styles.shortcutRow}>
-        <Box sx={styles.shortcutKeysRow}>
-            {keys.map((key, i) => (
-                <Box key={i} sx={getShortcutKeySx}>
-                    {key}
-                </Box>
-            ))}
-        </Box>
-        <Typography sx={styles.shortcutDescription}>
             {description}
         </Typography>
     </Box>
@@ -1086,7 +1059,7 @@ interface HelpPanelProps {
     mode: string;
 }
 
-const HelpPanel: React.FC<HelpPanelProps> = ({ open, onClose, helpContext, mode }) => {
+const HelpPanel: React.FC<HelpPanelProps> = ({ open, onClose, helpContext, mode: _mode }) => {
     const [currentPage, setCurrentPage] = useState(HELP_PAGES.overview);
     const contentRef = useRef(null);
 

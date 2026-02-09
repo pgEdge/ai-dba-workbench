@@ -125,9 +125,9 @@ const MainLayout: React.FC<MainLayoutProps> = ({ mode, onToggleTheme }) => {
 
     // Determine help context based on current selection
     const helpContext = useMemo(() => {
-        if (selectionType === 'server') return 'server';
-        if (selectionType === 'cluster') return 'cluster';
-        if (selectionType === 'estate') return 'navigator';
+        if (selectionType === 'server') {return 'server';}
+        if (selectionType === 'cluster') {return 'cluster';}
+        if (selectionType === 'estate') {return 'navigator';}
         return null;
     }, [selectionType]);
 

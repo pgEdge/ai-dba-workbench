@@ -14,6 +14,13 @@ import (
 	"strings"
 )
 
+// Package-level compiled regexes for query parsing
+var (
+	reConnString = regexp.MustCompile(`postgres(?:ql)?://[^\s'"]+`)
+	reAtPattern  = regexp.MustCompile(`(?i)\s+(?:at|from|on|for|in)\s+(postgres(?:ql)?://[^\s'"]+)`)
+	reDBPattern  = regexp.MustCompile(`(?i)^(?:database|db)\s+(postgres(?:ql)?://[^\s'"]+)\s+`)
+)
+
 // QueryContext contains information parsed from a natural language query
 type QueryContext struct {
 	CleanedQuery     string // The query with connection string references removed
@@ -27,9 +34,7 @@ func ParseQueryForConnection(query string) *QueryContext {
 		CleanedQuery: query,
 	}
 
-	// Patterns for detecting connection strings
-	// Matches: postgres://..., postgresql://...
-	connStringPattern := regexp.MustCompile(`postgres(?:ql)?://[^\s'"]+`)
+	// Use pre-compiled patterns for detecting connection strings
 
 	// Check for "set default" or "use database" commands
 	lowerQuery := strings.ToLower(query)
@@ -41,7 +46,7 @@ func ParseQueryForConnection(query string) *QueryContext {
 		ctx.SetAsDefault = true
 
 		// Extract the connection string
-		if match := connStringPattern.FindString(query); match != "" {
+		if match := reConnString.FindString(query); match != "" {
 			ctx.ConnectionString = match
 			// Remove the command from the query
 			ctx.CleanedQuery = ""
@@ -50,21 +55,19 @@ func ParseQueryForConnection(query string) *QueryContext {
 	}
 
 	// Pattern: "... at postgres://..." or "... from postgres://..." or "... on postgres://..."
-	atPattern := regexp.MustCompile(`(?i)\s+(?:at|from|on|for|in)\s+(postgres(?:ql)?://[^\s'"]+)`)
-	if matches := atPattern.FindStringSubmatch(query); len(matches) > 1 {
+	if matches := reAtPattern.FindStringSubmatch(query); len(matches) > 1 {
 		ctx.ConnectionString = matches[1]
 		// Remove the connection string reference from the query
-		ctx.CleanedQuery = atPattern.ReplaceAllString(query, "")
+		ctx.CleanedQuery = reAtPattern.ReplaceAllString(query, "")
 		ctx.CleanedQuery = strings.TrimSpace(ctx.CleanedQuery)
 		return ctx
 	}
 
 	// Pattern: "database postgres://... " at the beginning
-	dbPattern := regexp.MustCompile(`(?i)^(?:database|db)\s+(postgres(?:ql)?://[^\s'"]+)\s+`)
-	if matches := dbPattern.FindStringSubmatch(query); len(matches) > 1 {
+	if matches := reDBPattern.FindStringSubmatch(query); len(matches) > 1 {
 		ctx.ConnectionString = matches[1]
 		// Remove the database prefix from the query
-		ctx.CleanedQuery = dbPattern.ReplaceAllString(query, "")
+		ctx.CleanedQuery = reDBPattern.ReplaceAllString(query, "")
 		ctx.CleanedQuery = strings.TrimSpace(ctx.CleanedQuery)
 		return ctx
 	}

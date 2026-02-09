@@ -156,6 +156,23 @@ func (h *ConnectionHandler) listConnections(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Filter connections based on RBAC privileges
+	accessibleIDs := h.rbacChecker.GetAccessibleConnections(r.Context())
+	if accessibleIDs != nil {
+		// Build a set of accessible connection IDs for efficient lookup
+		accessibleSet := make(map[int]bool, len(accessibleIDs))
+		for _, id := range accessibleIDs {
+			accessibleSet[id] = true
+		}
+		filtered := connections[:0]
+		for _, conn := range connections {
+			if accessibleSet[conn.ID] {
+				filtered = append(filtered, conn)
+			}
+		}
+		connections = filtered
+	}
+
 	RespondJSON(w, http.StatusOK, connections)
 }
 

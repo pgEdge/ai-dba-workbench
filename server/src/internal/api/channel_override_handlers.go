@@ -10,6 +10,7 @@
 package api
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -136,7 +137,8 @@ func (h *ChannelOverrideHandler) listOverrides(w http.ResponseWriter, r *http.Re
 	}
 
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch channel overrides: "+err.Error())
+		log.Printf("[ERROR] Failed to fetch channel overrides: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch channel overrides")
 		return
 	}
 
@@ -156,7 +158,8 @@ func (h *ChannelOverrideHandler) upsertOverride(w http.ResponseWriter, r *http.R
 
 	err := h.datastore.UpsertChannelOverride(r.Context(), scope, scopeID, channelID, req)
 	if err != nil {
-		RespondError(w, http.StatusBadRequest, err.Error())
+		log.Printf("[ERROR] Request error: %v", err)
+		RespondError(w, http.StatusBadRequest, "Request failed")
 		return
 	}
 
@@ -171,7 +174,8 @@ func (h *ChannelOverrideHandler) deleteOverride(w http.ResponseWriter, r *http.R
 
 	err := h.datastore.DeleteChannelOverride(r.Context(), scope, scopeID, channelID)
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError, "Failed to delete channel override: "+err.Error())
+		log.Printf("[ERROR] Failed to delete channel override: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to delete channel override")
 		return
 	}
 

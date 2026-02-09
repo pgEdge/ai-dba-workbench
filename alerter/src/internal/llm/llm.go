@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
 	"github.com/pgedge/ai-workbench/pkg/embedding"
@@ -217,22 +218,10 @@ func normalizeEmbedding(embedding []float32) []float32 {
 		return embedding
 	}
 
-	magnitude := float32(1.0 / sqrt(sumSquares))
+	magnitude := float32(1.0 / math.Sqrt(sumSquares))
 	result := make([]float32, len(embedding))
 	for i, v := range embedding {
 		result[i] = v * magnitude
 	}
 	return result
-}
-
-// sqrt calculates the square root using Newton-Raphson method
-func sqrt(x float64) float64 {
-	if x <= 0 {
-		return 0
-	}
-	z := x
-	for i := 0; i < 10; i++ {
-		z = z - (z*z-x)/(2*z)
-	}
-	return z
 }

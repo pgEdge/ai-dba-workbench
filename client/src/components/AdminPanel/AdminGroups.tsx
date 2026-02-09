@@ -80,7 +80,7 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
     const { user } = useAuth();
     const isSuperuser = !!user?.isSuperuser;
     const [groups, setGroups] = useState([]);
-    const [connections, setConnections] = useState<any[]>([]);
+    const [connections, setConnections] = useState<Array<{ id: number; name: string }>>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [expandedGroup, setExpandedGroup] = useState(null);
@@ -186,7 +186,7 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
 
     // Create group
     const handleCreateGroup = async () => {
-        if (!createName.trim()) return;
+        if (!createName.trim()) {return;}
         try {
             setCreateLoading(true);
             setCreateError(null);
@@ -225,7 +225,7 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
     };
 
     const handleEditGroup = async () => {
-        if (!editName.trim() || !editGroup) return;
+        if (!editName.trim() || !editGroup) {return;}
         try {
             setEditLoading(true);
             setEditError(null);
@@ -265,7 +265,7 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
     };
 
     const handleDeleteGroup = async () => {
-        if (!deleteGroup) return;
+        if (!deleteGroup) {return;}
         try {
             setDeleteLoading(true);
             const response = await fetch(
@@ -311,13 +311,13 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
                     (data.groups || []).filter((g) => g.id !== expandedGroup)
                 );
             }
-        } catch (err) {
+        } catch {
             setAddMemberError('Failed to load available members');
         }
     };
 
     const handleAddMember = async () => {
-        if (!selectedMemberId || !expandedGroup) return;
+        if (!selectedMemberId || !expandedGroup) {return;}
         try {
             setAddMemberLoading(true);
             setAddMemberError(null);
@@ -354,7 +354,7 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
     };
 
     const handleRemoveMember = async (memberId, mType) => {
-        if (!expandedGroup) return;
+        if (!expandedGroup) {return;}
         try {
             const response = await fetch(
                 `${API_BASE_URL}/rbac/groups/${expandedGroup}/members/${mType}/${memberId}`,
@@ -374,7 +374,7 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
     };
 
     const handleRemoveMemberByName = async (name, mType) => {
-        if (!expandedGroup) return;
+        if (!expandedGroup) {return;}
         try {
             let memberId;
             if (mType === 'user') {
@@ -382,11 +382,11 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
                 if (res.ok) {
                     const data = await res.json();
                     const user = (data.users || []).find(u => u.username === name);
-                    if (user) memberId = user.id;
+                    if (user) {memberId = user.id;}
                 }
             } else {
                 const found = groups.find(g => g.name === name);
-                if (found) memberId = found.id;
+                if (found) {memberId = found.id;}
             }
             if (!memberId) {
                 setError(`Could not find ${mType} "${name}"`);

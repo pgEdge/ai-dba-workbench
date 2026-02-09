@@ -7,6 +7,7 @@
  *
  *-------------------------------------------------------------------------
  */
+/* eslint-disable react-refresh/only-export-components */
 
 import React, { createContext, useContext, useCallback } from 'react';
 import { useAuth } from './AuthContext';
@@ -59,7 +60,7 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
      * auto-detected groups (group-auto)
      */
     const updateGroupName = useCallback(async (groupId: string, newName: string): Promise<void> => {
-        if (!user) throw new Error('Not authenticated');
+        if (!user) {throw new Error('Not authenticated');}
 
         const groupIdStr = groupId.toString();
 
@@ -115,7 +116,7 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
      * auto-detected clusters (server-{id}, cluster-spock-{prefix})
      */
     const updateClusterName = useCallback(async (clusterId: string, newName: string, groupId: string, autoClusterKey?: string): Promise<void> => {
-        if (!user) throw new Error('Not authenticated');
+        if (!user) {throw new Error('Not authenticated');}
 
         const clusterIdStr = clusterId.toString();
 
@@ -178,7 +179,7 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
      * Update a server's (connection's) name
      */
     const updateServerName = useCallback(async (serverId: number, newName: string): Promise<void> => {
-        if (!user) throw new Error('Not authenticated');
+        if (!user) {throw new Error('Not authenticated');}
 
         const response = await fetch(`/api/v1/connections/${serverId}`, {
             method: 'PUT',
@@ -202,7 +203,7 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
      * Get full server (connection) details for editing
      */
     const getServer = useCallback(async (serverId: number): Promise<unknown> => {
-        if (!user) throw new Error('Not authenticated');
+        if (!user) {throw new Error('Not authenticated');}
 
         const response = await fetch(`/api/v1/connections/${serverId}`, {
             method: 'GET',
@@ -221,7 +222,7 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
      * Create a new server (connection)
      */
     const createServer = useCallback(async (serverData: ServerData): Promise<unknown> => {
-        if (!user) throw new Error('Not authenticated');
+        if (!user) {throw new Error('Not authenticated');}
 
         const response = await fetch('/api/v1/connections', {
             method: 'POST',
@@ -245,7 +246,7 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
      * Update an existing server (connection)
      */
     const updateServer = useCallback(async (serverId: number, serverData: ServerData): Promise<unknown> => {
-        if (!user) throw new Error('Not authenticated');
+        if (!user) {throw new Error('Not authenticated');}
 
         const response = await fetch(`/api/v1/connections/${serverId}`, {
             method: 'PUT',
@@ -269,7 +270,7 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
      * Delete a server (connection)
      */
     const deleteServer = useCallback(async (serverId: number): Promise<void> => {
-        if (!user) throw new Error('Not authenticated');
+        if (!user) {throw new Error('Not authenticated');}
 
         const response = await fetch(`/api/v1/connections/${serverId}`, {
             method: 'DELETE',
@@ -293,7 +294,7 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
      * Create a new cluster group
      */
     const createGroup = useCallback(async (groupData: GroupData): Promise<unknown> => {
-        if (!user) throw new Error('Not authenticated');
+        if (!user) {throw new Error('Not authenticated');}
 
         const response = await fetch('/api/v1/cluster-groups', {
             method: 'POST',
@@ -317,7 +318,7 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
      * Delete a cluster group
      */
     const deleteGroup = useCallback(async (groupId: string | number): Promise<void> => {
-        if (!user) throw new Error('Not authenticated');
+        if (!user) {throw new Error('Not authenticated');}
 
         // Extract numeric ID from group-{id} format if needed
         const numericId = typeof groupId === 'string' && groupId.startsWith('group-')
@@ -342,7 +343,7 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
      * Supports both database-backed clusters and auto-detected clusters
      */
     const moveClusterToGroup = useCallback(async (clusterId: string, targetGroupId: string | null, autoClusterKey?: string, clusterName?: string): Promise<void> => {
-        if (!user) throw new Error('Not authenticated');
+        if (!user) {throw new Error('Not authenticated');}
 
         const clusterIdStr = clusterId.toString();
 

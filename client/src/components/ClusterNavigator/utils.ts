@@ -36,13 +36,13 @@ export interface Cluster {
  * Recursively collect all roles from servers and their children
  */
 export const collectAllRoles = (servers: Server[]): string[] => {
-    if (!servers || servers.length === 0) return [];
+    if (!servers || servers.length === 0) {return [];}
     const roles: string[] = [];
     const traverse = (serverList: Server[]): void => {
         serverList.forEach(s => {
             const role = s.primary_role || s.role;
-            if (role) roles.push(role);
-            if (s.children && s.children.length > 0) traverse(s.children);
+            if (role) {roles.push(role);}
+            if (s.children && s.children.length > 0) {traverse(s.children);}
         });
     };
     traverse(servers);
@@ -55,24 +55,24 @@ export const collectAllRoles = (servers: Server[]): string[] => {
  * Priority: spock > logical > binary (logical takes precedence since it's often combined with binary)
  */
 export const getClusterType = (cluster: Cluster | null | undefined): ClusterType => {
-    if (!cluster) return 'default';
-    if (cluster.name?.toLowerCase().includes('spock')) return 'spock';
-    if (!cluster.servers || cluster.servers.length === 0) return 'default';
+    if (!cluster) {return 'default';}
+    if (cluster.name?.toLowerCase().includes('spock')) {return 'spock';}
+    if (!cluster.servers || cluster.servers.length === 0) {return 'default';}
 
     // Collect roles from all servers including nested children
     const roles = collectAllRoles(cluster.servers);
-    if (roles.length === 0) return 'default';
+    if (roles.length === 0) {return 'default';}
 
     // Check for Spock (highest priority)
-    if (roles.some(r => r === 'spock_node')) return 'spock';
+    if (roles.some(r => r === 'spock_node')) {return 'spock';}
 
     // Check for logical replication (takes precedence over binary)
     const logicalRoles = ['logical_publisher', 'logical_subscriber', 'logical_bidirectional'];
-    if (roles.some(r => logicalRoles.includes(r))) return 'logical';
+    if (roles.some(r => logicalRoles.includes(r))) {return 'logical';}
 
     // Check for binary replication
     const binaryRoles = ['binary_primary', 'binary_standby', 'binary_cascading'];
-    if (roles.some(r => binaryRoles.includes(r))) return 'binary';
+    if (roles.some(r => binaryRoles.includes(r))) {return 'binary';}
 
     return 'default';
 };
@@ -95,7 +95,7 @@ export const countServersRecursive = (
     servers: Server[] | undefined,
     filterFn: (server: Server) => boolean = () => true
 ): number => {
-    if (!servers) return 0;
+    if (!servers) {return 0;}
     return servers.reduce((count, server) => {
         const current = filterFn(server) ? 1 : 0;
         const childCount = countServersRecursive(server.children, filterFn);
@@ -107,7 +107,7 @@ export const countServersRecursive = (
  * Collect all expandable server IDs recursively
  */
 export const collectExpandableServerIds = (servers: Server[] | undefined): number[] => {
-    if (!servers) return [];
+    if (!servers) {return [];}
     return servers.flatMap(server => {
         const ids = server.is_expandable || (server.children && server.children.length > 0) ? [server.id] : [];
         return [...ids, ...collectExpandableServerIds(server.children)];
@@ -118,7 +118,7 @@ export const collectExpandableServerIds = (servers: Server[] | undefined): numbe
  * Recursively filter servers by search query, including children
  */
 export const filterServersRecursive = (servers: Server[] | undefined, query: string): Server[] => {
-    if (!servers) return [];
+    if (!servers) {return [];}
 
     return servers.reduce<Server[]>((result, server) => {
         const serverMatches =
@@ -146,7 +146,7 @@ export const filterServersRecursive = (servers: Server[] | undefined, query: str
 export const loadFromStorage = <T>(key: string, defaultValue: T): T => {
     try {
         const stored = localStorage.getItem(key);
-        if (stored === null) return defaultValue;
+        if (stored === null) {return defaultValue;}
         return JSON.parse(stored) as T;
     } catch {
         return defaultValue;
@@ -168,9 +168,9 @@ export const saveToStorage = (key: string, value: unknown): void => {
  * Format relative time for display (e.g., "just now", "5m ago")
  */
 export const formatRelativeTime = (date: Date | null | undefined): string => {
-    if (!date) return '';
+    if (!date) {return '';}
     const seconds = Math.floor((new Date().getTime() - date.getTime()) / 1000);
-    if (seconds < 60) return 'just now';
+    if (seconds < 60) {return 'just now';}
     const minutes = Math.floor(seconds / 60);
     return `${minutes}m ago`;
 };

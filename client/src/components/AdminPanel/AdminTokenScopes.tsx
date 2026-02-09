@@ -52,7 +52,6 @@ import {
     loadingContainerSx,
     pageHeadingSx,
     subsectionLabelSx,
-    emptyRowTextSx,
     getContainedButtonSx,
     getDeleteIconSx,
     getTableContainerSx,
@@ -67,7 +66,12 @@ const EXPIRY_OPTIONS = [
     { label: 'Never', value: 'never' },
 ];
 
-const ADMIN_PERMISSIONS = [
+interface AdminPermissionEntry {
+    id: string;
+    label: string;
+}
+
+const ADMIN_PERMISSIONS: AdminPermissionEntry[] = [
     { id: 'manage_connections', label: 'Manage Connections' },
     { id: 'manage_groups', label: 'Manage Groups' },
     { id: 'manage_permissions', label: 'Manage Permissions' },
@@ -79,13 +83,74 @@ const ADMIN_PERMISSIONS = [
     { id: 'manage_notification_channels', label: 'Manage Notification Channels' },
 ];
 
-const ALL_MCP_OPTION = { id: -1, identifier: '*', _isAll: true };
-const ALL_ADMIN_OPTION = { id: '*', label: 'All Admin Permissions', _isAll: true };
+interface McpPrivilege {
+    id: number;
+    identifier: string;
+}
+
+interface McpPrivilegeOption extends McpPrivilege {
+    _isAll?: boolean;
+}
+
+interface AdminPermissionOption {
+    id: string;
+    label: string;
+    _isAll?: boolean;
+}
+
+const ALL_MCP_OPTION: McpPrivilegeOption = { id: -1, identifier: '*', _isAll: true };
+const ALL_ADMIN_OPTION: AdminPermissionOption = { id: '*', label: 'All Admin Permissions', _isAll: true };
 
 interface ScopedConnection {
     id: number;
     name: string;
     access_level: string;
+}
+
+interface Connection {
+    id: number;
+    name: string;
+}
+
+interface TokenScopeConnection {
+    connection_id: number;
+    access_level: string;
+}
+
+interface TokenScope {
+    scoped: boolean;
+    connections?: TokenScopeConnection[];
+    mcp_privileges?: number[];
+    admin_permissions?: string[];
+}
+
+interface Token {
+    id: number;
+    name?: string;
+    token_prefix?: string;
+    username?: string;
+    user_id?: number;
+    is_service_account?: boolean;
+    is_superuser?: boolean;
+    expires_at?: string | null;
+    scope?: TokenScope;
+}
+
+interface User {
+    id: number;
+    username: string;
+}
+
+interface CreateTokenResponse {
+    id: number;
+    token: string;
+}
+
+interface UserPrivilegesResponse {
+    is_superuser: boolean;
+    connection_privileges?: Record<string, string>;
+    mcp_privileges?: string[];
+    admin_permissions?: string[];
 }
 
 interface AdminTokenScopesProps {
@@ -94,72 +159,60 @@ interface AdminTokenScopesProps {
 
 const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
     const theme = useTheme();
-    const [tokens, setTokens] = useState<any[]>([]);
-    const [connections, setConnections] = useState<any[]>([]);
-    const [mcpPrivileges, setMcpPrivileges] = useState<any[]>([]);
-    const [users, setUsers] = useState<any[]>([]);
+    const [tokens, setTokens] = useState<Token[]>([]);
+    const [connections, setConnections] = useState<Connection[]>([]);
+    const [mcpPrivileges, setMcpPrivileges] = useState<McpPrivilege[]>([]);
+    const [users, setUsers] = useState<User[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [expandedToken, setExpandedToken] = useState<number | null>(null);
 
     // Create token dialog
     const [createOpen, setCreateOpen] = useState(false);
-    const [createOwner, setCreateOwner] = useState<any>(null);
+    const [createOwner, setCreateOwner] = useState<User | null>(null);
     const [createAnnotation, setCreateAnnotation] = useState('');
     const [createExpiry, setCreateExpiry] = useState('90d');
     const [createLoading, setCreateLoading] = useState(false);
     const [createError, setCreateError] = useState<string | null>(null);
-    const [createConnections, setCreateConnections] = useState<any[]>([]);
-    const [createMcpPrivileges, setCreateMcpPrivileges] = useState<any[]>([]);
-    const [createAdminPermissions, setCreateAdminPermissions] = useState<any[]>([]);
+    const [createConnections, setCreateConnections] = useState<ScopedConnection[]>([]);
+    const [createMcpPrivileges, setCreateMcpPrivileges] = useState<McpPrivilegeOption[]>([]);
+    const [createAdminPermissions, setCreateAdminPermissions] = useState<AdminPermissionOption[]>([]);
 
     // Token created success dialog
     const [createdToken, setCreatedToken] = useState<string | null>(null);
     const [createdDialogOpen, setCreatedDialogOpen] = useState(false);
 
     // Create dialog - owner privilege filtering
-    const [ownerConnections, setOwnerConnections] = useState<any[]>([]);
+    const [ownerConnections, setOwnerConnections] = useState<Connection[]>([]);
     const [ownerConnectionLevels, setOwnerConnectionLevels] = useState<Record<number, string>>({});
-    const [ownerMcpPrivileges, setOwnerMcpPrivileges] = useState<any[]>([]);
-    const [ownerAdminPermissions, setOwnerAdminPermissions] = useState<any[]>([]);
+    const [ownerMcpPrivileges, setOwnerMcpPrivileges] = useState<McpPrivilege[]>([]);
+    const [ownerAdminPermissions, setOwnerAdminPermissions] = useState<AdminPermissionEntry[]>([]);
     const [ownerIsSuperuser, setOwnerIsSuperuser] = useState(false);
 
     // Edit scope dialog
     const [editOpen, setEditOpen] = useState(false);
-    const [editToken, setEditToken] = useState<any>(null);
-    const [editConnections, setEditConnections] = useState<any[]>([]);
-    const [editMcpPrivileges, setEditMcpPrivileges] = useState<any[]>([]);
-    const [editAdminPermissions, setEditAdminPermissions] = useState<any[]>([]);
+    const [editToken, setEditToken] = useState<Token | null>(null);
+    const [editConnections, setEditConnections] = useState<ScopedConnection[]>([]);
+    const [editMcpPrivileges, setEditMcpPrivileges] = useState<McpPrivilegeOption[]>([]);
+    const [editAdminPermissions, setEditAdminPermissions] = useState<AdminPermissionOption[]>([]);
     const [editLoading, setEditLoading] = useState(false);
     const [editError, setEditError] = useState<string | null>(null);
-    const [editAvailableConnections, setEditAvailableConnections] = useState<any[]>([]);
+    const [editAvailableConnections, setEditAvailableConnections] = useState<Connection[]>([]);
     const [editOwnerConnectionLevels, setEditOwnerConnectionLevels] = useState<Record<number, string>>({});
     const [editOwnerIsSuperuser, setEditOwnerIsSuperuser] = useState(false);
-    const [editAvailableMcpPrivileges, setEditAvailableMcpPrivileges] = useState<any[]>([]);
-    const [editAvailableAdminPermissions, setEditAvailableAdminPermissions] = useState<any[]>([]);
+    const [editAvailableMcpPrivileges, setEditAvailableMcpPrivileges] = useState<McpPrivilege[]>([]);
+    const [editAvailableAdminPermissions, setEditAvailableAdminPermissions] = useState<AdminPermissionEntry[]>([]);
 
     // Delete confirmation
     const [deleteOpen, setDeleteOpen] = useState(false);
-    const [deleteToken, setDeleteToken] = useState<any>(null);
+    const [deleteToken, setDeleteToken] = useState<Token | null>(null);
     const [deleteLoading, setDeleteLoading] = useState(false);
 
-    const getConnectionName = useCallback((id: number) => {
-        if (id === 0) return 'All Connections';
-        const conn = connections.find((c: any) => c.id === id);
-        return conn ? conn.name : `Connection ${id}`;
-    }, [connections]);
-
     const getMcpPrivilegeName = useCallback((id: number) => {
-        if (id === -1) return 'All MCP Privileges';
-        const priv = mcpPrivileges.find((p: any) => p.id === id);
+        if (id === -1) {return 'All MCP Privileges';}
+        const priv = mcpPrivileges.find((p: McpPrivilege) => p.id === id);
         return priv ? priv.identifier : `Privilege ${id}`;
     }, [mcpPrivileges]);
-
-    const getAdminPermissionLabel = useCallback((id: string) => {
-        if (id === '*') return 'All Admin Permissions';
-        const perm = ADMIN_PERMISSIONS.find(p => p.id === id);
-        return perm ? perm.label : id;
-    }, []);
 
     const fetchData = useCallback(async () => {
         try {
@@ -171,7 +224,7 @@ const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
                 fetch(`${API_BASE_URL}/rbac/privileges/mcp`, { credentials: 'include' }),
                 fetch(`${API_BASE_URL}/rbac/users`, { credentials: 'include' }),
             ]);
-            if (!tokRes.ok) throw new Error('Failed to fetch tokens');
+            if (!tokRes.ok) {throw new Error('Failed to fetch tokens');}
             const tokData = await tokRes.json();
             setTokens(tokData.tokens || []);
             if (connRes.ok) {
@@ -186,8 +239,8 @@ const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
                 const usersData = await usersRes.json();
                 setUsers(usersData.users || []);
             }
-        } catch (err: any) {
-            setError(err.message);
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : String(err));
         } finally {
             setLoading(false);
         }
@@ -197,7 +250,7 @@ const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
         fetchData();
     }, [fetchData]);
 
-    const handleTokenRowClick = (token: any) => {
+    const handleTokenRowClick = (token: Token) => {
         if (expandedToken === token.id) {
             setExpandedToken(null);
         } else {
@@ -206,7 +259,7 @@ const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
     };
 
     // Handle owner change in create dialog - fetch privileges
-    const handleOwnerChange = async (owner: any) => {
+    const handleOwnerChange = async (owner: User | null) => {
         setCreateOwner(owner);
         // Clear current scope selections when owner changes
         setCreateConnections([]);
@@ -228,13 +281,13 @@ const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
                 { credentials: 'include' }
             );
             if (res.ok) {
-                const data = await res.json();
+                const data: UserPrivilegesResponse = await res.json();
                 if (data.is_superuser) {
                     // Superusers can access everything
                     setOwnerIsSuperuser(true);
                     setOwnerConnections(connections);
                     const levels: Record<number, string> = {};
-                    connections.forEach((c: any) => { levels[c.id] = 'read_write'; });
+                    connections.forEach((c: Connection) => { levels[c.id] = 'read_write'; });
                     setOwnerConnectionLevels(levels);
                     setOwnerMcpPrivileges(mcpPrivileges);
                     setOwnerAdminPermissions(ADMIN_PERMISSIONS);
@@ -251,7 +304,7 @@ const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
                         setOwnerConnections(connections);
                     } else {
                         setOwnerConnections(
-                            connections.filter((c: any) =>
+                            connections.filter((c: Connection) =>
                                 allowedConnIds.includes(c.id)
                             )
                         );
@@ -259,7 +312,7 @@ const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
                     // Filter MCP privileges to those the user has
                     const allowedMcp = data.mcp_privileges || [];
                     setOwnerMcpPrivileges(
-                        mcpPrivileges.filter((p: any) =>
+                        mcpPrivileges.filter((p: McpPrivilege) =>
                             allowedMcp.includes(p.identifier)
                         )
                     );
@@ -282,11 +335,11 @@ const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
 
     // Create token
     const handleCreateToken = async () => {
-        if (!createOwner || !createAnnotation.trim()) return;
+        if (!createOwner || !createAnnotation.trim()) {return;}
         try {
             setCreateLoading(true);
             setCreateError(null);
-            const body: any = {
+            const body: { owner_username: string; annotation: string; expires_in: string } = {
                 owner_username: createOwner.username,
                 annotation: createAnnotation.trim(),
                 expires_in: createExpiry,
@@ -301,7 +354,7 @@ const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
                 const data = await response.json();
                 throw new Error(data.error || 'Failed to create token');
             }
-            const data = await response.json();
+            const data: CreateTokenResponse = await response.json();
             // Set scope if specified
             if (createConnections.length > 0 || createMcpPrivileges.length > 0 || createAdminPermissions.length > 0) {
                 await fetch(`${API_BASE_URL}/rbac/tokens/${data.id}/scope`, {
@@ -313,12 +366,12 @@ const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
                             connection_id: c.id,
                             access_level: c.access_level,
                         })),
-                        mcp_privileges: createMcpPrivileges.some((p: any) => p._isAll)
+                        mcp_privileges: createMcpPrivileges.some((p: McpPrivilegeOption) => p._isAll)
                             ? ['*']
-                            : createMcpPrivileges.map((p: any) => p.identifier),
-                        admin_permissions: createAdminPermissions.some((p: any) => p._isAll)
+                            : createMcpPrivileges.map((p: McpPrivilegeOption) => p.identifier),
+                        admin_permissions: createAdminPermissions.some((p: AdminPermissionOption) => p._isAll)
                             ? ['*']
-                            : createAdminPermissions.map((p: any) => p.id),
+                            : createAdminPermissions.map((p: AdminPermissionOption) => p.id),
                     }),
                 });
             }
@@ -333,19 +386,19 @@ const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
             setCreatedToken(data.token);
             setCreatedDialogOpen(true);
             fetchData();
-        } catch (err: any) {
-            setCreateError(err.message);
+        } catch (err: unknown) {
+            setCreateError(err instanceof Error ? err.message : String(err));
         } finally {
             setCreateLoading(false);
         }
     };
 
     // Edit scope
-    const handleOpenEdit = async (token: any) => {
+    const handleOpenEdit = async (token: Token) => {
         setEditToken(token);
         const scopeConns = token.scope?.connections || [];
-        setEditConnections(scopeConns.map((sc: any) => {
-            const conn = connections.find((c: any) => c.id === sc.connection_id);
+        setEditConnections(scopeConns.map((sc: TokenScopeConnection) => {
+            const conn = connections.find((c: Connection) => c.id === sc.connection_id);
             return {
                 id: sc.connection_id,
                 name: conn ? conn.name : `Connection ${sc.connection_id}`,
@@ -357,13 +410,13 @@ const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
         if (mcpNames.includes('*')) {
             setEditMcpPrivileges([ALL_MCP_OPTION]);
         } else {
-            setEditMcpPrivileges(mcpPrivileges.filter((p: any) => scopeMcpIds.includes(p.id)));
+            setEditMcpPrivileges(mcpPrivileges.filter((p: McpPrivilege) => scopeMcpIds.includes(p.id)));
         }
         const scopeAdminPerms = token.scope?.admin_permissions || [];
         if (scopeAdminPerms.includes('*')) {
             setEditAdminPermissions([ALL_ADMIN_OPTION]);
         } else {
-            setEditAdminPermissions(ADMIN_PERMISSIONS.filter((p: any) => scopeAdminPerms.includes(p.id)));
+            setEditAdminPermissions(ADMIN_PERMISSIONS.filter((p: AdminPermissionEntry) => scopeAdminPerms.includes(p.id)));
         }
         setEditError(null);
         setEditOpen(true);
@@ -376,12 +429,12 @@ const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
                     { credentials: 'include' }
                 );
                 if (res.ok) {
-                    const data = await res.json();
+                    const data: UserPrivilegesResponse = await res.json();
                     if (data.is_superuser) {
                         setEditOwnerIsSuperuser(true);
                         setEditAvailableConnections(connections);
                         const levels: Record<number, string> = {};
-                        connections.forEach((c: any) => { levels[c.id] = 'read_write'; });
+                        connections.forEach((c: Connection) => { levels[c.id] = 'read_write'; });
                         setEditOwnerConnectionLevels(levels);
                         setEditAvailableMcpPrivileges(mcpPrivileges);
                         setEditAvailableAdminPermissions(ADMIN_PERMISSIONS);
@@ -396,14 +449,14 @@ const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
                             setEditAvailableConnections(connections);
                         } else {
                             setEditAvailableConnections(
-                                connections.filter((c: any) =>
+                                connections.filter((c: Connection) =>
                                     allowedConnIds.includes(c.id)
                                 )
                             );
                         }
                         const allowedMcp = data.mcp_privileges || [];
                         setEditAvailableMcpPrivileges(
-                            mcpPrivileges.filter((p: any) =>
+                            mcpPrivileges.filter((p: McpPrivilege) =>
                                 allowedMcp.includes(p.identifier)
                             )
                         );
@@ -438,7 +491,7 @@ const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
     };
 
     const handleSaveScope = async () => {
-        if (!editToken) return;
+        if (!editToken) {return;}
         try {
             setEditLoading(true);
             setEditError(null);
@@ -453,12 +506,12 @@ const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
                             connection_id: c.id,
                             access_level: c.access_level,
                         })),
-                        mcp_privileges: editMcpPrivileges.some((p: any) => p._isAll)
+                        mcp_privileges: editMcpPrivileges.some((p: McpPrivilegeOption) => p._isAll)
                             ? ['*']
-                            : editMcpPrivileges.map((p: any) => p.identifier),
-                        admin_permissions: editAdminPermissions.some((p: any) => p._isAll)
+                            : editMcpPrivileges.map((p: McpPrivilegeOption) => p.identifier),
+                        admin_permissions: editAdminPermissions.some((p: AdminPermissionOption) => p._isAll)
                             ? ['*']
-                            : editAdminPermissions.map((p: any) => p.id),
+                            : editAdminPermissions.map((p: AdminPermissionOption) => p.id),
                     }),
                 }
             );
@@ -468,21 +521,21 @@ const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
             }
             setEditOpen(false);
             fetchData();
-        } catch (err: any) {
-            setEditError(err.message);
+        } catch (err: unknown) {
+            setEditError(err instanceof Error ? err.message : String(err));
         } finally {
             setEditLoading(false);
         }
     };
 
     // Delete token
-    const handleOpenDelete = (token: any) => {
+    const handleOpenDelete = (token: Token) => {
         setDeleteToken(token);
         setDeleteOpen(true);
     };
 
     const handleDeleteToken = async () => {
-        if (!deleteToken) return;
+        if (!deleteToken) {return;}
         try {
             setDeleteLoading(true);
             const response = await fetch(
@@ -495,8 +548,8 @@ const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
             setDeleteOpen(false);
             setDeleteToken(null);
             fetchData();
-        } catch (err: any) {
-            setError(err.message);
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : String(err));
         } finally {
             setDeleteLoading(false);
         }
@@ -511,7 +564,7 @@ const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
 
     // Format expiry date
     const formatExpiry = (expiresAt: string | null | undefined) => {
-        if (!expiresAt) return 'Never';
+        if (!expiresAt) {return 'Never';}
         return new Date(expiresAt).toLocaleDateString();
     };
 
@@ -580,7 +633,7 @@ const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
                     </TableHead>
                     <TableBody>
                         {tokens.length > 0 ? (
-                            tokens.map((token: any) => {
+                            tokens.map((token: Token) => {
                                 const hasScope = token.scope?.scoped;
                                 return (
                                     <React.Fragment key={token.id}>
@@ -655,19 +708,19 @@ const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
                                                         </Typography>
                                                         {hasScope ? (
                                                             <EffectivePermissionsPanel
-                                                                connectionPrivileges={token.scope.connections?.map((sc: any) => ({
+                                                                connectionPrivileges={token.scope?.connections?.map((sc: TokenScopeConnection) => ({
                                                                     connection_id: sc.connection_id,
                                                                     access_level: sc.access_level,
                                                                 }))}
                                                                 mcpPrivileges={
-                                                                    token.scope.mcp_privileges?.some((id: number) => getMcpPrivilegeName(id) === '*')
+                                                                    token.scope?.mcp_privileges?.some((id: number) => getMcpPrivilegeName(id) === '*')
                                                                         ? ['All MCP Privileges']
-                                                                        : token.scope.mcp_privileges?.map((id: number) => getMcpPrivilegeName(id))
+                                                                        : token.scope?.mcp_privileges?.map((id: number) => getMcpPrivilegeName(id))
                                                                 }
                                                                 adminPermissions={
-                                                                    token.scope.admin_permissions?.includes('*')
+                                                                    token.scope?.admin_permissions?.includes('*')
                                                                         ? ['All Admin Permissions']
-                                                                        : token.scope.admin_permissions
+                                                                        : token.scope?.admin_permissions
                                                                 }
                                                                 isSuperuser={true}
                                                                 isDark={mode === 'dark'}
@@ -761,10 +814,10 @@ curl -s -X POST -H "Authorization: Bearer <token>" \\
                         margin="dense"
                         required
                     />
-                    <Autocomplete
+                    <Autocomplete<User>
                         options={users}
-                        getOptionLabel={(option: any) => option.username || ''}
-                        isOptionEqualToValue={(option: any, value: any) => option.id === value.id}
+                        getOptionLabel={(option: User) => option.username || ''}
+                        isOptionEqualToValue={(option: User, value: User) => option.id === value.id}
                         value={createOwner}
                         onChange={(_e, value) => handleOwnerChange(value)}
                         renderInput={(params) => (
@@ -798,9 +851,9 @@ curl -s -X POST -H "Authorization: Bearer <token>" \\
                     >
                         Scope (Optional)
                     </Typography>
-                    <Autocomplete
-                        options={ownerConnections.filter((c: any) => !createConnections.some((sc: ScopedConnection) => sc.id === c.id))}
-                        getOptionLabel={(option: any) => option.name || ''}
+                    <Autocomplete<Connection>
+                        options={ownerConnections.filter((c: Connection) => !createConnections.some((sc: ScopedConnection) => sc.id === c.id))}
+                        getOptionLabel={(option: Connection) => option.name || ''}
                         value={null}
                         onChange={(_e, value) => {
                             if (value) {
@@ -863,26 +916,26 @@ curl -s -X POST -H "Authorization: Bearer <token>" \\
                             </TableBody>
                         </Table>
                     )}
-                    <Autocomplete
+                    <Autocomplete<McpPrivilegeOption, true>
                         multiple
                         options={[
                             ...(ownerMcpPrivileges.length > 0 ? [ALL_MCP_OPTION] : []),
                             ...ownerMcpPrivileges
-                        ].filter((p: any) => {
-                            if (createMcpPrivileges.some((s: any) => s._isAll)) return p._isAll;
-                            if (createMcpPrivileges.length > 0 && p._isAll) return false;
+                        ].filter((p: McpPrivilegeOption) => {
+                            if (createMcpPrivileges.some((s: McpPrivilegeOption) => s._isAll)) {return p._isAll;}
+                            if (createMcpPrivileges.length > 0 && p._isAll) {return false;}
                             return true;
                         })}
-                        getOptionLabel={(option: any) => option._isAll ? 'All MCP Privileges' : (option.identifier || '')}
-                        isOptionEqualToValue={(option: any, value: any) => option.id === value.id}
+                        getOptionLabel={(option: McpPrivilegeOption) => option._isAll ? 'All MCP Privileges' : (option.identifier || '')}
+                        isOptionEqualToValue={(option: McpPrivilegeOption, value: McpPrivilegeOption) => option.id === value.id}
                         value={createMcpPrivileges}
                         onChange={(_e, value) => {
-                            const hasAll = value.some((v: any) => v._isAll);
-                            const hadAll = createMcpPrivileges.some((v: any) => v._isAll);
+                            const hasAll = value.some((v: McpPrivilegeOption) => v._isAll);
+                            const hadAll = createMcpPrivileges.some((v: McpPrivilegeOption) => v._isAll);
                             if (hasAll && !hadAll) {
                                 setCreateMcpPrivileges([ALL_MCP_OPTION]);
                             } else if (!hasAll && hadAll) {
-                                setCreateMcpPrivileges(value.filter((v: any) => !v._isAll));
+                                setCreateMcpPrivileges(value.filter((v: McpPrivilegeOption) => !v._isAll));
                             } else {
                                 setCreateMcpPrivileges(value);
                             }
@@ -896,26 +949,26 @@ curl -s -X POST -H "Authorization: Bearer <token>" \\
                         )}
                         disabled={createLoading}
                     />
-                    <Autocomplete
+                    <Autocomplete<AdminPermissionOption, true>
                         multiple
                         options={[
                             ...(ownerAdminPermissions.length > 0 ? [ALL_ADMIN_OPTION] : []),
                             ...ownerAdminPermissions
-                        ].filter((p: any) => {
-                            if (createAdminPermissions.some((s: any) => s._isAll)) return p._isAll;
-                            if (createAdminPermissions.length > 0 && p._isAll) return false;
+                        ].filter((p: AdminPermissionOption) => {
+                            if (createAdminPermissions.some((s: AdminPermissionOption) => s._isAll)) {return p._isAll;}
+                            if (createAdminPermissions.length > 0 && p._isAll) {return false;}
                             return true;
                         })}
-                        getOptionLabel={(option: any) => option._isAll ? 'All Admin Permissions' : (option.label || option.id || '')}
-                        isOptionEqualToValue={(option: any, value: any) => option.id === value.id}
+                        getOptionLabel={(option: AdminPermissionOption) => option._isAll ? 'All Admin Permissions' : (option.label || option.id || '')}
+                        isOptionEqualToValue={(option: AdminPermissionOption, value: AdminPermissionOption) => option.id === value.id}
                         value={createAdminPermissions}
                         onChange={(_e, value) => {
-                            const hasAll = value.some((v: any) => v._isAll);
-                            const hadAll = createAdminPermissions.some((v: any) => v._isAll);
+                            const hasAll = value.some((v: AdminPermissionOption) => v._isAll);
+                            const hadAll = createAdminPermissions.some((v: AdminPermissionOption) => v._isAll);
                             if (hasAll && !hadAll) {
                                 setCreateAdminPermissions([ALL_ADMIN_OPTION]);
                             } else if (!hasAll && hadAll) {
-                                setCreateAdminPermissions(value.filter((v: any) => !v._isAll));
+                                setCreateAdminPermissions(value.filter((v: AdminPermissionOption) => !v._isAll));
                             } else {
                                 setCreateAdminPermissions(value);
                             }
@@ -1011,9 +1064,9 @@ curl -s -X POST -H "Authorization: Bearer <token>" \\
                     >
                         Connections
                     </Typography>
-                    <Autocomplete
-                        options={editAvailableConnections.filter((c: any) => !editConnections.some((sc: ScopedConnection) => sc.id === c.id))}
-                        getOptionLabel={(option: any) => option.name || ''}
+                    <Autocomplete<Connection>
+                        options={editAvailableConnections.filter((c: Connection) => !editConnections.some((sc: ScopedConnection) => sc.id === c.id))}
+                        getOptionLabel={(option: Connection) => option.name || ''}
                         value={null}
                         onChange={(_e, value) => {
                             if (value) {
@@ -1082,26 +1135,26 @@ curl -s -X POST -H "Authorization: Bearer <token>" \\
                     >
                         MCP Privileges
                     </Typography>
-                    <Autocomplete
+                    <Autocomplete<McpPrivilegeOption, true>
                         multiple
                         options={[
                             ...(editAvailableMcpPrivileges.length > 0 ? [ALL_MCP_OPTION] : []),
                             ...editAvailableMcpPrivileges
-                        ].filter((p: any) => {
-                            if (editMcpPrivileges.some((s: any) => s._isAll)) return p._isAll;
-                            if (editMcpPrivileges.length > 0 && p._isAll) return false;
+                        ].filter((p: McpPrivilegeOption) => {
+                            if (editMcpPrivileges.some((s: McpPrivilegeOption) => s._isAll)) {return p._isAll;}
+                            if (editMcpPrivileges.length > 0 && p._isAll) {return false;}
                             return true;
                         })}
-                        getOptionLabel={(option: any) => option._isAll ? 'All MCP Privileges' : (option.identifier || '')}
-                        isOptionEqualToValue={(option: any, value: any) => option.id === value.id}
+                        getOptionLabel={(option: McpPrivilegeOption) => option._isAll ? 'All MCP Privileges' : (option.identifier || '')}
+                        isOptionEqualToValue={(option: McpPrivilegeOption, value: McpPrivilegeOption) => option.id === value.id}
                         value={editMcpPrivileges}
                         onChange={(_e, value) => {
-                            const hasAll = value.some((v: any) => v._isAll);
-                            const hadAll = editMcpPrivileges.some((v: any) => v._isAll);
+                            const hasAll = value.some((v: McpPrivilegeOption) => v._isAll);
+                            const hadAll = editMcpPrivileges.some((v: McpPrivilegeOption) => v._isAll);
                             if (hasAll && !hadAll) {
                                 setEditMcpPrivileges([ALL_MCP_OPTION]);
                             } else if (!hasAll && hadAll) {
-                                setEditMcpPrivileges(value.filter((v: any) => !v._isAll));
+                                setEditMcpPrivileges(value.filter((v: McpPrivilegeOption) => !v._isAll));
                             } else {
                                 setEditMcpPrivileges(value);
                             }
@@ -1121,26 +1174,26 @@ curl -s -X POST -H "Authorization: Bearer <token>" \\
                     >
                         Admin Permissions
                     </Typography>
-                    <Autocomplete
+                    <Autocomplete<AdminPermissionOption, true>
                         multiple
                         options={[
                             ...(editAvailableAdminPermissions.length > 0 ? [ALL_ADMIN_OPTION] : []),
                             ...editAvailableAdminPermissions
-                        ].filter((p: any) => {
-                            if (editAdminPermissions.some((s: any) => s._isAll)) return p._isAll;
-                            if (editAdminPermissions.length > 0 && p._isAll) return false;
+                        ].filter((p: AdminPermissionOption) => {
+                            if (editAdminPermissions.some((s: AdminPermissionOption) => s._isAll)) {return p._isAll;}
+                            if (editAdminPermissions.length > 0 && p._isAll) {return false;}
                             return true;
                         })}
-                        getOptionLabel={(option: any) => option._isAll ? 'All Admin Permissions' : (option.label || option.id || '')}
-                        isOptionEqualToValue={(option: any, value: any) => option.id === value.id}
+                        getOptionLabel={(option: AdminPermissionOption) => option._isAll ? 'All Admin Permissions' : (option.label || option.id || '')}
+                        isOptionEqualToValue={(option: AdminPermissionOption, value: AdminPermissionOption) => option.id === value.id}
                         value={editAdminPermissions}
                         onChange={(_e, value) => {
-                            const hasAll = value.some((v: any) => v._isAll);
-                            const hadAll = editAdminPermissions.some((v: any) => v._isAll);
+                            const hasAll = value.some((v: AdminPermissionOption) => v._isAll);
+                            const hadAll = editAdminPermissions.some((v: AdminPermissionOption) => v._isAll);
                             if (hasAll && !hadAll) {
                                 setEditAdminPermissions([ALL_ADMIN_OPTION]);
                             } else if (!hasAll && hadAll) {
-                                setEditAdminPermissions(value.filter((v: any) => !v._isAll));
+                                setEditAdminPermissions(value.filter((v: AdminPermissionOption) => !v._isAll));
                             } else {
                                 setEditAdminPermissions(value);
                             }

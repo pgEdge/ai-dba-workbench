@@ -13,7 +13,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -23,17 +25,30 @@ import (
 
 // NotificationChannelHandler handles REST API requests for notification channel management
 type NotificationChannelHandler struct {
-	datastore   *database.Datastore
-	authStore   *auth.AuthStore
-	rbacChecker *auth.RBACChecker
+	datastore     *database.Datastore
+	authStore     *auth.AuthStore
+	rbacChecker   *auth.RBACChecker
+	hostValidator *HostValidator
 }
 
 // NewNotificationChannelHandler creates a new notification channel handler
 func NewNotificationChannelHandler(datastore *database.Datastore, authStore *auth.AuthStore, rbacChecker *auth.RBACChecker) *NotificationChannelHandler {
 	return &NotificationChannelHandler{
-		datastore:   datastore,
-		authStore:   authStore,
-		rbacChecker: rbacChecker,
+		datastore:     datastore,
+		authStore:     authStore,
+		rbacChecker:   rbacChecker,
+		hostValidator: DefaultHostValidator(),
+	}
+}
+
+// NewNotificationChannelHandlerWithSecurity creates a new notification channel handler with custom security settings
+func NewNotificationChannelHandlerWithSecurity(datastore *database.Datastore, authStore *auth.AuthStore,
+	rbacChecker *auth.RBACChecker, allowInternal bool, allowedHosts, blockedHosts []string) *NotificationChannelHandler {
+	return &NotificationChannelHandler{
+		datastore:     datastore,
+		authStore:     authStore,
+		rbacChecker:   rbacChecker,
+		hostValidator: NewHostValidator(allowInternal, allowedHosts, blockedHosts),
 	}
 }
 
@@ -221,7 +236,8 @@ func (h *NotificationChannelHandler) listChannels(w http.ResponseWriter, r *http
 
 	channels, err := h.datastore.ListNotificationChannels(r.Context())
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch notification channels: "+err.Error())
+		log.Printf("[ERROR] Failed to fetch notification channels: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch notification channels")
 		return
 	}
 
@@ -240,7 +256,8 @@ func (h *NotificationChannelHandler) getChannel(w http.ResponseWriter, r *http.R
 			RespondError(w, http.StatusNotFound, "Notification channel not found")
 			return
 		}
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch notification channel: "+err.Error())
+		log.Printf("[ERROR] Failed to fetch notification channel: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch notification channel")
 		return
 	}
 
@@ -358,7 +375,8 @@ func (h *NotificationChannelHandler) createChannel(w http.ResponseWriter, r *htt
 	}
 
 	if err := h.datastore.CreateNotificationChannel(r.Context(), channel); err != nil {
-		RespondError(w, http.StatusInternalServerError, "Failed to create notification channel: "+err.Error())
+		log.Printf("[ERROR] Failed to create notification channel: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to create notification channel")
 		return
 	}
 
@@ -383,7 +401,8 @@ func (h *NotificationChannelHandler) updateChannel(w http.ResponseWriter, r *htt
 			RespondError(w, http.StatusNotFound, "Notification channel not found")
 			return
 		}
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch notification channel: "+err.Error())
+		log.Printf("[ERROR] Failed to fetch notification channel: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch notification channel")
 		return
 	}
 
@@ -497,7 +516,8 @@ func (h *NotificationChannelHandler) updateChannel(w http.ResponseWriter, r *htt
 			RespondError(w, http.StatusNotFound, "Notification channel not found")
 			return
 		}
-		RespondError(w, http.StatusInternalServerError, "Failed to update notification channel: "+err.Error())
+		log.Printf("[ERROR] Failed to update notification channel: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to update notification channel")
 		return
 	}
 
@@ -515,7 +535,8 @@ func (h *NotificationChannelHandler) deleteChannel(w http.ResponseWriter, r *htt
 			RespondError(w, http.StatusNotFound, "Notification channel not found")
 			return
 		}
-		RespondError(w, http.StatusInternalServerError, "Failed to delete notification channel: "+err.Error())
+		log.Printf("[ERROR] Failed to delete notification channel: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to delete notification channel")
 		return
 	}
 
@@ -535,13 +556,15 @@ func (h *NotificationChannelHandler) listRecipients(w http.ResponseWriter, r *ht
 			RespondError(w, http.StatusNotFound, "Notification channel not found")
 			return
 		}
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch notification channel: "+err.Error())
+		log.Printf("[ERROR] Failed to fetch notification channel: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch notification channel")
 		return
 	}
 
 	recipients, err := h.datastore.ListEmailRecipients(r.Context(), channelID)
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch email recipients: "+err.Error())
+		log.Printf("[ERROR] Failed to fetch email recipients: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch email recipients")
 		return
 	}
 
@@ -561,7 +584,8 @@ func (h *NotificationChannelHandler) createRecipient(w http.ResponseWriter, r *h
 			RespondError(w, http.StatusNotFound, "Notification channel not found")
 			return
 		}
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch notification channel: "+err.Error())
+		log.Printf("[ERROR] Failed to fetch notification channel: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch notification channel")
 		return
 	}
 
@@ -589,7 +613,8 @@ func (h *NotificationChannelHandler) createRecipient(w http.ResponseWriter, r *h
 	}
 
 	if err := h.datastore.CreateEmailRecipient(r.Context(), recipient); err != nil {
-		RespondError(w, http.StatusInternalServerError, "Failed to create email recipient: "+err.Error())
+		log.Printf("[ERROR] Failed to create email recipient: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to create email recipient")
 		return
 	}
 
@@ -630,7 +655,8 @@ func (h *NotificationChannelHandler) updateRecipient(w http.ResponseWriter, r *h
 			RespondError(w, http.StatusNotFound, "Email recipient not found")
 			return
 		}
-		RespondError(w, http.StatusInternalServerError, "Failed to update email recipient: "+err.Error())
+		log.Printf("[ERROR] Failed to update email recipient: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to update email recipient")
 		return
 	}
 
@@ -648,7 +674,8 @@ func (h *NotificationChannelHandler) deleteRecipient(w http.ResponseWriter, r *h
 			RespondError(w, http.StatusNotFound, "Email recipient not found")
 			return
 		}
-		RespondError(w, http.StatusInternalServerError, "Failed to delete email recipient: "+err.Error())
+		log.Printf("[ERROR] Failed to delete email recipient: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to delete email recipient")
 		return
 	}
 
@@ -681,7 +708,8 @@ func (h *NotificationChannelHandler) testChannel(w http.ResponseWriter, r *http.
 			RespondError(w, http.StatusNotFound, "Notification channel not found")
 			return
 		}
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch notification channel: "+err.Error())
+		log.Printf("[ERROR] Failed to fetch notification channel: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch notification channel")
 		return
 	}
 
@@ -701,7 +729,8 @@ func (h *NotificationChannelHandler) testChannel(w http.ResponseWriter, r *http.
 		if r.Body != nil {
 			dec := json.NewDecoder(r.Body)
 			if decErr := dec.Decode(&req); decErr != nil && !errors.Is(decErr, io.EOF) {
-				RespondError(w, http.StatusBadRequest, "Invalid request body: "+decErr.Error())
+				log.Printf("[ERROR] Invalid request body: %v", decErr)
+				RespondError(w, http.StatusBadRequest, "Invalid request body")
 				return
 			}
 		}
@@ -724,6 +753,13 @@ func (h *NotificationChannelHandler) testChannel(w http.ResponseWriter, r *http.
 			return
 		}
 
+		// Validate SMTP host to prevent SSRF attacks
+		if err := h.hostValidator.ValidateHost(*channel.SMTPHost); err != nil {
+			log.Printf("[ERROR] SMTP host validation failed: %v", err)
+			RespondError(w, http.StatusBadRequest, "Invalid SMTP host")
+			return
+		}
+
 		if err := sendTestEmail(
 			*channel.SMTPHost,
 			channel.SMTPPort,
@@ -734,7 +770,8 @@ func (h *NotificationChannelHandler) testChannel(w http.ResponseWriter, r *http.
 			derefStr(channel.FromName),
 			toAddresses,
 		); err != nil {
-			RespondError(w, http.StatusBadGateway, "Failed to send test email: "+err.Error())
+			log.Printf("[ERROR] Failed to send test email: %v", err)
+			RespondError(w, http.StatusBadGateway, "Failed to send test email")
 			return
 		}
 
@@ -747,8 +784,21 @@ func (h *NotificationChannelHandler) testChannel(w http.ResponseWriter, r *http.
 		if channel.ChannelType == database.ChannelTypeMattermost {
 			displayType = "Mattermost"
 		}
+		// Validate webhook URL host to prevent SSRF attacks
+		webhookURL, parseErr := url.Parse(*channel.WebhookURL)
+		if parseErr != nil {
+			RespondError(w, http.StatusBadRequest, "Invalid webhook URL")
+			return
+		}
+		if err := h.hostValidator.ValidateHost(webhookURL.Hostname()); err != nil {
+			log.Printf("[ERROR] Webhook host validation failed: %v", err)
+			RespondError(w, http.StatusBadRequest, "Invalid webhook host")
+			return
+		}
+
 		if err := sendTestWebhook(*channel.WebhookURL, displayType); err != nil {
-			RespondError(w, http.StatusBadGateway, "Failed to send test webhook: "+err.Error())
+			log.Printf("[ERROR] Failed to send test webhook: %v", err)
+			RespondError(w, http.StatusBadGateway, "Failed to send test webhook")
 			return
 		}
 
@@ -757,6 +807,18 @@ func (h *NotificationChannelHandler) testChannel(w http.ResponseWriter, r *http.
 			RespondError(w, http.StatusBadRequest, "Endpoint URL is not configured for this channel")
 			return
 		}
+		// Validate endpoint URL host to prevent SSRF attacks
+		endpointURL, parseErr := url.Parse(*channel.EndpointURL)
+		if parseErr != nil {
+			RespondError(w, http.StatusBadRequest, "Invalid endpoint URL")
+			return
+		}
+		if err := h.hostValidator.ValidateHost(endpointURL.Hostname()); err != nil {
+			log.Printf("[ERROR] Endpoint host validation failed: %v", err)
+			RespondError(w, http.StatusBadRequest, "Invalid endpoint host")
+			return
+		}
+
 		if err := sendTestGenericWebhook(
 			*channel.EndpointURL,
 			channel.HTTPMethod,
@@ -764,7 +826,8 @@ func (h *NotificationChannelHandler) testChannel(w http.ResponseWriter, r *http.
 			derefStr(channel.AuthType),
 			derefStr(channel.AuthCredentials),
 		); err != nil {
-			RespondError(w, http.StatusBadGateway, "Failed to send test webhook: "+err.Error())
+			log.Printf("[ERROR] Failed to send test webhook: %v", err)
+			RespondError(w, http.StatusBadGateway, "Failed to send test webhook")
 			return
 		}
 

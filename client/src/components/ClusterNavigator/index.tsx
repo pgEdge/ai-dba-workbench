@@ -151,7 +151,7 @@ const getResizeHandleSx = (theme: Theme, isResizing: boolean) => ({
     }),
 });
 
-const getHeaderSx = (theme: Theme) => ({
+const getHeaderSx = (_theme: Theme) => ({
     px: 2,
     py: 1.5,
     borderBottom: '1px solid',
@@ -347,7 +347,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
                 const collectIds = (servers: Server[] | undefined) => {
                     servers?.forEach(s => {
                         map.set(s.id, cluster.id);
-                        if (s.children) collectIds(s.children);
+                        if (s.children) {collectIds(s.children);}
                     });
                 };
                 collectIds(cluster.servers);
@@ -363,8 +363,8 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
         const directBlackout = !isNaN(numericId) && activeBlackouts.some(
             b => b.scope === 'cluster' && b.cluster_id === numericId,
         );
-        if (directBlackout) return { active: true, inherited: false };
-        if (isEstateBlackedOut) return { active: true, inherited: true };
+        if (directBlackout) {return { active: true, inherited: false };}
+        if (isEstateBlackedOut) {return { active: true, inherited: true };}
         return { active: false, inherited: false };
     }, [activeBlackouts, isEstateBlackedOut]);
 
@@ -373,22 +373,22 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
         const directBlackout = activeBlackouts.some(
             b => b.scope === 'server' && b.connection_id === serverId,
         );
-        if (directBlackout) return { active: true, inherited: false };
+        if (directBlackout) {return { active: true, inherited: false };}
         // Check cluster-level blackout inheritance
         const clusterId = serverToClusterMap.get(serverId);
         if (clusterId) {
             const clusterStatus = getClusterBlackoutStatus(clusterId);
-            if (clusterStatus.active) return { active: true, inherited: true };
+            if (clusterStatus.active) {return { active: true, inherited: true };}
         }
         // Estate-level blackout cascades to servers
-        if (isEstateBlackedOut) return { active: true, inherited: true };
+        if (isEstateBlackedOut) {return { active: true, inherited: true };}
         return { active: false, inherited: false };
     }, [activeBlackouts, isEstateBlackedOut, serverToClusterMap, getClusterBlackoutStatus]);
 
     // Handle resize drag
     useEffect(() => {
         const handleMouseMove = (e: MouseEvent) => {
-            if (!isResizing) return;
+            if (!isResizing) {return;}
             const newWidth = Math.min(maxWidth, Math.max(minWidth, e.clientX));
             panelWidthRef.current = newWidth;
             setPanelWidth(newWidth);
@@ -488,14 +488,6 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
         setGroupDialogOpen(true);
     };
 
-    // Handler for editing a group
-    const handleEditGroup = (group: Record<string, unknown>) => {
-        setEditingGroup(group);
-        setGroupDialogMode('edit');
-        setGroupDialogInitialTab(0);
-        setGroupDialogOpen(true);
-    };
-
     // Handler for saving a group
     const handleSaveGroup = async (groupData: { name: string; description?: string; is_shared?: boolean }) => {
         if (groupDialogMode === 'create') {
@@ -534,7 +526,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
 
     // Handler for confirming delete
     const handleConfirmDelete = async () => {
-        if (!deleteTarget) return;
+        if (!deleteTarget) {return;}
 
         setDeleteLoading(true);
         try {
@@ -565,19 +557,19 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
         const { active, over } = event;
         setActiveDragItem(null);
 
-        if (!over || !active.data.current) return;
+        if (!over || !active.data.current) {return;}
 
         const dragData = active.data.current;
         const dropData = over.data.current;
 
         // Only handle dropping on groups
-        if (dragData.type !== 'cluster' || dropData?.type !== 'group') return;
+        if (dragData.type !== 'cluster' || dropData?.type !== 'group') {return;}
 
         const sourceGroupId = dragData.groupId;
         const targetGroupId = dropData.groupId;
 
         // Don't move if dropping on same group
-        if (sourceGroupId === targetGroupId) return;
+        if (sourceGroupId === targetGroupId) {return;}
 
         try {
             await moveClusterToGroup(
@@ -633,7 +625,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
 
     // Filter data based on search query
     const filteredData = useMemo(() => {
-        if (!searchQuery.trim()) return data;
+        if (!searchQuery.trim()) {return data;}
 
         const query = searchQuery.toLowerCase();
 

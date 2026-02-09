@@ -111,7 +111,7 @@ const AdminMattermostChannels: React.FC = () => {
             const response = await fetch(`${API_BASE_URL}/notification-channels`, {
                 credentials: 'include',
             });
-            if (!response.ok) throw new Error('Failed to fetch notification channels');
+            if (!response.ok) {throw new Error('Failed to fetch notification channels');}
             const data = await response.json();
             const allChannels = data.notification_channels || data || [];
             const mattermostChannels: MattermostChannel[] = allChannels
@@ -164,7 +164,7 @@ const AdminMattermostChannels: React.FC = () => {
     };
 
     const handleCloseDialog = () => {
-        if (saving) return;
+        if (saving) {return;}
         setDialogOpen(false);
         setEditingChannel(null);
     };
@@ -269,7 +269,7 @@ const AdminMattermostChannels: React.FC = () => {
     };
 
     const handleDeleteChannel = async () => {
-        if (!deleteChannel) return;
+        if (!deleteChannel) {return;}
         try {
             setDeleteLoading(true);
             const response = await fetch(
@@ -354,9 +354,9 @@ const AdminMattermostChannels: React.FC = () => {
     // --- Helpers ---
 
     const truncateDescription = (desc: string): string => {
-        if (!desc) return '';
+        if (!desc) {return '';}
         const firstLine = desc.split('\n')[0];
-        if (firstLine.length <= 60) return firstLine;
+        if (firstLine.length <= 60) {return firstLine;}
         return firstLine.substring(0, 60) + '...';
     };
 

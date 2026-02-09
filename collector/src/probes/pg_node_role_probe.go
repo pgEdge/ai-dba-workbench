@@ -12,11 +12,13 @@ package probes
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/lib/pq"
 	"github.com/pgedge/ai-workbench/pkg/logger"
@@ -234,9 +236,7 @@ func (p *PgNodeRoleProbe) getBinaryReplicationStatus(ctx context.Context, conn *
 		err := row.Scan(&info.UpstreamHost, &info.UpstreamPort, &info.ReceivedLSN, &info.ReplayedLSN)
 		if err != nil {
 			// Not necessarily an error - wal receiver might not be active
-			// pgx returns pgx.ErrNoRows for no rows, but error string varies
-			errStr := err.Error()
-			if errStr != "no rows in result set" {
+			if !errors.Is(err, pgx.ErrNoRows) {
 				logger.Infof("WAL receiver query for %s: %v", "standby", err)
 			}
 		} else {
@@ -334,7 +334,7 @@ func (p *PgNodeRoleProbe) getSpockStatus(ctx context.Context, connectionName str
 	row := conn.QueryRow(ctx, nodeQuery)
 	err = row.Scan(&info.SpockNodeID, &info.SpockNodeName)
 	if err != nil {
-		if err.Error() != "no rows in result set" {
+		if !errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("failed to get Spock node info: %w", err)
 		}
 		// No local node registered - Spock installed but not configured
@@ -383,7 +383,7 @@ func (p *PgNodeRoleProbe) getBDRStatus(ctx context.Context, connectionName strin
 	row := conn.QueryRow(ctx, nodeQuery)
 	err = row.Scan(&info.BDRNodeID, &info.BDRNodeName, &info.BDRNodeGroup, &info.BDRNodeState)
 	if err != nil {
-		if err.Error() != "no rows in result set" {
+		if !errors.Is(err, pgx.ErrNoRows) {
 			// BDR installed but local_node_info view may not exist in all versions
 			logger.Infof("BDR local_node_info query: %v", err)
 		}

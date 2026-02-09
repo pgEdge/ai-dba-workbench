@@ -7,6 +7,7 @@
  *
  *-------------------------------------------------------------------------
  */
+/* eslint-disable react-refresh/only-export-components */
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from './AuthContext';
 
@@ -76,7 +77,7 @@ export interface UpdateScheduleRequest {
     enabled?: boolean;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 export interface BlackoutSelection {
     type: string;
     id?: string | number;
@@ -123,7 +124,7 @@ export const BlackoutProvider = ({ selection, children }: BlackoutProviderProps)
      * Only shows loading state on initial load, not during auto-refresh.
      */
     const fetchBlackouts = useCallback(async (): Promise<void> => {
-        if (!user) return;
+        if (!user) {return;}
 
         if (isInitialLoadRef.current) {
             setLoading(true);
@@ -288,7 +289,7 @@ export const BlackoutProvider = ({ selection, children }: BlackoutProviderProps)
 
     // Auto-refresh every 30 seconds
     useEffect(() => {
-        if (!user) return;
+        if (!user) {return;}
 
         const intervalId = setInterval(() => {
             fetchBlackouts();
@@ -306,11 +307,11 @@ export const BlackoutProvider = ({ selection, children }: BlackoutProviderProps)
      */
     const activeBlackoutsForSelection = useMemo(() => {
         const active = blackouts.filter(b => b.is_active);
-        if (!selection) return active;
+        if (!selection) {return active;}
 
         return active.filter(b => {
             // Estate-scoped blackouts apply to everything
-            if (b.scope === 'estate') return true;
+            if (b.scope === 'estate') {return true;}
 
             if (selection.type === 'estate') {
                 // Estate view shows all active blackouts
@@ -331,7 +332,7 @@ export const BlackoutProvider = ({ selection, children }: BlackoutProviderProps)
 
             if (selection.type === 'server') {
                 // Show cluster-scoped blackouts if this server is in that cluster
-                if (b.scope === 'cluster') return false;
+                if (b.scope === 'cluster') {return false;}
                 // Show server-scoped blackouts matching this server
                 if (b.scope === 'server' && b.connection_id !== undefined) {
                     return b.connection_id === selection.id;

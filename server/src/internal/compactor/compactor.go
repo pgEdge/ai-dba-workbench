@@ -17,6 +17,9 @@ import (
 	"time"
 )
 
+// reTableReference matches table name references in text (e.g., "users table")
+var reTableReference = regexp.MustCompile(`(?i)\b(\w+)\s+table`)
+
 // Compactor performs smart chat history compaction.
 type Compactor struct {
 	classifier        *Classifier
@@ -330,13 +333,11 @@ func (c *Compactor) extractContext(messages []Message) ExtractedContext {
 		Tools:  make(map[string]bool),
 	}
 
-	tableRegex := regexp.MustCompile(`(?i)\b(\w+)\s+table`)
-
 	for _, msg := range messages {
 		text := c.classifier.getContentText(msg)
 
 		// Extract table references
-		matches := tableRegex.FindAllStringSubmatch(text, -1)
+		matches := reTableReference.FindAllStringSubmatch(text, -1)
 		for _, match := range matches {
 			if len(match) > 1 {
 				tableName := strings.ToLower(match[1])

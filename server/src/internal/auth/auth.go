@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -178,7 +179,7 @@ func (s *TokenStore) GetTokenByHash(hash string) *Token {
 	}
 
 	for _, token := range s.Tokens {
-		if token.Hash == hash {
+		if subtle.ConstantTimeCompare([]byte(token.Hash), []byte(hash)) == 1 {
 			return token
 		}
 	}
@@ -203,7 +204,7 @@ func (s *TokenStore) RemoveToken(identifier string) (bool, error) {
 
 	// Try hash prefix match
 	for id, token := range s.Tokens {
-		if len(identifier) >= 8 && token.Hash[:len(identifier)] == identifier {
+		if len(identifier) >= 8 && len(token.Hash) >= len(identifier) && subtle.ConstantTimeCompare([]byte(token.Hash[:len(identifier)]), []byte(identifier)) == 1 {
 			delete(s.Tokens, id)
 			return true, nil
 		}
@@ -225,7 +226,7 @@ func (s *TokenStore) ValidateToken(token string) (bool, error) {
 	now := time.Now()
 
 	for _, storedToken := range s.Tokens {
-		if storedToken.Hash == hash {
+		if subtle.ConstantTimeCompare([]byte(storedToken.Hash), []byte(hash)) == 1 {
 			// Check if expired
 			if storedToken.ExpiresAt != nil && storedToken.ExpiresAt.Before(now) {
 				return false, fmt.Errorf("token has expired")

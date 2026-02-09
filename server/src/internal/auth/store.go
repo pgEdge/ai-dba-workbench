@@ -715,6 +715,11 @@ func (s *AuthStore) UpdateUser(username, newPassword, newAnnotation, newDisplayN
 		return fmt.Errorf("failed to update user: %w", err)
 	}
 
+	// Invalidate all active sessions when the password changes
+	if newPassword != "" {
+		s.InvalidateUserSessions(username)
+	}
+
 	return nil
 }
 
@@ -821,6 +826,11 @@ func (s *AuthStore) UpdateUserAtomic(username string, update UserUpdate) error {
 	if commitErr := tx.Commit(); commitErr != nil {
 		err = fmt.Errorf("failed to commit transaction: %w", commitErr)
 		return err
+	}
+
+	// Invalidate all active sessions when the password changes
+	if update.Password != nil && *update.Password != "" {
+		s.InvalidateUserSessions(username)
 	}
 
 	return nil
@@ -1098,6 +1108,24 @@ func (s *AuthStore) ValidateSessionToken(token string) (string, error) {
 // InvalidateSession removes a session token
 func (s *AuthStore) InvalidateSession(token string) {
 	s.sessions.Delete(GetTokenHashByRawToken(token))
+}
+
+// InvalidateUserSessions removes all active sessions for a given username.
+// This is called after a password change to ensure that compromised sessions
+// cannot persist after credential rotation.
+func (s *AuthStore) InvalidateUserSessions(username string) {
+	count := 0
+	s.sessions.Range(func(key, value any) bool {
+		session, ok := value.(*SessionInfo)
+		if ok && session.Username == username {
+			s.sessions.Delete(key)
+			count++
+		}
+		return true
+	})
+	if count > 0 {
+		log.Printf("[AUTH] Invalidated %d active session(s) for user %s due to password change", count, username)
+	}
 }
 
 // =============================================================================

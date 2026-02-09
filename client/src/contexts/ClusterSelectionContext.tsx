@@ -7,6 +7,7 @@
  *
  *-------------------------------------------------------------------------
  */
+/* eslint-disable react-refresh/only-export-components */
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { useAuth } from './AuthContext';
 import { useClusterData, ClusterServer, ClusterEntry } from './ClusterDataContext';
@@ -47,7 +48,7 @@ export const ClusterSelectionProvider = ({ children }: ClusterSelectionProviderP
      * Select a server and set it as the current connection
      */
     const selectServer = useCallback(async (server: ClusterServer): Promise<void> => {
-        if (!user || !server) return;
+        if (!user || !server) {return;}
 
         setSelectedServer(server);
         setSelectedCluster(null);
@@ -100,7 +101,7 @@ export const ClusterSelectionProvider = ({ children }: ClusterSelectionProviderP
      * Clear the current selection
      */
     const clearSelection = useCallback(async (): Promise<void> => {
-        if (!user) return;
+        if (!user) {return;}
 
         setSelectedServer(null);
         setSelectedCluster(null);
@@ -121,7 +122,7 @@ export const ClusterSelectionProvider = ({ children }: ClusterSelectionProviderP
      * Get the current connection from the server on initial load
      */
     const fetchCurrentConnection = useCallback(async (): Promise<void> => {
-        if (!user) return;
+        if (!user) {return;}
 
         try {
             const response = await fetch('/api/v1/connections/current', {
@@ -143,7 +144,7 @@ export const ClusterSelectionProvider = ({ children }: ClusterSelectionProviderP
                     }
                 }
             }
-        } catch (_err) {
+        } catch {
             // Ignore errors - current connection might not be set
         }
     }, [user, clusterData]);

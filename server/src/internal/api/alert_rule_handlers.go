@@ -11,6 +11,7 @@ package api
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -110,7 +111,8 @@ func (h *AlertRuleHandler) handleAlertRuleSubpath(w http.ResponseWriter, r *http
 func (h *AlertRuleHandler) listAlertRules(w http.ResponseWriter, r *http.Request) {
 	rules, err := h.datastore.GetAlertRules(r.Context())
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch alert rules: "+err.Error())
+		log.Printf("[ERROR] Failed to fetch alert rules: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch alert rules")
 		return
 	}
 
@@ -125,7 +127,8 @@ func (h *AlertRuleHandler) getAlertRule(w http.ResponseWriter, r *http.Request, 
 			RespondError(w, http.StatusNotFound, "Alert rule not found")
 			return
 		}
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch alert rule: "+err.Error())
+		log.Printf("[ERROR] Failed to fetch alert rule: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch alert rule")
 		return
 	}
 
@@ -149,7 +152,8 @@ func (h *AlertRuleHandler) updateAlertRule(w http.ResponseWriter, r *http.Reques
 			RespondError(w, http.StatusNotFound, "Alert rule not found")
 			return
 		}
-		RespondError(w, http.StatusBadRequest, err.Error())
+		log.Printf("[ERROR] Request error: %v", err)
+		RespondError(w, http.StatusBadRequest, "Request failed")
 		return
 	}
 

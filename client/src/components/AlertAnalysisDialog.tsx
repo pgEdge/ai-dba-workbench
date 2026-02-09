@@ -50,7 +50,7 @@ const createCleanTheme = (baseTheme, customBackground) => {
     for (const [key, value] of Object.entries(baseTheme)) {
         if (typeof value === 'object' && value !== null) {
             // Remove background from token styles, keep other properties
-            const { background, backgroundColor, ...rest } = value;
+            const { background: _background, backgroundColor: _backgroundColor, ...rest } = value;
             cleanTheme[key] = rest;
         } else {
             cleanTheme[key] = value;
@@ -607,7 +607,7 @@ const MarkdownContent = ({ content, isDark }) => {
         ),
     }), [isDark, theme]);
 
-    if (!content) return null;
+    if (!content) {return null;}
 
     return (
         <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
@@ -677,7 +677,7 @@ const AlertAnalysisDialog: React.FC<AlertAnalysisDialogProps> = ({ open, alert, 
 
     // Download analysis as markdown file
     const handleDownload = () => {
-        if (!analysis || !alert) return;
+        if (!analysis || !alert) {return;}
 
         const timestamp = new Date().toISOString().split('T')[0];
         const filename = `alert-analysis-${alert.id || 'unknown'}-${timestamp}.md`;

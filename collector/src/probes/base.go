@@ -447,7 +447,7 @@ func EnsureProbeConfig(ctx context.Context, conn *pgxpool.Conn, connectionID int
 		return &config, nil
 	}
 
-	if err.Error() != "no rows in result set" {
+	if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("failed to query server probe config: %w", err)
 	}
 
@@ -467,7 +467,7 @@ func EnsureProbeConfig(ctx context.Context, conn *pgxpool.Conn, connectionID int
 
 	if err == nil {
 		found = true
-	} else if err.Error() != "no rows in result set" {
+	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("failed to query cluster probe config: %w", err)
 	}
 
@@ -486,7 +486,7 @@ func EnsureProbeConfig(ctx context.Context, conn *pgxpool.Conn, connectionID int
 
 		if err == nil {
 			found = true
-		} else if err.Error() != "no rows in result set" {
+		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("failed to query group probe config: %w", err)
 		}
 	}
@@ -504,7 +504,7 @@ func EnsureProbeConfig(ctx context.Context, conn *pgxpool.Conn, connectionID int
 
 		if err == nil {
 			found = true
-		} else if err.Error() != "no rows in result set" {
+		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("failed to query global probe config: %w", err)
 		}
 	}

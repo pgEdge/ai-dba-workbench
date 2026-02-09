@@ -34,7 +34,7 @@ interface RolePillProps {
 const RolePill: React.FC<RolePillProps> = ({ role, isDark }) => {
     const theme = useTheme();
     const config = getRoleConfigs(theme)[role];
-    if (!config) return null;
+    if (!config) {return null;}
 
     const color = isDark ? config.darkColor : config.color;
     const IconComponent = ROLE_ICONS[role];

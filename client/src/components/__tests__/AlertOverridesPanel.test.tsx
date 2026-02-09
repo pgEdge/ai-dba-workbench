@@ -193,12 +193,12 @@ describe('AlertOverridesPanel', () => {
         // Categories are sorted alphabetically: Database, System
         // The overridden rule (High CPU Usage) is in the System category,
         // so its edit button appears after the Database category edit button.
-        const editButtons = screen.getAllByLabelText('edit override');
-
         // Find the edit button in the same row as High CPU Usage
         const cpuRow = screen.getByText('High CPU Usage').closest('tr');
-        const cpuEditButton = cpuRow!.querySelector('[aria-label="edit override"]')!;
-        fireEvent.click(cpuEditButton);
+        expect(cpuRow).not.toBeNull();
+        const cpuEditButton = (cpuRow as HTMLElement).querySelector('[aria-label="edit override"]');
+        expect(cpuEditButton).not.toBeNull();
+        fireEvent.click(cpuEditButton as HTMLElement);
 
         await waitFor(() => {
             expect(screen.getByText(/Edit Override: High CPU Usage/)).toBeInTheDocument();

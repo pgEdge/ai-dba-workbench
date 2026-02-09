@@ -87,7 +87,7 @@ const InlineEditText: React.FC<InlineEditTextProps> = ({
     }, [isEditing]);
 
     const handleDoubleClick = (e: React.MouseEvent) => {
-        if (!canEdit) return;
+        if (!canEdit) {return;}
         e.stopPropagation();
         e.preventDefault();
         setIsEditing(true);

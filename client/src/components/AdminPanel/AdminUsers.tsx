@@ -68,7 +68,7 @@ interface AdminUsersProps {
 const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
     const theme = useTheme();
     const [users, setUsers] = useState([]);
-    const [connections, setConnections] = useState<any[]>([]);
+    const [connections, setConnections] = useState<Array<{ id: number; name: string }>>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [expandedUser, setExpandedUser] = useState<number | null>(null);
@@ -163,7 +163,7 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
 
     // Create user
     const handleCreateUser = async () => {
-        if (!createUsername.trim() || (!createServiceAccount && !createPassword)) return;
+        if (!createUsername.trim() || (!createServiceAccount && !createPassword)) {return;}
         try {
             setCreateLoading(true);
             setCreateError(null);
@@ -232,7 +232,7 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
     };
 
     const handleEditUser = async () => {
-        if (!editUser) return;
+        if (!editUser) {return;}
         try {
             setEditLoading(true);
             setEditError(null);
@@ -290,7 +290,7 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
     };
 
     const handleDeleteUser = async () => {
-        if (!deleteUser) return;
+        if (!deleteUser) {return;}
         try {
             setDeleteLoading(true);
             const response = await fetch(

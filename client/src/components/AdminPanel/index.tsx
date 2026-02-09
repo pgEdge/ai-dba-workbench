@@ -48,7 +48,7 @@ interface NavItem {
     id: string;
     label: string;
     permission: string;
-    Component: React.FC<any>;
+    Component: React.FC<{ mode: string }>;
 }
 
 interface NavSection {

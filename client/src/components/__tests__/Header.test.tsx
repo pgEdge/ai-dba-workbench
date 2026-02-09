@@ -17,25 +17,6 @@ import { AuthProvider } from '../../contexts/AuthContext';
 // Mock fetch for API calls
 global.fetch = vi.fn() as unknown as typeof fetch;
 
-// Create a mock AuthContext provider with a user
-const MockAuthProvider = ({ children }: { children: React.ReactNode }) => {
-    const mockValue = {
-        user: { username: 'testuser' },
-        loading: false,
-        login: vi.fn(),
-        logout: vi.fn(),
-        forceLogout: vi.fn(),
-    };
-
-    const AuthContext = React.createContext(null);
-
-    return (
-        <AuthContext.Provider value={mockValue}>
-            {children}
-        </AuthContext.Provider>
-    );
-};
-
 // Use a custom render that provides auth context
 const renderHeader = (props: Record<string, unknown> = {}) => {
     const defaultProps = {

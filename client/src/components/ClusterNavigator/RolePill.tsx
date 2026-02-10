@@ -17,6 +17,7 @@ import { getRoleConfigs, ROLE_ICONS, ServerRole } from './constants';
 
 const chipBaseSx = {
     height: 18,
+    maxWidth: 'none',
     fontSize: '0.625rem',
     fontWeight: 600,
     '& .MuiChip-icon': { ml: 0.5, mr: -0.25 },

@@ -47,6 +47,7 @@ const deleteIconSx = { fontSize: 14 };
 
 const initializingChipBase = {
     height: 20,
+    maxWidth: 'none',
     fontSize: '0.625rem',
     fontWeight: 600,
     '& .MuiChip-label': { px: 1 },

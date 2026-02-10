@@ -22,7 +22,9 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/config"
 	"github.com/pgedge/ai-workbench/server/internal/conversations"
 	"github.com/pgedge/ai-workbench/server/internal/database"
+	"github.com/pgedge/ai-workbench/server/internal/llmproxy"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
+	"github.com/pgedge/ai-workbench/server/internal/overview"
 	"github.com/pgedge/ai-workbench/server/internal/prompts"
 	"github.com/pgedge/ai-workbench/server/internal/resources"
 	"github.com/pgedge/ai-workbench/server/internal/tools"
@@ -44,6 +46,7 @@ type Server struct {
 	clientManager *database.ClientManager
 	convStore     *conversations.Store
 	mcpServer     *mcp.Server
+	overviewGen   *overview.Generator
 	ctx           context.Context
 	cancel        context.CancelFunc
 	dataDir       string
@@ -111,6 +114,7 @@ func NewServer(sc *ServerConfig) (*Server, error) {
 	}
 
 	s.startTokenCleanup()
+	s.startOverviewGenerator()
 
 	return s, nil
 }
@@ -338,6 +342,29 @@ func (s *Server) startTokenCleanup() {
 	}()
 }
 
+// startOverviewGenerator initializes and starts the AI overview generator
+// if both the datastore and LLM configuration are available.
+func (s *Server) startOverviewGenerator() {
+	if s.datastore == nil || s.cfg.LLM.Provider == "" {
+		fmt.Fprintf(os.Stderr, "AI Overview: DISABLED (requires datastore and LLM configuration)\n")
+		return
+	}
+
+	llmConfig := &llmproxy.Config{
+		Provider:        s.cfg.LLM.Provider,
+		Model:           s.cfg.LLM.Model,
+		AnthropicAPIKey: s.cfg.LLM.AnthropicAPIKey,
+		OpenAIAPIKey:    s.cfg.LLM.OpenAIAPIKey,
+		OllamaURL:       s.cfg.LLM.OllamaURL,
+		MaxTokens:       s.cfg.LLM.MaxTokens,
+		Temperature:     s.cfg.LLM.Temperature,
+	}
+
+	s.overviewGen = overview.NewGenerator(s.datastore, llmConfig)
+	s.overviewGen.Start(s.ctx)
+	fmt.Fprintf(os.Stderr, "AI Overview: ENABLED\n")
+}
+
 // cleanupExpiredConnections cleans up database connections for expired tokens
 func (s *Server) cleanupExpiredConnections(hashes []string) {
 	// Create a timeout context for cleanup operations
@@ -386,6 +413,7 @@ func (s *Server) Run(flags *Flags, configPath string) error {
 		ConvStore:   s.convStore,
 		Datastore:   s.datastore,
 		Config:      s.cfg,
+		OverviewGen: s.overviewGen,
 	}
 	httpConfig.SetupHandlers = SetupHandlers(deps)
 
@@ -463,6 +491,11 @@ func (s *Server) Close() {
 
 	// Close tracing
 	tracing.Close()
+
+	// Stop overview generator
+	if s.overviewGen != nil {
+		s.overviewGen.Stop()
+	}
 
 	// Stop rate limiter cleanup
 	if s.rateLimiter != nil {

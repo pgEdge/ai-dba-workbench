@@ -79,6 +79,60 @@ type DatabaseInfo struct {
 	Size     string `json:"size"`
 }
 
+// EstateServerSummary holds summary information for a single server
+// in the estate snapshot
+type EstateServerSummary struct {
+	ID               int    `json:"id"`
+	Name             string `json:"name"`
+	Status           string `json:"status"`
+	Role             string `json:"role"`
+	ActiveAlertCount int    `json:"active_alert_count"`
+}
+
+// EstateAlertSummary holds a summary of a single active alert
+type EstateAlertSummary struct {
+	Title      string `json:"title"`
+	ServerName string `json:"server_name"`
+	Severity   string `json:"severity"`
+}
+
+// EstateBlackoutSummary holds a summary of a blackout period
+type EstateBlackoutSummary struct {
+	Scope     string    `json:"scope"`
+	Reason    string    `json:"reason"`
+	StartTime time.Time `json:"start_time"`
+	EndTime   time.Time `json:"end_time"`
+}
+
+// EstateEventSummary holds a summary of a recent timeline event
+type EstateEventSummary struct {
+	EventType  string    `json:"event_type"`
+	ServerName string    `json:"server_name"`
+	OccurredAt time.Time `json:"occurred_at"`
+	Severity   string    `json:"severity"`
+	Title      string    `json:"title"`
+	Summary    string    `json:"summary"`
+}
+
+// EstateSnapshot contains a point-in-time summary of the entire
+// monitored estate for the AI overview
+type EstateSnapshot struct {
+	Timestamp         time.Time               `json:"timestamp"`
+	ServerTotal       int                     `json:"server_total"`
+	ServerOnline      int                     `json:"server_online"`
+	ServerOffline     int                     `json:"server_offline"`
+	ServerWarning     int                     `json:"server_warning"`
+	Servers           []EstateServerSummary   `json:"servers"`
+	AlertTotal        int                     `json:"alert_total"`
+	AlertCritical     int                     `json:"alert_critical"`
+	AlertWarning      int                     `json:"alert_warning"`
+	AlertInfo         int                     `json:"alert_info"`
+	TopAlerts         []EstateAlertSummary    `json:"top_alerts"`
+	ActiveBlackouts   []EstateBlackoutSummary `json:"active_blackouts"`
+	UpcomingBlackouts []EstateBlackoutSummary `json:"upcoming_blackouts"`
+	RecentEvents      []EstateEventSummary    `json:"recent_events"`
+}
+
 // Datastore manages the connection to the collector's datastore database
 type Datastore struct {
 	pool         *pgxpool.Pool
@@ -2952,6 +3006,201 @@ func (d *Datastore) UnacknowledgeAlert(ctx context.Context, alertID int64) error
 	}
 
 	return nil
+}
+
+// GetEstateSnapshot gathers all data needed for an AI overview of the
+// estate. It returns a point-in-time snapshot of server status, alerts,
+// blackouts, and recent events. If individual sub-queries fail, partial
+// data is returned with what succeeded.
+func (d *Datastore) GetEstateSnapshot(ctx context.Context) (*EstateSnapshot, error) {
+	snapshotCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	snapshot := &EstateSnapshot{
+		Timestamp:         time.Now().UTC(),
+		Servers:           []EstateServerSummary{},
+		TopAlerts:         []EstateAlertSummary{},
+		ActiveBlackouts:   []EstateBlackoutSummary{},
+		UpcomingBlackouts: []EstateBlackoutSummary{},
+		RecentEvents:      []EstateEventSummary{},
+	}
+
+	// Gather server topology and compute status counts
+	d.gatherEstateServerData(snapshotCtx, snapshot)
+
+	// Gather alert summary and top alerts
+	d.gatherEstateAlertData(snapshotCtx, snapshot)
+
+	// Gather active and upcoming blackout periods
+	d.gatherEstateBlackoutData(snapshotCtx, snapshot)
+
+	// Gather recent events from the last 24 hours
+	d.gatherEstateRecentEvents(snapshotCtx, snapshot)
+
+	return snapshot, nil
+}
+
+// gatherEstateServerData populates server status counts and per-server
+// details by walking the cluster topology hierarchy. Servers are
+// classified as offline (status is offline), warning (has active alerts
+// but not offline), or online (no alerts, not offline).
+func (d *Datastore) gatherEstateServerData(ctx context.Context, snapshot *EstateSnapshot) {
+	groups, err := d.GetClusterTopology(ctx)
+	if err != nil {
+		logger.Errorf("GetEstateSnapshot: failed to get cluster topology: %v", err)
+		return
+	}
+
+	var servers []EstateServerSummary
+	for _, group := range groups {
+		for _, cluster := range group.Clusters {
+			flattenTopologyServers(cluster.Servers, &servers)
+		}
+	}
+
+	// Map roles to display-friendly names and compute status counts
+	for i := range servers {
+		servers[i].Role = d.mapPrimaryRoleToDisplayRole(servers[i].Role)
+
+		switch {
+		case servers[i].Status == "offline":
+			snapshot.ServerOffline++
+		case servers[i].ActiveAlertCount > 0:
+			snapshot.ServerWarning++
+		default:
+			snapshot.ServerOnline++
+		}
+	}
+
+	snapshot.Servers = servers
+	snapshot.ServerTotal = len(servers)
+}
+
+// flattenTopologyServers recursively extracts server summaries from the
+// nested topology hierarchy into a flat slice. Children (such as hot
+// standbys) are included alongside their parents.
+func flattenTopologyServers(servers []TopologyServerInfo, result *[]EstateServerSummary) {
+	for _, s := range servers {
+		*result = append(*result, EstateServerSummary{
+			ID:               s.ID,
+			Name:             s.Name,
+			Status:           s.Status,
+			Role:             s.PrimaryRole,
+			ActiveAlertCount: s.ActiveAlertCount,
+		})
+		if len(s.Children) > 0 {
+			flattenTopologyServers(s.Children, result)
+		}
+	}
+}
+
+// gatherEstateAlertData populates alert severity counts and the top
+// active alerts list. Active alerts are retrieved in order of most
+// recent trigger time. Severity counts are computed from the returned
+// set; if total active alerts exceed the query limit of 500, the
+// breakdown is approximate while AlertTotal remains accurate.
+func (d *Datastore) gatherEstateAlertData(ctx context.Context, snapshot *EstateSnapshot) {
+	activeStatus := "active"
+	result, err := d.GetAlerts(ctx, AlertListFilter{
+		Status: &activeStatus,
+		Limit:  500,
+	})
+	if err != nil {
+		logger.Errorf("GetEstateSnapshot: failed to get alerts: %v", err)
+		return
+	}
+
+	snapshot.AlertTotal = int(result.Total)
+
+	for i, alert := range result.Alerts {
+		switch alert.Severity {
+		case "critical":
+			snapshot.AlertCritical++
+		case "warning":
+			snapshot.AlertWarning++
+		case "info":
+			snapshot.AlertInfo++
+		}
+
+		if i < 10 {
+			snapshot.TopAlerts = append(snapshot.TopAlerts, EstateAlertSummary{
+				Title:      alert.Title,
+				ServerName: alert.ServerName,
+				Severity:   alert.Severity,
+			})
+		}
+	}
+}
+
+// gatherEstateBlackoutData populates active blackouts and upcoming
+// blackouts. Upcoming blackouts are one-time blackouts whose start
+// time falls within the next 24 hours. Scheduled blackout occurrences
+// are not evaluated because that would require a cron expression
+// parser.
+func (d *Datastore) gatherEstateBlackoutData(ctx context.Context, snapshot *EstateSnapshot) {
+	// Retrieve recent blackouts ordered by start_time DESC; future
+	// blackouts appear first, followed by currently active ones
+	result, err := d.ListBlackouts(ctx, BlackoutFilter{
+		Limit: 100,
+	})
+	if err != nil {
+		logger.Errorf("GetEstateSnapshot: failed to get blackouts: %v", err)
+		return
+	}
+
+	now := time.Now().UTC()
+	cutoff := now.Add(24 * time.Hour)
+
+	for _, b := range result.Blackouts {
+		summary := EstateBlackoutSummary{
+			Scope:     b.Scope,
+			Reason:    b.Reason,
+			StartTime: b.StartTime,
+			EndTime:   b.EndTime,
+		}
+
+		if b.IsActive {
+			snapshot.ActiveBlackouts = append(snapshot.ActiveBlackouts, summary)
+		} else if b.StartTime.After(now) && b.StartTime.Before(cutoff) {
+			snapshot.UpcomingBlackouts = append(snapshot.UpcomingBlackouts, summary)
+		}
+	}
+}
+
+// gatherEstateRecentEvents populates recent events from the last 24
+// hours, focusing on restarts, configuration changes, and blackout
+// transitions. Events are returned in reverse chronological order
+// with a maximum of 20 entries.
+func (d *Datastore) gatherEstateRecentEvents(ctx context.Context, snapshot *EstateSnapshot) {
+	now := time.Now().UTC()
+	dayAgo := now.Add(-24 * time.Hour)
+
+	result, err := d.GetTimelineEvents(ctx, TimelineFilter{
+		StartTime: dayAgo,
+		EndTime:   now,
+		EventTypes: []string{
+			EventTypeRestart,
+			EventTypeConfigChange,
+			EventTypeBlackoutStarted,
+			EventTypeBlackoutEnded,
+		},
+		Limit: 20,
+	})
+	if err != nil {
+		logger.Errorf("GetEstateSnapshot: failed to get timeline events: %v", err)
+		return
+	}
+
+	for _, event := range result.Events {
+		snapshot.RecentEvents = append(snapshot.RecentEvents, EstateEventSummary{
+			EventType:  event.EventType,
+			ServerName: event.ServerName,
+			OccurredAt: event.OccurredAt,
+			Severity:   event.Severity,
+			Title:      event.Title,
+			Summary:    event.Summary,
+		})
+	}
 }
 
 // ConnectionContext holds comprehensive system context for a monitored connection

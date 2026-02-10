@@ -199,6 +199,10 @@ func (h *AlertOverrideHandler) deleteOverride(w http.ResponseWriter, r *http.Req
 
 // getOverrideContext handles GET /api/v1/alert-overrides/context/{connectionId}/{ruleId}
 func (h *AlertOverrideHandler) getOverrideContext(w http.ResponseWriter, r *http.Request, connectionID int, ruleID int64) {
+	if !h.checkPermission(w, r) {
+		return
+	}
+
 	ctx, err := h.datastore.GetOverrideContext(r.Context(), connectionID, ruleID)
 	if err != nil {
 		log.Printf("[ERROR] Failed to get override context: %v", err)

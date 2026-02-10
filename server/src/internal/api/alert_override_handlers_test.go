@@ -355,3 +355,131 @@ func TestAlertOverrideHandler_PermissionCheckAllScopes(t *testing.T) {
 		}
 	}
 }
+
+func TestAlertOverrideHandler_ContextEndpoint_MethodNotAllowed(t *testing.T) {
+	handler := NewAlertOverrideHandler(nil, nil, nil)
+
+	methods := []string{http.MethodPost, http.MethodPut, http.MethodDelete}
+	for _, method := range methods {
+		req := httptest.NewRequest(method, "/api/v1/alert-overrides/context/1/2", nil)
+		rec := httptest.NewRecorder()
+
+		handler.handleAlertOverrides(rec, req)
+
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("Method %s: expected status %d, got %d", method, http.StatusMethodNotAllowed, rec.Code)
+		}
+
+		allowed := rec.Header().Get("Allow")
+		if allowed != "GET" {
+			t.Errorf("Method %s: expected Allow header 'GET', got %q", method, allowed)
+		}
+	}
+}
+
+func TestAlertOverrideHandler_ContextEndpoint_MissingParts(t *testing.T) {
+	handler := NewAlertOverrideHandler(nil, nil, nil)
+
+	paths := []string{
+		"/api/v1/alert-overrides/context/",
+		"/api/v1/alert-overrides/context/1",
+	}
+
+	for _, path := range paths {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+
+		handler.handleAlertOverrides(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("Path %s: expected status %d, got %d", path, http.StatusNotFound, rec.Code)
+		}
+	}
+}
+
+func TestAlertOverrideHandler_ContextEndpoint_InvalidConnectionID(t *testing.T) {
+	handler := NewAlertOverrideHandler(nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/alert-overrides/context/abc/2", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleAlertOverrides(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if response.Error != "Invalid connection ID" {
+		t.Errorf("Expected error 'Invalid connection ID', got %q", response.Error)
+	}
+}
+
+func TestAlertOverrideHandler_ContextEndpoint_InvalidRuleID(t *testing.T) {
+	handler := NewAlertOverrideHandler(nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/alert-overrides/context/1/abc", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleAlertOverrides(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if response.Error != "Invalid rule ID" {
+		t.Errorf("Expected error 'Invalid rule ID', got %q", response.Error)
+	}
+}
+
+func TestAlertOverrideHandler_ContextEndpoint_RequiresPermission(t *testing.T) {
+	authStore, cleanup := createTestAuthStoreForAlertOverrides(t)
+	defer cleanup()
+
+	rbac := auth.NewRBACChecker(authStore, true)
+	handler := NewAlertOverrideHandler(nil, nil, rbac)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/alert-overrides/context/1/2", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleAlertOverrides(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("Expected status %d, got %d", http.StatusForbidden, rec.Code)
+	}
+
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	expectedError := "Permission denied: you do not have permission to manage alert rules"
+	if response.Error != expectedError {
+		t.Errorf("Expected error %q, got %q", expectedError, response.Error)
+	}
+}
+
+func TestAlertOverrideHandler_ContextEndpoint_NilDatastore(t *testing.T) {
+	handler := NewAlertOverrideHandler(nil, nil, nil)
+	mux := http.NewServeMux()
+	noopWrapper := func(h http.HandlerFunc) http.HandlerFunc { return h }
+
+	handler.RegisterRoutes(mux, noopWrapper)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/alert-overrides/context/1/2", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("Expected status %d, got %d", http.StatusServiceUnavailable, rec.Code)
+	}
+}

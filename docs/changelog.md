@@ -19,6 +19,13 @@ and this project adheres to
   and enabled state for each rule.
 - Per-connection alert threshold overrides that allow fine-tuned
   alerting for individual monitored database connections.
+- Edit alert override button on alert instances; users can edit
+  threshold overrides directly from active alerts with a scope
+  dropdown for server, cluster, or group targeting.
+- REST API endpoint for override context
+  (`GET /api/v1/alert-overrides/context/{connectionId}/{ruleId}`)
+  that returns the connection hierarchy, rule defaults, and
+  existing overrides at all applicable scopes.
 - New RBAC permissions `manage_probes` and `manage_alert_rules`
   for controlling access to probe and alert configuration.
 - Probes and Alert Rules tabs in the administration panel for

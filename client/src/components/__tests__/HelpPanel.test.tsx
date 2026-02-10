@@ -203,4 +203,30 @@ describe('HelpPanel Component', () => {
         const helpLink = screen.getByRole('button', { name: 'Help' });
         expect(helpLink).toBeInTheDocument();
     });
+
+    it('displays Ask Ellie in navigation sidebar', () => {
+        render(<HelpPanel {...defaultProps} />);
+        expect(screen.getByText('Ask Ellie')).toBeInTheDocument();
+    });
+
+    it('navigates to Ask Ellie page when clicked', () => {
+        render(<HelpPanel {...defaultProps} />);
+        fireEvent.click(screen.getByText('Ask Ellie'));
+        const askEllieElements = screen.getAllByText('Ask Ellie');
+        expect(askEllieElements.length).toBeGreaterThan(0);
+        expect(screen.getByText(/AI-powered database assistant/)).toBeInTheDocument();
+    });
+
+    it('opens to Ask Ellie help when helpContext is chat', () => {
+        render(<HelpPanel {...defaultProps} helpContext="chat" />);
+        expect(screen.getByText(/AI-powered database assistant/)).toBeInTheDocument();
+    });
+
+    it('displays key sections on Ask Ellie page', () => {
+        render(<HelpPanel {...defaultProps} />);
+        fireEvent.click(screen.getByText('Ask Ellie'));
+        expect(screen.getByText('Getting Started')).toBeInTheDocument();
+        expect(screen.getByText('Conversation History')).toBeInTheDocument();
+        expect(screen.getByText('Available Tools')).toBeInTheDocument();
+    });
 });

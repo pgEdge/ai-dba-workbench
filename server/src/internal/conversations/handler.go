@@ -36,14 +36,21 @@ func NewHandler(store *Store, authStore *auth.AuthStore) *Handler {
 
 // extractUsername extracts the username from the session token
 func (h *Handler) extractUsername(r *http.Request) (string, error) {
+	// Try Authorization header first (for API tokens)
+	var token string
 	authHeader := r.Header.Get("Authorization")
-	if authHeader == "" {
-		return "", fmt.Errorf("missing Authorization header")
-	}
-
-	token := strings.TrimPrefix(authHeader, "Bearer ")
-	if token == authHeader {
-		return "", fmt.Errorf("invalid Authorization header format")
+	if authHeader != "" {
+		token = strings.TrimPrefix(authHeader, "Bearer ")
+		if token == authHeader {
+			return "", fmt.Errorf("invalid Authorization header format")
+		}
+	} else {
+		// Fall back to session cookie (for browser sessions)
+		cookie, err := r.Cookie("session_token")
+		if err != nil || cookie.Value == "" {
+			return "", fmt.Errorf("missing authentication credentials")
+		}
+		token = cookie.Value
 	}
 
 	username, err := h.authStore.ValidateSessionToken(token)
@@ -96,7 +103,7 @@ func (h *Handler) HandleList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	conversations, err := h.store.List(username, limit, offset)
+	conversations, err := h.store.List(r.Context(), username, limit, offset)
 	if err != nil {
 		sendError(w, http.StatusInternalServerError, "Failed to list conversations")
 		return
@@ -132,7 +139,7 @@ func (h *Handler) HandleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conv, err := h.store.Get(id, username)
+	conv, err := h.store.Get(r.Context(), id, username)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			sendError(w, http.StatusNotFound, "Conversation not found")
@@ -177,7 +184,7 @@ func (h *Handler) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conv, err := h.store.Create(username, req.Provider, req.Model, req.Connection, req.Messages)
+	conv, err := h.store.Create(r.Context(), username, req.Provider, req.Model, req.Connection, req.Messages)
 	if err != nil {
 		sendError(w, http.StatusInternalServerError, "Failed to create conversation")
 		return
@@ -220,7 +227,7 @@ func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conv, err := h.store.Update(id, username, req.Provider, req.Model, req.Connection, req.Messages)
+	conv, err := h.store.Update(r.Context(), id, username, req.Provider, req.Model, req.Connection, req.Messages)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			sendError(w, http.StatusNotFound, "Conversation not found")
@@ -271,7 +278,7 @@ func (h *Handler) HandleRename(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.store.Rename(id, username, req.Title)
+	err = h.store.Rename(r.Context(), id, username, req.Title)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrAccessDenied) {
 			sendError(w, http.StatusNotFound, "Conversation not found")
@@ -304,7 +311,7 @@ func (h *Handler) HandleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.store.Delete(id, username)
+	err = h.store.Delete(r.Context(), id, username)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrAccessDenied) {
 			sendError(w, http.StatusNotFound, "Conversation not found")
@@ -330,7 +337,7 @@ func (h *Handler) HandleDeleteAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	count, err := h.store.DeleteAll(username)
+	count, err := h.store.DeleteAll(r.Context(), username)
 	if err != nil {
 		sendError(w, http.StatusInternalServerError, "Failed to delete conversations")
 		return

@@ -115,6 +115,7 @@ nav:
       - Blackout Management: server/blackouts.md
       - Server Information: server/server-info.md
       - AI Overview: server/ai-overview.md
+      - Ask Ellie: server/ask-ellie.md
   - CLI:
       - Overview: cli/index.md
   - Changelog: changelog.md

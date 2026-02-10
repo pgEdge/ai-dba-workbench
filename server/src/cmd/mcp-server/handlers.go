@@ -44,13 +44,14 @@ func registerDatastoreHandler(mux *http.ServeMux, handler routeRegistrar, authWr
 
 // HandlerDependencies holds all dependencies needed for HTTP handlers
 type HandlerDependencies struct {
-	AuthStore   *auth.AuthStore
-	RateLimiter *auth.RateLimiter
-	IPExtractor *auth.IPExtractor
-	ConvStore   *conversations.Store
-	Datastore   *database.Datastore
-	Config      *config.Config
-	OverviewGen *overview.Generator
+	AuthStore    *auth.AuthStore
+	RateLimiter  *auth.RateLimiter
+	IPExtractor  *auth.IPExtractor
+	ConvStore    *conversations.Store
+	Datastore    *database.Datastore
+	Config       *config.Config
+	OverviewGen  *overview.Generator
+	ToolProvider api.ContextAwareToolProvider
 }
 
 // SetupHandlers configures all HTTP handlers for the server
@@ -80,6 +81,13 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 
 		// LLM proxy handlers (always enabled)
 		setupLLMHandlers(mux, deps.Config, authWrapper)
+
+		// MCP tool REST bridge (exposes tools/list and tools/call over REST)
+		if deps.ToolProvider != nil {
+			mcpToolHandler := api.NewMCPToolHandler(deps.ToolProvider)
+			mcpToolHandler.RegisterRoutes(mux, authWrapper)
+			fmt.Fprintf(os.Stderr, "MCP tool REST bridge: ENABLED\n")
+		}
 
 		// Conversation history endpoints (only if store is available)
 		if deps.ConvStore != nil && deps.AuthStore != nil {

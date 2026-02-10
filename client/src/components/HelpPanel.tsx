@@ -54,6 +54,9 @@ import {
     Psychology as AIIcon,
     PlayArrow as RunIcon,
     AutoAwesome as AutoAwesomeIcon,
+    SmartToyOutlined as ChatBotIcon,
+    History as HistoryIcon,
+    Send as SendIcon,
 } from '@mui/icons-material';
 import { CLIENT_VERSION } from '../lib/version';
 
@@ -67,6 +70,7 @@ const HELP_PAGES = {
     settings: 'settings',
     administration: 'administration',
     blackouts: 'blackouts',
+    askEllie: 'askEllie',
 };
 
 // Map context to help page
@@ -98,6 +102,10 @@ const contextToPage = (context) => {
         case 'blackout':
         case 'maintenance':
             return HELP_PAGES.blackouts;
+        case 'chat':
+        case 'ellie':
+        case 'askEllie':
+            return HELP_PAGES.askEllie;
         default:
             return HELP_PAGES.overview;
     }
@@ -1159,6 +1167,83 @@ const BlackoutsPage = () => (
 );
 
 /**
+ * Ask Ellie Page - AI chat assistant help
+ */
+const AskElliePage = () => (
+    <Box>
+        <Typography variant="h5" sx={styles.pageHeading}>
+            Ask Ellie
+        </Typography>
+        <Typography sx={styles.bodyTextMb3}>
+            Ellie is your AI-powered database assistant. Ask questions about
+            your PostgreSQL databases, get performance advice, troubleshoot
+            issues, or explore pgEdge product documentation.
+        </Typography>
+
+        <SectionTitle icon={ChatBotIcon}>Getting Started</SectionTitle>
+        <Box sx={styles.indentedBlock}>
+            <FeatureItem
+                title="Opening the Chat"
+                description="Click the chat button in the bottom-right corner to open the Ask Ellie panel. The panel appears alongside your current view."
+            />
+            <FeatureItem
+                title="Asking Questions"
+                description="Type your question in the input field and press Enter to send. Ellie can answer questions about your monitored databases, run read-only queries, analyze query plans, and search the pgEdge knowledge base."
+            />
+            <FeatureItem
+                title="Tool Execution"
+                description="Ellie has access to monitoring tools that run automatically as needed. A status indicator shows which tools are active during a response."
+            />
+        </Box>
+
+        <SectionTitle icon={HistoryIcon}>Conversation History</SectionTitle>
+        <Box sx={styles.indentedBlock}>
+            <FeatureItem
+                title="Viewing History"
+                description="Click the history button in the chat header to view previous conversations. The history overlay shows all saved conversations sorted by most recent."
+            />
+            <FeatureItem
+                title="Managing Conversations"
+                description="Right-click the menu icon on any conversation to rename or delete it. Use the Clear All button at the bottom to remove all conversations."
+            />
+            <FeatureItem
+                title="New Conversation"
+                description="Click the plus button in the chat header to start a fresh conversation. Previous conversations are saved automatically."
+            />
+        </Box>
+
+        <SectionTitle icon={AutoAwesomeIcon}>Available Tools</SectionTitle>
+        <Box sx={styles.indentedBlock}>
+            <FeatureItem
+                title="Database Queries"
+                description="Ellie can run read-only SQL queries against your monitored databases and return formatted results."
+            />
+            <FeatureItem
+                title="Metrics Analysis"
+                description="Query historical monitoring metrics with time-based aggregation to identify trends and anomalies."
+            />
+            <FeatureItem
+                title="Schema Information"
+                description="Explore database schemas, tables, and columns across your monitored connections."
+            />
+            <FeatureItem
+                title="Knowledge Base"
+                description="Search pgEdge documentation for information about PostgreSQL, Spock replication, and pgEdge products."
+            />
+            <FeatureItem
+                title="Alert History"
+                description="Review historical alerts and alert rules for any monitored connection."
+            />
+        </Box>
+
+        <HelpTip>
+            Use Shift+Enter to add a new line without sending. Press the up
+            arrow at the start of the input to recall previous messages.
+        </HelpTip>
+    </Box>
+);
+
+/**
  * HelpPanel - Main help panel component
  */
 interface HelpPanelProps {
@@ -1215,6 +1300,8 @@ const HelpPanel: React.FC<HelpPanelProps> = ({ open, onClose, helpContext, mode:
                 return <AdministrationPage />;
             case HELP_PAGES.blackouts:
                 return <BlackoutsPage />;
+            case HELP_PAGES.askEllie:
+                return <AskElliePage />;
             default:
                 return <OverviewPage />;
         }
@@ -1236,6 +1323,8 @@ const HelpPanel: React.FC<HelpPanelProps> = ({ open, onClose, helpContext, mode:
                 return 'Administration';
             case HELP_PAGES.blackouts:
                 return 'Blackouts';
+            case HELP_PAGES.askEllie:
+                return 'Ask Ellie';
             default:
                 return 'Overview';
         }
@@ -1342,6 +1431,13 @@ const HelpPanel: React.FC<HelpPanelProps> = ({ open, onClose, helpContext, mode:
                                 icon={BlackoutIcon}
                                 label="Blackouts"
                                 pageId={HELP_PAGES.blackouts}
+                                currentPage={currentPage}
+                                onClick={setCurrentPage}
+                            />
+                            <HelpNavItem
+                                icon={ChatBotIcon}
+                                label="Ask Ellie"
+                                pageId={HELP_PAGES.askEllie}
                                 currentPage={currentPage}
                                 onClick={setCurrentPage}
                             />

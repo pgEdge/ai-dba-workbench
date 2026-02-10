@@ -47,6 +47,7 @@ type Server struct {
 	convStore     *conversations.Store
 	mcpServer     *mcp.Server
 	overviewGen   *overview.Generator
+	toolProvider  *tools.ContextAwareProvider
 	ctx           context.Context
 	cancel        context.CancelFunc
 	dataDir       string
@@ -285,6 +286,7 @@ func (s *Server) initMCPServer() error {
 	if err := contextAwareToolProvider.RegisterTools(s.ctx); err != nil {
 		return fmt.Errorf("failed to register tools: %w", err)
 	}
+	s.toolProvider = contextAwareToolProvider
 
 	// Create MCP server with context-aware providers
 	s.mcpServer = mcp.NewServer(contextAwareToolProvider)
@@ -303,13 +305,13 @@ func (s *Server) initConversationStore() error {
 		return nil
 	}
 
-	var err error
-	s.convStore, err = conversations.NewStore(s.dataDir)
-	if err != nil {
-		return fmt.Errorf("failed to initialize conversation store: %w", err)
+	if s.datastore == nil {
+		return fmt.Errorf("datastore required for conversation storage")
 	}
 
-	fmt.Fprintf(os.Stderr, "Conversation store: %s/conversations.db\n", s.dataDir)
+	s.convStore = conversations.NewStore(s.datastore.GetPool())
+
+	fmt.Fprintf(os.Stderr, "Conversation store: PostgreSQL datastore\n")
 	return nil
 }
 
@@ -407,13 +409,14 @@ func (s *Server) Run(flags *Flags, configPath string) error {
 
 	// Setup HTTP handlers
 	deps := &HandlerDependencies{
-		AuthStore:   s.authStore,
-		RateLimiter: s.rateLimiter,
-		IPExtractor: ipExtractor,
-		ConvStore:   s.convStore,
-		Datastore:   s.datastore,
-		Config:      s.cfg,
-		OverviewGen: s.overviewGen,
+		AuthStore:    s.authStore,
+		RateLimiter:  s.rateLimiter,
+		IPExtractor:  ipExtractor,
+		ConvStore:    s.convStore,
+		Datastore:    s.datastore,
+		Config:       s.cfg,
+		OverviewGen:  s.overviewGen,
+		ToolProvider: s.toolProvider,
 	}
 	httpConfig.SetupHandlers = SetupHandlers(deps)
 
@@ -500,11 +503,6 @@ func (s *Server) Close() {
 	// Stop rate limiter cleanup
 	if s.rateLimiter != nil {
 		s.rateLimiter.Stop()
-	}
-
-	// Close conversation store
-	if s.convStore != nil {
-		s.convStore.Close()
 	}
 
 	// Close auth store

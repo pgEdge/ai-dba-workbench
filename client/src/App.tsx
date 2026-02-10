@@ -14,11 +14,14 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ClusterProvider, useCluster } from './contexts/ClusterContext';
 import { AlertsProvider } from './contexts/AlertsContext';
 import { BlackoutProvider } from './contexts/BlackoutContext';
+import { ChatProvider, useChatContext } from './contexts/ChatContext';
 import ErrorBoundary from './components/ErrorBoundary';
 import Header from './components/Header';
 import Login from './components/Login';
 import ClusterNavigator from './components/ClusterNavigator';
 import StatusPanel from './components/StatusPanel';
+import ChatPanel from './components/ChatPanel';
+import ChatFAB from './components/ChatPanel/ChatFAB';
 import { createPgedgeTheme, loginTheme } from './theme/pgedgeTheme';
 import { ThemeMode } from './types/theme';
 
@@ -97,9 +100,11 @@ const AppContent = () => {
             <CssBaseline />
             <ClusterProvider>
                 <AlertsProvider>
-                    <ErrorBoundary>
-                        <MainLayout mode={mode} onToggleTheme={toggleTheme} />
-                    </ErrorBoundary>
+                    <ChatProvider>
+                        <ErrorBoundary>
+                            <MainLayout mode={mode} onToggleTheme={toggleTheme} />
+                        </ErrorBoundary>
+                    </ChatProvider>
                 </AlertsProvider>
             </ClusterProvider>
         </ThemeProvider>
@@ -123,6 +128,13 @@ const MainLayout: React.FC<MainLayoutProps> = ({ mode, onToggleTheme }) => {
         selectCluster,
         selectEstate,
     } = useCluster();
+
+    // Chat panel state from context
+    const {
+        isOpen: chatOpen,
+        toggleChat: handleToggleChat,
+        closeChat: handleCloseChat,
+    } = useChatContext();
 
     // Determine help context based on current selection
     const helpContext = useMemo(() => {
@@ -219,13 +231,30 @@ const MainLayout: React.FC<MainLayoutProps> = ({ mode, onToggleTheme }) => {
                     />
 
                     {/* Main content area */}
-                    <Box sx={styles.contentArea}>
+                    <Box
+                        sx={styles.contentArea}
+                    >
                         <StatusPanel
                             selection={selection}
                             mode={mode}
                         />
                     </Box>
+
+                    {/* AI Chat Panel */}
+                    <ChatPanel
+                        open={chatOpen}
+                        onClose={handleCloseChat}
+                        mode={mode}
+                    />
                 </Box>
+
+                {/* AI Chat FAB (hidden when panel is open) */}
+                {!chatOpen && (
+                    <ChatFAB
+                        onClick={handleToggleChat}
+                        isOpen={false}
+                    />
+                )}
             </Box>
         </BlackoutProvider>
     );

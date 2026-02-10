@@ -80,6 +80,7 @@ type ToolsConfig struct {
 	GetAlertHistory     *bool `yaml:"get_alert_history"`    // Query historic alerts (default: true)
 	GetAlertRules       *bool `yaml:"get_alert_rules"`      // Query alert rules and thresholds (default: true)
 	GetMetricBaselines  *bool `yaml:"get_metric_baselines"` // Query metric baselines for anomaly context (default: true)
+	QueryDatastore      *bool `yaml:"query_datastore"`      // Execute read-only SQL against the datastore (default: true)
 }
 
 // ResourcesConfig holds configuration for enabling/disabling built-in resources
@@ -126,6 +127,8 @@ func (c *ToolsConfig) IsToolEnabled(toolName string) bool {
 		return c.GetAlertRules == nil || *c.GetAlertRules
 	case "get_metric_baselines":
 		return c.GetMetricBaselines == nil || *c.GetMetricBaselines
+	case "query_datastore":
+		return c.QueryDatastore == nil || *c.QueryDatastore
 	default:
 		return true // Unknown tools are enabled by default
 	}

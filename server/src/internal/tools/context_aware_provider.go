@@ -59,10 +59,12 @@ func (p *ContextAwareProvider) registerStatelessTools(registry *Registry) {
 		registry.Register("generate_embedding", GenerateEmbeddingTool(p.cfg))
 	}
 
-	// Knowledgebase search tool (if enabled in both knowledgebase config and builtins config)
+	// Knowledgebase search tool (if enabled, path configured, file exists, and tool enabled)
 	if p.cfg.Knowledgebase.Enabled && p.cfg.Knowledgebase.DatabasePath != "" &&
 		p.cfg.Builtins.Tools.IsToolEnabled("search_knowledgebase") {
-		registry.Register("search_knowledgebase", SearchKnowledgebaseTool(p.cfg.Knowledgebase.DatabasePath, p.cfg))
+		if _, err := os.Stat(p.cfg.Knowledgebase.DatabasePath); err == nil {
+			registry.Register("search_knowledgebase", SearchKnowledgebaseTool(p.cfg.Knowledgebase.DatabasePath, p.cfg))
+		}
 	}
 }
 
@@ -93,6 +95,9 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_metric_baselines") {
 			registry.Register("get_metric_baselines", GetMetricBaselinesTool(datastorePool))
 		}
+		if p.cfg.Builtins.Tools.IsToolEnabled("query_datastore") {
+			registry.Register("query_datastore", QueryDatastoreTool(datastorePool))
+		}
 	} else {
 		// Register tools with nil pool - they'll return helpful errors
 		if p.cfg.Builtins.Tools.IsToolEnabled("list_probes") {
@@ -115,6 +120,9 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_metric_baselines") {
 			registry.Register("get_metric_baselines", GetMetricBaselinesTool(nil))
+		}
+		if p.cfg.Builtins.Tools.IsToolEnabled("query_datastore") {
+			registry.Register("query_datastore", QueryDatastoreTool(nil))
 		}
 	}
 }
@@ -357,6 +365,7 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 	statelessTools := map[string]bool{
 		"read_resource":        true, // Resource access tool
 		"generate_embedding":   true, // Embedding generation doesn't need database
+		"search_knowledgebase": true, // Knowledgebase search - uses independent SQLite DB
 		"list_probes":          true, // Datastore tool - uses shared datastore pool
 		"describe_probe":       true, // Datastore tool - uses shared datastore pool
 		"query_metrics":        true, // Datastore tool - uses shared datastore pool
@@ -364,6 +373,7 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 		"get_alert_history":    true, // Datastore tool - uses shared datastore pool
 		"get_alert_rules":      true, // Datastore tool - uses shared datastore pool
 		"get_metric_baselines": true, // Datastore tool - uses shared datastore pool
+		"query_datastore":      true, // Datastore tool - uses shared datastore pool
 	}
 
 	if statelessTools[name] {

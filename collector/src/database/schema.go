@@ -2667,6 +2667,56 @@ func (sm *SchemaManager) registerMigrations() {
 			return err
 		},
 	})
+
+	// Migration #15: Create conversations table for chat history
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     15,
+		Description: "Create conversations table for chat history",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+			_, err := tx.Exec(ctx, `
+				CREATE TABLE IF NOT EXISTS conversations (
+					id TEXT PRIMARY KEY,
+					username TEXT NOT NULL,
+					title TEXT NOT NULL,
+					provider TEXT NOT NULL DEFAULT '',
+					model TEXT NOT NULL DEFAULT '',
+					connection TEXT NOT NULL DEFAULT '',
+					messages JSONB NOT NULL,
+					created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+
+				CREATE INDEX IF NOT EXISTS idx_conversations_username
+					ON conversations(username);
+
+				CREATE INDEX IF NOT EXISTS idx_conversations_updated_at
+					ON conversations(updated_at DESC);
+
+				COMMENT ON TABLE conversations IS
+					'Stores chat conversation history per user';
+				COMMENT ON COLUMN conversations.id IS
+					'Unique conversation identifier (conv_<nanos> format)';
+				COMMENT ON COLUMN conversations.username IS
+					'Owner username for access control';
+				COMMENT ON COLUMN conversations.title IS
+					'Auto-generated title from first user message';
+				COMMENT ON COLUMN conversations.provider IS
+					'LLM provider used (e.g. anthropic, openai)';
+				COMMENT ON COLUMN conversations.model IS
+					'LLM model used (e.g. claude-3-sonnet)';
+				COMMENT ON COLUMN conversations.connection IS
+					'Database connection name if applicable';
+				COMMENT ON COLUMN conversations.messages IS
+					'JSONB array of message objects with role, content, timestamps';
+				COMMENT ON COLUMN conversations.created_at IS
+					'Timestamp when conversation was first created';
+				COMMENT ON COLUMN conversations.updated_at IS
+					'Timestamp of last message or modification';
+			`)
+			return err
+		},
+	})
 }
 
 // Migrate applies all pending migrations

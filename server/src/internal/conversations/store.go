@@ -10,16 +10,14 @@
 package conversations
 
 import (
-	"database/sql"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
-	"sync"
 	"time"
 
-	_ "modernc.org/sqlite" // Pure Go SQLite driver
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Sentinel errors for conversation operations
@@ -65,123 +63,14 @@ type ConversationSummary struct {
 	Preview    string    `json:"preview"`
 }
 
-// Store manages conversation persistence using SQLite
+// Store manages conversation persistence using PostgreSQL
 type Store struct {
-	db   *sql.DB
-	mu   sync.RWMutex
-	path string
+	pool *pgxpool.Pool
 }
 
-// NewStore creates a new conversation store
-func NewStore(dataDir string) (*Store, error) {
-	// Ensure data directory exists
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create data directory: %w", err)
-	}
-
-	dbPath := filepath.Join(dataDir, "conversations.db")
-
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open database: %w", err)
-	}
-
-	// Enable WAL mode for better concurrent access
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to enable WAL mode: %w", err)
-	}
-
-	// Enable foreign keys
-	if _, err := db.Exec("PRAGMA foreign_keys=ON"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
-	}
-
-	store := &Store{
-		db:   db,
-		path: dbPath,
-	}
-
-	// Initialize schema
-	if err := store.initSchema(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to initialize schema: %w", err)
-	}
-
-	return store, nil
-}
-
-// initSchema creates the necessary tables
-func (s *Store) initSchema() error {
-	schema := `
-    CREATE TABLE IF NOT EXISTS conversations (
-        id TEXT PRIMARY KEY,
-        username TEXT NOT NULL,
-        title TEXT NOT NULL,
-        provider TEXT DEFAULT '',
-        model TEXT DEFAULT '',
-        connection TEXT DEFAULT '',
-        messages TEXT NOT NULL,
-        created_at DATETIME NOT NULL,
-        updated_at DATETIME NOT NULL
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_conversations_username
-        ON conversations(username);
-
-    CREATE INDEX IF NOT EXISTS idx_conversations_updated_at
-        ON conversations(updated_at DESC);
-    `
-
-	_, err := s.db.Exec(schema)
-	if err != nil {
-		return err
-	}
-
-	// Migration: Add provider and model columns if they don't exist
-	// SQLite doesn't support IF NOT EXISTS for ALTER TABLE, so we check first
-	var count int
-	err = s.db.QueryRow(`
-        SELECT COUNT(*) FROM pragma_table_info('conversations')
-        WHERE name = 'provider'
-    `).Scan(&count)
-	if err != nil {
-		return err
-	}
-
-	if count == 0 {
-		// Add provider column
-		if _, err := s.db.Exec(`ALTER TABLE conversations ADD COLUMN provider TEXT DEFAULT ''`); err != nil {
-			return fmt.Errorf("failed to add provider column: %w", err)
-		}
-		// Add model column
-		if _, err := s.db.Exec(`ALTER TABLE conversations ADD COLUMN model TEXT DEFAULT ''`); err != nil {
-			return fmt.Errorf("failed to add model column: %w", err)
-		}
-	}
-
-	// Migration: Add connection column if it doesn't exist
-	err = s.db.QueryRow(`
-        SELECT COUNT(*) FROM pragma_table_info('conversations')
-        WHERE name = 'connection'
-    `).Scan(&count)
-	if err != nil {
-		return err
-	}
-
-	if count == 0 {
-		if _, err := s.db.Exec(`ALTER TABLE conversations ADD COLUMN connection TEXT DEFAULT ''`); err != nil {
-			return fmt.Errorf("failed to add connection column: %w", err)
-		}
-	}
-
-	return nil
-}
-
-// Close closes the database connection
-func (s *Store) Close() error {
-	return s.db.Close()
+// NewStore creates a new conversation store backed by PostgreSQL
+func NewStore(pool *pgxpool.Pool) *Store {
+	return &Store{pool: pool}
 }
 
 // generateID creates a unique conversation ID
@@ -217,10 +106,7 @@ func generateTitle(messages []Message) string {
 }
 
 // Create creates a new conversation
-func (s *Store) Create(username, provider, model, connection string, messages []Message) (*Conversation, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
+func (s *Store) Create(ctx context.Context, username, provider, model, connection string, messages []Message) (*Conversation, error) {
 	conv := &Conversation{
 		ID:         generateID(),
 		Username:   username,
@@ -238,10 +124,10 @@ func (s *Store) Create(username, provider, model, connection string, messages []
 		return nil, fmt.Errorf("failed to marshal messages: %w", err)
 	}
 
-	_, err = s.db.Exec(
+	_, err = s.pool.Exec(ctx,
 		`INSERT INTO conversations (id, username, title, provider, model, connection, messages, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		conv.ID, conv.Username, conv.Title, conv.Provider, conv.Model, conv.Connection, string(messagesJSON),
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		conv.ID, conv.Username, conv.Title, conv.Provider, conv.Model, conv.Connection, messagesJSON,
 		conv.CreatedAt, conv.UpdatedAt,
 	)
 	if err != nil {
@@ -252,16 +138,13 @@ func (s *Store) Create(username, provider, model, connection string, messages []
 }
 
 // Update updates an existing conversation
-func (s *Store) Update(id, username, provider, model, connection string, messages []Message) (*Conversation, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
+func (s *Store) Update(ctx context.Context, id, username, provider, model, connection string, messages []Message) (*Conversation, error) {
 	// Verify ownership
 	var existingUsername string
-	err := s.db.QueryRow(
-		"SELECT username FROM conversations WHERE id = ?", id,
+	err := s.pool.QueryRow(ctx,
+		"SELECT username FROM conversations WHERE id = $1", id,
 	).Scan(&existingUsername)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
@@ -276,52 +159,48 @@ func (s *Store) Update(id, username, provider, model, connection string, message
 		return nil, fmt.Errorf("failed to marshal messages: %w", err)
 	}
 
-	title := generateTitle(messages)
 	updatedAt := time.Now().UTC()
 
-	_, err = s.db.Exec(
+	_, err = s.pool.Exec(ctx,
 		`UPDATE conversations
-         SET title = ?, provider = ?, model = ?, connection = ?, messages = ?, updated_at = ?
-         WHERE id = ? AND username = ?`,
-		title, provider, model, connection, string(messagesJSON), updatedAt, id, username,
+         SET provider = $1, model = $2, connection = $3, messages = $4, updated_at = $5
+         WHERE id = $6 AND username = $7`,
+		provider, model, connection, messagesJSON, updatedAt, id, username,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update conversation: %w", err)
 	}
 
 	// Fetch updated conversation
-	return s.getUnlocked(id, username)
+	return s.get(ctx, id, username)
 }
 
 // Get retrieves a conversation by ID
-func (s *Store) Get(id, username string) (*Conversation, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	return s.getUnlocked(id, username)
+func (s *Store) Get(ctx context.Context, id, username string) (*Conversation, error) {
+	return s.get(ctx, id, username)
 }
 
-// getUnlocked retrieves a conversation without acquiring a lock (caller must hold lock)
-func (s *Store) getUnlocked(id, username string) (*Conversation, error) {
+// get retrieves a conversation (internal helper)
+func (s *Store) get(ctx context.Context, id, username string) (*Conversation, error) {
 	var conv Conversation
-	var messagesJSON string
+	var messagesJSON []byte
 
-	err := s.db.QueryRow(
+	err := s.pool.QueryRow(ctx,
 		`SELECT id, username, title, provider, model, connection, messages, created_at, updated_at
          FROM conversations
-         WHERE id = ? AND username = ?`,
+         WHERE id = $1 AND username = $2`,
 		id, username,
 	).Scan(&conv.ID, &conv.Username, &conv.Title, &conv.Provider, &conv.Model, &conv.Connection,
 		&messagesJSON, &conv.CreatedAt, &conv.UpdatedAt)
 
-	if err == sql.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to query conversation: %w", err)
 	}
 
-	if err := json.Unmarshal([]byte(messagesJSON), &conv.Messages); err != nil {
+	if err := json.Unmarshal(messagesJSON, &conv.Messages); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal messages: %w", err)
 	}
 
@@ -329,10 +208,7 @@ func (s *Store) getUnlocked(id, username string) (*Conversation, error) {
 }
 
 // List lists all conversations for a user
-func (s *Store) List(username string, limit, offset int) ([]ConversationSummary, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
+func (s *Store) List(ctx context.Context, username string, limit, offset int) ([]ConversationSummary, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -340,12 +216,12 @@ func (s *Store) List(username string, limit, offset int) ([]ConversationSummary,
 		limit = 100
 	}
 
-	rows, err := s.db.Query(
+	rows, err := s.pool.Query(ctx,
 		`SELECT id, title, connection, messages, created_at, updated_at
          FROM conversations
-         WHERE username = ?
+         WHERE username = $1
          ORDER BY updated_at DESC
-         LIMIT ? OFFSET ?`,
+         LIMIT $2 OFFSET $3`,
 		username, limit, offset,
 	)
 	if err != nil {
@@ -356,7 +232,7 @@ func (s *Store) List(username string, limit, offset int) ([]ConversationSummary,
 	var summaries []ConversationSummary
 	for rows.Next() {
 		var summary ConversationSummary
-		var messagesJSON string
+		var messagesJSON []byte
 
 		if err := rows.Scan(&summary.ID, &summary.Title, &summary.Connection, &messagesJSON,
 			&summary.CreatedAt, &summary.UpdatedAt); err != nil {
@@ -365,7 +241,7 @@ func (s *Store) List(username string, limit, offset int) ([]ConversationSummary,
 
 		// Extract preview from first user message
 		var messages []Message
-		if err := json.Unmarshal([]byte(messagesJSON), &messages); err == nil {
+		if err := json.Unmarshal(messagesJSON, &messages); err == nil {
 			for _, msg := range messages {
 				if msg.Role == "user" {
 					if content, ok := msg.Content.(string); ok {
@@ -391,24 +267,17 @@ func (s *Store) List(username string, limit, offset int) ([]ConversationSummary,
 }
 
 // Rename renames a conversation
-func (s *Store) Rename(id, username, title string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	result, err := s.db.Exec(
-		`UPDATE conversations SET title = ?, updated_at = ?
-         WHERE id = ? AND username = ?`,
+func (s *Store) Rename(ctx context.Context, id, username, title string) error {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE conversations SET title = $1, updated_at = $2
+         WHERE id = $3 AND username = $4`,
 		title, time.Now().UTC(), id, username,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to rename conversation: %w", err)
 	}
 
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
-	}
-	if rows == 0 {
+	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
 
@@ -416,23 +285,16 @@ func (s *Store) Rename(id, username, title string) error {
 }
 
 // Delete deletes a conversation
-func (s *Store) Delete(id, username string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	result, err := s.db.Exec(
-		"DELETE FROM conversations WHERE id = ? AND username = ?",
+func (s *Store) Delete(ctx context.Context, id, username string) error {
+	tag, err := s.pool.Exec(ctx,
+		"DELETE FROM conversations WHERE id = $1 AND username = $2",
 		id, username,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to delete conversation: %w", err)
 	}
 
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
-	}
-	if rows == 0 {
+	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
 
@@ -440,17 +302,14 @@ func (s *Store) Delete(id, username string) error {
 }
 
 // DeleteAll deletes all conversations for a user
-func (s *Store) DeleteAll(username string) (int64, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	result, err := s.db.Exec(
-		"DELETE FROM conversations WHERE username = ?",
+func (s *Store) DeleteAll(ctx context.Context, username string) (int64, error) {
+	tag, err := s.pool.Exec(ctx,
+		"DELETE FROM conversations WHERE username = $1",
 		username,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("failed to delete conversations: %w", err)
 	}
 
-	return result.RowsAffected()
+	return tag.RowsAffected(), nil
 }

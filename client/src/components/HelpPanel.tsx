@@ -513,6 +513,10 @@ const StatusPanelPage = () => (
                 description="PostgreSQL version, operating system, and server role."
             />
             <FeatureItem
+                title="Server Information Dialog"
+                description="Click the info button on the server properties bar to open a detailed dialog showing system hardware, PostgreSQL configuration, database listings with AI-generated descriptions, and key configuration settings grouped by category."
+            />
+            <FeatureItem
                 title="Replication Status"
                 description="For Spock servers, displays the Spock version and node name."
             />

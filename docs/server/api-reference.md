@@ -216,6 +216,13 @@ The API provides endpoints in the following categories:
 | PUT | `/api/v1/channel-overrides/{scope}/{scopeId}/{channelId}` | Upsert override |
 | DELETE | `/api/v1/channel-overrides/{scope}/{scopeId}/{channelId}` | Remove override |
 
+### Server Information
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/server-info/{connection_id}` | Get server information |
+| GET | `/api/v1/server-info/{connection_id}/ai-analysis` | Get AI database analysis |
+
 ### Timeline
 
 | Method | Endpoint | Description |

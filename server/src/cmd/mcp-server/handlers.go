@@ -146,6 +146,19 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		channelOverrideHandler := api.NewChannelOverrideHandler(deps.Datastore, deps.AuthStore, rbacChecker)
 		registerDatastoreHandler(mux, channelOverrideHandler, authWrapper, "Channel override configuration", deps.Datastore)
 
+		// Server info endpoint (for Server Info Dialog)
+		serverInfoLLMConfig := &llmproxy.Config{
+			Provider:        deps.Config.LLM.Provider,
+			Model:           deps.Config.LLM.Model,
+			AnthropicAPIKey: deps.Config.LLM.AnthropicAPIKey,
+			OpenAIAPIKey:    deps.Config.LLM.OpenAIAPIKey,
+			OllamaURL:       deps.Config.LLM.OllamaURL,
+			MaxTokens:       deps.Config.LLM.MaxTokens,
+			Temperature:     deps.Config.LLM.Temperature,
+		}
+		serverInfoHandler := api.NewServerInfoHandler(deps.Datastore, deps.AuthStore, rbacChecker, serverInfoLLMConfig)
+		registerDatastoreHandler(mux, serverInfoHandler, authWrapper, "Server info", deps.Datastore)
+
 		// Timeline endpoints (for EventTimeline component)
 		timelineHandler := api.NewTimelineHandler(deps.Datastore, deps.AuthStore)
 		registerDatastoreHandler(mux, timelineHandler, authWrapper, "Timeline events", deps.Datastore)

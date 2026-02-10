@@ -113,6 +113,7 @@ nav:
       - Metrics: server/metrics.md
       - Notification Channels: server/notification-channels.md
       - Blackout Management: server/blackouts.md
+      - Server Information: server/server-info.md
       - AI Overview: server/ai-overview.md
   - CLI:
       - Overview: cli/index.md

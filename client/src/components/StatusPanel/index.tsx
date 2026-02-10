@@ -26,6 +26,7 @@ import {
     Language as EstateIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
+import { useClusterData } from '../../contexts/ClusterDataContext';
 import EventTimeline from '../EventTimeline';
 import BlackoutPanel from '../BlackoutPanel';
 import AlertAnalysisDialog from '../AlertAnalysisDialog';
@@ -56,6 +57,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
     const theme = useTheme();
     const isDark = mode === 'dark';
     const { user } = useAuth();
+    const { lastRefresh } = useClusterData();
     const [alerts, setAlerts] = useState([]);
     const [loading, setLoading] = useState(false);
     const initialLoadDoneRef = React.useRef(false);
@@ -321,10 +323,10 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
         initialLoadDoneRef.current = false;
     }, [selection?.type, selection?.id]);
 
-    // Fetch alerts on selection change
+    // Fetch alerts on selection change or cluster data refresh
     useEffect(() => {
         fetchAlertsData();
-    }, [fetchAlertsData]);
+    }, [fetchAlertsData, lastRefresh]);
 
     // Count only active (non-acknowledged) alerts for the header indicator
     const activeAlertCount = useMemo(() => {

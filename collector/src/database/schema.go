@@ -2651,6 +2651,22 @@ func (sm *SchemaManager) registerMigrations() {
 			return err
 		},
 	})
+
+	// Migration #14: Fix unique index for server-scoped alert thresholds with NULL database_name
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     14,
+		Description: "Fix server alert threshold unique index to handle NULL database_name",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+			_, err := tx.Exec(ctx, `
+				DROP INDEX IF EXISTS idx_alert_thresholds_unique_server;
+				CREATE UNIQUE INDEX idx_alert_thresholds_unique_server
+					ON alert_thresholds(rule_id, connection_id, COALESCE(database_name, ''))
+					WHERE scope = 'server';
+			`)
+			return err
+		},
+	})
 }
 
 // Migrate applies all pending migrations

@@ -148,6 +148,12 @@ and this project adheres to
   (`/api/v1/channel-overrides/{scope}/{scopeId}`).
 - Collector schema migration v10 that adds the estate default
   column and notification channel overrides table.
+- Status panel alerts now refresh in sync with the cluster
+  navigator refresh cycle, including both manual and automatic
+  refresh.
+- Event timeline now refreshes in sync with the cluster
+  navigator instead of using a separate 60-second polling
+  interval.
 
 ### Changed
 
@@ -233,6 +239,16 @@ and this project adheres to
   active scheduler until collector restart
 - pg_database probe type mismatch for `datlocprovider` column; schema now uses
   correct `"char"` type instead of TEXT
+- Alert override edit dialog scope dropdown now shows cluster
+  and group options for auto-detected clusters by resolving
+  the hierarchy through the topology system.
+- Alerter now treats a NULL `database_name` in alert threshold
+  overrides as a wildcard matching any database.
+- Alerter now updates threshold value, operator, and severity
+  on active alert records when overrides change.
+- Server-level alert threshold unique index now uses COALESCE
+  to handle NULL `database_name` values, preventing duplicate
+  rows on upsert.
 
 ### Breaking Changes
 

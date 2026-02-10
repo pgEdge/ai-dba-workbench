@@ -150,7 +150,9 @@ func (d *Datastore) GetEffectiveThreshold(ctx context.Context, ruleID int64, con
 		SELECT threshold, operator, severity, enabled
 		FROM alert_thresholds
 		WHERE scope = 'server' AND rule_id = $1 AND connection_id = $2
-		  AND (database_name = $3 OR ($3 IS NULL AND database_name IS NULL))
+		  AND (database_name = $3 OR ($3 IS NULL AND database_name IS NULL) OR database_name IS NULL)
+		ORDER BY database_name IS NULL ASC
+		LIMIT 1
 	`, ruleID, connectionID, dbName).Scan(&threshold, &operator, &severity, &enabled)
 	if err == nil {
 		return threshold, operator, severity, enabled
@@ -1178,15 +1180,18 @@ func (d *Datastore) GetActiveThresholdAlert(ctx context.Context, ruleID int64, c
 	return &alert, nil
 }
 
-// UpdateAlertMetricValue updates the metric_value and last_updated timestamp for an active alert
-func (d *Datastore) UpdateAlertMetricValue(ctx context.Context, alertID int64, metricValue float64) error {
+// UpdateAlertValues updates the metric_value, threshold, operator, severity,
+// and last_updated timestamp for an active alert. AI analysis is cleared when
+// the metric value changes.
+func (d *Datastore) UpdateAlertValues(ctx context.Context, alertID int64, metricValue, thresholdValue float64, operator, severity string) error {
 	_, err := d.pool.Exec(ctx, `
 		UPDATE alerts
 		SET metric_value = $2, last_updated = $3,
+		    threshold_value = $4, operator = $5, severity = $6,
 		    ai_analysis = CASE WHEN metric_value IS DISTINCT FROM $2 THEN NULL ELSE ai_analysis END,
 		    ai_analysis_metric_value = CASE WHEN metric_value IS DISTINCT FROM $2 THEN NULL ELSE ai_analysis_metric_value END
 		WHERE id = $1
-	`, alertID, metricValue, time.Now())
+	`, alertID, metricValue, time.Now(), thresholdValue, operator, severity)
 	return err
 }
 

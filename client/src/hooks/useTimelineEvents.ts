@@ -10,6 +10,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useClusterData } from '../contexts/ClusterDataContext';
 
 export interface TimelineEvent {
     id: number;
@@ -104,13 +105,13 @@ export const useTimelineEvents = ({
     enabled = true,
 }: UseTimelineEventsOptions = {}): UseTimelineEventsReturn => {
     const { user } = useAuth();
+    const { lastRefresh } = useClusterData();
     const [events, setEvents] = useState<TimelineEvent[]>([]);
     const [totalCount, setTotalCount] = useState<number>(0);
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
     const isMountedRef = useRef<boolean>(true);
     const initialLoadDoneRef = useRef<boolean>(false);
-    const refreshInterval = 60000; // 60 seconds
 
     // Create a stable string representation of eventTypes for dependency comparison
     // This ensures the callback is recreated when event types change, regardless of
@@ -213,15 +214,7 @@ export const useTimelineEvents = ({
         return () => {
             isMountedRef.current = false;
         };
-    }, [enabled, user, fetchEvents]);
-
-    // Auto-refresh when enabled (no loading indicator)
-    useEffect(() => {
-        if (!enabled || !user) {return;}
-
-        const intervalId = setInterval(fetchEvents, refreshInterval);
-        return () => clearInterval(intervalId);
-    }, [enabled, user, fetchEvents]);
+    }, [enabled, user, fetchEvents, lastRefresh]);
 
     return {
         events,

@@ -437,7 +437,7 @@ func (d *Datastore) UpsertAlertThreshold(ctx context.Context, scope string, scop
 		query = `
 			INSERT INTO alert_thresholds (rule_id, connection_id, scope, operator, threshold, severity, enabled)
 			VALUES ($1, $2, 'server', $3, $4, $5, $6)
-			ON CONFLICT (rule_id, connection_id, database_name) WHERE scope = 'server'
+			ON CONFLICT (rule_id, connection_id, COALESCE(database_name, '')) WHERE scope = 'server'
 			DO UPDATE SET operator = $3, threshold = $4, severity = $5, enabled = $6, updated_at = NOW()`
 		args = []interface{}{ruleID, scopeID, update.Operator, update.Threshold, update.Severity, update.Enabled}
 	case "cluster":
@@ -491,11 +491,101 @@ func (d *Datastore) DeleteAlertThreshold(ctx context.Context, scope string, scop
 	return nil
 }
 
+// resolveConnectionHierarchy determines the cluster and group for a
+// connection by using the auto-detection topology system. It rebuilds
+// the topology, finds which cluster contains the target connection,
+// then looks up the corresponding clusters table entry to resolve the
+// cluster ID, cluster name, group ID, and group name.
+func (d *Datastore) resolveConnectionHierarchy(ctx context.Context, connectionID int) (*int, *string, *int, *string, error) {
+	clusterOverrides, err := d.getClusterOverridesInternal(ctx)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("failed to get cluster overrides: %w", err)
+	}
+
+	connections, err := d.getAllConnectionsWithRoles(ctx)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("failed to get connections with roles: %w", err)
+	}
+
+	autoClusters := d.buildAutoDetectedClusters(connections, clusterOverrides)
+
+	// Find which auto-detected cluster contains this connection
+	var foundKey string
+	var foundName string
+	for key, cluster := range autoClusters {
+		// Skip standalone servers; they have no meaningful cluster scope
+		if cluster.ClusterType == "server" {
+			continue
+		}
+		ids := make(map[int]bool)
+		collectServerIDsRecursive(cluster.Servers, ids)
+		if ids[connectionID] {
+			foundKey = key
+			foundName = cluster.Name
+			break
+		}
+	}
+
+	if foundKey == "" {
+		return nil, nil, nil, nil, nil
+	}
+
+	// Look up the cluster in the clusters table by auto_cluster_key
+	var clusterID int
+	var clusterName string
+	var groupID *int
+	var groupName *string
+	err = d.pool.QueryRow(ctx, `
+		SELECT cl.id, cl.name, cg.id, cg.name
+		FROM clusters cl
+		LEFT JOIN cluster_groups cg ON cl.group_id = cg.id
+		WHERE cl.auto_cluster_key = $1`, foundKey).Scan(
+		&clusterID, &clusterName, &groupID, &groupName,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// The auto-detected cluster has no persisted entry.
+			// Create one now, assigned to the default group, so the
+			// override system always has a cluster and group to work
+			// with.
+			defaultGroup, dgErr := d.getDefaultGroupInternal(ctx)
+			if dgErr != nil {
+				return nil, nil, nil, nil,
+					fmt.Errorf("failed to get default group: %w", dgErr)
+			}
+
+			var newClusterID int
+			var newClusterName string
+			insertErr := d.pool.QueryRow(ctx, `
+				INSERT INTO clusters (name, auto_cluster_key, group_id)
+				VALUES ($1, $2, $3)
+				ON CONFLICT (auto_cluster_key)
+				    DO UPDATE SET updated_at = CURRENT_TIMESTAMP
+				RETURNING id, name`,
+				foundName, foundKey, defaultGroup.ID,
+			).Scan(&newClusterID, &newClusterName)
+			if insertErr != nil {
+				return nil, nil, nil, nil,
+					fmt.Errorf("failed to create cluster entry: %w", insertErr)
+			}
+
+			gID := defaultGroup.ID
+			gName := defaultGroup.Name
+			return &newClusterID, &newClusterName, &gID, &gName, nil
+		}
+		return nil, nil, nil, nil, fmt.Errorf("failed to look up cluster by auto key: %w", err)
+	}
+
+	return &clusterID, &clusterName, groupID, groupName, nil
+}
+
 // GetOverrideContext returns the hierarchy, rule defaults, and existing
 // overrides at all scopes for a given connection and rule. The frontend
 // uses this data to populate the alert override edit dialog.
 func (d *Datastore) GetOverrideContext(ctx context.Context, connectionID int, ruleID int64) (*OverrideContext, error) {
 	// 1. Get hierarchy: connection -> cluster -> group
+	//    First try the direct join via connections.cluster_id, then
+	//    fall back to the auto-detection topology system.
 	var hierarchy OverrideContextHierarchy
 	err := d.pool.QueryRow(ctx, `
 		SELECT c.id, cl.id, cg.id,
@@ -509,6 +599,18 @@ func (d *Datastore) GetOverrideContext(ctx context.Context, connectionID int, ru
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get connection hierarchy: %w", err)
+	}
+
+	// If the direct join did not resolve a cluster, try auto-detection
+	if hierarchy.ClusterID == nil {
+		clusterID, clusterName, groupID, groupName, resolveErr := d.resolveConnectionHierarchy(ctx, connectionID)
+		if resolveErr != nil {
+			return nil, fmt.Errorf("failed to resolve connection hierarchy: %w", resolveErr)
+		}
+		hierarchy.ClusterID = clusterID
+		hierarchy.ClusterName = clusterName
+		hierarchy.GroupID = groupID
+		hierarchy.GroupName = groupName
 	}
 
 	// 2. Get rule defaults

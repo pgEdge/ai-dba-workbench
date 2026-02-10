@@ -623,6 +623,27 @@ const AlertsPage = () => (
             />
         </Box>
 
+        <SectionTitle icon={EditIcon}>Editing Overrides</SectionTitle>
+        <Typography sx={styles.bodyTextMb2}>
+            Click the edit (pencil) icon on an alert to open the override
+            editor. The dialog allows you to create or update a threshold
+            override for that alert rule.
+        </Typography>
+        <Box sx={styles.indentedBlock}>
+            <FeatureItem
+                title="Scope Selection"
+                description="Choose the scope for the override: Server, Cluster, or Group. Scopes above an existing override are disabled since editing them would have no effect."
+            />
+            <FeatureItem
+                title="Override Fields"
+                description="Configure the enabled state, comparison operator, threshold value, and severity level for the override."
+            />
+            <FeatureItem
+                title="Saving"
+                description="Saving creates a new override or updates an existing one at the selected scope level."
+            />
+        </Box>
+
         <SectionTitle icon={AIIcon}>AI Alert Analysis</SectionTitle>
         <Typography sx={styles.bodyTextMb2}>
             Each alert has an &quot;Analyze with AI&quot; button (brain icon)

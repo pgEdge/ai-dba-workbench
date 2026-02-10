@@ -9,7 +9,7 @@
  */
 
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { ThemeProvider, createTheme } from '@mui/material';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import AlertOverrideEditDialog from '../AlertOverrideEditDialog';
@@ -18,6 +18,17 @@ const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
 const darkTheme = createTheme({ palette: { mode: 'dark' } });
+
+/**
+ * Find a MUI Select combobox element by its associated InputLabel text.
+ * MUI Select does not always create a proper aria label association, so
+ * we locate the FormControl via its label and query the combobox within.
+ */
+const getSelectByLabel = (labelText: string): HTMLElement => {
+    const label = screen.getByText(labelText, { selector: 'label' });
+    const formControl = label.closest('.MuiFormControl-root') as HTMLElement;
+    return within(formControl).getByRole('combobox');
+};
 
 const renderWithTheme = (component: React.ReactElement) => {
     return render(
@@ -136,10 +147,10 @@ describe('AlertOverrideEditDialog', () => {
             expect(screen.getByText('High CPU Usage')).toBeInTheDocument();
         });
 
-        expect(screen.getByLabelText('Scope')).toBeInTheDocument();
-        expect(screen.getByLabelText('Operator')).toBeInTheDocument();
+        expect(getSelectByLabel('Scope')).toBeInTheDocument();
+        expect(getSelectByLabel('Operator')).toBeInTheDocument();
         expect(screen.getByLabelText('Threshold')).toBeInTheDocument();
-        expect(screen.getByLabelText('Severity')).toBeInTheDocument();
+        expect(getSelectByLabel('Severity')).toBeInTheDocument();
     });
 
     it('shows all scope options for full hierarchy', async () => {
@@ -160,7 +171,7 @@ describe('AlertOverrideEditDialog', () => {
             expect(screen.getByText('High CPU Usage')).toBeInTheDocument();
         });
 
-        const scopeSelect = screen.getByLabelText('Scope');
+        const scopeSelect = getSelectByLabel('Scope');
         fireEvent.mouseDown(scopeSelect);
 
         await waitFor(() => {
@@ -191,7 +202,7 @@ describe('AlertOverrideEditDialog', () => {
             expect(screen.getByText('High CPU Usage')).toBeInTheDocument();
         });
 
-        const scopeSelect = screen.getByLabelText('Scope');
+        const scopeSelect = getSelectByLabel('Scope');
         fireEvent.mouseDown(scopeSelect);
 
         await waitFor(() => {
@@ -314,7 +325,7 @@ describe('AlertOverrideEditDialog', () => {
         });
 
         // Default scope is 'group' which has an override; switch to 'server'
-        const scopeSelect = screen.getByLabelText('Scope');
+        const scopeSelect = getSelectByLabel('Scope');
         fireEvent.mouseDown(scopeSelect);
 
         await waitFor(() => {

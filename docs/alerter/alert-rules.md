@@ -81,6 +81,64 @@ checks the cluster that contains the server, then the group
 that contains the cluster. If no override exists at any
 level, the alerter uses the global default values.
 
+### Override Evaluation Order
+
+The alerter evaluates thresholds using a strict precedence
+order for each server and database combination:
+
+1. The alerter checks for a server-level override first.
+2. The alerter checks the cluster override if no server
+   override exists.
+3. The alerter checks the group override if no cluster
+   override exists.
+4. The alerter applies global defaults when no overrides
+   exist at any level.
+
+A `NULL` database name in an override acts as a wildcard.
+The wildcard override matches any database on the server.
+A database-specific override takes precedence over a
+wildcard override at the same scope level.
+
+### Auto-Detected Clusters
+
+The system automatically detects cluster membership by
+analyzing replication topology. The alerter identifies
+clusters through Spock replication, binary replication,
+and logical replication connections between servers.
+
+When the alerter detects that servers participate in the
+same replication topology, the system groups the servers
+into an auto-detected cluster. The auto-detected cluster
+and its parent group appear in the scope dropdown when
+a user edits overrides for any member server.
+
+### Editing Overrides from Alerts
+
+Users can edit an override directly from an alert instance.
+The edit button on an alert instance opens the Edit
+Override dialog for the associated rule and scope.
+
+The Edit Override dialog allows the user to adjust the
+threshold, operator, severity, and enabled state. The
+scope dropdown displays the available override levels:
+server, cluster, and group. The dialog pre-selects the
+scope that matches the alert's originating context.
+
+### Scope Disabling Logic
+
+The Edit Override dialog disables scope levels that would
+have no practical effect. Scopes above the highest existing
+override are disabled in the dropdown. For example, if a
+server-level override exists for a rule, the cluster and
+group scope options are disabled. Editing the cluster or
+group override would have no effect because the more
+specific server-level override takes precedence.
+
+This behavior prevents users from creating overrides that
+the alerter would never apply. The dialog displays a
+tooltip on disabled options to explain why the scope is
+unavailable.
+
 ### Managing Overrides
 
 Overrides are managed through the Alert Overrides tab in

@@ -107,9 +107,9 @@ func (e *Engine) triggerThresholdAlert(ctx context.Context, rule *database.Alert
 	// Check if there's already an active alert for this rule/connection
 	existing, err := e.datastore.GetActiveThresholdAlert(ctx, rule.ID, connectionID, dbName)
 	if err == nil && existing != nil {
-		// Alert already exists - update metric_value and last_updated timestamp
-		if err := e.datastore.UpdateAlertMetricValue(ctx, existing.ID, value); err != nil {
-			e.log("ERROR: Failed to update alert metric value: %v", err)
+		// Alert already exists - update metric_value, threshold, operator, severity, and last_updated timestamp
+		if err := e.datastore.UpdateAlertValues(ctx, existing.ID, value, threshold, operator, severity); err != nil {
+			e.log("ERROR: Failed to update alert values: %v", err)
 		} else {
 			e.debugLog("Updated metric value for active alert %s: %.2f -> %.2f", rule.Name, *existing.MetricValue, value)
 		}

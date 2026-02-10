@@ -20,8 +20,14 @@ const chipBaseSx = {
     maxWidth: 'none',
     fontSize: '0.625rem',
     fontWeight: 600,
+    flexShrink: 0,
     '& .MuiChip-icon': { ml: 0.5, mr: -0.25 },
-    '& .MuiChip-label': { pl: 0.75, pr: 0.75 },
+    '& .MuiChip-label': {
+        pl: 0.75,
+        pr: 0.75,
+        overflow: 'visible',
+        textOverflow: 'clip',
+    },
 };
 
 interface RolePillProps {

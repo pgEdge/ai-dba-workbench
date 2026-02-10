@@ -191,6 +191,13 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
         setAnalysisDialogOpen(true);
     };
 
+    // Update local alert state when AI analysis completes
+    const handleAnalysisComplete = useCallback((alertId: number, analysis: string) => {
+        setAlerts(prev => prev.map(a =>
+            a.id === alertId ? { ...a, aiAnalysis: analysis } : a
+        ));
+    }, []);
+
     // Handle confirming acknowledgment
     const handleAckConfirm = async (alertId, message, falsePositive = false) => {
         if (!user || !alertId) {return;}
@@ -443,6 +450,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                     setAnalysisDialogOpen(false);
                     setAnalysisAlert(null);
                 }}
+                onAnalysisComplete={handleAnalysisComplete}
                 isDark={isDark}
             />
 

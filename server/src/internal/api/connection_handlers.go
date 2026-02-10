@@ -316,6 +316,23 @@ func (h *ConnectionHandler) handleConnectionSubpath(w http.ResponseWriter, r *ht
 		return
 	}
 
+	// Handle /api/v1/connections/{id}/query
+	if len(parts) == 2 && parts[1] == "query" {
+		h.executeQuery(w, r, connectionID)
+		return
+	}
+
+	// Handle /api/v1/connections/{id}/context
+	if len(parts) == 2 && parts[1] == "context" {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", "GET")
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		h.getConnectionContext(w, r, connectionID)
+		return
+	}
+
 	http.NotFound(w, r)
 }
 
@@ -609,6 +626,21 @@ func (h *ConnectionHandler) clearCurrentConnection(w http.ResponseWriter, r *htt
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// getConnectionContext handles GET /api/v1/connections/{id}/context
+func (h *ConnectionHandler) getConnectionContext(w http.ResponseWriter, r *http.Request, connectionID int) {
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+
+	connCtx, err := h.datastore.GetConnectionContext(ctx, connectionID)
+	if err != nil {
+		log.Printf("[ERROR] Failed to get connection context (id=%d): %v", connectionID, err)
+		RespondError(w, http.StatusNotFound, "Connection not found")
+		return
+	}
+
+	RespondJSON(w, http.StatusOK, connCtx)
 }
 
 // getTokenHashFromRequest extracts and hashes the token from the Authorization header.

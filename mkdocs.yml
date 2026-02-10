@@ -100,6 +100,7 @@ nav:
           - Adding Rules: alerter/adding-rules.md
           - Cron Expressions: alerter/cron-expressions.md
       - Anomaly Detection: alerter/anomaly-detection.md
+      - AI Alert Analysis: alerter/ai-analysis.md
       - Development:
           - Development Guide: alerter/development.md
           - Testing: alerter/testing.md

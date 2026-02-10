@@ -51,6 +51,8 @@ import {
     PauseCircle as BlackoutIcon,
     Schedule as ScheduleIcon,
     Timer as TimerIcon,
+    Psychology as AIIcon,
+    PlayArrow as RunIcon,
 } from '@mui/icons-material';
 import { CLIENT_VERSION } from '../lib/version';
 
@@ -618,6 +620,54 @@ const AlertsPage = () => (
             <FeatureItem
                 title="Global Default"
                 description="The default threshold applies when no override exists at any level."
+            />
+        </Box>
+
+        <SectionTitle icon={AIIcon}>AI Alert Analysis</SectionTitle>
+        <Typography sx={styles.bodyTextMb2}>
+            Each alert has an &quot;Analyze with AI&quot; button (brain icon)
+            that triggers AI-powered analysis of the alert.
+        </Typography>
+        <Box sx={styles.indentedBlock}>
+            <FeatureItem
+                title="Automated Analysis"
+                description="The AI examines historical patterns, baselines, and alert context to generate a detailed report."
+            />
+            <FeatureItem
+                title="Report Contents"
+                description="Reports include a Summary, Analysis, Remediation Steps, and Threshold Tuning recommendations."
+            />
+            <FeatureItem
+                title="Cached Reports"
+                description="A green brain icon indicates a cached analysis is available. Click it to view the report instantly without waiting for regeneration."
+            />
+            <FeatureItem
+                title="Download"
+                description="Reports can be downloaded as markdown files for sharing or archiving."
+            />
+        </Box>
+
+        <SectionTitle icon={RunIcon}>Running SQL from Analysis Reports</SectionTitle>
+        <Typography sx={styles.bodyTextMb2}>
+            SQL code blocks in analysis reports include a Run button (play
+            icon) in the top-right corner of the code block.
+        </Typography>
+        <Box sx={styles.indentedBlock}>
+            <FeatureItem
+                title="Execute Queries"
+                description="Click the Run button to execute the SQL query against the monitored database server. Results appear inline below the code block in a table format."
+            />
+            <FeatureItem
+                title="Read-Only Queries"
+                description="Read-only queries such as SELECT and SHOW execute immediately when the Run button is clicked."
+            />
+            <FeatureItem
+                title="Write Statements"
+                description="Write statements such as ALTER SYSTEM show a confirmation dialog before executing, to prevent accidental changes."
+            />
+            <FeatureItem
+                title="SQL Detection"
+                description="The Run button only appears on code blocks identified as SQL. Configuration snippets and shell commands do not show the Run button."
             />
         </Box>
 

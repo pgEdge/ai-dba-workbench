@@ -2953,3 +2953,282 @@ func (d *Datastore) UnacknowledgeAlert(ctx context.Context, alertID int64) error
 
 	return nil
 }
+
+// ConnectionContext holds comprehensive system context for a monitored connection
+type ConnectionContext struct {
+	ConnectionID int                `json:"connection_id"`
+	ServerName   string             `json:"server_name"`
+	PostgreSQL   *PostgreSQLContext `json:"postgresql,omitempty"`
+	System       *SystemContext     `json:"system,omitempty"`
+}
+
+// PostgreSQLContext holds PostgreSQL server information
+type PostgreSQLContext struct {
+	Version             string            `json:"version,omitempty"`
+	VersionNum          int               `json:"version_num,omitempty"`
+	MaxConnections      int               `json:"max_connections,omitempty"`
+	DataDirectory       string            `json:"data_directory,omitempty"`
+	InstalledExtensions []string          `json:"installed_extensions,omitempty"`
+	Settings            map[string]string `json:"settings,omitempty"`
+}
+
+// SystemContext holds operating system and hardware information
+type SystemContext struct {
+	OSName       string         `json:"os_name,omitempty"`
+	OSVersion    string         `json:"os_version,omitempty"`
+	Architecture string         `json:"architecture,omitempty"`
+	Hostname     string         `json:"hostname,omitempty"`
+	CPU          *CPUContext    `json:"cpu,omitempty"`
+	Memory       *MemoryContext `json:"memory,omitempty"`
+	Disks        []DiskContext  `json:"disks,omitempty"`
+}
+
+// CPUContext holds CPU information
+type CPUContext struct {
+	Model             string `json:"model,omitempty"`
+	Cores             int    `json:"cores,omitempty"`
+	LogicalProcessors int    `json:"logical_processors,omitempty"`
+}
+
+// MemoryContext holds memory information
+type MemoryContext struct {
+	TotalBytes int64 `json:"total_bytes,omitempty"`
+	FreeBytes  int64 `json:"free_bytes,omitempty"`
+}
+
+// DiskContext holds disk information for a single mount point
+type DiskContext struct {
+	MountPoint     string `json:"mount_point"`
+	FilesystemType string `json:"filesystem_type,omitempty"`
+	TotalBytes     int64  `json:"total_bytes,omitempty"`
+	UsedBytes      int64  `json:"used_bytes,omitempty"`
+	FreeBytes      int64  `json:"free_bytes,omitempty"`
+}
+
+// GetConnectionContext retrieves comprehensive system context for a connection
+func (d *Datastore) GetConnectionContext(ctx context.Context, connectionID int) (*ConnectionContext, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	// Get connection name
+	var serverName string
+	err := d.pool.QueryRow(ctx,
+		`SELECT name FROM connections WHERE id = $1`, connectionID).Scan(&serverName)
+	if err != nil {
+		return nil, fmt.Errorf("connection not found: %w", err)
+	}
+
+	result := &ConnectionContext{
+		ConnectionID: connectionID,
+		ServerName:   serverName,
+	}
+
+	// Query pg_server_info for PostgreSQL version, max_connections, extensions, etc.
+	pgCtx := &PostgreSQLContext{}
+	hasPGData := false
+
+	var version sql.NullString
+	var versionNum sql.NullInt32
+	var maxConns sql.NullInt32
+	var dataDir sql.NullString
+	var extensions []string
+
+	err = d.pool.QueryRow(ctx, `
+		SELECT server_version, server_version_num, max_connections,
+		       data_directory, installed_extensions
+		FROM metrics.pg_server_info
+		WHERE connection_id = $1
+		ORDER BY collected_at DESC
+		LIMIT 1
+	`, connectionID).Scan(&version, &versionNum, &maxConns, &dataDir, &extensions)
+	if err == nil {
+		hasPGData = true
+		if version.Valid {
+			pgCtx.Version = version.String
+		}
+		if versionNum.Valid {
+			pgCtx.VersionNum = int(versionNum.Int32)
+		}
+		if maxConns.Valid {
+			pgCtx.MaxConnections = int(maxConns.Int32)
+		}
+		if dataDir.Valid {
+			pgCtx.DataDirectory = dataDir.String
+		}
+		if len(extensions) > 0 {
+			pgCtx.InstalledExtensions = extensions
+		}
+	}
+
+	// Query pg_settings for key configuration parameters
+	settingsRows, err := d.pool.Query(ctx, `
+		SELECT name, setting
+		FROM metrics.pg_settings
+		WHERE connection_id = $1
+		  AND name IN (
+		      'shared_buffers', 'work_mem', 'effective_cache_size',
+		      'maintenance_work_mem', 'max_worker_processes',
+		      'max_parallel_workers', 'max_parallel_workers_per_gather',
+		      'wal_level', 'wal_buffers', 'random_page_cost',
+		      'effective_io_concurrency', 'checkpoint_completion_target',
+		      'huge_pages', 'temp_buffers'
+		  )
+		  AND collected_at = (
+		      SELECT MAX(collected_at)
+		      FROM metrics.pg_settings
+		      WHERE connection_id = $1
+		  )
+		ORDER BY name
+	`, connectionID)
+	if err == nil {
+		defer settingsRows.Close()
+		settings := make(map[string]string)
+		for settingsRows.Next() {
+			var name string
+			var setting sql.NullString
+			if err := settingsRows.Scan(&name, &setting); err == nil && setting.Valid {
+				settings[name] = setting.String
+			}
+		}
+		if len(settings) > 0 {
+			hasPGData = true
+			pgCtx.Settings = settings
+		}
+	}
+
+	if hasPGData {
+		result.PostgreSQL = pgCtx
+	}
+
+	// Query system information (requires system_stats extension)
+	sysCtx := &SystemContext{}
+	hasSysData := false
+
+	// OS info
+	var osName, osVersion, architecture, hostname sql.NullString
+	err = d.pool.QueryRow(ctx, `
+		SELECT name, version, architecture, host_name
+		FROM metrics.pg_sys_os_info
+		WHERE connection_id = $1
+		ORDER BY collected_at DESC
+		LIMIT 1
+	`, connectionID).Scan(&osName, &osVersion, &architecture, &hostname)
+	if err == nil {
+		hasSysData = true
+		if osName.Valid {
+			sysCtx.OSName = osName.String
+		}
+		if osVersion.Valid {
+			sysCtx.OSVersion = osVersion.String
+		}
+		if architecture.Valid {
+			sysCtx.Architecture = architecture.String
+		}
+		if hostname.Valid {
+			sysCtx.Hostname = hostname.String
+		}
+	}
+
+	// CPU info
+	var cpuModel sql.NullString
+	var cores, logicalProcs sql.NullInt32
+	err = d.pool.QueryRow(ctx, `
+		SELECT model_name, no_of_cores, logical_processor
+		FROM metrics.pg_sys_cpu_info
+		WHERE connection_id = $1
+		ORDER BY collected_at DESC
+		LIMIT 1
+	`, connectionID).Scan(&cpuModel, &cores, &logicalProcs)
+	if err == nil {
+		hasSysData = true
+		cpu := &CPUContext{}
+		hasCPU := false
+		if cpuModel.Valid {
+			cpu.Model = cpuModel.String
+			hasCPU = true
+		}
+		if cores.Valid {
+			cpu.Cores = int(cores.Int32)
+			hasCPU = true
+		}
+		if logicalProcs.Valid {
+			cpu.LogicalProcessors = int(logicalProcs.Int32)
+			hasCPU = true
+		}
+		if hasCPU {
+			sysCtx.CPU = cpu
+		}
+	}
+
+	// Memory info
+	var totalMem, freeMem sql.NullInt64
+	err = d.pool.QueryRow(ctx, `
+		SELECT total_memory, free_memory
+		FROM metrics.pg_sys_memory_info
+		WHERE connection_id = $1
+		ORDER BY collected_at DESC
+		LIMIT 1
+	`, connectionID).Scan(&totalMem, &freeMem)
+	if err == nil {
+		hasSysData = true
+		if totalMem.Valid || freeMem.Valid {
+			mem := &MemoryContext{}
+			if totalMem.Valid {
+				mem.TotalBytes = totalMem.Int64
+			}
+			if freeMem.Valid {
+				mem.FreeBytes = freeMem.Int64
+			}
+			sysCtx.Memory = mem
+		}
+	}
+
+	// Disk info
+	diskRows, err := d.pool.Query(ctx, `
+		SELECT mount_point, file_system_type, total_space, used_space, free_space
+		FROM metrics.pg_sys_disk_info
+		WHERE connection_id = $1
+		  AND collected_at = (
+		      SELECT MAX(collected_at)
+		      FROM metrics.pg_sys_disk_info
+		      WHERE connection_id = $1
+		  )
+		ORDER BY mount_point
+	`, connectionID)
+	if err == nil {
+		defer diskRows.Close()
+		var disks []DiskContext
+		for diskRows.Next() {
+			var mountPoint string
+			var fsType sql.NullString
+			var totalSpace, usedSpace, freeSpace sql.NullInt64
+			if err := diskRows.Scan(&mountPoint, &fsType, &totalSpace,
+				&usedSpace, &freeSpace); err == nil {
+				disk := DiskContext{MountPoint: mountPoint}
+				if fsType.Valid {
+					disk.FilesystemType = fsType.String
+				}
+				if totalSpace.Valid {
+					disk.TotalBytes = totalSpace.Int64
+				}
+				if usedSpace.Valid {
+					disk.UsedBytes = usedSpace.Int64
+				}
+				if freeSpace.Valid {
+					disk.FreeBytes = freeSpace.Int64
+				}
+				disks = append(disks, disk)
+			}
+		}
+		if len(disks) > 0 {
+			hasSysData = true
+			sysCtx.Disks = disks
+		}
+	}
+
+	if hasSysData {
+		result.System = sysCtx
+	}
+
+	return result, nil
+}

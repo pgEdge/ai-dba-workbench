@@ -102,6 +102,31 @@ Numbered list of specific actions to address the issue.
 ## Threshold Tuning
 If the current threshold seems misconfigured, recommend changes with rationale.
 
+CRITICAL rules for code blocks - the user executes SQL directly from the UI so accuracy is essential:
+
+1. SQL code blocks (\`\`\`sql) must ONLY contain executable SQL statements and SQL comments (lines starting with --). NEVER include any of the following in SQL code blocks:
+   - Configuration file snippets (e.g. shared_buffers = 8GB, work_mem = 16MB)
+   - File paths or filenames
+   - Shell commands
+   - Explanatory prose or notes
+   Use \`\`\`conf for postgresql.conf snippets, \`\`\`bash for shell commands, and \`\`\`text for other content.
+
+2. Place each SQL query in its own separate \`\`\`sql code block. NEVER combine multiple queries in one block.
+
+3. Every SQL query MUST be correct and executable. The user will run these directly. Incorrect SQL wastes their time and erodes trust. You MUST verify all column names against the actual PostgreSQL system catalog. The correct column names are:
+   - pg_stat_user_tables: schemaname, relname, seq_scan, seq_tup_read, idx_scan, idx_tup_fetch, n_tup_ins, n_tup_upd, n_tup_del, n_live_tup, n_dead_tup, last_vacuum, last_autovacuum, last_analyze, last_autoanalyze, vacuum_count, autovacuum_count, analyze_count, autoanalyze_count
+   - pg_statio_user_tables: schemaname, relname, heap_blks_read, heap_blks_hit, idx_blks_read, idx_blks_hit, toast_blks_read, toast_blks_hit, tidx_blks_read, tidx_blks_hit
+   - pg_stat_activity: datid, datname, pid, leader_pid, usesysid, usename, application_name, client_addr, client_hostname, client_port, backend_start, xact_start, query_start, state_change, wait_event_type, wait_event, state, backend_xid, backend_xmin, query, backend_type
+   - pg_stat_statements: userid, dbid, queryid, query, calls, total_exec_time, mean_exec_time, rows, shared_blks_hit, shared_blks_read, shared_blks_written, temp_blks_read, temp_blks_written
+   - pg_stat_bgwriter: checkpoints_timed, checkpoints_req, buffers_checkpoint, buffers_clean, maxwritten_clean, buffers_backend, buffers_alloc
+   - pg_class: oid, relname, relnamespace, reltype, relowner, relam, relfilenode, reltablespace, relpages, reltuples, relallvisible, reltoastrelid, relhasindex, relisshared, relpersistence, relkind, relnatts, relchecks, relhasrules, relhastriggers, relhassubclass
+   - pg_stat_database: datid, datname, numbackends, xact_commit, xact_rollback, blks_read, blks_hit, tup_returned, tup_fetched, tup_inserted, tup_updated, tup_deleted, conflicts, temp_files, temp_bytes, deadlocks
+   NEVER use "tablename" - the column is always "relname" in PostgreSQL catalogs. When in doubt, keep queries simple and use only columns you are certain exist.
+
+4. Ensure all SQL syntax, function names, and catalog column names are valid for the specific PostgreSQL version in use (provided in the server context below). Do not use features, functions, or columns introduced in newer versions. For example, pg_stat_statements column names changed between PostgreSQL 12 and 13.
+
+5. When suggesting ALTER SYSTEM or other DDL statements, place them in separate code blocks from diagnostic SELECT queries.
+
 Keep responses concise and actionable.`;
 
 // Tool definitions for the LLM (must use camelCase inputSchema to match Go struct)
@@ -164,6 +189,72 @@ const ANALYSIS_TOOLS: AnalysisTool[] = [
 ];
 
 /**
+ * Format connection context data into a readable summary for the LLM.
+ */
+function formatConnectionContext(ctx: Record<string, unknown>): string {
+    const lines: string[] = [];
+
+    const pg = ctx.postgresql as Record<string, unknown> | undefined;
+    if (pg) {
+        if (pg.version) lines.push(`PostgreSQL Version: ${pg.version}`);
+        if (pg.max_connections) lines.push(`Max Connections: ${pg.max_connections}`);
+        if (pg.installed_extensions) {
+            const exts = pg.installed_extensions as string[];
+            lines.push(`Installed Extensions: ${exts.join(', ')}`);
+        }
+        const settings = pg.settings as Record<string, string> | undefined;
+        if (settings && Object.keys(settings).length > 0) {
+            lines.push('Key Settings:');
+            for (const [name, value] of Object.entries(settings)) {
+                lines.push(`  ${name} = ${value}`);
+            }
+        }
+    }
+
+    const sys = ctx.system as Record<string, unknown> | undefined;
+    if (sys) {
+        if (sys.os_name) lines.push(`OS: ${sys.os_name} ${sys.os_version || ''}`);
+        if (sys.architecture) lines.push(`Architecture: ${sys.architecture}`);
+
+        const cpu = sys.cpu as Record<string, unknown> | undefined;
+        if (cpu) {
+            if (cpu.model) lines.push(`CPU: ${cpu.model}`);
+            if (cpu.cores) lines.push(`CPU Cores: ${cpu.cores} (${cpu.logical_processors || cpu.cores} logical)`);
+        }
+
+        const mem = sys.memory as Record<string, unknown> | undefined;
+        if (mem && mem.total_bytes) {
+            const totalGB = ((mem.total_bytes as number) / (1024 * 1024 * 1024)).toFixed(1);
+            lines.push(`Total Memory: ${totalGB} GB`);
+        }
+
+        const disks = sys.disks as Array<Record<string, unknown>> | undefined;
+        if (disks && disks.length > 0) {
+            for (const disk of disks) {
+                const totalGB = ((disk.total_bytes as number) / (1024 * 1024 * 1024)).toFixed(1);
+                const usedGB = ((disk.used_bytes as number) / (1024 * 1024 * 1024)).toFixed(1);
+                lines.push(`Disk ${disk.mount_point}: ${usedGB}/${totalGB} GB used`);
+            }
+        }
+    }
+
+    return lines.length > 0 ? '\nServer Context:\n' + lines.join('\n') : '';
+}
+
+/**
+ * Check if two metric values are close enough to consider the
+ * cached analysis still valid. Returns true if the values are
+ * within 10% of each other (relative to the larger value).
+ */
+const isMetricValueClose = (a: number, b: number): boolean => {
+    if (a === b) return true;
+    if (a === 0 && b === 0) return true;
+    const larger = Math.max(Math.abs(a), Math.abs(b));
+    if (larger === 0) return true;
+    return Math.abs(a - b) / larger <= 0.1;
+};
+
+/**
  * Hook for managing LLM-powered alert analysis
  * Implements an agentic loop to gather context via tools before providing recommendations
  */
@@ -180,7 +271,7 @@ export const useAlertAnalysis = (): UseAlertAnalysisReturn => {
 
         // Check server-side cache (from alert object)
         if (alert.aiAnalysis && alert.aiAnalysisMetricValue != null &&
-            alert.metricValue != null && alert.aiAnalysisMetricValue === Number(alert.metricValue)) {
+            alert.metricValue != null && isMetricValueClose(alert.aiAnalysisMetricValue, Number(alert.metricValue))) {
             setAnalysis(alert.aiAnalysis);
             setLoading(false);
             return;
@@ -189,11 +280,25 @@ export const useAlertAnalysis = (): UseAlertAnalysisReturn => {
         // Check client-side cache (from previous analysis in this session)
         if (alert.id != null && alert.metricValue != null) {
             const cached = analysisCache.get(alert.id);
-            if (cached && cached.metricValue === Number(alert.metricValue)) {
+            if (cached && isMetricValueClose(cached.metricValue, Number(alert.metricValue))) {
                 setAnalysis(cached.analysis);
                 setLoading(false);
                 return;
             }
+        }
+
+        // Fetch connection context for the LLM (fire-and-forget if it fails)
+        let connectionContext = '';
+        try {
+            const ctxResponse = await fetch(`/api/v1/connections/${alert.connectionId}/context`, {
+                credentials: 'include',
+            });
+            if (ctxResponse.ok) {
+                const ctxData = await ctxResponse.json();
+                connectionContext = formatConnectionContext(ctxData);
+            }
+        } catch {
+            // Context is optional - continue without it
         }
 
         // Build user message with alert context
@@ -208,7 +313,7 @@ Current Value: ${alert.metricValue ?? 'N/A'}
 Threshold: ${alert.operator || '>'} ${alert.thresholdValue ?? 'N/A'}
 Connection ID: ${alert.connectionId}
 Triggered At: ${alert.triggeredAt || alert.time}
-
+${connectionContext}
 Provide remediation recommendations and any threshold tuning suggestions.`;
 
         const messages: Message[] = [

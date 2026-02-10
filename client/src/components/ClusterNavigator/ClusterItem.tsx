@@ -49,6 +49,7 @@ const clusterNameBase = {
 
 const countChipBase = {
     height: 18,
+    maxWidth: 'none',
     fontSize: '0.625rem',
     fontWeight: 600,
     '& .MuiChip-label': { px: 0.75 },

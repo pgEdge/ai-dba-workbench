@@ -23,6 +23,7 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/conversations"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/llmproxy"
+	"github.com/pgedge/ai-workbench/server/internal/overview"
 )
 
 // routeRegistrar is implemented by any handler that can register routes on a mux.
@@ -49,6 +50,7 @@ type HandlerDependencies struct {
 	ConvStore   *conversations.Store
 	Datastore   *database.Datastore
 	Config      *config.Config
+	OverviewGen *overview.Generator
 }
 
 // SetupHandlers configures all HTTP handlers for the server
@@ -147,6 +149,13 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		// Timeline endpoints (for EventTimeline component)
 		timelineHandler := api.NewTimelineHandler(deps.Datastore, deps.AuthStore)
 		registerDatastoreHandler(mux, timelineHandler, authWrapper, "Timeline events", deps.Datastore)
+
+		// AI Overview endpoint (for estate overview summary)
+		if deps.OverviewGen != nil {
+			overviewHandler := overview.NewHandler(deps.OverviewGen)
+			overviewHandler.RegisterRoutes(mux, authWrapper)
+			fmt.Fprintf(os.Stderr, "AI Overview API: ENABLED\n")
+		}
 
 		// RBAC management endpoints
 		if deps.AuthStore != nil {

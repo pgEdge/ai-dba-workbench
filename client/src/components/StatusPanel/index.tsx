@@ -30,6 +30,7 @@ import EventTimeline from '../EventTimeline';
 import BlackoutPanel from '../BlackoutPanel';
 import AlertAnalysisDialog from '../AlertAnalysisDialog';
 import BlackoutManagementDialog from '../BlackoutManagementDialog';
+import AIOverview from '../AIOverview';
 import SelectionHeader from './SelectionHeader';
 import ServerInfoCard from './ServerInfoCard';
 import MetricCard from './MetricCard';
@@ -343,6 +344,9 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
     if (!selection) {
         return (
             <Box sx={EMPTY_STATE_CONTAINER_SX}>
+                <Box sx={{ width: '100%', maxWidth: 600, mb: 3 }}>
+                    <AIOverview mode={isDark ? 'dark' : 'light'} />
+                </Box>
                 <Box sx={emptyStateIconBoxSx}>
                     <ServerIcon sx={{ fontSize: 36, color: 'text.disabled' }} />
                 </Box>
@@ -365,6 +369,11 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
 
                 {/* Divider with gradient */}
                 <Box sx={dividerSx} />
+
+                {/* AI Overview */}
+                <Box sx={{ mb: 2 }}>
+                    <AIOverview mode={isDark ? 'dark' : 'light'} />
+                </Box>
 
                 {/* Server Info Card */}
                 {selection.type === 'server' && (

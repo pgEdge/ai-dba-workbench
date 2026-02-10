@@ -11,6 +11,19 @@ and this project adheres to
 
 ### Added
 
+- AI Overview panel on the status panel that displays
+  LLM-generated summaries of database health and status.
+- Context-aware scoped summaries that adapt to estate,
+  cluster, server, and group selections in the navigator.
+- Collapsible AI Overview panel with persistent collapse
+  state across browser sessions.
+- Automatic refresh of estate-wide summaries every 60
+  seconds; scoped summaries refresh on demand.
+- Stale summary indicator when the cached overview
+  exceeds its five-minute expiry window.
+- REST API endpoint `GET /api/v1/overview` for retrieving
+  AI-generated overview summaries with optional scope
+  filtering.
 - Configurable probe settings via the REST API and admin panel;
   administrators can adjust frequency, retention, and enabled
   state for each probe.

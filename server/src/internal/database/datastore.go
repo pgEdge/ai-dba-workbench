@@ -3080,7 +3080,8 @@ func (d *Datastore) gatherEstateServerData(ctx context.Context, snapshot *Estate
 // nested topology hierarchy into a flat slice. Children (such as hot
 // standbys) are included alongside their parents.
 func flattenTopologyServers(servers []TopologyServerInfo, result *[]EstateServerSummary) {
-	for _, s := range servers {
+	for i := range servers {
+		s := &servers[i]
 		*result = append(*result, EstateServerSummary{
 			ID:               s.ID,
 			Name:             s.Name,
@@ -3112,7 +3113,8 @@ func (d *Datastore) gatherEstateAlertData(ctx context.Context, snapshot *EstateS
 
 	snapshot.AlertTotal = int(result.Total)
 
-	for i, alert := range result.Alerts {
+	for i := range result.Alerts {
+		alert := &result.Alerts[i]
 		switch alert.Severity {
 		case "critical":
 			snapshot.AlertCritical++
@@ -3151,7 +3153,8 @@ func (d *Datastore) gatherEstateBlackoutData(ctx context.Context, snapshot *Esta
 	now := time.Now().UTC()
 	cutoff := now.Add(24 * time.Hour)
 
-	for _, b := range result.Blackouts {
+	for i := range result.Blackouts {
+		b := &result.Blackouts[i]
 		summary := EstateBlackoutSummary{
 			Scope:     b.Scope,
 			Reason:    b.Reason,
@@ -3191,7 +3194,8 @@ func (d *Datastore) gatherEstateRecentEvents(ctx context.Context, snapshot *Esta
 		return
 	}
 
-	for _, event := range result.Events {
+	for i := range result.Events {
+		event := &result.Events[i]
 		snapshot.RecentEvents = append(snapshot.RecentEvents, EstateEventSummary{
 			EventType:  event.EventType,
 			ServerName: event.ServerName,
@@ -3199,6 +3203,270 @@ func (d *Datastore) gatherEstateRecentEvents(ctx context.Context, snapshot *Esta
 			Severity:   event.Severity,
 			Title:      event.Title,
 			Summary:    event.Summary,
+		})
+	}
+}
+
+// GetServerSnapshot returns an estate snapshot filtered to a single
+// server (connection). It returns the same EstateSnapshot structure but
+// populated only with data for the given connection ID.
+func (d *Datastore) GetServerSnapshot(ctx context.Context, serverID int) (*EstateSnapshot, string, error) {
+	// Verify the connection exists and get its name.
+	conn, err := d.GetConnection(ctx, serverID)
+	if err != nil {
+		return nil, "", fmt.Errorf("server not found: %w", err)
+	}
+
+	snapshot := d.buildScopedSnapshot(ctx, []int{serverID})
+	return snapshot, conn.Name, nil
+}
+
+// GetClusterSnapshot returns an estate snapshot filtered to all servers
+// in a given cluster. It returns the snapshot, the cluster name, and
+// any error encountered.
+func (d *Datastore) GetClusterSnapshot(ctx context.Context, clusterID int) (*EstateSnapshot, string, error) {
+	cluster, err := d.GetCluster(ctx, clusterID)
+	if err != nil {
+		return nil, "", fmt.Errorf("cluster not found: %w", err)
+	}
+
+	connectionIDs, err := d.getConnectionIDsForCluster(ctx, clusterID)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to get connections for cluster: %w", err)
+	}
+
+	snapshot := d.buildScopedSnapshot(ctx, connectionIDs)
+	return snapshot, cluster.Name, nil
+}
+
+// GetGroupSnapshot returns an estate snapshot filtered to all servers
+// in all clusters belonging to a given group. It returns the snapshot,
+// the group name, and any error encountered.
+func (d *Datastore) GetGroupSnapshot(ctx context.Context, groupID int) (*EstateSnapshot, string, error) {
+	group, err := d.GetClusterGroup(ctx, groupID)
+	if err != nil {
+		return nil, "", fmt.Errorf("group not found: %w", err)
+	}
+
+	connectionIDs, err := d.getConnectionIDsForGroup(ctx, groupID)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to get connections for group: %w", err)
+	}
+
+	snapshot := d.buildScopedSnapshot(ctx, connectionIDs)
+	return snapshot, group.Name, nil
+}
+
+// GetConnectionsSnapshot returns an estate snapshot filtered to the
+// specified connection IDs. It is a public wrapper around
+// buildScopedSnapshot for callers that already have a list of
+// connection IDs and do not need scope-name resolution.
+func (d *Datastore) GetConnectionsSnapshot(ctx context.Context, connectionIDs []int) *EstateSnapshot {
+	return d.buildScopedSnapshot(ctx, connectionIDs)
+}
+
+// buildScopedSnapshot creates an EstateSnapshot containing only data
+// for the specified connection IDs. It reuses the same gathering
+// helpers as the estate-wide snapshot but filters by connection.
+func (d *Datastore) buildScopedSnapshot(ctx context.Context, connectionIDs []int) *EstateSnapshot {
+	snapshotCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	snapshot := &EstateSnapshot{
+		Timestamp:         time.Now().UTC(),
+		Servers:           []EstateServerSummary{},
+		TopAlerts:         []EstateAlertSummary{},
+		ActiveBlackouts:   []EstateBlackoutSummary{},
+		UpcomingBlackouts: []EstateBlackoutSummary{},
+		RecentEvents:      []EstateEventSummary{},
+	}
+
+	if len(connectionIDs) == 0 {
+		return snapshot
+	}
+
+	// Gather server data filtered to the given connections.
+	d.gatherScopedServerData(snapshotCtx, snapshot, connectionIDs)
+
+	// Gather alert data filtered to the given connections.
+	d.gatherScopedAlertData(snapshotCtx, snapshot, connectionIDs)
+
+	// Gather blackout data (estate-wide; filtered post-query is not
+	// possible because blackouts reference scopes, not connections
+	// directly). Include all blackouts so the LLM can note relevant
+	// maintenance windows.
+	d.gatherEstateBlackoutData(snapshotCtx, snapshot)
+
+	// Gather recent events filtered to the given connections.
+	d.gatherScopedRecentEvents(snapshotCtx, snapshot, connectionIDs)
+
+	return snapshot
+}
+
+// getConnectionIDsForCluster returns all connection IDs that belong
+// to the given cluster.
+func (d *Datastore) getConnectionIDsForCluster(ctx context.Context, clusterID int) ([]int, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	query := `SELECT id FROM connections WHERE cluster_id = $1 ORDER BY id`
+	rows, err := d.pool.Query(ctx, query, clusterID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query connections for cluster: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("failed to scan connection id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// getConnectionIDsForGroup returns all connection IDs that belong to
+// any cluster in the given group.
+func (d *Datastore) getConnectionIDsForGroup(ctx context.Context, groupID int) ([]int, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	query := `
+        SELECT c.id
+        FROM connections c
+        JOIN clusters cl ON c.cluster_id = cl.id
+        WHERE cl.group_id = $1
+        ORDER BY c.id
+    `
+	rows, err := d.pool.Query(ctx, query, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query connections for group: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("failed to scan connection id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// gatherScopedServerData populates server status counts for a specific
+// set of connection IDs by walking the full topology and filtering.
+func (d *Datastore) gatherScopedServerData(ctx context.Context, snapshot *EstateSnapshot, connectionIDs []int) {
+	idSet := make(map[int]bool, len(connectionIDs))
+	for _, id := range connectionIDs {
+		idSet[id] = true
+	}
+
+	groups, err := d.GetClusterTopology(ctx)
+	if err != nil {
+		logger.Errorf("GetScopedSnapshot: failed to get cluster topology: %v", err)
+		return
+	}
+
+	var allServers []EstateServerSummary
+	for _, group := range groups {
+		for _, cluster := range group.Clusters {
+			flattenTopologyServers(cluster.Servers, &allServers)
+		}
+	}
+
+	// Filter to only the requested connections.
+	var servers []EstateServerSummary
+	for i := range allServers {
+		if idSet[allServers[i].ID] {
+			allServers[i].Role = d.mapPrimaryRoleToDisplayRole(allServers[i].Role)
+			servers = append(servers, allServers[i])
+
+			switch {
+			case allServers[i].Status == "offline":
+				snapshot.ServerOffline++
+			case allServers[i].ActiveAlertCount > 0:
+				snapshot.ServerWarning++
+			default:
+				snapshot.ServerOnline++
+			}
+		}
+	}
+
+	snapshot.Servers = servers
+	snapshot.ServerTotal = len(servers)
+}
+
+// gatherScopedAlertData populates alert severity counts and top alerts
+// for a specific set of connection IDs.
+func (d *Datastore) gatherScopedAlertData(ctx context.Context, snapshot *EstateSnapshot, connectionIDs []int) {
+	activeStatus := "active"
+	result, err := d.GetAlerts(ctx, AlertListFilter{
+		Status:        &activeStatus,
+		ConnectionIDs: connectionIDs,
+		Limit:         500,
+	})
+	if err != nil {
+		logger.Errorf("GetScopedSnapshot: failed to get alerts: %v", err)
+		return
+	}
+
+	snapshot.AlertTotal = int(result.Total)
+
+	for i := range result.Alerts {
+		switch result.Alerts[i].Severity {
+		case "critical":
+			snapshot.AlertCritical++
+		case "warning":
+			snapshot.AlertWarning++
+		case "info":
+			snapshot.AlertInfo++
+		}
+
+		if i < 10 {
+			snapshot.TopAlerts = append(snapshot.TopAlerts, EstateAlertSummary{
+				Title:      result.Alerts[i].Title,
+				ServerName: result.Alerts[i].ServerName,
+				Severity:   result.Alerts[i].Severity,
+			})
+		}
+	}
+}
+
+// gatherScopedRecentEvents populates recent events from the last 24
+// hours for a specific set of connection IDs.
+func (d *Datastore) gatherScopedRecentEvents(ctx context.Context, snapshot *EstateSnapshot, connectionIDs []int) {
+	now := time.Now().UTC()
+	dayAgo := now.Add(-24 * time.Hour)
+
+	result, err := d.GetTimelineEvents(ctx, TimelineFilter{
+		StartTime:     dayAgo,
+		EndTime:       now,
+		ConnectionIDs: connectionIDs,
+		EventTypes: []string{
+			EventTypeRestart,
+			EventTypeConfigChange,
+			EventTypeBlackoutStarted,
+			EventTypeBlackoutEnded,
+		},
+		Limit: 20,
+	})
+	if err != nil {
+		logger.Errorf("GetScopedSnapshot: failed to get timeline events: %v", err)
+		return
+	}
+
+	for i := range result.Events {
+		snapshot.RecentEvents = append(snapshot.RecentEvents, EstateEventSummary{
+			EventType:  result.Events[i].EventType,
+			ServerName: result.Events[i].ServerName,
+			OccurredAt: result.Events[i].OccurredAt,
+			Severity:   result.Events[i].Severity,
+			Title:      result.Events[i].Title,
+			Summary:    result.Events[i].Summary,
 		})
 	}
 }

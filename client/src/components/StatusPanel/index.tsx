@@ -384,7 +384,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
 
                 {/* AI Overview */}
                 <Box sx={{ mb: 2 }}>
-                    <AIOverview mode={isDark ? 'dark' : 'light'} />
+                    <AIOverview mode={isDark ? 'dark' : 'light'} selection={selection} />
                 </Box>
 
                 {/* Server Info Card */}

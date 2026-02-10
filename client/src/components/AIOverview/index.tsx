@@ -14,10 +14,16 @@ import {
     Typography,
     Paper,
     Skeleton,
+    Collapse,
+    IconButton,
     alpha,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
-import { AutoAwesome as SparkleIcon } from '@mui/icons-material';
+import {
+    AutoAwesome as SparkleIcon,
+    ExpandMore as ExpandMoreIcon,
+    ExpandLess as ExpandLessIcon,
+} from '@mui/icons-material';
 import { apiGet } from '../../utils/apiClient';
 import { ApiError } from '../../utils/apiClient';
 
@@ -33,11 +39,26 @@ interface OverviewResponse {
 }
 
 /**
+ * Selection object describing the current scope for the overview.
+ */
+interface OverviewSelection {
+    type: 'server' | 'cluster' | 'estate' | 'group';
+    id?: number | string;
+    name?: string;
+    serverIds?: number[];
+    [key: string]: unknown;
+}
+
+/**
  * Props accepted by the AIOverview component.
  */
 interface AIOverviewProps {
     mode?: 'light' | 'dark';
+    selection?: OverviewSelection | null;
 }
+
+/** localStorage key for persisting collapsed state. */
+const COLLAPSED_STORAGE_KEY = 'ai-overview-collapsed';
 
 /** Refresh interval in milliseconds (30 seconds). */
 const REFRESH_INTERVAL_MS = 30_000;
@@ -77,13 +98,66 @@ function formatRelativeTime(dateStr: string): string {
  * StatusPanel.  It fetches from GET /api/v1/overview, auto-refreshes
  * every 30 seconds, and handles loading, generating, and ready states.
  */
-const AIOverview: React.FC<AIOverviewProps> = ({ mode = 'light' }) => {
+const AIOverview: React.FC<AIOverviewProps> = ({ mode = 'light', selection }) => {
     const theme = useTheme();
     const isDark = mode === 'dark';
 
     const [overview, setOverview] = useState<OverviewResponse | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+
+    // Collapsed state with localStorage persistence
+    const [collapsed, setCollapsed] = useState<boolean>(() => {
+        try {
+            const stored = localStorage.getItem(COLLAPSED_STORAGE_KEY);
+            return stored === 'true';
+        } catch {
+            return false;
+        }
+    });
+
+    const handleToggleCollapse = useCallback(() => {
+        setCollapsed(prev => {
+            const next = !prev;
+            try {
+                localStorage.setItem(COLLAPSED_STORAGE_KEY, String(next));
+            } catch {
+                // Ignore localStorage errors
+            }
+            return next;
+        });
+    }, []);
+
+    // Build the API URL based on the current selection scope
+    const overviewUrl = useMemo(() => {
+        if (!selection || selection.type === 'estate') {
+            return '/api/v1/overview';
+        }
+
+        // For servers with a numeric ID, use scope_type/scope_id directly
+        if (selection.type === 'server' && typeof selection.id === 'number') {
+            return `/api/v1/overview?scope_type=server&scope_id=${encodeURIComponent(String(selection.id))}`;
+        }
+
+        // For clusters and groups, send the individual connection IDs
+        // instead of the virtual string ID that the server cannot resolve
+        if (
+            (selection.type === 'cluster' || selection.type === 'group') &&
+            selection.serverIds &&
+            selection.serverIds.length > 0
+        ) {
+            const ids = selection.serverIds.join(',');
+            const params = new URLSearchParams();
+            params.set('connection_ids', ids);
+            if (selection.name) {
+                params.set('scope_name', selection.name);
+            }
+            return `/api/v1/overview?${params.toString()}`;
+        }
+
+        // Fallback: estate-wide overview
+        return '/api/v1/overview';
+    }, [selection?.type, selection?.id, selection?.serverIds, selection?.name]);
 
     const fetchOverview = useCallback(async (isInitial: boolean) => {
         if (isInitial) {
@@ -92,7 +166,7 @@ const AIOverview: React.FC<AIOverviewProps> = ({ mode = 'light' }) => {
         setError(null);
 
         try {
-            const data = await apiGet<OverviewResponse>('/api/v1/overview');
+            const data = await apiGet<OverviewResponse>(overviewUrl);
             setOverview(data);
         } catch (err) {
             if (err instanceof ApiError && err.statusCode === 401) {
@@ -105,9 +179,9 @@ const AIOverview: React.FC<AIOverviewProps> = ({ mode = 'light' }) => {
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [overviewUrl]);
 
-    // Fetch on mount and set up auto-refresh
+    // Fetch on mount, when scope changes, and set up auto-refresh
     useEffect(() => {
         fetchOverview(true);
 
@@ -135,35 +209,37 @@ const AIOverview: React.FC<AIOverviewProps> = ({ mode = 'light' }) => {
     const paperSx = useMemo(() => ({
         p: 1.5,
         elevation: 0,
-        borderLeft: `3px solid ${alpha(theme.palette.primary.main, 0.3)}`,
         bgcolor: isDark
-            ? alpha(theme.palette.primary.main, 0.08)
-            : alpha(theme.palette.primary.main, 0.04),
-        border: `1px solid ${alpha(theme.palette.primary.main, 0.12)}`,
-        borderLeftWidth: '3px',
-        borderLeftColor: alpha(theme.palette.primary.main, 0.3),
+            ? alpha(theme.palette.background.paper, 0.4)
+            : alpha(theme.palette.grey[50], 0.8),
+        border: '1px solid',
+        borderColor: theme.palette.divider,
     }), [theme, isDark]);
 
     const labelContainerSx = useMemo(() => ({
         display: 'flex',
         alignItems: 'center',
         gap: 0.5,
-        mb: 0.75,
+        mb: collapsed ? 0 : 0.75,
+    }), [collapsed]);
+
+    const toggleButtonSx = useMemo(() => ({
+        ml: 'auto',
+        p: 0.25,
+        color: 'text.secondary',
     }), []);
 
     const sparkleIconSx = useMemo(() => ({
         fontSize: 16,
-        color: theme.palette.primary.main,
-    }), [theme.palette.primary.main]);
+        color: 'primary.main',
+    }), []);
 
     const labelSx = useMemo(() => ({
-        fontSize: '0.6875rem',
+        fontSize: '0.8125rem',
         fontWeight: 600,
-        color: theme.palette.primary.main,
-        letterSpacing: '0.05em',
-        textTransform: 'uppercase',
+        color: 'text.primary',
         lineHeight: 1,
-    }), [theme.palette.primary.main]);
+    }), []);
 
     const staleBadgeSx = useMemo(() => ({
         fontSize: '0.5625rem',
@@ -172,19 +248,39 @@ const AIOverview: React.FC<AIOverviewProps> = ({ mode = 'light' }) => {
         ml: 1,
     }), [theme.palette.warning.main]);
 
+    // Header row shared across all states
+    const headerRow = (showStale = false) => (
+        <Box sx={labelContainerSx}>
+            <SparkleIcon sx={sparkleIconSx} />
+            <Typography sx={labelSx}>
+                AI Overview
+            </Typography>
+            {showStale && isStale && (
+                <Typography sx={staleBadgeSx}>
+                    (stale)
+                </Typography>
+            )}
+            <IconButton
+                size="small"
+                onClick={handleToggleCollapse}
+                aria-label={collapsed ? 'Expand AI Overview' : 'Collapse AI Overview'}
+                sx={toggleButtonSx}
+            >
+                {collapsed ? <ExpandMoreIcon sx={{ fontSize: 18 }} /> : <ExpandLessIcon sx={{ fontSize: 18 }} />}
+            </IconButton>
+        </Box>
+    );
+
     // Loading state: show skeleton placeholder
     if (loading) {
         return (
             <Paper elevation={0} sx={paperSx}>
-                <Box sx={labelContainerSx}>
-                    <SparkleIcon sx={sparkleIconSx} />
-                    <Typography sx={labelSx}>
-                        AI Overview
-                    </Typography>
-                </Box>
-                <Skeleton variant="text" width="90%" height={18} />
-                <Skeleton variant="text" width="75%" height={18} />
-                <Skeleton variant="text" width="40%" height={14} sx={{ mt: 0.5 }} />
+                {headerRow()}
+                <Collapse in={!collapsed}>
+                    <Skeleton variant="text" width="90%" height={18} />
+                    <Skeleton variant="text" width="75%" height={18} />
+                    <Skeleton variant="text" width="40%" height={14} sx={{ mt: 0.5 }} />
+                </Collapse>
             </Paper>
         );
     }
@@ -198,18 +294,15 @@ const AIOverview: React.FC<AIOverviewProps> = ({ mode = 'light' }) => {
     if (isGenerating) {
         return (
             <Paper elevation={0} sx={paperSx}>
-                <Box sx={labelContainerSx}>
-                    <SparkleIcon sx={sparkleIconSx} />
-                    <Typography sx={labelSx}>
-                        AI Overview
+                {headerRow()}
+                <Collapse in={!collapsed}>
+                    <Typography
+                        variant="body2"
+                        sx={{ color: 'text.secondary', fontStyle: 'italic' }}
+                    >
+                        Generating overview...
                     </Typography>
-                </Box>
-                <Typography
-                    variant="body2"
-                    sx={{ color: 'text.secondary', fontStyle: 'italic' }}
-                >
-                    Generating estate overview...
-                </Typography>
+                </Collapse>
             </Paper>
         );
     }
@@ -217,39 +310,31 @@ const AIOverview: React.FC<AIOverviewProps> = ({ mode = 'light' }) => {
     // Ready state: display the summary
     return (
         <Paper elevation={0} sx={paperSx}>
-            <Box sx={labelContainerSx}>
-                <SparkleIcon sx={sparkleIconSx} />
-                <Typography sx={labelSx}>
-                    AI Overview
-                </Typography>
-                {isStale && (
-                    <Typography sx={staleBadgeSx}>
-                        (stale)
-                    </Typography>
-                )}
-            </Box>
-            <Typography
-                variant="body2"
-                sx={{
-                    color: 'text.primary',
-                    lineHeight: 1.5,
-                    whiteSpace: 'pre-wrap',
-                }}
-            >
-                {overview.summary}
-            </Typography>
-            {overview.generated_at && (
+            {headerRow(true)}
+            <Collapse in={!collapsed}>
                 <Typography
-                    variant="caption"
+                    variant="body2"
                     sx={{
-                        color: 'text.secondary',
-                        display: 'block',
-                        mt: 0.75,
+                        color: 'text.primary',
+                        lineHeight: 1.5,
+                        whiteSpace: 'pre-wrap',
                     }}
                 >
-                    {formatRelativeTime(overview.generated_at)}
+                    {overview.summary}
                 </Typography>
-            )}
+                {overview.generated_at && (
+                    <Typography
+                        variant="caption"
+                        sx={{
+                            color: 'text.secondary',
+                            display: 'block',
+                            mt: 0.75,
+                        }}
+                    >
+                        {formatRelativeTime(overview.generated_at)}
+                    </Typography>
+                )}
+            </Collapse>
         </Paper>
     );
 };

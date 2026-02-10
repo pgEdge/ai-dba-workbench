@@ -53,6 +53,7 @@ import {
     Timer as TimerIcon,
     Psychology as AIIcon,
     PlayArrow as RunIcon,
+    AutoAwesome as AutoAwesomeIcon,
 } from '@mui/icons-material';
 import { CLIENT_VERSION } from '../lib/version';
 
@@ -373,6 +374,10 @@ const OverviewPage = () => (
             title="Replication Support"
             description="Support for binary replication (primary/standby), Spock multi-master replication, and logical replication."
         />
+        <FeatureItem
+            title="AI-Powered Overview"
+            description="The status panel includes an AI-generated summary that provides context-aware insights for your current selection."
+        />
 
         <SectionTitle>Getting Started</SectionTitle>
         <Typography sx={styles.bodyText}>
@@ -465,6 +470,34 @@ const StatusPanelPage = () => (
             selection, whether it's a single server, a cluster, or the entire
             estate.
         </Typography>
+
+        <SectionTitle icon={AutoAwesomeIcon}>AI Overview</SectionTitle>
+        <Typography sx={styles.bodyTextMb2}>
+            The AI Overview panel appears at the top of the status panel. It
+            provides an AI-generated summary of your current selection.
+        </Typography>
+        <Box sx={styles.indentedBlock}>
+            <FeatureItem
+                title="Context-Aware Summaries"
+                description="The summary adapts to your selection. It covers the full estate, a specific cluster, or an individual server."
+            />
+            <FeatureItem
+                title="Auto-Refresh"
+                description="The summary refreshes automatically every 30 seconds and displays how recently it was updated."
+            />
+            <FeatureItem
+                title="Stale Indicator"
+                description="A stale indicator appears if the summary has not refreshed in over five minutes."
+            />
+            <FeatureItem
+                title="Collapse and Expand"
+                description="Click the toggle button to collapse or expand the panel. The collapse state persists across sessions."
+            />
+            <FeatureItem
+                title="Generation Status"
+                description="While generating a new summary, the panel displays a 'Generating estate overview...' message."
+            />
+        </Box>
 
         <SectionTitle icon={ServerIcon}>Server View</SectionTitle>
         <Typography sx={styles.bodyTextMb2}>

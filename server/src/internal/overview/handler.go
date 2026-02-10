@@ -14,11 +14,20 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 )
 
 // openAPISpecPath is the path to the OpenAPI specification for RFC 8631
 // API discovery.
 const openAPISpecPath = "/api/v1/openapi.json"
+
+// validScopeTypes lists the scope_type values accepted by the handler.
+var validScopeTypes = map[string]bool{
+	"server":  true,
+	"cluster": true,
+	"group":   true,
+}
 
 // Handler serves the current AI-generated estate overview via a REST
 // endpoint. It satisfies the routeRegistrar interface used by the
@@ -49,17 +58,85 @@ type generatingResponse struct {
 }
 
 // handleOverview handles GET /api/v1/overview and returns the current
-// estate overview as JSON.
+// estate overview as JSON. It accepts optional query parameters
+// scope_type and scope_id to return a scoped summary instead of the
+// estate-wide overview.
 func (h *Handler) handleOverview(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	overview := h.generator.GetOverview()
-
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Link", fmt.Sprintf("<%s>; rel=\"service-desc\"", openAPISpecPath))
+
+	connectionIDsStr := r.URL.Query().Get("connection_ids")
+	scopeName := r.URL.Query().Get("scope_name")
+	scopeType := r.URL.Query().Get("scope_type")
+	scopeIDStr := r.URL.Query().Get("scope_id")
+
+	// When connection_ids is provided, use the explicit connection list
+	// approach. This takes priority over scope_type/scope_id.
+	if connectionIDsStr != "" {
+		connectionIDs, err := parseConnectionIDs(connectionIDsStr)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		overview, err := h.generator.GetConnectionsSummary(connectionIDs, scopeName)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: overview: connections summary failed: %v\n", err)
+			http.Error(w, "Failed to generate connections summary", http.StatusInternalServerError)
+			return
+		}
+
+		if err := json.NewEncoder(w).Encode(overview); err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: overview: failed to encode connections response: %v\n", err)
+		}
+		return
+	}
+
+	// When no scope parameters are provided, return the estate-wide
+	// overview using the existing behavior.
+	if scopeType == "" && scopeIDStr == "" {
+		h.serveEstateOverview(w)
+		return
+	}
+
+	// Both parameters must be provided together.
+	if scopeType == "" || scopeIDStr == "" {
+		http.Error(w, "Both scope_type and scope_id are required", http.StatusBadRequest)
+		return
+	}
+
+	if !validScopeTypes[scopeType] {
+		http.Error(w, "scope_type must be server, cluster, or group", http.StatusBadRequest)
+		return
+	}
+
+	scopeID, err := strconv.Atoi(scopeIDStr)
+	if err != nil || scopeID <= 0 {
+		http.Error(w, "scope_id must be a positive integer", http.StatusBadRequest)
+		return
+	}
+
+	overview, err := h.generator.GetScopedSummary(scopeType, scopeID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: overview: scoped summary failed: %v\n", err)
+		http.Error(w, "Failed to generate scoped summary", http.StatusInternalServerError)
+		return
+	}
+
+	if err := json.NewEncoder(w).Encode(overview); err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: overview: failed to encode scoped response: %v\n", err)
+	}
+}
+
+// serveEstateOverview returns the cached estate-wide overview or a
+// "generating" status when no overview is available yet.
+func (h *Handler) serveEstateOverview(w http.ResponseWriter) {
+	overview := h.generator.GetOverview()
 
 	if overview == nil {
 		resp := generatingResponse{
@@ -75,4 +152,37 @@ func (h *Handler) handleOverview(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(overview); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: overview: failed to encode overview response: %v\n", err)
 	}
+}
+
+// parseConnectionIDs parses a comma-separated string of connection IDs
+// into a slice of positive integers. It returns an error when the input
+// is empty, contains non-integer values, or contains non-positive IDs.
+func parseConnectionIDs(raw string) ([]int, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, fmt.Errorf("connection_ids must not be empty")
+	}
+
+	parts := strings.Split(raw, ",")
+	ids := make([]int, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		id, err := strconv.Atoi(part)
+		if err != nil {
+			return nil, fmt.Errorf("connection_ids must be comma-separated positive integers")
+		}
+		if id <= 0 {
+			return nil, fmt.Errorf("connection_ids must be comma-separated positive integers")
+		}
+		ids = append(ids, id)
+	}
+
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("connection_ids must contain at least one valid ID")
+	}
+
+	return ids, nil
 }

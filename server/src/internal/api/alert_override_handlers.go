@@ -60,6 +60,32 @@ func (h *AlertOverrideHandler) handleAlertOverrides(w http.ResponseWriter, r *ht
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/alert-overrides/")
 	parts := strings.Split(path, "/")
 
+	// Check for context endpoint first:
+	// GET /api/v1/alert-overrides/context/{connectionId}/{ruleId}
+	if len(parts) >= 1 && parts[0] == "context" {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", "GET")
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if len(parts) != 3 || parts[1] == "" || parts[2] == "" {
+			http.NotFound(w, r)
+			return
+		}
+		connectionID, err := strconv.Atoi(parts[1])
+		if err != nil {
+			RespondError(w, http.StatusBadRequest, "Invalid connection ID")
+			return
+		}
+		ruleID, err := strconv.ParseInt(parts[2], 10, 64)
+		if err != nil {
+			RespondError(w, http.StatusBadRequest, "Invalid rule ID")
+			return
+		}
+		h.getOverrideContext(w, r, connectionID, ruleID)
+		return
+	}
+
 	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
 		http.NotFound(w, r)
 		return
@@ -169,4 +195,19 @@ func (h *AlertOverrideHandler) deleteOverride(w http.ResponseWriter, r *http.Req
 	}
 
 	RespondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// getOverrideContext handles GET /api/v1/alert-overrides/context/{connectionId}/{ruleId}
+func (h *AlertOverrideHandler) getOverrideContext(w http.ResponseWriter, r *http.Request, connectionID int, ruleID int64) {
+	if !h.checkPermission(w, r) {
+		return
+	}
+
+	ctx, err := h.datastore.GetOverrideContext(r.Context(), connectionID, ruleID)
+	if err != nil {
+		log.Printf("[ERROR] Failed to get override context: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to get override context")
+		return
+	}
+	RespondJSON(w, http.StatusOK, ctx)
 }

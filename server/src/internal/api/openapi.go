@@ -653,6 +653,95 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"deleted": {Type: "integer", Description: "Number of items deleted"},
 			},
 		},
+		"StatusResponse": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"status": {Type: "string", Description: "Status message", Example: "ok"},
+			},
+		},
+		"AlertRule": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"id":                 {Type: "integer", Format: "int64", Description: "Alert rule ID"},
+				"name":               {Type: "string", Description: "Rule name"},
+				"description":        {Type: "string", Description: "Rule description"},
+				"category":           {Type: "string", Description: "Rule category"},
+				"metric_name":        {Type: "string", Description: "Metric name"},
+				"metric_unit":        {Type: "string", Description: "Metric unit", Nullable: true},
+				"default_operator":   {Type: "string", Description: "Default comparison operator"},
+				"default_threshold":  {Type: "number", Description: "Default threshold value"},
+				"default_severity":   {Type: "string", Description: "Default severity level", Enum: []string{"info", "warning", "critical"}},
+				"default_enabled":    {Type: "boolean", Description: "Default enabled state"},
+				"required_extension": {Type: "string", Description: "Required PostgreSQL extension", Nullable: true},
+				"is_built_in":        {Type: "boolean", Description: "Whether the rule is built-in"},
+				"created_at":         {Type: "string", Format: "date-time", Description: "Creation timestamp"},
+			},
+		},
+		"AlertOverride": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"rule_id":            {Type: "integer", Format: "int64", Description: "Alert rule ID"},
+				"name":               {Type: "string", Description: "Rule name"},
+				"description":        {Type: "string", Description: "Rule description"},
+				"category":           {Type: "string", Description: "Rule category"},
+				"metric_name":        {Type: "string", Description: "Metric name"},
+				"metric_unit":        {Type: "string", Description: "Metric unit", Nullable: true},
+				"default_operator":   {Type: "string", Description: "Default comparison operator"},
+				"default_threshold":  {Type: "number", Description: "Default threshold value"},
+				"default_severity":   {Type: "string", Description: "Default severity level", Enum: []string{"info", "warning", "critical"}},
+				"default_enabled":    {Type: "boolean", Description: "Default enabled state"},
+				"has_override":       {Type: "boolean", Description: "Whether an override exists at this scope"},
+				"override_operator":  {Type: "string", Description: "Override comparison operator", Nullable: true},
+				"override_threshold": {Type: "number", Description: "Override threshold value", Nullable: true},
+				"override_severity":  {Type: "string", Description: "Override severity level", Nullable: true},
+				"override_enabled":   {Type: "boolean", Description: "Override enabled state", Nullable: true},
+			},
+		},
+		"AlertOverrideUpdate": {
+			Type:     "object",
+			Required: []string{"operator", "threshold", "severity", "enabled"},
+			Properties: map[string]*OpenAPISchema{
+				"operator":  {Type: "string", Description: "Comparison operator", Enum: []string{">", ">=", "<", "<=", "=", "!="}},
+				"threshold": {Type: "number", Description: "Threshold value"},
+				"severity":  {Type: "string", Description: "Severity level", Enum: []string{"info", "warning", "critical"}},
+				"enabled":   {Type: "boolean", Description: "Whether the rule is enabled"},
+			},
+		},
+		"OverrideDetail": {
+			Type:     "object",
+			Nullable: true,
+			Properties: map[string]*OpenAPISchema{
+				"operator":  {Type: "string", Description: "Comparison operator"},
+				"threshold": {Type: "number", Description: "Threshold value"},
+				"severity":  {Type: "string", Description: "Severity level"},
+				"enabled":   {Type: "boolean", Description: "Whether the rule is enabled"},
+			},
+		},
+		"OverrideContextResponse": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"hierarchy": {
+					Type: "object",
+					Properties: map[string]*OpenAPISchema{
+						"connection_id": {Type: "integer", Description: "Server connection ID"},
+						"cluster_id":    {Type: "integer", Description: "Cluster ID", Nullable: true},
+						"group_id":      {Type: "integer", Description: "Group ID", Nullable: true},
+						"server_name":   {Type: "string", Description: "Server name"},
+						"cluster_name":  {Type: "string", Description: "Cluster name", Nullable: true},
+						"group_name":    {Type: "string", Description: "Group name", Nullable: true},
+					},
+				},
+				"rule": {Ref: "#/components/schemas/AlertRule"},
+				"overrides": {
+					Type: "object",
+					Properties: map[string]*OpenAPISchema{
+						"server":  {Ref: "#/components/schemas/OverrideDetail"},
+						"cluster": {Ref: "#/components/schemas/OverrideDetail"},
+						"group":   {Ref: "#/components/schemas/OverrideDetail"},
+					},
+				},
+			},
+		},
 	}
 }
 
@@ -1102,6 +1191,88 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"500": jsonResponse("ErrorResponse", "Failed to unacknowledge"),
+				},
+			},
+		},
+
+		// Alert Overrides
+		"/alert-overrides/{scope}/{scopeId}": {
+			Get: &OpenAPIOperation{
+				Summary:     "List alert overrides",
+				Description: "Returns all alert rules with their override values at the specified scope",
+				OperationID: "listAlertOverrides",
+				Tags:        []string{"Alert Overrides"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					pathParamString("scope", "Override scope (server, cluster, or group)"),
+					pathParamInt("scopeId", "Scope entity ID"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonArrayResponse("AlertOverride", "List of alert rules with overrides"),
+					"400": jsonResponse("ErrorResponse", "Invalid scope"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"503": jsonResponse("ErrorResponse", "Datastore not configured"),
+				},
+			},
+		},
+		"/alert-overrides/{scope}/{scopeId}/{ruleId}": {
+			Put: &OpenAPIOperation{
+				Summary:     "Create or update alert override",
+				Description: "Creates or updates an alert threshold override at the specified scope for a rule",
+				OperationID: "upsertAlertOverride",
+				Tags:        []string{"Alert Overrides"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					pathParamString("scope", "Override scope (server, cluster, or group)"),
+					pathParamInt("scopeId", "Scope entity ID"),
+					pathParamInt("ruleId", "Alert rule ID"),
+				},
+				RequestBody: jsonRequestBody("AlertOverrideUpdate", "Override values", true),
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("StatusResponse", "Override saved"),
+					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Permission denied"),
+					"503": jsonResponse("ErrorResponse", "Datastore not configured"),
+				},
+			},
+			Delete: &OpenAPIOperation{
+				Summary:     "Delete alert override",
+				Description: "Removes an alert threshold override, reverting to the inherited or default value",
+				OperationID: "deleteAlertOverride",
+				Tags:        []string{"Alert Overrides"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					pathParamString("scope", "Override scope (server, cluster, or group)"),
+					pathParamInt("scopeId", "Scope entity ID"),
+					pathParamInt("ruleId", "Alert rule ID"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("StatusResponse", "Override deleted"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Permission denied"),
+					"503": jsonResponse("ErrorResponse", "Datastore not configured"),
+				},
+			},
+		},
+		"/alert-overrides/context/{connectionId}/{ruleId}": {
+			Get: &OpenAPIOperation{
+				Summary:     "Get override context for editing",
+				Description: "Returns the connection hierarchy, rule defaults, and existing overrides at all applicable scopes for a given connection and rule. Used by the alert override edit dialog.",
+				OperationID: "getAlertOverrideContext",
+				Tags:        []string{"Alert Overrides"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					pathParamInt("connectionId", "Server connection ID"),
+					pathParamInt("ruleId", "Alert rule ID"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("OverrideContextResponse", "Override context with hierarchy and existing overrides"),
+					"400": jsonResponse("ErrorResponse", "Invalid parameters"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Permission denied"),
+					"500": jsonResponse("ErrorResponse", "Internal server error"),
+					"503": jsonResponse("ErrorResponse", "Datastore not configured"),
 				},
 			},
 		},

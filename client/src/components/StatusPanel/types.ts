@@ -30,6 +30,7 @@ export interface TransformedAlert {
     databaseName?: string;
     objectName?: string;
     alertType?: string;
+    ruleId?: number;
     metricValue?: number | string;
     metricUnit?: string;
     thresholdValue?: number | string;
@@ -48,6 +49,7 @@ export interface AlertItemProps {
     onAcknowledge?: (alert: TransformedAlert) => void;
     onUnacknowledge?: (alertId: number | string) => void;
     onAnalyze?: (alert: TransformedAlert) => void;
+    onEditOverride?: (alert: TransformedAlert) => void;
 }
 
 export interface GroupedAlertInstanceProps {
@@ -56,6 +58,7 @@ export interface GroupedAlertInstanceProps {
     onAcknowledge?: (alert: TransformedAlert) => void;
     onUnacknowledge?: (alertId: number | string) => void;
     onAnalyze?: (alert: TransformedAlert) => void;
+    onEditOverride?: (alert: TransformedAlert) => void;
 }
 
 export interface GroupedAlertItemProps {
@@ -65,6 +68,7 @@ export interface GroupedAlertItemProps {
     onAcknowledge?: (alert: TransformedAlert) => void;
     onUnacknowledge?: (alertId: number | string) => void;
     onAnalyze?: (alert: TransformedAlert) => void;
+    onEditOverride?: (alert: TransformedAlert) => void;
 }
 
 export interface AcknowledgeDialogProps {
@@ -81,6 +85,7 @@ export interface AlertsSectionProps {
     onAcknowledge?: (alert: TransformedAlert) => void;
     onUnacknowledge?: (alertId: number | string) => void;
     onAnalyze?: (alert: TransformedAlert) => void;
+    onEditOverride?: (alert: TransformedAlert) => void;
 }
 
 export interface SelectionHeaderProps {

@@ -236,11 +236,18 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 
 	case "connection_utilization_percent":
 		// Calculate connection utilization as percentage of max_connections
+		// Uses only the latest snapshot per connection to avoid inflation
 		rows, err := d.pool.Query(ctx, `
 			WITH active_counts AS (
 				SELECT connection_id, COUNT(*) as active
 				FROM metrics.pg_stat_activity
-				WHERE collected_at > NOW() - INTERVAL '5 minutes'
+				WHERE backend_type = 'client backend'
+				  AND (connection_id, collected_at) IN (
+				      SELECT connection_id, MAX(collected_at)
+				      FROM metrics.pg_stat_activity
+				      WHERE collected_at > NOW() - INTERVAL '5 minutes'
+				      GROUP BY connection_id
+				  )
 				GROUP BY connection_id
 			),
 			max_conns AS (
@@ -254,6 +261,35 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			       NOW() as collected_at
 			FROM active_counts a
 			JOIN max_conns m ON a.connection_id = m.connection_id
+		`)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var mv MetricValue
+			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan metric value: %w", err)
+			}
+			results = append(results, mv)
+		}
+
+	case "pg_stat_activity.count":
+		// Count of active sessions per connection using only the latest snapshot
+		rows, err := d.pool.Query(ctx, `
+			SELECT connection_id,
+			       COUNT(*)::float as value,
+			       collected_at
+			FROM metrics.pg_stat_activity
+			WHERE backend_type = 'client backend'
+			  AND (connection_id, collected_at) IN (
+			      SELECT connection_id, MAX(collected_at)
+			      FROM metrics.pg_stat_activity
+			      WHERE collected_at > NOW() - INTERVAL '5 minutes'
+			      GROUP BY connection_id
+			  )
+			GROUP BY connection_id, collected_at
 		`)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
@@ -397,16 +433,21 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 		}
 
 	case "pg_stat_activity.blocked_count":
-		// Count of blocked sessions per connection
+		// Count of blocked sessions per connection using only the latest snapshot
 		rows, err := d.pool.Query(ctx, `
 			SELECT connection_id,
 			       COUNT(*)::float as value,
-			       MAX(collected_at) as collected_at
+			       collected_at
 			FROM metrics.pg_stat_activity
-			WHERE collected_at > NOW() - INTERVAL '5 minutes'
-			  AND wait_event_type = 'Lock'
+			WHERE wait_event_type = 'Lock'
 			  AND backend_type = 'client backend'
-			GROUP BY connection_id
+			  AND (connection_id, collected_at) IN (
+			      SELECT connection_id, MAX(collected_at)
+			      FROM metrics.pg_stat_activity
+			      WHERE collected_at > NOW() - INTERVAL '5 minutes'
+			      GROUP BY connection_id
+			  )
+			GROUP BY connection_id, collected_at
 		`)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
@@ -422,17 +463,22 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 		}
 
 	case "pg_stat_activity.idle_in_transaction_seconds":
-		// Max idle in transaction time per connection
+		// Max idle in transaction time per connection using only the latest snapshot
 		rows, err := d.pool.Query(ctx, `
 			SELECT connection_id,
 			       COALESCE(MAX(EXTRACT(EPOCH FROM (collected_at - xact_start))), 0)::float as value,
-			       MAX(collected_at) as collected_at
+			       collected_at
 			FROM metrics.pg_stat_activity
-			WHERE collected_at > NOW() - INTERVAL '5 minutes'
-			  AND state = 'idle in transaction'
+			WHERE state = 'idle in transaction'
 			  AND xact_start IS NOT NULL
 			  AND backend_type = 'client backend'
-			GROUP BY connection_id
+			  AND (connection_id, collected_at) IN (
+			      SELECT connection_id, MAX(collected_at)
+			      FROM metrics.pg_stat_activity
+			      WHERE collected_at > NOW() - INTERVAL '5 minutes'
+			      GROUP BY connection_id
+			  )
+			GROUP BY connection_id, collected_at
 		`)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
@@ -448,17 +494,22 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 		}
 
 	case "pg_stat_activity.max_lock_wait_seconds":
-		// Max lock wait time per connection
+		// Max lock wait time per connection using only the latest snapshot
 		rows, err := d.pool.Query(ctx, `
 			SELECT connection_id,
 			       COALESCE(MAX(EXTRACT(EPOCH FROM (collected_at - query_start))), 0)::float as value,
-			       MAX(collected_at) as collected_at
+			       collected_at
 			FROM metrics.pg_stat_activity
-			WHERE collected_at > NOW() - INTERVAL '5 minutes'
-			  AND wait_event_type = 'Lock'
+			WHERE wait_event_type = 'Lock'
 			  AND query_start IS NOT NULL
 			  AND backend_type = 'client backend'
-			GROUP BY connection_id
+			  AND (connection_id, collected_at) IN (
+			      SELECT connection_id, MAX(collected_at)
+			      FROM metrics.pg_stat_activity
+			      WHERE collected_at > NOW() - INTERVAL '5 minutes'
+			      GROUP BY connection_id
+			  )
+			GROUP BY connection_id, collected_at
 		`)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
@@ -474,17 +525,22 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 		}
 
 	case "pg_stat_activity.max_query_duration_seconds":
-		// Max query duration per connection
+		// Max query duration per connection using only the latest snapshot
 		rows, err := d.pool.Query(ctx, `
 			SELECT connection_id,
 			       COALESCE(MAX(EXTRACT(EPOCH FROM (collected_at - query_start))), 0)::float as value,
-			       MAX(collected_at) as collected_at
+			       collected_at
 			FROM metrics.pg_stat_activity
-			WHERE collected_at > NOW() - INTERVAL '5 minutes'
-			  AND state = 'active'
+			WHERE state = 'active'
 			  AND query_start IS NOT NULL
 			  AND backend_type = 'client backend'
-			GROUP BY connection_id
+			  AND (connection_id, collected_at) IN (
+			      SELECT connection_id, MAX(collected_at)
+			      FROM metrics.pg_stat_activity
+			      WHERE collected_at > NOW() - INTERVAL '5 minutes'
+			      GROUP BY connection_id
+			  )
+			GROUP BY connection_id, collected_at
 		`)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
@@ -500,16 +556,21 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 		}
 
 	case "pg_stat_activity.max_xact_duration_seconds":
-		// Max transaction duration per connection
+		// Max transaction duration per connection using only the latest snapshot
 		rows, err := d.pool.Query(ctx, `
 			SELECT connection_id,
 			       COALESCE(MAX(EXTRACT(EPOCH FROM (collected_at - xact_start))), 0)::float as value,
-			       MAX(collected_at) as collected_at
+			       collected_at
 			FROM metrics.pg_stat_activity
-			WHERE collected_at > NOW() - INTERVAL '5 minutes'
-			  AND xact_start IS NOT NULL
+			WHERE xact_start IS NOT NULL
 			  AND backend_type = 'client backend'
-			GROUP BY connection_id
+			  AND (connection_id, collected_at) IN (
+			      SELECT connection_id, MAX(collected_at)
+			      FROM metrics.pg_stat_activity
+			      WHERE collected_at > NOW() - INTERVAL '5 minutes'
+			      GROUP BY connection_id
+			  )
+			GROUP BY connection_id, collected_at
 		`)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
@@ -1023,7 +1084,7 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 				       ) as rn
 				FROM metrics.pg_stat_all_tables
 				WHERE collected_at > NOW() - INTERVAL '15 minutes'
-				  AND n_live_tup > 0
+				  AND n_live_tup >= 1000
 			),
 			calculated AS (
 				SELECT connection_id,
@@ -1086,6 +1147,7 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 				FROM metrics.pg_stat_all_tables
 				WHERE collected_at > NOW() - INTERVAL '15 minutes'
 				  AND last_autovacuum IS NOT NULL
+				  AND (n_dead_tup > 0 OR n_mod_since_analyze > 0)
 			),
 			calculated AS (
 				SELECT connection_id,
@@ -1582,6 +1644,29 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 			FROM activity_counts a
 			JOIN max_conns m ON a.connection_id = m.connection_id
 			ORDER BY a.connection_id, a.collected_at
+		`, lookbackDays)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query historical %s: %w", metricName, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var hv HistoricalMetricValue
+			if err := rows.Scan(&hv.ConnectionID, &hv.DatabaseName, &hv.Value, &hv.CollectedAt); err != nil {
+				return nil, fmt.Errorf("failed to scan historical metric value: %w", err)
+			}
+			results = append(results, hv)
+		}
+
+	case "pg_stat_activity.count":
+		rows, err := d.pool.Query(ctx, `
+			SELECT connection_id, NULL::text as database_name,
+			       COUNT(*)::float as value, collected_at
+			FROM metrics.pg_stat_activity
+			WHERE collected_at > NOW() - INTERVAL '1 day' * $1
+			  AND backend_type = 'client backend'
+			GROUP BY connection_id, collected_at
+			ORDER BY connection_id, collected_at
 		`, lookbackDays)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query historical %s: %w", metricName, err)

@@ -2717,6 +2717,57 @@ func (sm *SchemaManager) registerMigrations() {
 			return err
 		},
 	})
+
+	// Migration #16: Fix alert rule metric names and add session count rule
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     16,
+		Description: "Fix alert rule metric names to match collected metrics and add session count rule",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+			_, err := tx.Exec(ctx, `
+				-- Fix connection_utilization: wrong metric name
+				UPDATE alert_rules
+				SET metric_name = 'connection_utilization_percent'
+				WHERE name = 'connection_utilization'
+				  AND metric_name = 'pg_stat_activity.connection_utilization_percent';
+
+				-- Fix table_bloat_ratio: wrong metric name
+				UPDATE alert_rules
+				SET metric_name = 'table_bloat_ratio'
+				WHERE name = 'table_bloat_ratio'
+				  AND metric_name = 'pg_stat_all_tables.bloat_ratio';
+
+				-- Fix transaction_wraparound: wrong metric name
+				UPDATE alert_rules
+				SET metric_name = 'age_percent'
+				WHERE name = 'transaction_wraparound'
+				  AND metric_name = 'pg_class.age_percent';
+
+				-- Fix autovacuum_not_running: wrong metric name
+				UPDATE alert_rules
+				SET metric_name = 'table_last_autovacuum_hours'
+				WHERE name = 'autovacuum_not_running'
+				  AND metric_name = 'pg_stat_all_tables.last_autovacuum_hours';
+
+				-- Fix wal_archive_failed: references pg_stat_wal but handler uses pg_stat_archiver
+				UPDATE alert_rules
+				SET metric_name = 'pg_stat_archiver.failed_count_delta'
+				WHERE name = 'wal_archive_failed'
+				  AND metric_name = 'pg_stat_wal.failed_count_delta';
+
+				-- Add session count anomaly detection rule
+				INSERT INTO alert_rules (name, description, category, metric_name, metric_unit,
+				                         default_operator, default_threshold, default_severity,
+				                         default_enabled, required_extension, is_built_in)
+				VALUES ('session_count_anomaly',
+				        'Unusual session count detected; primarily used for anomaly detection of unexpected changes in active session counts',
+				        'connections', 'pg_stat_activity.count', 'sessions',
+				        '>', 200, 'warning', TRUE, NULL, TRUE)
+				ON CONFLICT (name) DO NOTHING;
+			`)
+			return err
+		},
+	})
 }
 
 // Migrate applies all pending migrations

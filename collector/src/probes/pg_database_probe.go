@@ -45,14 +45,25 @@ func (p *PgDatabaseProbe) IsDatabaseScoped() bool {
 	return false
 }
 
-// GetQuery returns the SQL query to execute
+// GetQuery returns the SQL query to execute (default for PG16+)
 func (p *PgDatabaseProbe) GetQuery() string {
-	return `
+	return p.GetQueryForVersion(16)
+}
+
+// GetQueryForVersion returns the appropriate SQL query for the given PostgreSQL version
+func (p *PgDatabaseProbe) GetQueryForVersion(pgVersion int) string {
+	datlocprovider := "datlocprovider"
+	if pgVersion < 16 {
+		// datlocprovider was introduced in PostgreSQL 16
+		datlocprovider = "NULL AS datlocprovider"
+	}
+
+	return fmt.Sprintf(`
         SELECT
             datname,
             datdba,
             encoding,
-            datlocprovider,
+            %s,
             datistemplate,
             datallowconn,
             datconnlimit,
@@ -63,12 +74,13 @@ func (p *PgDatabaseProbe) GetQuery() string {
             mxid_age(datminmxid) AS age_datminmxid,
             pg_database_size(datname) AS database_size_bytes
         FROM pg_database
-    `
+    `, datlocprovider)
 }
 
 // Execute runs the probe against a monitored connection
 func (p *PgDatabaseProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
-	rows, err := monitoredConn.Query(ctx, p.GetQuery())
+	query := p.GetQueryForVersion(pgVersion)
+	rows, err := monitoredConn.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute query: %w", err)
 	}

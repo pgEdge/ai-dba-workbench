@@ -102,7 +102,7 @@ const AlertsSection = ({ alerts, loading, showServer = false, onAcknowledge, onU
         gap: 0.75,
         py: 2,
         borderRadius: 1,
-        bgcolor: alpha(theme.palette.success.main, 0.05),
+        bgcolor: alpha(theme.palette.success.main, 0.10),
         border: '1px solid',
         borderColor: alpha(theme.palette.success.main, 0.12),
     }), [theme.palette.success]);

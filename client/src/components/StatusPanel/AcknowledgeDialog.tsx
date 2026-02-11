@@ -64,7 +64,7 @@ const AcknowledgeDialog = ({ open, alert, onClose, onConfirm }) => {
         gap: 1,
         p: 1.5,
         borderRadius: 1,
-        bgcolor: alpha(theme.palette.error.main, 0.06),
+        bgcolor: alpha(theme.palette.error.main, 0.10),
         border: '1px solid',
         borderColor: alpha(theme.palette.error.main, 0.18),
         cursor: 'pointer',

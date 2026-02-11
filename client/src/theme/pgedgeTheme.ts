@@ -108,7 +108,7 @@ const lightPalette = {
         secondary: '#6B7280',
         disabled: '#9CA3AF',
     },
-    divider: '#E5E7EB',
+    divider: '#D1D5DB',
     grey: {
         50: '#F9FAFB',
         100: '#F3F4F6',
@@ -123,7 +123,7 @@ const lightPalette = {
     },
     action: {
         active: '#6B7280',
-        hover: alpha('#15AABF', 0.04),
+        hover: alpha('#15AABF', 0.06),
         selected: alpha('#15AABF', 0.08),
         disabled: '#9CA3AF',
         disabledBackground: '#E5E7EB',

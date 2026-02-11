@@ -81,15 +81,15 @@ export const ROLE_ICONS: Record<ServerRole, SvgIconComponent> = {
 export const getClusterTypeColors = (theme: Theme): Record<ClusterType, ClusterTypeColor> => ({
     spock: {
         border: { dark: alpha(theme.palette.warning.main, 0.5), light: alpha(theme.palette.warning.main, 0.4) },
-        bg: { dark: alpha(theme.palette.warning.main, 0.08), light: alpha(theme.palette.warning.main, 0.05) },
+        bg: { dark: alpha(theme.palette.warning.main, 0.12), light: alpha(theme.palette.warning.main, 0.10) },
     },
     binary: {
         border: { dark: alpha(theme.palette.primary.light, 0.4), light: alpha(theme.palette.primary.main, 0.35) },
-        bg: { dark: alpha(theme.palette.primary.light, 0.06), light: alpha(theme.palette.primary.main, 0.04) },
+        bg: { dark: alpha(theme.palette.primary.light, 0.10), light: alpha(theme.palette.primary.main, 0.08) },
     },
     logical: {
         border: { dark: alpha(theme.palette.custom.status.purple, 0.4), light: alpha(theme.palette.custom.status.purple, 0.35) },
-        bg: { dark: alpha(theme.palette.custom.status.purple, 0.06), light: alpha(theme.palette.custom.status.purple, 0.04) },
+        bg: { dark: alpha(theme.palette.custom.status.purple, 0.10), light: alpha(theme.palette.custom.status.purple, 0.08) },
     },
     default: {
         border: { dark: alpha(theme.palette.grey[600], 0.5), light: alpha(theme.palette.grey[300], 0.6) },

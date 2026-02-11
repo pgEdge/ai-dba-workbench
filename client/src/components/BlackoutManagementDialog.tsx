@@ -217,7 +217,7 @@ const BlackoutManagementDialog: React.FC<BlackoutManagementDialogProps> = ({
         px: 1.25,
         py: 0.75,
         borderRadius: 1,
-        bgcolor: alpha(amberColor, 0.08),
+        bgcolor: alpha(amberColor, 0.12),
         border: '1px solid',
         borderColor: alpha(amberColor, 0.25),
     }), [amberColor]);
@@ -255,7 +255,7 @@ const BlackoutManagementDialog: React.FC<BlackoutManagementDialogProps> = ({
         borderColor: alpha(amberColor, 0.4),
         '&:hover': {
             borderColor: amberColor,
-            bgcolor: alpha(amberColor, 0.08),
+            bgcolor: alpha(amberColor, 0.12),
         },
     }), [amberColor]);
 
@@ -266,7 +266,7 @@ const BlackoutManagementDialog: React.FC<BlackoutManagementDialogProps> = ({
         px: 1.25,
         py: 0.75,
         borderRadius: 1,
-        bgcolor: alpha(theme.palette.grey[500], 0.05),
+        bgcolor: alpha(theme.palette.grey[500], 0.10),
         border: '1px solid',
         borderColor: alpha(theme.palette.grey[500], 0.15),
     }), [theme]);

@@ -60,7 +60,7 @@ export function useEChartsTheme() {
             },
             legend: {
                 textStyle: {
-                    color: palette.text.secondary,
+                    color: palette.text.primary,
                 },
             },
             tooltip: {

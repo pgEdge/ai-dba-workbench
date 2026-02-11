@@ -102,7 +102,7 @@ const ActiveBlackoutBanner = ({ blackout, onStop }) => {
         px: 1.25,
         py: 0.75,
         borderRadius: 1,
-        bgcolor: alpha(amberColor, 0.08),
+        bgcolor: alpha(amberColor, 0.12),
         border: '1px solid',
         borderColor: alpha(amberColor, 0.25),
     }), [amberColor]);
@@ -140,7 +140,7 @@ const ActiveBlackoutBanner = ({ blackout, onStop }) => {
         borderColor: alpha(amberColor, 0.4),
         '&:hover': {
             borderColor: amberColor,
-            bgcolor: alpha(amberColor, 0.08),
+            bgcolor: alpha(amberColor, 0.12),
         },
     }), [amberColor]);
 

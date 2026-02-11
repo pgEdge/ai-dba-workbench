@@ -64,8 +64,8 @@ const AlertItem = ({ alert, showServer = false, onAcknowledge, onUnacknowledge, 
         py: 0.75,
         borderRadius: 1,
         bgcolor: isAcknowledged
-            ? alpha(theme.palette.grey[500], 0.08)
-            : alpha(baseColor, 0.05),
+            ? alpha(theme.palette.grey[500], 0.12)
+            : alpha(baseColor, 0.08),
         border: '1px solid',
         borderColor: isAcknowledged
             ? alpha(theme.palette.grey[500], 0.22)

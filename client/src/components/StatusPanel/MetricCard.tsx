@@ -39,7 +39,7 @@ const MetricCard = ({ label, value, trend, trendValue, icon: Icon, color }) => {
         borderRadius: 2,
         bgcolor: theme.palette.mode === 'dark'
             ? alpha(theme.palette.grey[800], 0.8)
-            : alpha(theme.palette.grey[100], 0.8),
+            : theme.palette.grey[100],
         border: '1px solid',
         borderColor: theme.palette.divider,
         flex: 1,

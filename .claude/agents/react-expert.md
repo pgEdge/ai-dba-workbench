@@ -34,6 +34,7 @@ base at `/.claude/react-expert/`:**
 - `mui-patterns.md` - Material-UI usage patterns and theming
 - `testing-approach.md` - React testing strategies
 - `quality-checklist.md` - Anti-patterns, standards, and review checklists
+- `color-contrast-guidelines.md` - WCAG AA color contrast requirements
 
 **Knowledge Base Maintenance**: When you discover stable patterns,
 conventions, or architectural details not already in your knowledge base,

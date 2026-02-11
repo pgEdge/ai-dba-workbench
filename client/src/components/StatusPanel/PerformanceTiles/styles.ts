@@ -33,7 +33,7 @@ export const getTilePaperSx = (theme: Theme): SxProps<Theme> => ({
     borderRadius: 2,
     bgcolor: theme.palette.mode === 'dark'
         ? alpha(theme.palette.grey[800], 0.8)
-        : alpha(theme.palette.grey[100], 0.8),
+        : theme.palette.grey[100],
     border: '1px solid',
     borderColor: theme.palette.divider,
     height: 220,

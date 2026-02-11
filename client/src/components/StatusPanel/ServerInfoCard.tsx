@@ -73,7 +73,7 @@ const ServerInfoCard = ({ selection }) => {
         gap: 2,
         px: 1.5,
         py: 0.75,
-        bgcolor: alpha(theme.palette.custom.status.sky, 0.06),
+        bgcolor: alpha(theme.palette.custom.status.sky, 0.10),
         borderTop: '1px solid',
         borderColor: alpha(theme.palette.custom.status.sky, 0.18),
     }), [theme]);

@@ -187,7 +187,7 @@ export const getCollapsibleCardSx = (theme: Theme) => ({
     borderRadius: 1,
     bgcolor: theme.palette.mode === 'dark'
         ? alpha(theme.palette.grey[700], 0.3)
-        : alpha(theme.palette.grey[50], 0.8),
+        : theme.palette.grey[100],
     border: '1px solid',
     borderColor: theme.palette.mode === 'dark'
         ? alpha(theme.palette.grey[700], 0.5)
@@ -204,7 +204,7 @@ export const getCollapsibleHeaderHoverSx = (theme: Theme) => ({
     '&:hover': {
         bgcolor: theme.palette.mode === 'dark'
             ? alpha(theme.palette.grey[700], 0.2)
-            : alpha(theme.palette.divider, 0.3),
+            : alpha(theme.palette.divider, 0.5),
     },
 });
 
@@ -279,7 +279,7 @@ export const getCloseButtonSx = (theme: Theme) => ({
     '&:hover': {
         bgcolor: theme.palette.mode === 'dark'
             ? alpha(theme.palette.grey[700], 0.5)
-            : alpha(theme.palette.divider, 0.5),
+            : alpha(theme.palette.divider, 0.8),
     },
 });
 
@@ -335,7 +335,7 @@ export const getTimelineTrackSx = (theme: Theme) => ({
     borderRadius: 2,
     bgcolor: theme.palette.mode === 'dark'
         ? alpha(theme.palette.grey[700], 0.3)
-        : alpha(theme.palette.divider, 0.5),
+        : theme.palette.grey[200],
     border: '1px solid',
     borderColor: theme.palette.divider,
 });
@@ -457,7 +457,7 @@ export const getEmptyStateSx = (theme: Theme) => ({
     borderRadius: 1,
     bgcolor: theme.palette.mode === 'dark'
         ? alpha(theme.palette.grey[700], 0.2)
-        : alpha(theme.palette.grey[100], 0.5),
+        : theme.palette.grey[100],
     border: '1px dashed',
     borderColor: theme.palette.divider,
     mt: 1,
@@ -481,7 +481,7 @@ export const getOuterContainerSx = (theme: Theme) => ({
     borderRadius: 1.5,
     bgcolor: theme.palette.mode === 'dark'
         ? alpha(theme.palette.background.paper, 0.4)
-        : alpha(theme.palette.grey[50], 0.8),
+        : theme.palette.grey[100],
     border: '1px solid',
     borderColor: theme.palette.divider,
 });

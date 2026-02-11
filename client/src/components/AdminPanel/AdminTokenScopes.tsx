@@ -760,7 +760,7 @@ const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
                 <Box
                     component="pre"
                     sx={{
-                        bgcolor: alpha(theme.palette.text.primary, 0.05),
+                        bgcolor: alpha(theme.palette.text.primary, 0.08),
                         border: '1px solid',
                         borderColor: theme.palette.divider,
                         borderRadius: 1,
@@ -1018,7 +1018,7 @@ curl -s -X POST -H "Authorization: Bearer <token>" \\
                             gap: 1,
                             fontFamily: 'monospace',
                             fontSize: '1rem',
-                            bgcolor: alpha(theme.palette.text.primary, 0.05),
+                            bgcolor: alpha(theme.palette.text.primary, 0.08),
                             border: '1px solid',
                             borderColor: theme.palette.divider,
                             borderRadius: 1,

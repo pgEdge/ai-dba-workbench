@@ -75,7 +75,7 @@ const CheckpointTile: React.FC<CheckpointTileProps> = ({
                     <Chart
                         type="line"
                         data={chartData}
-                        height={165}
+                        height={180}
                         stacked
                         areaFill
                         smooth
@@ -83,8 +83,8 @@ const CheckpointTile: React.FC<CheckpointTileProps> = ({
                         showLegend
                         showTooltip
                         echartsOptions={{
-                            grid: { top: 10, right: 10, bottom: 30, left: 10, containLabel: true },
-                            legend: { bottom: 2 },
+                            grid: { top: 10, right: 10, bottom: 40, left: 10, containLabel: true },
+                            legend: { bottom: 8, textStyle: { color: theme.palette.text.primary } },
                             xAxis: {
                                 boundaryGap: false,
                                 axisLabel: {

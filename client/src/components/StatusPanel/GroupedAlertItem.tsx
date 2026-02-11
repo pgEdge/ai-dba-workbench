@@ -66,10 +66,10 @@ const GroupedAlertInstance = ({ alert, showServer, onAcknowledge, onUnacknowledg
         py: 0.5,
         borderRadius: 0.5,
         bgcolor: isAcknowledged
-            ? alpha(theme.palette.grey[500], 0.06)
+            ? alpha(theme.palette.grey[500], 0.10)
             : 'transparent',
         '&:hover': {
-            bgcolor: alpha(theme.palette.grey[500], 0.08),
+            bgcolor: alpha(theme.palette.grey[500], 0.12),
         },
     }), [isAcknowledged, theme]);
 
@@ -232,7 +232,7 @@ const GroupedAlertItem = ({ title, alerts, showServer = false, onAcknowledge, on
 
     const containerSx = useMemo(() => ({
         borderRadius: 1,
-        bgcolor: alpha(baseColor, 0.04),
+        bgcolor: alpha(baseColor, 0.08),
         border: '1px solid',
         borderColor: alpha(baseColor, 0.15),
         overflow: 'hidden',
@@ -245,7 +245,7 @@ const GroupedAlertItem = ({ title, alerts, showServer = false, onAcknowledge, on
         px: 1.25,
         py: 0.75,
         cursor: 'pointer',
-        bgcolor: alpha(baseColor, 0.06),
+        bgcolor: alpha(baseColor, 0.10),
         '&:hover': {
             bgcolor: alpha(baseColor, 0.1),
         },

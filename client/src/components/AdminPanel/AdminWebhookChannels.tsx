@@ -612,7 +612,7 @@ const AdminWebhookChannels: React.FC = () => {
         <Box>
             <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
                 <Typography variant="h6" sx={pageHeadingSx}>
-                    Webhook Channels
+                    Webhook channels
                 </Typography>
                 <Button
                     variant="contained"
@@ -734,7 +734,7 @@ const AdminWebhookChannels: React.FC = () => {
                 fullWidth
             >
                 <DialogTitle sx={dialogTitleSx}>
-                    {isEditing ? `Edit Channel: ${editingChannel.name}` : 'Create Webhook Channel'}
+                    {isEditing ? `Edit channel: ${editingChannel.name}` : 'Create webhook channel'}
                 </DialogTitle>
                 <DialogContent>
                     {dialogError && (
@@ -876,7 +876,7 @@ const AdminWebhookChannels: React.FC = () => {
                         ) : (
                             <Typography
                                 color="text.secondary"
-                                sx={{ fontSize: '0.875rem', mb: 2, mt: 1 }}
+                                sx={{ fontSize: '1rem', mb: 2, mt: 1 }}
                             >
                                 No custom headers configured.
                             </Typography>

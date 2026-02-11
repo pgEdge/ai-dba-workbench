@@ -44,7 +44,7 @@ export const getTilePaperSx = (theme: Theme): SxProps<Theme> => ({
 
 export const TILE_TITLE_SX: SxProps<Theme> = {
     color: 'text.secondary',
-    fontSize: '0.75rem',
+    fontSize: '0.875rem',
     fontWeight: 500,
     textTransform: 'uppercase',
     letterSpacing: '0.05em',
@@ -67,7 +67,7 @@ export const TILE_CONTENT_SX: SxProps<Theme> = {
 
 export const NO_DATA_SX: SxProps<Theme> = {
     color: 'text.disabled',
-    fontSize: '0.8125rem',
+    fontSize: '1rem',
     fontWeight: 500,
     display: 'flex',
     alignItems: 'center',

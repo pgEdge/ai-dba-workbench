@@ -78,7 +78,7 @@ const spinnerSx = (theme: Theme) => ({
 });
 
 const getTextSx = (opacity: number) => (theme: Theme) => ({
-    fontSize: '0.875rem',
+    fontSize: '1rem',
     fontWeight: 500,
     color: theme.palette.mode === 'dark'
         ? alpha(theme.palette.primary.light, 0.85)

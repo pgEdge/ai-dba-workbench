@@ -51,7 +51,7 @@ const HeaderStatusIndicator = ({ status, alertCount = 0, size = 'large' }) => {
         borderRadius: '7px',
         bgcolor: theme.palette.grey[500],
         color: 'common.white',
-        fontSize: '0.5625rem',
+        fontSize: '0.875rem',
         fontWeight: 700,
         display: 'flex',
         alignItems: 'center',

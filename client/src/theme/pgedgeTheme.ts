@@ -356,7 +356,7 @@ const getComponents = (mode: PaletteMode) => ({
             tooltip: {
                 backgroundColor: mode === 'dark' ? '#334155' : '#1F2937',
                 borderRadius: 6,
-                fontSize: '0.8125rem',
+                fontSize: '0.875rem',
                 padding: '8px 14px',
             },
             arrow: {
@@ -562,7 +562,7 @@ const typography = {
         lineHeight: 1.6,
     },
     body2: {
-        fontSize: '1rem',
+        fontSize: '1.125rem',
         lineHeight: 1.6,
     },
     button: {

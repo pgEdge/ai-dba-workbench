@@ -201,7 +201,7 @@ describe('AlertOverridesPanel', () => {
         fireEvent.click(cpuEditButton as HTMLElement);
 
         await waitFor(() => {
-            expect(screen.getByText(/Edit Override: High CPU Usage/)).toBeInTheDocument();
+            expect(screen.getByText(/Edit override: High CPU Usage/)).toBeInTheDocument();
         });
 
         // Verify the threshold field is pre-populated with the override value

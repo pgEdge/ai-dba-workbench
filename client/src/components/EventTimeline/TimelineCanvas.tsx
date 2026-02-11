@@ -19,7 +19,6 @@ import EventMarker from './EventMarker';
 import {
     timelineCanvasContainerSx,
     timeAxisSx,
-    getTickMarkSx,
     tickLabelSx,
     getTimelineTrackSx,
 } from './styles';
@@ -36,7 +35,6 @@ const TimelineCanvas = memo(({ events, timeRange, showServer, onEventClick }) =>
         [events, startTime, endTime]
     );
 
-    const tickSx = useMemo(() => getTickMarkSx(theme), [theme]);
     const trackSx = useMemo(() => getTimelineTrackSx(theme), [theme]);
 
     return (
@@ -55,7 +53,6 @@ const TimelineCanvas = memo(({ events, timeRange, showServer, onEventClick }) =>
                             alignItems: 'center',
                         }}
                     >
-                        <Box sx={tickSx} />
                         <Typography sx={tickLabelSx}>
                             {marker.label}
                         </Typography>

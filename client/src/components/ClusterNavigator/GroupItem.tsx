@@ -49,9 +49,9 @@ const flexMinWidthSx = { flex: 1, minWidth: 0 };
 const groupNameSx = {
     fontWeight: 600,
     color: 'text.primary',
-    fontSize: '0.8125rem',
+    fontSize: '0.875rem',
     textTransform: 'uppercase',
-    letterSpacing: '0.04em',
+    letterSpacing: '0.08em',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
@@ -59,7 +59,7 @@ const groupNameSx = {
 
 const countTextSx = {
     color: 'text.disabled',
-    fontSize: '0.6875rem',
+    fontSize: '0.875rem',
     ml: 'auto',
     flexShrink: 0,
 };

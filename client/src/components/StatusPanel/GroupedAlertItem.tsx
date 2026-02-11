@@ -22,7 +22,7 @@ import { useTheme } from '@mui/material/styles';
 import {
     Warning as WarningIcon,
     Error as ErrorIcon,
-    Schedule as ScheduleIcon,
+
     ExpandMore as ExpandMoreIcon,
     ExpandLess as ExpandLessIcon,
     CheckCircleOutline as AckIcon,
@@ -40,7 +40,7 @@ import {
     EXPAND_BUTTON_SX,
     ICON_16_SX,
     ICON_14_SX,
-    ICON_10_SX,
+
     SEVERITY_CHIP_BASE_SX,
     INSTANCE_TIME_SX,
     INSTANCE_THRESHOLD_SX,
@@ -75,7 +75,7 @@ const GroupedAlertInstance = ({ alert, showServer, onAcknowledge, onUnacknowledg
 
     const serverChipSx = useMemo(() => ({
         height: 16,
-        fontSize: '0.625rem',
+        fontSize: '0.875rem',
         bgcolor: alpha(theme.palette.grey[500], 0.15),
         color: 'text.secondary',
         '& .MuiChip-label': CHIP_LABEL_SX,
@@ -83,7 +83,7 @@ const GroupedAlertInstance = ({ alert, showServer, onAcknowledge, onUnacknowledg
 
     const dbChipSx = useMemo(() => ({
         height: 16,
-        fontSize: '0.625rem',
+        fontSize: '0.875rem',
         bgcolor: alpha(theme.palette.secondary.main, 0.15),
         color: theme.palette.secondary.main,
         '& .MuiChip-label': CHIP_LABEL_SX,
@@ -91,7 +91,7 @@ const GroupedAlertInstance = ({ alert, showServer, onAcknowledge, onUnacknowledg
 
     const objectChipSx = useMemo(() => ({
         height: 16,
-        fontSize: '0.625rem',
+        fontSize: '0.875rem',
         bgcolor: alpha(theme.palette.custom.status.online, 0.15),
         color: theme.palette.custom.status.connected,
         '& .MuiChip-label': CHIP_LABEL_SX,
@@ -138,7 +138,7 @@ const GroupedAlertInstance = ({ alert, showServer, onAcknowledge, onUnacknowledg
                 )}
                 {alert.objectName && (
                     <Chip
-                        icon={<TableIcon sx={{ fontSize: '0.625rem !important' }} />}
+                        icon={<TableIcon sx={{ fontSize: '0.875rem !important' }} />}
                         label={alert.objectName}
                         size="small"
                         sx={objectChipSx}
@@ -153,7 +153,6 @@ const GroupedAlertInstance = ({ alert, showServer, onAcknowledge, onUnacknowledg
 
             {/* Time */}
             <Typography sx={INSTANCE_TIME_SX}>
-                <ScheduleIcon sx={ICON_10_SX} />
                 {alert.time}
             </Typography>
 
@@ -254,7 +253,7 @@ const GroupedAlertItem = ({ title, alerts, showServer = false, onAcknowledge, on
 
     const countChipSx = useMemo(() => ({
         height: 18,
-        fontSize: '0.625rem',
+        fontSize: '0.875rem',
         fontWeight: 600,
         bgcolor: alpha(baseColor, 0.15),
         color: baseColor,

@@ -42,7 +42,7 @@ const getChipSx = (status: ToolActivity['status']) => (theme: Theme) => {
     if (status === 'error') {
         return {
             height: 24,
-            fontSize: '0.875rem',
+            fontSize: '1rem',
             fontWeight: 500,
             bgcolor: alpha(theme.palette.warning.main, 0.12),
             color: theme.palette.mode === 'dark'
@@ -58,7 +58,7 @@ const getChipSx = (status: ToolActivity['status']) => (theme: Theme) => {
     if (status === 'completed') {
         return {
             height: 24,
-            fontSize: '0.875rem',
+            fontSize: '1rem',
             fontWeight: 500,
             bgcolor: alpha(theme.palette.success.main, 0.12),
             color: theme.palette.mode === 'dark'
@@ -74,7 +74,7 @@ const getChipSx = (status: ToolActivity['status']) => (theme: Theme) => {
     // running
     return {
         height: 24,
-        fontSize: '0.875rem',
+        fontSize: '1rem',
         fontWeight: 500,
         bgcolor: alpha(theme.palette.primary.main, 0.12),
         color: theme.palette.mode === 'dark'

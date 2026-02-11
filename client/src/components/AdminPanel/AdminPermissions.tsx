@@ -654,7 +654,7 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode: _mode }) => {
 
             {/* Grant MCP Permission Dialog */}
             <Dialog open={grantMcpOpen} onClose={() => !grantMcpLoading && setGrantMcpOpen(false)} maxWidth="xs" fullWidth>
-                <DialogTitle sx={dialogTitleSx}>Grant MCP Permission</DialogTitle>
+                <DialogTitle sx={dialogTitleSx}>Grant MCP permission</DialogTitle>
                 <DialogContent>
                     {grantMcpError && (
                         <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }}>{grantMcpError}</Alert>
@@ -692,7 +692,7 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode: _mode }) => {
 
             {/* Grant Connection Permission Dialog */}
             <Dialog open={grantConnOpen} onClose={() => !grantConnLoading && setGrantConnOpen(false)} maxWidth="xs" fullWidth>
-                <DialogTitle sx={dialogTitleSx}>Grant Connection Permission</DialogTitle>
+                <DialogTitle sx={dialogTitleSx}>Grant connection permission</DialogTitle>
                 <DialogContent>
                     {grantConnError && (
                         <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }}>{grantConnError}</Alert>
@@ -751,7 +751,7 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode: _mode }) => {
 
             {/* Grant Admin Permission Dialog */}
             <Dialog open={grantAdminOpen} onClose={() => !grantAdminLoading && setGrantAdminOpen(false)} maxWidth="xs" fullWidth>
-                <DialogTitle sx={dialogTitleSx}>Grant Admin Permission</DialogTitle>
+                <DialogTitle sx={dialogTitleSx}>Grant admin permission</DialogTitle>
                 <DialogContent>
                     {grantAdminError && (
                         <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }}>{grantAdminError}</Alert>

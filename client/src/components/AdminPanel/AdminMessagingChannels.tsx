@@ -519,7 +519,7 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                 fullWidth
             >
                 <DialogTitle sx={dialogTitleSx}>
-                    {isEditing ? `Edit Channel: ${editingChannel.name}` : `Create ${platformName} Channel`}
+                    {isEditing ? `Edit channel: ${editingChannel.name}` : `Create ${platformName} channel`}
                 </DialogTitle>
                 <DialogContent>
                     {dialogError && (

@@ -407,7 +407,7 @@ const AlertOverridesPanel: React.FC<AlertOverridesPanelProps> = ({ scope, scopeI
                 fullWidth
             >
                 <DialogTitle sx={dialogTitleSx}>
-                    Edit Override: {editOverride?.name}
+                    Edit override: {editOverride?.name}
                 </DialogTitle>
                 <DialogContent>
                     <Box sx={{ display: 'flex', alignItems: 'center', mt: 1, mb: 2 }}>

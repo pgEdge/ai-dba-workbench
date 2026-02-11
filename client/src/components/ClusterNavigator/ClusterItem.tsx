@@ -40,7 +40,7 @@ const trailingSx = { ml: 'auto', flexShrink: 0 };
 const serverListSx = { pb: 0.5 };
 
 const clusterNameBase = {
-    fontSize: '0.8125rem',
+    fontSize: '0.875rem',
     lineHeight: 1.3,
     overflow: 'hidden',
     textOverflow: 'ellipsis',
@@ -50,7 +50,7 @@ const clusterNameBase = {
 const countChipBase = {
     height: 18,
     maxWidth: 'none',
-    fontSize: '0.625rem',
+    fontSize: '0.875rem',
     fontWeight: 600,
     '& .MuiChip-label': { px: 0.75 },
 };
@@ -89,7 +89,7 @@ const getClusterIconSx = (isSelected) => ({
 
 const getClusterNameSx = (isSelected) => ({
     ...clusterNameBase,
-    fontWeight: isSelected ? 600 : 500,
+    fontWeight: 600,
     color: 'text.primary',
 });
 

@@ -88,7 +88,7 @@ const CheckpointTile: React.FC<CheckpointTileProps> = ({
                             xAxis: {
                                 boundaryGap: false,
                                 axisLabel: {
-                                    fontSize: 9,
+                                    fontSize: 14,
                                     color: theme.palette.text.secondary,
                                     formatter: (value: string) => {
                                         const d = new Date(value);
@@ -98,7 +98,7 @@ const CheckpointTile: React.FC<CheckpointTileProps> = ({
                             },
                             yAxis: {
                                 axisLabel: {
-                                    fontSize: 9,
+                                    fontSize: 14,
                                     color: theme.palette.text.secondary,
                                     formatter: (value: number) => Math.round(value).toLocaleString(),
                                 },

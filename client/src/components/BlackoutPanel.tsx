@@ -36,12 +36,12 @@ const ICON_14_SX = { fontSize: 14 };
 
 const BANNER_TITLE_SX = {
     fontWeight: 600,
-    fontSize: '0.8125rem',
+    fontSize: '1rem',
     lineHeight: 1.2,
 };
 
 const BANNER_REASON_SX = {
-    fontSize: '0.6875rem',
+    fontSize: '0.875rem',
     mt: 0.25,
     wordBreak: 'break-word',
 };
@@ -115,7 +115,7 @@ const ActiveBlackoutBanner = ({ blackout, onStop }) => {
 
     const scopeChipSx = useMemo(() => ({
         height: 16,
-        fontSize: '0.5625rem',
+        fontSize: '0.875rem',
         fontWeight: 600,
         textTransform: 'uppercase',
         bgcolor: alpha(amberColor, 0.15),
@@ -125,7 +125,7 @@ const ActiveBlackoutBanner = ({ blackout, onStop }) => {
 
     const timeChipSx = useMemo(() => ({
         height: 16,
-        fontSize: '0.5625rem',
+        fontSize: '0.875rem',
         fontWeight: 600,
         bgcolor: alpha(amberColor, 0.12),
         color: amberColor,
@@ -133,7 +133,7 @@ const ActiveBlackoutBanner = ({ blackout, onStop }) => {
     }), [amberColor]);
 
     const stopButtonSx = useMemo(() => ({
-        fontSize: '0.6875rem',
+        fontSize: '0.875rem',
         textTransform: 'none',
         fontWeight: 600,
         color: amberColor,

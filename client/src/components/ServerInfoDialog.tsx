@@ -248,7 +248,7 @@ const getSectionIconSx = (theme: Theme) => ({
 });
 
 const getSectionTitleSx = () => ({
-    fontSize: '0.8125rem',
+    fontSize: '1rem',
     fontWeight: 700,
     textTransform: 'uppercase' as const,
     letterSpacing: '0.08em',
@@ -270,7 +270,7 @@ const getKvGridSx = () => ({
 });
 
 const getKvLabelSx = (theme: Theme) => ({
-    fontSize: '0.625rem',
+    fontSize: '0.875rem',
     fontWeight: 700,
     textTransform: 'uppercase' as const,
     letterSpacing: '0.1em',
@@ -280,7 +280,7 @@ const getKvLabelSx = (theme: Theme) => ({
 });
 
 const getKvValueSx = () => ({
-    fontSize: '0.875rem',
+    fontSize: '1rem',
     fontWeight: 500,
     lineHeight: 1.3,
     color: 'text.primary',
@@ -325,7 +325,7 @@ const getExtChipSx = (theme: Theme) => ({
     bgcolor: theme.palette.mode === 'dark'
         ? alpha(theme.palette.grey[700], 0.4)
         : alpha(theme.palette.grey[200], 0.6),
-    fontSize: '0.8125rem',
+    fontSize: '1rem',
     ...sxMono,
     color: 'text.secondary',
 });
@@ -390,7 +390,7 @@ const Section: React.FC<{
                 </Typography>
                 {badge && (
                     <Typography sx={{
-                        fontSize: '0.6875rem',
+                        fontSize: '0.875rem',
                         fontWeight: 600,
                         color: 'text.disabled',
                         ...sxMono,
@@ -448,7 +448,7 @@ const UsageBar: React.FC<{
             <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.25 }}>
                 <Typography sx={getKvLabelSx(theme)}>{label}</Typography>
                 <Typography sx={{
-                    fontSize: '0.6875rem',
+                    fontSize: '0.875rem',
                     color: 'text.disabled',
                     ...sxMono,
                 }}>
@@ -642,7 +642,7 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
                         Server Information
                     </Typography>
                     <Typography sx={{
-                        fontSize: '0.75rem',
+                        fontSize: '0.875rem',
                         color: 'text.secondary',
                         ...sxMono,
                         mt: 0.125,
@@ -672,7 +672,7 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
                     <Box sx={{ p: 3 }}>
                         <Typography sx={{
                             color: theme.palette.error.main,
-                            fontSize: '0.875rem',
+                            fontSize: '1rem',
                         }}>
                             {error}
                         </Typography>
@@ -745,14 +745,14 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
                                                     <Box key={idx} sx={{ mb: idx < sys.disks!.length - 1 ? 1 : 0 }}>
                                                         <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.25 }}>
                                                             <Typography sx={{
-                                                                fontSize: '0.8125rem',
+                                                                fontSize: '1rem',
                                                                 ...sxMono,
                                                                 color: 'text.primary',
                                                                 fontWeight: 500,
                                                             }}>
                                                                 {disk.mount_point}
                                                                 <Typography component="span" sx={{
-                                                                    fontSize: '0.6875rem',
+                                                                    fontSize: '0.875rem',
                                                                     color: 'text.disabled',
                                                                     ml: 0.75,
                                                                 }}>
@@ -760,7 +760,7 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
                                                                 </Typography>
                                                             </Typography>
                                                             <Typography sx={{
-                                                                fontSize: '0.6875rem',
+                                                                fontSize: '0.875rem',
                                                                 color: 'text.disabled',
                                                                 ...sxMono,
                                                             }}>
@@ -829,7 +829,7 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
                                                     mb: 0.25,
                                                 }}>
                                                     <Typography sx={{
-                                                        fontSize: '0.875rem',
+                                                        fontSize: '1rem',
                                                         fontWeight: 600,
                                                         color: 'text.primary',
                                                         ...sxMono,
@@ -838,7 +838,7 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
                                                     </Typography>
                                                     {db.encoding && (
                                                         <Typography sx={{
-                                                            fontSize: '0.6875rem',
+                                                            fontSize: '0.875rem',
                                                             color: 'text.disabled',
                                                         }}>
                                                             {db.encoding}
@@ -852,7 +852,7 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
                                                     mb: 0.5,
                                                 }}>
                                                     <Typography sx={{
-                                                        fontSize: '0.75rem',
+                                                        fontSize: '0.875rem',
                                                         color: 'text.secondary',
                                                         ...sxMono,
                                                     }}>
@@ -860,7 +860,7 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
                                                     </Typography>
                                                     {db.connection_limit != null && db.connection_limit >= 0 && (
                                                         <Typography sx={{
-                                                            fontSize: '0.6875rem',
+                                                            fontSize: '0.875rem',
                                                             color: 'text.disabled',
                                                         }}>
                                                             limit: {db.connection_limit}
@@ -878,7 +878,7 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
                                                         {extsByDb[db.name].map((ext) => (
                                                             <Box key={`${db.name}-${ext.name}`} sx={getExtChipSx(theme)}>
                                                                 <Typography component="span" sx={{
-                                                                    fontSize: '0.8125rem',
+                                                                    fontSize: '1rem',
                                                                     color: 'text.primary',
                                                                     fontWeight: 500,
                                                                     ...sxMono,
@@ -887,7 +887,7 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
                                                                 </Typography>
                                                                 {ext.version && (
                                                                     <Typography component="span" sx={{
-                                                                        fontSize: '0.625rem',
+                                                                        fontSize: '0.875rem',
                                                                         color: 'text.disabled',
                                                                         ...sxMono,
                                                                     }}>
@@ -913,7 +913,7 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
                                                                 flexShrink: 0,
                                                             }} />
                                                             <Typography sx={{
-                                                                fontSize: '0.8125rem',
+                                                                fontSize: '1rem',
                                                                 color: 'text.secondary',
                                                                 lineHeight: 1.5,
                                                             }}>
@@ -946,7 +946,7 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
                                     {Object.entries(settingsByCategory).map(([category, catSettings]) => (
                                         <Box key={category} sx={{ mb: 1.5, '&:last-child': { mb: 0 } }}>
                                             <Typography sx={{
-                                                fontSize: '0.625rem',
+                                                fontSize: '0.875rem',
                                                 fontWeight: 700,
                                                 textTransform: 'uppercase',
                                                 letterSpacing: '0.1em',
@@ -958,7 +958,7 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
                                             {catSettings.map((s) => (
                                                 <Box key={s.name} sx={getSettingRowSx(theme)}>
                                                     <Typography sx={{
-                                                        fontSize: '0.8125rem',
+                                                        fontSize: '1rem',
                                                         color: 'text.secondary',
                                                         ...sxMono,
                                                         flexShrink: 0,
@@ -966,7 +966,7 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
                                                         {s.name}
                                                     </Typography>
                                                     <Typography sx={{
-                                                        fontSize: '0.8125rem',
+                                                        fontSize: '1rem',
                                                         color: 'text.primary',
                                                         fontWeight: 500,
                                                         ...sxMono,
@@ -975,7 +975,7 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
                                                         {s.setting || '—'}
                                                         {s.unit && (
                                                             <Typography component="span" sx={{
-                                                                fontSize: '0.6875rem',
+                                                                fontSize: '0.875rem',
                                                                 color: 'text.disabled',
                                                                 ml: 0.5,
                                                             }}>
@@ -998,7 +998,7 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
             <DialogActions sx={getFooterSx(theme)}>
                 {data?.collected_at && (
                     <Typography sx={{
-                        fontSize: '0.6875rem',
+                        fontSize: '0.875rem',
                         color: 'text.disabled',
                         mr: 'auto',
                     }}>

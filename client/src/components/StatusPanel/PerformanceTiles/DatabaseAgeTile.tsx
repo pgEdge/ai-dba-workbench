@@ -88,7 +88,7 @@ const DatabaseAgeTile: React.FC<DatabaseAgeTileProps> = ({
                                 mb: 0.25,
                             }}>
                                 <Typography sx={{
-                                    fontSize: '0.6875rem',
+                                    fontSize: '0.875rem',
                                     fontWeight: 500,
                                     color: 'text.primary',
                                     overflow: 'hidden',
@@ -100,7 +100,7 @@ const DatabaseAgeTile: React.FC<DatabaseAgeTileProps> = ({
                                     {label}
                                 </Typography>
                                 <Typography sx={{
-                                    fontSize: '0.625rem',
+                                    fontSize: '0.875rem',
                                     fontWeight: 600,
                                     fontFamily: '"JetBrains Mono", "SF Mono", monospace',
                                     color,

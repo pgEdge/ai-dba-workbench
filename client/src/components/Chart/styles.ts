@@ -29,7 +29,7 @@ export const CHART_PAPER_SX = {
 
 export const CHART_TITLE_SX = {
     fontWeight: 600,
-    fontSize: '0.875rem',
+    fontSize: '1rem',
     color: 'text.primary',
     mb: 1,
 };

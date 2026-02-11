@@ -81,7 +81,7 @@ const EffectivePermissionsPanel: React.FC<EffectivePermissionsPanelProps> = ({
     const chipSx = {
         borderColor: alpha(theme.palette.primary.main, 0.3),
         color: 'text.primary',
-        fontSize: '0.75rem',
+        fontSize: '0.875rem',
         height: 26,
         '& .MuiChip-label': { px: 1 },
     };

@@ -73,7 +73,7 @@ const MetricCard = ({ label, value, trend, trendValue, icon: Icon, color }) => {
                         <TrendIcon sx={{ fontSize: 14, color: trendColor }} />
                         <Typography
                             variant="caption"
-                            sx={{ color: trendColor, fontSize: '0.6875rem', fontWeight: 600 }}
+                            sx={{ color: trendColor, fontSize: '0.875rem', fontWeight: 600 }}
                         >
                             {trendValue}
                         </Typography>

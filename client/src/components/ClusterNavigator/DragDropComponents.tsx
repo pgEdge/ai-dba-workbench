@@ -75,13 +75,13 @@ const overlayContainerBase = {
 
 const overlayClusterNameSx = {
     fontWeight: 500,
-    fontSize: '0.8125rem',
+    fontSize: '1rem',
     color: 'text.primary',
 };
 
 const overlayChipBase = {
     height: 18,
-    fontSize: '0.625rem',
+    fontSize: '0.875rem',
     fontWeight: 600,
     '& .MuiChip-label': { px: 0.75 },
 };

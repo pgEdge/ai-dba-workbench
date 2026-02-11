@@ -48,13 +48,13 @@ const deleteIconSx = { fontSize: 14 };
 const initializingChipBase = {
     height: 20,
     maxWidth: 'none',
-    fontSize: '0.625rem',
+    fontSize: '0.875rem',
     fontWeight: 600,
     '& .MuiChip-label': { px: 1 },
 };
 
 const serverNameBase = {
-    fontSize: '0.8125rem',
+    fontSize: '0.875rem',
     lineHeight: 1.3,
     overflow: 'hidden',
     textOverflow: 'ellipsis',

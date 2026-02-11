@@ -13,12 +13,12 @@ import { Theme } from '@mui/material/styles';
 
 // ---- Tooltip styles ----
 export const tooltipPaddingSx = { p: 0.5 };
-export const tooltipClusterTitleSx = { fontSize: '0.75rem', fontWeight: 600 };
-export const tooltipClusterItemSx = { fontSize: '0.6875rem', color: 'grey.300' };
-export const tooltipClusterMoreSx = { fontSize: '0.6875rem', color: 'grey.400' };
-export const tooltipSingleTitleSx = { fontSize: '0.75rem', fontWeight: 600 };
-export const tooltipSingleTimeSx = { fontSize: '0.6875rem', color: 'grey.300' };
-export const tooltipSingleServerSx = { fontSize: '0.6875rem', color: 'grey.400' };
+export const tooltipClusterTitleSx = { fontSize: '0.875rem', fontWeight: 600 };
+export const tooltipClusterItemSx = { fontSize: '0.875rem', color: 'grey.300' };
+export const tooltipClusterMoreSx = { fontSize: '0.875rem', color: 'grey.400' };
+export const tooltipSingleTitleSx = { fontSize: '0.875rem', fontWeight: 600 };
+export const tooltipSingleTimeSx = { fontSize: '0.875rem', color: 'grey.300' };
+export const tooltipSingleServerSx = { fontSize: '0.875rem', color: 'grey.400' };
 
 // ---- Cluster badge styles ----
 const clusterBadgeBaseSx = {
@@ -30,7 +30,7 @@ const clusterBadgeBaseSx = {
     px: 0.5,
     borderRadius: '8px',
     color: 'common.white',
-    fontSize: '0.5625rem',
+    fontSize: '0.875rem',
     fontWeight: 700,
     display: 'flex',
     alignItems: 'center',
@@ -45,7 +45,7 @@ export const getClusterBadgeSx = (theme: Theme) => ({
 
 // ---- Detail section styles ----
 export const sectionLabelSx = {
-    fontSize: '0.6875rem',
+    fontSize: '0.875rem',
     fontWeight: 600,
     color: 'text.secondary',
     textTransform: 'uppercase',
@@ -65,14 +65,14 @@ export const getCodeBlockSx = (theme: Theme) => ({
         ? alpha(theme.palette.grey[700], 0.5)
         : theme.palette.grey[100],
     fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-    fontSize: '0.75rem',
+    fontSize: '0.875rem',
     maxHeight: 300,
     overflow: 'auto',
 });
 
 export const getCodeBlockSmallSx = (theme: Theme) => ({
     ...getCodeBlockSx(theme),
-    fontSize: '0.6875rem',
+    fontSize: '0.875rem',
 });
 
 export const settingNameSx = {
@@ -97,7 +97,7 @@ export const hbaRuleTextSx = {
 export const falsePositiveChipSx = (theme: Theme) => ({
     ml: 1,
     height: 16,
-    fontSize: '0.5625rem',
+    fontSize: '0.875rem',
     fontWeight: 600,
     textTransform: 'uppercase',
     bgcolor: alpha(theme.palette.warning.main, 0.15),
@@ -107,26 +107,26 @@ export const falsePositiveChipSx = (theme: Theme) => ({
 
 export const metricValueMonoSx = {
     fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-    fontSize: '0.875rem',
+    fontSize: '1rem',
     fontWeight: 600,
 };
 
 export const metricUnitSx = {
     fontWeight: 400,
     color: 'text.secondary',
-    fontSize: '0.75rem',
+    fontSize: '0.875rem',
     ml: 0.5,
 };
 
 export const thresholdSx = {
     fontWeight: 400,
     color: 'text.secondary',
-    fontSize: '0.75rem',
+    fontSize: '0.875rem',
 };
 
 export const severityChipSx = (color) => ({
     height: 18,
-    fontSize: '0.5625rem',
+    fontSize: '0.875rem',
     fontWeight: 600,
     textTransform: 'uppercase',
     bgcolor: alpha(color, 0.15),
@@ -141,25 +141,25 @@ export const restartCodeBlockSx = (theme: Theme) => ({
         ? alpha(theme.palette.grey[700], 0.5)
         : theme.palette.grey[100],
     fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-    fontSize: '0.75rem',
+    fontSize: '0.875rem',
 });
 
 export const databaseNameSx = (theme: Theme) => ({
     fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-    fontSize: '0.8125rem',
+    fontSize: '1rem',
     fontWeight: 500,
     color: theme.palette.secondary.main,
 });
 
 export const ackNameSx = {
     fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-    fontSize: '0.8125rem',
+    fontSize: '1rem',
     fontWeight: 500,
     color: 'text.primary',
 };
 
 export const ackMessageSx = {
-    fontSize: '0.75rem',
+    fontSize: '0.875rem',
     color: 'text.secondary',
     mt: 0.5,
     fontStyle: 'italic',
@@ -173,7 +173,7 @@ export const expandableShowMoreBaseSx = {
     alignItems: 'center',
     gap: 0.5,
     color: 'primary.main',
-    fontSize: '0.6875rem',
+    fontSize: '0.875rem',
     fontWeight: 500,
     '&:hover': {
         textDecoration: 'underline',
@@ -210,13 +210,13 @@ export const getCollapsibleHeaderHoverSx = (theme: Theme) => ({
 
 export const collapsibleTitleSx = {
     fontWeight: 600,
-    fontSize: '0.8125rem',
+    fontSize: '1rem',
     color: 'text.primary',
     lineHeight: 1.3,
 };
 
 export const collapsibleTimeSx = {
-    fontSize: '0.6875rem',
+    fontSize: '0.875rem',
     color: 'text.secondary',
 };
 
@@ -230,7 +230,7 @@ export const collapseToggleSx = {
 export const collapseContentSx = { px: 1.5, pb: 1.5 };
 
 export const summarySx = {
-    fontSize: '0.75rem',
+    fontSize: '0.875rem',
     color: 'text.secondary',
     lineHeight: 1.4,
     mb: 1,
@@ -263,12 +263,12 @@ export const getDetailPanelHeaderSx = (theme: Theme) => ({
 
 export const detailPanelTitleSx = {
     fontWeight: 600,
-    fontSize: '0.875rem',
+    fontSize: '1rem',
     color: 'text.primary',
 };
 
 export const detailPanelSubtitleSx = {
-    fontSize: '0.75rem',
+    fontSize: '0.875rem',
     color: 'text.secondary',
     mt: 0.25,
 };
@@ -305,8 +305,8 @@ export const timelineCanvasContainerSx = {
 export const timeAxisSx = {
     position: 'absolute',
     bottom: 0,
-    left: 0,
-    right: 0,
+    left: 16,
+    right: 16,
     height: 20,
     display: 'flex',
     justifyContent: 'space-between',
@@ -321,7 +321,7 @@ export const getTickMarkSx = (theme: Theme) => ({
 });
 
 export const tickLabelSx = {
-    fontSize: '0.5625rem',
+    fontSize: '0.875rem',
     color: 'text.secondary',
     whiteSpace: 'nowrap',
 };
@@ -361,7 +361,7 @@ export const headerTitleIconSx = { fontSize: 16, color: 'primary.main' };
 export const headerTitleTextSx = {
     fontWeight: 600,
     color: 'text.primary',
-    fontSize: '0.8125rem',
+    fontSize: '1rem',
 };
 
 export const headerExpandSx = { p: 0.25 };
@@ -377,7 +377,7 @@ export const getToggleGroupSx = (theme: Theme) => ({
     '& .MuiToggleButton-root': {
         px: 1,
         py: 0,
-        fontSize: '0.625rem',
+        fontSize: '0.875rem',
         fontWeight: 600,
         textTransform: 'none',
         color: 'text.secondary',
@@ -408,7 +408,7 @@ export const getToggleGroupSx = (theme: Theme) => ({
 
 export const getEventCountChipSx = (theme, eventCount) => ({
     height: 18,
-    fontSize: '0.625rem',
+    fontSize: '0.875rem',
     fontWeight: 600,
     bgcolor: eventCount > 0
         ? alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.15 : 0.1)
@@ -419,7 +419,7 @@ export const getEventCountChipSx = (theme, eventCount) => ({
 
 export const getFilterChipSx = (theme, isSelected, color) => ({
     height: 20,
-    fontSize: '0.5625rem',
+    fontSize: '0.875rem',
     fontWeight: 500,
     cursor: 'pointer',
     bgcolor: isSelected
@@ -465,13 +465,13 @@ export const getEmptyStateSx = (theme: Theme) => ({
 
 export const emptyStateTitleSx = {
     color: 'text.secondary',
-    fontSize: '0.8125rem',
+    fontSize: '1rem',
     fontWeight: 500,
 };
 
 export const emptyStateSubtitleSx = {
     color: 'text.disabled',
-    fontSize: '0.75rem',
+    fontSize: '0.875rem',
 };
 
 // ---- Outer container ----

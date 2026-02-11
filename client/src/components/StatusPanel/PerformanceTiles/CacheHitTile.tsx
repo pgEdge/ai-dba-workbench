@@ -84,7 +84,7 @@ const CacheHitTile: React.FC<CacheHitTileProps> = ({
                         {headlineValue !== null ? headlineValue.toFixed(1) : '--'}
                     </Typography>
                     <Typography sx={{
-                        fontSize: '0.875rem',
+                        fontSize: '1rem',
                         fontWeight: 600,
                         color: 'text.secondary',
                     }}>
@@ -92,7 +92,7 @@ const CacheHitTile: React.FC<CacheHitTileProps> = ({
                     </Typography>
                     {isMultiServer && (
                         <Typography sx={{
-                            fontSize: '0.625rem',
+                            fontSize: '0.875rem',
                             color: 'text.disabled',
                             ml: 0.5,
                         }}>

@@ -157,7 +157,7 @@ const AdminProbes: React.FC = () => {
     return (
         <Box>
             <Typography variant="h6" sx={{ ...pageHeadingSx, mb: 2 }}>
-                Probe Defaults
+                Probe defaults
             </Typography>
 
             {error && (
@@ -237,7 +237,7 @@ const AdminProbes: React.FC = () => {
                 fullWidth
             >
                 <DialogTitle sx={dialogTitleSx}>
-                    Edit Probe: {editProbe?.name}
+                    Edit probe: {editProbe?.name}
                 </DialogTitle>
                 <DialogContent>
                     <Box sx={{ display: 'flex', alignItems: 'center', mt: 1, mb: 2 }}>

@@ -522,8 +522,8 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
                                                                         <ListItemText
                                                                             primary={username}
                                                                             secondary="user"
-                                                                            primaryTypographyProps={{ fontSize: '0.875rem' }}
-                                                                            secondaryTypographyProps={{ fontSize: '0.75rem' }}
+                                                                            primaryTypographyProps={{ fontSize: '1rem' }}
+                                                                            secondaryTypographyProps={{ fontSize: '0.875rem' }}
                                                                         />
                                                                         <ListItemSecondaryAction>
                                                                             <IconButton
@@ -543,8 +543,8 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
                                                                         <ListItemText
                                                                             primary={groupName}
                                                                             secondary="group"
-                                                                            primaryTypographyProps={{ fontSize: '0.875rem' }}
-                                                                            secondaryTypographyProps={{ fontSize: '0.75rem' }}
+                                                                            primaryTypographyProps={{ fontSize: '1rem' }}
+                                                                            secondaryTypographyProps={{ fontSize: '0.875rem' }}
                                                                         />
                                                                         <ListItemSecondaryAction>
                                                                             <IconButton
@@ -561,7 +561,7 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
                                                                 ))}
                                                             </List>
                                                         ) : (
-                                                            <Typography color="text.secondary" sx={{ fontSize: '0.875rem', py: 1 }}>
+                                                            <Typography color="text.secondary" sx={{ fontSize: '1rem', py: 1 }}>
                                                                 No members in this group.
                                                             </Typography>
                                                         )}
@@ -608,7 +608,7 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
 
             {/* Create Group Dialog */}
             <Dialog open={createOpen} onClose={() => !createLoading && setCreateOpen(false)} maxWidth="xs" fullWidth>
-                <DialogTitle sx={dialogTitleSx}>Create Group</DialogTitle>
+                <DialogTitle sx={dialogTitleSx}>Create group</DialogTitle>
                 <DialogContent>
                     {createError && (
                         <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }}>{createError}</Alert>
@@ -652,7 +652,7 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
 
             {/* Edit Group Dialog */}
             <Dialog open={editOpen} onClose={() => !editLoading && setEditOpen(false)} maxWidth="xs" fullWidth>
-                <DialogTitle sx={dialogTitleSx}>Edit Group</DialogTitle>
+                <DialogTitle sx={dialogTitleSx}>Edit group</DialogTitle>
                 <DialogContent>
                     {editError && (
                         <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }}>{editError}</Alert>
@@ -707,7 +707,7 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
 
             {/* Add Member Dialog */}
             <Dialog open={addMemberOpen} onClose={() => !addMemberLoading && setAddMemberOpen(false)} maxWidth="xs" fullWidth>
-                <DialogTitle sx={dialogTitleSx}>Add Member</DialogTitle>
+                <DialogTitle sx={dialogTitleSx}>Add member</DialogTitle>
                 <DialogContent>
                     {addMemberError && (
                         <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }}>{addMemberError}</Alert>

@@ -328,7 +328,7 @@ const AlertOverrideEditDialog: React.FC<AlertOverrideEditDialogProps> = ({
             fullWidth
         >
             <DialogTitle sx={dialogTitleSx}>
-                Edit Alert Override
+                Edit alert override
                 {context?.rule?.name && (
                     <Typography
                         variant="body2"
@@ -402,7 +402,7 @@ const AlertOverrideEditDialog: React.FC<AlertOverrideEditDialogProps> = ({
                                                     size="small"
                                                     sx={{
                                                         height: 18,
-                                                        fontSize: '0.625rem',
+                                                        fontSize: '0.875rem',
                                                         bgcolor: alpha(
                                                             theme.palette.primary.main,
                                                             0.12

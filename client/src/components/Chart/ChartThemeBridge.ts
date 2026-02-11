@@ -83,6 +83,7 @@ export function useEChartsTheme() {
                 },
                 axisLabel: {
                     color: palette.text.secondary,
+                    fontSize: 14,
                 },
                 splitLine: {
                     lineStyle: {
@@ -103,6 +104,7 @@ export function useEChartsTheme() {
                 },
                 axisLabel: {
                     color: palette.text.secondary,
+                    fontSize: 14,
                 },
                 splitLine: {
                     lineStyle: {

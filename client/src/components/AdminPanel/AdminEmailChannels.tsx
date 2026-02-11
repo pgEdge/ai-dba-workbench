@@ -639,7 +639,7 @@ const AdminEmailChannels: React.FC = () => {
         <Box>
             <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
                 <Typography variant="h6" sx={pageHeadingSx}>
-                    Email Channels
+                    Email channels
                 </Typography>
                 <Button
                     variant="contained"
@@ -769,7 +769,7 @@ const AdminEmailChannels: React.FC = () => {
                 fullWidth
             >
                 <DialogTitle sx={dialogTitleSx}>
-                    {isEditing ? `Edit Channel: ${editingChannel.name}` : 'Create Email Channel'}
+                    {isEditing ? `Edit channel: ${editingChannel.name}` : 'Create email channel'}
                 </DialogTitle>
                 <DialogContent>
                     {dialogError && (

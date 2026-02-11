@@ -74,8 +74,8 @@ const headerRowSx = {
 
 const headerTitleSx = {
     color: 'text.primary',
-    fontSize: '0.6875rem',
-    fontWeight: 600,
+    fontSize: '1rem',
+    fontWeight: 700,
     letterSpacing: '0.08em',
 };
 
@@ -101,7 +101,7 @@ const emptyIconSx = { fontSize: 48, color: 'text.disabled', mb: 1.5 };
 const emptyTitleSx = { color: 'text.secondary', mb: 0.5 };
 const emptySubtitleSx = { color: 'text.disabled' };
 
-const footerCountSx = { color: 'text.disabled', fontSize: '0.625rem' };
+const footerCountSx = { color: 'text.disabled', fontSize: '0.875rem' };
 
 const addButtonBaseSx = {
     p: 0.5,
@@ -197,7 +197,7 @@ const getEstateSx = (theme: Theme, isSelected: boolean) => ({
 const getSearchFieldSx = (theme: Theme) => ({
     '& .MuiOutlinedInput-root': {
         bgcolor: alpha(theme.palette.background.default, theme.palette.mode === 'dark' ? 0.5 : 0.8),
-        fontSize: '0.8125rem',
+        fontSize: '1rem',
         '& fieldset': {
             borderColor: 'divider',
         },
@@ -232,7 +232,7 @@ const getFooterSx = (theme: Theme) => ({
 
 const getLastRefreshSx = (theme: Theme) => ({
     color: theme.palette.mode === 'dark' ? alpha(theme.palette.common.white, 0.5) : 'text.disabled',
-    fontSize: '0.625rem',
+    fontSize: '0.875rem',
 });
 
 const getSpinnerSx = (loading: boolean) => ({
@@ -774,7 +774,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
                             variant="caption"
                             sx={{
                                 color: isEstateSelected ? 'text.primary' : 'text.secondary',
-                                fontSize: '0.6875rem',
+                                fontSize: '0.875rem',
                                 fontWeight: isEstateSelected ? 600 : 400,
                                 flex: 1,
                             }}

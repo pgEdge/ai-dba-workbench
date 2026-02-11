@@ -59,26 +59,26 @@ const LIST_SX = {
 
 const BANNER_TITLE_SX = {
     fontWeight: 600,
-    fontSize: '0.8125rem',
+    fontSize: '1rem',
     lineHeight: 1.2,
 };
 
 const BANNER_REASON_SX = {
-    fontSize: '0.6875rem',
+    fontSize: '0.875rem',
     mt: 0.25,
     wordBreak: 'break-word',
 };
 
 const ITEM_REASON_SX = {
     color: 'text.secondary',
-    fontSize: '0.6875rem',
+    fontSize: '0.875rem',
     mt: 0.25,
     wordBreak: 'break-word',
 };
 
 const ITEM_META_SX = {
     color: 'text.disabled',
-    fontSize: '0.625rem',
+    fontSize: '0.875rem',
     display: 'flex',
     alignItems: 'center',
     gap: 0.25,
@@ -86,24 +86,24 @@ const ITEM_META_SX = {
 
 const SCHEDULE_NAME_SX = {
     fontWeight: 600,
-    fontSize: '0.8125rem',
+    fontSize: '1rem',
     lineHeight: 1.2,
     color: 'text.primary',
 };
 
 const SCHEDULE_CRON_SX = {
-    fontSize: '0.6875rem',
+    fontSize: '0.875rem',
     fontFamily: '"JetBrains Mono", "SF Mono", monospace',
     color: 'text.secondary',
 };
 
 const SCHEDULE_DETAIL_SX = {
     color: 'text.secondary',
-    fontSize: '0.6875rem',
+    fontSize: '0.875rem',
 };
 
 const SECTION_LABEL_SX = {
-    fontSize: '0.625rem',
+    fontSize: '0.875rem',
     fontWeight: 700,
     textTransform: 'uppercase',
     letterSpacing: '0.05em',
@@ -230,7 +230,7 @@ const BlackoutManagementDialog: React.FC<BlackoutManagementDialogProps> = ({
 
     const activeScopeChipSx = useMemo(() => ({
         height: 16,
-        fontSize: '0.5625rem',
+        fontSize: '0.875rem',
         fontWeight: 600,
         textTransform: 'uppercase',
         bgcolor: alpha(amberColor, 0.15),
@@ -240,7 +240,7 @@ const BlackoutManagementDialog: React.FC<BlackoutManagementDialogProps> = ({
 
     const activeTimeChipSx = useMemo(() => ({
         height: 16,
-        fontSize: '0.5625rem',
+        fontSize: '0.875rem',
         fontWeight: 600,
         bgcolor: alpha(amberColor, 0.12),
         color: amberColor,
@@ -248,7 +248,7 @@ const BlackoutManagementDialog: React.FC<BlackoutManagementDialogProps> = ({
     }), [amberColor]);
 
     const activeStopButtonSx = useMemo(() => ({
-        fontSize: '0.6875rem',
+        fontSize: '0.875rem',
         textTransform: 'none',
         fontWeight: 600,
         color: amberColor,
@@ -273,7 +273,7 @@ const BlackoutManagementDialog: React.FC<BlackoutManagementDialogProps> = ({
 
     const itemScopeChipSx = useMemo(() => ({
         height: 16,
-        fontSize: '0.625rem',
+        fontSize: '0.875rem',
         bgcolor: alpha(theme.palette.grey[500], 0.15),
         color: 'text.secondary',
         '& .MuiChip-label': CHIP_LABEL_SX,
@@ -289,7 +289,7 @@ const BlackoutManagementDialog: React.FC<BlackoutManagementDialogProps> = ({
     }), [theme]);
 
     const splitButtonSx = useMemo(() => ({
-        fontSize: '0.8125rem',
+        fontSize: '1rem',
         textTransform: 'none',
         fontWeight: 600,
     }), []);
@@ -309,7 +309,7 @@ const BlackoutManagementDialog: React.FC<BlackoutManagementDialogProps> = ({
             >
                 <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <Typography variant="h6" component="span" sx={{ fontWeight: 600 }}>
-                        Blackout Management
+                        Blackout management
                     </Typography>
                     <IconButton
                         aria-label="close"
@@ -326,7 +326,7 @@ const BlackoutManagementDialog: React.FC<BlackoutManagementDialogProps> = ({
                         <Typography
                             sx={{
                                 color: 'text.disabled',
-                                fontSize: '0.75rem',
+                                fontSize: '0.875rem',
                                 py: 4,
                                 textAlign: 'center',
                             }}

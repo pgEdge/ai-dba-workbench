@@ -107,7 +107,7 @@ const getAvatarSx = (theme: Theme) => ({
     width: 32,
     height: 32,
     bgcolor: theme.palette.primary.main,
-    fontSize: '0.875rem',
+    fontSize: '1rem',
     fontWeight: 600,
 });
 
@@ -151,7 +151,7 @@ const getLogoutMenuItemSx = (theme: Theme) => ({
 const listItemIconSx = { color: 'inherit' };
 
 const signOutTypographyProps = {
-    fontSize: '0.875rem',
+    fontSize: '1rem',
     fontWeight: 500,
 };
 

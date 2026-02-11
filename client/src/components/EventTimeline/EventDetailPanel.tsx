@@ -79,7 +79,7 @@ const SingleEventCard = memo(({ event, isCompact = false }) => {
                     <Typography
                         sx={{
                             fontWeight: 600,
-                            fontSize: isCompact ? '0.8125rem' : '0.875rem',
+                            fontSize: isCompact ? '1rem' : '0.875rem',
                             color: 'text.primary',
                             lineHeight: 1.3,
                         }}
@@ -88,7 +88,7 @@ const SingleEventCard = memo(({ event, isCompact = false }) => {
                     </Typography>
                     <Typography
                         sx={{
-                            fontSize: '0.6875rem',
+                            fontSize: '0.875rem',
                             color: 'text.secondary',
                             mt: 0.25,
                         }}
@@ -112,7 +112,7 @@ const SingleEventCard = memo(({ event, isCompact = false }) => {
                 <Typography
                     sx={{
                         mt: 0.75,
-                        fontSize: '0.75rem',
+                        fontSize: '0.875rem',
                         color: 'text.secondary',
                         lineHeight: 1.4,
                         pl: isCompact ? 4 : 5.5,

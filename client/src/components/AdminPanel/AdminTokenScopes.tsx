@@ -662,7 +662,7 @@ const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
                                                             sx={{
                                                                 bgcolor: alpha(theme.palette.info.main, 0.15),
                                                                 color: theme.palette.info.main,
-                                                                fontSize: '0.75rem',
+                                                                fontSize: '0.875rem',
                                                             }}
                                                         />
                                                     )}
@@ -673,7 +673,7 @@ const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
                                                             sx={{
                                                                 bgcolor: alpha(theme.palette.warning.main, 0.15),
                                                                 color: theme.palette.warning.main,
-                                                                fontSize: '0.75rem',
+                                                                fontSize: '0.875rem',
                                                             }}
                                                         />
                                                     )}
@@ -728,7 +728,7 @@ const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
                                                                 connections={connections}
                                                             />
                                                         ) : (
-                                                            <Typography color="text.secondary" sx={{ fontSize: '0.875rem' }}>
+                                                            <Typography color="text.secondary" sx={{ fontSize: '1rem' }}>
                                                                 Unrestricted - this token has access to all permissions granted to its owner.
                                                             </Typography>
                                                         )}
@@ -801,7 +801,7 @@ curl -s -X POST -H "Authorization: Bearer <token>" \\
 
             {/* Create Token Dialog */}
             <Dialog open={createOpen} onClose={() => !createLoading && setCreateOpen(false)} maxWidth="xs" fullWidth>
-                <DialogTitle sx={dialogTitleSx}>Create Token</DialogTitle>
+                <DialogTitle sx={dialogTitleSx}>Create token</DialogTitle>
                 <DialogContent>
                     {createError && (
                         <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }}>{createError}</Alert>
@@ -1006,7 +1006,7 @@ curl -s -X POST -H "Authorization: Bearer <token>" \\
                 maxWidth="sm"
                 fullWidth
             >
-                <DialogTitle sx={dialogTitleSx}>Token Created</DialogTitle>
+                <DialogTitle sx={dialogTitleSx}>Token created</DialogTitle>
                 <DialogContent>
                     <Alert severity="warning" sx={{ mb: 2, borderRadius: 1 }}>
                         Save this token securely. It will not be shown again.
@@ -1017,7 +1017,7 @@ curl -s -X POST -H "Authorization: Bearer <token>" \\
                             alignItems: 'center',
                             gap: 1,
                             fontFamily: 'monospace',
-                            fontSize: '0.875rem',
+                            fontSize: '1rem',
                             bgcolor: alpha(theme.palette.text.primary, 0.05),
                             border: '1px solid',
                             borderColor: theme.palette.divider,
@@ -1049,7 +1049,7 @@ curl -s -X POST -H "Authorization: Bearer <token>" \\
             <Dialog open={editOpen} onClose={() => !editLoading && setEditOpen(false)} maxWidth="sm" fullWidth>
                 <DialogTitle sx={{ ...dialogTitleSx, display: 'flex', alignItems: 'center' }}>
                     <Box sx={{ flex: 1 }}>
-                        Edit Token: {editToken?.name || editToken?.token_prefix || 'Token'}
+                        Edit token: {editToken?.name || editToken?.token_prefix || 'Token'}
                     </Box>
                     <IconButton onClick={() => setEditOpen(false)} size="small" disabled={editLoading}>
                         <CloseIcon />

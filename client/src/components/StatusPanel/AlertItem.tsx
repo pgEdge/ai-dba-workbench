@@ -21,7 +21,7 @@ import { useTheme } from '@mui/material/styles';
 import {
     Warning as WarningIcon,
     Error as ErrorIcon,
-    Schedule as ScheduleIcon,
+
     CheckCircleOutline as AckIcon,
     Undo as UnackIcon,
     Psychology as AnalyzeIcon,
@@ -35,7 +35,7 @@ import {
     CHIP_LABEL_SX,
     FLEX_1_MIN0_SX,
     ICON_16_SX,
-    ICON_10_SX,
+
     ALERT_TITLE_BASE_SX,
     ALERT_THRESHOLD_SX,
     ALERT_DESCRIPTION_SX,
@@ -80,7 +80,7 @@ const AlertItem = ({ alert, showServer = false, onAcknowledge, onUnacknowledge, 
 
     const dbChipSx = useMemo(() => ({
         height: 16,
-        fontSize: '0.625rem',
+        fontSize: '0.875rem',
         bgcolor: alpha(theme.palette.secondary.main, 0.15),
         color: theme.palette.secondary.main,
         '& .MuiChip-label': CHIP_LABEL_SX,
@@ -88,7 +88,7 @@ const AlertItem = ({ alert, showServer = false, onAcknowledge, onUnacknowledge, 
 
     const objectChipSx = useMemo(() => ({
         height: 16,
-        fontSize: '0.625rem',
+        fontSize: '0.875rem',
         bgcolor: alpha(theme.palette.custom.status.online, 0.15),
         color: theme.palette.custom.status.connected,
         '& .MuiChip-label': CHIP_LABEL_SX,
@@ -141,7 +141,7 @@ const AlertItem = ({ alert, showServer = false, onAcknowledge, onUnacknowledge, 
 
     const serverChipSx = useMemo(() => ({
         height: 16,
-        fontSize: '0.625rem',
+        fontSize: '0.875rem',
         bgcolor: alpha(theme.palette.grey[500], 0.15),
         color: 'text.secondary',
         '& .MuiChip-label': CHIP_LABEL_SX,
@@ -172,7 +172,7 @@ const AlertItem = ({ alert, showServer = false, onAcknowledge, onUnacknowledge, 
                     )}
                     {alert.objectName && (
                         <Chip
-                            icon={<TableIcon sx={{ fontSize: '0.625rem !important' }} />}
+                            icon={<TableIcon sx={{ fontSize: '0.875rem !important' }} />}
                             label={alert.objectName}
                             size="small"
                             sx={objectChipSx}
@@ -207,7 +207,6 @@ const AlertItem = ({ alert, showServer = false, onAcknowledge, onUnacknowledge, 
             {/* Time and severity */}
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexShrink: 0 }}>
                 <Typography sx={ALERT_TIME_SX}>
-                    <ScheduleIcon sx={ICON_10_SX} />
                     {alert.time}
                 </Typography>
                 <Chip label={alert.severity} size="small" sx={severityChipSx} />

@@ -56,7 +56,7 @@ const sectionLabelSx = {
     mb: 1,
     mt: 2,
     textTransform: 'uppercase',
-    fontSize: '0.75rem',
+    fontSize: '0.875rem',
     letterSpacing: '0.05em',
 };
 
@@ -271,7 +271,7 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
     // Scope chip styles
     const scopeChipSx = useMemo(() => ({
         height: 20,
-        fontSize: '0.6875rem',
+        fontSize: '0.875rem',
         fontWeight: 500,
         bgcolor: alpha(theme.palette.primary.main, 0.1),
         color: theme.palette.primary.main,
@@ -299,7 +299,7 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
     const modeToggleSx = useMemo(() => ({
         '& .MuiToggleButton-root': {
             textTransform: 'none',
-            fontSize: '0.8125rem',
+            fontSize: '1rem',
             fontWeight: 500,
             px: 2,
             py: 0.5,
@@ -325,7 +325,7 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
             PaperProps={{ sx: dialogPaperSx }}
         >
             <DialogTitle sx={dialogTitleSx}>
-                Start Blackout
+                Start blackout
             </DialogTitle>
 
             <DialogContent>
@@ -357,7 +357,7 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
                                     label={
                                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
                                             <Icon sx={{ fontSize: 16, color: 'text.secondary' }} />
-                                            <Typography sx={{ fontSize: '0.875rem' }}>
+                                            <Typography sx={{ fontSize: '1rem' }}>
                                                 {opt.label}
                                             </Typography>
                                         </Box>
@@ -394,7 +394,7 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
                 {/* Start Now mode */}
                 {mode === 'now' && (
                     <Box sx={{ mt: 2 }}>
-                        <Typography sx={{ fontSize: '0.75rem', color: 'text.secondary', mb: 1 }}>
+                        <Typography sx={{ fontSize: '0.875rem', color: 'text.secondary', mb: 1 }}>
                             Duration
                         </Typography>
                         <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap', mb: 2 }}>
@@ -443,7 +443,7 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
                             />
                         </Box>
                         {computedEndTimeLabel && (
-                            <Typography sx={{ fontSize: '0.6875rem', color: 'text.disabled', mt: 1 }}>
+                            <Typography sx={{ fontSize: '0.875rem', color: 'text.disabled', mt: 1 }}>
                                 Ends at {computedEndTimeLabel}
                             </Typography>
                         )}

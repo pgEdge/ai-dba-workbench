@@ -235,14 +235,14 @@ const AIOverview: React.FC<AIOverviewProps> = ({ mode = 'light', selection }) =>
     }), []);
 
     const labelSx = useMemo(() => ({
-        fontSize: '0.8125rem',
+        fontSize: '1rem',
         fontWeight: 600,
         color: 'text.primary',
         lineHeight: 1,
     }), []);
 
     const staleBadgeSx = useMemo(() => ({
-        fontSize: '0.5625rem',
+        fontSize: '0.875rem',
         fontWeight: 500,
         color: theme.palette.warning.main,
         ml: 1,

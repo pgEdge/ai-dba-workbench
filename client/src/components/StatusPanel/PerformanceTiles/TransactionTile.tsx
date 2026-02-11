@@ -54,7 +54,7 @@ const TransactionTile: React.FC<TransactionTileProps> = ({
             ],
         };
 
-        const axisLabelStyle = { fontSize: 9, color: theme.palette.text.secondary };
+        const axisLabelStyle = { fontSize: 14, color: theme.palette.text.secondary };
 
         const options = {
             grid: { top: 8, right: 4, bottom: 30, left: 4, containLabel: true },

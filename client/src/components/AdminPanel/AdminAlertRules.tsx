@@ -179,7 +179,7 @@ const AdminAlertRules: React.FC = () => {
     return (
         <Box>
             <Typography variant="h6" sx={{ ...pageHeadingSx, mb: 2 }}>
-                Alert Defaults
+                Alert defaults
             </Typography>
 
             {error && (
@@ -285,7 +285,7 @@ const AdminAlertRules: React.FC = () => {
                 fullWidth
             >
                 <DialogTitle sx={dialogTitleSx}>
-                    Edit Alert Rule: {editRule?.name}
+                    Edit alert rule: {editRule?.name}
                 </DialogTitle>
                 <DialogContent>
                     <Box sx={{ display: 'flex', alignItems: 'center', mt: 1, mb: 2 }}>

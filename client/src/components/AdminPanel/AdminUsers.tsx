@@ -399,7 +399,7 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
                                                 sx={{
                                                     bgcolor: alpha(theme.palette.info.main, 0.15),
                                                     color: theme.palette.info.main,
-                                                    fontSize: '0.75rem',
+                                                    fontSize: '0.875rem',
                                                 }}
                                             />
                                         ) : (
@@ -491,7 +491,7 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
 
             {/* Create User Dialog */}
             <Dialog open={createOpen} onClose={() => !createLoading && setCreateOpen(false)} maxWidth="xs" fullWidth>
-                <DialogTitle sx={dialogTitleSx}>Create User</DialogTitle>
+                <DialogTitle sx={dialogTitleSx}>Create user</DialogTitle>
                 <DialogContent>
                     {createError && (
                         <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }}>{createError}</Alert>
@@ -601,7 +601,7 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
 
             {/* Edit User Dialog */}
             <Dialog open={editOpen} onClose={() => !editLoading && setEditOpen(false)} maxWidth="xs" fullWidth>
-                <DialogTitle sx={dialogTitleSx}>Edit User: {editUser?.username}</DialogTitle>
+                <DialogTitle sx={dialogTitleSx}>Edit user: {editUser?.username}</DialogTitle>
                 <DialogContent>
                     {editError && (
                         <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }}>{editError}</Alert>

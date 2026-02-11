@@ -104,14 +104,14 @@ const sxMonoFont = {
 const sxH3 = {
     fontWeight: 600,
     color: 'text.primary',
-    fontSize: '0.9375rem',
+    fontSize: '1.125rem',
     mt: 2,
     mb: 0.75,
 };
 
 const sxParagraph = {
     color: 'text.primary',
-    fontSize: '0.875rem',
+    fontSize: '1rem',
     lineHeight: 1.7,
     my: 1,
 };
@@ -121,7 +121,7 @@ const sxList = {
     my: 1.5,
     '& li': {
         mb: 0.75,
-        fontSize: '0.875rem',
+        fontSize: '1rem',
         lineHeight: 1.6,
         color: 'text.primary',
     },
@@ -165,7 +165,7 @@ const sxH2 = (theme: Theme) => ({
 
 const getInlineCodeSx = (theme: Theme) => ({
     ...sxMonoFont,
-    fontSize: '0.8125rem',
+    fontSize: '1rem',
     bgcolor: theme.palette.mode === 'dark'
         ? alpha(theme.palette.grey[700], 0.6)
         : alpha(theme.palette.grey[200], 0.8),
@@ -194,7 +194,7 @@ const getCodeBlockWrapperSx = (theme: Theme) => ({
 const getCodeBlockCustomStyle = (customBackground) => ({
     margin: 0,
     padding: '1rem',
-    fontSize: '0.8125rem',
+    fontSize: '1rem',
     fontFamily: '"JetBrains Mono", "SF Mono", monospace',
     background: customBackground,
 });
@@ -225,7 +225,7 @@ const getTableSx = (theme: Theme) => ({
     width: '100%',
     borderCollapse: 'collapse',
     my: 1.5,
-    fontSize: '0.875rem',
+    fontSize: '1rem',
     '& th, & td': {
         border: '1px solid',
         borderColor: theme.palette.mode === 'dark'
@@ -356,7 +356,7 @@ const getDatabaseBadgeSx = (theme: Theme) => ({
 });
 
 const getDatabaseTextSx = (theme: Theme) => ({
-    fontSize: '0.6875rem',
+    fontSize: '0.875rem',
     color: theme.palette.mode === 'dark'
         ? theme.palette.secondary.light
         : theme.palette.secondary.main,
@@ -412,7 +412,7 @@ const getPulseDotSx = (theme: Theme) => ({
 });
 
 const getLoadingTextSx = (theme: Theme) => ({
-    fontSize: '0.8125rem',
+    fontSize: '1rem',
     color: theme.palette.mode === 'dark'
         ? theme.palette.secondary.light
         : theme.palette.secondary.main,
@@ -438,7 +438,7 @@ const getErrorTitleSx = (theme: Theme) => ({
     color: theme.palette.mode === 'dark'
         ? theme.palette.error.light
         : theme.palette.error.dark,
-    fontSize: '0.875rem',
+    fontSize: '1rem',
     mb: 0.5,
 });
 
@@ -491,13 +491,13 @@ const sxMetadataSecondRow = {
 };
 
 const sxMonoSmall = {
-    fontSize: '0.6875rem',
+    fontSize: '0.875rem',
     color: 'text.secondary',
     ...sxMonoFont,
 };
 
 const sxThresholdText = {
-    fontSize: '0.6875rem',
+    fontSize: '0.875rem',
     color: 'text.disabled',
     ...sxMonoFont,
 };
@@ -692,7 +692,7 @@ const getConfirmationTitleSx = (_theme: Theme) => ({
 });
 
 const getConfirmationTextSx = (theme: Theme) => ({
-    fontSize: '0.8125rem',
+    fontSize: '1rem',
     fontWeight: 500,
     color: theme.palette.mode === 'dark'
         ? theme.palette.warning.light
@@ -700,7 +700,7 @@ const getConfirmationTextSx = (theme: Theme) => ({
 });
 
 const getConfirmationStatementSx = (theme: Theme) => ({
-    fontSize: '0.75rem',
+    fontSize: '0.875rem',
     color: theme.palette.mode === 'dark'
         ? theme.palette.grey[300]
         : theme.palette.grey[700],
@@ -965,7 +965,7 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
                 <Box sx={getQueryResultWrapperSx(theme)}>
                     <Box sx={getQueryResultHeaderSx(theme)}>
                         <Typography sx={{
-                            fontSize: '0.75rem',
+                            fontSize: '0.875rem',
                             color: 'text.secondary',
                             ...sxMonoFont,
                         }}>
@@ -983,7 +983,7 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
                         <Box key={idx}>
                             {/* Query label */}
                             <Typography sx={{
-                                fontSize: '0.6875rem',
+                                fontSize: '0.875rem',
                                 color: 'text.disabled',
                                 ...sxMonoFont,
                                 px: 1.5,
@@ -1009,7 +1009,7 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
                                         flexShrink: 0,
                                     }} />
                                     <Typography sx={{
-                                        fontSize: '0.75rem',
+                                        fontSize: '0.875rem',
                                         color: theme.palette.mode === 'dark'
                                             ? theme.palette.error.light
                                             : theme.palette.error.dark,
@@ -1032,7 +1032,7 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
                                                     {result.columns.map((col, i) => (
                                                         <th key={i}>
                                                             <Typography sx={{
-                                                                fontSize: '0.75rem',
+                                                                fontSize: '0.875rem',
                                                                 fontWeight: 600,
                                                                 ...sxMonoFont,
                                                                 whiteSpace: 'nowrap',
@@ -1049,7 +1049,7 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
                                                         {row.map((cell, ci) => (
                                                             <td key={ci}>
                                                                 <Typography sx={{
-                                                                    fontSize: '0.75rem',
+                                                                    fontSize: '0.875rem',
                                                                     ...sxMonoFont,
                                                                     whiteSpace: 'nowrap',
                                                                 }}>
@@ -1064,7 +1064,7 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
                                     </Box>
                                     {result.truncated && (
                                         <Typography sx={{
-                                            fontSize: '0.6875rem',
+                                            fontSize: '0.875rem',
                                             color: 'text.disabled',
                                             px: 1.5,
                                             py: 0.5,
@@ -1074,7 +1074,7 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
                                     )}
                                     {!result.truncated && result.row_count !== undefined && (
                                         <Typography sx={{
-                                            fontSize: '0.6875rem',
+                                            fontSize: '0.875rem',
                                             color: 'text.disabled',
                                             px: 1.5,
                                             py: 0.5,
@@ -1100,7 +1100,7 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
                             flexShrink: 0,
                         }} />
                         <Typography sx={{
-                            fontSize: '0.75rem',
+                            fontSize: '0.875rem',
                             color: theme.palette.mode === 'dark'
                                 ? theme.palette.error.light
                                 : theme.palette.error.dark,
@@ -1416,7 +1416,7 @@ ${analysis}
                 {/* Title and metadata */}
                 <Box sx={sxTitleFlexBox}>
                     <Typography variant="h6" sx={sxTitleTypography}>
-                        Alert Analysis
+                        Alert analysis
                     </Typography>
                     {/* First row: severity, title, time */}
                     <Box sx={sxMetadataRow}>
@@ -1424,7 +1424,7 @@ ${analysis}
                             <SeverityIcon sx={{ fontSize: 14, color: severityColor }} />
                             <Typography
                                 sx={{
-                                    fontSize: '0.8125rem',
+                                    fontSize: '1rem',
                                     color: severityColor,
                                     fontWeight: 500,
                                     textTransform: 'capitalize',
@@ -1433,11 +1433,11 @@ ${analysis}
                                 {alert?.severity || 'Unknown'}
                             </Typography>
                         </Box>
-                        <Typography sx={{ fontSize: '0.75rem', color: 'text.secondary' }}>
+                        <Typography sx={{ fontSize: '0.875rem', color: 'text.secondary' }}>
                             {alert?.title || 'Alert'}
                         </Typography>
                         {alert?.time && (
-                            <Typography sx={{ fontSize: '0.75rem', color: 'text.disabled' }}>
+                            <Typography sx={{ fontSize: '0.875rem', color: 'text.disabled' }}>
                                 {alert.time}
                             </Typography>
                         )}
@@ -1511,7 +1511,7 @@ ${analysis}
                                         <Typography
                                             sx={{
                                                 color: 'text.secondary',
-                                                fontSize: '0.8125rem',
+                                                fontSize: '1rem',
                                             }}
                                         >
                                             {error}

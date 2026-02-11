@@ -85,7 +85,7 @@ const getSendButtonSx = (disabled: boolean) => (theme: Theme) => ({
 });
 
 const hintSx = {
-    fontSize: '0.8125rem',
+    fontSize: '1rem',
     color: 'text.disabled',
     textAlign: 'right',
     px: 0.5,

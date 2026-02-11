@@ -86,7 +86,7 @@ const AlertsSection = ({ alerts, loading, showServer = false, onAcknowledge, onU
 
     const activeCountChipSx = useMemo(() => ({
         height: 18,
-        fontSize: '0.625rem',
+        fontSize: '0.875rem',
         fontWeight: 600,
         bgcolor: activeAlerts.length > 0
             ? alpha(severityColors.warning, 0.15)
@@ -114,7 +114,7 @@ const AlertsSection = ({ alerts, loading, showServer = false, onAcknowledge, onU
 
     const ackCountChipSx = useMemo(() => ({
         height: 16,
-        fontSize: '0.5625rem',
+        fontSize: '0.875rem',
         fontWeight: 600,
         bgcolor: alpha(theme.palette.grey[500], 0.15),
         color: 'text.disabled',

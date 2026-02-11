@@ -55,7 +55,7 @@ const sectionLabelSx = {
     mb: 1,
     mt: 2,
     textTransform: 'uppercase',
-    fontSize: '0.75rem',
+    fontSize: '0.875rem',
     letterSpacing: '0.05em',
 };
 
@@ -372,7 +372,7 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
     // Styles
     const scopeChipSx = useMemo(() => ({
         height: 20,
-        fontSize: '0.6875rem',
+        fontSize: '0.875rem',
         fontWeight: 500,
         bgcolor: alpha(theme.palette.primary.main, 0.1),
         color: theme.palette.primary.main,
@@ -402,7 +402,7 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
         '& .MuiOutlinedInput-root': {
             ...textFieldSx['& .MuiOutlinedInput-root'],
             fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-            fontSize: '0.8125rem',
+            fontSize: '1rem',
         },
     }), []);
 
@@ -417,7 +417,7 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
             PaperProps={{ sx: dialogPaperSx }}
         >
             <DialogTitle sx={dialogTitleSx}>
-                {isEdit ? 'Edit Blackout Schedule' : 'Create Blackout Schedule'}
+                {isEdit ? 'Edit blackout schedule' : 'Create blackout schedule'}
             </DialogTitle>
 
             <DialogContent>
@@ -449,7 +449,7 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
                                     label={
                                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
                                             <Icon sx={{ fontSize: 16, color: 'text.secondary' }} />
-                                            <Typography sx={{ fontSize: '0.875rem' }}>
+                                            <Typography sx={{ fontSize: '1rem' }}>
                                                 {opt.label}
                                             </Typography>
                                         </Box>
@@ -556,7 +556,7 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
                     sx={cronFieldSx}
                 />
                 {cronDescription && (
-                    <Typography sx={{ fontSize: '0.6875rem', color: 'text.disabled', mt: 0.5 }}>
+                    <Typography sx={{ fontSize: '0.875rem', color: 'text.disabled', mt: 0.5 }}>
                         {cronDescription}
                     </Typography>
                 )}
@@ -633,7 +633,7 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
                         disabled={isSaving}
                         size="small"
                     />
-                    <Typography sx={{ fontSize: '0.875rem', color: 'text.primary' }}>
+                    <Typography sx={{ fontSize: '1rem', color: 'text.primary' }}>
                         {enabled ? 'Enabled' : 'Disabled'}
                     </Typography>
                 </Box>
@@ -656,7 +656,7 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
                     {isSaving ? (
                         <CircularProgress size={20} sx={{ color: 'inherit' }} />
                     ) : (
-                        isEdit ? 'Update Blackout Schedule' : 'Create Blackout Schedule'
+                        isEdit ? 'Update blackout schedule' : 'Create blackout schedule'
                     )}
                 </Button>
             </DialogActions>

@@ -37,7 +37,7 @@ const editTextFieldSx = {
     flex: 1,
     minWidth: 0,
     '& .MuiInputBase-input': {
-        fontSize: '0.8125rem',
+        fontSize: '1rem',
         padding: '2px 4px',
     },
     '& .MuiInput-underline:before': {

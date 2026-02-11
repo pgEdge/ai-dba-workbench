@@ -54,7 +54,7 @@ export const sectionLabelSx: SxProps<Theme> = {
     mb: 1,
     mt: 1,
     textTransform: 'uppercase',
-    fontSize: '0.75rem',
+    fontSize: '0.875rem',
     letterSpacing: '0.05em',
 };
 
@@ -91,7 +91,7 @@ export const accordionSummarySx: SxProps<Theme> = {
 export const sslLabelSx: SxProps<Theme> = {
     color: 'text.secondary',
     textTransform: 'uppercase',
-    fontSize: '0.75rem',
+    fontSize: '0.875rem',
     letterSpacing: '0.05em',
 };
 
@@ -118,7 +118,7 @@ export const formControlLabelSx: SxProps<Theme> = {
     ml: 0,
     gap: 1,
     '& .MuiFormControlLabel-label': {
-        fontSize: '0.875rem',
+        fontSize: '1rem',
         color: 'text.primary',
     },
 };

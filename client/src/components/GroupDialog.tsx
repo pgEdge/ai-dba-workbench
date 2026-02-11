@@ -341,9 +341,9 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
                     sx={{ px: 3, borderBottom: 1, borderColor: 'divider' }}
                 >
                     <Tab label="Details" />
-                    <Tab label="Alert Overrides" />
-                    <Tab label="Probe Configuration" />
-                    <Tab label="Notification Channels" />
+                    <Tab label="Alert overrides" />
+                    <Tab label="Probe configuration" />
+                    <Tab label="Notification channels" />
                 </Tabs>
                 <Box sx={{ flex: 1, overflow: 'auto', p: 3, bgcolor: 'background.default' }}>
                     {activeTab === 0 && (

@@ -133,25 +133,25 @@ const styles = {
         color: 'text.primary',
     },
     helpTipText: {
-        fontSize: '0.8125rem',
+        fontSize: '1rem',
         color: 'text.secondary',
         lineHeight: 1.5,
     },
     featureTitle: {
         fontWeight: 600,
-        fontSize: '0.8125rem',
+        fontSize: '1rem',
         color: 'text.primary',
         mb: 0.25,
     },
     featureDescription: {
-        fontSize: '0.8125rem',
+        fontSize: '1rem',
         color: 'text.secondary',
         lineHeight: 1.5,
     },
     featureWrapper: { mb: 1.5 },
     shortcutKeyBase: {
         fontFamily: '"JetBrains Mono", monospace',
-        fontSize: '0.6875rem',
+        fontSize: '0.875rem',
         fontWeight: 600,
         color: 'text.primary',
         px: 0.75,
@@ -161,7 +161,7 @@ const styles = {
     },
     shortcutRow: { display: 'flex', alignItems: 'center', gap: 1, mb: 1 },
     shortcutKeysRow: { display: 'flex', gap: 0.5 },
-    shortcutDescription: { fontSize: '0.8125rem', color: 'text.secondary' },
+    shortcutDescription: { fontSize: '1rem', color: 'text.secondary' },
     drawerContent: {
         display: 'flex',
         flexDirection: 'column',
@@ -180,13 +180,13 @@ const styles = {
         '& .MuiBreadcrumbs-ol': { flexWrap: 'nowrap' },
     },
     breadcrumbLink: {
-        fontSize: '0.8125rem',
+        fontSize: '1rem',
         color: 'text.secondary',
         textDecoration: 'none',
         '&:hover': { textDecoration: 'underline' },
     },
     breadcrumbCurrent: {
-        fontSize: '0.8125rem',
+        fontSize: '1rem',
         fontWeight: 600,
         color: 'text.primary',
     },
@@ -215,15 +215,15 @@ const styles = {
         justifyContent: 'space-between',
         alignItems: 'center',
     },
-    footerVersion: { fontSize: '0.75rem' },
-    footerCopyright: { fontSize: '0.6875rem' },
+    footerVersion: { fontSize: '0.875rem' },
+    footerCopyright: { fontSize: '0.875rem' },
     pageHeading: { fontWeight: 600, mb: 2 },
     bodyText: { color: 'text.secondary', lineHeight: 1.6 },
     bodyTextMb3: { color: 'text.secondary', mb: 3, lineHeight: 1.6 },
     bodyTextMb2: { color: 'text.secondary', mb: 2, lineHeight: 1.6 },
     indentedBlock: { pl: 2, mb: 2 },
     severityChipsRow: { display: 'flex', gap: 1, mb: 3 },
-    severityChipBase: { fontWeight: 600, fontSize: '0.75rem' },
+    severityChipBase: { fontWeight: 600, fontSize: '0.875rem' },
 };
 
 // ---------------------------------------------------------------------------
@@ -255,7 +255,7 @@ const getNavItemIconColor = (isActive) =>
     isActive ? 'primary.main' : 'text.secondary';
 
 const getNavItemLabelProps = (isActive) => ({
-    fontSize: '0.8125rem',
+    fontSize: '1rem',
     fontWeight: isActive ? 600 : 500,
     color: isActive ? 'primary.main' : 'text.primary',
 });

@@ -52,7 +52,7 @@ export const ExpandableList = memo(({ items, initialLimit, renderItem, emptyText
 
     if (!items || items.length === 0) {
         return (
-            <Typography sx={{ color: 'text.secondary', fontSize: '0.75rem' }}>
+            <Typography sx={{ color: 'text.secondary', fontSize: '0.875rem' }}>
                 {emptyText || '0 items'}
             </Typography>
         );
@@ -362,7 +362,7 @@ export const RestartDetails = memo(({ details }) => {
     return (
         <Box sx={{ mt: 1 }}>
             <Box sx={codeBlockSx}>
-                <Typography sx={{ fontSize: '0.6875rem', color: 'text.secondary', mb: 0.25 }}>
+                <Typography sx={{ fontSize: '0.875rem', color: 'text.secondary', mb: 0.25 }}>
                     Timeline ID
                 </Typography>
                 <Typography sx={{ fontFamily: 'inherit', fontSize: 'inherit' }}>
@@ -396,7 +396,7 @@ export const BlackoutDetails = memo(({ details, eventType }) => {
                     <Typography sx={sectionLabelShortSx}>
                         Reason
                     </Typography>
-                    <Typography sx={{ fontSize: '0.75rem', color: 'text.secondary' }}>
+                    <Typography sx={{ fontSize: '0.875rem', color: 'text.secondary' }}>
                         {details.reason}
                     </Typography>
                 </Box>
@@ -416,7 +416,7 @@ export const BlackoutDetails = memo(({ details, eventType }) => {
                     <Typography sx={sectionLabelShortSx}>
                         End Time
                     </Typography>
-                    <Typography sx={{ fontSize: '0.75rem', color: 'text.secondary' }}>
+                    <Typography sx={{ fontSize: '0.875rem', color: 'text.secondary' }}>
                         {formatFullTime(details.end_time)}
                     </Typography>
                 </Box>

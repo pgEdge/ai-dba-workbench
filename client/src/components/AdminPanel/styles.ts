@@ -57,18 +57,18 @@ export const loadingContainerSx: SxProps<Theme> = {
 };
 
 export const categoryLabelSx: SxProps<Theme> = {
-    fontSize: '0.7rem',
+    fontSize: '0.875rem',
     fontWeight: FONT_WEIGHT_SEMIBOLD,
     color: 'text.secondary',
     textTransform: 'uppercase',
-    letterSpacing: '0.05em',
+    letterSpacing: '0.08em',
 };
 
 export const subsectionLabelSx: SxProps<Theme> = {
     fontWeight: FONT_WEIGHT_SEMIBOLD,
     color: 'text.secondary',
     textTransform: 'uppercase',
-    fontSize: '0.75rem',
+    fontSize: '0.875rem',
 };
 
 export const emptyRowSx: SxProps<Theme> = {
@@ -76,7 +76,7 @@ export const emptyRowSx: SxProps<Theme> = {
 };
 
 export const emptyRowTextSx: SxProps<Theme> = {
-    fontSize: '0.875rem',
+    fontSize: '1rem',
 };
 
 // --- Theme-dependent style-getter functions ---

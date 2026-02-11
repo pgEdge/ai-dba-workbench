@@ -113,7 +113,7 @@ export const ICON_10_SX = { fontSize: 10 };
 // MetricCard static styles
 export const METRIC_LABEL_SX = {
     color: 'text.secondary',
-    fontSize: '0.75rem',
+    fontSize: '0.875rem',
     fontWeight: 500,
     textTransform: 'uppercase',
     letterSpacing: '0.05em',
@@ -135,7 +135,7 @@ export const SERVER_INFO_WRAPPER_SX = {
 };
 
 export const SERVER_INFO_LABEL_BASE_SX = {
-    fontSize: '0.5625rem',
+    fontSize: '0.875rem',
     fontWeight: 700,
     textTransform: 'uppercase',
     letterSpacing: '0.1em',
@@ -144,7 +144,7 @@ export const SERVER_INFO_LABEL_BASE_SX = {
 
 export const SERVER_INFO_VALUE_BASE_SX = {
     color: 'text.primary',
-    fontSize: '0.8125rem',
+    fontSize: '1rem',
     fontWeight: 500,
     lineHeight: 1.2,
     whiteSpace: 'nowrap',
@@ -157,20 +157,20 @@ export const SPOCK_DOT_SX = {
 };
 
 export const SPOCK_LABEL_BASE_SX = {
-    fontSize: '0.6875rem',
+    fontSize: '0.875rem',
     fontWeight: 600,
     textTransform: 'uppercase',
     letterSpacing: '0.05em',
 };
 
 export const SPOCK_VERSION_SX = {
-    fontSize: '0.75rem',
+    fontSize: '0.875rem',
     fontFamily: '"JetBrains Mono", "SF Mono", monospace',
     color: 'text.secondary',
 };
 
 export const SPOCK_NODE_SX = {
-    fontSize: '0.75rem',
+    fontSize: '0.875rem',
     fontFamily: '"JetBrains Mono", "SF Mono", monospace',
     color: 'text.primary',
     fontWeight: 500,
@@ -179,33 +179,33 @@ export const SPOCK_NODE_SX = {
 // AlertItem static styles
 export const ALERT_TITLE_BASE_SX = {
     fontWeight: 600,
-    fontSize: '0.8125rem',
+    fontSize: '1rem',
     lineHeight: 1.2,
 };
 
 export const ALERT_THRESHOLD_SX = {
     color: 'text.secondary',
-    fontSize: '0.6875rem',
+    fontSize: '0.875rem',
     fontFamily: '"JetBrains Mono", "SF Mono", monospace',
     mt: 0.25,
 };
 
 export const ALERT_DESCRIPTION_SX = {
     color: 'text.secondary',
-    fontSize: '0.6875rem',
+    fontSize: '0.875rem',
     mt: 0.25,
     wordBreak: 'break-word',
 };
 
 export const ALERT_ACK_TEXT_SX = {
     color: 'text.secondary',
-    fontSize: '0.625rem',
+    fontSize: '0.875rem',
     fontStyle: 'italic',
 };
 
 export const ALERT_TIME_SX = {
     color: 'text.disabled',
-    fontSize: '0.625rem',
+    fontSize: '0.875rem',
     display: 'flex',
     alignItems: 'center',
     gap: 0.25,
@@ -213,7 +213,7 @@ export const ALERT_TIME_SX = {
 
 export const SEVERITY_CHIP_BASE_SX = {
     height: 16,
-    fontSize: '0.5625rem',
+    fontSize: '0.875rem',
     fontWeight: 600,
     textTransform: 'uppercase',
 };
@@ -221,7 +221,7 @@ export const SEVERITY_CHIP_BASE_SX = {
 // GroupedAlertInstance static styles
 export const INSTANCE_TIME_SX = {
     color: 'text.disabled',
-    fontSize: '0.5625rem',
+    fontSize: '0.875rem',
     display: 'flex',
     alignItems: 'center',
     gap: 0.25,
@@ -230,7 +230,7 @@ export const INSTANCE_TIME_SX = {
 
 export const INSTANCE_THRESHOLD_SX = {
     color: 'text.secondary',
-    fontSize: '0.625rem',
+    fontSize: '0.875rem',
     fontFamily: '"JetBrains Mono", "SF Mono", monospace',
 };
 
@@ -238,7 +238,7 @@ export const INSTANCE_THRESHOLD_SX = {
 export const GROUP_TITLE_SX = {
     fontWeight: 600,
     color: 'text.primary',
-    fontSize: '0.8125rem',
+    fontSize: '1rem',
     lineHeight: 1.2,
     flex: 1,
 };
@@ -254,8 +254,8 @@ export const GROUP_INSTANCES_LIST_SX = {
 // AcknowledgeDialog static styles
 export const ACK_DIALOG_TITLE_SX = { pb: 1 };
 export const ACK_DIALOG_ACTIONS_SX = { px: 3, pb: 2 };
-export const ACK_FALSE_POSITIVE_TITLE_SX = { fontSize: '0.8125rem', fontWeight: 500, color: 'text.primary' };
-export const ACK_FALSE_POSITIVE_DESC_SX = { fontSize: '0.6875rem', color: 'text.secondary' };
+export const ACK_FALSE_POSITIVE_TITLE_SX = { fontSize: '1rem', fontWeight: 500, color: 'text.primary' };
+export const ACK_FALSE_POSITIVE_DESC_SX = { fontSize: '0.875rem', color: 'text.secondary' };
 
 // AlertsSection static styles
 export const ALERTS_SECTION_MT_SX = { mt: 2 };
@@ -271,12 +271,12 @@ export const ALERTS_HEADER_SX = {
 export const ALERTS_TITLE_SX = {
     fontWeight: 600,
     color: 'text.primary',
-    fontSize: '0.8125rem',
+    fontSize: '1rem',
 };
 
 export const ALERTS_TYPE_COUNT_SX = {
     color: 'text.disabled',
-    fontSize: '0.625rem',
+    fontSize: '0.875rem',
 };
 
 export const ACTIVE_LIST_SX = {
@@ -288,7 +288,7 @@ export const ACTIVE_LIST_SX = {
 
 export const NO_ALERTS_TEXT_BASE_SX = {
     fontWeight: 500,
-    fontSize: '0.8125rem',
+    fontSize: '1rem',
 };
 
 export const ACK_HEADER_BASE_SX = {
@@ -304,7 +304,7 @@ export const ACK_HEADER_BASE_SX = {
 export const ACK_TITLE_SX = {
     fontWeight: 500,
     color: 'text.secondary',
-    fontSize: '0.75rem',
+    fontSize: '0.875rem',
 };
 
 export const ACK_LIST_SX = {
@@ -333,7 +333,7 @@ export const HEADER_ICON_BOX_BASE_SX = {
 
 export const HEADER_LABEL_SX = {
     color: 'text.secondary',
-    fontSize: '0.6875rem',
+    fontSize: '0.875rem',
     fontWeight: 600,
     letterSpacing: '0.08em',
     lineHeight: 1,

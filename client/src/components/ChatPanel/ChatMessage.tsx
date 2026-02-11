@@ -78,7 +78,7 @@ const sxMonoFont = {
 };
 
 const sxTimestamp = {
-    fontSize: '0.75rem',
+    fontSize: '0.875rem',
     color: 'text.disabled',
     mt: 0.5,
 };
@@ -92,7 +92,7 @@ const sxToolChipsRow = {
 
 const sxToolChip = {
     height: 20,
-    fontSize: '0.8125rem',
+    fontSize: '1rem',
     fontWeight: 500,
 };
 
@@ -158,7 +158,7 @@ const getUserTextSx = {
 };
 
 const getSystemTextSx = (theme: Theme) => ({
-    fontSize: '0.9375rem',
+    fontSize: '1.125rem',
     fontStyle: 'italic',
     color: theme.palette.text.secondary,
     lineHeight: 1.5,
@@ -211,7 +211,7 @@ const sxMdH3 = {
 
 const sxMdParagraph = {
     color: 'text.primary',
-    fontSize: '0.9375rem',
+    fontSize: '1.125rem',
     lineHeight: 1.7,
     my: 0.75,
 };
@@ -221,7 +221,7 @@ const sxMdList = {
     my: 1,
     '& li': {
         mb: 0.5,
-        fontSize: '0.9375rem',
+        fontSize: '1.125rem',
         lineHeight: 1.6,
         color: 'text.primary',
     },
@@ -237,7 +237,7 @@ const sxMdEm = { fontStyle: 'italic' };
 
 const getMdInlineCodeSx = (theme: Theme) => ({
     ...sxMonoFont,
-    fontSize: '0.875rem',
+    fontSize: '1rem',
     bgcolor: theme.palette.mode === 'dark'
         ? alpha(theme.palette.grey[700], 0.6)
         : alpha(theme.palette.grey[200], 0.8),
@@ -266,7 +266,7 @@ const getMdCodeBlockWrapperSx = (theme: Theme) => ({
 const getMdCodeBlockCustomStyle = (customBackground: string) => ({
     margin: 0,
     padding: '0.75rem',
-    fontSize: '0.875rem',
+    fontSize: '1rem',
     fontFamily: '"JetBrains Mono", "SF Mono", monospace',
     background: customBackground,
 });
@@ -297,7 +297,7 @@ const getMdTableSx = (theme: Theme) => ({
     width: '100%',
     borderCollapse: 'collapse',
     my: 1,
-    fontSize: '0.9375rem',
+    fontSize: '1.125rem',
     '& th, & td': {
         border: '1px solid',
         borderColor: theme.palette.mode === 'dark'

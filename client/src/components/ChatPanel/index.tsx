@@ -182,7 +182,7 @@ const emptyTitleSx = {
 
 const emptySubtitleSx = {
     color: 'text.disabled',
-    fontSize: '0.9375rem',
+    fontSize: '1.125rem',
     textAlign: 'center',
     maxWidth: 280,
     lineHeight: 1.5,
@@ -200,7 +200,7 @@ const errorBannerSx = {
 };
 
 const errorBannerTextSx = {
-    fontSize: '0.875rem',
+    fontSize: '1rem',
     color: 'error.main',
     lineHeight: 1.4,
 };

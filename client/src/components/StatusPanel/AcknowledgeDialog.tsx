@@ -93,7 +93,7 @@ const AcknowledgeDialog = ({ open, alert, onClose, onConfirm }) => {
             PaperProps={{ sx: dialogPaperSx }}
         >
             <DialogTitle sx={ACK_DIALOG_TITLE_SX}>
-                Acknowledge Alert
+                Acknowledge alert
             </DialogTitle>
             <DialogContent>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>

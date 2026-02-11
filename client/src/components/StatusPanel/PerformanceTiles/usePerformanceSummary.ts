@@ -70,19 +70,19 @@ export const usePerformanceSummary = (
 
         if (selection.type === 'server') {
             if (selection.id === undefined || selection.id === null) return null;
-            return `${base}?connection_id=${selection.id}`;
+            return `${base}?connection_id=${selection.id}&time_range=24h`;
         }
 
         if (selection.type === 'cluster') {
             const serverIds = selection.serverIds as number[] | undefined;
             if (!serverIds?.length) return null;
-            return `${base}?connection_ids=${serverIds.join(',')}`;
+            return `${base}?connection_ids=${serverIds.join(',')}&time_range=24h`;
         }
 
         if (selection.type === 'estate') {
             const serverIds = extractEstateServerIds(selection);
             if (!serverIds.length) return null;
-            return `${base}?connection_ids=${serverIds.join(',')}`;
+            return `${base}?connection_ids=${serverIds.join(',')}&time_range=24h`;
         }
 
         return null;

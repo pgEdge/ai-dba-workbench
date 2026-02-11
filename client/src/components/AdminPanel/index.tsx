@@ -211,7 +211,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ open, onClose, mode }) => {
                                             <ListItemText
                                                 primary={item.label}
                                                 primaryTypographyProps={{
-                                                    fontSize: '0.875rem',
+                                                    fontSize: '1rem',
                                                 }}
                                             />
                                         </ListItemButton>

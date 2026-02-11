@@ -10,62 +10,65 @@
 
 # MCP Protocol Implementation
 
-This document details the Model Context Protocol (MCP) implementation in the
-pgEdge AI DBA Workbench server.
+This document details the Model Context Protocol (MCP) implementation
+in the pgEdge AI DBA Workbench server. For the complete tools and
+resources catalog, see `mcp-tools-catalog.md`.
 
 ## Overview
 
-The MCP server implements JSON-RPC 2.0 protocol to provide AI models with
-structured access to PostgreSQL databases. It exposes tools, resources, and
-prompts that can be used by AI assistants.
+The MCP server implements JSON-RPC 2.0 over HTTP/HTTPS with support
+for POST requests and Server-Sent Events (SSE). It exposes tools,
+resources, and prompts that AI assistants use to interact with
+PostgreSQL databases.
 
-## Protocol Basics
+**Protocol Version:** 2024-11-05
 
-### JSON-RPC 2.0 Structure
+**Key Files:**
 
-**Request:**
-```json
-{
-    "jsonrpc": "2.0",
-    "id": "request-123",
-    "method": "tools/call",
-    "params": {
-        "name": "execute_query",
-        "arguments": {
-            "connection_id": 1,
-            "query": "SELECT version()"
-        }
-    }
+- `/server/src/mcp/protocol.go` - Protocol types and constructors
+- `/server/src/mcp/handler.go` - Request routing and tool handlers
+- `/server/src/server/server.go` - HTTP/SSE server
+- `/server/src/privileges/privileges.go` - Authorization logic
+- `/server/src/privileges/seed.go` - MCP privilege registration
+- `/server/src/usermgmt/usermgmt.go` - User and token management
+- `/server/src/groupmgmt/groupmgmt.go` - Group management
+
+## JSON-RPC Foundation
+
+### Request and Response Types
+
+```go
+type Request struct {
+    JSONRPC string          `json:"jsonrpc"`  // Always "2.0"
+    ID      interface{}     `json:"id,omitempty"`
+    Method  string          `json:"method"`
+    Params  json.RawMessage `json:"params,omitempty"`
+}
+
+type Response struct {
+    JSONRPC string      `json:"jsonrpc"`
+    ID      interface{} `json:"id,omitempty"`
+    Result  interface{} `json:"result,omitempty"`
+    Error   *Error      `json:"error,omitempty"`
+}
+
+type Error struct {
+    Code    int         `json:"code"`
+    Message string      `json:"message"`
+    Data    interface{} `json:"data,omitempty"`
 }
 ```
 
-**Success Response:**
-```json
-{
-    "jsonrpc": "2.0",
-    "id": "request-123",
-    "result": {
-        "content": [
-            {
-                "type": "text",
-                "text": "Query result: ..."
-            }
-        ]
-    }
-}
-```
+### Error Codes
 
-**Error Response:**
-```json
-{
-    "jsonrpc": "2.0",
-    "id": "request-123",
-    "error": {
-        "code": -32602,
-        "message": "Invalid parameters",
-        "data": "connection_id is required"
-    }
-}
+```go
+const (
+    ParseError     = -32700 // Invalid JSON
+    InvalidRequest = -32600 // Invalid Request object
+    MethodNotFound = -32601 // Method doesn't exist
+    InvalidParams  = -32602 // Invalid parameters
+    InternalError  = -32603 // Internal error
+)
 ```
 
 ## Handler Architecture
@@ -81,435 +84,134 @@ type Handler struct {
     config        *config.Config
     userInfo      *UserInfo
 }
-
-func NewHandler(
-    serverName, serverVersion string,
-    dbPool *pgxpool.Pool,
-    cfg *config.Config,
-) *Handler {
-    return &Handler{
-        serverName:    serverName,
-        serverVersion: serverVersion,
-        initialized:   false,
-        dbPool:        dbPool,
-        config:        cfg,
-    }
-}
 ```
 
 ### Request Processing Flow
 
+1. Parse JSON-RPC request from raw bytes.
+2. Validate JSON-RPC version is "2.0".
+3. Check whether the method requires authentication.
+4. If authentication is required, validate the bearer token.
+5. Route to the appropriate method handler.
+6. Return JSON-RPC response.
+
 ```go
 func (h *Handler) HandleRequest(
-    data []byte,
-    bearerToken string,
-) (*Response, error) {
-    // 1. Parse JSON-RPC request
-    var req Request
-    if err := json.Unmarshal(data, &req); err != nil {
-        return NewErrorResponse(nil, ParseError, "Parse error", err.Error()), nil
-    }
-
-    // 2. Validate JSON-RPC version
-    if req.JSONRPC != JSONRPCVersion {
-        return NewErrorResponse(req.ID, InvalidRequest,
-            "Invalid JSON-RPC version", nil), nil
-    }
-
-    // 3. Authenticate (if required)
-    requiresAuth := h.methodRequiresAuth(req.Method, req.Params)
-    if requiresAuth {
-        userInfo, err := h.validateToken(bearerToken)
-        if err != nil || userInfo == nil || !userInfo.IsAuthenticated {
-            return NewErrorResponse(req.ID, InvalidRequest,
-                "Authentication required", nil), nil
-        }
-        h.userInfo = userInfo
-    }
-
-    // 4. Route to handler
-    return h.routeRequest(req)
-}
+    data []byte, bearerToken string,
+) (*Response, error)
 ```
 
-## Protocol Methods
-
-### 1. initialize
-
-Establishes the protocol session and exchanges capabilities.
-
-**Request:**
-```go
-type InitializeParams struct {
-    ProtocolVersion string                 `json:"protocolVersion"`
-    Capabilities    map[string]interface{} `json:"capabilities"`
-    ClientInfo      ClientInfo             `json:"clientInfo"`
-}
-
-type ClientInfo struct {
-    Name    string `json:"name"`
-    Version string `json:"version"`
-}
-```
-
-**Response:**
-```go
-type InitializeResult struct {
-    ProtocolVersion string                 `json:"protocolVersion"`
-    Capabilities    map[string]interface{} `json:"capabilities"`
-    ServerInfo      ServerInfo             `json:"serverInfo"`
-}
-
-type ServerInfo struct {
-    Name    string `json:"name"`
-    Version string `json:"version"`
-}
-```
-
-**Implementation:**
-```go
-func (h *Handler) handleInitialize(req Request) (*Response, error) {
-    var params InitializeParams
-    if err := json.Unmarshal(req.Params, &params); err != nil {
-        return NewErrorResponse(req.ID, InvalidParams,
-            "Invalid parameters", err.Error()), nil
-    }
-
-    h.initialized = true
-
-    result := InitializeResult{
-        ProtocolVersion: "2024-11-05",
-        Capabilities:    make(map[string]interface{}),
-        ServerInfo: ServerInfo{
-            Name:    h.serverName,
-            Version: h.serverVersion,
-        },
-    }
-
-    return NewResponse(req.ID, result), nil
-}
-```
-
-**Authentication:** Not required
-
-### 2. ping
-
-Health check endpoint.
-
-**Request:** No parameters
-
-**Response:**
-```json
-{
-    "status": "ok"
-}
-```
-
-**Authentication:** Not required
-
-### 3. resources/list
-
-Lists available resources (users, tokens, connections).
-
-**Response:**
-```json
-{
-    "resources": [
-        {
-            "uri": "ai-workbench://users",
-            "name": "User Accounts",
-            "description": "List of all user accounts in the system",
-            "mimeType": "application/json"
-        }
-    ]
-}
-```
-
-**Authentication:** Required
-
-### 4. resources/read
-
-Retrieves resource data.
-
-**Request:**
-```json
-{
-    "uri": "ai-workbench://users"
-}
-```
-
-**Response:**
-```json
-{
-    "contents": [
-        {
-            "uri": "ai-workbench://users",
-            "mimeType": "application/json",
-            "text": "[{\"username\":\"admin\",...}]"
-        }
-    ]
-}
-```
-
-**Authentication:** Required
-
-**Authorization:** Requires privilege on the resource URI
-
-### 5. tools/list
-
-Lists available MCP tools.
-
-**Response:**
-```json
-{
-    "tools": [
-        {
-            "name": "execute_query",
-            "description": "Execute a SQL query on a connection",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "connection_id": {
-                        "type": "integer",
-                        "description": "The connection ID"
-                    },
-                    "query": {
-                        "type": "string",
-                        "description": "SQL query to execute"
-                    }
-                },
-                "required": ["connection_id", "query"]
-            }
-        }
-    ]
-}
-```
-
-**Authentication:** Required
-
-**Authorization:** Only tools the user has privileges for are returned
-
-### 6. tools/call
-
-Executes an MCP tool.
-
-**Request:**
-```json
-{
-    "name": "execute_query",
-    "arguments": {
-        "connection_id": 1,
-        "query": "SELECT version()"
-    }
-}
-```
-
-**Response:**
-```json
-{
-    "content": [
-        {
-            "type": "text",
-            "text": "Query executed successfully. Results: [...]"
-        }
-    ]
-}
-```
-
-**Authentication:** Required (authentication handled via HTTP API `/api/auth/login`)
-
-**Authorization:** Checked per-tool
-
-## MCP Tools
-
-### Tool Definition Pattern
-
-Each tool follows this structure:
+### Method Routing
 
 ```go
-func (h *Handler) handleToolExecuteQuery(params map[string]interface{}) (
-    *Response, error) {
-    // 1. Validate parameters
-    connectionID, err := validateIntParam(params, "connection_id")
-    if err != nil {
-        return nil, err
-    }
-
-    query, err := validateStringParam(params, "query")
-    if err != nil {
-        return nil, err
-    }
-
-    // 2. Check authorization
-    canAccess, err := privileges.CanAccessConnection(
-        ctx, h.dbPool, h.userInfo.UserID, connectionID,
-        privileges.AccessLevelRead)
-    if err != nil {
-        return nil, fmt.Errorf("failed to check access: %w", err)
-    }
-    if !canAccess {
-        return nil, fmt.Errorf("access denied to connection %d", connectionID)
-    }
-
-    // 3. Execute operation
-    result, err := h.executeQueryOnConnection(connectionID, query)
-    if err != nil {
-        return nil, fmt.Errorf("query execution failed: %w", err)
-    }
-
-    // 4. Format response
-    return h.formatToolResponse(result), nil
+switch req.Method {
+case "initialize":
+    return h.handleInitialize(req)
+case "ping":
+    return h.handlePing(req)
+case "resources/list":
+    return h.handleListResources(req)
+case "resources/read":
+    return h.handleReadResource(req)
+case "tools/list":
+    return h.handleListTools(req)
+case "tools/call":
+    return h.handleCallTool(req)
+case "prompts/list":
+    return h.handleListPrompts(req)
+default:
+    return NewErrorResponse(req.ID, MethodNotFound,
+        "Method not found", nil), nil
 }
 ```
 
-### Available Tools
+## Transport Mechanisms
 
-**Database Operations:**
-- `execute_query` - Execute arbitrary SQL
-- `list_databases` - List databases in a connection
-- `list_schemas` - List schemas in a database
-- `list_tables` - List tables in a schema
-- `describe_table` - Get table structure
+### HTTP POST (/mcp endpoint)
 
-**Connection Management:**
-- `test_connection` - Test database connectivity
-- `list_connections` - List available connections
-- `get_connection` - Get connection details
-- `create_connection` - Create new connection
-- `update_connection` - Update connection
-- `delete_connection` - Delete connection
+1. Client sends JSON-RPC request as POST body.
+2. Server processes request synchronously.
+3. Server returns JSON-RPC response.
 
-**User Management:**
-- `create_user` - Create user account
-- `update_user` - Update user account
-- `delete_user` - Delete user account
-- `list_users` - List user accounts
+### Server-Sent Events (/sse endpoint)
 
-**Token Management:**
-- `create_service_token` - Create service token
-- `update_service_token` - Update service token
-- `delete_service_token` - Delete service token
-- `list_service_tokens` - List service tokens
-- `create_user_token` - Create user token
-- `list_user_tokens` - List user tokens
-- `delete_user_token` - Delete user token
+1. Client establishes SSE connection.
+2. Server sends `event: connected` acknowledgment.
+3. Client sends JSON-RPC requests as lines in body.
+4. Server sends responses as `event: message` SSE messages.
+5. Connection persists until client disconnects.
 
-**Group Management:**
-- `create_group` - Create group
-- `update_group` - Update group
-- `delete_group` - Delete group
-- `list_groups` - List groups
-- `add_group_member` - Add member to group
-- `remove_group_member` - Remove member from group
+### HTTP Server Integration
 
-**Privilege Management:**
-- `grant_connection_access` - Grant group access to connection
-- `revoke_connection_access` - Revoke group access to connection
-- `grant_mcp_privilege` - Grant MCP privilege to group
-- `revoke_mcp_privilege` - Revoke MCP privilege from group
+```go
+type Server struct {
+    config     *config.Config
+    mcpHandler *mcp.Handler
+    httpServer *http.Server
+}
+```
 
-## Authentication Flow
+The server extracts the bearer token from the `Authorization`
+header and passes it to `HandleRequest()`.
+
+## Authentication
+
+### Token Transmission
+
+All authenticated requests include a bearer token:
+
+```http
+POST /mcp HTTP/1.1
+Authorization: Bearer <token-value>
+Content-Type: application/json
+```
+
+### Authentication Exemptions
+
+The following operations do not require authentication:
+
+- The `initialize` method handles the protocol handshake.
+- The `ping` method provides a health check endpoint.
+- The `POST /api/auth/login` endpoint handles initial login.
 
 ### Token Validation
 
+The `validateToken()` function checks tokens against two sources
+in order: API tokens and session tokens.
+
+```go
+func (h *Handler) validateToken(
+    token string,
+) (*UserInfo, error)
+```
+
+**Source 1: API Tokens (unified `tokens` table)**
+
+- Token is hashed via `usermgmt.HashPassword()`.
+- Joined with `users` table to get owner identity.
+- Expiration is checked if `expires_at` is set.
+- Service accounts (`is_service_account = TRUE`) authenticate
+  exclusively through API tokens.
+
+**Source 2: User Sessions (`user_sessions` table)**
+
+- Direct token comparison (not hashed).
+- Joined with `users` table for superuser status.
+- Default 24-hour expiration.
+- Updates `last_used_at` on successful validation.
+
+### UserInfo Structure
+
 ```go
 type UserInfo struct {
-    UserID          int
-    Username        string
-    IsSuperuser     bool
     IsAuthenticated bool
-    TokenType       string // "password", "service", "user"
-}
-
-func (h *Handler) validateToken(bearerToken string) (*UserInfo, error) {
-    if bearerToken == "" {
-        return nil, fmt.Errorf("no bearer token provided")
-    }
-
-    // Hash the provided token
-    tokenHash := usermgmt.HashPassword(bearerToken)
-
-    ctx := context.Background()
-
-    // Try service token first
-    var id int
-    var name string
-    var isSuperuser bool
-    var expiresAt sql.NullTime
-    err := h.dbPool.QueryRow(ctx, `
-        SELECT id, name, is_superuser, expires_at
-        FROM service_tokens
-        WHERE token_hash = $1
-    `, tokenHash).Scan(&id, &name, &isSuperuser, &expiresAt)
-
-    if err == nil {
-        // Check expiry
-        if expiresAt.Valid && time.Now().After(expiresAt.Time) {
-            return nil, fmt.Errorf("service token expired")
-        }
-
-        return &UserInfo{
-            UserID:          id,
-            Username:        name,
-            IsSuperuser:     isSuperuser,
-            IsAuthenticated: true,
-            TokenType:       "service",
-        }, nil
-    }
-
-    // Try user password next
-    err = h.dbPool.QueryRow(ctx, `
-        SELECT id, username, is_superuser, password_expiry
-        FROM user_accounts
-        WHERE password_hash = $1
-    `, tokenHash).Scan(&id, &name, &isSuperuser, &expiresAt)
-
-    if err == nil {
-        // Check expiry
-        if expiresAt.Valid && time.Now().After(expiresAt.Time) {
-            return nil, fmt.Errorf("password expired")
-        }
-
-        return &UserInfo{
-            UserID:          id,
-            Username:        name,
-            IsSuperuser:     isSuperuser,
-            IsAuthenticated: true,
-            TokenType:       "password",
-        }, nil
-    }
-
-    // Try user token last
-    err = h.dbPool.QueryRow(ctx, `
-        SELECT ut.id, ua.username, ua.is_superuser, ut.expires_at
-        FROM user_tokens ut
-        JOIN user_accounts ua ON ut.user_id = ua.id
-        WHERE ut.token_hash = $1
-    `, tokenHash).Scan(&id, &name, &isSuperuser, &expiresAt)
-
-    if err == nil {
-        // Check expiry
-        if expiresAt.Valid && time.Now().After(expiresAt.Time) {
-            return nil, fmt.Errorf("user token expired")
-        }
-
-        return &UserInfo{
-            UserID:          id,
-            Username:        name,
-            IsSuperuser:     isSuperuser,
-            IsAuthenticated: true,
-            TokenType:       "user",
-        }, nil
-    }
-
-    return nil, fmt.Errorf("invalid token")
+    IsSuperuser     bool
+    Username        string
+    IsServiceToken  bool
 }
 ```
 
 ### Authentication via HTTP API
-
-Authentication is handled via an HTTP API endpoint, not an MCP tool. This
-keeps authentication separate from the MCP protocol.
 
 **Endpoint:** `POST /api/auth/login`
 
@@ -531,142 +233,281 @@ keeps authentication separate from the MCP protocol.
 }
 ```
 
-**Implementation:** See `internal/api/auth_handlers.go`
+### Test Mode
 
-## Authorization Flow
+When `dbPool` is nil during unit tests, the server bypasses
+authentication entirely, allowing tool logic testing without
+database dependencies.
 
-See `authentication-flow.md` for detailed RBAC implementation.
+## Authorization
 
-## Error Handling
+### Authorization Levels
 
-### Error Codes
+1. **Unauthenticated** - `initialize`, `ping`, login only.
+2. **Authenticated User** - Resource reads, self-service tokens.
+3. **Privileged User** - Operations granted via group membership;
+   checked by `privileges.CanAccessMCPItem()`.
+4. **Superuser** - All operations; bypasses all privilege checks.
+   Superuser status comes from the owning user account.
 
-Following JSON-RPC 2.0 specification:
+### Authorization Patterns
+
+**Pattern 1: Superuser Only**
+
+Token scope management tools use this pattern:
 
 ```go
-const (
-    ParseError     = -32700 // Invalid JSON
-    InvalidRequest = -32600 // Invalid Request object
-    MethodNotFound = -32601 // Method doesn't exist
-    InvalidParams  = -32602 // Invalid parameters
-    InternalError  = -32603 // Internal error
+if !h.userInfo.IsSuperuser {
+    return nil, fmt.Errorf(
+        "permission denied: superuser privileges required")
+}
+```
+
+**Pattern 2: Superuser or Privilege Check**
+
+User, token, group, and privilege management tools use this:
+
+```go
+if !h.userInfo.IsSuperuser {
+    canAccess, err := privileges.CanAccessMCPItem(
+        ctx, h.dbPool, userID, "tool_name")
+    if err != nil || !canAccess {
+        return nil, fmt.Errorf(
+            "permission denied: insufficient privileges")
+    }
+}
+```
+
+**Pattern 3: Self-Service or Superuser**
+
+User token management uses this pattern; users manage their own
+tokens, while superusers manage anyone's tokens.
+
+### Group-Based Privilege System
+
+**Core tables:**
+
+- `mcp_privilege_identifiers` - Registered privileges; seeded at
+  startup via `privileges.SeedMCPPrivileges()`.
+- `user_groups` - Named collections of users and nested groups.
+- `group_memberships` - Links users/groups to parent groups;
+  supports recursive resolution.
+- `group_mcp_privileges` - Grants specific MCP privileges to
+  groups; all members inherit them.
+
+**Privilege Resolution via `CanAccessMCPItem()`:**
+
+1. Return `true` if user is superuser.
+2. Verify the privilege identifier exists.
+3. Check whether any groups hold the privilege.
+4. Use recursive CTE to resolve all user's groups.
+5. Check whether any resolved group holds the privilege.
+
+**Group Membership Resolution (recursive CTE):**
+
+```sql
+WITH RECURSIVE user_groups_recursive AS (
+    SELECT parent_group_id AS group_id
+    FROM group_memberships
+    WHERE member_user_id = $1
+    UNION
+    SELECT gm.parent_group_id
+    FROM group_memberships gm
+    INNER JOIN user_groups_recursive ugr
+        ON gm.member_group_id = ugr.group_id
 )
+SELECT DISTINCT group_id
+FROM user_groups_recursive;
 ```
 
-### Error Response Pattern
+### Token Scoping
+
+Token scoping provides restrictions beyond user privileges:
+
+- **Connection scope** limits tokens to specific database
+  connections (`token_connection_scope` table).
+- **MCP scope** limits tokens to specific MCP tools
+  (`token_mcp_scope` table).
+
+Only superusers can manage token scopes.
+
+## Extending the MCP Server
+
+### Adding a New Tool (Checklist)
+
+1. Register the privilege identifier in
+   `/server/src/privileges/seed.go`.
+2. Define the tool schema in `handleListTools()` in
+   `/server/src/mcp/handler.go`.
+3. Add routing case in `handleCallTool()`.
+4. Implement the handler function.
+5. Include authentication and authorization checks.
+6. Write unit tests in `handler_test.go`.
+7. Write integration tests in `/server/src/integration/`.
+8. Update `mcp-tools-catalog.md`.
+
+### Tool Handler Template
 
 ```go
-func (h *Handler) handleToolCall(req Request) (*Response, error) {
-    var params struct {
-        Name      string                 `json:"name"`
-        Arguments map[string]interface{} `json:"arguments"`
+func (h *Handler) handleNewTool(
+    args map[string]interface{},
+) (interface{}, error) {
+    // 1. Check authentication
+    if h.userInfo == nil || !h.userInfo.IsAuthenticated {
+        return nil, fmt.Errorf("authentication required")
     }
 
-    if err := json.Unmarshal(req.Params, &params); err != nil {
-        return NewErrorResponse(req.ID, InvalidParams,
-            "Invalid parameters", err.Error()), nil
-    }
-
-    // Route to tool handler
-    result, err := h.routeToolCall(params.Name, params.Arguments)
-    if err != nil {
-        // Convert application error to MCP error
-        return NewErrorResponse(req.ID, InternalError,
-            "Tool execution failed", err.Error()), nil
-    }
-
-    return NewResponse(req.ID, result), nil
-}
-```
-
-## HTTP Server Integration
-
-The MCP handler is integrated with an HTTP server:
-
-```go
-type Server struct {
-    config     *config.Config
-    mcpHandler *mcp.Handler
-    httpServer *http.Server
-}
-
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-    // Extract bearer token
-    bearerToken := ""
-    authHeader := r.Header.Get("Authorization")
-    if strings.HasPrefix(authHeader, "Bearer ") {
-        bearerToken = strings.TrimPrefix(authHeader, "Bearer ")
-    }
-
-    // Read request body
-    body, err := io.ReadAll(r.Body)
-    if err != nil {
-        http.Error(w, "Failed to read request", http.StatusBadRequest)
-        return
-    }
-
-    // Handle MCP request
-    resp, err := s.mcpHandler.HandleRequest(body, bearerToken)
-    if err != nil {
-        http.Error(w, err.Error(), http.StatusInternalServerError)
-        return
-    }
-
-    // Write response
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(resp)
-}
-```
-
-## Testing
-
-### Unit Testing
-
-Mock the database pool for handler testing:
-
-```go
-func TestHandleInitialize(t *testing.T) {
-    handler := NewHandler("TestServer", "1.0.0", nil, nil)
-
-    reqData := []byte(`{
-        "jsonrpc": "2.0",
-        "id": "test-1",
-        "method": "initialize",
-        "params": {}
-    }`)
-
-    resp, err := handler.HandleRequest(reqData, "")
-    if err != nil {
-        t.Fatalf("HandleRequest failed: %v", err)
-    }
-
-    if resp.Error != nil {
-        t.Errorf("Expected no error, got: %v", resp.Error)
-    }
-
-    result, ok := resp.Result.(InitializeResult)
+    // 2. Parse arguments
+    paramFloat, ok := args["param"].(float64)
     if !ok {
-        t.Fatalf("Result is not InitializeResult")
+        return nil, fmt.Errorf("invalid param parameter")
+    }
+    param := int(paramFloat)
+
+    // 3. Check authorization
+    if !h.userInfo.IsSuperuser {
+        ctx := context.Background()
+        var userID int
+        err := h.dbPool.QueryRow(ctx,
+            "SELECT id FROM users WHERE username = $1",
+            h.userInfo.Username).Scan(&userID)
+        if err != nil {
+            return nil, fmt.Errorf(
+                "failed to get user ID: %w", err)
+        }
+        canAccess, err := privileges.CanAccessMCPItem(
+            ctx, h.dbPool, userID, "new_tool")
+        if err != nil || !canAccess {
+            return nil, fmt.Errorf(
+                "permission denied: insufficient privileges")
+        }
     }
 
-    if result.ProtocolVersion != "2024-11-05" {
-        t.Errorf("ProtocolVersion = %v, want 2024-11-05",
-            result.ProtocolVersion)
-    }
+    // 4. Execute tool logic
+    // ...
+
+    // 5. Return result
+    return map[string]interface{}{
+        "content": []map[string]interface{}{
+            {"type": "text", "text": "Success"},
+        },
+    }, nil
 }
 ```
 
-### Integration Testing
+### Adding a New Resource
 
-See `testing-strategy.md` for integration test patterns.
+1. Define the resource in `handleListResources()`.
+2. Add URI case to `handleReadResource()`.
+3. Implement the query and formatting logic.
+4. Ensure sensitive data (passwords, tokens) is excluded.
+5. Write tests and update `mcp-tools-catalog.md`.
+
+### Adding a New Prompt
+
+1. Add the prompt definition to `handleListPrompts()`.
+2. Implement `handleGetPrompt()` with a `prompts/get` route.
+3. Use template strings with argument substitution.
+
+### Modifying Existing Tools
+
+- Adding optional parameters is safe for backwards compatibility.
+- Adding required parameters is a breaking change; add as
+  optional first, then require in a future version.
+- Changing response format is a breaking change; prefer adding
+  a new tool and deprecating the old one.
+
+## Testing MCP Components
+
+### Unit Test Pattern
+
+```go
+func TestHandleToolName(t *testing.T) {
+    handler := NewHandler("TestServer", "1.0.0", nil, nil)
+    handler.userInfo = &UserInfo{
+        IsAuthenticated: true,
+        IsSuperuser:     true,
+        Username:        "testuser",
+    }
+
+    args := map[string]interface{}{
+        "param": float64(1),
+    }
+
+    result, err := handler.handleToolName(args)
+    if err != nil {
+        t.Fatalf("handleToolName failed: %v", err)
+    }
+
+    resultMap, ok := result.(map[string]interface{})
+    if !ok {
+        t.Fatalf("Result is not a map")
+    }
+    // Verify content structure...
+}
+```
+
+### Key Test Categories
+
+- **Protocol tests** - Initialize, ping, invalid JSON, wrong
+  version.
+- **Authentication tests** - Missing token, expired token,
+  invalid token.
+- **Authorization tests** - Superuser access, non-superuser
+  denied, privilege-granted access.
+- **Tool handler tests** - Valid parameters, missing parameters,
+  invalid types.
+- **Integration tests** - Full request flow with real database.
+
+### Integration Test Setup
+
+```go
+func setupTestDatabase(t *testing.T) (
+    *pgxpool.Pool, *config.Config,
+) {
+    cfg := config.NewConfig()
+    cfg.PgHost = os.Getenv("TEST_DB_HOST")
+    // ... configure test database ...
+    pool, err := database.Connect(cfg)
+    if err != nil {
+        t.Fatalf("Failed to connect: %v", err)
+    }
+    ctx := context.Background()
+    privileges.SeedMCPPrivileges(ctx, pool)
+    return pool, cfg
+}
+```
+
+### Coverage Targets
+
+- Overall: 80% minimum
+- Critical paths (auth, authorization): 90%+
+- Handler functions: 85%+
+- Protocol functions: 90%+
+
+### Running Tests
+
+```bash
+# Unit tests
+cd server/src && go test ./mcp/...
+
+# Integration tests
+cd server/src && go test ./integration/... -v
+
+# Coverage report
+cd server/src && go test ./mcp/... -coverprofile=coverage.out
+go tool cover -html=coverage.out
+```
 
 ## Best Practices
 
-1. **Always Validate Parameters:** Check required fields and types
-2. **Always Check Authorization:** Even if user is authenticated
-3. **Use Transactions:** For operations that modify multiple tables
-4. **Return Structured Errors:** Include context in error messages
-5. **Log Operations:** Log tool calls and results for audit trail
-6. **Handle Context Cancellation:** Respect request cancellation
-7. **Release Resources:** Always release database connections
-8. **Sanitize Output:** Don't leak sensitive data in error messages
+1. Always validate parameters before processing.
+2. Always check authorization even if user is authenticated.
+3. Use transactions for operations that modify multiple tables.
+4. Return structured errors with context.
+5. Log tool calls for audit trail.
+6. Handle context cancellation for SSE connections.
+7. Release database connections promptly.
+8. Never leak sensitive data in error messages.
+9. Use parameterized queries to prevent SQL injection.
+10. Follow four-space indentation and include copyright headers.

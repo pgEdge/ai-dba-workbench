@@ -10,180 +10,150 @@
 
 # Testing Strategy
 
-This document describes the testing approach, patterns, and best practices for
-the pgEdge AI DBA Workbench Go backend.
+This document describes the testing approach, patterns, and best practices
+for the pgEdge AI DBA Workbench Go backend.
 
 ## Testing Philosophy
 
-The project follows these testing principles:
+1. **Test Behavior, Not Implementation:** Focus on what the code does.
+2. **Isolate Units:** Test components independently using mocking.
+3. **Test Realistic Scenarios:** Integration tests use real databases.
+4. **Maintain High Coverage:** Aim for >80% overall; >90% critical; 100%
+   security.
+5. **Fast Feedback:** Unit tests run in milliseconds.
+6. **Reliable Tests:** No flaky tests; consistent results.
 
-1. **Test Behavior, Not Implementation:** Focus on what the code does, not how
-2. **Isolate Units:** Test components independently using mocking
-3. **Test Realistic Scenarios:** Integration tests use real databases
-4. **Maintain High Coverage:** Aim for >80% code coverage
-5. **Fast Feedback:** Unit tests run in milliseconds
-6. **Reliable Tests:** No flaky tests, consistent results
+## Test Organization
 
-## Test Types
+### Directory Structure
 
-### 1. Unit Tests
+```
+collector/src/
+├── database/
+│   ├── datastore.go
+│   ├── datastore_test.go       # Unit tests (co-located)
+│   ├── schema.go
+│   └── schema_test.go
+├── probes/
+│   ├── base.go
+│   └── pg_settings_probe_test.go
 
-Test individual functions and methods in isolation.
+server/src/
+├── mcp/
+│   ├── handler.go
+│   ├── handler_test.go
+│   ├── protocol.go
+│   └── protocol_test.go
+├── internal/auth/
+│   ├── store.go
+│   └── store_test.go
+└── integration/
+    └── privileges_integration_test.go
 
-**Location:** Same directory as source code (Go convention)
-
-**Example:** `/server/src/mcp/handler_test.go`
-
-**Pattern:**
-```go
-package mcp
-
-import (
-    "testing"
-)
-
-func TestHandlerCreation(t *testing.T) {
-    handler := NewHandler("TestServer", "1.0.0", nil, nil)
-
-    if handler == nil {
-        t.Fatal("NewHandler returned nil")
-    }
-
-    if handler.serverName != "TestServer" {
-        t.Errorf("serverName = %v, want TestServer", handler.serverName)
-    }
-
-    if handler.initialized {
-        t.Error("Handler should not be initialized on creation")
-    }
-}
-
-func TestHandleInitialize(t *testing.T) {
-    handler := NewHandler("TestServer", "1.0.0", nil, nil)
-
-    reqData := []byte(`{
-        "jsonrpc": "2.0",
-        "id": "test-1",
-        "method": "initialize",
-        "params": {}
-    }`)
-
-    resp, err := handler.HandleRequest(reqData, "")
-    if err != nil {
-        t.Fatalf("HandleRequest failed: %v", err)
-    }
-
-    if resp.Error != nil {
-        t.Errorf("Expected no error, got: %v", resp.Error)
-    }
-
-    result, ok := resp.Result.(InitializeResult)
-    if !ok {
-        t.Fatalf("Result is not InitializeResult, got %T", resp.Result)
-    }
-
-    if result.ProtocolVersion != "2024-11-05" {
-        t.Errorf("ProtocolVersion = %v, want 2024-11-05",
-            result.ProtocolVersion)
-    }
-}
+tests/                           # Cross-component integration tests
+├── integration/
+│   └── user_test.go
+├── testutil/                    # Shared test utilities
+│   ├── database.go              # Database lifecycle
+│   ├── services.go              # Service process management
+│   ├── cli.go                   # CLI command execution
+│   ├── config.go                # Configuration templating
+│   └── common.go                # Common helpers
+├── config/
+│   └── test.conf.template
+├── logs/                        # Service logs (created during tests)
+├── Makefile
+└── go.mod
 ```
 
-### 2. Integration Tests
+### Naming Conventions
 
-Test components working together with real dependencies (database, etc.).
-
-**Location:** `/tests/integration/`
-
-**Example:** `/tests/integration/user_test.go`
-
-**Pattern:**
 ```go
-package integration
-
-import (
-    "context"
-    "testing"
-
-    "github.com/pgEdge/ai-workbench/tests/testutil"
-)
-
-func TestUserCreation(t *testing.T) {
-    // Setup test database
-    pool := testutil.SetupTestDatabase(t)
-    defer pool.Close()
-
-    ctx := context.Background()
-
-    // Create user
-    _, err := pool.Exec(ctx, `
-        INSERT INTO user_accounts (username, email, full_name, password_hash)
-        VALUES ($1, $2, $3, $4)
-    `, "testuser", "test@example.com", "Test User", "hash")
-
-    if err != nil {
-        t.Fatalf("Failed to create user: %v", err)
-    }
-
-    // Verify user exists
-    var username string
-    err = pool.QueryRow(ctx, `
-        SELECT username FROM user_accounts WHERE username = $1
-    `, "testuser").Scan(&username)
-
-    if err != nil {
-        t.Fatalf("Failed to query user: %v", err)
-    }
-
-    if username != "testuser" {
-        t.Errorf("username = %v, want testuser", username)
-    }
-}
+func TestFunctionName(t *testing.T)              // Basic test
+func TestFunctionName_SpecificCase(t *testing.T) // Specific scenario
+func TestFunctionName_Error(t *testing.T)        // Error case
 ```
 
-### 3. Table-Driven Tests
+## Running Tests
 
-Test multiple scenarios with the same logic.
+### Makefile Commands
 
-**Pattern:**
+```bash
+# Per sub-project
+cd collector && make test        # Unit tests
+cd collector && make coverage    # Tests with coverage
+cd collector && make lint        # Linter
+cd collector && make test-all    # Test + coverage + lint
+
+cd server && make test           # Unit tests (SKIP_DB_TESTS=1)
+cd server && make coverage
+cd server && make lint
+cd server && make test-all
+
+# Integration tests
+cd tests && make test            # Run integration tests
+cd tests && make coverage
+cd tests && make run-test TEST=TestName
+cd tests && make build-deps      # Build required binaries
+cd tests && make killall         # Kill orphaned processes
+
+# All projects from root
+make test-all
+```
+
+### Environment Variables
+
+```bash
+# PostgreSQL connection for tests
+export TEST_AI_WORKBENCH_SERVER=postgres://postgres@localhost:5432/postgres
+
+# Keep test database for debugging (name printed to console)
+export TEST_AI_WORKBENCH_KEEP_DB=1
+
+# Skip database-dependent tests
+export SKIP_DB_TESTS=1
+
+# Skip integration tests
+export SKIP_INTEGRATION_TESTS=1
+```
+
+### Go Test Commands
+
+```bash
+go test ./...                              # All tests
+go test -v ./...                           # Verbose
+go test -run TestHandleInitialize ./...    # Specific test
+go test -race ./...                        # Race detector
+go test -short ./...                       # Skip long tests
+go test -coverprofile=coverage.out ./...   # Coverage profile
+go tool cover -html=coverage.out           # HTML coverage report
+go tool cover -func=coverage.out           # Per-function coverage
+go test -bench=. -benchmem ./...           # Benchmarks
+```
+
+## Unit Test Patterns
+
+### Table-Driven Tests
+
+Preferred pattern for testing multiple scenarios:
+
 ```go
 func TestBuildConnectionString(t *testing.T) {
     tests := []struct {
         name     string
         config   Config
         expected string
+        wantErr  bool
     }{
         {
-            name: "basic connection",
-            config: Config{
-                PgHost:     "localhost",
-                PgPort:     5432,
-                PgDatabase: "testdb",
-                PgUsername: "user",
-            },
-            expected: "host=localhost port=5432 dbname=testdb user=user",
+            name:     "basic connection",
+            config:   Config{PgHost: "localhost", PgPort: 5432},
+            expected: "host=localhost port=5432",
         },
         {
-            name: "with password",
-            config: Config{
-                PgHost:     "localhost",
-                PgPort:     5432,
-                PgDatabase: "testdb",
-                PgUsername: "user",
-                PgPassword: "secret",
-            },
-            expected: "host=localhost port=5432 dbname=testdb user=user password=secret",
-        },
-        {
-            name: "with SSL",
-            config: Config{
-                PgHost:     "localhost",
-                PgPort:     5432,
-                PgDatabase: "testdb",
-                PgUsername: "user",
-                PgSSLMode:  "require",
-            },
-            expected: "host=localhost port=5432 dbname=testdb user=user sslmode=require",
+            name:     "with SSL",
+            config:   Config{PgHost: "localhost", PgSSLMode: "require"},
+            expected: "sslmode=require",
         },
     }
 
@@ -191,7 +161,7 @@ func TestBuildConnectionString(t *testing.T) {
         t.Run(tt.name, func(t *testing.T) {
             result := BuildConnectionString(&tt.config)
             if !strings.Contains(result, tt.expected) {
-                t.Errorf("BuildConnectionString() = %v, want to contain %v",
+                t.Errorf("got %v, want to contain %v",
                     result, tt.expected)
             }
         })
@@ -199,71 +169,56 @@ func TestBuildConnectionString(t *testing.T) {
 }
 ```
 
-## Mocking
-
 ### Interface-Based Mocking
 
-Define interfaces for dependencies:
+Define interfaces for dependencies; create manual mock implementations:
 
 ```go
-// Config interface for dependency injection
-type Config interface {
-    Validate() error
-    GetPgHost() string
-    GetPgPort() int
-    GetPgDatabase() string
-    // ... other methods
+// Production code
+type Database interface {
+    Query(sql string) ([]Row, error)
+    Execute(sql string) error
 }
 
-// Mock implementation for testing
-type mockConfig struct {
-    pgHost     string
-    pgPort     int
-    pgDatabase string
-    validationError error
+type UserRepository struct {
+    db Database
 }
 
-func (m *mockConfig) Validate() error {
-    return m.validationError
+// Test code
+type mockDatabase struct {
+    queryResult []Row
+    queryError  error
+    execError   error
 }
 
-func (m *mockConfig) GetPgHost() string {
-    return m.pgHost
+func (m *mockDatabase) Query(sql string) ([]Row, error) {
+    return m.queryResult, m.queryError
 }
 
-func (m *mockConfig) GetPgPort() int {
-    return m.pgPort
+func (m *mockDatabase) Execute(sql string) error {
+    return m.execError
 }
 
-func (m *mockConfig) GetPgDatabase() string {
-    return m.pgDatabase
-}
-
-// Test using mock
-func TestDatabaseConnection(t *testing.T) {
-    config := &mockConfig{
-        pgHost:     "testhost",
-        pgPort:     5432,
-        pgDatabase: "testdb",
+func TestUserRepository_GetUser(t *testing.T) {
+    mockDB := &mockDatabase{
+        queryResult: []Row{{ID: 1, Name: "Test User"}},
     }
+    repo := &UserRepository{db: mockDB}
 
-    // Test logic using config
-    connStr := BuildConnectionString(config)
-    // Assertions...
+    user, err := repo.GetUser(1)
+    require.NoError(t, err)
+    assert.Equal(t, "Test User", user.Name)
 }
 ```
 
-### Database Mocking
+### Testing Without Database
 
-For unit tests that need database interaction, pass `nil` pool and test
-without database:
+Pass `nil` pool for methods that do not require database access:
 
 ```go
 func TestHandlerWithoutDatabase(t *testing.T) {
-    // Create handler with nil database pool
     handler := NewHandler("TestServer", "1.0.0", nil, nil)
 
-    // Test methods that don't require database
     reqData := []byte(`{
         "jsonrpc": "2.0",
         "id": "test-1",
@@ -275,453 +230,531 @@ func TestHandlerWithoutDatabase(t *testing.T) {
     if err != nil {
         t.Fatalf("HandleRequest failed: %v", err)
     }
-
-    // Assertions...
 }
 ```
 
-For integration tests, use a real test database (see Test Utilities below).
-
-## Test Utilities
-
-### Test Database Setup
-
-**Location:** `/tests/testutil/database.go`
+### Skip Pattern for Database Tests
 
 ```go
-package testutil
+func skipIfNoDatabase(t *testing.T) *pgxpool.Pool {
+    if os.Getenv("SKIP_DB_TESTS") != "" {
+        t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
+    }
 
-import (
-    "context"
-    "fmt"
-    "os"
-    "testing"
-
-    "github.com/jackc/pgx/v5/pgxpool"
-)
-
-// SetupTestDatabase creates a test database connection pool
-func SetupTestDatabase(t *testing.T) *pgxpool.Pool {
-    t.Helper()
-
-    // Get test database connection string from environment
-    connStr := os.Getenv("TEST_DATABASE_URL")
+    connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
     if connStr == "" {
-        connStr = "host=localhost port=5432 dbname=ai_workbench_test " +
-            "user=postgres password=postgres sslmode=disable"
+        t.Skip("TEST_AI_WORKBENCH_SERVER not set")
     }
 
     ctx := context.Background()
     pool, err := pgxpool.New(ctx, connStr)
     if err != nil {
-        t.Fatalf("Failed to create test database pool: %v", err)
+        t.Skipf("Could not connect: %v", err)
     }
 
-    // Verify connection
     if err := pool.Ping(ctx); err != nil {
         pool.Close()
-        t.Fatalf("Failed to ping test database: %v", err)
+        t.Skipf("Ping failed: %v", err)
     }
-
-    // Clean database before test
-    CleanTestDatabase(t, pool)
 
     return pool
 }
+```
 
-// CleanTestDatabase removes all data from test database
-func CleanTestDatabase(t *testing.T, pool *pgxpool.Pool) {
-    t.Helper()
+## Database Testing
+
+### Test Database Lifecycle
+
+Each test run creates a unique temporary database via `testutil`:
+
+```go
+db, err := testutil.NewTestDatabase()
+require.NoError(t, err)
+defer db.Close()
+```
+
+- **Naming**: `ai_workbench_test_<unix_timestamp>`
+- **Connection**: Uses `TEST_AI_WORKBENCH_SERVER` (default:
+  `postgres://postgres@localhost:5432/postgres`)
+- **Cleanup**: `Close()` terminates connections and drops the database
+  unless `TEST_AI_WORKBENCH_KEEP_DB=1`
+
+### TestDatabase Struct
+
+```go
+type TestDatabase struct {
+    Name         string         // ai_workbench_test_<timestamp>
+    ConnString   string         // Connection string for test database
+    AdminConnStr string         // Admin connection string
+    Pool         *pgxpool.Pool  // Connection pool
+    keepDB       bool           // Whether to keep DB after tests
+}
+```
+
+### Testing Transactions
+
+```go
+func TestTransactionRollback(t *testing.T) {
+    db, err := testutil.NewTestDatabase()
+    require.NoError(t, err)
+    defer db.Close()
+
+    err = runSchemaMigrations(db)
+    require.NoError(t, err)
 
     ctx := context.Background()
-    tables := []string{
-        "group_mcp_privileges",
-        "connection_privileges",
-        "group_memberships",
-        "user_tokens",
-        "service_tokens",
-        "groups",
-        "connections",
-        "user_accounts",
-    }
+    tx, err := db.Pool.Begin(ctx)
+    require.NoError(t, err)
 
-    for _, table := range tables {
-        _, err := pool.Exec(ctx, fmt.Sprintf("DELETE FROM %s", table))
-        if err != nil {
-            t.Logf("Warning: failed to clean table %s: %v", table, err)
-        }
-    }
+    _, err = tx.Exec(ctx, `
+        INSERT INTO user_accounts (username, email, full_name, password_hash)
+        VALUES ($1, $2, $3, $4)
+    `, "txuser", "tx@example.com", "TX User", "hash")
+    require.NoError(t, err)
+
+    err = tx.Rollback(ctx)
+    require.NoError(t, err)
+
+    var count int
+    err = db.Pool.QueryRow(ctx,
+        "SELECT COUNT(*) FROM user_accounts WHERE username = $1",
+        "txuser").Scan(&count)
+    require.NoError(t, err)
+    assert.Equal(t, 0, count, "Data should not exist after rollback")
+}
+```
+
+### Testing Schema Migrations
+
+```go
+func TestMigrationIdempotency(t *testing.T) {
+    db, err := testutil.NewTestDatabase()
+    require.NoError(t, err)
+    defer db.Close()
+
+    err = runSchemaMigrations(db)
+    require.NoError(t, err)
+
+    var count1 int
+    err = db.Pool.QueryRow(ctx,
+        "SELECT COUNT(*) FROM schema_version").Scan(&count1)
+    require.NoError(t, err)
+
+    // Run again; verify no duplicates
+    err = runSchemaMigrations(db)
+    require.NoError(t, err)
+
+    var count2 int
+    err = db.Pool.QueryRow(ctx,
+        "SELECT COUNT(*) FROM schema_version").Scan(&count2)
+    require.NoError(t, err)
+    assert.Equal(t, count1, count2)
+}
+```
+
+### Testing Constraint Violations
+
+```go
+func TestDatabaseErrors(t *testing.T) {
+    db, err := testutil.NewTestDatabase()
+    require.NoError(t, err)
+    defer db.Close()
+    err = runSchemaMigrations(db)
+    require.NoError(t, err)
+    ctx := context.Background()
+
+    t.Run("duplicate key", func(t *testing.T) {
+        _, err := db.Pool.Exec(ctx, `
+            INSERT INTO user_accounts (username, email, full_name, password_hash)
+            VALUES ($1, $2, $3, $4)
+        `, "dup", "dup@example.com", "Dup", "hash")
+        require.NoError(t, err)
+
+        _, err = db.Pool.Exec(ctx, `
+            INSERT INTO user_accounts (username, email, full_name, password_hash)
+            VALUES ($1, $2, $3, $4)
+        `, "dup", "another@example.com", "Another", "hash")
+        require.Error(t, err)
+        assert.Contains(t, err.Error(), "unique")
+    })
+
+    t.Run("not null violation", func(t *testing.T) {
+        _, err := db.Pool.Exec(ctx, `
+            INSERT INTO user_accounts (username, email, full_name, password_hash)
+            VALUES ($1, $2, $3, $4)
+        `, "nulltest", nil, "Null Test", "hash")
+        require.Error(t, err)
+    })
+}
+```
+
+## Integration Testing
+
+### Test Environment Pattern
+
+```go
+type TestEnvironment struct {
+    DB         *testutil.TestDatabase
+    Server     *testutil.Service
+    CLI        *testutil.CLIClient
+    Config     string
+    AdminToken string
 }
 
-// CreateTestUser creates a test user account
-func CreateTestUser(
-    t *testing.T,
-    pool *pgxpool.Pool,
-    username string,
-    isSuperuser bool,
-) int {
+func SetupTestEnvironment(t *testing.T) *TestEnvironment {
     t.Helper()
 
-    var userID int
-    err := pool.QueryRow(context.Background(), `
-        INSERT INTO user_accounts
-            (username, email, full_name, password_hash, is_superuser)
-        VALUES ($1, $2, $3, $4, $5)
-        RETURNING id
-    `, username, username+"@example.com", "Test User",
-        "test_hash", isSuperuser).Scan(&userID)
+    db, err := testutil.NewTestDatabase()
+    require.NoError(t, err)
 
-    if err != nil {
-        t.Fatalf("Failed to create test user: %v", err)
+    err = runSchemaMigrations(db)
+    require.NoError(t, err)
+
+    adminToken, err := createAdminUser(db)
+    require.NoError(t, err)
+
+    configPath, err := testutil.CreateTestConfig(db.Name)
+    require.NoError(t, err)
+
+    server, err := testutil.StartMCPServer(configPath, 18080)
+    require.NoError(t, err)
+
+    cli, err := testutil.NewCLIClient("http://localhost:18080")
+    require.NoError(t, err)
+    cli.SetToken(adminToken)
+
+    time.Sleep(3 * time.Second)
+
+    err = cli.Ping()
+    require.NoError(t, err, "Server not responding")
+
+    return &TestEnvironment{
+        DB: db, Server: server, CLI: cli,
+        Config: configPath, AdminToken: adminToken,
     }
+}
 
-    return userID
+func (env *TestEnvironment) Teardown(t *testing.T) {
+    t.Helper()
+    if env.Server != nil { env.Server.Stop() }
+    if env.Config != "" { testutil.CleanupTestConfig(env.Config) }
+    if env.DB != nil { env.DB.Close() }
 }
 ```
 
-### Test Configuration
+### Test Utilities Reference
 
-**Location:** `/tests/testutil/config.go`
+Utilities live in `/tests/testutil/`:
+
+| File          | Purpose                                |
+|---------------|----------------------------------------|
+| `database.go` | `NewTestDatabase()`, `Close()`, pool   |
+| `services.go` | `StartCollector()`, `StartMCPServer()` |
+| `cli.go`      | `NewCLIClient()`, `RunTool()`, auth    |
+| `config.go`   | `CreateTestConfig()`, template vars    |
+| `common.go`   | `GetProjectRoot()`, shared helpers     |
+
+Key functions:
+
+- `testutil.NewTestDatabase() (*TestDatabase, error)` - Creates a
+  temporary database with unique name and connection pool.
+- `testutil.StartMCPServer(configPath string, port int) (*Service, error)`
+  \- Starts the MCP server, logs to `tests/logs/`.
+- `testutil.StartCollector(configPath string) (*Service, error)` - Starts
+  the collector service.
+- `testutil.NewCLIClient(serverURL string) (*CLIClient, error)` - Creates
+  a CLI client for executing MCP tools.
+- `testutil.CreateTestConfig(dbName string) (string, error)` - Generates
+  a config file from `tests/config/test.conf.template`.
+
+### CRUD Integration Test Example
 
 ```go
-package testutil
-
-// CreateTestConfig creates a test configuration
-func CreateTestConfig() *Config {
-    return &Config{
-        PgHost:     "localhost",
-        PgPort:     5432,
-        PgDatabase: "ai_workbench_test",
-        PgUsername: "postgres",
-        PgPassword: "postgres",
-        PgSSLMode:  "disable",
+func TestUserCRUD(t *testing.T) {
+    if os.Getenv("SKIP_INTEGRATION_TESTS") != "" {
+        t.Skip("Skipping integration tests")
     }
+
+    env := SetupTestEnvironment(t)
+    defer env.Teardown(t)
+
+    t.Run("Create", func(t *testing.T) {
+        result, err := env.CLI.RunTool("create_user", map[string]interface{}{
+            "username":  "testuser",
+            "email":     "test@example.com",
+            "full_name": "Test User",
+            "password":  "TestPassword123!",
+        })
+        require.NoError(t, err)
+        assert.Contains(t, result, "created")
+    })
+
+    t.Run("List", func(t *testing.T) {
+        result, err := env.CLI.RunTool("list_users", nil)
+        require.NoError(t, err)
+        users := result.([]map[string]interface{})
+        found := false
+        for _, u := range users {
+            if u["username"] == "testuser" { found = true }
+        }
+        assert.True(t, found)
+    })
+
+    t.Run("Delete", func(t *testing.T) {
+        result, err := env.CLI.RunTool("delete_user", map[string]interface{}{
+            "username": "testuser",
+        })
+        require.NoError(t, err)
+        assert.Contains(t, result, "deleted")
+    })
 }
 ```
 
-## Test Organization
+## Security Testing Patterns
 
-### Project Structure
+### Input Validation
 
-```
-/server/src/
-├── mcp/
-│   ├── handler.go
-│   ├── handler_test.go       # Unit tests
-│   ├── protocol.go
-│   └── protocol_test.go      # Unit tests
-├── privileges/
-│   ├── privileges.go
-│   └── privileges_test.go    # Unit tests
-└── ...
-
-/collector/src/
-├── database/
-│   ├── datastore.go
-│   ├── datastore_test.go     # Unit tests
-│   ├── schema.go
-│   └── schema_test.go        # Unit tests
-├── probes/
-│   ├── base.go
-│   ├── pg_settings_probe.go
-│   └── pg_settings_probe_test.go  # Unit tests
-└── ...
-
-/tests/
-├── integration/
-│   ├── user_test.go          # Integration tests
-│   └── connection_test.go    # Integration tests
-└── testutil/
-    ├── database.go           # Test utilities
-    ├── config.go             # Test utilities
-    └── common.go             # Common test helpers
-```
-
-### Test Naming Conventions
-
-**Test Functions:**
 ```go
-func TestFunctionName(t *testing.T)              // Basic test
-func TestFunctionName_SpecificCase(t *testing.T) // Specific scenario
-func TestFunctionName_Error(t *testing.T)        // Error case
-```
-
-**Table-Driven Tests:**
-```go
-func TestFunctionName(t *testing.T) {
+func TestInputValidation(t *testing.T) {
     tests := []struct {
-        name     string  // Descriptive test name
-        input    Type
-        expected Type
-        wantErr  bool
+        name    string
+        input   string
+        wantErr bool
     }{
-        // Test cases...
+        {"valid input", "valid_username", false},
+        {"SQL injection", "admin' OR '1'='1", true},
+        {"XSS attempt", "<script>alert('xss')</script>", true},
+        {"command injection", "user; rm -rf /", true},
+        {"oversized input", strings.Repeat("a", 10000), true},
+        {"null bytes", "user\x00admin", true},
     }
 
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
-            // Test logic...
+            err := ValidateUsername(tt.input)
+            if tt.wantErr {
+                require.Error(t, err)
+            } else {
+                require.NoError(t, err)
+            }
         })
     }
 }
 ```
 
-## Running Tests
-
-### Run All Tests
-
-```bash
-# Server tests
-cd server/src
-go test ./...
-
-# Collector tests
-cd collector/src
-go test ./...
-
-# Integration tests
-cd tests/integration
-go test -v
-```
-
-### Run Specific Package
-
-```bash
-go test github.com/pgEdge/ai-workbench/server/src/mcp
-```
-
-### Run Specific Test
-
-```bash
-go test -run TestHandleInitialize
-```
-
-### Run with Verbose Output
-
-```bash
-go test -v ./...
-```
-
-### Run with Coverage
-
-```bash
-# Generate coverage report
-go test -coverprofile=coverage.out ./...
-
-# View coverage in terminal
-go tool cover -func=coverage.out
-
-# Generate HTML coverage report
-go tool cover -html=coverage.out -o coverage.html
-```
-
-### Run with Race Detector
-
-```bash
-go test -race ./...
-```
-
-## Coverage Reporting
-
-Current coverage targets:
-
-- **Overall:** >80%
-- **Critical Paths:** >90% (authentication, authorization, connection handling)
-- **Utility Functions:** >70%
-
-### Measuring Coverage
-
-```bash
-# Generate coverage for all packages
-go test -coverprofile=coverage.out ./...
-
-# View summary
-go tool cover -func=coverage.out | grep total
-
-# View detailed HTML report
-go tool cover -html=coverage.out
-```
-
-### Coverage in CI/CD
-
-```bash
-# Generate coverage report
-go test -coverprofile=coverage.out ./...
-
-# Check coverage threshold
-go tool cover -func=coverage.out | grep total | \
-    awk '{print substr($3, 1, length($3)-1)}' | \
-    awk '{if ($1 < 80) exit 1}'
-```
-
-## Benchmarking
-
-### Writing Benchmarks
+### Authorization
 
 ```go
-func BenchmarkConnectionPooling(b *testing.B) {
-    pool := setupTestPool(b)
-    defer pool.Close()
+func TestAuthorization(t *testing.T) {
+    env := SetupTestEnvironment(t)
+    defer env.Teardown(t)
 
-    ctx := context.Background()
+    regularToken := createTestUser(t, env, "regular", false)
+    superToken := createTestUser(t, env, "admin", true)
 
-    b.ResetTimer()
-    for i := 0; i < b.N; i++ {
-        conn, err := pool.Acquire(ctx)
-        if err != nil {
-            b.Fatalf("Failed to acquire connection: %v", err)
-        }
-        conn.Release()
-    }
-}
+    t.Run("regular user denied", func(t *testing.T) {
+        env.CLI.SetToken(regularToken)
+        _, err := env.CLI.RunTool("create_user", map[string]interface{}{
+            "username": "newuser", "email": "new@example.com",
+        })
+        require.Error(t, err)
+        assert.Contains(t, err.Error(), "permission denied")
+    })
 
-func BenchmarkQueryExecution(b *testing.B) {
-    pool := setupTestPool(b)
-    defer pool.Close()
-
-    ctx := context.Background()
-
-    b.ResetTimer()
-    for i := 0; i < b.N; i++ {
-        var result int
-        err := pool.QueryRow(ctx, "SELECT 1").Scan(&result)
-        if err != nil {
-            b.Fatalf("Query failed: %v", err)
-        }
-    }
+    t.Run("superuser allowed", func(t *testing.T) {
+        env.CLI.SetToken(superToken)
+        result, err := env.CLI.RunTool("create_user", map[string]interface{}{
+            "username": "newuser", "email": "new@example.com",
+            "full_name": "New", "password": "Password123!",
+        })
+        require.NoError(t, err)
+        assert.Contains(t, result, "created")
+    })
 }
 ```
 
-### Running Benchmarks
+## Coverage and Quality
+
+### Coverage Targets
+
+- **Overall**: >80%
+- **Critical paths** (auth, RBAC, connection handling): >90%
+- **Security functions** (encryption, validation): 100%
+- **Lower priority** (main entry points, logging, simple getters):
+  acceptable lower coverage
+
+### Coverage Commands
 
 ```bash
-# Run all benchmarks
-go test -bench=.
-
-# Run specific benchmark
-go test -bench=BenchmarkConnectionPooling
-
-# Run with memory profiling
-go test -bench=. -benchmem
-
-# Run with CPU profiling
-go test -bench=. -cpuprofile=cpu.prof
+go test -coverprofile=coverage.out ./...
+go tool cover -func=coverage.out | grep total        # Summary
+go tool cover -html=coverage.out -o coverage.html     # HTML report
+go tool cover -func=coverage.out | awk '$3 < 80.0'   # Low-coverage files
 ```
 
-## Linting and Static Analysis
+### Coverage Modes
 
-### golangci-lint Configuration
+- `set` (default): Binary covered/not-covered.
+- `count`: How many times each statement executed.
+- `atomic`: Thread-safe counting; use with `-race`.
 
-**File:** `.golangci.yml`
+### Linting with golangci-lint
+
+**Config file**: `/tests/.golangci.yml` (also used by collector and server)
 
 ```yaml
-linters:
-  enable:
-    - errcheck      # Check for unchecked errors
-    - gosimple      # Simplify code
-    - govet         # Go vet
-    - ineffassign   # Detect ineffectual assignments
-    - staticcheck   # Static analysis
-    - unused        # Detect unused code
-    - gosec         # Security issues
-    - gofmt         # Format check
-    - misspell      # Spelling errors
-
 linters-settings:
-  gosec:
-    excludes:
-      - G304  # File inclusion via variable (config files)
-      - G115  # Integer overflow (bounds checked)
+    errcheck:
+        check-type-assertions: true
+        check-blank: true
+    govet:
+        enable-all: true
+        disable:
+            - fieldalignment
+            - shadow
+    misspell:
+        locale: US
+
+linters:
+    enable:
+        - errcheck        # Unchecked errors
+        - govet           # Standard Go vet checks
+        - ineffassign     # Ineffectual assignments
+        - staticcheck     # Advanced static analysis
+        - unused          # Unused code
+        - misspell        # Spelling errors
+        - gosec           # Security-focused checks
+
+issues:
+    exclude-dirs:
+        - vendor
+    exclude-rules:
+        - path: _test\.go
+          linters:
+              - gosec
+        - path: _test\.go
+          linters:
+              - errcheck
+          text: "Error return value of.*Close.*not checked"
+
+run:
+    timeout: 5m
+    tests: true
 ```
 
 ### Running Linters
 
 ```bash
-# Install golangci-lint
-go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-
-# Run linter
-golangci-lint run ./...
-
-# Run specific linter
-golangci-lint run --disable-all --enable=gosec ./...
-
-# Auto-fix issues
-golangci-lint run --fix ./...
+golangci-lint run ./...           # Run all enabled linters
+golangci-lint run --fix ./...     # Auto-fix where possible
+gofmt -w ./...                    # Format all Go files
+go vet ./...                      # Built-in static analysis
 ```
 
-## Test Best Practices
+### Suppressing Linter Warnings
 
-### 1. Use t.Helper()
+```go
+// Specific linter with explanation
+//nolint:gosec // G204: Command execution - input is validated
+func executeCommand(cmd string) { ... }
+```
 
-Mark helper functions to improve error reporting:
+## CI/CD
+
+### GitHub Actions Workflows
+
+- `.github/workflows/test-collector.yml`
+- `.github/workflows/test-server.yml`
+- `.github/workflows/test-integration.yml`
+- `.github/workflows/test-cli.yml`
+
+All workflows:
+
+1. **Matrix**: Go 1.23, 1.24, 1.25
+2. **Services**: PostgreSQL 16
+3. **Steps**: Build, test with coverage, lint, upload coverage HTML
+4. **Artifacts**: Coverage reports retained 30 days
+
+### Integration Test CI Example
+
+```yaml
+services:
+  postgres:
+    image: postgres:16
+    env:
+      POSTGRES_PASSWORD: postgres
+    options: >-
+      --health-cmd pg_isready
+      --health-interval 10s
+      --health-timeout 5s
+      --health-retries 5
+    ports:
+      - 5432:5432
+
+steps:
+- uses: actions/checkout@v4
+- name: Set up Go
+  uses: actions/setup-go@v5
+  with:
+    go-version: '1.23'
+- name: Build dependencies
+  run: cd tests && make build-deps
+- name: Run integration tests
+  env:
+    TEST_AI_WORKBENCH_SERVER: postgres://postgres:postgres@localhost:5432/postgres
+  run: cd tests && make coverage
+- name: Upload coverage
+  uses: actions/upload-artifact@v4
+  with:
+    name: integration-coverage
+    path: tests/coverage.html
+    retention-days: 30
+```
+
+## Best Practices
+
+### Use t.Helper()
+
+Mark helper functions for better error reporting:
 
 ```go
 func createTestUser(t *testing.T, username string) int {
-    t.Helper()  // Errors reported at caller's line
-
+    t.Helper()
     var userID int
     err := pool.QueryRow(ctx, `
         INSERT INTO user_accounts (username, ...) VALUES ($1, ...)
         RETURNING id
     `, username).Scan(&userID)
-
     if err != nil {
         t.Fatalf("Failed to create user: %v", err)
     }
-
     return userID
 }
 ```
 
-### 2. Use t.Cleanup()
-
-Register cleanup functions for better resource management:
+### Use t.Cleanup()
 
 ```go
 func TestWithCleanup(t *testing.T) {
     pool := setupTestPool(t)
-    t.Cleanup(func() {
-        pool.Close()
-    })
-
-    // Test logic...
+    t.Cleanup(func() { pool.Close() })
     // Pool automatically closed after test
 }
 ```
 
-### 3. Use Subtests
-
-Organize related tests:
+### Use Subtests for Related Operations
 
 ```go
 func TestUserManagement(t *testing.T) {
-    t.Run("CreateUser", func(t *testing.T) {
-        // Test user creation
-    })
-
-    t.Run("UpdateUser", func(t *testing.T) {
-        // Test user update
-    })
-
-    t.Run("DeleteUser", func(t *testing.T) {
-        // Test user deletion
-    })
+    t.Run("CreateUser", func(t *testing.T) { ... })
+    t.Run("UpdateUser", func(t *testing.T) { ... })
+    t.Run("DeleteUser", func(t *testing.T) { ... })
 }
 ```
 
-### 4. Avoid Sleeps
-
-Use synchronization primitives instead:
+### Avoid Sleeps; Use Synchronization
 
 ```go
-// Bad
-time.Sleep(100 * time.Millisecond)
-if !condition {
-    t.Error("Condition not met")
-}
-
-// Good
 ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 defer cancel()
 
@@ -734,62 +767,47 @@ for {
         t.Error("Timeout waiting for condition")
         return
     case <-ticker.C:
-        if condition {
-            return
-        }
+        if condition { return }
     }
 }
 ```
 
-### 5. Test Error Conditions
+### Do Not Use t.Parallel() With Shared Database
 
-Don't just test happy paths:
+Tests sharing a database or mutable state must not use `t.Parallel()`.
+
+### Test Error Conditions
+
+Always test failure paths alongside success paths:
 
 ```go
 func TestDivision(t *testing.T) {
     tests := []struct {
-        name      string
-        numerator int
-        denominator int
-        expected  float64
-        wantErr   bool
+        name    string
+        a, b    int
+        want    float64
+        wantErr bool
     }{
-        {
-            name:        "valid division",
-            numerator:   10,
-            denominator: 2,
-            expected:    5.0,
-            wantErr:     false,
-        },
-        {
-            name:        "division by zero",
-            numerator:   10,
-            denominator: 0,
-            wantErr:     true,
-        },
+        {"valid", 10, 2, 5.0, false},
+        {"divide by zero", 10, 0, 0, true},
     }
 
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
-            result, err := Divide(tt.numerator, tt.denominator)
-
+            result, err := Divide(tt.a, tt.b)
             if (err != nil) != tt.wantErr {
-                t.Errorf("Divide() error = %v, wantErr %v",
-                    err, tt.wantErr)
+                t.Errorf("error = %v, wantErr %v", err, tt.wantErr)
                 return
             }
-
-            if !tt.wantErr && result != tt.expected {
-                t.Errorf("Divide() = %v, want %v", result, tt.expected)
+            if !tt.wantErr && result != tt.want {
+                t.Errorf("got %v, want %v", result, tt.want)
             }
         })
     }
 }
 ```
 
-### 6. Use testdata Directory
-
-Store test fixtures in `testdata/`:
+### Use testdata Directory for Fixtures
 
 ```
 pkg/
@@ -797,162 +815,55 @@ pkg/
 ├── handler_test.go
 └── testdata/
     ├── valid_request.json
-    ├── invalid_request.json
-    └── expected_response.json
+    └── invalid_request.json
 ```
 
-```go
-func TestHandleRequest(t *testing.T) {
-    data, err := os.ReadFile("testdata/valid_request.json")
-    if err != nil {
-        t.Fatalf("Failed to read test data: %v", err)
-    }
+### Testing Stack
 
-    // Use data in test...
-}
+- **Framework**: Standard library `testing` package
+- **Assertions**: `testify/assert` and `testify/require`
+- **Mocking**: Interface-based (manual mocks; no external framework)
+- **Database**: `pgx/v5` with connection pooling
+- **Coverage**: `go test -cover` and `go tool cover`
+- **Linting**: `golangci-lint`
+
+## Debugging Tests
+
+### Keep Test Database for Inspection
+
+```bash
+TEST_AI_WORKBENCH_KEEP_DB=1 go test -v ./...
+# Output: "Keeping test database: ai_workbench_test_1699564823"
+psql postgres://postgres@localhost:5432/ai_workbench_test_1699564823
+\dt
+SELECT * FROM user_accounts;
 ```
 
-### 7. Parallel Tests
+### Check Service Logs
 
-Run independent tests in parallel:
-
-```go
-func TestParallelExecution(t *testing.T) {
-    t.Parallel()  // Mark test as parallel
-
-    // Test logic...
-}
+```bash
+ls tests/logs/
+tail -f tests/logs/mcp-server-<timestamp>.log
+tail -f tests/logs/collector-<timestamp>.log
 ```
 
-**Note:** Don't use `t.Parallel()` for tests that:
-- Share mutable state
-- Use the same database
-- Depend on specific execution order
+### Kill Orphaned Processes
 
-## Continuous Integration
-
-### GitHub Actions Example
-
-```yaml
-name: Tests
-
-on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-
-jobs:
-  test:
-    runs-on: ubuntu-latest
-
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: ai_workbench_test
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
-
-    steps:
-    - uses: actions/checkout@v3
-
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: '1.21'
-
-    - name: Run tests
-      env:
-        TEST_DATABASE_URL: "host=localhost port=5432 dbname=ai_workbench_test user=postgres password=postgres sslmode=disable"
-      run: |
-        cd server/src
-        go test -v -race -coverprofile=coverage.out ./...
-        cd ../../collector/src
-        go test -v -race -coverprofile=coverage.out ./...
-
-    - name: Check coverage
-      run: |
-        cd server/src
-        go tool cover -func=coverage.out | grep total
+```bash
+cd tests && make killall
+# or manually:
+pkill -f mcp-server
+pkill -f collector
 ```
 
-## Common Testing Pitfalls
+## Common Pitfalls
 
-### 1. Not Cleaning Up Resources
-
-Always clean up:
-
-```go
-// Bad
-func TestWithoutCleanup(t *testing.T) {
-    file, _ := os.Create("test.txt")
-    // File never closed
-}
-
-// Good
-func TestWithCleanup(t *testing.T) {
-    file, err := os.Create("test.txt")
-    if err != nil {
-        t.Fatalf("Failed to create file: %v", err)
-    }
-    defer os.Remove("test.txt")
-    defer file.Close()
-}
-```
-
-### 2. Ignoring Errors in Tests
-
-Check all errors:
-
-```go
-// Bad
-result, _ := SomeFunction()
-
-// Good
-result, err := SomeFunction()
-if err != nil {
-    t.Fatalf("SomeFunction() failed: %v", err)
-}
-```
-
-### 3. Brittle Assertions
-
-Test behavior, not implementation:
-
-```go
-// Bad - too specific
-if response == "User alice created at 2024-01-01 12:00:00" {
-    t.Error("Response doesn't match")
-}
-
-// Good - test essential parts
-if !strings.Contains(response, "User alice created") {
-    t.Error("Response doesn't indicate user creation")
-}
-```
-
-### 4. Global State
-
-Avoid global variables in tests:
-
-```go
-// Bad
-var testDB *pgxpool.Pool
-
-func TestSomething(t *testing.T) {
-    testDB = setupDB()  // Shared global state
-}
-
-// Good
-func TestSomething(t *testing.T) {
-    db := setupDB(t)  // Test-local state
-    defer db.Close()
-}
-```
+1. **Not cleaning up resources**: Always use `defer db.Close()`,
+   `defer file.Close()`, `defer os.Remove(path)`.
+2. **Ignoring errors in tests**: Check all errors with `require.NoError`.
+3. **Brittle assertions**: Test essential behavior, not exact timestamps
+   or formatting.
+4. **Global state**: Use test-local variables, not package-level globals.
+5. **Testing external libraries**: Test your wrappers, not pgx itself.
+6. **Disabling linters without reason**: Always add an explanation in
+   `//nolint` comments.

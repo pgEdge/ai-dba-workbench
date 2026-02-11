@@ -34,8 +34,8 @@ The primary agent's responsibilities are:
 
 - Perform any task that a sub-agent could handle.
 
-When uncertain which sub-agent to use, delegate to **codebase-navigator**
-for exploration or use the generic **Explore** agent type for research tasks.
+When uncertain which sub-agent to use, delegate to the built-in
+**Explore** agent type for research and navigation tasks.
 
 ## Project Structure
 
@@ -81,20 +81,20 @@ The primary agent MUST delegate every task to an appropriate sub-agent.
 **ALL work must be delegated to sub-agents.** The primary agent coordinates
 but never implements. Use this mapping to select the correct sub-agent:
 
-| Task Type                      | Sub-Agent                      |
-|--------------------------------|--------------------------------|
-| Go code (any change)           | **golang-expert**              |
-| React/TypeScript code          | **react-expert**               |
-| Documentation changes          | **documentation-writer**       |
-| PostgreSQL questions           | **postgres-expert**            |
-| Spock/replication questions    | **spock-expert**               |
-| MCP protocol questions         | **mcp-server-expert**          |
-| Test strategy questions        | **testing-framework-architect**|
-| Security review                | **security-auditor**           |
-| Code quality review            | **code-reviewer**              |
-| Finding code/understanding     | **codebase-navigator**         |
-| Design compliance check        | **design-compliance-validator**|
-| General exploration/research   | **Explore** (generic agent)    |
+| Task Type                      | Sub-Agent                     |
+|--------------------------------|-------------------------------|
+| Go code (any change)           | **golang-expert**             |
+| Go tests and test strategy     | **golang-expert**             |
+| Go code review                 | **golang-expert**             |
+| MCP protocol and tools         | **golang-expert**             |
+| React/TypeScript code          | **react-expert**              |
+| React tests and test strategy  | **react-expert**              |
+| React code review              | **react-expert**              |
+| Documentation changes          | **documentation-writer**      |
+| PostgreSQL questions           | **postgres-expert**           |
+| Spock/replication questions    | **postgres-expert**           |
+| Security review                | **security-auditor**          |
+| General exploration/research   | **Explore** (built-in agent)  |
 
 Sub-agents have full access to the codebase and can both advise and write
 code directly. The primary agent's role is to coordinate their work and
@@ -104,29 +104,25 @@ present results to the user.
 
 **Implementation Agents** (can write code):
 
-- **golang-expert** - Go development: features, bugs, architecture, review.
+- **golang-expert** - Go development: features, bugs, architecture,
+  review. Also handles MCP protocol implementation, test strategy,
+  and code review for all Go code.
 
 - **react-expert** - React/MUI development: components, features, bugs.
+  Also handles test strategy and code review for React code.
 
 - **documentation-writer** - Documentation following project style guide.
 
 **Advisory Agents** (research and recommend):
 
-- **postgres-expert** - PostgreSQL administration, tuning, troubleshooting.
-
-- **spock-expert** - pgEdge Spock replication, Snowflake, Lolor extensions.
-
-- **mcp-server-expert** - MCP protocol, tool implementation, debugging.
-
-- **testing-framework-architect** - Test strategies for Go and React.
+- **postgres-expert** - PostgreSQL administration, tuning,
+  troubleshooting. Also covers Spock replication topics.
 
 - **security-auditor** - Security review, vulnerability detection, OWASP.
 
-- **code-reviewer** - Code quality, bug detection, anti-patterns.
-
-- **codebase-navigator** - Finding code, tracing data flow, structure.
-
-- **design-compliance-validator** - Ensuring changes align with DESIGN.md.
+Implementation agents read `DESIGN.md` directly to verify design
+compliance. Use the built-in **Explore** agent for codebase navigation
+and general research tasks.
 
 Each sub-agent has a knowledge base in `/.claude/<agent-name>/` containing
 domain-specific patterns and project conventions.

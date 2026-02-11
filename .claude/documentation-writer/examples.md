@@ -17,8 +17,8 @@ references to good documentation in the project.
 The knowledge bases in `/.claude/` demonstrate good technical documentation:
 
 - `/.claude/postgres-expert/README.md` - Good index structure
-- `/.claude/testing-expert/README.md` - Clear organization
 - `/.claude/golang-expert/README.md` - Comprehensive coverage
+- `/.claude/react-expert/README.md` - Clear organization
 
 ## Style Guide Compliance Examples
 

@@ -1005,30 +1005,103 @@ coverage: {
 }
 ```
 
+## Testing Utility Functions
+
+Use parameterized tests for utilities with many input/output
+combinations.
+
+```typescript
+// validation.test.ts
+import { validateEmail, validatePassword } from './validation';
+
+describe('validateEmail', () => {
+    it.each([
+        ['valid@example.com', true],
+        ['test.user@domain.co.uk', true],
+        ['invalid', false],
+        ['@example.com', false],
+        ['test@', false],
+        ['', false],
+    ])('validates %s as %s', (email, expected) => {
+        expect(validateEmail(email)).toBe(expected);
+    });
+});
+
+describe('validatePassword', () => {
+    const validCases = [
+        'Password123!',
+        'Strong@Pass1',
+        'Secure#2023',
+    ];
+
+    const invalidCases = [
+        'weak',              // too short
+        'nouppercaseonly1!', // no uppercase
+        'NOLOWERCASE1!',     // no lowercase
+        'NoNumbers!',        // no numbers
+        'NoSpecial123',      // no special char
+    ];
+
+    test.each(validCases)('accepts valid password: %s', (password) => {
+        expect(validatePassword(password)).toBe(true);
+    });
+
+    test.each(invalidCases)('rejects invalid password: %s', (password) => {
+        expect(validatePassword(password)).toBe(false);
+    });
+});
+```
+
+## Test File Organization
+
+Place tests co-located with source files or in a parallel
+`/client/tests/` directory.
+
+```
+src/
+├── components/
+│   ├── UserList/
+│   │   ├── UserList.tsx
+│   │   └── UserList.test.tsx
+│   └── LoginForm/
+│       ├── LoginForm.tsx
+│       └── LoginForm.test.tsx
+└── utils/
+    ├── validation.ts
+    └── validation.test.ts
+```
+
 ## Best Practices Summary
 
-1. **Test user behavior, not implementation** - Focus on what users see and do
-2. **Use React Testing Library queries** - getByRole, getByLabelText, etc.
-3. **Mock external dependencies** - Use MSW for API mocking
-4. **Test accessibility** - Use axe-core and keyboard navigation tests
-5. **Aim for high coverage** - Target 80%+ code coverage
-6. **Write descriptive test names** - Clearly state what is being tested
-7. **Keep tests isolated** - Each test should be independent
-8. **Test error states** - Don't just test the happy path
-9. **Use snapshots sparingly** - Only for truly static UI
-10. **Run tests in CI/CD** - Automate test execution on every commit
+1. **Test user behavior, not implementation** - Focus on what users see
+   and do.
+2. **Use React Testing Library queries** - Prefer getByRole and
+   getByLabelText over getByTestId.
+3. **Mock external dependencies** - Use MSW for API mocking.
+4. **Test accessibility** - Use axe-core and keyboard navigation tests.
+5. **Aim for high coverage** - Target 80%+ code coverage; 70% minimum
+   for UI components, 90% for business logic.
+6. **Write descriptive test names** - Use describe/it blocks that read
+   as sentences.
+7. **Keep tests isolated** - Each test should be independent; no shared
+   mutable state.
+8. **Test error states** - Cover loading, error, and empty states.
+9. **Use snapshots sparingly** - Only for truly static UI.
+10. **Use parameterized tests** - Use `it.each` or `test.each` for
+    multiple input/output scenarios.
+11. **Run tests in CI/CD** - Automate test execution on every commit.
 
 ## Testing Checklist
 
 For each component, ensure:
 
-- [ ] Renders correctly with valid props
-- [ ] Handles all user interactions (clicks, typing, etc.)
-- [ ] Validates form inputs properly
-- [ ] Displays loading states
-- [ ] Displays error states
-- [ ] Handles API errors gracefully
-- [ ] Is accessible (ARIA, keyboard navigation)
-- [ ] No accessibility violations (axe)
-- [ ] Responsive across breakpoints (if applicable)
-- [ ] Snapshot test (if UI is stable)
+- [ ] Renders correctly with valid props.
+- [ ] Handles all user interactions (clicks, typing, etc.).
+- [ ] Validates form inputs properly.
+- [ ] Displays loading states.
+- [ ] Displays error states.
+- [ ] Handles API errors gracefully.
+- [ ] Is accessible (ARIA, keyboard navigation).
+- [ ] No accessibility violations (axe).
+- [ ] Responsive across breakpoints (if applicable).
+- [ ] Snapshot test (if UI is stable).

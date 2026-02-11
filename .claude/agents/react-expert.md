@@ -33,10 +33,18 @@ base at `/.claude/react-expert/`:**
 - `api-integration.md` - API integration patterns
 - `mui-patterns.md` - Material-UI usage patterns and theming
 - `testing-approach.md` - React testing strategies
+- `quality-checklist.md` - Anti-patterns, standards, and review checklists
 
-**Knowledge Base Updates**: If you discover new patterns or important details
-not documented in the knowledge base, include a "Knowledge Base Update
-Suggestions" section in your response.
+**Knowledge Base Maintenance**: When you discover stable patterns,
+conventions, or architectural details not already in your knowledge base,
+update the relevant file directly. Follow these rules:
+
+- Only record facts verified against actual code; never write speculative
+  or assumed information.
+- Keep entries concise; prefer bullet points over prose.
+- Do not record session-specific context (current task, temporary state).
+- Update or remove entries that have become stale or incorrect.
+- If no existing file fits, create a new file and list it above.
 
 ## Core Expertise Areas
 

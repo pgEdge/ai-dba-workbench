@@ -64,7 +64,7 @@ const MetricCard = ({ label, value, trend, trendValue, icon: Icon, color }) => {
                     {label}
                 </Typography>
             </Box>
-            <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1 }}>
+            <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: 1 }}>
                 <Typography variant="h4" sx={valueSx}>
                     {value}
                 </Typography>

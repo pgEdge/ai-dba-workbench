@@ -37,6 +37,7 @@ import SelectionHeader from './SelectionHeader';
 import ServerInfoCard from './ServerInfoCard';
 import MetricCard from './MetricCard';
 import AlertsSection from './AlertsSection';
+import PerformanceTiles from './PerformanceTiles';
 import AcknowledgeDialog from './AcknowledgeDialog';
 import {
     getStatusColors,
@@ -431,6 +432,9 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                         )}
                     </Box>
                 )}
+
+                {/* Performance Summary Tiles */}
+                <PerformanceTiles selection={selection} />
 
                 {/* Event Timeline */}
                 <EventTimeline

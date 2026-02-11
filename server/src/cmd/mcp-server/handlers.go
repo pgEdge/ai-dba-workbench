@@ -171,6 +171,10 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		timelineHandler := api.NewTimelineHandler(deps.Datastore, deps.AuthStore)
 		registerDatastoreHandler(mux, timelineHandler, authWrapper, "Timeline events", deps.Datastore)
 
+		// Performance summary endpoint (for performance dashboard)
+		perfHandler := api.NewPerfSummaryHandler(deps.Datastore, deps.AuthStore)
+		registerDatastoreHandler(mux, perfHandler, authWrapper, "Performance summary", deps.Datastore)
+
 		// AI Overview endpoint (for estate overview summary)
 		if deps.OverviewGen != nil {
 			overviewHandler := overview.NewHandler(deps.OverviewGen)

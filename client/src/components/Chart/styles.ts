@@ -24,7 +24,7 @@ export const CHART_TOOLBAR_SX = {
 
 export const CHART_PAPER_SX = {
     p: 2,
-    overflow: 'hidden',
+    overflow: 'visible',
 };
 
 export const CHART_TITLE_SX = {

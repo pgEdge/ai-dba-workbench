@@ -13,6 +13,7 @@ import { Box, CircularProgress, CssBaseline } from '@mui/material';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ClusterProvider, useCluster } from './contexts/ClusterContext';
 import { AlertsProvider } from './contexts/AlertsContext';
+import { DashboardProvider } from './contexts/DashboardContext';
 import { BlackoutProvider } from './contexts/BlackoutContext';
 import { ChatProvider, useChatContext } from './contexts/ChatContext';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -99,13 +100,15 @@ const AppContent = () => {
         <ThemeProvider theme={theme}>
             <CssBaseline />
             <ClusterProvider>
-                <AlertsProvider>
-                    <ChatProvider>
-                        <ErrorBoundary>
-                            <MainLayout mode={mode} onToggleTheme={toggleTheme} />
-                        </ErrorBoundary>
-                    </ChatProvider>
-                </AlertsProvider>
+                <DashboardProvider>
+                    <AlertsProvider>
+                        <ChatProvider>
+                            <ErrorBoundary>
+                                <MainLayout mode={mode} onToggleTheme={toggleTheme} />
+                            </ErrorBoundary>
+                        </ChatProvider>
+                    </AlertsProvider>
+                </DashboardProvider>
             </ClusterProvider>
         </ThemeProvider>
     );

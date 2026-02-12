@@ -1,0 +1,394 @@
+/*-------------------------------------------------------------------------
+ *
+ * pgEdge AI DBA Workbench
+ *
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-------------------------------------------------------------------------
+ */
+
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import CircularProgress from '@mui/material/CircularProgress';
+import { useTheme, Theme } from '@mui/material/styles';
+import { useAuth } from '../../../contexts/AuthContext';
+import { useDashboard } from '../../../contexts/DashboardContext';
+import CollapsibleSection from '../CollapsibleSection';
+import {
+    DatabaseSectionProps,
+    TableLeaderboardRow,
+    LeaderboardResponse,
+    formatNumber,
+    formatTimestamp,
+    getVacuumStatus,
+} from './types';
+
+/** Table container styles */
+const TABLE_CONTAINER_SX = {
+    overflowX: 'auto' as const,
+    mb: 2,
+};
+
+/** Table header row */
+const TABLE_HEADER_SX = {
+    display: 'grid',
+    gridTemplateColumns: '2fr 1.2fr 1.2fr 0.8fr 0.8fr',
+    gap: 1,
+    px: 1.5,
+    py: 1,
+    borderBottom: '2px solid',
+    borderColor: 'divider',
+    minWidth: 600,
+};
+
+/** Table header cell */
+const HEADER_CELL_SX = {
+    fontSize: '0.75rem',
+    fontWeight: 700,
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.05em',
+    color: 'text.secondary',
+};
+
+/** Table row */
+const TABLE_ROW_SX = {
+    display: 'grid',
+    gridTemplateColumns: '2fr 1.2fr 1.2fr 0.8fr 0.8fr',
+    gap: 1,
+    px: 1.5,
+    py: 1,
+    borderBottom: '1px solid',
+    borderColor: 'divider',
+    minWidth: 600,
+    '&:last-child': {
+        borderBottom: 'none',
+    },
+};
+
+/** Table name cell */
+const NAME_CELL_SX = {
+    fontSize: '0.8125rem',
+    fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+    fontWeight: 500,
+    whiteSpace: 'nowrap' as const,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    color: 'text.primary',
+};
+
+/** Timestamp cell */
+const TIMESTAMP_CELL_SX = {
+    fontSize: '0.75rem',
+    fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+    color: 'text.primary',
+};
+
+/** Numeric cell */
+const NUMERIC_CELL_SX = {
+    fontSize: '0.8125rem',
+    fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+    fontWeight: 500,
+    textAlign: 'right' as const,
+    color: 'text.primary',
+};
+
+/**
+ * Get color for a vacuum status indicator.
+ */
+const getStatusColor = (
+    status: 'good' | 'warning' | 'critical',
+    theme: Theme,
+): string => {
+    switch (status) {
+        case 'good':
+            return theme.palette.success.main;
+        case 'warning':
+            return theme.palette.warning.main;
+        case 'critical':
+            return theme.palette.error.main;
+        default:
+            return theme.palette.text.primary;
+    }
+};
+
+/**
+ * Calculate the dead tuple ratio for a table row.
+ */
+const getDeadTupleRatio = (row: TableLeaderboardRow): number => {
+    const total = row.n_live_tup + row.n_dead_tup;
+    if (total === 0) { return 0; }
+    return (row.n_dead_tup / total) * 100;
+};
+
+/**
+ * Get the more recent vacuum timestamp between manual and auto.
+ */
+const getMostRecentVacuum = (
+    row: TableLeaderboardRow
+): string | undefined => {
+    if (!row.last_vacuum && !row.last_autovacuum) {
+        return undefined;
+    }
+    if (!row.last_vacuum) { return row.last_autovacuum; }
+    if (!row.last_autovacuum) { return row.last_vacuum; }
+
+    const vacuumDate = new Date(row.last_vacuum);
+    const autoDate = new Date(row.last_autovacuum);
+    return vacuumDate > autoDate
+        ? row.last_vacuum
+        : row.last_autovacuum;
+};
+
+/**
+ * Vacuum Status section displays the vacuum and autovacuum status
+ * for all tables in the database, sorted by dead tuple ratio in
+ * descending order. Color-coded timestamps indicate freshness of
+ * the last vacuum operation.
+ */
+const VacuumStatusSection: React.FC<DatabaseSectionProps> = ({
+    connectionId,
+    databaseName,
+}) => {
+    const { user } = useAuth();
+    const { refreshTrigger } = useDashboard();
+    const theme = useTheme();
+
+    const [tables, setTables] = useState<TableLeaderboardRow[]>([]);
+    const [loading, setLoading] = useState<boolean>(false);
+    const [error, setError] = useState<string | null>(null);
+    const isMountedRef = useRef<boolean>(true);
+    const initialLoadDoneRef = useRef<boolean>(false);
+
+    const fetchData = useCallback(async (): Promise<void> => {
+        if (!user) { return; }
+
+        const params = new URLSearchParams({
+            probe_name: 'pg_stat_all_tables',
+            connection_id: connectionId.toString(),
+            database_name: databaseName,
+            limit: '20',
+            order_by: 'n_dead_tup',
+            order: 'desc',
+        });
+        const url = `/api/v1/metrics/query?${params.toString()}`;
+
+        if (!initialLoadDoneRef.current) {
+            setLoading(true);
+        }
+        setError(null);
+
+        try {
+            const response = await fetch(url, {
+                credentials: 'include',
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json().catch(
+                    () => ({})
+                ) as { error?: string };
+                throw new Error(
+                    errorData.error
+                    || `Failed to fetch vacuum status: ${response.status}`
+                );
+            }
+
+            if (isMountedRef.current) {
+                const result = await response.json() as
+                    LeaderboardResponse<TableLeaderboardRow>
+                    | TableLeaderboardRow[];
+
+                let rows: TableLeaderboardRow[];
+                if (Array.isArray(result)) {
+                    rows = result;
+                } else {
+                    rows = result.rows ?? [];
+                }
+
+                // Sort by dead tuple ratio descending
+                rows.sort((a, b) => {
+                    return getDeadTupleRatio(b)
+                        - getDeadTupleRatio(a);
+                });
+
+                setTables(rows);
+                initialLoadDoneRef.current = true;
+            }
+        } catch (err) {
+            console.error('Error fetching vacuum status:', err);
+            if (isMountedRef.current) {
+                setError(
+                    (err as Error).message
+                    || 'Failed to fetch vacuum status'
+                );
+                setTables([]);
+            }
+        } finally {
+            if (isMountedRef.current) {
+                setLoading(false);
+            }
+        }
+    }, [user, connectionId, databaseName]);
+
+    useEffect(() => {
+        initialLoadDoneRef.current = false;
+    }, [connectionId, databaseName]);
+
+    useEffect(() => {
+        isMountedRef.current = true;
+
+        if (user) {
+            fetchData();
+        }
+
+        return () => {
+            isMountedRef.current = false;
+        };
+    }, [user, fetchData, refreshTrigger]);
+
+    const headerRowSx = useMemo(() => ({
+        ...TABLE_HEADER_SX,
+        borderColor: theme.palette.divider,
+    }), [theme.palette.divider]);
+
+    return (
+        <CollapsibleSection
+            title="Vacuum Status"
+            defaultExpanded={false}
+        >
+            {loading && tables.length === 0 && (
+                <Box sx={{
+                    display: 'flex',
+                    justifyContent: 'center',
+                    py: 3,
+                }}>
+                    <CircularProgress size={24} />
+                </Box>
+            )}
+
+            {error && (
+                <Typography
+                    variant="body2"
+                    color="error"
+                    sx={{ textAlign: 'center', py: 2 }}
+                >
+                    {error}
+                </Typography>
+            )}
+
+            {!loading && !error && tables.length === 0 && (
+                <Typography
+                    variant="body2"
+                    color="text.secondary"
+                    sx={{ textAlign: 'center', py: 3 }}
+                >
+                    No vacuum status data available
+                </Typography>
+            )}
+
+            {tables.length > 0 && (
+                <Box sx={TABLE_CONTAINER_SX}>
+                    <Box sx={headerRowSx}>
+                        <Typography sx={HEADER_CELL_SX}>
+                            Table
+                        </Typography>
+                        <Typography sx={HEADER_CELL_SX}>
+                            Last Vacuum
+                        </Typography>
+                        <Typography sx={HEADER_CELL_SX}>
+                            Last Autovacuum
+                        </Typography>
+                        <Typography sx={{
+                            ...HEADER_CELL_SX,
+                            textAlign: 'right',
+                        }}>
+                            Dead Tuples
+                        </Typography>
+                        <Typography sx={{
+                            ...HEADER_CELL_SX,
+                            textAlign: 'right',
+                        }}>
+                            Dead Ratio
+                        </Typography>
+                    </Box>
+
+                    {tables.map((row) => {
+                        const deadRatio = getDeadTupleRatio(row);
+                        const mostRecent = getMostRecentVacuum(row);
+                        const vacuumStatus = getVacuumStatus(
+                            mostRecent
+                        );
+                        const statusColor = getStatusColor(
+                            vacuumStatus, theme
+                        );
+
+                        return (
+                            <Box
+                                key={
+                                    `${row.schemaname}`
+                                    + `.${row.relname}`
+                                }
+                                sx={TABLE_ROW_SX}
+                            >
+                                <Typography
+                                    sx={NAME_CELL_SX}
+                                    title={
+                                        `${row.schemaname}`
+                                        + `.${row.relname}`
+                                    }
+                                >
+                                    {row.schemaname}.{row.relname}
+                                </Typography>
+                                <Typography
+                                    sx={{
+                                        ...TIMESTAMP_CELL_SX,
+                                        color: getStatusColor(
+                                            getVacuumStatus(
+                                                row.last_vacuum
+                                            ),
+                                            theme,
+                                        ),
+                                    }}
+                                >
+                                    {formatTimestamp(
+                                        row.last_vacuum
+                                    )}
+                                </Typography>
+                                <Typography
+                                    sx={{
+                                        ...TIMESTAMP_CELL_SX,
+                                        color: getStatusColor(
+                                            getVacuumStatus(
+                                                row.last_autovacuum
+                                            ),
+                                            theme,
+                                        ),
+                                    }}
+                                >
+                                    {formatTimestamp(
+                                        row.last_autovacuum
+                                    )}
+                                </Typography>
+                                <Typography sx={NUMERIC_CELL_SX}>
+                                    {formatNumber(row.n_dead_tup)}
+                                </Typography>
+                                <Typography
+                                    sx={{
+                                        ...NUMERIC_CELL_SX as object,
+                                        color: statusColor,
+                                        fontWeight: 600,
+                                    }}
+                                >
+                                    {deadRatio.toFixed(1)}%
+                                </Typography>
+                            </Box>
+                        );
+                    })}
+                </Box>
+            )}
+        </CollapsibleSection>
+    );
+};
+
+export default VacuumStatusSection;

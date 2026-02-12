@@ -27,12 +27,21 @@ import {
 } from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
 import { useClusterData } from '../../contexts/ClusterDataContext';
+import { useDashboard } from '../../contexts/DashboardContext';
 import EventTimeline from '../EventTimeline';
 import BlackoutPanel from '../BlackoutPanel';
 import AlertAnalysisDialog from '../AlertAnalysisDialog';
 import AlertOverrideEditDialog from '../AlertOverrideEditDialog';
 import BlackoutManagementDialog from '../BlackoutManagementDialog';
 import AIOverview from '../AIOverview';
+import {
+    ServerDashboard,
+    EstateDashboard,
+    ClusterDashboard,
+    DatabaseDashboard,
+    ObjectDashboard,
+    MetricOverlay,
+} from '../Dashboard';
 import SelectionHeader from './SelectionHeader';
 import ServerInfoCard from './ServerInfoCard';
 import MetricCard from './MetricCard';
@@ -48,6 +57,42 @@ import {
     METRICS_GRID_SX,
 } from './styles';
 import { StatusPanelProps } from './types';
+
+/**
+ * DashboardOverlayContent - Renders the appropriate dashboard
+ * component based on the current overlay level. Used as the child
+ * of MetricOverlay.
+ */
+const DashboardOverlayContent: React.FC = () => {
+    const { currentOverlay } = useDashboard();
+
+    if (!currentOverlay) {
+        return null;
+    }
+
+    if (currentOverlay.level === 'database') {
+        return (
+            <DatabaseDashboard
+                connectionId={currentOverlay.connectionId ?? 0}
+                databaseName={currentOverlay.databaseName ?? currentOverlay.entityName}
+            />
+        );
+    }
+
+    if (currentOverlay.level === 'object' && currentOverlay.objectType) {
+        return (
+            <ObjectDashboard
+                connectionId={currentOverlay.connectionId ?? 0}
+                databaseName={currentOverlay.databaseName ?? ''}
+                schemaName={currentOverlay.schemaName ?? 'public'}
+                objectName={currentOverlay.objectName ?? currentOverlay.entityName}
+                objectType={currentOverlay.objectType}
+            />
+        );
+    }
+
+    return null;
+};
 
 /**
  * StatusPanel - Main component showing status and alerts
@@ -70,6 +115,12 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
     const [analysisAlert, setAnalysisAlert] = useState(null);
     const [overrideDialogOpen, setOverrideDialogOpen] = useState(false);
     const [overrideAlert, setOverrideAlert] = useState(null);
+    const { clearOverlays } = useDashboard();
+
+    // Clear dashboard overlay stack when the selection changes
+    useEffect(() => {
+        clearOverlays();
+    }, [selection?.type, selection?.id, clearOverlays]);
 
     const statusColors = useMemo(() => getStatusColors(theme), [theme]);
 
@@ -455,7 +506,23 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                     onAnalyze={handleAnalyze}
                     onEditOverride={handleEditOverride}
                 />
+
+                {/* Monitoring Dashboards */}
+                {selection.type === 'server' && (
+                    <ServerDashboard selection={selection} />
+                )}
+                {selection.type === 'cluster' && (
+                    <ClusterDashboard selection={selection} />
+                )}
+                {selection.type === 'estate' && (
+                    <EstateDashboard selection={selection} />
+                )}
             </Box>
+
+            {/* Dashboard Overlay for drill-downs */}
+            <MetricOverlay>
+                <DashboardOverlayContent />
+            </MetricOverlay>
 
             {/* Acknowledge Dialog */}
             <AcknowledgeDialog

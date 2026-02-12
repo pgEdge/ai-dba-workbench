@@ -1,0 +1,84 @@
+/*-------------------------------------------------------------------------
+ *
+ * pgEdge AI DBA Workbench
+ *
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-------------------------------------------------------------------------
+ */
+
+/**
+ * Local types for the ServerDashboard components.
+ */
+
+import { MetricDataPoint } from '../types';
+
+/** Props shared by all server dashboard section components */
+export interface ServerSectionProps {
+    connectionId: number;
+}
+
+/** Database summary card data from the performance-summary API */
+export interface DatabaseSummary {
+    database_name: string;
+    size_bytes: number;
+    size_pretty: string;
+    cache_hit_ratio: {
+        current: number;
+        time_series: Array<{ time: string; value: number }>;
+    };
+    transaction_rate: number;
+    dead_tuple_ratio: number;
+    active_connections: number;
+}
+
+/** Performance summary response for a single server */
+export interface ServerPerformanceSummary {
+    connection_id: number;
+    server_name: string;
+    databases: DatabaseSummary[];
+}
+
+/** Top query row from pg_stat_statements */
+export interface TopQueryRow {
+    query: string;
+    queryid: string;
+    calls: number;
+    total_exec_time: number;
+    mean_exec_time: number;
+    rows: number;
+    shared_blks_hit: number;
+    shared_blks_read: number;
+}
+
+/** Response shape for query metrics listing */
+export interface QueryMetricsResponse {
+    rows: TopQueryRow[];
+    total_count: number;
+}
+
+/**
+ * Helper to extract sparkline-compatible data points from a
+ * MetricSeries array returned by useMetrics.
+ */
+export const extractSparklineData = (
+    data: Array<{ name: string; metric: string; data: MetricDataPoint[] }> | null,
+    metricName: string,
+): MetricDataPoint[] => {
+    if (!data) { return []; }
+    const series = data.find(s => s.metric === metricName);
+    return series?.data ?? [];
+};
+
+/**
+ * Extract the latest value from a metric series.
+ */
+export const extractLatestValue = (
+    data: Array<{ name: string; metric: string; data: MetricDataPoint[] }> | null,
+    metricName: string,
+): number | null => {
+    const points = extractSparklineData(data, metricName);
+    if (points.length === 0) { return null; }
+    return points[points.length - 1].value;
+};

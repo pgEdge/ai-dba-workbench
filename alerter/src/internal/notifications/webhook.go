@@ -22,15 +22,13 @@ import (
 // webhookNotifier implements Notifier for generic REST webhooks
 type webhookNotifier struct {
 	httpClient *http.Client
-	secrets    SecretManager
 	renderer   TemplateRenderer
 }
 
 // NewWebhookNotifier creates a new webhook notifier
-func NewWebhookNotifier(httpClient *http.Client, secrets SecretManager, renderer TemplateRenderer) Notifier {
+func NewWebhookNotifier(httpClient *http.Client, renderer TemplateRenderer) Notifier {
 	return &webhookNotifier{
 		httpClient: httpClient,
-		secrets:    secrets,
 		renderer:   renderer,
 	}
 }

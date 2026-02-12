@@ -22,15 +22,13 @@ import (
 // mattermostNotifier implements Notifier for Mattermost webhooks
 type mattermostNotifier struct {
 	httpClient *http.Client
-	secrets    SecretManager
 	renderer   TemplateRenderer
 }
 
 // NewMattermostNotifier creates a new Mattermost notifier
-func NewMattermostNotifier(httpClient *http.Client, secrets SecretManager, renderer TemplateRenderer) Notifier {
+func NewMattermostNotifier(httpClient *http.Client, renderer TemplateRenderer) Notifier {
 	return &mattermostNotifier{
 		httpClient: httpClient,
-		secrets:    secrets,
 		renderer:   renderer,
 	}
 }

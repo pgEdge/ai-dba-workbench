@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/pgedge/ai-workbench/pkg/crypto"
 )
 
 // NotificationChannelType represents the type of notification channel
@@ -100,6 +101,46 @@ type EmailRecipient struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
+// encryptNotificationSecret encrypts a notification channel secret field.
+func (d *Datastore) encryptNotificationSecret(value *string) (*string, error) {
+	if value == nil || *value == "" {
+		return value, nil
+	}
+	if d.serverSecret == "" {
+		return nil, fmt.Errorf("server secret is required to encrypt notification secrets")
+	}
+	encrypted, err := crypto.EncryptPassword(*value, d.serverSecret)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encrypt: %w", err)
+	}
+	return &encrypted, nil
+}
+
+// decryptNotificationSecret decrypts a notification channel secret field.
+// If decryption fails (e.g. the value is plaintext from before encryption
+// was enabled), the original value is returned for backwards compatibility.
+func (d *Datastore) decryptNotificationSecret(value *string) *string {
+	if value == nil || *value == "" {
+		return value
+	}
+	if d.serverSecret == "" {
+		return value
+	}
+	decrypted, err := crypto.DecryptPassword(*value, d.serverSecret)
+	if err != nil {
+		return value
+	}
+	return &decrypted
+}
+
+// decryptNotificationChannelSecrets decrypts all secret fields on a
+// notification channel in place.
+func (d *Datastore) decryptNotificationChannelSecrets(c *NotificationChannel) {
+	c.WebhookURL = d.decryptNotificationSecret(c.WebhookURL)
+	c.AuthCredentials = d.decryptNotificationSecret(c.AuthCredentials)
+	c.SMTPPassword = d.decryptNotificationSecret(c.SMTPPassword)
+}
+
 // ListNotificationChannels returns all notification channels ordered by name.
 // For email channels, recipients are loaded and attached.
 func (d *Datastore) ListNotificationChannels(ctx context.Context) ([]*NotificationChannel, error) {
@@ -128,6 +169,7 @@ func (d *Datastore) ListNotificationChannels(ctx context.Context) ([]*Notificati
 		if scanErr != nil {
 			return nil, fmt.Errorf("failed to scan notification channel: %w", scanErr)
 		}
+		d.decryptNotificationChannelSecrets(c)
 		channels = append(channels, c)
 	}
 	if err := rows.Err(); err != nil {
@@ -176,6 +218,7 @@ func (d *Datastore) GetNotificationChannel(ctx context.Context, id int64) (*Noti
 		}
 		return nil, fmt.Errorf("failed to get notification channel: %w", err)
 	}
+	d.decryptNotificationChannelSecrets(c)
 
 	// Load recipients for email channels
 	if c.ChannelType == ChannelTypeEmail {
@@ -204,6 +247,19 @@ func (d *Datastore) CreateNotificationChannel(ctx context.Context, channel *Noti
 		return fmt.Errorf("failed to marshal headers: %w", err)
 	}
 
+	webhookURL, err := d.encryptNotificationSecret(channel.WebhookURL)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt webhook URL: %w", err)
+	}
+	authCreds, err := d.encryptNotificationSecret(channel.AuthCredentials)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt auth credentials: %w", err)
+	}
+	smtpPass, err := d.encryptNotificationSecret(channel.SMTPPassword)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt SMTP password: %w", err)
+	}
+
 	err = d.pool.QueryRow(ctx, `
         INSERT INTO notification_channels (
             owner_username, owner_token, enabled, channel_type, name,
@@ -217,10 +273,10 @@ func (d *Datastore) CreateNotificationChannel(ctx context.Context, channel *Noti
                   $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
         RETURNING id, created_at, updated_at
     `, channel.OwnerUsername, channel.OwnerToken, channel.Enabled,
-		channel.ChannelType, channel.Name, channel.Description, channel.WebhookURL,
+		channel.ChannelType, channel.Name, channel.Description, webhookURL,
 		channel.EndpointURL, channel.HTTPMethod, headersJSON, channel.AuthType,
-		channel.AuthCredentials, channel.SMTPHost, channel.SMTPPort, channel.SMTPUsername,
-		channel.SMTPPassword, channel.SMTPUseTLS, channel.FromAddress, channel.FromName,
+		authCreds, channel.SMTPHost, channel.SMTPPort, channel.SMTPUsername,
+		smtpPass, channel.SMTPUseTLS, channel.FromAddress, channel.FromName,
 		channel.TemplateAlertFire, channel.TemplateAlertClear, channel.TemplateReminder,
 		channel.ReminderEnabled, channel.ReminderIntervalHours, channel.IsEstateDefault,
 		channel.CreatedAt, channel.UpdatedAt).Scan(&channel.ID, &channel.CreatedAt, &channel.UpdatedAt)
@@ -241,6 +297,19 @@ func (d *Datastore) UpdateNotificationChannel(ctx context.Context, channel *Noti
 		return fmt.Errorf("failed to marshal headers: %w", err)
 	}
 
+	webhookURL, err := d.encryptNotificationSecret(channel.WebhookURL)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt webhook URL: %w", err)
+	}
+	authCreds, err := d.encryptNotificationSecret(channel.AuthCredentials)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt auth credentials: %w", err)
+	}
+	smtpPass, err := d.encryptNotificationSecret(channel.SMTPPassword)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt SMTP password: %w", err)
+	}
+
 	err = d.pool.QueryRow(ctx, `
         UPDATE notification_channels
         SET owner_username = $2, owner_token = $3, enabled = $4,
@@ -258,9 +327,9 @@ func (d *Datastore) UpdateNotificationChannel(ctx context.Context, channel *Noti
         RETURNING updated_at
     `, channel.ID, channel.OwnerUsername, channel.OwnerToken,
 		channel.Enabled, channel.ChannelType, channel.Name, channel.Description,
-		channel.WebhookURL, channel.EndpointURL, channel.HTTPMethod, headersJSON,
-		channel.AuthType, channel.AuthCredentials, channel.SMTPHost, channel.SMTPPort,
-		channel.SMTPUsername, channel.SMTPPassword, channel.SMTPUseTLS,
+		webhookURL, channel.EndpointURL, channel.HTTPMethod, headersJSON,
+		channel.AuthType, authCreds, channel.SMTPHost, channel.SMTPPort,
+		channel.SMTPUsername, smtpPass, channel.SMTPUseTLS,
 		channel.FromAddress, channel.FromName, channel.TemplateAlertFire,
 		channel.TemplateAlertClear, channel.TemplateReminder, channel.ReminderEnabled,
 		channel.ReminderIntervalHours, channel.IsEstateDefault).Scan(&channel.UpdatedAt)

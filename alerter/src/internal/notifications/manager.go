@@ -13,21 +13,24 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
+	"github.com/pgedge/ai-workbench/pkg/crypto"
 )
 
 // Manager implements NotificationManager
 type Manager struct {
-	datastore  *database.Datastore
-	config     *config.NotificationsConfig
-	secrets    SecretManager
-	renderer   TemplateRenderer
-	notifiers  map[database.NotificationChannelType]Notifier
-	httpClient *http.Client
-	debug      bool
+	datastore    *database.Datastore
+	config       *config.NotificationsConfig
+	serverSecret string
+	renderer     TemplateRenderer
+	notifiers    map[database.NotificationChannelType]Notifier
+	httpClient   *http.Client
+	debug        bool
 
 	// Logging function
 	log func(format string, args ...interface{})
@@ -40,15 +43,14 @@ func NewManager(ds *database.Datastore, cfg *config.NotificationsConfig, debug b
 		return nil, nil
 	}
 
-	// Load secret key from file
-	secretKey, err := LoadSecretKey(cfg.SecretFile)
+	// Load server secret from file (plain text, same format as server secret)
+	secretData, err := os.ReadFile(cfg.SecretFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load notification secret key: %w", err)
+		return nil, fmt.Errorf("failed to read secret file: %w", err)
 	}
-
-	secrets, err := NewSecretManager(secretKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create secret manager: %w", err)
+	serverSecret := strings.TrimSpace(string(secretData))
+	if serverSecret == "" {
+		return nil, fmt.Errorf("secret file is empty")
 	}
 
 	renderer := NewTemplateRenderer()
@@ -68,21 +70,21 @@ func NewManager(ds *database.Datastore, cfg *config.NotificationsConfig, debug b
 	}
 
 	m := &Manager{
-		datastore:  ds,
-		config:     cfg,
-		secrets:    secrets,
-		renderer:   renderer,
-		httpClient: httpClient,
-		debug:      debug,
-		log:        logFunc,
-		notifiers:  make(map[database.NotificationChannelType]Notifier),
+		datastore:    ds,
+		config:       cfg,
+		serverSecret: serverSecret,
+		renderer:     renderer,
+		httpClient:   httpClient,
+		debug:        debug,
+		log:          logFunc,
+		notifiers:    make(map[database.NotificationChannelType]Notifier),
 	}
 
 	// Register notifiers
-	m.notifiers[database.ChannelTypeSlack] = NewSlackNotifier(httpClient, secrets, renderer)
-	m.notifiers[database.ChannelTypeMattermost] = NewMattermostNotifier(httpClient, secrets, renderer)
-	m.notifiers[database.ChannelTypeWebhook] = NewWebhookNotifier(httpClient, secrets, renderer)
-	m.notifiers[database.ChannelTypeEmail] = NewEmailNotifier(secrets, renderer)
+	m.notifiers[database.ChannelTypeSlack] = NewSlackNotifier(httpClient, renderer)
+	m.notifiers[database.ChannelTypeMattermost] = NewMattermostNotifier(httpClient, renderer)
+	m.notifiers[database.ChannelTypeWebhook] = NewWebhookNotifier(httpClient, renderer)
+	m.notifiers[database.ChannelTypeEmail] = NewEmailNotifier(serverSecret, renderer)
 
 	return m, nil
 }
@@ -356,11 +358,13 @@ func (m *Manager) buildPayload(alert *database.Alert, notifType database.Notific
 	return payload
 }
 
-// decryptChannelSecrets decrypts sensitive fields in the channel
+// decryptChannelSecrets decrypts sensitive fields in the channel.
+// If decryption fails (e.g. plaintext or legacy data), the original
+// value is kept.
 func (m *Manager) decryptChannelSecrets(channel *database.NotificationChannel) {
 	// Decrypt webhook URL for Slack/Mattermost
 	if channel.WebhookURL != nil && *channel.WebhookURL != "" {
-		decrypted, err := m.secrets.Decrypt(*channel.WebhookURL)
+		decrypted, err := crypto.DecryptPassword(*channel.WebhookURL, m.serverSecret)
 		if err == nil {
 			channel.WebhookURL = &decrypted
 		}
@@ -368,7 +372,7 @@ func (m *Manager) decryptChannelSecrets(channel *database.NotificationChannel) {
 
 	// Decrypt auth credentials for webhooks
 	if channel.AuthCredentials != nil && *channel.AuthCredentials != "" {
-		decrypted, err := m.secrets.Decrypt(*channel.AuthCredentials)
+		decrypted, err := crypto.DecryptPassword(*channel.AuthCredentials, m.serverSecret)
 		if err == nil {
 			channel.AuthCredentials = &decrypted
 		}
@@ -376,7 +380,7 @@ func (m *Manager) decryptChannelSecrets(channel *database.NotificationChannel) {
 
 	// Decrypt SMTP password for email
 	if channel.SMTPPassword != nil && *channel.SMTPPassword != "" {
-		decrypted, err := m.secrets.Decrypt(*channel.SMTPPassword)
+		decrypted, err := crypto.DecryptPassword(*channel.SMTPPassword, m.serverSecret)
 		if err == nil {
 			channel.SMTPPassword = &decrypted
 		}

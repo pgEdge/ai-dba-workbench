@@ -16,6 +16,7 @@ import (
 
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
+	"github.com/pgedge/ai-workbench/pkg/crypto"
 )
 
 func TestManager_GetBackoffMinutes(t *testing.T) {
@@ -243,63 +244,53 @@ func TestManager_BuildPayload_WithoutOptionalFields(t *testing.T) {
 }
 
 func TestManager_DecryptChannelSecrets(t *testing.T) {
-	// Create a manager with a mock secret manager that tracks calls
-	decryptCalls := make(map[string]string)
-	secrets := &mockSecretManager{
-		decryptFunc: func(ciphertext string) (string, error) {
-			decrypted := "decrypted_" + ciphertext
-			decryptCalls[ciphertext] = decrypted
-			return decrypted, nil
-		},
+	testSecret := "test-server-secret-for-decrypt"
+
+	// Encrypt test values using the shared crypto package
+	encWebhook, err := crypto.EncryptPassword("https://hooks.slack.com/test", testSecret)
+	if err != nil {
+		t.Fatalf("EncryptPassword() error: %v", err)
+	}
+	encAuth, err := crypto.EncryptPassword("user:password", testSecret)
+	if err != nil {
+		t.Fatalf("EncryptPassword() error: %v", err)
+	}
+	encSMTP, err := crypto.EncryptPassword("smtp-secret", testSecret)
+	if err != nil {
+		t.Fatalf("EncryptPassword() error: %v", err)
 	}
 
 	m := &Manager{
-		secrets: secrets,
+		serverSecret: testSecret,
 	}
 
-	webhookURL := "encrypted_webhook"
-	authCreds := "encrypted_auth"
-	smtpPassword := "encrypted_smtp"
-
 	channel := &database.NotificationChannel{
-		WebhookURL:      &webhookURL,
-		AuthCredentials: &authCreds,
-		SMTPPassword:    &smtpPassword,
+		WebhookURL:      &encWebhook,
+		AuthCredentials: &encAuth,
+		SMTPPassword:    &encSMTP,
 	}
 
 	m.decryptChannelSecrets(channel)
 
 	// Verify webhook URL was decrypted
-	if *channel.WebhookURL != "decrypted_encrypted_webhook" {
-		t.Errorf("WebhookURL = %q, want %q", *channel.WebhookURL, "decrypted_encrypted_webhook")
+	if *channel.WebhookURL != "https://hooks.slack.com/test" {
+		t.Errorf("WebhookURL = %q, want %q", *channel.WebhookURL, "https://hooks.slack.com/test")
 	}
 
 	// Verify auth credentials were decrypted
-	if *channel.AuthCredentials != "decrypted_encrypted_auth" {
-		t.Errorf("AuthCredentials = %q, want %q", *channel.AuthCredentials, "decrypted_encrypted_auth")
+	if *channel.AuthCredentials != "user:password" {
+		t.Errorf("AuthCredentials = %q, want %q", *channel.AuthCredentials, "user:password")
 	}
 
 	// Verify SMTP password was decrypted
-	if *channel.SMTPPassword != "decrypted_encrypted_smtp" {
-		t.Errorf("SMTPPassword = %q, want %q", *channel.SMTPPassword, "decrypted_encrypted_smtp")
-	}
-
-	// Verify all three were decrypted
-	if len(decryptCalls) != 3 {
-		t.Errorf("Expected 3 decrypt calls, got %d", len(decryptCalls))
+	if *channel.SMTPPassword != "smtp-secret" {
+		t.Errorf("SMTPPassword = %q, want %q", *channel.SMTPPassword, "smtp-secret")
 	}
 }
 
 func TestManager_DecryptChannelSecrets_EmptyFields(t *testing.T) {
-	secrets := &mockSecretManager{
-		decryptFunc: func(ciphertext string) (string, error) {
-			t.Error("Decrypt should not be called for empty fields")
-			return "", nil
-		},
-	}
-
 	m := &Manager{
-		secrets: secrets,
+		serverSecret: "test-secret",
 	}
 
 	emptyStr := ""
@@ -309,8 +300,13 @@ func TestManager_DecryptChannelSecrets_EmptyFields(t *testing.T) {
 		SMTPPassword:    nil,
 	}
 
-	// Should not panic or call decrypt for nil/empty values
+	// Should not panic for nil/empty values
 	m.decryptChannelSecrets(channel)
+
+	// Empty string should remain unchanged
+	if *channel.AuthCredentials != "" {
+		t.Errorf("AuthCredentials should remain empty, got %q", *channel.AuthCredentials)
+	}
 }
 
 func TestManager_DebugLog(t *testing.T) {

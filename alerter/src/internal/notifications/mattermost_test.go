@@ -22,14 +22,14 @@ import (
 )
 
 func TestMattermostNotifier_Type(t *testing.T) {
-	notifier := NewMattermostNotifier(http.DefaultClient, &mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewMattermostNotifier(http.DefaultClient, &mockTemplateRenderer{})
 	if got := notifier.Type(); got != database.ChannelTypeMattermost {
 		t.Errorf("Type() = %v, want %v", got, database.ChannelTypeMattermost)
 	}
 }
 
 func TestMattermostNotifier_Validate(t *testing.T) {
-	notifier := NewMattermostNotifier(http.DefaultClient, &mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewMattermostNotifier(http.DefaultClient, &mockTemplateRenderer{})
 
 	tests := []struct {
 		name    string
@@ -109,7 +109,7 @@ func TestMattermostNotifier_Send_Success(t *testing.T) {
 		},
 	}
 
-	notifier := NewMattermostNotifier(server.Client(), &mockSecretManager{}, renderer)
+	notifier := NewMattermostNotifier(server.Client(), renderer)
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{
@@ -144,7 +144,7 @@ func TestMattermostNotifier_Send_HTTPError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	notifier := NewMattermostNotifier(server.Client(), &mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewMattermostNotifier(server.Client(), &mockTemplateRenderer{})
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{
@@ -168,7 +168,7 @@ func TestMattermostNotifier_Send_HTTPError(t *testing.T) {
 }
 
 func TestMattermostNotifier_Send_ValidationError(t *testing.T) {
-	notifier := NewMattermostNotifier(http.DefaultClient, &mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewMattermostNotifier(http.DefaultClient, &mockTemplateRenderer{})
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{
@@ -193,7 +193,7 @@ func TestMattermostNotifier_Send_UnknownNotificationType(t *testing.T) {
 	}))
 	defer server.Close()
 
-	notifier := NewMattermostNotifier(server.Client(), &mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewMattermostNotifier(server.Client(), &mockTemplateRenderer{})
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{
@@ -253,7 +253,7 @@ func TestMattermostNotifier_Send_UsesSlackTemplates(t *testing.T) {
 				},
 			}
 
-			notifier := NewMattermostNotifier(server.Client(), &mockSecretManager{}, renderer)
+			notifier := NewMattermostNotifier(server.Client(), renderer)
 			ctx := context.Background()
 
 			channel := &database.NotificationChannel{
@@ -293,7 +293,7 @@ func TestMattermostNotifier_Send_CustomTemplate(t *testing.T) {
 		},
 	}
 
-	notifier := NewMattermostNotifier(server.Client(), &mockSecretManager{}, renderer)
+	notifier := NewMattermostNotifier(server.Client(), renderer)
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{
@@ -328,7 +328,7 @@ func TestMattermostNotifier_Send_TemplateRenderError(t *testing.T) {
 		},
 	}
 
-	notifier := NewMattermostNotifier(server.Client(), &mockSecretManager{}, renderer)
+	notifier := NewMattermostNotifier(server.Client(), renderer)
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{
@@ -348,7 +348,7 @@ func TestMattermostNotifier_Send_TemplateRenderError(t *testing.T) {
 }
 
 func TestMattermostNotifier_Send_ConnectionError(t *testing.T) {
-	notifier := NewMattermostNotifier(http.DefaultClient, &mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewMattermostNotifier(http.DefaultClient, &mockTemplateRenderer{})
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{
@@ -375,7 +375,7 @@ func TestMattermostNotifier_Send_ContextCancellation(t *testing.T) {
 	}))
 	defer server.Close()
 
-	notifier := NewMattermostNotifier(server.Client(), &mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewMattermostNotifier(server.Client(), &mockTemplateRenderer{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
@@ -401,7 +401,7 @@ func TestMattermostNotifier_Send_ResponseBodyReadError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	notifier := NewMattermostNotifier(server.Client(), &mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewMattermostNotifier(server.Client(), &mockTemplateRenderer{})
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{

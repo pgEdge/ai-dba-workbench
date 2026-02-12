@@ -257,7 +257,7 @@ system for sending alerts via external channels:
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `enabled` | boolean | `false` | Enable notification delivery |
-| `secret_file` | string | None | Path to encryption key file |
+| `secret_file` | string | None | Path to server secret file |
 | `process_interval_seconds` | integer | `30` | Processing interval for pending notifications |
 | `reminder_check_interval_minutes` | integer | `60` | Interval for checking due reminders |
 | `max_retry_attempts` | integer | `3` | Maximum retries for failed notifications |
@@ -265,9 +265,11 @@ system for sending alerts via external channels:
 | `http_timeout_seconds` | integer | `30` | HTTP request timeout for webhooks |
 | `http_max_idle_conns` | integer | `10` | Maximum idle HTTP connections |
 
-The `secret_file` option specifies a file containing a
-hex-encoded 32-byte key for encrypting sensitive notification
-channel credentials.
+The `secret_file` option specifies a file containing the same
+plain text secret used by the Server component. The alerter
+uses this secret to decrypt notification channel credentials
+that the server encrypted when storing them. The alerter and
+the server must reference the same secret file.
 
 In the following example, the `notifications` section enables
 delivery with custom retry settings:
@@ -275,7 +277,7 @@ delivery with custom retry settings:
 ```yaml
 notifications:
   enabled: true
-  secret_file: /etc/ai-workbench/notifications.key
+  secret_file: /etc/ai-workbench/ai-dba-server.secret
   process_interval_seconds: 30
   max_retry_attempts: 5
   retry_backoff_minutes: [5, 15, 30]

@@ -15,29 +15,8 @@ import (
 	"time"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
+	"github.com/pgedge/ai-workbench/pkg/crypto"
 )
-
-// mockSecretManager implements SecretManager for testing
-type mockSecretManager struct {
-	decryptFunc func(string) (string, error)
-	encryptFunc func(string) (string, error)
-}
-
-func (m *mockSecretManager) Decrypt(ciphertext string) (string, error) {
-	if m.decryptFunc != nil {
-		return m.decryptFunc(ciphertext)
-	}
-	// Default: return plaintext unchanged (simulate no encryption)
-	return ciphertext, nil
-}
-
-func (m *mockSecretManager) Encrypt(plaintext string) (string, error) {
-	if m.encryptFunc != nil {
-		return m.encryptFunc(plaintext)
-	}
-	// Default: return plaintext unchanged (simulate no encryption)
-	return plaintext, nil
-}
 
 // mockTemplateRenderer implements TemplateRenderer for testing
 type mockTemplateRenderer struct {
@@ -66,14 +45,14 @@ func strPtr(s string) *string {
 }
 
 func TestEmailNotifier_Type(t *testing.T) {
-	notifier := NewEmailNotifier(&mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewEmailNotifier("test-secret", &mockTemplateRenderer{})
 	if got := notifier.Type(); got != database.ChannelTypeEmail {
 		t.Errorf("Type() = %v, want %v", got, database.ChannelTypeEmail)
 	}
 }
 
 func TestEmailNotifier_Validate(t *testing.T) {
-	notifier := NewEmailNotifier(&mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewEmailNotifier("test-secret", &mockTemplateRenderer{})
 
 	tests := []struct {
 		name    string
@@ -146,7 +125,7 @@ func TestEmailNotifier_Validate(t *testing.T) {
 }
 
 func TestEmailNotifier_Send_ValidationErrors(t *testing.T) {
-	notifier := NewEmailNotifier(&mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewEmailNotifier("test-secret", &mockTemplateRenderer{})
 	ctx := context.Background()
 	payload := createTestPayload()
 
@@ -207,7 +186,7 @@ func TestEmailNotifier_Send_ValidationErrors(t *testing.T) {
 }
 
 func TestEmailNotifier_Send_UnknownNotificationType(t *testing.T) {
-	notifier := NewEmailNotifier(&mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewEmailNotifier("test-secret", &mockTemplateRenderer{})
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{
@@ -277,7 +256,7 @@ func TestEmailNotifier_Send_TemplateRendering(t *testing.T) {
 				},
 			}
 
-			notifier := NewEmailNotifier(&mockSecretManager{}, renderer)
+			notifier := NewEmailNotifier("test-secret", renderer)
 			ctx := context.Background()
 
 			channel := &database.NotificationChannel{
@@ -363,7 +342,7 @@ func TestEmailNotifier_SubjectFormatting(t *testing.T) {
 func TestEmailNotifier_SMTPPortDefault(t *testing.T) {
 	// Test that SMTP port defaults to 587 when not specified
 	renderer := &mockTemplateRenderer{}
-	notifier := NewEmailNotifier(&mockSecretManager{}, renderer)
+	notifier := NewEmailNotifier("test-secret", renderer)
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{
@@ -388,25 +367,22 @@ func TestEmailNotifier_SMTPPortDefault(t *testing.T) {
 }
 
 func TestEmailNotifier_PasswordDecryption(t *testing.T) {
-	decryptCalled := false
-	secrets := &mockSecretManager{
-		decryptFunc: func(ciphertext string) (string, error) {
-			decryptCalled = true
-			if ciphertext != "encrypted_password" {
-				t.Errorf("Expected encrypted_password, got %s", ciphertext)
-			}
-			return "decrypted_password", nil
-		},
+	testSecret := "test-server-secret-for-email"
+
+	// Encrypt a password using the shared crypto package
+	encryptedPwd, err := crypto.EncryptPassword("decrypted_password", testSecret)
+	if err != nil {
+		t.Fatalf("EncryptPassword() error: %v", err)
 	}
 
-	notifier := NewEmailNotifier(secrets, &mockTemplateRenderer{})
+	notifier := NewEmailNotifier(testSecret, &mockTemplateRenderer{})
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{
 		SMTPHost:     strPtr("smtp.example.com"),
 		FromAddress:  strPtr("alerts@example.com"),
 		SMTPUsername: strPtr("user"),
-		SMTPPassword: strPtr("encrypted_password"),
+		SMTPPassword: &encryptedPwd,
 		Recipients: []*database.EmailRecipient{
 			{EmailAddress: "user@example.com", Enabled: true},
 		},
@@ -414,20 +390,39 @@ func TestEmailNotifier_PasswordDecryption(t *testing.T) {
 
 	payload := createTestPayload()
 
-	// Send will fail at SMTP, but decryption should be called
-	// We intentionally ignore the error as we're testing decryption, not SMTP
-	err := notifier.Send(ctx, channel, payload)
+	// Send will fail at SMTP, but decryption should succeed
+	err = notifier.Send(ctx, channel, payload)
 	if err == nil {
 		t.Log("Send() succeeded unexpectedly")
 	}
+}
 
-	if !decryptCalled {
-		t.Error("Expected password decryption to be called")
+func TestEmailNotifier_PasswordDecryption_PlaintextFallback(t *testing.T) {
+	notifier := NewEmailNotifier("test-secret", &mockTemplateRenderer{})
+	ctx := context.Background()
+
+	channel := &database.NotificationChannel{
+		SMTPHost:     strPtr("smtp.example.com"),
+		FromAddress:  strPtr("alerts@example.com"),
+		SMTPUsername: strPtr("user"),
+		SMTPPassword: strPtr("plaintext_password"),
+		Recipients: []*database.EmailRecipient{
+			{EmailAddress: "user@example.com", Enabled: true},
+		},
+	}
+
+	payload := createTestPayload()
+
+	// Send will fail at SMTP connection, but should NOT fail at
+	// decryption. The plaintext password should be used as-is.
+	err := notifier.Send(ctx, channel, payload)
+	if err != nil && err.Error() == "failed to decrypt SMTP password: failed to decode base64 ciphertext: illegal base64 data at input byte 4" {
+		t.Error("Send() should not fail on decryption error; plaintext fallback expected")
 	}
 }
 
 func TestEmailNotifier_MultipleRecipients(t *testing.T) {
-	notifier := NewEmailNotifier(&mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewEmailNotifier("test-secret", &mockTemplateRenderer{})
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{
@@ -452,7 +447,7 @@ func TestEmailNotifier_MultipleRecipients(t *testing.T) {
 }
 
 func TestEmailNotifier_FromNameHeader(t *testing.T) {
-	notifier := NewEmailNotifier(&mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewEmailNotifier("test-secret", &mockTemplateRenderer{})
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{

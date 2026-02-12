@@ -22,14 +22,14 @@ import (
 )
 
 func TestWebhookNotifier_Type(t *testing.T) {
-	notifier := NewWebhookNotifier(http.DefaultClient, &mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewWebhookNotifier(http.DefaultClient, &mockTemplateRenderer{})
 	if got := notifier.Type(); got != database.ChannelTypeWebhook {
 		t.Errorf("Type() = %v, want %v", got, database.ChannelTypeWebhook)
 	}
 }
 
 func TestWebhookNotifier_Validate(t *testing.T) {
-	notifier := NewWebhookNotifier(http.DefaultClient, &mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewWebhookNotifier(http.DefaultClient, &mockTemplateRenderer{})
 
 	tests := []struct {
 		name    string
@@ -155,7 +155,7 @@ func TestWebhookNotifier_Send_POSTSuccess(t *testing.T) {
 		},
 	}
 
-	notifier := NewWebhookNotifier(server.Client(), &mockSecretManager{}, renderer)
+	notifier := NewWebhookNotifier(server.Client(), renderer)
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{
@@ -198,7 +198,7 @@ func TestWebhookNotifier_Send_GETMethod(t *testing.T) {
 	}))
 	defer server.Close()
 
-	notifier := NewWebhookNotifier(server.Client(), &mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewWebhookNotifier(server.Client(), &mockTemplateRenderer{})
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{
@@ -232,7 +232,7 @@ func TestWebhookNotifier_Send_DefaultMethod(t *testing.T) {
 	}))
 	defer server.Close()
 
-	notifier := NewWebhookNotifier(server.Client(), &mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewWebhookNotifier(server.Client(), &mockTemplateRenderer{})
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{
@@ -261,7 +261,7 @@ func TestWebhookNotifier_Send_CustomHeaders(t *testing.T) {
 	}))
 	defer server.Close()
 
-	notifier := NewWebhookNotifier(server.Client(), &mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewWebhookNotifier(server.Client(), &mockTemplateRenderer{})
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{
@@ -298,7 +298,7 @@ func TestWebhookNotifier_Send_BasicAuth(t *testing.T) {
 	}))
 	defer server.Close()
 
-	notifier := NewWebhookNotifier(server.Client(), &mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewWebhookNotifier(server.Client(), &mockTemplateRenderer{})
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{
@@ -329,7 +329,7 @@ func TestWebhookNotifier_Send_BearerAuth(t *testing.T) {
 	}))
 	defer server.Close()
 
-	notifier := NewWebhookNotifier(server.Client(), &mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewWebhookNotifier(server.Client(), &mockTemplateRenderer{})
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{
@@ -360,7 +360,7 @@ func TestWebhookNotifier_Send_APIKeyAuth(t *testing.T) {
 	}))
 	defer server.Close()
 
-	notifier := NewWebhookNotifier(server.Client(), &mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewWebhookNotifier(server.Client(), &mockTemplateRenderer{})
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{
@@ -393,7 +393,7 @@ func TestWebhookNotifier_Send_2xxSuccess(t *testing.T) {
 			}))
 			defer server.Close()
 
-			notifier := NewWebhookNotifier(server.Client(), &mockSecretManager{}, &mockTemplateRenderer{})
+			notifier := NewWebhookNotifier(server.Client(), &mockTemplateRenderer{})
 			ctx := context.Background()
 
 			channel := &database.NotificationChannel{
@@ -424,7 +424,7 @@ func TestWebhookNotifier_Send_HTTPErrors(t *testing.T) {
 			}))
 			defer server.Close()
 
-			notifier := NewWebhookNotifier(server.Client(), &mockSecretManager{}, &mockTemplateRenderer{})
+			notifier := NewWebhookNotifier(server.Client(), &mockTemplateRenderer{})
 			ctx := context.Background()
 
 			channel := &database.NotificationChannel{
@@ -447,7 +447,7 @@ func TestWebhookNotifier_Send_HTTPErrors(t *testing.T) {
 }
 
 func TestWebhookNotifier_Send_ValidationError(t *testing.T) {
-	notifier := NewWebhookNotifier(http.DefaultClient, &mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewWebhookNotifier(http.DefaultClient, &mockTemplateRenderer{})
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{
@@ -472,7 +472,7 @@ func TestWebhookNotifier_Send_UnknownNotificationType(t *testing.T) {
 	}))
 	defer server.Close()
 
-	notifier := NewWebhookNotifier(server.Client(), &mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewWebhookNotifier(server.Client(), &mockTemplateRenderer{})
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{
@@ -531,7 +531,7 @@ func TestWebhookNotifier_Send_TemplateRendering(t *testing.T) {
 				},
 			}
 
-			notifier := NewWebhookNotifier(server.Client(), &mockSecretManager{}, renderer)
+			notifier := NewWebhookNotifier(server.Client(), renderer)
 			ctx := context.Background()
 
 			channel := &database.NotificationChannel{
@@ -571,7 +571,7 @@ func TestWebhookNotifier_Send_CustomTemplate(t *testing.T) {
 		},
 	}
 
-	notifier := NewWebhookNotifier(server.Client(), &mockSecretManager{}, renderer)
+	notifier := NewWebhookNotifier(server.Client(), renderer)
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{
@@ -603,7 +603,7 @@ func TestWebhookNotifier_Send_TemplateRenderError(t *testing.T) {
 		},
 	}
 
-	notifier := NewWebhookNotifier(server.Client(), &mockSecretManager{}, renderer)
+	notifier := NewWebhookNotifier(server.Client(), renderer)
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{
@@ -623,7 +623,7 @@ func TestWebhookNotifier_Send_TemplateRenderError(t *testing.T) {
 }
 
 func TestWebhookNotifier_Send_ConnectionError(t *testing.T) {
-	notifier := NewWebhookNotifier(http.DefaultClient, &mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewWebhookNotifier(http.DefaultClient, &mockTemplateRenderer{})
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{
@@ -649,7 +649,7 @@ func TestWebhookNotifier_Send_ContextCancellation(t *testing.T) {
 	}))
 	defer server.Close()
 
-	notifier := NewWebhookNotifier(server.Client(), &mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewWebhookNotifier(server.Client(), &mockTemplateRenderer{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -681,7 +681,7 @@ func TestWebhookNotifier_Send_PUTMethod(t *testing.T) {
 	}))
 	defer server.Close()
 
-	notifier := NewWebhookNotifier(server.Client(), &mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewWebhookNotifier(server.Client(), &mockTemplateRenderer{})
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{
@@ -715,7 +715,7 @@ func TestWebhookNotifier_Send_PATCHMethod(t *testing.T) {
 	}))
 	defer server.Close()
 
-	notifier := NewWebhookNotifier(server.Client(), &mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewWebhookNotifier(server.Client(), &mockTemplateRenderer{})
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{
@@ -744,7 +744,7 @@ func TestWebhookNotifier_Send_NoContentTypeForGET(t *testing.T) {
 	}))
 	defer server.Close()
 
-	notifier := NewWebhookNotifier(server.Client(), &mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewWebhookNotifier(server.Client(), &mockTemplateRenderer{})
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{

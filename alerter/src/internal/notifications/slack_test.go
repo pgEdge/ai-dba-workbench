@@ -22,14 +22,14 @@ import (
 )
 
 func TestSlackNotifier_Type(t *testing.T) {
-	notifier := NewSlackNotifier(http.DefaultClient, &mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewSlackNotifier(http.DefaultClient, &mockTemplateRenderer{})
 	if got := notifier.Type(); got != database.ChannelTypeSlack {
 		t.Errorf("Type() = %v, want %v", got, database.ChannelTypeSlack)
 	}
 }
 
 func TestSlackNotifier_Validate(t *testing.T) {
-	notifier := NewSlackNotifier(http.DefaultClient, &mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewSlackNotifier(http.DefaultClient, &mockTemplateRenderer{})
 
 	tests := []struct {
 		name    string
@@ -109,7 +109,7 @@ func TestSlackNotifier_Send_Success(t *testing.T) {
 		},
 	}
 
-	notifier := NewSlackNotifier(server.Client(), &mockSecretManager{}, renderer)
+	notifier := NewSlackNotifier(server.Client(), renderer)
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{
@@ -144,7 +144,7 @@ func TestSlackNotifier_Send_HTTPError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	notifier := NewSlackNotifier(server.Client(), &mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewSlackNotifier(server.Client(), &mockTemplateRenderer{})
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{
@@ -168,7 +168,7 @@ func TestSlackNotifier_Send_HTTPError(t *testing.T) {
 }
 
 func TestSlackNotifier_Send_ValidationError(t *testing.T) {
-	notifier := NewSlackNotifier(http.DefaultClient, &mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewSlackNotifier(http.DefaultClient, &mockTemplateRenderer{})
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{
@@ -193,7 +193,7 @@ func TestSlackNotifier_Send_UnknownNotificationType(t *testing.T) {
 	}))
 	defer server.Close()
 
-	notifier := NewSlackNotifier(server.Client(), &mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewSlackNotifier(server.Client(), &mockTemplateRenderer{})
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{
@@ -252,7 +252,7 @@ func TestSlackNotifier_Send_TemplateRendering(t *testing.T) {
 				},
 			}
 
-			notifier := NewSlackNotifier(server.Client(), &mockSecretManager{}, renderer)
+			notifier := NewSlackNotifier(server.Client(), renderer)
 			ctx := context.Background()
 
 			channel := &database.NotificationChannel{
@@ -292,7 +292,7 @@ func TestSlackNotifier_Send_CustomTemplate(t *testing.T) {
 		},
 	}
 
-	notifier := NewSlackNotifier(server.Client(), &mockSecretManager{}, renderer)
+	notifier := NewSlackNotifier(server.Client(), renderer)
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{
@@ -327,7 +327,7 @@ func TestSlackNotifier_Send_TemplateRenderError(t *testing.T) {
 		},
 	}
 
-	notifier := NewSlackNotifier(server.Client(), &mockSecretManager{}, renderer)
+	notifier := NewSlackNotifier(server.Client(), renderer)
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{
@@ -347,7 +347,7 @@ func TestSlackNotifier_Send_TemplateRenderError(t *testing.T) {
 }
 
 func TestSlackNotifier_Send_ConnectionError(t *testing.T) {
-	notifier := NewSlackNotifier(http.DefaultClient, &mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewSlackNotifier(http.DefaultClient, &mockTemplateRenderer{})
 	ctx := context.Background()
 
 	channel := &database.NotificationChannel{
@@ -375,7 +375,7 @@ func TestSlackNotifier_Send_ContextCancellation(t *testing.T) {
 	}))
 	defer server.Close()
 
-	notifier := NewSlackNotifier(server.Client(), &mockSecretManager{}, &mockTemplateRenderer{})
+	notifier := NewSlackNotifier(server.Client(), &mockTemplateRenderer{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately

@@ -29,9 +29,13 @@ func (d *Datastore) GetNotificationChannel(ctx context.Context, id int64) (*Noti
 	var channel NotificationChannel
 	err := d.pool.QueryRow(ctx, `
         SELECT id, owner_username, owner_token, enabled, channel_type,
-               name, description, webhook_url, endpoint_url, http_method, headers,
-               auth_type, auth_credentials, smtp_host, smtp_port, smtp_username,
-               smtp_password, smtp_use_tls, from_address, from_name,
+               name, description, webhook_url_encrypted AS webhook_url,
+               endpoint_url, http_method,
+               headers_json AS headers, auth_type,
+               auth_credentials_encrypted AS auth_credentials,
+               smtp_host, smtp_port, smtp_username,
+               smtp_password_encrypted AS smtp_password,
+               smtp_use_tls, from_address, from_name,
                template_alert_fire, template_alert_clear, template_reminder,
                reminder_enabled, reminder_interval_hours, is_estate_default,
                created_at, updated_at
@@ -62,9 +66,12 @@ func (d *Datastore) GetNotificationChannel(ctx context.Context, id int64) (*Noti
 func (d *Datastore) GetNotificationChannelsForConnection(ctx context.Context, connectionID int) ([]*NotificationChannel, error) {
 	rows, err := d.pool.Query(ctx, `
         SELECT nc.id, nc.owner_username, nc.owner_token, nc.enabled,
-               nc.channel_type, nc.name, nc.description, nc.webhook_url, nc.endpoint_url,
-               nc.http_method, nc.headers, nc.auth_type, nc.auth_credentials,
-               nc.smtp_host, nc.smtp_port, nc.smtp_username, nc.smtp_password,
+               nc.channel_type, nc.name, nc.description,
+               nc.webhook_url_encrypted AS webhook_url, nc.endpoint_url,
+               nc.http_method, nc.headers_json AS headers,
+               nc.auth_type, nc.auth_credentials_encrypted AS auth_credentials,
+               nc.smtp_host, nc.smtp_port, nc.smtp_username,
+               nc.smtp_password_encrypted AS smtp_password,
                nc.smtp_use_tls, nc.from_address, nc.from_name, nc.template_alert_fire,
                nc.template_alert_clear, nc.template_reminder, nc.reminder_enabled,
                nc.reminder_interval_hours, nc.is_estate_default, nc.created_at, nc.updated_at
@@ -121,8 +128,9 @@ func (d *Datastore) CreateNotificationChannel(ctx context.Context, channel *Noti
 	return d.pool.QueryRow(ctx, `
         INSERT INTO notification_channels (
             owner_username, owner_token, enabled, channel_type, name,
-            description, webhook_url, endpoint_url, http_method, headers, auth_type,
-            auth_credentials, smtp_host, smtp_port, smtp_username, smtp_password,
+            description, webhook_url_encrypted, endpoint_url, http_method,
+            headers_json, auth_type, auth_credentials_encrypted, smtp_host,
+            smtp_port, smtp_username, smtp_password_encrypted,
             smtp_use_tls, from_address, from_name, template_alert_fire,
             template_alert_clear, template_reminder, reminder_enabled,
             reminder_interval_hours, is_estate_default, created_at, updated_at
@@ -144,10 +152,13 @@ func (d *Datastore) UpdateNotificationChannel(ctx context.Context, channel *Noti
 	_, err := d.pool.Exec(ctx, `
         UPDATE notification_channels
         SET owner_username = $2, owner_token = $3, enabled = $4,
-            channel_type = $5, name = $6, description = $7, webhook_url = $8,
-            endpoint_url = $9, http_method = $10, headers = $11, auth_type = $12,
-            auth_credentials = $13, smtp_host = $14, smtp_port = $15,
-            smtp_username = $16, smtp_password = $17, smtp_use_tls = $18,
+            channel_type = $5, name = $6, description = $7,
+            webhook_url_encrypted = $8,
+            endpoint_url = $9, http_method = $10, headers_json = $11,
+            auth_type = $12, auth_credentials_encrypted = $13,
+            smtp_host = $14, smtp_port = $15,
+            smtp_username = $16, smtp_password_encrypted = $17,
+            smtp_use_tls = $18,
             from_address = $19, from_name = $20, template_alert_fire = $21,
             template_alert_clear = $22, template_reminder = $23,
             reminder_enabled = $24, reminder_interval_hours = $25,
@@ -424,9 +435,12 @@ func (d *Datastore) GetDueReminders(ctx context.Context) ([]DueReminder, error) 
             a.status, a.triggered_at, a.cleared_at, a.anomaly_score, a.anomaly_details,
             -- Channel fields
             nc.id, nc.owner_username, nc.owner_token, nc.enabled,
-            nc.channel_type, nc.name, nc.description, nc.webhook_url, nc.endpoint_url,
-            nc.http_method, nc.headers, nc.auth_type, nc.auth_credentials,
-            nc.smtp_host, nc.smtp_port, nc.smtp_username, nc.smtp_password,
+            nc.channel_type, nc.name, nc.description,
+            nc.webhook_url_encrypted AS webhook_url, nc.endpoint_url,
+            nc.http_method, nc.headers_json AS headers,
+            nc.auth_type, nc.auth_credentials_encrypted AS auth_credentials,
+            nc.smtp_host, nc.smtp_port, nc.smtp_username,
+            nc.smtp_password_encrypted AS smtp_password,
             nc.smtp_use_tls, nc.from_address, nc.from_name, nc.template_alert_fire,
             nc.template_alert_clear, nc.template_reminder, nc.reminder_enabled,
             nc.reminder_interval_hours, nc.is_estate_default, nc.created_at, nc.updated_at,

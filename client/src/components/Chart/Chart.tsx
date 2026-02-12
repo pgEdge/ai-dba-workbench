@@ -145,8 +145,92 @@ export function Chart(props: ChartProps) {
         }
     }, [normalizedData, props, showMarkers, markerShape, enableZoom, showLegend, showTooltip]);
 
+    /* Inject theme-derived axis label, legend, and tooltip styles into
+       the built options. ECharts applies the registered theme first, but
+       any option object provided to the chart instance *replaces* the
+       corresponding theme object entirely. When buildXAxis/buildYAxis
+       set axisLabel with a formatter but no color, the theme color is
+       lost. By merging the theme defaults here (before the caller's
+       echartsOptions override), every axis label, legend, and tooltip
+       inherits the correct palette colors automatically. */
+    const themedOptions = useMemo(() => {
+        const options = { ...baseOptions };
+
+        const axisLabelDefaults = {
+            color: echartsTheme.xAxis?.axisLabel?.color,
+            fontSize: echartsTheme.xAxis?.axisLabel?.fontSize,
+        };
+
+        const injectAxisDefaults = (axis: Record<string, unknown>) => {
+            if (axis.axisLabel && typeof axis.axisLabel === 'object') {
+                axis.axisLabel = { ...axisLabelDefaults, ...(axis.axisLabel as Record<string, unknown>) };
+            }
+        };
+
+        if (options.xAxis && typeof options.xAxis === 'object') {
+            if (Array.isArray(options.xAxis)) {
+                options.xAxis = options.xAxis.map((a: Record<string, unknown>) => {
+                    const copy = { ...a };
+                    injectAxisDefaults(copy);
+                    return copy;
+                });
+            } else {
+                const copy = { ...(options.xAxis as Record<string, unknown>) };
+                injectAxisDefaults(copy);
+                options.xAxis = copy;
+            }
+        }
+
+        if (options.yAxis) {
+            if (Array.isArray(options.yAxis)) {
+                options.yAxis = options.yAxis.map((a: Record<string, unknown>) => {
+                    const copy = { ...a };
+                    injectAxisDefaults(copy);
+                    return copy;
+                });
+            } else if (typeof options.yAxis === 'object') {
+                const copy = { ...(options.yAxis as Record<string, unknown>) };
+                injectAxisDefaults(copy);
+                options.yAxis = copy;
+            }
+        }
+
+        if (options.legend && typeof options.legend === 'object') {
+            const legend = { ...(options.legend as Record<string, unknown>) };
+            const themeTextStyle = echartsTheme.legend?.textStyle ?? {};
+            if (legend.textStyle && typeof legend.textStyle === 'object') {
+                legend.textStyle = { ...themeTextStyle, ...(legend.textStyle as Record<string, unknown>) };
+            } else if (!legend.textStyle) {
+                legend.textStyle = { ...themeTextStyle };
+            }
+            options.legend = legend;
+        }
+
+        if (options.tooltip && typeof options.tooltip === 'object') {
+            const tooltip = { ...(options.tooltip as Record<string, unknown>) };
+            const themeTooltip = echartsTheme.tooltip ?? {};
+            if (!tooltip.backgroundColor) {
+                tooltip.backgroundColor = themeTooltip.backgroundColor;
+            }
+            if (!tooltip.borderColor) {
+                tooltip.borderColor = themeTooltip.borderColor;
+            }
+            if (tooltip.textStyle && typeof tooltip.textStyle === 'object') {
+                tooltip.textStyle = {
+                    ...(themeTooltip.textStyle ?? {}),
+                    ...(tooltip.textStyle as Record<string, unknown>),
+                };
+            } else if (!tooltip.textStyle) {
+                tooltip.textStyle = { ...(themeTooltip.textStyle ?? {}) };
+            }
+            options.tooltip = tooltip;
+        }
+
+        return options;
+    }, [baseOptions, echartsTheme]);
+
     const mergedOptions = useMemo(() => {
-        let options = baseOptions;
+        let options = themedOptions;
         if (colorPalette) {
             options = { ...options, color: colorPalette };
         }
@@ -154,7 +238,7 @@ export function Chart(props: ChartProps) {
             options = deepMerge(options, echartsOptions);
         }
         return options;
-    }, [baseOptions, colorPalette, echartsOptions]);
+    }, [themedOptions, colorPalette, echartsOptions]);
 
     useEffect(() => {
         if (!liveUpdate || !onDataRefresh) {

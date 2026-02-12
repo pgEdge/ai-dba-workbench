@@ -8,10 +8,9 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useMemo } from 'react';
+import React from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
-import TimeRangeSelector from '../TimeRangeSelector';
 import SystemResourcesSection from './SystemResourcesSection';
 import PostgresOverviewSection from './PostgresOverviewSection';
 import WalReplicationSection from './WalReplicationSection';
@@ -21,34 +20,6 @@ import TopQueriesSection from './TopQueriesSection';
 interface ServerDashboardProps {
     selection: Record<string, unknown>;
 }
-
-/** Header container with server name and time range selector */
-const HEADER_SX = {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    mb: 2,
-};
-
-/** Server info display */
-const SERVER_INFO_SX = {
-    display: 'flex',
-    alignItems: 'baseline',
-    gap: 1,
-};
-
-/** Server name */
-const SERVER_NAME_SX = {
-    fontWeight: 600,
-    fontSize: '1.1rem',
-};
-
-/** Server metadata (host, role, version) */
-const SERVER_META_SX = {
-    fontSize: '0.8125rem',
-    color: 'text.secondary',
-    fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-};
 
 /**
  * ServerDashboard provides comprehensive server health and
@@ -60,36 +31,7 @@ const ServerDashboard: React.FC<ServerDashboardProps> = ({
     selection,
 }) => {
     const connectionId = selection.id as number;
-
-    const serverLabel = useMemo(() => {
-        const name = selection.name as string | undefined;
-        const host = selection.host as string | undefined;
-        const port = selection.port as number | undefined;
-        const role = selection.role as string | undefined;
-        const version = selection.version as string | undefined;
-
-        const parts: string[] = [];
-        if (host) {
-            parts.push(port ? `${host}:${port}` : host);
-        }
-        if (role) {
-            parts.push(role);
-        }
-        if (version) {
-            parts.push(`PG ${version}`);
-        }
-
-        return {
-            name: name || 'Server',
-            meta: parts.join(' | '),
-        };
-    }, [
-        selection.name,
-        selection.host,
-        selection.port,
-        selection.role,
-        selection.version,
-    ]);
+    const connectionName = selection.name as string | undefined;
 
     if (!connectionId && connectionId !== 0) {
         return (
@@ -105,25 +47,11 @@ const ServerDashboard: React.FC<ServerDashboardProps> = ({
 
     return (
         <Box>
-            <Box sx={HEADER_SX}>
-                <Box sx={SERVER_INFO_SX}>
-                    <Typography sx={SERVER_NAME_SX}>
-                        {serverLabel.name}
-                    </Typography>
-                    {serverLabel.meta && (
-                        <Typography sx={SERVER_META_SX}>
-                            {serverLabel.meta}
-                        </Typography>
-                    )}
-                </Box>
-                <TimeRangeSelector />
-            </Box>
-
             <SystemResourcesSection connectionId={connectionId} />
             <PostgresOverviewSection connectionId={connectionId} />
             <WalReplicationSection connectionId={connectionId} />
-            <DatabaseSummariesSection connectionId={connectionId} />
-            <TopQueriesSection connectionId={connectionId} />
+            <DatabaseSummariesSection connectionId={connectionId} connectionName={connectionName} />
+            <TopQueriesSection connectionId={connectionId} connectionName={connectionName} />
         </Box>
     );
 };

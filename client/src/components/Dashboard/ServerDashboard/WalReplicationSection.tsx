@@ -10,8 +10,8 @@
 
 import React, { useMemo } from 'react';
 import Box from '@mui/material/Box';
-import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
+import SyncIcon from '@mui/icons-material/Sync';
 import { useDashboard } from '../../../contexts/DashboardContext';
 import { useMetrics } from '../../../hooks/useMetrics';
 import { MetricQueryParams, MetricSeries } from '../types';
@@ -19,6 +19,7 @@ import { KPI_GRID_SX, CHART_SECTION_SX } from '../styles';
 import KpiTile from '../KpiTile';
 import CollapsibleSection from '../CollapsibleSection';
 import { Chart } from '../../Chart';
+import ChartPanel from '../ChartPanel';
 import { ServerSectionProps, extractSparklineData, extractLatestValue } from './types';
 
 /** Number of data buckets for KPI sparklines */
@@ -31,12 +32,12 @@ const CHART_BUCKETS = 150;
 const CHART_HEIGHT = 250;
 
 /**
- * Format bytes per second into a human-readable rate string.
+ * Format byte values into a human-readable string.
  */
-const formatBytesRate = (bytesPerSec: number | null): string => {
-    if (bytesPerSec === null) { return '--'; }
-    const units = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
-    let size = bytesPerSec;
+const formatBytes = (bytes: number | null): string => {
+    if (bytes === null) { return '--'; }
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let size = bytes;
     let unitIndex = 0;
     while (size >= 1024 && unitIndex < units.length - 1) {
         size /= 1024;
@@ -46,17 +47,7 @@ const formatBytesRate = (bytesPerSec: number | null): string => {
 };
 
 /**
- * Format a duration in milliseconds to a human-readable string.
- */
-const formatDuration = (ms: number | null): string => {
-    if (ms === null) { return '--'; }
-    if (ms < 1000) { return `${ms.toFixed(0)} ms`; }
-    if (ms < 60000) { return `${(ms / 1000).toFixed(1)} s`; }
-    return `${(ms / 60000).toFixed(1)} min`;
-};
-
-/**
- * Format a lag value into a human-readable string.
+ * Format a lag value (in seconds) into a human-readable string.
  */
 const formatLag = (lagSeconds: number | null): string => {
     if (lagSeconds === null) { return '--'; }
@@ -76,6 +67,14 @@ const getLagStatus = (
     if (lagSeconds > 30) { return 'critical'; }
     if (lagSeconds > 5) { return 'warning'; }
     return 'good';
+};
+
+/**
+ * Format a numeric value for display.
+ */
+const formatValue = (value: number | null, decimals = 0): string => {
+    if (value === null) { return '--'; }
+    return value.toFixed(decimals);
 };
 
 /**
@@ -118,27 +117,38 @@ const buildChartData = (
  */
 const buildReplicationLagChartData = (
     series: MetricSeries[] | null,
+    metricNames: string[],
+    displayNames: string[],
 ) => {
     if (!series || series.length === 0) { return null; }
 
-    const lagSeries = series.filter(s => s.metric === 'replay_lag');
-    if (lagSeries.length === 0) { return null; }
+    const matchedSeries = metricNames.map((metric, idx) => {
+        const found = series.find(s => s.metric === metric);
+        return {
+            name: displayNames[idx],
+            data: found?.data.map(d => d.value) ?? [],
+            categories: found?.data.map(d => d.time) ?? [],
+        };
+    });
 
-    const categories = lagSeries[0]?.data.map(d => d.time) ?? [];
+    if (matchedSeries.every(s => s.data.length === 0)) { return null; }
+
+    const categories = matchedSeries.find(
+        s => s.categories.length > 0
+    )?.categories ?? [];
 
     return {
         categories,
-        series: lagSeries.map(s => ({
-            name: s.name || 'Standby',
-            data: s.data.map(d => d.value),
+        series: matchedSeries.map(s => ({
+            name: s.name,
+            data: s.data,
         })),
     };
 };
 
 /**
  * WAL and Replication section displays WAL generation rates,
- * replication lag, replication slot status, and checkpoint
- * performance metrics.
+ * replication lag, checkpoint performance, and WAL statistics.
  */
 const WalReplicationSection: React.FC<ServerSectionProps> = ({
     connectionId,
@@ -152,7 +162,7 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
         timeRange: timeRange.range,
         buckets: KPI_BUCKETS,
         aggregation: 'avg',
-        metrics: ['wal_bytes_per_sec'],
+        metrics: ['wal_bytes', 'wal_records'],
     }), [connectionId, timeRange.range]);
 
     const replLagKpiParams = useMemo((): MetricQueryParams => ({
@@ -161,16 +171,7 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
         timeRange: timeRange.range,
         buckets: KPI_BUCKETS,
         aggregation: 'avg',
-        metrics: ['replay_lag'],
-    }), [connectionId, timeRange.range]);
-
-    const replSlotsKpiParams = useMemo((): MetricQueryParams => ({
-        probeName: 'pg_replication_slots',
-        connectionId,
-        timeRange: timeRange.range,
-        buckets: KPI_BUCKETS,
-        aggregation: 'last',
-        metrics: ['active_count'],
+        metrics: ['replay_lag', 'write_lag', 'flush_lag'],
     }), [connectionId, timeRange.range]);
 
     const checkpointKpiParams = useMemo((): MetricQueryParams => ({
@@ -179,7 +180,7 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
         timeRange: timeRange.range,
         buckets: KPI_BUCKETS,
         aggregation: 'avg',
-        metrics: ['checkpoint_write_time'],
+        metrics: ['num_timed', 'num_requested', 'buffers_written'],
     }), [connectionId, timeRange.range]);
 
     // Chart queries (150 buckets)
@@ -189,7 +190,7 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
         timeRange: timeRange.range,
         buckets: CHART_BUCKETS,
         aggregation: 'avg',
-        metrics: ['wal_bytes_per_sec'],
+        metrics: ['wal_bytes', 'wal_records'],
     }), [connectionId, timeRange.range]);
 
     const replLagChartParams = useMemo((): MetricQueryParams => ({
@@ -198,49 +199,78 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
         timeRange: timeRange.range,
         buckets: CHART_BUCKETS,
         aggregation: 'avg',
-        metrics: ['replay_lag'],
+        metrics: ['write_lag', 'flush_lag', 'replay_lag'],
+    }), [connectionId, timeRange.range]);
+
+    const checkpointChartParams = useMemo((): MetricQueryParams => ({
+        probeName: 'pg_stat_checkpointer',
+        connectionId,
+        timeRange: timeRange.range,
+        buckets: CHART_BUCKETS,
+        aggregation: 'avg',
+        metrics: ['num_timed', 'num_requested', 'buffers_written'],
     }), [connectionId, timeRange.range]);
 
     // Fetch KPI data
     const walKpi = useMetrics(walKpiParams);
     const replLagKpi = useMetrics(replLagKpiParams);
-    const replSlotsKpi = useMetrics(replSlotsKpiParams);
     const checkpointKpi = useMetrics(checkpointKpiParams);
 
     // Fetch chart data
     const walChart = useMetrics(walChartParams);
     const replLagChart = useMetrics(replLagChartParams);
+    const checkpointChart = useMetrics(checkpointChartParams);
 
     // Extract current values
-    const walRate = extractLatestValue(walKpi.data, 'wal_bytes_per_sec');
+    const walBytes = extractLatestValue(walKpi.data, 'wal_bytes');
+    const walRecords = extractLatestValue(walKpi.data, 'wal_records');
     const replayLag = extractLatestValue(replLagKpi.data, 'replay_lag');
-    const activeSlots = extractLatestValue(
-        replSlotsKpi.data, 'active_count'
+    const numTimed = extractLatestValue(
+        checkpointKpi.data, 'num_timed'
     );
-    const checkpointTime = extractLatestValue(
-        checkpointKpi.data, 'checkpoint_write_time'
+    const numRequested = extractLatestValue(
+        checkpointKpi.data, 'num_requested'
     );
+    const totalCheckpoints = useMemo(() => {
+        if (numTimed !== null || numRequested !== null) {
+            return (numTimed ?? 0) + (numRequested ?? 0);
+        }
+        return null;
+    }, [numTimed, numRequested]);
 
     // Build chart datasets
     const walChartData = useMemo(
         () => buildChartData(
             walChart.data,
-            ['wal_bytes_per_sec'],
-            ['WAL Bytes/s'],
+            ['wal_bytes', 'wal_records'],
+            ['WAL Bytes', 'WAL Records'],
         ),
         [walChart.data]
     );
 
     const replLagChartData = useMemo(
-        () => buildReplicationLagChartData(replLagChart.data),
+        () => buildReplicationLagChartData(
+            replLagChart.data,
+            ['write_lag', 'flush_lag', 'replay_lag'],
+            ['Write Lag', 'Flush Lag', 'Replay Lag'],
+        ),
         [replLagChart.data]
     );
 
+    const checkpointChartData = useMemo(
+        () => buildChartData(
+            checkpointChart.data,
+            ['num_timed', 'num_requested', 'buffers_written'],
+            ['Timed', 'Requested', 'Buffers Written'],
+        ),
+        [checkpointChart.data]
+    );
+
     const isKpiLoading = walKpi.loading || replLagKpi.loading
-        || replSlotsKpi.loading || checkpointKpi.loading;
+        || checkpointKpi.loading;
 
     return (
-        <CollapsibleSection title="WAL and Replication" defaultExpanded>
+        <CollapsibleSection title="WAL and Replication" icon={<SyncIcon sx={{ fontSize: 16 }} />} defaultExpanded>
             {isKpiLoading && !walKpi.data && (
                 <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
                     <CircularProgress size={24} />
@@ -248,10 +278,19 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
             )}
             <Box sx={KPI_GRID_SX}>
                 <KpiTile
-                    label="WAL Generation Rate"
-                    value={formatBytesRate(walRate)}
+                    label="WAL Bytes"
+                    value={formatBytes(walBytes)}
                     sparklineData={extractSparklineData(
-                        walKpi.data, 'wal_bytes_per_sec'
+                        walKpi.data, 'wal_bytes'
+                    )}
+                />
+                <KpiTile
+                    label="WAL Records"
+                    value={walRecords !== null
+                        ? formatValue(walRecords)
+                        : '--'}
+                    sparklineData={extractSparklineData(
+                        walKpi.data, 'wal_records'
                     )}
                 />
                 <KpiTile
@@ -263,87 +302,85 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
                     )}
                 />
                 <KpiTile
-                    label="Active Replication Slots"
-                    value={activeSlots !== null
-                        ? Math.round(activeSlots).toString()
+                    label="Checkpoints"
+                    value={totalCheckpoints !== null
+                        ? formatValue(totalCheckpoints)
                         : '--'}
                     sparklineData={extractSparklineData(
-                        replSlotsKpi.data, 'active_count'
-                    )}
-                />
-                <KpiTile
-                    label="Checkpoint Duration"
-                    value={formatDuration(checkpointTime)}
-                    sparklineData={extractSparklineData(
-                        checkpointKpi.data, 'checkpoint_write_time'
+                        checkpointKpi.data, 'num_timed'
                     )}
                 />
             </Box>
 
             <Box sx={CHART_SECTION_SX}>
                 <Box>
-                    {walChart.loading && !walChartData ? (
-                        <Box sx={{
-                            display: 'flex',
-                            justifyContent: 'center',
-                            alignItems: 'center',
-                            height: CHART_HEIGHT,
-                        }}>
-                            <CircularProgress size={24} />
-                        </Box>
-                    ) : walChartData ? (
-                        <Chart
-                            type="line"
-                            data={walChartData}
-                            title="WAL Generation Over Time"
-                            height={CHART_HEIGHT}
-                            smooth
-                            areaFill
-                            showLegend
-                            showTooltip
-                            showToolbar={false}
-                        />
-                    ) : (
-                        <Typography
-                            variant="body2"
-                            color="text.secondary"
-                            sx={{ textAlign: 'center', py: 4 }}
-                        >
-                            No WAL data available
-                        </Typography>
-                    )}
+                    <ChartPanel
+                        title="WAL Activity Over Time"
+                        loading={walChart.loading && !walChartData}
+                        hasData={!!walChartData}
+                        emptyMessage="No WAL data available"
+                        height={CHART_HEIGHT}
+                    >
+                        {walChartData && (
+                            <Chart
+                                type="line"
+                                data={walChartData}
+                                title="WAL Activity Over Time"
+                                height={CHART_HEIGHT}
+                                smooth
+                                areaFill
+                                showLegend
+                                showTooltip
+                                showToolbar={false}
+                            />
+                        )}
+                    </ChartPanel>
                 </Box>
 
                 <Box>
-                    {replLagChart.loading && !replLagChartData ? (
-                        <Box sx={{
-                            display: 'flex',
-                            justifyContent: 'center',
-                            alignItems: 'center',
-                            height: CHART_HEIGHT,
-                        }}>
-                            <CircularProgress size={24} />
-                        </Box>
-                    ) : replLagChartData ? (
-                        <Chart
-                            type="line"
-                            data={replLagChartData}
-                            title="Replication Lag Over Time"
-                            height={CHART_HEIGHT}
-                            smooth
-                            showLegend
-                            showTooltip
-                            showToolbar={false}
-                        />
-                    ) : (
-                        <Typography
-                            variant="body2"
-                            color="text.secondary"
-                            sx={{ textAlign: 'center', py: 4 }}
-                        >
-                            No replication lag data available
-                        </Typography>
-                    )}
+                    <ChartPanel
+                        title="Replication Lag Over Time"
+                        loading={replLagChart.loading && !replLagChartData}
+                        hasData={!!replLagChartData}
+                        emptyMessage="No replication data available. Is this server a primary with standbys?"
+                        height={CHART_HEIGHT}
+                    >
+                        {replLagChartData && (
+                            <Chart
+                                type="line"
+                                data={replLagChartData}
+                                title="Replication Lag Over Time"
+                                height={CHART_HEIGHT}
+                                smooth
+                                showLegend
+                                showTooltip
+                                showToolbar={false}
+                            />
+                        )}
+                    </ChartPanel>
+                </Box>
+
+                <Box>
+                    <ChartPanel
+                        title="Checkpoints Over Time"
+                        loading={checkpointChart.loading && !checkpointChartData}
+                        hasData={!!checkpointChartData}
+                        emptyMessage="No checkpoint data available"
+                        height={CHART_HEIGHT}
+                    >
+                        {checkpointChartData && (
+                            <Chart
+                                type="line"
+                                data={checkpointChartData}
+                                title="Checkpoints Over Time"
+                                height={CHART_HEIGHT}
+                                smooth
+                                showLegend
+                                showTooltip
+                                showToolbar={false}
+                            />
+                        )}
+                    </ChartPanel>
                 </Box>
             </Box>
         </CollapsibleSection>

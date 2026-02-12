@@ -19,6 +19,7 @@ import { MetricQueryParams } from '../types';
 import { KPI_GRID_SX, CHART_SECTION_SX } from '../styles';
 import KpiTile from '../KpiTile';
 import CollapsibleSection from '../CollapsibleSection';
+import TimeRangeSelector from '../TimeRangeSelector';
 import { Chart } from '../../Chart';
 import {
     ObjectDetailProps,
@@ -98,18 +99,12 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
         if (!user) { return; }
 
         const params = new URLSearchParams({
-            probe_name: 'pg_stat_statements',
             connection_id: connectionId.toString(),
+            queryid: objectName,
             limit: '1',
-            order_by: 'total_exec_time',
-            order: 'desc',
         });
-        if (databaseName) {
-            params.append('database_name', databaseName);
-        }
-        params.append('queryid', objectName);
 
-        const url = `/api/v1/metrics/query?${params.toString()}`;
+        const url = `/api/v1/metrics/top-queries?${params.toString()}`;
 
         if (!initialLoadDoneRef.current) {
             setLoading(true);
@@ -133,12 +128,9 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
             }
 
             if (isMountedRef.current) {
-                const result = await response.json();
-                const rows = Array.isArray(result)
-                    ? result
-                    : (result.rows ?? []);
+                const result = await response.json() as QueryDetailData[];
                 setQueryData(
-                    rows.length > 0 ? rows[0] : null
+                    result.length > 0 ? result[0] : null
                 );
                 initialLoadDoneRef.current = true;
             }
@@ -355,7 +347,7 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                             : '--'}
                     />
                     <KpiTile
-                        label="Rows per Call"
+                        label="Avg Rows/Call"
                         value={rowsPerCall !== null
                             ? formatValue(rowsPerCall)
                             : '--'}
@@ -366,6 +358,7 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
             <CollapsibleSection
                 title="Performance Charts"
                 defaultExpanded
+                headerRight={<TimeRangeSelector />}
             >
                 <Box sx={CHART_SECTION_SX}>
                     <Box>

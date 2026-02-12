@@ -17,6 +17,7 @@ import { MetricDataPoint } from '../types';
 /** Props shared by all server dashboard section components */
 export interface ServerSectionProps {
     connectionId: number;
+    connectionName?: string;
 }
 
 /** Database summary card data from the performance-summary API */
@@ -35,8 +36,6 @@ export interface DatabaseSummary {
 
 /** Performance summary response for a single server */
 export interface ServerPerformanceSummary {
-    connection_id: number;
-    server_name: string;
     databases: DatabaseSummary[];
 }
 
@@ -50,12 +49,6 @@ export interface TopQueryRow {
     rows: number;
     shared_blks_hit: number;
     shared_blks_read: number;
-}
-
-/** Response shape for query metrics listing */
-export interface QueryMetricsResponse {
-    rows: TopQueryRow[];
-    total_count: number;
 }
 
 /**

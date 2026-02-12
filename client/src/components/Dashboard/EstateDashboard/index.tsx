@@ -10,28 +10,13 @@
 
 import React, { useMemo } from 'react';
 import Box from '@mui/material/Box';
-import Typography from '@mui/material/Typography';
 import { BaseDashboardProps } from '../types';
-import TimeRangeSelector from '../TimeRangeSelector';
 import CollapsibleSection from '../CollapsibleSection';
 import HealthOverviewSection from './HealthOverviewSection';
 import KpiTilesSection from './KpiTilesSection';
 import ClusterCardsSection from './ClusterCardsSection';
 import HotSpotsSection from './HotSpotsSection';
 import EventTimeline from '../../EventTimeline';
-
-const HEADER_SX = {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    mb: 2,
-};
-
-const TITLE_SX = {
-    fontWeight: 600,
-    fontSize: '1.25rem',
-    color: 'text.primary',
-};
 
 /**
  * Extract all server IDs from an estate selection by traversing
@@ -72,13 +57,6 @@ const EstateDashboard: React.FC<BaseDashboardProps> = ({ selection }) => {
 
     return (
         <Box>
-            <Box sx={HEADER_SX}>
-                <Typography sx={TITLE_SX}>
-                    Estate Dashboard
-                </Typography>
-                <TimeRangeSelector />
-            </Box>
-
             <CollapsibleSection title="Health Overview" defaultExpanded>
                 <HealthOverviewSection selection={selection} />
             </CollapsibleSection>

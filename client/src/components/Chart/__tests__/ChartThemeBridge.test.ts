@@ -52,17 +52,43 @@ describe('getDefaultColorPalette', () => {
         expect(palette).toHaveLength(9);
     });
 
-    it('includes theme primary and secondary colors', () => {
+    it('starts with pgEdge brand cyan/teal and all colors are valid hex', () => {
         const palette = getDefaultColorPalette(lightTheme);
-        expect(palette[0]).toBe(lightTheme.palette.primary.main);
-        expect(palette[1]).toBe(lightTheme.palette.secondary.main);
+        const hexRegex = /^#[0-9A-Fa-f]{6}$/;
+
+        // First color should be in the cyan/teal family
+        expect(palette[0]).toBe('#0C8599');
+
+        // Every color must be a valid 6-digit hex string
+        for (const color of palette) {
+            expect(color).toMatch(hexRegex);
+        }
     });
 
-    it('includes custom status colors', () => {
+    it('contains 9 distinct colors with significant differences', () => {
         const palette = getDefaultColorPalette(lightTheme);
-        expect(palette).toContain('#8B5CF6');
-        expect(palette).toContain('#06B6D4');
-        expect(palette).toContain('#0EA5E9');
+
+        // All colors must be unique (no duplicates)
+        const unique = new Set(palette);
+        expect(unique.size).toBe(palette.length);
+
+        // Each pair of colors must differ significantly
+        // (at least 30 in total RGB distance)
+        function hexToRgb(hex: string): [number, number, number] {
+            const n = parseInt(hex.slice(1), 16);
+            return [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff];
+        }
+        for (let i = 0; i < palette.length; i++) {
+            for (let j = i + 1; j < palette.length; j++) {
+                const [r1, g1, b1] = hexToRgb(palette[i]);
+                const [r2, g2, b2] = hexToRgb(palette[j]);
+                const dist =
+                    Math.abs(r1 - r2) +
+                    Math.abs(g1 - g2) +
+                    Math.abs(b1 - b2);
+                expect(dist).toBeGreaterThan(30);
+            }
+        }
     });
 });
 
@@ -115,6 +141,12 @@ describe('useEChartsTheme', () => {
         expect(lightResult.current.textStyle.color).not.toBe(
             darkResult.current.textStyle.color
         );
+    });
+
+    it('produces different palette colors for light vs dark mode', () => {
+        const lightPalette = getDefaultColorPalette(lightTheme);
+        const darkPalette = getDefaultColorPalette(darkTheme);
+        expect(lightPalette).not.toEqual(darkPalette);
     });
 
     it('produces different tooltip background colors for light vs dark mode', () => {

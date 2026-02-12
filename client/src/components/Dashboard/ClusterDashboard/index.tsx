@@ -10,34 +10,12 @@
 
 import React, { useMemo } from 'react';
 import Box from '@mui/material/Box';
-import Typography from '@mui/material/Typography';
 import { BaseDashboardProps } from '../types';
-import TimeRangeSelector from '../TimeRangeSelector';
 import CollapsibleSection from '../CollapsibleSection';
 import TopologySection from './TopologySection';
 import ReplicationLagSection from './ReplicationLagSection';
 import ComparativeChartsSection from './ComparativeChartsSection';
 import AlertSummarySection from './AlertSummarySection';
-
-const HEADER_SX = {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    mb: 2,
-};
-
-const TITLE_SX = {
-    fontWeight: 600,
-    fontSize: '1.25rem',
-    color: 'text.primary',
-};
-
-const SUBTITLE_SX = {
-    fontSize: '0.875rem',
-    color: 'text.secondary',
-    fontWeight: 400,
-    ml: 1,
-};
 
 /**
  * Extract all server IDs from a cluster selection, including
@@ -69,23 +47,10 @@ const extractServerIds = (selection: Record<string, unknown>): number[] => {
  * for all servers in the cluster.
  */
 const ClusterDashboard: React.FC<BaseDashboardProps> = ({ selection }) => {
-    const clusterName = (selection.name as string) || 'Cluster';
     const serverIds = useMemo(() => extractServerIds(selection), [selection]);
 
     return (
         <Box>
-            <Box sx={HEADER_SX}>
-                <Box sx={{ display: 'flex', alignItems: 'baseline' }}>
-                    <Typography sx={TITLE_SX}>
-                        Cluster Dashboard
-                    </Typography>
-                    <Typography sx={SUBTITLE_SX}>
-                        {clusterName}
-                    </Typography>
-                </Box>
-                <TimeRangeSelector />
-            </Box>
-
             <CollapsibleSection title="Topology" defaultExpanded>
                 <TopologySection selection={selection} />
             </CollapsibleSection>

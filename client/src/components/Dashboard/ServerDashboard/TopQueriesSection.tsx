@@ -12,11 +12,12 @@ import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
+import QueryStatsIcon from '@mui/icons-material/QueryStats';
 import { useTheme } from '@mui/material/styles';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useDashboard } from '../../../contexts/DashboardContext';
 import CollapsibleSection from '../CollapsibleSection';
-import { ServerSectionProps, TopQueryRow, QueryMetricsResponse } from './types';
+import { ServerSectionProps, TopQueryRow } from './types';
 
 /** Maximum characters to display before truncating a query */
 const MAX_QUERY_LENGTH = 80;
@@ -108,6 +109,7 @@ const formatNumber = (num: number): string => {
  * Truncate a query string and clean up whitespace.
  */
 const truncateQuery = (query: string, maxLen: number): string => {
+    if (!query) { return ''; }
     const cleaned = query.replace(/\s+/g, ' ').trim();
     if (cleaned.length <= maxLen) { return cleaned; }
     return cleaned.substring(0, maxLen) + '...';
@@ -120,6 +122,7 @@ const truncateQuery = (query: string, maxLen: number): string => {
  */
 const TopQueriesSection: React.FC<ServerSectionProps> = ({
     connectionId,
+    connectionName,
 }) => {
     const { user } = useAuth();
     const { refreshTrigger, pushOverlay } = useDashboard();
@@ -135,13 +138,12 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
         if (!user) { return; }
 
         const params = new URLSearchParams({
-            probe_name: 'pg_stat_statements',
             connection_id: connectionId.toString(),
             limit: '10',
             order_by: 'total_exec_time',
             order: 'desc',
         });
-        const url = `/api/v1/metrics/query?${params.toString()}`;
+        const url = `/api/v1/metrics/top-queries?${params.toString()}`;
 
         if (!initialLoadDoneRef.current) {
             setLoading(true);
@@ -164,14 +166,8 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
             }
 
             if (isMountedRef.current) {
-                const result = await response.json() as
-                    QueryMetricsResponse | TopQueryRow[];
-
-                if (Array.isArray(result)) {
-                    setQueries(result);
-                } else {
-                    setQueries(result.rows ?? []);
-                }
+                const result = await response.json() as TopQueryRow[];
+                setQueries(Array.isArray(result) ? result : []);
                 initialLoadDoneRef.current = true;
             }
         } catch (err) {
@@ -212,10 +208,12 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
             title: truncateQuery(query.query, 60),
             entityId: query.queryid,
             entityName: query.query,
+            objectName: query.queryid,
             objectType: 'query',
             connectionId,
+            connectionName,
         });
-    }, [pushOverlay, connectionId]);
+    }, [pushOverlay, connectionId, connectionName]);
 
     const headerRowSx = useMemo(() => ({
         ...TABLE_HEADER_SX,
@@ -223,7 +221,7 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
     }), [theme.palette.divider]);
 
     return (
-        <CollapsibleSection title="Top Queries" defaultExpanded={false}>
+        <CollapsibleSection title="Top Queries" icon={<QueryStatsIcon sx={{ fontSize: 16 }} />} defaultExpanded>
             {loading && queries.length === 0 && (
                 <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
                     <CircularProgress size={24} />

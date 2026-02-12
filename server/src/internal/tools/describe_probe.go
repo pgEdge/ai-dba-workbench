@@ -16,6 +16,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
+	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
 
 // MetricColumn represents a column in a metrics probe table
@@ -82,7 +83,7 @@ Returns TSV with:
 			}
 
 			// Validate probe name (prevent SQL injection)
-			if !isValidIdentifier(probeName) {
+			if !metrics.IsValidIdentifier(probeName) {
 				return mcp.NewToolError("Invalid probe name. Probe names must contain only letters, numbers, and underscores.")
 			}
 
@@ -131,7 +132,7 @@ Returns TSV with:
 				if err := rows.Scan(&col.Name, &col.DataType, &col.Description); err != nil {
 					return mcp.NewToolError(fmt.Sprintf("Failed to scan column: %v", err))
 				}
-				col.IsMetric = isMetricColumn(col.Name, col.DataType)
+				col.IsMetric = metrics.IsMetricColumn(col.Name, col.DataType)
 				columns = append(columns, col)
 			}
 
@@ -172,103 +173,7 @@ Returns TSV with:
 	}
 }
 
-// isValidIdentifier checks if a string is a valid SQL identifier
+// isValidIdentifier delegates to the shared metrics package.
 func isValidIdentifier(s string) bool {
-	if s == "" {
-		return false
-	}
-	for i, c := range s {
-		// First character must be letter or underscore
-		if i == 0 {
-			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_') {
-				return false
-			}
-		} else {
-			// Subsequent characters can also be digits
-			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-// isMetricColumn determines if a column is a metric (numeric data) vs a dimension (identifier)
-func isMetricColumn(name, dataType string) bool {
-	// Dimension columns (identifiers, timestamps, text)
-	dimensionColumns := map[string]bool{
-		"connection_id":    true,
-		"collected_at":     true,
-		"inserted_at":      true,
-		"datid":            true,
-		"datname":          true,
-		"pid":              true,
-		"usesysid":         true,
-		"usename":          true,
-		"application_name": true,
-		"client_addr":      true,
-		"client_hostname":  true,
-		"client_port":      true,
-		"backend_start":    true,
-		"xact_start":       true,
-		"query_start":      true,
-		"state_change":     true,
-		"wait_event_type":  true,
-		"wait_event":       true,
-		"state":            true,
-		"backend_xid":      true,
-		"backend_xmin":     true,
-		"query":            true,
-		"backend_type":     true,
-		"relid":            true,
-		"relname":          true,
-		"schemaname":       true,
-		"indexrelid":       true,
-		"indexrelname":     true,
-		"funcid":           true,
-		"funcname":         true,
-		"queryid":          true,
-		"slot_name":        true,
-		"plugin":           true,
-		"slot_type":        true,
-		"sender_host":      true,
-		"sender_port":      true,
-		"conninfo":         true,
-		"status":           true,
-		"name":             true,
-		"setting":          true,
-		"unit":             true,
-		"category":         true,
-		"short_desc":       true,
-		"extra_desc":       true,
-		"context":          true,
-		"vartype":          true,
-		"source":           true,
-		"boot_val":         true,
-		"reset_val":        true,
-		"sourcefile":       true,
-		"sourceline":       true,
-	}
-
-	if dimensionColumns[name] {
-		return false
-	}
-
-	// Timestamp types are dimensions
-	if strings.Contains(dataType, "timestamp") || dataType == "date" || dataType == "time" {
-		return false
-	}
-
-	// Text types are typically dimensions
-	if dataType == "text" || dataType == "character varying" || dataType == "name" || dataType == "inet" || dataType == "oid" {
-		return false
-	}
-
-	// Numeric types are typically metrics
-	if dataType == "bigint" || dataType == "integer" || dataType == "smallint" ||
-		dataType == "numeric" || dataType == "double precision" || dataType == "real" {
-		return true
-	}
-
-	return false
+	return metrics.IsValidIdentifier(s)
 }

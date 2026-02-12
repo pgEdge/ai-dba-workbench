@@ -30,11 +30,11 @@ import AlertItem from './AlertItem';
 import GroupedAlertItem from './GroupedAlertItem';
 import {
     getSeverityColors,
+    getSectionPanelSx,
     groupAlertsByTitle,
     CHIP_LABEL_SX,
     EXPAND_BUTTON_SX,
     ICON_16_SX,
-    ALERTS_SECTION_MT_SX,
     ALERTS_HEADER_SX,
     ALERTS_TITLE_SX,
     ALERTS_TYPE_COUNT_SX,
@@ -80,6 +80,8 @@ const AlertsSection = ({ alerts, loading, showServer = false, onAcknowledge, onU
         return Object.entries(groupedAcknowledgedAlerts).sort((a, b) => b[1].length - a[1].length);
     }, [groupedAcknowledgedAlerts]);
 
+    const panelSx = useMemo(() => getSectionPanelSx(theme), [theme]);
+
     const skeletonSx = useMemo(() => ({
         bgcolor: theme.palette.divider,
     }), [theme.palette.divider]);
@@ -123,7 +125,7 @@ const AlertsSection = ({ alerts, loading, showServer = false, onAcknowledge, onU
 
     if (loading) {
         return (
-            <Box sx={ALERTS_SECTION_MT_SX}>
+            <Box sx={panelSx}>
                 <Skeleton variant="text" width={120} height={20} />
                 <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 0.75 }}>
                     {[1, 2].map((i) => (
@@ -169,7 +171,7 @@ const AlertsSection = ({ alerts, loading, showServer = false, onAcknowledge, onU
     };
 
     return (
-        <Box sx={ALERTS_SECTION_MT_SX}>
+        <Box sx={panelSx}>
             {/* Active Alerts Header */}
             <Box onClick={() => setExpanded(!expanded)} sx={ALERTS_HEADER_SX}>
                 <AlertIcon sx={{ fontSize: 16, color: 'primary.main' }} />

@@ -78,31 +78,9 @@ export const TimelineHeader = memo(({
                     size="small"
                     sx={countChipSx}
                 />
-                <IconButton size="small" sx={headerExpandSx}>
-                    {expanded ? (
-                        <ExpandLessIcon sx={expandIconMedSx} />
-                    ) : (
-                        <ExpandMoreIcon sx={expandIconMedSx} />
-                    )}
-                </IconButton>
             </Box>
 
             <Box sx={{ flex: 1 }} />
-
-            {/* Time range selector */}
-            <ToggleButtonGroup
-                value={timeRange}
-                exclusive
-                onChange={(e, value) => value && onTimeRangeChange(value)}
-                size="small"
-                sx={toggleGroupSx}
-            >
-                {TIME_RANGE_OPTIONS.map((option) => (
-                    <ToggleButton key={option.value} value={option.value}>
-                        {option.label}
-                    </ToggleButton>
-                ))}
-            </ToggleButtonGroup>
 
             {/* Event type filter chips */}
             <Box sx={filterChipsSx}>
@@ -144,6 +122,34 @@ export const TimelineHeader = memo(({
                     );
                 })}
             </Box>
+
+            {/* Time range selector */}
+            <ToggleButtonGroup
+                value={timeRange}
+                exclusive
+                onChange={(e, value) => value && onTimeRangeChange(value)}
+                size="small"
+                sx={toggleGroupSx}
+            >
+                {TIME_RANGE_OPTIONS.map((option) => (
+                    <ToggleButton key={option.value} value={option.value}>
+                        {option.label}
+                    </ToggleButton>
+                ))}
+            </ToggleButtonGroup>
+
+            {/* Expand/collapse toggle */}
+            <IconButton
+                size="small"
+                onClick={onExpandToggle}
+                sx={headerExpandSx}
+            >
+                {expanded ? (
+                    <ExpandLessIcon sx={expandIconMedSx} />
+                ) : (
+                    <ExpandMoreIcon sx={expandIconMedSx} />
+                )}
+            </IconButton>
         </Box>
     );
 });

@@ -25,6 +25,9 @@ export const CHART_TOOLBAR_SX = {
 export const CHART_PAPER_SX = {
     p: 2,
     overflow: 'visible',
+    borderRadius: 2,
+    border: '1px solid',
+    borderColor: 'divider',
 };
 
 export const CHART_TITLE_SX = {

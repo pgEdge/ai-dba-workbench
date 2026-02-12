@@ -10,8 +10,8 @@
 
 import React, { useMemo } from 'react';
 import Box from '@mui/material/Box';
-import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
+import ComputerIcon from '@mui/icons-material/Computer';
 import { useDashboard } from '../../../contexts/DashboardContext';
 import { useMetrics } from '../../../hooks/useMetrics';
 import { MetricQueryParams, MetricSeries } from '../types';
@@ -19,6 +19,7 @@ import { KPI_GRID_SX, CHART_SECTION_SX } from '../styles';
 import KpiTile from '../KpiTile';
 import CollapsibleSection from '../CollapsibleSection';
 import { Chart } from '../../Chart';
+import ChartPanel from '../ChartPanel';
 import { ServerSectionProps, extractSparklineData, extractLatestValue } from './types';
 
 /** Number of data buckets for KPI sparklines */
@@ -48,6 +49,21 @@ const getPercentageStatus = (
 const formatKpiValue = (value: number | null, decimals = 1): string => {
     if (value === null) { return '--'; }
     return value.toFixed(decimals);
+};
+
+/**
+ * Format byte values into a human-readable string.
+ */
+const formatBytes = (bytes: number | null): string => {
+    if (bytes === null) { return '--'; }
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let size = bytes;
+    let unitIndex = 0;
+    while (size >= 1024 && unitIndex < units.length - 1) {
+        size /= 1024;
+        unitIndex++;
+    }
+    return `${size.toFixed(1)} ${units[unitIndex]}`;
 };
 
 /**
@@ -99,7 +115,8 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
         timeRange: timeRange.range,
         buckets: KPI_BUCKETS,
         aggregation: 'avg',
-        metrics: ['cpu_usage_percent'],
+        metrics: ['usermode_normal_process_percent', 'kernelmode_process_percent',
+            'idle_mode_percent'],
     }), [connectionId, timeRange.range]);
 
     const memoryKpiParams = useMemo((): MetricQueryParams => ({
@@ -108,7 +125,7 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
         timeRange: timeRange.range,
         buckets: KPI_BUCKETS,
         aggregation: 'avg',
-        metrics: ['used_percent'],
+        metrics: ['used_memory', 'total_memory'],
     }), [connectionId, timeRange.range]);
 
     const diskKpiParams = useMemo((): MetricQueryParams => ({
@@ -117,7 +134,7 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
         timeRange: timeRange.range,
         buckets: KPI_BUCKETS,
         aggregation: 'avg',
-        metrics: ['used_percent'],
+        metrics: ['used_space', 'free_space'],
     }), [connectionId, timeRange.range]);
 
     const loadKpiParams = useMemo((): MetricQueryParams => ({
@@ -136,7 +153,12 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
         timeRange: timeRange.range,
         buckets: CHART_BUCKETS,
         aggregation: 'avg',
-        metrics: ['user_percent', 'system_percent', 'iowait_percent'],
+        metrics: [
+            'usermode_normal_process_percent',
+            'kernelmode_process_percent',
+            'io_completion_percent',
+            'idle_mode_percent',
+        ],
     }), [connectionId, timeRange.range]);
 
     const memoryChartParams = useMemo((): MetricQueryParams => ({
@@ -145,16 +167,30 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
         timeRange: timeRange.range,
         buckets: CHART_BUCKETS,
         aggregation: 'avg',
-        metrics: ['used', 'buffers', 'cached'],
+        metrics: ['used_memory', 'free_memory', 'cache_total'],
     }), [connectionId, timeRange.range]);
 
-    const diskIoChartParams = useMemo((): MetricQueryParams => ({
+    const diskChartParams = useMemo((): MetricQueryParams => ({
         probeName: 'pg_sys_disk_info',
         connectionId,
         timeRange: timeRange.range,
         buckets: CHART_BUCKETS,
         aggregation: 'avg',
-        metrics: ['reads_per_sec', 'writes_per_sec'],
+        metrics: ['used_space', 'free_space'],
+    }), [connectionId, timeRange.range]);
+
+    const loadChartParams = useMemo((): MetricQueryParams => ({
+        probeName: 'pg_sys_load_avg_info',
+        connectionId,
+        timeRange: timeRange.range,
+        buckets: CHART_BUCKETS,
+        aggregation: 'avg',
+        metrics: [
+            'load_avg_one_minute',
+            'load_avg_five_minutes',
+            'load_avg_ten_minutes',
+            'load_avg_fifteen_minutes',
+        ],
     }), [connectionId, timeRange.range]);
 
     const networkChartParams = useMemo((): MetricQueryParams => ({
@@ -163,7 +199,7 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
         timeRange: timeRange.range,
         buckets: CHART_BUCKETS,
         aggregation: 'avg',
-        metrics: ['bytes_recv_per_sec', 'bytes_sent_per_sec'],
+        metrics: ['tx_bytes', 'rx_bytes'],
     }), [connectionId, timeRange.range]);
 
     // Fetch KPI data
@@ -175,21 +211,58 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
     // Fetch chart data
     const cpuChart = useMetrics(cpuChartParams);
     const memoryChart = useMetrics(memoryChartParams);
-    const diskIoChart = useMetrics(diskIoChartParams);
+    const diskChart = useMetrics(diskChartParams);
+    const loadChart = useMetrics(loadChartParams);
     const networkChart = useMetrics(networkChartParams);
 
     // Extract current values for KPI tiles
-    const cpuValue = extractLatestValue(cpuKpi.data, 'cpu_usage_percent');
-    const memoryValue = extractLatestValue(memoryKpi.data, 'used_percent');
-    const diskValue = extractLatestValue(diskKpi.data, 'used_percent');
+    const cpuUser = extractLatestValue(
+        cpuKpi.data, 'usermode_normal_process_percent'
+    );
+    const cpuSystem = extractLatestValue(
+        cpuKpi.data, 'kernelmode_process_percent'
+    );
+    const cpuIdle = extractLatestValue(cpuKpi.data, 'idle_mode_percent');
+    const cpuUsage = useMemo(() => {
+        if (cpuIdle !== null) { return 100 - cpuIdle; }
+        if (cpuUser !== null || cpuSystem !== null) {
+            return (cpuUser ?? 0) + (cpuSystem ?? 0);
+        }
+        return null;
+    }, [cpuUser, cpuSystem, cpuIdle]);
+
+    const usedMemory = extractLatestValue(memoryKpi.data, 'used_memory');
+    const totalMemory = extractLatestValue(memoryKpi.data, 'total_memory');
+    const memoryUsagePercent = useMemo(() => {
+        if (usedMemory !== null && totalMemory !== null && totalMemory > 0) {
+            return (usedMemory / totalMemory) * 100;
+        }
+        return null;
+    }, [usedMemory, totalMemory]);
+
+    const usedSpace = extractLatestValue(diskKpi.data, 'used_space');
+    const freeSpace = extractLatestValue(diskKpi.data, 'free_space');
+    const diskUsagePercent = useMemo(() => {
+        if (usedSpace !== null && freeSpace !== null) {
+            const total = usedSpace + freeSpace;
+            if (total > 0) { return (usedSpace / total) * 100; }
+        }
+        return null;
+    }, [usedSpace, freeSpace]);
+
     const loadValue = extractLatestValue(loadKpi.data, 'load_avg_one_minute');
 
     // Build chart datasets
     const cpuChartData = useMemo(
         () => buildChartData(
             cpuChart.data,
-            ['user_percent', 'system_percent', 'iowait_percent'],
-            ['User %', 'System %', 'IO Wait %'],
+            [
+                'usermode_normal_process_percent',
+                'kernelmode_process_percent',
+                'io_completion_percent',
+                'idle_mode_percent',
+            ],
+            ['User', 'System', 'I/O Wait', 'Idle'],
         ),
         [cpuChart.data]
     );
@@ -197,26 +270,40 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
     const memoryChartData = useMemo(
         () => buildChartData(
             memoryChart.data,
-            ['used', 'buffers', 'cached'],
-            ['Used', 'Buffers', 'Cached'],
+            ['used_memory', 'free_memory', 'cache_total'],
+            ['Used', 'Free', 'Cached'],
         ),
         [memoryChart.data]
     );
 
-    const diskIoChartData = useMemo(
+    const diskChartData = useMemo(
         () => buildChartData(
-            diskIoChart.data,
-            ['reads_per_sec', 'writes_per_sec'],
-            ['Reads/s', 'Writes/s'],
+            diskChart.data,
+            ['used_space', 'free_space'],
+            ['Used', 'Free'],
         ),
-        [diskIoChart.data]
+        [diskChart.data]
+    );
+
+    const loadChartData = useMemo(
+        () => buildChartData(
+            loadChart.data,
+            [
+                'load_avg_one_minute',
+                'load_avg_five_minutes',
+                'load_avg_ten_minutes',
+                'load_avg_fifteen_minutes',
+            ],
+            ['1 min', '5 min', '10 min', '15 min'],
+        ),
+        [loadChart.data]
     );
 
     const networkChartData = useMemo(
         () => buildChartData(
             networkChart.data,
-            ['bytes_recv_per_sec', 'bytes_sent_per_sec'],
-            ['Bytes Recv/s', 'Bytes Sent/s'],
+            ['tx_bytes', 'rx_bytes'],
+            ['TX Bytes', 'RX Bytes'],
         ),
         [networkChart.data]
     );
@@ -225,7 +312,7 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
         || diskKpi.loading || loadKpi.loading;
 
     return (
-        <CollapsibleSection title="System Resources" defaultExpanded>
+        <CollapsibleSection title="System Resources" icon={<ComputerIcon sx={{ fontSize: 16 }} />} defaultExpanded>
             {isKpiLoading && !cpuKpi.data && (
                 <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
                     <CircularProgress size={24} />
@@ -234,29 +321,34 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
             <Box sx={KPI_GRID_SX}>
                 <KpiTile
                     label="CPU Usage"
-                    value={formatKpiValue(cpuValue)}
+                    value={formatKpiValue(cpuUsage)}
                     unit="%"
-                    status={getPercentageStatus(cpuValue)}
+                    status={getPercentageStatus(cpuUsage)}
                     sparklineData={extractSparklineData(
-                        cpuKpi.data, 'cpu_usage_percent'
+                        cpuKpi.data,
+                        'usermode_normal_process_percent'
                     )}
                 />
                 <KpiTile
                     label="Memory Usage"
-                    value={formatKpiValue(memoryValue)}
-                    unit="%"
-                    status={getPercentageStatus(memoryValue)}
+                    value={memoryUsagePercent !== null
+                        ? formatKpiValue(memoryUsagePercent)
+                        : formatBytes(usedMemory)}
+                    unit={memoryUsagePercent !== null ? '%' : undefined}
+                    status={getPercentageStatus(memoryUsagePercent)}
                     sparklineData={extractSparklineData(
-                        memoryKpi.data, 'used_percent'
+                        memoryKpi.data, 'used_memory'
                     )}
                 />
                 <KpiTile
                     label="Disk Usage"
-                    value={formatKpiValue(diskValue)}
-                    unit="%"
-                    status={getPercentageStatus(diskValue)}
+                    value={diskUsagePercent !== null
+                        ? formatKpiValue(diskUsagePercent)
+                        : formatBytes(usedSpace)}
+                    unit={diskUsagePercent !== null ? '%' : undefined}
+                    status={getPercentageStatus(diskUsagePercent)}
                     sparklineData={extractSparklineData(
-                        diskKpi.data, 'used_percent'
+                        diskKpi.data, 'used_space'
                     )}
                 />
                 <KpiTile
@@ -270,134 +362,122 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
 
             <Box sx={CHART_SECTION_SX}>
                 <Box>
-                    {cpuChart.loading && !cpuChartData ? (
-                        <Box sx={{
-                            display: 'flex',
-                            justifyContent: 'center',
-                            alignItems: 'center',
-                            height: CHART_HEIGHT,
-                        }}>
-                            <CircularProgress size={24} />
-                        </Box>
-                    ) : cpuChartData ? (
-                        <Chart
-                            type="line"
-                            data={cpuChartData}
-                            title="CPU Usage Over Time"
-                            height={CHART_HEIGHT}
-                            smooth
-                            areaFill
-                            stacked
-                            showLegend
-                            showTooltip
-                            showToolbar={false}
-                        />
-                    ) : (
-                        <Typography
-                            variant="body2"
-                            color="text.secondary"
-                            sx={{ textAlign: 'center', py: 4 }}
-                        >
-                            No CPU data available
-                        </Typography>
-                    )}
+                    <ChartPanel
+                        title="CPU Usage Over Time"
+                        loading={cpuChart.loading && !cpuChartData}
+                        hasData={!!cpuChartData}
+                        emptyMessage="No CPU data available. Is the system_stats extension installed?"
+                        height={CHART_HEIGHT}
+                    >
+                        {cpuChartData && (
+                            <Chart
+                                type="line"
+                                data={cpuChartData}
+                                title="CPU Usage Over Time"
+                                height={CHART_HEIGHT}
+                                smooth
+                                areaFill
+                                stacked
+                                showLegend
+                                showTooltip
+                                showToolbar={false}
+                            />
+                        )}
+                    </ChartPanel>
                 </Box>
 
                 <Box>
-                    {memoryChart.loading && !memoryChartData ? (
-                        <Box sx={{
-                            display: 'flex',
-                            justifyContent: 'center',
-                            alignItems: 'center',
-                            height: CHART_HEIGHT,
-                        }}>
-                            <CircularProgress size={24} />
-                        </Box>
-                    ) : memoryChartData ? (
-                        <Chart
-                            type="line"
-                            data={memoryChartData}
-                            title="Memory Usage Over Time"
-                            height={CHART_HEIGHT}
-                            smooth
-                            areaFill
-                            showLegend
-                            showTooltip
-                            showToolbar={false}
-                        />
-                    ) : (
-                        <Typography
-                            variant="body2"
-                            color="text.secondary"
-                            sx={{ textAlign: 'center', py: 4 }}
-                        >
-                            No memory data available
-                        </Typography>
-                    )}
+                    <ChartPanel
+                        title="Memory Usage Over Time"
+                        loading={memoryChart.loading && !memoryChartData}
+                        hasData={!!memoryChartData}
+                        emptyMessage="No memory data available. Is the system_stats extension installed?"
+                        height={CHART_HEIGHT}
+                    >
+                        {memoryChartData && (
+                            <Chart
+                                type="line"
+                                data={memoryChartData}
+                                title="Memory Usage Over Time"
+                                height={CHART_HEIGHT}
+                                smooth
+                                areaFill
+                                showLegend
+                                showTooltip
+                                showToolbar={false}
+                            />
+                        )}
+                    </ChartPanel>
                 </Box>
 
                 <Box>
-                    {diskIoChart.loading && !diskIoChartData ? (
-                        <Box sx={{
-                            display: 'flex',
-                            justifyContent: 'center',
-                            alignItems: 'center',
-                            height: CHART_HEIGHT,
-                        }}>
-                            <CircularProgress size={24} />
-                        </Box>
-                    ) : diskIoChartData ? (
-                        <Chart
-                            type="line"
-                            data={diskIoChartData}
-                            title="Disk I/O"
-                            height={CHART_HEIGHT}
-                            smooth
-                            showLegend
-                            showTooltip
-                            showToolbar={false}
-                        />
-                    ) : (
-                        <Typography
-                            variant="body2"
-                            color="text.secondary"
-                            sx={{ textAlign: 'center', py: 4 }}
-                        >
-                            No disk I/O data available
-                        </Typography>
-                    )}
+                    <ChartPanel
+                        title="Disk Space"
+                        loading={diskChart.loading && !diskChartData}
+                        hasData={!!diskChartData}
+                        emptyMessage="No disk data available. Is the system_stats extension installed?"
+                        height={CHART_HEIGHT}
+                    >
+                        {diskChartData && (
+                            <Chart
+                                type="line"
+                                data={diskChartData}
+                                title="Disk Space"
+                                height={CHART_HEIGHT}
+                                smooth
+                                areaFill
+                                showLegend
+                                showTooltip
+                                showToolbar={false}
+                            />
+                        )}
+                    </ChartPanel>
                 </Box>
 
                 <Box>
-                    {networkChart.loading && !networkChartData ? (
-                        <Box sx={{
-                            display: 'flex',
-                            justifyContent: 'center',
-                            alignItems: 'center',
-                            height: CHART_HEIGHT,
-                        }}>
-                            <CircularProgress size={24} />
-                        </Box>
-                    ) : networkChartData ? (
-                        <Chart
-                            type="line"
-                            data={networkChartData}
-                            title="Network I/O"
-                            height={CHART_HEIGHT}
-                            smooth
-                            showLegend
-                            showTooltip
-                            showToolbar={false}
-                        />
-                    ) : (
-                        <Typography
-                            variant="body2"
-                            color="text.secondary"
-                            sx={{ textAlign: 'center', py: 4 }}
-                        >
-                            No network data available
-                        </Typography>
-                    )}
+                    <ChartPanel
+                        title="Load Average Over Time"
+                        loading={loadChart.loading && !loadChartData}
+                        hasData={!!loadChartData}
+                        emptyMessage="No load average data available. Is the system_stats extension installed?"
+                        height={CHART_HEIGHT}
+                    >
+                        {loadChartData && (
+                            <Chart
+                                type="line"
+                                data={loadChartData}
+                                title="Load Average Over Time"
+                                height={CHART_HEIGHT}
+                                smooth
+                                showLegend
+                                showTooltip
+                                showToolbar={false}
+                            />
+                        )}
+                    </ChartPanel>
+                </Box>
+
+                <Box>
+                    <ChartPanel
+                        title="Network I/O"
+                        loading={networkChart.loading && !networkChartData}
+                        hasData={!!networkChartData}
+                        emptyMessage="No network data available. Is the system_stats extension installed?"
+                        height={CHART_HEIGHT}
+                    >
+                        {networkChartData && (
+                            <Chart
+                                type="line"
+                                data={networkChartData}
+                                title="Network I/O"
+                                height={CHART_HEIGHT}
+                                smooth
+                                showLegend
+                                showTooltip
+                                showToolbar={false}
+                            />
+                        )}
+                    </ChartPanel>
                 </Box>
             </Box>
         </CollapsibleSection>

@@ -18,6 +18,10 @@ import { alpha } from '@mui/material';
 /** Section container */
 export const SECTION_CONTAINER_SX: SxProps<Theme> = {
     mb: 2,
+    p: 1.5,
+    borderRadius: 1.5,
+    border: '1px solid',
+    borderColor: 'divider',
 };
 
 /** Section header (collapsible) */
@@ -26,7 +30,7 @@ export const SECTION_HEADER_SX: SxProps<Theme> = {
     alignItems: 'center',
     gap: 0.75,
     cursor: 'pointer',
-    py: 0.5,
+    py: 0.25,
     '&:hover': { opacity: 0.8 },
 };
 
@@ -40,7 +44,7 @@ export const SECTION_TITLE_SX: SxProps<Theme> = {
 /** KPI tile grid (similar to TILE_GRID_SX but more flexible) */
 export const KPI_GRID_SX: SxProps<Theme> = {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
     gap: 2,
     mb: 2,
 };

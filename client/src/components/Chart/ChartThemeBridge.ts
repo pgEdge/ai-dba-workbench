@@ -17,16 +17,30 @@ import { useTheme, alpha, Theme } from '@mui/material/styles';
  * only the color array is needed.
  */
 export function getDefaultColorPalette(theme: Theme): string[] {
+    if (theme.palette.mode === 'dark') {
+        return [
+            '#22D3EE', // bright cyan (pgEdge brand family)
+            '#818CF8', // light indigo
+            '#4ADE80', // bright green
+            '#FBBF24', // bright amber
+            '#F87171', // light red
+            '#A78BFA', // light purple
+            '#F472B6', // light pink
+            '#2DD4BF', // bright teal
+            '#FB923C', // light orange
+        ];
+    }
+
     return [
-        theme.palette.primary.main,
-        theme.palette.secondary.main,
-        theme.palette.success.main,
-        theme.palette.warning.main,
-        theme.palette.info.main,
-        theme.palette.error.main,
-        theme.palette.custom.status.purple,
-        theme.palette.custom.status.cyan,
-        theme.palette.custom.status.sky,
+        '#0C8599', // pgEdge teal (darker cyan for white contrast)
+        '#6366F1', // indigo
+        '#22C55E', // green
+        '#F59E0B', // amber
+        '#EF4444', // red
+        '#8B5CF6', // purple
+        '#EC4899', // pink
+        '#14B8A6', // teal
+        '#F97316', // orange
     ];
 }
 

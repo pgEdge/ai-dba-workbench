@@ -12,7 +12,7 @@ import React, { useMemo } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import { ObjectType } from '../types';
-import TimeRangeSelector from '../TimeRangeSelector';
+import { useDashboard } from '../../../contexts/DashboardContext';
 import TableDetail from './TableDetail';
 import IndexDetail from './IndexDetail';
 import QueryDetail from './QueryDetail';
@@ -25,10 +25,9 @@ interface ObjectDashboardProps {
     objectName: string;
 }
 
-/** Header container with object type label and time range selector */
+/** Header container with object type label */
 const HEADER_SX = {
     display: 'flex',
-    justifyContent: 'space-between',
     alignItems: 'center',
     mb: 2,
 };
@@ -66,6 +65,8 @@ const ObjectDashboard: React.FC<ObjectDashboardProps> = ({
     schemaName,
     objectName,
 }) => {
+    const { currentOverlay } = useDashboard();
+
     const typeLabel = useMemo(() => {
         return objectType.charAt(0).toUpperCase()
             + objectType.slice(1);
@@ -76,9 +77,10 @@ const ObjectDashboard: React.FC<ObjectDashboardProps> = ({
         if (databaseName) {
             parts.push(databaseName);
         }
-        parts.push(`Connection ${connectionId}`);
+        const name = currentOverlay?.connectionName;
+        parts.push(name || `Connection ${connectionId}`);
         return parts.join(' | ');
-    }, [databaseName, connectionId]);
+    }, [databaseName, connectionId, currentOverlay?.connectionName]);
 
     if (!objectName) {
         return (
@@ -110,7 +112,6 @@ const ObjectDashboard: React.FC<ObjectDashboardProps> = ({
                         {contextLabel}
                     </Typography>
                 </Box>
-                <TimeRangeSelector />
             </Box>
 
             {objectType === 'table' && (

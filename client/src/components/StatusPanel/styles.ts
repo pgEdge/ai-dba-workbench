@@ -13,6 +13,7 @@
  */
 
 import { Theme } from '@mui/material/styles';
+import { alpha } from '@mui/material';
 
 // Map internal alert rule names to friendly display names
 export const FRIENDLY_ALERT_TITLES = {
@@ -91,6 +92,18 @@ export const formatThresholdInfo = (alert) => {
         ? `${value} ${unit} ${op} threshold of ${threshold} ${unit}`
         : `${value} ${op} threshold of ${threshold}`;
 };
+
+// Shared section panel container style (used by AlertsSection, Monitoring, etc.)
+export const getSectionPanelSx = (theme: Theme) => ({
+    mt: 2,
+    p: 1.5,
+    borderRadius: 1.5,
+    bgcolor: theme.palette.mode === 'dark'
+        ? alpha(theme.palette.background.paper, 0.4)
+        : theme.palette.grey[100],
+    border: '1px solid',
+    borderColor: theme.palette.divider,
+});
 
 // Shared small chip label style
 export const CHIP_LABEL_SX = { px: 0.5 };

@@ -175,6 +175,10 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		perfHandler := api.NewPerfSummaryHandler(deps.Datastore, deps.AuthStore)
 		registerDatastoreHandler(mux, perfHandler, authWrapper, "Performance summary", deps.Datastore)
 
+		// Metrics query endpoints (for monitoring dashboards)
+		metricsHandler := api.NewMetricsHandler(deps.Datastore, deps.AuthStore)
+		registerDatastoreHandler(mux, metricsHandler, authWrapper, "Metrics query", deps.Datastore)
+
 		// AI Overview endpoint (for estate overview summary)
 		if deps.OverviewGen != nil {
 			overviewHandler := overview.NewHandler(deps.OverviewGen)

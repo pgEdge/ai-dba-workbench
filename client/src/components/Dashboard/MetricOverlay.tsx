@@ -68,14 +68,15 @@ const MetricOverlay: React.FC<MetricOverlayProps> = ({ children }) => {
                     }}
                 >
                     <Box sx={OVERLAY_HEADER_SX}>
-                        <IconButton
-                            size="small"
-                            onClick={handleBack}
-                            aria-label="Go back"
-                            disabled={overlayStack.length <= 1}
-                        >
-                            <ArrowBackIcon fontSize="small" />
-                        </IconButton>
+                        {overlayStack.length > 1 && (
+                            <IconButton
+                                size="small"
+                                onClick={handleBack}
+                                aria-label="Go back"
+                            >
+                                <ArrowBackIcon fontSize="small" />
+                            </IconButton>
+                        )}
                         <Typography sx={OVERLAY_TITLE_SX}>
                             {currentOverlay.title}
                         </Typography>

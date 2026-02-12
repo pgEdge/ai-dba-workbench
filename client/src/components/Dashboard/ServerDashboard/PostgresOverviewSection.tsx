@@ -10,8 +10,8 @@
 
 import React, { useMemo } from 'react';
 import Box from '@mui/material/Box';
-import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
+import StorageIcon from '@mui/icons-material/Storage';
 import { useDashboard } from '../../../contexts/DashboardContext';
 import { useMetrics } from '../../../hooks/useMetrics';
 import { MetricQueryParams, MetricSeries } from '../types';
@@ -19,6 +19,7 @@ import { KPI_GRID_SX, CHART_SECTION_SX } from '../styles';
 import KpiTile from '../KpiTile';
 import CollapsibleSection from '../CollapsibleSection';
 import { Chart } from '../../Chart';
+import ChartPanel from '../ChartPanel';
 import { ServerSectionProps, extractSparklineData, extractLatestValue } from './types';
 
 /** Number of data buckets for KPI sparklines */
@@ -29,18 +30,6 @@ const CHART_BUCKETS = 150;
 
 /** Chart height in pixels */
 const CHART_HEIGHT = 250;
-
-/**
- * Determine status for cache hit ratio values.
- */
-const getCacheHitStatus = (
-    value: number | null
-): 'good' | 'warning' | 'critical' | undefined => {
-    if (value === null) { return undefined; }
-    if (value >= 95) { return 'good'; }
-    if (value >= 80) { return 'warning'; }
-    return 'critical';
-};
 
 /**
  * Format a numeric value for display.
@@ -101,22 +90,22 @@ const buildChartData = (
 
 /**
  * PostgreSQL Overview section displays database-specific metrics
- * including connections, transaction rates, cache hit ratios, and
- * tuple operation statistics.
+ * including connections, transactions, block I/O, and tuple
+ * operation statistics from pg_stat_database.
  */
 const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
     connectionId,
 }) => {
     const { timeRange } = useDashboard();
 
-    // KPI queries (30 buckets)
+    // KPI queries (30 buckets) - all from pg_stat_database
     const connectionsKpiParams = useMemo((): MetricQueryParams => ({
-        probeName: 'pg_stat_activity',
+        probeName: 'pg_stat_database',
         connectionId,
         timeRange: timeRange.range,
         buckets: KPI_BUCKETS,
         aggregation: 'avg',
-        metrics: ['active_count'],
+        metrics: ['numbackends'],
     }), [connectionId, timeRange.range]);
 
     const txnKpiParams = useMemo((): MetricQueryParams => ({
@@ -125,7 +114,7 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
         timeRange: timeRange.range,
         buckets: KPI_BUCKETS,
         aggregation: 'avg',
-        metrics: ['xact_commit_per_sec', 'xact_rollback_per_sec'],
+        metrics: ['xact_commit', 'xact_rollback'],
     }), [connectionId, timeRange.range]);
 
     const cacheKpiParams = useMemo((): MetricQueryParams => ({
@@ -134,7 +123,7 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
         timeRange: timeRange.range,
         buckets: KPI_BUCKETS,
         aggregation: 'avg',
-        metrics: ['cache_hit_ratio'],
+        metrics: ['blks_hit', 'blks_read'],
     }), [connectionId, timeRange.range]);
 
     const tempKpiParams = useMemo((): MetricQueryParams => ({
@@ -148,17 +137,12 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
 
     // Chart queries (150 buckets)
     const connectionChartParams = useMemo((): MetricQueryParams => ({
-        probeName: 'pg_stat_activity',
+        probeName: 'pg_stat_database',
         connectionId,
         timeRange: timeRange.range,
         buckets: CHART_BUCKETS,
         aggregation: 'avg',
-        metrics: [
-            'active_count',
-            'idle_count',
-            'idle_in_transaction_count',
-            'waiting_count',
-        ],
+        metrics: ['numbackends', 'sessions'],
     }), [connectionId, timeRange.range]);
 
     const txnChartParams = useMemo((): MetricQueryParams => ({
@@ -167,7 +151,7 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
         timeRange: timeRange.range,
         buckets: CHART_BUCKETS,
         aggregation: 'avg',
-        metrics: ['xact_commit_per_sec', 'xact_rollback_per_sec'],
+        metrics: ['xact_commit', 'xact_rollback'],
     }), [connectionId, timeRange.range]);
 
     const blockIoChartParams = useMemo((): MetricQueryParams => ({
@@ -176,7 +160,7 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
         timeRange: timeRange.range,
         buckets: CHART_BUCKETS,
         aggregation: 'avg',
-        metrics: ['blks_hit_per_sec', 'blks_read_per_sec'],
+        metrics: ['blks_hit', 'blks_read'],
     }), [connectionId, timeRange.range]);
 
     const tupleChartParams = useMemo((): MetricQueryParams => ({
@@ -186,10 +170,10 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
         buckets: CHART_BUCKETS,
         aggregation: 'avg',
         metrics: [
-            'tup_inserted_per_sec',
-            'tup_updated_per_sec',
-            'tup_deleted_per_sec',
-            'tup_fetched_per_sec',
+            'tup_fetched',
+            'tup_inserted',
+            'tup_updated',
+            'tup_deleted',
         ],
     }), [connectionId, timeRange.range]);
 
@@ -206,23 +190,28 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
     const tupleChart = useMetrics(tupleChartParams);
 
     // Extract current values
-    const activeConnections = extractLatestValue(
-        connectionsKpi.data, 'active_count'
+    const numBackends = extractLatestValue(
+        connectionsKpi.data, 'numbackends'
     );
-    const commitRate = extractLatestValue(
-        txnKpi.data, 'xact_commit_per_sec'
+    const xactCommit = extractLatestValue(
+        txnKpi.data, 'xact_commit'
     );
-    const rollbackRate = extractLatestValue(
-        txnKpi.data, 'xact_rollback_per_sec'
+    const xactRollback = extractLatestValue(
+        txnKpi.data, 'xact_rollback'
     );
-    const txnRate = useMemo(() => {
-        if (commitRate === null && rollbackRate === null) { return null; }
-        return (commitRate ?? 0) + (rollbackRate ?? 0);
-    }, [commitRate, rollbackRate]);
-
-    const cacheHitRatio = extractLatestValue(
-        cacheKpi.data, 'cache_hit_ratio'
+    const blksHit = extractLatestValue(
+        cacheKpi.data, 'blks_hit'
     );
+    const blksRead = extractLatestValue(
+        cacheKpi.data, 'blks_read'
+    );
+    const cacheHitRatio = useMemo(() => {
+        if (blksHit !== null && blksRead !== null) {
+            const total = blksHit + blksRead;
+            if (total > 0) { return (blksHit / total) * 100; }
+        }
+        return null;
+    }, [blksHit, blksRead]);
     const tempBytes = extractLatestValue(
         tempKpi.data, 'temp_bytes'
     );
@@ -231,13 +220,8 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
     const connectionChartData = useMemo(
         () => buildChartData(
             connectionChart.data,
-            [
-                'active_count',
-                'idle_count',
-                'idle_in_transaction_count',
-                'waiting_count',
-            ],
-            ['Active', 'Idle', 'Idle in Transaction', 'Waiting'],
+            ['numbackends', 'sessions'],
+            ['Backends', 'Sessions'],
         ),
         [connectionChart.data]
     );
@@ -245,8 +229,8 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
     const txnChartData = useMemo(
         () => buildChartData(
             txnChart.data,
-            ['xact_commit_per_sec', 'xact_rollback_per_sec'],
-            ['Commits/s', 'Rollbacks/s'],
+            ['xact_commit', 'xact_rollback'],
+            ['Commits', 'Rollbacks'],
         ),
         [txnChart.data]
     );
@@ -254,8 +238,8 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
     const blockIoChartData = useMemo(
         () => buildChartData(
             blockIoChart.data,
-            ['blks_hit_per_sec', 'blks_read_per_sec'],
-            ['Blocks Hit/s', 'Blocks Read/s'],
+            ['blks_hit', 'blks_read'],
+            ['Blocks Hit', 'Blocks Read'],
         ),
         [blockIoChart.data]
     );
@@ -264,12 +248,12 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
         () => buildChartData(
             tupleChart.data,
             [
-                'tup_inserted_per_sec',
-                'tup_updated_per_sec',
-                'tup_deleted_per_sec',
-                'tup_fetched_per_sec',
+                'tup_fetched',
+                'tup_inserted',
+                'tup_updated',
+                'tup_deleted',
             ],
-            ['Inserted/s', 'Updated/s', 'Deleted/s', 'Fetched/s'],
+            ['Fetched', 'Inserted', 'Updated', 'Deleted'],
         ),
         [tupleChart.data]
     );
@@ -278,7 +262,7 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
         || cacheKpi.loading || tempKpi.loading;
 
     return (
-        <CollapsibleSection title="PostgreSQL Overview" defaultExpanded>
+        <CollapsibleSection title="PostgreSQL Overview" icon={<StorageIcon sx={{ fontSize: 16 }} />} defaultExpanded>
             {isKpiLoading && !connectionsKpi.data && (
                 <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
                     <CircularProgress size={24} />
@@ -286,33 +270,35 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
             )}
             <Box sx={KPI_GRID_SX}>
                 <KpiTile
-                    label="Active Connections"
-                    value={activeConnections !== null
-                        ? Math.round(activeConnections).toString()
+                    label="Backends"
+                    value={numBackends !== null
+                        ? Math.round(numBackends).toString()
                         : '--'}
                     sparklineData={extractSparklineData(
-                        connectionsKpi.data, 'active_count'
+                        connectionsKpi.data, 'numbackends'
                     )}
                 />
                 <KpiTile
-                    label="Transactions/sec"
-                    value={formatValue(txnRate)}
-                    unit="txn/s"
+                    label="Commits"
+                    value={xactCommit !== null
+                        ? Math.round(xactCommit).toString()
+                        : '--'}
                     sparklineData={extractSparklineData(
-                        txnKpi.data, 'xact_commit_per_sec'
+                        txnKpi.data, 'xact_commit'
                     )}
                 />
                 <KpiTile
                     label="Cache Hit Ratio"
-                    value={formatValue(cacheHitRatio)}
-                    unit="%"
-                    status={getCacheHitStatus(cacheHitRatio)}
+                    value={cacheHitRatio !== null
+                        ? formatValue(cacheHitRatio)
+                        : '--'}
+                    unit={cacheHitRatio !== null ? '%' : undefined}
                     sparklineData={extractSparklineData(
-                        cacheKpi.data, 'cache_hit_ratio'
+                        cacheKpi.data, 'blks_hit'
                     )}
                 />
                 <KpiTile
-                    label="Temp Files Size"
+                    label="Temp Bytes"
                     value={formatBytes(tempBytes)}
                     sparklineData={extractSparklineData(
                         tempKpi.data, 'temp_bytes'
@@ -322,131 +308,95 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
 
             <Box sx={CHART_SECTION_SX}>
                 <Box>
-                    {connectionChart.loading && !connectionChartData ? (
-                        <Box sx={{
-                            display: 'flex',
-                            justifyContent: 'center',
-                            alignItems: 'center',
-                            height: CHART_HEIGHT,
-                        }}>
-                            <CircularProgress size={24} />
-                        </Box>
-                    ) : connectionChartData ? (
-                        <Chart
-                            type="bar"
-                            data={connectionChartData}
-                            title="Connection States Over Time"
-                            height={CHART_HEIGHT}
-                            stacked
-                            showLegend
-                            showTooltip
-                            showToolbar={false}
-                        />
-                    ) : (
-                        <Typography
-                            variant="body2"
-                            color="text.secondary"
-                            sx={{ textAlign: 'center', py: 4 }}
-                        >
-                            No connection state data available
-                        </Typography>
-                    )}
+                    <ChartPanel
+                        title="Connections Over Time"
+                        loading={connectionChart.loading && !connectionChartData}
+                        hasData={!!connectionChartData}
+                        emptyMessage="No connection data available"
+                        height={CHART_HEIGHT}
+                    >
+                        {connectionChartData && (
+                            <Chart
+                                type="line"
+                                data={connectionChartData}
+                                title="Connections Over Time"
+                                height={CHART_HEIGHT}
+                                smooth
+                                showLegend
+                                showTooltip
+                                showToolbar={false}
+                            />
+                        )}
+                    </ChartPanel>
                 </Box>
 
                 <Box>
-                    {txnChart.loading && !txnChartData ? (
-                        <Box sx={{
-                            display: 'flex',
-                            justifyContent: 'center',
-                            alignItems: 'center',
-                            height: CHART_HEIGHT,
-                        }}>
-                            <CircularProgress size={24} />
-                        </Box>
-                    ) : txnChartData ? (
-                        <Chart
-                            type="line"
-                            data={txnChartData}
-                            title="Transaction Rate"
-                            height={CHART_HEIGHT}
-                            smooth
-                            showLegend
-                            showTooltip
-                            showToolbar={false}
-                        />
-                    ) : (
-                        <Typography
-                            variant="body2"
-                            color="text.secondary"
-                            sx={{ textAlign: 'center', py: 4 }}
-                        >
-                            No transaction data available
-                        </Typography>
-                    )}
+                    <ChartPanel
+                        title="Transactions"
+                        loading={txnChart.loading && !txnChartData}
+                        hasData={!!txnChartData}
+                        emptyMessage="No transaction data available"
+                        height={CHART_HEIGHT}
+                    >
+                        {txnChartData && (
+                            <Chart
+                                type="line"
+                                data={txnChartData}
+                                title="Transactions"
+                                height={CHART_HEIGHT}
+                                smooth
+                                showLegend
+                                showTooltip
+                                showToolbar={false}
+                            />
+                        )}
+                    </ChartPanel>
                 </Box>
 
                 <Box>
-                    {blockIoChart.loading && !blockIoChartData ? (
-                        <Box sx={{
-                            display: 'flex',
-                            justifyContent: 'center',
-                            alignItems: 'center',
-                            height: CHART_HEIGHT,
-                        }}>
-                            <CircularProgress size={24} />
-                        </Box>
-                    ) : blockIoChartData ? (
-                        <Chart
-                            type="line"
-                            data={blockIoChartData}
-                            title="Block I/O"
-                            height={CHART_HEIGHT}
-                            smooth
-                            showLegend
-                            showTooltip
-                            showToolbar={false}
-                        />
-                    ) : (
-                        <Typography
-                            variant="body2"
-                            color="text.secondary"
-                            sx={{ textAlign: 'center', py: 4 }}
-                        >
-                            No block I/O data available
-                        </Typography>
-                    )}
+                    <ChartPanel
+                        title="Block I/O"
+                        loading={blockIoChart.loading && !blockIoChartData}
+                        hasData={!!blockIoChartData}
+                        emptyMessage="No block I/O data available"
+                        height={CHART_HEIGHT}
+                    >
+                        {blockIoChartData && (
+                            <Chart
+                                type="line"
+                                data={blockIoChartData}
+                                title="Block I/O"
+                                height={CHART_HEIGHT}
+                                smooth
+                                showLegend
+                                showTooltip
+                                showToolbar={false}
+                            />
+                        )}
+                    </ChartPanel>
                 </Box>
 
                 <Box>
-                    {tupleChart.loading && !tupleChartData ? (
-                        <Box sx={{
-                            display: 'flex',
-                            justifyContent: 'center',
-                            alignItems: 'center',
-                            height: CHART_HEIGHT,
-                        }}>
-                            <CircularProgress size={24} />
-                        </Box>
-                    ) : tupleChartData ? (
-                        <Chart
-                            type="line"
-                            data={tupleChartData}
-                            title="Tuple Operations"
-                            height={CHART_HEIGHT}
-                            smooth
-                            showLegend
-                            showTooltip
-                            showToolbar={false}
-                        />
-                    ) : (
-                        <Typography
-                            variant="body2"
-                            color="text.secondary"
-                            sx={{ textAlign: 'center', py: 4 }}
-                        >
-                            No tuple operation data available
-                        </Typography>
-                    )}
+                    <ChartPanel
+                        title="Tuple Operations"
+                        loading={tupleChart.loading && !tupleChartData}
+                        hasData={!!tupleChartData}
+                        emptyMessage="No tuple operation data available"
+                        height={CHART_HEIGHT}
+                    >
+                        {tupleChartData && (
+                            <Chart
+                                type="line"
+                                data={tupleChartData}
+                                title="Tuple Operations"
+                                height={CHART_HEIGHT}
+                                smooth
+                                showLegend
+                                showTooltip
+                                showToolbar={false}
+                            />
+                        )}
+                    </ChartPanel>
                 </Box>
             </Box>
         </CollapsibleSection>

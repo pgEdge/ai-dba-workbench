@@ -11,6 +11,8 @@ package tools
 
 import (
 	"testing"
+
+	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
 
 func TestDescribeProbe_NilPool(t *testing.T) {
@@ -121,9 +123,9 @@ func TestIsMetricColumn(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name+"_"+tt.dataType, func(t *testing.T) {
-			result := isMetricColumn(tt.name, tt.dataType)
+			result := metrics.IsMetricColumn(tt.name, tt.dataType)
 			if result != tt.expected {
-				t.Errorf("isMetricColumn(%q, %q) = %v, want %v", tt.name, tt.dataType, result, tt.expected)
+				t.Errorf("IsMetricColumn(%q, %q) = %v, want %v", tt.name, tt.dataType, result, tt.expected)
 			}
 		})
 	}

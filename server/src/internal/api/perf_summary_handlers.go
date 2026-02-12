@@ -15,6 +15,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -29,6 +30,7 @@ var validTimeRanges = map[string]time.Duration{
 	"6h":  6 * time.Hour,
 	"24h": 24 * time.Hour,
 	"7d":  7 * 24 * time.Hour,
+	"30d": 30 * 24 * time.Hour,
 }
 
 // PerfSummaryHandler handles GET /api/v1/metrics/performance-summary
@@ -106,6 +108,44 @@ type PerfAggregate struct {
 	RollbackPct   float64 `json:"rollback_percent"`
 }
 
+// DatabaseSummaryResponse is the response for the database summaries endpoint.
+type DatabaseSummaryResponse struct {
+	Databases []DatabaseSummary `json:"databases"`
+}
+
+// DatabaseSummary holds per-database summary metrics for a single connection.
+type DatabaseSummary struct {
+	DatabaseName      string            `json:"database_name"`
+	SizeBytes         int64             `json:"size_bytes"`
+	SizePretty        string            `json:"size_pretty"`
+	CacheHitRatio     CacheHitRatioData `json:"cache_hit_ratio"`
+	TransactionRate   float64           `json:"transaction_rate"`
+	DeadTupleRatio    float64           `json:"dead_tuple_ratio"`
+	ActiveConnections int               `json:"active_connections"`
+}
+
+// TopQueryRow holds a single row from pg_stat_statements.
+type TopQueryRow struct {
+	QueryID        string  `json:"queryid"`
+	Query          string  `json:"query"`
+	Calls          int64   `json:"calls"`
+	TotalExecTime  float64 `json:"total_exec_time"`
+	MeanExecTime   float64 `json:"mean_exec_time"`
+	Rows           int64   `json:"rows"`
+	SharedBlksHit  int64   `json:"shared_blks_hit"`
+	SharedBlksRead int64   `json:"shared_blks_read"`
+}
+
+// validTopQueryOrderColumns is the whitelist of allowed order_by columns.
+var validTopQueryOrderColumns = map[string]bool{
+	"total_exec_time":  true,
+	"calls":            true,
+	"mean_exec_time":   true,
+	"rows":             true,
+	"shared_blks_hit":  true,
+	"shared_blks_read": true,
+}
+
 // NewPerfSummaryHandler creates a new performance summary handler.
 func NewPerfSummaryHandler(
 	datastore *database.Datastore,
@@ -126,11 +166,19 @@ func (h *PerfSummaryHandler) RegisterRoutes(
 		notConfigured := HandleNotConfigured("Performance summary")
 		mux.HandleFunc("/api/v1/metrics/performance-summary",
 			authWrapper(notConfigured))
+		mux.HandleFunc("/api/v1/metrics/database-summaries",
+			authWrapper(HandleNotConfigured("Database summaries")))
+		mux.HandleFunc("/api/v1/metrics/top-queries",
+			authWrapper(HandleNotConfigured("Top queries")))
 		return
 	}
 
 	mux.HandleFunc("/api/v1/metrics/performance-summary",
 		authWrapper(h.handlePerfSummary))
+	mux.HandleFunc("/api/v1/metrics/database-summaries",
+		authWrapper(h.handleDatabaseSummaries))
+	mux.HandleFunc("/api/v1/metrics/top-queries",
+		authWrapper(h.handleTopQueries))
 }
 
 // handlePerfSummary handles GET /api/v1/metrics/performance-summary
@@ -167,7 +215,7 @@ func (h *PerfSummaryHandler) handlePerfSummary(
 	duration, ok := validTimeRanges[timeRange]
 	if !ok {
 		RespondError(w, http.StatusBadRequest,
-			"Invalid time_range: must be one of 1h, 6h, 24h, 7d")
+			"Invalid time_range: must be one of 1h, 6h, 24h, 7d, 30d")
 		return
 	}
 
@@ -620,6 +668,526 @@ func (h *PerfSummaryHandler) queryCheckpoints(
 		points = []CheckpointPoint{}
 	}
 	return points
+}
+
+// handleDatabaseSummaries handles GET /api/v1/metrics/database-summaries
+func (h *PerfSummaryHandler) handleDatabaseSummaries(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	if !RequireGET(w, r) {
+		return
+	}
+
+	connectionIDs := h.parseConnectionIDs(w, r)
+	if connectionIDs == nil {
+		return
+	}
+	if len(connectionIDs) != 1 {
+		RespondError(w, http.StatusBadRequest,
+			"Exactly one connection_id is required")
+		return
+	}
+	connID := connectionIDs[0]
+
+	rbacChecker := auth.NewRBACChecker(h.authStore, true)
+	canAccess, _ := rbacChecker.CanAccessConnection(r.Context(), connID)
+	if !canAccess {
+		RespondError(w, http.StatusForbidden,
+			fmt.Sprintf("Permission denied: you do not have access to connection %d", connID))
+		return
+	}
+
+	timeRange := ParseQueryString(r, "time_range")
+	if timeRange == "" {
+		timeRange = "24h"
+	}
+	duration, ok := validTimeRanges[timeRange]
+	if !ok {
+		RespondError(w, http.StatusBadRequest,
+			"Invalid time_range: must be one of 1h, 6h, 24h, 7d, 30d")
+		return
+	}
+
+	bucketSeconds := int(duration.Seconds()) / 60
+	if bucketSeconds < 10 {
+		bucketSeconds = 10
+	}
+	bucketInterval := fmt.Sprintf("%d seconds", bucketSeconds)
+
+	now := time.Now().UTC()
+	startTime := now.Add(-duration)
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	pool := h.datastore.GetPool()
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{
+		AccessMode: pgx.ReadOnly,
+	})
+	if err != nil {
+		log.Printf("[ERROR] Failed to begin read-only transaction: %v", err)
+		RespondError(w, http.StatusInternalServerError,
+			"Failed to query database summaries")
+		return
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // Rollback after commit is a no-op
+
+	dbMap := make(map[string]*DatabaseSummary)
+
+	// Query 1: Database sizes from metrics.pg_database
+	h.queryDatabaseSizes(ctx, tx, connID, dbMap)
+
+	// Query 2: Stats from metrics.pg_stat_database
+	h.queryDatabaseStats(ctx, tx, connID, dbMap)
+
+	// Query 3: Dead tuple ratio from metrics.pg_stat_all_tables
+	h.queryDeadTupleRatios(ctx, tx, connID, dbMap)
+
+	// Query 4: Transaction rate (delta between latest two collections)
+	h.queryTransactionRates(ctx, tx, connID, dbMap)
+
+	// Query 5: Cache hit ratio time series per database
+	h.queryDatabaseCacheHitTimeSeries(ctx, tx, connID, startTime, now,
+		bucketInterval, dbMap)
+
+	if err := tx.Commit(ctx); err != nil {
+		log.Printf("[ERROR] Failed to commit read-only transaction: %v", err)
+	}
+
+	databases := make([]DatabaseSummary, 0, len(dbMap))
+	for _, db := range dbMap {
+		if db.CacheHitRatio.TimeSeries == nil {
+			db.CacheHitRatio.TimeSeries = []CacheHitRatioPoint{}
+		}
+		databases = append(databases, *db)
+	}
+
+	RespondJSON(w, http.StatusOK, DatabaseSummaryResponse{
+		Databases: databases,
+	})
+}
+
+// queryDatabaseSizes populates database size information from pg_database.
+func (h *PerfSummaryHandler) queryDatabaseSizes(
+	ctx context.Context,
+	tx pgx.Tx,
+	connectionID int,
+	dbMap map[string]*DatabaseSummary,
+) {
+	rows, err := tx.Query(ctx, `
+        SELECT datname, database_size_bytes
+        FROM metrics.pg_database
+        WHERE connection_id = $1
+          AND collected_at = (
+              SELECT MAX(collected_at)
+              FROM metrics.pg_database
+              WHERE connection_id = $1
+          )
+          AND datistemplate = false
+    `, connectionID)
+	if err != nil {
+		log.Printf("[DEBUG] No database size data for connection %d: %v",
+			connectionID, err)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var name string
+		var sizeBytes int64
+		if err := rows.Scan(&name, &sizeBytes); err != nil {
+			log.Printf("[DEBUG] Error scanning database size: %v", err)
+			continue
+		}
+		dbMap[name] = &DatabaseSummary{
+			DatabaseName: name,
+			SizeBytes:    sizeBytes,
+			SizePretty:   formatBytes(sizeBytes),
+			CacheHitRatio: CacheHitRatioData{
+				TimeSeries: []CacheHitRatioPoint{},
+			},
+		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[DEBUG] Error iterating database size rows: %v", err)
+	}
+}
+
+// queryDatabaseStats populates connection count and cache hit ratio from
+// pg_stat_database.
+func (h *PerfSummaryHandler) queryDatabaseStats(
+	ctx context.Context,
+	tx pgx.Tx,
+	connectionID int,
+	dbMap map[string]*DatabaseSummary,
+) {
+	rows, err := tx.Query(ctx, `
+        SELECT datname, numbackends,
+               COALESCE(blks_hit, 0), COALESCE(blks_read, 0)
+        FROM metrics.pg_stat_database
+        WHERE connection_id = $1
+          AND collected_at = (
+              SELECT MAX(collected_at)
+              FROM metrics.pg_stat_database
+              WHERE connection_id = $1
+          )
+    `, connectionID)
+	if err != nil {
+		log.Printf("[DEBUG] No pg_stat_database data for connection %d: %v",
+			connectionID, err)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var name string
+		var numBackends int
+		var blksHit, blksRead float64
+		if err := rows.Scan(&name, &numBackends, &blksHit, &blksRead); err != nil {
+			log.Printf("[DEBUG] Error scanning database stats: %v", err)
+			continue
+		}
+		db, exists := dbMap[name]
+		if !exists {
+			db = &DatabaseSummary{
+				DatabaseName: name,
+				CacheHitRatio: CacheHitRatioData{
+					TimeSeries: []CacheHitRatioPoint{},
+				},
+			}
+			dbMap[name] = db
+		}
+		db.ActiveConnections = numBackends
+		total := blksHit + blksRead
+		if total > 0 {
+			db.CacheHitRatio.Current = roundTo(blksHit/total*100.0, 2)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[DEBUG] Error iterating database stats rows: %v", err)
+	}
+}
+
+// queryDeadTupleRatios populates dead tuple ratios from pg_stat_all_tables.
+func (h *PerfSummaryHandler) queryDeadTupleRatios(
+	ctx context.Context,
+	tx pgx.Tx,
+	connectionID int,
+	dbMap map[string]*DatabaseSummary,
+) {
+	rows, err := tx.Query(ctx, `
+        SELECT database_name,
+               CASE WHEN SUM(n_live_tup) + SUM(n_dead_tup) = 0 THEN 0
+                    ELSE SUM(n_dead_tup)::float /
+                         (SUM(n_live_tup) + SUM(n_dead_tup))::float * 100.0
+               END AS dead_tuple_ratio
+        FROM metrics.pg_stat_all_tables
+        WHERE connection_id = $1
+          AND collected_at = (
+              SELECT MAX(collected_at)
+              FROM metrics.pg_stat_all_tables
+              WHERE connection_id = $1
+          )
+        GROUP BY database_name
+    `, connectionID)
+	if err != nil {
+		log.Printf("[DEBUG] No dead tuple data for connection %d: %v",
+			connectionID, err)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var name string
+		var ratio float64
+		if err := rows.Scan(&name, &ratio); err != nil {
+			log.Printf("[DEBUG] Error scanning dead tuple ratio: %v", err)
+			continue
+		}
+		db, exists := dbMap[name]
+		if !exists {
+			db = &DatabaseSummary{
+				DatabaseName: name,
+				CacheHitRatio: CacheHitRatioData{
+					TimeSeries: []CacheHitRatioPoint{},
+				},
+			}
+			dbMap[name] = db
+		}
+		db.DeadTupleRatio = roundTo(ratio, 2)
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[DEBUG] Error iterating dead tuple rows: %v", err)
+	}
+}
+
+// queryTransactionRates computes transaction rate per database as the delta
+// between the latest two collections.
+func (h *PerfSummaryHandler) queryTransactionRates(
+	ctx context.Context,
+	tx pgx.Tx,
+	connectionID int,
+	dbMap map[string]*DatabaseSummary,
+) {
+	rows, err := tx.Query(ctx, `
+        WITH latest_two AS (
+            SELECT DISTINCT collected_at
+            FROM metrics.pg_stat_database
+            WHERE connection_id = $1
+            ORDER BY collected_at DESC
+            LIMIT 2
+        ),
+        pivoted AS (
+            SELECT datname,
+                   collected_at,
+                   xact_commit,
+                   xact_rollback
+            FROM metrics.pg_stat_database
+            WHERE connection_id = $1
+              AND collected_at IN (SELECT collected_at FROM latest_two)
+        )
+        SELECT p1.datname,
+               CASE WHEN EXTRACT(EPOCH FROM p1.collected_at - p2.collected_at) > 0
+                    THEN (p1.xact_commit - p2.xact_commit)::float /
+                         EXTRACT(EPOCH FROM p1.collected_at - p2.collected_at)
+                    ELSE 0
+               END AS tx_rate
+        FROM pivoted p1
+        JOIN pivoted p2
+          ON p1.datname = p2.datname
+         AND p1.collected_at > p2.collected_at
+        WHERE (p1.xact_commit - p2.xact_commit) >= 0
+    `, connectionID)
+	if err != nil {
+		log.Printf("[DEBUG] No transaction rate data for connection %d: %v",
+			connectionID, err)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var name string
+		var rate float64
+		if err := rows.Scan(&name, &rate); err != nil {
+			log.Printf("[DEBUG] Error scanning transaction rate: %v", err)
+			continue
+		}
+		db, exists := dbMap[name]
+		if !exists {
+			db = &DatabaseSummary{
+				DatabaseName: name,
+				CacheHitRatio: CacheHitRatioData{
+					TimeSeries: []CacheHitRatioPoint{},
+				},
+			}
+			dbMap[name] = db
+		}
+		db.TransactionRate = roundTo(rate, 1)
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[DEBUG] Error iterating transaction rate rows: %v", err)
+	}
+}
+
+// queryDatabaseCacheHitTimeSeries populates per-database cache hit ratio
+// time series using date_bin bucketing.
+func (h *PerfSummaryHandler) queryDatabaseCacheHitTimeSeries(
+	ctx context.Context,
+	tx pgx.Tx,
+	connectionID int,
+	startTime, endTime time.Time,
+	bucketInterval string,
+	dbMap map[string]*DatabaseSummary,
+) {
+	rows, err := tx.Query(ctx, `
+        SELECT datname,
+               date_bin($1::interval, collected_at, $2) AS bucket,
+               CASE WHEN (SUM(blks_hit) + SUM(blks_read)) = 0 THEN 0
+                    ELSE SUM(blks_hit)::float /
+                         (SUM(blks_hit) + SUM(blks_read))::float * 100.0
+               END AS ratio
+        FROM metrics.pg_stat_database
+        WHERE connection_id = $3
+          AND collected_at >= $2
+          AND collected_at <= $4
+        GROUP BY datname, bucket
+        ORDER BY datname, bucket
+    `, bucketInterval, startTime, connectionID, endTime)
+	if err != nil {
+		log.Printf("[DEBUG] No cache hit time series for connection %d: %v",
+			connectionID, err)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var name string
+		var pt CacheHitRatioPoint
+		if err := rows.Scan(&name, &pt.Time, &pt.Value); err != nil {
+			log.Printf("[DEBUG] Error scanning db cache hit time series: %v",
+				err)
+			continue
+		}
+		pt.Value = roundTo(pt.Value, 2)
+		db, exists := dbMap[name]
+		if !exists {
+			db = &DatabaseSummary{
+				DatabaseName: name,
+				CacheHitRatio: CacheHitRatioData{
+					TimeSeries: []CacheHitRatioPoint{},
+				},
+			}
+			dbMap[name] = db
+		}
+		db.CacheHitRatio.TimeSeries = append(
+			db.CacheHitRatio.TimeSeries, pt)
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[DEBUG] Error iterating db cache hit time series: %v",
+			err)
+	}
+}
+
+// handleTopQueries handles GET /api/v1/metrics/top-queries
+func (h *PerfSummaryHandler) handleTopQueries(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	if !RequireGET(w, r) {
+		return
+	}
+
+	connectionIDs := h.parseConnectionIDs(w, r)
+	if connectionIDs == nil {
+		return
+	}
+	if len(connectionIDs) != 1 {
+		RespondError(w, http.StatusBadRequest,
+			"Exactly one connection_id is required")
+		return
+	}
+	connID := connectionIDs[0]
+
+	rbacChecker := auth.NewRBACChecker(h.authStore, true)
+	canAccess, _ := rbacChecker.CanAccessConnection(r.Context(), connID)
+	if !canAccess {
+		RespondError(w, http.StatusForbidden,
+			fmt.Sprintf("Permission denied: you do not have access to connection %d", connID))
+		return
+	}
+
+	// Parse limit (default 10, max 100)
+	limit := 10
+	if l, ok := ParseQueryInt(w, r, "limit"); ok {
+		limit = l
+	} else if r.URL.Query().Get("limit") != "" {
+		return // ParseQueryInt already sent error
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	// Parse and validate order_by
+	orderBy := ParseQueryString(r, "order_by")
+	if orderBy == "" {
+		orderBy = "total_exec_time"
+	}
+	if !validTopQueryOrderColumns[orderBy] {
+		RespondError(w, http.StatusBadRequest,
+			"Invalid order_by: must be one of total_exec_time, calls, "+
+				"mean_exec_time, rows, shared_blks_hit, shared_blks_read")
+		return
+	}
+
+	// Parse and validate order direction
+	order := strings.ToLower(ParseQueryString(r, "order"))
+	if order == "" {
+		order = "desc"
+	}
+	if order != "asc" && order != "desc" {
+		RespondError(w, http.StatusBadRequest,
+			"Invalid order: must be asc or desc")
+		return
+	}
+
+	// Parse optional queryid filter
+	queryID := ParseQueryString(r, "queryid")
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	pool := h.datastore.GetPool()
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{
+		AccessMode: pgx.ReadOnly,
+	})
+	if err != nil {
+		log.Printf("[ERROR] Failed to begin read-only transaction: %v", err)
+		RespondError(w, http.StatusInternalServerError,
+			"Failed to query top queries")
+		return
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // Rollback after commit is a no-op
+
+	// Safe to use string formatting for ORDER BY because orderBy and order
+	// are validated against whitelists above.
+	// Build optional queryid filter clause.
+	queryIDClause := ""
+	args := []interface{}{connID, limit}
+	if queryID != "" {
+		queryIDClause = fmt.Sprintf("AND queryid::text = $%d", len(args)+1)
+		args = append(args, queryID)
+	}
+
+	query := fmt.Sprintf(`
+        SELECT queryid::text, query, calls, total_exec_time,
+               mean_exec_time, rows, shared_blks_hit, shared_blks_read
+        FROM metrics.pg_stat_statements
+        WHERE connection_id = $1
+          AND collected_at = (
+              SELECT MAX(collected_at)
+              FROM metrics.pg_stat_statements
+              WHERE connection_id = $1
+          )
+          %s
+        ORDER BY %s %s
+        LIMIT $2
+    `, queryIDClause, orderBy, order)
+
+	rows, err := tx.Query(ctx, query, args...)
+	if err != nil {
+		log.Printf("[DEBUG] No top queries data for connection %d: %v",
+			connID, err)
+		RespondJSON(w, http.StatusOK, []TopQueryRow{})
+		return
+	}
+	defer rows.Close()
+
+	results := make([]TopQueryRow, 0)
+	for rows.Next() {
+		var row TopQueryRow
+		if err := rows.Scan(
+			&row.QueryID, &row.Query, &row.Calls,
+			&row.TotalExecTime, &row.MeanExecTime, &row.Rows,
+			&row.SharedBlksHit, &row.SharedBlksRead,
+		); err != nil {
+			log.Printf("[DEBUG] Error scanning top query row: %v", err)
+			continue
+		}
+		results = append(results, row)
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[DEBUG] Error iterating top query rows: %v", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		log.Printf("[ERROR] Failed to commit read-only transaction: %v", err)
+	}
+
+	RespondJSON(w, http.StatusOK, results)
 }
 
 // roundTo rounds a float64 to the specified number of decimal places.

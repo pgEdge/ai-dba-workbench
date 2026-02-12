@@ -24,6 +24,7 @@ import {
     CheckCircle as HealthyIcon,
     Dns as ClusterIcon,
     Language as EstateIcon,
+    MonitorHeart as MonitorHeartIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
 import { useClusterData } from '../../contexts/ClusterDataContext';
@@ -42,6 +43,8 @@ import {
     ObjectDashboard,
     MetricOverlay,
 } from '../Dashboard';
+import CollapsibleSection from '../Dashboard/CollapsibleSection';
+import TimeRangeSelector from '../Dashboard/TimeRangeSelector';
 import SelectionHeader from './SelectionHeader';
 import ServerInfoCard from './ServerInfoCard';
 import MetricCard from './MetricCard';
@@ -123,6 +126,13 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
     }, [selection?.type, selection?.id, clearOverlays]);
 
     const statusColors = useMemo(() => getStatusColors(theme), [theme]);
+
+    const monitoringSx = useMemo(() => ({
+        mt: 2,
+        bgcolor: theme.palette.mode === 'dark'
+            ? alpha(theme.palette.background.paper, 0.4)
+            : theme.palette.grey[100],
+    }), [theme]);
 
     // Calculate metrics based on selection type
     const metrics = useMemo(() => {
@@ -399,6 +409,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
         mb: 2,
     }), [theme]);
 
+
     const dividerSx = useMemo(() => ({
         height: 1,
         background: `linear-gradient(90deg, transparent, ${theme.palette.divider} 20%, ${theme.palette.divider} 80%, transparent)`,
@@ -508,15 +519,17 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                 />
 
                 {/* Monitoring Dashboards */}
-                {selection.type === 'server' && (
-                    <ServerDashboard selection={selection} />
-                )}
-                {selection.type === 'cluster' && (
-                    <ClusterDashboard selection={selection} />
-                )}
-                {selection.type === 'estate' && (
-                    <EstateDashboard selection={selection} />
-                )}
+                <CollapsibleSection title="Monitoring" icon={<MonitorHeartIcon sx={{ fontSize: 16 }} />} defaultExpanded sx={monitoringSx} headerRight={<TimeRangeSelector />}>
+                    {selection.type === 'server' && (
+                        <ServerDashboard selection={selection} />
+                    )}
+                    {selection.type === 'cluster' && (
+                        <ClusterDashboard selection={selection} />
+                    )}
+                    {selection.type === 'estate' && (
+                        <EstateDashboard selection={selection} />
+                    )}
+                </CollapsibleSection>
             </Box>
 
             {/* Dashboard Overlay for drill-downs */}

@@ -17,6 +17,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
+	"github.com/pgedge/ai-workbench/server/internal/metrics"
 	"github.com/pgedge/ai-workbench/server/internal/tsv"
 )
 
@@ -160,7 +161,7 @@ To manage response sizes:
 				return mcp.NewToolError("Missing or invalid 'probe_name' parameter")
 			}
 
-			if !isValidIdentifier(probeName) {
+			if !metrics.IsValidIdentifier(probeName) {
 				return mcp.NewToolError("Invalid probe name. Probe names must contain only letters, numbers, and underscores.")
 			}
 
@@ -239,7 +240,7 @@ To manage response sizes:
 			}
 
 			// Get metric columns from the probe
-			metricCols, err := getProbeMetricColumns(ctx, pool, probeName)
+			metricCols, err := metrics.GetProbeMetricColumns(ctx, pool, probeName)
 			if err != nil {
 				return mcp.NewToolError(fmt.Sprintf("Failed to get probe columns: %v", err))
 			}
@@ -251,7 +252,7 @@ To manage response sizes:
 				for _, m := range requestedMetrics {
 					m = strings.TrimSpace(m)
 					// Validate metric name
-					if !isValidIdentifier(m) {
+					if !metrics.IsValidIdentifier(m) {
 						return mcp.NewToolError(fmt.Sprintf("Invalid metric name: %s", m))
 					}
 					// Check if metric exists
@@ -274,8 +275,18 @@ To manage response sizes:
 				return mcp.NewToolError(fmt.Sprintf("No numeric metrics found in probe '%s'. Use describe_probe to see available columns.", probeName))
 			}
 
-			// Build the aggregated query
-			query, queryArgs, err := buildMetricsQuery(probeName, metricCols, connectionID, timeStart, timeEnd, buckets, aggregation, args)
+			// Build the aggregated query using shared package
+			filters := metrics.MetricFilters{}
+			if dbName, fok := args["database_name"].(string); fok && dbName != "" {
+				filters.DatabaseName = dbName
+			}
+			if schemaName, fok := args["schema_name"].(string); fok && schemaName != "" {
+				filters.SchemaName = schemaName
+			}
+			if tableName, fok := args["table_name"].(string); fok && tableName != "" {
+				filters.TableName = tableName
+			}
+			query, queryArgs, err := metrics.BuildMetricsQuery(probeName, metricCols, connectionID, timeStart, timeEnd, buckets, aggregation, filters)
 			if err != nil {
 				return mcp.NewToolError(fmt.Sprintf("Failed to build query: %v", err))
 			}
@@ -441,134 +452,6 @@ func parseTimeArg(s string) (time.Time, error) {
 	}
 
 	return time.Time{}, fmt.Errorf("unable to parse time: %s", s)
-}
-
-// getProbeMetricColumns returns the numeric metric columns for a probe
-func getProbeMetricColumns(ctx context.Context, pool *pgxpool.Pool, probeName string) ([]string, error) {
-	query := `
-		SELECT column_name, data_type
-		FROM information_schema.columns
-		WHERE table_schema = 'metrics'
-			AND table_name = $1
-		ORDER BY ordinal_position
-	`
-
-	rows, err := pool.Query(ctx, query, probeName)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var metricCols []string
-	for rows.Next() {
-		var name, dataType string
-		if err := rows.Scan(&name, &dataType); err != nil {
-			return nil, err
-		}
-		if isMetricColumn(name, dataType) {
-			metricCols = append(metricCols, name)
-		}
-	}
-
-	return metricCols, rows.Err()
-}
-
-// buildMetricsQuery builds the aggregated metrics query
-func buildMetricsQuery(probeName string, metricCols []string, connectionID int, timeStart, timeEnd time.Time, buckets int, aggregation string, args map[string]interface{}) (string, []interface{}, error) {
-	// Calculate bucket width
-	duration := timeEnd.Sub(timeStart)
-	bucketWidth := duration / time.Duration(buckets)
-	if bucketWidth < time.Second {
-		bucketWidth = time.Second
-	}
-
-	// Build WHERE clause
-	var whereClauses []string
-	queryArgs := []interface{}{
-		fmt.Sprintf("%d seconds", int(bucketWidth.Seconds())),
-		connectionID,
-		timeStart,
-		timeEnd,
-	}
-	argNum := 5
-
-	whereClauses = append(whereClauses, "connection_id = $2")
-	whereClauses = append(whereClauses, "collected_at >= $3")
-	whereClauses = append(whereClauses, "collected_at <= $4")
-
-	// Add optional filters
-	if dbName, ok := args["database_name"].(string); ok && dbName != "" {
-		whereClauses = append(whereClauses, fmt.Sprintf("datname = $%d", argNum))
-		queryArgs = append(queryArgs, dbName)
-		argNum++
-	}
-
-	if schemaName, ok := args["schema_name"].(string); ok && schemaName != "" {
-		whereClauses = append(whereClauses, fmt.Sprintf("schemaname = $%d", argNum))
-		queryArgs = append(queryArgs, schemaName)
-		argNum++
-	}
-
-	if tableName, ok := args["table_name"].(string); ok && tableName != "" {
-		whereClauses = append(whereClauses, fmt.Sprintf("relname = $%d", argNum))
-		queryArgs = append(queryArgs, tableName)
-		// argNum not needed after this point
-	}
-
-	// Build final query
-	// Note: time_bucket is a PostgreSQL function available with pg_partman or timescaledb
-	// We'll use a fallback approach with date_trunc for broader compatibility
-	//
-	// Security: All identifiers (probe name, column names) are quoted using
-	// quoteIdentifier() to prevent SQL injection from malicious column names
-	// that could come from a compromised monitored database.
-	query := fmt.Sprintf(`
-		WITH buckets AS (
-			SELECT
-				date_bin($1::interval, collected_at, $3) AS bucket_time,
-				%s
-			FROM metrics.%s
-			WHERE %s
-			GROUP BY date_bin($1::interval, collected_at, $3)
-		)
-		SELECT
-			bucket_time,
-			%s
-		FROM buckets
-		ORDER BY bucket_time
-	`,
-		strings.Join(getAggSelectCols(metricCols, aggregation), ", "),
-		quoteIdentifier(probeName),
-		strings.Join(whereClauses, " AND "),
-		strings.Join(getQuotedSelectCols(metricCols), ", "),
-	)
-
-	return query, queryArgs, nil
-}
-
-// getAggSelectCols returns the aggregated select columns with quoted identifiers
-// to prevent SQL injection from malicious column names.
-func getAggSelectCols(metricCols []string, aggregation string) []string {
-	var cols []string
-	for _, col := range metricCols {
-		quotedCol := quoteIdentifier(col)
-		if aggregation == "last" {
-			cols = append(cols, fmt.Sprintf("(array_agg(%s ORDER BY collected_at DESC))[1] AS %s", quotedCol, quotedCol))
-		} else {
-			cols = append(cols, fmt.Sprintf("%s(%s) AS %s", aggregation, quotedCol, quotedCol))
-		}
-	}
-	return cols
-}
-
-// getQuotedSelectCols returns column names with quoted identifiers
-// for use in SELECT clauses.
-func getQuotedSelectCols(metricCols []string) []string {
-	var cols []string
-	for _, col := range metricCols {
-		cols = append(cols, quoteIdentifier(col))
-	}
-	return cols
 }
 
 // formatMetricValue formats a metric value for TSV output.

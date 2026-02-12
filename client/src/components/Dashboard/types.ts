@@ -30,6 +30,7 @@ export interface OverlayEntry {
     objectType?: ObjectType;
     /** For database level: which connection and database */
     connectionId?: number;
+    connectionName?: string;
     databaseName?: string;
     /** For object level: parent database info */
     schemaName?: string;

@@ -13,12 +13,13 @@ import Box from '@mui/material/Box';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
+import ViewListIcon from '@mui/icons-material/ViewList';
 import { useTheme } from '@mui/material/styles';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useDashboard } from '../../../contexts/DashboardContext';
 import CollapsibleSection from '../CollapsibleSection';
 import Sparkline from '../Sparkline';
-import { getDashboardTileSx, KPI_LABEL_SX } from '../styles';
+import { getDashboardTileSx } from '../styles';
 import { MetricDataPoint } from '../types';
 import {
     ServerSectionProps,
@@ -44,13 +45,13 @@ const STAT_ROW_SX = {
 
 /** Stat label */
 const STAT_LABEL_SX = {
-    fontSize: '0.75rem',
+    fontSize: '0.875rem',
     color: 'text.secondary',
 };
 
 /** Stat value */
 const STAT_VALUE_SX = {
-    fontSize: '0.75rem',
+    fontSize: '0.875rem',
     fontWeight: 600,
     fontFamily: '"JetBrains Mono", "SF Mono", monospace',
 };
@@ -58,7 +59,7 @@ const STAT_VALUE_SX = {
 /** Database name style */
 const DB_NAME_SX = {
     fontWeight: 600,
-    fontSize: '0.95rem',
+    fontSize: '0.875rem',
     fontFamily: '"JetBrains Mono", "SF Mono", monospace',
     mb: 0.5,
 };
@@ -89,6 +90,7 @@ const getDeadTupleColor = (ratio: number): string => {
  */
 const DatabaseSummariesSection: React.FC<ServerSectionProps> = ({
     connectionId,
+    connectionName,
 }) => {
     const { user } = useAuth();
     const { refreshTrigger, pushOverlay } = useDashboard();
@@ -103,7 +105,7 @@ const DatabaseSummariesSection: React.FC<ServerSectionProps> = ({
     const fetchData = useCallback(async (): Promise<void> => {
         if (!user) { return; }
 
-        const url = `/api/v1/metrics/performance-summary`
+        const url = `/api/v1/metrics/database-summaries`
             + `?connection_id=${connectionId}&time_range=24h`;
 
         if (!initialLoadDoneRef.current) {
@@ -172,9 +174,10 @@ const DatabaseSummariesSection: React.FC<ServerSectionProps> = ({
             entityId: connectionId,
             entityName: db.database_name,
             connectionId,
+            connectionName,
             databaseName: db.database_name,
         });
-    }, [pushOverlay, connectionId]);
+    }, [pushOverlay, connectionId, connectionName]);
 
     /**
      * Convert cache hit ratio time series into MetricDataPoint array
@@ -191,7 +194,7 @@ const DatabaseSummariesSection: React.FC<ServerSectionProps> = ({
     };
 
     return (
-        <CollapsibleSection title="Database Summaries" defaultExpanded>
+        <CollapsibleSection title="Database Summaries" icon={<ViewListIcon sx={{ fontSize: 16 }} />} defaultExpanded>
             {loading && databases.length === 0 && (
                 <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
                     <CircularProgress size={24} />
@@ -242,7 +245,11 @@ const DatabaseSummariesSection: React.FC<ServerSectionProps> = ({
                         <Typography sx={DB_NAME_SX}>
                             {db.database_name}
                         </Typography>
-                        <Typography sx={KPI_LABEL_SX}>
+                        <Typography sx={{
+                            color: 'text.secondary',
+                            fontSize: '0.875rem',
+                            fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+                        }}>
                             {db.size_pretty}
                         </Typography>
 
@@ -266,7 +273,7 @@ const DatabaseSummariesSection: React.FC<ServerSectionProps> = ({
                             </Box>
 
                             {db.cache_hit_ratio?.time_series && (
-                                <Box sx={{ height: 30, mt: 0.5, mb: 0.5 }}>
+                                <Box sx={{ height: 30, mt: 0.5, mb: 5 }}>
                                     <Sparkline
                                         data={toSparklineData(
                                             db.cache_hit_ratio.time_series

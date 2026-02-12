@@ -1085,6 +1085,7 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 				FROM metrics.pg_stat_all_tables
 				WHERE collected_at > NOW() - INTERVAL '15 minutes'
 				  AND n_live_tup >= 1000
+				  AND schemaname NOT IN ('pg_catalog', 'pg_toast', 'information_schema')
 			),
 			calculated AS (
 				SELECT connection_id,
@@ -1130,14 +1131,18 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 		}
 
 	case "table_last_autovacuum_hours":
-		// Hours since last autovacuum
-		// Returns the table with the longest time since autovacuum per connection/database
+		// Hours since last autovacuum for tables that NEED vacuuming
+		// Only fires when dead tuples exceed PostgreSQL's autovacuum threshold
+		// (autovacuum_vacuum_threshold + autovacuum_vacuum_scale_factor * n_live_tup)
+		// Returns the worst offender per connection/database
 		rows, err := d.pool.Query(ctx, `
 			WITH recent_tables AS (
 				SELECT connection_id,
 				       database_name,
 				       schemaname,
 				       relname,
+				       n_live_tup,
+				       n_dead_tup,
 				       last_autovacuum,
 				       collected_at,
 				       ROW_NUMBER() OVER (
@@ -1146,18 +1151,33 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 				       ) as rn
 				FROM metrics.pg_stat_all_tables
 				WHERE collected_at > NOW() - INTERVAL '15 minutes'
-				  AND last_autovacuum IS NOT NULL
-				  AND (n_dead_tup > 0 OR n_mod_since_analyze > 0)
+				  AND schemaname NOT IN ('pg_catalog', 'pg_toast', 'information_schema')
 			),
-			calculated AS (
-				SELECT connection_id,
-				       database_name,
-				       schemaname,
-				       relname,
-				       EXTRACT(EPOCH FROM (NOW() - last_autovacuum)) / 3600 as hours_since_vacuum,
-				       collected_at
-				FROM recent_tables
-				WHERE rn = 1
+			av_settings AS (
+				SELECT DISTINCT ON (connection_id)
+				       connection_id,
+				       MAX(CASE WHEN name = 'autovacuum_vacuum_threshold'
+				           THEN setting::float ELSE NULL END) as av_threshold,
+				       MAX(CASE WHEN name = 'autovacuum_vacuum_scale_factor'
+				           THEN setting::float ELSE NULL END) as av_scale_factor
+				FROM metrics.pg_settings
+				WHERE name IN ('autovacuum_vacuum_threshold', 'autovacuum_vacuum_scale_factor')
+				  AND collected_at > NOW() - INTERVAL '1 hour'
+				GROUP BY connection_id
+			),
+			exceeding AS (
+				SELECT t.connection_id,
+				       t.database_name,
+				       t.schemaname,
+				       t.relname,
+				       t.n_dead_tup,
+				       COALESCE(s.av_threshold, 50) + COALESCE(s.av_scale_factor, 0.2) * t.n_live_tup as calc_threshold,
+				       EXTRACT(EPOCH FROM (NOW() - COALESCE(t.last_autovacuum, '1970-01-01'::timestamptz))) / 3600 as hours_since_vacuum,
+				       t.collected_at
+				FROM recent_tables t
+				LEFT JOIN av_settings s ON t.connection_id = s.connection_id
+				WHERE t.rn = 1
+				  AND t.n_dead_tup > (COALESCE(s.av_threshold, 50) + COALESCE(s.av_scale_factor, 0.2) * t.n_live_tup)
 			),
 			ranked AS (
 				SELECT *,
@@ -1165,7 +1185,7 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 				           PARTITION BY connection_id, database_name
 				           ORDER BY hours_since_vacuum DESC
 				       ) as rank
-				FROM calculated
+				FROM exceeding
 			)
 			SELECT connection_id,
 			       database_name,

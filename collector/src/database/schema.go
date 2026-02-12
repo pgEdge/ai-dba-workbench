@@ -2768,6 +2768,22 @@ func (sm *SchemaManager) registerMigrations() {
 			return err
 		},
 	})
+
+	// Migration #17: Update autovacuum_not_running alert rule semantics
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     17,
+		Description: "Update autovacuum_not_running threshold and description for dead-tuple-aware semantics",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+			_, err := tx.Exec(ctx, `
+				UPDATE alert_rules
+				SET default_threshold = 1,
+				    description = 'Table has dead tuples exceeding the autovacuum threshold but has not been vacuumed; indicates autovacuum may be blocked or unable to keep up'
+				WHERE name = 'autovacuum_not_running';
+			`)
+			return err
+		},
+	})
 }
 
 // Migrate applies all pending migrations

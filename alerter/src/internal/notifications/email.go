@@ -17,19 +17,20 @@ import (
 	"strings"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
+	"github.com/pgedge/ai-workbench/pkg/crypto"
 )
 
 // emailNotifier implements Notifier for SMTP email
 type emailNotifier struct {
-	secrets  SecretManager
-	renderer TemplateRenderer
+	serverSecret string
+	renderer     TemplateRenderer
 }
 
 // NewEmailNotifier creates a new email notifier
-func NewEmailNotifier(secrets SecretManager, renderer TemplateRenderer) Notifier {
+func NewEmailNotifier(serverSecret string, renderer TemplateRenderer) Notifier {
 	return &emailNotifier{
-		secrets:  secrets,
-		renderer: renderer,
+		serverSecret: serverSecret,
+		renderer:     renderer,
 	}
 }
 
@@ -113,14 +114,16 @@ func (n *emailNotifier) Send(ctx context.Context, channel *database.Notification
 	}
 	addr := fmt.Sprintf("%s:%d", smtpHost, smtpPort)
 
-	// Decrypt password if present
+	// Decrypt password if present. If decryption fails, the value is
+	// assumed to be stored in plaintext and is used as-is.
 	var smtpPassword string
 	if channel.SMTPPassword != nil && *channel.SMTPPassword != "" {
-		decrypted, err := n.secrets.Decrypt(*channel.SMTPPassword)
-		if err != nil {
-			return fmt.Errorf("failed to decrypt SMTP password: %w", err)
+		decrypted, err := crypto.DecryptPassword(*channel.SMTPPassword, n.serverSecret)
+		if err == nil {
+			smtpPassword = decrypted
+		} else {
+			smtpPassword = *channel.SMTPPassword
 		}
-		smtpPassword = decrypted
 	}
 
 	// Setup authentication if credentials provided
@@ -137,7 +140,7 @@ func (n *emailNotifier) Send(ctx context.Context, channel *database.Notification
 	}
 
 	// Send email
-	return n.sendEmail(ctx, addr, auth, from, fromHeader, toAddresses, subject, body, channel.SMTPUseTLS, smtpHost)
+	return n.sendEmail(ctx, addr, auth, from, fromHeader, toAddresses, subject, body, channel.SMTPUseTLS, smtpPort, smtpHost)
 }
 
 // sendEmail sends an HTML email via SMTP
@@ -151,6 +154,7 @@ func (n *emailNotifier) sendEmail(
 	subject string,
 	htmlBody string,
 	useTLS bool,
+	smtpPort int,
 	smtpHost string,
 ) error {
 	// Build message with headers
@@ -165,7 +169,10 @@ func (n *emailNotifier) sendEmail(
 
 	msgBytes := []byte(msg.String())
 
-	if useTLS {
+	// Port 465 uses implicit TLS (SMTPS). All other ports use STARTTLS,
+	// which opportunistically upgrades the connection to TLS if the server
+	// supports it.
+	if useTLS && smtpPort == 465 {
 		return n.sendWithTLS(ctx, addr, auth, from, to, msgBytes, smtpHost)
 	}
 	return n.sendWithStartTLS(ctx, addr, auth, from, to, msgBytes, smtpHost)

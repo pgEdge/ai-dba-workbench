@@ -550,6 +550,171 @@ func TestDefaultTemplatesAreValid(t *testing.T) {
 	}
 }
 
+func TestTemplateRenderer_RenderJSON_EscapesSpecialCharacters(t *testing.T) {
+	renderer := NewTemplateRenderer()
+
+	tests := []struct {
+		name        string
+		description string
+		wantSubstr  string
+	}{
+		{
+			"double quotes",
+			`password authentication failed for user "postgres"`,
+			`password authentication failed for user \"postgres\"`,
+		},
+		{
+			"backticks and quotes",
+			"connection error: failed to connect to `user=postgres database=postgres`: failed SASL auth: FATAL: password authentication failed for user \"postgres\"",
+			`failed for user \"postgres\"`,
+		},
+		{
+			"newlines",
+			"line one\nline two\nline three",
+			`line one\nline two\nline three`,
+		},
+		{
+			"backslashes",
+			`path is C:\Users\admin`,
+			`path is C:\\Users\\admin`,
+		},
+		{
+			"tabs",
+			"col1\tcol2\tcol3",
+			`col1\tcol2\tcol3`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payload := &database.NotificationPayload{
+				AlertID:          1,
+				AlertTitle:       "Test Alert",
+				AlertDescription: tt.description,
+				Severity:         "warning",
+			}
+
+			tmpl := `{"title":"{{.AlertTitle}}","description":"{{.AlertDescription}}"}`
+			result, err := renderer.RenderJSON(tmpl, payload, "")
+			if err != nil {
+				t.Fatalf("RenderJSON() unexpected error: %v", err)
+			}
+
+			if !strings.Contains(result, tt.wantSubstr) {
+				t.Errorf("RenderJSON() result should contain %q, got %q", tt.wantSubstr, result)
+			}
+		})
+	}
+}
+
+func TestTemplateRenderer_RenderJSON_DoesNotDoubleEscapeSafeStrings(t *testing.T) {
+	renderer := NewTemplateRenderer()
+
+	payload := &database.NotificationPayload{
+		AlertID:          123,
+		AlertTitle:       "High CPU Usage",
+		AlertDescription: "CPU usage exceeds 90%",
+		Severity:         "warning",
+	}
+
+	tmpl := `{"alert_id": {{.AlertID}}, "title": "{{.AlertTitle}}", "description": "{{.AlertDescription}}"}`
+	result, err := renderer.RenderJSON(tmpl, payload, "")
+	if err != nil {
+		t.Fatalf("RenderJSON() unexpected error: %v", err)
+	}
+
+	expected := `{"alert_id": 123, "title": "High CPU Usage", "description": "CPU usage exceeds 90%"}`
+	if result != expected {
+		t.Errorf("RenderJSON() = %q, want %q", result, expected)
+	}
+}
+
+func TestTemplateRenderer_RenderJSON_DefaultTemplatesWithSpecialChars(t *testing.T) {
+	renderer := NewTemplateRenderer()
+
+	triggeredAt := time.Now()
+	clearedAt := triggeredAt.Add(1 * time.Hour)
+	metricName := "cpu_usage"
+	metricValue := 95.0
+	thresholdValue := 90.0
+	operator := ">"
+	dbName := "testdb"
+
+	// Use a description that contains characters problematic for JSON
+	payload := &database.NotificationPayload{
+		AlertID:          1,
+		AlertType:        "metric",
+		AlertTitle:       "Connection Failed",
+		AlertDescription: "connection error: failed to connect to `user=postgres database=postgres`: FATAL: password authentication failed for user \"postgres\"",
+		Severity:         "critical",
+		Status:           "active",
+		TriggeredAt:      triggeredAt,
+		ClearedAt:        &clearedAt,
+		MetricName:       &metricName,
+		MetricValue:      &metricValue,
+		ThresholdValue:   &thresholdValue,
+		Operator:         &operator,
+		ConnectionID:     1,
+		ServerName:       "prod-db",
+		ServerHost:       "10.0.0.1",
+		ServerPort:       5432,
+		DatabaseName:     &dbName,
+		NotificationType: "alert_fire",
+		ReminderCount:    2,
+		Timestamp:        time.Now(),
+	}
+
+	jsonTemplates := []struct {
+		name     string
+		template string
+	}{
+		{"Slack Alert Fire", DefaultSlackAlertFireTemplate},
+		{"Slack Alert Clear", DefaultSlackAlertClearTemplate},
+		{"Slack Reminder", DefaultSlackReminderTemplate},
+		{"Webhook Alert Fire", DefaultWebhookAlertFireTemplate},
+		{"Webhook Alert Clear", DefaultWebhookAlertClearTemplate},
+		{"Webhook Reminder", DefaultWebhookReminderTemplate},
+	}
+
+	for _, tt := range jsonTemplates {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := renderer.RenderJSON(tt.template, payload, "")
+			if err != nil {
+				t.Errorf("RenderJSON(%s) with special chars failed: %v", tt.name, err)
+			}
+			if result == "" {
+				t.Errorf("RenderJSON(%s) produced empty result", tt.name)
+			}
+		})
+	}
+}
+
+func TestJsonEscapeString(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"plain text", "hello world", "hello world"},
+		{"double quotes", `say "hello"`, `say \"hello\"`},
+		{"backslash", `C:\path`, `C:\\path`},
+		{"newline", "line1\nline2", `line1\nline2`},
+		{"tab", "col1\tcol2", `col1\tcol2`},
+		{"backtick", "`code`", "`code`"},
+		{"mixed special", "error: \"fail\"\nnext", `error: \"fail\"\nnext`},
+		{"empty", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := jsonEscapeString(tt.input)
+			if result != tt.expected {
+				t.Errorf("jsonEscapeString(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
 func TestTemplateRenderer_Render_AllPayloadFields(t *testing.T) {
 	renderer := NewTemplateRenderer()
 

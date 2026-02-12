@@ -59,6 +59,69 @@ export interface ApiRequestOptions {
 }
 
 // ---------------------------------------------------------------
+// Connection health tracking
+// ---------------------------------------------------------------
+
+export type DisconnectReason = 'auth' | 'server' | 'network';
+
+type DisconnectListener = (reason: DisconnectReason) => void;
+
+const CONSECUTIVE_FAILURE_THRESHOLD = 3;
+
+let consecutiveFailures = 0;
+let disconnected = false;
+let disconnectReason: DisconnectReason | '' = '';
+let disconnectListener: DisconnectListener | null = null;
+
+/**
+ * Register a callback that fires when the server is considered
+ * unreachable.  Returns an unsubscribe function.
+ */
+export function onDisconnect(listener: DisconnectListener): () => void {
+    disconnectListener = listener;
+    return () => {
+        if (disconnectListener === listener) {
+            disconnectListener = null;
+        }
+    };
+}
+
+/**
+ * Reset all connection-health state so the next request starts
+ * with a clean slate.
+ */
+export function resetConnectionHealth(): void {
+    consecutiveFailures = 0;
+    disconnected = false;
+    disconnectReason = '';
+}
+
+function recordSuccess(): void {
+    consecutiveFailures = 0;
+}
+
+function recordFailure(reason: DisconnectReason): void {
+    if (disconnected) {
+        return;
+    }
+
+    if (reason === 'auth') {
+        // Auth failures fire immediately.
+        disconnected = true;
+        disconnectReason = reason;
+        disconnectListener?.(reason);
+        return;
+    }
+
+    consecutiveFailures += 1;
+    if (consecutiveFailures >= CONSECUTIVE_FAILURE_THRESHOLD) {
+        disconnected = true;
+        disconnectReason = reason;
+        disconnectListener?.(reason);
+    }
+}
+
+// ---------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------
 
@@ -126,15 +189,31 @@ async function request<T>(
         fetchOptions.body = JSON.stringify(body);
     }
 
-    const response = await fetch(url, fetchOptions);
+    let response: Response;
+    try {
+        response = await fetch(url, fetchOptions);
+    } catch (error) {
+        // Network errors surface as TypeError when the server is
+        // unreachable.
+        recordFailure('network');
+        throw error;
+    }
 
     if (!response.ok) {
+        if (response.status === 401) {
+            recordFailure('auth');
+        } else if (response.status >= 500) {
+            recordFailure('server');
+        }
+
         const { message, body: errorBody } = await extractErrorMessage(
             response,
             `Request failed: ${method} ${url}`,
         );
         throw new ApiError(message, response.status, errorBody);
     }
+
+    recordSuccess();
 
     // 204 No Content -- nothing to parse.
     if (response.status === 204) {

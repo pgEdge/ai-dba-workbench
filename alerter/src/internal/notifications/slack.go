@@ -22,15 +22,13 @@ import (
 // slackNotifier implements Notifier for Slack webhooks
 type slackNotifier struct {
 	httpClient *http.Client
-	secrets    SecretManager
 	renderer   TemplateRenderer
 }
 
 // NewSlackNotifier creates a new Slack notifier
-func NewSlackNotifier(httpClient *http.Client, secrets SecretManager, renderer TemplateRenderer) Notifier {
+func NewSlackNotifier(httpClient *http.Client, renderer TemplateRenderer) Notifier {
 	return &slackNotifier{
 		httpClient: httpClient,
-		secrets:    secrets,
 		renderer:   renderer,
 	}
 }

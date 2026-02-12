@@ -247,12 +247,39 @@ func (r *templateRenderer) Render(templateStr string, payload *database.Notifica
 }
 
 // RenderJSON implements TemplateRenderer.RenderJSON
+// Unlike Render, this method JSON-escapes all string values in the
+// template data before executing the template.  This ensures that
+// descriptions or titles containing characters that are special in
+// JSON (double quotes, backslashes, backticks, newlines, etc.) do
+// not break the rendered JSON payload.
 func (r *templateRenderer) RenderJSON(templateStr string, payload *database.NotificationPayload, defaultTemplate string) (string, error) {
-	// Render template
-	result, err := r.Render(templateStr, payload, defaultTemplate)
-	if err != nil {
-		return "", err
+	// Use defaultTemplate if templateStr is empty
+	tmplStr := templateStr
+	if tmplStr == "" {
+		tmplStr = defaultTemplate
 	}
+
+	if tmplStr == "" {
+		return "", fmt.Errorf("no template provided")
+	}
+
+	// Get or compile template from cache
+	tmpl, err := r.getOrCompileTemplate(tmplStr)
+	if err != nil {
+		return "", fmt.Errorf("failed to compile template: %w", err)
+	}
+
+	// Create enhanced data map and JSON-escape all string values
+	data := r.enhancePayload(payload)
+	jsonEscapeStringValues(data)
+
+	// Execute template
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("failed to execute template: %w", err)
+	}
+
+	result := buf.String()
 
 	// Validate result is valid JSON
 	var js json.RawMessage
@@ -261,6 +288,32 @@ func (r *templateRenderer) RenderJSON(templateStr string, payload *database.Noti
 	}
 
 	return result, nil
+}
+
+// jsonEscapeStringValues iterates over a map and replaces every
+// string value with its JSON-escaped form (without surrounding
+// quotes).  Non-string values are left unchanged.
+func jsonEscapeStringValues(data map[string]interface{}) {
+	for k, v := range data {
+		if s, ok := v.(string); ok {
+			data[k] = jsonEscapeString(s)
+		}
+	}
+}
+
+// jsonEscapeString returns the JSON-escaped form of s, without
+// the surrounding double-quote characters that json.Marshal adds.
+// For example, a string containing a literal double-quote becomes
+// \" in the output, and a newline becomes \n.
+func jsonEscapeString(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		// json.Marshal on a string should never fail, but return
+		// the original string unmodified if it somehow does.
+		return s
+	}
+	// json.Marshal wraps the result in double quotes; strip them.
+	return string(b[1 : len(b)-1])
 }
 
 // getOrCompileTemplate retrieves a compiled template from the cache or compiles it

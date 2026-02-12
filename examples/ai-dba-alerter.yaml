@@ -334,15 +334,18 @@ notifications:
   # Default: false
   enabled: false
 
-  # Path to file containing the encryption key for channel credentials
-  # The file should contain a hex-encoded 32-byte key (64 hex characters)
+  # Path to file containing the server secret for decrypting
+  # notification channel credentials (webhook URLs, SMTP passwords,
+  # and authentication credentials stored by the Server component).
+  #
+  # This file must contain the same plain text secret used by the
+  # Server and Collector components. You can point to the server's
+  # secret file directly or use a copy with identical content.
+  #
+  # The file should have restricted permissions (chmod 600).
   # Default: none
   #
-  # Generate a secure key file:
-  #   openssl rand -hex 32 > /etc/ai-workbench/notifications.key
-  #   chmod 600 /etc/ai-workbench/notifications.key
-  #
-  # secret_file: /etc/ai-workbench/notifications.key
+  # secret_file: /etc/pgedge/ai-dba-alerter.secret
 
   # How often to process pending notifications (in seconds)
   # Default: 30
@@ -491,7 +494,7 @@ notifications:
 #   window_seconds: 180
 # notifications:
 #   enabled: true
-#   secret_file: /var/secrets/ai-workbench/notifications.key
+#   secret_file: /var/secrets/ai-workbench/alerter.secret
 #   process_interval_seconds: 30
 #   max_retry_attempts: 3
 # secret_file: /var/secrets/ai-workbench/alerter.secret

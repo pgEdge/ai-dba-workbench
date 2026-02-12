@@ -16,6 +16,8 @@ import { AlertsProvider } from './contexts/AlertsContext';
 import { DashboardProvider } from './contexts/DashboardContext';
 import { BlackoutProvider } from './contexts/BlackoutContext';
 import { ChatProvider, useChatContext } from './contexts/ChatContext';
+import { ConnectionStatusProvider } from './contexts/ConnectionStatusContext';
+import ConnectionLostOverlay from './components/ConnectionLostOverlay';
 import ErrorBoundary from './components/ErrorBoundary';
 import Header from './components/Header';
 import Login from './components/Login';
@@ -99,17 +101,20 @@ const AppContent = () => {
     return (
         <ThemeProvider theme={theme}>
             <CssBaseline />
-            <ClusterProvider>
-                <DashboardProvider>
-                    <AlertsProvider>
-                        <ChatProvider>
-                            <ErrorBoundary>
-                                <MainLayout mode={mode} onToggleTheme={toggleTheme} />
-                            </ErrorBoundary>
-                        </ChatProvider>
-                    </AlertsProvider>
-                </DashboardProvider>
-            </ClusterProvider>
+            <ConnectionStatusProvider>
+                <ConnectionLostOverlay />
+                <ClusterProvider>
+                    <DashboardProvider>
+                        <AlertsProvider>
+                            <ChatProvider>
+                                <ErrorBoundary>
+                                    <MainLayout mode={mode} onToggleTheme={toggleTheme} />
+                                </ErrorBoundary>
+                            </ChatProvider>
+                        </AlertsProvider>
+                    </DashboardProvider>
+                </ClusterProvider>
+            </ConnectionStatusProvider>
         </ThemeProvider>
     );
 };

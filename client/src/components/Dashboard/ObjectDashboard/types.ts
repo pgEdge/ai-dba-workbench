@@ -185,7 +185,14 @@ export const formatTimestamp = (ts: string | undefined): string => {
     if (!ts) { return 'Never'; }
     try {
         const date = new Date(ts);
-        return date.toLocaleString();
+        return date.toLocaleString(undefined, {
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+        });
     } catch {
         return ts;
     }

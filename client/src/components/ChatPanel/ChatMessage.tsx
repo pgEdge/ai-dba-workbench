@@ -508,6 +508,18 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, mode }) => {
         );
     };
 
+    // Format an ISO timestamp for display (includes date for old chat context)
+    const formatTimestamp = (ts: string): string => {
+        const date = new Date(ts);
+        return date.toLocaleString(undefined, {
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+        });
+    };
+
     // Error message rendering
     if (message.isError) {
         return (
@@ -519,7 +531,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, mode }) => {
                 </Box>
                 {message.timestamp && (
                     <Typography sx={sxTimestamp}>
-                        {message.timestamp}
+                        {formatTimestamp(message.timestamp)}
                     </Typography>
                 )}
             </Box>
@@ -548,7 +560,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, mode }) => {
                 </Box>
                 {message.timestamp && (
                     <Typography sx={sxTimestamp}>
-                        {message.timestamp}
+                        {formatTimestamp(message.timestamp)}
                     </Typography>
                 )}
             </Box>
@@ -568,7 +580,9 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, mode }) => {
                 {renderToolActivity()}
             </Box>
             {message.timestamp && (
-                <Typography sx={sxTimestamp}>{message.timestamp}</Typography>
+                <Typography sx={sxTimestamp}>
+                    {formatTimestamp(message.timestamp)}
+                </Typography>
             )}
         </Box>
     );

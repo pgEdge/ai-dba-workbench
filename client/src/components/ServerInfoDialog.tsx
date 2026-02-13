@@ -1002,7 +1002,14 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
                         color: 'text.disabled',
                         mr: 'auto',
                     }}>
-                        Data collected {new Date(data.collected_at).toLocaleString()}
+                        Data collected {new Date(data.collected_at).toLocaleString(undefined, {
+                            month: 'short',
+                            day: 'numeric',
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            second: '2-digit',
+                        })}
                     </Typography>
                 )}
                 <Button

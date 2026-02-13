@@ -138,16 +138,15 @@ describe('ServerInfoDialog', () => {
         it('renders the dialog title and server name when open', async () => {
             renderWithTheme(<ServerInfoDialog {...defaultProps} />);
             await waitFor(() => {
-                expect(screen.getByText('Server Information')).toBeInTheDocument();
+                expect(screen.getByText('Server Information: Production Server')).toBeInTheDocument();
             });
-            expect(screen.getByText('Production Server')).toBeInTheDocument();
         });
 
         it('does not render dialog content when closed', () => {
             renderWithTheme(
                 <ServerInfoDialog {...defaultProps} open={false} />
             );
-            expect(screen.queryByText('Server Information')).not.toBeInTheDocument();
+            expect(screen.queryByText('Server Information: Production Server')).not.toBeInTheDocument();
         });
 
         it('does not fetch data when closed', () => {
@@ -604,7 +603,7 @@ describe('ServerInfoDialog', () => {
             );
 
             await waitFor(() => {
-                expect(screen.getByText('Server Information')).toBeInTheDocument();
+                expect(screen.getByText('Server Information: Production Server')).toBeInTheDocument();
             });
 
             // Click the close button in the app bar
@@ -620,7 +619,7 @@ describe('ServerInfoDialog', () => {
             );
 
             await waitFor(() => {
-                expect(screen.getByText('Server Information')).toBeInTheDocument();
+                expect(screen.getByText('Server Information: Production Server')).toBeInTheDocument();
             });
 
             // The IconButton with CloseIcon is the first button in the header

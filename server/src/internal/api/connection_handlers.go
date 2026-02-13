@@ -58,6 +58,7 @@ type ConnectionUpdateRequest struct {
 // ConnectionCreateRequest is the request body for creating a connection
 type ConnectionCreateRequest struct {
 	Name         string  `json:"name"`
+	Description  *string `json:"description,omitempty"`
 	Host         string  `json:"host"`
 	HostAddr     *string `json:"hostaddr,omitempty"`
 	Port         int     `json:"port"`
@@ -75,6 +76,7 @@ type ConnectionCreateRequest struct {
 // ConnectionFullUpdateRequest is the request body for full connection update
 type ConnectionFullUpdateRequest struct {
 	Name         *string `json:"name,omitempty"`
+	Description  *string `json:"description,omitempty"`
 	Host         *string `json:"host,omitempty"`
 	HostAddr     *string `json:"hostaddr,omitempty"`
 	Port         *int    `json:"port,omitempty"`
@@ -239,6 +241,7 @@ func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Requ
 	// Create connection
 	params := database.ConnectionCreateParams{
 		Name:          req.Name,
+		Description:   req.Description,
 		Host:          req.Host,
 		HostAddr:      req.HostAddr,
 		Port:          req.Port,
@@ -421,6 +424,7 @@ func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Requ
 	// Build update params
 	params := database.ConnectionUpdateParams{
 		Name:         req.Name,
+		Description:  req.Description,
 		Host:         req.Host,
 		HostAddr:     req.HostAddr,
 		Port:         req.Port,

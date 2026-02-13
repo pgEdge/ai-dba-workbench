@@ -27,6 +27,7 @@ export interface Server {
 export interface Cluster {
     id: string;
     name: string;
+    description?: string;
     servers?: Server[];
     isStandalone?: boolean;
     auto_cluster_key?: string;

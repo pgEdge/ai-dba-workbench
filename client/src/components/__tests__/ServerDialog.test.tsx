@@ -51,9 +51,10 @@ describe('ServerDialog', () => {
             expect(screen.getByText('Add Server')).toBeInTheDocument();
         });
 
-        it('renders dialog with Edit Server title in edit mode', () => {
-            render(<ServerDialog {...defaultProps} mode="edit" />);
-            expect(screen.getByText('Edit Server')).toBeInTheDocument();
+        it('renders dialog with Server Settings title in edit mode', () => {
+            const server = { id: 1, name: 'Test Server', host: 'localhost', port: 5432, database: 'postgres', username: 'user', password: '', sslmode: 'prefer' };
+            render(<ServerDialog {...defaultProps} mode="edit" server={server} />);
+            expect(screen.getByText('Server Settings: Test Server')).toBeInTheDocument();
         });
 
         it('renders all required form fields', () => {
@@ -532,11 +533,11 @@ describe('ServerDialog', () => {
         it('does not render tabs in create mode', () => {
             render(<ServerDialog {...defaultProps} mode="create" />);
 
-            expect(screen.queryByRole('tab', { name: /connection/i })).not.toBeInTheDocument();
+            expect(screen.queryByRole('tab', { name: /details/i })).not.toBeInTheDocument();
             expect(screen.queryByRole('tab', { name: /alert overrides/i })).not.toBeInTheDocument();
         });
 
-        it('renders Connection and Alert Overrides tabs in edit mode', () => {
+        it('renders Details and Alert Overrides tabs in edit mode', () => {
             render(
                 <ServerDialog
                     {...defaultProps}
@@ -545,7 +546,7 @@ describe('ServerDialog', () => {
                 />
             );
 
-            expect(screen.getByRole('tab', { name: /connection/i })).toBeInTheDocument();
+            expect(screen.getByRole('tab', { name: /details/i })).toBeInTheDocument();
             expect(screen.getByRole('tab', { name: /alert overrides/i })).toBeInTheDocument();
         });
 
@@ -567,7 +568,7 @@ describe('ServerDialog', () => {
             expect(screen.getByText(/AlertOverridesPanel: server 42/)).toBeInTheDocument();
         });
 
-        it('shows Save button on Connection tab and Close button on Alert Overrides tab', async () => {
+        it('shows Save button on Details tab and Close button on Alert Overrides tab', async () => {
             const user = userEvent.setup();
             render(
                 <ServerDialog
@@ -577,7 +578,7 @@ describe('ServerDialog', () => {
                 />
             );
 
-            // On the Connection tab, Save and Cancel buttons should be present
+            // On the Details tab, Save and Cancel buttons should be present
             expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
             expect(screen.getByRole('button', { name: /cancel/i })).toBeInTheDocument();
 

@@ -127,6 +127,9 @@ const getSaveButtonSx = (theme: Theme) => ({
 const dialogActionsSx = {
     px: 3,
     pb: 2,
+    borderTop: '1px solid',
+    borderColor: 'divider',
+    pt: 2,
 };
 
 // --- Component ---
@@ -331,7 +334,7 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
                                 color: 'text.primary',
                             }}
                         >
-                            Edit Cluster Group
+                            Group Settings: {group?.name}
                         </Typography>
                     </Toolbar>
                 </AppBar>
@@ -351,7 +354,10 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
                             <form onSubmit={handleSubmit} noValidate>
                                 {formContent}
                                 <Box sx={{
-                                    mt: 3,
+                                    mt: 1,
+                                    borderTop: '1px solid',
+                                    borderColor: 'divider',
+                                    pt: 2,
                                     display: 'flex',
                                     gap: 1,
                                     justifyContent: 'flex-end',

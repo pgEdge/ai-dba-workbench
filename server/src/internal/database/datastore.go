@@ -45,6 +45,7 @@ var (
 type MonitoredConnection struct {
 	ID                int            `json:"id"`
 	Name              string         `json:"name"`
+	Description       string         `json:"description"`
 	Host              string         `json:"host"`
 	HostAddr          sql.NullString `json:"-"`
 	Port              int            `json:"port"`
@@ -65,6 +66,7 @@ type MonitoredConnection struct {
 type ConnectionListItem struct {
 	ID           int    `json:"id"`
 	Name         string `json:"name"`
+	Description  string `json:"description"`
 	Host         string `json:"host"`
 	Port         int    `json:"port"`
 	DatabaseName string `json:"database_name"`
@@ -209,7 +211,7 @@ func (d *Datastore) GetAllConnections(ctx context.Context) ([]ConnectionListItem
 	defer d.mu.RUnlock()
 
 	query := `
-        SELECT id, name, host, port, database_name, is_monitored
+        SELECT id, name, description, host, port, database_name, is_monitored
         FROM connections
         ORDER BY name
     `
@@ -223,7 +225,7 @@ func (d *Datastore) GetAllConnections(ctx context.Context) ([]ConnectionListItem
 	var connections []ConnectionListItem
 	for rows.Next() {
 		var conn ConnectionListItem
-		if err := rows.Scan(&conn.ID, &conn.Name, &conn.Host, &conn.Port, &conn.DatabaseName, &conn.IsMonitored); err != nil {
+		if err := rows.Scan(&conn.ID, &conn.Name, &conn.Description, &conn.Host, &conn.Port, &conn.DatabaseName, &conn.IsMonitored); err != nil {
 			return nil, fmt.Errorf("failed to scan connection: %w", err)
 		}
 		connections = append(connections, conn)
@@ -242,7 +244,7 @@ func (d *Datastore) GetConnection(ctx context.Context, id int) (*MonitoredConnec
 	defer d.mu.RUnlock()
 
 	query := `
-        SELECT id, name, host, hostaddr, port, database_name, username,
+        SELECT id, name, description, host, hostaddr, port, database_name, username,
                password_encrypted, sslmode, sslcert, sslkey, sslrootcert,
                owner_username, owner_token, is_monitored, is_shared
         FROM connections
@@ -251,7 +253,7 @@ func (d *Datastore) GetConnection(ctx context.Context, id int) (*MonitoredConnec
 
 	var conn MonitoredConnection
 	err := d.pool.QueryRow(ctx, query, id).Scan(
-		&conn.ID, &conn.Name, &conn.Host, &conn.HostAddr, &conn.Port,
+		&conn.ID, &conn.Name, &conn.Description, &conn.Host, &conn.HostAddr, &conn.Port,
 		&conn.DatabaseName, &conn.Username, &conn.PasswordEncrypted,
 		&conn.SSLMode, &conn.SSLCert, &conn.SSLKey, &conn.SSLRootCert,
 		&conn.OwnerUsername, &conn.OwnerToken, &conn.IsMonitored, &conn.IsShared,
@@ -294,14 +296,14 @@ func (d *Datastore) UpdateConnectionName(ctx context.Context, id int, name strin
         UPDATE connections
         SET name = $2
         WHERE id = $1
-        RETURNING id, name, host, hostaddr, port, database_name, username,
+        RETURNING id, name, description, host, hostaddr, port, database_name, username,
                   password_encrypted, sslmode, sslcert, sslkey, sslrootcert,
                   owner_username, owner_token, is_monitored, is_shared
     `
 
 	var conn MonitoredConnection
 	err := d.pool.QueryRow(ctx, query, id, name).Scan(
-		&conn.ID, &conn.Name, &conn.Host, &conn.HostAddr, &conn.Port,
+		&conn.ID, &conn.Name, &conn.Description, &conn.Host, &conn.HostAddr, &conn.Port,
 		&conn.DatabaseName, &conn.Username, &conn.PasswordEncrypted,
 		&conn.SSLMode, &conn.SSLCert, &conn.SSLKey, &conn.SSLRootCert,
 		&conn.OwnerUsername, &conn.OwnerToken, &conn.IsMonitored, &conn.IsShared,
@@ -316,6 +318,7 @@ func (d *Datastore) UpdateConnectionName(ctx context.Context, id int, name strin
 // ConnectionCreateParams contains parameters for creating a new connection
 type ConnectionCreateParams struct {
 	Name          string
+	Description   *string
 	Host          string
 	HostAddr      *string
 	Port          int
@@ -351,23 +354,23 @@ func (d *Datastore) CreateConnection(ctx context.Context, params ConnectionCreat
 
 	query := `
         INSERT INTO connections (
-            name, host, hostaddr, port, database_name, username,
+            name, description, host, hostaddr, port, database_name, username,
             password_encrypted, sslmode, sslcert, sslkey, sslrootcert,
             owner_username, is_shared, is_monitored
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-        RETURNING id, name, host, hostaddr, port, database_name, username,
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        RETURNING id, name, description, host, hostaddr, port, database_name, username,
                   password_encrypted, sslmode, sslcert, sslkey, sslrootcert,
                   owner_username, owner_token, is_monitored, is_shared
     `
 
 	var conn MonitoredConnection
 	err := d.pool.QueryRow(ctx, query,
-		params.Name, params.Host, params.HostAddr, params.Port, params.DatabaseName,
-		params.Username, encryptedPassword, params.SSLMode, params.SSLCert,
-		params.SSLKey, params.SSLRootCert, params.OwnerUsername, params.IsShared,
-		params.IsMonitored,
+		params.Name, params.Description, params.Host, params.HostAddr, params.Port,
+		params.DatabaseName, params.Username, encryptedPassword, params.SSLMode,
+		params.SSLCert, params.SSLKey, params.SSLRootCert, params.OwnerUsername,
+		params.IsShared, params.IsMonitored,
 	).Scan(
-		&conn.ID, &conn.Name, &conn.Host, &conn.HostAddr, &conn.Port,
+		&conn.ID, &conn.Name, &conn.Description, &conn.Host, &conn.HostAddr, &conn.Port,
 		&conn.DatabaseName, &conn.Username, &conn.PasswordEncrypted,
 		&conn.SSLMode, &conn.SSLCert, &conn.SSLKey, &conn.SSLRootCert,
 		&conn.OwnerUsername, &conn.OwnerToken, &conn.IsMonitored, &conn.IsShared,
@@ -402,6 +405,7 @@ func (d *Datastore) DeleteConnection(ctx context.Context, id int) error {
 // Only non-nil fields will be updated
 type ConnectionUpdateParams struct {
 	Name         *string
+	Description  *string
 	Host         *string
 	HostAddr     *string
 	Port         *int
@@ -430,6 +434,11 @@ func (d *Datastore) UpdateConnectionFull(ctx context.Context, id int, params Con
 	if params.Name != nil {
 		setClauses = append(setClauses, fmt.Sprintf("name = $%d", argNum))
 		args = append(args, *params.Name)
+		argNum++
+	}
+	if params.Description != nil {
+		setClauses = append(setClauses, fmt.Sprintf("description = $%d", argNum))
+		args = append(args, *params.Description)
 		argNum++
 	}
 	if params.Host != nil {
@@ -507,14 +516,14 @@ func (d *Datastore) UpdateConnectionFull(ctx context.Context, id int, params Con
         UPDATE connections
         SET %s
         WHERE id = $%d
-        RETURNING id, name, host, hostaddr, port, database_name, username,
+        RETURNING id, name, description, host, hostaddr, port, database_name, username,
                   password_encrypted, sslmode, sslcert, sslkey, sslrootcert,
                   owner_username, owner_token, is_monitored, is_shared
     `, strings.Join(setClauses, ", "), argNum)
 
 	var conn MonitoredConnection
 	err := d.pool.QueryRow(ctx, query, args...).Scan(
-		&conn.ID, &conn.Name, &conn.Host, &conn.HostAddr, &conn.Port,
+		&conn.ID, &conn.Name, &conn.Description, &conn.Host, &conn.HostAddr, &conn.Port,
 		&conn.DatabaseName, &conn.Username, &conn.PasswordEncrypted,
 		&conn.SSLMode, &conn.SSLCert, &conn.SSLKey, &conn.SSLRootCert,
 		&conn.OwnerUsername, &conn.OwnerToken, &conn.IsMonitored, &conn.IsShared,
@@ -1572,6 +1581,7 @@ func (d *Datastore) AssignConnectionToCluster(ctx context.Context, connectionID 
 type TopologyServerInfo struct {
 	ID               int                  `json:"id"`
 	Name             string               `json:"name"`
+	Description      string               `json:"description"`
 	Host             string               `json:"host"`
 	Port             int                  `json:"port"`
 	Status           string               `json:"status"`
@@ -1612,6 +1622,7 @@ type TopologyGroup struct {
 type connectionWithRole struct {
 	ID                 int
 	Name               string
+	Description        sql.NullString
 	Host               string
 	Port               int
 	OwnerUsername      sql.NullString
@@ -1761,7 +1772,7 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
             WHERE status = 'active'
             GROUP BY connection_id
         )
-        SELECT c.id, c.name, c.host, c.port, c.owner_username,
+        SELECT c.id, c.name, c.description, c.host, c.port, c.owner_username,
                c.database_name, c.username,
                lsi.server_version,
                loi.os_name,
@@ -1801,7 +1812,7 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
 	for rows.Next() {
 		var conn connectionWithRole
 		if err := rows.Scan(
-			&conn.ID, &conn.Name, &conn.Host, &conn.Port, &conn.OwnerUsername,
+			&conn.ID, &conn.Name, &conn.Description, &conn.Host, &conn.Port, &conn.OwnerUsername,
 			&conn.DatabaseName, &conn.Username,
 			&conn.Version,
 			&conn.OS,
@@ -2099,7 +2110,7 @@ func (d *Datastore) getServersInClusterWithRolesInternal(ctx context.Context, cl
             WHERE status = 'active'
             GROUP BY connection_id
         )
-        SELECT c.id, c.name, c.host, c.port, c.owner_username, c.role,
+        SELECT c.id, c.name, c.description, c.host, c.port, c.owner_username, c.role,
                c.database_name, c.username,
                lsi.server_version,
                loi.os_name,
@@ -2127,14 +2138,17 @@ func (d *Datastore) getServersInClusterWithRolesInternal(ctx context.Context, cl
 	var servers []TopologyServerInfo
 	for rows.Next() {
 		var s TopologyServerInfo
-		var ownerUsername, role, version, osName, spockNodeName sql.NullString
-		if err := rows.Scan(&s.ID, &s.Name, &s.Host, &s.Port, &ownerUsername, &role,
+		var ownerUsername, description, role, version, osName, spockNodeName sql.NullString
+		if err := rows.Scan(&s.ID, &s.Name, &description, &s.Host, &s.Port, &ownerUsername, &role,
 			&s.DatabaseName, &s.Username, &version, &osName, &spockNodeName,
 			&s.PrimaryRole, &s.Status, &s.ActiveAlertCount); err != nil {
 			return nil, fmt.Errorf("failed to scan server: %w", err)
 		}
 		if ownerUsername.Valid {
 			s.OwnerUsername = ownerUsername.String
+		}
+		if description.Valid {
+			s.Description = description.String
 		}
 		if role.Valid {
 			s.Role = role.String
@@ -2454,9 +2468,14 @@ func (d *Datastore) groupLogicalReplicationByPublisher(
 		if publisher.SpockVersion.Valid {
 			pubSpockVersion = publisher.SpockVersion.String
 		}
+		pubDescription := ""
+		if publisher.Description.Valid {
+			pubDescription = publisher.Description.String
+		}
 		pubServer := TopologyServerInfo{
 			ID:               publisher.ID,
 			Name:             publisher.Name,
+			Description:      pubDescription,
 			Host:             publisher.Host,
 			Port:             publisher.Port,
 			Status:           publisher.Status,
@@ -2497,9 +2516,14 @@ func (d *Datastore) groupLogicalReplicationByPublisher(
 			if sub.SpockVersion.Valid {
 				subSpockVersion = sub.SpockVersion.String
 			}
+			subDescription := ""
+			if sub.Description.Valid {
+				subDescription = sub.Description.String
+			}
 			subServer := TopologyServerInfo{
 				ID:               sub.ID,
 				Name:             sub.Name,
+				Description:      subDescription,
 				Host:             sub.Host,
 				Port:             sub.Port,
 				Status:           sub.Status,
@@ -2587,9 +2611,15 @@ func (d *Datastore) buildServerWithChildren(
 		spockVersion = conn.SpockVersion.String
 	}
 
+	description := ""
+	if conn.Description.Valid {
+		description = conn.Description.String
+	}
+
 	server := TopologyServerInfo{
 		ID:               conn.ID,
 		Name:             conn.Name,
+		Description:      description,
 		Host:             conn.Host,
 		Port:             conn.Port,
 		Status:           conn.Status,

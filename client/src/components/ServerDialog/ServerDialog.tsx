@@ -86,6 +86,7 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
             if (isEditMode && server) {
                 setFormData({
                     name: server.name || '',
+                    description: server.description || '',
                     host: server.host || '',
                     port: server.port || 5432,
                     database: server.database_name || '',
@@ -200,7 +201,7 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
                                 color: 'text.primary',
                             }}
                         >
-                            Edit Server
+                            Server Settings: {server?.name}
                         </Typography>
                     </Toolbar>
                 </AppBar>
@@ -213,7 +214,7 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
                         borderColor: 'divider',
                     }}
                 >
-                    <Tab label="Connection" />
+                    <Tab label="Details" />
                     <Tab label="Alert overrides" />
                     <Tab label="Probe configuration" />
                     <Tab label="Notification channels" />

@@ -25,6 +25,7 @@ export const SSL_MODES = [
  */
 export interface ServerFormData {
     name: string;
+    description: string;
     host: string;
     port: number | string;
     database: string;
@@ -44,6 +45,7 @@ export interface ServerFormData {
 export interface ServerEditData {
     id?: number;
     name?: string;
+    description?: string;
     host?: string;
     port?: number;
     database_name?: string;
@@ -74,6 +76,7 @@ export interface ServerDialogProps {
  */
 export const getDefaultFormData = (): ServerFormData => ({
     name: '',
+    description: '',
     host: '',
     port: 5432,
     database: 'postgres',

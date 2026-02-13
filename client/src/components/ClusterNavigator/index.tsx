@@ -320,7 +320,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
     const [deleteTarget, setDeleteTarget] = useState<{ type: string; item: { id: number | string; name?: string } } | null>(null);
     const [deleteLoading, setDeleteLoading] = useState(false);
     const [clusterConfigOpen, setClusterConfigOpen] = useState(false);
-    const [configCluster, setConfigCluster] = useState<{ id: number; name: string } | null>(null);
+    const [configCluster, setConfigCluster] = useState<{ id: number; name: string; description?: string } | null>(null);
 
     // Drag and drop state
     const [activeDragItem, setActiveDragItem] = useState<Cluster | null>(null);
@@ -434,6 +434,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
         createGroup,
         deleteGroup,
         moveClusterToGroup,
+        fetchClusterData,
         autoRefreshEnabled,
         setAutoRefreshEnabled,
         lastRefresh,
@@ -520,9 +521,32 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
     const handleConfigureCluster = (cluster: Cluster) => {
         const numericId = parseInt(cluster.id.replace('cluster-', ''), 10);
         if (!isNaN(numericId)) {
-            setConfigCluster({ id: numericId, name: cluster.name });
+            setConfigCluster({ id: numericId, name: cluster.name, description: cluster.description });
             setClusterConfigOpen(true);
         }
+    };
+
+    // Handler for saving cluster details (name and description)
+    const handleClusterConfigSave = async (saveData: { name: string; description: string }) => {
+        if (!configCluster) {return;}
+
+        const response = await fetch(`/api/v1/clusters/${configCluster.id}`, {
+            method: 'PUT',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                name: saveData.name,
+                description: saveData.description,
+            }),
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || 'Failed to update cluster');
+        }
+
+        // Refresh cluster data to reflect the change
+        await fetchClusterData();
     };
 
     // Handler for confirming delete
@@ -943,6 +967,8 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
                     }}
                     clusterId={configCluster.id}
                     clusterName={configCluster.name}
+                    clusterDescription={configCluster.description}
+                    onSave={handleClusterConfigSave}
                 />
             )}
 

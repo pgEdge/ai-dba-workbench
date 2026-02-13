@@ -2784,6 +2784,20 @@ func (sm *SchemaManager) registerMigrations() {
 			return err
 		},
 	})
+
+	// Migration #18: Add description column to connections table
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     18,
+		Description: "Add description column to connections table",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+			_, err := tx.Exec(ctx, `
+				ALTER TABLE connections ADD COLUMN IF NOT EXISTS description TEXT DEFAULT '';
+				COMMENT ON COLUMN connections.description IS 'User-provided description';
+			`)
+			return err
+		},
+	})
 }
 
 // Migrate applies all pending migrations

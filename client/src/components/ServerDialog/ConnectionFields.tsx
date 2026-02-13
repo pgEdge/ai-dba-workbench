@@ -35,9 +35,9 @@ const ConnectionFields: React.FC<ConnectionFieldsProps> = ({
     isSaving,
     onFieldChange,
 }) => {
-    const fields = (
+    return (
         <>
-            {/* Name field */}
+            {/* Name field - above section heading */}
             <TextField
                 autoFocus
                 fullWidth
@@ -51,6 +51,24 @@ const ConnectionFields: React.FC<ConnectionFieldsProps> = ({
                 margin="dense"
                 sx={textFieldSx}
             />
+
+            {/* Description field - optional */}
+            <TextField
+                fullWidth
+                multiline
+                minRows={2}
+                label="Description"
+                value={formData.description}
+                onChange={(e) => onFieldChange('description', e.target.value)}
+                disabled={isSaving}
+                margin="dense"
+                sx={textFieldSx}
+            />
+
+            {/* Connection Details Section Label */}
+            <Typography variant="subtitle2" sx={sectionLabelSx}>
+                Connection Details
+            </Typography>
 
             {/* Host and Port side by side */}
             <Box sx={{ display: 'flex', gap: 2, mt: 1 }}>
@@ -129,16 +147,6 @@ const ConnectionFields: React.FC<ConnectionFieldsProps> = ({
                     sx={{ flex: 1, ...textFieldSx }}
                 />
             </Box>
-        </>
-    );
-
-    return (
-        <>
-            {/* Connection Details Section Label */}
-            <Typography variant="subtitle2" sx={sectionLabelSx}>
-                Connection Details
-            </Typography>
-            {fields}
         </>
     );
 };

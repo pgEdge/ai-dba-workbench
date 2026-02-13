@@ -78,6 +78,7 @@ export const prepareSaveData = (
         ssl_cert_path: formData.ssl_cert_path.trim(),
         ssl_key_path: formData.ssl_key_path.trim(),
         ssl_root_cert_path: formData.ssl_root_cert_path.trim(),
+        description: formData.description.trim(),
         is_monitored: formData.is_monitored,
         is_shared: formData.is_shared,
     };

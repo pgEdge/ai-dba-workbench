@@ -80,9 +80,16 @@ const SelectionHeader = ({ selection, alertCount = 0, onBlackoutClick }) => {
                 <Typography variant="overline" sx={HEADER_LABEL_SX}>
                     {getLabel()}
                 </Typography>
-                <Typography variant="h5" sx={HEADER_NAME_SX}>
-                    {selection.name}
-                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1.5 }}>
+                    <Typography variant="h5" sx={HEADER_NAME_SX}>
+                        {selection.name}
+                    </Typography>
+                    {selection.description && (
+                        <Typography variant="body2" sx={{ color: 'text.secondary', fontWeight: 400 }}>
+                            {selection.description}
+                        </Typography>
+                    )}
+                </Box>
             </Box>
             <Tooltip title="Blackout management" placement="bottom">
                 <IconButton

@@ -159,6 +159,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ mode, onToggleTheme }) => {
                 type: 'server',
                 id: selectedServer.id,
                 name: selectedServer.name,
+                description: selectedServer.description || '',
                 status: selectedServer.status || 'unknown',
                 host: selectedServer.host,
                 port: selectedServer.port,
@@ -193,6 +194,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ mode, onToggleTheme }) => {
                 type: 'cluster',
                 id: selectedCluster.id,
                 name: selectedCluster.name,
+                description: selectedCluster.description || '',
                 servers: servers,
                 serverIds: serverIds,
                 status: servers.every(s => s.status === 'offline') && servers.length > 0

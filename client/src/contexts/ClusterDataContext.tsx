@@ -14,6 +14,7 @@ import { useAuth } from './AuthContext';
 export interface ClusterServer {
     id: number;
     name: string;
+    description?: string;
     host?: string;
     port?: number;
     status: string;
@@ -27,6 +28,7 @@ export interface ClusterServer {
 export interface ClusterEntry {
     id: string;
     name: string;
+    description?: string;
     servers: ClusterServer[];
     isStandalone?: boolean;
     auto_cluster_key?: string;
@@ -55,6 +57,7 @@ interface ClusterDataProviderProps {
 interface ConnectionRecord {
     id: number;
     name: string;
+    description?: string;
     host: string;
     port: number;
     status?: string;
@@ -143,6 +146,7 @@ export const transformConnectionsToHierarchy = (connections: ConnectionRecord[])
                 cluster.servers.push({
                     id: conn.id,
                     name: conn.name,
+                    description: conn.description || '',
                     host: conn.host,
                     port: conn.port,
                     status: conn.status || 'unknown',
@@ -160,6 +164,7 @@ export const transformConnectionsToHierarchy = (connections: ConnectionRecord[])
                 servers: [{
                     id: conn.id,
                     name: conn.name,
+                    description: conn.description || '',
                     host: conn.host,
                     port: conn.port,
                     status: conn.status || 'unknown',

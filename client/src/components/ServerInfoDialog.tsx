@@ -625,19 +625,8 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
                             color: 'text.primary',
                         }}
                     >
-                        Server Information
+                        Server Information: {serverName}
                     </Typography>
-                    {serverName && (
-                        <Typography
-                            sx={{
-                                fontSize: '0.875rem',
-                                color: 'text.secondary',
-                                fontFamily: MONO_FONT,
-                            }}
-                        >
-                            {serverName}
-                        </Typography>
-                    )}
                 </Toolbar>
             </AppBar>
             <Box sx={getContentSx(theme)}>

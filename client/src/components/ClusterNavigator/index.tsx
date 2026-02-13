@@ -512,7 +512,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
         const numericId = parseInt(groupId.replace('group-', ''), 10);
         setEditingGroup({ ...group, id: numericId });
         setGroupDialogMode('edit');
-        setGroupDialogInitialTab(1);
+        setGroupDialogInitialTab(0);
         setGroupDialogOpen(true);
     };
 

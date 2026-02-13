@@ -347,7 +347,7 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
                 </Tabs>
                 <Box sx={{ flex: 1, overflow: 'auto', p: 3, bgcolor: 'background.default' }}>
                     {activeTab === 0 && (
-                        <Box sx={{ maxWidth: 600 }}>
+                        <Box sx={{ maxWidth: 600, mx: 'auto', display: 'flex', flexDirection: 'column', gap: 2.5 }}>
                             <form onSubmit={handleSubmit} noValidate>
                                 {formContent}
                                 <Box sx={{

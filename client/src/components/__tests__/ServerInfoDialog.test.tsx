@@ -607,8 +607,8 @@ describe('ServerInfoDialog', () => {
                 expect(screen.getByText('Server Information')).toBeInTheDocument();
             });
 
-            // Click the Close button in the footer
-            fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+            // Click the close button in the app bar
+            fireEvent.click(screen.getByRole('button', { name: 'close server info' }));
 
             expect(onClose).toHaveBeenCalledTimes(1);
         });

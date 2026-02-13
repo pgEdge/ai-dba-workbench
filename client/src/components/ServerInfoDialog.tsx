@@ -17,21 +17,20 @@ import {
     Box,
     Typography,
     Dialog,
-    DialogTitle,
-    DialogContent,
-    DialogActions,
-    Button,
+    AppBar,
+    Toolbar,
     IconButton,
     alpha,
     Skeleton,
     Collapse,
     Fade,
     LinearProgress,
+    Slide,
 } from '@mui/material';
 import { useTheme, Theme } from '@mui/material/styles';
+import { TransitionProps } from '@mui/material/transitions';
 import {
     Close as CloseIcon,
-    Storage as StorageIcon,
     Memory as MemoryIcon,
     Dns as DnsIcon,
 Tune as TuneIcon,
@@ -41,6 +40,13 @@ Tune as TuneIcon,
     Computer as ComputerIcon,
 } from '@mui/icons-material';
 import { apiGet } from '../utils/apiClient';
+
+const Transition = React.forwardRef(function Transition(
+    props: TransitionProps & { children: React.ReactElement },
+    ref: React.Ref<unknown>,
+) {
+    return <Slide direction="up" ref={ref} {...props} />;
+});
 
 // ---------------------------------------------------------------------------
 // Types matching the server API response
@@ -134,6 +140,7 @@ interface ServerInfoDialogProps {
 // ---------------------------------------------------------------------------
 
 const MONO_FONT = '"JetBrains Mono", "SF Mono", monospace';
+const SECTION_STATE_KEY = 'serverInfoSectionState';
 
 function formatBytes(bytes: number | null | undefined): string {
     if (bytes == null || bytes === 0) return '—';
@@ -165,50 +172,9 @@ function pct(used: number | null, total: number | null): number | null {
 
 const sxMono = { fontFamily: MONO_FONT };
 
-const getDialogPaperSx = (theme: Theme) => ({
-    bgcolor: theme.palette.mode === 'dark'
-        ? theme.palette.background.default
-        : theme.palette.grey[50],
-    backgroundImage: 'none',
-    borderRadius: 2,
-    border: '1px solid',
-    borderColor: theme.palette.mode === 'dark'
-        ? theme.palette.divider
-        : theme.palette.grey[200],
-    boxShadow: theme.palette.mode === 'dark'
-        ? '0 25px 50px -12px rgba(0, 0, 0, 0.5)'
-        : '0 25px 50px -12px rgba(0, 0, 0, 0.15)',
-    maxHeight: '85vh',
-});
-
-const getDialogTitleSx = (theme: Theme) => ({
-    display: 'flex',
-    alignItems: 'center',
-    gap: 1.5,
-    pb: 1.5,
-    borderBottom: '1px solid',
-    borderColor: theme.palette.divider,
-    bgcolor: theme.palette.mode === 'dark'
-        ? alpha(theme.palette.background.paper, 0.5)
-        : theme.palette.background.paper,
-});
-
-const getIconBoxSx = (theme: Theme) => ({
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: 40,
-    height: 40,
-    borderRadius: 1.5,
-    bgcolor: alpha(
-        theme.palette.primary.main,
-        theme.palette.mode === 'dark' ? 0.15 : 0.1
-    ),
-    flexShrink: 0,
-});
-
 const getContentSx = (theme: Theme) => ({
-    p: 0,
+    flex: 1,
+    overflow: 'auto',
     bgcolor: theme.palette.mode === 'dark'
         ? theme.palette.background.default
         : theme.palette.grey[50],
@@ -353,36 +319,47 @@ const getSettingRowSx = (theme: Theme) => ({
     '&:last-child': { borderBottom: 'none' },
 });
 
-const getFooterSx = (theme: Theme) => ({
-    px: 2.5,
-    py: 1.5,
-    borderTop: '1px solid',
-    borderColor: theme.palette.divider,
-    bgcolor: theme.palette.mode === 'dark'
-        ? alpha(theme.palette.background.paper, 0.5)
-        : theme.palette.background.paper,
-});
-
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
 
 /** Collapsible section wrapper */
 const Section: React.FC<{
+    sectionId: string;
     icon: React.ReactNode;
     title: string;
     defaultOpen?: boolean;
     children: React.ReactNode;
     badge?: string;
-}> = ({ icon, title, defaultOpen = true, children, badge }) => {
+}> = ({ sectionId, icon, title, defaultOpen = true, children, badge }) => {
     const theme = useTheme();
-    const [open, setOpen] = useState(defaultOpen);
+    const [open, setOpen] = useState(() => {
+        try {
+            const stored = localStorage.getItem(SECTION_STATE_KEY);
+            if (stored) {
+                const state = JSON.parse(stored);
+                if (sectionId in state) return state[sectionId];
+            }
+        } catch { /* ignore */ }
+        return defaultOpen;
+    });
+
+    const handleToggle = () => {
+        const next = !open;
+        setOpen(next);
+        try {
+            const stored = localStorage.getItem(SECTION_STATE_KEY);
+            const state = stored ? JSON.parse(stored) : {};
+            state[sectionId] = next;
+            localStorage.setItem(SECTION_STATE_KEY, JSON.stringify(state));
+        } catch { /* ignore */ }
+    };
 
     return (
         <Box>
             <Box
                 sx={getSectionHeaderSx(theme)}
-                onClick={() => setOpen(!open)}
+                onClick={handleToggle}
             >
                 {icon}
                 <Typography sx={getSectionTitleSx()}>
@@ -616,56 +593,54 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
 
     return (
         <Dialog
+            fullScreen
             open={open}
             onClose={onClose}
-            maxWidth="md"
-            fullWidth
-            PaperProps={{ sx: getDialogPaperSx(theme) }}
+            TransitionComponent={Transition}
         >
-            {/* Header */}
-            <DialogTitle sx={getDialogTitleSx(theme)}>
-                <Box sx={getIconBoxSx(theme)}>
-                    <StorageIcon sx={{
-                        fontSize: 22,
-                        color: theme.palette.mode === 'dark'
-                            ? theme.palette.primary.light
-                            : theme.palette.primary.main,
-                    }} />
-                </Box>
-                <Box sx={{ flex: 1, minWidth: 0 }}>
-                    <Typography sx={{
-                        fontWeight: 600,
-                        color: 'text.primary',
-                        fontSize: '1.0625rem',
-                        lineHeight: 1.3,
-                    }}>
+            <AppBar
+                position="static"
+                elevation={0}
+                sx={{
+                    bgcolor: 'background.paper',
+                    borderBottom: '1px solid',
+                    borderColor: 'divider',
+                }}
+            >
+                <Toolbar>
+                    <IconButton
+                        edge="start"
+                        onClick={onClose}
+                        aria-label="close server info"
+                        sx={{ color: 'text.secondary', mr: 2 }}
+                    >
+                        <CloseIcon />
+                    </IconButton>
+                    <Typography
+                        variant="h6"
+                        component="div"
+                        sx={{
+                            flexGrow: 1,
+                            fontWeight: 600,
+                            color: 'text.primary',
+                        }}
+                    >
                         Server Information
                     </Typography>
-                    <Typography sx={{
-                        fontSize: '0.875rem',
-                        color: 'text.secondary',
-                        ...sxMono,
-                        mt: 0.125,
-                    }}>
-                        {serverName}
-                    </Typography>
-                </Box>
-                <IconButton
-                    onClick={onClose}
-                    size="small"
-                    sx={{
-                        color: 'text.secondary',
-                        '&:hover': {
-                            bgcolor: alpha(theme.palette.grey[400], 0.1),
-                        },
-                    }}
-                >
-                    <CloseIcon sx={{ fontSize: 20 }} />
-                </IconButton>
-            </DialogTitle>
-
-            {/* Content */}
-            <DialogContent sx={getContentSx(theme)}>
+                    {serverName && (
+                        <Typography
+                            sx={{
+                                fontSize: '0.875rem',
+                                color: 'text.secondary',
+                                fontFamily: MONO_FONT,
+                            }}
+                        >
+                            {serverName}
+                        </Typography>
+                    )}
+                </Toolbar>
+            </AppBar>
+            <Box sx={getContentSx(theme)}>
                 {loading && <LoadingSkeleton />}
 
                 {error && !loading && (
@@ -685,6 +660,7 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
                             {/* System & Hardware */}
                             {hasSystem && (
                                 <Section
+                                    sectionId="system"
                                     icon={<ComputerIcon sx={getSectionIconSx(theme)} />}
                                     title="System & Hardware"
                                 >
@@ -786,6 +762,7 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
                             {/* PostgreSQL */}
                             {pg && (
                                 <Section
+                                    sectionId="postgresql"
                                     icon={<DnsIcon sx={getSectionIconSx(theme)} />}
                                     title="PostgreSQL"
                                 >
@@ -815,6 +792,7 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
                             {/* Databases with AI Analysis */}
                             {dbs && dbs.length > 0 && (
                                 <Section
+                                    sectionId="databases"
                                     icon={<MemoryIcon sx={getSectionIconSx(theme)} />}
                                     title="Databases"
                                     badge={`${dbs.length}`}
@@ -938,10 +916,10 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
                             {/* Key Settings */}
                             {settingsByCategory && (
                                 <Section
+                                    sectionId="configuration"
                                     icon={<TuneIcon sx={getSectionIconSx(theme)} />}
                                     title="Configuration"
                                     badge={`${settings?.length || 0}`}
-                                    defaultOpen={false}
                                 >
                                     {Object.entries(settingsByCategory).map(([category, catSettings]) => (
                                         <Box key={category} sx={{ mb: 1.5, '&:last-child': { mb: 0 } }}>
@@ -989,37 +967,37 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
                                     ))}
                                 </Section>
                             )}
+
+                            {/* Footer metadata */}
+                            {data.collected_at && (
+                                <Box sx={{
+                                    px: 2.5,
+                                    py: 1.5,
+                                    borderTop: '1px solid',
+                                    borderColor: theme.palette.divider,
+                                    bgcolor: theme.palette.mode === 'dark'
+                                        ? alpha(theme.palette.background.paper, 0.5)
+                                        : theme.palette.background.paper,
+                                }}>
+                                    <Typography sx={{
+                                        fontSize: '0.875rem',
+                                        color: 'text.disabled',
+                                    }}>
+                                        Data collected {new Date(data.collected_at).toLocaleString(undefined, {
+                                            month: 'short',
+                                            day: 'numeric',
+                                            year: 'numeric',
+                                            hour: '2-digit',
+                                            minute: '2-digit',
+                                            second: '2-digit',
+                                        })}
+                                    </Typography>
+                                </Box>
+                            )}
                         </Box>
                     </Fade>
                 )}
-            </DialogContent>
-
-            {/* Footer */}
-            <DialogActions sx={getFooterSx(theme)}>
-                {data?.collected_at && (
-                    <Typography sx={{
-                        fontSize: '0.875rem',
-                        color: 'text.disabled',
-                        mr: 'auto',
-                    }}>
-                        Data collected {new Date(data.collected_at).toLocaleString(undefined, {
-                            month: 'short',
-                            day: 'numeric',
-                            year: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                            second: '2-digit',
-                        })}
-                    </Typography>
-                )}
-                <Button
-                    onClick={onClose}
-                    variant="contained"
-                    size="small"
-                >
-                    Close
-                </Button>
-            </DialogActions>
+            </Box>
         </Dialog>
     );
 };

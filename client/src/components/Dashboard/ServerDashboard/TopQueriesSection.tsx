@@ -244,7 +244,7 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
                     color="text.secondary"
                     sx={{ textAlign: 'center', py: 3 }}
                 >
-                    No query statistics available
+                    No query statistics available. Is the pg_stat_statements extension installed?
                 </Typography>
             )}
 

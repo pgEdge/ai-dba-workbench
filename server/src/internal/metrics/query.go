@@ -183,8 +183,9 @@ func QuoteIdentifier(name string) string {
 }
 
 // GetProbeMetricColumns discovers numeric metric columns for a probe table
-// in the metrics schema.
-func GetProbeMetricColumns(ctx context.Context, pool *pgxpool.Pool, probeName string) ([]string, error) {
+// in the metrics schema. It returns the column names and a map from column
+// name to its PostgreSQL data type.
+func GetProbeMetricColumns(ctx context.Context, pool *pgxpool.Pool, probeName string) ([]string, map[string]string, error) {
 	query := `
         SELECT column_name, data_type
         FROM information_schema.columns
@@ -195,22 +196,24 @@ func GetProbeMetricColumns(ctx context.Context, pool *pgxpool.Pool, probeName st
 
 	rows, err := pool.Query(ctx, query, probeName)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer rows.Close()
 
 	var metricCols []string
+	colTypes := make(map[string]string)
 	for rows.Next() {
 		var name, dataType string
 		if err := rows.Scan(&name, &dataType); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if IsMetricColumn(name, dataType) {
 			metricCols = append(metricCols, name)
+			colTypes[name] = dataType
 		}
 	}
 
-	return metricCols, rows.Err()
+	return metricCols, colTypes, rows.Err()
 }
 
 // GetAggSelectCols returns aggregated SELECT expressions with quoted
@@ -241,11 +244,32 @@ func GetQuotedSelectCols(metricCols []string) []string {
 	return cols
 }
 
+// GetCoalescedSelectCols returns column expressions qualified with a
+// table alias, wrapped in COALESCE to replace NULLs with a zero value.
+// For interval columns the default is '0 seconds'::interval; for all
+// other numeric types the default is 0.  This ensures LEFT JOIN gaps
+// produce zero values instead of NULLs.
+func GetCoalescedSelectCols(metricCols []string, tableAlias string, colTypes map[string]string) []string {
+	var cols []string
+	for _, col := range metricCols {
+		qualified := tableAlias + "." + QuoteIdentifier(col)
+		defaultVal := "0"
+		if colTypes[col] == "interval" {
+			defaultVal = "'0 seconds'::interval"
+		}
+		cols = append(cols, "COALESCE("+qualified+", "+defaultVal+") AS "+QuoteIdentifier(col))
+	}
+	return cols
+}
+
 // BuildMetricsQuery constructs a time-bucketed aggregation SQL query for
-// the given probe, columns, connection, time range, and filters.
+// the given probe, columns, connection, time range, and filters. The
+// colTypes map provides each column's PostgreSQL data type so that the
+// COALESCE default can match (e.g. interval vs numeric).
 func BuildMetricsQuery(
 	probeName string,
 	metricCols []string,
+	colTypes map[string]string,
 	connectionID int,
 	timeStart, timeEnd time.Time,
 	buckets int,
@@ -295,24 +319,28 @@ func BuildMetricsQuery(
 	}
 
 	query := fmt.Sprintf(`
-        WITH buckets AS (
+        WITH data_buckets AS (
             SELECT
                 date_bin($1::interval, collected_at, $3) AS bucket_time,
                 %s
             FROM metrics.%s
             WHERE %s
             GROUP BY date_bin($1::interval, collected_at, $3)
+        ),
+        all_buckets AS (
+            SELECT generate_series($3::timestamptz, $4::timestamptz, $1::interval) AS bucket_time
         )
         SELECT
-            bucket_time,
+            all_buckets.bucket_time,
             %s
-        FROM buckets
-        ORDER BY bucket_time
+        FROM all_buckets
+        LEFT JOIN data_buckets ON all_buckets.bucket_time = data_buckets.bucket_time
+        ORDER BY all_buckets.bucket_time
     `,
 		strings.Join(GetAggSelectCols(metricCols, aggregation), ", "),
 		QuoteIdentifier(probeName),
 		strings.Join(whereClauses, " AND "),
-		strings.Join(GetQuotedSelectCols(metricCols), ", "),
+		strings.Join(GetCoalescedSelectCols(metricCols, "data_buckets", colTypes), ", "),
 	)
 
 	return query, queryArgs, nil
@@ -357,7 +385,7 @@ func QueryTimeSeries(
 	}
 
 	// Discover metric columns
-	metricCols, err := GetProbeMetricColumns(ctx, pool, probeName)
+	metricCols, colTypes, err := GetProbeMetricColumns(ctx, pool, probeName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get probe columns: %w", err)
 	}
@@ -396,7 +424,7 @@ func QueryTimeSeries(
 
 	for _, connID := range connectionIDs {
 		query, queryArgs, err := BuildMetricsQuery(
-			probeName, metricCols, connID, timeStart, timeEnd,
+			probeName, metricCols, colTypes, connID, timeStart, timeEnd,
 			buckets, aggregation, filters)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build query: %w", err)
@@ -654,16 +682,18 @@ func toFloat64(v interface{}) (float64, bool) {
 		return f.Float64, true
 	case pgtype.Interval:
 		if !val.Valid {
-			return 0, false
+			// NULL interval means no lag reported; treat as zero
+			return 0, true
 		}
 		// Convert interval to total seconds
 		return float64(val.Microseconds) / 1_000_000.0, true
 	case *pgtype.Interval:
 		if val == nil {
-			return 0, false
+			return 0, true
 		}
 		if !val.Valid {
-			return 0, false
+			// NULL interval means no lag reported; treat as zero
+			return 0, true
 		}
 		return float64(val.Microseconds) / 1_000_000.0, true
 	default:

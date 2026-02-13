@@ -16,7 +16,6 @@ import HealthOverviewSection from './HealthOverviewSection';
 import KpiTilesSection from './KpiTilesSection';
 import ClusterCardsSection from './ClusterCardsSection';
 import HotSpotsSection from './HotSpotsSection';
-import EventTimeline from '../../EventTimeline';
 
 /**
  * Extract all server IDs from an estate selection by traversing
@@ -77,10 +76,6 @@ const EstateDashboard: React.FC<BaseDashboardProps> = ({ selection }) => {
                     selection={selection}
                     serverIds={serverIds}
                 />
-            </CollapsibleSection>
-
-            <CollapsibleSection title="Event Timeline" defaultExpanded>
-                <EventTimeline selection={selection} />
             </CollapsibleSection>
         </Box>
     );

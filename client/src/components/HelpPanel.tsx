@@ -57,6 +57,9 @@ import {
     SmartToyOutlined as ChatBotIcon,
     History as HistoryIcon,
     Send as SendIcon,
+    MonitorHeart as MonitoringIcon,
+    Timeline as TimelineIcon,
+    AccountTree as TopologyIcon,
 } from '@mui/icons-material';
 import { CLIENT_VERSION } from '../lib/version';
 
@@ -71,6 +74,7 @@ const HELP_PAGES = {
     administration: 'administration',
     blackouts: 'blackouts',
     askEllie: 'askEllie',
+    monitoring: 'monitoring',
 };
 
 // Map context to help page
@@ -106,6 +110,10 @@ const contextToPage = (context) => {
         case 'ellie':
         case 'askEllie':
             return HELP_PAGES.askEllie;
+        case 'monitoring':
+        case 'dashboard':
+        case 'dashboards':
+            return HELP_PAGES.monitoring;
         default:
             return HELP_PAGES.overview;
     }
@@ -1244,6 +1252,144 @@ const AskElliePage = () => (
 );
 
 /**
+ * Monitoring Dashboards Page - Dashboard hierarchy and features help
+ */
+const MonitoringPage = () => (
+    <Box>
+        <Typography variant="h5" sx={styles.pageHeading}>
+            Monitoring Dashboards
+        </Typography>
+        <Typography sx={styles.bodyTextMb3}>
+            The monitoring dashboards provide a hierarchical drill-down view
+            of your database infrastructure. Navigate from a high-level estate
+            overview down to individual database objects, with time-series
+            charts and KPI tiles at every level.
+        </Typography>
+
+        <SectionTitle icon={StatusIcon}>Estate Dashboard</SectionTitle>
+        <Typography sx={styles.bodyTextMb2}>
+            The top-level view showing the health of your entire estate:
+        </Typography>
+        <Box sx={styles.indentedBlock}>
+            <FeatureItem
+                title="Server Status"
+                description="Donut charts showing the distribution of servers by health status across all clusters."
+            />
+            <FeatureItem
+                title="KPI Tiles"
+                description="Key metrics with sparklines showing trends over the selected time range."
+            />
+            <FeatureItem
+                title="Cluster Cards"
+                description="Summary cards for each cluster with status indicators. Click a card to drill down to the cluster dashboard."
+            />
+            <FeatureItem
+                title="Hot Spots"
+                description="Servers with concerning metrics such as high CPU, low disk space, or replication lag are highlighted for quick attention."
+            />
+        </Box>
+
+        <SectionTitle icon={TopologyIcon}>Cluster Dashboard</SectionTitle>
+        <Typography sx={styles.bodyTextMb2}>
+            Detailed view of a single cluster and its members:
+        </Typography>
+        <Box sx={styles.indentedBlock}>
+            <FeatureItem
+                title="Topology Diagram"
+                description="Interactive diagram showing server nodes and replication connections. Edge colors indicate replication type: physical/streaming, Spock bidirectional, or logical. Click a node to navigate to that server's dashboard."
+            />
+            <FeatureItem
+                title="Replication Lag"
+                description="KPI tiles and a time-series chart showing replication lag across cluster members."
+            />
+            <FeatureItem
+                title="Comparative Metrics"
+                description="Side-by-side charts comparing CPU, memory, connections, and other metrics across all servers in the cluster."
+            />
+        </Box>
+
+        <SectionTitle icon={ServerIcon}>Server Dashboard</SectionTitle>
+        <Typography sx={styles.bodyTextMb2}>
+            Comprehensive metrics for an individual server:
+        </Typography>
+        <Box sx={styles.indentedBlock}>
+            <FeatureItem
+                title="System Resources"
+                description="CPU utilization, memory usage, disk space, load average, and network I/O with time-series charts."
+            />
+            <FeatureItem
+                title="PostgreSQL Overview"
+                description="Active connections, transactions per second, cache hit ratio, and temporary file usage."
+            />
+            <FeatureItem
+                title="WAL & Replication"
+                description="WAL generation rate and replication metrics for servers participating in replication."
+            />
+            <FeatureItem
+                title="Database Summaries"
+                description="Cards for each database on the server. Click a card to drill down to the database dashboard."
+            />
+            <FeatureItem
+                title="Top Queries"
+                description="Leaderboards showing the most resource-intensive queries by total time, calls, mean time, or rows returned."
+            />
+        </Box>
+
+        <SectionTitle icon={ServerIcon}>Database Dashboard</SectionTitle>
+        <Typography sx={styles.bodyTextMb2}>
+            Performance and health metrics for a single database:
+        </Typography>
+        <Box sx={styles.indentedBlock}>
+            <FeatureItem
+                title="Performance KPIs"
+                description="Database size, cache hit ratio, transactions per second, and dead tuple count with trend sparklines."
+            />
+            <FeatureItem
+                title="Table & Index Leaderboards"
+                description="Ranked lists of tables and indexes by size, sequential scans, dead tuples, or index usage."
+            />
+            <FeatureItem
+                title="Vacuum Status"
+                description="Overview of autovacuum activity and tables that may need manual vacuuming."
+            />
+        </Box>
+
+        <SectionTitle>Object Dashboard</SectionTitle>
+        <Typography sx={styles.bodyText}>
+            The deepest level shows detailed metrics for individual tables,
+            indexes, or queries. Access an object dashboard by clicking an
+            item in any leaderboard or top queries list.
+        </Typography>
+
+        <SectionTitle icon={TimelineIcon}>Key Features</SectionTitle>
+        <Box sx={styles.indentedBlock}>
+            <FeatureItem
+                title="Time Range Selector"
+                description="Choose from 1 hour, 6 hours, 24 hours, 7 days, or 30 days. The selected range applies to all charts in the monitoring section."
+            />
+            <FeatureItem
+                title="Drill-Down Navigation"
+                description="Navigate the hierarchy from estate to cluster to server to database to object. Breadcrumbs at the top show your current position and allow quick navigation back up."
+            />
+            <FeatureItem
+                title="Auto-Refresh"
+                description="Charts and metrics refresh automatically to keep data current."
+            />
+            <FeatureItem
+                title="Event Timeline"
+                description="A timeline below the charts shows configuration changes, alerts, server restarts, and other notable events in the selected time range."
+            />
+        </Box>
+
+        <HelpTip>
+            Select a server, cluster, or the estate header in the Cluster
+            Navigator to view the corresponding monitoring dashboard in the
+            Status Panel.
+        </HelpTip>
+    </Box>
+);
+
+/**
  * HelpPanel - Main help panel component
  */
 interface HelpPanelProps {
@@ -1302,6 +1448,8 @@ const HelpPanel: React.FC<HelpPanelProps> = ({ open, onClose, helpContext, mode:
                 return <BlackoutsPage />;
             case HELP_PAGES.askEllie:
                 return <AskElliePage />;
+            case HELP_PAGES.monitoring:
+                return <MonitoringPage />;
             default:
                 return <OverviewPage />;
         }
@@ -1325,6 +1473,8 @@ const HelpPanel: React.FC<HelpPanelProps> = ({ open, onClose, helpContext, mode:
                 return 'Blackouts';
             case HELP_PAGES.askEllie:
                 return 'Ask Ellie';
+            case HELP_PAGES.monitoring:
+                return 'Monitoring';
             default:
                 return 'Overview';
         }
@@ -1396,6 +1546,13 @@ const HelpPanel: React.FC<HelpPanelProps> = ({ open, onClose, helpContext, mode:
                                 icon={StatusIcon}
                                 label="Status Panel"
                                 pageId={HELP_PAGES.statusPanel}
+                                currentPage={currentPage}
+                                onClick={setCurrentPage}
+                            />
+                            <HelpNavItem
+                                icon={MonitoringIcon}
+                                label="Monitoring"
+                                pageId={HELP_PAGES.monitoring}
                                 currentPage={currentPage}
                                 onClick={setCurrentPage}
                             />

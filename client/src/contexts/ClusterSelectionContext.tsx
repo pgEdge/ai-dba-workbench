@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 /* eslint-disable react-refresh/only-export-components */
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { useAuth } from './AuthContext';
 import { useClusterData, ClusterServer, ClusterEntry } from './ClusterDataContext';
 
@@ -165,6 +165,61 @@ export const ClusterSelectionProvider = ({ children }: ClusterSelectionProviderP
             fetchCurrentConnection();
         }
     }, [clusterData, fetchCurrentConnection]);
+
+    // Refs for reading current selection without adding as
+    // effect dependencies.
+    const selectedClusterRef = useRef(selectedCluster);
+    const selectedServerRef = useRef(selectedServer);
+    const selectionTypeRef = useRef(selectionType);
+    selectedClusterRef.current = selectedCluster;
+    selectedServerRef.current = selectedServer;
+    selectionTypeRef.current = selectionType;
+
+    // Re-sync selected cluster and server with fresh clusterData
+    // references when cluster data refreshes (e.g. after rename).
+    useEffect(() => {
+        if (clusterData.length === 0) {return;}
+
+        const curCluster = selectedClusterRef.current;
+        const curServer = selectedServerRef.current;
+        const curType = selectionTypeRef.current;
+
+        if (curCluster && curType === 'cluster') {
+            for (const group of clusterData) {
+                const fresh = group.clusters?.find(
+                    c => c.id === curCluster.id,
+                );
+                if (fresh && fresh !== curCluster) {
+                    setSelectedCluster(fresh);
+                    return;
+                }
+            }
+        }
+
+        if (curServer && curType === 'server') {
+            for (const group of clusterData) {
+                for (const cluster of group.clusters || []) {
+                    const findServer = (
+                        servers: ClusterServer[],
+                    ): ClusterServer | undefined => {
+                        for (const s of servers) {
+                            if (s.id === curServer.id) {return s;}
+                            if (s.children) {
+                                const found = findServer(s.children);
+                                if (found) {return found;}
+                            }
+                        }
+                        return undefined;
+                    };
+                    const fresh = findServer(cluster.servers || []);
+                    if (fresh && fresh !== curServer) {
+                        setSelectedServer(fresh);
+                        return;
+                    }
+                }
+            }
+        }
+    }, [clusterData]);
 
     const value: ClusterSelectionContextValue = {
         // Selection state

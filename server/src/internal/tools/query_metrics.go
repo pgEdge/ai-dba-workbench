@@ -240,7 +240,7 @@ To manage response sizes:
 			}
 
 			// Get metric columns from the probe
-			metricCols, err := metrics.GetProbeMetricColumns(ctx, pool, probeName)
+			metricCols, colTypes, err := metrics.GetProbeMetricColumns(ctx, pool, probeName)
 			if err != nil {
 				return mcp.NewToolError(fmt.Sprintf("Failed to get probe columns: %v", err))
 			}
@@ -286,7 +286,7 @@ To manage response sizes:
 			if tableName, fok := args["table_name"].(string); fok && tableName != "" {
 				filters.TableName = tableName
 			}
-			query, queryArgs, err := metrics.BuildMetricsQuery(probeName, metricCols, connectionID, timeStart, timeEnd, buckets, aggregation, filters)
+			query, queryArgs, err := metrics.BuildMetricsQuery(probeName, metricCols, colTypes, connectionID, timeStart, timeEnd, buckets, aggregation, filters)
 			if err != nil {
 				return mcp.NewToolError(fmt.Sprintf("Failed to build query: %v", err))
 			}

@@ -19,6 +19,7 @@ export const TILE_GRID_SX: SxProps<Theme> = {
     display: 'grid',
     gridTemplateColumns: 'repeat(4, 1fr)',
     gap: 2,
+    mt: 2,
     mb: 2,
     '@media (max-width: 1200px)': {
         gridTemplateColumns: 'repeat(2, 1fr)',

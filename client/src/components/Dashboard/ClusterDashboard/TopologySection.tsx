@@ -8,82 +8,21 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useMemo, useCallback } from 'react';
+import React, { useMemo, useCallback, useRef, useState, useEffect } from 'react';
 import Box from '@mui/material/Box';
-import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
-import Chip from '@mui/material/Chip';
-import { alpha, useTheme, Theme } from '@mui/material/styles';
+import { alpha, useTheme } from '@mui/material/styles';
 import { useClusterSelection } from '../../../contexts/ClusterSelectionContext';
 import { ClusterServer } from '../../../contexts/ClusterDataContext';
+import { buildGraph } from './topology/graphBuilder';
+import { computeLayout, computeContainerHeight, NODE_WIDTH, NODE_HEIGHT } from './topology/layoutEngine';
+import TopologyEdges from './topology/TopologyEdges';
+import TopologyNode from './topology/TopologyNode';
+import { TopoNode } from './topology/types';
 
 interface TopologySectionProps {
     selection: Record<string, unknown>;
 }
-
-interface ServerCardData {
-    id: number;
-    name: string;
-    role: string;
-    status: string;
-    host: string;
-    port: number;
-    version: string;
-    raw: ClusterServer;
-}
-
-const TOPOLOGY_GRID_SX = {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))',
-    gap: 2,
-};
-
-const CARD_HEADER_SX = {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 1,
-    mb: 1,
-};
-
-const SERVER_NAME_SX = {
-    fontWeight: 600,
-    fontSize: '0.95rem',
-    color: 'text.primary',
-    lineHeight: 1.2,
-    flex: 1,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-};
-
-const DETAIL_LABEL_SX = {
-    fontSize: '0.75rem',
-    color: 'text.secondary',
-    fontWeight: 500,
-    textTransform: 'uppercase',
-    letterSpacing: '0.05em',
-};
-
-const DETAIL_VALUE_SX = {
-    fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-    fontSize: '0.8rem',
-    color: 'text.primary',
-    fontWeight: 500,
-};
-
-const DETAIL_ROW_SX = {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    py: 0.25,
-};
-
-const STATUS_DOT_SX = {
-    width: 10,
-    height: 10,
-    borderRadius: '50%',
-    flexShrink: 0,
-};
 
 const EMPTY_SX = {
     color: 'text.secondary',
@@ -93,198 +32,119 @@ const EMPTY_SX = {
 };
 
 /**
- * Determine the dot color for a given server status.
+ * Blend two hex colors. Equivalent to layering `fg` at the
+ * given opacity over `bg`.
  */
-const getStatusDotColor = (status: string, theme: Theme): string => {
-    switch (status) {
-        case 'online':
-            return theme.palette.success.main;
-        case 'warning':
-            return theme.palette.warning.main;
-        case 'offline':
-            return theme.palette.error.main;
-        default:
-            return theme.palette.grey[500];
-    }
-};
-
-/**
- * Determine a display-friendly role label.
- */
-const getRoleLabel = (role: string): string => {
-    const normalized = (role || '').toLowerCase();
-    if (normalized === 'primary' || normalized === 'master') {
-        return 'Primary';
-    }
-    if (normalized === 'standby' || normalized === 'replica' || normalized === 'subscriber') {
-        return 'Standby';
-    }
-    if (normalized === 'writer') {
-        return 'Writer';
-    }
-    if (normalized === 'reader') {
-        return 'Reader';
-    }
-    if (!role || role === 'unknown') {
-        return 'Standalone';
-    }
-    return role.charAt(0).toUpperCase() + role.slice(1);
-};
-
-/**
- * Build the card sx (clickable, themed).
- */
-const getCardSx = (theme: Theme) => ({
-    p: 2,
-    borderRadius: 2,
-    bgcolor: theme.palette.mode === 'dark'
-        ? alpha(theme.palette.grey[800], 0.8)
-        : theme.palette.grey[50],
-    border: '1px solid',
-    borderColor: theme.palette.divider,
-    cursor: 'pointer',
-    transition: 'border-color 0.2s, box-shadow 0.2s',
-    '&:hover': {
-        borderColor: theme.palette.primary.main,
-        boxShadow: `0 0 0 1px ${alpha(theme.palette.primary.main, 0.3)}`,
-    },
-});
-
-/**
- * Collect server card data from selection, flattening children.
- */
-const extractServerCards = (selection: Record<string, unknown>): ServerCardData[] => {
-    const cards: ServerCardData[] = [];
-    const servers = selection.servers as Array<Record<string, unknown>> | undefined;
-
-    const collectServers = (serverList: Array<Record<string, unknown>> | undefined): void => {
-        serverList?.forEach(s => {
-            cards.push({
-                id: s.id as number,
-                name: s.name as string,
-                role: (s.primary_role || s.role || 'unknown') as string,
-                status: s.status as string || 'unknown',
-                host: s.host as string || 'N/A',
-                port: s.port as number || 5432,
-                version: s.version as string || 'N/A',
-                raw: s as unknown as ClusterServer,
-            });
-            if (s.children) {
-                collectServers(s.children as Array<Record<string, unknown>>);
-            }
-        });
+const blendColors = (bg: string, fg: string, opacity: number): string => {
+    const parse = (hex: string): [number, number, number] => {
+        const h = hex.replace('#', '');
+        return [
+            parseInt(h.substring(0, 2), 16),
+            parseInt(h.substring(2, 4), 16),
+            parseInt(h.substring(4, 6), 16),
+        ];
     };
-
-    collectServers(servers);
-
-    cards.sort((a, b) => {
-        const roleOrder: Record<string, number> = {
-            primary: 0,
-            master: 0,
-            writer: 1,
-            standby: 2,
-            replica: 2,
-            reader: 3,
-            subscriber: 3,
-        };
-        const aOrder = roleOrder[a.role.toLowerCase()] ?? 99;
-        const bOrder = roleOrder[b.role.toLowerCase()] ?? 99;
-        return aOrder - bOrder;
-    });
-
-    return cards;
+    const [br, bg2, bb] = parse(bg);
+    const [fr, fg2, fb] = parse(fg);
+    const r = Math.round(fr * opacity + br * (1 - opacity));
+    const g = Math.round(fg2 * opacity + bg2 * (1 - opacity));
+    const b = Math.round(fb * opacity + bb * (1 - opacity));
+    return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
 };
 
 /**
- * TopologySection displays the cluster topology as a vertical
- * card-based layout. Each server card shows the server name,
- * role badge, status indicator, host and port, and version.
- * Cards are clickable to select the server via
- * ClusterSelectionContext.
+ * TopologySection displays the cluster topology as a connected
+ * diagram with nodes and edges representing servers and their
+ * replication relationships. The layout adapts to the cluster
+ * type (binary tree, spock mesh, logical flow, or standalone).
  */
 const TopologySection: React.FC<TopologySectionProps> = ({ selection }) => {
-    const theme = useTheme();
     const { selectServer } = useClusterSelection();
+    const theme = useTheme();
+    const containerRef = useRef<HTMLDivElement>(null);
+    const [containerWidth, setContainerWidth] = useState(600);
 
-    const serverCards = useMemo(() => extractServerCards(selection), [selection]);
-    const cardSx = useMemo(() => getCardSx(theme), [theme]);
+    const labelBackground = theme.palette.mode === 'dark'
+        ? blendColors(theme.palette.background.default, theme.palette.background.paper, 0.4)
+        : theme.palette.grey[100];
 
-    const handleServerClick = useCallback(
-        (server: ClusterServer) => (): void => {
-            selectServer(server);
-        },
-        [selectServer]
+    // Observe container width changes for responsive layout
+    useEffect(() => {
+        const el = containerRef.current;
+        if (!el) {return;}
+
+        const observer = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+                const width = entry.contentRect.width;
+                if (width > 0) {
+                    setContainerWidth(width);
+                }
+            }
+        });
+
+        observer.observe(el);
+        return () => observer.disconnect();
+    }, []);
+
+    // Extract servers from the selection object
+    const servers = useMemo(
+        () => (selection.servers as ClusterServer[] | undefined) || [],
+        [selection.servers],
     );
 
-    if (serverCards.length === 0) {
+    // Build the topology graph from server hierarchy
+    const graph = useMemo(() => buildGraph(servers), [servers]);
+
+    // Compute positioned layout based on container width
+    const layout = useMemo(
+        () => computeLayout(graph, containerWidth),
+        [graph, containerWidth],
+    );
+
+    const containerHeight = useMemo(
+        () => computeContainerHeight(layout),
+        [layout],
+    );
+
+    const handleNodeClick = useCallback(
+        (node: TopoNode) => {
+            selectServer(node.server);
+        },
+        [selectServer],
+    );
+
+    if (servers.length === 0) {
         return (
             <Typography sx={EMPTY_SX}>
-                No servers found in this cluster.
+                No topology data available.
             </Typography>
         );
     }
 
     return (
-        <Box sx={TOPOLOGY_GRID_SX}>
-            {serverCards.map(card => (
-                <Paper
-                    key={card.id}
-                    elevation={0}
-                    sx={cardSx}
-                    onClick={handleServerClick(card.raw)}
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`Select server ${card.name}`}
-                    onKeyDown={(e: React.KeyboardEvent) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();
-                            selectServer(card.raw);
-                        }
-                    }}
-                >
-                    <Box sx={CARD_HEADER_SX}>
-                        <Box
-                            sx={{
-                                ...STATUS_DOT_SX,
-                                bgcolor: getStatusDotColor(card.status, theme),
-                            }}
-                            aria-label={`Status: ${card.status}`}
-                        />
-                        <Typography sx={SERVER_NAME_SX}>
-                            {card.name}
-                        </Typography>
-                        <Chip
-                            label={getRoleLabel(card.role)}
-                            size="small"
-                            color={
-                                card.role.toLowerCase() === 'primary' ||
-                                card.role.toLowerCase() === 'master'
-                                    ? 'primary'
-                                    : 'default'
-                            }
-                            variant="outlined"
-                            sx={{
-                                height: 20,
-                                fontSize: '0.7rem',
-                                fontWeight: 600,
-                            }}
-                        />
-                    </Box>
-
-                    <Box sx={DETAIL_ROW_SX}>
-                        <Typography sx={DETAIL_LABEL_SX}>Host</Typography>
-                        <Typography sx={DETAIL_VALUE_SX}>
-                            {card.host}:{card.port}
-                        </Typography>
-                    </Box>
-
-                    <Box sx={DETAIL_ROW_SX}>
-                        <Typography sx={DETAIL_LABEL_SX}>Version</Typography>
-                        <Typography sx={DETAIL_VALUE_SX}>
-                            {card.version}
-                        </Typography>
-                    </Box>
-                </Paper>
+        <Box
+            ref={containerRef}
+            sx={{
+                position: 'relative',
+                minHeight: containerHeight,
+                width: '100%',
+            }}
+        >
+            <TopologyEdges
+                edges={layout.edges}
+                nodes={layout.nodes}
+                nodeWidth={NODE_WIDTH}
+                nodeHeight={NODE_HEIGHT}
+                topologyType={layout.topologyType}
+                labelBackground={labelBackground}
+            />
+            {layout.nodes.map(node => (
+                <TopologyNode
+                    key={node.id}
+                    node={node}
+                    nodeWidth={NODE_WIDTH}
+                    onClick={handleNodeClick}
+                />
             ))}
         </Box>
     );

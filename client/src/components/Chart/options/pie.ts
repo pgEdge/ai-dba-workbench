@@ -40,10 +40,13 @@ export function buildPieOptions(
                 radius: options.isDonut ? ['40%', '70%'] : '70%',
                 data: pieData,
                 label: {
-                    show: true,
+                    show: !options.isDonut,
                     formatter: options.showPercentage
                         ? '{b}: {d}%'
                         : '{b}: {c}',
+                },
+                labelLine: {
+                    show: !options.isDonut,
                 },
             },
         ],

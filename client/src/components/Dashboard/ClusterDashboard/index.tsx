@@ -15,20 +15,20 @@ import CollapsibleSection from '../CollapsibleSection';
 import TopologySection from './TopologySection';
 import ReplicationLagSection from './ReplicationLagSection';
 import ComparativeChartsSection from './ComparativeChartsSection';
-import AlertSummarySection from './AlertSummarySection';
+
 
 /**
  * Extract all server IDs from a cluster selection, including
  * nested children.
  */
 const extractServerIds = (selection: Record<string, unknown>): number[] => {
-    const ids: number[] = [];
+    const ids = new Set<number>();
     const servers = selection.servers as Array<Record<string, unknown>> | undefined;
 
     const collectIds = (serverList: Array<Record<string, unknown>> | undefined): void => {
         serverList?.forEach(s => {
             if (typeof s.id === 'number') {
-                ids.push(s.id);
+                ids.add(s.id);
             }
             if (s.children) {
                 collectIds(s.children as Array<Record<string, unknown>>);
@@ -37,14 +37,14 @@ const extractServerIds = (selection: Record<string, unknown>): number[] => {
     };
 
     collectIds(servers);
-    return ids;
+    return Array.from(ids);
 };
 
 /**
  * ClusterDashboard focuses on replication health and shows
  * comparative metrics across cluster members. Displays topology,
- * replication lag, comparative charts, and an alert summary
- * for all servers in the cluster.
+ * replication lag, and comparative charts for all servers in
+ * the cluster.
  */
 const ClusterDashboard: React.FC<BaseDashboardProps> = ({ selection }) => {
     const serverIds = useMemo(() => extractServerIds(selection), [selection]);
@@ -64,10 +64,6 @@ const ClusterDashboard: React.FC<BaseDashboardProps> = ({ selection }) => {
 
             <CollapsibleSection title="Comparative Metrics" defaultExpanded>
                 <ComparativeChartsSection serverIds={serverIds} />
-            </CollapsibleSection>
-
-            <CollapsibleSection title="Alert Summary" defaultExpanded>
-                <AlertSummarySection serverIds={serverIds} />
             </CollapsibleSection>
         </Box>
     );

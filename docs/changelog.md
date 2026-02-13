@@ -11,6 +11,18 @@ and this project adheres to
 
 ### Added
 
+- Hierarchical monitoring dashboards with estate, cluster,
+  server, database, and object levels; users drill down
+  through the cluster navigator or dashboard elements.
+- Cluster topology visualization showing servers as nodes
+  with color-coded replication edges for physical, Spock,
+  and logical replication types.
+- Replication lag monitoring with KPI tiles and time-series
+  charts tracking lag across cluster relationships.
+- Comparative metrics section on the cluster dashboard for
+  identifying performance disparities between members.
+- Event timeline repositioned above performance summary
+  tiles in the monitoring section.
 - AI Overview panel on the status panel that displays
   LLM-generated summaries of database health and status.
 - Context-aware scoped summaries that adapt to estate,
@@ -170,6 +182,9 @@ and this project adheres to
 
 ### Changed
 
+- Metrics charts now use `generate_series` for full time-series
+  coverage; gaps in collected data no longer cause missing
+  chart segments.
 - Unified the token model; all tokens now have a mandatory owner and
   inherit superuser status from the owning user instead of storing it
   on the token.
@@ -230,6 +245,8 @@ and this project adheres to
 
 ### Fixed
 
+- NULL interval values in replication lag metrics are now
+  treated as zero to prevent chart rendering errors.
 - SQL identifier validation prevents injection attacks via table and column
   names.
 - X-Forwarded-For IP spoofing vulnerability addressed with trusted proxy

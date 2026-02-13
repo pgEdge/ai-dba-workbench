@@ -14,7 +14,7 @@ import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
 import { useDashboard } from '../../../contexts/DashboardContext';
 import { useMetrics } from '../../../hooks/useMetrics';
-import { MetricQueryParams, MetricSeries } from '../types';
+import { MetricQueryParams } from '../types';
 import KpiTile from '../KpiTile';
 import { Chart } from '../../Chart';
 import { KPI_GRID_SX } from '../styles';
@@ -48,12 +48,21 @@ const CHART_CONTAINER_SX = {
 const findPrimaryServerId = (selection: Record<string, unknown>): number | null => {
     const servers = selection.servers as Array<Record<string, unknown>> | undefined;
     if (!servers) { return null; }
+    const visited = new Set<number>();
 
     const findPrimary = (serverList: Array<Record<string, unknown>>): number | null => {
         for (const s of serverList) {
-            const role = ((s.primary_role || s.role || '') as string).toLowerCase();
-            if (role === 'primary' || role === 'master' || role === 'writer') {
-                return s.id as number;
+            const id = s.id as number;
+            if (visited.has(id)) { continue; }
+            visited.add(id);
+
+            const role = (s.primary_role || s.role || '') as string;
+            if (
+                role === 'binary_primary' ||
+                role === 'logical_publisher' ||
+                role === 'spock_node'
+            ) {
+                return id;
             }
             if (s.children) {
                 const found = findPrimary(s.children as Array<Record<string, unknown>>);
@@ -67,59 +76,40 @@ const findPrimaryServerId = (selection: Record<string, unknown>): number | null 
 };
 
 /**
- * Identify standby servers from the cluster selection.
+ * Format a lag value from seconds to a human-readable string.
+ * The backend converts INTERVAL columns to seconds.
  */
-const findStandbyServers = (
-    selection: Record<string, unknown>
-): Array<{ id: number; name: string }> => {
-    const standbys: Array<{ id: number; name: string }> = [];
-    const servers = selection.servers as Array<Record<string, unknown>> | undefined;
-
-    const collect = (serverList: Array<Record<string, unknown>> | undefined): void => {
-        serverList?.forEach(s => {
-            const role = ((s.primary_role || s.role || '') as string).toLowerCase();
-            if (
-                role === 'standby' ||
-                role === 'replica' ||
-                role === 'subscriber' ||
-                role === 'reader'
-            ) {
-                standbys.push({
-                    id: s.id as number,
-                    name: s.name as string,
-                });
-            }
-            if (s.children) {
-                collect(s.children as Array<Record<string, unknown>>);
-            }
-        });
-    };
-
-    collect(servers);
-    return standbys;
+const formatLagValue = (seconds: number): string => {
+    if (seconds < 0.001) {
+        return '< 1 ms';
+    }
+    if (seconds < 1) {
+        return `${Math.round(seconds * 1000)} ms`;
+    }
+    if (seconds < 60) {
+        return `${seconds.toFixed(1)} s`;
+    }
+    if (seconds < 3600) {
+        return `${(seconds / 60).toFixed(1)} min`;
+    }
+    return `${(seconds / 3600).toFixed(1)} hr`;
 };
 
 /**
- * Format a lag value from bytes to a human-readable string.
+ * Format a metric name for display: "replay_lag" -> "Replay Lag".
  */
-const formatLagValue = (bytes: number): string => {
-    if (bytes < 1024) {
-        return `${bytes} B`;
-    }
-    if (bytes < 1024 * 1024) {
-        return `${(bytes / 1024).toFixed(1)} KB`;
-    }
-    if (bytes < 1024 * 1024 * 1024) {
-        return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-    }
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+const formatMetricLabel = (metric: string): string => {
+    return metric
+        .split('_')
+        .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(' ');
 };
 
 /**
- * ReplicationLagSection shows replication lag metrics for each
- * standby node in the cluster. Displays KPI tiles with current
- * lag values and a time-series chart with all standby lag
- * overlaid for comparison.
+ * ReplicationLagSection shows replication lag metrics queried from
+ * the primary server. Displays KPI tiles for each lag metric
+ * (replay_lag, write_lag, flush_lag) with current values and a
+ * time-series chart showing all lag series over time.
  */
 const ReplicationLagSection: React.FC<ReplicationLagSectionProps> = ({
     selection,
@@ -127,8 +117,10 @@ const ReplicationLagSection: React.FC<ReplicationLagSectionProps> = ({
 }) => {
     const { timeRange } = useDashboard();
 
-    const primaryServerId = useMemo(() => findPrimaryServerId(selection), [selection]);
-    const standbys = useMemo(() => findStandbyServers(selection), [selection]);
+    const primaryServerId = useMemo(
+        () => findPrimaryServerId(selection),
+        [selection.servers],
+    );
 
     const metricsParams = useMemo((): MetricQueryParams | null => {
         if (primaryServerId === null) { return null; }
@@ -142,41 +134,47 @@ const ReplicationLagSection: React.FC<ReplicationLagSectionProps> = ({
 
     const { data: metricsData, loading, error } = useMetrics(metricsParams);
 
-    const lagValues = useMemo((): Record<string, number> => {
-        const values: Record<string, number> = {};
-        if (!metricsData) { return values; }
-
-        metricsData.forEach((series: MetricSeries) => {
-            if (series.data && series.data.length > 0) {
+    /* Build KPI values from the latest data point of each series. */
+    const kpiItems = useMemo(() => {
+        if (!metricsData) { return []; }
+        return metricsData
+            .filter(series =>
+                series.data &&
+                series.data.length > 0 &&
+                (series.metric || series.name).includes('lag'),
+            )
+            .map(series => {
                 const lastPoint = series.data[series.data.length - 1];
-                values[series.name] = lastPoint.value;
-            }
-        });
-
-        return values;
+                return {
+                    metric: series.metric || series.name,
+                    label: formatMetricLabel(series.metric || series.name),
+                    value: lastPoint.value,
+                };
+            });
     }, [metricsData]);
 
+    /* Build chart data from all series. */
     const chartData = useMemo(() => {
         if (!metricsData || metricsData.length === 0) { return null; }
+        const withData = metricsData.filter(
+            s => s.data &&
+                s.data.length > 0 &&
+                (s.metric || s.name).includes('lag'),
+        );
+        if (withData.length === 0) { return null; }
 
-        const firstSeries = metricsData[0];
-        if (!firstSeries || !firstSeries.data || firstSeries.data.length === 0) {
-            return null;
-        }
-
-        const categories = firstSeries.data.map(d => d.time);
-        const series = metricsData.map(s => ({
-            name: s.name,
+        const categories = withData[0].data.map(d => d.time);
+        const series = withData.map(s => ({
+            name: formatMetricLabel(s.metric || s.name),
             data: s.data.map(d => d.value),
         }));
-
         return { categories, series };
     }, [metricsData]);
 
-    if (standbys.length === 0 && !loading) {
+    if (primaryServerId === null && !loading) {
         return (
             <Typography sx={EMPTY_SX}>
-                No standby servers detected in this cluster.
+                No primary server detected in this cluster.
             </Typography>
         );
     }
@@ -191,8 +189,15 @@ const ReplicationLagSection: React.FC<ReplicationLagSectionProps> = ({
 
     if (error) {
         return (
+            <Typography sx={EMPTY_SX}>{error}</Typography>
+        );
+    }
+
+    if (kpiItems.length === 0) {
+        return (
             <Typography sx={EMPTY_SX}>
-                {error}
+                No replication lag data available. Lag metrics
+                require active streaming replication.
             </Typography>
         );
     }
@@ -200,30 +205,22 @@ const ReplicationLagSection: React.FC<ReplicationLagSectionProps> = ({
     return (
         <Box>
             <Box sx={KPI_GRID_SX}>
-                {standbys.map(standby => {
-                    const lagBytes = lagValues[standby.name] ?? null;
-                    const displayValue = lagBytes !== null
-                        ? formatLagValue(lagBytes)
-                        : 'N/A';
-                    const status = lagBytes === null
-                        ? undefined
-                        : lagBytes > 100 * 1024 * 1024
-                            ? 'critical'
-                            : lagBytes > 10 * 1024 * 1024
-                                ? 'warning'
-                                : 'good';
-
+                {kpiItems.map(item => {
+                    const status = item.value > 30
+                        ? 'critical'
+                        : item.value > 5
+                            ? 'warning'
+                            : 'good';
                     return (
                         <KpiTile
-                            key={standby.id}
-                            label={standby.name}
-                            value={displayValue}
-                            status={status as 'good' | 'warning' | 'critical' | undefined}
+                            key={item.metric}
+                            label={item.label}
+                            value={formatLagValue(item.value)}
+                            status={status as 'good' | 'warning' | 'critical'}
                         />
                     );
                 })}
             </Box>
-
             {chartData && (
                 <Box sx={CHART_CONTAINER_SX}>
                     <Chart
@@ -235,6 +232,18 @@ const ReplicationLagSection: React.FC<ReplicationLagSectionProps> = ({
                         showTooltip
                         showToolbar={false}
                         title="Replication Lag Over Time"
+                        echartsOptions={{
+                            yAxis: {
+                                axisLabel: {
+                                    formatter: (v: number) =>
+                                        formatLagValue(v),
+                                },
+                            },
+                            tooltip: {
+                                valueFormatter: (v: number) =>
+                                    formatLagValue(v),
+                            },
+                        }}
                     />
                 </Box>
             )}

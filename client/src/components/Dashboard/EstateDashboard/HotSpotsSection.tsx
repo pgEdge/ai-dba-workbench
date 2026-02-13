@@ -81,14 +81,14 @@ const computeHotSpots = (
         const serverName = conn.connection_name as string || `Server ${connectionId}`;
 
         const cacheHit = conn.cache_hit_ratio as Record<string, unknown> | undefined;
-        if (cacheHit && typeof cacheHit.current === 'number' && cacheHit.current < 0.95) {
+        if (cacheHit && typeof cacheHit.current === 'number' && cacheHit.current < 95) {
             hotSpots.push({
                 connectionId,
                 serverName,
                 metric: 'Cache Hit Ratio',
-                value: Math.round(cacheHit.current * 10000) / 100,
+                value: Math.round(cacheHit.current * 100) / 100,
                 unit: '%',
-                severity: cacheHit.current < 0.90 ? 'critical' : 'warning',
+                severity: cacheHit.current < 90 ? 'critical' : 'warning',
             });
         }
 

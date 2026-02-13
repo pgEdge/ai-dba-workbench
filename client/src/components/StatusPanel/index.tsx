@@ -495,14 +495,14 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                     </Box>
                 )}
 
-                {/* Performance Summary Tiles */}
-                <PerformanceTiles selection={selection} />
-
                 {/* Event Timeline */}
                 <EventTimeline
                     selection={selection}
                     mode={isDark ? 'dark' : 'light'}
                 />
+
+                {/* Performance Summary Tiles */}
+                <PerformanceTiles selection={selection} />
 
                 {/* Blackout Management */}
                 <BlackoutPanel selection={selection} />

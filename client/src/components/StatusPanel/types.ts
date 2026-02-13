@@ -91,5 +91,6 @@ export interface AlertsSectionProps {
 export interface SelectionHeaderProps {
     selection: Record<string, unknown>;
     alertCount?: number;
+    alertSeverities?: Record<string, number>;
     onBlackoutClick: () => void;
 }

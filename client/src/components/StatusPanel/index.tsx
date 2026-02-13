@@ -396,6 +396,16 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
         return alerts.filter(a => !a.acknowledgedAt).length;
     }, [alerts]);
 
+    const activeAlertSeverities = useMemo(() => {
+        const active = alerts.filter(a => !a.acknowledgedAt);
+        const counts: Record<string, number> = {};
+        active.forEach(a => {
+            const sev = a.severity || 'unknown';
+            counts[sev] = (counts[sev] || 0) + 1;
+        });
+        return counts;
+    }, [alerts]);
+
     const emptyStateIconBoxSx = useMemo(() => ({
         width: 80,
         height: 80,
@@ -440,7 +450,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
             {/* Content Container */}
             <Box>
                 {/* Selection Header */}
-                <SelectionHeader selection={selection} alertCount={activeAlertCount} onBlackoutClick={() => setBlackoutMgmtOpen(true)} />
+                <SelectionHeader selection={selection} alertCount={activeAlertCount} alertSeverities={activeAlertSeverities} onBlackoutClick={() => setBlackoutMgmtOpen(true)} />
 
                 {/* Divider with gradient */}
                 <Box sx={dividerSx} />

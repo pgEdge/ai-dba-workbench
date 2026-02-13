@@ -24,7 +24,6 @@ import {
     Info as InfoIcon,
     DarkMode as BlackoutIcon,
 } from '@mui/icons-material';
-import HeaderStatusIndicator from './HeaderStatusIndicator';
 import {
     HEADER_CONTAINER_SX,
     HEADER_ICON_BOX_BASE_SX,
@@ -35,7 +34,7 @@ import {
 /**
  * SelectionHeader - Header showing what's currently selected
  */
-const SelectionHeader = ({ selection, alertCount = 0, onBlackoutClick }) => {
+const SelectionHeader = ({ selection, alertCount = 0, alertSeverities = {}, onBlackoutClick }) => {
     const theme = useTheme();
 
     const getIcon = () => {
@@ -66,16 +65,82 @@ const SelectionHeader = ({ selection, alertCount = 0, onBlackoutClick }) => {
 
     const Icon = getIcon();
 
-    const iconBoxSx = useMemo(() => ({
-        ...HEADER_ICON_BOX_BASE_SX,
-        bgcolor: alpha(theme.palette.primary.main, 0.12),
-    }), [theme.palette.primary]);
+    const status = selection.status;
+
+    const iconColor = useMemo(() => {
+        if (status === 'offline') return 'error.main';
+        if (alertCount > 0) return 'warning.main';
+        return 'success.main';
+    }, [status, alertCount]);
+
+    const iconBoxSx = useMemo(() => {
+        let palette = theme.palette.success.main;
+        if (status === 'offline') palette = theme.palette.error.main;
+        else if (alertCount > 0) palette = theme.palette.warning.main;
+
+        return {
+            ...HEADER_ICON_BOX_BASE_SX,
+            bgcolor: alpha(palette, 0.12),
+            position: 'relative',
+        };
+    }, [theme.palette.success, theme.palette.error, theme.palette.warning, status, alertCount]);
+
+    const tooltipTitle = useMemo(() => {
+        const typeName = selection.type === 'server' ? 'Server'
+            : selection.type === 'cluster' ? 'Cluster'
+            : selection.type === 'estate' ? 'Estate'
+            : 'Selection';
+
+        if (status === 'offline') return `${typeName} is offline`;
+
+        if (alertCount > 0) {
+            const parts = Object.entries(alertSeverities)
+                .sort(([a], [b]) => {
+                    const order = { critical: 0, warning: 1, info: 2 };
+                    return (order[a] ?? 99) - (order[b] ?? 99);
+                })
+                .map(([sev, count]) =>
+                    `${count} ${sev.charAt(0).toUpperCase() + sev.slice(1)}`
+                );
+            const alertWord = alertCount === 1 ? 'alert' : 'alerts';
+            return `${alertCount} active ${alertWord}: ${parts.join(', ')}`;
+        }
+
+        return `${typeName} is online`;
+    }, [status, alertCount, alertSeverities, selection.type]);
+
+    const badgeSx = useMemo(() => ({
+        position: 'absolute',
+        top: -4,
+        right: -4,
+        minWidth: 16,
+        height: 16,
+        px: 0.5,
+        borderRadius: '8px',
+        bgcolor: theme.palette.grey[500],
+        color: 'common.white',
+        fontSize: '0.625rem',
+        fontWeight: 700,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        lineHeight: 1,
+    }), [theme.palette.grey]);
+
+    const showBadge = alertCount > 0;
 
     return (
         <Box sx={HEADER_CONTAINER_SX}>
-            <Box sx={iconBoxSx}>
-                <Icon sx={{ fontSize: 24, color: 'primary.main' }} />
-            </Box>
+            <Tooltip title={tooltipTitle} placement="bottom">
+                <Box sx={iconBoxSx}>
+                    <Icon sx={{ fontSize: 24, color: iconColor }} />
+                    {showBadge && (
+                        <Box sx={badgeSx}>
+                            {alertCount > 99 ? '99+' : alertCount}
+                        </Box>
+                    )}
+                </Box>
+            </Tooltip>
             <Box sx={{ flex: 1 }}>
                 <Typography variant="overline" sx={HEADER_LABEL_SX}>
                     {getLabel()}
@@ -100,10 +165,6 @@ const SelectionHeader = ({ selection, alertCount = 0, onBlackoutClick }) => {
                     <BlackoutIcon sx={{ fontSize: 20 }} />
                 </IconButton>
             </Tooltip>
-            <HeaderStatusIndicator
-                status={selection.status}
-                alertCount={alertCount}
-            />
         </Box>
     );
 };

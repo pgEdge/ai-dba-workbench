@@ -87,7 +87,7 @@ datastore:
 
 pool:
   datastore_max_connections: 25
-  monitored_max_connections: 5
+  max_connections_per_server: 3
 
 # secret_file uses default search paths
 ```

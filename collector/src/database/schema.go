@@ -2838,8 +2838,24 @@ func (sm *SchemaManager) registerMigrations() {
 			// Seed alert_rules for metric_staleness
 			_, err = tx.Exec(ctx, `
 				INSERT INTO alert_rules (name, description, category, metric_name, metric_unit, default_operator, default_threshold, default_severity, default_enabled, required_extension, is_built_in)
-				VALUES ('metric_staleness', 'Metrics collection is stale; dashboards may show outdated data', 'availability', 'probe_staleness_ratio', 'ratio', '>', 3, 'critical', TRUE, NULL, TRUE)
+				VALUES ('metric_staleness', 'Metrics collection is stale; dashboards may show outdated data', 'availability', 'probe_staleness_ratio', 'ratio', '>', 3, 'warning', TRUE, NULL, TRUE)
 				ON CONFLICT DO NOTHING;
+			`)
+			return err
+		},
+	})
+
+	// Migration #20: Fix metric_staleness alert rule severity
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     20,
+		Description: "Fix metric_staleness alert rule severity from critical to warning",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+			_, err := tx.Exec(ctx, `
+				UPDATE alert_rules
+				SET default_severity = 'warning'
+				WHERE name = 'metric_staleness'
+				  AND default_severity = 'critical';
 			`)
 			return err
 		},

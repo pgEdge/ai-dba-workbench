@@ -58,7 +58,7 @@ type PoolConfig struct {
 	DatastoreMaxWaitSeconds int `yaml:"datastore_max_wait_seconds"` // Max wait time to acquire a connection
 
 	// Monitored server pool settings (per-server)
-	MonitoredMaxConnections int `yaml:"monitored_max_connections"`  // Max connections PER monitored server
+	MaxConnectionsPerServer int `yaml:"max_connections_per_server"` // Max connections per monitored server
 	MonitoredMaxIdleSeconds int `yaml:"monitored_max_idle_seconds"` // Max idle time before closing connections
 	MonitoredMaxWaitSeconds int `yaml:"monitored_max_wait_seconds"` // Max wait time to acquire a connection
 }
@@ -77,7 +77,7 @@ func NewConfig() *Config {
 			DatastoreMaxConnections: 25,
 			DatastoreMaxIdleSeconds: 300,
 			DatastoreMaxWaitSeconds: 60,
-			MonitoredMaxConnections: 5,
+			MaxConnectionsPerServer: 3,
 			MonitoredMaxIdleSeconds: 300,
 			MonitoredMaxWaitSeconds: 60,
 		},
@@ -228,6 +228,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Pool.MonitoredMaxIdleSeconds < 0 {
 		return fmt.Errorf("pool.monitored_max_idle_seconds must be non-negative")
+	}
+	if c.Pool.MaxConnectionsPerServer <= 0 {
+		return fmt.Errorf("pool.max_connections_per_server must be greater than 0")
 	}
 	if c.Pool.DatastoreMaxWaitSeconds <= 0 {
 		return fmt.Errorf("pool.datastore_max_wait_seconds must be greater than 0")

@@ -14,6 +14,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"hash/fnv"
+	"math"
 	"sync"
 	"time"
 
@@ -472,7 +473,7 @@ func (m *MonitoredConnectionPoolManager) Close() error {
 }
 
 // createMonitoredPool creates a pgxpool.Pool for a monitored connection
-func createMonitoredPool(connStr string, _ int, maxIdleSeconds int) (*pgxpool.Pool, error) {
+func createMonitoredPool(connStr string, maxConns int, maxIdleSeconds int) (*pgxpool.Pool, error) {
 	ctx := context.Background()
 
 	// Parse connection string
@@ -481,11 +482,12 @@ func createMonitoredPool(connStr string, _ int, maxIdleSeconds int) (*pgxpool.Po
 		return nil, fmt.Errorf("failed to parse connection string: %w", err)
 	}
 
-	// Configure pool settings
-	// Set MaxConns to 1 since each database gets its own pool
-	// The semaphore in the pool manager controls the actual concurrency limit
-	config.MaxConns = 1
-	config.MinConns = 0 // Start with no connections
+	// Set MaxConns to match the per-server connection limit
+	if maxConns > math.MaxInt32 {
+		maxConns = math.MaxInt32
+	}
+	config.MaxConns = int32(maxConns) // #nosec G115 - bounds checked above
+	config.MinConns = 0               // Start with no connections
 
 	// Set max connection lifetime (use maxIdleSeconds as max conn lifetime)
 	// pgxpool will close connections that have been idle for this duration

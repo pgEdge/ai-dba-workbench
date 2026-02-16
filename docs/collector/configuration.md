@@ -49,7 +49,7 @@ datastore:
 
 pool:
   datastore_max_connections: 25
-  monitored_max_connections: 5
+  max_connections_per_server: 3
 ```
 
 **Rules:**
@@ -219,14 +219,14 @@ Maximum time (seconds) to wait for an available datastore connection.
 - Example: `datastore_max_wait_seconds: 120`
 - Note: Probe storage operations will fail if timeout is exceeded
 
-#### pool.monitored_max_connections
+#### pool.max_connections_per_server
 
-Maximum concurrent connections PER monitored database server.
+Maximum concurrent connections per monitored database server.
 
 - Type: integer
-- Default: `5`
-- Example: `monitored_max_connections: 10`
-- Note: This is per-server, not total. 10 servers with limit 5 = 50 max
+- Default: `3`
+- Example: `max_connections_per_server: 5`
+- Note: This is per-server, not total. 10 servers with limit 3 = 30 max
   connections
 
 #### pool.monitored_max_idle_seconds
@@ -338,7 +338,7 @@ pool:
   datastore_max_connections: 100
   datastore_max_idle_seconds: 300
   datastore_max_wait_seconds: 60
-  monitored_max_connections: 10
+  max_connections_per_server: 10
   monitored_max_idle_seconds: 300
   monitored_max_wait_seconds: 120
 
@@ -361,7 +361,7 @@ datastore:
 # Smaller pools for development
 pool:
   datastore_max_connections: 10
-  monitored_max_connections: 3
+  max_connections_per_server: 3
 
 # Development secret file (DO NOT USE IN PRODUCTION)
 secret_file: ./ai-dba-collector.secret
@@ -383,7 +383,7 @@ datastore:
 # Large connection pools for high concurrency
 pool:
   datastore_max_connections: 200
-  monitored_max_connections: 15
+  max_connections_per_server: 15
   datastore_max_wait_seconds: 90
   monitored_max_wait_seconds: 90
   # Longer idle timeout to keep connections warm
@@ -409,13 +409,13 @@ Choose `datastore_max_connections` based on:
 
 ### Monitored Pool Size
 
-Choose `monitored_max_connections` based on:
+Choose `max_connections_per_server` based on:
 
 - Consider how many probes might run simultaneously.
 - Do not overwhelm monitored servers with too many connections.
 - Higher network latency may require more connections.
 
-**Recommendation**: Start with 5, increase if you see timeout errors
+**Recommendation**: Start with 3, increase if you see timeout errors
 
 ### Idle Timeout
 
@@ -460,7 +460,7 @@ Choose `*_max_wait_seconds` based on:
 ### "Too many connections"
 
 - Reduce `datastore_max_connections`
-- Reduce `monitored_max_connections`
+- Reduce `max_connections_per_server`
 - Check monitored servers' max_connections setting
 - Verify other clients aren't consuming connections
 

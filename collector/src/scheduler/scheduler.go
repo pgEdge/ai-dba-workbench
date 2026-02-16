@@ -24,12 +24,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// availabilityKey identifies a probe for a specific connection
-type availabilityKey struct {
-	connectionID int
-	probeName    string
-}
-
 // ProbeScheduler manages the execution of monitoring probes
 type ProbeScheduler struct {
 	datastore      *database.Datastore
@@ -43,9 +37,6 @@ type ProbeScheduler struct {
 	cancel         context.CancelFunc
 	wg             sync.WaitGroup
 	configReloader *time.Ticker
-	availCache     map[availabilityKey]bool      // tracks last known is_available per probe/connection
-	availLastWrite map[availabilityKey]time.Time // tracks when we last wrote to DB
-	availMutex     sync.Mutex
 }
 
 // Config interface defines the minimal configuration needed by ProbeScheduler
@@ -58,16 +49,14 @@ type Config interface {
 func NewProbeScheduler(datastore *database.Datastore, poolManager *database.MonitoredConnectionPoolManager, config Config, serverSecret string) *ProbeScheduler {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &ProbeScheduler{
-		datastore:      datastore,
-		poolManager:    poolManager,
-		serverSecret:   serverSecret,
-		config:         config,
-		probesByConn:   make(map[int]map[string]probes.MetricsProbe),
-		shutdownChan:   make(chan struct{}),
-		ctx:            ctx,
-		cancel:         cancel,
-		availCache:     make(map[availabilityKey]bool),
-		availLastWrite: make(map[availabilityKey]time.Time),
+		datastore:    datastore,
+		poolManager:  poolManager,
+		serverSecret: serverSecret,
+		config:       config,
+		probesByConn: make(map[int]map[string]probes.MetricsProbe),
+		shutdownChan: make(chan struct{}),
+		ctx:          ctx,
+		cancel:       cancel,
 	}
 }
 
@@ -194,25 +183,6 @@ func (ps *ProbeScheduler) loadConfigs(ctx context.Context) error {
 				}
 			}
 		}
-	}
-
-	// Auto-derive the semaphore size from the maximum number of probes
-	// configured for any single connection. Each probe may fire
-	// concurrently, so the semaphore must have enough slots to prevent
-	// probe timeouts. Apply a minimum of 5 to handle edge cases.
-	maxProbesPerConn := 0
-	for _, probeMap := range ps.probesByConn {
-		if len(probeMap) > maxProbesPerConn {
-			maxProbesPerConn = len(probeMap)
-		}
-	}
-	semSize := maxProbesPerConn
-	if semSize < 5 {
-		semSize = 5
-	}
-	if semSize != ps.poolManager.GetMaxConnections() {
-		ps.poolManager.SetMaxConnections(semSize)
-		logger.Infof("Auto-derived semaphore size: %d (max probes per connection: %d)", semSize, maxProbesPerConn)
 	}
 
 	return nil
@@ -479,24 +449,8 @@ func (ps *ProbeScheduler) executeProbeForConnection(ctx context.Context, probe p
 	}
 }
 
-// recordAvailability records probe availability, writing to the DB only
-// when the status changes or every 10 minutes to keep last_checked fresh.
+// recordAvailability records probe availability to the database.
 func (ps *ProbeScheduler) recordAvailability(connectionID int, probeName string, extensionName *string, isAvailable bool, unavailableReason *string) {
-	key := availabilityKey{connectionID: connectionID, probeName: probeName}
-
-	ps.availMutex.Lock()
-	prev, known := ps.availCache[key]
-	lastWrite := ps.availLastWrite[key]
-	ps.availMutex.Unlock()
-
-	changed := !known || prev != isAvailable
-	stale := time.Since(lastWrite) > 10*time.Minute
-
-	if !changed && !stale {
-		return
-	}
-
-	// Get a datastore connection to write availability
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -510,13 +464,7 @@ func (ps *ProbeScheduler) recordAvailability(connectionID int, probeName string,
 	err = database.UpsertProbeAvailability(ctx, conn, connectionID, nil, probeName, extensionName, isAvailable, unavailableReason)
 	if err != nil {
 		logger.Errorf("Failed to upsert probe availability for %s on connection %d: %v", probeName, connectionID, err)
-		return
 	}
-
-	ps.availMutex.Lock()
-	ps.availCache[key] = isAvailable
-	ps.availLastWrite[key] = time.Now()
-	ps.availMutex.Unlock()
 }
 
 // isClosedPoolError checks whether the error is a "closed pool" error from

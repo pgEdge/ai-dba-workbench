@@ -33,7 +33,7 @@ The investigation identified two independent root causes.
 
 ### Semaphore Too Small for Probe Count
 
-The `monitored_max_connections` configuration defaulted to 5.
+The `max_connections_per_server` configuration defaults to 3.
 This created a 5-slot semaphore for approximately 33 concurrent
 probes. When multiple probes with the same interval fired
 simultaneously, they overwhelmed the semaphore. Queued probes
@@ -63,11 +63,9 @@ connection. The `MonitoredConnectionPoolManager` gained a
 maximum probes per connection after `loadConfigs` and calls
 `SetMaxConnections` with that value.
 
-The `monitored_max_connections` configuration field is
-deprecated. The collector retains the field for YAML
-compatibility and logs a warning when the field is set. The
-semaphore now sizes to 33 slots; this matches the 33 active
-probes.
+The `max_connections_per_server` configuration controls both
+the per-server semaphore size and the pgxpool MaxConns.
+The old `monitored_max_connections` field has been removed.
 
 The fix spans two files:
 
@@ -112,7 +110,7 @@ The following files are central to the pool management system:
 - `collector/src/scheduler/scheduler.go` contains probe
   scheduling and semaphore auto-sizing logic.
 - `collector/src/config.go` contains pool configuration and the
-  deprecated `monitored_max_connections` field.
+  `max_connections_per_server` field.
 - `collector/src/main.go` contains pool manager creation.
 
 ## Remaining Concerns

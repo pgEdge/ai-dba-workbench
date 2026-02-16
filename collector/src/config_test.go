@@ -37,6 +37,10 @@ func TestNewConfig(t *testing.T) {
 	if config.Pool.MonitoredMaxWaitSeconds != 60 {
 		t.Errorf("Expected default Pool.MonitoredMaxWaitSeconds to be 60, got %d", config.Pool.MonitoredMaxWaitSeconds)
 	}
+
+	if config.Pool.MaxConnectionsPerServer != 3 {
+		t.Errorf("Expected default Pool.MaxConnectionsPerServer to be 3, got %d", config.Pool.MaxConnectionsPerServer)
+	}
 }
 
 func TestConfigLoadFromFile(t *testing.T) {
@@ -109,6 +113,7 @@ func TestConfigValidate(t *testing.T) {
 					DatastoreMaxConnections: 10,
 					DatastoreMaxIdleSeconds: 60,
 					DatastoreMaxWaitSeconds: 60,
+					MaxConnectionsPerServer: 3,
 					MonitoredMaxWaitSeconds: 60,
 				},
 			},
@@ -216,6 +221,25 @@ func TestConfigValidate(t *testing.T) {
 					DatastoreMaxIdleSeconds: 60,
 					DatastoreMaxWaitSeconds: 60,
 					MonitoredMaxWaitSeconds: -1,
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid max_connections_per_server",
+			config: &Config{
+				Datastore: DatastoreConfig{
+					Host:     "localhost",
+					Database: "testdb",
+					Username: "testuser",
+					Port:     5432,
+				},
+				Pool: PoolConfig{
+					DatastoreMaxConnections: 10,
+					DatastoreMaxIdleSeconds: 60,
+					DatastoreMaxWaitSeconds: 60,
+					MonitoredMaxWaitSeconds: 60,
+					MaxConnectionsPerServer: 0,
 				},
 			},
 			wantErr: true,

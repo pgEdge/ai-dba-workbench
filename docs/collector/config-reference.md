@@ -195,17 +195,17 @@ in seconds for an available datastore connection.
 - Example: `datastore_max_wait_seconds: 120`
 - Tuning: Increase this value if you see storage timeout errors.
 
-### pool.monitored_max_connections
+### pool.max_connections_per_server
 
-The `monitored_max_connections` option specifies the maximum concurrent
+The `max_connections_per_server` option specifies the maximum concurrent
 connections per monitored database server.
 
 - Type: integer
-- Default: `5`
+- Default: `3`
 - Required: No
 - Min: 1
 - Command-line: Not available
-- Example: `monitored_max_connections: 10`
+- Example: `max_connections_per_server: 5`
 - Note: This limit applies per server, not total.
 
 ### pool.monitored_max_idle_seconds
@@ -364,7 +364,7 @@ pool:
   datastore_max_connections: 100
   datastore_max_idle_seconds: 300
   datastore_max_wait_seconds: 60
-  monitored_max_connections: 10
+  max_connections_per_server: 10
   monitored_max_idle_seconds: 300
   monitored_max_wait_seconds: 120
 
@@ -385,7 +385,7 @@ datastore:
 
 pool:
   datastore_max_connections: 10
-  monitored_max_connections: 3
+  max_connections_per_server: 3
 
 secret_file: ./ai-dba-collector.secret
 ```

@@ -115,7 +115,7 @@ datastore:
 #
 # 2. MONITORED POOLS: Connections to each monitored PostgreSQL server.
 #    Each monitored server gets its own independent pool with the
-#    specified limits (so 10 servers with limit 5 = 50 max connections).
+#    specified limits (so 10 servers with limit 3 = 30 max connections).
 #
 
 pool:
@@ -147,12 +147,12 @@ pool:
   #-------------------------------------------------------------------------
 
   # Maximum concurrent connections PER monitored database server
-  # This is per-server, not total. For example:
-  #   10 servers with limit 5 = 50 max connections total
-  # Higher values allow more concurrent probe execution per server
-  # Default: 5
-  # Recommendation: Start with 5, increase if you see timeout errors
-  monitored_max_connections: 5
+  # This controls both the connection pool size and the concurrency
+  # limit for probes on each server. Each server gets an independent
+  # pool with this many connections.
+  # Default: 3
+  # Recommendation: Start with 3, increase if you see timeout errors
+  max_connections_per_server: 3
 
   # Maximum idle time for monitored connections in seconds
   # Connections that have been idle for longer than this will be closed
@@ -217,7 +217,7 @@ pool:
 #   sslmode: disable
 # pool:
 #   datastore_max_connections: 10
-#   monitored_max_connections: 3
+#   max_connections_per_server: 3
 # secret_file: ./ai-dba-collector.secret
 
 #-------------------------------------------------------------------------
@@ -237,7 +237,7 @@ pool:
 #   datastore_max_connections: 100
 #   datastore_max_idle_seconds: 300
 #   datastore_max_wait_seconds: 60
-#   monitored_max_connections: 10
+#   max_connections_per_server: 10
 #   monitored_max_idle_seconds: 300
 #   monitored_max_wait_seconds: 120
 # secret_file: /var/secrets/ai-workbench/collector.secret
@@ -255,7 +255,7 @@ pool:
 #   datastore_max_connections: 200
 #   datastore_max_idle_seconds: 600
 #   datastore_max_wait_seconds: 90
-#   monitored_max_connections: 15
+#   max_connections_per_server: 15
 #   monitored_max_idle_seconds: 600
 #   monitored_max_wait_seconds: 90
 # secret_file: /etc/ai-workbench/collector.secret

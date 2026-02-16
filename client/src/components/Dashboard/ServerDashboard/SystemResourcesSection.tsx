@@ -20,7 +20,9 @@ import KpiTile from '../KpiTile';
 import CollapsibleSection from '../CollapsibleSection';
 import { Chart } from '../../Chart';
 import ChartPanel from '../ChartPanel';
-import { ServerSectionProps, extractSparklineData, extractLatestValue } from './types';
+import {
+    ServerSectionProps, extractSparklineData, extractLatestValue, hasNonZeroData,
+} from './types';
 
 /** Number of data buckets for KPI sparklines */
 const KPI_BUCKETS = 30;
@@ -215,6 +217,12 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
     const loadChart = useMetrics(loadChartParams);
     const networkChart = useMetrics(networkChartParams);
 
+    // Check if system_stats probes have real data. CPU idle will
+    // always have non-zero values if the extension is installed.
+    const hasSystemStats = useMemo(() => {
+        return hasNonZeroData(cpuKpi.data, 'idle_mode_percent');
+    }, [cpuKpi.data]);
+
     // Extract current values for KPI tiles
     const cpuUser = extractLatestValue(
         cpuKpi.data, 'usermode_normal_process_percent'
@@ -224,31 +232,34 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
     );
     const cpuIdle = extractLatestValue(cpuKpi.data, 'idle_mode_percent');
     const cpuUsage = useMemo(() => {
+        if (!hasSystemStats) { return null; }
         if (cpuIdle !== null) { return 100 - cpuIdle; }
         if (cpuUser !== null || cpuSystem !== null) {
             return (cpuUser ?? 0) + (cpuSystem ?? 0);
         }
         return null;
-    }, [cpuUser, cpuSystem, cpuIdle]);
+    }, [cpuUser, cpuSystem, cpuIdle, hasSystemStats]);
 
     const usedMemory = extractLatestValue(memoryKpi.data, 'used_memory');
     const totalMemory = extractLatestValue(memoryKpi.data, 'total_memory');
     const memoryUsagePercent = useMemo(() => {
+        if (!hasSystemStats) { return null; }
         if (usedMemory !== null && totalMemory !== null && totalMemory > 0) {
             return (usedMemory / totalMemory) * 100;
         }
         return null;
-    }, [usedMemory, totalMemory]);
+    }, [usedMemory, totalMemory, hasSystemStats]);
 
     const usedSpace = extractLatestValue(diskKpi.data, 'used_space');
     const freeSpace = extractLatestValue(diskKpi.data, 'free_space');
     const diskUsagePercent = useMemo(() => {
+        if (!hasSystemStats) { return null; }
         if (usedSpace !== null && freeSpace !== null) {
             const total = usedSpace + freeSpace;
             if (total > 0) { return (usedSpace / total) * 100; }
         }
         return null;
-    }, [usedSpace, freeSpace]);
+    }, [usedSpace, freeSpace, hasSystemStats]);
 
     const loadValue = extractLatestValue(loadKpi.data, 'load_avg_one_minute');
 
@@ -331,29 +342,35 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                 />
                 <KpiTile
                     label="Memory Usage"
-                    value={memoryUsagePercent !== null
-                        ? formatKpiValue(memoryUsagePercent)
-                        : formatBytes(usedMemory)}
-                    unit={memoryUsagePercent !== null ? '%' : undefined}
-                    status={getPercentageStatus(memoryUsagePercent)}
+                    value={!hasSystemStats ? '--'
+                        : memoryUsagePercent !== null
+                            ? formatKpiValue(memoryUsagePercent)
+                            : formatBytes(usedMemory)}
+                    unit={!hasSystemStats ? undefined
+                        : memoryUsagePercent !== null ? '%' : undefined}
+                    status={!hasSystemStats ? undefined
+                        : getPercentageStatus(memoryUsagePercent)}
                     sparklineData={extractSparklineData(
                         memoryKpi.data, 'used_memory'
                     )}
                 />
                 <KpiTile
                     label="Disk Usage"
-                    value={diskUsagePercent !== null
-                        ? formatKpiValue(diskUsagePercent)
-                        : formatBytes(usedSpace)}
-                    unit={diskUsagePercent !== null ? '%' : undefined}
-                    status={getPercentageStatus(diskUsagePercent)}
+                    value={!hasSystemStats ? '--'
+                        : diskUsagePercent !== null
+                            ? formatKpiValue(diskUsagePercent)
+                            : formatBytes(usedSpace)}
+                    unit={!hasSystemStats ? undefined
+                        : diskUsagePercent !== null ? '%' : undefined}
+                    status={!hasSystemStats ? undefined
+                        : getPercentageStatus(diskUsagePercent)}
                     sparklineData={extractSparklineData(
                         diskKpi.data, 'used_space'
                     )}
                 />
                 <KpiTile
                     label="Load Average"
-                    value={formatKpiValue(loadValue, 2)}
+                    value={!hasSystemStats ? '--' : formatKpiValue(loadValue, 2)}
                     sparklineData={extractSparklineData(
                         loadKpi.data, 'load_avg_one_minute'
                     )}
@@ -365,7 +382,7 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                     <ChartPanel
                         title="CPU Usage Over Time"
                         loading={cpuChart.loading && !cpuChartData}
-                        hasData={!!cpuChartData}
+                        hasData={hasSystemStats && !!cpuChartData}
                         emptyMessage="No CPU data available. Is the system_stats extension installed?"
                         height={CHART_HEIGHT}
                     >
@@ -390,7 +407,7 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                     <ChartPanel
                         title="Memory Usage Over Time"
                         loading={memoryChart.loading && !memoryChartData}
-                        hasData={!!memoryChartData}
+                        hasData={hasSystemStats && !!memoryChartData}
                         emptyMessage="No memory data available. Is the system_stats extension installed?"
                         height={CHART_HEIGHT}
                     >
@@ -414,7 +431,7 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                     <ChartPanel
                         title="Disk Space"
                         loading={diskChart.loading && !diskChartData}
-                        hasData={!!diskChartData}
+                        hasData={hasSystemStats && !!diskChartData}
                         emptyMessage="No disk data available. Is the system_stats extension installed?"
                         height={CHART_HEIGHT}
                     >
@@ -438,7 +455,7 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                     <ChartPanel
                         title="Load Average Over Time"
                         loading={loadChart.loading && !loadChartData}
-                        hasData={!!loadChartData}
+                        hasData={hasSystemStats && !!loadChartData}
                         emptyMessage="No load average data available. Is the system_stats extension installed?"
                         height={CHART_HEIGHT}
                     >
@@ -461,7 +478,7 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                     <ChartPanel
                         title="Network I/O"
                         loading={networkChart.loading && !networkChartData}
-                        hasData={!!networkChartData}
+                        hasData={hasSystemStats && !!networkChartData}
                         emptyMessage="No network data available. Is the system_stats extension installed?"
                         height={CHART_HEIGHT}
                     >

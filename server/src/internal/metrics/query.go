@@ -262,10 +262,23 @@ func GetCoalescedSelectCols(metricCols []string, tableAlias string, colTypes map
 	return cols
 }
 
+// GetQualifiedSelectCols returns column expressions qualified with a
+// table alias. Unlike GetCoalescedSelectCols, NULL values from LEFT JOIN
+// gaps pass through so the caller can apply LOCF (Last Observation
+// Carried Forward).
+func GetQualifiedSelectCols(metricCols []string, tableAlias string) []string {
+	var cols []string
+	for _, col := range metricCols {
+		cols = append(cols, tableAlias+"."+QuoteIdentifier(col))
+	}
+	return cols
+}
+
 // BuildMetricsQuery constructs a time-bucketed aggregation SQL query for
 // the given probe, columns, connection, time range, and filters. The
 // colTypes map provides each column's PostgreSQL data type so that the
-// COALESCE default can match (e.g. interval vs numeric).
+// aggregation default can match (e.g. interval vs numeric). NULL values
+// from LEFT JOIN gaps are preserved so the caller can apply LOCF.
 func BuildMetricsQuery(
 	probeName string,
 	metricCols []string,
@@ -340,7 +353,7 @@ func BuildMetricsQuery(
 		strings.Join(GetAggSelectCols(metricCols, aggregation), ", "),
 		QuoteIdentifier(probeName),
 		strings.Join(whereClauses, " AND "),
-		strings.Join(GetCoalescedSelectCols(metricCols, "data_buckets", colTypes), ", "),
+		strings.Join(GetQualifiedSelectCols(metricCols, "data_buckets"), ", "),
 	)
 
 	return query, queryArgs, nil
@@ -422,6 +435,9 @@ func QueryTimeSeries(
 	}
 	dataMap := make(map[seriesKey][]MetricDataPoint)
 
+	// Track last known value per metric column for LOCF
+	lastKnown := make(map[string]float64)
+
 	for _, connID := range connectionIDs {
 		query, queryArgs, err := BuildMetricsQuery(
 			probeName, metricCols, colTypes, connID, timeStart, timeEnd,
@@ -454,7 +470,16 @@ func QueryTimeSeries(
 			for i, col := range metricCols {
 				val, ok := toFloat64(values[i+1])
 				if !ok {
-					continue
+					// Empty bucket from LEFT JOIN gap - apply LOCF
+					lkKey := fmt.Sprintf("%d:%s", connID, col)
+					if prev, exists := lastKnown[lkKey]; exists {
+						val = prev
+					} else {
+						continue
+					}
+				} else {
+					lkKey := fmt.Sprintf("%d:%s", connID, col)
+					lastKnown[lkKey] = val
 				}
 				key := seriesKey{metric: col, connectionID: connID}
 				dataMap[key] = append(dataMap[key], MetricDataPoint{

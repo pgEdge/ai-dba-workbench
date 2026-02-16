@@ -65,6 +65,19 @@ export const extractSparklineData = (
 };
 
 /**
+ * Check whether a metric series contains any non-zero data points.
+ * Returns false when all values are zero, which typically indicates
+ * the underlying extension is not installed.
+ */
+export const hasNonZeroData = (
+    data: Array<{ name: string; metric: string; data: MetricDataPoint[] }> | null,
+    metricName: string,
+): boolean => {
+    const points = extractSparklineData(data, metricName);
+    return points.some(p => p.value !== 0);
+};
+
+/**
  * Extract the latest value from a metric series.
  */
 export const extractLatestValue = (
@@ -73,5 +86,15 @@ export const extractLatestValue = (
 ): number | null => {
     const points = extractSparklineData(data, metricName);
     if (points.length === 0) { return null; }
-    return points[points.length - 1].value;
+
+    // Scan backwards to find the last non-zero value. This handles
+    // the common case where the most recent time bucket has no data
+    // yet (empty buckets are filled with 0 by the backend).
+    for (let i = points.length - 1; i >= 0; i--) {
+        if (points[i].value !== 0) {
+            return points[i].value;
+        }
+    }
+
+    return 0;
 };

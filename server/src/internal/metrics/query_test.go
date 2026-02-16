@@ -189,8 +189,11 @@ func TestBuildMetricsQuery(t *testing.T) {
 		if !strings.Contains(query, `avg("blks_hit")`) {
 			t.Error("query should aggregate blks_hit")
 		}
-		if !strings.Contains(query, `COALESCE(data_buckets."xact_commit", 0) AS "xact_commit"`) {
-			t.Error("query should COALESCE metric columns to fill NULL gaps")
+		if !strings.Contains(query, `data_buckets."xact_commit"`) {
+			t.Error("query should include qualified metric columns for LOCF")
+		}
+		if strings.Contains(query, `COALESCE(data_buckets."xact_commit"`) {
+			t.Error("query should not COALESCE metric columns; LOCF is applied in Go")
 		}
 
 		// Check args
@@ -272,6 +275,21 @@ func TestGetQuotedSelectCols(t *testing.T) {
 	}
 	if cols[0] != `"col_a"` {
 		t.Errorf("expected quoted col, got %s", cols[0])
+	}
+}
+
+func TestGetQualifiedSelectCols(t *testing.T) {
+	cols := GetQualifiedSelectCols([]string{"xact_commit", "blks_hit"}, "data_buckets")
+	if len(cols) != 2 {
+		t.Fatalf("expected 2 cols, got %d", len(cols))
+	}
+	expected0 := `data_buckets."xact_commit"`
+	if cols[0] != expected0 {
+		t.Errorf("cols[0] = %s, want %s", cols[0], expected0)
+	}
+	expected1 := `data_buckets."blks_hit"`
+	if cols[1] != expected1 {
+		t.Errorf("cols[1] = %s, want %s", cols[1], expected1)
 	}
 }
 

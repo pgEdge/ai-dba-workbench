@@ -92,7 +92,17 @@ export const extractLatestValue = (
 ): number | null => {
     const points = extractSparklineData(data, metricName);
     if (points.length === 0) { return null; }
-    return points[points.length - 1].value;
+
+    // Scan backwards to find the last non-zero value. This handles
+    // the common case where the most recent time bucket has no data
+    // yet (empty buckets are filled with 0 by the backend).
+    for (let i = points.length - 1; i >= 0; i--) {
+        if (points[i].value !== 0) {
+            return points[i].value;
+        }
+    }
+
+    return 0;
 };
 
 /**

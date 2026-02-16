@@ -111,6 +111,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
     const [alerts, setAlerts] = useState([]);
     const [loading, setLoading] = useState(false);
     const initialLoadDoneRef = React.useRef(false);
+    const localAnalysisRef = React.useRef<Map<number, string>>(new Map());
     const [blackoutMgmtOpen, setBlackoutMgmtOpen] = useState(false);
     const [ackDialogOpen, setAckDialogOpen] = useState(false);
     const [selectedAlertForAck, setSelectedAlertForAck] = useState(null);
@@ -262,6 +263,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
 
     // Update local alert state when AI analysis completes
     const handleAnalysisComplete = useCallback((alertId: number, analysis: string) => {
+        localAnalysisRef.current.set(alertId, analysis);
         setAlerts(prev => prev.map(a =>
             a.id === alertId ? { ...a, aiAnalysis: analysis } : a
         ));
@@ -368,7 +370,23 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
             if (response.ok) {
                 const data = await response.json();
                 const transformedAlerts = transformAlerts(data.alerts || []);
-                setAlerts(transformedAlerts);
+                // Merge locally-cached AI analyses that the server
+                // may not have persisted yet, then prune entries
+                // the server has caught up with.
+                const merged = transformedAlerts.map(a => {
+                    const local = a.id != null ? localAnalysisRef.current.get(a.id) : undefined;
+                    if (local && !a.aiAnalysis) {
+                        return { ...a, aiAnalysis: local };
+                    }
+                    return a;
+                });
+                // Remove local entries that the server now has
+                for (const a of merged) {
+                    if (a.id != null && a.aiAnalysis && localAnalysisRef.current.has(a.id)) {
+                        localAnalysisRef.current.delete(a.id);
+                    }
+                }
+                setAlerts(merged);
                 initialLoadDoneRef.current = true;
             } else {
                 setAlerts([]);

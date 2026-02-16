@@ -86,7 +86,7 @@ func (p *PgStatDatabaseConflictsProbe) GetQueryForVersion(pgVersion int) string 
 
 // Execute runs the probe against a monitored connection
 func (p *PgStatDatabaseConflictsProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
-	query := p.GetQueryForVersion(pgVersion)
+	query := WrapQuery(ProbeNamePgStatDatabaseConflicts, p.GetQueryForVersion(pgVersion))
 	rows, err := monitoredConn.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute query: %w", err)

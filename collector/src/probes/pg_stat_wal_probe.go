@@ -88,7 +88,8 @@ func (p *PgStatWalProbe) Execute(ctx context.Context, connectionName string, mon
                 a.stats_reset AS archiver_stats_reset
             FROM pg_stat_archiver a
         `
-		rows, err := monitoredConn.Query(ctx, query)
+		wrappedQuery := WrapQuery(ProbeNamePgStatWAL, query)
+		rows, err := monitoredConn.Query(ctx, wrappedQuery)
 		if err != nil {
 			return nil, fmt.Errorf("failed to execute query: %w", err)
 		}
@@ -145,7 +146,8 @@ func (p *PgStatWalProbe) Execute(ctx context.Context, connectionName string, mon
         `
 	}
 
-	rows, err := monitoredConn.Query(ctx, query)
+	wrappedQuery := WrapQuery(ProbeNamePgStatWAL, query)
+	rows, err := monitoredConn.Query(ctx, wrappedQuery)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute query: %w", err)
 	}

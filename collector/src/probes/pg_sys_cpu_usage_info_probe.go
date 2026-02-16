@@ -81,7 +81,8 @@ func (p *PgSysCPUUsageInfoProbe) Execute(ctx context.Context, connectionName str
 		return nil, nil
 	}
 
-	rows, err := monitoredConn.Query(ctx, p.GetQuery())
+	query := WrapQuery(ProbeNamePgSysCPUUsageInfo, p.GetQuery())
+	rows, err := monitoredConn.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute query: %w", err)
 	}

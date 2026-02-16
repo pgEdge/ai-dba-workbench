@@ -142,6 +142,10 @@ The top queries section ranks queries by resource
 consumption. The section displays execution time, call
 count, and rows returned for the most active queries.
 
+The "Hide monitoring queries" toggle filters out the
+workbench's own monitoring queries from the list. The
+toggle is on by default to focus on application queries.
+
 ## Database Dashboard
 
 The database dashboard presents detailed metrics for a

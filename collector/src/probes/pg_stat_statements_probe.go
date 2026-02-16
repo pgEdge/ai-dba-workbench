@@ -277,7 +277,8 @@ func (p *PgStatStatementsProbe) Execute(ctx context.Context, connectionName stri
         `, PgStatStatementsQueryLimit)
 	}
 
-	rows, err := monitoredConn.Query(ctx, query)
+	wrappedQuery := WrapQuery(ProbeNamePgStatStatements, query)
+	rows, err := monitoredConn.Query(ctx, wrappedQuery)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute query: %w", err)
 	}

@@ -116,7 +116,8 @@ func (p *PgStatReplicationProbe) Execute(ctx context.Context, connectionName str
             ORDER BY pid
         `
 
-		rows, err := monitoredConn.Query(ctx, query)
+		wrappedQuery := WrapQuery(ProbeNamePgStatReplication, query)
+		rows, err := monitoredConn.Query(ctx, wrappedQuery)
 		if err != nil {
 			return nil, fmt.Errorf("failed to execute query: %w", err)
 		}
@@ -171,7 +172,8 @@ func (p *PgStatReplicationProbe) Execute(ctx context.Context, connectionName str
         FROM pg_stat_wal_receiver
     `
 
-	receiverRows, err := monitoredConn.Query(ctx, receiverQuery)
+	wrappedReceiverQuery := WrapQuery(ProbeNamePgStatReplication, receiverQuery)
+	receiverRows, err := monitoredConn.Query(ctx, wrappedReceiverQuery)
 	if err != nil {
 		// If query fails (e.g., view doesn't exist), just continue with what we have
 		return metrics, nil

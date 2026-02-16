@@ -1117,6 +1117,9 @@ func (h *PerfSummaryHandler) handleTopQueries(
 	// Parse optional queryid filter
 	queryID := ParseQueryString(r, "queryid")
 
+	// Parse optional exclude_collector filter
+	excludeCollector := r.URL.Query().Get("exclude_collector") == "true"
+
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
@@ -1142,6 +1145,12 @@ func (h *PerfSummaryHandler) handleTopQueries(
 		args = append(args, queryID)
 	}
 
+	// Build optional clause to exclude collector probe queries.
+	excludeCollectorClause := ""
+	if excludeCollector {
+		excludeCollectorClause = "AND query NOT LIKE '%ai_dba_wb_probe%'"
+	}
+
 	query := fmt.Sprintf(`
         SELECT queryid::text, query, calls, total_exec_time,
                mean_exec_time, rows, shared_blks_hit, shared_blks_read
@@ -1153,9 +1162,10 @@ func (h *PerfSummaryHandler) handleTopQueries(
               WHERE connection_id = $1
           )
           %s
+          %s
         ORDER BY %s %s
         LIMIT $2
-    `, queryIDClause, orderBy, order)
+    `, queryIDClause, excludeCollectorClause, orderBy, order)
 
 	rows, err := tx.Query(ctx, query, args...)
 	if err != nil {

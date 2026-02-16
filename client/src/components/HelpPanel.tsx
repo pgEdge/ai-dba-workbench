@@ -1331,7 +1331,7 @@ const MonitoringPage = () => (
             />
             <FeatureItem
                 title="Top Queries"
-                description="Leaderboards showing the most resource-intensive queries by total time, calls, mean time, or rows returned."
+                description="Leaderboards showing the most resource-intensive queries by total time, calls, mean time, or rows returned; the Hide monitoring queries toggle filters out workbench monitoring queries by default."
             />
         </Box>
 

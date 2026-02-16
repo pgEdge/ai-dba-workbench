@@ -119,7 +119,8 @@ func (p *PgStatCheckpointerProbe) Execute(ctx context.Context, connectionName st
         `
 	}
 
-	rows, err := monitoredConn.Query(ctx, query)
+	wrappedQuery := WrapQuery(ProbeNamePgStatCheckpointer, query)
+	rows, err := monitoredConn.Query(ctx, wrappedQuery)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute query: %w", err)
 	}

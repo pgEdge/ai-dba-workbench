@@ -169,7 +169,8 @@ func (p *PgStatConnectionSecurityProbe) Execute(ctx context.Context, connectionN
         `
 	}
 
-	rows, err := monitoredConn.Query(ctx, query)
+	wrappedQuery := WrapQuery(ProbeNamePgStatConnectionSecurity, query)
+	rows, err := monitoredConn.Query(ctx, wrappedQuery)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute query: %w", err)
 	}

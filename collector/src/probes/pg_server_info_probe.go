@@ -66,8 +66,10 @@ func (p *PgServerInfoProbe) GetQuery() string {
 
 // Execute runs the probe against a monitored connection
 func (p *PgServerInfoProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
-	row := monitoredConn.QueryRow(ctx, p.GetQuery())
+	query := WrapQuery(ProbeNamePgServerInfo, p.GetQuery())
+	row := monitoredConn.QueryRow(ctx, query)
 
+	var probeMarker string
 	var serverVersion string
 	var serverVersionNum int
 	var systemIdentifier int64
@@ -79,6 +81,7 @@ func (p *PgServerInfoProbe) Execute(ctx context.Context, connectionName string, 
 	var installedExtensions []string
 
 	err := row.Scan(
+		&probeMarker,
 		&serverVersion,
 		&serverVersionNum,
 		&systemIdentifier,
@@ -89,6 +92,7 @@ func (p *PgServerInfoProbe) Execute(ctx context.Context, connectionName string, 
 		&maxReplicationSlots,
 		&installedExtensions,
 	)
+	_ = probeMarker // marker column used for query identification only
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan server info: %w", err)
 	}

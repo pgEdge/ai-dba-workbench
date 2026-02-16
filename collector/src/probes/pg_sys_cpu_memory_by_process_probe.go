@@ -76,7 +76,8 @@ func (p *PgSysCPUMemoryByProcessProbe) Execute(ctx context.Context, connectionNa
 		return nil, nil
 	}
 
-	rows, err := monitoredConn.Query(ctx, p.GetQuery())
+	query := WrapQuery(ProbeNamePgSysCPUMemoryByProcess, p.GetQuery())
+	rows, err := monitoredConn.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute query: %w", err)
 	}

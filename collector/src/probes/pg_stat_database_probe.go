@@ -84,7 +84,8 @@ func (p *PgStatDatabaseProbe) GetQuery() string {
 
 // Execute runs the probe against a monitored connection
 func (p *PgStatDatabaseProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
-	rows, err := monitoredConn.Query(ctx, p.GetQuery())
+	query := WrapQuery(ProbeNamePgStatDatabase, p.GetQuery())
+	rows, err := monitoredConn.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute query: %w", err)
 	}

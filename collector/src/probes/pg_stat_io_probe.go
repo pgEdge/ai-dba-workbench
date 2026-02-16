@@ -156,7 +156,8 @@ func (p *PgStatIOProbe) Execute(ctx context.Context, connectionName string, moni
             `
 		}
 
-		rows, err := monitoredConn.Query(ctx, query)
+		wrappedQuery := WrapQuery(ProbeNamePgStatIO, query)
+		rows, err := monitoredConn.Query(ctx, wrappedQuery)
 		if err != nil {
 			return nil, fmt.Errorf("failed to execute query: %w", err)
 		}
@@ -207,7 +208,8 @@ func (p *PgStatIOProbe) Execute(ctx context.Context, connectionName string, moni
             FROM pg_stat_slru
         `
 
-		slruRows, err := monitoredConn.Query(ctx, slruQuery)
+		wrappedSlruQuery := WrapQuery(ProbeNamePgStatIO, slruQuery)
+		slruRows, err := monitoredConn.Query(ctx, wrappedSlruQuery)
 		if err != nil {
 			return nil, fmt.Errorf("failed to execute SLRU query: %w", err)
 		}

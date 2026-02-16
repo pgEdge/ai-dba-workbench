@@ -12,6 +12,8 @@ import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
+import FormControlLabel from '@mui/material/FormControlLabel';
+import Switch from '@mui/material/Switch';
 import QueryStatsIcon from '@mui/icons-material/QueryStats';
 import { useTheme } from '@mui/material/styles';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -41,7 +43,7 @@ const TABLE_HEADER_SX = {
 
 /** Table header cell */
 const HEADER_CELL_SX = {
-    fontSize: '0.75rem',
+    fontSize: '0.875rem',
     fontWeight: 700,
     textTransform: 'uppercase' as const,
     letterSpacing: '0.05em',
@@ -69,7 +71,7 @@ const TABLE_ROW_SX = {
 
 /** Query text cell */
 const QUERY_CELL_SX = {
-    fontSize: '0.8125rem',
+    fontSize: '0.875rem',
     fontFamily: '"JetBrains Mono", "SF Mono", monospace',
     whiteSpace: 'nowrap' as const,
     overflow: 'hidden',
@@ -79,7 +81,7 @@ const QUERY_CELL_SX = {
 
 /** Numeric cell */
 const NUMERIC_CELL_SX = {
-    fontSize: '0.8125rem',
+    fontSize: '0.875rem',
     fontFamily: '"JetBrains Mono", "SF Mono", monospace',
     fontWeight: 500,
     textAlign: 'right' as const,
@@ -131,6 +133,7 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
     const [queries, setQueries] = useState<TopQueryRow[]>([]);
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
+    const [hideCollectorQueries, setHideCollectorQueries] = useState<boolean>(true);
     const isMountedRef = useRef<boolean>(true);
     const initialLoadDoneRef = useRef<boolean>(false);
 
@@ -143,6 +146,9 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
             order_by: 'total_exec_time',
             order: 'desc',
         });
+        if (hideCollectorQueries) {
+            params.set('exclude_collector', 'true');
+        }
         const url = `/api/v1/metrics/top-queries?${params.toString()}`;
 
         if (!initialLoadDoneRef.current) {
@@ -184,7 +190,7 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
                 setLoading(false);
             }
         }
-    }, [user, connectionId]);
+    }, [user, connectionId, hideCollectorQueries]);
 
     useEffect(() => {
         initialLoadDoneRef.current = false;
@@ -221,7 +227,33 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
     }), [theme.palette.divider]);
 
     return (
-        <CollapsibleSection title="Top Queries" icon={<QueryStatsIcon sx={{ fontSize: 16 }} />} defaultExpanded>
+        <CollapsibleSection
+            title="Top Queries"
+            icon={<QueryStatsIcon sx={{ fontSize: 16 }} />}
+            defaultExpanded
+            headerRight={
+                <FormControlLabel
+                    control={
+                        <Switch
+                            size="small"
+                            checked={hideCollectorQueries}
+                            onChange={(e) => setHideCollectorQueries(e.target.checked)}
+                        />
+                    }
+                    label="Hide monitoring queries"
+                    labelPlacement="start"
+                    slotProps={{
+                        typography: {
+                            sx: {
+                                fontSize: '0.875rem',
+                                color: 'text.secondary',
+                            },
+                        },
+                    }}
+                    sx={{ mr: 0, gap: 1 }}
+                />
+            }
+        >
             {loading && queries.length === 0 && (
                 <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
                     <CircularProgress size={24} />

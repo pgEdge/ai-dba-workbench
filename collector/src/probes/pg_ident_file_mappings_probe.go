@@ -116,7 +116,7 @@ func (p *PgIdentFileMappingsProbe) Execute(ctx context.Context, connectionName s
 		return []map[string]interface{}{}, nil
 	}
 
-	query := p.GetQueryForVersion(pgVersion)
+	query := WrapQuery(ProbeNamePgIdentFileMappings, p.GetQueryForVersion(pgVersion))
 	rows, err := monitoredConn.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute query: %w", err)

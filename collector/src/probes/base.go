@@ -28,6 +28,15 @@ import (
 	"github.com/pgedge/ai-workbench/pkg/logger"
 )
 
+// WrapQuery wraps a SQL query with a probe marker column so the server
+// can identify and filter collector queries from monitoring panels.
+func WrapQuery(probeName, query string) string {
+	return fmt.Sprintf(
+		"SELECT '%s' AS ai_dba_wb_probe, subq.* FROM (%s) AS subq",
+		probeName, query,
+	)
+}
+
 // featureCache stores boolean feature-detection results keyed by
 // "connectionName:checkName". View and column existence checks never
 // change during the lifetime of a PostgreSQL connection, so caching

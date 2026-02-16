@@ -39,6 +39,13 @@ import {
     ackMessageSx,
     expandableShowMoreBaseSx,
     expandIconSmallSx,
+    oldValueSx,
+    newValueSx,
+    removedLineSx,
+    addedLineSx,
+    changeArrowSx,
+    changeTypePrefixSx,
+    noChangesSx,
 } from './styles';
 
 /**
@@ -86,14 +93,127 @@ export const ExpandableList = memo(({ items, initialLimit, renderItem, emptyText
 ExpandableList.displayName = 'ExpandableList';
 
 /**
- * ConfigChangeDetails - Shows configuration change details with expandable list
+ * ConfigChangeDetails - Shows configuration change details with expandable list.
+ * Supports both diff format (details.changes) and snapshot format (details.settings).
  */
 export const ConfigChangeDetails = memo(({ details }) => {
     const theme = useTheme();
+    const codeBlockSx = useMemo(() => getCodeBlockSx(theme), [theme]);
+
+    // New diff format: details.changes array exists
+    if (details?.changes) {
+        const changes = details.changes;
+        const count = details.change_count || changes.length || 0;
+
+        if (changes.length === 0 || count === 0) {
+            return (
+                <Box sx={{ mt: 1 }}>
+                    <Typography sx={sectionLabelSx}>
+                        Changes (0)
+                    </Typography>
+                    <Typography sx={noChangesSx}>
+                        No actual changes detected
+                    </Typography>
+                </Box>
+            );
+        }
+
+        return (
+            <Box sx={{ mt: 1 }}>
+                <Typography sx={sectionLabelSx}>
+                    Changes ({count})
+                </Typography>
+                <Box sx={codeBlockSx}>
+                    <ExpandableList
+                        items={changes}
+                        initialLimit={10}
+                        emptyText={`${count} changes`}
+                        renderItem={(change, i, total) => (
+                            <Box key={i} sx={{ mb: i < total - 1 ? 0.5 : 0 }}>
+                                {change.change_type === 'modified' && (
+                                    <Box>
+                                        <Typography
+                                            component="span"
+                                            sx={settingNameSx}
+                                        >
+                                            {change.name}:
+                                        </Typography>
+                                        {' '}
+                                        <Typography
+                                            component="span"
+                                            sx={oldValueSx}
+                                        >
+                                            {change.old_value}
+                                        </Typography>
+                                        <Typography
+                                            component="span"
+                                            sx={changeArrowSx}
+                                        >
+                                            {'\u2192'}
+                                        </Typography>
+                                        <Typography
+                                            component="span"
+                                            sx={newValueSx}
+                                        >
+                                            {change.new_value}
+                                        </Typography>
+                                    </Box>
+                                )}
+                                {change.change_type === 'added' && (
+                                    <Box>
+                                        <Typography
+                                            component="span"
+                                            sx={{ ...changeTypePrefixSx, color: 'success.main' }}
+                                        >
+                                            +
+                                        </Typography>
+                                        <Typography
+                                            component="span"
+                                            sx={settingNameSx}
+                                        >
+                                            {change.name}
+                                        </Typography>
+                                        <Typography
+                                            component="span"
+                                            sx={addedLineSx}
+                                        >
+                                            {' = '}{change.new_value}
+                                        </Typography>
+                                    </Box>
+                                )}
+                                {change.change_type === 'removed' && (
+                                    <Box>
+                                        <Typography
+                                            component="span"
+                                            sx={{ ...changeTypePrefixSx, color: 'error.main' }}
+                                        >
+                                            -
+                                        </Typography>
+                                        <Typography
+                                            component="span"
+                                            sx={{ ...settingNameSx, ...removedLineSx }}
+                                        >
+                                            {change.name}
+                                        </Typography>
+                                        <Typography
+                                            component="span"
+                                            sx={removedLineSx}
+                                        >
+                                            {' = '}{change.old_value}
+                                        </Typography>
+                                    </Box>
+                                )}
+                            </Box>
+                        )}
+                    />
+                </Box>
+            </Box>
+        );
+    }
+
+    // Old snapshot format: details.settings
     const settings = details?.settings || [];
     const count = details?.setting_count || settings.length || 0;
-
-    const codeBlockSx = useMemo(() => getCodeBlockSx(theme), [theme]);
 
     return (
         <Box sx={{ mt: 1 }}>
@@ -130,14 +250,148 @@ export const ConfigChangeDetails = memo(({ details }) => {
 ConfigChangeDetails.displayName = 'ConfigChangeDetails';
 
 /**
- * ExtensionChangeDetails - Shows extension change details
+ * ExtensionChangeDetails - Shows extension change details.
+ * Supports both diff format (details.changes) and snapshot format (details.extensions).
  */
 export const ExtensionChangeDetails = memo(({ details }) => {
     const theme = useTheme();
+    const codeBlockSx = useMemo(() => getCodeBlockSx(theme), [theme]);
+
+    const extNameSx = useMemo(() => ({
+        color: theme.palette.custom.status.cyan,
+        fontWeight: 600,
+        fontFamily: 'inherit',
+        fontSize: 'inherit',
+    }), [theme]);
+
+    const extDbSx = { color: 'text.disabled', fontFamily: 'inherit', fontSize: 'inherit' };
+
+    // New diff format: details.changes array exists
+    if (details?.changes) {
+        const changes = details.changes;
+        const count = details.change_count || changes.length || 0;
+
+        if (changes.length === 0 || count === 0) {
+            return (
+                <Box sx={{ mt: 1 }}>
+                    <Typography sx={sectionLabelSx}>
+                        Changes (0)
+                    </Typography>
+                    <Typography sx={noChangesSx}>
+                        No actual changes detected
+                    </Typography>
+                </Box>
+            );
+        }
+
+        return (
+            <Box sx={{ mt: 1 }}>
+                <Typography sx={sectionLabelSx}>
+                    Changes ({count})
+                </Typography>
+                <Box sx={codeBlockSx}>
+                    <ExpandableList
+                        items={changes}
+                        initialLimit={10}
+                        emptyText={`${count} changes`}
+                        renderItem={(change, i, total) => (
+                            <Box key={i} sx={{ mb: i < total - 1 ? 0.5 : 0 }}>
+                                {change.change_type === 'added' && (
+                                    <Box>
+                                        <Typography
+                                            component="span"
+                                            sx={{ ...changeTypePrefixSx, color: 'success.main' }}
+                                        >
+                                            +
+                                        </Typography>
+                                        <Typography
+                                            component="span"
+                                            sx={addedLineSx}
+                                        >
+                                            {change.name} v{change.version}
+                                        </Typography>
+                                        {change.database && (
+                                            <Typography
+                                                component="span"
+                                                sx={addedLineSx}
+                                            >
+                                                {' in '}{change.database}
+                                            </Typography>
+                                        )}
+                                    </Box>
+                                )}
+                                {change.change_type === 'removed' && (
+                                    <Box>
+                                        <Typography
+                                            component="span"
+                                            sx={{ ...changeTypePrefixSx, color: 'error.main' }}
+                                        >
+                                            -
+                                        </Typography>
+                                        <Typography
+                                            component="span"
+                                            sx={removedLineSx}
+                                        >
+                                            {change.name} v{change.old_version}
+                                        </Typography>
+                                        {change.database && (
+                                            <Typography
+                                                component="span"
+                                                sx={removedLineSx}
+                                            >
+                                                {' in '}{change.database}
+                                            </Typography>
+                                        )}
+                                    </Box>
+                                )}
+                                {change.change_type === 'modified' && (
+                                    <Box>
+                                        <Typography
+                                            component="span"
+                                            sx={extNameSx}
+                                        >
+                                            {change.name}
+                                        </Typography>
+                                        {' '}
+                                        <Typography
+                                            component="span"
+                                            sx={oldValueSx}
+                                        >
+                                            v{change.old_version}
+                                        </Typography>
+                                        <Typography
+                                            component="span"
+                                            sx={changeArrowSx}
+                                        >
+                                            {'\u2192'}
+                                        </Typography>
+                                        <Typography
+                                            component="span"
+                                            sx={newValueSx}
+                                        >
+                                            v{change.version}
+                                        </Typography>
+                                        {change.database && (
+                                            <Typography
+                                                component="span"
+                                                sx={extDbSx}
+                                            >
+                                                {' in '}{change.database}
+                                            </Typography>
+                                        )}
+                                    </Box>
+                                )}
+                            </Box>
+                        )}
+                    />
+                </Box>
+            </Box>
+        );
+    }
+
+    // Old snapshot format: details.extensions
     const extensions = details?.extensions || [];
     const count = details?.extension_count || extensions.length || 0;
-
-    const codeBlockSx = useMemo(() => getCodeBlockSx(theme), [theme]);
 
     return (
         <Box sx={{ mt: 1 }}>
@@ -153,12 +407,7 @@ export const ExtensionChangeDetails = memo(({ details }) => {
                         <Box key={i} sx={{ mb: i < total - 1 ? 0.5 : 0 }}>
                             <Typography
                                 component="span"
-                                sx={{
-                                    color: theme.palette.custom.status.cyan,
-                                    fontWeight: 600,
-                                    fontFamily: 'inherit',
-                                    fontSize: 'inherit',
-                                }}
+                                sx={extNameSx}
                             >
                                 {ext.name}
                             </Typography>
@@ -171,7 +420,7 @@ export const ExtensionChangeDetails = memo(({ details }) => {
                             {ext.database && (
                                 <Typography
                                     component="span"
-                                    sx={{ color: 'text.disabled', fontFamily: 'inherit', fontSize: 'inherit' }}
+                                    sx={extDbSx}
                                 >
                                     {' in '}{ext.database}
                                 </Typography>
@@ -187,14 +436,118 @@ export const ExtensionChangeDetails = memo(({ details }) => {
 ExtensionChangeDetails.displayName = 'ExtensionChangeDetails';
 
 /**
- * HbaChangeDetails - Shows HBA rule change details with expandable list
+ * HbaChangeDetails - Shows HBA rule change details with expandable list.
+ * Supports both diff format (details.changes) and snapshot format (details.rules).
  */
 export const HbaChangeDetails = memo(({ details }) => {
     const theme = useTheme();
+    const codeBlockSx = useMemo(() => getCodeBlockSmallSx(theme), [theme]);
+
+    // New diff format: details.changes array exists
+    if (details?.changes) {
+        const changes = details.changes;
+        const count = details.change_count || changes.length || 0;
+
+        if (changes.length === 0 || count === 0) {
+            return (
+                <Box sx={{ mt: 1 }}>
+                    <Typography sx={sectionLabelSx}>
+                        Changes (0)
+                    </Typography>
+                    <Typography sx={noChangesSx}>
+                        No actual changes detected
+                    </Typography>
+                </Box>
+            );
+        }
+
+        return (
+            <Box sx={{ mt: 1 }}>
+                <Typography sx={sectionLabelSx}>
+                    Changes ({count})
+                </Typography>
+                <Box sx={codeBlockSx}>
+                    <ExpandableList
+                        items={changes}
+                        initialLimit={8}
+                        emptyText={`${count} changes`}
+                        renderItem={(change, i, total) => (
+                            <Box key={i} sx={{ mb: i < total - 1 ? 0.25 : 0 }}>
+                                {change.change_type === 'added' && (
+                                    <Box>
+                                        <Typography
+                                            component="span"
+                                            sx={{ ...changeTypePrefixSx, color: 'success.main' }}
+                                        >
+                                            +
+                                        </Typography>
+                                        <Typography
+                                            component="span"
+                                            sx={addedLineSx}
+                                        >
+                                            {change.type} {change.database} {change.user_name} {change.address || ''} {change.auth_method}
+                                        </Typography>
+                                    </Box>
+                                )}
+                                {change.change_type === 'removed' && (
+                                    <Box>
+                                        <Typography
+                                            component="span"
+                                            sx={{ ...changeTypePrefixSx, color: 'error.main' }}
+                                        >
+                                            -
+                                        </Typography>
+                                        <Typography
+                                            component="span"
+                                            sx={removedLineSx}
+                                        >
+                                            {change.prev_type} {change.prev_database} {change.prev_user_name} {change.prev_address || ''} {change.prev_auth_method}
+                                        </Typography>
+                                    </Box>
+                                )}
+                                {change.change_type === 'modified' && (
+                                    <Box>
+                                        <Box>
+                                            <Typography
+                                                component="span"
+                                                sx={{ ...changeTypePrefixSx, color: 'error.main' }}
+                                            >
+                                                -
+                                            </Typography>
+                                            <Typography
+                                                component="span"
+                                                sx={removedLineSx}
+                                            >
+                                                {change.prev_type} {change.prev_database} {change.prev_user_name} {change.prev_address || ''} {change.prev_auth_method}
+                                            </Typography>
+                                        </Box>
+                                        <Box>
+                                            <Typography
+                                                component="span"
+                                                sx={{ ...changeTypePrefixSx, color: 'success.main' }}
+                                            >
+                                                +
+                                            </Typography>
+                                            <Typography
+                                                component="span"
+                                                sx={hbaRuleTextSx}
+                                            >
+                                                {change.type} {change.database} {change.user_name} {change.address || ''} {change.auth_method}
+                                            </Typography>
+                                        </Box>
+                                    </Box>
+                                )}
+                            </Box>
+                        )}
+                    />
+                </Box>
+            </Box>
+        );
+    }
+
+    // Old snapshot format: details.rules
     const rules = details?.rules || [];
     const count = details?.rule_count || rules.length || 0;
-
-    const codeBlockSx = useMemo(() => getCodeBlockSmallSx(theme), [theme]);
 
     return (
         <Box sx={{ mt: 1 }}>

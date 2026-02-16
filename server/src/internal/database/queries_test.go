@@ -1528,11 +1528,11 @@ func TestBuildConfigChangeQueryWithWhere(t *testing.T) {
 	query := buildConfigChangeQuery("WHERE connection_id = $1 AND event_time >= $2")
 
 	// Column names should be rewritten to table-qualified names
-	if !strings.Contains(query, "s.connection_id = $1") {
-		t.Error("expected connection_id rewritten to s.connection_id")
+	if !strings.Contains(query, "d.connection_id = $1") {
+		t.Error("expected connection_id rewritten to d.connection_id")
 	}
-	if !strings.Contains(query, "s.collected_at >= $2") {
-		t.Error("expected event_time rewritten to s.collected_at")
+	if !strings.Contains(query, "d.collected_at >= $2") {
+		t.Error("expected event_time rewritten to d.collected_at")
 	}
 }
 

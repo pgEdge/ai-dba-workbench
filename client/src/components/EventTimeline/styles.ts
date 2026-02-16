@@ -485,3 +485,54 @@ export const getOuterContainerSx = (theme: Theme) => ({
     border: '1px solid',
     borderColor: theme.palette.divider,
 });
+
+// ---- Diff display styles ----
+export const oldValueSx = {
+    color: 'error.main',
+    textDecoration: 'line-through',
+    fontFamily: 'inherit',
+    fontSize: 'inherit',
+    opacity: 0.7,
+};
+
+export const newValueSx = {
+    color: 'success.main',
+    fontWeight: 600,
+    fontFamily: 'inherit',
+    fontSize: 'inherit',
+};
+
+export const removedLineSx = {
+    color: 'error.main',
+    textDecoration: 'line-through',
+    fontFamily: 'inherit',
+    fontSize: 'inherit',
+    opacity: 0.7,
+};
+
+export const addedLineSx = {
+    color: 'success.main',
+    fontFamily: 'inherit',
+    fontSize: 'inherit',
+};
+
+export const changeArrowSx = {
+    color: 'text.disabled',
+    fontFamily: 'inherit',
+    fontSize: 'inherit',
+    mx: 0.5,
+};
+
+export const changeTypePrefixSx = {
+    fontFamily: 'inherit',
+    fontSize: 'inherit',
+    fontWeight: 700,
+    mr: 0.5,
+    display: 'inline',
+};
+
+export const noChangesSx = {
+    color: 'text.disabled',
+    fontSize: '0.875rem',
+    fontStyle: 'italic',
+};

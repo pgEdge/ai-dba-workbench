@@ -380,134 +380,334 @@ func buildWhereClause(connCondition, timeCondition, extraCondition string) strin
 	return "WHERE " + strings.Join(conditions, " AND ")
 }
 
-// buildConfigChangeQuery creates the subquery for configuration changes
-// Excludes initial collection (first snapshot) since that's not really a "change"
+// buildConfigChangeQuery creates the subquery for configuration changes.
+// Uses LAG() to find previous snapshots and compares settings between
+// consecutive snapshots, returning only settings that actually changed.
 func buildConfigChangeQuery(whereClause string) string {
-	// Replace generic column names with actual column names for this table
-	tableWhere := strings.ReplaceAll(whereClause, "event_time", "s.collected_at")
-	tableWhere = strings.ReplaceAll(tableWhere, "connection_id", "s.connection_id")
+	tableWhere := strings.ReplaceAll(whereClause, "event_time", "d.collected_at")
+	tableWhere = strings.ReplaceAll(tableWhere, "connection_id", "d.connection_id")
+
+	extraFilter := ""
+	if tableWhere != "" {
+		extraFilter = "AND " + strings.TrimPrefix(tableWhere, "WHERE ")
+	}
 
 	return fmt.Sprintf(`
         SELECT
-            'config-' || s.connection_id || '-' || s.collected_at::TEXT AS id,
+            'config-' || d.connection_id || '-' || d.collected_at::TEXT AS id,
             '%s' AS event_type,
-            s.connection_id,
+            d.connection_id,
             COALESCE(c.name, 'Unknown') AS server_name,
-            s.collected_at AS event_time,
+            d.collected_at AS event_time,
             'info' AS severity,
             'Configuration Changed' AS title,
-            'Updated ' || COUNT(*) || ' PostgreSQL settings' AS summary,
+            'Changed ' || COUNT(*) || ' settings' AS summary,
             jsonb_build_object(
-                'setting_count', COUNT(*),
-                'settings', jsonb_agg(jsonb_build_object(
-                    'name', s.name,
-                    'value', s.setting,
-                    'source', s.source
-                ) ORDER BY s.name) FILTER (WHERE s.name IS NOT NULL)
+                'change_count', COUNT(*),
+                'changes', jsonb_agg(jsonb_build_object(
+                    'name', COALESCE(d.curr_name, d.prev_name),
+                    'old_value', d.prev_setting,
+                    'new_value', d.curr_setting,
+                    'change_type', d.change_type
+                ) ORDER BY COALESCE(d.curr_name, d.prev_name))
             )::TEXT AS details
-        FROM metrics.pg_settings s
-        JOIN connections c ON s.connection_id = c.id
-        %s
-        AND s.collected_at > (
-            SELECT MIN(collected_at)
-            FROM metrics.pg_settings
-            WHERE connection_id = s.connection_id
-        )
-        GROUP BY s.connection_id, s.collected_at, c.name
-    `, EventTypeConfigChange, func() string {
-		if tableWhere == "" {
-			return "WHERE 1=1"
-		}
-		return tableWhere
-	}())
+        FROM (
+            SELECT
+                snap.connection_id,
+                snap.collected_at,
+                curr.name AS curr_name,
+                curr.setting AS curr_setting,
+                prev.name AS prev_name,
+                prev.setting AS prev_setting,
+                CASE
+                    WHEN prev.name IS NULL THEN 'added'
+                    ELSE 'modified'
+                END AS change_type
+            FROM (
+                SELECT DISTINCT connection_id, collected_at,
+                    LAG(collected_at) OVER (
+                        PARTITION BY connection_id ORDER BY collected_at
+                    ) AS prev_collected_at
+                FROM metrics.pg_settings
+            ) snap
+            JOIN metrics.pg_settings curr
+                ON curr.connection_id = snap.connection_id
+                AND curr.collected_at = snap.collected_at
+            LEFT JOIN metrics.pg_settings prev
+                ON prev.connection_id = snap.connection_id
+                AND prev.collected_at = snap.prev_collected_at
+                AND prev.name = curr.name
+            WHERE snap.prev_collected_at IS NOT NULL
+              AND (prev.name IS NULL
+                   OR curr.setting IS DISTINCT FROM prev.setting)
+
+            UNION ALL
+
+            SELECT
+                snap.connection_id,
+                snap.collected_at,
+                NULL AS curr_name,
+                NULL AS curr_setting,
+                prev.name AS prev_name,
+                prev.setting AS prev_setting,
+                'removed' AS change_type
+            FROM (
+                SELECT DISTINCT connection_id, collected_at,
+                    LAG(collected_at) OVER (
+                        PARTITION BY connection_id ORDER BY collected_at
+                    ) AS prev_collected_at
+                FROM metrics.pg_settings
+            ) snap
+            JOIN metrics.pg_settings prev
+                ON prev.connection_id = snap.connection_id
+                AND prev.collected_at = snap.prev_collected_at
+            WHERE snap.prev_collected_at IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM metrics.pg_settings curr
+                  WHERE curr.connection_id = snap.connection_id
+                    AND curr.collected_at = snap.collected_at
+                    AND curr.name = prev.name
+              )
+        ) d
+        JOIN connections c ON d.connection_id = c.id
+        WHERE TRUE %s
+        GROUP BY d.connection_id, d.collected_at, c.name
+    `, EventTypeConfigChange, extraFilter)
 }
 
-// buildConfigChangeCountQuery creates the count query for configuration changes
-// Excludes initial collection to match the main query
+// buildConfigChangeCountQuery creates the count query for configuration
+// changes. Counts only snapshots that have at least one actual diff from
+// the previous snapshot.
 func buildConfigChangeCountQuery(whereClause string) string {
-	tableWhere := strings.ReplaceAll(whereClause, "event_time", "collected_at")
+	tableWhere := strings.ReplaceAll(whereClause, "event_time", "d.collected_at")
+	tableWhere = strings.ReplaceAll(tableWhere, "connection_id", "d.connection_id")
+
+	extraFilter := ""
+	if tableWhere != "" {
+		extraFilter = "AND " + strings.TrimPrefix(tableWhere, "WHERE ")
+	}
 
 	return fmt.Sprintf(`
-        SELECT COUNT(DISTINCT (s.connection_id, s.collected_at))
-        FROM metrics.pg_settings s
-        %s
-        AND s.collected_at > (
-            SELECT MIN(collected_at)
-            FROM metrics.pg_settings
-            WHERE connection_id = s.connection_id
-        )
-    `, func() string {
-		if tableWhere == "" {
-			return "WHERE 1=1"
-		}
-		return strings.ReplaceAll(tableWhere, "connection_id", "s.connection_id")
-	}())
+        SELECT COUNT(*) FROM (
+            SELECT snap.connection_id, snap.collected_at
+            FROM (
+                SELECT DISTINCT connection_id, collected_at,
+                    LAG(collected_at) OVER (
+                        PARTITION BY connection_id ORDER BY collected_at
+                    ) AS prev_collected_at
+                FROM metrics.pg_settings
+            ) snap
+            WHERE snap.prev_collected_at IS NOT NULL
+              AND (
+                  EXISTS (
+                      SELECT 1
+                      FROM metrics.pg_settings curr
+                      LEFT JOIN metrics.pg_settings prev
+                          ON prev.connection_id = snap.connection_id
+                          AND prev.collected_at = snap.prev_collected_at
+                          AND prev.name = curr.name
+                      WHERE curr.connection_id = snap.connection_id
+                        AND curr.collected_at = snap.collected_at
+                        AND (prev.name IS NULL
+                             OR curr.setting IS DISTINCT FROM prev.setting)
+                  )
+                  OR EXISTS (
+                      SELECT 1
+                      FROM metrics.pg_settings prev
+                      WHERE prev.connection_id = snap.connection_id
+                        AND prev.collected_at = snap.prev_collected_at
+                        AND NOT EXISTS (
+                            SELECT 1 FROM metrics.pg_settings curr
+                            WHERE curr.connection_id = snap.connection_id
+                              AND curr.collected_at = snap.collected_at
+                              AND curr.name = prev.name
+                        )
+                  )
+              )
+        ) d
+        WHERE TRUE %s
+    `, extraFilter)
 }
 
-// buildHBAChangeQuery creates the subquery for HBA changes
-// Excludes initial collection (first snapshot) since that's not really a "change"
+// buildHBAChangeQuery creates the subquery for HBA changes.
+// Uses LAG() to find previous snapshots and compares rules between
+// consecutive snapshots, returning only rules that actually changed.
 func buildHBAChangeQuery(whereClause string) string {
-	tableWhere := strings.ReplaceAll(whereClause, "event_time", "h.collected_at")
-	tableWhere = strings.ReplaceAll(tableWhere, "connection_id", "h.connection_id")
+	tableWhere := strings.ReplaceAll(whereClause, "event_time", "d.collected_at")
+	tableWhere = strings.ReplaceAll(tableWhere, "connection_id", "d.connection_id")
+
+	extraFilter := ""
+	if tableWhere != "" {
+		extraFilter = "AND " + strings.TrimPrefix(tableWhere, "WHERE ")
+	}
 
 	return fmt.Sprintf(`
         SELECT
-            'hba-' || h.connection_id || '-' || h.collected_at::TEXT AS id,
+            'hba-' || d.connection_id || '-' || d.collected_at::TEXT AS id,
             '%s' AS event_type,
-            h.connection_id,
+            d.connection_id,
             COALESCE(c.name, 'Unknown') AS server_name,
-            h.collected_at AS event_time,
+            d.collected_at AS event_time,
             'info' AS severity,
             'HBA Configuration Changed' AS title,
-            'Updated pg_hba.conf with ' || COUNT(*) || ' rules' AS summary,
+            'Changed ' || COUNT(*) || ' HBA rules' AS summary,
             jsonb_build_object(
-                'rule_count', COUNT(*),
-                'rules', jsonb_agg(jsonb_build_object(
-                    'rule_number', h.rule_number,
-                    'type', h.type,
-                    'database', h.database,
-                    'user_name', h.user_name,
-                    'address', h.address,
-                    'auth_method', h.auth_method
-                ) ORDER BY h.rule_number) FILTER (WHERE h.rule_number IS NOT NULL)
+                'change_count', COUNT(*),
+                'changes', jsonb_agg(jsonb_build_object(
+                    'rule_number', COALESCE(d.curr_rule_number, d.prev_rule_number),
+                    'type', d.curr_type,
+                    'database', d.curr_database,
+                    'user_name', d.curr_user_name,
+                    'address', d.curr_address,
+                    'auth_method', d.curr_auth_method,
+                    'prev_type', d.prev_type,
+                    'prev_database', d.prev_database,
+                    'prev_user_name', d.prev_user_name,
+                    'prev_address', d.prev_address,
+                    'prev_auth_method', d.prev_auth_method,
+                    'change_type', d.change_type
+                ) ORDER BY COALESCE(d.curr_rule_number, d.prev_rule_number))
             )::TEXT AS details
-        FROM metrics.pg_hba_file_rules h
-        JOIN connections c ON h.connection_id = c.id
-        %s
-        AND h.collected_at > (
-            SELECT MIN(collected_at)
-            FROM metrics.pg_hba_file_rules
-            WHERE connection_id = h.connection_id
-        )
-        GROUP BY h.connection_id, h.collected_at, c.name
-    `, EventTypeHBAChange, func() string {
-		if tableWhere == "" {
-			return "WHERE 1=1"
-		}
-		return tableWhere
-	}())
+        FROM (
+            SELECT
+                snap.connection_id,
+                snap.collected_at,
+                curr.rule_number AS curr_rule_number,
+                curr.type AS curr_type,
+                curr.database AS curr_database,
+                curr.user_name AS curr_user_name,
+                curr.address AS curr_address,
+                curr.auth_method AS curr_auth_method,
+                prev.rule_number AS prev_rule_number,
+                prev.type AS prev_type,
+                prev.database AS prev_database,
+                prev.user_name AS prev_user_name,
+                prev.address AS prev_address,
+                prev.auth_method AS prev_auth_method,
+                CASE
+                    WHEN prev.rule_number IS NULL THEN 'added'
+                    ELSE 'modified'
+                END AS change_type
+            FROM (
+                SELECT DISTINCT connection_id, collected_at,
+                    LAG(collected_at) OVER (
+                        PARTITION BY connection_id ORDER BY collected_at
+                    ) AS prev_collected_at
+                FROM metrics.pg_hba_file_rules
+            ) snap
+            JOIN metrics.pg_hba_file_rules curr
+                ON curr.connection_id = snap.connection_id
+                AND curr.collected_at = snap.collected_at
+            LEFT JOIN metrics.pg_hba_file_rules prev
+                ON prev.connection_id = snap.connection_id
+                AND prev.collected_at = snap.prev_collected_at
+                AND prev.rule_number = curr.rule_number
+            WHERE snap.prev_collected_at IS NOT NULL
+              AND (prev.rule_number IS NULL
+                   OR curr.type IS DISTINCT FROM prev.type
+                   OR curr.database IS DISTINCT FROM prev.database
+                   OR curr.user_name IS DISTINCT FROM prev.user_name
+                   OR curr.address IS DISTINCT FROM prev.address
+                   OR curr.auth_method IS DISTINCT FROM prev.auth_method)
+
+            UNION ALL
+
+            SELECT
+                snap.connection_id,
+                snap.collected_at,
+                NULL AS curr_rule_number,
+                NULL AS curr_type,
+                NULL AS curr_database,
+                NULL AS curr_user_name,
+                NULL AS curr_address,
+                NULL AS curr_auth_method,
+                prev.rule_number AS prev_rule_number,
+                prev.type AS prev_type,
+                prev.database AS prev_database,
+                prev.user_name AS prev_user_name,
+                prev.address AS prev_address,
+                prev.auth_method AS prev_auth_method,
+                'removed' AS change_type
+            FROM (
+                SELECT DISTINCT connection_id, collected_at,
+                    LAG(collected_at) OVER (
+                        PARTITION BY connection_id ORDER BY collected_at
+                    ) AS prev_collected_at
+                FROM metrics.pg_hba_file_rules
+            ) snap
+            JOIN metrics.pg_hba_file_rules prev
+                ON prev.connection_id = snap.connection_id
+                AND prev.collected_at = snap.prev_collected_at
+            WHERE snap.prev_collected_at IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM metrics.pg_hba_file_rules curr
+                  WHERE curr.connection_id = snap.connection_id
+                    AND curr.collected_at = snap.collected_at
+                    AND curr.rule_number = prev.rule_number
+              )
+        ) d
+        JOIN connections c ON d.connection_id = c.id
+        WHERE TRUE %s
+        GROUP BY d.connection_id, d.collected_at, c.name
+    `, EventTypeHBAChange, extraFilter)
 }
 
-// buildHBAChangeCountQuery creates the count query for HBA changes
-// Excludes initial collection to match the main query
+// buildHBAChangeCountQuery creates the count query for HBA changes.
+// Counts only snapshots that have at least one actual diff from the
+// previous snapshot.
 func buildHBAChangeCountQuery(whereClause string) string {
-	tableWhere := strings.ReplaceAll(whereClause, "event_time", "collected_at")
+	tableWhere := strings.ReplaceAll(whereClause, "event_time", "d.collected_at")
+	tableWhere = strings.ReplaceAll(tableWhere, "connection_id", "d.connection_id")
+
+	extraFilter := ""
+	if tableWhere != "" {
+		extraFilter = "AND " + strings.TrimPrefix(tableWhere, "WHERE ")
+	}
 
 	return fmt.Sprintf(`
-        SELECT COUNT(DISTINCT (h.connection_id, h.collected_at))
-        FROM metrics.pg_hba_file_rules h
-        %s
-        AND h.collected_at > (
-            SELECT MIN(collected_at)
-            FROM metrics.pg_hba_file_rules
-            WHERE connection_id = h.connection_id
-        )
-    `, func() string {
-		if tableWhere == "" {
-			return "WHERE 1=1"
-		}
-		return strings.ReplaceAll(tableWhere, "connection_id", "h.connection_id")
-	}())
+        SELECT COUNT(*) FROM (
+            SELECT snap.connection_id, snap.collected_at
+            FROM (
+                SELECT DISTINCT connection_id, collected_at,
+                    LAG(collected_at) OVER (
+                        PARTITION BY connection_id ORDER BY collected_at
+                    ) AS prev_collected_at
+                FROM metrics.pg_hba_file_rules
+            ) snap
+            WHERE snap.prev_collected_at IS NOT NULL
+              AND (
+                  EXISTS (
+                      SELECT 1
+                      FROM metrics.pg_hba_file_rules curr
+                      LEFT JOIN metrics.pg_hba_file_rules prev
+                          ON prev.connection_id = snap.connection_id
+                          AND prev.collected_at = snap.prev_collected_at
+                          AND prev.rule_number = curr.rule_number
+                      WHERE curr.connection_id = snap.connection_id
+                        AND curr.collected_at = snap.collected_at
+                        AND (prev.rule_number IS NULL
+                             OR curr.type IS DISTINCT FROM prev.type
+                             OR curr.database IS DISTINCT FROM prev.database
+                             OR curr.user_name IS DISTINCT FROM prev.user_name
+                             OR curr.address IS DISTINCT FROM prev.address
+                             OR curr.auth_method IS DISTINCT FROM prev.auth_method)
+                  )
+                  OR EXISTS (
+                      SELECT 1
+                      FROM metrics.pg_hba_file_rules prev
+                      WHERE prev.connection_id = snap.connection_id
+                        AND prev.collected_at = snap.prev_collected_at
+                        AND NOT EXISTS (
+                            SELECT 1 FROM metrics.pg_hba_file_rules curr
+                            WHERE curr.connection_id = snap.connection_id
+                              AND curr.collected_at = snap.collected_at
+                              AND curr.rule_number = prev.rule_number
+                        )
+                  )
+              )
+        ) d
+        WHERE TRUE %s
+    `, extraFilter)
 }
 
 // buildIdentChangeQuery creates the subquery for ident mapping changes
@@ -797,69 +997,162 @@ func buildAlertAcknowledgedCountQuery(whereClause string) string {
     `, tableWhere)
 }
 
-// buildExtensionChangeQuery creates the subquery for extension changes from pg_extension
-// The table is change-tracked, so each row represents an extension when a change was detected
-// We exclude the initial collection (first snapshot) since that's not really a "change"
+// buildExtensionChangeQuery creates the subquery for extension changes.
+// Uses LAG() to find previous snapshots and compares extensions between
+// consecutive snapshots, returning only extensions that actually changed.
 func buildExtensionChangeQuery(whereClause string) string {
-	tableWhere := strings.ReplaceAll(whereClause, "event_time", "e.collected_at")
-	tableWhere = strings.ReplaceAll(tableWhere, "connection_id", "e.connection_id")
+	tableWhere := strings.ReplaceAll(whereClause, "event_time", "d.collected_at")
+	tableWhere = strings.ReplaceAll(tableWhere, "connection_id", "d.connection_id")
+
+	extraFilter := ""
+	if tableWhere != "" {
+		extraFilter = "AND " + strings.TrimPrefix(tableWhere, "WHERE ")
+	}
 
 	return fmt.Sprintf(`
         SELECT
-            'ext-' || e.connection_id || '-' || e.collected_at::TEXT AS id,
+            'ext-' || d.connection_id || '-' || d.collected_at::TEXT AS id,
             '%s' AS event_type,
-            e.connection_id,
+            d.connection_id,
             COALESCE(c.name, 'Unknown') AS server_name,
-            e.collected_at AS event_time,
+            d.collected_at AS event_time,
             'info' AS severity,
             'Extensions Changed' AS title,
-            COUNT(*) || ' extensions installed' AS summary,
+            'Changed ' || COUNT(*) || ' extensions' AS summary,
             jsonb_build_object(
-                'extension_count', COUNT(*),
-                'extensions', jsonb_agg(jsonb_build_object(
-                    'name', e.extname,
-                    'version', e.extversion,
-                    'schema', e.schema_name,
-                    'database', e.database_name
-                ) ORDER BY e.extname) FILTER (WHERE e.extname IS NOT NULL)
+                'change_count', COUNT(*),
+                'changes', jsonb_agg(jsonb_build_object(
+                    'name', COALESCE(d.curr_extname, d.prev_extname),
+                    'version', d.curr_extversion,
+                    'old_version', d.prev_extversion,
+                    'database', COALESCE(d.curr_database, d.prev_database),
+                    'change_type', d.change_type
+                ) ORDER BY COALESCE(d.curr_extname, d.prev_extname))
             )::TEXT AS details
-        FROM metrics.pg_extension e
-        JOIN connections c ON e.connection_id = c.id
-        %s
-        AND e.collected_at > (
-            SELECT MIN(collected_at)
-            FROM metrics.pg_extension
-            WHERE connection_id = e.connection_id
-        )
-        GROUP BY e.connection_id, e.collected_at, c.name
-    `, EventTypeExtensionChange, func() string {
-		if tableWhere == "" {
-			return "WHERE 1=1"
-		}
-		return tableWhere
-	}())
+        FROM (
+            SELECT
+                snap.connection_id,
+                snap.collected_at,
+                curr.extname AS curr_extname,
+                curr.extversion AS curr_extversion,
+                curr.database_name AS curr_database,
+                prev.extname AS prev_extname,
+                prev.extversion AS prev_extversion,
+                prev.database_name AS prev_database,
+                CASE
+                    WHEN prev.extname IS NULL THEN 'added'
+                    ELSE 'modified'
+                END AS change_type
+            FROM (
+                SELECT DISTINCT connection_id, collected_at,
+                    LAG(collected_at) OVER (
+                        PARTITION BY connection_id ORDER BY collected_at
+                    ) AS prev_collected_at
+                FROM metrics.pg_extension
+            ) snap
+            JOIN metrics.pg_extension curr
+                ON curr.connection_id = snap.connection_id
+                AND curr.collected_at = snap.collected_at
+            LEFT JOIN metrics.pg_extension prev
+                ON prev.connection_id = snap.connection_id
+                AND prev.collected_at = snap.prev_collected_at
+                AND prev.database_name = curr.database_name
+                AND prev.extname = curr.extname
+            WHERE snap.prev_collected_at IS NOT NULL
+              AND (prev.extname IS NULL
+                   OR curr.extversion IS DISTINCT FROM prev.extversion)
+
+            UNION ALL
+
+            SELECT
+                snap.connection_id,
+                snap.collected_at,
+                NULL AS curr_extname,
+                NULL AS curr_extversion,
+                NULL AS curr_database,
+                prev.extname AS prev_extname,
+                prev.extversion AS prev_extversion,
+                prev.database_name AS prev_database,
+                'removed' AS change_type
+            FROM (
+                SELECT DISTINCT connection_id, collected_at,
+                    LAG(collected_at) OVER (
+                        PARTITION BY connection_id ORDER BY collected_at
+                    ) AS prev_collected_at
+                FROM metrics.pg_extension
+            ) snap
+            JOIN metrics.pg_extension prev
+                ON prev.connection_id = snap.connection_id
+                AND prev.collected_at = snap.prev_collected_at
+            WHERE snap.prev_collected_at IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM metrics.pg_extension curr
+                  WHERE curr.connection_id = snap.connection_id
+                    AND curr.collected_at = snap.collected_at
+                    AND curr.database_name = prev.database_name
+                    AND curr.extname = prev.extname
+              )
+        ) d
+        JOIN connections c ON d.connection_id = c.id
+        WHERE TRUE %s
+        GROUP BY d.connection_id, d.collected_at, c.name
+    `, EventTypeExtensionChange, extraFilter)
 }
 
-// buildExtensionChangeCountQuery creates the count query for extension changes
-// Excludes initial collection (first snapshot) to match the main query
+// buildExtensionChangeCountQuery creates the count query for extension
+// changes. Counts only snapshots that have at least one actual diff from
+// the previous snapshot.
 func buildExtensionChangeCountQuery(whereClause string) string {
-	tableWhere := strings.ReplaceAll(whereClause, "event_time", "collected_at")
+	tableWhere := strings.ReplaceAll(whereClause, "event_time", "d.collected_at")
+	tableWhere = strings.ReplaceAll(tableWhere, "connection_id", "d.connection_id")
+
+	extraFilter := ""
+	if tableWhere != "" {
+		extraFilter = "AND " + strings.TrimPrefix(tableWhere, "WHERE ")
+	}
 
 	return fmt.Sprintf(`
-        SELECT COUNT(DISTINCT (e.connection_id, e.collected_at))
-        FROM metrics.pg_extension e
-        %s
-        AND e.collected_at > (
-            SELECT MIN(collected_at)
-            FROM metrics.pg_extension
-            WHERE connection_id = e.connection_id
-        )
-    `, func() string {
-		if tableWhere == "" {
-			return "WHERE 1=1"
-		}
-		return strings.ReplaceAll(tableWhere, "connection_id", "e.connection_id")
-	}())
+        SELECT COUNT(*) FROM (
+            SELECT snap.connection_id, snap.collected_at
+            FROM (
+                SELECT DISTINCT connection_id, collected_at,
+                    LAG(collected_at) OVER (
+                        PARTITION BY connection_id ORDER BY collected_at
+                    ) AS prev_collected_at
+                FROM metrics.pg_extension
+            ) snap
+            WHERE snap.prev_collected_at IS NOT NULL
+              AND (
+                  EXISTS (
+                      SELECT 1
+                      FROM metrics.pg_extension curr
+                      LEFT JOIN metrics.pg_extension prev
+                          ON prev.connection_id = snap.connection_id
+                          AND prev.collected_at = snap.prev_collected_at
+                          AND prev.database_name = curr.database_name
+                          AND prev.extname = curr.extname
+                      WHERE curr.connection_id = snap.connection_id
+                        AND curr.collected_at = snap.collected_at
+                        AND (prev.extname IS NULL
+                             OR curr.extversion IS DISTINCT FROM prev.extversion)
+                  )
+                  OR EXISTS (
+                      SELECT 1
+                      FROM metrics.pg_extension prev
+                      WHERE prev.connection_id = snap.connection_id
+                        AND prev.collected_at = snap.prev_collected_at
+                        AND NOT EXISTS (
+                            SELECT 1 FROM metrics.pg_extension curr
+                            WHERE curr.connection_id = snap.connection_id
+                              AND curr.collected_at = snap.collected_at
+                              AND curr.database_name = prev.database_name
+                              AND curr.extname = prev.extname
+                        )
+                  )
+              )
+        ) d
+        WHERE TRUE %s
+    `, extraFilter)
 }
 
 // buildBlackoutScopeFilter builds a scope-aware connection filter for blackout

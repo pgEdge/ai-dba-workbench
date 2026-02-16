@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -694,31 +695,90 @@ func ComputeMetricsHash(metrics []map[string]interface{}) (string, error) {
 	return hex.EncodeToString(hash[:]), nil
 }
 
-// normalizeValue converts a value to a canonical form for comparison
+// normalizeValue converts a value to a canonical form for comparison.
+// This ensures that logically equivalent values from different sources
+// (e.g., pgx returning int32 vs datastore returning int64) produce
+// identical JSON serialization and therefore identical hashes.
 func normalizeValue(v interface{}) interface{} {
 	if v == nil {
 		return nil
 	}
 
 	switch val := v.(type) {
+	// Integer types — normalize to int64
+	case int:
+		return int64(val)
+	case int8:
+		return int64(val)
+	case int16:
+		return int64(val)
+	case int32:
+		return int64(val)
+	case int64:
+		return val
+	case uint:
+		if uint64(val) > math.MaxInt64 {
+			return val
+		}
+		return int64(val) // #nosec G115 -- overflow checked above
+	case uint8:
+		return int64(val)
+	case uint16:
+		return int64(val)
+	case uint32:
+		return int64(val)
+	case uint64:
+		if val > math.MaxInt64 {
+			return val
+		}
+		return int64(val) // #nosec G115 -- overflow checked above
+
+	// Float types — normalize to float64
+	case float32:
+		return float64(val)
+	case float64:
+		return val
+
+	// Bool — pass through explicitly
+	case bool:
+		return val
+
+	// String — pass through explicitly
+	case string:
+		return val
+
+	// Byte slices — convert to string
+	case []byte:
+		return string(val)
+
+	// Slices — normalize elements recursively
 	case []interface{}:
-		// Normalize array elements
 		result := make([]interface{}, len(val))
 		for i, elem := range val {
 			result[i] = normalizeValue(elem)
 		}
 		return result
 	case []string:
-		// Convert []string to []interface{} for consistent comparison
 		result := make([]interface{}, len(val))
 		for i, elem := range val {
 			result[i] = elem
 		}
 		return result
-	case []byte:
-		// Convert byte arrays to string
-		return string(val)
+
+	// Maps — normalize values recursively
+	case map[string]interface{}:
+		result := make(map[string]interface{}, len(val))
+		for k, elem := range val {
+			result[k] = normalizeValue(elem)
+		}
+		return result
+
 	default:
+		// For types implementing fmt.Stringer, use their string
+		// representation for consistent serialization.
+		if s, ok := v.(fmt.Stringer); ok {
+			return s.String()
+		}
 		return v
 	}
 }

@@ -1177,9 +1177,13 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
             </Box>
         ),
         li: ({ children }) => <li>{children}</li>,
-        code: ({ inline, className, children, ...props }) => {
+        code: ({ className, children, ...props }) => {
             const language = extractLanguage(className);
             const codeString = String(children).replace(/\n$/, '');
+
+            // In react-markdown v10, the `inline` prop was removed.
+            // Inline code has no language className and no newlines.
+            const isInline = !className && !String(children).includes('\n');
 
             // Custom backgrounds for code blocks
             const customBackground = isDark
@@ -1191,7 +1195,7 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
                 ? createCleanTheme(oneDark, theme.palette.background.paper)
                 : createCleanTheme(oneLight, theme.palette.grey[50]);
 
-            if (inline) {
+            if (isInline) {
                 return (
                     <Box component="code" sx={getInlineCodeSx(theme)}>
                         {children}

@@ -127,7 +127,7 @@ CRITICAL rules for code blocks - the user executes SQL directly from the UI so a
 
 5. When suggesting ALTER SYSTEM or other DDL statements, place them in separate code blocks from diagnostic SELECT queries.
 
-Keep responses concise and actionable.`;
+Keep responses concise and actionable. Do not offer to perform additional actions, run further queries, or investigate anything else. Do not ask follow-up questions or ask what the user would like to do next. Your analysis is displayed in a read-only report that the user cannot respond to.`;
 
 // Tool definitions for the LLM (must use camelCase inputSchema to match Go struct)
 const ANALYSIS_TOOLS: AnalysisTool[] = [

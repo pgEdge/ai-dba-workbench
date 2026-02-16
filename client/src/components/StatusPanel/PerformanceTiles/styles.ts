@@ -40,7 +40,8 @@ export const getTilePaperSx = (theme: Theme): SxProps<Theme> => ({
     height: 220,
     display: 'flex',
     flexDirection: 'column',
-    overflow: 'visible',
+    overflow: 'hidden',
+    minWidth: 0,
 });
 
 export const TILE_TITLE_SX: SxProps<Theme> = {

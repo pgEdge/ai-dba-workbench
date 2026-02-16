@@ -75,7 +75,7 @@ const CheckpointTile: React.FC<CheckpointTileProps> = ({
                     <Chart
                         type="line"
                         data={chartData}
-                        height={180}
+                        height={150}
                         stacked
                         areaFill
                         smooth

@@ -126,7 +126,7 @@ const TransactionTile: React.FC<TransactionTileProps> = ({
                     <Chart
                         type="line"
                         data={chartData}
-                        height={180}
+                        height={150}
                         showToolbar={false}
                         showLegend
                         showTooltip

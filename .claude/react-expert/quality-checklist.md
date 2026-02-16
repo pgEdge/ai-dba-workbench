@@ -13,6 +13,24 @@
 This document provides quality standards, anti-patterns, and review
 checklists for React and TypeScript code.
 
+## CRITICAL: Font Size Rules
+
+**The absolute minimum font size is 14px (0.875rem). No exceptions.**
+
+This applies EVERYWHERE including:
+
+- ECharts axis labels (`fontSize` in `axisLabel` options)
+- Chart legends and tooltips
+- Small labels, captions, footnotes
+- Any text rendered in the UI
+
+Never use `fontSize: 10`, `fontSize: 11`, `fontSize: 12`, or
+`fontSize: 13`. These are all below the minimum and violate the
+project typography guidelines in `typography-guidelines.md`.
+
+When configuring chart axis labels, use `fontSize: 14` not
+`fontSize: 10` or `fontSize: 12`.
+
 ## Common React Anti-Patterns
 
 ### Hook Issues

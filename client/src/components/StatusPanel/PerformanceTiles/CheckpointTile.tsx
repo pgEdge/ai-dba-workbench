@@ -90,6 +90,8 @@ const CheckpointTile: React.FC<CheckpointTileProps> = ({
                                 axisLabel: {
                                     fontSize: 14,
                                     color: theme.palette.text.secondary,
+                                    interval: 'auto',
+                                    hideOverlap: true,
                                     formatter: (value: string) => {
                                         const d = new Date(value);
                                         return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -97,6 +99,7 @@ const CheckpointTile: React.FC<CheckpointTileProps> = ({
                                 },
                             },
                             yAxis: {
+                                splitNumber: 3,
                                 axisLabel: {
                                     fontSize: 14,
                                     color: theme.palette.text.secondary,

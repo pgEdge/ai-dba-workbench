@@ -63,6 +63,8 @@ const TransactionTile: React.FC<TransactionTileProps> = ({
                 boundaryGap: false,
                 axisLabel: {
                     ...axisLabelStyle,
+                    interval: 'auto',
+                    hideOverlap: true,
                     formatter: (value: string) => {
                         const d = new Date(value);
                         return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -74,12 +76,14 @@ const TransactionTile: React.FC<TransactionTileProps> = ({
                     type: 'value',
                     axisLabel: axisLabelStyle,
                     splitLine: { show: true },
+                    splitNumber: 3,
                 },
                 {
                     type: 'value',
                     axisLabel: axisLabelStyle,
                     max: 100,
                     splitLine: { show: false },
+                    splitNumber: 3,
                 },
             ],
             series: [

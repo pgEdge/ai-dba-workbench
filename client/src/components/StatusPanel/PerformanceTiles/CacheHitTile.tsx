@@ -9,10 +9,10 @@
  */
 
 import React, { useMemo } from 'react';
-import { Box, Typography } from '@mui/material';
+import { Box, Typography, useTheme } from '@mui/material';
 import { Chart } from '../../Chart/Chart';
 import TileContainer from './TileContainer';
-import { ConnectionPerformance, CacheHitTimeSeries } from './types';
+import { ConnectionPerformance } from './types';
 import { TILE_VALUE_SX, getCacheColor } from './styles';
 
 interface CacheHitTileProps {
@@ -31,6 +31,7 @@ const CacheHitTile: React.FC<CacheHitTileProps> = ({
     loading,
     isMultiServer,
 }) => {
+    const theme = useTheme();
     // Find the headline value: worst ratio for multi-server, current for single
     const headlineValue = useMemo(() => {
         if (!connections.length) return null;
@@ -48,26 +49,45 @@ const CacheHitTile: React.FC<CacheHitTileProps> = ({
         return connections[0]?.cache_hit_ratio?.current ?? null;
     }, [connections, isMultiServer]);
 
-    // Build sparkline data from the first connection (or aggregate)
+    // Build chart data: one series per connection for multi-server,
+    // or a single series for single-server views
     const chartData = useMemo(() => {
-        const allSeries: CacheHitTimeSeries[] = [];
+        if (!connections.length) return null;
+
+        // For single server, use one series
+        if (!isMultiServer || connections.length === 1) {
+            const conn = connections[0];
+            const ts = conn?.cache_hit_ratio?.time_series;
+            if (!ts?.length) return null;
+
+            return {
+                categories: ts.map(p => p.time),
+                series: [{ name: 'Cache Hit %', data: ts.map(p => p.value) }],
+            };
+        }
+
+        // For multi-server, create one series per connection
+        let categories: string[] = [];
+        const series: Array<{ name: string; data: number[] }> = [];
 
         connections.forEach(conn => {
-            if (conn.cache_hit_ratio?.time_series?.length) {
-                allSeries.push(...conn.cache_hit_ratio.time_series);
+            const ts = conn.cache_hit_ratio?.time_series;
+            if (!ts?.length) return;
+
+            if (categories.length === 0) {
+                categories = ts.map(p => p.time);
             }
+
+            series.push({
+                name: conn.connection_name || `Server ${conn.connection_id}`,
+                data: ts.map(p => p.value),
+            });
         });
 
-        if (!allSeries.length) return null;
+        if (series.length === 0) return null;
 
-        // Sort by time and deduplicate for multi-server
-        allSeries.sort((a, b) => a.time.localeCompare(b.time));
-
-        return {
-            categories: allSeries.map(p => p.time),
-            series: [{ name: 'Cache Hit %', data: allSeries.map(p => p.value) }],
-        };
-    }, [connections]);
+        return { categories, series };
+    }, [connections, isMultiServer]);
 
     const hasData = headlineValue !== null;
     const color = hasData ? getCacheColor(headlineValue) : undefined;
@@ -77,14 +97,13 @@ const CacheHitTile: React.FC<CacheHitTileProps> = ({
             title="Cache Hit Ratio"
             loading={loading}
             hasData={hasData}
-        >
-            <Box sx={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
-                <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.5, mb: 0.5 }}>
-                    <Typography sx={{ ...TILE_VALUE_SX, color }}>
-                        {headlineValue !== null ? headlineValue.toFixed(1) : '--'}
+            headerRight={headlineValue !== null ? (
+                <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.5 }}>
+                    <Typography sx={{ ...TILE_VALUE_SX, fontSize: '1.25rem', color }}>
+                        {headlineValue.toFixed(1)}
                     </Typography>
                     <Typography sx={{
-                        fontSize: '1rem',
+                        fontSize: '0.875rem',
                         fontWeight: 600,
                         color: 'text.secondary',
                     }}>
@@ -100,34 +119,57 @@ const CacheHitTile: React.FC<CacheHitTileProps> = ({
                         </Typography>
                     )}
                 </Box>
-                {chartData && (
-                    <Box sx={{
-                        flex: 1,
-                        minHeight: 0,
-                        '& > .MuiPaper-root': {
-                            p: 0,
-                            boxShadow: 'none',
-                            bgcolor: 'transparent',
-                        },
-                    }}>
-                        <Chart
-                            type="line"
-                            data={chartData}
-                            height={100}
-                            smooth
-                            areaFill
-                            showToolbar={false}
-                            showLegend={false}
-                            showTooltip
-                            echartsOptions={{
-                                grid: { top: 4, right: 4, bottom: 4, left: 4 },
-                                xAxis: { show: false, boundaryGap: false },
-                                yAxis: { show: false },
-                            }}
-                        />
-                    </Box>
-                )}
-            </Box>
+            ) : undefined}
+        >
+            {chartData && (
+                <Box sx={{
+                    flex: 1,
+                    minHeight: 0,
+                    '& > .MuiPaper-root': {
+                        p: 0,
+                        boxShadow: 'none',
+                        bgcolor: 'transparent',
+                    },
+                }}>
+                    <Chart
+                        type="line"
+                        data={chartData}
+                        height={150}
+                        smooth
+                        showToolbar={false}
+                        showLegend={false}
+                        showTooltip
+                        echartsOptions={{
+                            grid: { top: 8, right: 8, bottom: 20, left: 8, containLabel: true },
+                            xAxis: {
+                                boundaryGap: false,
+                                axisLabel: {
+                                    fontSize: 14,
+                                    color: theme.palette.text.secondary,
+                                    interval: 'auto',
+                                    hideOverlap: true,
+                                    formatter: (value: string) => {
+                                        const d = new Date(value);
+                                        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                                    },
+                                },
+                            },
+                            yAxis: {
+                                scale: true,
+                                splitNumber: 3,
+                                axisLabel: {
+                                    fontSize: 14,
+                                    color: theme.palette.text.secondary,
+                                    formatter: (value: number) => `${Math.round(value)}%`,
+                                },
+                                splitLine: {
+                                    lineStyle: { opacity: 0.3 },
+                                },
+                            },
+                        }}
+                    />
+                </Box>
+            )}
         </TileContainer>
     );
 };

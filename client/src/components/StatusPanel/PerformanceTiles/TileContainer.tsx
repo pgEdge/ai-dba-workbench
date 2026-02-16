@@ -15,6 +15,7 @@ import { getTilePaperSx, TILE_TITLE_SX, TILE_CONTENT_SX, NO_DATA_SX } from './st
 
 interface TileContainerProps {
     title: string;
+    headerRight?: React.ReactNode;
     loading: boolean;
     hasData: boolean;
     children: React.ReactNode;
@@ -27,6 +28,7 @@ interface TileContainerProps {
  */
 const TileContainer: React.FC<TileContainerProps> = ({
     title,
+    headerRight,
     loading,
     hasData,
     children,
@@ -36,7 +38,10 @@ const TileContainer: React.FC<TileContainerProps> = ({
 
     return (
         <Paper elevation={0} sx={paperSx}>
-            <Typography sx={TILE_TITLE_SX}>{title}</Typography>
+            <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, mb: 1 }}>
+                <Typography sx={{ ...TILE_TITLE_SX, mb: 0 }}>{title}</Typography>
+                {headerRight}
+            </Box>
             <Box sx={TILE_CONTENT_SX}>
                 {loading ? (
                     <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 1 }}>

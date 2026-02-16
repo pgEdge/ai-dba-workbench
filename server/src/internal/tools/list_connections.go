@@ -106,18 +106,10 @@ CRITICAL: Never silently analyze multiple connections. Always get explicit user 
 
 			// Query for all connections (excluding sensitive fields like passwords)
 			query := `
-                WITH latest_roles AS (
+                WITH latest_connectivity AS (
                     SELECT DISTINCT ON (connection_id)
-                        connection_id,
-                        COALESCE(
-                            CASE
-                                WHEN collected_at > NOW() - INTERVAL '6 minutes' THEN 'online'
-                                WHEN collected_at > NOW() - INTERVAL '12 minutes' THEN 'warning'
-                                ELSE 'offline'
-                            END, 'unknown'
-                        ) as status
-                    FROM metrics.pg_node_role
-                    WHERE collected_at > NOW() - INTERVAL '15 minutes'
+                        connection_id, collected_at
+                    FROM metrics.pg_connectivity
                     ORDER BY connection_id, collected_at DESC
                 )
                 SELECT
@@ -130,13 +122,16 @@ CRITICAL: Never silently analyze multiple connections. Always get explicit user 
                     CASE
                         WHEN c.is_monitored AND c.connection_error IS NOT NULL
                         THEN 'offline'
-                        WHEN c.is_monitored AND lr.connection_id IS NULL
+                        WHEN c.is_monitored AND lc.connection_id IS NULL
                         THEN 'initialising'
-                        ELSE COALESCE(lr.status, 'unknown')
+                        WHEN lc.collected_at > NOW() - INTERVAL '60 seconds' THEN 'online'
+                        WHEN lc.collected_at > NOW() - INTERVAL '150 seconds' THEN 'warning'
+                        WHEN lc.collected_at IS NOT NULL THEN 'offline'
+                        ELSE 'unknown'
                     END as status,
                     COALESCE(c.connection_error, '') as connection_error
                 FROM public.connections c
-                LEFT JOIN latest_roles lr ON c.id = lr.connection_id
+                LEFT JOIN latest_connectivity lc ON c.id = lc.connection_id
                 ORDER BY c.name, c.host
             `
 

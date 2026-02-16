@@ -576,6 +576,7 @@ func getDefaultInterval(probeName string) int {
 		"pg_stat_gssapi":             300,  // IntervalDefault
 		"pg_server_info":             3600, // IntervalServerInfo (hourly, change-tracked)
 		"pg_node_role":               300,  // IntervalNodeRole (every 5 minutes)
+		"pg_connectivity":            30,   // IntervalConnectivity (every 30 seconds)
 	}
 
 	if interval, ok := defaultIntervals[probeName]; ok {

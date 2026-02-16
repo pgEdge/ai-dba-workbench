@@ -828,6 +828,8 @@ func (ps *ProbeScheduler) createProbe(config *probes.ProbeConfig) probes.Metrics
 		return probes.NewPgServerInfoProbe(config)
 	case probes.ProbeNamePgNodeRole:
 		return probes.NewPgNodeRoleProbe(config)
+	case probes.ProbeNamePgConnectivity:
+		return probes.NewPgConnectivityProbe(config)
 	case probes.ProbeNamePgDatabase:
 		return probes.NewPgDatabaseProbe(config)
 	// Database-scoped probes

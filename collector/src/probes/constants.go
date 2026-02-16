@@ -25,6 +25,7 @@ const (
 	ProbeNamePgIdentFileMappings      = "pg_ident_file_mappings"
 	ProbeNamePgServerInfo             = "pg_server_info"
 	ProbeNamePgNodeRole               = "pg_node_role"
+	ProbeNamePgConnectivity           = "pg_connectivity"
 	ProbeNamePgDatabase               = "pg_database"
 )
 

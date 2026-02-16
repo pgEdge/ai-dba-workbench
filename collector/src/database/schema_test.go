@@ -269,7 +269,7 @@ func TestNewSchemaManager(t *testing.T) {
 	// Verify migrations are registered in order
 	// All migrations have been squashed into a single migration at version 1
 	// that creates the complete schema with all tables, indexes, and seed data
-	expectedVersions := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18}
+	expectedVersions := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19}
 	if len(sm.migrations) != len(expectedVersions) {
 		t.Fatalf("Expected %d migrations, got %d", len(expectedVersions), len(sm.migrations))
 	}
@@ -668,6 +668,27 @@ func TestZZZ_FullSchemaForInspection(t *testing.T) {
 		}
 		if count != 1 {
 			t.Errorf("Table %s not found", tableName)
+		}
+	}
+
+	// Verify metrics schema tables exist
+	expectedMetricsTables := []string{
+		"pg_connectivity",
+	}
+
+	for _, tableName := range expectedMetricsTables {
+		var count int
+		err := pool.QueryRow(ctx, `
+            SELECT COUNT(*)
+            FROM information_schema.tables
+            WHERE table_schema = 'metrics'
+            AND table_name = $1
+        `, tableName).Scan(&count)
+		if err != nil {
+			t.Fatalf("Failed to check for metrics table %s: %v", tableName, err)
+		}
+		if count != 1 {
+			t.Errorf("Metrics table metrics.%s not found", tableName)
 		}
 	}
 

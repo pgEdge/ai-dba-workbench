@@ -655,13 +655,14 @@ type Cluster struct {
 
 // ServerInfo represents a server in the cluster hierarchy with status
 type ServerInfo struct {
-	ID       int     `json:"id"`
-	Name     string  `json:"name"`
-	Host     string  `json:"host"`
-	Port     int     `json:"port"`
-	Status   string  `json:"status"`
-	Role     *string `json:"role,omitempty"`
-	Database string  `json:"database_name,omitempty"`
+	ID              int     `json:"id"`
+	Name            string  `json:"name"`
+	Host            string  `json:"host"`
+	Port            int     `json:"port"`
+	Status          string  `json:"status"`
+	ConnectionError *string `json:"connection_error,omitempty"`
+	Role            *string `json:"role,omitempty"`
+	Database        string  `json:"database_name,omitempty"`
 }
 
 // ClusterWithServers represents a cluster with its servers
@@ -1389,18 +1390,21 @@ func (d *Datastore) getUngroupedServersInternal(ctx context.Context) ([]ServerIn
             c.host,
             c.port,
             COALESCE(c.role, 'primary') as role,
-            COALESCE(
-                CASE
-                    WHEN m.collected_at > NOW() - INTERVAL '2 minutes' THEN 'online'
-                    WHEN m.collected_at > NOW() - INTERVAL '5 minutes' THEN 'warning'
-                    ELSE 'offline'
-                END,
-                'unknown'
-            ) as status
+            CASE
+                WHEN c.is_monitored AND c.connection_error IS NOT NULL
+                THEN 'offline'
+                WHEN c.is_monitored AND m.collected_at IS NULL
+                THEN 'initialising'
+                WHEN m.collected_at > NOW() - INTERVAL '60 seconds' THEN 'online'
+                WHEN m.collected_at > NOW() - INTERVAL '150 seconds' THEN 'warning'
+                WHEN m.collected_at IS NOT NULL THEN 'offline'
+                ELSE 'unknown'
+            END as status,
+            c.connection_error
         FROM connections c
         LEFT JOIN LATERAL (
             SELECT collected_at
-            FROM metrics.pg_stat_database
+            FROM metrics.pg_connectivity
             WHERE connection_id = c.id
             ORDER BY collected_at DESC
             LIMIT 1
@@ -1418,8 +1422,12 @@ func (d *Datastore) getUngroupedServersInternal(ctx context.Context) ([]ServerIn
 	var servers []ServerInfo
 	for rows.Next() {
 		var s ServerInfo
-		if err := rows.Scan(&s.ID, &s.Name, &s.Host, &s.Port, &s.Role, &s.Status); err != nil {
+		var connErr sql.NullString
+		if err := rows.Scan(&s.ID, &s.Name, &s.Host, &s.Port, &s.Role, &s.Status, &connErr); err != nil {
 			return nil, fmt.Errorf("failed to scan server: %w", err)
+		}
+		if connErr.Valid {
+			s.ConnectionError = &connErr.String
 		}
 		servers = append(servers, s)
 	}
@@ -1501,12 +1509,24 @@ func (d *Datastore) getServersInClusterInternal(ctx context.Context, clusterID i
             c.port,
             c.role,
             c.database_name,
-            COALESCE(m.last_collected, '1970-01-01'::timestamp) as last_collected
+            CASE
+                WHEN c.is_monitored AND c.connection_error IS NOT NULL
+                THEN 'offline'
+                WHEN c.is_monitored AND m.collected_at IS NULL
+                THEN 'initialising'
+                WHEN m.collected_at > NOW() - INTERVAL '60 seconds' THEN 'online'
+                WHEN m.collected_at > NOW() - INTERVAL '150 seconds' THEN 'warning'
+                WHEN m.collected_at IS NOT NULL THEN 'offline'
+                ELSE 'unknown'
+            END as status,
+            c.connection_error
         FROM connections c
         LEFT JOIN LATERAL (
-            SELECT MAX(collected_at) as last_collected
-            FROM metrics.pg_stat_activity
+            SELECT collected_at
+            FROM metrics.pg_connectivity
             WHERE connection_id = c.id
+            ORDER BY collected_at DESC
+            LIMIT 1
         ) m ON true
         WHERE c.cluster_id = $1
         ORDER BY
@@ -1520,28 +1540,20 @@ func (d *Datastore) getServersInClusterInternal(ctx context.Context, clusterID i
 	}
 	defer rows.Close()
 
-	now := time.Now()
 	var servers []ServerInfo
 	for rows.Next() {
 		var s ServerInfo
-		var lastCollected time.Time
 		var role sql.NullString
-		if err := rows.Scan(&s.ID, &s.Name, &s.Host, &s.Port, &role, &s.Database, &lastCollected); err != nil {
+		var connErr sql.NullString
+		if err := rows.Scan(&s.ID, &s.Name, &s.Host, &s.Port, &role, &s.Database, &s.Status, &connErr); err != nil {
 			return nil, fmt.Errorf("failed to scan server: %w", err)
 		}
 
 		if role.Valid {
 			s.Role = &role.String
 		}
-
-		elapsed := now.Sub(lastCollected)
-		switch {
-		case elapsed < 2*time.Minute:
-			s.Status = "online"
-		case elapsed < 5*time.Minute:
-			s.Status = "warning"
-		default:
-			s.Status = "offline"
+		if connErr.Valid {
+			s.ConnectionError = &connErr.String
 		}
 
 		servers = append(servers, s)
@@ -1732,18 +1744,17 @@ func collectServerIDsRecursive(servers []TopologyServerInfo, ids map[int]bool) {
 // getAllConnectionsWithRoles queries all connections with their role data
 func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectionWithRole, error) {
 	query := `
-        WITH latest_roles AS (
+        WITH latest_connectivity AS (
+            SELECT DISTINCT ON (connection_id)
+                connection_id, collected_at
+            FROM metrics.pg_connectivity
+            ORDER BY connection_id, collected_at DESC
+        ),
+        latest_roles AS (
             SELECT DISTINCT ON (connection_id)
                 connection_id, primary_role, upstream_host, upstream_port,
                 has_spock, spock_node_name, binary_standby_count, is_streaming_standby,
-                publisher_host, publisher_port,
-                COALESCE(
-                    CASE
-                        WHEN collected_at > NOW() - INTERVAL '6 minutes' THEN 'online'
-                        WHEN collected_at > NOW() - INTERVAL '12 minutes' THEN 'warning'
-                        ELSE 'offline'
-                    END, 'unknown'
-                ) as status
+                publisher_host, publisher_port
             FROM metrics.pg_node_role
             ORDER BY connection_id, collected_at DESC
         ),
@@ -1787,13 +1798,17 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
                CASE
                    WHEN c.is_monitored AND c.connection_error IS NOT NULL
                    THEN 'offline'
-                   WHEN c.is_monitored AND lr.connection_id IS NULL
+                   WHEN c.is_monitored AND lc.connection_id IS NULL
                    THEN 'initialising'
-                   ELSE COALESCE(lr.status, 'unknown')
+                   WHEN lc.collected_at > NOW() - INTERVAL '60 seconds' THEN 'online'
+                   WHEN lc.collected_at > NOW() - INTERVAL '150 seconds' THEN 'warning'
+                   WHEN lc.collected_at IS NOT NULL THEN 'offline'
+                   ELSE 'unknown'
                END as status,
                c.connection_error,
                COALESCE(aa.alert_count, 0) as active_alert_count
         FROM connections c
+        LEFT JOIN latest_connectivity lc ON c.id = lc.connection_id
         LEFT JOIN latest_roles lr ON c.id = lr.connection_id
         LEFT JOIN latest_server_info lsi ON c.id = lsi.connection_id
         LEFT JOIN latest_os_info loi ON c.id = loi.connection_id

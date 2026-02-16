@@ -137,7 +137,7 @@ const StatusIndicator: React.FC<StatusIndicatorProps> = ({
     // Offline/down nodes - red error icon
     if (status === 'offline') {
         return withBlackoutOverlay(
-            <Tooltip title={connectionError || "Offline"} placement="right">
+            <Tooltip title={connectionError || "Unreachable"} placement="right">
                 <ErrorIcon sx={getOfflineIconSx(theme)} />
             </Tooltip>
         );

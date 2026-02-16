@@ -2798,6 +2798,52 @@ func (sm *SchemaManager) registerMigrations() {
 			return err
 		},
 	})
+
+	// Migration #19: Add pg_connectivity probe table and seed data
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     19,
+		Description: "Add pg_connectivity metrics table, probe config, and metric_staleness alert rule",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			// Create metrics.pg_connectivity partitioned table
+			_, err := tx.Exec(ctx, `
+				CREATE TABLE IF NOT EXISTS metrics.pg_connectivity (
+					connection_id INTEGER NOT NULL,
+					collected_at TIMESTAMPTZ NOT NULL,
+					response_time_ms DOUBLE PRECISION NOT NULL,
+					PRIMARY KEY (connection_id, collected_at),
+					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE
+				) PARTITION BY RANGE (collected_at);
+
+				COMMENT ON TABLE metrics.pg_connectivity IS 'Stores connectivity check results and response times for monitored connections';
+
+				CREATE INDEX IF NOT EXISTS idx_pg_connectivity_conn_time
+					ON metrics.pg_connectivity (connection_id, collected_at DESC);
+			`)
+			if err != nil {
+				return err
+			}
+
+			// Seed probe_configs for pg_connectivity
+			_, err = tx.Exec(ctx, `
+				INSERT INTO probe_configs (cluster_id, is_enabled, name, description, collection_interval_seconds, retention_days)
+				VALUES (NULL, TRUE, 'pg_connectivity', 'Monitors database connectivity and response time', 30, 7)
+				ON CONFLICT DO NOTHING;
+			`)
+			if err != nil {
+				return err
+			}
+
+			// Seed alert_rules for metric_staleness
+			_, err = tx.Exec(ctx, `
+				INSERT INTO alert_rules (name, description, category, metric_name, metric_unit, default_operator, default_threshold, default_severity, default_enabled, required_extension, is_built_in)
+				VALUES ('metric_staleness', 'Metrics collection is stale; dashboards may show outdated data', 'availability', 'probe_staleness_ratio', 'ratio', '>', 3, 'critical', TRUE, NULL, TRUE)
+				ON CONFLICT DO NOTHING;
+			`)
+			return err
+		},
+	})
 }
 
 // Migrate applies all pending migrations

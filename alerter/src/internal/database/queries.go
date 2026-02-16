@@ -2132,6 +2132,67 @@ func (d *Datastore) GetAnomalyCandidateByID(ctx context.Context, id int64) (*Ano
 	return &c, nil
 }
 
+// ProbeStaleness represents a probe's staleness ratio for a connection
+type ProbeStaleness struct {
+	ConnectionID       int
+	ConnectionName     string
+	ProbeName          string
+	CollectionInterval int     // seconds
+	StalenessRatio     float64 // elapsed / interval
+}
+
+// GetProbeStalenessByConnection retrieves staleness ratios for all enabled probes
+// on monitored connections. The caller decides which entries exceed the threshold.
+func (d *Datastore) GetProbeStalenessByConnection(ctx context.Context) ([]ProbeStaleness, error) {
+	rows, err := d.pool.Query(ctx, `
+		SELECT c.id, c.name, pa.probe_name, pc.collection_interval_seconds,
+		       EXTRACT(EPOCH FROM (NOW() - pa.last_collected)) / pc.collection_interval_seconds AS staleness_ratio
+		FROM probe_availability pa
+		JOIN probe_configs pc ON pc.name = pa.probe_name AND pc.connection_id IS NULL
+		JOIN connections c ON c.id = pa.connection_id
+		WHERE pa.is_available = TRUE
+		  AND pc.is_enabled = TRUE
+		  AND c.is_monitored = TRUE
+		  AND pa.last_collected IS NOT NULL
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get probe staleness: %w", err)
+	}
+	defer rows.Close()
+
+	var results []ProbeStaleness
+	for rows.Next() {
+		var ps ProbeStaleness
+		if err := rows.Scan(&ps.ConnectionID, &ps.ConnectionName, &ps.ProbeName,
+			&ps.CollectionInterval, &ps.StalenessRatio); err != nil {
+			return nil, fmt.Errorf("failed to scan probe staleness: %w", err)
+		}
+		results = append(results, ps)
+	}
+
+	return results, nil
+}
+
+// GetAlertRuleByName retrieves an alert rule by its unique name
+func (d *Datastore) GetAlertRuleByName(ctx context.Context, name string) (*AlertRule, error) {
+	var rule AlertRule
+	err := d.pool.QueryRow(ctx, `
+		SELECT id, name, description, category, metric_name, default_operator,
+		       default_threshold, default_severity, default_enabled, required_extension,
+		       is_built_in, created_at
+		FROM alert_rules
+		WHERE name = $1
+	`, name).Scan(&rule.ID, &rule.Name, &rule.Description, &rule.Category,
+		&rule.MetricName, &rule.DefaultOperator, &rule.DefaultThreshold,
+		&rule.DefaultSeverity, &rule.DefaultEnabled, &rule.RequiredExtension,
+		&rule.IsBuiltIn, &rule.CreatedAt)
+
+	if err != nil {
+		return nil, err
+	}
+	return &rule, nil
+}
+
 // float32SliceToVectorString converts a []float32 to a PostgreSQL vector string format
 func float32SliceToVectorString(v []float32) string {
 	if len(v) == 0 {

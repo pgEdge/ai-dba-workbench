@@ -230,8 +230,12 @@ const ReplicationLagSection: React.FC<ReplicationLagSectionProps> = ({
                         smooth
                         showLegend
                         showTooltip
-                        showToolbar={false}
+                        enableExport={false}
                         title="Replication Lag Over Time"
+                        analysisContext={{
+                            metricDescription: 'Replication lag across cluster members over time',
+                            connectionId: primaryServerId ?? undefined,
+                        }}
                         echartsOptions={{
                             yAxis: {
                                 axisLabel: {

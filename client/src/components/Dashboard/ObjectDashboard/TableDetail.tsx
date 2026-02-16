@@ -383,7 +383,13 @@ const TableDetail: React.FC<ObjectDetailProps> = ({
                                     smooth
                                     showLegend
                                     showTooltip
-                                    showToolbar={false}
+                                    enableExport={false}
+                                    analysisContext={{
+                                        metricDescription: `Tuple operations (inserts, updates, deletes, hot updates) for table ${schemaName}.${objectName}`,
+                                        connectionId,
+                                        databaseName,
+                                        timeRange: timeRange.range,
+                                    }}
                                 />
                             ) : (
                                 <Typography
@@ -422,7 +428,13 @@ const TableDetail: React.FC<ObjectDetailProps> = ({
                                     smooth
                                     showLegend
                                     showTooltip
-                                    showToolbar={false}
+                                    enableExport={false}
+                                    analysisContext={{
+                                        metricDescription: `Sequential scan vs index scan activity for table ${schemaName}.${objectName}`,
+                                        connectionId,
+                                        databaseName,
+                                        timeRange: timeRange.range,
+                                    }}
                                 />
                             ) : (
                                 <Typography
@@ -461,7 +473,13 @@ const TableDetail: React.FC<ObjectDetailProps> = ({
                                     areaFill
                                     showLegend
                                     showTooltip
-                                    showToolbar={false}
+                                    enableExport={false}
+                                    analysisContext={{
+                                        metricDescription: `Dead tuple ratio indicating vacuum effectiveness for table ${schemaName}.${objectName}`,
+                                        connectionId,
+                                        databaseName,
+                                        timeRange: timeRange.range,
+                                    }}
                                 />
                             ) : (
                                 <Typography

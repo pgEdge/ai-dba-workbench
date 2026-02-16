@@ -8,16 +8,21 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import Box from '@mui/material/Box';
+import IconButton from '@mui/material/IconButton';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
+import PsychologyIcon from '@mui/icons-material/Psychology';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import TrendingFlatIcon from '@mui/icons-material/TrendingFlat';
 import { Theme, useTheme } from '@mui/material/styles';
-import { KpiTileData } from './types';
+import { ChartAnalysisContext, ChartData } from '../Chart/types';
+import { ChartAnalysisDialog } from '../ChartAnalysisDialog';
+import { KpiTileData, MetricDataPoint } from './types';
 import Sparkline from './Sparkline';
+import { hasCachedAnalysis } from '../../hooks/useChartAnalysis';
 import {
     getDashboardTileSx,
     KPI_LABEL_SX,
@@ -28,11 +33,32 @@ import {
 
 interface KpiTileProps extends KpiTileData {
     onClick?: () => void;
+    analysisContext?: ChartAnalysisContext;
 }
+
+/**
+ * Convert sparkline MetricDataPoint array into ChartData format
+ * suitable for the analysis dialog.
+ */
+const sparklineToChartData = (
+    sparklineData: MetricDataPoint[],
+    seriesName: string
+): ChartData => ({
+    categories: sparklineData.map(d => d.time),
+    series: [{
+        name: seriesName,
+        data: sparklineData.map(d => d.value),
+    }],
+});
 
 const TREND_ICON_SX = { fontSize: 16 };
 const TREND_TEXT_SX = { fontSize: '0.75rem', fontWeight: 500 };
 const SPARKLINE_CONTAINER_SX = { mt: 1, flex: 1, minHeight: 0 };
+const ANALYZE_BUTTON_SX = {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+};
 
 /**
  * Return the color for a status indicator.
@@ -85,8 +111,11 @@ const KpiTile: React.FC<KpiTileProps> = ({
     sparklineData,
     status,
     onClick,
+    analysisContext,
 }) => {
     const theme = useTheme();
+    const [analysisOpen, setAnalysisOpen] = useState(false);
+    const isDark = theme.palette.mode === 'dark';
     const tileSx = useMemo(() => getDashboardTileSx(theme), [theme]);
     const statusColor = getStatusColor(status, theme);
     const trendColor = getTrendColor(trend, theme);
@@ -103,6 +132,22 @@ const KpiTile: React.FC<KpiTileProps> = ({
             onClick();
         }
     }, [onClick]);
+
+    const isCached = analysisContext ? hasCachedAnalysis(
+        analysisContext.metricDescription,
+        analysisContext.connectionId,
+        analysisContext.databaseName,
+        analysisContext.timeRange,
+    ) : false;
+
+    const handleAnalyzeClick = useCallback((e: React.MouseEvent) => {
+        e.stopPropagation();
+        setAnalysisOpen(true);
+    }, []);
+
+    const handleAnalysisClose = useCallback(() => {
+        setAnalysisOpen(false);
+    }, []);
 
     const TrendIcon = useMemo(() => {
         switch (trend) {
@@ -124,6 +169,7 @@ const KpiTile: React.FC<KpiTileProps> = ({
                 ...tileSx as object,
                 display: 'flex',
                 flexDirection: 'column',
+                position: 'relative',
                 cursor: onClick ? 'pointer' : 'default',
             }}
             onClick={handleClick}
@@ -171,6 +217,25 @@ const KpiTile: React.FC<KpiTileProps> = ({
                         color={statusColor || theme.palette.primary.main}
                     />
                 </Box>
+            )}
+            {analysisContext && sparklineData && sparklineData.length > 0 && (
+                <IconButton
+                    size="small"
+                    color={isCached ? 'warning' : 'secondary'}
+                    onClick={handleAnalyzeClick}
+                    sx={ANALYZE_BUTTON_SX}
+                >
+                    <PsychologyIcon sx={{ fontSize: 16 }} />
+                </IconButton>
+            )}
+            {analysisContext && sparklineData && sparklineData.length > 0 && (
+                <ChartAnalysisDialog
+                    open={analysisOpen}
+                    onClose={handleAnalysisClose}
+                    isDark={isDark}
+                    analysisContext={analysisContext}
+                    chartData={sparklineToChartData(sparklineData, label)}
+                />
             )}
         </Paper>
     );

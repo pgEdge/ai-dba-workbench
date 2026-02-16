@@ -209,8 +209,11 @@ const ComparativeChartsSection: React.FC<ComparativeChartsSectionProps> = ({ ser
                 height={220}
                 showLegend={false}
                 showTooltip
-                showToolbar={false}
+                enableExport={false}
                 title="Transaction Rate (commits/sec)"
+                analysisContext={{
+                    metricDescription: 'Comparative transaction rates across cluster servers',
+                }}
             />
             <Chart
                 type="bar"
@@ -218,8 +221,11 @@ const ComparativeChartsSection: React.FC<ComparativeChartsSectionProps> = ({ ser
                 height={220}
                 showLegend={false}
                 showTooltip
-                showToolbar={false}
+                enableExport={false}
                 title="Cache Hit Ratio (%)"
+                analysisContext={{
+                    metricDescription: 'Comparative cache hit ratios across cluster servers',
+                }}
             />
             <Chart
                 type="bar"
@@ -227,8 +233,11 @@ const ComparativeChartsSection: React.FC<ComparativeChartsSectionProps> = ({ ser
                 height={220}
                 showLegend={false}
                 showTooltip
-                showToolbar={false}
+                enableExport={false}
                 title="Rollback Rate (%)"
+                analysisContext={{
+                    metricDescription: 'Comparative rollback rates across cluster servers',
+                }}
             />
             <Chart
                 type="bar"
@@ -236,8 +245,11 @@ const ComparativeChartsSection: React.FC<ComparativeChartsSectionProps> = ({ ser
                 height={220}
                 showLegend={false}
                 showTooltip
-                showToolbar={false}
+                enableExport={false}
                 title="Connection Count"
+                analysisContext={{
+                    metricDescription: 'Comparative connection counts across cluster servers',
+                }}
             />
         </Box>
     );

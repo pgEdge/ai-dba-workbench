@@ -8,12 +8,16 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useMemo } from 'react';
-import { Box } from '@mui/material';
+import React, { useMemo, useState, useCallback } from 'react';
+import { Box, IconButton, Tooltip } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
+import PsychologyIcon from '@mui/icons-material/Psychology';
 import { Chart } from '../../Chart/Chart';
+import { ChartAnalysisDialog } from '../../ChartAnalysisDialog';
+import { ChartAnalysisContext } from '../../Chart/types';
 import TileContainer from './TileContainer';
 import { ConnectionPerformance, CheckpointTimeSeries } from './types';
+import { hasCachedAnalysis } from '../../../hooks/useChartAnalysis';
 
 interface CheckpointTileProps {
     connections: ConnectionPerformance[];
@@ -55,6 +59,28 @@ const CheckpointTile: React.FC<CheckpointTileProps> = ({
 
         return { chartData: data, hasData: true };
     }, [connections]);
+
+    const [analysisOpen, setAnalysisOpen] = useState(false);
+    const handleAnalyzeClick = useCallback((e: React.MouseEvent) => {
+        e.stopPropagation();
+        setAnalysisOpen(true);
+    }, []);
+    const handleAnalysisClose = useCallback(() => {
+        setAnalysisOpen(false);
+    }, []);
+
+    const analysisContext: ChartAnalysisContext | undefined = hasData ? {
+        metricDescription: 'Checkpoint write time and sync time',
+        connectionId: connections[0]?.connection_id,
+        connectionName: connections[0]?.connection_name,
+    } : undefined;
+
+    const isCached = analysisContext ? hasCachedAnalysis(
+        analysisContext.metricDescription,
+        analysisContext.connectionId,
+        analysisContext.databaseName,
+        analysisContext.timeRange,
+    ) : false;
 
     return (
         <TileContainer
@@ -109,6 +135,32 @@ const CheckpointTile: React.FC<CheckpointTileProps> = ({
                         }}
                     />
                 </Box>
+            )}
+            {analysisContext && chartData && (
+                <Tooltip title="AI Analysis">
+                    <IconButton
+                        size="small"
+                        color={isCached ? 'warning' : 'secondary'}
+                        onClick={handleAnalyzeClick}
+                        sx={{
+                            position: 'absolute',
+                            top: 8,
+                            right: 8,
+                            zIndex: 1,
+                        }}
+                    >
+                        <PsychologyIcon sx={{ fontSize: 16 }} />
+                    </IconButton>
+                </Tooltip>
+            )}
+            {analysisContext && chartData && (
+                <ChartAnalysisDialog
+                    open={analysisOpen}
+                    onClose={handleAnalysisClose}
+                    isDark={theme.palette.mode === 'dark'}
+                    analysisContext={analysisContext}
+                    chartData={chartData}
+                />
             )}
         </TileContainer>
     );

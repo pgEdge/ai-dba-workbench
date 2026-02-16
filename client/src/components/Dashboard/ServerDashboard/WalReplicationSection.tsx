@@ -152,6 +152,7 @@ const buildReplicationLagChartData = (
  */
 const WalReplicationSection: React.FC<ServerSectionProps> = ({
     connectionId,
+    connectionName,
 }) => {
     const { timeRange } = useDashboard();
 
@@ -283,6 +284,12 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
                     sparklineData={extractSparklineData(
                         walKpi.data, 'wal_bytes'
                     )}
+                    analysisContext={{
+                        metricDescription: 'WAL bytes generated over time',
+                        connectionId,
+                        connectionName,
+                        timeRange: timeRange.range,
+                    }}
                 />
                 <KpiTile
                     label="WAL Records"
@@ -292,6 +299,12 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
                     sparklineData={extractSparklineData(
                         walKpi.data, 'wal_records'
                     )}
+                    analysisContext={{
+                        metricDescription: 'WAL record count over time',
+                        connectionId,
+                        connectionName,
+                        timeRange: timeRange.range,
+                    }}
                 />
                 <KpiTile
                     label="Replication Lag"
@@ -300,6 +313,12 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
                     sparklineData={extractSparklineData(
                         replLagKpi.data, 'replay_lag'
                     )}
+                    analysisContext={{
+                        metricDescription: 'Replication replay lag over time',
+                        connectionId,
+                        connectionName,
+                        timeRange: timeRange.range,
+                    }}
                 />
                 <KpiTile
                     label="Checkpoints"
@@ -309,6 +328,12 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
                     sparklineData={extractSparklineData(
                         checkpointKpi.data, 'num_timed'
                     )}
+                    analysisContext={{
+                        metricDescription: 'Checkpoint frequency over time',
+                        connectionId,
+                        connectionName,
+                        timeRange: timeRange.range,
+                    }}
                 />
             </Box>
 
@@ -331,7 +356,13 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
                                 areaFill
                                 showLegend
                                 showTooltip
-                                showToolbar={false}
+                                enableExport={false}
+                                analysisContext={{
+                                    metricDescription: 'Write-ahead log activity including WAL bytes generated',
+                                    connectionId,
+                                    connectionName,
+                                    timeRange: timeRange.range,
+                                }}
                             />
                         )}
                     </ChartPanel>
@@ -354,7 +385,13 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
                                 smooth
                                 showLegend
                                 showTooltip
-                                showToolbar={false}
+                                enableExport={false}
+                                analysisContext={{
+                                    metricDescription: 'Replication lag showing delay between primary and replicas',
+                                    connectionId,
+                                    connectionName,
+                                    timeRange: timeRange.range,
+                                }}
                             />
                         )}
                     </ChartPanel>
@@ -377,7 +414,13 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
                                 smooth
                                 showLegend
                                 showTooltip
-                                showToolbar={false}
+                                enableExport={false}
+                                analysisContext={{
+                                    metricDescription: 'Checkpoint activity showing timed and requested checkpoints',
+                                    connectionId,
+                                    connectionName,
+                                    timeRange: timeRange.range,
+                                }}
                             />
                         )}
                     </ChartPanel>

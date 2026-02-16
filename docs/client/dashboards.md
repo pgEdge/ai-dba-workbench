@@ -252,3 +252,85 @@ The event timeline tracks the following event types:
 The event timeline refreshes in sync with the cluster
 navigator refresh cycle. Users can filter events by
 server and event type.
+
+## AI Chart Analysis
+
+The AI chart analysis feature provides LLM-powered
+insights for any chart or KPI tile in the monitoring
+dashboards. The analysis examines data trends, identifies
+anomalies, and generates actionable recommendations.
+
+### Triggering an Analysis
+
+Every chart and KPI tile displays a brain icon in the
+upper right corner. Clicking the icon opens an analysis
+dialog and starts the LLM analysis.
+
+The analysis follows these steps:
+
+1. The system checks for a cached analysis result.
+2. The system fetches server context from the connection.
+3. The system fetches timeline events for the time range.
+4. The system serializes the chart data and sends the
+   data to the LLM.
+5. The LLM produces a structured analysis report.
+
+The dialog displays a loading skeleton while the analysis
+runs. The final report renders as formatted markdown.
+
+### Analysis Reports
+
+Each chart analysis report contains a structured
+assessment of the metric data:
+
+- The summary section describes the current state of the
+  metric and its significance.
+- The trends and patterns section identifies notable
+  changes, spikes, or anomalies in the data.
+- The recommendations section suggests specific actions
+  to address any issues found.
+
+### Timeline Event Correlation
+
+The analysis includes timeline events from the chart's
+time range to identify correlations between metric
+changes and system events. The LLM considers the
+following event types:
+
+- Configuration changes to PostgreSQL settings.
+- Alert activations and resolutions.
+- Server restarts and recovery events.
+- Extension installations and upgrades.
+- Blackout periods and maintenance windows.
+
+### Running SQL Queries
+
+SQL code blocks in analysis reports include a play button
+in the upper right corner. The run button executes the
+query against the chart's associated database server.
+Results appear inline below the code block.
+
+Write statements such as `ALTER SYSTEM` display a
+confirmation dialog before executing. Read-only queries
+execute immediately.
+
+### Caching
+
+The system caches chart analysis results on the client
+side to avoid redundant LLM calls.
+
+- An amber brain icon indicates that a cached analysis
+  exists for the chart.
+- The cache uses stable identifiers as the cache key;
+  these include the metric description, connection,
+  database, and time range.
+- The cache expires after 30 minutes.
+- Clicking an amber brain icon opens the cached report
+  instantly.
+
+### Downloading Reports
+
+The dialog footer includes a Download button that saves
+the analysis as a markdown file. The downloaded file
+includes the chart details, the full analysis report,
+and a generation timestamp.

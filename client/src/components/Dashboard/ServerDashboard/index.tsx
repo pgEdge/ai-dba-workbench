@@ -47,9 +47,9 @@ const ServerDashboard: React.FC<ServerDashboardProps> = ({
 
     return (
         <Box>
-            <SystemResourcesSection connectionId={connectionId} />
-            <PostgresOverviewSection connectionId={connectionId} />
-            <WalReplicationSection connectionId={connectionId} />
+            <SystemResourcesSection connectionId={connectionId} connectionName={connectionName} />
+            <PostgresOverviewSection connectionId={connectionId} connectionName={connectionName} />
+            <WalReplicationSection connectionId={connectionId} connectionName={connectionName} />
             <DatabaseSummariesSection connectionId={connectionId} connectionName={connectionName} />
             <TopQueriesSection connectionId={connectionId} connectionName={connectionName} />
         </Box>

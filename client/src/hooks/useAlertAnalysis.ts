@@ -85,8 +85,9 @@ const SYSTEM_PROMPT = `You are a PostgreSQL database expert analyzing an alert f
 Your task is to:
 1. Understand the alert context using the provided tools
 2. Analyze historical patterns and current state
-3. Provide actionable remediation recommendations
-4. Suggest threshold tuning if appropriate
+3. If timeline events are provided, check for correlations (config changes, restarts, other alerts, extension changes) that may explain the alert
+4. Provide actionable remediation recommendations
+5. Suggest threshold tuning if appropriate
 
 Structure your response as:
 
@@ -241,6 +242,53 @@ function formatConnectionContext(ctx: Record<string, unknown>): string {
     return lines.length > 0 ? '\nServer Context:\n' + lines.join('\n') : '';
 }
 
+interface TimelineEvent {
+    event_type: string;
+    title: string;
+    summary?: string;
+    occurred_at: string;
+    server_name?: string;
+    details?: Record<string, unknown>;
+}
+
+/**
+ * Fetch timeline events surrounding an alert's trigger time.
+ * Looks at a 24-hour window centered on the alert.
+ */
+async function fetchTimelineEvents(
+    connectionId: number,
+    triggeredAt: string | undefined,
+): Promise<string> {
+    const alertTime = triggeredAt ? new Date(triggeredAt) : new Date();
+    const startTime = new Date(alertTime.getTime() - 12 * 60 * 60 * 1000);
+    const endTime = new Date(alertTime.getTime() + 12 * 60 * 60 * 1000);
+
+    const params = new URLSearchParams({
+        start_time: startTime.toISOString(),
+        end_time: endTime.toISOString(),
+        connection_id: String(connectionId),
+        limit: '100',
+    });
+
+    const response = await fetch(
+        `/api/v1/timeline/events?${params}`,
+        { credentials: 'include' }
+    );
+    if (!response.ok) { return ''; }
+
+    const data = await response.json();
+    const events = data.events as TimelineEvent[] | undefined;
+    if (!events || events.length === 0) { return ''; }
+
+    const lines = events.map(e => {
+        const time = new Date(e.occurred_at).toLocaleString();
+        const summary = e.summary ? `: ${e.summary}` : '';
+        return `  [${time}] ${e.event_type} - ${e.title}${summary}`;
+    });
+
+    return '\nTimeline Events (24h window around alert):\n' + lines.join('\n');
+}
+
 /**
  * Check if two metric values are close enough to consider the
  * cached analysis still valid. Returns true if the values are
@@ -287,18 +335,23 @@ export const useAlertAnalysis = (): UseAlertAnalysisReturn => {
             }
         }
 
-        // Fetch connection context for the LLM (fire-and-forget if it fails)
+        // Fetch connection context and timeline events in parallel
         let connectionContext = '';
-        try {
-            const ctxResponse = await fetch(`/api/v1/connections/${alert.connectionId}/context`, {
+        let timelineContext = '';
+        const [ctxResult, timelineResult] = await Promise.allSettled([
+            fetch(`/api/v1/connections/${alert.connectionId}/context`, {
                 credentials: 'include',
-            });
-            if (ctxResponse.ok) {
-                const ctxData = await ctxResponse.json();
-                connectionContext = formatConnectionContext(ctxData);
-            }
-        } catch {
-            // Context is optional - continue without it
+            }).then(async r => r.ok ? formatConnectionContext(await r.json()) : ''),
+            fetchTimelineEvents(
+                alert.connectionId,
+                alert.triggeredAt || alert.time
+            ),
+        ]);
+        if (ctxResult.status === 'fulfilled') {
+            connectionContext = ctxResult.value;
+        }
+        if (timelineResult.status === 'fulfilled') {
+            timelineContext = timelineResult.value;
         }
 
         // Build user message with alert context
@@ -313,7 +366,7 @@ Current Value: ${alert.metricValue ?? 'N/A'}
 Threshold: ${alert.operator || '>'} ${alert.thresholdValue ?? 'N/A'}
 Connection ID: ${alert.connectionId}
 Triggered At: ${alert.triggeredAt || alert.time}
-${connectionContext}
+${connectionContext}${timelineContext}
 Provide remediation recommendations and any threshold tuning suggestions.`;
 
         const messages: Message[] = [

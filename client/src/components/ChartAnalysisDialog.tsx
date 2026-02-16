@@ -1,17 +1,17 @@
 /*-------------------------------------------------------------------------
  *
- * pgEdge AI DBA Workbench - Alert Analysis Dialog
+ * pgEdge AI DBA Workbench - Chart Analysis Dialog
  *
  * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
- * Dialog component for displaying AI-powered alert analysis with
+ * Dialog component for displaying AI-powered chart data analysis with
  * professional analytics aesthetic and markdown rendering
  *
  *-------------------------------------------------------------------------
  */
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
     Box,
     Typography,
@@ -31,10 +31,9 @@ import {
     Download as DownloadIcon,
     Psychology as PsychologyIcon,
     Error as ErrorIcon,
-    Warning as WarningIcon,
-    Info as InfoIcon,
 } from '@mui/icons-material';
-import { useAlertAnalysis } from '../hooks/useAlertAnalysis';
+import { useChartAnalysis, ChartAnalysisInput } from '../hooks/useChartAnalysis';
+import { ChartData, ChartAnalysisContext } from './Chart/types';
 import {
     MarkdownContent,
     AnalysisSkeleton,
@@ -60,48 +59,9 @@ import {
     getCloseButtonSx,
 } from './shared/MarkdownContent';
 
-// Severity color getter using theme palette
-const getSeverityColor = (severity, theme) => {
-    switch (severity) {
-        case 'critical':
-            return theme.palette.error.main;
-        case 'warning':
-            return theme.palette.warning.main;
-        default:
-            return theme.palette.info.main;
-    }
-};
-
-// Get severity icon
-const getSeverityIcon = (severity) => {
-    switch (severity) {
-        case 'critical':
-            return ErrorIcon;
-        case 'warning':
-            return WarningIcon;
-        default:
-            return InfoIcon;
-    }
-};
-
 // ---------------------------------------------------------------------------
-// Alert-specific style constants and style-getter functions
+// Chart-specific style constants and style-getter functions
 // ---------------------------------------------------------------------------
-
-const getSeverityDotSx = (severityColor, theme) => ({
-    position: 'absolute',
-    top: -4,
-    right: -4,
-    width: 14,
-    height: 14,
-    borderRadius: '50%',
-    bgcolor: severityColor,
-    border: '2px solid',
-    borderColor: theme.palette.mode === 'dark'
-        ? theme.palette.background.default
-        : theme.palette.grey[50],
-    boxShadow: `0 0 8px ${alpha(severityColor, 0.5)}`,
-});
 
 const sxMetadataRow = {
     display: 'flex',
@@ -111,9 +71,15 @@ const sxMetadataRow = {
     flexWrap: 'wrap',
 };
 
-const sxSeverityBadge = { display: 'flex', alignItems: 'center', gap: 0.5 };
+const sxMetadataSecondRow = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 1,
+    mt: 0.75,
+    flexWrap: 'wrap',
+};
 
-const getServerBadgeSx = (theme: Theme) => ({
+const getConnectionBadgeSx = (theme: Theme) => ({
     display: 'flex',
     alignItems: 'center',
     gap: 0.5,
@@ -147,94 +113,96 @@ const getDatabaseTextSx = (theme: Theme) => ({
     ...sxMonoFont,
 });
 
-const sxMetadataSecondRow = {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 1,
-    mt: 0.75,
-    flexWrap: 'wrap',
-};
-
 const sxMonoSmall = {
     fontSize: '0.875rem',
     color: 'text.secondary',
     ...sxMonoFont,
 };
 
-const sxThresholdText = {
-    fontSize: '0.875rem',
-    color: 'text.disabled',
-    ...sxMonoFont,
-};
+// ---------------------------------------------------------------------------
+// Helper: slugify a string for use in filenames
+// ---------------------------------------------------------------------------
+
+const slugify = (text: string): string =>
+    text
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-/**
- * AlertAnalysisDialog - Dialog for displaying AI-powered alert analysis
- */
-interface AlertAnalysisDialogProps {
+interface ChartAnalysisDialogProps {
     open: boolean;
-    alert: Record<string, unknown> | null;
     onClose: () => void;
-    onAnalysisComplete?: (alertId: number, analysis: string) => void;
     isDark: boolean;
+    analysisContext: ChartAnalysisContext;
+    chartData: ChartData;
 }
 
-const AlertAnalysisDialog: React.FC<AlertAnalysisDialogProps> = ({ open, alert, onClose, onAnalysisComplete, isDark }) => {
+const ChartAnalysisDialog: React.FC<ChartAnalysisDialogProps> = ({
+    open,
+    onClose,
+    isDark,
+    analysisContext,
+    chartData,
+}) => {
     const theme = useTheme();
-    const { analysis, loading, error, analyze, reset } = useAlertAnalysis();
+    const { analysis, loading, error, analyze } = useChartAnalysis();
 
-    // Trigger analysis when dialog opens with an alert
+    // Trigger analysis once when dialog opens; ignore subsequent chartData
+    // changes from dashboard polling while the dialog remains open.
+    const hasTriggeredRef = useRef(false);
+
     useEffect(() => {
-        if (open && alert) {
-            analyze(alert);
+        if (open && !hasTriggeredRef.current) {
+            hasTriggeredRef.current = true;
+            if (!analysis) {
+                const input: ChartAnalysisInput = {
+                    metricDescription: analysisContext.metricDescription,
+                    connectionId: analysisContext.connectionId,
+                    connectionName: analysisContext.connectionName,
+                    databaseName: analysisContext.databaseName,
+                    timeRange: analysisContext.timeRange,
+                    data: chartData,
+                };
+                analyze(input);
+            }
         }
-    }, [open, alert, analyze]);
-
-    // Notify parent when analysis completes so the alert list updates
-    useEffect(() => {
-        if (analysis && alert?.id != null && onAnalysisComplete) {
-            onAnalysisComplete(alert.id as number, analysis);
+        if (!open) {
+            hasTriggeredRef.current = false;
         }
-    }, [analysis, alert, onAnalysisComplete]);
+    }, [open, analysis, analysisContext, chartData, analyze]);
 
-    // Reset state when dialog closes
     const handleClose = () => {
-        reset();
         onClose();
     };
 
     // Download analysis as markdown file
     const handleDownload = () => {
-        if (!analysis || !alert) {return;}
+        if (!analysis) { return; }
 
         const timestamp = new Date().toISOString().split('T')[0];
-        const filename = `alert-analysis-${alert.id || 'unknown'}-${timestamp}.md`;
+        const slug = slugify(analysisContext.metricDescription || 'chart');
+        const filename = `chart-analysis-${slug}-${timestamp}.md`;
 
-        // Build optional fields
-        const serverLine = alert.server ? `- **Server:** ${alert.server}\n` : '';
-        const databaseLine = alert.databaseName ? `- **Database:** ${alert.databaseName}\n` : '';
-        const unit = alert.metricUnit || '';
-        const metricDisplay = alert.metricValue !== undefined
-            ? `${alert.metricValue}${unit ? ` ${unit}` : ''}`
-            : 'N/A';
-        const thresholdDisplay = alert.thresholdValue !== undefined
-            ? `${alert.operator || '>'} ${alert.thresholdValue}${unit ? ` ${unit}` : ''}`
-            : 'N/A';
+        const connectionLine = analysisContext.connectionName
+            ? `- **Connection:** ${analysisContext.connectionName}\n`
+            : '';
+        const databaseLine = analysisContext.databaseName
+            ? `- **Database:** ${analysisContext.databaseName}\n`
+            : '';
+        const timeRangeLine = analysisContext.timeRange
+            ? `- **Time Range:** ${analysisContext.timeRange}\n`
+            : '';
 
-        const content = `# Alert Analysis Report
+        const content = `# Chart Analysis Report
 
-## Alert Details
+## Chart Details
 
-- **Title:** ${alert.title || 'N/A'}
-- **Severity:** ${alert.severity || 'N/A'}
-${serverLine}${databaseLine}- **Alert Type:** ${alert.alertType || 'threshold'}
-- **Metric Value:** ${metricDisplay}
-- **Threshold:** ${thresholdDisplay}
-- **Triggered At:** ${alert.triggeredAt || alert.time || 'N/A'}
-
+- **Metric:** ${analysisContext.metricDescription || 'N/A'}
+${connectionLine}${databaseLine}${timeRangeLine}
 ---
 
 ${analysis}
@@ -255,9 +223,6 @@ ${analysis}
         URL.revokeObjectURL(url);
     };
 
-    const severityColor = getSeverityColor(alert?.severity, theme);
-    const SeverityIcon = getSeverityIcon(alert?.severity);
-
     return (
         <Dialog
             open={open}
@@ -270,69 +235,41 @@ ${analysis}
         >
             {/* Header */}
             <DialogTitle sx={getDialogTitleSx(theme)}>
-                {/* Icon with severity indicator */}
+                {/* Icon (no severity dot) */}
                 <Box sx={getIconBoxSx(theme)}>
                     <PsychologyIcon sx={getIconColorSx(theme)} />
-                    {/* Severity dot */}
-                    <Box sx={getSeverityDotSx(severityColor, theme)} />
                 </Box>
 
                 {/* Title and metadata */}
                 <Box sx={sxTitleFlexBox}>
                     <Typography variant="h6" sx={sxTitleTypography}>
-                        Alert analysis
+                        Chart analysis
                     </Typography>
-                    {/* First row: severity, title, time */}
+                    {/* First row: metric description */}
                     <Box sx={sxMetadataRow}>
-                        <Box sx={sxSeverityBadge}>
-                            <SeverityIcon sx={{ fontSize: 14, color: severityColor }} />
-                            <Typography
-                                sx={{
-                                    fontSize: '1rem',
-                                    color: severityColor,
-                                    fontWeight: 500,
-                                    textTransform: 'capitalize',
-                                }}
-                            >
-                                {alert?.severity || 'Unknown'}
-                            </Typography>
-                        </Box>
                         <Typography sx={{ fontSize: '0.875rem', color: 'text.secondary' }}>
-                            {alert?.title || 'Alert'}
+                            {analysisContext.metricDescription || 'Chart'}
                         </Typography>
-                        {alert?.time && (
-                            <Typography sx={{ fontSize: '0.875rem', color: 'text.disabled' }}>
-                                {alert.time}
-                            </Typography>
-                        )}
                     </Box>
-                    {/* Second row: server, database, threshold info */}
+                    {/* Second row: connection name, database name, time range */}
                     <Box sx={sxMetadataSecondRow}>
-                        {alert?.server && (
-                            <Box sx={getServerBadgeSx(theme)}>
+                        {analysisContext.connectionName && (
+                            <Box sx={getConnectionBadgeSx(theme)}>
                                 <Typography sx={sxMonoSmall}>
-                                    {alert.server}
+                                    {analysisContext.connectionName}
                                 </Typography>
                             </Box>
                         )}
-                        {alert?.databaseName && (
+                        {analysisContext.databaseName && (
                             <Box sx={getDatabaseBadgeSx(theme)}>
                                 <Typography sx={getDatabaseTextSx(theme)}>
-                                    {alert.databaseName}
+                                    {analysisContext.databaseName}
                                 </Typography>
                             </Box>
                         )}
-                        {alert?.metricValue !== undefined && alert?.thresholdValue !== undefined && (
-                            <Typography sx={sxThresholdText}>
-                                {typeof alert.metricValue === 'number'
-                                    ? alert.metricValue.toLocaleString(undefined, { maximumFractionDigits: 2 })
-                                    : alert.metricValue}
-                                {alert.metricUnit && ` ${alert.metricUnit}`}
-                                {' '}{alert.operator === '>' ? '>' : alert.operator === '<' ? '<' : '='}{' '}
-                                {typeof alert.thresholdValue === 'number'
-                                    ? alert.thresholdValue.toLocaleString(undefined, { maximumFractionDigits: 2 })
-                                    : alert.thresholdValue}
-                                {alert.metricUnit && ` ${alert.metricUnit}`}
+                        {analysisContext.timeRange && (
+                            <Typography sx={{ fontSize: '0.875rem', color: 'text.disabled' }}>
+                                {analysisContext.timeRange}
                             </Typography>
                         )}
                     </Box>
@@ -357,7 +294,7 @@ ${analysis}
                                 <Box sx={getLoadingBannerSx(theme)}>
                                     <Box sx={getPulseDotSx(theme)} />
                                     <Typography sx={getLoadingTextSx(theme)}>
-                                        Analyzing alert and gathering context...
+                                        Analyzing data and identifying patterns...
                                     </Typography>
                                 </Box>
                                 <AnalysisSkeleton />
@@ -390,9 +327,9 @@ ${analysis}
                                 <MarkdownContent
                                     content={analysis}
                                     isDark={isDark}
-                                    connectionId={alert?.connectionId as number | undefined}
-                                    databaseName={alert?.databaseName as string | undefined}
-                                    serverName={alert?.server as string | undefined}
+                                    connectionId={analysisContext.connectionId}
+                                    databaseName={analysisContext.databaseName}
+                                    serverName={analysisContext.connectionName}
                                 />
                             </Box>
                         )}
@@ -423,4 +360,5 @@ ${analysis}
     );
 };
 
-export default AlertAnalysisDialog;
+export { ChartAnalysisDialog };
+export default ChartAnalysisDialog;

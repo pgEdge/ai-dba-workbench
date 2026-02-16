@@ -238,6 +238,12 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
                     sparklineData={extractSparklineData(
                         sizeKpi.data, 'database_size'
                     )}
+                    analysisContext={{
+                        metricDescription: 'Database size over time',
+                        connectionId,
+                        databaseName,
+                        timeRange: timeRange.range,
+                    }}
                 />
                 <KpiTile
                     label="Cache Hit Ratio"
@@ -247,6 +253,12 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
                     sparklineData={extractSparklineData(
                         cacheKpi.data, 'cache_hit_ratio'
                     )}
+                    analysisContext={{
+                        metricDescription: 'Buffer cache hit ratio over time',
+                        connectionId,
+                        databaseName,
+                        timeRange: timeRange.range,
+                    }}
                 />
                 <KpiTile
                     label="Transaction Rate"
@@ -255,6 +267,12 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
                     sparklineData={extractSparklineData(
                         txnKpi.data, 'xact_commit_per_sec'
                     )}
+                    analysisContext={{
+                        metricDescription: 'Transaction commit rate over time',
+                        connectionId,
+                        databaseName,
+                        timeRange: timeRange.range,
+                    }}
                 />
                 <KpiTile
                     label="Dead Tuple Ratio"
@@ -264,6 +282,12 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
                     sparklineData={extractSparklineData(
                         deadTupleKpi.data, 'dead_tuple_ratio'
                     )}
+                    analysisContext={{
+                        metricDescription: 'Dead tuple ratio over time',
+                        connectionId,
+                        databaseName,
+                        timeRange: timeRange.range,
+                    }}
                 />
             </Box>
 
@@ -287,7 +311,13 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
                             smooth
                             showLegend
                             showTooltip
-                            showToolbar={false}
+                            enableExport={false}
+                            analysisContext={{
+                                metricDescription: 'Transaction commit and rollback rate for the database',
+                                connectionId,
+                                databaseName,
+                                timeRange: timeRange.range,
+                            }}
                         />
                     ) : (
                         <Typography
@@ -320,7 +350,13 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
                             areaFill
                             showLegend
                             showTooltip
-                            showToolbar={false}
+                            enableExport={false}
+                            analysisContext={{
+                                metricDescription: 'Buffer cache hit ratio showing cache effectiveness',
+                                connectionId,
+                                databaseName,
+                                timeRange: timeRange.range,
+                            }}
                         />
                     ) : (
                         <Typography

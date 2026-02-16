@@ -24,7 +24,9 @@ import {
 import { CanvasRenderer } from 'echarts/renderers';
 import ReactEChartsCore from 'echarts-for-react/lib/core';
 
-import { ChartProps, ChartData } from './types';
+import useTheme from '@mui/material/styles/useTheme';
+import { ChartProps, ChartData, ChartAnalysisContext } from './types';
+import { ChartAnalysisDialog } from '../ChartAnalysisDialog';
 import { CHART_CONTAINER_SX, CHART_PAPER_SX, CHART_TITLE_SX } from './styles';
 import { useEChartsTheme } from './ChartThemeBridge';
 import { exportChartAsPng } from './utils/exportPng';
@@ -34,6 +36,7 @@ import { buildLineOptions } from './options/line';
 import { buildBarOptions } from './options/bar';
 import { buildPieOptions } from './options/pie';
 import { ChartToolbar } from './ChartToolbar';
+import { hasCachedAnalysis } from '../../hooks/useChartAnalysis';
 
 interface EChartsInstance {
     getDataURL: (opts: { type: string; pixelRatio: number; backgroundColor: string }) => string;
@@ -92,10 +95,15 @@ export function Chart(props: ChartProps) {
         echartsOptions,
         onChartReady,
         onChartClick,
+        analysisContext,
     } = props;
 
     const chartRef = useRef<EChartsInstance | null>(null);
     const [liveData, setLiveData] = useState<ChartData | null>(null);
+    const [analysisOpen, setAnalysisOpen] = useState(false);
+
+    const theme = useTheme();
+    const isDark = theme.palette.mode === 'dark';
 
     const echartsTheme = useEChartsTheme();
     echarts.registerTheme('pgedge', echartsTheme);
@@ -276,12 +284,22 @@ export function Chart(props: ChartProps) {
         }
     }, [onDataRefresh]);
 
+    const handleAnalyze = useCallback(() => setAnalysisOpen(true), []);
+    const handleAnalysisClose = useCallback(() => setAnalysisOpen(false), []);
+
     const chartEvents = useMemo((): Record<string, (...args: unknown[]) => void> => {
         if (!onChartClick) {
             return {};
         }
         return { click: onChartClick };
     }, [onChartClick]);
+
+    const isCached = analysisContext ? hasCachedAnalysis(
+        analysisContext.metricDescription,
+        analysisContext.connectionId,
+        analysisContext.databaseName,
+        analysisContext.timeRange,
+    ) : false;
 
     return (
         <Paper sx={CHART_PAPER_SX} elevation={1}>
@@ -291,8 +309,11 @@ export function Chart(props: ChartProps) {
                 )}
                 {showToolbar && (
                     <ChartToolbar
+                        cached={isCached}
+                        showAnalyze={!!analysisContext}
                         showExport={enableExport}
                         showRefresh={liveUpdate}
+                        onAnalyze={handleAnalyze}
                         onExport={handleExport}
                         onRefresh={handleRefresh}
                     />
@@ -311,6 +332,15 @@ export function Chart(props: ChartProps) {
                     onEvents={chartEvents}
                 />
             </Box>
+            {analysisContext && (
+                <ChartAnalysisDialog
+                    open={analysisOpen}
+                    onClose={handleAnalysisClose}
+                    isDark={isDark}
+                    analysisContext={analysisContext}
+                    chartData={activeData}
+                />
+            )}
         </Paper>
     );
 }

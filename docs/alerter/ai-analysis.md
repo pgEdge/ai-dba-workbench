@@ -194,3 +194,24 @@ The following tools are available to the LLM:
   and maximum values.
 - The `query_metrics` tool queries historical metric
   values with time-based aggregation.
+
+## Timeline Event Context
+
+The analysis includes timeline events to help the LLM
+correlate alerts with recent system changes. The system
+fetches events from a 24-hour window centered on the
+alert trigger time.
+
+The LLM considers the following event types:
+
+- Configuration changes to PostgreSQL settings.
+- Alert activations and resolutions.
+- Server restarts and recovery events.
+- Extension installations and upgrades.
+- Blackout periods and maintenance windows.
+- Authentication configuration changes.
+
+The LLM uses timeline events to identify potential root
+causes. A configuration change shortly before an alert
+may explain the metric deviation. The LLM notes these
+correlations in the analysis report.

@@ -18,6 +18,14 @@ export interface ChartData {
     series: ChartDataSeries[];
 }
 
+export interface ChartAnalysisContext {
+    metricDescription: string;
+    connectionId?: number;
+    connectionName?: string;
+    databaseName?: string;
+    timeRange?: string;
+}
+
 export interface BaseChartProps {
     data: ChartData;
     width?: string | number;
@@ -38,6 +46,7 @@ export interface BaseChartProps {
     echartsOptions?: object;
     onChartReady?: (chart: unknown) => void;
     onChartClick?: (params: unknown) => void;
+    analysisContext?: ChartAnalysisContext;
 }
 
 export interface LineChartProps extends BaseChartProps {

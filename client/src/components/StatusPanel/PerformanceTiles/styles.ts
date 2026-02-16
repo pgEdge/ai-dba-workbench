@@ -30,6 +30,7 @@ export const TILE_GRID_SX: SxProps<Theme> = {
 };
 
 export const getTilePaperSx = (theme: Theme): SxProps<Theme> => ({
+    position: 'relative',
     p: 2,
     borderRadius: 2,
     bgcolor: theme.palette.mode === 'dark'

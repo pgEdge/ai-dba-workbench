@@ -8,12 +8,16 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useMemo } from 'react';
-import { Box, Typography, useTheme } from '@mui/material';
+import React, { useMemo, useState, useCallback } from 'react';
+import { Box, Typography, useTheme, IconButton, Tooltip } from '@mui/material';
+import PsychologyIcon from '@mui/icons-material/Psychology';
 import { Chart } from '../../Chart/Chart';
+import { ChartAnalysisDialog } from '../../ChartAnalysisDialog';
+import { ChartAnalysisContext } from '../../Chart/types';
 import TileContainer from './TileContainer';
 import { ConnectionPerformance } from './types';
 import { TILE_VALUE_SX, getCacheColor } from './styles';
+import { hasCachedAnalysis } from '../../../hooks/useChartAnalysis';
 
 interface CacheHitTileProps {
     connections: ConnectionPerformance[];
@@ -92,6 +96,28 @@ const CacheHitTile: React.FC<CacheHitTileProps> = ({
     const hasData = headlineValue !== null;
     const color = hasData ? getCacheColor(headlineValue) : undefined;
 
+    const [analysisOpen, setAnalysisOpen] = useState(false);
+    const handleAnalyzeClick = useCallback((e: React.MouseEvent) => {
+        e.stopPropagation();
+        setAnalysisOpen(true);
+    }, []);
+    const handleAnalysisClose = useCallback(() => {
+        setAnalysisOpen(false);
+    }, []);
+
+    const analysisContext: ChartAnalysisContext | undefined = hasData ? {
+        metricDescription: 'Buffer cache hit ratio showing cache effectiveness',
+        connectionId: connections[0]?.connection_id,
+        connectionName: connections[0]?.connection_name,
+    } : undefined;
+
+    const isCached = analysisContext ? hasCachedAnalysis(
+        analysisContext.metricDescription,
+        analysisContext.connectionId,
+        analysisContext.databaseName,
+        analysisContext.timeRange,
+    ) : false;
+
     return (
         <TileContainer
             title="Cache Hit Ratio"
@@ -169,6 +195,32 @@ const CacheHitTile: React.FC<CacheHitTileProps> = ({
                         }}
                     />
                 </Box>
+            )}
+            {analysisContext && chartData && (
+                <Tooltip title="AI Analysis">
+                    <IconButton
+                        size="small"
+                        color={isCached ? 'warning' : 'secondary'}
+                        onClick={handleAnalyzeClick}
+                        sx={{
+                            position: 'absolute',
+                            top: 8,
+                            right: 8,
+                            zIndex: 1,
+                        }}
+                    >
+                        <PsychologyIcon sx={{ fontSize: 16 }} />
+                    </IconButton>
+                </Tooltip>
+            )}
+            {analysisContext && chartData && (
+                <ChartAnalysisDialog
+                    open={analysisOpen}
+                    onClose={handleAnalysisClose}
+                    isDark={theme.palette.mode === 'dark'}
+                    analysisContext={analysisContext}
+                    chartData={chartData}
+                />
             )}
         </TileContainer>
     );

@@ -199,9 +199,12 @@ const HealthOverviewSection: React.FC<HealthOverviewSectionProps> = ({ selection
                     height={200}
                     showLegend
                     showTooltip
-                    showToolbar={false}
+                    enableExport={false}
                     colorPalette={serverColors}
                     showPercentage
+                    analysisContext={{
+                        metricDescription: 'Distribution of server health statuses across the estate',
+                    }}
                 />
                 <Typography sx={RING_LABEL_SX}>
                     Server Status
@@ -215,9 +218,12 @@ const HealthOverviewSection: React.FC<HealthOverviewSectionProps> = ({ selection
                         height={200}
                         showLegend
                         showTooltip
-                        showToolbar={false}
+                        enableExport={false}
                         colorPalette={alertColors}
                         showPercentage
+                        analysisContext={{
+                            metricDescription: 'Distribution of alerts by severity across the estate',
+                        }}
                     />
                 ) : (
                     <Box sx={{

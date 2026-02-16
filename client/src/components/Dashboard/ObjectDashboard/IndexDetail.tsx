@@ -279,7 +279,13 @@ const IndexDetail: React.FC<ObjectDetailProps> = ({
                                     smooth
                                     showLegend
                                     showTooltip
-                                    showToolbar={false}
+                                    enableExport={false}
+                                    analysisContext={{
+                                        metricDescription: `Index scan activity for ${schemaName}.${objectName}`,
+                                        connectionId,
+                                        databaseName,
+                                        timeRange: timeRange.range,
+                                    }}
                                 />
                             ) : (
                                 <Typography

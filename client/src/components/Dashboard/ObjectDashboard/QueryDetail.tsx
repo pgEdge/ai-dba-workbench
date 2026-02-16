@@ -383,7 +383,13 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                                     smooth
                                     showLegend
                                     showTooltip
-                                    showToolbar={false}
+                                    enableExport={false}
+                                    analysisContext={{
+                                        metricDescription: 'Query execution time trends',
+                                        connectionId,
+                                        databaseName,
+                                        timeRange: timeRange.range,
+                                    }}
                                 />
                             ) : (
                                 <Typography
@@ -418,7 +424,13 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                                     height={CHART_HEIGHT}
                                     showLegend
                                     showTooltip
-                                    showToolbar={false}
+                                    enableExport={false}
+                                    analysisContext={{
+                                        metricDescription: 'Query call frequency over time',
+                                        connectionId,
+                                        databaseName,
+                                        timeRange: timeRange.range,
+                                    }}
                                 />
                             ) : (
                                 <Typography

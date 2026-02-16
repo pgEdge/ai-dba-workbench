@@ -107,6 +107,7 @@ const buildChartData = (
  */
 const SystemResourcesSection: React.FC<ServerSectionProps> = ({
     connectionId,
+    connectionName,
 }) => {
     const { timeRange } = useDashboard();
 
@@ -339,6 +340,12 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                         cpuKpi.data,
                         'usermode_normal_process_percent'
                     )}
+                    analysisContext={{
+                        metricDescription: 'CPU usage percentage over time',
+                        connectionId,
+                        connectionName,
+                        timeRange: timeRange.range,
+                    }}
                 />
                 <KpiTile
                     label="Memory Usage"
@@ -353,6 +360,12 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                     sparklineData={extractSparklineData(
                         memoryKpi.data, 'used_memory'
                     )}
+                    analysisContext={{
+                        metricDescription: 'Memory usage over time',
+                        connectionId,
+                        connectionName,
+                        timeRange: timeRange.range,
+                    }}
                 />
                 <KpiTile
                     label="Disk Usage"
@@ -367,6 +380,12 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                     sparklineData={extractSparklineData(
                         diskKpi.data, 'used_space'
                     )}
+                    analysisContext={{
+                        metricDescription: 'Disk space usage over time',
+                        connectionId,
+                        connectionName,
+                        timeRange: timeRange.range,
+                    }}
                 />
                 <KpiTile
                     label="Load Average"
@@ -374,6 +393,12 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                     sparklineData={extractSparklineData(
                         loadKpi.data, 'load_avg_one_minute'
                     )}
+                    analysisContext={{
+                        metricDescription: 'System load average (1 minute) over time',
+                        connectionId,
+                        connectionName,
+                        timeRange: timeRange.range,
+                    }}
                 />
             </Box>
 
@@ -397,7 +422,13 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                                 stacked
                                 showLegend
                                 showTooltip
-                                showToolbar={false}
+                                enableExport={false}
+                                analysisContext={{
+                                    metricDescription: 'CPU usage breakdown showing user, system, I/O wait, and idle percentages',
+                                    connectionId,
+                                    connectionName,
+                                    timeRange: timeRange.range,
+                                }}
                             />
                         )}
                     </ChartPanel>
@@ -421,7 +452,13 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                                 areaFill
                                 showLegend
                                 showTooltip
-                                showToolbar={false}
+                                enableExport={false}
+                                analysisContext={{
+                                    metricDescription: 'Memory usage showing used, free, and cached memory',
+                                    connectionId,
+                                    connectionName,
+                                    timeRange: timeRange.range,
+                                }}
                             />
                         )}
                     </ChartPanel>
@@ -445,7 +482,13 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                                 areaFill
                                 showLegend
                                 showTooltip
-                                showToolbar={false}
+                                enableExport={false}
+                                analysisContext={{
+                                    metricDescription: 'Disk space usage showing used and free space',
+                                    connectionId,
+                                    connectionName,
+                                    timeRange: timeRange.range,
+                                }}
                             />
                         )}
                     </ChartPanel>
@@ -468,7 +511,13 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                                 smooth
                                 showLegend
                                 showTooltip
-                                showToolbar={false}
+                                enableExport={false}
+                                analysisContext={{
+                                    metricDescription: 'System load average over 1, 5, 10, and 15 minute intervals',
+                                    connectionId,
+                                    connectionName,
+                                    timeRange: timeRange.range,
+                                }}
                             />
                         )}
                     </ChartPanel>
@@ -491,7 +540,13 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                                 smooth
                                 showLegend
                                 showTooltip
-                                showToolbar={false}
+                                enableExport={false}
+                                analysisContext={{
+                                    metricDescription: 'Network throughput showing transmitted and received bytes',
+                                    connectionId,
+                                    connectionName,
+                                    timeRange: timeRange.range,
+                                }}
                             />
                         )}
                     </ChartPanel>

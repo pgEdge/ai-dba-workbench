@@ -1381,6 +1381,34 @@ const MonitoringPage = () => (
             />
         </Box>
 
+        <SectionTitle icon={AIIcon}>AI Chart Analysis</SectionTitle>
+        <Typography sx={styles.bodyTextMb2}>
+            Every chart and KPI tile displays a brain icon that triggers
+            AI-powered analysis of the displayed data.
+        </Typography>
+        <Box sx={styles.indentedBlock}>
+            <FeatureItem
+                title="Data Analysis"
+                description="The AI examines the chart data, identifies trends and anomalies, and generates a report with summary, patterns, and recommendations."
+            />
+            <FeatureItem
+                title="Timeline Correlation"
+                description="The analysis includes timeline events such as configuration changes, alerts, and server restarts to identify correlations with metric changes."
+            />
+            <FeatureItem
+                title="Cached Reports"
+                description="An amber brain icon indicates a cached analysis is available. Click it to view the report instantly without waiting for regeneration."
+            />
+            <FeatureItem
+                title="Runnable SQL"
+                description="SQL code blocks in analysis reports include a Run button to execute queries against the monitored server. Results appear inline below the code block."
+            />
+            <FeatureItem
+                title="Download"
+                description="Reports can be downloaded as markdown files for sharing or archiving."
+            />
+        </Box>
+
         <HelpTip>
             Select a server, cluster, or the estate header in the Cluster
             Navigator to view the corresponding monitoring dashboard in the

@@ -95,6 +95,7 @@ const buildChartData = (
  */
 const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
     connectionId,
+    connectionName,
 }) => {
     const { timeRange } = useDashboard();
 
@@ -277,6 +278,12 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
                     sparklineData={extractSparklineData(
                         connectionsKpi.data, 'numbackends'
                     )}
+                    analysisContext={{
+                        metricDescription: 'PostgreSQL backend connection count over time',
+                        connectionId,
+                        connectionName,
+                        timeRange: timeRange.range,
+                    }}
                 />
                 <KpiTile
                     label="Commits"
@@ -286,6 +293,12 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
                     sparklineData={extractSparklineData(
                         txnKpi.data, 'xact_commit'
                     )}
+                    analysisContext={{
+                        metricDescription: 'Transaction commit rate over time',
+                        connectionId,
+                        connectionName,
+                        timeRange: timeRange.range,
+                    }}
                 />
                 <KpiTile
                     label="Cache Hit Ratio"
@@ -296,6 +309,12 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
                     sparklineData={extractSparklineData(
                         cacheKpi.data, 'blks_hit'
                     )}
+                    analysisContext={{
+                        metricDescription: 'Buffer cache hit ratio over time',
+                        connectionId,
+                        connectionName,
+                        timeRange: timeRange.range,
+                    }}
                 />
                 <KpiTile
                     label="Temp Bytes"
@@ -303,6 +322,12 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
                     sparklineData={extractSparklineData(
                         tempKpi.data, 'temp_bytes'
                     )}
+                    analysisContext={{
+                        metricDescription: 'Temporary bytes written over time',
+                        connectionId,
+                        connectionName,
+                        timeRange: timeRange.range,
+                    }}
                 />
             </Box>
 
@@ -324,7 +349,13 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
                                 smooth
                                 showLegend
                                 showTooltip
-                                showToolbar={false}
+                                enableExport={false}
+                                analysisContext={{
+                                    metricDescription: 'PostgreSQL backend connections and sessions over time',
+                                    connectionId,
+                                    connectionName,
+                                    timeRange: timeRange.range,
+                                }}
                             />
                         )}
                     </ChartPanel>
@@ -347,7 +378,13 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
                                 smooth
                                 showLegend
                                 showTooltip
-                                showToolbar={false}
+                                enableExport={false}
+                                analysisContext={{
+                                    metricDescription: 'Transaction commit and rollback rates',
+                                    connectionId,
+                                    connectionName,
+                                    timeRange: timeRange.range,
+                                }}
                             />
                         )}
                     </ChartPanel>
@@ -370,7 +407,13 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
                                 smooth
                                 showLegend
                                 showTooltip
-                                showToolbar={false}
+                                enableExport={false}
+                                analysisContext={{
+                                    metricDescription: 'Block I/O showing cache hits vs disk reads',
+                                    connectionId,
+                                    connectionName,
+                                    timeRange: timeRange.range,
+                                }}
                             />
                         )}
                     </ChartPanel>
@@ -393,7 +436,13 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
                                 smooth
                                 showLegend
                                 showTooltip
-                                showToolbar={false}
+                                enableExport={false}
+                                analysisContext={{
+                                    metricDescription: 'Tuple operations showing rows fetched, inserted, updated, and deleted',
+                                    connectionId,
+                                    connectionName,
+                                    timeRange: timeRange.range,
+                                }}
                             />
                         )}
                     </ChartPanel>

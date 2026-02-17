@@ -289,7 +289,7 @@ func TestClient_HandleSlashCommand_Help(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	handled := client.HandleSlashCommand(ctx, &SlashCommand{Command: "help"})
+	handled, _ := client.HandleSlashCommand(ctx, &SlashCommand{Command: "help"})
 	if !handled {
 		t.Error("Expected help command to be handled")
 	}
@@ -311,7 +311,7 @@ func TestClient_HandleSlashCommand_Clear(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	handled := client.HandleSlashCommand(ctx, &SlashCommand{Command: "clear"})
+	handled, _ := client.HandleSlashCommand(ctx, &SlashCommand{Command: "clear"})
 	if !handled {
 		t.Error("Expected clear command to be handled")
 	}
@@ -341,7 +341,7 @@ func TestClient_HandleSlashCommand_Tools(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	handled := client.HandleSlashCommand(ctx, &SlashCommand{Command: "list", Args: []string{"tools"}})
+	handled, _ := client.HandleSlashCommand(ctx, &SlashCommand{Command: "list", Args: []string{"tools"}})
 	if !handled {
 		t.Error("Expected list tools command to be handled")
 	}
@@ -383,7 +383,7 @@ func TestClient_HandleSlashCommand_Resources(t *testing.T) {
 	}
 
 	// Handle list resources command
-	handled := client.HandleSlashCommand(ctx, &SlashCommand{Command: "list", Args: []string{"resources"}})
+	handled, _ := client.HandleSlashCommand(ctx, &SlashCommand{Command: "list", Args: []string{"resources"}})
 	if !handled {
 		t.Error("Expected list resources command to be handled")
 	}
@@ -405,7 +405,7 @@ func TestClient_HandleSlashCommand_Unknown(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	handled := client.HandleSlashCommand(ctx, &SlashCommand{Command: "unknown-command"})
+	handled, _ := client.HandleSlashCommand(ctx, &SlashCommand{Command: "unknown-command"})
 	if handled {
 		t.Error("Expected unknown command to not be handled")
 	}

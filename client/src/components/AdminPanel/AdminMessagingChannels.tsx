@@ -393,6 +393,7 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                                             checked={channel.enabled}
                                             size="small"
                                             onChange={() => handleToggleEnabled(channel)}
+                                            inputProps={{ 'aria-label': 'Toggle channel enabled' }}
                                         />
                                     </TableCell>
                                     <TableCell>
@@ -400,6 +401,7 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                                             checked={channel.is_estate_default}
                                             size="small"
                                             disabled
+                                            inputProps={{ 'aria-label': 'Toggle estate default' }}
                                         />
                                     </TableCell>
                                     <TableCell align="right">
@@ -510,6 +512,7 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                                     checked={form.enabled}
                                     onChange={(e) => handleFormChange('enabled', e.target.checked)}
                                     disabled={saving}
+                                    inputProps={{ 'aria-label': 'Toggle channel enabled' }}
                                 />
                             }
                             label="Enabled"
@@ -521,6 +524,7 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                                     checked={form.is_estate_default}
                                     onChange={(e) => handleFormChange('is_estate_default', e.target.checked)}
                                     disabled={saving}
+                                    inputProps={{ 'aria-label': 'Toggle estate default' }}
                                 />
                             }
                             label={

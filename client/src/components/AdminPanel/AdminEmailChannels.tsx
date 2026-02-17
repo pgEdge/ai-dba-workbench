@@ -609,6 +609,7 @@ const AdminEmailChannels: React.FC = () => {
                                             checked={channel.enabled}
                                             size="small"
                                             onChange={() => handleToggleEnabled(channel)}
+                                            inputProps={{ 'aria-label': 'Toggle channel enabled' }}
                                         />
                                     </TableCell>
                                     <TableCell>
@@ -616,6 +617,7 @@ const AdminEmailChannels: React.FC = () => {
                                             checked={channel.is_estate_default}
                                             size="small"
                                             disabled
+                                            inputProps={{ 'aria-label': 'Toggle estate default' }}
                                         />
                                     </TableCell>
                                     <TableCell align="right">
@@ -792,6 +794,7 @@ const AdminEmailChannels: React.FC = () => {
                                         checked={form.use_tls}
                                         onChange={(e) => handleFormChange('use_tls', e.target.checked)}
                                         disabled={saving}
+                                        inputProps={{ 'aria-label': 'Toggle use TLS' }}
                                     />
                                 }
                                 label="Use TLS"
@@ -803,6 +806,7 @@ const AdminEmailChannels: React.FC = () => {
                                         checked={form.enabled}
                                         onChange={(e) => handleFormChange('enabled', e.target.checked)}
                                         disabled={saving}
+                                        inputProps={{ 'aria-label': 'Toggle channel enabled' }}
                                     />
                                 }
                                 label="Enabled"
@@ -814,6 +818,7 @@ const AdminEmailChannels: React.FC = () => {
                                         checked={form.is_estate_default}
                                         onChange={(e) => handleFormChange('is_estate_default', e.target.checked)}
                                         disabled={saving}
+                                        inputProps={{ 'aria-label': 'Toggle estate default' }}
                                     />
                                 }
                                 label={
@@ -862,6 +867,7 @@ const AdminEmailChannels: React.FC = () => {
                                                         size="small"
                                                         onChange={() => handleToggleRecipientEnabled(recipient)}
                                                         disabled={recipientSaving}
+                                                        inputProps={{ 'aria-label': 'Toggle recipient enabled' }}
                                                     />
                                                 </TableCell>
                                                 <TableCell align="right">

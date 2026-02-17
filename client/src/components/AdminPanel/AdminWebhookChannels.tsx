@@ -608,6 +608,7 @@ const AdminWebhookChannels: React.FC = () => {
                                             checked={channel.enabled}
                                             size="small"
                                             onChange={() => handleToggleEnabled(channel)}
+                                            inputProps={{ 'aria-label': 'Toggle channel enabled' }}
                                         />
                                     </TableCell>
                                     <TableCell>
@@ -615,6 +616,7 @@ const AdminWebhookChannels: React.FC = () => {
                                             checked={channel.is_estate_default}
                                             size="small"
                                             disabled
+                                            inputProps={{ 'aria-label': 'Toggle estate default' }}
                                         />
                                     </TableCell>
                                     <TableCell align="right">
@@ -754,6 +756,7 @@ const AdminWebhookChannels: React.FC = () => {
                                         checked={form.enabled}
                                         onChange={(e) => handleFormChange('enabled', e.target.checked)}
                                         disabled={saving}
+                                        inputProps={{ 'aria-label': 'Toggle channel enabled' }}
                                     />
                                 }
                                 label="Enabled"
@@ -765,6 +768,7 @@ const AdminWebhookChannels: React.FC = () => {
                                         checked={form.is_estate_default}
                                         onChange={(e) => handleFormChange('is_estate_default', e.target.checked)}
                                         disabled={saving}
+                                        inputProps={{ 'aria-label': 'Toggle estate default' }}
                                     />
                                 }
                                 label={

@@ -178,25 +178,6 @@ func (c *Client) Run(ctx context.Context) error {
 	return c.chatLoop(ctx)
 }
 
-// PrefixCompleter implements readline.AutoCompleter for prefix-based history
-type PrefixCompleter struct {
-}
-
-// Do implements the AutoCompleter interface for prefix-based history completion
-func (pc *PrefixCompleter) Do(line []rune, pos int) (newLine [][]rune, length int) {
-	// Get current line text
-	lineStr := string(line[:pos])
-
-	// If line is empty, don't suggest anything
-	if lineStr == "" {
-		return nil, 0
-	}
-
-	// This is called for Tab completion - we don't want to interfere with that
-	// We only want to filter history on up/down arrows, which readline handles differently
-	return nil, 0
-}
-
 // chatLoop runs the interactive chat loop
 func (c *Client) chatLoop(ctx context.Context) error {
 	// Use history file from config
@@ -253,7 +234,11 @@ func (c *Client) chatLoop(ctx context.Context) error {
 
 		// Check for slash commands (all CLI commands start with /)
 		if cmd := ParseSlashCommand(userInput); cmd != nil {
-			if c.HandleSlashCommand(ctx, cmd) {
+			handled, err := c.HandleSlashCommand(ctx, cmd)
+			if err == ErrQuit {
+				return nil
+			}
+			if handled {
 				continue // Command was handled
 			}
 			// Unknown slash command - inform user

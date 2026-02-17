@@ -11,11 +11,16 @@ package chat
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 )
+
+// ErrQuit is a sentinel error returned by HandleSlashCommand when the user
+// requests to quit. The caller should check for this error and exit the
+// chat loop cleanly, allowing deferred cleanup functions to run.
+var ErrQuit = errors.New("quit requested")
 
 // SlashCommand represents a parsed slash command
 type SlashCommand struct {
@@ -97,16 +102,17 @@ func parseQuotedArgs(input string) []string {
 	return args
 }
 
-// HandleSlashCommand processes slash commands, returns true if handled
-func (c *Client) HandleSlashCommand(ctx context.Context, cmd *SlashCommand) bool {
+// HandleSlashCommand processes slash commands. It returns true if the command
+// was handled, and an error if the caller should exit (e.g., ErrQuit).
+func (c *Client) HandleSlashCommand(ctx context.Context, cmd *SlashCommand) (bool, error) {
 	if cmd == nil {
-		return false
+		return false, nil
 	}
 
 	switch cmd.Command {
 	case "help":
 		c.printSlashHelp()
-		return true
+		return true, nil
 
 	case "clear":
 		c.ui.ClearScreen()
@@ -115,7 +121,7 @@ func (c *Client) HandleSlashCommand(ctx context.Context, cmd *SlashCommand) bool
 			_, serverVersion = c.mcp.GetServerInfo()
 		}
 		c.ui.PrintWelcome(ClientVersion, serverVersion)
-		return true
+		return true, nil
 
 	case "tools":
 		c.ui.PrintSystemMessage(fmt.Sprintf("Available tools (%d):", len(c.tools)))
@@ -130,7 +136,7 @@ func (c *Client) HandleSlashCommand(ctx context.Context, cmd *SlashCommand) bool
 		for _, tool := range sortedTools {
 			fmt.Printf("  - %s: %s\n", tool.Name, tool.Desc)
 		}
-		return true
+		return true, nil
 
 	case "resources":
 		c.ui.PrintSystemMessage(fmt.Sprintf("Available resources (%d):", len(c.resources)))
@@ -145,7 +151,7 @@ func (c *Client) HandleSlashCommand(ctx context.Context, cmd *SlashCommand) bool
 		for _, resource := range sortedResources {
 			fmt.Printf("  - %s: %s\n", resource.Name, resource.Desc)
 		}
-		return true
+		return true, nil
 
 	case "prompts":
 		c.ui.PrintSystemMessage(fmt.Sprintf("Available prompts (%d):", len(c.prompts)))
@@ -160,37 +166,36 @@ func (c *Client) HandleSlashCommand(ctx context.Context, cmd *SlashCommand) bool
 		for _, prompt := range sortedPrompts {
 			fmt.Printf("  - %s: %s\n", prompt.Name, prompt.Desc)
 		}
-		return true
+		return true, nil
 
 	case "quit", "exit":
 		c.ui.PrintSystemMessage("Goodbye!")
-		os.Exit(0)
-		return true
+		return true, ErrQuit
 
 	case "set":
-		return c.handleSetCommand(ctx, cmd.Args)
+		return c.handleSetCommand(ctx, cmd.Args), nil
 
 	case "show":
-		return c.handleShowCommand(ctx, cmd.Args)
+		return c.handleShowCommand(ctx, cmd.Args), nil
 
 	case "list":
-		return c.handleListCommand(ctx, cmd.Args)
+		return c.handleListCommand(ctx, cmd.Args), nil
 
 	case "prompt":
-		return c.handlePromptCommand(ctx, cmd.Args)
+		return c.handlePromptCommand(ctx, cmd.Args), nil
 
 	case "history":
-		return c.handleHistoryCommand(ctx, cmd.Args)
+		return c.handleHistoryCommand(ctx, cmd.Args), nil
 
 	case "new":
-		return c.handleNewConversation(ctx)
+		return c.handleNewConversation(ctx), nil
 
 	case "save":
-		return c.handleSaveConversation(ctx)
+		return c.handleSaveConversation(ctx), nil
 
 	default:
 		// Unknown slash command, let it be sent to LLM
-		return false
+		return false, nil
 	}
 }
 

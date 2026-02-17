@@ -13,7 +13,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
+	"sync"
 )
 
 // processQuery handles sending a query to the LLM and processing the response,
@@ -34,12 +34,31 @@ func (c *Client) processQuery(ctx context.Context, query string) error {
 	reqCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// WaitGroup tracks background goroutines (thinking animation, escape listener)
+	// so we can wait for them to finish and restore terminal state reliably.
+	var wg sync.WaitGroup
+
 	// Start thinking animation
 	thinkingDone := make(chan struct{})
-	go c.ui.ShowThinking(reqCtx, thinkingDone)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		c.ui.ShowThinking(reqCtx, thinkingDone)
+	}()
 
 	// Start listening for Escape key to cancel the request
-	go ListenForEscape(ctx, thinkingDone, cancel)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ListenForEscape(ctx, thinkingDone, cancel)
+	}()
+
+	// waitForGoroutines closes thinkingDone and waits for all background
+	// goroutines to finish, ensuring terminal state is properly restored.
+	waitForGoroutines := func() {
+		close(thinkingDone)
+		wg.Wait()
+	}
 
 	// Agentic loop (allow up to maxAgenticLoops iterations for complex queries)
 	for iteration := 0; iteration < maxAgenticLoops; iteration++ {
@@ -49,9 +68,7 @@ func (c *Client) processQuery(ctx context.Context, query string) error {
 		// Get response from LLM with compacted history
 		response, err := c.llm.Chat(reqCtx, compactedMessages, c.tools)
 		if err != nil {
-			close(thinkingDone)
-			// Wait for ListenForEscape to restore terminal from raw mode
-			time.Sleep(50 * time.Millisecond)
+			waitForGoroutines()
 			// Check if this was a user cancellation (Escape key)
 			if reqCtx.Err() == context.Canceled && ctx.Err() == nil {
 				// User canceled with Escape - keep the query in history
@@ -82,20 +99,34 @@ func (c *Client) processQuery(ctx context.Context, query string) error {
 			// Execute all tool calls
 			toolResults := []ToolResult{}
 			for _, toolUse := range toolUses {
-				close(thinkingDone)
-				// Give the thinking animation goroutine time to clear the line
-				time.Sleep(50 * time.Millisecond)
+				// Wait for current goroutines before printing tool info
+				waitForGoroutines()
 				c.ui.PrintToolExecution(toolUse.Name, toolUse.Input)
+
+				// Start new thinking animation and escape listener
 				thinkingDone = make(chan struct{})
-				go c.ui.ShowThinking(reqCtx, thinkingDone)
-				// Start new Escape listener for this tool execution
-				go ListenForEscape(ctx, thinkingDone, cancel)
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					c.ui.ShowThinking(reqCtx, thinkingDone)
+				}()
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					ListenForEscape(ctx, thinkingDone, cancel)
+				}()
+
+				// Update waitForGoroutines to use the new thinkingDone
+				waitForGoroutines = func() {
+					close(thinkingDone)
+					wg.Wait()
+				}
 
 				result, err := c.mcp.CallTool(reqCtx, toolUse.Name, toolUse.Input)
 				if err != nil {
 					// Check if this was a user cancellation (Escape key)
 					if reqCtx.Err() == context.Canceled && ctx.Err() == nil {
-						close(thinkingDone)
+						waitForGoroutines()
 						// User canceled with Escape - keep the query in history
 						// but don't save the Escape keypress
 						c.ui.PrintCanceled()
@@ -136,9 +167,7 @@ func (c *Client) processQuery(ctx context.Context, query string) error {
 		}
 
 		// Got final response
-		close(thinkingDone)
-		// Wait for ListenForEscape to restore terminal from raw mode
-		time.Sleep(50 * time.Millisecond)
+		waitForGoroutines()
 
 		// Extract and display text content
 		var textParts []string
@@ -160,9 +189,7 @@ func (c *Client) processQuery(ctx context.Context, query string) error {
 		return nil
 	}
 
-	close(thinkingDone)
-	// Wait for ListenForEscape to restore terminal from raw mode
-	time.Sleep(50 * time.Millisecond)
+	waitForGoroutines()
 	return fmt.Errorf("reached maximum number of tool calls (%d)", maxAgenticLoops)
 }
 

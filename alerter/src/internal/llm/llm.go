@@ -107,7 +107,7 @@ func NewEmbeddingProvider(cfg *config.Config) (EmbeddingProvider, error) {
 		if apiKey == "" {
 			return nil, fmt.Errorf("openai: %w", ErrAPIKeyMissing)
 		}
-		provider, err := embedding.NewOpenAIProvider(apiKey, cfg.LLM.OpenAI.EmbeddingModel)
+		provider, err := embedding.NewOpenAIProvider(apiKey, cfg.LLM.OpenAI.EmbeddingModel, cfg.LLM.OpenAI.BaseURL)
 		if err != nil {
 			return nil, fmt.Errorf("openai: %w", err)
 		}
@@ -118,7 +118,7 @@ func NewEmbeddingProvider(cfg *config.Config) (EmbeddingProvider, error) {
 		if apiKey == "" {
 			return nil, fmt.Errorf("voyage: %w", ErrAPIKeyMissing)
 		}
-		provider, err := embedding.NewVoyageProvider(apiKey, cfg.LLM.Voyage.EmbeddingModel)
+		provider, err := embedding.NewVoyageProvider(apiKey, cfg.LLM.Voyage.EmbeddingModel, cfg.LLM.Voyage.BaseURL)
 		if err != nil {
 			return nil, fmt.Errorf("voyage: %w", err)
 		}
@@ -160,14 +160,14 @@ func NewReasoningProvider(cfg *config.Config) (ReasoningProvider, error) {
 		if apiKey == "" {
 			return nil, fmt.Errorf("openai: %w", ErrAPIKeyMissing)
 		}
-		return NewOpenAIReasoning(apiKey, cfg.LLM.OpenAI.ReasoningModel), nil
+		return NewOpenAIReasoning(apiKey, cfg.LLM.OpenAI.ReasoningModel, cfg.LLM.OpenAI.BaseURL), nil
 
 	case "anthropic":
 		apiKey := cfg.GetAnthropicAPIKey()
 		if apiKey == "" {
 			return nil, fmt.Errorf("anthropic: %w", ErrAPIKeyMissing)
 		}
-		return NewAnthropicReasoning(apiKey, cfg.LLM.Anthropic.ReasoningModel), nil
+		return NewAnthropicReasoning(apiKey, cfg.LLM.Anthropic.ReasoningModel, cfg.LLM.Anthropic.BaseURL), nil
 
 	case "ollama":
 		baseURL := cfg.LLM.Ollama.BaseURL

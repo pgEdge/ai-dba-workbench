@@ -228,6 +228,7 @@ The `llm.openai` section configures the OpenAI provider:
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `api_key_file` | string | None | Path to API key file |
+| `base_url` | string | `https://api.openai.com/v1` | Override the OpenAI API base URL |
 | `embedding_model` | string | `text-embedding-3-small` | Embedding model |
 | `reasoning_model` | string | `gpt-4o-mini` | Reasoning model |
 
@@ -238,6 +239,7 @@ The `llm.anthropic` section configures the Anthropic provider:
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `api_key_file` | string | None | Path to API key file |
+| `base_url` | string | `https://api.anthropic.com/v1` | Override the Anthropic API base URL |
 | `reasoning_model` | string | `claude-3-5-haiku-20241022` | Reasoning model |
 
 #### Voyage Configuration
@@ -247,6 +249,7 @@ The `llm.voyage` section configures the Voyage provider for embeddings:
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `api_key_file` | string | None | Path to API key file |
+| `base_url` | string | `https://api.voyageai.com/v1/embeddings` | Override the Voyage AI API base URL |
 | `embedding_model` | string | `voyage-3-lite` | Embedding model |
 
 ### Notifications

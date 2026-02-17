@@ -23,13 +23,15 @@ import (
 
 // Config holds LLM configuration from the server config
 type Config struct {
-	Provider        string
-	Model           string
-	AnthropicAPIKey string
-	OpenAIAPIKey    string
-	OllamaURL       string
-	MaxTokens       int
-	Temperature     float64
+	Provider         string
+	Model            string
+	AnthropicAPIKey  string
+	AnthropicBaseURL string
+	OpenAIAPIKey     string
+	OpenAIBaseURL    string
+	OllamaURL        string
+	MaxTokens        int
+	Temperature      float64
 }
 
 // Message represents a message in the chat conversation
@@ -163,13 +165,13 @@ func HandleModels(w http.ResponseWriter, r *http.Request, config *Config) {
 			http.Error(w, "Anthropic API key not configured", http.StatusBadRequest)
 			return
 		}
-		client = chat.NewAnthropicClient(config.AnthropicAPIKey, config.Model, config.MaxTokens, config.Temperature, false)
+		client = chat.NewAnthropicClient(config.AnthropicAPIKey, config.Model, config.MaxTokens, config.Temperature, false, config.AnthropicBaseURL)
 	case "openai":
 		if config.OpenAIAPIKey == "" {
 			http.Error(w, "OpenAI API key not configured", http.StatusBadRequest)
 			return
 		}
-		client = chat.NewOpenAIClient(config.OpenAIAPIKey, config.Model, config.MaxTokens, config.Temperature, false)
+		client = chat.NewOpenAIClient(config.OpenAIAPIKey, config.Model, config.MaxTokens, config.Temperature, false, config.OpenAIBaseURL)
 	case "ollama":
 		if config.OllamaURL == "" {
 			http.Error(w, "Ollama URL not configured", http.StatusBadRequest)
@@ -266,13 +268,13 @@ func HandleChat(w http.ResponseWriter, r *http.Request, config *Config) {
 			http.Error(w, "Anthropic API key not configured", http.StatusBadRequest)
 			return
 		}
-		client = chat.NewAnthropicClient(config.AnthropicAPIKey, model, config.MaxTokens, config.Temperature, req.Debug)
+		client = chat.NewAnthropicClient(config.AnthropicAPIKey, model, config.MaxTokens, config.Temperature, req.Debug, config.AnthropicBaseURL)
 	case "openai":
 		if config.OpenAIAPIKey == "" {
 			http.Error(w, "OpenAI API key not configured", http.StatusBadRequest)
 			return
 		}
-		client = chat.NewOpenAIClient(config.OpenAIAPIKey, model, config.MaxTokens, config.Temperature, req.Debug)
+		client = chat.NewOpenAIClient(config.OpenAIAPIKey, model, config.MaxTokens, config.Temperature, req.Debug, config.OpenAIBaseURL)
 	case "ollama":
 		if config.OllamaURL == "" {
 			http.Error(w, "Ollama URL not configured", http.StatusBadRequest)

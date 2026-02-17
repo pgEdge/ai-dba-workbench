@@ -398,6 +398,7 @@ func (g *Generator) createLLMClient() chat.LLMClient {
 			llmMaxTokens,
 			llmTemperature,
 			false,
+			g.llmConfig.AnthropicBaseURL,
 		)
 	case "openai":
 		return chat.NewOpenAIClient(
@@ -406,6 +407,7 @@ func (g *Generator) createLLMClient() chat.LLMClient {
 			llmMaxTokens,
 			llmTemperature,
 			false,
+			g.llmConfig.OpenAIBaseURL,
 		)
 	case "ollama":
 		return chat.NewOllamaClient(

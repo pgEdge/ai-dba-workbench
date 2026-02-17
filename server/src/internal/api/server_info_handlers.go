@@ -811,6 +811,7 @@ func (h *ServerInfoHandler) createLLMClient() chat.LLMClient {
 			llmAnalysisMaxTokens,
 			llmAnalysisTemperature,
 			false,
+			h.llmConfig.AnthropicBaseURL,
 		)
 	case "openai":
 		return chat.NewOpenAIClient(
@@ -819,6 +820,7 @@ func (h *ServerInfoHandler) createLLMClient() chat.LLMClient {
 			llmAnalysisMaxTokens,
 			llmAnalysisTemperature,
 			false,
+			h.llmConfig.OpenAIBaseURL,
 		)
 	case "ollama":
 		return chat.NewOllamaClient(

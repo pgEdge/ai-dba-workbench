@@ -165,6 +165,7 @@ type OllamaConfig struct {
 // OpenAIConfig holds OpenAI provider settings
 type OpenAIConfig struct {
 	APIKeyFile     string `yaml:"api_key_file"`
+	BaseURL        string `yaml:"base_url"`
 	EmbeddingModel string `yaml:"embedding_model"`
 	ReasoningModel string `yaml:"reasoning_model"`
 	apiKey         string
@@ -173,6 +174,7 @@ type OpenAIConfig struct {
 // AnthropicConfig holds Anthropic provider settings
 type AnthropicConfig struct {
 	APIKeyFile     string `yaml:"api_key_file"`
+	BaseURL        string `yaml:"base_url"`
 	ReasoningModel string `yaml:"reasoning_model"`
 	apiKey         string
 }
@@ -180,6 +182,7 @@ type AnthropicConfig struct {
 // VoyageConfig holds Voyage provider settings
 type VoyageConfig struct {
 	APIKeyFile     string `yaml:"api_key_file"`
+	BaseURL        string `yaml:"base_url"`
 	EmbeddingModel string `yaml:"embedding_model"`
 	apiKey         string
 }

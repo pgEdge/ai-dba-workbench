@@ -27,19 +27,24 @@ const (
 
 // OpenAIReasoning implements ReasoningProvider using OpenAI's API.
 type OpenAIReasoning struct {
-	apiKey string
-	model  string
-	client *http.Client
+	apiKey  string
+	model   string
+	baseURL string
+	client  *http.Client
 }
 
 // NewOpenAIReasoning creates a new OpenAI reasoning provider.
-func NewOpenAIReasoning(apiKey, model string) *OpenAIReasoning {
+func NewOpenAIReasoning(apiKey, model, baseURL string) *OpenAIReasoning {
 	if model == "" {
 		model = openaiDefaultReasoningModel
 	}
+	if baseURL == "" {
+		baseURL = openaiBaseURL
+	}
 	return &OpenAIReasoning{
-		apiKey: apiKey,
-		model:  model,
+		apiKey:  apiKey,
+		model:   model,
+		baseURL: baseURL,
 		client: &http.Client{
 			Timeout: 60 * time.Second,
 		},
@@ -69,7 +74,7 @@ func (o *OpenAIReasoning) Classify(ctx context.Context, prompt string) (string, 
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", openaiBaseURL+"/chat/completions", bytes.NewReader(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", o.baseURL+"/chat/completions", bytes.NewReader(jsonBody))
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}

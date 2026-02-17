@@ -27,19 +27,24 @@ const (
 
 // AnthropicReasoning implements ReasoningProvider using Anthropic's Claude API.
 type AnthropicReasoning struct {
-	apiKey string
-	model  string
-	client *http.Client
+	apiKey  string
+	model   string
+	baseURL string
+	client  *http.Client
 }
 
 // NewAnthropicReasoning creates a new Anthropic reasoning provider.
-func NewAnthropicReasoning(apiKey, model string) *AnthropicReasoning {
+func NewAnthropicReasoning(apiKey, model, baseURL string) *AnthropicReasoning {
 	if model == "" {
 		model = anthropicDefaultModel
 	}
+	if baseURL == "" {
+		baseURL = anthropicBaseURL
+	}
 	return &AnthropicReasoning{
-		apiKey: apiKey,
-		model:  model,
+		apiKey:  apiKey,
+		model:   model,
+		baseURL: baseURL,
 		client: &http.Client{
 			Timeout: 60 * time.Second,
 		},
@@ -65,7 +70,7 @@ func (a *AnthropicReasoning) Classify(ctx context.Context, prompt string) (strin
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", anthropicBaseURL+"/messages", bytes.NewReader(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", a.baseURL+"/messages", bytes.NewReader(jsonBody))
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}

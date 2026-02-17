@@ -20,7 +20,7 @@ import (
 
 func TestNewOpenAIProvider(t *testing.T) {
 	t.Run("valid config", func(t *testing.T) {
-		provider, err := NewOpenAIProvider("sk-test-key-12345678", "text-embedding-3-small")
+		provider, err := NewOpenAIProvider("sk-test-key-12345678", "text-embedding-3-small", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -30,7 +30,7 @@ func TestNewOpenAIProvider(t *testing.T) {
 	})
 
 	t.Run("empty API key", func(t *testing.T) {
-		_, err := NewOpenAIProvider("", "text-embedding-3-small")
+		_, err := NewOpenAIProvider("", "text-embedding-3-small", "")
 		if err == nil {
 			t.Fatal("expected error for empty API key")
 		}
@@ -40,7 +40,7 @@ func TestNewOpenAIProvider(t *testing.T) {
 	})
 
 	t.Run("default model", func(t *testing.T) {
-		provider, err := NewOpenAIProvider("sk-test-key-12345678", "")
+		provider, err := NewOpenAIProvider("sk-test-key-12345678", "", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -50,7 +50,7 @@ func TestNewOpenAIProvider(t *testing.T) {
 	})
 
 	t.Run("unsupported model", func(t *testing.T) {
-		_, err := NewOpenAIProvider("sk-test-key-12345678", "unsupported-model")
+		_, err := NewOpenAIProvider("sk-test-key-12345678", "unsupported-model", "")
 		if err == nil {
 			t.Fatal("expected error for unsupported model")
 		}
@@ -58,7 +58,7 @@ func TestNewOpenAIProvider(t *testing.T) {
 }
 
 func TestOpenAIProvider_Methods(t *testing.T) {
-	provider, err := NewOpenAIProvider("sk-test-key-12345678", "text-embedding-3-large")
+	provider, err := NewOpenAIProvider("sk-test-key-12345678", "text-embedding-3-large", "")
 	if err != nil {
 		t.Fatalf("failed to create provider: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestOpenAIProvider_Dimensions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.model, func(t *testing.T) {
-			provider, err := NewOpenAIProvider("sk-test-key", tt.model)
+			provider, err := NewOpenAIProvider("sk-test-key", tt.model, "")
 			if err != nil {
 				t.Fatalf("failed to create provider: %v", err)
 			}
@@ -109,7 +109,7 @@ func TestOpenAIProvider_Dimensions(t *testing.T) {
 }
 
 func TestOpenAIProvider_Embed_EmptyText(t *testing.T) {
-	provider, err := NewOpenAIProvider("sk-test-key-12345678", "text-embedding-3-small")
+	provider, err := NewOpenAIProvider("sk-test-key-12345678", "text-embedding-3-small", "")
 	if err != nil {
 		t.Fatalf("failed to create provider: %v", err)
 	}

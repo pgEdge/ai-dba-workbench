@@ -156,13 +156,15 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 
 		// Server info endpoint (for Server Info Dialog)
 		serverInfoLLMConfig := &llmproxy.Config{
-			Provider:        deps.Config.LLM.Provider,
-			Model:           deps.Config.LLM.Model,
-			AnthropicAPIKey: deps.Config.LLM.AnthropicAPIKey,
-			OpenAIAPIKey:    deps.Config.LLM.OpenAIAPIKey,
-			OllamaURL:       deps.Config.LLM.OllamaURL,
-			MaxTokens:       deps.Config.LLM.MaxTokens,
-			Temperature:     deps.Config.LLM.Temperature,
+			Provider:         deps.Config.LLM.Provider,
+			Model:            deps.Config.LLM.Model,
+			AnthropicAPIKey:  deps.Config.LLM.AnthropicAPIKey,
+			AnthropicBaseURL: deps.Config.LLM.AnthropicBaseURL,
+			OpenAIAPIKey:     deps.Config.LLM.OpenAIAPIKey,
+			OpenAIBaseURL:    deps.Config.LLM.OpenAIBaseURL,
+			OllamaURL:        deps.Config.LLM.OllamaURL,
+			MaxTokens:        deps.Config.LLM.MaxTokens,
+			Temperature:      deps.Config.LLM.Temperature,
 		}
 		serverInfoHandler := api.NewServerInfoHandler(deps.Datastore, deps.AuthStore, rbacChecker, serverInfoLLMConfig)
 		registerDatastoreHandler(mux, serverInfoHandler, authWrapper, "Server info", deps.Datastore)
@@ -360,13 +362,15 @@ func handleOpenAPISpec(w http.ResponseWriter, r *http.Request) {
 func setupLLMHandlers(mux *http.ServeMux, cfg *config.Config, authWrapper func(http.HandlerFunc) http.HandlerFunc) {
 	// Create LLM proxy configuration
 	llmConfig := &llmproxy.Config{
-		Provider:        cfg.LLM.Provider,
-		Model:           cfg.LLM.Model,
-		AnthropicAPIKey: cfg.LLM.AnthropicAPIKey,
-		OpenAIAPIKey:    cfg.LLM.OpenAIAPIKey,
-		OllamaURL:       cfg.LLM.OllamaURL,
-		MaxTokens:       cfg.LLM.MaxTokens,
-		Temperature:     cfg.LLM.Temperature,
+		Provider:         cfg.LLM.Provider,
+		Model:            cfg.LLM.Model,
+		AnthropicAPIKey:  cfg.LLM.AnthropicAPIKey,
+		AnthropicBaseURL: cfg.LLM.AnthropicBaseURL,
+		OpenAIAPIKey:     cfg.LLM.OpenAIAPIKey,
+		OpenAIBaseURL:    cfg.LLM.OpenAIBaseURL,
+		OllamaURL:        cfg.LLM.OllamaURL,
+		MaxTokens:        cfg.LLM.MaxTokens,
+		Temperature:      cfg.LLM.Temperature,
 	}
 
 	// Provider/model listing don't require auth (needed for login page)

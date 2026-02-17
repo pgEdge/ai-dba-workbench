@@ -353,13 +353,15 @@ func (s *Server) startOverviewGenerator() {
 	}
 
 	llmConfig := &llmproxy.Config{
-		Provider:        s.cfg.LLM.Provider,
-		Model:           s.cfg.LLM.Model,
-		AnthropicAPIKey: s.cfg.LLM.AnthropicAPIKey,
-		OpenAIAPIKey:    s.cfg.LLM.OpenAIAPIKey,
-		OllamaURL:       s.cfg.LLM.OllamaURL,
-		MaxTokens:       s.cfg.LLM.MaxTokens,
-		Temperature:     s.cfg.LLM.Temperature,
+		Provider:         s.cfg.LLM.Provider,
+		Model:            s.cfg.LLM.Model,
+		AnthropicAPIKey:  s.cfg.LLM.AnthropicAPIKey,
+		AnthropicBaseURL: s.cfg.LLM.AnthropicBaseURL,
+		OpenAIAPIKey:     s.cfg.LLM.OpenAIAPIKey,
+		OpenAIBaseURL:    s.cfg.LLM.OpenAIBaseURL,
+		OllamaURL:        s.cfg.LLM.OllamaURL,
+		MaxTokens:        s.cfg.LLM.MaxTokens,
+		Temperature:      s.cfg.LLM.Temperature,
 	}
 
 	s.overviewGen = overview.NewGenerator(s.datastore, llmConfig)

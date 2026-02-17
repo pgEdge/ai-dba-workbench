@@ -287,6 +287,9 @@ llm:
     # File should contain only the API key with no extra whitespace
     # api_key_file: /etc/ai-workbench/openai-api-key.txt
 
+    # Base URL for the OpenAI API
+    # base_url: https://api.openai.com/v1
+
     # Model to use for embeddings
     # Default: text-embedding-3-small
     embedding_model: text-embedding-3-small
@@ -304,6 +307,9 @@ llm:
     # File should contain only the API key with no extra whitespace
     # api_key_file: /etc/ai-workbench/anthropic-api-key.txt
 
+    # Base URL for the Anthropic API
+    # base_url: https://api.anthropic.com/v1
+
     # Model to use for reasoning/classification
     # Default: claude-3-5-haiku-20241022
     reasoning_model: claude-3-5-haiku-20241022
@@ -316,6 +322,9 @@ llm:
     # Path to file containing Voyage API key
     # File should contain only the API key with no extra whitespace
     # api_key_file: /etc/ai-workbench/voyage-api-key.txt
+
+    # Base URL for the Voyage AI API
+    # base_url: https://api.voyageai.com/v1/embeddings
 
     # Model to use for embeddings
     # Default: voyage-3-lite

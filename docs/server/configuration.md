@@ -90,7 +90,9 @@ embedding:
   model: "nomic-embed-text"
   ollama_url: "http://localhost:11434"
   # voyage_api_key_file: "~/.voyage-api-key"
+  # voyage_base_url: "https://api.voyageai.com/v1/embeddings"
   # openai_api_key_file: "~/.openai-api-key"
+  # openai_base_url: "https://api.openai.com/v1"
 
 #=========================================================================
 # LLM CONFIGURATION (Web Client Chat Proxy)
@@ -99,7 +101,9 @@ llm:
   provider: "anthropic"  # anthropic, openai, or ollama
   model: "claude-sonnet-4-5"
   # anthropic_api_key_file: "~/.anthropic-api-key"
+  # anthropic_base_url: "https://api.anthropic.com/v1"
   # openai_api_key_file: "~/.openai-api-key"
+  # openai_base_url: "https://api.openai.com/v1"
   ollama_url: "http://localhost:11434"
   max_tokens: 4096
   temperature: 0.7
@@ -113,6 +117,8 @@ knowledgebase:
   embedding_provider: "ollama"
   embedding_model: "nomic-embed-text"
   embedding_ollama_url: "http://localhost:11434"
+  # embedding_voyage_base_url: "https://api.voyageai.com/v1/embeddings"
+  # embedding_openai_base_url: "https://api.openai.com/v1"
 
 #=========================================================================
 # BUILT-IN TOOLS, RESOURCES, AND PROMPTS
@@ -302,6 +308,8 @@ user-created database connections.
 | `ollama_url` | string | `http://localhost:11434` | Ollama URL |
 | `voyage_api_key_file` | string | | Path to Voyage API key |
 | `openai_api_key_file` | string | | Path to OpenAI API key |
+| `voyage_base_url` | string | `https://api.voyageai.com/v1/embeddings` | Override the Voyage AI API base URL |
+| `openai_base_url` | string | `https://api.openai.com/v1` | Override the OpenAI API base URL |
 
 ### LLM Proxy (`llm`)
 
@@ -316,6 +324,8 @@ The LLM proxy is always enabled; configure API keys for your chosen provider.
 | `ollama_url` | string | `http://localhost:11434` | Ollama URL |
 | `max_tokens` | int | `4096` | Max response tokens |
 | `temperature` | float | `0.7` | Sampling temperature |
+| `anthropic_base_url` | string | `https://api.anthropic.com/v1` | Override the Anthropic API base URL |
+| `openai_base_url` | string | `https://api.openai.com/v1` | Override the OpenAI API base URL |
 
 ### Knowledgebase (`knowledgebase`)
 
@@ -326,6 +336,8 @@ The LLM proxy is always enabled; configure API keys for your chosen provider.
 | `embedding_provider` | string | `ollama` | Embedding provider |
 | `embedding_model` | string | `nomic-embed-text` | Embedding model |
 | `embedding_ollama_url` | string | `http://localhost:11434` | Ollama URL |
+| `embedding_voyage_base_url` | string | `https://api.voyageai.com/v1/embeddings` | Override the Voyage AI API base URL |
+| `embedding_openai_base_url` | string | `https://api.openai.com/v1` | Override the OpenAI API base URL |
 
 ### Built-in Features (`builtins`)
 

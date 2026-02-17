@@ -220,10 +220,10 @@ func (c *Client) initializeLLM() error {
 	switch provider {
 	case "anthropic":
 		tempClient = NewAnthropicClient(
-			c.config.LLM.AnthropicAPIKey, "", 0, 0, false)
+			c.config.LLM.AnthropicAPIKey, "", 0, 0, false, c.config.LLM.AnthropicBaseURL)
 	case "openai":
 		tempClient = NewOpenAIClient(
-			c.config.LLM.OpenAIAPIKey, "", 0, 0, false)
+			c.config.LLM.OpenAIAPIKey, "", 0, 0, false, c.config.LLM.OpenAIBaseURL)
 	case "ollama":
 		tempClient = NewOllamaClient(
 			c.config.LLM.OllamaURL, "", false)
@@ -278,6 +278,7 @@ func (c *Client) initializeLLM() error {
 			c.config.LLM.MaxTokens,
 			c.config.LLM.Temperature,
 			c.config.UI.Debug,
+			c.config.LLM.AnthropicBaseURL,
 		)
 	case "openai":
 		c.llm = NewOpenAIClient(
@@ -286,6 +287,7 @@ func (c *Client) initializeLLM() error {
 			c.config.LLM.MaxTokens,
 			c.config.LLM.Temperature,
 			c.config.UI.Debug,
+			c.config.LLM.OpenAIBaseURL,
 		)
 	case "ollama":
 		c.llm = NewOllamaClient(

@@ -50,8 +50,10 @@ type LLMConfig struct {
 	Model               string  `yaml:"model"`                  // Model to use
 	AnthropicAPIKey     string  `yaml:"anthropic_api_key"`      // API key for Anthropic (direct - discouraged, use api_key_file or env var)
 	AnthropicAPIKeyFile string  `yaml:"anthropic_api_key_file"` // Path to file containing Anthropic API key
+	AnthropicBaseURL    string  `yaml:"anthropic_base_url"`     // Base URL for Anthropic API (default: https://api.anthropic.com/v1)
 	OpenAIAPIKey        string  `yaml:"openai_api_key"`         // API key for OpenAI (direct - discouraged, use api_key_file or env var)
 	OpenAIAPIKeyFile    string  `yaml:"openai_api_key_file"`    // Path to file containing OpenAI API key
+	OpenAIBaseURL       string  `yaml:"openai_base_url"`        // Base URL for OpenAI API (default: https://api.openai.com/v1)
 	OllamaURL           string  `yaml:"ollama_url"`             // Ollama server URL
 	MaxTokens           int     `yaml:"max_tokens"`             // Max tokens for response
 	Temperature         float64 `yaml:"temperature"`            // Temperature for sampling

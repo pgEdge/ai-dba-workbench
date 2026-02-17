@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 /* eslint-disable react-refresh/only-export-components */
-import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from './AuthContext';
 import { apiGet, ApiError } from '../utils/apiClient';
 
@@ -278,18 +278,15 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
         return () => clearInterval(intervalId);
     }, [autoRefreshEnabled, user]);
 
-    const value: ClusterDataContextValue = {
-        // Data
+    const value: ClusterDataContextValue = useMemo(() => ({
         clusterData,
         loading,
         error,
         lastRefresh,
-        // Auto-refresh
         autoRefreshEnabled,
         setAutoRefreshEnabled,
-        // Data fetching
         fetchClusterData,
-    };
+    }), [clusterData, loading, error, lastRefresh, autoRefreshEnabled, setAutoRefreshEnabled, fetchClusterData]);
 
     return (
         <ClusterDataContext.Provider value={value}>

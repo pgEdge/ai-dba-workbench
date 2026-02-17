@@ -11,6 +11,7 @@
 import { useState, useCallback } from 'react';
 import { ChartData } from '../components/Chart/types';
 import { apiGet } from '../utils/apiClient';
+import { LLMResponse } from '../types/llm';
 
 export interface ChartAnalysisInput {
     metricDescription: string;
@@ -27,15 +28,6 @@ export interface UseChartAnalysisReturn {
     error: string | null;
     analyze: (input: ChartAnalysisInput) => Promise<void>;
     reset: () => void;
-}
-
-interface ContentBlock {
-    type: string;
-    text?: string;
-}
-
-interface LLMResponse {
-    content?: ContentBlock[];
 }
 
 // Module-level cache for chart analysis results (persists across component mounts)

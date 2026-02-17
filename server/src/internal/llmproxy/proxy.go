@@ -154,6 +154,15 @@ func HandleProviders(w http.ResponseWriter, r *http.Request, config *Config) {
 	}
 }
 
+// validProviders is an allowlist of supported LLM provider identifiers.
+// Validate user-supplied provider values against this map before use.
+var validProviders = map[string]bool{
+	"anthropic": true,
+	"openai":    true,
+	"gemini":    true,
+	"ollama":    true,
+}
+
 // HandleModels handles GET /api/v1/llm/models?provider=<provider>
 func HandleModels(w http.ResponseWriter, r *http.Request, config *Config) {
 	if r.Method != http.MethodGet {
@@ -164,6 +173,12 @@ func HandleModels(w http.ResponseWriter, r *http.Request, config *Config) {
 	provider := r.URL.Query().Get("provider")
 	if provider == "" {
 		http.Error(w, "Provider parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	// Validate provider against allowlist before use
+	if !validProviders[provider] {
+		http.Error(w, "Unsupported provider", http.StatusBadRequest)
 		return
 	}
 
@@ -194,9 +209,6 @@ func HandleModels(w http.ResponseWriter, r *http.Request, config *Config) {
 			return
 		}
 		client = chat.NewOllamaClient(config.OllamaURL, config.Model, false)
-	default:
-		http.Error(w, fmt.Sprintf("Unsupported provider: %s", provider), http.StatusBadRequest)
-		return
 	}
 
 	// List models
@@ -271,6 +283,12 @@ func HandleChat(w http.ResponseWriter, r *http.Request, config *Config) {
 		provider = config.Provider
 	}
 
+	// Validate provider against allowlist before use
+	if !validProviders[provider] {
+		http.Error(w, "Unsupported provider", http.StatusBadRequest)
+		return
+	}
+
 	model := req.Model
 	if model == "" {
 		model = config.Model
@@ -303,9 +321,6 @@ func HandleChat(w http.ResponseWriter, r *http.Request, config *Config) {
 			return
 		}
 		client = chat.NewOllamaClient(config.OllamaURL, model, req.Debug)
-	default:
-		http.Error(w, fmt.Sprintf("Unsupported provider: %s", provider), http.StatusBadRequest)
-		return
 	}
 
 	// Convert proxy messages to chat messages

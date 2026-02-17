@@ -11,6 +11,13 @@
 import { useState, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { apiGet, apiPut } from '../utils/apiClient';
+import {
+    LLMContentBlock,
+    LLMResponse,
+    ToolCallResponse,
+    ToolResult,
+    ToolInputSchema,
+} from '../types/llm';
 
 // Module-level cache for analysis results (persists across dialog open/close)
 const analysisCache = new Map<number, { analysis: string; metricValue: number }>();
@@ -32,45 +39,15 @@ export interface AlertInput {
     time?: string;
 }
 
-interface ToolInputSchema {
-    type: string;
-    properties: Record<string, { type: string; description: string }>;
-    required: string[];
-}
-
 interface AnalysisTool {
     name: string;
     description: string;
     inputSchema: ToolInputSchema;
 }
 
-interface ContentBlock {
-    type: string;
-    text?: string;
-    id?: string;
-    name?: string;
-    input?: Record<string, unknown>;
-}
-
-interface LLMResponse {
-    content?: ContentBlock[];
-}
-
-interface ToolCallResponse {
-    content?: Array<{ text?: string }>;
-    isError?: boolean;
-}
-
-interface ToolResult {
-    type: 'tool_result';
-    tool_use_id: string;
-    content: string;
-    is_error?: boolean;
-}
-
 interface Message {
     role: string;
-    content: string | ContentBlock[] | ToolResult[];
+    content: string | LLMContentBlock[] | ToolResult[];
 }
 
 export interface UseAlertAnalysisReturn {
@@ -417,7 +394,7 @@ Provide remediation recommendations and any threshold tuning suggestions.`;
                 }
 
                 // Add assistant message with tool uses
-                messages.push({ role: 'assistant', content: data.content as ContentBlock[] });
+                messages.push({ role: 'assistant', content: data.content as LLMContentBlock[] });
 
                 // Execute tool calls and add results
                 const toolResults: ToolResult[] = [];

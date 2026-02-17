@@ -1,5 +1,7 @@
 # AI DBA Workbench Client
 
+[![CI - Client](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-client.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-client.yml)
+
 The web client for the AI DBA Workbench application.
 
 ## Overview
@@ -81,6 +83,21 @@ The development server proxies API requests to the server running on
 port 8080. Configure the proxy in `vite.config.js` if your server runs
 on a different port.
 
+## Issues
+
+To report an issue with the software, visit:
+[GitHub Issues](https://github.com/pgEdge/ai-dba-workbench/issues)
+
+## Contributing
+
+We welcome your project contributions; for more
+information, see
+[docs/developers.md](../docs/developers.md).
+
+For more information, visit
+[docs.pgedge.com](https://docs.pgedge.com)
+
 ## License
 
-This project is licensed under the [PostgreSQL License](../LICENSE.md).
+This project is licensed under the
+[PostgreSQL License](../LICENSE.md).

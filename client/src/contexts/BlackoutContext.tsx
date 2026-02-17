@@ -266,7 +266,7 @@ export const BlackoutProvider = ({ selection, children }: BlackoutProviderProps)
         });
     }, [blackouts, selection]);
 
-    const value: BlackoutContextValue = {
+    const value: BlackoutContextValue = useMemo(() => ({
         blackouts,
         schedules,
         loading,
@@ -279,7 +279,7 @@ export const BlackoutProvider = ({ selection, children }: BlackoutProviderProps)
         updateSchedule,
         deleteSchedule,
         activeBlackoutsForSelection,
-    };
+    }), [blackouts, schedules, loading, error, fetchBlackouts, createBlackout, stopBlackout, deleteBlackout, createSchedule, updateSchedule, deleteSchedule, activeBlackoutsForSelection]);
 
     return (
         <BlackoutContext.Provider value={value}>

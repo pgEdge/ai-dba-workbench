@@ -202,6 +202,12 @@ READ ONLY transaction to prevent side effects. However, be cautious with:
 				return mcp.NewToolError(fmt.Sprintf("Failed to set transaction to read-only: %v", err))
 			}
 
+			// Defense-in-depth: limit query execution time
+			_, err = tx.Exec(ctx, "SET LOCAL statement_timeout = '10s'")
+			if err != nil {
+				return mcp.NewToolError(fmt.Sprintf("Failed to set statement timeout: %v", err))
+			}
+
 			// Execute EXPLAIN
 			rows, err := tx.Query(ctx, explainQuery)
 			if err != nil {

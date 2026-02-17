@@ -157,17 +157,19 @@ export const AuthProvider = ({ children }: AuthProviderProps): React.ReactElemen
         setAdminPermissions([]);
     };
 
+    const value: AuthContextValue = useMemo(() => ({
+        user,
+        loading,
+        login,
+        logout,
+        forceLogout,
+        adminPermissions,
+        hasPermission,
+        hasAnyAdminAccess,
+    }), [user, loading, login, logout, forceLogout, adminPermissions, hasPermission, hasAnyAdminAccess]);
+
     return (
-        <AuthContext.Provider value={{
-            user,
-            loading,
-            login,
-            logout,
-            forceLogout,
-            adminPermissions,
-            hasPermission,
-            hasAnyAdminAccess,
-        }}>
+        <AuthContext.Provider value={value}>
             {children}
         </AuthContext.Provider>
     );

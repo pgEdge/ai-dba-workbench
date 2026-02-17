@@ -11,7 +11,7 @@
  */
 /* eslint-disable react-refresh/only-export-components */
 
-import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from './AuthContext';
 import { apiGet } from '../utils/apiClient';
 
@@ -123,7 +123,7 @@ export const AlertsProvider = ({ children }: AlertsProviderProps): React.ReactEl
         return () => clearInterval(intervalId);
     }, [user, fetchAlertCounts]);
 
-    const value: AlertsContextValue = {
+    const value: AlertsContextValue = useMemo(() => ({
         alertCounts,
         loading,
         lastFetch,
@@ -131,7 +131,7 @@ export const AlertsProvider = ({ children }: AlertsProviderProps): React.ReactEl
         getServerAlertCount,
         getClusterAlertCount,
         getTotalAlertCount,
-    };
+    }), [alertCounts, loading, lastFetch, fetchAlertCounts, getServerAlertCount, getClusterAlertCount, getTotalAlertCount]);
 
     return (
         <AlertsContext.Provider value={value}>

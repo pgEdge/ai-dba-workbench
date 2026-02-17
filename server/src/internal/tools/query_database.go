@@ -230,6 +230,12 @@ To avoid rate limits (30,000 input tokens/minute):
 				return mcp.NewToolError(fmt.Sprintf("Failed to set transaction read-only: %v", err))
 			}
 
+			// Defense-in-depth: limit query execution time
+			_, err = tx.Exec(ctx, "SET LOCAL statement_timeout = '10s'")
+			if err != nil {
+				return mcp.NewToolError(fmt.Sprintf("Failed to set statement timeout: %v", err))
+			}
+
 			rows, err := tx.Query(ctx, sqlQuery)
 			if err != nil {
 				return mcp.NewToolError(fmt.Sprintf("%sSQL Query:\n%s\n\nError executing query: %v", connectionMessage, sqlQuery, err))

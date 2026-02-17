@@ -15,6 +15,13 @@ import {
 } from '../components/ChatPanel/ChatMessage';
 import { ToolActivity } from '../components/ChatPanel/ToolStatus';
 import { ConversationSummary } from '../components/ChatPanel/ConversationHistory';
+import {
+    LLMContentBlock,
+    LLMResponse,
+    ToolCallResponse,
+    ToolResult,
+    ToolInputSchema,
+} from '../types/llm';
 
 // Re-export types that consuming modules import from this hook.
 // These aliases ensure backward compatibility with modules that
@@ -28,45 +35,9 @@ export type { ConversationSummary };
 // Internal types (API wire format - not exported)
 // ---------------------------------------------------------------
 
-/**
- * Extended content block with fields returned by the LLM API
- * that are not present on the UI-facing ContentBlock type
- * (e.g. tool_use id and input).
- */
-interface LLMContentBlock {
-    type: string;
-    text?: string;
-    id?: string;
-    name?: string;
-    input?: Record<string, unknown>;
-}
-
-interface LLMResponse {
-    content?: LLMContentBlock[];
-    stop_reason?: string;
-}
-
-interface ToolCallResponse {
-    content?: Array<{ text?: string }>;
-    isError?: boolean;
-}
-
-interface ToolResult {
-    type: 'tool_result';
-    tool_use_id: string;
-    content: string;
-    is_error?: boolean;
-}
-
 interface APIMessage {
     role: string;
     content: string | LLMContentBlock[] | ToolResult[];
-}
-
-interface ToolInputSchema {
-    type: string;
-    properties: Record<string, { type: string; description: string }>;
-    required: string[];
 }
 
 interface ToolDefinition {

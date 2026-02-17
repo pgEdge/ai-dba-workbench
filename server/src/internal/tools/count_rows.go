@@ -163,6 +163,12 @@ Use count_rows to efficiently determine data volume:
 				return mcp.NewToolError(fmt.Sprintf("Failed to set transaction read-only: %v", err))
 			}
 
+			// Defense-in-depth: limit query execution time
+			_, err = tx.Exec(ctx, "SET LOCAL statement_timeout = '10s'")
+			if err != nil {
+				return mcp.NewToolError(fmt.Sprintf("Failed to set statement timeout: %v", err))
+			}
+
 			var count int64
 			err = tx.QueryRow(ctx, sqlQuery).Scan(&count)
 			if err != nil {

@@ -44,6 +44,7 @@ import {
 } from '@mui/icons-material';
 import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
 import { apiGet, apiPost, apiPut, apiDelete } from '../../utils/apiClient';
+import { truncateDescription } from '../../utils/textHelpers';
 import {
     tableHeaderCellSx,
     dialogTitleSx,
@@ -518,15 +519,6 @@ const AdminEmailChannels: React.FC = () => {
         } finally {
             setRecipientSaving(false);
         }
-    };
-
-    // --- Helpers ---
-
-    const truncateDescription = (desc: string): string => {
-        if (!desc) {return '';}
-        const firstLine = desc.split('\n')[0];
-        if (firstLine.length <= 60) {return firstLine;}
-        return firstLine.substring(0, 60) + '...';
     };
 
     // --- Render ---

@@ -11,6 +11,8 @@ package chat
 
 import (
 	"testing"
+
+	pkgchat "github.com/pgedge/ai-workbench/pkg/chat"
 )
 
 func TestParseSlashCommand(t *testing.T) {
@@ -390,7 +392,7 @@ func TestParseQuotedArgs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := parseQuotedArgs(tt.input)
+			result := pkgchat.ParseQuotedArgs(tt.input)
 
 			if len(result) != len(tt.expected) {
 				t.Errorf("Expected %d args, got %d\nExpected: %v\nGot: %v",

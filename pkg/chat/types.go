@@ -11,6 +11,8 @@
 package chat
 
 import (
+	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/pgedge/ai-workbench/pkg/mcp"
@@ -175,10 +177,8 @@ func EstimateTotalTokens(messages []Message) int {
 						total += EstimateTokens(text)
 					}
 					if input, ok := m["input"]; ok {
-						// Note: Using json.Marshal here would create import cycle concerns
-						// so we estimate based on the type
-						if inputMap, ok := input.(map[string]interface{}); ok {
-							total += len(inputMap) * 20 // Rough estimate per field
+						if jsonBytes, err := json.Marshal(input); err == nil {
+							total += EstimateTokens(string(jsonBytes))
 						}
 					}
 					if c, ok := m["content"]; ok {
@@ -209,16 +209,16 @@ func EstimateTotalTokens(messages []Message) int {
 // GetBriefDescription extracts the first line or sentence from a description
 func GetBriefDescription(desc string) string {
 	// Split by newlines and take first non-empty line
-	lines := splitLines(desc)
+	lines := strings.Split(desc, "\n")
 	for _, line := range lines {
-		line = trimSpace(line)
+		line = strings.TrimSpace(line)
 		if line != "" {
 			// If line ends with period, return it
-			if hasSuffix(line, ".") {
+			if strings.HasSuffix(line, ".") {
 				return line
 			}
 			// Otherwise, find first sentence (period followed by space or end)
-			if idx := indexOf(line, ". "); idx != -1 {
+			if idx := strings.Index(line, ". "); idx != -1 {
 				return line[:idx+1]
 			}
 			// No period found, return the whole line
@@ -226,45 +226,4 @@ func GetBriefDescription(desc string) string {
 		}
 	}
 	return desc
-}
-
-// Helper functions to avoid importing strings package
-func splitLines(s string) []string {
-	var lines []string
-	start := 0
-	for i := 0; i < len(s); i++ {
-		if s[i] == '\n' {
-			lines = append(lines, s[start:i])
-			start = i + 1
-		}
-	}
-	if start < len(s) {
-		lines = append(lines, s[start:])
-	}
-	return lines
-}
-
-func trimSpace(s string) string {
-	start := 0
-	end := len(s)
-	for start < end && (s[start] == ' ' || s[start] == '\t' || s[start] == '\r') {
-		start++
-	}
-	for end > start && (s[end-1] == ' ' || s[end-1] == '\t' || s[end-1] == '\r') {
-		end--
-	}
-	return s[start:end]
-}
-
-func hasSuffix(s, suffix string) bool {
-	return len(s) >= len(suffix) && s[len(s)-len(suffix):] == suffix
-}
-
-func indexOf(s, substr string) int {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return i
-		}
-	}
-	return -1
 }

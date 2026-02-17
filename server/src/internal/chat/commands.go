@@ -11,96 +11,20 @@ package chat
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
-	"strings"
+
+	pkgchat "github.com/pgedge/ai-workbench/pkg/chat"
 )
 
-// ErrQuit is a sentinel error returned by HandleSlashCommand when the user
-// requests to quit. The caller should check for this error and exit the
-// chat loop cleanly, allowing deferred cleanup functions to run.
-var ErrQuit = errors.New("quit requested")
+// Re-export command types and functions from pkg/chat
+var (
+	ErrQuit           = pkgchat.ErrQuit
+	ParseSlashCommand = pkgchat.ParseSlashCommand
+)
 
-// SlashCommand represents a parsed slash command
-type SlashCommand struct {
-	Command string
-	Args    []string
-}
-
-// ParseSlashCommand parses a slash command from user input
-func ParseSlashCommand(input string) *SlashCommand {
-	if !strings.HasPrefix(input, "/") {
-		return nil
-	}
-
-	// Remove the leading slash
-	input = strings.TrimPrefix(input, "/")
-
-	// Split into command and arguments, respecting quotes
-	parts := parseQuotedArgs(input)
-	if len(parts) == 0 {
-		return nil
-	}
-
-	return &SlashCommand{
-		Command: parts[0],
-		Args:    parts[1:],
-	}
-}
-
-// parseQuotedArgs splits a string into arguments, respecting quoted strings
-func parseQuotedArgs(input string) []string {
-	var args []string
-	var current strings.Builder
-	inQuote := false
-	quoteChar := rune(0)
-
-	// Convert to runes for proper Unicode handling
-	runes := []rune(input)
-
-	for i := 0; i < len(runes); i++ {
-		r := runes[i]
-
-		switch {
-		case (r == '"' || r == '\'') && !inQuote:
-			// Start of quoted string
-			inQuote = true
-			quoteChar = r
-		case r == quoteChar && inQuote:
-			// End of quoted string
-			inQuote = false
-			quoteChar = 0
-		case r == ' ' && !inQuote:
-			// Space outside quotes - end of argument
-			if current.Len() > 0 {
-				args = append(args, current.String())
-				current.Reset()
-			}
-		case r == '\\' && inQuote && i+1 < len(runes):
-			// Escape sequence in quoted string
-			next := runes[i+1]
-			if next == quoteChar || next == '\\' {
-				// Skip the backslash, include the escaped character
-				current.WriteRune(next)
-				i++ // Skip the next character since we've already processed it
-			} else {
-				// Not a valid escape sequence, include the backslash
-				current.WriteRune(r)
-			}
-		default:
-			// Regular character
-			current.WriteRune(r)
-		}
-	}
-
-	// Add the last argument if any
-	if current.Len() > 0 {
-		args = append(args, current.String())
-	}
-
-	return args
-}
+// SlashCommand is an alias for the shared SlashCommand type.
+type SlashCommand = pkgchat.SlashCommand
 
 // HandleSlashCommand processes slash commands. It returns true if the command
 // was handled, and an error if the caller should exit (e.g., ErrQuit).
@@ -128,7 +52,7 @@ func (c *Client) HandleSlashCommand(ctx context.Context, cmd *SlashCommand) (boo
 		// Sort tools alphabetically by name
 		sortedTools := make([]struct{ Name, Desc string }, len(c.tools))
 		for i, tool := range c.tools {
-			sortedTools[i] = struct{ Name, Desc string }{tool.Name, getBriefDescription(tool.Description)}
+			sortedTools[i] = struct{ Name, Desc string }{tool.Name, GetBriefDescription(tool.Description)}
 		}
 		sort.Slice(sortedTools, func(i, j int) bool {
 			return sortedTools[i].Name < sortedTools[j].Name

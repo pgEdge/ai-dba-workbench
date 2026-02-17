@@ -12,6 +12,7 @@ package chat
 import (
 	"testing"
 
+	pkgchat "github.com/pgedge/ai-workbench/pkg/chat"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
 )
 
@@ -29,9 +30,9 @@ func TestEstimateTokens(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := estimateTokens(tt.text)
+			got := EstimateTokens(tt.text)
 			if got != tt.want {
-				t.Errorf("estimateTokens(%q) = %d, want %d", tt.text, got, tt.want)
+				t.Errorf("EstimateTokens(%q) = %d, want %d", tt.text, got, tt.want)
 			}
 		})
 	}
@@ -67,9 +68,9 @@ func TestEstimateTotalTokens(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := estimateTotalTokens(tt.messages)
+			got := EstimateTotalTokens(tt.messages)
 			if got < tt.wantMin {
-				t.Errorf("estimateTotalTokens() = %d, want at least %d", got, tt.wantMin)
+				t.Errorf("EstimateTotalTokens() = %d, want at least %d", got, tt.wantMin)
 			}
 		})
 	}
@@ -120,9 +121,9 @@ func TestGetBriefDescription(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := getBriefDescription(tt.desc)
+			got := GetBriefDescription(tt.desc)
 			if got != tt.want {
-				t.Errorf("getBriefDescription(%q) = %q, want %q", tt.desc, got, tt.want)
+				t.Errorf("GetBriefDescription(%q) = %q, want %q", tt.desc, got, tt.want)
 			}
 		})
 	}
@@ -285,21 +286,6 @@ func TestFindModelFamilyMatch(t *testing.T) {
 }
 
 func TestHasToolResults(t *testing.T) {
-	// Create a client for testing
-	cfg := &Config{
-		LLM: LLMConfig{
-			Provider:  "ollama",
-			OllamaURL: "http://localhost:11434",
-		},
-		UI: UIConfig{
-			NoColor: true,
-		},
-	}
-	client, err := NewClient(cfg, &ConfigOverrides{ProviderSet: true})
-	if err != nil {
-		t.Fatalf("NewClient failed: %v", err)
-	}
-
 	tests := []struct {
 		name string
 		msg  Message
@@ -361,30 +347,15 @@ func TestHasToolResults(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := client.hasToolResults(tt.msg)
+			got := HasToolResults(tt.msg)
 			if got != tt.want {
-				t.Errorf("hasToolResults() = %v, want %v", got, tt.want)
+				t.Errorf("HasToolResults() = %v, want %v", got, tt.want)
 			}
 		})
 	}
 }
 
 func TestAdjustStartForToolPairs(t *testing.T) {
-	// Create a client for testing
-	cfg := &Config{
-		LLM: LLMConfig{
-			Provider:  "ollama",
-			OllamaURL: "http://localhost:11434",
-		},
-		UI: UIConfig{
-			NoColor: true,
-		},
-	}
-	client, err := NewClient(cfg, &ConfigOverrides{ProviderSet: true})
-	if err != nil {
-		t.Fatalf("NewClient failed: %v", err)
-	}
-
 	tests := []struct {
 		name     string
 		messages []Message
@@ -427,30 +398,15 @@ func TestAdjustStartForToolPairs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := client.adjustStartForToolPairs(tt.messages, tt.startIdx)
+			got := pkgchat.AdjustStartForToolPairs(tt.messages, tt.startIdx)
 			if got != tt.want {
-				t.Errorf("adjustStartForToolPairs() = %d, want %d", got, tt.want)
+				t.Errorf("AdjustStartForToolPairs() = %d, want %d", got, tt.want)
 			}
 		})
 	}
 }
 
 func TestLocalCompactMessages(t *testing.T) {
-	// Create a client for testing
-	cfg := &Config{
-		LLM: LLMConfig{
-			Provider:  "ollama",
-			OllamaURL: "http://localhost:11434",
-		},
-		UI: UIConfig{
-			NoColor: true,
-		},
-	}
-	client, err := NewClient(cfg, &ConfigOverrides{ProviderSet: true})
-	if err != nil {
-		t.Fatalf("NewClient failed: %v", err)
-	}
-
 	tests := []struct {
 		name              string
 		messages          []Message
@@ -491,9 +447,9 @@ func TestLocalCompactMessages(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := client.localCompactMessages(tt.messages, tt.maxRecentMessages)
+			got := pkgchat.CompactMessagesLocally(tt.messages, tt.maxRecentMessages, nil)
 			if len(got) != tt.wantLen {
-				t.Errorf("localCompactMessages() returned %d messages, want %d", len(got), tt.wantLen)
+				t.Errorf("CompactMessagesLocally() returned %d messages, want %d", len(got), tt.wantLen)
 			}
 		})
 	}
@@ -516,7 +472,7 @@ func TestEstimateTotalTokensWithToolContent(t *testing.T) {
 		},
 	}
 
-	tokens := estimateTotalTokens(messages)
+	tokens := EstimateTotalTokens(messages)
 	// Should have some tokens for the content
 	if tokens < 10 {
 		t.Errorf("Expected at least 10 tokens, got %d", tokens)

@@ -44,6 +44,7 @@ import {
 } from '@mui/icons-material';
 import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
 import { apiGet, apiPost, apiPut, apiDelete } from '../../utils/apiClient';
+import { truncateDescription } from '../../utils/textHelpers';
 import {
     tableHeaderCellSx,
     dialogTitleSx,
@@ -290,13 +291,6 @@ const AdminWebhookChannels: React.FC = () => {
             if (h.key.trim()) {acc[h.key.trim()] = h.value;}
             return acc;
         }, {});
-    };
-
-    const truncateDescription = (desc: string): string => {
-        if (!desc) {return '';}
-        const firstLine = desc.split('\n')[0];
-        if (firstLine.length <= 60) {return firstLine;}
-        return firstLine.substring(0, 60) + '...';
     };
 
     // --- Create / Edit dialog ---

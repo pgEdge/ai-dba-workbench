@@ -209,7 +209,7 @@ The `llm` section configures LLM providers for tier 3 anomaly detection:
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `embedding_provider` | string | `ollama` | Provider for embeddings |
-| `reasoning_provider` | string | `ollama` | Provider for classification |
+| `reasoning_provider` | string | `ollama` | Provider for classification (ollama, openai, anthropic, gemini) |
 
 #### Ollama Configuration
 
@@ -232,6 +232,35 @@ The `llm.openai` section configures the OpenAI provider:
 | `embedding_model` | string | `text-embedding-3-small` | Embedding model |
 | `reasoning_model` | string | `gpt-4o-mini` | Reasoning model |
 
+The `openai` provider works with any server that implements
+the OpenAI-compatible API. Set `base_url` to point at a
+local inference server. The API key is optional when using
+a custom base URL; omit `api_key_file` if the server does
+not require authentication.
+
+The following local inference servers are compatible:
+
+- Docker Model Runner uses
+  `http://localhost:12434/engines/llama.cpp/v1` as the
+  default endpoint.
+- llama.cpp uses `http://localhost:8080/v1` as the default
+  endpoint.
+- LM Studio uses `http://localhost:1234/v1` as the default
+  endpoint.
+- EXO uses `http://localhost:52415/v1` as the default
+  endpoint.
+
+In the following example, the `llm.openai` section
+configures a local llama.cpp server for reasoning:
+
+```yaml
+llm:
+  reasoning_provider: openai
+  openai:
+    base_url: http://localhost:8080/v1
+    reasoning_model: my-local-model
+```
+
 #### Anthropic Configuration
 
 The `llm.anthropic` section configures the Anthropic provider:
@@ -241,6 +270,16 @@ The `llm.anthropic` section configures the Anthropic provider:
 | `api_key_file` | string | None | Path to API key file |
 | `base_url` | string | `https://api.anthropic.com/v1` | Override the Anthropic API base URL |
 | `reasoning_model` | string | `claude-3-5-haiku-20241022` | Reasoning model |
+
+#### Gemini Configuration
+
+The `llm.gemini` section configures the Google Gemini provider:
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `api_key_file` | string | None | Path to API key file |
+| `base_url` | string | `https://generativelanguage.googleapis.com` | Override the Gemini API base URL |
+| `reasoning_model` | string | `gemini-2.0-flash` | Reasoning model |
 
 #### Voyage Configuration
 

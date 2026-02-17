@@ -29,6 +29,8 @@ type Config struct {
 	AnthropicBaseURL string
 	OpenAIAPIKey     string
 	OpenAIBaseURL    string
+	GeminiAPIKey     string
+	GeminiBaseURL    string
 	OllamaURL        string
 	MaxTokens        int
 	Temperature      float64
@@ -116,11 +118,19 @@ func HandleProviders(w http.ResponseWriter, r *http.Request, config *Config) {
 		})
 	}
 
-	if config.OpenAIAPIKey != "" {
+	if config.OpenAIAPIKey != "" || config.OpenAIBaseURL != "" {
 		providers = append(providers, ProviderInfo{
 			Name:      "openai",
 			Display:   "OpenAI",
 			IsDefault: config.Provider == "openai",
+		})
+	}
+
+	if config.GeminiAPIKey != "" {
+		providers = append(providers, ProviderInfo{
+			Name:      "gemini",
+			Display:   "Google Gemini",
+			IsDefault: config.Provider == "gemini",
 		})
 	}
 
@@ -167,11 +177,17 @@ func HandleModels(w http.ResponseWriter, r *http.Request, config *Config) {
 		}
 		client = chat.NewAnthropicClient(config.AnthropicAPIKey, config.Model, config.MaxTokens, config.Temperature, false, config.AnthropicBaseURL)
 	case "openai":
-		if config.OpenAIAPIKey == "" {
+		if config.OpenAIAPIKey == "" && config.OpenAIBaseURL == "" {
 			http.Error(w, "OpenAI API key not configured", http.StatusBadRequest)
 			return
 		}
 		client = chat.NewOpenAIClient(config.OpenAIAPIKey, config.Model, config.MaxTokens, config.Temperature, false, config.OpenAIBaseURL)
+	case "gemini":
+		if config.GeminiAPIKey == "" {
+			http.Error(w, "Gemini API key not configured", http.StatusBadRequest)
+			return
+		}
+		client = chat.NewGeminiClient(config.GeminiAPIKey, config.Model, config.MaxTokens, config.Temperature, false, config.GeminiBaseURL)
 	case "ollama":
 		if config.OllamaURL == "" {
 			http.Error(w, "Ollama URL not configured", http.StatusBadRequest)
@@ -270,11 +286,17 @@ func HandleChat(w http.ResponseWriter, r *http.Request, config *Config) {
 		}
 		client = chat.NewAnthropicClient(config.AnthropicAPIKey, model, config.MaxTokens, config.Temperature, req.Debug, config.AnthropicBaseURL)
 	case "openai":
-		if config.OpenAIAPIKey == "" {
+		if config.OpenAIAPIKey == "" && config.OpenAIBaseURL == "" {
 			http.Error(w, "OpenAI API key not configured", http.StatusBadRequest)
 			return
 		}
 		client = chat.NewOpenAIClient(config.OpenAIAPIKey, model, config.MaxTokens, config.Temperature, req.Debug, config.OpenAIBaseURL)
+	case "gemini":
+		if config.GeminiAPIKey == "" {
+			http.Error(w, "Gemini API key not configured", http.StatusBadRequest)
+			return
+		}
+		client = chat.NewGeminiClient(config.GeminiAPIKey, model, config.MaxTokens, config.Temperature, req.Debug, config.GeminiBaseURL)
 	case "ollama":
 		if config.OllamaURL == "" {
 			http.Error(w, "Ollama URL not configured", http.StatusBadRequest)

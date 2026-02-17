@@ -67,7 +67,7 @@ func TestNewProvider_OpenAI(t *testing.T) {
 		}
 	})
 
-	t.Run("missing API key", func(t *testing.T) {
+	t.Run("missing API key without base URL", func(t *testing.T) {
 		cfg := Config{
 			Provider: "openai",
 			Model:    "text-embedding-3-small",
@@ -75,7 +75,23 @@ func TestNewProvider_OpenAI(t *testing.T) {
 
 		_, err := NewProvider(cfg)
 		if err == nil {
-			t.Fatal("expected error for missing API key")
+			t.Fatal("expected error for missing API key without custom base URL")
+		}
+	})
+
+	t.Run("missing API key with custom base URL", func(t *testing.T) {
+		cfg := Config{
+			Provider:      "openai",
+			Model:         "text-embedding-3-small",
+			OpenAIBaseURL: "http://localhost:8080/v1",
+		}
+
+		provider, err := NewProvider(cfg)
+		if err != nil {
+			t.Fatalf("unexpected error: empty API key should be allowed with custom base URL: %v", err)
+		}
+		if provider == nil {
+			t.Fatal("expected non-nil provider")
 		}
 	})
 }
@@ -128,7 +144,7 @@ func TestNewProvider_Unsupported(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unsupported provider")
 	}
-	if err.Error() != "unsupported embedding provider: unsupported (supported: voyage, openai, ollama)" {
+	if err.Error() != "unsupported embedding provider: unsupported (supported: voyage, openai, gemini, ollama)" {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }

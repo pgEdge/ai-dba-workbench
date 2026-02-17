@@ -184,6 +184,7 @@ Configure the reasoning provider in the `llm` section:
 | Ollama | `qwen2.5:7b-instruct` |
 | OpenAI | `gpt-4o-mini` |
 | Anthropic | `claude-3-5-haiku-20241022` |
+| Gemini | `gemini-2.0-flash` |
 
 ### Example Configuration
 

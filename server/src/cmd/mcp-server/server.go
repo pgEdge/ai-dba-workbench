@@ -359,6 +359,8 @@ func (s *Server) startOverviewGenerator() {
 		AnthropicBaseURL: s.cfg.LLM.AnthropicBaseURL,
 		OpenAIAPIKey:     s.cfg.LLM.OpenAIAPIKey,
 		OpenAIBaseURL:    s.cfg.LLM.OpenAIBaseURL,
+		GeminiAPIKey:     s.cfg.LLM.GeminiAPIKey,
+		GeminiBaseURL:    s.cfg.LLM.GeminiBaseURL,
 		OllamaURL:        s.cfg.LLM.OllamaURL,
 		MaxTokens:        s.cfg.LLM.MaxTokens,
 		Temperature:      s.cfg.LLM.Temperature,

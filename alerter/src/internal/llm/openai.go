@@ -80,7 +80,9 @@ func (o *OpenAIReasoning) Classify(ctx context.Context, prompt string) (string, 
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+o.apiKey)
+	if o.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+o.apiKey)
+	}
 
 	resp, err := o.doRequestWithRetry(ctx, req)
 	if err != nil {

@@ -822,6 +822,15 @@ func (h *ServerInfoHandler) createLLMClient() chat.LLMClient {
 			false,
 			h.llmConfig.OpenAIBaseURL,
 		)
+	case "gemini":
+		return chat.NewGeminiClient(
+			h.llmConfig.GeminiAPIKey,
+			h.llmConfig.Model,
+			llmAnalysisMaxTokens,
+			llmAnalysisTemperature,
+			false,
+			h.llmConfig.GeminiBaseURL,
+		)
 	case "ollama":
 		return chat.NewOllamaClient(
 			h.llmConfig.OllamaURL,

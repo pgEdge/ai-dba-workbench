@@ -235,7 +235,7 @@ embedding:
 # for the chosen provider.
 #
 llm:
-  # LLM provider: "anthropic", "openai", or "ollama"
+  # LLM provider: "anthropic", "openai", "gemini", or "ollama"
   # Default: anthropic
   provider: "anthropic"
 
@@ -256,12 +256,44 @@ llm:
   #-----------------------------------------------------------------------
   # OpenAI Configuration
   #-----------------------------------------------------------------------
+  #
+  # The openai provider also works with OpenAI-compatible
+  # local inference servers. Set openai_base_url to point at
+  # a local server. The API key is optional when using a
+  # custom base URL.
+  #
+  # Compatible servers and their default URLs:
+  #   Docker Model Runner:
+  #     http://localhost:12434/engines/llama.cpp/v1
+  #   llama.cpp:  http://localhost:8080/v1
+  #   LM Studio:  http://localhost:1234/v1
+  #   EXO:        http://localhost:52415/v1
+  #
 
   # OpenAI API key (or use openai_api_key_file)
+  # Optional when using a custom base URL with a local server
   # openai_api_key: ""
 
   # Path to file containing OpenAI API key
+  # Optional when using a custom base URL with a local server
   # openai_api_key_file: "~/.openai-api-key"
+
+  # Base URL for the OpenAI API
+  # Override this to use an OpenAI-compatible local server
+  # openai_base_url: "https://api.openai.com/v1"
+
+  #-----------------------------------------------------------------------
+  # Google Gemini Configuration
+  #-----------------------------------------------------------------------
+
+  # Google Gemini API key (or use gemini_api_key_file)
+  # gemini_api_key: ""
+
+  # Path to file containing Google Gemini API key
+  # gemini_api_key_file: "~/.gemini-api-key"
+
+  # Base URL for Gemini API
+  # gemini_base_url: "https://generativelanguage.googleapis.com"
 
   #-----------------------------------------------------------------------
   # Ollama Configuration

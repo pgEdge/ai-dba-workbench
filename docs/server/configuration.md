@@ -98,12 +98,14 @@ embedding:
 # LLM CONFIGURATION (Web Client Chat Proxy)
 #=========================================================================
 llm:
-  provider: "anthropic"  # anthropic, openai, or ollama
+  provider: "anthropic"  # anthropic, openai, gemini, or ollama
   model: "claude-sonnet-4-5"
   # anthropic_api_key_file: "~/.anthropic-api-key"
   # anthropic_base_url: "https://api.anthropic.com/v1"
   # openai_api_key_file: "~/.openai-api-key"
   # openai_base_url: "https://api.openai.com/v1"
+  # gemini_api_key_file: "~/.gemini-api-key"
+  # gemini_base_url: "https://generativelanguage.googleapis.com"
   ollama_url: "http://localhost:11434"
   max_tokens: 4096
   temperature: 0.7
@@ -313,19 +315,52 @@ user-created database connections.
 
 ### LLM Proxy (`llm`)
 
-The LLM proxy is always enabled; configure API keys for your chosen provider.
+The LLM proxy is always enabled; configure API keys for
+your chosen provider.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `provider` | string | `anthropic` | Provider (anthropic, openai, ollama) |
+| `provider` | string | `anthropic` | Provider (anthropic, openai, gemini, ollama) |
 | `model` | string | `claude-sonnet-4-5` | Model name |
 | `anthropic_api_key_file` | string | | Path to Anthropic API key |
 | `openai_api_key_file` | string | | Path to OpenAI API key |
+| `gemini_api_key_file` | string | | Path to Google Gemini API key |
 | `ollama_url` | string | `http://localhost:11434` | Ollama URL |
 | `max_tokens` | int | `4096` | Max response tokens |
 | `temperature` | float | `0.7` | Sampling temperature |
 | `anthropic_base_url` | string | `https://api.anthropic.com/v1` | Override the Anthropic API base URL |
 | `openai_base_url` | string | `https://api.openai.com/v1` | Override the OpenAI API base URL |
+| `gemini_base_url` | string | `https://generativelanguage.googleapis.com` | Override the Gemini API base URL |
+
+#### OpenAI-Compatible Local Servers
+
+The `openai` provider works with any server that implements
+the OpenAI-compatible API. Set `openai_base_url` to point
+at a local inference server. The API key is optional when
+using a custom base URL; omit `openai_api_key_file` if the
+server does not require authentication.
+
+The following local inference servers are compatible:
+
+- Docker Model Runner uses
+  `http://localhost:12434/engines/llama.cpp/v1` as the
+  default endpoint.
+- llama.cpp uses `http://localhost:8080/v1` as the default
+  endpoint.
+- LM Studio uses `http://localhost:1234/v1` as the default
+  endpoint.
+- EXO uses `http://localhost:52415/v1` as the default
+  endpoint.
+
+In the following example, the `llm` section configures a
+local llama.cpp server:
+
+```yaml
+llm:
+  provider: "openai"
+  model: "my-local-model"
+  openai_base_url: "http://localhost:8080/v1"
+```
 
 ### Knowledgebase (`knowledgebase`)
 

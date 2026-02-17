@@ -32,7 +32,7 @@ type Provider interface {
 
 // Config holds configuration for embedding providers
 type Config struct {
-	Provider string // "voyage", "ollama", or "openai"
+	Provider string // "voyage", "ollama", "openai", or "gemini"
 	Model    string // Model name (provider-specific)
 
 	// Voyage AI-specific
@@ -42,6 +42,10 @@ type Config struct {
 	// OpenAI-specific
 	OpenAIAPIKey  string
 	OpenAIBaseURL string // Base URL for OpenAI API (default: https://api.openai.com/v1)
+
+	// Gemini-specific
+	GeminiAPIKey  string
+	GeminiBaseURL string // Base URL for Gemini API (default: https://generativelanguage.googleapis.com)
 
 	// Ollama-specific
 	OllamaURL string
@@ -57,10 +61,16 @@ func NewProvider(cfg Config) (Provider, error) {
 		return NewVoyageProvider(cfg.VoyageAPIKey, cfg.Model, cfg.VoyageBaseURL)
 
 	case "openai":
-		if cfg.OpenAIAPIKey == "" {
+		if cfg.OpenAIAPIKey == "" && cfg.OpenAIBaseURL == "" {
 			return nil, fmt.Errorf("OpenAI API key is required when provider is 'openai'")
 		}
 		return NewOpenAIProvider(cfg.OpenAIAPIKey, cfg.Model, cfg.OpenAIBaseURL)
+
+	case "gemini":
+		if cfg.GeminiAPIKey == "" {
+			return nil, fmt.Errorf("Gemini API key is required when provider is 'gemini'")
+		}
+		return NewGeminiProvider(cfg.GeminiAPIKey, cfg.Model, cfg.GeminiBaseURL)
 
 	case "ollama":
 		if cfg.OllamaURL == "" {
@@ -72,6 +82,6 @@ func NewProvider(cfg Config) (Provider, error) {
 		return NewOllamaProvider(cfg.OllamaURL, cfg.Model)
 
 	default:
-		return nil, fmt.Errorf("unsupported embedding provider: %s (supported: voyage, openai, ollama)", cfg.Provider)
+		return nil, fmt.Errorf("unsupported embedding provider: %s (supported: voyage, openai, gemini, ollama)", cfg.Provider)
 	}
 }

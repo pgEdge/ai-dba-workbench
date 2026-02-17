@@ -339,6 +339,21 @@ func TestServerInfoCreateLLMClient(t *testing.T) {
 		}
 	})
 
+	t.Run("gemini provider creates client", func(t *testing.T) {
+		h := &ServerInfoHandler{
+			llmConfig: &llmproxy.Config{
+				Provider:     "gemini",
+				GeminiAPIKey: "test-key",
+				Model:        "gemini-2.0-flash",
+			},
+		}
+
+		client := h.createLLMClient()
+		if client == nil {
+			t.Error("expected non-nil client for gemini provider")
+		}
+	})
+
 	t.Run("ollama provider creates client", func(t *testing.T) {
 		h := &ServerInfoHandler{
 			llmConfig: &llmproxy.Config{

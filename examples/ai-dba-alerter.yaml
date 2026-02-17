@@ -252,12 +252,12 @@ correlation:
 
 llm:
   # Provider to use for generating embeddings (tier 2)
-  # Options: ollama, openai, voyage
+  # Options: ollama, openai, gemini, voyage
   # Default: ollama
   embedding_provider: ollama
 
   # Provider to use for reasoning/classification (tier 3)
-  # Options: ollama, openai, anthropic
+  # Options: ollama, openai, gemini, anthropic
   # Default: ollama
   reasoning_provider: ollama
 
@@ -281,13 +281,30 @@ llm:
   #-------------------------------------------------------------------------
   # OpenAI Settings
   #-------------------------------------------------------------------------
+  #
+  # The openai provider also works with OpenAI-compatible
+  # local inference servers. Set base_url to point at a local
+  # server. The API key is optional when using a custom base
+  # URL.
+  #
+  # Compatible servers and their default URLs:
+  #   Docker Model Runner:
+  #     http://localhost:12434/engines/llama.cpp/v1
+  #   llama.cpp:  http://localhost:8080/v1
+  #   LM Studio:  http://localhost:1234/v1
+  #   EXO:        http://localhost:52415/v1
+  #
 
   openai:
     # Path to file containing OpenAI API key
-    # File should contain only the API key with no extra whitespace
+    # File should contain only the API key with no extra
+    # whitespace.
+    # Optional when using a custom base URL with a local
+    # server.
     # api_key_file: /etc/ai-workbench/openai-api-key.txt
 
     # Base URL for the OpenAI API
+    # Override this to use an OpenAI-compatible local server
     # base_url: https://api.openai.com/v1
 
     # Model to use for embeddings
@@ -313,6 +330,22 @@ llm:
     # Model to use for reasoning/classification
     # Default: claude-3-5-haiku-20241022
     reasoning_model: claude-3-5-haiku-20241022
+
+  #-------------------------------------------------------------------------
+  # Google Gemini Settings
+  #-------------------------------------------------------------------------
+
+  gemini:
+    # Path to file containing Google Gemini API key
+    # File should contain only the API key with no extra whitespace
+    # api_key_file: /etc/ai-workbench/gemini-api-key.txt
+
+    # Base URL for the Gemini API
+    # base_url: https://generativelanguage.googleapis.com
+
+    # Model to use for reasoning/classification
+    # Default: gemini-2.0-flash
+    reasoning_model: gemini-2.0-flash
 
   #-------------------------------------------------------------------------
   # Voyage Settings (for embeddings only)

@@ -63,8 +63,10 @@ var openaiModelDimensions = map[string]int{
 
 // NewOpenAIProvider creates a new OpenAI embedding provider.
 // If baseURL is empty, the default OpenAI API endpoint is used.
+// When a custom baseURL is provided (pointing at a local or compatible
+// server), the API key is optional.
 func NewOpenAIProvider(apiKey, model, baseURL string) (*OpenAIProvider, error) {
-	if apiKey == "" {
+	if apiKey == "" && (baseURL == "" || baseURL == "https://api.openai.com/v1") {
 		return nil, fmt.Errorf("OpenAI API key cannot be empty")
 	}
 
@@ -84,9 +86,12 @@ func NewOpenAIProvider(apiKey, model, baseURL string) (*OpenAIProvider, error) {
 	}
 
 	// Mask the API key for logging (show only first/last few characters)
-	maskedKey := "(redacted)"
-	if len(apiKey) > 8 {
-		maskedKey = apiKey[:4] + "..." + apiKey[len(apiKey)-4:]
+	maskedKey := "(none)"
+	if apiKey != "" {
+		maskedKey = "(redacted)"
+		if len(apiKey) > 8 {
+			maskedKey = apiKey[:4] + "..." + apiKey[len(apiKey)-4:]
+		}
 	}
 
 	LogProviderInit("openai", model, map[string]string{
@@ -133,7 +138,9 @@ func (p *OpenAIProvider) Embed(ctx context.Context, text string) ([]float64, err
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+p.apiKey)
+	if p.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+p.apiKey)
+	}
 
 	resp, err := p.client.Do(req)
 	if err != nil {

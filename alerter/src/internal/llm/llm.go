@@ -104,7 +104,7 @@ func NewEmbeddingProvider(cfg *config.Config) (EmbeddingProvider, error) {
 	switch cfg.LLM.EmbeddingProvider {
 	case "openai":
 		apiKey := cfg.GetOpenAIAPIKey()
-		if apiKey == "" {
+		if apiKey == "" && cfg.LLM.OpenAI.BaseURL == "" {
 			return nil, fmt.Errorf("openai: %w", ErrAPIKeyMissing)
 		}
 		provider, err := embedding.NewOpenAIProvider(apiKey, cfg.LLM.OpenAI.EmbeddingModel, cfg.LLM.OpenAI.BaseURL)
@@ -157,7 +157,7 @@ func NewReasoningProvider(cfg *config.Config) (ReasoningProvider, error) {
 	switch cfg.LLM.ReasoningProvider {
 	case "openai":
 		apiKey := cfg.GetOpenAIAPIKey()
-		if apiKey == "" {
+		if apiKey == "" && cfg.LLM.OpenAI.BaseURL == "" {
 			return nil, fmt.Errorf("openai: %w", ErrAPIKeyMissing)
 		}
 		return NewOpenAIReasoning(apiKey, cfg.LLM.OpenAI.ReasoningModel, cfg.LLM.OpenAI.BaseURL), nil
@@ -168,6 +168,13 @@ func NewReasoningProvider(cfg *config.Config) (ReasoningProvider, error) {
 			return nil, fmt.Errorf("anthropic: %w", ErrAPIKeyMissing)
 		}
 		return NewAnthropicReasoning(apiKey, cfg.LLM.Anthropic.ReasoningModel, cfg.LLM.Anthropic.BaseURL), nil
+
+	case "gemini":
+		apiKey := cfg.GetGeminiAPIKey()
+		if apiKey == "" {
+			return nil, fmt.Errorf("gemini: %w", ErrAPIKeyMissing)
+		}
+		return NewGeminiReasoning(apiKey, cfg.LLM.Gemini.ReasoningModel, cfg.LLM.Gemini.BaseURL), nil
 
 	case "ollama":
 		baseURL := cfg.LLM.Ollama.BaseURL

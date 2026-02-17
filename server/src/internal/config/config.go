@@ -249,7 +249,7 @@ type EmbeddingConfig struct {
 // LLMConfig holds LLM configuration for web client chat proxy
 // LLM proxy is always enabled - API keys must be configured for the chosen provider
 type LLMConfig struct {
-	Provider            string  `yaml:"provider"`               // "anthropic", "openai", or "ollama"
+	Provider            string  `yaml:"provider"`               // "anthropic", "openai", "gemini", or "ollama"
 	Model               string  `yaml:"model"`                  // Provider-specific model name
 	AnthropicAPIKey     string  `yaml:"-"`                      // API key for Anthropic (loaded from file, not config)
 	AnthropicAPIKeyFile string  `yaml:"anthropic_api_key_file"` // Path to file containing Anthropic API key
@@ -257,6 +257,9 @@ type LLMConfig struct {
 	OpenAIAPIKey        string  `yaml:"-"`                      // API key for OpenAI (loaded from file, not config)
 	OpenAIAPIKeyFile    string  `yaml:"openai_api_key_file"`    // Path to file containing OpenAI API key
 	OpenAIBaseURL       string  `yaml:"openai_base_url"`        // Base URL for OpenAI API (default: https://api.openai.com/v1)
+	GeminiAPIKey        string  `yaml:"-"`                      // API key for Google Gemini (loaded from file, not config)
+	GeminiAPIKeyFile    string  `yaml:"gemini_api_key_file"`    // Path to file containing Gemini API key
+	GeminiBaseURL       string  `yaml:"gemini_base_url"`        // Base URL for Gemini API (default: https://generativelanguage.googleapis.com)
 	OllamaURL           string  `yaml:"ollama_url"`             // URL for Ollama service (default: http://localhost:11434)
 	MaxTokens           int     `yaml:"max_tokens"`             // Maximum tokens for LLM response (default: 4096)
 	Temperature         float64 `yaml:"temperature"`            // Temperature for LLM sampling (default: 0.7)
@@ -395,6 +398,7 @@ func defaultConfig() *Config {
 			Model:           "claude-sonnet-4-5",      // Default Anthropic model
 			AnthropicAPIKey: "",                       // Must be provided if using Anthropic
 			OpenAIAPIKey:    "",                       // Must be provided if using OpenAI
+			GeminiAPIKey:    "",                       // Must be provided if using Gemini
 			OllamaURL:       "http://localhost:11434", // Default Ollama URL
 			MaxTokens:       4096,                     // Default max tokens
 			Temperature:     0.7,                      // Default temperature
@@ -532,6 +536,15 @@ func mergeConfig(dest, src *Config) {
 	}
 	if src.LLM.OpenAIBaseURL != "" {
 		dest.LLM.OpenAIBaseURL = src.LLM.OpenAIBaseURL
+	}
+	if src.LLM.GeminiAPIKey != "" {
+		dest.LLM.GeminiAPIKey = src.LLM.GeminiAPIKey
+	}
+	if src.LLM.GeminiAPIKeyFile != "" {
+		dest.LLM.GeminiAPIKeyFile = src.LLM.GeminiAPIKeyFile
+	}
+	if src.LLM.GeminiBaseURL != "" {
+		dest.LLM.GeminiBaseURL = src.LLM.GeminiBaseURL
 	}
 	if src.LLM.OllamaURL != "" {
 		dest.LLM.OllamaURL = src.LLM.OllamaURL
@@ -674,6 +687,11 @@ func loadAPIKeysFromFiles(cfg *Config) {
 	if cfg.LLM.OpenAIAPIKey == "" && cfg.LLM.OpenAIAPIKeyFile != "" {
 		if key, err := fileutil.ReadOptionalTrimmedFile(cfg.LLM.OpenAIAPIKeyFile); err == nil && key != "" {
 			cfg.LLM.OpenAIAPIKey = key
+		}
+	}
+	if cfg.LLM.GeminiAPIKey == "" && cfg.LLM.GeminiAPIKeyFile != "" {
+		if key, err := fileutil.ReadOptionalTrimmedFile(cfg.LLM.GeminiAPIKeyFile); err == nil && key != "" {
+			cfg.LLM.GeminiAPIKey = key
 		}
 	}
 

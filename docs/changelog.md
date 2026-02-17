@@ -11,6 +11,13 @@ and this project adheres to
 
 ### Added
 
+- Support for custom base URLs on all LLM providers;
+  the OpenAI provider API key is optional when using a
+  custom base URL, enabling local OpenAI-compatible
+  inference servers such as Docker Model Runner,
+  llama.cpp, LM Studio, and EXO.
+- Google Gemini as an LLM provider option for the server
+  chat proxy and the alerter reasoning engine.
 - Hierarchical monitoring dashboards with estate, cluster,
   server, database, and object levels; users drill down
   through the cluster navigator or dashboard elements.

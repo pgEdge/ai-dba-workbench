@@ -119,6 +119,7 @@ type LLMConfig struct {
 	OpenAI            OpenAIConfig    `yaml:"openai"`
 	Anthropic         AnthropicConfig `yaml:"anthropic"`
 	Voyage            VoyageConfig    `yaml:"voyage"`
+	Gemini            GeminiConfig    `yaml:"gemini"`
 }
 
 // NotificationsConfig holds notification settings
@@ -187,6 +188,14 @@ type VoyageConfig struct {
 	apiKey         string
 }
 
+// GeminiConfig holds Google Gemini provider settings
+type GeminiConfig struct {
+	APIKeyFile     string `yaml:"api_key_file"`
+	BaseURL        string `yaml:"base_url"`
+	ReasoningModel string `yaml:"reasoning_model"`
+	apiKey         string
+}
+
 // NewConfig creates a new Config with default values
 func NewConfig() *Config {
 	return &Config{
@@ -245,6 +254,9 @@ func NewConfig() *Config {
 			},
 			Voyage: VoyageConfig{
 				EmbeddingModel: "voyage-3-lite",
+			},
+			Gemini: GeminiConfig{
+				ReasoningModel: "gemini-2.0-flash",
 			},
 		},
 	}
@@ -341,6 +353,14 @@ func (c *Config) LoadAPIKeys() error {
 		c.LLM.Voyage.apiKey = key
 	}
 
+	if c.LLM.Gemini.APIKeyFile != "" {
+		key, err := readSecretFile(c.LLM.Gemini.APIKeyFile)
+		if err != nil {
+			return fmt.Errorf("failed to read Gemini API key: %w", err)
+		}
+		c.LLM.Gemini.apiKey = key
+	}
+
 	return nil
 }
 
@@ -357,6 +377,11 @@ func (c *Config) GetAnthropicAPIKey() string {
 // GetVoyageAPIKey returns the loaded Voyage API key
 func (c *Config) GetVoyageAPIKey() string {
 	return c.LLM.Voyage.apiKey
+}
+
+// GetGeminiAPIKey returns the loaded Gemini API key
+func (c *Config) GetGeminiAPIKey() string {
+	return c.LLM.Gemini.apiKey
 }
 
 // readSecretFile reads a secret from a file

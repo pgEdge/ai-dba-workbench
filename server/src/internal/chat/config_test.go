@@ -246,6 +246,74 @@ func TestValidate_InvalidProvider(t *testing.T) {
 	}
 }
 
+func TestValidate_OpenAIBaseURLOnly(t *testing.T) {
+	cfg := &Config{
+		MCP: MCPConfig{
+			Mode:       "stdio",
+			ServerPath: "/path/to/server",
+		},
+		LLM: LLMConfig{
+			Provider:      "openai",
+			OpenAIBaseURL: "http://localhost:8080/v1",
+			Model:         "local-model",
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate should pass with base URL and no API key: %v", err)
+	}
+}
+
+func TestValidate_OpenAIMissingKeyAndBaseURL(t *testing.T) {
+	cfg := &Config{
+		MCP: MCPConfig{
+			Mode:       "stdio",
+			ServerPath: "/path/to/server",
+		},
+		LLM: LLMConfig{
+			Provider: "openai",
+			// No API key and no base URL
+		},
+	}
+
+	if err := cfg.Validate(); err == nil {
+		t.Error("Expected validation error when both API key and base URL are missing")
+	}
+}
+
+func TestIsProviderConfigured_OpenAIBaseURLOnly(t *testing.T) {
+	cfg := &Config{
+		LLM: LLMConfig{
+			OpenAIBaseURL: "http://localhost:8080/v1",
+		},
+	}
+
+	if !cfg.IsProviderConfigured("openai") {
+		t.Error("Expected OpenAI to be configured with base URL only")
+	}
+}
+
+func TestGetConfiguredProviders_OpenAIBaseURLOnly(t *testing.T) {
+	cfg := &Config{
+		LLM: LLMConfig{
+			OpenAIBaseURL: "http://localhost:8080/v1",
+			OllamaURL:     "http://localhost:11434",
+		},
+	}
+
+	providers := cfg.GetConfiguredProviders()
+	found := false
+	for _, p := range providers {
+		if p == "openai" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("Expected 'openai' in configured providers when base URL is set")
+	}
+}
+
 func TestValidate_MissingAPIKey(t *testing.T) {
 	cfg := &Config{
 		MCP: MCPConfig{

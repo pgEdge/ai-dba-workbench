@@ -29,13 +29,30 @@ func TestNewOpenAIProvider(t *testing.T) {
 		}
 	})
 
-	t.Run("empty API key", func(t *testing.T) {
+	t.Run("empty API key without base URL", func(t *testing.T) {
 		_, err := NewOpenAIProvider("", "text-embedding-3-small", "")
 		if err == nil {
-			t.Fatal("expected error for empty API key")
+			t.Fatal("expected error for empty API key without custom base URL")
 		}
 		if err.Error() != "OpenAI API key cannot be empty" {
 			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("empty API key with default OpenAI base URL", func(t *testing.T) {
+		_, err := NewOpenAIProvider("", "text-embedding-3-small", "https://api.openai.com/v1")
+		if err == nil {
+			t.Fatal("expected error for empty API key with default OpenAI base URL")
+		}
+	})
+
+	t.Run("empty API key with custom base URL", func(t *testing.T) {
+		provider, err := NewOpenAIProvider("", "text-embedding-3-small", "http://localhost:8080/v1")
+		if err != nil {
+			t.Fatalf("unexpected error: empty API key should be allowed with custom base URL: %v", err)
+		}
+		if provider == nil {
+			t.Fatal("expected non-nil provider")
 		}
 	})
 

@@ -103,6 +103,7 @@ func TestHandleProviders_AllProviders(t *testing.T) {
 		Model:           "gpt-4o",
 		AnthropicAPIKey: "anthropic-key",
 		OpenAIAPIKey:    "openai-key",
+		GeminiAPIKey:    "gemini-key",
 		OllamaURL:       "http://localhost:11434",
 	}
 
@@ -120,8 +121,8 @@ func TestHandleProviders_AllProviders(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	if len(response.Providers) != 3 {
-		t.Errorf("expected 3 providers, got %d", len(response.Providers))
+	if len(response.Providers) != 4 {
+		t.Errorf("expected 4 providers, got %d", len(response.Providers))
 	}
 
 	// Check that openai is marked as default
@@ -132,6 +133,54 @@ func TestHandleProviders_AllProviders(t *testing.T) {
 		if p.Name != "openai" && p.IsDefault {
 			t.Errorf("expected %s to not be marked as default", p.Name)
 		}
+	}
+
+	// Check that gemini is in the list
+	geminiFound := false
+	for _, p := range response.Providers {
+		if p.Name == "gemini" {
+			geminiFound = true
+			if p.Display != "Google Gemini" {
+				t.Errorf("expected gemini display 'Google Gemini', got %q", p.Display)
+			}
+		}
+	}
+	if !geminiFound {
+		t.Error("expected gemini provider in list")
+	}
+}
+
+func TestHandleProviders_OpenAIBaseURLOnly(t *testing.T) {
+	config := &Config{
+		Provider:      "openai",
+		Model:         "local-model",
+		OpenAIBaseURL: "http://localhost:8080/v1",
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/llm/providers", nil)
+	w := httptest.NewRecorder()
+
+	HandleProviders(w, req, config)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", w.Code)
+	}
+
+	var response ProvidersResponse
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if len(response.Providers) != 1 {
+		t.Fatalf("expected 1 provider, got %d", len(response.Providers))
+	}
+
+	if response.Providers[0].Name != "openai" {
+		t.Errorf("expected provider 'openai', got %q", response.Providers[0].Name)
+	}
+
+	if !response.Providers[0].IsDefault {
+		t.Error("expected openai to be marked as default")
 	}
 }
 
@@ -210,6 +259,41 @@ func TestHandleModels_OllamaNotConfigured(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected status 400, got %d", w.Code)
+	}
+}
+
+func TestHandleModels_GeminiNotConfigured(t *testing.T) {
+	config := &Config{}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/llm/models?provider=gemini", nil)
+	w := httptest.NewRecorder()
+
+	HandleModels(w, req, config)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400, got %d", w.Code)
+	}
+}
+
+func TestHandleModels_OpenAIBaseURLOnly(t *testing.T) {
+	config := &Config{
+		OpenAIBaseURL: "http://localhost:8080/v1",
+		Model:         "local-model",
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/llm/models?provider=openai", nil)
+	w := httptest.NewRecorder()
+
+	HandleModels(w, req, config)
+
+	// Should not get a 400 "not configured" error; it will fail at
+	// the actual API call level (500) since the URL is not real,
+	// but the configuration check should pass.
+	if w.Code == http.StatusBadRequest {
+		body := w.Body.String()
+		if body == "OpenAI API key not configured\n" {
+			t.Error("should not get 'not configured' error when base URL is set")
+		}
 	}
 }
 
@@ -311,6 +395,56 @@ func TestHandleChat_OpenAINotConfigured(t *testing.T) {
 	}
 }
 
+func TestHandleChat_OpenAIBaseURLOnly(t *testing.T) {
+	config := &Config{
+		Provider:      "openai",
+		OpenAIBaseURL: "http://localhost:8080/v1",
+	}
+
+	body := ChatRequest{
+		Messages: []Message{{Role: "user", Content: "Hello"}},
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat",
+		bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	HandleChat(w, req, config)
+
+	// Should not get a 400 "not configured" error
+	if w.Code == http.StatusBadRequest {
+		respBody := w.Body.String()
+		if respBody == "OpenAI API key not configured\n" {
+			t.Error("should not get 'not configured' error when base URL is set")
+		}
+	}
+}
+
+func TestHandleChat_GeminiNotConfigured(t *testing.T) {
+	config := &Config{
+		Provider: "gemini",
+		// No API key
+	}
+
+	body := ChatRequest{
+		Messages: []Message{{Role: "user", Content: "Hello"}},
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat",
+		bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	HandleChat(w, req, config)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400, got %d", w.Code)
+	}
+}
+
 func TestHandleChat_OllamaNotConfigured(t *testing.T) {
 	config := &Config{
 		Provider: "ollama",
@@ -362,6 +496,35 @@ func TestHandleChat_OverrideProvider(t *testing.T) {
 		body := w.Body.String()
 		if body == "OpenAI API key not configured\n" {
 			t.Error("should not get 'not configured' error when key is set")
+		}
+	}
+}
+
+func TestHandleChat_OverrideProviderWithBaseURL(t *testing.T) {
+	config := &Config{
+		Provider:      "anthropic",
+		OpenAIBaseURL: "http://localhost:8080/v1",
+	}
+
+	// Override to openai using base URL only (no API key)
+	body := ChatRequest{
+		Messages: []Message{{Role: "user", Content: "Hello"}},
+		Provider: "openai",
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat",
+		bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	HandleChat(w, req, config)
+
+	// Should not get a 400 "not configured" error
+	if w.Code == http.StatusBadRequest {
+		respBody := w.Body.String()
+		if respBody == "OpenAI API key not configured\n" {
+			t.Error("should not get 'not configured' error when base URL is set")
 		}
 	}
 }

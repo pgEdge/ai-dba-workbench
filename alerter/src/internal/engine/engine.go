@@ -54,6 +54,10 @@ const (
 
 	// DefaultTier3Timeout is the fallback timeout for Tier 3 LLM classification.
 	DefaultTier3Timeout = 30 * time.Second
+
+	// AlertCooldownPeriod prevents flapping by suppressing new alerts for a
+	// rule+connection+database combination that was recently cleared.
+	AlertCooldownPeriod = 5 * time.Minute
 )
 
 // Engine is the main alerter engine that coordinates all background processing

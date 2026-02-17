@@ -1262,6 +1262,25 @@ func (d *Datastore) GetActiveThresholdAlert(ctx context.Context, ruleID int64, c
 	return &alert, nil
 }
 
+// GetRecentlyClearedAlert checks if there's a recently cleared alert for the
+// same rule, connection, and database within the cooldown period.
+func (d *Datastore) GetRecentlyClearedAlert(ctx context.Context, ruleID int64, connectionID int, dbName *string, cooldown time.Duration) (bool, error) {
+	var exists bool
+	err := d.pool.QueryRow(ctx, `
+        SELECT EXISTS(
+            SELECT 1 FROM alerts
+            WHERE rule_id = $1 AND connection_id = $2 AND status = 'cleared'
+              AND cleared_at > NOW() - $3::interval
+              AND (database_name = $4 OR ($4 IS NULL AND database_name IS NULL))
+        )
+    `, ruleID, connectionID, fmt.Sprintf("%d seconds", int(cooldown.Seconds())), dbName).Scan(&exists)
+
+	if err != nil {
+		return false, fmt.Errorf("failed to check recently cleared alert: %w", err)
+	}
+	return exists, nil
+}
+
 // UpdateAlertValues updates the metric_value, threshold, operator, severity,
 // and last_updated timestamp for an active alert. AI analysis is cleared when
 // the metric value changes.

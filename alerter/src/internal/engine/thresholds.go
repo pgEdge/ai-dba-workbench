@@ -120,6 +120,15 @@ func (e *Engine) triggerThresholdAlert(ctx context.Context, rule *database.Alert
 		return
 	}
 
+	// Check cooldown - don't re-fire if recently cleared (prevents flapping)
+	recentlyClosed, err := e.datastore.GetRecentlyClearedAlert(ctx, rule.ID, connectionID, dbName, AlertCooldownPeriod)
+	if err != nil {
+		e.debugLog("Error checking cooldown for %s on connection %d: %v", rule.Name, connectionID, err)
+	} else if recentlyClosed {
+		e.debugLog("Skipping alert %s on connection %d: cooldown active (cleared within %v)", rule.Name, connectionID, AlertCooldownPeriod)
+		return
+	}
+
 	// Create new alert
 	alert := &database.Alert{
 		AlertType:      "threshold",

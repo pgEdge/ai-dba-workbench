@@ -2168,8 +2168,8 @@ func (sm *SchemaManager) registerMigrations() {
 					('cpu_usage_high', 'CPU usage exceeds threshold', 'performance', 'pg_sys_cpu_usage_info.processor_time_percent', 'percent', '>', 80, 'warning', TRUE, 'system_stats', TRUE),
 					('memory_usage_high', 'Memory usage exceeds threshold', 'performance', 'pg_sys_memory_info.used_percent', 'percent', '>', 85, 'warning', TRUE, 'system_stats', TRUE),
 					('load_average_high', 'System load average exceeds threshold', 'performance', 'pg_sys_load_avg_info.load_avg_fifteen_minutes', 'load average', '>', 4, 'warning', TRUE, 'system_stats', TRUE),
-					('long_running_queries', 'Queries running longer than threshold', 'performance', 'pg_stat_activity.max_query_duration_seconds', 'seconds', '>', 300, 'warning', TRUE, NULL, TRUE),
-					('blocked_queries', 'Blocked queries detected', 'performance', 'pg_stat_activity.blocked_count', 'queries', '>', 0, 'warning', TRUE, NULL, TRUE),
+					('long_running_queries', 'Queries running longer than threshold', 'performance', 'pg_stat_activity.max_query_duration_seconds', 'seconds', '>', 600, 'warning', TRUE, NULL, TRUE),
+					('blocked_queries', 'Blocked queries detected', 'performance', 'pg_stat_activity.blocked_count', 'queries', '>', 5, 'warning', TRUE, NULL, TRUE),
 
 					-- Transaction alerts
 					('long_running_transaction', 'Transaction running too long', 'transactions', 'pg_stat_activity.max_xact_duration_seconds', 'seconds', '>', 3600, 'warning', TRUE, NULL, TRUE),
@@ -2181,7 +2181,7 @@ func (sm *SchemaManager) registerMigrations() {
 					('lock_wait_time', 'Lock wait time exceeds threshold', 'locks', 'pg_stat_activity.max_lock_wait_seconds', 'seconds', '>', 30, 'warning', TRUE, NULL, TRUE),
 
 					-- WAL and Checkpoint alerts
-					('checkpoint_warning', 'Checkpoints requested too frequently', 'wal', 'pg_stat_checkpointer.checkpoints_req_delta', 'checkpoints', '>', 10, 'warning', TRUE, NULL, TRUE),
+					('checkpoint_warning', 'Checkpoints requested too frequently', 'wal', 'pg_stat_checkpointer.checkpoints_req_delta', 'checkpoints', '>', 50, 'warning', TRUE, NULL, TRUE),
 					('wal_archive_failed', 'WAL archiving failures detected', 'wal', 'pg_stat_wal.failed_count_delta', 'failures', '>', 0, 'critical', TRUE, NULL, TRUE),
 
 					-- Vacuum alerts
@@ -2190,7 +2190,7 @@ func (sm *SchemaManager) registerMigrations() {
 
 					-- Statement alerts
 					('slow_query_count', 'High number of slow queries', 'queries', 'pg_stat_statements.slow_query_count', 'queries', '>', 10, 'warning', TRUE, 'pg_stat_statements', TRUE),
-					('cache_hit_ratio_low', 'Buffer cache hit ratio below threshold', 'queries', 'pg_stat_database.cache_hit_ratio', 'percent', '<', 90, 'warning', TRUE, NULL, TRUE),
+					('cache_hit_ratio_low', 'Buffer cache hit ratio below threshold', 'queries', 'pg_stat_database.cache_hit_ratio', 'percent', '<', 80, 'warning', TRUE, NULL, TRUE),
 
 					-- Error alerts
 					('temp_files_created', 'Temporary files being created', 'performance', 'pg_stat_database.temp_files_delta', 'files', '>', 100, 'warning', TRUE, NULL, TRUE)
@@ -2856,6 +2856,37 @@ func (sm *SchemaManager) registerMigrations() {
 				SET default_severity = 'warning'
 				WHERE name = 'metric_staleness'
 				  AND default_severity = 'critical';
+			`)
+			return err
+		},
+	})
+
+	// Migration #21: Adjust noisy alert rule default thresholds
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     21,
+		Description: "Adjust noisy alert rule default thresholds to reduce flapping",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+			_, err := tx.Exec(ctx, `
+				UPDATE alert_rules
+				SET default_threshold = 5
+				WHERE name = 'blocked_queries'
+				  AND default_threshold = 0;
+
+				UPDATE alert_rules
+				SET default_threshold = 80
+				WHERE name = 'cache_hit_ratio_low'
+				  AND default_threshold = 90;
+
+				UPDATE alert_rules
+				SET default_threshold = 50
+				WHERE name = 'checkpoint_warning'
+				  AND default_threshold = 10;
+
+				UPDATE alert_rules
+				SET default_threshold = 600
+				WHERE name = 'long_running_queries'
+				  AND default_threshold = 300;
 			`)
 			return err
 		},

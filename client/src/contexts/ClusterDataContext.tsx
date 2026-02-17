@@ -10,6 +10,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { useAuth } from './AuthContext';
+import { apiGet, ApiError } from '../utils/apiClient';
 
 export interface ClusterServer {
     id: number;
@@ -215,34 +216,18 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
         try {
             // First, try to get the hierarchical cluster data
             // If the API doesn't support it yet, fall back to connections
-            let response = await fetch('/api/v1/clusters', {
-                credentials: 'include',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-            });
-
             let newData: ClusterGroup[] | null = null;
 
-            if (response.ok) {
-                newData = await response.json();
-            } else if (response.status === 404) {
-                // Fall back to connections endpoint
-                response = await fetch('/api/v1/connections', {
-                    credentials: 'include',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                });
-
-                if (response.ok) {
-                    const connections: ConnectionRecord[] = await response.json();
+            try {
+                newData = await apiGet<ClusterGroup[]>('/api/v1/clusters');
+            } catch (err) {
+                if (err instanceof ApiError && err.statusCode === 404) {
+                    // Fall back to connections endpoint
+                    const connections = await apiGet<ConnectionRecord[]>('/api/v1/connections');
                     newData = transformConnectionsToHierarchy(connections);
                 } else {
-                    throw new Error('Failed to fetch connections');
+                    throw err;
                 }
-            } else {
-                throw new Error('Failed to fetch cluster data');
             }
 
             // Generate fingerprint for the new data

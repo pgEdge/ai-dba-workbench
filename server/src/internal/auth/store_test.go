@@ -873,8 +873,8 @@ func TestUserCount(t *testing.T) {
 		t.Errorf("Expected 0 users initially, got %d", count)
 	}
 
-	store.CreateUser("user1", "pass", "", "", "")
-	store.CreateUser("user2", "pass", "", "", "")
+	store.CreateUser("user1", "password", "", "", "")
+	store.CreateUser("user2", "password", "", "", "")
 
 	if count := store.UserCount(); count != 2 {
 		t.Errorf("Expected 2 users, got %d", count)
@@ -902,7 +902,7 @@ func TestGetCounts(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	store.CreateUser("user1", "pass", "", "", "")
+	store.CreateUser("user1", "password", "", "", "")
 	store.CreateToken("user1", "Token", nil)
 
 	users, tokens := store.GetCounts()
@@ -996,7 +996,7 @@ func TestUpdateUserAtomic_AllFields(t *testing.T) {
 	defer cleanup()
 
 	// Create a user
-	err := store.CreateUser("testuser", "oldpass", "old annotation", "Old Name", "old@example.com")
+	err := store.CreateUser("testuser", "oldpass1", "old annotation", "Old Name", "old@example.com")
 	if err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}

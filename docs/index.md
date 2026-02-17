@@ -31,7 +31,7 @@ The [Collector](collector/index.md) continuously monitors PostgreSQL servers
 and collects metrics into a centralized datastore. It provides:
 
 - Multi-server monitoring with independent connection pools
-- 24 built-in probes covering PostgreSQL system views
+- 34 built-in probes covering PostgreSQL system views
 - Automated data management with partitioning and retention
 - Secure connections with encryption and SSL/TLS support
 

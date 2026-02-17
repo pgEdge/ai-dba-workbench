@@ -46,6 +46,7 @@ import {
 } from '@mui/icons-material';
 import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
 import EffectivePermissionsPanel from './EffectivePermissionsPanel';
+import { apiGet, apiPost, apiPut, apiDelete } from '../../utils/apiClient';
 import {
     tableHeaderCellSx,
     dialogTitleSx,
@@ -57,8 +58,6 @@ import {
     getDeleteIconSx,
     getTableContainerSx,
 } from './styles';
-
-const API_BASE_URL = '/api/v1';
 
 const EXPIRY_OPTIONS = [
     { label: '30 days', value: '30d' },
@@ -219,26 +218,21 @@ const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
         try {
             setLoading(true);
             setError(null);
-            const [tokRes, connRes, mcpRes, usersRes] = await Promise.all([
-                fetch(`${API_BASE_URL}/rbac/tokens`, { credentials: 'include' }),
-                fetch(`${API_BASE_URL}/connections`, { credentials: 'include' }),
-                fetch(`${API_BASE_URL}/rbac/privileges/mcp`, { credentials: 'include' }),
-                fetch(`${API_BASE_URL}/rbac/users`, { credentials: 'include' }),
+            const [tokData, connResult, mcpResult, usersResult] = await Promise.all([
+                apiGet<{ tokens?: Token[] }>('/api/v1/rbac/tokens'),
+                apiGet<{ connections?: Connection[] }>('/api/v1/connections').catch(() => null),
+                apiGet<McpPrivilege[]>('/api/v1/rbac/privileges/mcp').catch(() => null),
+                apiGet<{ users?: User[] }>('/api/v1/rbac/users').catch(() => null),
             ]);
-            if (!tokRes.ok) {throw new Error('Failed to fetch tokens');}
-            const tokData = await tokRes.json();
             setTokens(tokData.tokens || []);
-            if (connRes.ok) {
-                const connData = await connRes.json();
-                setConnections(connData.connections || connData || []);
+            if (connResult) {
+                setConnections(connResult.connections || (connResult as unknown as Connection[]) || []);
             }
-            if (mcpRes.ok) {
-                const mcpData = await mcpRes.json();
-                setMcpPrivileges(mcpData || []);
+            if (mcpResult) {
+                setMcpPrivileges(mcpResult || []);
             }
-            if (usersRes.ok) {
-                const usersData = await usersRes.json();
-                setUsers(usersData.users || []);
+            if (usersResult) {
+                setUsers(usersResult.users || []);
             }
         } catch (err: unknown) {
             setError(err instanceof Error ? err.message : String(err));
@@ -277,54 +271,50 @@ const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
         }
 
         try {
-            const res = await fetch(
-                `${API_BASE_URL}/rbac/users/${owner.id}/privileges`,
-                { credentials: 'include' }
+            const data = await apiGet<UserPrivilegesResponse>(
+                `/api/v1/rbac/users/${owner.id}/privileges`
             );
-            if (res.ok) {
-                const data: UserPrivilegesResponse = await res.json();
-                if (data.is_superuser) {
-                    // Superusers can access everything
-                    setOwnerIsSuperuser(true);
+            if (data.is_superuser) {
+                // Superusers can access everything
+                setOwnerIsSuperuser(true);
+                setOwnerConnections(connections);
+                const levels: Record<number, string> = {};
+                connections.forEach((c: Connection) => { levels[c.id] = 'read_write'; });
+                setOwnerConnectionLevels(levels);
+                setOwnerMcpPrivileges(mcpPrivileges);
+                setOwnerAdminPermissions(ADMIN_PERMISSIONS);
+            } else {
+                setOwnerIsSuperuser(false);
+                // Filter connections to those the user has access to
+                const connPrivs = data.connection_privileges || {};
+                const allowedConnIds = Object.keys(connPrivs).map(Number);
+                setOwnerConnectionLevels(
+                    Object.fromEntries(Object.entries(connPrivs).map(([k, v]) => [Number(k), v as string]))
+                );
+                // Check for wildcard (0 means all connections)
+                if (allowedConnIds.includes(0)) {
                     setOwnerConnections(connections);
-                    const levels: Record<number, string> = {};
-                    connections.forEach((c: Connection) => { levels[c.id] = 'read_write'; });
-                    setOwnerConnectionLevels(levels);
-                    setOwnerMcpPrivileges(mcpPrivileges);
-                    setOwnerAdminPermissions(ADMIN_PERMISSIONS);
                 } else {
-                    setOwnerIsSuperuser(false);
-                    // Filter connections to those the user has access to
-                    const connPrivs = data.connection_privileges || {};
-                    const allowedConnIds = Object.keys(connPrivs).map(Number);
-                    setOwnerConnectionLevels(
-                        Object.fromEntries(Object.entries(connPrivs).map(([k, v]) => [Number(k), v as string]))
-                    );
-                    // Check for wildcard (0 means all connections)
-                    if (allowedConnIds.includes(0)) {
-                        setOwnerConnections(connections);
-                    } else {
-                        setOwnerConnections(
-                            connections.filter((c: Connection) =>
-                                allowedConnIds.includes(c.id)
-                            )
-                        );
-                    }
-                    // Filter MCP privileges to those the user has
-                    const allowedMcp = data.mcp_privileges || [];
-                    setOwnerMcpPrivileges(
-                        mcpPrivileges.filter((p: McpPrivilege) =>
-                            allowedMcp.includes(p.identifier)
-                        )
-                    );
-                    // Filter admin permissions to those the user has
-                    const allowedAdmin = data.admin_permissions || [];
-                    setOwnerAdminPermissions(
-                        ADMIN_PERMISSIONS.filter(p =>
-                            allowedAdmin.includes(p.id)
+                    setOwnerConnections(
+                        connections.filter((c: Connection) =>
+                            allowedConnIds.includes(c.id)
                         )
                     );
                 }
+                // Filter MCP privileges to those the user has
+                const allowedMcp = data.mcp_privileges || [];
+                setOwnerMcpPrivileges(
+                    mcpPrivileges.filter((p: McpPrivilege) =>
+                        allowedMcp.includes(p.identifier)
+                    )
+                );
+                // Filter admin permissions to those the user has
+                const allowedAdmin = data.admin_permissions || [];
+                setOwnerAdminPermissions(
+                    ADMIN_PERMISSIONS.filter(p =>
+                        allowedAdmin.includes(p.id)
+                    )
+                );
             }
         } catch {
             // If privilege fetch fails, show all options as fallback
@@ -345,35 +335,20 @@ const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
                 annotation: createAnnotation.trim(),
                 expires_in: createExpiry,
             };
-            const response = await fetch(`${API_BASE_URL}/rbac/tokens`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify(body),
-            });
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.error || 'Failed to create token');
-            }
-            const data: CreateTokenResponse = await response.json();
+            const data = await apiPost<CreateTokenResponse>('/api/v1/rbac/tokens', body);
             // Set scope if specified
             if (createConnections.length > 0 || createMcpPrivileges.length > 0 || createAdminPermissions.length > 0) {
-                await fetch(`${API_BASE_URL}/rbac/tokens/${data.id}/scope`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'include',
-                    body: JSON.stringify({
-                        connections: createConnections.map((c: ScopedConnection) => ({
-                            connection_id: c.id,
-                            access_level: c.access_level,
-                        })),
-                        mcp_privileges: createMcpPrivileges.some((p: McpPrivilegeOption) => p._isAll)
-                            ? ['*']
-                            : createMcpPrivileges.map((p: McpPrivilegeOption) => p.identifier),
-                        admin_permissions: createAdminPermissions.some((p: AdminPermissionOption) => p._isAll)
-                            ? ['*']
-                            : createAdminPermissions.map((p: AdminPermissionOption) => p.id),
-                    }),
+                await apiPut(`/api/v1/rbac/tokens/${data.id}/scope`, {
+                    connections: createConnections.map((c: ScopedConnection) => ({
+                        connection_id: c.id,
+                        access_level: c.access_level,
+                    })),
+                    mcp_privileges: createMcpPrivileges.some((p: McpPrivilegeOption) => p._isAll)
+                        ? ['*']
+                        : createMcpPrivileges.map((p: McpPrivilegeOption) => p.identifier),
+                    admin_permissions: createAdminPermissions.some((p: AdminPermissionOption) => p._isAll)
+                        ? ['*']
+                        : createAdminPermissions.map((p: AdminPermissionOption) => p.id),
                 });
             }
             setCreateOpen(false);
@@ -425,55 +400,45 @@ const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
         // Fetch owner's privileges for filtering scope options
         if (token.user_id) {
             try {
-                const res = await fetch(
-                    `${API_BASE_URL}/rbac/users/${token.user_id}/privileges`,
-                    { credentials: 'include' }
+                const data = await apiGet<UserPrivilegesResponse>(
+                    `/api/v1/rbac/users/${token.user_id}/privileges`
                 );
-                if (res.ok) {
-                    const data: UserPrivilegesResponse = await res.json();
-                    if (data.is_superuser) {
-                        setEditOwnerIsSuperuser(true);
+                if (data.is_superuser) {
+                    setEditOwnerIsSuperuser(true);
+                    setEditAvailableConnections(connections);
+                    const levels: Record<number, string> = {};
+                    connections.forEach((c: Connection) => { levels[c.id] = 'read_write'; });
+                    setEditOwnerConnectionLevels(levels);
+                    setEditAvailableMcpPrivileges(mcpPrivileges);
+                    setEditAvailableAdminPermissions(ADMIN_PERMISSIONS);
+                } else {
+                    setEditOwnerIsSuperuser(false);
+                    const connPrivs = data.connection_privileges || {};
+                    const allowedConnIds = Object.keys(connPrivs).map(Number);
+                    setEditOwnerConnectionLevels(
+                        Object.fromEntries(Object.entries(connPrivs).map(([k, v]) => [Number(k), v as string]))
+                    );
+                    if (allowedConnIds.includes(0)) {
                         setEditAvailableConnections(connections);
-                        const levels: Record<number, string> = {};
-                        connections.forEach((c: Connection) => { levels[c.id] = 'read_write'; });
-                        setEditOwnerConnectionLevels(levels);
-                        setEditAvailableMcpPrivileges(mcpPrivileges);
-                        setEditAvailableAdminPermissions(ADMIN_PERMISSIONS);
                     } else {
-                        setEditOwnerIsSuperuser(false);
-                        const connPrivs = data.connection_privileges || {};
-                        const allowedConnIds = Object.keys(connPrivs).map(Number);
-                        setEditOwnerConnectionLevels(
-                            Object.fromEntries(Object.entries(connPrivs).map(([k, v]) => [Number(k), v as string]))
-                        );
-                        if (allowedConnIds.includes(0)) {
-                            setEditAvailableConnections(connections);
-                        } else {
-                            setEditAvailableConnections(
-                                connections.filter((c: Connection) =>
-                                    allowedConnIds.includes(c.id)
-                                )
-                            );
-                        }
-                        const allowedMcp = data.mcp_privileges || [];
-                        setEditAvailableMcpPrivileges(
-                            mcpPrivileges.filter((p: McpPrivilege) =>
-                                allowedMcp.includes(p.identifier)
-                            )
-                        );
-                        const allowedAdmin = data.admin_permissions || [];
-                        setEditAvailableAdminPermissions(
-                            ADMIN_PERMISSIONS.filter(p =>
-                                allowedAdmin.includes(p.id)
+                        setEditAvailableConnections(
+                            connections.filter((c: Connection) =>
+                                allowedConnIds.includes(c.id)
                             )
                         );
                     }
-                } else {
-                    setEditOwnerIsSuperuser(false);
-                    setEditAvailableConnections(connections);
-                    setEditOwnerConnectionLevels({});
-                    setEditAvailableMcpPrivileges(mcpPrivileges);
-                    setEditAvailableAdminPermissions(ADMIN_PERMISSIONS);
+                    const allowedMcp = data.mcp_privileges || [];
+                    setEditAvailableMcpPrivileges(
+                        mcpPrivileges.filter((p: McpPrivilege) =>
+                            allowedMcp.includes(p.identifier)
+                        )
+                    );
+                    const allowedAdmin = data.admin_permissions || [];
+                    setEditAvailableAdminPermissions(
+                        ADMIN_PERMISSIONS.filter(p =>
+                            allowedAdmin.includes(p.id)
+                        )
+                    );
                 }
             } catch {
                 setEditOwnerIsSuperuser(false);
@@ -496,30 +461,18 @@ const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
         try {
             setEditLoading(true);
             setEditError(null);
-            const response = await fetch(
-                `${API_BASE_URL}/rbac/tokens/${editToken.id}/scope`,
-                {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'include',
-                    body: JSON.stringify({
-                        connections: editConnections.map((c: ScopedConnection) => ({
-                            connection_id: c.id,
-                            access_level: c.access_level,
-                        })),
-                        mcp_privileges: editMcpPrivileges.some((p: McpPrivilegeOption) => p._isAll)
-                            ? ['*']
-                            : editMcpPrivileges.map((p: McpPrivilegeOption) => p.identifier),
-                        admin_permissions: editAdminPermissions.some((p: AdminPermissionOption) => p._isAll)
-                            ? ['*']
-                            : editAdminPermissions.map((p: AdminPermissionOption) => p.id),
-                    }),
-                }
-            );
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.error || 'Failed to update scope');
-            }
+            await apiPut(`/api/v1/rbac/tokens/${editToken.id}/scope`, {
+                connections: editConnections.map((c: ScopedConnection) => ({
+                    connection_id: c.id,
+                    access_level: c.access_level,
+                })),
+                mcp_privileges: editMcpPrivileges.some((p: McpPrivilegeOption) => p._isAll)
+                    ? ['*']
+                    : editMcpPrivileges.map((p: McpPrivilegeOption) => p.identifier),
+                admin_permissions: editAdminPermissions.some((p: AdminPermissionOption) => p._isAll)
+                    ? ['*']
+                    : editAdminPermissions.map((p: AdminPermissionOption) => p.id),
+            });
             setEditOpen(false);
             fetchData();
         } catch (err: unknown) {
@@ -539,13 +492,7 @@ const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
         if (!deleteToken) {return;}
         try {
             setDeleteLoading(true);
-            const response = await fetch(
-                `${API_BASE_URL}/rbac/tokens/${deleteToken.id}`,
-                { method: 'DELETE', credentials: 'include' }
-            );
-            if (!response.ok) {
-                throw new Error('Failed to delete token');
-            }
+            await apiDelete(`/api/v1/rbac/tokens/${deleteToken.id}`);
             setDeleteOpen(false);
             setDeleteToken(null);
             fetchData();

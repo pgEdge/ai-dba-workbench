@@ -10,6 +10,7 @@
 
 import { useState, useCallback } from 'react';
 import { ChartData } from '../components/Chart/types';
+import { apiGet } from '../utils/apiClient';
 
 export interface ChartAnalysisInput {
     metricDescription: string;
@@ -300,14 +301,12 @@ async function fetchTimelineEvents(
         limit: '100',
     });
 
-    const response = await fetch(
-        `/api/v1/timeline/events?${params}`,
-        { credentials: 'include' }
-    );
-    if (!response.ok) { return ''; }
+    const data = await apiGet<{ events?: TimelineEvent[] }>(
+        `/api/v1/timeline/events?${params}`
+    ).catch(() => null);
+    if (!data) { return ''; }
 
-    const data = await response.json();
-    const events = data.events as TimelineEvent[] | undefined;
+    const events = data.events;
     if (!events || events.length === 0) { return ''; }
 
     const lines = events.map(e => {
@@ -357,10 +356,9 @@ export const useChartAnalysis = (): UseChartAnalysisReturn => {
             let timelineContext = '';
             if (input.connectionId != null) {
                 const [ctxResult, timelineResult] = await Promise.allSettled([
-                    fetch(
-                        `/api/v1/connections/${input.connectionId}/context`,
-                        { credentials: 'include' }
-                    ).then(async r => r.ok ? formatConnectionContext(await r.json()) : ''),
+                    apiGet<Record<string, unknown>>(
+                        `/api/v1/connections/${input.connectionId}/context`
+                    ).then(data => formatConnectionContext(data)).catch(() => ''),
                     fetchTimelineEvents(input.connectionId, input.timeRange),
                 ]);
                 if (ctxResult.status === 'fulfilled') {

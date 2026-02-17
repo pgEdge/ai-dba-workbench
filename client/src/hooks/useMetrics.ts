@@ -12,6 +12,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useDashboard } from '../contexts/DashboardContext';
 import { MetricQueryParams, MetricSeries, MetricBaseline } from '../components/Dashboard/types';
+import { apiGet } from '../utils/apiClient';
 
 export interface UseMetricsReturn {
     data: MetricSeries[] | null;
@@ -95,19 +96,9 @@ export const useMetrics = (params: MetricQueryParams | null): UseMetricsReturn =
         setError(null);
 
         try {
-            const response = await fetch(url, {
-                credentials: 'include',
-            });
-
-            if (!response.ok) {
-                const errorData = await response.json().catch(() => ({})) as { error?: string };
-                throw new Error(
-                    errorData.error || `Failed to fetch metrics: ${response.status}`
-                );
-            }
+            const result = await apiGet<MetricSeries[]>(url);
 
             if (isMountedRef.current) {
-                const result: MetricSeries[] = await response.json();
                 setData(result);
                 initialLoadDoneRef.current = true;
             }
@@ -180,20 +171,11 @@ export const useBaselines = (
                 searchParams.append('metrics', metrics.join(','));
             }
 
-            const response = await fetch(
-                `/api/v1/metrics/baselines?${searchParams.toString()}`,
-                { credentials: 'include' }
+            const result = await apiGet<MetricBaseline[]>(
+                `/api/v1/metrics/baselines?${searchParams.toString()}`
             );
 
-            if (!response.ok) {
-                const errorData = await response.json().catch(() => ({})) as { error?: string };
-                throw new Error(
-                    errorData.error || `Failed to fetch baselines: ${response.status}`
-                );
-            }
-
             if (isMountedRef.current) {
-                const result: MetricBaseline[] = await response.json();
                 setBaselines(result);
             }
         } catch (err) {

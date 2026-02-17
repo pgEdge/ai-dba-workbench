@@ -170,7 +170,7 @@ type MonitoredConnection struct {
 
 - `base.go` - Base probe interface and shared functions
 - `constants.go` - Probe name constants
-- `pg_stat_*.go` - 24 probe implementations (one per file)
+- `pg_stat_*.go` - 34 probe implementations (one per file)
 
 **Responsibilities**:
 
@@ -395,7 +395,7 @@ Common columns across all metric tables:
 
 ```
 main goroutine
-├── scheduler goroutine (per probe: 24 total)
+├── scheduler goroutine (per probe: 34 total)
 │   └── probe execution goroutines (per monitored connection)
 │       └── database execution goroutines (if database-scoped)
 └── garbage collector goroutine
@@ -463,9 +463,9 @@ main goroutine
 
 **Bandwidth Estimate**:
 - 10 monitored servers
-- 24 probes averaging 5-minute intervals
+- 34 probes averaging 5-minute intervals
 - Average result size: 100 KB
-- Bandwidth: `(10 × 24 × 100 KB) / 300s ≈ 80 KB/s`
+- Bandwidth: `(10 × 34 × 100 KB) / 300s ≈ 113 KB/s`
 
 ### Disk I/O
 
@@ -474,8 +474,8 @@ main goroutine
 **Read Rate**: Minimal (configuration queries, GC queries)
 
 **Estimate**:
-- 10 servers, 24 probes, 5-min intervals, 100 KB per probe
-- Write rate: `(10 × 24 × 100 KB) / 300s ≈ 80 KB/s`
+- 10 servers, 34 probes, 5-min intervals, 100 KB per probe
+- Write rate: `(10 × 34 × 100 KB) / 300s ≈ 113 KB/s`
 
 ## Error Handling
 

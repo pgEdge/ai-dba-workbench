@@ -34,6 +34,7 @@ import { useTheme } from '@mui/material/styles';
 import {
     Edit as EditIcon,
 } from '@mui/icons-material';
+import { apiGet, apiPut } from '../../utils/apiClient';
 import {
     tableHeaderCellSx,
     dialogTitleSx,
@@ -45,8 +46,6 @@ import {
     getContainedButtonSx,
     getTableContainerSx,
 } from './styles';
-
-const API_BASE_URL = '/api/v1';
 
 interface ProbeConfig {
     id: number;
@@ -77,12 +76,8 @@ const AdminProbes: React.FC = () => {
     const fetchProbes = useCallback(async () => {
         try {
             setLoading(true);
-            const response = await fetch(`${API_BASE_URL}/probe-configs`, {
-                credentials: 'include',
-            });
-            if (!response.ok) {throw new Error('Failed to fetch probe configurations');}
-            const data = await response.json();
-            setProbes(data.probe_configs || data || []);
+            const data = await apiGet<Record<string, unknown>>('/api/v1/probe-configs');
+            setProbes((data.probe_configs || data || []) as ProbeConfig[]);
         } catch (err: unknown) {
             if (err instanceof Error) {
                 setError(err.message);
@@ -112,23 +107,11 @@ const AdminProbes: React.FC = () => {
         try {
             setSaving(true);
             setError(null);
-            const response = await fetch(
-                `${API_BASE_URL}/probe-configs/${editProbe.id}`,
-                {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'include',
-                    body: JSON.stringify({
-                        is_enabled: editEnabled,
-                        collection_interval_seconds: parseInt(editInterval, 10),
-                        retention_days: parseInt(editRetention, 10),
-                    }),
-                }
-            );
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.error || 'Failed to update probe configuration');
-            }
+            await apiPut(`/api/v1/probe-configs/${editProbe.id}`, {
+                is_enabled: editEnabled,
+                collection_interval_seconds: parseInt(editInterval, 10),
+                retention_days: parseInt(editRetention, 10),
+            });
             setEditOpen(false);
             setSuccess(`Probe "${editProbe.name}" updated successfully.`);
             fetchProbes();

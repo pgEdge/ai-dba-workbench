@@ -46,6 +46,7 @@ import {
 } from '@mui/icons-material';
 import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
 import EffectivePermissionsPanel from './EffectivePermissionsPanel';
+import { apiGet, apiPost, apiPut, apiDelete } from '../../utils/apiClient';
 import {
     tableHeaderCellSx,
     dialogTitleSx,
@@ -59,8 +60,6 @@ import {
     getInactiveIconSx,
     getTableContainerSx,
 } from './styles';
-
-const API_BASE_URL = '/api/v1';
 
 interface AdminUsersProps {
     mode: ThemeMode;
@@ -111,18 +110,14 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
         try {
             setLoading(true);
             setError(null);
-            const [usersRes, connRes] = await Promise.all([
-                fetch(`${API_BASE_URL}/rbac/users`, { credentials: 'include' }),
-                fetch(`${API_BASE_URL}/connections`, { credentials: 'include' }),
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const [usersData, connResult] = await Promise.all([
+                apiGet<any>('/api/v1/rbac/users'),
+                apiGet<any>('/api/v1/connections').catch(() => null),
             ]);
-            if (!usersRes.ok) {
-                throw new Error('Failed to fetch users');
-            }
-            const data = await usersRes.json();
-            setUsers(data.users || []);
-            if (connRes.ok) {
-                const connData = await connRes.json();
-                setConnections(connData.connections || connData || []);
+            setUsers(usersData.users || []);
+            if (connResult) {
+                setConnections(connResult.connections || connResult || []);
             }
         } catch (err) {
             setError(err.message);
@@ -146,14 +141,7 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
         setPermissionsError(null);
         setPermissionsLoading(true);
         try {
-            const response = await fetch(
-                `${API_BASE_URL}/rbac/users/${user.id}/privileges`,
-                { credentials: 'include' }
-            );
-            if (!response.ok) {
-                throw new Error('Failed to fetch user permissions');
-            }
-            const data = await response.json();
+            const data = await apiGet(`/api/v1/rbac/users/${user.id}/privileges`);
             setPermissions(data);
         } catch (err) {
             setPermissionsError(err.message);
@@ -191,16 +179,7 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
             if (createSuperuser) {
                 body.is_superuser = true;
             }
-            const response = await fetch(`${API_BASE_URL}/rbac/users`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify(body),
-            });
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.error || 'Failed to create user');
-            }
+            await apiPost('/api/v1/rbac/users', body);
             setCreateOpen(false);
             setCreateUsername('');
             setCreatePassword('');
@@ -261,19 +240,7 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
             if (editSuperuser !== currentSuperuser) {
                 body.is_superuser = editSuperuser;
             }
-            const response = await fetch(
-                `${API_BASE_URL}/rbac/users/${editUser.id}`,
-                {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'include',
-                    body: JSON.stringify(body),
-                }
-            );
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.error || 'Failed to update user');
-            }
+            await apiPut(`/api/v1/rbac/users/${editUser.id}`, body);
             setEditOpen(false);
             fetchUsers();
         } catch (err) {
@@ -294,13 +261,7 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
         if (!deleteUser) {return;}
         try {
             setDeleteLoading(true);
-            const response = await fetch(
-                `${API_BASE_URL}/rbac/users/${deleteUser.id}`,
-                { method: 'DELETE', credentials: 'include' }
-            );
-            if (!response.ok) {
-                throw new Error('Failed to delete user');
-            }
+            await apiDelete(`/api/v1/rbac/users/${deleteUser.id}`);
             setDeleteOpen(false);
             setDeleteUser(null);
             fetchUsers();

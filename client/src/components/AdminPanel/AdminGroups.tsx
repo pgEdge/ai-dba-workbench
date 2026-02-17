@@ -54,6 +54,7 @@ import {
 import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
 import EffectivePermissionsPanel from './EffectivePermissionsPanel';
 import { useAuth } from '../../contexts/AuthContext';
+import { apiGet, apiPost, apiPut, apiDelete } from '../../utils/apiClient';
 import {
     tableHeaderCellSx,
     dialogTitleSx,
@@ -68,8 +69,6 @@ import {
     getRadioSx,
     getFocusedLabelSx,
 } from './styles';
-
-const API_BASE_URL = '/api/v1';
 
 interface AdminGroupsProps {
     mode: ThemeMode;
@@ -123,18 +122,14 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
         try {
             setLoading(true);
             setError(null);
-            const [groupsRes, connRes] = await Promise.all([
-                fetch(`${API_BASE_URL}/rbac/groups`, { credentials: 'include' }),
-                fetch(`${API_BASE_URL}/connections`, { credentials: 'include' }),
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const [groupsData, connResult] = await Promise.all([
+                apiGet<any>('/api/v1/rbac/groups'),
+                apiGet<{ connections?: Array<{ id: number; name: string }> }>('/api/v1/connections').catch(() => null),
             ]);
-            if (!groupsRes.ok) {
-                throw new Error('Failed to fetch groups');
-            }
-            const data = await groupsRes.json();
-            setGroups(data.groups || []);
-            if (connRes.ok) {
-                const connData = await connRes.json();
-                setConnections(connData.connections || connData || []);
+            setGroups(groupsData.groups || []);
+            if (connResult) {
+                setConnections(connResult.connections || []);
             }
         } catch (err) {
             setError(err.message);
@@ -151,21 +146,13 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
         try {
             setDetailLoading(true);
             setEffectivePermsLoading(true);
-            const [detailRes, effectiveRes] = await Promise.all([
-                fetch(`${API_BASE_URL}/rbac/groups/${groupId}`, { credentials: 'include' }),
-                fetch(`${API_BASE_URL}/rbac/groups/${groupId}/effective-privileges`, { credentials: 'include' }),
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const [detailData, effectiveResult] = await Promise.all([
+                apiGet<any>(`/api/v1/rbac/groups/${groupId}`),
+                apiGet<any>(`/api/v1/rbac/groups/${groupId}/effective-privileges`).catch(() => null),
             ]);
-            if (!detailRes.ok) {
-                throw new Error('Failed to fetch group details');
-            }
-            const data = await detailRes.json();
-            setGroupDetail(data);
-            if (effectiveRes.ok) {
-                const permsData = await effectiveRes.json();
-                setEffectivePerms(permsData);
-            } else {
-                setEffectivePerms(null);
-            }
+            setGroupDetail(detailData);
+            setEffectivePerms(effectiveResult);
         } catch (err) {
             setError(err.message);
         } finally {
@@ -191,19 +178,10 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
         try {
             setCreateLoading(true);
             setCreateError(null);
-            const response = await fetch(`${API_BASE_URL}/rbac/groups`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify({
-                    name: createName.trim(),
-                    description: createDesc.trim(),
-                }),
+            await apiPost('/api/v1/rbac/groups', {
+                name: createName.trim(),
+                description: createDesc.trim(),
             });
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.error || 'Failed to create group');
-            }
             setCreateOpen(false);
             setCreateName('');
             setCreateDesc('');
@@ -230,22 +208,10 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
         try {
             setEditLoading(true);
             setEditError(null);
-            const response = await fetch(
-                `${API_BASE_URL}/rbac/groups/${editGroup.id}`,
-                {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'include',
-                    body: JSON.stringify({
-                        name: editName.trim(),
-                        description: editDesc.trim(),
-                    }),
-                }
-            );
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.error || 'Failed to update group');
-            }
+            await apiPut(`/api/v1/rbac/groups/${editGroup.id}`, {
+                name: editName.trim(),
+                description: editDesc.trim(),
+            });
             setEditOpen(false);
             fetchGroups();
             if (expandedGroup === editGroup.id) {
@@ -269,13 +235,7 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
         if (!deleteGroup) {return;}
         try {
             setDeleteLoading(true);
-            const response = await fetch(
-                `${API_BASE_URL}/rbac/groups/${deleteGroup.id}`,
-                { method: 'DELETE', credentials: 'include' }
-            );
-            if (!response.ok) {
-                throw new Error('Failed to delete group');
-            }
+            await apiDelete(`/api/v1/rbac/groups/${deleteGroup.id}`);
             setDeleteOpen(false);
             setDeleteGroup(null);
             if (expandedGroup === deleteGroup.id) {
@@ -297,19 +257,18 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
         setSelectedMemberId('');
         setMemberType('user');
         try {
-            const [usersRes, groupsRes] = await Promise.all([
-                fetch(`${API_BASE_URL}/rbac/users`, { credentials: 'include' }),
-                fetch(`${API_BASE_URL}/rbac/groups`, { credentials: 'include' }),
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const [usersData, groupsData] = await Promise.all([
+                apiGet<any>('/api/v1/rbac/users').catch(() => null),
+                apiGet<any>('/api/v1/rbac/groups').catch(() => null),
             ]);
-            if (usersRes.ok) {
-                const data = await usersRes.json();
-                setAvailableUsers(data.users || []);
+            if (usersData) {
+                setAvailableUsers(usersData.users || []);
             }
-            if (groupsRes.ok) {
-                const data = await groupsRes.json();
+            if (groupsData) {
                 // Exclude the current group from the list
                 setAvailableGroups(
-                    (data.groups || []).filter((g) => g.id !== expandedGroup)
+                    (groupsData.groups || []).filter((g) => g.id !== expandedGroup)
                 );
             }
         } catch {
@@ -322,22 +281,15 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
         try {
             setAddMemberLoading(true);
             setAddMemberError(null);
-            const response = await fetch(
-                `${API_BASE_URL}/rbac/groups/${expandedGroup}/members`,
-                {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'include',
-                    body: JSON.stringify(
-                        memberType === 'user'
-                            ? { user_id: parseInt(selectedMemberId, 10) }
-                            : { group_id: parseInt(selectedMemberId, 10) }
-                    ),
-                }
-            );
-            if (!response.ok) {
-                const data = await response.json();
-                const errorMsg = data.error || 'Failed to add member';
+            try {
+                await apiPost(
+                    `/api/v1/rbac/groups/${expandedGroup}/members`,
+                    memberType === 'user'
+                        ? { user_id: parseInt(selectedMemberId, 10) }
+                        : { group_id: parseInt(selectedMemberId, 10) }
+                );
+            } catch (apiErr) {
+                const errorMsg = (apiErr as Error).message || 'Failed to add member';
                 throw new Error(
                     errorMsg.includes('UNIQUE constraint')
                         ? 'This member is already in the group.'
@@ -357,16 +309,7 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
     const handleRemoveMember = async (memberId, mType) => {
         if (!expandedGroup) {return;}
         try {
-            const response = await fetch(
-                `${API_BASE_URL}/rbac/groups/${expandedGroup}/members/${mType}/${memberId}`,
-                {
-                    method: 'DELETE',
-                    credentials: 'include',
-                }
-            );
-            if (!response.ok) {
-                throw new Error('Failed to remove member');
-            }
+            await apiDelete(`/api/v1/rbac/groups/${expandedGroup}/members/${mType}/${memberId}`);
             fetchGroupDetail(expandedGroup);
             fetchGroups();
         } catch (err) {
@@ -379,12 +322,11 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
         try {
             let memberId;
             if (mType === 'user') {
-                const res = await fetch(`${API_BASE_URL}/rbac/users`, { credentials: 'include' });
-                if (res.ok) {
-                    const data = await res.json();
+                try {
+                    const data = await apiGet<{ users?: Array<{ id: number; username: string }> }>('/api/v1/rbac/users');
                     const user = (data.users || []).find(u => u.username === name);
                     if (user) {memberId = user.id;}
-                }
+                } catch { /* ignore */ }
             } else {
                 const found = groups.find(g => g.name === name);
                 if (found) {memberId = found.id;}

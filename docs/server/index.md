@@ -209,9 +209,20 @@ collector:
 | `describe_probe` | Get column details for a specific metrics probe |
 | `query_metrics` | Query historical metrics with time-based aggregation |
 | `list_connections` | List available monitored database connections |
+| `query_datastore` | Execute read-only SQL queries against the datastore |
 
 See [Metrics Tools](metrics.md) for detailed documentation on querying
 collected metrics.
+
+### Alert Tools
+
+These tools query alert data from the monitoring system:
+
+| Tool | Description |
+|------|-------------|
+| `get_alert_history` | Query alerts for monitored connections |
+| `get_alert_rules` | Query alert rules and their effective thresholds |
+| `get_metric_baselines` | Query statistical baselines for anomaly detection |
 
 ### Utility Tools
 

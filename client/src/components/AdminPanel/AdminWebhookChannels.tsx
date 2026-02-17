@@ -43,6 +43,7 @@ import {
     Send as SendIcon,
 } from '@mui/icons-material';
 import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
+import { apiGet, apiPost, apiPut, apiDelete } from '../../utils/apiClient';
 import {
     tableHeaderCellSx,
     dialogTitleSx,
@@ -55,8 +56,6 @@ import {
     getDeleteIconSx,
     getTableContainerSx,
 } from './styles';
-
-const API_BASE_URL = '/api/v1';
 
 interface WebhookChannel {
     id: number;
@@ -243,12 +242,8 @@ const AdminWebhookChannels: React.FC = () => {
     const fetchChannels = useCallback(async () => {
         try {
             setLoading(true);
-            const response = await fetch(`${API_BASE_URL}/notification-channels`, {
-                credentials: 'include',
-            });
-            if (!response.ok) {throw new Error('Failed to fetch notification channels');}
-            const data = await response.json();
-            const allChannels = data.notification_channels || data || [];
+            const data = await apiGet<Record<string, unknown>>('/api/v1/notification-channels');
+            const allChannels = (data.notification_channels || data || []) as Record<string, unknown>[];
             const webhookChannels: WebhookChannel[] = allChannels
                 .filter((ch: Record<string, unknown>) => ch.channel_type === 'webhook')
                 .map((ch: Record<string, unknown>) => ({
@@ -441,19 +436,7 @@ const AdminWebhookChannels: React.FC = () => {
                     body.template_reminder = form.template_reminder.trim();
                 }
 
-                const response = await fetch(
-                    `${API_BASE_URL}/notification-channels/${editingChannel.id}`,
-                    {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        credentials: 'include',
-                        body: JSON.stringify(body),
-                    }
-                );
-                if (!response.ok) {
-                    const data = await response.json();
-                    throw new Error(data.error || 'Failed to update channel');
-                }
+                await apiPut(`/api/v1/notification-channels/${editingChannel.id}`, body);
                 setSuccess(`Channel "${form.name.trim()}" updated successfully.`);
             } else {
                 // Create
@@ -472,19 +455,7 @@ const AdminWebhookChannels: React.FC = () => {
                     ...(form.template_alert_clear.trim() ? { template_alert_clear: form.template_alert_clear.trim() } : {}),
                     ...(form.template_reminder.trim() ? { template_reminder: form.template_reminder.trim() } : {}),
                 };
-                const response = await fetch(
-                    `${API_BASE_URL}/notification-channels`,
-                    {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        credentials: 'include',
-                        body: JSON.stringify(body),
-                    }
-                );
-                if (!response.ok) {
-                    const data = await response.json();
-                    throw new Error(data.error || 'Failed to create channel');
-                }
+                await apiPost('/api/v1/notification-channels', body);
                 setSuccess(`Channel "${form.name.trim()}" created successfully.`);
             }
 
@@ -514,13 +485,7 @@ const AdminWebhookChannels: React.FC = () => {
         if (!deleteChannel) {return;}
         try {
             setDeleteLoading(true);
-            const response = await fetch(
-                `${API_BASE_URL}/notification-channels/${deleteChannel.id}`,
-                { method: 'DELETE', credentials: 'include' }
-            );
-            if (!response.ok) {
-                throw new Error('Failed to delete channel');
-            }
+            await apiDelete(`/api/v1/notification-channels/${deleteChannel.id}`);
             setDeleteOpen(false);
             setDeleteChannel(null);
             setSuccess(`Channel "${deleteChannel.name}" deleted successfully.`);
@@ -540,19 +505,7 @@ const AdminWebhookChannels: React.FC = () => {
 
     const handleToggleEnabled = async (channel: WebhookChannel) => {
         try {
-            const response = await fetch(
-                `${API_BASE_URL}/notification-channels/${channel.id}`,
-                {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'include',
-                    body: JSON.stringify({ enabled: !channel.enabled }),
-                }
-            );
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.error || 'Failed to update channel');
-            }
+            await apiPut(`/api/v1/notification-channels/${channel.id}`, { enabled: !channel.enabled });
             fetchChannels();
         } catch (err: unknown) {
             if (err instanceof Error) {
@@ -570,17 +523,7 @@ const AdminWebhookChannels: React.FC = () => {
         try {
             setTestingChannelId(channel.id);
             setError(null);
-            const response = await fetch(
-                `${API_BASE_URL}/notification-channels/${channel.id}/test`,
-                {
-                    method: 'POST',
-                    credentials: 'include',
-                }
-            );
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.error || 'Failed to send test notification');
-            }
+            await apiPost(`/api/v1/notification-channels/${channel.id}/test`);
             setSuccess(`Test notification sent successfully for "${channel.name}".`);
         } catch (err: unknown) {
             if (err instanceof Error) {

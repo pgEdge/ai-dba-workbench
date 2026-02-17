@@ -11,6 +11,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useClusterData } from '../contexts/ClusterDataContext';
+import { apiGet } from '../utils/apiClient';
 
 export interface TimelineEvent {
     id: number;
@@ -160,17 +161,9 @@ export const useTimelineEvents = ({
 
         try {
             const queryString = buildQueryString();
-            const response = await fetch(`/api/v1/timeline/events?${queryString}`, {
-                credentials: 'include',
-            });
-
-            if (!response.ok) {
-                const errorData = await response.json().catch(() => ({})) as { error?: string };
-                throw new Error(errorData.error || `Failed to fetch events: ${response.status}`);
-            }
+            const data = await apiGet<TimelineApiResponse>(`/api/v1/timeline/events?${queryString}`);
 
             if (isMountedRef.current) {
-                const data: TimelineApiResponse = await response.json();
                 setEvents(data.events || []);
                 setTotalCount(data.total_count || 0);
                 initialLoadDoneRef.current = true;

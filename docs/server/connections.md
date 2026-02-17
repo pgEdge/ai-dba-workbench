@@ -195,9 +195,9 @@ The CLI provides slash commands for connection management:
 ```
 /list connections              List available database connections
 /list databases                List databases on current connection
-/connect                       Show current database connection
-/connect <id> [database]       Connect to database (by connection ID)
-/disconnect                    Disconnect from current database
+/show connection               Show the current database connection
+/set connection <id> [database]  Select a database connection
+/set connection none           Clear the current connection
 ```
 
 ### Examples
@@ -212,9 +212,9 @@ Available connections (2):
   2: Staging DB [monitored]
      Host: staging.example.com:5432, Database: myapp_staging
 
-Use '/connect <id>' to select a connection
+Use '/set connection <id>' to select a connection
 
-> /connect 1
+> /set connection 1
 Connected to: Production DB (db.example.com:5432)
 
 > /list databases
@@ -224,10 +224,11 @@ Databases on Production DB (3):
   analytics (owner: postgres, size: 2 GB, encoding: UTF8)
   archive (owner: postgres, size: 500 MB, encoding: UTF8)
 
-Use '/connect <connection-id> <database-name>' to select a specific database
+Use '/set connection <id> <database>' to select a database
 
-> /connect 1 analytics
-Connected to: Production DB (db.example.com:5432, database: analytics)
+> /set connection 1 analytics
+Connected to: Production DB (db.example.com:5432,
+  database: analytics)
 ```
 
 ## Error Handling

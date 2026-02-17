@@ -198,7 +198,7 @@ builtins:
 | `-list-tokens` | List all service tokens |
 | `-token-note string` | Annotation for new token |
 | `-token-expiry string` | Token expiry (30d, 1y, 2w, 12h, never) |
-| `-superuser` | Grant superuser privileges (bypasses access checks) |
+| `-user string` | Owner username for the new token |
 
 ### User Management Options
 
@@ -210,8 +210,11 @@ builtins:
 | `-list-users` | List all users |
 | `-enable-user` | Enable a user account |
 | `-disable-user` | Disable a user account |
+| `-add-service-account` | Add a new service account |
 | `-username string` | Username for user commands |
 | `-password string` | Password for user commands |
+| `-full-name string` | Full name for user management commands |
+| `-email string` | Email address for user management commands |
 | `-user-note string` | Annotation for new user |
 
 ### Group Management Options

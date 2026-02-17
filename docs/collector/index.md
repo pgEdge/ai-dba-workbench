@@ -53,7 +53,7 @@ The Collector provides the following capabilities:
 
 - Multi-server monitoring collects metrics from multiple PostgreSQL servers
   simultaneously with independent connection pools.
-- The system includes 29 built-in probes that provide comprehensive coverage
+- The system includes 34 built-in probes that provide comprehensive coverage
   of PostgreSQL system views and statistics.
 - Flexible scheduling allows configurable collection intervals per probe.
 - Automated data management handles weekly partitioning and retention-based

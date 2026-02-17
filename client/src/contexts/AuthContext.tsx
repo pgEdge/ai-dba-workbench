@@ -10,6 +10,7 @@
 /* eslint-disable react-refresh/only-export-components */
 
 import React, { createContext, useState, useContext, useEffect, useCallback, useMemo } from 'react';
+import { apiGet, apiPost } from '../utils/apiClient';
 
 export interface User {
     authenticated: boolean;
@@ -49,9 +50,6 @@ interface LoginResponse {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-// API base URL for authentication
-const API_BASE_URL = '/api/v1';
-
 export const AuthProvider = ({ children }: AuthProviderProps): React.ReactElement => {
     const [user, setUser] = useState<User | null>(null);
     const [loading, setLoading] = useState<boolean>(true);
@@ -65,15 +63,7 @@ export const AuthProvider = ({ children }: AuthProviderProps): React.ReactElemen
         try {
             // Validate session by calling the user info endpoint
             // The httpOnly cookie will be sent automatically with credentials: 'include'
-            const response = await fetch(`${API_BASE_URL}/user/info`, {
-                credentials: 'include'
-            });
-
-            if (!response.ok) {
-                throw new Error('Failed to fetch user info');
-            }
-
-            const userInfo: UserInfoResponse = await response.json();
+            const userInfo = await apiGet<UserInfoResponse>('/api/v1/user/info');
 
             if (userInfo.authenticated) {
                 setUser({
@@ -101,20 +91,7 @@ export const AuthProvider = ({ children }: AuthProviderProps): React.ReactElemen
         try {
             // Authenticate via REST API
             // The server will set an httpOnly cookie with the session token
-            const response = await fetch(`${API_BASE_URL}/auth/login`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                credentials: 'include', // Receive the httpOnly cookie
-                body: JSON.stringify({ username, password })
-            });
-
-            const result: LoginResponse = await response.json();
-
-            if (!response.ok) {
-                throw new Error(result.error || 'Login failed');
-            }
+            const result = await apiPost<LoginResponse>('/api/v1/auth/login', { username, password });
 
             if (!result.success) {
                 throw new Error(result.message || 'Authentication failed');
@@ -122,12 +99,8 @@ export const AuthProvider = ({ children }: AuthProviderProps): React.ReactElemen
 
             // Fetch full user info including superuser status
             // The httpOnly cookie will be sent automatically
-            const userInfoResponse = await fetch(`${API_BASE_URL}/user/info`, {
-                credentials: 'include'
-            });
-
-            if (userInfoResponse.ok) {
-                const userInfo: UserInfoResponse = await userInfoResponse.json();
+            try {
+                const userInfo = await apiGet<UserInfoResponse>('/api/v1/user/info');
                 setUser({
                     authenticated: true,
                     username: userInfo.username,
@@ -135,7 +108,7 @@ export const AuthProvider = ({ children }: AuthProviderProps): React.ReactElemen
                     expiresAt: result.expires_at
                 });
                 setAdminPermissions(userInfo.admin_permissions || []);
-            } else {
+            } catch {
                 // Fallback if user info fetch fails
                 setUser({
                     authenticated: true,
@@ -153,10 +126,7 @@ export const AuthProvider = ({ children }: AuthProviderProps): React.ReactElemen
     const logout = async (): Promise<void> => {
         try {
             // Call logout endpoint to clear the httpOnly cookie on the server
-            await fetch(`${API_BASE_URL}/auth/logout`, {
-                method: 'POST',
-                credentials: 'include'
-            });
+            await apiPost('/api/v1/auth/logout');
         } catch (error) {
             console.error('Logout request failed:', error);
             // Continue with local logout even if server request fails
@@ -179,10 +149,7 @@ export const AuthProvider = ({ children }: AuthProviderProps): React.ReactElemen
     // Force logout without any cleanup (used when session is invalidated)
     const forceLogout = async (): Promise<void> => {
         try {
-            await fetch(`${API_BASE_URL}/auth/logout`, {
-                method: 'POST',
-                credentials: 'include'
-            });
+            await apiPost('/api/v1/auth/logout');
         } catch {
             // Ignore errors during force logout
         }

@@ -10,6 +10,7 @@
 
 import { useState, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { apiGet, apiPut } from '../utils/apiClient';
 
 // Module-level cache for analysis results (persists across dialog open/close)
 const analysisCache = new Map<number, { analysis: string; metricValue: number }>();
@@ -270,14 +271,12 @@ async function fetchTimelineEvents(
         limit: '100',
     });
 
-    const response = await fetch(
-        `/api/v1/timeline/events?${params}`,
-        { credentials: 'include' }
-    );
-    if (!response.ok) { return ''; }
+    const data = await apiGet<{ events?: TimelineEvent[] }>(
+        `/api/v1/timeline/events?${params}`
+    ).catch(() => null);
+    if (!data) { return ''; }
 
-    const data = await response.json();
-    const events = data.events as TimelineEvent[] | undefined;
+    const events = data.events;
     if (!events || events.length === 0) { return ''; }
 
     const lines = events.map(e => {
@@ -339,9 +338,9 @@ export const useAlertAnalysis = (): UseAlertAnalysisReturn => {
         let connectionContext = '';
         let timelineContext = '';
         const [ctxResult, timelineResult] = await Promise.allSettled([
-            fetch(`/api/v1/connections/${alert.connectionId}/context`, {
-                credentials: 'include',
-            }).then(async r => r.ok ? formatConnectionContext(await r.json()) : ''),
+            apiGet<Record<string, unknown>>(`/api/v1/connections/${alert.connectionId}/context`)
+                .then(data => formatConnectionContext(data))
+                .catch(() => ''),
             fetchTimelineEvents(
                 alert.connectionId,
                 alert.triggeredAt || alert.time
@@ -469,15 +468,10 @@ Provide remediation recommendations and any threshold tuning suggestions.`;
                 });
 
                 // Save to server (fire-and-forget)
-                fetch('/api/v1/alerts/analysis', {
-                    method: 'PUT',
-                    credentials: 'include',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        alert_id: alert.id,
-                        analysis: analysisText,
-                        metric_value: metricVal,
-                    }),
+                apiPut('/api/v1/alerts/analysis', {
+                    alert_id: alert.id,
+                    analysis: analysisText,
+                    metric_value: metricVal,
                 }).catch(() => {});
             }
 

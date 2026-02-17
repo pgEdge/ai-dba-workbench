@@ -192,6 +192,10 @@ func SaveUserStore(path string, store *UserStore) error {
 
 // AddUser adds a new user to the store
 func (s *UserStore) AddUser(username, password, annotation string) error {
+	if err := ValidatePassword(password); err != nil {
+		return err
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -223,6 +227,12 @@ func (s *UserStore) AddUser(username, password, annotation string) error {
 
 // UpdateUser updates an existing user's password and/or annotation
 func (s *UserStore) UpdateUser(username, newPassword, newAnnotation string) error {
+	if newPassword != "" {
+		if err := ValidatePassword(newPassword); err != nil {
+			return err
+		}
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

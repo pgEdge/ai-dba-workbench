@@ -357,11 +357,11 @@ func TestGetGroupMembers(t *testing.T) {
 	parentID, _ := store.CreateGroup("parent", "Parent group")
 	childID, _ := store.CreateGroup("child", "Child group")
 
-	err := store.CreateUser("user1", "pass", "User 1", "", "")
+	err := store.CreateUser("user1", "password", "User 1", "", "")
 	if err != nil {
 		t.Fatalf("Failed to create user1: %v", err)
 	}
-	err = store.CreateUser("user2", "pass", "User 2", "", "")
+	err = store.CreateUser("user2", "password", "User 2", "", "")
 	if err != nil {
 		t.Fatalf("Failed to create user2: %v", err)
 	}

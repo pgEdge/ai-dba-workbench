@@ -34,8 +34,8 @@ The pgEdge AI DBA Workbench consists of four main components:
 - **[Alerter](alerter/README.md)** - A background monitoring service that
   evaluates collected metrics against thresholds and AI-powered anomaly
   detection to generate alerts
-- **Client** - A web-based user interface for interacting with the AI
-  Workbench (coming soon)
+- **[Client](client/README.md)** - A web-based user interface for
+  interacting with the AI Workbench
 
 ## Documentation
 

@@ -588,6 +588,14 @@ export function useChat(): UseChatReturn {
     const apiMessagesRef = useRef<APIMessage[]>([]);
     const conversationIdRef = useRef<string | null>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
+    // Ref to track visible messages within the sendMessage closure
+    // without depending on the `messages` state value.
+    const visibleMessagesRef = useRef<ChatMessageData[]>([]);
+
+    // Keep the visible messages ref in sync with React state.
+    useEffect(() => {
+        visibleMessagesRef.current = messages;
+    }, [messages]);
 
     /**
      * Keep the conversation id ref in sync with React state so
@@ -747,9 +755,13 @@ export function useChat(): UseChatReturn {
                 timestamp,
             };
 
-            // Append to visible messages
-            const updatedVisibleMessages = [...messages, userMessage];
-            setMessages(updatedVisibleMessages);
+            // Append to visible messages using functional update to
+            // avoid capturing stale `messages` from the closure.
+            setMessages(prev => {
+                const updated = [...prev, userMessage];
+                visibleMessagesRef.current = updated;
+                return updated;
+            });
 
             // Append to API message history (wire format, no UI fields)
             const userAPIMessage: APIMessage = {
@@ -954,12 +966,15 @@ export function useChat(): UseChatReturn {
                     ];
                 }
 
-                // Append the assistant reply to visible messages
+                // Append the assistant reply to visible messages.
+                // Read the latest visible messages from the ref to
+                // avoid stale closure issues.
                 const finalVisibleMessages = [
-                    ...updatedVisibleMessages,
+                    ...visibleMessagesRef.current,
                     finalAssistantMessage,
                 ];
                 setMessages(finalVisibleMessages);
+                visibleMessagesRef.current = finalVisibleMessages;
 
                 // --- Conversation persistence ---
 
@@ -1069,7 +1084,7 @@ export function useChat(): UseChatReturn {
                 }
             }
         },
-        [messages, availableTools, syncConversationId, refreshConversations, maybeCompact],
+        [availableTools, syncConversationId, refreshConversations, maybeCompact],
     );
 
     // ---------------------------------------------------------------
@@ -1090,6 +1105,7 @@ export function useChat(): UseChatReturn {
         setConversationTitle('New Chat');
         syncConversationId(null);
         apiMessagesRef.current = [];
+        visibleMessagesRef.current = [];
         // Intentionally preserve inputHistory across conversations
     }, [syncConversationId]);
 
@@ -1120,6 +1136,7 @@ export function useChat(): UseChatReturn {
                     await response.json();
 
                 setMessages(data.messages || []);
+                visibleMessagesRef.current = data.messages || [];
                 setConversationTitle(data.title || 'Conversation');
                 syncConversationId(id);
 

@@ -1,8 +1,6 @@
 # pgEdge AI DBA Workbench MCP Server
 
-[![Build Server](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/build-server.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/build-server.yml)
-[![Test Server](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/test-server.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/test-server.yml)
-[![Lint Server](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/lint-server.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/lint-server.yml)
+[![CI - Server](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-server.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-server.yml)
 
 The MCP (Model Context Protocol) Server provides AI assistants with standardized
 access to PostgreSQL systems through HTTP/HTTPS endpoints with authentication.

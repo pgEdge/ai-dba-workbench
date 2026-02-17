@@ -35,12 +35,19 @@ describe('AuthContext', () => {
         <AuthProvider>{children}</AuthProvider>
     );
 
+    // Helper to create a mock Response with both .json() and .text()
+    const mockResponse = (body: Record<string, unknown>, status = 200, ok = true) => ({
+        ok,
+        status,
+        json: () => Promise.resolve(body),
+        text: () => Promise.resolve(JSON.stringify(body)),
+    });
+
     // Helper to set up the initial checkAuth response (called on mount)
     const mockCheckAuthUnauthenticated = () => {
-        mockFetch.mockResolvedValueOnce({
-            ok: true,
-            json: () => Promise.resolve({ authenticated: false }),
-        });
+        mockFetch.mockResolvedValueOnce(
+            mockResponse({ authenticated: false })
+        );
     };
 
     const mockCheckAuthAuthenticated = (options?: {
@@ -48,15 +55,14 @@ describe('AuthContext', () => {
         is_superuser?: boolean;
         admin_permissions?: string[];
     }) => {
-        mockFetch.mockResolvedValueOnce({
-            ok: true,
-            json: () => Promise.resolve({
+        mockFetch.mockResolvedValueOnce(
+            mockResponse({
                 authenticated: true,
                 username: options?.username ?? 'testuser',
                 is_superuser: options?.is_superuser ?? false,
                 admin_permissions: options?.admin_permissions ?? [],
-            }),
-        });
+            })
+        );
     };
 
     const mockCheckAuthFailure = () => {
@@ -125,10 +131,9 @@ describe('AuthContext', () => {
             // Resolve the promise
             await act(async () => {
                 if (resolveCheckAuth) {
-                    resolveCheckAuth({
-                        ok: true,
-                        json: () => Promise.resolve({ authenticated: false }),
-                    });
+                    resolveCheckAuth(
+                        mockResponse({ authenticated: false })
+                    );
                 }
             });
 
@@ -190,13 +195,12 @@ describe('AuthContext', () => {
         });
 
         it('clears user when session check returns unauthenticated', async () => {
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve({
+            mockFetch.mockResolvedValueOnce(
+                mockResponse({
                     authenticated: false,
                     username: '',
-                }),
-            });
+                })
+            );
 
             const { result } = renderHook(() => useAuth(), { wrapper });
 
@@ -209,10 +213,9 @@ describe('AuthContext', () => {
         });
 
         it('clears user when session check returns a non-OK response', async () => {
-            mockFetch.mockResolvedValueOnce({
-                ok: false,
-                status: 401,
-            });
+            mockFetch.mockResolvedValueOnce(
+                mockResponse({}, 401, false)
+            );
 
             const { result } = renderHook(() => useAuth(), { wrapper });
 
@@ -231,7 +234,10 @@ describe('AuthContext', () => {
             await waitFor(() => {
                 expect(mockFetch).toHaveBeenCalledWith(
                     '/api/v1/user/info',
-                    { credentials: 'include' }
+                    expect.objectContaining({
+                        method: 'GET',
+                        credentials: 'include',
+                    })
                 );
             });
         });
@@ -249,24 +255,22 @@ describe('AuthContext', () => {
             });
 
             // Second call: login POST
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve({
+            mockFetch.mockResolvedValueOnce(
+                mockResponse({
                     success: true,
                     expires_at: '2026-03-01T00:00:00Z',
-                }),
-            });
+                })
+            );
 
             // Third call: user/info after login
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve({
+            mockFetch.mockResolvedValueOnce(
+                mockResponse({
                     authenticated: true,
                     username: 'testuser',
                     is_superuser: false,
                     admin_permissions: ['manage_probes'],
-                }),
-            });
+                })
+            );
 
             await act(async () => {
                 await result.current.login('testuser', 'password123');
@@ -291,24 +295,22 @@ describe('AuthContext', () => {
             });
 
             // Login POST
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve({
+            mockFetch.mockResolvedValueOnce(
+                mockResponse({
                     success: true,
                     expires_at: '2026-03-01T00:00:00Z',
-                }),
-            });
+                })
+            );
 
             // user/info after login
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve({
+            mockFetch.mockResolvedValueOnce(
+                mockResponse({
                     authenticated: true,
                     username: 'testuser',
                     is_superuser: false,
                     admin_permissions: [],
-                }),
-            });
+                })
+            );
 
             await act(async () => {
                 await result.current.login('testuser', 'password123');
@@ -316,12 +318,12 @@ describe('AuthContext', () => {
 
             expect(mockFetch).toHaveBeenCalledWith(
                 '/api/v1/auth/login',
-                {
+                expect.objectContaining({
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: expect.objectContaining({ 'Content-Type': 'application/json' }),
                     credentials: 'include',
                     body: JSON.stringify({ username: 'testuser', password: 'password123' }),
-                }
+                })
             );
         });
 
@@ -335,19 +337,17 @@ describe('AuthContext', () => {
             });
 
             // Login POST succeeds
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve({
+            mockFetch.mockResolvedValueOnce(
+                mockResponse({
                     success: true,
                     expires_at: '2026-03-01T00:00:00Z',
-                }),
-            });
+                })
+            );
 
             // user/info fails
-            mockFetch.mockResolvedValueOnce({
-                ok: false,
-                status: 500,
-            });
+            mockFetch.mockResolvedValueOnce(
+                mockResponse({}, 500, false)
+            );
 
             await act(async () => {
                 await result.current.login('fallbackuser', 'password123');
@@ -371,24 +371,22 @@ describe('AuthContext', () => {
             });
 
             // Login POST
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve({
+            mockFetch.mockResolvedValueOnce(
+                mockResponse({
                     success: true,
                     expires_at: '2026-03-01T00:00:00Z',
-                }),
-            });
+                })
+            );
 
             // user/info returns superuser
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve({
+            mockFetch.mockResolvedValueOnce(
+                mockResponse({
                     authenticated: true,
                     username: 'admin',
                     is_superuser: true,
                     admin_permissions: ['manage_users', 'manage_probes'],
-                }),
-            });
+                })
+            );
 
             await act(async () => {
                 await result.current.login('admin', 'adminpass');
@@ -410,13 +408,9 @@ describe('AuthContext', () => {
             });
 
             // Login POST returns 401
-            mockFetch.mockResolvedValueOnce({
-                ok: false,
-                status: 401,
-                json: () => Promise.resolve({
-                    error: 'Invalid credentials',
-                }),
-            });
+            mockFetch.mockResolvedValueOnce(
+                mockResponse({ error: 'Invalid credentials' }, 401, false)
+            );
 
             await expect(
                 act(async () => {
@@ -437,13 +431,12 @@ describe('AuthContext', () => {
             });
 
             // Login POST returns success=false
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve({
+            mockFetch.mockResolvedValueOnce(
+                mockResponse({
                     success: false,
                     message: 'Account locked',
-                }),
-            });
+                })
+            );
 
             await expect(
                 act(async () => {
@@ -485,17 +478,15 @@ describe('AuthContext', () => {
             });
 
             // Login POST returns non-OK with no error field
-            mockFetch.mockResolvedValueOnce({
-                ok: false,
-                status: 500,
-                json: () => Promise.resolve({}),
-            });
+            mockFetch.mockResolvedValueOnce(
+                mockResponse({}, 500, false)
+            );
 
             await expect(
                 act(async () => {
                     await result.current.login('testuser', 'password123');
                 })
-            ).rejects.toThrow('Login failed');
+            ).rejects.toThrow();
         });
     });
 
@@ -510,11 +501,10 @@ describe('AuthContext', () => {
                 expect(result.current.user).not.toBeNull();
             });
 
-            // Logout POST
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve({ success: true }),
-            });
+            // Logout POST (apiPost with no body returns 204-style or JSON)
+            mockFetch.mockResolvedValueOnce(
+                mockResponse({ success: true })
+            );
 
             await act(async () => {
                 await result.current.logout();
@@ -534,10 +524,9 @@ describe('AuthContext', () => {
                 expect(result.current.user).not.toBeNull();
             });
 
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve({ success: true }),
-            });
+            mockFetch.mockResolvedValueOnce(
+                mockResponse({ success: true })
+            );
 
             await act(async () => {
                 await result.current.logout();
@@ -545,10 +534,10 @@ describe('AuthContext', () => {
 
             expect(mockFetch).toHaveBeenCalledWith(
                 '/api/v1/auth/logout',
-                {
+                expect.objectContaining({
                     method: 'POST',
                     credentials: 'include',
-                }
+                })
             );
         });
 
@@ -587,10 +576,9 @@ describe('AuthContext', () => {
             });
 
             // forceLogout still sends the logout request
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve({ success: true }),
-            });
+            mockFetch.mockResolvedValueOnce(
+                mockResponse({ success: true })
+            );
 
             await act(async () => {
                 await result.current.forceLogout();

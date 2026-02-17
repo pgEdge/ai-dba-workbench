@@ -605,11 +605,31 @@ func (s *AuthStore) Close() error {
 }
 
 // =============================================================================
+// Password Validation
+// =============================================================================
+
+// MinPasswordLength is the minimum number of characters required for a password.
+const MinPasswordLength = 8
+
+// ValidatePassword checks that a password meets complexity requirements.
+// Currently enforces a minimum length of 8 characters.
+func ValidatePassword(password string) error {
+	if len(password) < MinPasswordLength {
+		return fmt.Errorf("password must be at least %d characters", MinPasswordLength)
+	}
+	return nil
+}
+
+// =============================================================================
 // User Management
 // =============================================================================
 
 // CreateUser creates a new user
 func (s *AuthStore) CreateUser(username, password, annotation, displayName, email string) error {
+	if err := ValidatePassword(password); err != nil {
+		return err
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -695,6 +715,12 @@ func (s *AuthStore) GetUserByID(id int64) (*StoredUser, error) {
 
 // UpdateUser updates a user's password, annotation, display name, and/or email
 func (s *AuthStore) UpdateUser(username, newPassword, newAnnotation, newDisplayName, newEmail string) error {
+	if newPassword != "" {
+		if err := ValidatePassword(newPassword); err != nil {
+			return err
+		}
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -754,8 +780,12 @@ func (s *AuthStore) UpdateUserAtomic(username string, update UserUpdate) error {
 		}
 	}()
 
-	// Update password if provided
+	// Validate and update password if provided
 	if update.Password != nil && *update.Password != "" {
+		if valErr := ValidatePassword(*update.Password); valErr != nil {
+			err = valErr
+			return err
+		}
 		hash, hashErr := bcrypt.GenerateFromPassword([]byte(*update.Password), 12)
 		if hashErr != nil {
 			err = fmt.Errorf("failed to hash password: %w", hashErr)

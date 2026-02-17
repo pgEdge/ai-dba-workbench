@@ -43,6 +43,7 @@ import {
     Send as SendIcon,
 } from '@mui/icons-material';
 import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
+import { apiGet, apiPost, apiPut, apiDelete } from '../../utils/apiClient';
 import {
     tableHeaderCellSx,
     dialogTitleSx,
@@ -55,8 +56,6 @@ import {
     getDeleteIconSx,
     getTableContainerSx,
 } from './styles';
-
-const API_BASE_URL = '/api/v1';
 
 interface EmailChannel {
     id: number;
@@ -147,12 +146,8 @@ const AdminEmailChannels: React.FC = () => {
     const fetchChannels = useCallback(async () => {
         try {
             setLoading(true);
-            const response = await fetch(`${API_BASE_URL}/notification-channels`, {
-                credentials: 'include',
-            });
-            if (!response.ok) {throw new Error('Failed to fetch notification channels');}
-            const data = await response.json();
-            const allChannels = data.notification_channels || data || [];
+            const data = await apiGet<Record<string, unknown>>('/api/v1/notification-channels');
+            const allChannels = (data.notification_channels || data || []) as Record<string, unknown>[];
             const emailChannels: EmailChannel[] = allChannels
                 .filter((ch: Record<string, unknown>) => ch.channel_type === 'email')
                 .map((ch: Record<string, unknown>) => ({
@@ -190,13 +185,10 @@ const AdminEmailChannels: React.FC = () => {
     const fetchRecipients = useCallback(async (channelId: number) => {
         try {
             setRecipientsLoading(true);
-            const response = await fetch(
-                `${API_BASE_URL}/notification-channels/${channelId}/recipients`,
-                { credentials: 'include' }
+            const data = await apiGet<Record<string, unknown>>(
+                `/api/v1/notification-channels/${channelId}/recipients`
             );
-            if (!response.ok) {throw new Error('Failed to fetch recipients');}
-            const data = await response.json();
-            const raw = data.recipients || data || [];
+            const raw = (data.recipients || data || []) as Record<string, unknown>[];
             const mapped: EmailRecipient[] = raw.map(
                 (r: Record<string, unknown>) => ({
                     id: r.id as number,
@@ -327,19 +319,7 @@ const AdminEmailChannels: React.FC = () => {
                     body.from_name = form.from_name.trim();
                 }
 
-                const response = await fetch(
-                    `${API_BASE_URL}/notification-channels/${editingChannel.id}`,
-                    {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        credentials: 'include',
-                        body: JSON.stringify(body),
-                    }
-                );
-                if (!response.ok) {
-                    const data = await response.json();
-                    throw new Error(data.error || 'Failed to update channel');
-                }
+                await apiPut(`/api/v1/notification-channels/${editingChannel.id}`, body);
                 setSuccess(`Channel "${form.name.trim()}" updated successfully.`);
             } else {
                 // Create
@@ -357,37 +337,19 @@ const AdminEmailChannels: React.FC = () => {
                     from_address: form.from_address.trim(),
                     from_name: form.from_name.trim(),
                 };
-                const response = await fetch(
-                    `${API_BASE_URL}/notification-channels`,
-                    {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        credentials: 'include',
-                        body: JSON.stringify(body),
-                    }
-                );
-                if (!response.ok) {
-                    const data = await response.json();
-                    throw new Error(data.error || 'Failed to create channel');
-                }
+                const createData = await apiPost<Record<string, unknown>>('/api/v1/notification-channels', body);
 
                 // Add any pending recipients to the newly created channel
                 if (pendingRecipients.length > 0) {
-                    const createData = await response.json();
-                    const newChannelId = createData.id || createData.channel?.id;
+                    const newChannelId = createData.id || (createData.channel as Record<string, unknown>)?.id;
                     if (newChannelId) {
                         for (const pending of pendingRecipients) {
-                            await fetch(
-                                `${API_BASE_URL}/notification-channels/${newChannelId}/recipients`,
+                            await apiPost(
+                                `/api/v1/notification-channels/${newChannelId}/recipients`,
                                 {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    credentials: 'include',
-                                    body: JSON.stringify({
-                                        email_address: pending.email,
-                                        display_name: pending.name,
-                                        enabled: true,
-                                    }),
+                                    email_address: pending.email,
+                                    display_name: pending.name,
+                                    enabled: true,
                                 }
                             );
                         }
@@ -426,13 +388,7 @@ const AdminEmailChannels: React.FC = () => {
         if (!deleteChannel) {return;}
         try {
             setDeleteLoading(true);
-            const response = await fetch(
-                `${API_BASE_URL}/notification-channels/${deleteChannel.id}`,
-                { method: 'DELETE', credentials: 'include' }
-            );
-            if (!response.ok) {
-                throw new Error('Failed to delete channel');
-            }
+            await apiDelete(`/api/v1/notification-channels/${deleteChannel.id}`);
             setDeleteOpen(false);
             setDeleteChannel(null);
             setSuccess(`Channel "${deleteChannel.name}" deleted successfully.`);
@@ -452,19 +408,7 @@ const AdminEmailChannels: React.FC = () => {
 
     const handleToggleEnabled = async (channel: EmailChannel) => {
         try {
-            const response = await fetch(
-                `${API_BASE_URL}/notification-channels/${channel.id}`,
-                {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'include',
-                    body: JSON.stringify({ enabled: !channel.enabled }),
-                }
-            );
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.error || 'Failed to update channel');
-            }
+            await apiPut(`/api/v1/notification-channels/${channel.id}`, { enabled: !channel.enabled });
             fetchChannels();
         } catch (err: unknown) {
             if (err instanceof Error) {
@@ -482,17 +426,7 @@ const AdminEmailChannels: React.FC = () => {
         try {
             setTestingChannelId(channel.id);
             setError(null);
-            const response = await fetch(
-                `${API_BASE_URL}/notification-channels/${channel.id}/test`,
-                {
-                    method: 'POST',
-                    credentials: 'include',
-                }
-            );
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.error || 'Failed to send test email');
-            }
+            await apiPost(`/api/v1/notification-channels/${channel.id}/test`);
             setSuccess(`Test email sent successfully for "${channel.name}".`);
         } catch (err: unknown) {
             if (err instanceof Error) {
@@ -525,23 +459,14 @@ const AdminEmailChannels: React.FC = () => {
         try {
             setRecipientSaving(true);
             setDialogError(null);
-            const response = await fetch(
-                `${API_BASE_URL}/notification-channels/${editingChannel.id}/recipients`,
+            await apiPost(
+                `/api/v1/notification-channels/${editingChannel.id}/recipients`,
                 {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'include',
-                    body: JSON.stringify({
-                        email_address: newRecipientEmail.trim(),
-                        display_name: newRecipientName.trim(),
-                        enabled: true,
-                    }),
+                    email_address: newRecipientEmail.trim(),
+                    display_name: newRecipientName.trim(),
+                    enabled: true,
                 }
             );
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.error || 'Failed to add recipient');
-            }
             setNewRecipientEmail('');
             setNewRecipientName('');
             fetchRecipients(editingChannel.id);
@@ -560,19 +485,10 @@ const AdminEmailChannels: React.FC = () => {
         if (!editingChannel) {return;}
         try {
             setRecipientSaving(true);
-            const response = await fetch(
-                `${API_BASE_URL}/notification-channels/${editingChannel.id}/recipients/${recipient.id}`,
-                {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'include',
-                    body: JSON.stringify({ enabled: !recipient.enabled }),
-                }
+            await apiPut(
+                `/api/v1/notification-channels/${editingChannel.id}/recipients/${recipient.id}`,
+                { enabled: !recipient.enabled }
             );
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.error || 'Failed to update recipient');
-            }
             fetchRecipients(editingChannel.id);
         } catch (err: unknown) {
             if (err instanceof Error) {
@@ -589,16 +505,9 @@ const AdminEmailChannels: React.FC = () => {
         if (!editingChannel) {return;}
         try {
             setRecipientSaving(true);
-            const response = await fetch(
-                `${API_BASE_URL}/notification-channels/${editingChannel.id}/recipients/${recipient.id}`,
-                {
-                    method: 'DELETE',
-                    credentials: 'include',
-                }
+            await apiDelete(
+                `/api/v1/notification-channels/${editingChannel.id}/recipients/${recipient.id}`
             );
-            if (!response.ok) {
-                throw new Error('Failed to delete recipient');
-            }
             fetchRecipients(editingChannel.id);
         } catch (err: unknown) {
             if (err instanceof Error) {

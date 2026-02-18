@@ -1,17 +1,14 @@
 /*-------------------------------------------------------------------------
  *
- * pgEdge AI DBA Workbench - Chart Analysis Dialog
+ * pgEdge AI DBA Workbench
  *
  * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
- * Dialog component for displaying AI-powered chart data analysis with
- * professional analytics aesthetic and markdown rendering
- *
  *-------------------------------------------------------------------------
  */
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import {
     Box,
     Typography,
@@ -31,9 +28,10 @@ import {
     Download as DownloadIcon,
     Psychology as PsychologyIcon,
     Error as ErrorIcon,
+    Storage as ServerIcon,
+    Dns as ClusterIcon,
 } from '@mui/icons-material';
-import { useChartAnalysis, ChartAnalysisInput } from '../hooks/useChartAnalysis';
-import { ChartData, ChartAnalysisContext } from './Chart/types';
+import { useServerAnalysis, ServerAnalysisInput } from '../hooks/useServerAnalysis';
 import {
     MarkdownContent,
     AnalysisSkeleton,
@@ -50,6 +48,17 @@ import {
     getDownloadButtonSx,
 } from './shared/MarkdownContent';
 
+const TOOL_LABELS = [
+    'Querying metrics',
+    'Fetching metric baselines',
+    'Reviewing alert history',
+    'Checking alert rules',
+    'Querying database',
+    'Inspecting schema',
+    'Listing probes',
+    'Examining probe details',
+];
+
 const Transition = React.forwardRef(function Transition(
     props: TransitionProps & { children: React.ReactElement },
     ref: React.Ref<unknown>,
@@ -58,10 +67,10 @@ const Transition = React.forwardRef(function Transition(
 });
 
 // ---------------------------------------------------------------------------
-// Chart-specific style constants and style-getter functions
+// Server-specific style constants and style-getter functions
 // ---------------------------------------------------------------------------
 
-const getConnectionBadgeSx = (theme: Theme) => ({
+const getServerBadgeSx = (theme: Theme) => ({
     display: 'flex',
     alignItems: 'center',
     gap: 0.5,
@@ -74,27 +83,6 @@ const getConnectionBadgeSx = (theme: Theme) => ({
     ),
 });
 
-const getDatabaseBadgeSx = (theme: Theme) => ({
-    display: 'flex',
-    alignItems: 'center',
-    gap: 0.5,
-    px: 0.75,
-    py: 0.25,
-    borderRadius: 0.5,
-    bgcolor: alpha(
-        theme.palette.secondary.main,
-        theme.palette.mode === 'dark' ? 0.2 : 0.1
-    ),
-});
-
-const getDatabaseTextSx = (theme: Theme) => ({
-    fontSize: '0.875rem',
-    color: theme.palette.mode === 'dark'
-        ? theme.palette.secondary.light
-        : theme.palette.secondary.main,
-    ...sxMonoFont,
-});
-
 const sxMonoSmall = {
     fontSize: '0.875rem',
     color: 'text.secondary',
@@ -102,104 +90,66 @@ const sxMonoSmall = {
 };
 
 // ---------------------------------------------------------------------------
-// Helper: slugify a string for use in filenames
-// ---------------------------------------------------------------------------
-
-const slugify = (text: string): string =>
-    text
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '');
-
-const TOOL_LABELS = [
-    'Preparing chart data',
-    'Fetching server context',
-    'Fetching timeline events',
-    'Analyzing data',
-];
-
-// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-interface ChartAnalysisDialogProps {
+/**
+ * ServerAnalysisDialog - Dialog for displaying AI-powered server/cluster analysis
+ */
+interface ServerAnalysisDialogProps {
     open: boolean;
+    selection: ServerAnalysisInput | null;
     onClose: () => void;
     isDark: boolean;
-    analysisContext: ChartAnalysisContext;
-    chartData: ChartData;
 }
 
-const ChartAnalysisDialog: React.FC<ChartAnalysisDialogProps> = ({
-    open,
-    onClose,
-    isDark,
-    analysisContext,
-    chartData,
-}) => {
+const ServerAnalysisDialog: React.FC<ServerAnalysisDialogProps> = ({ open, selection, onClose, isDark }) => {
     const theme = useTheme();
-    const { analysis, loading, error, progressMessage, activeTools, analyze } = useChartAnalysis();
+    const { analysis, loading, error, progressMessage, activeTools, analyze, reset } = useServerAnalysis();
 
-    // Trigger analysis once when dialog opens; ignore subsequent chartData
-    // changes from dashboard polling while the dialog remains open.
-    const hasTriggeredRef = useRef(false);
-
+    // Trigger analysis when dialog opens with a selection
     useEffect(() => {
-        if (open && !hasTriggeredRef.current) {
-            hasTriggeredRef.current = true;
-            if (!analysis) {
-                const input: ChartAnalysisInput = {
-                    metricDescription: analysisContext.metricDescription,
-                    connectionId: analysisContext.connectionId,
-                    connectionName: analysisContext.connectionName,
-                    databaseName: analysisContext.databaseName,
-                    timeRange: analysisContext.timeRange,
-                    data: chartData,
-                };
-                analyze(input);
-            }
+        if (open && selection) {
+            analyze(selection);
         }
-        if (!open) {
-            hasTriggeredRef.current = false;
-        }
-    }, [open, analysis, analysisContext, chartData, analyze]);
+    }, [open, selection, analyze]);
 
+    // Reset state when dialog closes
     const handleClose = () => {
+        reset();
         onClose();
     };
 
+    // Build connection map for cluster analysis
+    const connectionMap = useMemo(() => {
+        if (!selection || selection.type !== 'cluster' || !selection.servers) {
+            return undefined;
+        }
+        const map = new Map<number, string>();
+        for (const server of selection.servers) {
+            map.set(server.id, server.name);
+        }
+        return map;
+    }, [selection]);
+
     // Download analysis as markdown file
     const handleDownload = () => {
-        if (!analysis) { return; }
+        if (!analysis || !selection) return;
 
         const timestamp = new Date().toISOString().split('T')[0];
-        const slug = slugify(analysisContext.metricDescription || 'chart');
-        const filename = `chart-analysis-${slug}-${timestamp}.md`;
+        const typeLabel = selection.type === 'cluster' ? 'cluster' : 'server';
+        const filename = `${typeLabel}-analysis-${selection.name || 'unknown'}-${timestamp}.md`;
 
-        const connectionLine = analysisContext.connectionName
-            ? `- **Connection:** ${analysisContext.connectionName}\n`
-            : '';
-        const databaseLine = analysisContext.databaseName
-            ? `- **Database:** ${analysisContext.databaseName}\n`
-            : '';
-        const timeRangeLine = analysisContext.timeRange
-            ? `- **Time Range:** ${analysisContext.timeRange}\n`
-            : '';
+        let header = `# ${selection.type === 'cluster' ? 'Cluster' : 'Server'} Analysis Report\n\n`;
+        header += `## Details\n\n`;
+        header += `- **Name:** ${selection.name || 'N/A'}\n`;
+        header += `- **Type:** ${selection.type === 'cluster' ? 'Cluster' : 'Server'}\n`;
+        if (selection.type === 'cluster' && selection.servers) {
+            header += `- **Servers:** ${selection.servers.map(s => s.name).join(', ')}\n`;
+        }
+        header += '\n---\n\n';
 
-        const content = `# Chart Analysis Report
-
-## Chart Details
-
-- **Metric:** ${analysisContext.metricDescription || 'N/A'}
-${connectionLine}${databaseLine}${timeRangeLine}
----
-
-${analysis}
-
----
-
-*Generated by pgEdge AI DBA Workbench on ${new Date().toISOString()}*
-`;
+        const content = `${header}${analysis}\n\n---\n\n*Generated by pgEdge AI DBA Workbench on ${new Date().toISOString()}*\n`;
 
         const blob = new Blob([content], { type: 'text/markdown' });
         const url = URL.createObjectURL(blob);
@@ -211,6 +161,9 @@ ${analysis}
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
     };
+
+    const isCluster = selection?.type === 'cluster';
+    const TypeIcon = isCluster ? ClusterIcon : ServerIcon;
 
     return (
         <Dialog
@@ -241,13 +194,13 @@ ${analysis}
                     <IconButton
                         edge="start"
                         onClick={handleClose}
-                        aria-label="close chart analysis"
+                        aria-label="close server analysis"
                         sx={{ color: 'text.secondary' }}
                     >
                         <CloseIcon />
                     </IconButton>
 
-                    {/* Icon (no severity dot) */}
+                    {/* Icon */}
                     <Box sx={getIconBoxSx(theme)}>
                         <PsychologyIcon sx={getIconColorSx(theme)} />
                     </Box>
@@ -262,36 +215,21 @@ ${analysis}
                             whiteSpace: 'nowrap',
                         }}
                     >
-                        Chart analysis
+                        {isCluster ? 'Cluster analysis' : 'Server analysis'}
                     </Typography>
 
-                    {/* Metric description */}
-                    <Typography sx={{ fontSize: '0.875rem', color: 'text.secondary' }}>
-                        {analysisContext.metricDescription || 'Chart'}
-                    </Typography>
+                    {/* Name pill */}
+                    <Box sx={getServerBadgeSx(theme)}>
+                        <TypeIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
+                        <Typography sx={sxMonoSmall}>
+                            {selection?.name || 'Unknown'}
+                        </Typography>
+                    </Box>
 
-                    {/* Connection pill */}
-                    {analysisContext.connectionName && (
-                        <Box sx={getConnectionBadgeSx(theme)}>
-                            <Typography sx={sxMonoSmall}>
-                                {analysisContext.connectionName}
-                            </Typography>
-                        </Box>
-                    )}
-
-                    {/* Database pill */}
-                    {analysisContext.databaseName && (
-                        <Box sx={getDatabaseBadgeSx(theme)}>
-                            <Typography sx={getDatabaseTextSx(theme)}>
-                                {analysisContext.databaseName}
-                            </Typography>
-                        </Box>
-                    )}
-
-                    {/* Time range */}
-                    {analysisContext.timeRange && (
+                    {/* Server count for clusters */}
+                    {isCluster && selection?.servers && (
                         <Typography sx={{ fontSize: '0.875rem', color: 'text.disabled' }}>
-                            {analysisContext.timeRange}
+                            {selection.servers.length} server{selection.servers.length !== 1 ? 's' : ''}
                         </Typography>
                     )}
 
@@ -407,11 +345,19 @@ ${analysis}
                         {analysis && !loading && (
                             <Box sx={getAnalysisBoxSx(theme)}>
                                 <MarkdownContent
-                                    content={`# Chart Analysis: ${analysisContext.metricDescription || 'Chart'}\n\n${analysis}`}
+                                    content={`# ${selection?.type === 'cluster' ? 'Cluster' : 'Server'} Analysis: ${selection?.name || 'Unknown'}\n\n${analysis}`}
                                     isDark={isDark}
-                                    connectionId={analysisContext.connectionId}
-                                    databaseName={analysisContext.databaseName}
-                                    serverName={analysisContext.connectionName}
+                                    connectionId={
+                                        selection?.type === 'server'
+                                            ? (selection.id as number)
+                                            : undefined
+                                    }
+                                    serverName={
+                                        selection?.type === 'server'
+                                            ? selection.name
+                                            : undefined
+                                    }
+                                    connectionMap={connectionMap}
                                 />
                             </Box>
                         )}
@@ -422,5 +368,4 @@ ${analysis}
     );
 };
 
-export { ChartAnalysisDialog };
-export default ChartAnalysisDialog;
+export default ServerAnalysisDialog;

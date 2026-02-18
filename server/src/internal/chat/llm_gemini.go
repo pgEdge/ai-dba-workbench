@@ -130,7 +130,7 @@ func extractGeminiError(body []byte) string {
 	return ""
 }
 
-func (c *geminiClient) Chat(ctx context.Context, messages []Message, tools interface{}) (LLMResponse, error) {
+func (c *geminiClient) Chat(ctx context.Context, messages []Message, tools interface{}, customSystemPrompt string) (LLMResponse, error) {
 	startTime := time.Now()
 	operation := "chat"
 	url := fmt.Sprintf("%s/v1beta/models/%s:generateContent?key=%s", c.baseURL, c.model, c.apiKey)
@@ -285,9 +285,13 @@ func (c *geminiClient) Chat(ctx context.Context, messages []Message, tools inter
 		}
 	}
 
-	// Build system instruction
+	// Build system instruction; use custom prompt if provided, otherwise default
+	activePrompt := systemPrompt
+	if customSystemPrompt != "" {
+		activePrompt = customSystemPrompt
+	}
 	systemInstruction := &geminiContent{
-		Parts: []geminiPart{{Text: systemPrompt}},
+		Parts: []geminiPart{{Text: activePrompt}},
 	}
 
 	// Build generation config

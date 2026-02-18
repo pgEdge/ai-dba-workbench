@@ -97,7 +97,7 @@ func (s *Server) RunHTTP(config *HTTPConfig) error {
 		Addr:         config.Addr,
 		Handler:      handler,
 		ReadTimeout:  30 * time.Second,  // Prevents slow request body attacks
-		WriteTimeout: 60 * time.Second,  // Prevents slow response reading attacks
+		WriteTimeout: 300 * time.Second, // Must accommodate long LLM agentic loops (e.g. server analysis)
 		IdleTimeout:  120 * time.Second, // Limits keep-alive connection duration
 	}
 

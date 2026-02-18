@@ -676,7 +676,7 @@ func (h *ServerInfoHandler) getAIAnalysis(
 		},
 	}
 
-	resp, err := client.Chat(ctx, messages, nil)
+	resp, err := client.Chat(ctx, messages, nil, "")
 	if err != nil {
 		log.Printf("[ERROR] AI analysis failed for connection %d: %v",
 			connectionID, err)

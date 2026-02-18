@@ -51,6 +51,13 @@ import {
     getDownloadButtonSx,
 } from './shared/MarkdownContent';
 
+const TOOL_LABELS = [
+    'Querying metrics',
+    'Fetching metric baselines',
+    'Reviewing alert history',
+    'Checking alert rules',
+];
+
 const Transition = React.forwardRef(function Transition(
     props: TransitionProps & { children: React.ReactElement },
     ref: React.Ref<unknown>,
@@ -166,7 +173,7 @@ interface AlertAnalysisDialogProps {
 
 const AlertAnalysisDialog: React.FC<AlertAnalysisDialogProps> = ({ open, alert, onClose, onAnalysisComplete, isDark }) => {
     const theme = useTheme();
-    const { analysis, loading, error, analyze, reset } = useAlertAnalysis();
+    const { analysis, loading, error, progressMessage, activeTools, analyze, reset } = useAlertAnalysis();
 
     // Trigger analysis when dialog opens with an alert
     useEffect(() => {
@@ -396,9 +403,47 @@ ${analysis}
                             <Box>
                                 <Box sx={getLoadingBannerSx(theme)}>
                                     <Box sx={getPulseDotSx(theme)} />
-                                    <Typography sx={getLoadingTextSx(theme)}>
-                                        Analyzing alert and gathering context...
-                                    </Typography>
+                                    <Box sx={{ flex: 1 }}>
+                                        <Typography sx={getLoadingTextSx(theme)}>
+                                            {progressMessage}
+                                        </Typography>
+                                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 1 }}>
+                                            {TOOL_LABELS.map(label => {
+                                                const isActive = activeTools.includes(label);
+                                                return (
+                                                    <Box
+                                                        key={label}
+                                                        sx={{
+                                                            px: 1,
+                                                            py: 0.25,
+                                                            borderRadius: 0.75,
+                                                            fontSize: '0.75rem',
+                                                            fontWeight: 500,
+                                                            fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+                                                            border: '1px solid',
+                                                            ...(isActive
+                                                                ? {
+                                                                    transition: 'all 0.3s ease',
+                                                                    color: theme.palette.mode === 'dark'
+                                                                        ? theme.palette.success.light
+                                                                        : theme.palette.success.main,
+                                                                    borderColor: alpha(theme.palette.success.main, 0.4),
+                                                                    bgcolor: alpha(theme.palette.success.main, theme.palette.mode === 'dark' ? 0.15 : 0.08),
+                                                                }
+                                                                : {
+                                                                    transition: 'all 2.5s ease',
+                                                                    color: theme.palette.text.disabled,
+                                                                    borderColor: alpha(theme.palette.divider, 0.5),
+                                                                    bgcolor: 'transparent',
+                                                                }),
+                                                        }}
+                                                    >
+                                                        {label}
+                                                    </Box>
+                                                );
+                                            })}
+                                        </Box>
+                                    </Box>
                                 </Box>
                                 <AnalysisSkeleton />
                             </Box>
@@ -428,7 +473,7 @@ ${analysis}
                         {analysis && !loading && (
                             <Box sx={getAnalysisBoxSx(theme)}>
                                 <MarkdownContent
-                                    content={analysis}
+                                    content={`# Alert Analysis: ${alert?.title || 'Alert'}\n\n${analysis}`}
                                     isDark={isDark}
                                     connectionId={alert?.connectionId as number | undefined}
                                     databaseName={alert?.databaseName as string | undefined}

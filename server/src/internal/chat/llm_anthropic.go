@@ -94,7 +94,7 @@ func extractAnthropicError(body []byte) string {
 	return ""
 }
 
-func (c *anthropicClient) Chat(ctx context.Context, messages []Message, tools interface{}) (LLMResponse, error) {
+func (c *anthropicClient) Chat(ctx context.Context, messages []Message, tools interface{}, customSystemPrompt string) (LLMResponse, error) {
 	startTime := time.Now()
 	operation := "chat"
 	url := c.baseURL + "/messages"
@@ -127,11 +127,15 @@ func (c *anthropicClient) Chat(ctx context.Context, messages []Message, tools in
 		anthropicTools = append(anthropicTools, toolDef)
 	}
 
-	// Create system message for better UX
+	// Create system message; use custom prompt if provided, otherwise default
+	activePrompt := systemPrompt
+	if customSystemPrompt != "" {
+		activePrompt = customSystemPrompt
+	}
 	systemMessage := []map[string]interface{}{
 		{
 			"type": "text",
-			"text": systemPrompt,
+			"text": activePrompt,
 		},
 	}
 

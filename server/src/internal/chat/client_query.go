@@ -66,7 +66,7 @@ func (c *Client) processQuery(ctx context.Context, query string) error {
 		compactedMessages := c.compactMessages(c.messages)
 
 		// Get response from LLM with compacted history
-		response, err := c.llm.Chat(reqCtx, compactedMessages, c.tools)
+		response, err := c.llm.Chat(reqCtx, compactedMessages, c.tools, "")
 		if err != nil {
 			waitForGoroutines()
 			// Check if this was a user cancellation (Escape key)

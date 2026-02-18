@@ -19,8 +19,12 @@ import {
     useTheme,
     CircularProgress,
     Tooltip,
+    Select,
+    MenuItem,
+    FormControl,
 } from '@mui/material';
 import { Theme } from '@mui/material/styles';
+import type { SelectChangeEvent } from '@mui/material';
 import {
     Close as CloseIcon,
     Error as ErrorIcon,
@@ -68,7 +72,7 @@ const sxMonoFont = {
 const sxH3 = {
     fontWeight: 600,
     color: 'text.primary',
-    fontSize: '1.125rem',
+    fontSize: '1.0625rem',
     mt: 2,
     mb: 0.75,
 };
@@ -124,14 +128,14 @@ const getHeadingSx = (theme: Theme) => ({
 
 const sxH1 = (theme: Theme) => ({
     ...getHeadingSx(theme),
-    fontSize: '1.125rem',
+    fontSize: '1.75rem',
     mt: 2,
     mb: 1,
 });
 
 const sxH2 = (theme: Theme) => ({
     ...getHeadingSx(theme),
-    fontSize: '1rem',
+    fontSize: '1.25rem',
     mt: 2.5,
     mb: 1,
 });
@@ -1013,6 +1017,78 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
 };
 
 /**
+ * ConnectionSelectorCodeBlock - wraps a RunnableCodeBlock with a dropdown
+ * that lets the user choose which cluster node to run the SQL against.
+ */
+interface ConnectionSelectorCodeBlockProps {
+    codeContent: string;
+    language: string;
+    isDark: boolean;
+    connectionMap: Map<number, string>;
+    databaseName?: string;
+    syntaxTheme: Record<string, unknown>;
+    customBackground: string;
+    theme: Theme;
+    props: Record<string, unknown>;
+}
+
+const ConnectionSelectorCodeBlock: React.FC<ConnectionSelectorCodeBlockProps> = ({
+    codeContent,
+    language,
+    isDark,
+    connectionMap,
+    databaseName,
+    syntaxTheme,
+    customBackground,
+    theme,
+    props,
+}) => {
+    const entries = Array.from(connectionMap.entries());
+    const [selectedId, setSelectedId] = useState<number>(entries[0]?.[0] ?? 0);
+
+    const handleChange = useCallback((event: SelectChangeEvent<number>) => {
+        setSelectedId(event.target.value as number);
+    }, []);
+
+    const selectedName = connectionMap.get(selectedId) || '';
+
+    return (
+        <Box>
+            <FormControl size="small" sx={{ mb: 0.5, minWidth: 200 }}>
+                <Select
+                    value={selectedId}
+                    onChange={handleChange}
+                    sx={{
+                        fontSize: '0.875rem',
+                        ...sxMonoFont,
+                        '& .MuiSelect-select': { py: 0.5, px: 1 },
+                    }}
+                >
+                    {entries.map(([id, name]) => (
+                        <MenuItem key={id} value={id} sx={{ fontSize: '0.875rem', ...sxMonoFont }}>
+                            {name} (ID: {id})
+                        </MenuItem>
+                    ))}
+                </Select>
+            </FormControl>
+            <RunnableCodeBlock
+                codeContent={codeContent}
+                language={language}
+                isDark={isDark}
+                connectionId={selectedId}
+                databaseName={databaseName}
+                serverName={selectedName}
+                syntaxTheme={syntaxTheme}
+                customBackground={customBackground}
+                theme={theme}
+                isSql={true}
+                props={props}
+            />
+        </Box>
+    );
+};
+
+/**
  * Styled markdown content component using react-markdown
  */
 interface MarkdownContentProps {
@@ -1021,6 +1097,7 @@ interface MarkdownContentProps {
     connectionId?: number;
     databaseName?: string;
     serverName?: string;
+    connectionMap?: Map<number, string>;
 }
 
 const MarkdownContent: React.FC<MarkdownContentProps> = ({
@@ -1029,6 +1106,7 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
     connectionId,
     databaseName,
     serverName,
+    connectionMap,
 }) => {
     const theme = useTheme();
 
@@ -1093,22 +1171,65 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
 
             const sqlDetected = isSqlCodeBlock(className, codeString);
 
-            if (sqlDetected && connectionId) {
-                return (
-                    <RunnableCodeBlock
-                        codeContent={codeString}
-                        language={language}
-                        isDark={isDark}
-                        connectionId={connectionId}
-                        databaseName={databaseName}
-                        serverName={serverName}
-                        syntaxTheme={cleanTheme}
-                        customBackground={customBackground}
-                        theme={theme}
-                        isSql={true}
-                        props={props}
-                    />
-                );
+            if (sqlDetected) {
+                // Server analysis: direct connection ID
+                if (connectionId) {
+                    return (
+                        <RunnableCodeBlock
+                            codeContent={codeString}
+                            language={language}
+                            isDark={isDark}
+                            connectionId={connectionId}
+                            databaseName={databaseName}
+                            serverName={serverName}
+                            syntaxTheme={cleanTheme}
+                            customBackground={customBackground}
+                            theme={theme}
+                            isSql={true}
+                            props={props}
+                        />
+                    );
+                }
+
+                // Cluster analysis: parse connection_id comment or show selector
+                if (connectionMap && connectionMap.size > 0) {
+                    const connectionIdMatch = codeString.match(/^--\s*connection_id:\s*(\d+)\s*\n/);
+                    if (connectionIdMatch) {
+                        const targetId = parseInt(connectionIdMatch[1], 10);
+                        const targetName = connectionMap.get(targetId) || `Server ${targetId}`;
+                        const strippedCode = codeString.replace(/^--\s*connection_id:\s*\d+\s*\n/, '');
+                        return (
+                            <RunnableCodeBlock
+                                codeContent={strippedCode}
+                                language={language}
+                                isDark={isDark}
+                                connectionId={targetId}
+                                databaseName={databaseName}
+                                serverName={targetName}
+                                syntaxTheme={cleanTheme}
+                                customBackground={customBackground}
+                                theme={theme}
+                                isSql={true}
+                                props={props}
+                            />
+                        );
+                    }
+
+                    // No connection_id comment - show selector
+                    return (
+                        <ConnectionSelectorCodeBlock
+                            codeContent={codeString}
+                            language={language}
+                            isDark={isDark}
+                            connectionMap={connectionMap}
+                            databaseName={databaseName}
+                            syntaxTheme={cleanTheme}
+                            customBackground={customBackground}
+                            theme={theme}
+                            props={props}
+                        />
+                    );
+                }
             }
 
             return (
@@ -1156,7 +1277,7 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
                 {children}
             </Box>
         ),
-    }), [isDark, theme, connectionId, databaseName, serverName]);
+    }), [isDark, theme, connectionId, databaseName, serverName, connectionMap]);
 
     if (!content) {return null;}
 
@@ -1206,6 +1327,7 @@ const AnalysisSkeleton = () => {
 export {
     // Components
     RunnableCodeBlock,
+    ConnectionSelectorCodeBlock,
     MarkdownContent,
     AnalysisSkeleton,
 

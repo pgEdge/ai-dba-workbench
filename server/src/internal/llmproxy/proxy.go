@@ -85,6 +85,7 @@ type ModelInfo struct {
 type ChatRequest struct {
 	Messages []Message `json:"messages"`
 	Tools    []Tool    `json:"tools"`
+	System   string    `json:"system,omitempty"`   // Optional system prompt override
 	Provider string    `json:"provider,omitempty"` // Override default provider
 	Model    string    `json:"model,omitempty"`    // Override default model
 	Debug    bool      `json:"debug,omitempty"`    // Enable debug mode for token usage
@@ -341,7 +342,7 @@ func HandleChat(w http.ResponseWriter, r *http.Request, config *Config) {
 
 	// Call LLM - pass tools as []interface{} to avoid import cycle
 	// The chat client will access tool fields which are structurally identical to mcp.Tool
-	llmResponse, err := client.Chat(ctx, chatMessages, req.Tools)
+	llmResponse, err := client.Chat(ctx, chatMessages, req.Tools, req.System)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: LLM chat request failed: %v\n", err)
 		if tracing.IsEnabled() {

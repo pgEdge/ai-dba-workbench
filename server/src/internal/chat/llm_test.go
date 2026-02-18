@@ -68,7 +68,7 @@ func TestAnthropicClient_TextResponse(t *testing.T) {
 		t.Errorf("Expected model 'claude-test', got '%s'", client.model)
 	}
 
-	// In a real test, we'd call client.Chat(ctx, messages, tools)
+	// In a real test, we'd call client.Chat(ctx, messages, tools, "")
 	// but since we can't override the URL easily without refactoring,
 	// we'll skip that for now
 	_, _ = server, client // Suppress unused warnings
@@ -129,7 +129,7 @@ func TestOllamaClient_ToolCall(t *testing.T) {
 		},
 	}
 
-	response, err := client.Chat(ctx, messages, tools)
+	response, err := client.Chat(ctx, messages, tools, "")
 	if err != nil {
 		t.Fatalf("Chat failed: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestOllamaClient_TextResponse(t *testing.T) {
 	}
 	tools := []mcp.Tool{}
 
-	response, err := client.Chat(ctx, messages, tools)
+	response, err := client.Chat(ctx, messages, tools, "")
 	if err != nil {
 		t.Fatalf("Chat failed: %v", err)
 	}

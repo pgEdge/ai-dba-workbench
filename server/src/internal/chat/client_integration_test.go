@@ -127,7 +127,7 @@ type mockLLMClient struct {
 	callCount int
 }
 
-func (m *mockLLMClient) Chat(ctx context.Context, messages []Message, tools interface{}) (LLMResponse, error) {
+func (m *mockLLMClient) Chat(ctx context.Context, messages []Message, tools interface{}, customSystemPrompt string) (LLMResponse, error) {
 	if m.callCount >= len(m.responses) {
 		// Return a final text response if we run out of predefined responses
 		return LLMResponse{

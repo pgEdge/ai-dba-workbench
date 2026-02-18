@@ -17,12 +17,14 @@ import {
     Collapse,
     IconButton,
     alpha,
+    Tooltip,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import {
     AutoAwesome as SparkleIcon,
     ExpandMore as ExpandMoreIcon,
     ExpandLess as ExpandLessIcon,
+    Psychology as PsychologyIcon,
 } from '@mui/icons-material';
 import { apiGet } from '../../utils/apiClient';
 import { ApiError } from '../../utils/apiClient';
@@ -55,6 +57,8 @@ interface OverviewSelection {
 interface AIOverviewProps {
     mode?: 'light' | 'dark';
     selection?: OverviewSelection | null;
+    onAnalyze?: () => void;
+    analysisCached?: boolean;
 }
 
 /** localStorage key for persisting collapsed state. */
@@ -98,7 +102,7 @@ function formatRelativeTime(dateStr: string): string {
  * StatusPanel.  It fetches from GET /api/v1/overview, auto-refreshes
  * every 30 seconds, and handles loading, generating, and ready states.
  */
-const AIOverview: React.FC<AIOverviewProps> = ({ mode = 'light', selection }) => {
+const AIOverview: React.FC<AIOverviewProps> = ({ mode = 'light', selection, onAnalyze, analysisCached }) => {
     const theme = useTheme();
     const isDark = mode === 'dark';
 
@@ -224,7 +228,6 @@ const AIOverview: React.FC<AIOverviewProps> = ({ mode = 'light', selection }) =>
     }), [collapsed]);
 
     const toggleButtonSx = useMemo(() => ({
-        ml: 'auto',
         p: 0.25,
         color: 'text.secondary',
     }), []);
@@ -248,6 +251,8 @@ const AIOverview: React.FC<AIOverviewProps> = ({ mode = 'light', selection }) =>
         ml: 1,
     }), [theme.palette.warning.main]);
 
+    const showAnalyzeButton = onAnalyze && selection && (selection.type === 'server' || selection.type === 'cluster');
+
     // Header row shared across all states
     const headerRow = (showStale = false) => (
         <Box sx={labelContainerSx}>
@@ -260,6 +265,29 @@ const AIOverview: React.FC<AIOverviewProps> = ({ mode = 'light', selection }) =>
                     (stale)
                 </Typography>
             )}
+            {showAnalyzeButton && (
+                <Tooltip title={analysisCached
+                    ? `View cached ${selection?.type === 'cluster' ? 'cluster' : 'server'} analysis`
+                    : `Analyze ${selection?.type === 'cluster' ? 'cluster' : 'server'}`
+                }>
+                    <IconButton
+                        size="small"
+                        onClick={onAnalyze}
+                        aria-label="Run full analysis"
+                        sx={{
+                            p: 0.25,
+                            color: analysisCached ? 'warning.main' : 'secondary.main',
+                            '&:hover': { bgcolor: alpha(
+                                analysisCached ? theme.palette.warning.main : theme.palette.secondary.main,
+                                0.1,
+                            ) },
+                        }}
+                    >
+                        <PsychologyIcon sx={{ fontSize: 18 }} />
+                    </IconButton>
+                </Tooltip>
+            )}
+            <Box sx={{ flexGrow: 1 }} />
             <IconButton
                 size="small"
                 onClick={handleToggleCollapse}

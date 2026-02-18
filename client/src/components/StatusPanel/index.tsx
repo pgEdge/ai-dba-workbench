@@ -34,6 +34,8 @@ import { collectServers } from '../../utils/clusterHelpers';
 import EventTimeline from '../EventTimeline';
 import BlackoutPanel from '../BlackoutPanel';
 import AlertAnalysisDialog from '../AlertAnalysisDialog';
+import ServerAnalysisDialog from '../ServerAnalysisDialog';
+import { ServerAnalysisInput, hasCachedServerAnalysis } from '../../hooks/useServerAnalysis';
 import AlertOverrideEditDialog from '../AlertOverrideEditDialog';
 import BlackoutManagementDialog from '../BlackoutManagementDialog';
 import AIOverview from '../AIOverview';
@@ -121,6 +123,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
     const [analysisAlert, setAnalysisAlert] = useState(null);
     const [overrideDialogOpen, setOverrideDialogOpen] = useState(false);
     const [overrideAlert, setOverrideAlert] = useState(null);
+    const [serverAnalysisOpen, setServerAnalysisOpen] = useState(false);
     const { clearOverlays } = useDashboard();
 
     // Clear dashboard overlay stack when the selection changes
@@ -270,6 +273,40 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
         setOverrideAlert(alert);
         setOverrideDialogOpen(true);
     };
+
+    // Handle opening server analysis dialog from AI Overview
+    const handleServerAnalyze = useCallback(() => {
+        setServerAnalysisOpen(true);
+    }, []);
+
+    const serverAnalysisSelection = useMemo((): ServerAnalysisInput | null => {
+        if (!selection) return null;
+        if (selection.type === 'server' && typeof selection.id === 'number') {
+            return {
+                type: 'server',
+                id: selection.id,
+                name: selection.name || `Server ${selection.id}`,
+            };
+        }
+        if (selection.type === 'cluster' && selection.serverIds?.length) {
+            const servers = (selection.servers || []).map(s => ({
+                id: typeof s.id === 'number' ? s.id : parseInt(String(s.id), 10),
+                name: s.name || s.server_name || `Server ${s.id}`,
+            }));
+            return {
+                type: 'cluster',
+                id: selection.id || selection.name || 'cluster',
+                name: selection.name || 'Cluster',
+                serverIds: selection.serverIds,
+                servers,
+            };
+        }
+        return null;
+    }, [selection]);
+
+    const serverAnalysisCached = serverAnalysisSelection
+        ? hasCachedServerAnalysis(serverAnalysisSelection.type, serverAnalysisSelection.id)
+        : false;
 
     // Handle confirming acknowledgment
     const handleAckConfirm = async (alertId, message, falsePositive = false) => {
@@ -442,7 +479,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
 
                 {/* AI Overview */}
                 <Box sx={{ mb: 2 }}>
-                    <AIOverview mode={isDark ? 'dark' : 'light'} selection={selection} />
+                    <AIOverview mode={isDark ? 'dark' : 'light'} selection={selection} onAnalyze={handleServerAnalyze} analysisCached={serverAnalysisCached} />
                 </Box>
 
                 {/* Server Info Card */}
@@ -569,6 +606,14 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                 open={blackoutMgmtOpen}
                 onClose={() => setBlackoutMgmtOpen(false)}
                 selection={selection}
+            />
+
+            {/* Server Analysis Dialog */}
+            <ServerAnalysisDialog
+                open={serverAnalysisOpen}
+                selection={serverAnalysisSelection}
+                onClose={() => setServerAnalysisOpen(false)}
+                isDark={isDark}
             />
         </Box>
     );

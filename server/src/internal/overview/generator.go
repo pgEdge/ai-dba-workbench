@@ -379,7 +379,7 @@ func (g *Generator) generateSummaryFromPrompt(ctx context.Context, prompt string
 		},
 	}
 
-	resp, err := client.Chat(ctx, messages, nil)
+	resp, err := client.Chat(ctx, messages, nil, "")
 	if err != nil {
 		return "", fmt.Errorf("LLM chat failed: %w", err)
 	}

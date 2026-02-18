@@ -286,8 +286,9 @@ var (
 
 // LLMClient provides a unified interface for different LLM providers
 type LLMClient interface {
-	// Chat sends messages and available tools to the LLM and returns the response
-	Chat(ctx context.Context, messages []Message, tools interface{}) (LLMResponse, error)
+	// Chat sends messages and available tools to the LLM and returns the response.
+	// If customSystemPrompt is non-empty, it overrides the default system prompt.
+	Chat(ctx context.Context, messages []Message, tools interface{}, customSystemPrompt string) (LLMResponse, error)
 
 	// ListModels returns a list of available models from the provider
 	ListModels(ctx context.Context) ([]string, error)

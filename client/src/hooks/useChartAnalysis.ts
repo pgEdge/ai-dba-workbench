@@ -15,6 +15,18 @@ import { formatConnectionContext } from '../utils/connectionContext';
 import { LLMResponse } from '../types/llm';
 import { TimelineEvent } from '../components/EventTimeline/types';
 
+/**
+ * Strip any conversational preamble before the first markdown heading.
+ * LLMs sometimes add introductory text despite instructions not to.
+ */
+function stripPreamble(text: string): string {
+    const headingIndex = text.search(/^##\s/m);
+    if (headingIndex > 0) {
+        return text.substring(headingIndex);
+    }
+    return text;
+}
+
 export interface ChartAnalysisInput {
     metricDescription: string;
     connectionId?: number;
@@ -28,6 +40,8 @@ export interface UseChartAnalysisReturn {
     analysis: string | null;
     loading: boolean;
     error: string | null;
+    progressMessage: string;
+    activeTools: string[];
     analyze: (input: ChartAnalysisInput) => Promise<void>;
     reset: () => void;
 }
@@ -258,6 +272,8 @@ export const useChartAnalysis = (): UseChartAnalysisReturn => {
     const [analysis, setAnalysis] = useState<string | null>(null);
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
+    const [progressMessage, setProgressMessage] = useState<string>('Preparing chart data...');
+    const [activeTools, setActiveTools] = useState<string[]>([]);
 
     const analyze = useCallback(async (input: ChartAnalysisInput): Promise<void> => {
         // Check cache first to avoid flash of empty state
@@ -278,6 +294,8 @@ export const useChartAnalysis = (): UseChartAnalysisReturn => {
         setLoading(true);
         setError(null);
         setAnalysis(null);
+        setProgressMessage('Preparing chart data...');
+        setActiveTools(['Preparing chart data']);
 
         try {
             // Serialize chart data for the LLM
@@ -287,6 +305,7 @@ export const useChartAnalysis = (): UseChartAnalysisReturn => {
             let connectionContext = '';
             let timelineContext = '';
             if (input.connectionId != null) {
+                setActiveTools(['Fetching server context', 'Fetching timeline events']);
                 const [ctxResult, timelineResult] = await Promise.allSettled([
                     apiGet<Record<string, unknown>>(
                         `/api/v1/connections/${input.connectionId}/context`
@@ -325,6 +344,9 @@ ${serializedData}
 
 Provide analysis of trends, anomalies, and actionable recommendations.`;
 
+            setProgressMessage('Analyzing data...');
+            setActiveTools(['Analyzing data']);
+
             const response = await fetch('/api/v1/llm/chat', {
                 method: 'POST',
                 credentials: 'include',
@@ -349,16 +371,19 @@ Provide analysis of trends, anomalies, and actionable recommendations.`;
                 .map(c => c.text)
                 .join('\n') || '';
 
-            setAnalysis(textContent);
+            const cleanedText = stripPreamble(textContent);
+            setAnalysis(cleanedText);
+            setActiveTools([]);
 
             // Cache the result
             analysisCache.set(cacheKey, {
-                analysis: textContent,
+                analysis: cleanedText,
                 timestamp: Date.now(),
             });
         } catch (err) {
             console.error('Chart analysis error:', err);
             setError((err as Error).message);
+            setActiveTools([]);
         } finally {
             setLoading(false);
         }
@@ -368,9 +393,11 @@ Provide analysis of trends, anomalies, and actionable recommendations.`;
         setAnalysis(null);
         setError(null);
         setLoading(false);
+        setProgressMessage('Preparing chart data...');
+        setActiveTools([]);
     }, []);
 
-    return { analysis, loading, error, analyze, reset };
+    return { analysis, loading, error, progressMessage, activeTools, analyze, reset };
 };
 
 export default useChartAnalysis;

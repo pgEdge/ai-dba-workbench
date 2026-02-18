@@ -107,7 +107,7 @@ func extractOpenAIError(body []byte) string {
 	return ""
 }
 
-func (c *openaiClient) Chat(ctx context.Context, messages []Message, tools interface{}) (LLMResponse, error) {
+func (c *openaiClient) Chat(ctx context.Context, messages []Message, tools interface{}, customSystemPrompt string) (LLMResponse, error) {
 	startTime := time.Now()
 	operation := "chat"
 	url := c.baseURL + "/chat/completions"
@@ -136,11 +136,15 @@ func (c *openaiClient) Chat(ctx context.Context, messages []Message, tools inter
 	}
 
 	// Convert messages to OpenAI format
-	// Start with system message
+	// Start with system message; use custom prompt if provided, otherwise default
+	activePrompt := systemPrompt
+	if customSystemPrompt != "" {
+		activePrompt = customSystemPrompt
+	}
 	openaiMessages := make([]openaiMessage, 0, len(messages)+1)
 	openaiMessages = append(openaiMessages, openaiMessage{
 		Role:    "system",
-		Content: systemPrompt,
+		Content: activePrompt,
 	})
 
 	for _, msg := range messages {

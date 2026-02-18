@@ -16,16 +16,16 @@ import {
     Box,
     Typography,
     Dialog,
-    DialogTitle,
-    DialogContent,
-    DialogActions,
-    Button,
+    AppBar,
+    Toolbar,
     IconButton,
     alpha,
     Fade,
+    Slide,
     useTheme,
 } from '@mui/material';
 import { Theme } from '@mui/material/styles';
+import { TransitionProps } from '@mui/material/transitions';
 import {
     Close as CloseIcon,
     Download as DownloadIcon,
@@ -39,26 +39,24 @@ import {
     MarkdownContent,
     AnalysisSkeleton,
     sxMonoFont,
-    sxContentFadeBox,
     sxErrorFlexRow,
-    sxTitleFlexBox,
-    sxCloseIconSize,
-    sxTitleTypography,
-    getDialogPaperSx,
-    getDialogTitleSx,
     getIconBoxSx,
     getIconColorSx,
-    getContentSx,
     getLoadingBannerSx,
     getPulseDotSx,
     getLoadingTextSx,
     getErrorBoxSx,
     getErrorTitleSx,
     getAnalysisBoxSx,
-    getFooterSx,
     getDownloadButtonSx,
-    getCloseButtonSx,
 } from './shared/MarkdownContent';
+
+const Transition = React.forwardRef(function Transition(
+    props: TransitionProps & { children: React.ReactElement },
+    ref: React.Ref<unknown>,
+) {
+    return <Slide direction="up" ref={ref} {...props} />;
+});
 
 // Severity color getter using theme palette
 const getSeverityColor = (severity, theme) => {
@@ -103,14 +101,6 @@ const getSeverityDotSx = (severityColor, theme) => ({
     boxShadow: `0 0 8px ${alpha(severityColor, 0.5)}`,
 });
 
-const sxMetadataRow = {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 1.5,
-    mt: 0.5,
-    flexWrap: 'wrap',
-};
-
 const sxSeverityBadge = { display: 'flex', alignItems: 'center', gap: 0.5 };
 
 const getServerBadgeSx = (theme: Theme) => ({
@@ -146,14 +136,6 @@ const getDatabaseTextSx = (theme: Theme) => ({
         : theme.palette.secondary.main,
     ...sxMonoFont,
 });
-
-const sxMetadataSecondRow = {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 1,
-    mt: 0.75,
-    flexWrap: 'wrap',
-};
 
 const sxMonoSmall = {
     fontSize: '0.875rem',
@@ -260,98 +242,156 @@ ${analysis}
 
     return (
         <Dialog
+            fullScreen
             open={open}
             onClose={handleClose}
-            maxWidth="md"
-            fullWidth
-            PaperProps={{
-                sx: getDialogPaperSx(theme),
-            }}
+            TransitionComponent={Transition}
         >
-            {/* Header */}
-            <DialogTitle sx={getDialogTitleSx(theme)}>
-                {/* Icon with severity indicator */}
-                <Box sx={getIconBoxSx(theme)}>
-                    <PsychologyIcon sx={getIconColorSx(theme)} />
-                    {/* Severity dot */}
-                    <Box sx={getSeverityDotSx(severityColor, theme)} />
-                </Box>
+            {/* AppBar Header */}
+            <AppBar
+                position="static"
+                elevation={0}
+                sx={{
+                    bgcolor: 'background.paper',
+                    borderBottom: '1px solid',
+                    borderColor: 'divider',
+                }}
+            >
+                <Toolbar
+                    sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 1.5,
+                        flexWrap: 'wrap',
+                    }}
+                >
+                    {/* Close button */}
+                    <IconButton
+                        edge="start"
+                        onClick={handleClose}
+                        aria-label="close alert analysis"
+                        sx={{ color: 'text.secondary' }}
+                    >
+                        <CloseIcon />
+                    </IconButton>
 
-                {/* Title and metadata */}
-                <Box sx={sxTitleFlexBox}>
-                    <Typography variant="h6" sx={sxTitleTypography}>
+                    {/* Icon with severity indicator */}
+                    <Box sx={getIconBoxSx(theme)}>
+                        <PsychologyIcon sx={getIconColorSx(theme)} />
+                        <Box sx={getSeverityDotSx(severityColor, theme)} />
+                    </Box>
+
+                    {/* Title */}
+                    <Typography
+                        variant="h6"
+                        sx={{
+                            fontWeight: 600,
+                            fontSize: '1.125rem',
+                            color: 'text.primary',
+                            whiteSpace: 'nowrap',
+                        }}
+                    >
                         Alert analysis
                     </Typography>
-                    {/* First row: severity, title, time */}
-                    <Box sx={sxMetadataRow}>
-                        <Box sx={sxSeverityBadge}>
-                            <SeverityIcon sx={{ fontSize: 14, color: severityColor }} />
-                            <Typography
-                                sx={{
-                                    fontSize: '1rem',
-                                    color: severityColor,
-                                    fontWeight: 500,
-                                    textTransform: 'capitalize',
-                                }}
-                            >
-                                {alert?.severity || 'Unknown'}
+
+                    {/* Severity badge */}
+                    <Box sx={sxSeverityBadge}>
+                        <SeverityIcon sx={{ fontSize: 14, color: severityColor }} />
+                        <Typography
+                            sx={{
+                                fontSize: '1rem',
+                                color: severityColor,
+                                fontWeight: 500,
+                                textTransform: 'capitalize',
+                            }}
+                        >
+                            {alert?.severity || 'Unknown'}
+                        </Typography>
+                    </Box>
+
+                    {/* Alert title */}
+                    <Typography sx={{ fontSize: '0.875rem', color: 'text.secondary' }}>
+                        {alert?.title || 'Alert'}
+                    </Typography>
+
+                    {/* Server pill */}
+                    {alert?.server && (
+                        <Box sx={getServerBadgeSx(theme)}>
+                            <Typography sx={sxMonoSmall}>
+                                {alert.server}
                             </Typography>
                         </Box>
-                        <Typography sx={{ fontSize: '0.875rem', color: 'text.secondary' }}>
-                            {alert?.title || 'Alert'}
+                    )}
+
+                    {/* Database pill */}
+                    {alert?.databaseName && (
+                        <Box sx={getDatabaseBadgeSx(theme)}>
+                            <Typography sx={getDatabaseTextSx(theme)}>
+                                {alert.databaseName}
+                            </Typography>
+                        </Box>
+                    )}
+
+                    {/* Threshold text */}
+                    {alert?.metricValue !== undefined && alert?.thresholdValue !== undefined && (
+                        <Typography sx={sxThresholdText}>
+                            {typeof alert.metricValue === 'number'
+                                ? alert.metricValue.toLocaleString(undefined, { maximumFractionDigits: 2 })
+                                : alert.metricValue}
+                            {alert.metricUnit && ` ${alert.metricUnit}`}
+                            {' '}{alert.operator === '>' ? '>' : alert.operator === '<' ? '<' : '='}{' '}
+                            {typeof alert.thresholdValue === 'number'
+                                ? alert.thresholdValue.toLocaleString(undefined, { maximumFractionDigits: 2 })
+                                : alert.thresholdValue}
+                            {alert.metricUnit && ` ${alert.metricUnit}`}
                         </Typography>
-                        {alert?.time && (
-                            <Typography sx={{ fontSize: '0.875rem', color: 'text.disabled' }}>
-                                {alert.time}
-                            </Typography>
-                        )}
-                    </Box>
-                    {/* Second row: server, database, threshold info */}
-                    <Box sx={sxMetadataSecondRow}>
-                        {alert?.server && (
-                            <Box sx={getServerBadgeSx(theme)}>
-                                <Typography sx={sxMonoSmall}>
-                                    {alert.server}
-                                </Typography>
-                            </Box>
-                        )}
-                        {alert?.databaseName && (
-                            <Box sx={getDatabaseBadgeSx(theme)}>
-                                <Typography sx={getDatabaseTextSx(theme)}>
-                                    {alert.databaseName}
-                                </Typography>
-                            </Box>
-                        )}
-                        {alert?.metricValue !== undefined && alert?.thresholdValue !== undefined && (
-                            <Typography sx={sxThresholdText}>
-                                {typeof alert.metricValue === 'number'
-                                    ? alert.metricValue.toLocaleString(undefined, { maximumFractionDigits: 2 })
-                                    : alert.metricValue}
-                                {alert.metricUnit && ` ${alert.metricUnit}`}
-                                {' '}{alert.operator === '>' ? '>' : alert.operator === '<' ? '<' : '='}{' '}
-                                {typeof alert.thresholdValue === 'number'
-                                    ? alert.thresholdValue.toLocaleString(undefined, { maximumFractionDigits: 2 })
-                                    : alert.thresholdValue}
-                                {alert.metricUnit && ` ${alert.metricUnit}`}
-                            </Typography>
-                        )}
-                    </Box>
-                </Box>
+                    )}
 
-                {/* Close button */}
-                <IconButton
-                    onClick={handleClose}
-                    size="small"
-                    sx={getCloseButtonSx(theme)}
-                >
-                    <CloseIcon sx={sxCloseIconSize} />
-                </IconButton>
-            </DialogTitle>
+                    {/* Time text */}
+                    {alert?.time && (
+                        <Typography sx={{ fontSize: '0.875rem', color: 'text.disabled' }}>
+                            {alert.time}
+                        </Typography>
+                    )}
 
-            {/* Content */}
-            <DialogContent sx={getContentSx(theme)}>
+                    {/* Spacer */}
+                    <Box sx={{ flexGrow: 1 }} />
+
+                    {/* Download button */}
+                    <IconButton
+                        onClick={handleDownload}
+                        disabled={!analysis || loading}
+                        aria-label="download analysis"
+                        sx={getDownloadButtonSx(theme)}
+                    >
+                        <DownloadIcon />
+                    </IconButton>
+                </Toolbar>
+            </AppBar>
+
+            {/* Scrollable Content */}
+            <Box
+                sx={{
+                    flex: 1,
+                    overflow: 'auto',
+                    bgcolor: theme.palette.mode === 'dark'
+                        ? theme.palette.background.default
+                        : theme.palette.grey[50],
+                    px: 3,
+                    pt: 1.5,
+                    pb: 3,
+                    '&::-webkit-scrollbar': { width: 6 },
+                    '&::-webkit-scrollbar-thumb': {
+                        borderRadius: 3,
+                        backgroundColor: theme.palette.mode === 'dark' ? '#475569' : '#D1D5DB',
+                    },
+                    '&::-webkit-scrollbar-track': {
+                        backgroundColor: 'transparent',
+                    },
+                }}
+            >
                 <Fade in={true} timeout={300}>
-                    <Box sx={sxContentFadeBox}>
+                    <Box sx={{ mt: 1.5, maxWidth: 900, mx: 'auto' }}>
                         {loading && (
                             <Box>
                                 <Box sx={getLoadingBannerSx(theme)}>
@@ -398,27 +438,7 @@ ${analysis}
                         )}
                     </Box>
                 </Fade>
-            </DialogContent>
-
-            {/* Footer */}
-            <DialogActions sx={getFooterSx(theme)}>
-                <Button
-                    onClick={handleDownload}
-                    startIcon={<DownloadIcon />}
-                    disabled={!analysis || loading}
-                    size="small"
-                    sx={getDownloadButtonSx(theme)}
-                >
-                    Download
-                </Button>
-                <Button
-                    onClick={handleClose}
-                    variant="contained"
-                    size="small"
-                >
-                    Close
-                </Button>
-            </DialogActions>
+            </Box>
         </Dialog>
     );
 };

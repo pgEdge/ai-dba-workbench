@@ -16,16 +16,16 @@ import {
     Box,
     Typography,
     Dialog,
-    DialogTitle,
-    DialogContent,
-    DialogActions,
-    Button,
+    AppBar,
+    Toolbar,
     IconButton,
     alpha,
     Fade,
+    Slide,
     useTheme,
 } from '@mui/material';
 import { Theme } from '@mui/material/styles';
+import { TransitionProps } from '@mui/material/transitions';
 import {
     Close as CloseIcon,
     Download as DownloadIcon,
@@ -38,46 +38,28 @@ import {
     MarkdownContent,
     AnalysisSkeleton,
     sxMonoFont,
-    sxContentFadeBox,
     sxErrorFlexRow,
-    sxTitleFlexBox,
-    sxCloseIconSize,
-    sxTitleTypography,
-    getDialogPaperSx,
-    getDialogTitleSx,
     getIconBoxSx,
     getIconColorSx,
-    getContentSx,
     getLoadingBannerSx,
     getPulseDotSx,
     getLoadingTextSx,
     getErrorBoxSx,
     getErrorTitleSx,
     getAnalysisBoxSx,
-    getFooterSx,
     getDownloadButtonSx,
-    getCloseButtonSx,
 } from './shared/MarkdownContent';
+
+const Transition = React.forwardRef(function Transition(
+    props: TransitionProps & { children: React.ReactElement },
+    ref: React.Ref<unknown>,
+) {
+    return <Slide direction="up" ref={ref} {...props} />;
+});
 
 // ---------------------------------------------------------------------------
 // Chart-specific style constants and style-getter functions
 // ---------------------------------------------------------------------------
-
-const sxMetadataRow = {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 1.5,
-    mt: 0.5,
-    flexWrap: 'wrap',
-};
-
-const sxMetadataSecondRow = {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 1,
-    mt: 0.75,
-    flexWrap: 'wrap',
-};
 
 const getConnectionBadgeSx = (theme: Theme) => ({
     display: 'flex',
@@ -225,70 +207,125 @@ ${analysis}
 
     return (
         <Dialog
+            fullScreen
             open={open}
             onClose={handleClose}
-            maxWidth="md"
-            fullWidth
-            PaperProps={{
-                sx: getDialogPaperSx(theme),
-            }}
+            TransitionComponent={Transition}
         >
-            {/* Header */}
-            <DialogTitle sx={getDialogTitleSx(theme)}>
-                {/* Icon (no severity dot) */}
-                <Box sx={getIconBoxSx(theme)}>
-                    <PsychologyIcon sx={getIconColorSx(theme)} />
-                </Box>
+            {/* AppBar Header */}
+            <AppBar
+                position="static"
+                elevation={0}
+                sx={{
+                    bgcolor: 'background.paper',
+                    borderBottom: '1px solid',
+                    borderColor: 'divider',
+                }}
+            >
+                <Toolbar
+                    sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 1.5,
+                        flexWrap: 'wrap',
+                    }}
+                >
+                    {/* Close button */}
+                    <IconButton
+                        edge="start"
+                        onClick={handleClose}
+                        aria-label="close chart analysis"
+                        sx={{ color: 'text.secondary' }}
+                    >
+                        <CloseIcon />
+                    </IconButton>
 
-                {/* Title and metadata */}
-                <Box sx={sxTitleFlexBox}>
-                    <Typography variant="h6" sx={sxTitleTypography}>
+                    {/* Icon (no severity dot) */}
+                    <Box sx={getIconBoxSx(theme)}>
+                        <PsychologyIcon sx={getIconColorSx(theme)} />
+                    </Box>
+
+                    {/* Title */}
+                    <Typography
+                        variant="h6"
+                        sx={{
+                            fontWeight: 600,
+                            fontSize: '1.125rem',
+                            color: 'text.primary',
+                            whiteSpace: 'nowrap',
+                        }}
+                    >
                         Chart analysis
                     </Typography>
-                    {/* First row: metric description */}
-                    <Box sx={sxMetadataRow}>
-                        <Typography sx={{ fontSize: '0.875rem', color: 'text.secondary' }}>
-                            {analysisContext.metricDescription || 'Chart'}
-                        </Typography>
-                    </Box>
-                    {/* Second row: connection name, database name, time range */}
-                    <Box sx={sxMetadataSecondRow}>
-                        {analysisContext.connectionName && (
-                            <Box sx={getConnectionBadgeSx(theme)}>
-                                <Typography sx={sxMonoSmall}>
-                                    {analysisContext.connectionName}
-                                </Typography>
-                            </Box>
-                        )}
-                        {analysisContext.databaseName && (
-                            <Box sx={getDatabaseBadgeSx(theme)}>
-                                <Typography sx={getDatabaseTextSx(theme)}>
-                                    {analysisContext.databaseName}
-                                </Typography>
-                            </Box>
-                        )}
-                        {analysisContext.timeRange && (
-                            <Typography sx={{ fontSize: '0.875rem', color: 'text.disabled' }}>
-                                {analysisContext.timeRange}
+
+                    {/* Metric description */}
+                    <Typography sx={{ fontSize: '0.875rem', color: 'text.secondary' }}>
+                        {analysisContext.metricDescription || 'Chart'}
+                    </Typography>
+
+                    {/* Connection pill */}
+                    {analysisContext.connectionName && (
+                        <Box sx={getConnectionBadgeSx(theme)}>
+                            <Typography sx={sxMonoSmall}>
+                                {analysisContext.connectionName}
                             </Typography>
-                        )}
-                    </Box>
-                </Box>
+                        </Box>
+                    )}
 
-                {/* Close button */}
-                <IconButton
-                    onClick={handleClose}
-                    size="small"
-                    sx={getCloseButtonSx(theme)}
-                >
-                    <CloseIcon sx={sxCloseIconSize} />
-                </IconButton>
-            </DialogTitle>
+                    {/* Database pill */}
+                    {analysisContext.databaseName && (
+                        <Box sx={getDatabaseBadgeSx(theme)}>
+                            <Typography sx={getDatabaseTextSx(theme)}>
+                                {analysisContext.databaseName}
+                            </Typography>
+                        </Box>
+                    )}
 
-            {/* Content */}
-            <DialogContent sx={getContentSx(theme)}>
+                    {/* Time range */}
+                    {analysisContext.timeRange && (
+                        <Typography sx={{ fontSize: '0.875rem', color: 'text.disabled' }}>
+                            {analysisContext.timeRange}
+                        </Typography>
+                    )}
+
+                    {/* Spacer */}
+                    <Box sx={{ flexGrow: 1 }} />
+
+                    {/* Download button */}
+                    <IconButton
+                        onClick={handleDownload}
+                        disabled={!analysis || loading}
+                        aria-label="download analysis"
+                        sx={getDownloadButtonSx(theme)}
+                    >
+                        <DownloadIcon />
+                    </IconButton>
+                </Toolbar>
+            </AppBar>
+
+            {/* Scrollable Content */}
+            <Box
+                sx={{
+                    flex: 1,
+                    overflow: 'auto',
+                    bgcolor: theme.palette.mode === 'dark'
+                        ? theme.palette.background.default
+                        : theme.palette.grey[50],
+                    px: 3,
+                    pt: 1.5,
+                    pb: 3,
+                    '&::-webkit-scrollbar': { width: 6 },
+                    '&::-webkit-scrollbar-thumb': {
+                        borderRadius: 3,
+                        backgroundColor: theme.palette.mode === 'dark' ? '#475569' : '#D1D5DB',
+                    },
+                    '&::-webkit-scrollbar-track': {
+                        backgroundColor: 'transparent',
+                    },
+                }}
+            >
                 <Fade in={true} timeout={300}>
-                    <Box sx={sxContentFadeBox}>
+                    <Box sx={{ mt: 1.5, maxWidth: 900, mx: 'auto' }}>
                         {loading && (
                             <Box>
                                 <Box sx={getLoadingBannerSx(theme)}>
@@ -335,27 +372,7 @@ ${analysis}
                         )}
                     </Box>
                 </Fade>
-            </DialogContent>
-
-            {/* Footer */}
-            <DialogActions sx={getFooterSx(theme)}>
-                <Button
-                    onClick={handleDownload}
-                    startIcon={<DownloadIcon />}
-                    disabled={!analysis || loading}
-                    size="small"
-                    sx={getDownloadButtonSx(theme)}
-                >
-                    Download
-                </Button>
-                <Button
-                    onClick={handleClose}
-                    variant="contained"
-                    size="small"
-                >
-                    Close
-                </Button>
-            </DialogActions>
+            </Box>
         </Dialog>
     );
 };

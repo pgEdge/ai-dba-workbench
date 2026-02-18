@@ -40,7 +40,8 @@ const Transition = React.forwardRef(function Transition(
 interface ClusterConfigDialogProps {
     open: boolean;
     onClose: () => void;
-    clusterId: number;
+    clusterId: string;
+    numericClusterId?: number;
     clusterName: string;
     clusterDescription?: string;
     onSave?: (data: { name: string; description: string }) => Promise<void>;
@@ -49,7 +50,8 @@ interface ClusterConfigDialogProps {
 const ClusterConfigDialog: React.FC<ClusterConfigDialogProps> = ({
     open,
     onClose,
-    clusterId,
+    clusterId: _clusterId,
+    numericClusterId,
     clusterName,
     clusterDescription,
     onSave,
@@ -62,6 +64,7 @@ const ClusterConfigDialog: React.FC<ClusterConfigDialogProps> = ({
     const [nameError, setNameError] = useState('');
     const [isSaving, setIsSaving] = useState(false);
     const [saveError, setSaveError] = useState('');
+    const [saveSuccess, setSaveSuccess] = useState(false);
 
     // Reset form state when the dialog opens
     useEffect(() => {
@@ -70,6 +73,7 @@ const ClusterConfigDialog: React.FC<ClusterConfigDialogProps> = ({
             setDescription(clusterDescription || '');
             setNameError('');
             setSaveError('');
+            setSaveSuccess(false);
             setActiveTab(0);
         }
     }, [open, clusterName, clusterDescription]);
@@ -82,11 +86,13 @@ const ClusterConfigDialog: React.FC<ClusterConfigDialogProps> = ({
         }
         setNameError('');
         setSaveError('');
+        setSaveSuccess(false);
         setIsSaving(true);
         try {
             if (onSave) {
                 await onSave({ name: trimmed, description: description.trim() });
             }
+            setSaveSuccess(true);
         } catch (err) {
             setSaveError(err instanceof Error ? err.message : 'Failed to save');
         } finally {
@@ -150,6 +156,11 @@ const ClusterConfigDialog: React.FC<ClusterConfigDialogProps> = ({
                                 {saveError}
                             </Alert>
                         )}
+                        {saveSuccess && (
+                            <Alert severity="success" onClose={() => setSaveSuccess(false)} sx={{ borderRadius: 1 }}>
+                                Cluster settings saved successfully.
+                            </Alert>
+                        )}
                         <TextField
                             autoFocus
                             fullWidth
@@ -187,13 +198,31 @@ const ClusterConfigDialog: React.FC<ClusterConfigDialogProps> = ({
                     </Box>
                 )}
                 {activeTab === 1 && (
-                    <AlertOverridesPanel scope="cluster" scopeId={clusterId} />
+                    numericClusterId != null ? (
+                        <AlertOverridesPanel scope="cluster" scopeId={numericClusterId} />
+                    ) : (
+                        <Typography color="text.secondary" sx={{ py: 4, textAlign: 'center' }}>
+                            Save the cluster details first to configure alert overrides.
+                        </Typography>
+                    )
                 )}
                 {activeTab === 2 && (
-                    <ProbeOverridesPanel scope="cluster" scopeId={clusterId} />
+                    numericClusterId != null ? (
+                        <ProbeOverridesPanel scope="cluster" scopeId={numericClusterId} />
+                    ) : (
+                        <Typography color="text.secondary" sx={{ py: 4, textAlign: 'center' }}>
+                            Save the cluster details first to configure probe overrides.
+                        </Typography>
+                    )
                 )}
                 {activeTab === 3 && (
-                    <ChannelOverridesPanel scope="cluster" scopeId={clusterId} />
+                    numericClusterId != null ? (
+                        <ChannelOverridesPanel scope="cluster" scopeId={numericClusterId} />
+                    ) : (
+                        <Typography color="text.secondary" sx={{ py: 4, textAlign: 'center' }}>
+                            Save the cluster details first to configure notification channels.
+                        </Typography>
+                    )
                 )}
             </Box>
         </Dialog>

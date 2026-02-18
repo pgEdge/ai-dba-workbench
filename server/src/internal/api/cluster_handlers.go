@@ -466,9 +466,10 @@ func (h *ClusterHandler) deleteCluster(w http.ResponseWriter, r *http.Request, i
 
 // AutoDetectedClusterRequest is the request body for updating auto-detected clusters
 type AutoDetectedClusterRequest struct {
-	Name           string `json:"name,omitempty"`
-	AutoClusterKey string `json:"auto_cluster_key,omitempty"` // Optional: use if provided, else compute from ID
-	GroupID        *int   `json:"group_id,omitempty"`         // Optional: move cluster to different group
+	Name           string  `json:"name,omitempty"`
+	Description    *string `json:"description,omitempty"`      // Optional: update cluster description
+	AutoClusterKey string  `json:"auto_cluster_key,omitempty"` // Optional: use if provided, else compute from ID
+	GroupID        *int    `json:"group_id,omitempty"`         // Optional: move cluster to different group
 }
 
 // updateAutoDetectedCluster handles PUT requests for auto-detected clusters
@@ -488,9 +489,9 @@ func (h *ClusterHandler) updateAutoDetectedCluster(w http.ResponseWriter, r *htt
 		return
 	}
 
-	// At least name or group_id must be provided
-	if req.Name == "" && req.GroupID == nil {
-		RespondError(w, http.StatusBadRequest, "At least name or group_id is required")
+	// At least name, description, or group_id must be provided
+	if req.Name == "" && req.Description == nil && req.GroupID == nil {
+		RespondError(w, http.StatusBadRequest, "At least name, description, or group_id is required")
 		return
 	}
 
@@ -508,7 +509,7 @@ func (h *ClusterHandler) updateAutoDetectedCluster(w http.ResponseWriter, r *htt
 	defer cancel()
 
 	// Update cluster record (name and/or group_id)
-	cluster, err := h.datastore.UpsertAutoDetectedCluster(ctx, autoKey, req.Name, req.GroupID)
+	cluster, err := h.datastore.UpsertAutoDetectedCluster(ctx, autoKey, req.Name, req.Description, req.GroupID)
 	if err != nil {
 		log.Printf("[ERROR] Failed to update auto-detected cluster %s: %v", clusterID, err)
 		RespondError(w, http.StatusInternalServerError, "Failed to update auto-detected cluster")

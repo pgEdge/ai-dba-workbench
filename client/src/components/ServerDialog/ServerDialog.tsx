@@ -74,6 +74,7 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
     const [errors, setErrors] = useState<FormErrors>({});
     const [submitError, setSubmitError] = useState<string | null>(null);
     const [isSaving, setIsSaving] = useState(false);
+    const [saveSuccess, setSaveSuccess] = useState(false);
     const [sslExpanded, setSslExpanded] = useState(false);
     const [activeTab, setActiveTab] = useState(0);
 
@@ -111,6 +112,7 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
             }
             setErrors({});
             setSubmitError(null);
+            setSaveSuccess(false);
         }
     }, [open, isEditMode, server]);
 
@@ -137,6 +139,7 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
     const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         setSubmitError(null);
+        setSaveSuccess(false);
 
         const validationErrors = validateServerForm(formData, isEditMode);
         if (Object.keys(validationErrors).length > 0) {
@@ -149,7 +152,7 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
         try {
             const saveData = prepareSaveData(formData);
             await onSave(saveData);
-            onClose();
+            setSaveSuccess(true);
         } catch (err: unknown) {
             setSubmitError(
                 err instanceof Error ? err.message : 'Failed to save server'
@@ -230,6 +233,15 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
                                         onClose={() => setSubmitError(null)}
                                     >
                                         {submitError}
+                                    </Alert>
+                                )}
+                                {saveSuccess && (
+                                    <Alert
+                                        severity="success"
+                                        sx={{ mb: 0.5, borderRadius: 1 }}
+                                        onClose={() => setSaveSuccess(false)}
+                                    >
+                                        Server settings saved successfully.
                                     </Alert>
                                 )}
 
@@ -327,6 +339,15 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
                             onClose={() => setSubmitError(null)}
                         >
                             {submitError}
+                        </Alert>
+                    )}
+                    {saveSuccess && (
+                        <Alert
+                            severity="success"
+                            sx={{ mb: 2, borderRadius: 1 }}
+                            onClose={() => setSaveSuccess(false)}
+                        >
+                            Server settings saved successfully.
                         </Alert>
                     )}
 

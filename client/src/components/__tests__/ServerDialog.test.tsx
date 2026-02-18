@@ -307,11 +307,10 @@ describe('ServerDialog', () => {
             });
         });
 
-        it('calls onClose after successful save', async () => {
+        it('shows success message after successful save', async () => {
             const user = userEvent.setup();
             const onSave = vi.fn().mockResolvedValue();
-            const onClose = vi.fn();
-            render(<ServerDialog {...defaultProps} onSave={onSave} onClose={onClose} />);
+            render(<ServerDialog {...defaultProps} onSave={onSave} />);
 
             await user.type(getNameField(), 'Test Server');
             await user.type(getHostField(), 'localhost');
@@ -322,7 +321,7 @@ describe('ServerDialog', () => {
             await user.click(screen.getByRole('button', { name: /save/i }));
 
             await waitFor(() => {
-                expect(onClose).toHaveBeenCalled();
+                expect(screen.getByText('Server settings saved successfully.')).toBeInTheDocument();
             });
         });
 

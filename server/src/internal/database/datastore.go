@@ -981,10 +981,11 @@ func (d *Datastore) DeleteCluster(ctx context.Context, id int) error {
 	return nil
 }
 
-// GetClusterOverrides returns a map of auto_cluster_key -> custom name
+// GetClusterOverrides returns a map of auto_cluster_key -> clusterOverride
 // for all clusters that have an auto_cluster_key set. This is used to
-// apply custom names to auto-detected clusters in the topology view.
-func (d *Datastore) GetClusterOverrides(ctx context.Context) (map[string]string, error) {
+// apply custom names and descriptions to auto-detected clusters in the
+// topology view.
+func (d *Datastore) GetClusterOverrides(ctx context.Context) (map[string]clusterOverride, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
@@ -992,9 +993,9 @@ func (d *Datastore) GetClusterOverrides(ctx context.Context) (map[string]string,
 }
 
 // getClusterOverridesInternal is the lock-free internal implementation
-func (d *Datastore) getClusterOverridesInternal(ctx context.Context) (map[string]string, error) {
+func (d *Datastore) getClusterOverridesInternal(ctx context.Context) (map[string]clusterOverride, error) {
 	query := `
-        SELECT auto_cluster_key, name
+        SELECT auto_cluster_key, name, COALESCE(description, '') as description
         FROM clusters
         WHERE auto_cluster_key IS NOT NULL
     `
@@ -1005,13 +1006,13 @@ func (d *Datastore) getClusterOverridesInternal(ctx context.Context) (map[string
 	}
 	defer rows.Close()
 
-	overrides := make(map[string]string)
+	overrides := make(map[string]clusterOverride)
 	for rows.Next() {
-		var key, name string
-		if err := rows.Scan(&key, &name); err != nil {
+		var key, name, description string
+		if err := rows.Scan(&key, &name, &description); err != nil {
 			return nil, fmt.Errorf("failed to scan cluster override: %w", err)
 		}
-		overrides[key] = name
+		overrides[key] = clusterOverride{Name: name, Description: description}
 	}
 
 	if err := rows.Err(); err != nil {
@@ -1050,7 +1051,7 @@ func (d *Datastore) UpsertClusterByAutoKey(ctx context.Context, autoKey, name st
 // UpsertAutoDetectedCluster creates or updates an auto-detected cluster.
 // Supports renaming (name), moving to a different group (groupID), or both.
 // At least one of name or groupID must be provided.
-func (d *Datastore) UpsertAutoDetectedCluster(ctx context.Context, autoKey string, name string, groupID *int) (*Cluster, error) {
+func (d *Datastore) UpsertAutoDetectedCluster(ctx context.Context, autoKey string, name string, description *string, groupID *int) (*Cluster, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -1075,12 +1076,12 @@ func (d *Datastore) UpsertAutoDetectedCluster(ctx context.Context, autoKey strin
 		}
 
 		insertQuery := `
-            INSERT INTO clusters (name, auto_cluster_key, group_id)
-            VALUES ($1, $2, $3)
+            INSERT INTO clusters (name, description, auto_cluster_key, group_id)
+            VALUES ($1, $2, $3, $4)
             RETURNING id, group_id, name, description, auto_cluster_key, created_at, updated_at
         `
 		var c Cluster
-		err := d.pool.QueryRow(ctx, insertQuery, name, autoKey, groupID).Scan(
+		err := d.pool.QueryRow(ctx, insertQuery, name, description, autoKey, groupID).Scan(
 			&c.ID, &c.GroupID, &c.Name, &c.Description, &c.AutoClusterKey, &c.CreatedAt, &c.UpdatedAt,
 		)
 		if err != nil {
@@ -1098,6 +1099,12 @@ func (d *Datastore) UpsertAutoDetectedCluster(ctx context.Context, autoKey strin
 	if name != "" {
 		setClauses = append(setClauses, fmt.Sprintf("name = $%d", argNum))
 		args = append(args, name)
+		argNum++
+	}
+
+	if description != nil {
+		setClauses = append(setClauses, fmt.Sprintf("description = $%d", argNum))
+		args = append(args, *description)
 		argNum++
 	}
 
@@ -1616,9 +1623,16 @@ type TopologyServerInfo struct {
 type TopologyCluster struct {
 	ID             string               `json:"id"`
 	Name           string               `json:"name"`
+	Description    string               `json:"description,omitempty"`
 	ClusterType    string               `json:"cluster_type"` // spock, spock_ha, binary, logical, server
 	AutoClusterKey string               `json:"auto_cluster_key,omitempty"`
 	Servers        []TopologyServerInfo `json:"servers"`
+}
+
+// clusterOverride holds custom name and description for auto-detected clusters
+type clusterOverride struct {
+	Name        string
+	Description string
 }
 
 // TopologyGroup represents a group with topology-aware clusters
@@ -1681,7 +1695,7 @@ func (d *Datastore) GetClusterTopology(ctx context.Context) ([]TopologyGroup, er
 	// Get cluster name overrides for auto-detected clusters
 	clusterOverrides, err := d.getClusterOverridesInternal(ctx)
 	if err != nil {
-		clusterOverrides = make(map[string]string)
+		clusterOverrides = make(map[string]clusterOverride)
 	}
 
 	// Step 3: Build auto-detected topology from ALL connections
@@ -1888,7 +1902,7 @@ func (d *Datastore) getClaimedAutoClusterKeys(ctx context.Context, defaultGroupI
 // buildAutoDetectedClusters builds a map of auto_cluster_key -> TopologyCluster
 // This is used to get server information for auto-detected clusters that have been
 // moved to manual groups
-func (d *Datastore) buildAutoDetectedClusters(connections []connectionWithRole, clusterOverrides map[string]string) map[string]TopologyCluster {
+func (d *Datastore) buildAutoDetectedClusters(connections []connectionWithRole, clusterOverrides map[string]clusterOverride) map[string]TopologyCluster {
 	result := make(map[string]TopologyCluster)
 
 	// Create maps for lookups
@@ -1948,12 +1962,15 @@ func (d *Datastore) buildAutoDetectedClusters(connections []connectionWithRole, 
 			server := d.buildServerWithChildren(conn, childrenMap, connByID, assignedConnections)
 			autoKey := fmt.Sprintf("binary:%d", conn.ID)
 			clusterName := conn.Name
-			if customName, ok := clusterOverrides[autoKey]; ok {
-				clusterName = customName
+			clusterDescription := ""
+			if override, ok := clusterOverrides[autoKey]; ok {
+				clusterName = override.Name
+				clusterDescription = override.Description
 			}
 			cluster := TopologyCluster{
 				ID:             fmt.Sprintf("server-%d", conn.ID),
 				Name:           clusterName,
+				Description:    clusterDescription,
 				ClusterType:    "binary",
 				AutoClusterKey: autoKey,
 				Servers:        []TopologyServerInfo{server},
@@ -1980,12 +1997,15 @@ func (d *Datastore) buildAutoDetectedClusters(connections []connectionWithRole, 
 		server := d.buildServerWithChildren(conn, childrenMap, connByID, assignedConnections)
 		autoKey := fmt.Sprintf("standalone:%d", conn.ID)
 		clusterName := conn.Name
-		if customName, ok := clusterOverrides[autoKey]; ok {
-			clusterName = customName
+		clusterDescription := ""
+		if override, ok := clusterOverrides[autoKey]; ok {
+			clusterName = override.Name
+			clusterDescription = override.Description
 		}
 		cluster := TopologyCluster{
 			ID:             fmt.Sprintf("server-%d", conn.ID),
 			Name:           clusterName,
+			Description:    clusterDescription,
 			ClusterType:    "server",
 			AutoClusterKey: autoKey,
 			Servers:        []TopologyServerInfo{server},
@@ -2053,9 +2073,14 @@ func (d *Datastore) buildManualGroupsTopology(ctx context.Context, autoDetectedC
 				// This cluster was auto-detected and moved to this manual group
 				// Use the auto-detected cluster data (with servers) from our map
 				if autoCluster, ok := autoDetectedClusters[c.AutoClusterKey.String]; ok {
+					clusterDescription := ""
+					if c.Description != nil {
+						clusterDescription = *c.Description
+					}
 					topologyCluster := TopologyCluster{
 						ID:             fmt.Sprintf("cluster-%d", c.ID),
 						Name:           c.Name, // Use the custom name from the cluster record
+						Description:    clusterDescription,
 						ClusterType:    autoCluster.ClusterType,
 						AutoClusterKey: c.AutoClusterKey.String,
 						Servers:        autoCluster.Servers,
@@ -2068,9 +2093,14 @@ func (d *Datastore) buildManualGroupsTopology(ctx context.Context, autoDetectedC
 			}
 
 			// Regular manual cluster - get servers via cluster_id
+			manualDescription := ""
+			if c.Description != nil {
+				manualDescription = *c.Description
+			}
 			topologyCluster := TopologyCluster{
 				ID:          fmt.Sprintf("cluster-%d", c.ID),
 				Name:        c.Name,
+				Description: manualDescription,
 				ClusterType: "manual",
 				Servers:     []TopologyServerInfo{},
 			}
@@ -2194,7 +2224,7 @@ func (d *Datastore) getServersInClusterWithRolesInternal(ctx context.Context, cl
 // The claimedKeys parameter contains auto_cluster_keys that have been moved to
 // manual groups - these clusters will be excluded from the default group.
 // The defaultGroup parameter provides the database-backed default group info.
-func (d *Datastore) buildTopologyHierarchy(connections []connectionWithRole, clusterOverrides map[string]string, claimedKeys map[string]bool, defaultGroup *defaultGroupInfo) []TopologyGroup {
+func (d *Datastore) buildTopologyHierarchy(connections []connectionWithRole, clusterOverrides map[string]clusterOverride, claimedKeys map[string]bool, defaultGroup *defaultGroupInfo) []TopologyGroup {
 	// Create maps for lookups
 	connByID := make(map[int]*connectionWithRole)
 	connByHostPort := make(map[string]*connectionWithRole)
@@ -2278,13 +2308,16 @@ func (d *Datastore) buildTopologyHierarchy(connections []connectionWithRole, clu
 			server := d.buildServerWithChildren(conn, childrenMap, connByID, assignedConnections)
 
 			clusterName := conn.Name
-			if customName, ok := clusterOverrides[autoKey]; ok {
-				clusterName = customName
+			clusterDescription := ""
+			if override, ok := clusterOverrides[autoKey]; ok {
+				clusterName = override.Name
+				clusterDescription = override.Description
 			}
 
 			cluster := TopologyCluster{
 				ID:             fmt.Sprintf("server-%d", conn.ID),
 				Name:           clusterName,
+				Description:    clusterDescription,
 				ClusterType:    "binary", // UI will show cluster header for binary replication
 				AutoClusterKey: autoKey,
 				Servers:        []TopologyServerInfo{server},
@@ -2321,9 +2354,14 @@ func (d *Datastore) buildTopologyHierarchy(connections []connectionWithRole, clu
 
 		// Build server (with any children if applicable)
 		server := d.buildServerWithChildren(conn, childrenMap, connByID, assignedConnections)
+		standaloneDescription := ""
+		if override, ok := clusterOverrides[autoKey]; ok {
+			standaloneDescription = override.Description
+		}
 		standaloneCluster := TopologyCluster{
 			ID:             fmt.Sprintf("server-%d", conn.ID),
 			Name:           conn.Name,
+			Description:    standaloneDescription,
 			ClusterType:    "server", // UI will not show cluster header for this type
 			AutoClusterKey: autoKey,
 			Servers:        []TopologyServerInfo{server},
@@ -2348,7 +2386,7 @@ func (d *Datastore) groupSpockNodesByClusters(
 	childrenMap map[int][]int,
 	connByID map[int]*connectionWithRole,
 	assignedConnections map[int]bool,
-	overrides map[string]string,
+	overrides map[string]clusterOverride,
 ) []TopologyCluster {
 	if len(spockNodes) == 0 {
 		return nil
@@ -2380,15 +2418,18 @@ func (d *Datastore) groupSpockNodesByClusters(
 			clusterName = fmt.Sprintf("%s Spock HA", prefix)
 		}
 
-		// Compute auto_cluster_key and check for custom name
+		// Compute auto_cluster_key and check for custom name/description
 		autoKey := fmt.Sprintf("spock:%s", prefix)
-		if customName, ok := overrides[autoKey]; ok {
-			clusterName = customName
+		clusterDescription := ""
+		if override, ok := overrides[autoKey]; ok {
+			clusterName = override.Name
+			clusterDescription = override.Description
 		}
 
 		cluster := TopologyCluster{
 			ID:             fmt.Sprintf("cluster-spock-%s", prefix),
 			Name:           clusterName,
+			Description:    clusterDescription,
 			ClusterType:    clusterType,
 			AutoClusterKey: autoKey,
 			Servers:        make([]TopologyServerInfo, 0, len(nodes)),
@@ -2414,7 +2455,7 @@ func (d *Datastore) groupLogicalReplicationByPublisher(
 	connByHostPort map[string]*connectionWithRole,
 	connByNamePort map[string]*connectionWithRole,
 	assignedConnections map[int]bool,
-	overrides map[string]string,
+	overrides map[string]clusterOverride,
 ) []TopologyCluster {
 	// Build publisher->subscribers map by matching publisher_host:port to connections
 	subscribersByPublisher := make(map[int][]*connectionWithRole) // publisher connection ID -> subscribers
@@ -2558,17 +2599,20 @@ func (d *Datastore) groupLogicalReplicationByPublisher(
 			pubServer.Children = append(pubServer.Children, subServer)
 		}
 
-		// Compute auto_cluster_key and check for custom name
+		// Compute auto_cluster_key and check for custom name/description
 		autoKey := fmt.Sprintf("logical:%d", publisher.ID)
 		clusterName := publisher.Name
-		if customName, ok := overrides[autoKey]; ok {
-			clusterName = customName
+		clusterDescription := ""
+		if override, ok := overrides[autoKey]; ok {
+			clusterName = override.Name
+			clusterDescription = override.Description
 		}
 
 		// Use cluster_type "logical" so UI shows cluster header for logical replication
 		cluster := TopologyCluster{
 			ID:             fmt.Sprintf("server-%d", publisher.ID),
 			Name:           clusterName,
+			Description:    clusterDescription,
 			ClusterType:    "logical",
 			AutoClusterKey: autoKey,
 			Servers:        []TopologyServerInfo{pubServer},

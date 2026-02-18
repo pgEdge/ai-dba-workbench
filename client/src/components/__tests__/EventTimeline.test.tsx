@@ -94,17 +94,17 @@ describe('EventTimeline Component', () => {
 
     describe('Rendering', () => {
         it('renders timeline header with title', () => {
-            render(<EventTimeline selection={mockServerSelection} mode="light" />);
+            render(<EventTimeline selection={mockServerSelection} />);
             expect(screen.getByText('Event Timeline')).toBeInTheDocument();
         });
 
         it('displays event count chip', () => {
-            render(<EventTimeline selection={mockServerSelection} mode="light" />);
+            render(<EventTimeline selection={mockServerSelection} />);
             expect(screen.getByText('3')).toBeInTheDocument();
         });
 
         it('renders time range selector with all options', () => {
-            render(<EventTimeline selection={mockServerSelection} mode="light" />);
+            render(<EventTimeline selection={mockServerSelection} />);
             expect(screen.getByRole('button', { name: '1h' })).toBeInTheDocument();
             expect(screen.getByRole('button', { name: '6h' })).toBeInTheDocument();
             expect(screen.getByRole('button', { name: '24h' })).toBeInTheDocument();
@@ -112,7 +112,7 @@ describe('EventTimeline Component', () => {
         });
 
         it('renders event type filter chips', () => {
-            render(<EventTimeline selection={mockServerSelection} mode="light" />);
+            render(<EventTimeline selection={mockServerSelection} />);
             expect(screen.getByText('Config')).toBeInTheDocument();
             expect(screen.getByText('HBA')).toBeInTheDocument();
             expect(screen.getByText('Ident')).toBeInTheDocument();
@@ -123,12 +123,12 @@ describe('EventTimeline Component', () => {
         });
 
         it('does not render when selection is null', () => {
-            const { container } = render(<EventTimeline selection={null} mode="light" />);
+            const { container } = render(<EventTimeline selection={null} />);
             expect(container.firstChild).toBeNull();
         });
 
         it('renders correctly in dark mode', () => {
-            render(<EventTimeline selection={mockServerSelection} mode="dark" />);
+            render(<EventTimeline selection={mockServerSelection} />);
             expect(screen.getByText('Event Timeline')).toBeInTheDocument();
         });
     });
@@ -141,7 +141,7 @@ describe('EventTimeline Component', () => {
                 events: [],
             });
 
-            render(<EventTimeline selection={mockServerSelection} mode="light" />);
+            render(<EventTimeline selection={mockServerSelection} />);
 
             // Skeleton elements are rendered
             const skeletons = document.querySelectorAll('.MuiSkeleton-root');
@@ -157,7 +157,7 @@ describe('EventTimeline Component', () => {
                 totalCount: 0,
             });
 
-            render(<EventTimeline selection={mockServerSelection} mode="light" />);
+            render(<EventTimeline selection={mockServerSelection} />);
 
             expect(screen.getByText('No events in this time range')).toBeInTheDocument();
             expect(screen.getByText('Try expanding the time range or adjusting filters')).toBeInTheDocument();
@@ -166,7 +166,7 @@ describe('EventTimeline Component', () => {
 
     describe('Collapse/Expand', () => {
         it('timeline is expanded by default', () => {
-            render(<EventTimeline selection={mockServerSelection} mode="light" />);
+            render(<EventTimeline selection={mockServerSelection} />);
 
             // Timeline canvas should be visible (look for the track)
             const timeline = document.querySelector('[class*="MuiCollapse-entered"]');
@@ -174,7 +174,7 @@ describe('EventTimeline Component', () => {
         });
 
         it('collapses timeline when header is clicked', async () => {
-            render(<EventTimeline selection={mockServerSelection} mode="light" />);
+            render(<EventTimeline selection={mockServerSelection} />);
 
             // Click the header to collapse
             fireEvent.click(screen.getByText('Event Timeline'));
@@ -187,7 +187,7 @@ describe('EventTimeline Component', () => {
         });
 
         it('expands timeline when header is clicked again', async () => {
-            render(<EventTimeline selection={mockServerSelection} mode="light" />);
+            render(<EventTimeline selection={mockServerSelection} />);
 
             // Collapse first
             fireEvent.click(screen.getByText('Event Timeline'));
@@ -207,14 +207,14 @@ describe('EventTimeline Component', () => {
 
     describe('Time Range Selection', () => {
         it('selects 24h by default', () => {
-            render(<EventTimeline selection={mockServerSelection} mode="light" />);
+            render(<EventTimeline selection={mockServerSelection} />);
 
             const button24h = screen.getByRole('button', { name: '24h' });
             expect(button24h).toHaveClass('Mui-selected');
         });
 
         it('changes time range when different option clicked', () => {
-            render(<EventTimeline selection={mockServerSelection} mode="light" />);
+            render(<EventTimeline selection={mockServerSelection} />);
 
             fireEvent.click(screen.getByRole('button', { name: '1h' }));
 
@@ -226,7 +226,7 @@ describe('EventTimeline Component', () => {
         });
 
         it('updates hook call when time range changes', () => {
-            render(<EventTimeline selection={mockServerSelection} mode="light" />);
+            render(<EventTimeline selection={mockServerSelection} />);
 
             fireEvent.click(screen.getByRole('button', { name: '7d' }));
 
@@ -240,7 +240,7 @@ describe('EventTimeline Component', () => {
 
     describe('Event Type Filtering', () => {
         it('all event types selected by default', () => {
-            render(<EventTimeline selection={mockServerSelection} mode="light" />);
+            render(<EventTimeline selection={mockServerSelection} />);
 
             expect(useTimelineEventsModule.useTimelineEvents).toHaveBeenCalledWith(
                 expect.objectContaining({
@@ -250,7 +250,7 @@ describe('EventTimeline Component', () => {
         });
 
         it('filters to single event type when clicked', () => {
-            render(<EventTimeline selection={mockServerSelection} mode="light" />);
+            render(<EventTimeline selection={mockServerSelection} />);
 
             fireEvent.click(screen.getByText('Config'));
 
@@ -262,7 +262,7 @@ describe('EventTimeline Component', () => {
         });
 
         it('sends both blackout types when Blackouts chip is clicked', () => {
-            render(<EventTimeline selection={mockServerSelection} mode="light" />);
+            render(<EventTimeline selection={mockServerSelection} />);
 
             fireEvent.click(screen.getByText('Blackouts'));
 
@@ -274,7 +274,7 @@ describe('EventTimeline Component', () => {
         });
 
         it('adds event type when another is clicked', () => {
-            render(<EventTimeline selection={mockServerSelection} mode="light" />);
+            render(<EventTimeline selection={mockServerSelection} />);
 
             // Click Config first
             fireEvent.click(screen.getByText('Config'));
@@ -293,7 +293,7 @@ describe('EventTimeline Component', () => {
 
     describe('Connection ID Handling', () => {
         it('passes connectionId for server selection', () => {
-            render(<EventTimeline selection={mockServerSelection} mode="light" />);
+            render(<EventTimeline selection={mockServerSelection} />);
 
             expect(useTimelineEventsModule.useTimelineEvents).toHaveBeenCalledWith(
                 expect.objectContaining({
@@ -304,7 +304,7 @@ describe('EventTimeline Component', () => {
         });
 
         it('passes connectionIds for cluster selection', () => {
-            render(<EventTimeline selection={mockClusterSelection} mode="light" />);
+            render(<EventTimeline selection={mockClusterSelection} />);
 
             expect(useTimelineEventsModule.useTimelineEvents).toHaveBeenCalledWith(
                 expect.objectContaining({
@@ -317,7 +317,7 @@ describe('EventTimeline Component', () => {
 
     describe('Event Markers', () => {
         it('renders event markers on timeline', () => {
-            render(<EventTimeline selection={mockServerSelection} mode="light" />);
+            render(<EventTimeline selection={mockServerSelection} />);
 
             // Events should appear as markers - look for icons within the timeline
             const settingsIcons = document.querySelectorAll('[data-testid="SettingsIcon"]');
@@ -330,7 +330,7 @@ describe('EventTimeline Component', () => {
         });
 
         it('shows tooltip on hover', async () => {
-            render(<EventTimeline selection={mockServerSelection} mode="light" />);
+            render(<EventTimeline selection={mockServerSelection} />);
 
             // Find an event marker and hover
             const settingsIcon = document.querySelector('[data-testid="SettingsIcon"]');
@@ -350,7 +350,7 @@ describe('EventTimeline Component', () => {
 
     describe('Event Detail Panel', () => {
         it('opens panel when event marker is clicked', async () => {
-            render(<EventTimeline selection={mockServerSelection} mode="light" />);
+            render(<EventTimeline selection={mockServerSelection} />);
 
             // Find and click an event marker
             const settingsIcon = document.querySelector('[data-testid="SettingsIcon"]');
@@ -369,7 +369,7 @@ describe('EventTimeline Component', () => {
         });
 
         it('shows config change details in panel', async () => {
-            render(<EventTimeline selection={mockServerSelection} mode="light" />);
+            render(<EventTimeline selection={mockServerSelection} />);
 
             // Find and click the config change event marker
             const settingsIcon = document.querySelector('[data-testid="SettingsIcon"]');
@@ -389,7 +389,7 @@ describe('EventTimeline Component', () => {
         });
 
         it('closes panel when clicking close button', async () => {
-            render(<EventTimeline selection={mockServerSelection} mode="light" />);
+            render(<EventTimeline selection={mockServerSelection} />);
 
             // Find and click an event marker
             const settingsIcon = document.querySelector('[data-testid="SettingsIcon"]');
@@ -419,7 +419,7 @@ describe('EventTimeline Component', () => {
 
     describe('Server Name Display', () => {
         it('does not show server name chips for server selection', () => {
-            render(<EventTimeline selection={mockServerSelection} mode="light" />);
+            render(<EventTimeline selection={mockServerSelection} />);
 
             // Server name should not be prominent in tooltips for single server view
             // This is controlled by showServer prop in the component
@@ -431,7 +431,7 @@ describe('EventTimeline Component', () => {
         });
 
         it('shows server name chips for cluster selection', () => {
-            render(<EventTimeline selection={mockClusterSelection} mode="light" />);
+            render(<EventTimeline selection={mockClusterSelection} />);
 
             // For cluster selection, server names should be shown
             expect(useTimelineEventsModule.useTimelineEvents).toHaveBeenCalledWith(
@@ -444,7 +444,7 @@ describe('EventTimeline Component', () => {
 
     describe('Time Markers', () => {
         it('renders time axis markers', () => {
-            render(<EventTimeline selection={mockServerSelection} mode="light" />);
+            render(<EventTimeline selection={mockServerSelection} />);
 
             // Time markers should be rendered on the axis
             // Look for time-formatted text (hours:minutes format)
@@ -456,7 +456,7 @@ describe('EventTimeline Component', () => {
 
     describe('Accessibility', () => {
         it('has accessible toggle buttons for time range', () => {
-            render(<EventTimeline selection={mockServerSelection} mode="light" />);
+            render(<EventTimeline selection={mockServerSelection} />);
 
             const toggleGroup = screen.getByRole('group');
             expect(toggleGroup).toBeInTheDocument();
@@ -466,7 +466,7 @@ describe('EventTimeline Component', () => {
         });
 
         it('event markers have tooltips for accessibility', () => {
-            render(<EventTimeline selection={mockServerSelection} mode="light" />);
+            render(<EventTimeline selection={mockServerSelection} />);
 
             // Tooltips should be available for screen readers
             const markers = document.querySelectorAll('[data-testid*="Icon"]');

@@ -266,7 +266,7 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
         <CollapsibleSection title="PostgreSQL Overview" icon={<StorageIcon sx={{ fontSize: 16 }} />} defaultExpanded>
             {isKpiLoading && !connectionsKpi.data && (
                 <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
-                    <CircularProgress size={24} />
+                    <CircularProgress size={24} aria-label="Loading" />
                 </Box>
             )}
             <Box sx={KPI_GRID_SX}>

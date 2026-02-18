@@ -181,7 +181,7 @@ const ClusterConfigDialog: React.FC<ClusterConfigDialogProps> = ({
                                 onClick={handleSave}
                                 disabled={isSaving}
                             >
-                                {isSaving ? <CircularProgress size={20} sx={{ color: 'inherit' }} /> : 'Save'}
+                                {isSaving ? <CircularProgress size={20} sx={{ color: 'inherit' }} aria-label="Saving" /> : 'Save'}
                             </Button>
                         </Box>
                     </Box>

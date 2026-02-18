@@ -185,7 +185,7 @@ const HealthOverviewSection: React.FC<HealthOverviewSectionProps> = ({ selection
     if (alertsLoading && !initialLoadDoneRef.current) {
         return (
             <Box sx={LOADING_CONTAINER_SX}>
-                <CircularProgress size={32} />
+                <CircularProgress size={32} aria-label="Loading health overview" />
             </Box>
         );
     }

@@ -1,56 +1,62 @@
 # pgEdge AI DBA Workbench
 
-[![CI - Collector](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-collector.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-collector.yml)
-[![CI - Server](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-server.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-server.yml)
+[![CI - Alerter](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-alerter.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-alerter.yml)
 [![CI - CLI](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-cli.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-cli.yml)
+[![CI - Client](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-client.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-client.yml)
+[![CI - Collector](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-collector.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-collector.yml)
 [![CI - Docs](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-docs.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-docs.yml)
+[![CI - Server](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-server.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-server.yml)
 
-The pgEdge AI DBA Workbench is a unified environment for interacting with pgEdge's
-distributed and non-distributed PostgreSQL systems through artificial
-intelligence and traditional methods. It combines a Model Context Protocol
-(MCP) Server with a web-based user interface and data collector, enabling users
- to query, analyze, and manage distributed clusters using natural language and
- intelligent automation. The Workbench exposes pgEdge tools and data sources
- — such as Spock replication status, cluster configuration, and operational
- metrics — to either hosted or both hosted and locally running language models.
- Its architecture supports seamless switching between cloud-connected LLMs like
- Claude and locally hosted models from Ollama, ensuring the similar levels of
- functionality in air-gapped or secure environments. In essence, the pgEdge AI
- Workbench bridges the gap between database administration and AI reasoning,
- offering an extensible foundation for observability, troubleshooting, and
- intelligent workflow creation across the pgEdge ecosystem.
+The pgEdge AI DBA Workbench is a unified environment for
+interacting with pgEdge's distributed and non-distributed PostgreSQL
+systems through artificial intelligence and traditional methods.
+
+The Workbench combines a Model Context Protocol (MCP) Server with a
+web-based user interface and data collector. Users can query,
+analyze, and manage distributed clusters using natural language and
+intelligent automation. The Workbench exposes pgEdge tools and data
+sources such as Spock replication status, cluster configuration, and
+operational metrics to language models.
+
+The architecture supports switching between cloud-connected LLMs
+like Claude and locally hosted models from Ollama. This design
+ensures similar levels of functionality in air-gapped or secure
+environments. The pgEdge AI Workbench bridges database
+administration and AI reasoning; it offers an extensible foundation
+for observability, troubleshooting, and intelligent workflow
+creation across the pgEdge ecosystem.
 
 ## Components
 
-The pgEdge AI DBA Workbench consists of four main components:
+The pgEdge AI DBA Workbench consists of five main components:
 
-- **[Collector](collector/README.md)** - A monitoring service that collects
-  metrics from PostgreSQL servers and stores them in a centralized datastore
-  for analysis
-- **[Server](server/README.md)** - An MCP server that provides tools and
-  resources for interacting with PostgreSQL systems
-- **[CLI](cli/README.md)** - A command-line interface for interacting with
-  the MCP server
-- **[Alerter](alerter/README.md)** - A background monitoring service that
-  evaluates collected metrics against thresholds and AI-powered anomaly
-  detection to generate alerts
-- **[Client](client/README.md)** - A web-based user interface for
-  interacting with the AI Workbench
+- The [Collector](collector/README.md) monitors PostgreSQL
+  servers and stores metrics in a centralized datastore.
+- The [Server](server/README.md) provides MCP tools and
+  resources for interacting with PostgreSQL systems.
+- The [CLI](cli/README.md) offers a command-line interface
+  for communicating with the MCP server.
+- The [Alerter](alerter/README.md) evaluates collected
+  metrics against thresholds and AI-powered anomaly
+  detection to generate alerts.
+- The [Client](client/README.md) provides a web-based user
+  interface for the AI Workbench.
 
 ## Documentation
 
 Comprehensive documentation is available in the [docs](docs/index.md)
 directory:
 
-- **[Documentation Index](docs/index.md)** - Main documentation entry point
-- **[CLI Documentation](docs/cli/index.md)** - Command-line interface usage
-  and configuration
-- **[Server Documentation](docs/server/index.md)** - MCP server configuration
-  and authentication
-- **[Collector Documentation](docs/collector/index.md)** - Data collection
-  and monitoring
-- **[Alerter Documentation](docs/alerter/index.md)** - Alert generation and
-  anomaly detection
+- The [Documentation Index](docs/index.md) serves as the
+  main entry point for all project documentation.
+- The [CLI Documentation](docs/cli/index.md) covers
+  command-line interface usage and configuration.
+- The [Server Documentation](docs/server/index.md)
+  describes MCP server configuration and authentication.
+- The [Collector Documentation](docs/collector/index.md)
+  explains data collection and monitoring setup.
+- The [Alerter Documentation](docs/alerter/index.md)
+  covers alert generation and anomaly detection.
 
 ## Building
 

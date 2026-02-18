@@ -10,6 +10,7 @@
 package resources
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -98,7 +99,7 @@ Use before:
 				return systemInfo, nil
 			}
 
-			return database.ExecuteResourceQuery(dbClient, URISystemInfo, query, processor)
+			return database.ExecuteResourceQuery(context.Background(), dbClient, URISystemInfo, query, processor)
 		},
 	}
 }

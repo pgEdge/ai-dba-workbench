@@ -510,7 +510,7 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
                     sx={getSaveButtonSx(theme)}
                 >
                     {isSaving ? (
-                        <CircularProgress size={20} sx={{ color: 'inherit' }} />
+                        <CircularProgress size={20} sx={{ color: 'inherit' }} aria-label="Saving" />
                     ) : (
                         'Create Blackout'
                     )}

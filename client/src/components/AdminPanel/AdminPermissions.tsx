@@ -9,7 +9,6 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { ThemeMode } from '../../types/theme';
 import {
     Box,
     Typography,
@@ -41,6 +40,7 @@ import {
     Delete as DeleteIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
+import { apiGet, apiPost, apiDelete } from '../../utils/apiClient';
 import {
     tableHeaderCellSx,
     dialogTitleSx,
@@ -72,7 +72,34 @@ const PERMISSION_TYPES = [
     { value: 'manage_notification_channels', label: 'Manage Notification Channels' },
 ];
 
-const mcpTypeLabel = (itemType) => {
+interface RbacGroup {
+    id: number;
+    name: string;
+}
+
+interface McpPermission {
+    identifier?: string;
+    privilege?: string;
+    item_type?: string;
+    _isAll?: boolean;
+}
+
+interface ConnPermission {
+    connection_id: number;
+    access_level?: string;
+}
+
+interface AdminPermissionEntry {
+    permission?: string;
+    name?: string;
+}
+
+interface Connection {
+    id: number;
+    name: string;
+}
+
+const mcpTypeLabel = (itemType: string | undefined): string => {
     switch (itemType) {
         case 'tool': return 'Tool';
         case 'resource': return 'Resource';
@@ -81,68 +108,65 @@ const mcpTypeLabel = (itemType) => {
     }
 };
 
-const formatMcpName = (permission) => {
-    const name = permission.identifier || permission.privilege || permission;
+const formatMcpName = (permission: McpPermission | string): string => {
+    if (typeof permission === 'string') {
+        if (permission === '*') {return 'All MCP Privileges';}
+        return permission;
+    }
+    const name = permission.identifier || permission.privilege || '';
     if (name === '*') {return 'All MCP Privileges';}
     const type = permission.item_type;
     if (type) {return `${mcpTypeLabel(type)}: ${name}`;}
     return name;
 };
 
-interface AdminPermissionsProps {
-    mode: ThemeMode;
-}
-
-const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode: _mode }) => {
+const AdminPermissions: React.FC = () => {
     const theme = useTheme();
     const { user } = useAuth();
     const isSuperuser = !!user?.isSuperuser;
 
-    const [groups, setGroups] = useState([]);
-    const [selectedGroupId, setSelectedGroupId] = useState('');
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(null);
+    const [groups, setGroups] = useState<RbacGroup[]>([]);
+    const [selectedGroupId, setSelectedGroupId] = useState<string>('');
+    const [loading, setLoading] = useState<boolean>(true);
+    const [error, setError] = useState<string | null>(null);
 
     // MCP permissions
-    const [mcpPermissions, setMcpPermissions] = useState([]);
-    const [mcpLoading, setMcpLoading] = useState(false);
-    const [grantMcpOpen, setGrantMcpOpen] = useState(false);
-    const [availableMcpPermissions, setAvailableMcpPermissions] = useState([]);
-    const [selectedMcpPermission, setSelectedMcpPermission] = useState(null);
-    const [grantMcpLoading, setGrantMcpLoading] = useState(false);
-    const [grantMcpError, setGrantMcpError] = useState(null);
+    const [mcpPermissions, setMcpPermissions] = useState<McpPermission[]>([]);
+    const [mcpLoading, setMcpLoading] = useState<boolean>(false);
+    const [grantMcpOpen, setGrantMcpOpen] = useState<boolean>(false);
+    const [availableMcpPermissions, setAvailableMcpPermissions] = useState<McpPermission[]>([]);
+    const [selectedMcpPermission, setSelectedMcpPermission] = useState<McpPermission | null>(null);
+    const [grantMcpLoading, setGrantMcpLoading] = useState<boolean>(false);
+    const [grantMcpError, setGrantMcpError] = useState<string | null>(null);
 
     // Connection permissions
-    const [connPermissions, setConnPermissions] = useState([]);
-    const [connLoading, setConnLoading] = useState(false);
-    const [grantConnOpen, setGrantConnOpen] = useState(false);
-    const [availableConnections, setAvailableConnections] = useState([]);
-    const [selectedConnectionId, setSelectedConnectionId] = useState('');
-    const [selectedAccessLevel, setSelectedAccessLevel] = useState('read');
-    const [grantConnLoading, setGrantConnLoading] = useState(false);
-    const [grantConnError, setGrantConnError] = useState(null);
-    const [connections, setConnections] = useState([]);
+    const [connPermissions, setConnPermissions] = useState<ConnPermission[]>([]);
+    const [connLoading, setConnLoading] = useState<boolean>(false);
+    const [grantConnOpen, setGrantConnOpen] = useState<boolean>(false);
+    const [availableConnections, setAvailableConnections] = useState<Connection[]>([]);
+    const [selectedConnectionId, setSelectedConnectionId] = useState<string>('');
+    const [selectedAccessLevel, setSelectedAccessLevel] = useState<string>('read');
+    const [grantConnLoading, setGrantConnLoading] = useState<boolean>(false);
+    const [grantConnError, setGrantConnError] = useState<string | null>(null);
+    const [connections, setConnections] = useState<Connection[]>([]);
 
     // Admin permissions
-    const [adminPermissions, setAdminPermissions] = useState([]);
-    const [adminPermsLoading, setAdminPermsLoading] = useState(false);
-    const [grantAdminOpen, setGrantAdminOpen] = useState(false);
-    const [selectedAdminPermission, setSelectedAdminPermission] = useState('');
-    const [grantAdminLoading, setGrantAdminLoading] = useState(false);
-    const [grantAdminError, setGrantAdminError] = useState(null);
+    const [adminPermissions, setAdminPermissions] = useState<AdminPermissionEntry[]>([]);
+    const [adminPermsLoading, setAdminPermsLoading] = useState<boolean>(false);
+    const [grantAdminOpen, setGrantAdminOpen] = useState<boolean>(false);
+    const [selectedAdminPermission, setSelectedAdminPermission] = useState<string>('');
+    const [grantAdminLoading, setGrantAdminLoading] = useState<boolean>(false);
+    const [grantAdminError, setGrantAdminError] = useState<string | null>(null);
 
     // Fetch groups on mount
     useEffect(() => {
         const fetchGroups = async () => {
             try {
-                const response = await fetch(`${API_BASE_URL}/rbac/groups`, {
-                    credentials: 'include',
-                });
-                if (!response.ok) {throw new Error('Failed to fetch groups');}
-                const data = await response.json();
+                const data = await apiGet<{ groups?: RbacGroup[] }>(`${API_BASE_URL}/rbac/groups`);
                 setGroups(data.groups || []);
-            } catch (err) {
-                setError(err.message);
+            } catch (err: unknown) {
+                const message = err instanceof Error ? err.message : String(err);
+                setError(message);
             } finally {
                 setLoading(false);
             }
@@ -151,29 +175,31 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode: _mode }) => {
     }, []);
 
     // Fetch MCP and connection permissions when group changes
-    const fetchPermissions = useCallback(async (groupId) => {
+    const fetchPermissions = useCallback(async (groupId: string) => {
         if (!groupId) {return;}
         try {
             setMcpLoading(true);
             setConnLoading(true);
-            const [groupResponse, connResponse] = await Promise.all([
-                fetch(`${API_BASE_URL}/rbac/groups/${groupId}`, {
-                    credentials: 'include',
-                }),
-                fetch(`${API_BASE_URL}/connections`, {
-                    credentials: 'include',
-                }),
+            const [groupData, connData] = await Promise.all([
+                apiGet<{ mcp_privileges?: McpPermission[]; connection_privileges?: ConnPermission[] }>(
+                    `${API_BASE_URL}/rbac/groups/${groupId}`
+                ),
+                apiGet<{ connections?: Connection[] } | Connection[]>(
+                    `${API_BASE_URL}/connections`
+                ).catch(() => null),
             ]);
-            if (!groupResponse.ok) {throw new Error('Failed to fetch permissions');}
-            const data = await groupResponse.json();
-            setMcpPermissions(data.mcp_privileges || []);
-            setConnPermissions(data.connection_privileges || []);
-            if (connResponse.ok) {
-                const connData = await connResponse.json();
-                setConnections(connData.connections || connData || []);
+            setMcpPermissions(groupData.mcp_privileges || []);
+            setConnPermissions(groupData.connection_privileges || []);
+            if (connData) {
+                if (Array.isArray(connData)) {
+                    setConnections(connData);
+                } else {
+                    setConnections(connData.connections || []);
+                }
             }
-        } catch (err) {
-            setError(err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            setError(message);
         } finally {
             setMcpLoading(false);
             setConnLoading(false);
@@ -181,19 +207,17 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode: _mode }) => {
     }, []);
 
     // Fetch admin permissions when group changes
-    const fetchAdminPermissions = useCallback(async (groupId) => {
+    const fetchAdminPermissions = useCallback(async (groupId: string) => {
         if (!groupId || !isSuperuser) {return;}
         try {
             setAdminPermsLoading(true);
-            const response = await fetch(
-                `${API_BASE_URL}/rbac/groups/${groupId}/permissions`,
-                { credentials: 'include' }
+            const data = await apiGet<{ permissions?: AdminPermissionEntry[] }>(
+                `${API_BASE_URL}/rbac/groups/${groupId}/permissions`
             );
-            if (!response.ok) {throw new Error('Failed to fetch admin permissions');}
-            const data = await response.json();
             setAdminPermissions(data.permissions || []);
-        } catch (err) {
-            setError(err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            setError(message);
         } finally {
             setAdminPermsLoading(false);
         }
@@ -216,24 +240,19 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode: _mode }) => {
         setGrantMcpError(null);
         setSelectedMcpPermission(null);
         try {
-            const response = await fetch(`${API_BASE_URL}/rbac/privileges/mcp`, {
-                credentials: 'include',
-            });
-            if (response.ok) {
-                const data = await response.json();
-                const assignedIdentifiers = new Set(
-                    mcpPermissions.map(p => p.identifier || p.privilege || p)
+            const data = await apiGet<McpPermission[]>(`${API_BASE_URL}/rbac/privileges/mcp`);
+            const assignedIdentifiers = new Set(
+                mcpPermissions.map((p: McpPermission) => p.identifier || p.privilege || '')
+            );
+            const hasWildcard = assignedIdentifiers.has('*');
+            if (!hasWildcard) {
+                const filtered = (data || []).filter(
+                    (p: McpPermission) => !assignedIdentifiers.has(p.identifier || '')
                 );
-                const hasWildcard = assignedIdentifiers.has('*');
-                if (!hasWildcard) {
-                    const filtered = (data || []).filter(
-                        p => !assignedIdentifiers.has(p.identifier)
-                    );
-                    const allOption = { identifier: '*', item_type: null, _isAll: true };
-                    setAvailableMcpPermissions([allOption, ...filtered]);
-                } else {
-                    setAvailableMcpPermissions([]);
-                }
+                const allOption: McpPermission = { identifier: '*', item_type: undefined, _isAll: true };
+                setAvailableMcpPermissions([allOption, ...filtered]);
+            } else {
+                setAvailableMcpPermissions([]);
             }
         } catch {
             setGrantMcpError('Failed to load available permissions');
@@ -245,51 +264,39 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode: _mode }) => {
         try {
             setGrantMcpLoading(true);
             setGrantMcpError(null);
-            const response = await fetch(
+            await apiPost(
                 `${API_BASE_URL}/rbac/groups/${selectedGroupId}/privileges/mcp`,
                 {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'include',
-                    body: JSON.stringify({
-                        privilege: selectedMcpPermission.identifier || selectedMcpPermission,
-                    }),
-                }
+                    privilege: selectedMcpPermission.identifier || selectedMcpPermission,
+                },
             );
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.error || 'Failed to grant permission');
-            }
             setGrantMcpOpen(false);
             fetchPermissions(selectedGroupId);
-        } catch (err) {
-            setGrantMcpError(err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            setGrantMcpError(message);
         } finally {
             setGrantMcpLoading(false);
         }
     };
 
-    const handleRevokeMcp = async (permission) => {
+    const handleRevokeMcp = async (permission: McpPermission) => {
         try {
-            const identifier = permission.identifier || permission.privilege || permission;
-            const response = await fetch(
-                `${API_BASE_URL}/rbac/groups/${selectedGroupId}/privileges/mcp?name=${encodeURIComponent(identifier)}`,
-                {
-                    method: 'DELETE',
-                    credentials: 'include',
-                }
+            const identifier = permission.identifier || permission.privilege || '';
+            await apiDelete(
+                `${API_BASE_URL}/rbac/groups/${selectedGroupId}/privileges/mcp?name=${encodeURIComponent(identifier)}`
             );
-            if (!response.ok) {throw new Error('Failed to revoke permission');}
             fetchPermissions(selectedGroupId);
-        } catch (err) {
-            setError(err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            setError(message);
         }
     };
 
-    const getConnectionName = (id) => {
+    const getConnectionName = (id: number): string => {
         if (id === 0) {return 'All Connections';}
-        const conn = connections.find((c) => c.id === id);
-        return conn ? conn.name : id;
+        const conn = connections.find((c: Connection) => c.id === id);
+        return conn ? conn.name : String(id);
     };
 
     // Grant connection permission
@@ -306,44 +313,32 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode: _mode }) => {
         try {
             setGrantConnLoading(true);
             setGrantConnError(null);
-            const response = await fetch(
+            await apiPost(
                 `${API_BASE_URL}/rbac/groups/${selectedGroupId}/privileges/connections`,
                 {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'include',
-                    body: JSON.stringify({
-                        connection_id: parseInt(selectedConnectionId, 10),
-                        access_level: selectedAccessLevel,
-                    }),
-                }
+                    connection_id: parseInt(selectedConnectionId, 10),
+                    access_level: selectedAccessLevel,
+                },
             );
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.error || 'Failed to grant permission');
-            }
             setGrantConnOpen(false);
             fetchPermissions(selectedGroupId);
-        } catch (err) {
-            setGrantConnError(err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            setGrantConnError(message);
         } finally {
             setGrantConnLoading(false);
         }
     };
 
-    const handleRevokeConn = async (permission) => {
+    const handleRevokeConn = async (permission: ConnPermission) => {
         try {
-            const response = await fetch(
-                `${API_BASE_URL}/rbac/groups/${selectedGroupId}/privileges/connections/${permission.connection_id}`,
-                {
-                    method: 'DELETE',
-                    credentials: 'include',
-                }
+            await apiDelete(
+                `${API_BASE_URL}/rbac/groups/${selectedGroupId}/privileges/connections/${permission.connection_id}`
             );
-            if (!response.ok) {throw new Error('Failed to revoke permission');}
             fetchPermissions(selectedGroupId);
-        } catch (err) {
-            setError(err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            setError(message);
         }
     };
 
@@ -353,49 +348,37 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode: _mode }) => {
         try {
             setGrantAdminLoading(true);
             setGrantAdminError(null);
-            const response = await fetch(
+            await apiPost(
                 `${API_BASE_URL}/rbac/groups/${selectedGroupId}/permissions`,
-                {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'include',
-                    body: JSON.stringify({ permission: selectedAdminPermission }),
-                }
+                { permission: selectedAdminPermission },
             );
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.error || 'Failed to grant permission');
-            }
             setGrantAdminOpen(false);
             fetchAdminPermissions(selectedGroupId);
-        } catch (err) {
-            setGrantAdminError(err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            setGrantAdminError(message);
         } finally {
             setGrantAdminLoading(false);
         }
     };
 
-    const handleRevokeAdmin = async (permission) => {
+    const handleRevokeAdmin = async (permission: AdminPermissionEntry) => {
         try {
-            const permValue = permission.permission || permission.name || permission;
-            const response = await fetch(
-                `${API_BASE_URL}/rbac/groups/${selectedGroupId}/permissions/${encodeURIComponent(permValue)}`,
-                {
-                    method: 'DELETE',
-                    credentials: 'include',
-                }
+            const permValue = permission.permission || permission.name || '';
+            await apiDelete(
+                `${API_BASE_URL}/rbac/groups/${selectedGroupId}/permissions/${encodeURIComponent(permValue)}`
             );
-            if (!response.ok) {throw new Error('Failed to revoke permission');}
             fetchAdminPermissions(selectedGroupId);
-        } catch (err) {
-            setError(err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            setError(message);
         }
     };
 
     if (loading) {
         return (
             <Box sx={loadingContainerSx}>
-                <CircularProgress />
+                <CircularProgress aria-label="Loading permissions" />
             </Box>
         );
     }
@@ -470,7 +453,7 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode: _mode }) => {
                                     {connLoading ? (
                                         <TableRow>
                                             <TableCell colSpan={3} align="center" sx={{ py: 3 }}>
-                                                <CircularProgress size={24} />
+                                                <CircularProgress size={24} aria-label="Loading connections" />
                                             </TableCell>
                                         </TableRow>
                                     ) : connPermissions.length > 0 ? (
@@ -511,7 +494,7 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode: _mode }) => {
                                 <Typography variant="subtitle1" sx={sectionTitleSx}>
                                     Admin Permissions
                                 </Typography>
-                                {!adminPermissions.some(p => (p.permission || p.name || p) === '*') && (
+                                {!adminPermissions.some(p => (p.permission || p.name || '') === '*') && (
                                     <Button
                                         size="small"
                                         startIcon={<AddIcon />}
@@ -542,12 +525,12 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode: _mode }) => {
                                         {adminPermsLoading ? (
                                             <TableRow>
                                                 <TableCell colSpan={2} align="center" sx={{ py: 3 }}>
-                                                    <CircularProgress size={24} />
+                                                    <CircularProgress size={24} aria-label="Loading admin permissions" />
                                                 </TableCell>
                                             </TableRow>
                                         ) : adminPermissions.length > 0 ? (
                                             adminPermissions.map((p, i) => {
-                                                const permValue = p.permission || p.name || p;
+                                                const permValue = p.permission || p.name || '';
                                                 const permLabel = permValue === '*'
                                                     ? 'All Admin Permissions'
                                                     : PERMISSION_TYPES.find(
@@ -590,7 +573,7 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode: _mode }) => {
                             <Typography variant="subtitle1" sx={sectionTitleSx}>
                                 MCP Permissions
                             </Typography>
-                            {!mcpPermissions.some(p => (p.identifier || p.privilege || p) === '*') && (
+                            {!mcpPermissions.some(p => (p.identifier || p.privilege || '') === '*') && (
                                 <Button
                                     size="small"
                                     startIcon={<AddIcon />}
@@ -617,7 +600,7 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode: _mode }) => {
                                     {mcpLoading ? (
                                         <TableRow>
                                             <TableCell colSpan={2} align="center" sx={{ py: 3 }}>
-                                                <CircularProgress size={24} />
+                                                <CircularProgress size={24} aria-label="Loading MCP permissions" />
                                             </TableCell>
                                         </TableRow>
                                     ) : mcpPermissions.length > 0 ? (
@@ -661,9 +644,9 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode: _mode }) => {
                     )}
                     <Autocomplete
                         options={availableMcpPermissions}
-                        getOptionLabel={(option) => typeof option === 'string' ? option : formatMcpName(option)}
+                        getOptionLabel={(option: McpPermission | string) => typeof option === 'string' ? option : formatMcpName(option)}
                         value={selectedMcpPermission}
-                        onChange={(e, value) => setSelectedMcpPermission(value)}
+                        onChange={(_e: React.SyntheticEvent, value: McpPermission | null) => setSelectedMcpPermission(value)}
                         renderInput={(params) => (
                             <TextField
                                 {...params}
@@ -685,7 +668,7 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode: _mode }) => {
                         disabled={grantMcpLoading || !selectedMcpPermission}
                         sx={containedButtonSx}
                     >
-                        {grantMcpLoading ? <CircularProgress size={20} color="inherit" /> : 'Grant'}
+                        {grantMcpLoading ? <CircularProgress size={20} color="inherit" aria-label="Granting" /> : 'Grant'}
                     </Button>
                 </DialogActions>
             </Dialog>
@@ -744,7 +727,7 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode: _mode }) => {
                         disabled={grantConnLoading || selectedConnectionId === ''}
                         sx={containedButtonSx}
                     >
-                        {grantConnLoading ? <CircularProgress size={20} color="inherit" /> : 'Grant'}
+                        {grantConnLoading ? <CircularProgress size={20} color="inherit" aria-label="Granting" /> : 'Grant'}
                     </Button>
                 </DialogActions>
             </Dialog>
@@ -766,12 +749,12 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode: _mode }) => {
                             onChange={(e) => setSelectedAdminPermission(e.target.value)}
                             disabled={grantAdminLoading}
                         >
-                            {!adminPermissions.some(p => (p.permission || p.name || p) === '*') && (
+                            {!adminPermissions.some(p => (p.permission || p.name || '') === '*') && (
                                 [
                                     <MenuItem key="*" value="*">All Admin Permissions</MenuItem>,
                                     ...PERMISSION_TYPES
                                         .filter(pt => !adminPermissions.some(p =>
-                                            (p.permission || p.name || p) === pt.value
+                                            (p.permission || p.name || '') === pt.value
                                         ))
                                         .map((pt) => (
                                             <MenuItem key={pt.value} value={pt.value}>{pt.label}</MenuItem>
@@ -791,7 +774,7 @@ const AdminPermissions: React.FC<AdminPermissionsProps> = ({ mode: _mode }) => {
                         disabled={grantAdminLoading || !selectedAdminPermission}
                         sx={containedButtonSx}
                     >
-                        {grantAdminLoading ? <CircularProgress size={20} color="inherit" /> : 'Grant'}
+                        {grantAdminLoading ? <CircularProgress size={20} color="inherit" aria-label="Granting" /> : 'Grant'}
                     </Button>
                 </DialogActions>
             </Dialog>

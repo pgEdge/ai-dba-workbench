@@ -183,33 +183,15 @@ READ ONLY transaction to prevent side effects. However, be cautious with:
 				ctx = context.Background()
 			}
 
-			// Execute EXPLAIN in a READ ONLY transaction
-			tx, err := pool.Begin(ctx)
-			if err != nil {
-				return mcp.NewToolError(fmt.Sprintf("Failed to begin transaction: %v", err))
+			// Execute EXPLAIN in a READ ONLY transaction with timeout
+			rot, errResp, cleanup := BeginReadOnlyTx(ctx, pool)
+			if errResp != nil {
+				return *errResp, nil
 			}
-
-			committed := false
-			defer func() {
-				if !committed {
-					_ = tx.Rollback(ctx) //nolint:errcheck // rollback in defer after commit is expected to fail
-				}
-			}()
-
-			// Set transaction to read-only
-			_, err = tx.Exec(ctx, "SET TRANSACTION READ ONLY")
-			if err != nil {
-				return mcp.NewToolError(fmt.Sprintf("Failed to set transaction to read-only: %v", err))
-			}
-
-			// Defense-in-depth: limit query execution time
-			_, err = tx.Exec(ctx, "SET LOCAL statement_timeout = '10s'")
-			if err != nil {
-				return mcp.NewToolError(fmt.Sprintf("Failed to set statement timeout: %v", err))
-			}
+			defer cleanup()
 
 			// Execute EXPLAIN
-			rows, err := tx.Query(ctx, explainQuery)
+			rows, err := rot.Tx.Query(ctx, explainQuery)
 			if err != nil {
 				return mcp.NewToolError(fmt.Sprintf("Error executing EXPLAIN: %v\n\nQuery: %s", err, explainQuery))
 			}
@@ -230,10 +212,9 @@ READ ONLY transaction to prevent side effects. However, be cautious with:
 			}
 
 			// Commit the read-only transaction
-			if err := tx.Commit(ctx); err != nil {
+			if err := rot.Commit(); err != nil {
 				return mcp.NewToolError(fmt.Sprintf("Failed to commit transaction: %v", err))
 			}
-			committed = true
 
 			// Format the output
 			var result strings.Builder

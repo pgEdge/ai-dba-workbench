@@ -327,7 +327,7 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
         <CollapsibleSection title="System Resources" icon={<ComputerIcon sx={{ fontSize: 16 }} />} defaultExpanded>
             {isKpiLoading && !cpuKpi.data && (
                 <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
-                    <CircularProgress size={24} />
+                    <CircularProgress size={24} aria-label="Loading" />
                 </Box>
             )}
             <Box sx={KPI_GRID_SX}>

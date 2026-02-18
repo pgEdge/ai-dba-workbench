@@ -9,6 +9,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { apiGet, apiPut, apiDelete } from '../utils/apiClient';
 import {
     Box,
     Typography,
@@ -85,14 +86,9 @@ const ProbeOverridesPanel: React.FC<ProbeOverridesPanelProps> = ({ scope, scopeI
     const fetchOverrides = useCallback(async () => {
         try {
             setLoading(true);
-            const response = await fetch(
-                `${API_BASE_URL}/probe-overrides/${scope}/${scopeId}`,
-                { credentials: 'include' }
+            const data = await apiGet<ProbeOverride[]>(
+                `${API_BASE_URL}/probe-overrides/${scope}/${scopeId}`
             );
-            if (!response.ok) {
-                throw new Error('Failed to fetch probe overrides');
-            }
-            const data = await response.json();
             setOverrides(data || []);
         } catch (err: unknown) {
             if (err instanceof Error) {
@@ -137,23 +133,14 @@ const ProbeOverridesPanel: React.FC<ProbeOverridesPanelProps> = ({ scope, scopeI
         try {
             setSaving(true);
             setError(null);
-            const response = await fetch(
+            await apiPut(
                 `${API_BASE_URL}/probe-overrides/${scope}/${scopeId}/${editOverride.name}`,
                 {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'include',
-                    body: JSON.stringify({
-                        is_enabled: editEnabled,
-                        collection_interval_seconds: intervalNum,
-                        retention_days: retentionNum,
-                    }),
+                    is_enabled: editEnabled,
+                    collection_interval_seconds: intervalNum,
+                    retention_days: retentionNum,
                 }
             );
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.error || 'Failed to save override');
-            }
             setEditOpen(false);
             setSuccess(`Override for "${editOverride.name}" saved successfully.`);
             fetchOverrides();
@@ -172,17 +159,9 @@ const ProbeOverridesPanel: React.FC<ProbeOverridesPanelProps> = ({ scope, scopeI
         e.stopPropagation();
         try {
             setError(null);
-            const response = await fetch(
-                `${API_BASE_URL}/probe-overrides/${scope}/${scopeId}/${override.name}`,
-                {
-                    method: 'DELETE',
-                    credentials: 'include',
-                }
+            await apiDelete(
+                `${API_BASE_URL}/probe-overrides/${scope}/${scopeId}/${override.name}`
             );
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.error || 'Failed to reset override');
-            }
             setSuccess(`Override for "${override.name}" reset to default.`);
             fetchOverrides();
         } catch (err: unknown) {
@@ -197,7 +176,7 @@ const ProbeOverridesPanel: React.FC<ProbeOverridesPanelProps> = ({ scope, scopeI
     if (loading) {
         return (
             <Box sx={loadingContainerSx}>
-                <CircularProgress />
+                <CircularProgress aria-label="Loading probe overrides" />
             </Box>
         );
     }
@@ -385,7 +364,7 @@ const ProbeOverridesPanel: React.FC<ProbeOverridesPanelProps> = ({ scope, scopeI
                         disabled={saving}
                         sx={containedButtonSx}
                     >
-                        {saving ? <CircularProgress size={20} color="inherit" /> : 'Save'}
+                        {saving ? <CircularProgress size={20} color="inherit" aria-label="Saving" /> : 'Save'}
                     </Button>
                 </DialogActions>
             </Dialog>

@@ -535,7 +535,7 @@ const AdminWebhookChannels: React.FC = () => {
     if (loading) {
         return (
             <Box sx={loadingContainerSx}>
-                <CircularProgress />
+                <CircularProgress aria-label="Loading webhook channels" />
             </Box>
         );
     }
@@ -623,7 +623,7 @@ const AdminWebhookChannels: React.FC = () => {
                                                     disabled={testingChannelId === channel.id}
                                                 >
                                                     {testingChannelId === channel.id ? (
-                                                        <CircularProgress size={18} />
+                                                        <CircularProgress size={18} aria-label="Sending test" />
                                                     ) : (
                                                         <SendIcon fontSize="small" />
                                                     )}
@@ -990,7 +990,7 @@ const AdminWebhookChannels: React.FC = () => {
                         disabled={saving || !form.name.trim() || !form.endpoint_url.trim()}
                         sx={containedButtonSx}
                     >
-                        {saving ? <CircularProgress size={20} color="inherit" /> : (isEditing ? 'Save' : 'Create')}
+                        {saving ? <CircularProgress size={20} color="inherit" aria-label="Saving" /> : (isEditing ? 'Save' : 'Create')}
                     </Button>
                 </DialogActions>
             </Dialog>

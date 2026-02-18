@@ -292,6 +292,7 @@ describe('ChannelOverridesPanel', () => {
         mockFetch.mockResolvedValueOnce({
             ok: false,
             status: 500,
+            text: async () => JSON.stringify({ error: 'Failed to fetch channel overrides' }),
         });
 
         renderWithTheme(
@@ -311,7 +312,8 @@ describe('ChannelOverridesPanel', () => {
             })
             .mockResolvedValueOnce({
                 ok: false,
-                json: async () => ({ error: 'Permission denied' }),
+                status: 400,
+                text: async () => JSON.stringify({ error: 'Permission denied' }),
             });
 
         renderWithTheme(
@@ -341,7 +343,8 @@ describe('ChannelOverridesPanel', () => {
             })
             .mockResolvedValueOnce({
                 ok: false,
-                json: async () => ({ error: 'Reset not allowed' }),
+                status: 400,
+                text: async () => JSON.stringify({ error: 'Reset not allowed' }),
             });
 
         renderWithTheme(

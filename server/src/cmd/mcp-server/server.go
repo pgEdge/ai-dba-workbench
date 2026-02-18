@@ -253,15 +253,12 @@ func (s *Server) initDatastore(serverSecret string) error {
 func (s *Server) initClientManager() error {
 	s.clientManager = database.NewClientManager(s.cfg.Database)
 
-	// Create fallback client
-	fallbackClient := database.NewClient(s.cfg.Database)
 	if s.cfg.Database != nil && s.cfg.Database.User != "" {
 		fmt.Fprintf(os.Stderr, "Database configured: %s@%s:%d/%s (per-session connections)\n",
 			s.cfg.Database.User, s.cfg.Database.Host, s.cfg.Database.Port, s.cfg.Database.Database)
 	} else {
 		fmt.Fprintf(os.Stderr, "Database: Not configured\n")
 	}
-	_ = fallbackClient // Will be used by MCP server
 	return nil
 }
 

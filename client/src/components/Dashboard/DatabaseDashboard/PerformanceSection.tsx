@@ -228,7 +228,7 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
                     justifyContent: 'center',
                     py: 2,
                 }}>
-                    <CircularProgress size={24} />
+                    <CircularProgress size={24} aria-label="Loading" />
                 </Box>
             )}
             <Box sx={KPI_GRID_SX}>
@@ -300,7 +300,7 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
                             alignItems: 'center',
                             height: CHART_HEIGHT,
                         }}>
-                            <CircularProgress size={24} />
+                            <CircularProgress size={24} aria-label="Loading chart" />
                         </Box>
                     ) : txnChartData ? (
                         <Chart
@@ -338,7 +338,7 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
                             alignItems: 'center',
                             height: CHART_HEIGHT,
                         }}>
-                            <CircularProgress size={24} />
+                            <CircularProgress size={24} aria-label="Loading chart" />
                         </Box>
                     ) : cacheChartData ? (
                         <Chart

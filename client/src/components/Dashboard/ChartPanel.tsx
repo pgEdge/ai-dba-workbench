@@ -60,7 +60,7 @@ const ChartPanel: React.FC<ChartPanelProps> = ({
                 height,
             }}>
                 {loading ? (
-                    <CircularProgress size={24} />
+                    <CircularProgress size={24} aria-label="Loading chart" />
                 ) : (
                     <Typography variant="body2" color="text.secondary">
                         {emptyMessage}

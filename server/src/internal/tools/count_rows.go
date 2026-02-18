@@ -140,45 +140,22 @@ Use count_rows to efficiently determine data volume:
 				ctx = context.Background()
 			}
 
-			// Execute in a read-only transaction
-			tx, err := pool.Begin(ctx)
-			if err != nil {
-				return mcp.NewToolError(fmt.Sprintf("Failed to begin transaction: %v", err))
+			// Execute in a read-only transaction with timeout and panic recovery
+			rot, errResp, cleanup := BeginReadOnlyTx(ctx, pool)
+			if errResp != nil {
+				return *errResp, nil
 			}
-
-			committed := false
-			defer func() {
-				if r := recover(); r != nil {
-					_ = tx.Rollback(ctx) //nolint:errcheck // Best effort cleanup on panic
-					panic(r)
-				}
-				if !committed {
-					_ = tx.Rollback(ctx) //nolint:errcheck // rollback in defer after commit is expected to fail
-				}
-			}()
-
-			// Set transaction to read-only
-			_, err = tx.Exec(ctx, "SET TRANSACTION READ ONLY")
-			if err != nil {
-				return mcp.NewToolError(fmt.Sprintf("Failed to set transaction read-only: %v", err))
-			}
-
-			// Defense-in-depth: limit query execution time
-			_, err = tx.Exec(ctx, "SET LOCAL statement_timeout = '10s'")
-			if err != nil {
-				return mcp.NewToolError(fmt.Sprintf("Failed to set statement timeout: %v", err))
-			}
+			defer cleanup()
 
 			var count int64
-			err = tx.QueryRow(ctx, sqlQuery).Scan(&count)
+			err := rot.Tx.QueryRow(ctx, sqlQuery).Scan(&count)
 			if err != nil {
 				return mcp.NewToolError(fmt.Sprintf("SQL Query:\n%s\n\nError: %v", sqlQuery, err))
 			}
 
-			if err := tx.Commit(ctx); err != nil {
+			if err := rot.Commit(); err != nil {
 				return mcp.NewToolError(fmt.Sprintf("Failed to commit transaction: %v", err))
 			}
-			committed = true
 
 			// Log execution
 			logging.Info("count_rows_executed",

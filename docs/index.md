@@ -161,19 +161,26 @@ export PATH="$PATH:$(go env GOPATH)/bin"
 
 ```
 ai-workbench/
-├── collector/          # Data collector service
-│   ├── src/           # Source code
-│   └── README.md      # Component readme
-├── server/            # MCP server
+├── alerter/           # Alert evaluation service
 │   ├── src/           # Source code
 │   └── README.md      # Component readme
 ├── cli/               # Natural language agent CLI
 │   ├── src/           # Source code
 │   └── README.md      # Component readme
-├── docs/              # Unified documentation (this directory)
+├── client/            # Web-based user interface
+│   ├── src/           # Source code
+│   └── README.md      # Component readme
+├── collector/         # Data collector service
+│   ├── src/           # Source code
+│   └── README.md      # Component readme
+├── server/            # MCP server
+│   ├── src/           # Source code
+│   └── README.md      # Component readme
+├── docs/              # Unified documentation
+│   ├── alerter/       # Alerter docs
+│   ├── cli/           # CLI docs
 │   ├── collector/     # Collector docs
-│   ├── server/        # Server docs
-│   └── cli/           # CLI docs
+│   └── server/        # Server docs
 ├── examples/          # Example configurations
 ├── DESIGN.md          # Overall system design
 └── README.md          # Project readme

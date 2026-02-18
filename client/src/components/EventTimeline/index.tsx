@@ -25,7 +25,7 @@ import { EventTimelineProps } from './types';
 /**
  * EventTimeline - Main component for displaying server events on a timeline
  */
-const EventTimeline: React.FC<EventTimelineProps> = ({ selection, mode: _mode = 'light' }) => {
+const EventTimeline: React.FC<EventTimelineProps> = ({ selection }) => {
     const theme = useTheme();
 
     // Internal state

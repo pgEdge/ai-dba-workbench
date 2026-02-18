@@ -197,7 +197,7 @@ const DatabaseSummariesSection: React.FC<ServerSectionProps> = ({
         <CollapsibleSection title="Database Summaries" icon={<ViewListIcon sx={{ fontSize: 16 }} />} defaultExpanded>
             {loading && databases.length === 0 && (
                 <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
-                    <CircularProgress size={24} />
+                    <CircularProgress size={24} aria-label="Loading databases" />
                 </Box>
             )}
 

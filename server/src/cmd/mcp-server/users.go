@@ -318,11 +318,10 @@ func listUsersCommand(dataDir string) error {
 	for _, user := range users {
 		status := "Enabled"
 		if !user.Enabled {
-			status := "DISABLED"
+			status = "DISABLED"
 			if user.FailedAttempts > 0 {
 				status = fmt.Sprintf("DISABLED (%d fails)", user.FailedAttempts)
 			}
-			_ = status
 		}
 
 		lastLogin := "Never"
@@ -337,16 +336,11 @@ func listUsersCommand(dataDir string) error {
 			annotation = annotation[:17] + "..."
 		}
 
-		statusDisplay := status
-		if !user.Enabled {
-			statusDisplay = "DISABLED"
-		}
-
 		fmt.Printf("%-20s %-25s %-20s %-10s %s\n",
 			user.Username,
 			created,
 			lastLogin,
-			statusDisplay,
+			status,
 			annotation)
 	}
 	fmt.Println(strings.Repeat("=", 90) + "\n")

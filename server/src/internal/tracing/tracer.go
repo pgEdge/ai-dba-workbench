@@ -87,7 +87,7 @@ func Initialize(filePath string) error {
 			return
 		}
 
-		file, err := os.OpenFile(filePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0640)
+		file, err := os.OpenFile(filePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 		if err != nil {
 			initErr = fmt.Errorf("failed to open trace file %s: %w", filePath, err)
 			globalTracer = &Tracer{enabled: false}

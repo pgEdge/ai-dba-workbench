@@ -168,7 +168,7 @@ const KpiTilesSection: React.FC<KpiTilesSectionProps> = ({ selection, serverIds 
     if (loading && !initialLoadDoneRef.current) {
         return (
             <Box sx={LOADING_CONTAINER_SX}>
-                <CircularProgress size={28} />
+                <CircularProgress size={28} aria-label="Loading" />
             </Box>
         );
     }

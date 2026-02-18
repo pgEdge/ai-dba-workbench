@@ -138,7 +138,7 @@ const DeleteConfirmationDialog: React.FC<DeleteConfirmationDialogProps> = ({
                     sx={buttonSx}
                     startIcon={
                         loading ? (
-                            <CircularProgress size={16} color="inherit" />
+                            <CircularProgress size={16} color="inherit" aria-label="Deleting" />
                         ) : null
                     }
                 >

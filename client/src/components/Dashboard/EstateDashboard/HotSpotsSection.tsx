@@ -215,7 +215,7 @@ const HotSpotsSection: React.FC<HotSpotsSectionProps> = ({ selection: _selection
     if (loading && !initialLoadDoneRef.current) {
         return (
             <Box sx={LOADING_CONTAINER_SX}>
-                <CircularProgress size={28} />
+                <CircularProgress size={28} aria-label="Loading hot spots" />
             </Box>
         );
     }

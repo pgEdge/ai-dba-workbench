@@ -8,9 +8,10 @@
  *-------------------------------------------------------------------------
  */
 /* eslint-disable react-refresh/only-export-components */
-import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from './AuthContext';
 import { useClusterData, ClusterServer, ClusterEntry } from './ClusterDataContext';
+import { apiPost, apiGet, apiDelete } from '../utils/apiClient';
 
 export type SelectionType = 'server' | 'cluster' | 'estate' | null;
 
@@ -55,23 +56,11 @@ export const ClusterSelectionProvider = ({ children }: ClusterSelectionProviderP
         setSelectionType('server');
 
         try {
-            const response = await fetch('/api/v1/connections/current', {
-                method: 'POST',
-                credentials: 'include',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    connection_id: server.id,
-                }),
-            });
-
-            if (response.ok) {
-                const data: CurrentConnection = await response.json();
-                setCurrentConnection(data);
-            } else {
-                console.error('Failed to set current connection');
-            }
+            const data = await apiPost<CurrentConnection>(
+                '/api/v1/connections/current',
+                { connection_id: server.id },
+            );
+            setCurrentConnection(data);
         } catch (err) {
             console.error('Error setting current connection:', err);
         }
@@ -108,10 +97,7 @@ export const ClusterSelectionProvider = ({ children }: ClusterSelectionProviderP
         setSelectionType(null);
 
         try {
-            await fetch('/api/v1/connections/current', {
-                method: 'DELETE',
-                credentials: 'include',
-            });
+            await apiDelete('/api/v1/connections/current');
             setCurrentConnection(null);
         } catch (err) {
             console.error('Error clearing current connection:', err);
@@ -125,22 +111,16 @@ export const ClusterSelectionProvider = ({ children }: ClusterSelectionProviderP
         if (!user) {return;}
 
         try {
-            const response = await fetch('/api/v1/connections/current', {
-                credentials: 'include',
-            });
-
-            if (response.ok) {
-                const data: CurrentConnection = await response.json();
-                setCurrentConnection(data);
-                // Find and set the selected server from cluster data
-                for (const group of clusterData) {
-                    for (const cluster of group.clusters || []) {
-                        const server = cluster.servers?.find(s => s.id === data.connection_id);
-                        if (server) {
-                            setSelectedServer(server);
-                            setSelectionType('server');
-                            return;
-                        }
+            const data = await apiGet<CurrentConnection>('/api/v1/connections/current');
+            setCurrentConnection(data);
+            // Find and set the selected server from cluster data
+            for (const group of clusterData) {
+                for (const cluster of group.clusters || []) {
+                    const server = cluster.servers?.find(s => s.id === data.connection_id);
+                    if (server) {
+                        setSelectedServer(server);
+                        setSelectionType('server');
+                        return;
                     }
                 }
             }
@@ -221,7 +201,7 @@ export const ClusterSelectionProvider = ({ children }: ClusterSelectionProviderP
         }
     }, [clusterData]);
 
-    const value: ClusterSelectionContextValue = {
+    const value: ClusterSelectionContextValue = useMemo(() => ({
         // Selection state
         selectedServer,
         selectedCluster,
@@ -232,7 +212,16 @@ export const ClusterSelectionProvider = ({ children }: ClusterSelectionProviderP
         selectCluster,
         selectEstate,
         clearSelection,
-    };
+    }), [
+        selectedServer,
+        selectedCluster,
+        selectionType,
+        currentConnection,
+        selectServer,
+        selectCluster,
+        selectEstate,
+        clearSelection,
+    ]);
 
     return (
         <ClusterSelectionContext.Provider value={value}>

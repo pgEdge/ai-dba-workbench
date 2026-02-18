@@ -9,7 +9,6 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { ThemeMode } from '../types/theme';
 import {
     Drawer,
     Box,
@@ -1424,10 +1423,9 @@ interface HelpPanelProps {
     open: boolean;
     onClose: () => void;
     helpContext: string | null;
-    mode: ThemeMode;
 }
 
-const HelpPanel: React.FC<HelpPanelProps> = ({ open, onClose, helpContext, mode: _mode }) => {
+const HelpPanel: React.FC<HelpPanelProps> = ({ open, onClose, helpContext }) => {
     const [currentPage, setCurrentPage] = useState(HELP_PAGES.overview);
     const contentRef = useRef(null);
 

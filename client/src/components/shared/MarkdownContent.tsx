@@ -795,6 +795,7 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
                                     <CircularProgress
                                         size={14}
                                         sx={{ color: alpha(theme.palette.secondary.main, 0.7) }}
+                                        aria-label="Running query"
                                     />
                                 ) : (
                                     <PlayArrowIcon sx={{ fontSize: 18 }} />

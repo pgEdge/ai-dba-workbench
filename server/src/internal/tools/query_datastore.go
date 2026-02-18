@@ -179,37 +179,14 @@ To avoid rate limits (30,000 input tokens/minute):
 				ctx = context.Background()
 			}
 
-			// Begin a transaction with read-only protection
-			tx, err := pool.Begin(ctx)
-			if err != nil {
-				return mcp.NewToolError(fmt.Sprintf("Failed to begin transaction: %v", err))
+			// Begin a read-only transaction with timeout and panic recovery
+			rot, errResp, cleanup := BeginReadOnlyTx(ctx, pool)
+			if errResp != nil {
+				return *errResp, nil
 			}
+			defer cleanup()
 
-			// Track whether transaction was committed
-			committed := false
-			defer func() {
-				if r := recover(); r != nil {
-					_ = tx.Rollback(ctx) //nolint:errcheck // Best effort cleanup on panic
-					panic(r)
-				}
-				if !committed {
-					_ = tx.Rollback(ctx) //nolint:errcheck // rollback in defer after commit is expected to fail
-				}
-			}()
-
-			// Set transaction to read-only to prevent any data modifications
-			_, err = tx.Exec(ctx, "SET TRANSACTION READ ONLY")
-			if err != nil {
-				return mcp.NewToolError(fmt.Sprintf("Failed to set transaction read-only: %v", err))
-			}
-
-			// Defense-in-depth: limit query execution time
-			_, err = tx.Exec(ctx, "SET LOCAL statement_timeout = '10s'")
-			if err != nil {
-				return mcp.NewToolError(fmt.Sprintf("Failed to set statement timeout: %v", err))
-			}
-
-			rows, err := tx.Query(ctx, sqlQuery)
+			rows, err := rot.Tx.Query(ctx, sqlQuery)
 			if err != nil {
 				return mcp.NewToolError(fmt.Sprintf("SQL Query:\n%s\n\nError executing query: %v", sqlQuery, err))
 			}
@@ -247,10 +224,9 @@ To avoid rate limits (30,000 input tokens/minute):
 			resultsTSV := FormatResultsAsTSV(columnNames, results)
 
 			// Commit the read-only transaction
-			if err := tx.Commit(ctx); err != nil {
+			if err := rot.Commit(); err != nil {
 				return mcp.NewToolError(fmt.Sprintf("Failed to commit transaction: %v", err))
 			}
-			committed = true
 
 			var sb strings.Builder
 

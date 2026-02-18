@@ -323,14 +323,61 @@ func stripLeadingComments(sql string) string {
 
 // isReadOnlyStatement returns true if the SQL statement (after stripping
 // leading comments) begins with a read-only keyword: SELECT, WITH, SHOW,
-// EXPLAIN, or TABLE.
+// EXPLAIN, or TABLE. Writable CTEs (WITH ... INSERT/UPDATE/DELETE) are
+// classified as non-read-only.
 func isReadOnlyStatement(sql string) bool {
 	body := strings.ToUpper(strings.TrimSpace(stripLeadingComments(sql)))
+
+	if strings.HasPrefix(body, "WITH") {
+		// Writable CTEs can perform data modification, e.g.
+		// WITH deleted AS (DELETE FROM t RETURNING *) SELECT * FROM deleted.
+		// Check for DML keywords as standalone words in the body.
+		dmlKeywords := []string{"INSERT", "UPDATE", "DELETE"}
+		for _, kw := range dmlKeywords {
+			if containsSQLKeyword(body, kw) {
+				return false
+			}
+		}
+		return true
+	}
+
 	return strings.HasPrefix(body, "SELECT") ||
-		strings.HasPrefix(body, "WITH") ||
 		strings.HasPrefix(body, "SHOW") ||
 		strings.HasPrefix(body, "EXPLAIN") ||
 		strings.HasPrefix(body, "TABLE ")
+}
+
+// containsSQLKeyword checks whether a SQL keyword appears as a standalone
+// word in the given uppercase SQL string. This prevents false positives
+// from identifiers that contain a keyword as a substring (e.g.,
+// "updated_at" should not match "UPDATE").
+func containsSQLKeyword(upperSQL, keyword string) bool {
+	idx := 0
+	for {
+		pos := strings.Index(upperSQL[idx:], keyword)
+		if pos < 0 {
+			return false
+		}
+		pos += idx
+		end := pos + len(keyword)
+
+		startOK := pos == 0 || !isIdentChar(upperSQL[pos-1])
+		endOK := end >= len(upperSQL) || !isIdentChar(upperSQL[end])
+
+		if startOK && endOK {
+			return true
+		}
+		idx = end
+	}
+}
+
+// isIdentChar returns true if the byte is a valid SQL identifier character
+// (letter, digit, or underscore).
+func isIdentChar(b byte) bool {
+	return (b >= 'A' && b <= 'Z') ||
+		(b >= 'a' && b <= 'z') ||
+		(b >= '0' && b <= '9') ||
+		b == '_'
 }
 
 // queryable is an interface satisfied by both pgx.Tx and *pgxpool.Pool,

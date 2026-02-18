@@ -13,6 +13,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"math"
 	"net/url"
 	"os"
@@ -87,7 +88,8 @@ func (c *Client) Connect() error {
 			// No connection string set yet, read from environment
 			connStr = os.Getenv("PGEDGE_POSTGRES_CONNECTION_STRING")
 			if connStr == "" {
-				connStr = "postgres://localhost/postgres?sslmode=disable"
+				connStr = "postgres://localhost/postgres?sslmode=prefer"
+				log.Printf("[WARN] No database connection string configured, using fallback: %s", connStr)
 			}
 		}
 

@@ -8,15 +8,12 @@
  *-------------------------------------------------------------------------
  */
 
-import { ThemeMode } from '../../types/theme';
-
 /**
  * Shared types for EventTimeline sub-components
  */
 
 export interface EventTimelineProps {
     selection: Record<string, unknown> | null;
-    mode?: ThemeMode;
 }
 
 export interface EventCluster {

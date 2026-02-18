@@ -67,7 +67,7 @@ func NewProxyClient(baseURL, token, provider, model string, debug bool) LLMClien
 		provider: provider,
 		model:    model,
 		debug:    debug,
-		client:   &http.Client{},
+		client:   &http.Client{Timeout: 120 * time.Second},
 	}
 }
 

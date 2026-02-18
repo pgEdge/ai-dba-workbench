@@ -106,7 +106,7 @@ const getStatusIcon = (status: ToolActivity['status']) => {
             return <WarningIcon sx={{ fontSize: 16 }} />;
         case 'running':
         default:
-            return <CircularProgress size={12} sx={spinnerSx} />;
+            return <CircularProgress size={12} sx={spinnerSx} aria-label="Running" />;
     }
 };
 

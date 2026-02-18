@@ -19,7 +19,7 @@ import React, {
     useMemo,
 } from 'react';
 import { useAuth } from './AuthContext';
-import { apiGet, apiDelete } from '../utils/apiClient';
+import { apiGet, apiDelete, apiPatch } from '../utils/apiClient';
 import useChat from '../hooks/useChat';
 import type { ChatMessage, ToolActivity } from '../hooks/useChat';
 
@@ -182,16 +182,7 @@ export const ChatProvider = ({ children }: ChatProviderProps): React.ReactElemen
         title: string,
     ): Promise<void> => {
         try {
-            const response = await fetch(`/api/v1/conversations/${id}`, {
-                method: 'PATCH',
-                credentials: 'include',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ title }),
-            });
-
-            if (!response.ok) {
-                throw new Error('Failed to rename conversation');
-            }
+            await apiPatch(`/api/v1/conversations/${id}`, { title });
 
             if (isMountedRef.current) {
                 setConversations(prev =>

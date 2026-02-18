@@ -9,10 +9,11 @@
  */
 /* eslint-disable react-refresh/only-export-components */
 
-import React, { createContext, useContext, useCallback } from 'react';
+import React, { createContext, useContext, useCallback, useMemo } from 'react';
 import { useAuth } from './AuthContext';
 import { useClusterData } from './ClusterDataContext';
 import { useClusterSelection } from './ClusterSelectionContext';
+import { apiGet, apiPost, apiPut, apiDelete } from '../utils/apiClient';
 
 export interface ServerData {
     name?: string;
@@ -43,10 +44,6 @@ interface ClusterActionsProviderProps {
     children: React.ReactNode;
 }
 
-interface ApiErrorResponse {
-    error?: string;
-}
-
 const ClusterActionsContext = createContext<ClusterActionsContextValue | null>(null);
 
 export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps): React.ReactElement => {
@@ -69,19 +66,7 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
 
         if (isAutoDetected) {
             // Auto-detected groups: send the group ID as-is
-            const response = await fetch(`/api/v1/cluster-groups/${groupIdStr}`, {
-                method: 'PUT',
-                credentials: 'include',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ name: newName }),
-            });
-
-            if (!response.ok) {
-                const errorData: ApiErrorResponse = await response.json();
-                throw new Error(errorData.error || 'Failed to update group');
-            }
+            await apiPut(`/api/v1/cluster-groups/${groupIdStr}`, { name: newName });
         } else {
             // Database-backed groups: extract numeric ID
             if (!/^group-\d+$/.test(groupIdStr)) {
@@ -91,19 +76,7 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
             // Extract numeric ID from group ID format (e.g., "group-1" -> 1)
             const numericId = parseInt(groupIdStr.replace('group-', ''), 10);
 
-            const response = await fetch(`/api/v1/cluster-groups/${numericId}`, {
-                method: 'PUT',
-                credentials: 'include',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ name: newName }),
-            });
-
-            if (!response.ok) {
-                const errorData: ApiErrorResponse = await response.json();
-                throw new Error(errorData.error || 'Failed to update group');
-            }
+            await apiPut(`/api/v1/cluster-groups/${numericId}`, { name: newName });
         }
 
         // Refresh cluster data to reflect the change
@@ -130,19 +103,7 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
                 body.auto_cluster_key = autoClusterKey;
             }
 
-            const response = await fetch(`/api/v1/clusters/${clusterIdStr}`, {
-                method: 'PUT',
-                credentials: 'include',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(body),
-            });
-
-            if (!response.ok) {
-                const errorData: ApiErrorResponse = await response.json();
-                throw new Error(errorData.error || 'Failed to update cluster');
-            }
+            await apiPut(`/api/v1/clusters/${clusterIdStr}`, body);
         } else {
             // Database-backed clusters: extract numeric IDs
             const numericId = parseInt(clusterIdStr.replace('cluster-', ''), 10);
@@ -156,19 +117,7 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
                 throw new Error('Invalid group ID');
             }
 
-            const response = await fetch(`/api/v1/clusters/${numericId}`, {
-                method: 'PUT',
-                credentials: 'include',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ name: newName, group_id: numericGroupId }),
-            });
-
-            if (!response.ok) {
-                const errorData: ApiErrorResponse = await response.json();
-                throw new Error(errorData.error || 'Failed to update cluster');
-            }
+            await apiPut(`/api/v1/clusters/${numericId}`, { name: newName, group_id: numericGroupId });
         }
 
         // Refresh cluster data to reflect the change
@@ -181,19 +130,7 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
     const updateServerName = useCallback(async (serverId: number, newName: string): Promise<void> => {
         if (!user) {throw new Error('Not authenticated');}
 
-        const response = await fetch(`/api/v1/connections/${serverId}`, {
-            method: 'PUT',
-            credentials: 'include',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ name: newName }),
-        });
-
-        if (!response.ok) {
-            const errorData: ApiErrorResponse = await response.json();
-            throw new Error(errorData.error || 'Failed to update server');
-        }
+        await apiPut(`/api/v1/connections/${serverId}`, { name: newName });
 
         // Refresh cluster data to reflect the change
         await fetchClusterData();
@@ -205,17 +142,7 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
     const getServer = useCallback(async (serverId: number): Promise<unknown> => {
         if (!user) {throw new Error('Not authenticated');}
 
-        const response = await fetch(`/api/v1/connections/${serverId}`, {
-            method: 'GET',
-            credentials: 'include',
-        });
-
-        if (!response.ok) {
-            const errorData: ApiErrorResponse = await response.json();
-            throw new Error(errorData.error || 'Failed to get server details');
-        }
-
-        return await response.json();
+        return await apiGet(`/api/v1/connections/${serverId}`);
     }, [user]);
 
     /**
@@ -224,22 +151,10 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
     const createServer = useCallback(async (serverData: ServerData): Promise<unknown> => {
         if (!user) {throw new Error('Not authenticated');}
 
-        const response = await fetch('/api/v1/connections', {
-            method: 'POST',
-            credentials: 'include',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(serverData),
-        });
-
-        if (!response.ok) {
-            const errorData: ApiErrorResponse = await response.json();
-            throw new Error(errorData.error || 'Failed to create server');
-        }
+        const result = await apiPost('/api/v1/connections', serverData);
 
         await fetchClusterData();
-        return await response.json();
+        return result;
     }, [user, fetchClusterData]);
 
     /**
@@ -248,22 +163,10 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
     const updateServer = useCallback(async (serverId: number, serverData: ServerData): Promise<unknown> => {
         if (!user) {throw new Error('Not authenticated');}
 
-        const response = await fetch(`/api/v1/connections/${serverId}`, {
-            method: 'PUT',
-            credentials: 'include',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(serverData),
-        });
-
-        if (!response.ok) {
-            const errorData: ApiErrorResponse = await response.json();
-            throw new Error(errorData.error || 'Failed to update server');
-        }
+        const result = await apiPut(`/api/v1/connections/${serverId}`, serverData);
 
         await fetchClusterData();
-        return await response.json();
+        return result;
     }, [user, fetchClusterData]);
 
     /**
@@ -272,15 +175,7 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
     const deleteServer = useCallback(async (serverId: number): Promise<void> => {
         if (!user) {throw new Error('Not authenticated');}
 
-        const response = await fetch(`/api/v1/connections/${serverId}`, {
-            method: 'DELETE',
-            credentials: 'include',
-        });
-
-        if (!response.ok) {
-            const errorData: ApiErrorResponse = await response.json();
-            throw new Error(errorData.error || 'Failed to delete server');
-        }
+        await apiDelete(`/api/v1/connections/${serverId}`);
 
         // Clear selection if deleted server was selected
         if (selectedServer?.id === serverId) {
@@ -296,22 +191,10 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
     const createGroup = useCallback(async (groupData: GroupData): Promise<unknown> => {
         if (!user) {throw new Error('Not authenticated');}
 
-        const response = await fetch('/api/v1/cluster-groups', {
-            method: 'POST',
-            credentials: 'include',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(groupData),
-        });
-
-        if (!response.ok) {
-            const errorData: ApiErrorResponse = await response.json();
-            throw new Error(errorData.error || 'Failed to create group');
-        }
+        const result = await apiPost('/api/v1/cluster-groups', groupData);
 
         await fetchClusterData();
-        return await response.json();
+        return result;
     }, [user, fetchClusterData]);
 
     /**
@@ -325,15 +208,7 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
             ? parseInt(groupId.replace('group-', ''), 10)
             : groupId;
 
-        const response = await fetch(`/api/v1/cluster-groups/${numericId}`, {
-            method: 'DELETE',
-            credentials: 'include',
-        });
-
-        if (!response.ok) {
-            const errorData: ApiErrorResponse = await response.json();
-            throw new Error(errorData.error || 'Failed to delete group');
-        }
+        await apiDelete(`/api/v1/cluster-groups/${numericId}`);
 
         await fetchClusterData();
     }, [user, fetchClusterData]);
@@ -367,24 +242,12 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
             body.name = clusterName;
         }
 
-        const response = await fetch(`/api/v1/clusters/${clusterIdStr}`, {
-            method: 'PUT',
-            credentials: 'include',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(body),
-        });
-
-        if (!response.ok) {
-            const errorData: ApiErrorResponse = await response.json();
-            throw new Error(errorData.error || 'Failed to move cluster');
-        }
+        await apiPut(`/api/v1/clusters/${clusterIdStr}`, body);
 
         await fetchClusterData();
     }, [user, fetchClusterData]);
 
-    const value: ClusterActionsContextValue = {
+    const value: ClusterActionsContextValue = useMemo(() => ({
         // Update functions
         updateGroupName,
         updateClusterName,
@@ -397,7 +260,18 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
         createGroup,
         deleteGroup,
         moveClusterToGroup,
-    };
+    }), [
+        updateGroupName,
+        updateClusterName,
+        updateServerName,
+        getServer,
+        createServer,
+        updateServer,
+        deleteServer,
+        createGroup,
+        deleteGroup,
+        moveClusterToGroup,
+    ]);
 
     return (
         <ClusterActionsContext.Provider value={value}>

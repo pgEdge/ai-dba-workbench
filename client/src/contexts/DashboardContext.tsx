@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 /* eslint-disable react-refresh/only-export-components */
-import React, { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
     TimeRange,
     TimeRangeState,
@@ -126,7 +126,7 @@ export const DashboardProvider = ({ children }: DashboardProviderProps): React.R
         ? overlayStack[overlayStack.length - 1]
         : null;
 
-    const value: DashboardContextValue = {
+    const value: DashboardContextValue = useMemo(() => ({
         timeRange,
         setTimeRange,
         setCustomTimeRange,
@@ -140,7 +140,21 @@ export const DashboardProvider = ({ children }: DashboardProviderProps): React.R
         clearOverlays,
         refreshTrigger,
         triggerRefresh,
-    };
+    }), [
+        timeRange,
+        setTimeRange,
+        setCustomTimeRange,
+        autoRefresh,
+        setAutoRefreshEnabled,
+        setAutoRefreshInterval,
+        overlayStack,
+        currentOverlay,
+        pushOverlay,
+        popOverlay,
+        clearOverlays,
+        refreshTrigger,
+        triggerRefresh,
+    ]);
 
     return (
         <DashboardContext.Provider value={value}>

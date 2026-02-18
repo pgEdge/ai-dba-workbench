@@ -161,10 +161,11 @@ Slash commands provide access to settings and configuration.
 | `/show connection` | Show current database connection |
 | `/show settings` | Display all current settings |
 | `/history list` | List saved conversations |
-| `/history show <id>` | Show a saved conversation |
-| `/history continue <id>` | Continue a saved conversation |
+| `/history load <id>` | Load a saved conversation |
+| `/history rename <id> "title"` | Rename a saved conversation |
 | `/history delete <id>` | Delete a saved conversation |
-| `/save [name]` | Save current conversation |
+| `/history delete-all` | Delete all saved conversations |
+| `/save` | Save current conversation |
 | `/new` | Start a new conversation |
 
 ### Keyboard Shortcuts

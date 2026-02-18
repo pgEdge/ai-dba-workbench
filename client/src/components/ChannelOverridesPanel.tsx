@@ -9,6 +9,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { apiGet, apiPut, apiDelete } from '../utils/apiClient';
 import {
     Box,
     Typography,
@@ -66,14 +67,9 @@ const ChannelOverridesPanel: React.FC<ChannelOverridesPanelProps> = ({ scope, sc
     const fetchOverrides = useCallback(async () => {
         try {
             setLoading(true);
-            const response = await fetch(
-                `${API_BASE_URL}/channel-overrides/${scope}/${scopeId}`,
-                { credentials: 'include' }
+            const data = await apiGet<ChannelOverride[]>(
+                `${API_BASE_URL}/channel-overrides/${scope}/${scopeId}`
             );
-            if (!response.ok) {
-                throw new Error('Failed to fetch channel overrides');
-            }
-            const data = await response.json();
             setOverrides(data || []);
         } catch (err: unknown) {
             if (err instanceof Error) {
@@ -98,19 +94,10 @@ const ChannelOverridesPanel: React.FC<ChannelOverridesPanelProps> = ({ scope, sc
 
         try {
             setError(null);
-            const response = await fetch(
+            await apiPut(
                 `${API_BASE_URL}/channel-overrides/${scope}/${scopeId}/${item.channel_id}`,
-                {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'include',
-                    body: JSON.stringify({ enabled: newEnabled }),
-                }
+                { enabled: newEnabled }
             );
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.error || 'Failed to save channel override');
-            }
             setSuccess(`Override for "${item.channel_name}" saved successfully.`);
             fetchOverrides();
         } catch (err: unknown) {
@@ -126,17 +113,9 @@ const ChannelOverridesPanel: React.FC<ChannelOverridesPanelProps> = ({ scope, sc
         e.stopPropagation();
         try {
             setError(null);
-            const response = await fetch(
-                `${API_BASE_URL}/channel-overrides/${scope}/${scopeId}/${item.channel_id}`,
-                {
-                    method: 'DELETE',
-                    credentials: 'include',
-                }
+            await apiDelete(
+                `${API_BASE_URL}/channel-overrides/${scope}/${scopeId}/${item.channel_id}`
             );
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.error || 'Failed to reset channel override');
-            }
             setSuccess(`Override for "${item.channel_name}" reset to default.`);
             fetchOverrides();
         } catch (err: unknown) {
@@ -151,7 +130,7 @@ const ChannelOverridesPanel: React.FC<ChannelOverridesPanelProps> = ({ scope, sc
     if (loading) {
         return (
             <Box sx={loadingContainerSx}>
-                <CircularProgress />
+                <CircularProgress aria-label="Loading channel overrides" />
             </Box>
         );
     }

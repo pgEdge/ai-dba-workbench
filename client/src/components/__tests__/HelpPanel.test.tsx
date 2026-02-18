@@ -17,7 +17,6 @@ describe('HelpPanel Component', () => {
     const defaultProps = {
         open: true,
         onClose: vi.fn(),
-        mode: 'light',
     };
 
     it('renders when open is true', () => {
@@ -189,7 +188,7 @@ describe('HelpPanel Component', () => {
     });
 
     it('renders correctly in dark mode', () => {
-        render(<HelpPanel {...defaultProps} mode="dark" />);
+        render(<HelpPanel {...defaultProps} />);
         expect(screen.getByText('Help & Documentation')).toBeInTheDocument();
     });
 

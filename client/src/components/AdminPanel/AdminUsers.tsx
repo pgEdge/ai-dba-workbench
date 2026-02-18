@@ -65,46 +65,69 @@ interface AdminUsersProps {
     mode: ThemeMode;
 }
 
+interface RbacUser {
+    id: number;
+    username: string;
+    display_name?: string;
+    email?: string;
+    annotation?: string;
+    is_service_account?: boolean;
+    is_superuser?: boolean;
+    enabled?: boolean;
+}
+
+interface UserPermissions {
+    connection_privileges?: unknown[];
+    admin_permissions?: unknown[];
+    mcp_privileges?: unknown[];
+    groups?: unknown[];
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+interface CreateUserBody { [key: string]: any }
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+interface EditUserBody { [key: string]: any }
+
 const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
     const theme = useTheme();
-    const [users, setUsers] = useState([]);
+    const [users, setUsers] = useState<RbacUser[]>([]);
     const [connections, setConnections] = useState<Array<{ id: number; name: string }>>([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(null);
+    const [loading, setLoading] = useState<boolean>(true);
+    const [error, setError] = useState<string | null>(null);
     const [expandedUser, setExpandedUser] = useState<number | null>(null);
-    const [permissions, setPermissions] = useState(null);
-    const [permissionsLoading, setPermissionsLoading] = useState(false);
-    const [permissionsError, setPermissionsError] = useState(null);
+    const [permissions, setPermissions] = useState<UserPermissions | null>(null);
+    const [permissionsLoading, setPermissionsLoading] = useState<boolean>(false);
+    const [permissionsError, setPermissionsError] = useState<string | null>(null);
 
     // Create user dialog
-    const [createOpen, setCreateOpen] = useState(false);
-    const [createUsername, setCreateUsername] = useState('');
-    const [createPassword, setCreatePassword] = useState('');
-    const [createDisplayName, setCreateDisplayName] = useState('');
-    const [createEmail, setCreateEmail] = useState('');
-    const [createAnnotation, setCreateAnnotation] = useState('');
-    const [createServiceAccount, setCreateServiceAccount] = useState(false);
-    const [createEnabled, setCreateEnabled] = useState(true);
-    const [createSuperuser, setCreateSuperuser] = useState(false);
-    const [createLoading, setCreateLoading] = useState(false);
-    const [createError, setCreateError] = useState(null);
+    const [createOpen, setCreateOpen] = useState<boolean>(false);
+    const [createUsername, setCreateUsername] = useState<string>('');
+    const [createPassword, setCreatePassword] = useState<string>('');
+    const [createDisplayName, setCreateDisplayName] = useState<string>('');
+    const [createEmail, setCreateEmail] = useState<string>('');
+    const [createAnnotation, setCreateAnnotation] = useState<string>('');
+    const [createServiceAccount, setCreateServiceAccount] = useState<boolean>(false);
+    const [createEnabled, setCreateEnabled] = useState<boolean>(true);
+    const [createSuperuser, setCreateSuperuser] = useState<boolean>(false);
+    const [createLoading, setCreateLoading] = useState<boolean>(false);
+    const [createError, setCreateError] = useState<string | null>(null);
 
     // Edit user dialog
-    const [editOpen, setEditOpen] = useState(false);
-    const [editUser, setEditUser] = useState(null);
-    const [editPassword, setEditPassword] = useState('');
-    const [editDisplayName, setEditDisplayName] = useState('');
-    const [editEmail, setEditEmail] = useState('');
-    const [editAnnotation, setEditAnnotation] = useState('');
-    const [editEnabled, setEditEnabled] = useState(true);
-    const [editSuperuser, setEditSuperuser] = useState(false);
-    const [editLoading, setEditLoading] = useState(false);
-    const [editError, setEditError] = useState(null);
+    const [editOpen, setEditOpen] = useState<boolean>(false);
+    const [editUser, setEditUser] = useState<RbacUser | null>(null);
+    const [editPassword, setEditPassword] = useState<string>('');
+    const [editDisplayName, setEditDisplayName] = useState<string>('');
+    const [editEmail, setEditEmail] = useState<string>('');
+    const [editAnnotation, setEditAnnotation] = useState<string>('');
+    const [editEnabled, setEditEnabled] = useState<boolean>(true);
+    const [editSuperuser, setEditSuperuser] = useState<boolean>(false);
+    const [editLoading, setEditLoading] = useState<boolean>(false);
+    const [editError, setEditError] = useState<string | null>(null);
 
     // Delete confirmation
-    const [deleteOpen, setDeleteOpen] = useState(false);
-    const [deleteUser, setDeleteUser] = useState(null);
-    const [deleteLoading, setDeleteLoading] = useState(false);
+    const [deleteOpen, setDeleteOpen] = useState<boolean>(false);
+    const [deleteUser, setDeleteUser] = useState<RbacUser | null>(null);
+    const [deleteLoading, setDeleteLoading] = useState<boolean>(false);
 
     const fetchUsers = useCallback(async () => {
         try {
@@ -119,8 +142,9 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
             if (connResult) {
                 setConnections(connResult.connections || connResult || []);
             }
-        } catch (err) {
-            setError(err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            setError(message);
         } finally {
             setLoading(false);
         }
@@ -130,21 +154,22 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
         fetchUsers();
     }, [fetchUsers]);
 
-    const handleRowClick = async (user) => {
-        if (expandedUser === user.id) {
+    const handleRowClick = async (rowUser: RbacUser) => {
+        if (expandedUser === rowUser.id) {
             setExpandedUser(null);
             setPermissions(null);
             return;
         }
-        setExpandedUser(user.id);
+        setExpandedUser(rowUser.id);
         setPermissions(null);
         setPermissionsError(null);
         setPermissionsLoading(true);
         try {
-            const data = await apiGet(`/api/v1/rbac/users/${user.id}/privileges`);
+            const data = await apiGet<UserPermissions>(`/api/v1/rbac/users/${rowUser.id}/privileges`);
             setPermissions(data);
-        } catch (err) {
-            setPermissionsError(err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            setPermissionsError(message);
         } finally {
             setPermissionsLoading(false);
         }
@@ -156,7 +181,7 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
         try {
             setCreateLoading(true);
             setCreateError(null);
-            const body = {
+            const body: CreateUserBody = {
                 username: createUsername.trim(),
             };
             if (createServiceAccount) {
@@ -190,23 +215,24 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
             setCreateEnabled(true);
             setCreateSuperuser(false);
             fetchUsers();
-        } catch (err) {
-            setCreateError(err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            setCreateError(message);
         } finally {
             setCreateLoading(false);
         }
     };
 
     // Edit user
-    const handleOpenEdit = (e, user) => {
+    const handleOpenEdit = (e: React.MouseEvent, rowUser: RbacUser) => {
         e.stopPropagation();
-        setEditUser(user);
+        setEditUser(rowUser);
         setEditPassword('');
-        setEditDisplayName(user.display_name || '');
-        setEditEmail(user.email || '');
-        setEditAnnotation(user.annotation || '');
-        setEditEnabled(user.enabled !== false);
-        setEditSuperuser(user.is_superuser || false);
+        setEditDisplayName(rowUser.display_name || '');
+        setEditEmail(rowUser.email || '');
+        setEditAnnotation(rowUser.annotation || '');
+        setEditEnabled(rowUser.enabled !== false);
+        setEditSuperuser(rowUser.is_superuser || false);
         setEditError(null);
         setEditOpen(true);
     };
@@ -216,7 +242,7 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
         try {
             setEditLoading(true);
             setEditError(null);
-            const body = {};
+            const body: EditUserBody = {};
             if (editPassword) {
                 body.password = editPassword;
             }
@@ -243,17 +269,18 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
             await apiPut(`/api/v1/rbac/users/${editUser.id}`, body);
             setEditOpen(false);
             fetchUsers();
-        } catch (err) {
-            setEditError(err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            setEditError(message);
         } finally {
             setEditLoading(false);
         }
     };
 
     // Delete user
-    const handleOpenDelete = (e, user) => {
+    const handleOpenDelete = (e: React.MouseEvent, rowUser: RbacUser) => {
         e.stopPropagation();
-        setDeleteUser(user);
+        setDeleteUser(rowUser);
         setDeleteOpen(true);
     };
 
@@ -265,8 +292,9 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
             setDeleteOpen(false);
             setDeleteUser(null);
             fetchUsers();
-        } catch (err) {
-            setError(err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            setError(message);
         } finally {
             setDeleteLoading(false);
         }
@@ -275,7 +303,7 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
     if (loading) {
         return (
             <Box sx={loadingContainerSx}>
-                <CircularProgress />
+                <CircularProgress aria-label="Loading users" />
             </Box>
         );
     }
@@ -338,22 +366,22 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
                         </TableRow>
                     </TableHead>
                     <TableBody>
-                        {users.map((user) => (
-                            <React.Fragment key={user.id}>
+                        {users.map((rowUser) => (
+                            <React.Fragment key={rowUser.id}>
                                 <TableRow
                                     hover
-                                    onClick={() => handleRowClick(user)}
+                                    onClick={() => handleRowClick(rowUser)}
                                     sx={{ cursor: 'pointer' }}
                                 >
                                     <TableCell sx={{ px: 1 }}>
-                                        {expandedUser === user.id
+                                        {expandedUser === rowUser.id
                                             ? <ExpandLessIcon sx={{ color: 'text.secondary' }} />
                                             : <ExpandMoreIcon sx={{ color: 'text.secondary' }} />
                                         }
                                     </TableCell>
-                                    <TableCell>{user.username}</TableCell>
+                                    <TableCell>{rowUser.username}</TableCell>
                                     <TableCell>
-                                        {user.is_service_account ? (
+                                        {rowUser.is_service_account ? (
                                             <Chip
                                                 label="Service Account"
                                                 size="small"
@@ -367,18 +395,18 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
                                             <Typography variant="body2">User</Typography>
                                         )}
                                     </TableCell>
-                                    <TableCell>{user.display_name || '-'}</TableCell>
-                                    <TableCell>{user.email || '-'}</TableCell>
-                                    <TableCell>{user.annotation || '-'}</TableCell>
+                                    <TableCell>{rowUser.display_name || '-'}</TableCell>
+                                    <TableCell>{rowUser.email || '-'}</TableCell>
+                                    <TableCell>{rowUser.annotation || '-'}</TableCell>
                                     <TableCell align="center">
-                                        {user.is_superuser ? (
+                                        {rowUser.is_superuser ? (
                                             <CheckIcon sx={successIconSx} />
                                         ) : (
                                             <CancelIcon sx={inactiveIconSx} />
                                         )}
                                     </TableCell>
                                     <TableCell align="center">
-                                        {user.enabled !== false ? (
+                                        {rowUser.enabled !== false ? (
                                             <CheckIcon sx={successIconSx} />
                                         ) : (
                                             <CancelIcon sx={inactiveIconSx} />
@@ -387,14 +415,14 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
                                     <TableCell align="right">
                                         <IconButton
                                             size="small"
-                                            onClick={(e) => handleOpenEdit(e, user)}
+                                            onClick={(e) => handleOpenEdit(e, rowUser)}
                                             aria-label="edit user"
                                         >
                                             <EditIcon fontSize="small" />
                                         </IconButton>
                                         <IconButton
                                             size="small"
-                                            onClick={(e) => handleOpenDelete(e, user)}
+                                            onClick={(e) => handleOpenDelete(e, rowUser)}
                                             aria-label="delete user"
                                             sx={deleteIconSx}
                                         >
@@ -403,12 +431,12 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
                                     </TableCell>
                                 </TableRow>
                                 <TableRow>
-                                    <TableCell colSpan={9} sx={{ py: 0, borderBottom: expandedUser === user.id ? undefined : 'none' }}>
-                                        <Collapse in={expandedUser === user.id} timeout="auto" unmountOnExit>
+                                    <TableCell colSpan={9} sx={{ py: 0, borderBottom: expandedUser === rowUser.id ? undefined : 'none' }}>
+                                        <Collapse in={expandedUser === rowUser.id} timeout="auto" unmountOnExit>
                                             <Box sx={{ py: 2, px: 2 }}>
                                                 {permissionsLoading ? (
                                                     <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
-                                                        <CircularProgress size={24} />
+                                                        <CircularProgress size={24} aria-label="Loading permissions" />
                                                     </Box>
                                                 ) : permissionsError ? (
                                                     <Alert severity="error" sx={{ borderRadius: 1 }}>
@@ -555,7 +583,7 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
                         disabled={createLoading || !createUsername.trim() || (!createServiceAccount && !createPassword)}
                         sx={containedButtonSx}
                     >
-                        {createLoading ? <CircularProgress size={20} color="inherit" /> : 'Create'}
+                        {createLoading ? <CircularProgress size={20} color="inherit" aria-label="Creating" /> : 'Create'}
                     </Button>
                 </DialogActions>
             </Dialog>
@@ -645,7 +673,7 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
                         disabled={editLoading}
                         sx={containedButtonSx}
                     >
-                        {editLoading ? <CircularProgress size={20} color="inherit" /> : 'Save'}
+                        {editLoading ? <CircularProgress size={20} color="inherit" aria-label="Saving" /> : 'Save'}
                     </Button>
                 </DialogActions>
             </Dialog>

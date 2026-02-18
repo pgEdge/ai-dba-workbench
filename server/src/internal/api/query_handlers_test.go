@@ -669,6 +669,12 @@ func TestIsReadOnlyStatement(t *testing.T) {
 		{"SET", "SET work_mem = '256MB'", false},
 		{"ALTER with comment", "-- tune memory\nALTER SYSTEM SET work_mem = '16MB'", false},
 		{"empty after stripping", "-- just a comment", false},
+		{"writable CTE DELETE", "WITH deleted AS (DELETE FROM foo RETURNING *) SELECT * FROM deleted", false},
+		{"writable CTE INSERT", "WITH ins AS (INSERT INTO foo VALUES (1) RETURNING *) SELECT * FROM ins", false},
+		{"writable CTE UPDATE", "WITH upd AS (UPDATE foo SET bar = 1 RETURNING *) SELECT * FROM upd", false},
+		{"CTE with updated_at column", "WITH cte AS (SELECT updated_at FROM foo) SELECT * FROM cte", true},
+		{"CTE with delete_flag column", "WITH cte AS (SELECT delete_flag FROM foo) SELECT * FROM cte", true},
+		{"CTE pure SELECT", "WITH cte AS (SELECT 1) SELECT * FROM cte", true},
 	}
 
 	for _, tt := range tests {

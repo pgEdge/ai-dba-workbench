@@ -99,7 +99,7 @@ func LoadConfig(configPath string) (*Config, error) {
 			DisplayStatusMessages: true, // Default to showing status messages
 			RenderMarkdown:        true, // Default to rendering markdown
 		},
-		HistoryFile: filepath.Join(os.Getenv("HOME"), ".pgedge-nla-cli-history"),
+		HistoryFile: filepath.Join(os.Getenv("HOME"), ".ai-dba-workbench-cli-history"),
 	}
 
 	// Load from config file if provided
@@ -110,9 +110,9 @@ func LoadConfig(configPath string) (*Config, error) {
 	} else {
 		// Try default locations
 		defaultPaths := []string{
-			".pgedge-nla-cli.yaml",
-			filepath.Join(os.Getenv("HOME"), ".pgedge-nla-cli.yaml"),
-			"/etc/pgedge/pgedge-nla-cli.yaml",
+			".ai-dba-cli.yaml",
+			filepath.Join(os.Getenv("HOME"), ".ai-dba-cli.yaml"),
+			"/etc/pgedge/ai-dba-cli.yaml",
 		}
 		for _, path := range defaultPaths {
 			if _, err := os.Stat(path); err == nil {
@@ -159,7 +159,7 @@ func loadConfigFile(path string, cfg *Config) error {
 
 // loadAuthToken loads the authentication token with priority:
 // 1. Environment variable PGEDGE_MCP_TOKEN
-// 2. File ~/.pgedge-pg-mcp-cli-token
+// 2. File ~/.ai-dba-cli-token
 // 3. Returns empty string if not found (will prompt if needed)
 func loadAuthToken() string {
 	// Priority 1: Environment variable
@@ -168,7 +168,7 @@ func loadAuthToken() string {
 	}
 
 	// Priority 2: Token file
-	tokenPath := filepath.Join(os.Getenv("HOME"), ".pgedge-pg-mcp-cli-token")
+	tokenPath := filepath.Join(os.Getenv("HOME"), ".ai-dba-cli-token")
 	if token, err := fileutil.ReadTrimmedFile(tokenPath); err == nil {
 		return token
 	}

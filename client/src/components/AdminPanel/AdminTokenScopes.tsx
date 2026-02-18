@@ -519,7 +519,7 @@ const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
     if (loading) {
         return (
             <Box sx={loadingContainerSx}>
-                <CircularProgress />
+                <CircularProgress aria-label="Loading tokens" />
             </Box>
         );
     }
@@ -941,7 +941,7 @@ curl -s -X POST -H "Authorization: Bearer <token>" \\
                         disabled={createLoading || !createOwner || !createAnnotation.trim()}
                         sx={containedButtonSx}
                     >
-                        {createLoading ? <CircularProgress size={20} color="inherit" /> : 'Create'}
+                        {createLoading ? <CircularProgress size={20} color="inherit" aria-label="Creating" /> : 'Create'}
                     </Button>
                 </DialogActions>
             </Dialog>
@@ -1166,7 +1166,7 @@ curl -s -X POST -H "Authorization: Bearer <token>" \\
                         disabled={editLoading}
                         sx={containedButtonSx}
                     >
-                        {editLoading ? <CircularProgress size={20} color="inherit" /> : 'Save'}
+                        {editLoading ? <CircularProgress size={20} color="inherit" aria-label="Saving" /> : 'Save'}
                     </Button>
                 </DialogActions>
             </Dialog>

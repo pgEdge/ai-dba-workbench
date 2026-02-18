@@ -23,6 +23,9 @@ import (
 	pkgchat "github.com/pgedge/ai-workbench/pkg/chat"
 )
 
+// loginHTTPClient is used for login requests with a reasonable timeout.
+var loginHTTPClient = &http.Client{Timeout: 30 * time.Second}
+
 // connectToMCP establishes connection to the MCP server
 func (c *Client) connectToMCP(ctx context.Context) error {
 	if c.config.MCP.Mode == "http" {
@@ -157,7 +160,7 @@ func (c *Client) authenticateUser(ctx context.Context, username, password string
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := loginHTTPClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("login request failed: %w", err)
 	}

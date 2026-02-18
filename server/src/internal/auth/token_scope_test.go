@@ -30,7 +30,10 @@ func createTestAuthStoreForTokenScope(t *testing.T) (*AuthStore, func()) {
 	}
 
 	// Create a default user for token tests
-	store.CreateUser("testuser", "password", "", "", "")
+	if err := store.CreateUser("testuser", "password", "", "", ""); err != nil {
+		os.RemoveAll(tmpDir)
+		t.Fatalf("Failed to create test user: %v", err)
+	}
 
 	cleanup := func() {
 		store.Close()

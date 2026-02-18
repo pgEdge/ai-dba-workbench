@@ -191,11 +191,12 @@ configured with an expiry).
 | Command | Description |
 |---------|-------------|
 | `/history list` | List saved conversations |
-| `/history show <id>` | Show a saved conversation |
-| `/history continue <id>` | Continue a saved conversation |
+| `/history load <id>` | Load a saved conversation |
+| `/history rename <id> "title"` | Rename a saved conversation |
 | `/history delete <id>` | Delete a saved conversation |
+| `/history delete-all` | Delete all saved conversations |
 | `/new` | Start a new conversation |
-| `/save [name]` | Save current conversation |
+| `/save` | Save current conversation |
 
 ### Keyboard Shortcuts
 
@@ -288,7 +289,7 @@ System: Saved conversations (2):
   conv_987654321 - Query performance
 
 You: /history load conv_123456789
-System: Loaded conversation
+System: Loaded conversation: What tables exist?
 ```
 
 ## Example Session

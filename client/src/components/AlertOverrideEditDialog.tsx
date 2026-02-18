@@ -347,7 +347,7 @@ const AlertOverrideEditDialog: React.FC<AlertOverrideEditDialogProps> = ({
                             py: 4,
                         }}
                     >
-                        <CircularProgress />
+                        <CircularProgress aria-label="Loading alert override" />
                     </Box>
                 ) : error && !context ? (
                     <Alert severity="error" sx={{ mt: 1 }}>
@@ -507,7 +507,7 @@ const AlertOverrideEditDialog: React.FC<AlertOverrideEditDialogProps> = ({
                     sx={containedButtonSx}
                 >
                     {saving ? (
-                        <CircularProgress size={20} color="inherit" />
+                        <CircularProgress size={20} color="inherit" aria-label="Saving" />
                     ) : (
                         'Save'
                     )}

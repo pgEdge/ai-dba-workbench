@@ -87,7 +87,7 @@ export const AuthProvider = ({ children }: AuthProviderProps): React.ReactElemen
         }
     };
 
-    const login = async (username: string, password: string): Promise<void> => {
+    const login = useCallback(async (username: string, password: string): Promise<void> => {
         try {
             // Authenticate via REST API
             // The server will set an httpOnly cookie with the session token
@@ -121,9 +121,9 @@ export const AuthProvider = ({ children }: AuthProviderProps): React.ReactElemen
             // Re-throw with user-friendly message
             throw new Error((error as Error).message || 'Login failed');
         }
-    };
+    }, []);
 
-    const logout = async (): Promise<void> => {
+    const logout = useCallback(async (): Promise<void> => {
         try {
             // Call logout endpoint to clear the httpOnly cookie on the server
             await apiPost('/api/v1/auth/logout');
@@ -133,7 +133,7 @@ export const AuthProvider = ({ children }: AuthProviderProps): React.ReactElemen
         }
         setUser(null);
         setAdminPermissions([]);
-    };
+    }, []);
 
     // Check if the user has a specific admin permission
     const hasPermission = useCallback((perm: string): boolean => {
@@ -147,7 +147,7 @@ export const AuthProvider = ({ children }: AuthProviderProps): React.ReactElemen
     }, [user?.isSuperuser, adminPermissions]);
 
     // Force logout without any cleanup (used when session is invalidated)
-    const forceLogout = async (): Promise<void> => {
+    const forceLogout = useCallback(async (): Promise<void> => {
         try {
             await apiPost('/api/v1/auth/logout');
         } catch {
@@ -155,7 +155,7 @@ export const AuthProvider = ({ children }: AuthProviderProps): React.ReactElemen
         }
         setUser(null);
         setAdminPermissions([]);
-    };
+    }, []);
 
     const value: AuthContextValue = useMemo(() => ({
         user,

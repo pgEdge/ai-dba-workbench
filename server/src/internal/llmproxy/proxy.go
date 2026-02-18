@@ -294,6 +294,12 @@ func HandleChat(w http.ResponseWriter, r *http.Request, config *Config) {
 		model = config.Model
 	}
 
+	// Validate model name: allow only safe characters, max 256 chars
+	if !isValidModelName(model) {
+		http.Error(w, "Invalid model name: must be 1-256 characters and contain only alphanumeric characters, hyphens, dots, colons, forward slashes, and underscores", http.StatusBadRequest)
+		return
+	}
+
 	// Create LLM client with debug mode from request
 	var client chat.LLMClient
 	switch provider {
@@ -363,4 +369,22 @@ func HandleChat(w http.ResponseWriter, r *http.Request, config *Config) {
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: Failed to encode LLM chat response: %v\n", err)
 	}
+}
+
+// isValidModelName validates that a model name contains only safe
+// characters and is within the allowed length. Allowed characters are
+// alphanumeric, hyphens, dots, colons, forward slashes, and underscores.
+func isValidModelName(model string) bool {
+	if model == "" || len(model) > 256 {
+		return false
+	}
+	for _, c := range model {
+		if !((c >= 'a' && c <= 'z') ||
+			(c >= 'A' && c <= 'Z') ||
+			(c >= '0' && c <= '9') ||
+			c == '-' || c == '.' || c == ':' || c == '/' || c == '_') {
+			return false
+		}
+	}
+	return true
 }

@@ -95,7 +95,7 @@ func (n *slackNotifier) Send(ctx context.Context, channel *database.Notification
 
 	// Slack returns "ok" with 200 on success
 	if resp.StatusCode != http.StatusOK {
-		respBody, readErr := io.ReadAll(resp.Body)
+		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		if readErr != nil {
 			return fmt.Errorf("slack webhook returned %d (failed to read body: %v)", resp.StatusCode, readErr)
 		}

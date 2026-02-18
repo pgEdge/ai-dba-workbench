@@ -526,7 +526,7 @@ const AdminEmailChannels: React.FC = () => {
     if (loading) {
         return (
             <Box sx={loadingContainerSx}>
-                <CircularProgress />
+                <CircularProgress aria-label="Loading email channels" />
             </Box>
         );
     }
@@ -622,7 +622,7 @@ const AdminEmailChannels: React.FC = () => {
                                                     disabled={testingChannelId === channel.id}
                                                 >
                                                     {testingChannelId === channel.id ? (
-                                                        <CircularProgress size={18} />
+                                                        <CircularProgress size={18} aria-label="Sending test email" />
                                                     ) : (
                                                         <SendIcon fontSize="small" />
                                                     )}
@@ -829,7 +829,7 @@ const AdminEmailChannels: React.FC = () => {
                     <Box sx={{ display: dialogTab === 1 ? 'block' : 'none' }}>
                         {isEditing && recipientsLoading ? (
                             <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
-                                <CircularProgress size={24} />
+                                <CircularProgress size={24} aria-label="Loading recipients" />
                             </Box>
                         ) : (
                             <TableContainer
@@ -939,7 +939,7 @@ const AdminEmailChannels: React.FC = () => {
                                                     size="small"
                                                     variant="contained"
                                                     startIcon={recipientSaving
-                                                        ? <CircularProgress size={14} color="inherit" />
+                                                        ? <CircularProgress size={14} color="inherit" aria-label="Adding recipient" />
                                                         : <AddIcon />
                                                     }
                                                     onClick={handleAddRecipient}
@@ -966,7 +966,7 @@ const AdminEmailChannels: React.FC = () => {
                         disabled={saving || !form.name.trim() || !form.smtp_host.trim() || !form.from_address.trim()}
                         sx={containedButtonSx}
                     >
-                        {saving ? <CircularProgress size={20} color="inherit" /> : (isEditing ? 'Save' : 'Create')}
+                        {saving ? <CircularProgress size={20} color="inherit" aria-label="Saving" /> : (isEditing ? 'Save' : 'Create')}
                     </Button>
                 </DialogActions>
             </Dialog>

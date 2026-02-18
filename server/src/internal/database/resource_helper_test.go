@@ -10,6 +10,7 @@
 package database
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -28,7 +29,7 @@ func TestExecuteResourceQuery(t *testing.T) {
 			return nil, nil
 		}
 
-		content, err := ExecuteResourceQuery(client, "test://uri", query, processor)
+		content, err := ExecuteResourceQuery(context.Background(), client, "test://uri", query, processor)
 
 		// NewResourceError returns nil error, but includes error message in content
 		if err != nil {
@@ -216,7 +217,7 @@ func TestResourceHelperIntegration(t *testing.T) {
 			return nil, nil
 		}
 
-		content, err := ExecuteResourceQuery(client, "test://resource", query, processor)
+		content, err := ExecuteResourceQuery(context.Background(), client, "test://resource", query, processor)
 
 		// NewResourceError returns nil for error parameter
 		if err != nil {
@@ -247,7 +248,7 @@ func TestResourceHelperIntegration(t *testing.T) {
 		}()
 
 		// This will fail at the metadata check, which is fine for this test
-		_, _ = ExecuteResourceQuery(client, "test://resource", query, nil)
+		_, _ = ExecuteResourceQuery(context.Background(), client, "test://resource", query, nil)
 	})
 }
 

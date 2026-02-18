@@ -318,7 +318,7 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
     if (loading) {
         return (
             <Box sx={loadingContainerSx}>
-                <CircularProgress />
+                <CircularProgress aria-label="Loading channels" />
             </Box>
         );
     }
@@ -406,7 +406,7 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                                                     disabled={testingChannelId === channel.id}
                                                 >
                                                     {testingChannelId === channel.id ? (
-                                                        <CircularProgress size={18} />
+                                                        <CircularProgress size={18} aria-label="Sending test" />
                                                     ) : (
                                                         <SendIcon fontSize="small" />
                                                     )}
@@ -540,7 +540,7 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                         disabled={saving || !form.name.trim() || !form.webhook_url.trim()}
                         sx={containedButtonSx}
                     >
-                        {saving ? <CircularProgress size={20} color="inherit" /> : (isEditing ? 'Save' : 'Create')}
+                        {saving ? <CircularProgress size={20} color="inherit" aria-label="Saving" /> : (isEditing ? 'Save' : 'Create')}
                     </Button>
                 </DialogActions>
             </Dialog>

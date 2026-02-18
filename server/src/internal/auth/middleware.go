@@ -11,6 +11,7 @@ package auth
 
 import (
 	"context"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -131,7 +132,8 @@ type IPExtractor struct {
 }
 
 // NewIPExtractor creates a new IPExtractor with the given trusted proxy CIDR ranges.
-// Invalid CIDR strings are silently ignored.
+// Invalid CIDR strings that cannot be parsed as CIDR or IP addresses are
+// logged as warnings and skipped.
 func NewIPExtractor(trustedProxyCIDRs []string) *IPExtractor {
 	extractor := &IPExtractor{
 		TrustedProxies: make([]*net.IPNet, 0, len(trustedProxyCIDRs)),
@@ -149,6 +151,8 @@ func NewIPExtractor(trustedProxyCIDRs []string) *IPExtractor {
 				} else {
 					_, ipNet, _ = net.ParseCIDR(cidr + "/128") //nolint:errcheck // IP is already validated
 				}
+			} else {
+				log.Printf("[WARN] Ignoring invalid trusted proxy CIDR: %q", cidr)
 			}
 		}
 		if ipNet != nil {

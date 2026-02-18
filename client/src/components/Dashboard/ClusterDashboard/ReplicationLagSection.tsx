@@ -182,7 +182,7 @@ const ReplicationLagSection: React.FC<ReplicationLagSectionProps> = ({
     if (loading && !metricsData) {
         return (
             <Box sx={LOADING_SX}>
-                <CircularProgress size={28} />
+                <CircularProgress size={28} aria-label="Loading replication data" />
             </Box>
         );
     }

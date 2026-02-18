@@ -12,7 +12,6 @@ package auth
 import (
 	"database/sql"
 	"fmt"
-	"time"
 )
 
 // =============================================================================
@@ -619,6 +618,3 @@ func (s *AuthStore) GroupCount() int {
 	s.db.QueryRow("SELECT COUNT(*) FROM user_groups").Scan(&count)
 	return count
 }
-
-// Unused time import workaround
-var _ = time.Now

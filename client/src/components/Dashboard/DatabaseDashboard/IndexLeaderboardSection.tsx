@@ -359,7 +359,7 @@ const IndexLeaderboardSection: React.FC<DatabaseSectionProps> = ({
                     justifyContent: 'center',
                     py: 3,
                 }}>
-                    <CircularProgress size={24} />
+                    <CircularProgress size={24} aria-label="Loading indexes" />
                 </Box>
             )}
 

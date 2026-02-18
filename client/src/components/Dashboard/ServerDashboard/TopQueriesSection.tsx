@@ -256,7 +256,7 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
         >
             {loading && queries.length === 0 && (
                 <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
-                    <CircularProgress size={24} />
+                    <CircularProgress size={24} aria-label="Loading queries" />
                 </Box>
             )}
 

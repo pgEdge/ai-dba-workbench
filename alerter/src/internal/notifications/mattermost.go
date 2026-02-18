@@ -96,7 +96,7 @@ func (n *mattermostNotifier) Send(ctx context.Context, channel *database.Notific
 
 	// Mattermost returns "ok" with 200 on success (same as Slack)
 	if resp.StatusCode != http.StatusOK {
-		respBody, readErr := io.ReadAll(resp.Body)
+		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		if readErr != nil {
 			return fmt.Errorf("mattermost webhook returned %d (failed to read body: %v)", resp.StatusCode, readErr)
 		}

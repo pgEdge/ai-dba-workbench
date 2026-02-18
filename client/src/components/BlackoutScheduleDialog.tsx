@@ -654,7 +654,7 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
                     sx={getSaveButtonSx(theme)}
                 >
                     {isSaving ? (
-                        <CircularProgress size={20} sx={{ color: 'inherit' }} />
+                        <CircularProgress size={20} sx={{ color: 'inherit' }} aria-label="Saving" />
                     ) : (
                         isEdit ? 'Update blackout schedule' : 'Create blackout schedule'
                     )}

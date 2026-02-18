@@ -275,6 +275,20 @@ export async function apiPut<T>(
 }
 
 /**
+ * Perform a PATCH request with an optional JSON body.
+ *
+ * @example
+ *   await apiPatch('/api/v1/conversations/1', { title: 'New Title' });
+ */
+export async function apiPatch<T>(
+    url: string,
+    body?: unknown,
+    options?: ApiRequestOptions,
+): Promise<T> {
+    return request<T>(url, 'PATCH', body, options);
+}
+
+/**
  * Perform a DELETE request.
  *
  * @example

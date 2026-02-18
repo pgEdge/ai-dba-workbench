@@ -29,6 +29,8 @@ import {
 import { useAuth } from '../../contexts/AuthContext';
 import { useClusterData } from '../../contexts/ClusterDataContext';
 import { useDashboard } from '../../contexts/DashboardContext';
+import { apiPost, apiGet, apiDelete } from '../../utils/apiClient';
+import { collectServers } from '../../utils/clusterHelpers';
 import EventTimeline from '../EventTimeline';
 import BlackoutPanel from '../BlackoutPanel';
 import AlertAnalysisDialog from '../AlertAnalysisDialog';
@@ -171,13 +173,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
             const allServers = [];
             selection.groups?.forEach(group => {
                 group.clusters?.forEach(cluster => {
-                    const collectServers = (servers) => {
-                        servers?.forEach(s => {
-                            allServers.push(s);
-                            if (s.children) {collectServers(s.children);}
-                        });
-                    };
-                    collectServers(cluster.servers);
+                    allServers.push(...collectServers(cluster.servers || []));
                 });
             });
 
@@ -280,26 +276,13 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
         if (!user || !alertId) {return;}
 
         try {
-            const response = await fetch('/api/v1/alerts/acknowledge', {
-                method: 'POST',
-                credentials: 'include',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    alert_id: alertId,
-                    message: message || '',
-                    false_positive: falsePositive,
-                }),
+            await apiPost('/api/v1/alerts/acknowledge', {
+                alert_id: alertId,
+                message: message || '',
+                false_positive: falsePositive,
             });
-
-            if (response.ok) {
-                // Refresh alerts to show updated status
-                fetchAlertsData();
-            } else {
-                const errorData = await response.json().catch(() => ({}));
-                console.error('Failed to acknowledge alert:', errorData.error || response.statusText);
-            }
+            // Refresh alerts to show updated status
+            fetchAlertsData();
         } catch (err) {
             console.error('Error acknowledging alert:', err);
         } finally {
@@ -313,17 +296,9 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
         if (!user || !alertId) {return;}
 
         try {
-            const response = await fetch(`/api/v1/alerts/acknowledge?alert_id=${alertId}`, {
-                method: 'DELETE',
-                credentials: 'include',
-            });
-
-            if (response.ok) {
-                // Refresh alerts to show updated status
-                fetchAlertsData();
-            } else {
-                console.error('Failed to unacknowledge alert');
-            }
+            await apiDelete(`/api/v1/alerts/acknowledge?alert_id=${alertId}`);
+            // Refresh alerts to show updated status
+            fetchAlertsData();
         } catch (err) {
             console.error('Error unacknowledging alert:', err);
         }
@@ -363,34 +338,26 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
             }
             // For estate, fetch all alerts (no connection filter)
 
-            const response = await fetch(url, {
-                credentials: 'include',
-            });
-
-            if (response.ok) {
-                const data = await response.json();
-                const transformedAlerts = transformAlerts(data.alerts || []);
-                // Merge locally-cached AI analyses that the server
-                // may not have persisted yet, then prune entries
-                // the server has caught up with.
-                const merged = transformedAlerts.map(a => {
-                    const local = a.id != null ? localAnalysisRef.current.get(a.id) : undefined;
-                    if (local && !a.aiAnalysis) {
-                        return { ...a, aiAnalysis: local };
-                    }
-                    return a;
-                });
-                // Remove local entries that the server now has
-                for (const a of merged) {
-                    if (a.id != null && a.aiAnalysis && localAnalysisRef.current.has(a.id)) {
-                        localAnalysisRef.current.delete(a.id);
-                    }
+            const data = await apiGet<{ alerts?: unknown[] }>(url);
+            const transformedAlerts = transformAlerts(data.alerts || []);
+            // Merge locally-cached AI analyses that the server
+            // may not have persisted yet, then prune entries
+            // the server has caught up with.
+            const merged = transformedAlerts.map(a => {
+                const local = a.id != null ? localAnalysisRef.current.get(a.id) : undefined;
+                if (local && !a.aiAnalysis) {
+                    return { ...a, aiAnalysis: local };
                 }
-                setAlerts(merged);
-                initialLoadDoneRef.current = true;
-            } else {
-                setAlerts([]);
+                return a;
+            });
+            // Remove local entries that the server now has
+            for (const a of merged) {
+                if (a.id != null && a.aiAnalysis && localAnalysisRef.current.has(a.id)) {
+                    localAnalysisRef.current.delete(a.id);
+                }
             }
+            setAlerts(merged);
+            initialLoadDoneRef.current = true;
         } catch (err) {
             console.error('Error fetching alerts:', err);
             setAlerts([]);
@@ -526,7 +493,6 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                 {/* Event Timeline */}
                 <EventTimeline
                     selection={selection}
-                    mode={isDark ? 'dark' : 'light'}
                 />
 
                 {/* Performance Summary Tiles */}

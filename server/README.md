@@ -17,18 +17,20 @@ For complete documentation, visit [docs.pgedge.com](https://docs.pgedge.com).
 
 ## Features
 
-- HTTP/HTTPS transport with JSON-RPC 2.0.
-- SQLite-based authentication with users, sessions, and API
-  tokens.
-- Role-based access control with groups, privileges, and
-  token scopes.
-- Admin panel for managing users, groups, and tokens.
-- Multi-database support with per-connection access levels.
-- MCP tools for database operations.
-- MCP resources for schema and data access.
-- MCP prompts for common workflows.
-- LLM proxy support for Anthropic, OpenAI, and Ollama.
-- Conversation history management.
+- The server uses HTTP/HTTPS transport with JSON-RPC 2.0.
+- The server provides SQLite-based authentication with
+  users, sessions, and API tokens.
+- Role-based access control manages groups, privileges,
+  and token scopes.
+- The admin panel enables management of users, groups,
+  and tokens.
+- The server supports multiple databases with
+  per-connection access levels.
+- MCP tools provide interfaces for database operations.
+- MCP resources expose schema and data access.
+- MCP prompts guide common workflows.
+- The LLM proxy supports Anthropic, OpenAI, and Ollama.
+- The server manages conversation history.
 
 ## Building
 

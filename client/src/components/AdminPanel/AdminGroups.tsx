@@ -74,49 +74,73 @@ interface AdminGroupsProps {
     mode: ThemeMode;
 }
 
+interface RbacGroup {
+    id: number;
+    name: string;
+    description?: string;
+    member_count?: number;
+}
+
+interface GroupDetail {
+    user_members?: string[];
+    group_members?: string[];
+    [key: string]: unknown;
+}
+
+interface EffectivePermsData {
+    connection_privileges?: unknown[];
+    admin_permissions?: unknown[];
+    mcp_privileges?: unknown[];
+}
+
+interface RbacUser {
+    id: number;
+    username: string;
+}
+
 const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
     const theme = useTheme();
     const isDark = mode === 'dark';
     const { user } = useAuth();
     const isSuperuser = !!user?.isSuperuser;
-    const [groups, setGroups] = useState([]);
+    const [groups, setGroups] = useState<RbacGroup[]>([]);
     const [connections, setConnections] = useState<Array<{ id: number; name: string }>>([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(null);
-    const [expandedGroup, setExpandedGroup] = useState(null);
-    const [groupDetail, setGroupDetail] = useState(null);
-    const [detailLoading, setDetailLoading] = useState(false);
-    const [effectivePerms, setEffectivePerms] = useState(null);
-    const [effectivePermsLoading, setEffectivePermsLoading] = useState(false);
+    const [loading, setLoading] = useState<boolean>(true);
+    const [error, setError] = useState<string | null>(null);
+    const [expandedGroup, setExpandedGroup] = useState<number | null>(null);
+    const [groupDetail, setGroupDetail] = useState<GroupDetail | null>(null);
+    const [detailLoading, setDetailLoading] = useState<boolean>(false);
+    const [effectivePerms, setEffectivePerms] = useState<EffectivePermsData | null>(null);
+    const [effectivePermsLoading, setEffectivePermsLoading] = useState<boolean>(false);
 
     // Create group dialog
-    const [createOpen, setCreateOpen] = useState(false);
-    const [createName, setCreateName] = useState('');
-    const [createDesc, setCreateDesc] = useState('');
-    const [createLoading, setCreateLoading] = useState(false);
-    const [createError, setCreateError] = useState(null);
+    const [createOpen, setCreateOpen] = useState<boolean>(false);
+    const [createName, setCreateName] = useState<string>('');
+    const [createDesc, setCreateDesc] = useState<string>('');
+    const [createLoading, setCreateLoading] = useState<boolean>(false);
+    const [createError, setCreateError] = useState<string | null>(null);
 
     // Edit group dialog
-    const [editOpen, setEditOpen] = useState(false);
-    const [editGroup, setEditGroup] = useState(null);
-    const [editName, setEditName] = useState('');
-    const [editDesc, setEditDesc] = useState('');
-    const [editLoading, setEditLoading] = useState(false);
-    const [editError, setEditError] = useState(null);
+    const [editOpen, setEditOpen] = useState<boolean>(false);
+    const [editGroup, setEditGroup] = useState<RbacGroup | null>(null);
+    const [editName, setEditName] = useState<string>('');
+    const [editDesc, setEditDesc] = useState<string>('');
+    const [editLoading, setEditLoading] = useState<boolean>(false);
+    const [editError, setEditError] = useState<string | null>(null);
 
     // Delete confirmation
-    const [deleteOpen, setDeleteOpen] = useState(false);
-    const [deleteGroup, setDeleteGroup] = useState(null);
-    const [deleteLoading, setDeleteLoading] = useState(false);
+    const [deleteOpen, setDeleteOpen] = useState<boolean>(false);
+    const [deleteGroup, setDeleteGroup] = useState<RbacGroup | null>(null);
+    const [deleteLoading, setDeleteLoading] = useState<boolean>(false);
 
     // Add member dialog
-    const [addMemberOpen, setAddMemberOpen] = useState(false);
-    const [memberType, setMemberType] = useState('user');
-    const [selectedMemberId, setSelectedMemberId] = useState('');
-    const [addMemberLoading, setAddMemberLoading] = useState(false);
-    const [addMemberError, setAddMemberError] = useState(null);
-    const [availableUsers, setAvailableUsers] = useState([]);
-    const [availableGroups, setAvailableGroups] = useState([]);
+    const [addMemberOpen, setAddMemberOpen] = useState<boolean>(false);
+    const [memberType, setMemberType] = useState<string>('user');
+    const [selectedMemberId, setSelectedMemberId] = useState<string>('');
+    const [addMemberLoading, setAddMemberLoading] = useState<boolean>(false);
+    const [addMemberError, setAddMemberError] = useState<string | null>(null);
+    const [availableUsers, setAvailableUsers] = useState<RbacUser[]>([]);
+    const [availableGroups, setAvailableGroups] = useState<RbacGroup[]>([]);
 
     const fetchGroups = useCallback(async () => {
         try {
@@ -131,8 +155,9 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
             if (connResult) {
                 setConnections(connResult.connections || []);
             }
-        } catch (err) {
-            setError(err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            setError(message);
         } finally {
             setLoading(false);
         }
@@ -142,7 +167,7 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
         fetchGroups();
     }, [fetchGroups]);
 
-    const fetchGroupDetail = useCallback(async (groupId) => {
+    const fetchGroupDetail = useCallback(async (groupId: number) => {
         try {
             setDetailLoading(true);
             setEffectivePermsLoading(true);
@@ -153,15 +178,16 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
             ]);
             setGroupDetail(detailData);
             setEffectivePerms(effectiveResult);
-        } catch (err) {
-            setError(err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            setError(message);
         } finally {
             setDetailLoading(false);
             setEffectivePermsLoading(false);
         }
     }, []);
 
-    const handleRowClick = (group) => {
+    const handleRowClick = (group: RbacGroup) => {
         if (expandedGroup === group.id) {
             setExpandedGroup(null);
             setGroupDetail(null);
@@ -186,15 +212,16 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
             setCreateName('');
             setCreateDesc('');
             fetchGroups();
-        } catch (err) {
-            setCreateError(err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            setCreateError(message);
         } finally {
             setCreateLoading(false);
         }
     };
 
     // Edit group
-    const handleOpenEdit = (e, group) => {
+    const handleOpenEdit = (e: React.MouseEvent, group: RbacGroup) => {
         e.stopPropagation();
         setEditGroup(group);
         setEditName(group.name);
@@ -217,15 +244,16 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
             if (expandedGroup === editGroup.id) {
                 fetchGroupDetail(editGroup.id);
             }
-        } catch (err) {
-            setEditError(err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            setEditError(message);
         } finally {
             setEditLoading(false);
         }
     };
 
     // Delete group
-    const handleOpenDelete = (e, group) => {
+    const handleOpenDelete = (e: React.MouseEvent, group: RbacGroup) => {
         e.stopPropagation();
         setDeleteGroup(group);
         setDeleteOpen(true);
@@ -243,8 +271,9 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
                 setGroupDetail(null);
             }
             fetchGroups();
-        } catch (err) {
-            setError(err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            setError(message);
         } finally {
             setDeleteLoading(false);
         }
@@ -268,7 +297,7 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
             if (groupsData) {
                 // Exclude the current group from the list
                 setAvailableGroups(
-                    (groupsData.groups || []).filter((g) => g.id !== expandedGroup)
+                    (groupsData.groups || []).filter((g: RbacGroup) => g.id !== expandedGroup)
                 );
             }
         } catch {
@@ -288,8 +317,8 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
                         ? { user_id: parseInt(selectedMemberId, 10) }
                         : { group_id: parseInt(selectedMemberId, 10) }
                 );
-            } catch (apiErr) {
-                const errorMsg = (apiErr as Error).message || 'Failed to add member';
+            } catch (apiErr: unknown) {
+                const errorMsg = apiErr instanceof Error ? apiErr.message : String(apiErr);
                 throw new Error(
                     errorMsg.includes('UNIQUE constraint')
                         ? 'This member is already in the group.'
@@ -299,33 +328,35 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
             setAddMemberOpen(false);
             fetchGroupDetail(expandedGroup);
             fetchGroups();
-        } catch (err) {
-            setAddMemberError(err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            setAddMemberError(message);
         } finally {
             setAddMemberLoading(false);
         }
     };
 
-    const handleRemoveMember = async (memberId, mType) => {
+    const handleRemoveMember = async (memberId: number, mType: string) => {
         if (!expandedGroup) {return;}
         try {
             await apiDelete(`/api/v1/rbac/groups/${expandedGroup}/members/${mType}/${memberId}`);
             fetchGroupDetail(expandedGroup);
             fetchGroups();
-        } catch (err) {
-            setError(err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            setError(message);
         }
     };
 
-    const handleRemoveMemberByName = async (name, mType) => {
+    const handleRemoveMemberByName = async (name: string, mType: string) => {
         if (!expandedGroup) {return;}
         try {
-            let memberId;
+            let memberId: number | undefined;
             if (mType === 'user') {
                 try {
                     const data = await apiGet<{ users?: Array<{ id: number; username: string }> }>('/api/v1/rbac/users');
-                    const user = (data.users || []).find(u => u.username === name);
-                    if (user) {memberId = user.id;}
+                    const foundUser = (data.users || []).find(u => u.username === name);
+                    if (foundUser) {memberId = foundUser.id;}
                 } catch { /* ignore */ }
             } else {
                 const found = groups.find(g => g.name === name);
@@ -336,15 +367,16 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
                 return;
             }
             await handleRemoveMember(memberId, mType);
-        } catch (err) {
-            setError(err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            setError(message);
         }
     };
 
     if (loading) {
         return (
             <Box sx={loadingContainerSx}>
-                <CircularProgress />
+                <CircularProgress aria-label="Loading groups" />
             </Box>
         );
     }
@@ -437,7 +469,7 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
                                             <Box sx={{ py: 2, px: 2 }}>
                                                 {detailLoading ? (
                                                     <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
-                                                        <CircularProgress size={24} />
+                                                        <CircularProgress size={24} aria-label="Loading group details" />
                                                     </Box>
                                                 ) : groupDetail ? (
                                                     <Box>
@@ -509,7 +541,7 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
                                                         )}
                                                         {effectivePermsLoading ? (
                                                             <Box sx={{ display: 'flex', justifyContent: 'center', py: 2, mt: 3 }}>
-                                                                <CircularProgress size={24} />
+                                                                <CircularProgress size={24} aria-label="Loading permissions" />
                                                             </Box>
                                                         ) : effectivePerms ? (
                                                             <Box sx={{ mt: 3 }}>
@@ -587,7 +619,7 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
                         disabled={createLoading || !createName.trim()}
                         sx={containedButtonSx}
                     >
-                        {createLoading ? <CircularProgress size={20} color="inherit" /> : 'Create'}
+                        {createLoading ? <CircularProgress size={20} color="inherit" aria-label="Creating" /> : 'Create'}
                     </Button>
                 </DialogActions>
             </Dialog>
@@ -631,7 +663,7 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
                         disabled={editLoading || !editName.trim()}
                         sx={containedButtonSx}
                     >
-                        {editLoading ? <CircularProgress size={20} color="inherit" /> : 'Save'}
+                        {editLoading ? <CircularProgress size={20} color="inherit" aria-label="Saving" /> : 'Save'}
                     </Button>
                 </DialogActions>
             </Dialog>
@@ -694,7 +726,7 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
                         disabled={addMemberLoading || !selectedMemberId}
                         sx={containedButtonSx}
                     >
-                        {addMemberLoading ? <CircularProgress size={20} color="inherit" /> : 'Add'}
+                        {addMemberLoading ? <CircularProgress size={20} color="inherit" aria-label="Adding member" /> : 'Add'}
                     </Button>
                 </DialogActions>
             </Dialog>

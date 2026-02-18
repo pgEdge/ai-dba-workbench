@@ -176,7 +176,7 @@ const IndexDetail: React.FC<ObjectDetailProps> = ({
                 justifyContent: 'center',
                 py: 4,
             }}>
-                <CircularProgress size={32} />
+                <CircularProgress size={32} aria-label="Loading index details" />
             </Box>
         );
     }
@@ -265,7 +265,7 @@ const IndexDetail: React.FC<ObjectDetailProps> = ({
                                     alignItems: 'center',
                                     height: CHART_HEIGHT,
                                 }}>
-                                    <CircularProgress size={24} />
+                                    <CircularProgress size={24} aria-label="Loading chart" />
                                 </Box>
                             ) : scanChartData ? (
                                 <Chart

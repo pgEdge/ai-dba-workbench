@@ -10,7 +10,6 @@
 package probes
 
 import (
-	"fmt"
 	"testing"
 )
 
@@ -329,6 +328,3 @@ func TestNormalizeValueUnknownType(t *testing.T) {
 		t.Errorf("expected unknown type to pass through, got %v [%T]", got, got)
 	}
 }
-
-// Ensure the unused import does not cause a build error.
-var _ = fmt.Sprintf

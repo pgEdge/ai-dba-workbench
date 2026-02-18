@@ -30,7 +30,7 @@ type RowProcessor func(rows pgx.Rows) (interface{}, error)
 // - Process rows with custom processor
 // - Marshal to JSON
 // - Return formatted ResourceContent
-func ExecuteResourceQuery(client *Client, uri string, query string, processor RowProcessor) (mcp.ResourceContent, error) {
+func ExecuteResourceQuery(ctx context.Context, client *Client, uri string, query string, processor RowProcessor) (mcp.ResourceContent, error) {
 	// Check if metadata is loaded
 	if !client.IsMetadataLoaded() {
 		return mcp.NewResourceError(uri, mcp.DatabaseNotReadyErrorShort)
@@ -43,7 +43,6 @@ func ExecuteResourceQuery(client *Client, uri string, query string, processor Ro
 	}
 
 	// Execute query
-	ctx := context.Background()
 	rows, err := pool.Query(ctx, query)
 	if err != nil {
 		return mcp.ResourceContent{}, fmt.Errorf("failed to query: %w", err)

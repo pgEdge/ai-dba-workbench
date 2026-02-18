@@ -49,7 +49,7 @@ interface NavItem {
     id: string;
     label: string;
     permission: string;
-    Component: React.FC<{ mode: ThemeMode }>;
+    Component: React.FC<{ mode?: ThemeMode }>;
 }
 
 interface NavSection {

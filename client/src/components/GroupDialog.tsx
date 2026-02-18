@@ -379,6 +379,7 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
                                             <CircularProgress
                                                 size={20}
                                                 color="inherit"
+                                                aria-label="Saving"
                                             />
                                         ) : (
                                             'Save'
@@ -443,7 +444,7 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
                         sx={getSaveButtonSx}
                     >
                         {isSaving ? (
-                            <CircularProgress size={20} color="inherit" />
+                            <CircularProgress size={20} color="inherit" aria-label="Saving" />
                         ) : (
                             'Save'
                         )}

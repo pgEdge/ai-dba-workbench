@@ -274,6 +274,7 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
                                             <CircularProgress
                                                 size={20}
                                                 sx={{ color: 'inherit' }}
+                                                aria-label="Saving"
                                             />
                                         ) : (
                                             'Save'
@@ -371,6 +372,7 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
                             <CircularProgress
                                 size={20}
                                 sx={{ color: 'inherit' }}
+                                aria-label="Saving"
                             />
                         ) : (
                             'Save'

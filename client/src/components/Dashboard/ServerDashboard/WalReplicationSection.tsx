@@ -274,7 +274,7 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
         <CollapsibleSection title="WAL and Replication" icon={<SyncIcon sx={{ fontSize: 16 }} />} defaultExpanded>
             {isKpiLoading && !walKpi.data && (
                 <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
-                    <CircularProgress size={24} />
+                    <CircularProgress size={24} aria-label="Loading" />
                 </Box>
             )}
             <Box sx={KPI_GRID_SX}>

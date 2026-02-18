@@ -25,7 +25,8 @@ The server searches for configuration in the following order:
 
 ### Example Configuration
 
-A complete example configuration file is available at `examples/ai-dba-server.yaml`
+A complete example configuration file is available at
+[examples/ai-dba-server.yaml](https://github.com/pgEdge/ai-dba-workbench/blob/main/examples/ai-dba-server.yaml)
 in the project root directory.
 
 ```yaml
@@ -142,6 +143,8 @@ builtins:
     get_alert_history: true
     get_alert_rules: true
     get_metric_baselines: true
+    # Datastore tools
+    query_datastore: true
     # Utility tools
     generate_embedding: true
     search_knowledgebase: true
@@ -399,6 +402,8 @@ builtins:
     get_alert_history: true
     get_alert_rules: true
     get_metric_baselines: true
+    # Datastore tools
+    query_datastore: true
     # Utility tools
     generate_embedding: true
     search_knowledgebase: true
@@ -520,6 +525,52 @@ llm:
   anthropic_api_key_file: "/etc/ai-workbench/anthropic-api-key"
 secret_file: "/etc/ai-workbench/server.secret"
 data_dir: "/var/lib/ai-workbench/data"
+```
+
+## Environment Variables
+
+The server reads the following environment variables at startup.
+
+### `PGEDGE_POSTGRES_CONNECTION_STRING`
+
+The `PGEDGE_POSTGRES_CONNECTION_STRING` variable provides a PostgreSQL
+connection string for the datastore. The server uses this variable as
+a fallback when the configuration file does not specify database
+settings.
+
+The server applies connection settings in the following priority
+order:
+
+1. Database configuration from the YAML file or command-line flags.
+2. The `PGEDGE_POSTGRES_CONNECTION_STRING` environment variable.
+3. The default value `postgres://localhost/postgres?sslmode=disable`.
+
+In the following example, the variable specifies a remote database:
+
+```bash
+export PGEDGE_POSTGRES_CONNECTION_STRING=\
+"postgres://user:pass@db.example.com:5432/ai_workbench?sslmode=require"
+```
+
+### `PGEDGE_DB_LOG_LEVEL`
+
+The `PGEDGE_DB_LOG_LEVEL` variable controls the verbosity of
+database operation logging. The server writes database log messages
+to `stderr` with a `[DATABASE]` prefix.
+
+The following values are supported:
+
+- `none` disables all database logging (default).
+- `info` logs connections, queries, and errors.
+- `debug` logs metadata loading, pool details, and query details.
+- `trace` logs full queries, row counts, and detailed timings.
+
+An empty or unrecognized value defaults to `none`.
+
+In the following example, the variable enables debug logging:
+
+```bash
+export PGEDGE_DB_LOG_LEVEL=debug
 ```
 
 ## Configuration Reload

@@ -1424,8 +1424,9 @@ func (s *AuthStore) CleanupExpiredTokens() (int, []string) {
 			hashes = append(hashes, hash)
 		}
 	}
-	//nolint:errcheck // Err check non-critical for cleanup operation
-	_ = rows.Err()
+	if rowsErr := rows.Err(); rowsErr != nil {
+		log.Printf("[AUTH] Error iterating expired token rows: %v", rowsErr)
+	}
 	rows.Close()
 
 	// Delete expired tokens
@@ -1434,6 +1435,7 @@ func (s *AuthStore) CleanupExpiredTokens() (int, []string) {
 		time.Now(),
 	)
 	if err != nil {
+		log.Printf("[AUTH] Failed to delete expired tokens: %v", err)
 		return 0, nil
 	}
 

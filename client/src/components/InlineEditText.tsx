@@ -171,7 +171,7 @@ const InlineEditText: React.FC<InlineEditTextProps> = ({
                     {...textFieldProps}
                 />
                 {isSaving && (
-                    <CircularProgress size={14} />
+                    <CircularProgress size={14} aria-label="Saving" />
                 )}
             </Box>
         );

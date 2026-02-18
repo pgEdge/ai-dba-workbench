@@ -17,6 +17,7 @@ import (
 	"io"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/pgedge/ai-workbench/cli/internal/mcp"
 )
@@ -111,7 +112,7 @@ func NewHTTPClient(url, token string) MCPClient {
 	return &httpClient{
 		url:       url,
 		token:     token,
-		client:    &http.Client{},
+		client:    &http.Client{Timeout: 30 * time.Second},
 		requestID: 0,
 	}
 }

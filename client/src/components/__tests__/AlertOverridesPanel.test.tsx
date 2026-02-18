@@ -266,6 +266,7 @@ describe('AlertOverridesPanel', () => {
         mockFetch.mockResolvedValueOnce({
             ok: false,
             status: 500,
+            text: async () => JSON.stringify({ error: 'Failed to fetch alert overrides' }),
         });
 
         renderWithTheme(

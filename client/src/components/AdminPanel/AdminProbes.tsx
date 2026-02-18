@@ -129,7 +129,7 @@ const AdminProbes: React.FC = () => {
     if (loading) {
         return (
             <Box sx={loadingContainerSx}>
-                <CircularProgress />
+                <CircularProgress aria-label="Loading probes" />
             </Box>
         );
     }
@@ -272,7 +272,7 @@ const AdminProbes: React.FC = () => {
                         disabled={saving}
                         sx={containedButtonSx}
                     >
-                        {saving ? <CircularProgress size={20} color="inherit" /> : 'Save'}
+                        {saving ? <CircularProgress size={20} color="inherit" aria-label="Saving" /> : 'Save'}
                     </Button>
                 </DialogActions>
             </Dialog>

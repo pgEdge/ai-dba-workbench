@@ -292,7 +292,7 @@ const TableDetail: React.FC<ObjectDetailProps> = ({
                 justifyContent: 'center',
                 py: 4,
             }}>
-                <CircularProgress size={32} />
+                <CircularProgress size={32} aria-label="Loading table details" />
             </Box>
         );
     }
@@ -372,7 +372,7 @@ const TableDetail: React.FC<ObjectDetailProps> = ({
                                     alignItems: 'center',
                                     height: CHART_HEIGHT,
                                 }}>
-                                    <CircularProgress size={24} />
+                                    <CircularProgress size={24} aria-label="Loading chart" />
                                 </Box>
                             ) : tupleChartData ? (
                                 <Chart
@@ -414,7 +414,7 @@ const TableDetail: React.FC<ObjectDetailProps> = ({
                                     alignItems: 'center',
                                     height: CHART_HEIGHT,
                                 }}>
-                                    <CircularProgress size={24} />
+                                    <CircularProgress size={24} aria-label="Loading chart" />
                                 </Box>
                             ) : scanChartData ? (
                                 <Chart
@@ -459,7 +459,7 @@ const TableDetail: React.FC<ObjectDetailProps> = ({
                                     alignItems: 'center',
                                     height: CHART_HEIGHT,
                                 }}>
-                                    <CircularProgress size={24} />
+                                    <CircularProgress size={24} aria-label="Loading chart" />
                                 </Box>
                             ) : deadTupleChartData ? (
                                 <Chart

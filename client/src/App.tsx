@@ -27,6 +27,7 @@ import ChatPanel from './components/ChatPanel';
 import ChatFAB from './components/ChatPanel/ChatFAB';
 import { createPgedgeTheme, loginTheme } from './theme/pgedgeTheme';
 import { ThemeMode } from './types/theme';
+import { collectServers } from './utils/clusterHelpers';
 
 // Style constants
 const styles = {
@@ -83,7 +84,7 @@ const AppContent = () => {
             <ThemeProvider theme={theme}>
                 <CssBaseline />
                 <Box sx={styles.loadingContainer}>
-                    <CircularProgress />
+                    <CircularProgress aria-label="Loading application" />
                 </Box>
             </ThemeProvider>
         );
@@ -177,16 +178,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({ mode, onToggleTheme }) => {
 
         if (selectionType === 'cluster' && selectedCluster) {
             // Collect all servers in the cluster (including nested children)
-            const collectServers = (servers: Array<{ id: number; name: string; status?: string; children?: typeof servers; [key: string]: unknown }>): typeof servers => {
-                const result: typeof servers = [];
-                servers?.forEach(s => {
-                    result.push(s);
-                    if (s.children) {
-                        result.push(...collectServers(s.children));
-                    }
-                });
-                return result;
-            };
             const servers = collectServers(selectedCluster.servers);
             const serverIds = servers.map(s => s.id);
 

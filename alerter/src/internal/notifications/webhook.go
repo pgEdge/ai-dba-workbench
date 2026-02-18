@@ -17,19 +17,35 @@ import (
 	"strings"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
+	"github.com/pgedge/ai-workbench/pkg/hostvalidation"
 )
 
 // webhookNotifier implements Notifier for generic REST webhooks
 type webhookNotifier struct {
-	httpClient *http.Client
-	renderer   TemplateRenderer
+	httpClient    *http.Client
+	renderer      TemplateRenderer
+	allowInternal bool
 }
 
-// NewWebhookNotifier creates a new webhook notifier
+// NewWebhookNotifier creates a new webhook notifier. The notifier blocks
+// requests to private/internal IP addresses by default to prevent SSRF
+// attacks. Use NewWebhookNotifierAllowInternal for testing against
+// localhost endpoints.
 func NewWebhookNotifier(httpClient *http.Client, renderer TemplateRenderer) Notifier {
 	return &webhookNotifier{
 		httpClient: httpClient,
 		renderer:   renderer,
+	}
+}
+
+// NewWebhookNotifierAllowInternal creates a webhook notifier that permits
+// requests to internal network addresses. This should only be used in
+// test environments.
+func NewWebhookNotifierAllowInternal(httpClient *http.Client, renderer TemplateRenderer) Notifier {
+	return &webhookNotifier{
+		httpClient:    httpClient,
+		renderer:      renderer,
+		allowInternal: true,
 	}
 }
 
@@ -61,6 +77,15 @@ func (n *webhookNotifier) Send(ctx context.Context, channel *database.Notificati
 	}
 
 	endpointURL := *channel.EndpointURL
+
+	// SSRF protection: validate that the endpoint URL does not resolve
+	// to a private or internal IP address.
+	if !n.allowInternal {
+		if err := hostvalidation.ValidateURLHost(endpointURL); err != nil {
+			return fmt.Errorf("webhook endpoint blocked (SSRF protection): %w", err)
+		}
+	}
+
 	method := channel.HTTPMethod
 	if method == "" {
 		method = "POST"
@@ -139,7 +164,7 @@ func (n *webhookNotifier) Send(ctx context.Context, channel *database.Notificati
 
 	// Check response (2xx is success)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, readErr := io.ReadAll(resp.Body)
+		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		if readErr != nil {
 			return fmt.Errorf("webhook returned %d (failed to read body: %v)", resp.StatusCode, readErr)
 		}

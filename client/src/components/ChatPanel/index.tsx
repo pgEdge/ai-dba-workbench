@@ -22,19 +22,21 @@ import {
     Tooltip,
     alpha,
 } from '@mui/material';
-import { Theme } from '@mui/material/styles';
+import { Theme, useTheme } from '@mui/material/styles';
 import {
     Close as CloseIcon,
     Add as NewChatIcon,
     History as HistoryIcon,
+    Download as DownloadIcon,
 } from '@mui/icons-material';
 import { ThemeMode } from '../../types/theme';
 import { useChatContext } from '../../contexts/ChatContext';
-import ChatMessage, { ChatMessageData } from './ChatMessage';
+import ChatMessage, { ChatMessageData, ContentBlock } from './ChatMessage';
 import ChatInput from './ChatInput';
 import ToolStatus, { ToolActivity } from './ToolStatus';
 import ThinkingIndicator from './ThinkingIndicator';
 import ConversationHistory from './ConversationHistory';
+import { getDownloadButtonSx } from '../shared/MarkdownContent';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -217,6 +219,18 @@ type HookToolActivity = ToolActivity;
 const mapToolActivity = (tool: HookToolActivity): ToolActivity => tool;
 
 // ---------------------------------------------------------------------------
+// Helper: extract text from content blocks
+// ---------------------------------------------------------------------------
+
+const getContentText = (content: string | ContentBlock[]): string => {
+    if (typeof content === 'string') {return content;}
+    return content
+        .filter((block) => block.type === 'text' && block.text)
+        .map((block) => block.text)
+        .join('\n');
+};
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
@@ -243,6 +257,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
         return DEFAULT_WIDTH;
     });
 
+    const theme = useTheme();
     const [isResizing, setIsResizing] = useState(false);
     const [showHistory, setShowHistory] = useState(false);
 
@@ -402,6 +417,44 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
         refreshConversations();
     }, [refreshConversations]);
 
+    // Download conversation as markdown file
+    const handleDownload = useCallback(() => {
+        if (messages.length === 0) {return;}
+
+        const timestamp = new Date().toISOString().split('T')[0];
+        const filename = `ellie-chat-${timestamp}.md`;
+
+        const currentConversation = conversations.find(
+            (c) => c.id === currentConversationId,
+        );
+        const title = currentConversation?.title || 'Conversation';
+
+        const lines: string[] = [
+            `# Ellie Chat - ${title}`,
+            '',
+            `**Date:** ${timestamp}`,
+            '',
+        ];
+
+        for (const msg of messages) {
+            if (msg.role === 'system') {continue;}
+            const heading = msg.role === 'user' ? '## User' : '## Ellie';
+            const text = getContentText(msg.content);
+            lines.push(heading, '', text, '', '---', '');
+        }
+
+        const content = lines.join('\n');
+        const blob = new Blob([content], { type: 'text/markdown' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    }, [messages, conversations, currentConversationId]);
+
     // -----------------------------------------------------------------------
     // Render
     // -----------------------------------------------------------------------
@@ -450,6 +503,22 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
                         >
                             <NewChatIcon sx={headerIconSx} />
                         </IconButton>
+                    </Tooltip>
+
+                    <Tooltip title="Download conversation">
+                        <span>
+                            <IconButton
+                                onClick={handleDownload}
+                                disabled={
+                                    messages.length === 0 || isLoading
+                                }
+                                size="small"
+                                sx={getDownloadButtonSx(theme)}
+                                aria-label="Download conversation"
+                            >
+                                <DownloadIcon sx={headerIconSx} />
+                            </IconButton>
+                        </span>
                     </Tooltip>
 
                     <Tooltip title="Close">

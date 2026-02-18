@@ -45,6 +45,44 @@ The estate scope activates when no specific object is
 selected. Selecting a cluster, server, or group in the
 navigator updates the overview to reflect that scope.
 
+## Server and Cluster Analysis
+
+The AI Overview panel displays a brain icon when a server
+or cluster is selected in the navigator. Clicking the
+brain icon opens a full-screen AI analysis dialog.
+
+The analysis uses an agentic LLM loop that accesses
+monitoring tools to gather data. The LLM can query
+metrics, fetch baselines, review alerts, query databases,
+and inspect schemas during the analysis process.
+
+The analysis covers the following areas depending on the
+selected scope:
+
+- For individual servers, the analysis examines system
+  resources, PostgreSQL configuration, alert patterns,
+  and metric trends.
+- For clusters, the analysis compares metrics across all
+  member servers and examines replication health.
+
+The dialog displays real-time progress as the AI gathers
+data from different tools. Each tool invocation appears
+in the dialog so users can follow the analysis workflow.
+
+SQL code blocks in the generated report include a Run
+button. Read-only queries execute immediately when the
+user clicks Run. Write statements display a confirmation
+dialog before the system executes the query.
+
+An amber brain icon indicates that a cached analysis is
+available. The system caches analyses for 30 minutes
+before requiring a new analysis run.
+
+The dialog includes a download button that saves the
+report as a markdown file. The system names the file
+using the format
+`{type}-analysis-{name}-{YYYY-MM-DD}.md`.
+
 ## API Reference
 
 The REST API exposes a single endpoint for retrieving

@@ -514,6 +514,38 @@ const StatusPanelPage = () => (
             />
         </Box>
 
+        <SectionTitle icon={AIIcon}>Server &amp; Cluster Analysis</SectionTitle>
+        <Typography sx={styles.bodyTextMb2}>
+            The AI Overview panel displays a brain icon for servers and clusters
+            that opens a full AI-powered analysis dialog.
+        </Typography>
+        <Box sx={styles.indentedBlock}>
+            <FeatureItem
+                title="Agentic Analysis"
+                description="The AI examines server metrics, alert history, configuration, and schema using an agentic tool loop to generate a comprehensive health report."
+            />
+            <FeatureItem
+                title="Cluster Analysis"
+                description="For clusters, the AI analyzes all member servers and compares metrics across the cluster to identify replication issues and performance disparities."
+            />
+            <FeatureItem
+                title="Progress Indicators"
+                description="The analysis dialog shows real-time progress as the AI gathers data using monitoring tools such as querying metrics, fetching baselines, and reviewing alert history."
+            />
+            <FeatureItem
+                title="Runnable SQL"
+                description="SQL code blocks in analysis reports include a Run button to execute queries against the server. Results appear inline below the code block."
+            />
+            <FeatureItem
+                title="Cached Reports"
+                description="An amber brain icon in the AI Overview panel indicates a cached analysis is available. Click it to view the report instantly."
+            />
+            <FeatureItem
+                title="Download"
+                description="Reports can be downloaded as markdown files for sharing or archiving."
+            />
+        </Box>
+
         <SectionTitle icon={ServerIcon}>Server View</SectionTitle>
         <Typography sx={styles.bodyTextMb2}>
             When viewing a single server, you'll see:
@@ -1216,6 +1248,10 @@ const AskElliePage = () => (
             <FeatureItem
                 title="New Conversation"
                 description="Click the plus button in the chat header to start a fresh conversation. Previous conversations are saved automatically."
+            />
+            <FeatureItem
+                title="Download Conversation"
+                description="Click the download button in the chat header to save the current conversation as a markdown file. The file includes all messages with timestamps."
             />
         </Box>
 

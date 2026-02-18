@@ -64,6 +64,27 @@ available:
   conversation.
 - Use the Clear All button to remove all conversations.
 
+## Downloading Conversations
+
+The chat panel header includes a download button next
+to the History, New Chat, and Close buttons. Click the
+download button to save the current conversation as a
+markdown file.
+
+The exported file includes the following content:
+
+- A title containing the conversation name.
+- The date of the export.
+- All user and assistant messages in order.
+
+The workbench saves the file with the name format
+`ellie-chat-{YYYY-MM-DD}.md`, where the date reflects
+the day of the download.
+
+The download button is disabled when the conversation
+contains no messages. The button is also disabled while
+the assistant is generating a response.
+
 ## Available Tools
 
 Ellie has access to monitoring tools that execute

@@ -108,6 +108,11 @@ CRITICAL rules for code blocks - the user executes SQL directly from the UI so a
 
 5. When suggesting ALTER SYSTEM or other DDL statements, place them in separate code blocks from diagnostic SELECT queries.
 
+6. NEVER use placeholder names like \`schema_name\`, \`table_name\`, \`your_table\`, \`my_table\`, \`your_database\`, or similar invented identifiers in SQL code blocks. Users execute SQL directly from the UI, and placeholders cause runtime errors. Instead:
+   - If the alert context or tool results provide specific object names, use those exact names in the SQL.
+   - If remediation requires acting on specific database objects that are not yet known, first provide a diagnostic query that identifies the affected objects (e.g., tables with high dead tuple ratios), then provide the remediation SQL using the actual names returned by that diagnostic query.
+   - If the specific objects cannot be determined, provide ONLY the diagnostic query and explain that the user should run the remediation command on the objects it identifies. Do NOT generate non-executable SQL containing placeholders.
+
 Keep responses concise and actionable. Do not offer to perform additional actions, run further queries, or investigate anything else. Do not ask follow-up questions or ask what the user would like to do next. Your analysis is displayed in a read-only report that the user cannot respond to.`;
 
 // Tool definitions for the LLM (must use camelCase inputSchema to match Go struct)

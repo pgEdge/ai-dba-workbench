@@ -29,18 +29,8 @@ import {
 import { apiGet } from '../../utils/apiClient';
 import { ApiError } from '../../utils/apiClient';
 import { clearAnalysisCache } from '../../hooks/useServerAnalysis';
-
-/**
- * Shape of the API response from GET /api/v1/overview.
- */
-interface OverviewResponse {
-    status?: string;
-    summary: string | null;
-    generated_at: string;
-    stale_at: string;
-    snapshot?: Record<string, unknown>;
-    restart_detected?: boolean;
-}
+import { useOverviewSSE } from '../../hooks/useOverviewSSE';
+import type { OverviewResponse } from '../../hooks/useOverviewSSE';
 
 /**
  * Selection object describing the current scope for the overview.
@@ -65,9 +55,6 @@ interface AIOverviewProps {
 
 /** localStorage key for persisting collapsed state. */
 const COLLAPSED_STORAGE_KEY = 'ai-overview-collapsed';
-
-/** Refresh interval in milliseconds (30 seconds). */
-const REFRESH_INTERVAL_MS = 30_000;
 
 /**
  * Format a timestamp as a human-readable relative time string.
@@ -101,8 +88,9 @@ function formatRelativeTime(dateStr: string): string {
 
 /**
  * AIOverview displays an AI-generated estate summary at the top of the
- * StatusPanel.  It fetches from GET /api/v1/overview, auto-refreshes
- * every 30 seconds, and handles loading, generating, and ready states.
+ * StatusPanel.  It subscribes to real-time updates via SSE and falls
+ * back to polling when the SSE connection is unavailable.  Handles
+ * loading, generating, and ready states.
  */
 const AIOverview: React.FC<AIOverviewProps> = ({ mode = 'light', selection, onAnalyze, analysisCached }) => {
     const theme = useTheme();
@@ -165,6 +153,8 @@ const AIOverview: React.FC<AIOverviewProps> = ({ mode = 'light', selection, onAn
         return '/api/v1/overview';
     }, [selection?.type, selection?.id, selection?.serverIds, selection?.name]);
 
+    const { overview: sseOverview, connected: sseConnected } = useOverviewSSE(overviewUrl);
+
     // Reset state synchronously when the URL changes so the stale
     // overview is never painted to the screen.
     const [lastFetchedUrl, setLastFetchedUrl] = useState(overviewUrl);
@@ -200,16 +190,35 @@ const AIOverview: React.FC<AIOverviewProps> = ({ mode = 'light', selection, onAn
         }
     }, [overviewUrl]);
 
-    // Fetch on mount, when scope changes, and set up auto-refresh
+    // SSE-driven updates: when SSE delivers data, update local state
     useEffect(() => {
-        fetchOverview(true);
+        if (sseOverview) {
+            setOverview(sseOverview);
+            setLoading(false);
+            if (sseOverview.restart_detected) {
+                clearAnalysisCache();
+            }
+        }
+    }, [sseOverview]);
 
-        const intervalId = setInterval(() => {
-            fetchOverview(false);
-        }, REFRESH_INTERVAL_MS);
+    // Fallback polling: if SSE isn't connected after 5 seconds, poll every 10s
+    useEffect(() => {
+        let fallbackInterval: ReturnType<typeof setInterval> | null = null;
+        const fallbackTimeout = setTimeout(() => {
+            if (!sseConnected) {
+                fallbackInterval = setInterval(() => {
+                    fetchOverview(false);
+                }, 10_000);
+            }
+        }, 5000);
 
-        return () => clearInterval(intervalId);
-    }, [fetchOverview]);
+        return () => {
+            clearTimeout(fallbackTimeout);
+            if (fallbackInterval) {
+                clearInterval(fallbackInterval);
+            }
+        };
+    }, [sseConnected, fetchOverview]);
 
     // Determine whether the overview is stale
     const isStale = useMemo(() => {

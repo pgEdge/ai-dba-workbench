@@ -61,9 +61,10 @@ type InitializeResult struct {
 
 // Tool represents an MCP tool definition
 type Tool struct {
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	InputSchema InputSchema `json:"inputSchema"`
+	Name               string      `json:"name"`
+	Description        string      `json:"description"`
+	CompactDescription string      `json:"compactDescription,omitempty"`
+	InputSchema        InputSchema `json:"inputSchema"`
 }
 
 // InputSchema defines the JSON schema for tool input

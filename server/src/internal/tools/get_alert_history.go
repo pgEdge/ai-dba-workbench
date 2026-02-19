@@ -93,6 +93,7 @@ Returns TSV data with:
 - get_alert_history(status="active", connection_id=33) - active alerts for specific connection
 - get_alert_history(rule_id=5, time_start="30d") - specific rule, last 30 days
 </examples>`,
+			CompactDescription: `Query alert history for a monitored connection. Filter by status (active/cleared/acknowledged), time range, metric name, or rule ID. Defaults to last 7 days.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{

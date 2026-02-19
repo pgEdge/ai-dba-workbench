@@ -223,13 +223,13 @@ func (c *Client) initializeLLM() error {
 	switch provider {
 	case "anthropic":
 		tempClient = NewAnthropicClient(
-			c.config.LLM.AnthropicAPIKey, "", 0, 0, false, c.config.LLM.AnthropicBaseURL)
+			c.config.LLM.AnthropicAPIKey, "", 0, 0, false, c.config.LLM.AnthropicBaseURL, false)
 	case "openai":
 		tempClient = NewOpenAIClient(
-			c.config.LLM.OpenAIAPIKey, "", 0, 0, false, c.config.LLM.OpenAIBaseURL)
+			c.config.LLM.OpenAIAPIKey, "", 0, 0, false, c.config.LLM.OpenAIBaseURL, false)
 	case "ollama":
 		tempClient = NewOllamaClient(
-			c.config.LLM.OllamaURL, "", false)
+			c.config.LLM.OllamaURL, "", false, false)
 	default:
 		return fmt.Errorf("unsupported LLM provider: %s", provider)
 	}
@@ -282,6 +282,7 @@ func (c *Client) initializeLLM() error {
 			c.config.LLM.Temperature,
 			c.config.UI.Debug,
 			c.config.LLM.AnthropicBaseURL,
+			false,
 		)
 	case "openai":
 		c.llm = NewOpenAIClient(
@@ -291,12 +292,14 @@ func (c *Client) initializeLLM() error {
 			c.config.LLM.Temperature,
 			c.config.UI.Debug,
 			c.config.LLM.OpenAIBaseURL,
+			false,
 		)
 	case "ollama":
 		c.llm = NewOllamaClient(
 			c.config.LLM.OllamaURL,
 			c.config.LLM.Model,
 			c.config.UI.Debug,
+			false,
 		)
 	}
 

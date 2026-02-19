@@ -110,6 +110,7 @@ llm:
   ollama_url: "http://localhost:11434"
   max_tokens: 4096
   temperature: 0.7
+  compact_tool_descriptions: "auto"  # auto, true, or false
 
 #=========================================================================
 # KNOWLEDGEBASE CONFIGURATION
@@ -346,9 +347,42 @@ contain a valid key.
 | `ollama_url` | string | `http://localhost:11434` | Ollama URL |
 | `max_tokens` | int | `4096` | Max response tokens |
 | `temperature` | float | `0.7` | Sampling temperature |
+| `compact_tool_descriptions` | string | `auto` | Tool description mode (auto, true, false) |
 | `anthropic_base_url` | string | `https://api.anthropic.com/v1` | Override the Anthropic API base URL |
 | `openai_base_url` | string | `https://api.openai.com/v1` | Override the OpenAI API base URL |
 | `gemini_base_url` | string | `https://generativelanguage.googleapis.com` | Override the Gemini API base URL |
+
+#### Tool Descriptions (`compact_tool_descriptions`)
+
+The `compact_tool_descriptions` option controls whether the server sends
+compact or verbose tool descriptions to the LLM. This setting optimizes
+prompt token usage when using local models or rate-limited APIs.
+
+The option accepts three values:
+
+- `auto` (default) - The server uses compact descriptions for localhost
+  endpoints (localhost, 127.x.x.x, ::1, 0.0.0.0) and verbose descriptions
+  for remote APIs. Compact descriptions reduce prompt token count by
+  approximately fifty-four percent, significantly improving response times
+  for local models.
+
+- `true` - Always send compact tool descriptions to the LLM.
+
+- `false` - Always send verbose tool descriptions to the LLM.
+
+This setting affects the chat proxy (Ask Ellie) only. MCP protocol
+clients always receive full tool descriptions regardless of this setting.
+
+In the following example, the `llm` section configures the server to
+always use verbose tool descriptions:
+
+```yaml
+llm:
+  provider: "anthropic"
+  model: "claude-sonnet-4-5"
+  anthropic_api_key_file: "~/.anthropic-api-key"
+  compact_tool_descriptions: "false"
+```
 
 #### OpenAI-Compatible Local Servers
 

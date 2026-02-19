@@ -27,28 +27,30 @@ import (
 
 // anthropicClient implements LLMClient for Anthropic Claude
 type anthropicClient struct {
-	apiKey      string
-	model       string
-	maxTokens   int
-	temperature float64
-	debug       bool
-	baseURL     string
-	client      *http.Client
+	apiKey                 string
+	model                  string
+	maxTokens              int
+	temperature            float64
+	debug                  bool
+	baseURL                string
+	useCompactDescriptions bool
+	client                 *http.Client
 }
 
 // NewAnthropicClient creates a new Anthropic client
-func NewAnthropicClient(apiKey, model string, maxTokens int, temperature float64, debug bool, baseURL string) LLMClient {
+func NewAnthropicClient(apiKey, model string, maxTokens int, temperature float64, debug bool, baseURL string, useCompactDescriptions bool) LLMClient {
 	if baseURL == "" {
 		baseURL = "https://api.anthropic.com/v1"
 	}
 	return &anthropicClient{
-		apiKey:      apiKey,
-		model:       model,
-		maxTokens:   maxTokens,
-		temperature: temperature,
-		debug:       debug,
-		baseURL:     baseURL,
-		client:      sharedHTTPClient,
+		apiKey:                 apiKey,
+		model:                  model,
+		maxTokens:              maxTokens,
+		temperature:            temperature,
+		debug:                  debug,
+		baseURL:                baseURL,
+		useCompactDescriptions: useCompactDescriptions,
+		client:                 sharedHTTPClient,
 	}
 }
 
@@ -110,9 +112,13 @@ func (c *anthropicClient) Chat(ctx context.Context, messages []Message, tools in
 	// Convert MCP tools to Anthropic format with caching
 	anthropicTools := make([]map[string]interface{}, 0, len(mcpTools))
 	for i, tool := range mcpTools {
+		desc := tool.Description
+		if c.useCompactDescriptions && tool.CompactDescription != "" {
+			desc = tool.CompactDescription
+		}
 		toolDef := map[string]interface{}{
 			"name":         tool.Name,
-			"description":  tool.Description,
+			"description":  desc,
 			"input_schema": tool.InputSchema,
 		}
 

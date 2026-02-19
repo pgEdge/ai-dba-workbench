@@ -47,6 +47,7 @@ type Server struct {
 	convStore     *conversations.Store
 	mcpServer     *mcp.Server
 	overviewGen   *overview.Generator
+	overviewHub   *overview.Hub
 	toolProvider  *tools.ContextAwareProvider
 	ctx           context.Context
 	cancel        context.CancelFunc
@@ -372,20 +373,23 @@ func (s *Server) startOverviewGenerator() {
 	}
 
 	llmConfig := &llmproxy.Config{
-		Provider:         s.cfg.LLM.Provider,
-		Model:            s.cfg.LLM.Model,
-		AnthropicAPIKey:  s.cfg.LLM.AnthropicAPIKey,
-		AnthropicBaseURL: s.cfg.LLM.AnthropicBaseURL,
-		OpenAIAPIKey:     s.cfg.LLM.OpenAIAPIKey,
-		OpenAIBaseURL:    s.cfg.LLM.OpenAIBaseURL,
-		GeminiAPIKey:     s.cfg.LLM.GeminiAPIKey,
-		GeminiBaseURL:    s.cfg.LLM.GeminiBaseURL,
-		OllamaURL:        s.cfg.LLM.OllamaURL,
-		MaxTokens:        s.cfg.LLM.MaxTokens,
-		Temperature:      s.cfg.LLM.Temperature,
+		Provider:               s.cfg.LLM.Provider,
+		Model:                  s.cfg.LLM.Model,
+		AnthropicAPIKey:        s.cfg.LLM.AnthropicAPIKey,
+		AnthropicBaseURL:       s.cfg.LLM.AnthropicBaseURL,
+		OpenAIAPIKey:           s.cfg.LLM.OpenAIAPIKey,
+		OpenAIBaseURL:          s.cfg.LLM.OpenAIBaseURL,
+		GeminiAPIKey:           s.cfg.LLM.GeminiAPIKey,
+		GeminiBaseURL:          s.cfg.LLM.GeminiBaseURL,
+		OllamaURL:              s.cfg.LLM.OllamaURL,
+		MaxTokens:              s.cfg.LLM.MaxTokens,
+		Temperature:            s.cfg.LLM.Temperature,
+		UseCompactDescriptions: s.cfg.LLM.UseCompactDescriptions(),
 	}
 
+	s.overviewHub = overview.NewHub()
 	s.overviewGen = overview.NewGenerator(s.datastore, llmConfig)
+	s.overviewGen.SetHub(s.overviewHub)
 	s.overviewGen.Start(s.ctx)
 	fmt.Fprintf(os.Stderr, "AI Overview: ENABLED\n")
 	s.aiEnabled = true
@@ -440,6 +444,7 @@ func (s *Server) Run(flags *Flags, configPath string) error {
 		Datastore:    s.datastore,
 		Config:       s.cfg,
 		OverviewGen:  s.overviewGen,
+		OverviewHub:  s.overviewHub,
 		ToolProvider: s.toolProvider,
 		AIEnabled:    s.aiEnabled,
 	}

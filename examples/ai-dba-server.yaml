@@ -315,6 +315,13 @@ llm:
   # Default: 0.7
   temperature: 0.7
 
+  # Control tool description verbosity for chat requests.
+  # "auto" (default): compact for localhost LLM endpoints,
+  # verbose for remote APIs. "true": always compact. "false":
+  # always verbose. Compact descriptions reduce prompt tokens
+  # by ~54%, improving response times for local models.
+  # compact_tool_descriptions: "auto"
+
 #=========================================================================
 # KNOWLEDGEBASE CONFIGURATION
 #=========================================================================

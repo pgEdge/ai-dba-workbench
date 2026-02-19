@@ -20,6 +20,7 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/chat"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/llmproxy"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -69,9 +70,11 @@ type Generator struct {
 	current      *Overview
 	lastSnapshot *database.EstateSnapshot
 	scopedCache  map[string]*scopedEntry
+	inflight     singleflight.Group
 	ctx          context.Context
 	cancel       context.CancelFunc
 	onRestart    func()
+	hub          *Hub
 }
 
 // NewGenerator creates a new overview generator. It does not start any
@@ -114,6 +117,14 @@ func (g *Generator) Stop() {
 	}
 }
 
+// SetHub assigns the SSE hub used for broadcasting overview updates
+// to connected clients.
+func (g *Generator) SetHub(hub *Hub) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.hub = hub
+}
+
 // OnRestart registers a callback that is invoked when a PostgreSQL
 // restart is detected during a refresh cycle. The callback runs
 // under the generator's write lock, so it must not call back into
@@ -147,11 +158,13 @@ func (g *Generator) GetOverview() *Overview {
 // the given scope. The scopeType must be "server", "cluster", or
 // "group" and scopeID is the corresponding database identifier. Cached
 // entries are returned when they are still within the stale duration;
-// otherwise a new summary is generated on demand.
+// otherwise a new summary is generated on demand. Concurrent requests
+// for the same scope are deduplicated so that only one LLM call is
+// made; subsequent callers wait for and share the result.
 func (g *Generator) GetScopedSummary(scopeType string, scopeID int) (*Overview, error) {
 	key := fmt.Sprintf("%s:%d", scopeType, scopeID)
 
-	// Check the cache first.
+	// Fast path: return cached entry if still fresh.
 	g.mu.RLock()
 	if entry, ok := g.scopedCache[key]; ok {
 		if time.Now().UTC().Before(entry.overview.StaleAt) {
@@ -162,39 +175,66 @@ func (g *Generator) GetScopedSummary(scopeType string, scopeID int) (*Overview, 
 	}
 	g.mu.RUnlock()
 
-	// Generate a fresh scoped overview.
-	snapshot, scopeName, err := g.fetchScopedSnapshot(scopeType, scopeID)
+	// Deduplicate concurrent requests for the same key.
+	result, err, _ := g.inflight.Do(key, func() (interface{}, error) {
+		// Re-check cache; another goroutine may have populated it
+		// while we waited for the singleflight slot.
+		g.mu.RLock()
+		if entry, ok := g.scopedCache[key]; ok {
+			if time.Now().UTC().Before(entry.overview.StaleAt) {
+				entry.lastAccess = time.Now().UTC()
+				g.mu.RUnlock()
+				return entry.overview, nil
+			}
+		}
+		g.mu.RUnlock()
+
+		// Generate a fresh scoped overview.
+		snapshot, scopeName, err := g.fetchScopedSnapshot(scopeType, scopeID)
+		if err != nil {
+			return nil, err
+		}
+
+		system, data := buildScopedPrompt(snapshot, scopeType, scopeName)
+		summary, err := g.generateSummaryFromPrompt(g.ctx, system, data)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate scoped summary: %w", err)
+		}
+
+		now := time.Now().UTC()
+		overview := &Overview{
+			Summary:     summary,
+			GeneratedAt: now,
+			StaleAt:     now.Add(staleDuration),
+			Snapshot:    snapshot,
+		}
+
+		// Store in cache with eviction.
+		g.mu.Lock()
+		g.scopedCache[key] = &scopedEntry{
+			overview:   overview,
+			lastAccess: now,
+		}
+		g.evictScopedCacheLocked()
+		g.mu.Unlock()
+
+		if g.hub != nil {
+			g.hub.Broadcast(overview, key)
+		}
+
+		fmt.Fprintf(os.Stderr,
+			"Overview: generated scoped summary for %s at %s\n",
+			key, now.Format(time.RFC3339))
+
+		return overview, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-
-	system, data := buildScopedPrompt(snapshot, scopeType, scopeName)
-	summary, err := g.generateSummaryFromPrompt(g.ctx, system, data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate scoped summary: %w", err)
+	overview, ok := result.(*Overview)
+	if !ok {
+		return nil, fmt.Errorf("unexpected singleflight result type")
 	}
-
-	now := time.Now().UTC()
-	overview := &Overview{
-		Summary:     summary,
-		GeneratedAt: now,
-		StaleAt:     now.Add(staleDuration),
-		Snapshot:    snapshot,
-	}
-
-	// Store in cache with eviction.
-	g.mu.Lock()
-	g.scopedCache[key] = &scopedEntry{
-		overview:   overview,
-		lastAccess: now,
-	}
-	g.evictScopedCacheLocked()
-	g.mu.Unlock()
-
-	fmt.Fprintf(os.Stderr,
-		"Overview: generated scoped summary for %s at %s\n",
-		key, now.Format(time.RFC3339))
-
 	return overview, nil
 }
 
@@ -203,7 +243,9 @@ func (g *Generator) GetScopedSummary(scopeType string, scopeID int) (*Overview, 
 // LLM prompt to give context (e.g. "Spock Cluster: my-cluster"). The
 // cache key is derived from the sorted connection IDs so that the same
 // set of connections always hits the same cache entry regardless of the
-// order in which the IDs were supplied.
+// order in which the IDs were supplied. Concurrent requests for the
+// same set of connections are deduplicated so that only one LLM call
+// is made.
 func (g *Generator) GetConnectionsSummary(connectionIDs []int, scopeName string) (*Overview, error) {
 	// Build a deterministic cache key from sorted connection IDs.
 	sorted := make([]int, len(connectionIDs))
@@ -216,7 +258,7 @@ func (g *Generator) GetConnectionsSummary(connectionIDs []int, scopeName string)
 	}
 	key := "connections:" + strings.Join(parts, ",")
 
-	// Check the cache first.
+	// Fast path: return cached entry if still fresh.
 	g.mu.RLock()
 	if entry, ok := g.scopedCache[key]; ok {
 		if time.Now().UTC().Before(entry.overview.StaleAt) {
@@ -227,36 +269,63 @@ func (g *Generator) GetConnectionsSummary(connectionIDs []int, scopeName string)
 	}
 	g.mu.RUnlock()
 
-	// Generate a fresh snapshot from the explicit connection IDs.
-	snapshot := g.datastore.GetConnectionsSnapshot(g.ctx, connectionIDs)
+	// Deduplicate concurrent requests for the same key.
+	result, err, _ := g.inflight.Do(key, func() (interface{}, error) {
+		// Re-check cache; another goroutine may have populated it
+		// while we waited for the singleflight slot.
+		g.mu.RLock()
+		if entry, ok := g.scopedCache[key]; ok {
+			if time.Now().UTC().Before(entry.overview.StaleAt) {
+				entry.lastAccess = time.Now().UTC()
+				g.mu.RUnlock()
+				return entry.overview, nil
+			}
+		}
+		g.mu.RUnlock()
 
-	system, data := buildScopedPrompt(snapshot, "connections", scopeName)
-	summary, err := g.generateSummaryFromPrompt(g.ctx, system, data)
+		// Generate a fresh snapshot from the explicit connection IDs.
+		snapshot := g.datastore.GetConnectionsSnapshot(g.ctx, connectionIDs)
+
+		system, data := buildScopedPrompt(snapshot, "connections", scopeName)
+		summary, err := g.generateSummaryFromPrompt(g.ctx, system, data)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate connections summary: %w", err)
+		}
+
+		now := time.Now().UTC()
+		overview := &Overview{
+			Summary:     summary,
+			GeneratedAt: now,
+			StaleAt:     now.Add(staleDuration),
+			Snapshot:    snapshot,
+		}
+
+		// Store in cache with eviction.
+		g.mu.Lock()
+		g.scopedCache[key] = &scopedEntry{
+			overview:   overview,
+			lastAccess: now,
+		}
+		g.evictScopedCacheLocked()
+		g.mu.Unlock()
+
+		if g.hub != nil {
+			g.hub.Broadcast(overview, key)
+		}
+
+		fmt.Fprintf(os.Stderr,
+			"Overview: generated connections summary for %s at %s\n",
+			key, now.Format(time.RFC3339))
+
+		return overview, nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate connections summary: %w", err)
+		return nil, err
 	}
-
-	now := time.Now().UTC()
-	overview := &Overview{
-		Summary:     summary,
-		GeneratedAt: now,
-		StaleAt:     now.Add(staleDuration),
-		Snapshot:    snapshot,
+	overview, ok := result.(*Overview)
+	if !ok {
+		return nil, fmt.Errorf("unexpected singleflight result type")
 	}
-
-	// Store in cache with eviction.
-	g.mu.Lock()
-	g.scopedCache[key] = &scopedEntry{
-		overview:   overview,
-		lastAccess: now,
-	}
-	g.evictScopedCacheLocked()
-	g.mu.Unlock()
-
-	fmt.Fprintf(os.Stderr,
-		"Overview: generated connections summary for %s at %s\n",
-		key, now.Format(time.RFC3339))
-
 	return overview, nil
 }
 
@@ -354,6 +423,10 @@ func (g *Generator) refresh() {
 	}
 	g.mu.Unlock()
 
+	if g.hub != nil {
+		g.hub.Broadcast(overview, "")
+	}
+
 	if restartDetected {
 		fmt.Fprintf(os.Stderr, "Overview: restart detected, flushed all caches\n")
 	}
@@ -446,6 +519,7 @@ func (g *Generator) createLLMClient() chat.LLMClient {
 			llmTemperature,
 			false,
 			g.llmConfig.AnthropicBaseURL,
+			g.llmConfig.UseCompactDescriptions,
 		)
 	case "openai":
 		return chat.NewOpenAIClient(
@@ -455,6 +529,7 @@ func (g *Generator) createLLMClient() chat.LLMClient {
 			llmTemperature,
 			false,
 			g.llmConfig.OpenAIBaseURL,
+			g.llmConfig.UseCompactDescriptions,
 		)
 	case "gemini":
 		return chat.NewGeminiClient(
@@ -464,12 +539,14 @@ func (g *Generator) createLLMClient() chat.LLMClient {
 			llmTemperature,
 			false,
 			g.llmConfig.GeminiBaseURL,
+			g.llmConfig.UseCompactDescriptions,
 		)
 	case "ollama":
 		return chat.NewOllamaClient(
 			g.llmConfig.OllamaURL,
 			g.llmConfig.Model,
 			false,
+			g.llmConfig.UseCompactDescriptions,
 		)
 	default:
 		return nil

@@ -186,6 +186,16 @@ and this project adheres to
 - Event timeline now refreshes in sync with the cluster
   navigator instead of using a separate 60-second polling
   interval.
+- Server-Sent Events for AI Overview updates; the client
+  receives instant push notifications instead of polling.
+- Compact tool descriptions for chat requests that reduce
+  prompt token count by approximately 54 percent; the server
+  sends shorter tool summaries to the LLM when processing
+  Ellie chat requests.
+- New `compact_tool_descriptions` configuration option with
+  three modes: `"auto"` detects localhost LLM endpoints and
+  uses compact descriptions, `"true"` always uses compact
+  descriptions, and `"false"` always uses verbose descriptions.
 
 ### Changed
 

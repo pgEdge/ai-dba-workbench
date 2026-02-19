@@ -92,6 +92,7 @@ To avoid rate limits (30,000 input tokens/minute):
 - Filter results in WHERE clauses rather than fetching everything
 - If rate limited, wait 60 seconds before retrying
 </rate_limit_awareness>`,
+			CompactDescription: `Execute read-only SQL queries against the DATASTORE database (stores configuration, metrics, alerts, connections). Use for querying monitoring data, alert history, or system configuration. For monitored database queries, use query_database instead.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{

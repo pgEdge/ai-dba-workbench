@@ -87,6 +87,7 @@ For fleet-wide analysis (only when user explicitly requests):
 
 CRITICAL: Never silently analyze multiple connections. Always get explicit user consent.
 </workflow>`,
+			CompactDescription: `List all monitored database connections in the datastore. Returns connection IDs, names, hostnames, ports, and status. Use to discover available connections.`,
 			InputSchema: mcp.InputSchema{
 				Type:       "object",
 				Properties: map[string]interface{}{},

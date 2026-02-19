@@ -29,19 +29,21 @@ import (
 
 // ollamaClient implements LLMClient for Ollama
 type ollamaClient struct {
-	baseURL string
-	model   string
-	debug   bool
-	client  *http.Client
+	baseURL                string
+	model                  string
+	debug                  bool
+	useCompactDescriptions bool
+	client                 *http.Client
 }
 
 // NewOllamaClient creates a new Ollama client
-func NewOllamaClient(baseURL, model string, debug bool) LLMClient {
+func NewOllamaClient(baseURL, model string, debug bool, useCompactDescriptions bool) LLMClient {
 	return &ollamaClient{
-		baseURL: baseURL,
-		model:   model,
-		debug:   debug,
-		client:  sharedHTTPClient,
+		baseURL:                baseURL,
+		model:                  model,
+		debug:                  debug,
+		useCompactDescriptions: useCompactDescriptions,
+		client:                 sharedHTTPClient,
 	}
 }
 
@@ -474,7 +476,11 @@ func (c *ollamaClient) Chat(ctx context.Context, messages []Message, tools inter
 func (c *ollamaClient) formatToolsForOllama(tools []mcp.Tool) string {
 	var toolDescriptions []string
 	for _, tool := range tools {
-		toolDesc := fmt.Sprintf("- %s: %s", tool.Name, tool.Description)
+		desc := tool.Description
+		if c.useCompactDescriptions && tool.CompactDescription != "" {
+			desc = tool.CompactDescription
+		}
+		toolDesc := fmt.Sprintf("- %s: %s", tool.Name, desc)
 
 		// Add parameter info if available
 		if len(tool.InputSchema.Properties) > 0 {

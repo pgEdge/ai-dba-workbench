@@ -20,6 +20,7 @@ import (
 // ContextAwareToolProvider defines the interface for a tool provider that
 // supports RBAC-filtered listing and context-aware execution.
 type ContextAwareToolProvider interface {
+	List() []mcp.Tool
 	ListForContext(ctx context.Context) []mcp.Tool
 	Execute(ctx context.Context, name string, args map[string]any) (mcp.ToolResponse, error)
 }

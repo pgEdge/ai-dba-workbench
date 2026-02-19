@@ -10,10 +10,13 @@
 package overview
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -60,7 +63,7 @@ func newTestHandler() *Handler {
 	g := &Generator{
 		scopedCache: make(map[string]*scopedEntry),
 	}
-	return NewHandler(g)
+	return NewHandler(g, NewHub())
 }
 
 // doRequest sends an HTTP request to the handler and returns the recorder.
@@ -335,5 +338,195 @@ func TestParseConnectionIDs(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// --- SSE handler tests ------------------------------------------------------
+
+func TestHandleSSE_MethodNotAllowed(t *testing.T) {
+	h := newTestHandler()
+	methods := []string{http.MethodPost, http.MethodPut, http.MethodDelete}
+	for _, m := range methods {
+		t.Run(m, func(t *testing.T) {
+			req := httptest.NewRequest(m, "/api/v1/overview/stream", nil)
+			rr := httptest.NewRecorder()
+			h.handleSSE(rr, req)
+			if rr.Code != http.StatusMethodNotAllowed {
+				t.Errorf("expected %d, got %d", http.StatusMethodNotAllowed, rr.Code)
+			}
+		})
+	}
+}
+
+func TestHandleSSE_InvalidScopeParams(t *testing.T) {
+	h := newTestHandler()
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"missing scope_id", "?scope_type=server"},
+		{"missing scope_type", "?scope_id=1"},
+		{"invalid scope_type", "?scope_type=invalid&scope_id=1"},
+		{"invalid scope_id", "?scope_type=server&scope_id=abc"},
+		{"zero scope_id", "?scope_type=server&scope_id=0"},
+		{"invalid connection_ids", "?connection_ids=abc"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/overview/stream"+tc.query, nil)
+			rr := httptest.NewRecorder()
+			h.handleSSE(rr, req)
+			if rr.Code != http.StatusBadRequest {
+				t.Errorf("expected %d, got %d", http.StatusBadRequest, rr.Code)
+			}
+		})
+	}
+}
+
+func TestHandleSSE_ImmediateCachedOverview(t *testing.T) {
+	// Use a real HTTP test server for proper SSE streaming.
+	g := &Generator{
+		scopedCache: make(map[string]*scopedEntry),
+	}
+	hub := NewHub()
+	h := NewHandler(g, hub)
+
+	// Set a cached estate overview.
+	g.mu.Lock()
+	g.current = newTestOverview("Estate is healthy.")
+	g.mu.Unlock()
+
+	// Create test server.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/overview/stream", h.handleSSE)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	// Make SSE request with a context that times out.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/v1/overview/stream", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.Header.Get("Content-Type") != "text/event-stream" {
+		t.Errorf("expected Content-Type text/event-stream, got %q", resp.Header.Get("Content-Type"))
+	}
+
+	// Read until we get the first SSE event.
+	scanner := bufio.NewScanner(resp.Body)
+	var foundEvent bool
+	var dataLine string
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "data: ") {
+			dataLine = strings.TrimPrefix(line, "data: ")
+			foundEvent = true
+			break
+		}
+	}
+
+	if !foundEvent {
+		t.Fatal("did not receive an SSE event")
+	}
+
+	var overview Overview
+	if err := json.Unmarshal([]byte(dataLine), &overview); err != nil {
+		t.Fatalf("failed to parse SSE data: %v", err)
+	}
+	if overview.Summary != "Estate is healthy." {
+		t.Errorf("expected summary 'Estate is healthy.', got %q", overview.Summary)
+	}
+}
+
+func TestHandleSSE_BroadcastDelivery(t *testing.T) {
+	g := &Generator{
+		scopedCache: make(map[string]*scopedEntry),
+	}
+	hub := NewHub()
+	h := NewHandler(g, hub)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/overview/stream", h.handleSSE)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/v1/overview/stream", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Wait briefly for the subscriber to register.
+	time.Sleep(100 * time.Millisecond)
+
+	// Broadcast an overview.
+	ov := newTestOverview("New broadcast overview.")
+	hub.Broadcast(ov, "")
+
+	// Read the SSE event.
+	scanner := bufio.NewScanner(resp.Body)
+	var dataLine string
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "data: ") {
+			dataLine = strings.TrimPrefix(line, "data: ")
+			break
+		}
+	}
+
+	var overview Overview
+	if err := json.Unmarshal([]byte(dataLine), &overview); err != nil {
+		t.Fatalf("failed to parse SSE data: %v", err)
+	}
+	if overview.Summary != "New broadcast overview." {
+		t.Errorf("expected summary 'New broadcast overview.', got %q", overview.Summary)
+	}
+}
+
+func TestHandleSSE_SubscriberCleanupOnDisconnect(t *testing.T) {
+	g := &Generator{
+		scopedCache: make(map[string]*scopedEntry),
+	}
+	hub := NewHub()
+	h := NewHandler(g, hub)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/overview/stream", h.handleSSE)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	// Connect.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/v1/overview/stream", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+
+	// Wait for subscriber to register.
+	time.Sleep(100 * time.Millisecond)
+	if hub.Count() != 1 {
+		t.Fatalf("expected 1 subscriber, got %d", hub.Count())
+	}
+
+	// Disconnect by closing the response body and canceling context.
+	resp.Body.Close()
+	cancel()
+
+	// Wait for cleanup.
+	time.Sleep(200 * time.Millisecond)
+	if hub.Count() != 0 {
+		t.Errorf("expected 0 subscribers after disconnect, got %d", hub.Count())
 	}
 }

@@ -825,6 +825,7 @@ func (h *ServerInfoHandler) createLLMClient() chat.LLMClient {
 			llmAnalysisTemperature,
 			false,
 			h.llmConfig.AnthropicBaseURL,
+			h.llmConfig.UseCompactDescriptions,
 		)
 	case "openai":
 		return chat.NewOpenAIClient(
@@ -834,6 +835,7 @@ func (h *ServerInfoHandler) createLLMClient() chat.LLMClient {
 			llmAnalysisTemperature,
 			false,
 			h.llmConfig.OpenAIBaseURL,
+			h.llmConfig.UseCompactDescriptions,
 		)
 	case "gemini":
 		return chat.NewGeminiClient(
@@ -843,12 +845,14 @@ func (h *ServerInfoHandler) createLLMClient() chat.LLMClient {
 			llmAnalysisTemperature,
 			false,
 			h.llmConfig.GeminiBaseURL,
+			h.llmConfig.UseCompactDescriptions,
 		)
 	case "ollama":
 		return chat.NewOllamaClient(
 			h.llmConfig.OllamaURL,
 			h.llmConfig.Model,
 			false,
+			h.llmConfig.UseCompactDescriptions,
 		)
 	default:
 		return nil

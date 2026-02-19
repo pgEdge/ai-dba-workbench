@@ -78,6 +78,7 @@ Returns TSV data with:
 - get_metric_baselines(metric_name="cpu_usage") - baselines for CPU usage
 - get_metric_baselines(connection_id=5, metric_name="xact_commit") - transaction baselines for specific connection
 </examples>`,
+			CompactDescription: `Query statistical baselines for metrics used in anomaly detection. Returns mean, stddev, min, max, and sample count. Filter by connection_id or metric_name.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{

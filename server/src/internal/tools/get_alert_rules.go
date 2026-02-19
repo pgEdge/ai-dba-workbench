@@ -65,6 +65,7 @@ Returns TSV data with:
 - get_alert_rules(category="performance") - only performance-related rules
 - get_alert_rules(enabled_only=false) - include disabled rules
 </examples>`,
+			CompactDescription: `Query alerting rules and their effective thresholds. Filter by category or connection_id. Shows default thresholds and any connection-specific overrides.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{

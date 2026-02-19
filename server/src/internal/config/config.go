@@ -11,9 +11,11 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
 	"gopkg.in/yaml.v3"
@@ -249,20 +251,103 @@ type EmbeddingConfig struct {
 // LLMConfig holds LLM configuration for web client chat proxy
 // LLM proxy is always enabled - API keys must be configured for the chosen provider
 type LLMConfig struct {
-	Provider            string  `yaml:"provider"`               // "anthropic", "openai", "gemini", or "ollama"
-	Model               string  `yaml:"model"`                  // Provider-specific model name
-	AnthropicAPIKey     string  `yaml:"-"`                      // API key for Anthropic (loaded from file, not config)
-	AnthropicAPIKeyFile string  `yaml:"anthropic_api_key_file"` // Path to file containing Anthropic API key
-	AnthropicBaseURL    string  `yaml:"anthropic_base_url"`     // Base URL for Anthropic API (default: https://api.anthropic.com/v1)
-	OpenAIAPIKey        string  `yaml:"-"`                      // API key for OpenAI (loaded from file, not config)
-	OpenAIAPIKeyFile    string  `yaml:"openai_api_key_file"`    // Path to file containing OpenAI API key
-	OpenAIBaseURL       string  `yaml:"openai_base_url"`        // Base URL for OpenAI API (default: https://api.openai.com/v1)
-	GeminiAPIKey        string  `yaml:"-"`                      // API key for Google Gemini (loaded from file, not config)
-	GeminiAPIKeyFile    string  `yaml:"gemini_api_key_file"`    // Path to file containing Gemini API key
-	GeminiBaseURL       string  `yaml:"gemini_base_url"`        // Base URL for Gemini API (default: https://generativelanguage.googleapis.com)
-	OllamaURL           string  `yaml:"ollama_url"`             // URL for Ollama service (default: http://localhost:11434)
-	MaxTokens           int     `yaml:"max_tokens"`             // Maximum tokens for LLM response (default: 4096)
-	Temperature         float64 `yaml:"temperature"`            // Temperature for LLM sampling (default: 0.7)
+	Provider                string  `yaml:"provider"`                  // "anthropic", "openai", "gemini", or "ollama"
+	Model                   string  `yaml:"model"`                     // Provider-specific model name
+	AnthropicAPIKey         string  `yaml:"-"`                         // API key for Anthropic (loaded from file, not config)
+	AnthropicAPIKeyFile     string  `yaml:"anthropic_api_key_file"`    // Path to file containing Anthropic API key
+	AnthropicBaseURL        string  `yaml:"anthropic_base_url"`        // Base URL for Anthropic API (default: https://api.anthropic.com/v1)
+	OpenAIAPIKey            string  `yaml:"-"`                         // API key for OpenAI (loaded from file, not config)
+	OpenAIAPIKeyFile        string  `yaml:"openai_api_key_file"`       // Path to file containing OpenAI API key
+	OpenAIBaseURL           string  `yaml:"openai_base_url"`           // Base URL for OpenAI API (default: https://api.openai.com/v1)
+	GeminiAPIKey            string  `yaml:"-"`                         // API key for Google Gemini (loaded from file, not config)
+	GeminiAPIKeyFile        string  `yaml:"gemini_api_key_file"`       // Path to file containing Gemini API key
+	GeminiBaseURL           string  `yaml:"gemini_base_url"`           // Base URL for Gemini API (default: https://generativelanguage.googleapis.com)
+	OllamaURL               string  `yaml:"ollama_url"`                // URL for Ollama service (default: http://localhost:11434)
+	MaxTokens               int     `yaml:"max_tokens"`                // Maximum tokens for LLM response (default: 4096)
+	Temperature             float64 `yaml:"temperature"`               // Temperature for LLM sampling (default: 0.7)
+	CompactToolDescriptions string  `yaml:"compact_tool_descriptions"` // "auto" (default), "true", or "false"
+}
+
+// UseCompactDescriptions resolves the compact_tool_descriptions setting
+// to a boolean. In "auto" mode, compact descriptions are used when the
+// active LLM endpoint resolves to a localhost address.
+func (c *LLMConfig) UseCompactDescriptions() bool {
+	switch strings.ToLower(c.CompactToolDescriptions) {
+	case "true":
+		return true
+	case "false":
+		return false
+	default:
+		// "auto" or empty: check the active endpoint URL
+		endpointURL := c.activeEndpointURL()
+		return isLocalhostURL(endpointURL)
+	}
+}
+
+// activeEndpointURL returns the endpoint URL for the configured provider.
+func (c *LLMConfig) activeEndpointURL() string {
+	switch c.Provider {
+	case "openai":
+		if c.OpenAIBaseURL != "" {
+			return c.OpenAIBaseURL
+		}
+		return "https://api.openai.com/v1"
+	case "ollama":
+		if c.OllamaURL != "" {
+			return c.OllamaURL
+		}
+		return "http://localhost:11434"
+	case "anthropic":
+		if c.AnthropicBaseURL != "" {
+			return c.AnthropicBaseURL
+		}
+		return "https://api.anthropic.com/v1"
+	case "gemini":
+		if c.GeminiBaseURL != "" {
+			return c.GeminiBaseURL
+		}
+		return "https://generativelanguage.googleapis.com"
+	default:
+		return ""
+	}
+}
+
+// isLocalhostURL parses a URL and returns true when the hostname is a
+// loopback or unspecified address (localhost, 127.x.x.x, ::1, 0.0.0.0).
+func isLocalhostURL(rawURL string) bool {
+	if rawURL == "" {
+		return false
+	}
+
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+
+	hostname := parsed.Hostname()
+
+	if strings.EqualFold(hostname, "localhost") {
+		return true
+	}
+
+	if strings.HasPrefix(hostname, "127.") {
+		return true
+	}
+
+	ip := net.ParseIP(hostname)
+	if ip == nil {
+		return false
+	}
+
+	if ip.IsLoopback() {
+		return true
+	}
+
+	if ip.Equal(net.IPv4zero) {
+		return true
+	}
+
+	return false
 }
 
 // KnowledgebaseConfig holds knowledgebase configuration
@@ -554,6 +639,9 @@ func mergeConfig(dest, src *Config) {
 	}
 	if src.LLM.Temperature != 0 {
 		dest.LLM.Temperature = src.LLM.Temperature
+	}
+	if src.LLM.CompactToolDescriptions != "" {
+		dest.LLM.CompactToolDescriptions = src.LLM.CompactToolDescriptions
 	}
 
 	// Knowledgebase - merge if any KB fields are set

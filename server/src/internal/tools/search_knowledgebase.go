@@ -71,6 +71,7 @@ If you get zero results:
 ✓ {"query": "replication", "project_names": ["pgEdge Platform"]}
 ✓ {"query": "JSON functions", "project_names": ["PostgreSQL"], "project_versions": ["17"]}
 </examples>`,
+			CompactDescription: `Search the pre-built documentation knowledgebase for PostgreSQL and pgEdge product information. Filter by project name and version. Use list_products=true to see available documentation.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{

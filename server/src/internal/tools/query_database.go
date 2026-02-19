@@ -74,6 +74,7 @@ To avoid rate limits (30,000 input tokens/minute):
 - Use get_schema_info(schema_name="specific") to reduce metadata size
 - If rate limited, wait 60 seconds before retrying
 </rate_limit_awareness>`,
+			CompactDescription: `Execute read-only SQL queries against the currently selected monitored database. Returns results in TSV format. Use for exact matches, aggregations, joins, and filtering by structured columns. For natural language or concept-based searches, use similarity_search instead.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{

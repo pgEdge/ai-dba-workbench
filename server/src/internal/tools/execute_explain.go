@@ -75,6 +75,7 @@ READ ONLY transaction to prevent side effects. However, be cautious with:
 - Very long-running queries
 - Queries on production systems during peak load
 </safety>`,
+			CompactDescription: `Run EXPLAIN ANALYZE on SELECT queries to diagnose performance. Returns execution plan with timing and buffer statistics. Only works on SELECT queries; runs in a read-only transaction that is rolled back.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{

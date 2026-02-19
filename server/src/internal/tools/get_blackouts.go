@@ -84,6 +84,7 @@ If include_schedules is true, a second section shows recurring schedules:
 - get_blackouts(include_schedules=true) - blackouts and recurring schedules
 - get_blackouts(connection_id=5, active_only=true) - active blackouts for connection 5
 </examples>`,
+			CompactDescription: `Query blackout (maintenance window) periods for a connection. Filter by active_only=true for current blackouts. Set include_schedules=true to see recurring schedules.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{

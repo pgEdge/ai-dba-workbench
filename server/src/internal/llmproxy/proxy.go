@@ -23,17 +23,19 @@ import (
 
 // Config holds LLM configuration from the server config
 type Config struct {
-	Provider         string
-	Model            string
-	AnthropicAPIKey  string
-	AnthropicBaseURL string
-	OpenAIAPIKey     string
-	OpenAIBaseURL    string
-	GeminiAPIKey     string
-	GeminiBaseURL    string
-	OllamaURL        string
-	MaxTokens        int
-	Temperature      float64
+	Provider               string
+	Model                  string
+	AnthropicAPIKey        string
+	AnthropicBaseURL       string
+	OpenAIAPIKey           string
+	OpenAIBaseURL          string
+	GeminiAPIKey           string
+	GeminiBaseURL          string
+	OllamaURL              string
+	MaxTokens              int
+	Temperature            float64
+	UseCompactDescriptions bool
+	CompactDescriptions    map[string]string // tool name -> compact description
 }
 
 // Message represents a message in the chat conversation
@@ -191,25 +193,25 @@ func HandleModels(w http.ResponseWriter, r *http.Request, config *Config) {
 			http.Error(w, "Anthropic API key not configured", http.StatusBadRequest)
 			return
 		}
-		client = chat.NewAnthropicClient(config.AnthropicAPIKey, config.Model, config.MaxTokens, config.Temperature, false, config.AnthropicBaseURL)
+		client = chat.NewAnthropicClient(config.AnthropicAPIKey, config.Model, config.MaxTokens, config.Temperature, false, config.AnthropicBaseURL, config.UseCompactDescriptions)
 	case "openai":
 		if config.OpenAIAPIKey == "" && config.OpenAIBaseURL == "" {
 			http.Error(w, "OpenAI API key not configured", http.StatusBadRequest)
 			return
 		}
-		client = chat.NewOpenAIClient(config.OpenAIAPIKey, config.Model, config.MaxTokens, config.Temperature, false, config.OpenAIBaseURL)
+		client = chat.NewOpenAIClient(config.OpenAIAPIKey, config.Model, config.MaxTokens, config.Temperature, false, config.OpenAIBaseURL, config.UseCompactDescriptions)
 	case "gemini":
 		if config.GeminiAPIKey == "" {
 			http.Error(w, "Gemini API key not configured", http.StatusBadRequest)
 			return
 		}
-		client = chat.NewGeminiClient(config.GeminiAPIKey, config.Model, config.MaxTokens, config.Temperature, false, config.GeminiBaseURL)
+		client = chat.NewGeminiClient(config.GeminiAPIKey, config.Model, config.MaxTokens, config.Temperature, false, config.GeminiBaseURL, config.UseCompactDescriptions)
 	case "ollama":
 		if config.OllamaURL == "" {
 			http.Error(w, "Ollama URL not configured", http.StatusBadRequest)
 			return
 		}
-		client = chat.NewOllamaClient(config.OllamaURL, config.Model, false)
+		client = chat.NewOllamaClient(config.OllamaURL, config.Model, false, config.UseCompactDescriptions)
 	}
 
 	// List models
@@ -309,25 +311,25 @@ func HandleChat(w http.ResponseWriter, r *http.Request, config *Config) {
 			http.Error(w, "Anthropic API key not configured", http.StatusBadRequest)
 			return
 		}
-		client = chat.NewAnthropicClient(config.AnthropicAPIKey, model, config.MaxTokens, config.Temperature, req.Debug, config.AnthropicBaseURL)
+		client = chat.NewAnthropicClient(config.AnthropicAPIKey, model, config.MaxTokens, config.Temperature, req.Debug, config.AnthropicBaseURL, config.UseCompactDescriptions)
 	case "openai":
 		if config.OpenAIAPIKey == "" && config.OpenAIBaseURL == "" {
 			http.Error(w, "OpenAI API key not configured", http.StatusBadRequest)
 			return
 		}
-		client = chat.NewOpenAIClient(config.OpenAIAPIKey, model, config.MaxTokens, config.Temperature, req.Debug, config.OpenAIBaseURL)
+		client = chat.NewOpenAIClient(config.OpenAIAPIKey, model, config.MaxTokens, config.Temperature, req.Debug, config.OpenAIBaseURL, config.UseCompactDescriptions)
 	case "gemini":
 		if config.GeminiAPIKey == "" {
 			http.Error(w, "Gemini API key not configured", http.StatusBadRequest)
 			return
 		}
-		client = chat.NewGeminiClient(config.GeminiAPIKey, model, config.MaxTokens, config.Temperature, req.Debug, config.GeminiBaseURL)
+		client = chat.NewGeminiClient(config.GeminiAPIKey, model, config.MaxTokens, config.Temperature, req.Debug, config.GeminiBaseURL, config.UseCompactDescriptions)
 	case "ollama":
 		if config.OllamaURL == "" {
 			http.Error(w, "Ollama URL not configured", http.StatusBadRequest)
 			return
 		}
-		client = chat.NewOllamaClient(config.OllamaURL, model, req.Debug)
+		client = chat.NewOllamaClient(config.OllamaURL, model, req.Debug, config.UseCompactDescriptions)
 	}
 
 	// Convert proxy messages to chat messages
@@ -337,6 +339,18 @@ func HandleChat(w http.ResponseWriter, r *http.Request, config *Config) {
 			Role:         msg.Role,
 			Content:      msg.Content,
 			CacheControl: msg.CacheControl,
+		}
+	}
+
+	// Apply compact descriptions from the server-side registry.
+	// The tools arrive from the web client without CompactDescription
+	// populated, so we swap the full description for the compact one
+	// before sending tools to the LLM.
+	if config.UseCompactDescriptions && len(config.CompactDescriptions) > 0 {
+		for i := range req.Tools {
+			if compact, ok := config.CompactDescriptions[req.Tools[i].Name]; ok {
+				req.Tools[i].Description = compact
+			}
 		}
 	}
 

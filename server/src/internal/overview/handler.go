@@ -16,6 +16,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // openAPISpecPath is the path to the OpenAPI specification for RFC 8631
@@ -34,12 +35,14 @@ var validScopeTypes = map[string]bool{
 // server's handler setup.
 type Handler struct {
 	generator *Generator
+	hub       *Hub
 }
 
 // NewHandler creates a new overview handler backed by the given generator.
-func NewHandler(generator *Generator) *Handler {
+func NewHandler(generator *Generator, hub *Hub) *Handler {
 	return &Handler{
 		generator: generator,
+		hub:       hub,
 	}
 }
 
@@ -48,6 +51,7 @@ func NewHandler(generator *Generator) *Handler {
 // authentication.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux, authWrapper func(http.HandlerFunc) http.HandlerFunc) {
 	mux.HandleFunc("/api/v1/overview", authWrapper(h.handleOverview))
+	mux.HandleFunc("/api/v1/overview/stream", authWrapper(h.handleSSE))
 }
 
 // generatingResponse is returned when the overview has not yet been
@@ -152,6 +156,143 @@ func (h *Handler) serveEstateOverview(w http.ResponseWriter) {
 	if err := json.NewEncoder(w).Encode(overview); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: overview: failed to encode overview response: %v\n", err)
 	}
+}
+
+// handleSSE serves an SSE stream of Overview updates for a given scope.
+// Clients receive the current cached overview immediately, then subsequent
+// updates as they are broadcast by the generator.
+func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Verify streaming support.
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	// Disable the write deadline so the connection stays open.
+	rc := http.NewResponseController(w)
+	if err := rc.SetWriteDeadline(time.Time{}); err != nil {
+		fmt.Fprintf(os.Stderr, "overview: failed to disable write deadline: %v\n", err)
+	}
+
+	// Determine scope from query parameters (reuse existing parsing logic).
+	connectionIDsStr := r.URL.Query().Get("connection_ids")
+	scopeName := r.URL.Query().Get("scope_name")
+	scopeType := r.URL.Query().Get("scope_type")
+	scopeIDStr := r.URL.Query().Get("scope_id")
+
+	// Build the scope key for subscribing.
+	// Estate-wide subscribers use an empty key.
+	var scopeKey string
+	if connectionIDsStr != "" {
+		connectionIDs, err := parseConnectionIDs(connectionIDsStr)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		sorted := make([]int, len(connectionIDs))
+		copy(sorted, connectionIDs)
+		sortInts(sorted)
+		parts := make([]string, len(sorted))
+		for i, id := range sorted {
+			parts[i] = fmt.Sprintf("%d", id)
+		}
+		scopeKey = "connections:" + strings.Join(parts, ",")
+	} else if scopeType != "" || scopeIDStr != "" {
+		if scopeType == "" || scopeIDStr == "" {
+			http.Error(w, "Both scope_type and scope_id are required", http.StatusBadRequest)
+			return
+		}
+		if !validScopeTypes[scopeType] {
+			http.Error(w, "scope_type must be server, cluster, or group", http.StatusBadRequest)
+			return
+		}
+		scopeID, err := strconv.Atoi(scopeIDStr)
+		if err != nil || scopeID <= 0 {
+			http.Error(w, "scope_id must be a positive integer", http.StatusBadRequest)
+			return
+		}
+		scopeKey = fmt.Sprintf("%s:%d", scopeType, scopeID)
+	}
+
+	// Set SSE headers and flush immediately so the client receives the
+	// response headers without waiting for the first event.
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	flusher.Flush()
+
+	// Subscribe to updates.
+	sub := h.hub.Subscribe(scopeKey)
+	defer h.hub.Unsubscribe(sub)
+
+	// Send the current cached overview immediately so the client
+	// does not have to wait for the next generation cycle.
+	if scopeKey == "" {
+		if current := h.generator.GetOverview(); current != nil {
+			h.writeSSEEvent(w, current)
+			flusher.Flush()
+		}
+	} else if connectionIDsStr != "" {
+		// For connections scope, trigger generation in a goroutine.
+		// The generator will broadcast when complete.
+		connectionIDs, err := parseConnectionIDs(connectionIDsStr)
+		if err != nil {
+			return // Already validated above.
+		}
+		go func() {
+			if _, err := h.generator.GetConnectionsSummary(connectionIDs, scopeName); err != nil {
+				fmt.Fprintf(os.Stderr, "overview: scoped generation failed: %v\n", err)
+			}
+		}()
+	} else if scopeType != "" {
+		scopeID, err := strconv.Atoi(scopeIDStr)
+		if err != nil {
+			return // Already validated above.
+		}
+		go func() {
+			if _, err := h.generator.GetScopedSummary(scopeType, scopeID); err != nil {
+				fmt.Fprintf(os.Stderr, "overview: scoped generation failed: %v\n", err)
+			}
+		}()
+	}
+
+	// Stream loop: wait for updates or client disconnect.
+	keepalive := time.NewTicker(30 * time.Second)
+	defer keepalive.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case overview, ok := <-sub.C:
+			if !ok {
+				return
+			}
+			h.writeSSEEvent(w, overview)
+			flusher.Flush()
+		case <-keepalive.C:
+			fmt.Fprintf(w, ":keepalive\n\n")
+			flusher.Flush()
+		}
+	}
+}
+
+// writeSSEEvent marshals an Overview to JSON and writes it as an SSE event.
+func (h *Handler) writeSSEEvent(w http.ResponseWriter, overview *Overview) {
+	data, err := json.Marshal(overview)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: overview: failed to marshal SSE event: %v\n", err)
+		return
+	}
+	fmt.Fprintf(w, "id: %s\nevent: overview\ndata: %s\n\n",
+		overview.GeneratedAt.Format(time.RFC3339), string(data))
 }
 
 // parseConnectionIDs parses a comma-separated string of connection IDs

@@ -54,6 +54,7 @@ Use count_rows to efficiently determine data volume:
 - WHERE clause is optional - omit for total count
 - Returns a single integer count - minimal token usage
 </important>`,
+			CompactDescription: `Get the row count of a table with optional WHERE filtering. Returns a single integer. More efficient than SELECT COUNT(*) via query_database for simple counts.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{

@@ -90,6 +90,7 @@ To manage response sizes:
 - Filter to specific metrics of interest
 - Use filters (database_name, table_name) to reduce data volume
 </rate_limit_awareness>`,
+			CompactDescription: `Query time-series metrics from the datastore with time bucketing and aggregation. Requires probe_name (from list_probes). Supports avg/sum/min/max/last aggregation over configurable time ranges and bucket counts. Filter by database_name, schema_name, or table_name.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{

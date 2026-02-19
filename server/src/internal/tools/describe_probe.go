@@ -61,6 +61,7 @@ Returns TSV with:
 - describe_probe("pg_stat_statements") - See query statistics metrics
 - describe_probe("pg_sys_memory_info") - See system memory metrics
 </examples>`,
+			CompactDescription: `Get detailed column information for a specific metrics probe, including column names, types, and descriptions. Use after list_probes to understand what metrics a probe collects.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{

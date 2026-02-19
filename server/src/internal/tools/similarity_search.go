@@ -126,6 +126,7 @@ To avoid rate limits (30,000 input tokens/minute):
 - Call get_schema_info(vector_tables_only=true) to find tables efficiently
 - If rate limited, switch to lighter queries or wait 60 seconds
 </rate_limit_awareness>`,
+			CompactDescription: `Semantic search on tables with vector columns. ALWAYS use this tool FIRST before answering questions about database content. Finds results by meaning rather than exact match. Requires table_name and query_text. Use get_schema_info(vector_tables_only=true) to find searchable tables.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{

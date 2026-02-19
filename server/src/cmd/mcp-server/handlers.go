@@ -51,6 +51,7 @@ type HandlerDependencies struct {
 	Datastore    *database.Datastore
 	Config       *config.Config
 	OverviewGen  *overview.Generator
+	OverviewHub  *overview.Hub
 	ToolProvider api.ContextAwareToolProvider
 	AIEnabled    bool
 }
@@ -84,7 +85,7 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 			createUserInfoHandler(deps.AuthStore))
 
 		// LLM proxy handlers (always enabled)
-		setupLLMHandlers(mux, deps.Config, authWrapper)
+		setupLLMHandlers(mux, deps.Config, authWrapper, deps.ToolProvider)
 
 		// MCP tool REST bridge (exposes tools/list and tools/call over REST)
 		if deps.ToolProvider != nil {
@@ -160,17 +161,18 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 
 		// Server info endpoint (for Server Info Dialog)
 		serverInfoLLMConfig := &llmproxy.Config{
-			Provider:         deps.Config.LLM.Provider,
-			Model:            deps.Config.LLM.Model,
-			AnthropicAPIKey:  deps.Config.LLM.AnthropicAPIKey,
-			AnthropicBaseURL: deps.Config.LLM.AnthropicBaseURL,
-			OpenAIAPIKey:     deps.Config.LLM.OpenAIAPIKey,
-			OpenAIBaseURL:    deps.Config.LLM.OpenAIBaseURL,
-			GeminiAPIKey:     deps.Config.LLM.GeminiAPIKey,
-			GeminiBaseURL:    deps.Config.LLM.GeminiBaseURL,
-			OllamaURL:        deps.Config.LLM.OllamaURL,
-			MaxTokens:        deps.Config.LLM.MaxTokens,
-			Temperature:      deps.Config.LLM.Temperature,
+			Provider:               deps.Config.LLM.Provider,
+			Model:                  deps.Config.LLM.Model,
+			AnthropicAPIKey:        deps.Config.LLM.AnthropicAPIKey,
+			AnthropicBaseURL:       deps.Config.LLM.AnthropicBaseURL,
+			OpenAIAPIKey:           deps.Config.LLM.OpenAIAPIKey,
+			OpenAIBaseURL:          deps.Config.LLM.OpenAIBaseURL,
+			GeminiAPIKey:           deps.Config.LLM.GeminiAPIKey,
+			GeminiBaseURL:          deps.Config.LLM.GeminiBaseURL,
+			OllamaURL:              deps.Config.LLM.OllamaURL,
+			MaxTokens:              deps.Config.LLM.MaxTokens,
+			Temperature:            deps.Config.LLM.Temperature,
+			UseCompactDescriptions: deps.Config.LLM.UseCompactDescriptions(),
 		}
 		serverInfoHandler := api.NewServerInfoHandler(deps.Datastore, deps.AuthStore, rbacChecker, serverInfoLLMConfig)
 		registerDatastoreHandler(mux, serverInfoHandler, authWrapper, "Server info", deps.Datastore)
@@ -189,7 +191,7 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 
 		// AI Overview endpoint (for estate overview summary)
 		if deps.OverviewGen != nil {
-			overviewHandler := overview.NewHandler(deps.OverviewGen)
+			overviewHandler := overview.NewHandler(deps.OverviewGen, deps.OverviewHub)
 			overviewHandler.RegisterRoutes(mux, authWrapper)
 			deps.OverviewGen.OnRestart(func() {
 				serverInfoHandler.InvalidateCache()
@@ -381,20 +383,34 @@ func handleCapabilities(aiEnabled bool) http.HandlerFunc {
 }
 
 // setupLLMHandlers configures LLM proxy endpoints
-func setupLLMHandlers(mux *http.ServeMux, cfg *config.Config, authWrapper func(http.HandlerFunc) http.HandlerFunc) {
+func setupLLMHandlers(mux *http.ServeMux, cfg *config.Config, authWrapper func(http.HandlerFunc) http.HandlerFunc, toolProvider api.ContextAwareToolProvider) {
+	// Build a compact description lookup map from registered tools.
+	// The web client sends tools without CompactDescription populated,
+	// so we look them up server-side and apply them in HandleChat.
+	compactDescs := make(map[string]string)
+	if toolProvider != nil {
+		for _, t := range toolProvider.List() {
+			if t.CompactDescription != "" {
+				compactDescs[t.Name] = t.CompactDescription
+			}
+		}
+	}
+
 	// Create LLM proxy configuration
 	llmConfig := &llmproxy.Config{
-		Provider:         cfg.LLM.Provider,
-		Model:            cfg.LLM.Model,
-		AnthropicAPIKey:  cfg.LLM.AnthropicAPIKey,
-		AnthropicBaseURL: cfg.LLM.AnthropicBaseURL,
-		OpenAIAPIKey:     cfg.LLM.OpenAIAPIKey,
-		OpenAIBaseURL:    cfg.LLM.OpenAIBaseURL,
-		GeminiAPIKey:     cfg.LLM.GeminiAPIKey,
-		GeminiBaseURL:    cfg.LLM.GeminiBaseURL,
-		OllamaURL:        cfg.LLM.OllamaURL,
-		MaxTokens:        cfg.LLM.MaxTokens,
-		Temperature:      cfg.LLM.Temperature,
+		Provider:               cfg.LLM.Provider,
+		Model:                  cfg.LLM.Model,
+		AnthropicAPIKey:        cfg.LLM.AnthropicAPIKey,
+		AnthropicBaseURL:       cfg.LLM.AnthropicBaseURL,
+		OpenAIAPIKey:           cfg.LLM.OpenAIAPIKey,
+		OpenAIBaseURL:          cfg.LLM.OpenAIBaseURL,
+		GeminiAPIKey:           cfg.LLM.GeminiAPIKey,
+		GeminiBaseURL:          cfg.LLM.GeminiBaseURL,
+		OllamaURL:              cfg.LLM.OllamaURL,
+		MaxTokens:              cfg.LLM.MaxTokens,
+		Temperature:            cfg.LLM.Temperature,
+		UseCompactDescriptions: cfg.LLM.UseCompactDescriptions(),
+		CompactDescriptions:    compactDescs,
 	}
 
 	// Provider/model listing don't require auth (needed for login page)

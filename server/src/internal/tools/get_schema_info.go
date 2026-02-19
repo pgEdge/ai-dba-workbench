@@ -108,6 +108,7 @@ To avoid rate limits when calling this tool:
 - Call once and cache results in conversation rather than repeatedly
 - If exploring large schemas, filter by schema_name first
 </rate_limit_awareness>`,
+			CompactDescription: `Discover database structure: schemas, tables, columns, types, and constraints. Use compact=true for a quick table name overview. Filter by schema_name and table_name to reduce output size. Operates on the currently selected monitored database.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{

@@ -28,28 +28,30 @@ import (
 
 // openaiClient implements LLMClient for OpenAI GPT models
 type openaiClient struct {
-	apiKey      string
-	model       string
-	maxTokens   int
-	temperature float64
-	debug       bool
-	baseURL     string
-	client      *http.Client
+	apiKey                 string
+	model                  string
+	maxTokens              int
+	temperature            float64
+	debug                  bool
+	baseURL                string
+	useCompactDescriptions bool
+	client                 *http.Client
 }
 
 // NewOpenAIClient creates a new OpenAI client
-func NewOpenAIClient(apiKey, model string, maxTokens int, temperature float64, debug bool, baseURL string) LLMClient {
+func NewOpenAIClient(apiKey, model string, maxTokens int, temperature float64, debug bool, baseURL string, useCompactDescriptions bool) LLMClient {
 	if baseURL == "" {
 		baseURL = "https://api.openai.com/v1"
 	}
 	return &openaiClient{
-		apiKey:      apiKey,
-		model:       model,
-		maxTokens:   maxTokens,
-		temperature: temperature,
-		debug:       debug,
-		baseURL:     baseURL,
-		client:      sharedHTTPClient,
+		apiKey:                 apiKey,
+		model:                  model,
+		maxTokens:              maxTokens,
+		temperature:            temperature,
+		debug:                  debug,
+		baseURL:                baseURL,
+		useCompactDescriptions: useCompactDescriptions,
+		client:                 sharedHTTPClient,
 	}
 }
 
@@ -124,11 +126,15 @@ func (c *openaiClient) Chat(ctx context.Context, messages []Message, tools inter
 	var openaiTools []map[string]interface{}
 	if len(mcpTools) > 0 {
 		for _, tool := range mcpTools {
+			desc := tool.Description
+			if c.useCompactDescriptions && tool.CompactDescription != "" {
+				desc = tool.CompactDescription
+			}
 			openaiTools = append(openaiTools, map[string]interface{}{
 				"type": "function",
 				"function": map[string]interface{}{
 					"name":        tool.Name,
-					"description": tool.Description,
+					"description": desc,
 					"parameters":  tool.InputSchema,
 				},
 			})

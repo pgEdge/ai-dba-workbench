@@ -24,8 +24,9 @@ import (
 func GenerateEmbeddingTool(cfg *config.Config) Tool {
 	return Tool{
 		Definition: mcp.Tool{
-			Name:        "generate_embedding",
-			Description: "Generate embedding vector from text using configured provider (OpenAI, Anthropic Voyage, or Ollama). Returns the embedding vector for storage or semantic search operations.",
+			Name:               "generate_embedding",
+			Description:        "Generate embedding vector from text using configured provider (OpenAI, Anthropic Voyage, or Ollama). Returns the embedding vector for storage or semantic search operations.",
+			CompactDescription: `Generate an embedding vector from text using the configured embedding model. Returns a vector for storage or semantic search operations.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{

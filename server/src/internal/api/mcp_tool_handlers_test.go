@@ -31,6 +31,10 @@ type mockToolProvider struct {
 	lastArgs   map[string]any
 }
 
+func (m *mockToolProvider) List() []mcp.Tool {
+	return m.tools
+}
+
 func (m *mockToolProvider) ListForContext(ctx context.Context) []mcp.Tool {
 	m.lastCtx = ctx
 	return m.tools

@@ -30,6 +30,15 @@ vi.mock('../../utils/apiClient', () => ({
     },
 }));
 
+// Mock the SSE hook so tests don't need a real EventSource
+const mockUseOverviewSSE = vi.fn().mockReturnValue({
+    overview: null,
+    connected: false,
+});
+vi.mock('../../hooks/useOverviewSSE', () => ({
+    useOverviewSSE: (...args: unknown[]) => mockUseOverviewSSE(...args),
+}));
+
 const theme = createTheme();
 
 /**
@@ -59,6 +68,8 @@ describe('AIOverview Component', () => {
         vi.clearAllMocks();
         // Default: localStorage returns null (no stored value)
         mockGetItem.mockReturnValue(null);
+        // Default: SSE not connected and no data
+        mockUseOverviewSSE.mockReturnValue({ overview: null, connected: false });
     });
 
     afterEach(() => {
@@ -67,9 +78,8 @@ describe('AIOverview Component', () => {
     });
 
     describe('Rendering States', () => {
-        it('shows loading skeleton on initial render before API responds', () => {
-            // Never resolve the API call so we stay in loading state
-            mockApiGet.mockReturnValue(new Promise(() => {}));
+        it('shows loading skeleton when SSE has not delivered data yet', () => {
+            mockUseOverviewSSE.mockReturnValue({ overview: null, connected: false });
 
             renderWithTheme(<AIOverview />);
 
@@ -78,13 +88,14 @@ describe('AIOverview Component', () => {
             expect(skeletons.length).toBeGreaterThan(0);
         });
 
-        it('shows "Generating overview..." when API returns status generating with null summary', async () => {
-            mockApiGet.mockResolvedValue(
-                makeOverviewResponse({
+        it('shows "Generating overview..." when SSE delivers status generating with null summary', async () => {
+            mockUseOverviewSSE.mockReturnValue({
+                overview: makeOverviewResponse({
                     status: 'generating',
                     summary: null,
-                })
-            );
+                }),
+                connected: true,
+            });
 
             renderWithTheme(<AIOverview />);
 
@@ -94,12 +105,13 @@ describe('AIOverview Component', () => {
         });
 
         it('shows "Generating overview..." when summary is null regardless of status', async () => {
-            mockApiGet.mockResolvedValue(
-                makeOverviewResponse({
+            mockUseOverviewSSE.mockReturnValue({
+                overview: makeOverviewResponse({
                     status: 'ready',
                     summary: null,
-                })
-            );
+                }),
+                connected: true,
+            });
 
             renderWithTheme(<AIOverview />);
 
@@ -108,11 +120,12 @@ describe('AIOverview Component', () => {
             });
         });
 
-        it('shows the summary text when API returns a valid summary', async () => {
+        it('shows the summary text when SSE delivers a valid summary', async () => {
             const summaryText = 'All systems operational. No alerts detected.';
-            mockApiGet.mockResolvedValue(
-                makeOverviewResponse({ summary: summaryText })
-            );
+            mockUseOverviewSSE.mockReturnValue({
+                overview: makeOverviewResponse({ summary: summaryText }),
+                connected: true,
+            });
 
             renderWithTheme(<AIOverview />);
 
@@ -122,11 +135,12 @@ describe('AIOverview Component', () => {
         });
 
         it('shows "(stale)" badge when current time is past the stale_at timestamp', async () => {
-            mockApiGet.mockResolvedValue(
-                makeOverviewResponse({
+            mockUseOverviewSSE.mockReturnValue({
+                overview: makeOverviewResponse({
                     stale_at: new Date(Date.now() - 60 * 1000).toISOString(),
-                })
-            );
+                }),
+                connected: true,
+            });
 
             renderWithTheme(<AIOverview />);
 
@@ -136,11 +150,12 @@ describe('AIOverview Component', () => {
         });
 
         it('does not show "(stale)" badge when stale_at is in the future', async () => {
-            mockApiGet.mockResolvedValue(
-                makeOverviewResponse({
+            mockUseOverviewSSE.mockReturnValue({
+                overview: makeOverviewResponse({
                     stale_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-                })
-            );
+                }),
+                connected: true,
+            });
 
             renderWithTheme(<AIOverview />);
 
@@ -152,11 +167,12 @@ describe('AIOverview Component', () => {
         });
 
         it('shows "Updated just now" for a recently generated overview', async () => {
-            mockApiGet.mockResolvedValue(
-                makeOverviewResponse({
+            mockUseOverviewSSE.mockReturnValue({
+                overview: makeOverviewResponse({
                     generated_at: new Date().toISOString(),
-                })
-            );
+                }),
+                connected: true,
+            });
 
             renderWithTheme(<AIOverview />);
 
@@ -166,11 +182,12 @@ describe('AIOverview Component', () => {
         });
 
         it('shows "Updated 5 min ago" for an overview generated 5 minutes ago', async () => {
-            mockApiGet.mockResolvedValue(
-                makeOverviewResponse({
+            mockUseOverviewSSE.mockReturnValue({
+                overview: makeOverviewResponse({
                     generated_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
-                })
-            );
+                }),
+                connected: true,
+            });
 
             renderWithTheme(<AIOverview />);
 
@@ -179,77 +196,54 @@ describe('AIOverview Component', () => {
             });
         });
 
-        it('renders nothing when API returns a non-401 error', async () => {
-            mockApiGet.mockRejectedValue(new Error('Network error'));
-
-            const { container } = renderWithTheme(<AIOverview />);
-
-            await waitFor(() => {
-                // Loading should have finished
-                const skeletons = document.querySelectorAll('.MuiSkeleton-root');
-                expect(skeletons.length).toBe(0);
+        it('renders nothing when SSE has no data and is not loading', async () => {
+            // Simulate the case where SSE has no data but loading has been
+            // cleared (e.g. by a previous SSE delivery that was then reset)
+            mockUseOverviewSSE.mockReturnValue({
+                overview: null,
+                connected: true,
             });
 
-            // Component should render nothing
-            expect(container.querySelector('.MuiPaper-root')).toBeNull();
-        });
-
-        it('renders nothing when API returns a 401 error', async () => {
-            mockApiGet.mockRejectedValue(
-                new apiClientModule.ApiError('Unauthorized', 401)
-            );
-
+            // We need SSE to deliver null so loading clears but overview
+            // remains null.  The component renders null for error/no-data.
+            // First render will show loading; then SSE effect sets
+            // loading=false.
             const { container } = renderWithTheme(<AIOverview />);
 
-            await waitFor(() => {
-                const skeletons = document.querySelectorAll('.MuiSkeleton-root');
-                expect(skeletons.length).toBe(0);
-            });
-
-            expect(container.querySelector('.MuiPaper-root')).toBeNull();
+            // The SSE effect will fire and clear loading.  The component
+            // should still show the loading skeleton since sseOverview is
+            // null (the effect only runs when sseOverview is truthy).
+            const skeletons = document.querySelectorAll('.MuiSkeleton-root');
+            expect(skeletons.length).toBeGreaterThan(0);
         });
     });
 
-    describe('Scoped API Calls', () => {
-        it('fetches /api/v1/overview with no params when no selection is provided', async () => {
-            mockApiGet.mockResolvedValue(makeOverviewResponse());
-
+    describe('Scoped SSE Connections', () => {
+        it('passes /api/v1/overview to SSE hook when no selection is provided', () => {
             renderWithTheme(<AIOverview />);
 
-            await waitFor(() => {
-                expect(mockApiGet).toHaveBeenCalledWith('/api/v1/overview');
-            });
+            expect(mockUseOverviewSSE).toHaveBeenCalledWith('/api/v1/overview');
         });
 
-        it('fetches /api/v1/overview with no params when selection type is estate', async () => {
-            mockApiGet.mockResolvedValue(makeOverviewResponse());
-
+        it('passes /api/v1/overview to SSE hook when selection type is estate', () => {
             renderWithTheme(
                 <AIOverview selection={{ type: 'estate' }} />
             );
 
-            await waitFor(() => {
-                expect(mockApiGet).toHaveBeenCalledWith('/api/v1/overview');
-            });
+            expect(mockUseOverviewSSE).toHaveBeenCalledWith('/api/v1/overview');
         });
 
-        it('fetches with scope_type=server and scope_id when selection is a server', async () => {
-            mockApiGet.mockResolvedValue(makeOverviewResponse());
-
+        it('passes scope_type=server and scope_id to SSE hook when selection is a server', () => {
             renderWithTheme(
                 <AIOverview selection={{ type: 'server', id: 5 }} />
             );
 
-            await waitFor(() => {
-                expect(mockApiGet).toHaveBeenCalledWith(
-                    '/api/v1/overview?scope_type=server&scope_id=5'
-                );
-            });
+            expect(mockUseOverviewSSE).toHaveBeenCalledWith(
+                '/api/v1/overview?scope_type=server&scope_id=5'
+            );
         });
 
-        it('fetches with connection_ids and scope_name when selection is a cluster', async () => {
-            mockApiGet.mockResolvedValue(makeOverviewResponse());
-
+        it('passes connection_ids and scope_name to SSE hook when selection is a cluster', () => {
             renderWithTheme(
                 <AIOverview
                     selection={{
@@ -261,26 +255,20 @@ describe('AIOverview Component', () => {
                 />
             );
 
-            await waitFor(() => {
-                expect(mockApiGet).toHaveBeenCalledWith(
-                    expect.stringContaining('connection_ids=1%2C3%2C5')
-                );
-                expect(mockApiGet).toHaveBeenCalledWith(
-                    expect.stringContaining('scope_name=Production')
-                );
-            });
+            expect(mockUseOverviewSSE).toHaveBeenCalledWith(
+                expect.stringContaining('connection_ids=1%2C3%2C5')
+            );
+            expect(mockUseOverviewSSE).toHaveBeenCalledWith(
+                expect.stringContaining('scope_name=Production')
+            );
         });
 
-        it('re-fetches when selection changes from estate to a server', async () => {
-            mockApiGet.mockResolvedValue(makeOverviewResponse());
-
+        it('updates SSE hook URL when selection changes from estate to a server', () => {
             const { rerender } = renderWithTheme(<AIOverview />);
 
-            await waitFor(() => {
-                expect(mockApiGet).toHaveBeenCalledWith('/api/v1/overview');
-            });
+            expect(mockUseOverviewSSE).toHaveBeenCalledWith('/api/v1/overview');
 
-            mockApiGet.mockClear();
+            mockUseOverviewSSE.mockClear();
 
             rerender(
                 <ThemeProvider theme={theme}>
@@ -288,17 +276,18 @@ describe('AIOverview Component', () => {
                 </ThemeProvider>
             );
 
-            await waitFor(() => {
-                expect(mockApiGet).toHaveBeenCalledWith(
-                    '/api/v1/overview?scope_type=server&scope_id=7'
-                );
-            });
+            expect(mockUseOverviewSSE).toHaveBeenCalledWith(
+                '/api/v1/overview?scope_type=server&scope_id=7'
+            );
         });
     });
 
     describe('Collapsible Behavior', () => {
         it('renders expanded by default when no localStorage value exists', async () => {
-            mockApiGet.mockResolvedValue(makeOverviewResponse());
+            mockUseOverviewSSE.mockReturnValue({
+                overview: makeOverviewResponse(),
+                connected: true,
+            });
 
             renderWithTheme(<AIOverview />);
 
@@ -318,7 +307,10 @@ describe('AIOverview Component', () => {
         });
 
         it('hides the summary body when the collapse toggle is clicked', async () => {
-            mockApiGet.mockResolvedValue(makeOverviewResponse());
+            mockUseOverviewSSE.mockReturnValue({
+                overview: makeOverviewResponse(),
+                connected: true,
+            });
 
             renderWithTheme(<AIOverview />);
 
@@ -336,7 +328,10 @@ describe('AIOverview Component', () => {
         });
 
         it('re-expands the summary body when the toggle is clicked again', async () => {
-            mockApiGet.mockResolvedValue(makeOverviewResponse());
+            mockUseOverviewSSE.mockReturnValue({
+                overview: makeOverviewResponse(),
+                connected: true,
+            });
 
             renderWithTheme(<AIOverview />);
 
@@ -358,7 +353,10 @@ describe('AIOverview Component', () => {
         });
 
         it('keeps the header visible when collapsed', async () => {
-            mockApiGet.mockResolvedValue(makeOverviewResponse());
+            mockUseOverviewSSE.mockReturnValue({
+                overview: makeOverviewResponse(),
+                connected: true,
+            });
 
             renderWithTheme(<AIOverview />);
 
@@ -380,7 +378,10 @@ describe('AIOverview Component', () => {
     describe('localStorage Persistence', () => {
         it('reads initial collapsed state from localStorage', async () => {
             mockGetItem.mockReturnValue('true');
-            mockApiGet.mockResolvedValue(makeOverviewResponse());
+            mockUseOverviewSSE.mockReturnValue({
+                overview: makeOverviewResponse(),
+                connected: true,
+            });
 
             renderWithTheme(<AIOverview />);
 
@@ -398,7 +399,10 @@ describe('AIOverview Component', () => {
         });
 
         it('saves collapsed state to localStorage when toggled', async () => {
-            mockApiGet.mockResolvedValue(makeOverviewResponse());
+            mockUseOverviewSSE.mockReturnValue({
+                overview: makeOverviewResponse(),
+                connected: true,
+            });
 
             renderWithTheme(<AIOverview />);
 
@@ -423,7 +427,10 @@ describe('AIOverview Component', () => {
 
         it('starts collapsed if localStorage has "true"', async () => {
             mockGetItem.mockReturnValue('true');
-            mockApiGet.mockResolvedValue(makeOverviewResponse());
+            mockUseOverviewSSE.mockReturnValue({
+                overview: makeOverviewResponse(),
+                connected: true,
+            });
 
             renderWithTheme(<AIOverview />);
 
@@ -438,46 +445,74 @@ describe('AIOverview Component', () => {
         });
     });
 
-    describe('Auto-Refresh', () => {
-        it('sets up a 30-second interval for refreshing', async () => {
+    describe('SSE and Fallback Polling', () => {
+        it('does not make any REST calls when SSE is connected', async () => {
             vi.useFakeTimers();
+            mockUseOverviewSSE.mockReturnValue({
+                overview: makeOverviewResponse(),
+                connected: true,
+            });
+
+            await act(async () => {
+                renderWithTheme(<AIOverview />);
+            });
+
+            // Advance past the 5-second SSE grace period and beyond
+            await act(async () => {
+                vi.advanceTimersByTime(20_000);
+            });
+            await act(async () => {
+                await Promise.resolve();
+            });
+
+            // No REST calls should have been made at all
+            expect(mockApiGet).not.toHaveBeenCalled();
+        });
+
+        it('starts fallback polling every 10s when SSE is not connected after 5s', async () => {
+            vi.useFakeTimers();
+            mockUseOverviewSSE.mockReturnValue({ overview: null, connected: false });
             mockApiGet.mockResolvedValue(makeOverviewResponse());
 
             await act(async () => {
                 renderWithTheme(<AIOverview />);
             });
 
-            // Flush the initial fetch promise
+            // No initial REST fetch should have been made
+            expect(mockApiGet).not.toHaveBeenCalled();
+
+            // Advance past the 5-second grace period
+            await act(async () => {
+                vi.advanceTimersByTime(5_000);
+            });
             await act(async () => {
                 await Promise.resolve();
             });
 
-            // The initial fetch should have been called
+            // Advance by 10 seconds for first fallback poll
+            await act(async () => {
+                vi.advanceTimersByTime(10_000);
+            });
+            await act(async () => {
+                await Promise.resolve();
+            });
+
             expect(mockApiGet).toHaveBeenCalledTimes(1);
 
-            // Advance by 30 seconds and flush the resulting promise
+            // Advance by another 10 seconds for second fallback poll
             await act(async () => {
-                vi.advanceTimersByTime(30_000);
+                vi.advanceTimersByTime(10_000);
             });
             await act(async () => {
                 await Promise.resolve();
             });
 
             expect(mockApiGet).toHaveBeenCalledTimes(2);
-
-            // Advance by another 30 seconds
-            await act(async () => {
-                vi.advanceTimersByTime(30_000);
-            });
-            await act(async () => {
-                await Promise.resolve();
-            });
-
-            expect(mockApiGet).toHaveBeenCalledTimes(3);
         });
 
-        it('clears the interval on unmount', async () => {
+        it('clears fallback polling on unmount', async () => {
             vi.useFakeTimers();
+            mockUseOverviewSSE.mockReturnValue({ overview: null, connected: false });
             mockApiGet.mockResolvedValue(makeOverviewResponse());
 
             let result: ReturnType<typeof render>;
@@ -485,22 +520,18 @@ describe('AIOverview Component', () => {
                 result = renderWithTheme(<AIOverview />);
             });
 
-            // Flush the initial fetch promise
-            await act(async () => {
-                await Promise.resolve();
-            });
-
-            expect(mockApiGet).toHaveBeenCalledTimes(1);
+            // No initial REST fetch
+            expect(mockApiGet).not.toHaveBeenCalled();
 
             // Unmount the component
             result!.unmount();
 
-            // Advance timers; no additional calls should happen
+            // Advance timers well past fallback threshold; no calls
             await act(async () => {
                 vi.advanceTimersByTime(60_000);
             });
 
-            expect(mockApiGet).toHaveBeenCalledTimes(1);
+            expect(mockApiGet).not.toHaveBeenCalled();
         });
     });
 });

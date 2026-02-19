@@ -28,28 +28,30 @@ import (
 
 // geminiClient implements LLMClient for Google Gemini
 type geminiClient struct {
-	apiKey      string
-	model       string
-	maxTokens   int
-	temperature float64
-	debug       bool
-	baseURL     string
-	client      *http.Client
+	apiKey                 string
+	model                  string
+	maxTokens              int
+	temperature            float64
+	debug                  bool
+	baseURL                string
+	useCompactDescriptions bool
+	client                 *http.Client
 }
 
 // NewGeminiClient creates a new Google Gemini client
-func NewGeminiClient(apiKey, model string, maxTokens int, temperature float64, debug bool, baseURL string) LLMClient {
+func NewGeminiClient(apiKey, model string, maxTokens int, temperature float64, debug bool, baseURL string, useCompactDescriptions bool) LLMClient {
 	if baseURL == "" {
 		baseURL = "https://generativelanguage.googleapis.com"
 	}
 	return &geminiClient{
-		apiKey:      apiKey,
-		model:       model,
-		maxTokens:   maxTokens,
-		temperature: temperature,
-		debug:       debug,
-		baseURL:     baseURL,
-		client:      sharedHTTPClient,
+		apiKey:                 apiKey,
+		model:                  model,
+		maxTokens:              maxTokens,
+		temperature:            temperature,
+		debug:                  debug,
+		baseURL:                baseURL,
+		useCompactDescriptions: useCompactDescriptions,
+		client:                 sharedHTTPClient,
 	}
 }
 
@@ -148,9 +150,13 @@ func (c *geminiClient) Chat(ctx context.Context, messages []Message, tools inter
 	if len(mcpTools) > 0 {
 		decls := make([]geminiFunctionDecl, 0, len(mcpTools))
 		for _, tool := range mcpTools {
+			desc := tool.Description
+			if c.useCompactDescriptions && tool.CompactDescription != "" {
+				desc = tool.CompactDescription
+			}
 			decls = append(decls, geminiFunctionDecl{
 				Name:        tool.Name,
-				Description: tool.Description,
+				Description: desc,
 				Parameters:  tool.InputSchema,
 			})
 		}

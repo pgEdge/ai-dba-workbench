@@ -63,6 +63,7 @@ Native resources/read: Use if your client supports it
 - List all resources: read_resource(list=true)
 - Read specific resource: read_resource(uri="pg://system_info")
 </usage>`,
+			CompactDescription: `Read MCP resources. Use list=true to see all available resources, or provide a specific URI to read one resource.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{

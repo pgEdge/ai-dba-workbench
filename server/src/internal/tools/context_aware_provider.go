@@ -98,6 +98,9 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 		if p.cfg.Builtins.Tools.IsToolEnabled("query_datastore") {
 			registry.Register("query_datastore", QueryDatastoreTool(datastorePool))
 		}
+		if p.cfg.Builtins.Tools.IsToolEnabled("get_blackouts") {
+			registry.Register("get_blackouts", GetBlackoutsTool(datastorePool))
+		}
 	} else {
 		// Register tools with nil pool - they'll return helpful errors
 		if p.cfg.Builtins.Tools.IsToolEnabled("list_probes") {
@@ -123,6 +126,9 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("query_datastore") {
 			registry.Register("query_datastore", QueryDatastoreTool(nil))
+		}
+		if p.cfg.Builtins.Tools.IsToolEnabled("get_blackouts") {
+			registry.Register("get_blackouts", GetBlackoutsTool(nil))
 		}
 	}
 }
@@ -374,6 +380,7 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 		"get_alert_rules":      true, // Datastore tool - uses shared datastore pool
 		"get_metric_baselines": true, // Datastore tool - uses shared datastore pool
 		"query_datastore":      true, // Datastore tool - uses shared datastore pool
+		"get_blackouts":        true, // Datastore tool - uses shared datastore pool
 	}
 
 	if statelessTools[name] {
@@ -382,6 +389,7 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 			"query_metrics":        true,
 			"get_alert_history":    true,
 			"get_metric_baselines": true,
+			"get_blackouts":        true,
 		}
 		if connectionIDTools[name] {
 			if _, hasConnID := args["connection_id"]; !hasConnID && p.authStore != nil {

@@ -17,9 +17,9 @@ import {
     LLMResponse,
     ToolCallResponse,
     ToolResult,
-    ToolInputSchema,
 } from '../types/llm';
 import { TimelineEvent } from '../components/EventTimeline/types';
+import { getKnowledgebaseTool, AnalysisTool } from '../utils/mcpTools';
 
 /**
  * Strip any conversational preamble before the first markdown heading.
@@ -39,6 +39,8 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
     get_metric_baselines: 'Fetching metric baselines',
     get_alert_history: 'Reviewing alert history',
     get_alert_rules: 'Checking alert rules',
+    get_blackouts: 'Checking blackouts',
+    search_knowledgebase: 'Searching knowledgebase',
 };
 
 // Module-level cache for analysis results (persists across dialog open/close)
@@ -59,12 +61,6 @@ export interface AlertInput {
     connectionId: number;
     triggeredAt?: string;
     time?: string;
-}
-
-interface AnalysisTool {
-    name: string;
-    description: string;
-    inputSchema: ToolInputSchema;
 }
 
 interface Message {
@@ -135,7 +131,9 @@ CRITICAL rules for code blocks - the user executes SQL directly from the UI so a
    - If remediation requires acting on specific database objects that are not yet known, first provide a diagnostic query that identifies the affected objects (e.g., tables with high dead tuple ratios), then provide the remediation SQL using the actual names returned by that diagnostic query.
    - If the specific objects cannot be determined, provide ONLY the diagnostic query and explain that the user should run the remediation command on the objects it identifies. Do NOT generate non-executable SQL containing placeholders.
 
-Keep responses concise and actionable. Do not offer to perform additional actions, run further queries, or investigate anything else. Do not ask follow-up questions or ask what the user would like to do next. Your analysis is displayed in a read-only report that the user cannot respond to.`;
+Keep responses concise and actionable. Do not offer to perform additional actions, run further queries, or investigate anything else. Do not ask follow-up questions or ask what the user would like to do next. Your analysis is displayed in a read-only report that the user cannot respond to.
+
+If a search_knowledgebase tool is available, use it to look up unfamiliar PostgreSQL features, extensions, or pgEdge-specific concepts before making recommendations. If a get_blackouts tool is available, check whether the alert occurred during a maintenance window.`;
 
 // Tool definitions for the LLM (must use camelCase inputSchema to match Go struct)
 const ANALYSIS_TOOLS: AnalysisTool[] = [
@@ -192,6 +190,19 @@ const ANALYSIS_TOOLS: AnalysisTool[] = [
                 buckets: { type: "integer", description: "Number of time buckets" }
             },
             required: ["probe_name"]
+        }
+    },
+    {
+        name: "get_blackouts",
+        description: "Get active and recent blackout (maintenance window) periods for a connection",
+        inputSchema: {
+            type: "object",
+            properties: {
+                connection_id: { type: "integer", description: "Connection ID to query" },
+                active_only: { type: "boolean", description: "Only return currently active blackouts" },
+                include_schedules: { type: "boolean", description: "Also return recurring blackout schedules" }
+            },
+            required: []
         }
     }
 ];
@@ -282,6 +293,9 @@ export const useAlertAnalysis = (): UseAlertAnalysisReturn => {
             }
         }
 
+        // Fetch knowledgebase tool definition if available
+        const kbTool = await getKnowledgebaseTool();
+
         // Fetch connection context and timeline events in parallel
         let connectionContext = '';
         let timelineContext = '';
@@ -320,6 +334,11 @@ Provide remediation recommendations and any threshold tuning suggestions.`;
             { role: 'user', content: userMessage }
         ];
 
+        // Build tools list - add knowledgebase tool if available
+        const tools: AnalysisTool[] = kbTool
+            ? [...ANALYSIS_TOOLS, kbTool]
+            : ANALYSIS_TOOLS;
+
         setProgressMessage('Starting analysis...');
 
         try {
@@ -340,7 +359,7 @@ Provide remediation recommendations and any threshold tuning suggestions.`;
                     },
                     body: JSON.stringify({
                         messages,
-                        tools: ANALYSIS_TOOLS,
+                        tools,
                         system: SYSTEM_PROMPT,
                     }),
                 });

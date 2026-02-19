@@ -57,6 +57,8 @@ const TOOL_LABELS = [
     'Inspecting schema',
     'Listing probes',
     'Examining probe details',
+    'Checking blackouts',
+    'Searching knowledgebase',
 ];
 
 const Transition = React.forwardRef(function Transition(

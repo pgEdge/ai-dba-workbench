@@ -56,6 +56,8 @@ const TOOL_LABELS = [
     'Fetching metric baselines',
     'Reviewing alert history',
     'Checking alert rules',
+    'Checking blackouts',
+    'Searching knowledgebase',
 ];
 
 const Transition = React.forwardRef(function Transition(

@@ -12,12 +12,12 @@ import { useState, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { apiGet } from '../utils/apiClient';
 import { formatConnectionContext } from '../utils/connectionContext';
+import { getKnowledgebaseTool, AnalysisTool } from '../utils/mcpTools';
 import {
     LLMContentBlock,
     LLMResponse,
     ToolCallResponse,
     ToolResult,
-    ToolInputSchema,
 } from '../types/llm';
 import { TimelineEvent } from '../components/EventTimeline/types';
 
@@ -43,6 +43,8 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
     get_schema_info: 'Inspecting schema',
     list_probes: 'Listing probes',
     describe_probe: 'Examining probe details',
+    get_blackouts: 'Checking blackouts',
+    search_knowledgebase: 'Searching knowledgebase',
 };
 
 // Module-level cache for analysis results (persists across dialog open/close)
@@ -55,12 +57,6 @@ export interface ServerAnalysisInput {
     name: string;
     serverIds?: number[];
     servers?: Array<{ id: number; name: string }>;
-}
-
-interface AnalysisTool {
-    name: string;
-    description: string;
-    inputSchema: ToolInputSchema;
 }
 
 interface Message {
@@ -132,7 +128,9 @@ CRITICAL rules for code blocks - the user executes SQL directly from the UI so a
 
 7. NEVER suggest dropping indexes that implement PRIMARY KEY or UNIQUE constraints, even if they show zero scans in pg_stat_user_indexes. These indexes enforce data integrity constraints and cannot be removed without dropping the constraint itself. Low scan counts on constraint indexes are normal and expected; they serve a correctness purpose, not a performance purpose.
 
-Keep responses concise and actionable. Do not offer to perform additional actions, run further queries, or investigate anything else. Do not ask follow-up questions or ask what the user would like to do next. Begin your response directly with the first section heading (## Performance Review). Do not include any introductory text, preamble, or conversational remarks before the report. Your analysis is displayed in a read-only report that the user cannot respond to.`;
+Keep responses concise and actionable. Do not offer to perform additional actions, run further queries, or investigate anything else. Do not ask follow-up questions or ask what the user would like to do next. Begin your response directly with the first section heading (## Performance Review). Do not include any introductory text, preamble, or conversational remarks before the report. Your analysis is displayed in a read-only report that the user cannot respond to.
+
+If a search_knowledgebase tool is available, use it to look up unfamiliar PostgreSQL features, extensions, or pgEdge-specific concepts before making recommendations. If a get_blackouts tool is available, check whether the server is in a maintenance window before raising concerns about anomalous metrics.`;
 
 const CLUSTER_ADDENDUM = `
 
@@ -244,6 +242,19 @@ const ANALYSIS_TOOLS: AnalysisTool[] = [
             },
             required: ["probe_name"]
         }
+    },
+    {
+        name: "get_blackouts",
+        description: "Get active and recent blackout (maintenance window) periods for a connection",
+        inputSchema: {
+            type: "object",
+            properties: {
+                connection_id: { type: "integer", description: "Connection ID to query" },
+                active_only: { type: "boolean", description: "Only return currently active blackouts" },
+                include_schedules: { type: "boolean", description: "Also return recurring blackout schedules" }
+            },
+            required: []
+        }
     }
 ];
 
@@ -341,6 +352,9 @@ export const useServerAnalysis = (): UseServerAnalysisReturn => {
             return;
         }
 
+        // Fetch knowledgebase tool definition if available
+        const kbTool = await getKnowledgebaseTool();
+
         // Build context based on analysis type
         let contextText = '';
         let systemPrompt = BASE_SYSTEM_PROMPT;
@@ -391,6 +405,11 @@ Analyze performance metrics, schema design, security configuration, and replicat
             { role: 'user', content: userMessage }
         ];
 
+        // Build tools list - add knowledgebase tool if available
+        const tools: AnalysisTool[] = kbTool
+            ? [...ANALYSIS_TOOLS, kbTool]
+            : ANALYSIS_TOOLS;
+
         setProgressMessage('Starting analysis...');
 
         try {
@@ -411,7 +430,7 @@ Analyze performance metrics, schema design, security configuration, and replicat
                     },
                     body: JSON.stringify({
                         messages,
-                        tools: ANALYSIS_TOOLS,
+                        tools,
                         system: systemPrompt,
                     }),
                 });

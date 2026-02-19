@@ -81,6 +81,9 @@ Returns TSV data with:
 - threshold_value: The threshold that was exceeded
 - status: Current status (active, cleared, acknowledged)
 - cleared_at: When the alert was cleared (if applicable)
+- false_positive: Whether the alert was marked as a false positive (true/false, empty if not acknowledged)
+- acknowledged_by: Username of who acknowledged the alert (empty if not acknowledged)
+- notes: Acknowledgment notes/message (empty if not acknowledged)
 </output>
 
 <examples>
@@ -244,15 +247,23 @@ Returns TSV data with:
 
 			// Build the query with conditional time and status filters
 			query := `
-                SELECT id, triggered_at, severity, title, description, metric_name,
-                       metric_value, threshold_value, operator, status, cleared_at
-                FROM alerts
-                WHERE connection_id = $1
-                  AND ($2::timestamp IS NULL OR triggered_at >= $2)
-                  AND ($3::text IS NULL OR $3 = 'all' OR status = $3)
-                  AND ($4::bigint IS NULL OR rule_id = $4)
-                  AND ($5::text IS NULL OR metric_name = $5)
-                ORDER BY triggered_at DESC
+                SELECT a.id, a.triggered_at, a.severity, a.title, a.description, a.metric_name,
+                       a.metric_value, a.threshold_value, a.operator, a.status, a.cleared_at,
+                       ack.false_positive, ack.acknowledged_by, ack.message
+                FROM alerts a
+                LEFT JOIN LATERAL (
+                    SELECT acknowledged_at, acknowledged_by, message, false_positive
+                    FROM alert_acknowledgments
+                    WHERE alert_id = a.id
+                    ORDER BY acknowledged_at DESC
+                    LIMIT 1
+                ) ack ON true
+                WHERE a.connection_id = $1
+                  AND ($2::timestamp IS NULL OR a.triggered_at >= $2)
+                  AND ($3::text IS NULL OR $3 = 'all' OR a.status = $3)
+                  AND ($4::bigint IS NULL OR a.rule_id = $4)
+                  AND ($5::text IS NULL OR a.metric_name = $5)
+                ORDER BY a.triggered_at DESC
                 LIMIT $6 OFFSET $7
             `
 
@@ -278,7 +289,7 @@ Returns TSV data with:
 				connectionID, connName, statusFilter, timeInfo, limit))
 
 			// Header
-			sb.WriteString("id\ttriggered_at\tseverity\ttitle\tmetric_value\tthreshold_value\tstatus\tcleared_at\n")
+			sb.WriteString("id\ttriggered_at\tseverity\ttitle\tmetric_value\tthreshold_value\tstatus\tcleared_at\tfalse_positive\tacknowledged_by\tnotes\n")
 
 			// Data rows
 			rowCount := 0
@@ -295,15 +306,19 @@ Returns TSV data with:
 					operator       *string
 					status         string
 					clearedAt      *time.Time
+					falsePositive  *bool
+					acknowledgedBy *string
+					ackMessage     *string
 				)
 
 				if err := rows.Scan(&id, &triggeredAt, &severity, &title, &description,
-					&metricNameVal, &metricValue, &thresholdValue, &operator, &status, &clearedAt); err != nil {
+					&metricNameVal, &metricValue, &thresholdValue, &operator, &status, &clearedAt,
+					&falsePositive, &acknowledgedBy, &ackMessage); err != nil {
 					return mcp.NewToolError(fmt.Sprintf("Failed to scan row: %v", err))
 				}
 
 				// Format row
-				sb.WriteString(fmt.Sprintf("%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				sb.WriteString(fmt.Sprintf("%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 					id,
 					triggeredAt.Format(time.RFC3339),
 					severity,
@@ -312,6 +327,9 @@ Returns TSV data with:
 					formatOptionalFloat(thresholdValue),
 					status,
 					formatOptionalTime(clearedAt),
+					formatOptionalBool(falsePositive),
+					formatOptionalString(acknowledgedBy),
+					formatOptionalStringEscaped(ackMessage),
 				))
 				rowCount++
 			}
@@ -348,4 +366,32 @@ func formatOptionalTime(t *time.Time) string {
 		return ""
 	}
 	return t.Format(time.RFC3339)
+}
+
+// formatOptionalBool formats an optional bool pointer for TSV output
+func formatOptionalBool(b *bool) string {
+	if b == nil {
+		return ""
+	}
+	if *b {
+		return "true"
+	}
+	return "false"
+}
+
+// formatOptionalString formats an optional string pointer for TSV output
+func formatOptionalString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+// formatOptionalStringEscaped formats an optional string pointer for TSV output,
+// escaping tabs and newlines using tsv.FormatValue
+func formatOptionalStringEscaped(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return tsv.FormatValue(*s)
 }

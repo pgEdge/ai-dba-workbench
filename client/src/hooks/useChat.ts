@@ -9,6 +9,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { useAICapabilities } from '../contexts/AICapabilitiesContext';
 import {
     ChatMessageData,
     ContentBlock,
@@ -93,7 +94,6 @@ export interface UseChatReturn {
 // Constants
 // ---------------------------------------------------------------
 
-const MAX_AGENTIC_ITERATIONS = 15;
 const COMPACTION_TOKEN_THRESHOLD = 80_000;
 const COMPACTION_MAX_TOKENS = 100_000;
 const COMPACTION_RECENT_WINDOW = 10;
@@ -534,6 +534,7 @@ function saveInputHistory(history: string[]): void {
  * for arrow-key navigation.
  */
 export function useChat(): UseChatReturn {
+    const { maxIterations } = useAICapabilities();
     const [messages, setMessages] = useState<ChatMessageData[]>([]);
     const [activeTools, setActiveTools] = useState<ToolActivity[]>([]);
     const [conversations, setConversations] = useState<ConversationSummary[]>(
@@ -749,7 +750,7 @@ export function useChat(): UseChatReturn {
             const collectedActivity: ToolActivity[] = [];
 
             try {
-                while (iterations < MAX_AGENTIC_ITERATIONS) {
+                while (iterations < maxIterations) {
                     if (abortController.signal.aborted) {
                         return;
                     }
@@ -1055,7 +1056,7 @@ export function useChat(): UseChatReturn {
                 }
             }
         },
-        [availableTools, syncConversationId, refreshConversations, maybeCompact],
+        [availableTools, maxIterations, syncConversationId, refreshConversations, maybeCompact],
     );
 
     // ---------------------------------------------------------------

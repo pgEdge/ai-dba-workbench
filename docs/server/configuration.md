@@ -110,6 +110,7 @@ llm:
   ollama_url: "http://localhost:11434"
   max_tokens: 4096
   temperature: 0.7
+  max_iterations: 50
   compact_tool_descriptions: "auto"  # auto, true, or false
 
 #=========================================================================
@@ -347,6 +348,7 @@ contain a valid key.
 | `ollama_url` | string | `http://localhost:11434` | Ollama URL |
 | `max_tokens` | int | `4096` | Max response tokens |
 | `temperature` | float | `0.7` | Sampling temperature |
+| `max_iterations` | int | `50` | Max tool-calling iterations per request |
 | `compact_tool_descriptions` | string | `auto` | Tool description mode (auto, true, false) |
 | `anthropic_base_url` | string | `https://api.anthropic.com/v1` | Override the Anthropic API base URL |
 | `openai_base_url` | string | `https://api.openai.com/v1` | Override the OpenAI API base URL |

@@ -59,6 +59,7 @@ type LLMConfig struct {
 	GeminiBaseURL       string  `yaml:"gemini_base_url"`        // Base URL for Gemini API (default: https://generativelanguage.googleapis.com)
 	OllamaURL           string  `yaml:"ollama_url"`             // Ollama server URL
 	MaxTokens           int     `yaml:"max_tokens"`             // Max tokens for response
+	MaxIterations       int     `yaml:"max_iterations"`         // Max agentic loop iterations
 	Temperature         float64 `yaml:"temperature"`            // Temperature for sampling
 }
 

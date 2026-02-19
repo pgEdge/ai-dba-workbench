@@ -311,6 +311,10 @@ llm:
   # Default: 4096
   max_tokens: 4096
 
+  # Maximum iterations for agentic tool-calling loops
+  # Default: 50
+  max_iterations: 50
+
   # Temperature for sampling
   # Default: 0.7
   temperature: 0.7

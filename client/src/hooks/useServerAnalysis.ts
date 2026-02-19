@@ -10,6 +10,7 @@
 
 import { useState, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useAICapabilities } from '../contexts/AICapabilitiesContext';
 import { apiGet } from '../utils/apiClient';
 import { formatConnectionContext } from '../utils/connectionContext';
 import { getKnowledgebaseTool, AnalysisTool } from '../utils/mcpTools';
@@ -324,6 +325,7 @@ async function buildServerContext(
  */
 export const useServerAnalysis = (): UseServerAnalysisReturn => {
     const { user: _user } = useAuth();
+    const { maxIterations } = useAICapabilities();
     const [analysis, setAnalysis] = useState<string | null>(null);
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
@@ -409,7 +411,6 @@ Analyze performance metrics, schema design, security configuration, and replicat
 
         try {
             // Agentic loop - keep calling until no more tool use
-            const maxIterations = 15;
             let iterations = 0;
             let gotResponse = false;
             let analysisText = '';
@@ -519,7 +520,7 @@ Analyze performance metrics, schema design, security configuration, and replicat
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [maxIterations]);
 
     const reset = useCallback((): void => {
         setAnalysis(null);

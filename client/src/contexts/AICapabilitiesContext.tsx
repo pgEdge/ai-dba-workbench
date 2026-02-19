@@ -13,6 +13,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 
 interface AICapabilitiesValue {
     aiEnabled: boolean;
+    maxIterations: number;
     loading: boolean;
 }
 
@@ -20,6 +21,7 @@ const AICapabilitiesContext = createContext<AICapabilitiesValue | null>(null);
 
 interface CapabilitiesResponse {
     ai_enabled: boolean;
+    max_iterations?: number;
 }
 
 export const AICapabilitiesProvider = ({
@@ -28,6 +30,7 @@ export const AICapabilitiesProvider = ({
     children: React.ReactNode;
 }): React.ReactElement => {
     const [aiEnabled, setAiEnabled] = useState(false);
+    const [maxIterations, setMaxIterations] = useState(50);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
@@ -39,6 +42,7 @@ export const AICapabilitiesProvider = ({
                 if (response.ok) {
                     const data: CapabilitiesResponse = await response.json();
                     setAiEnabled(data.ai_enabled === true);
+                    setMaxIterations(data.max_iterations ?? 50);
                 } else {
                     setAiEnabled(false);
                 }
@@ -53,7 +57,7 @@ export const AICapabilitiesProvider = ({
     }, []);
 
     return (
-        <AICapabilitiesContext.Provider value={{ aiEnabled, loading }}>
+        <AICapabilitiesContext.Provider value={{ aiEnabled, maxIterations, loading }}>
             {children}
         </AICapabilitiesContext.Provider>
     );

@@ -619,7 +619,9 @@ func (c *Client) tryServerCompaction(messages []Message, maxTokens, recentWindow
 }
 
 func (c *Client) processQuery(ctx context.Context, query string) error {
-	const maxAgenticLoops = 50 // Maximum iterations to prevent infinite loops
+	// Maximum iterations to prevent infinite loops.
+	// TODO: read from server config via /api/v1/capabilities (max_iterations)
+	const maxAgenticLoops = 50
 
 	// Add user message to conversation history (skip if empty, used for prompts)
 	if query != "" {

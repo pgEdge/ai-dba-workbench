@@ -264,6 +264,7 @@ type LLMConfig struct {
 	GeminiBaseURL           string  `yaml:"gemini_base_url"`           // Base URL for Gemini API (default: https://generativelanguage.googleapis.com)
 	OllamaURL               string  `yaml:"ollama_url"`                // URL for Ollama service (default: http://localhost:11434)
 	MaxTokens               int     `yaml:"max_tokens"`                // Maximum tokens for LLM response (default: 4096)
+	MaxIterations           int     `yaml:"max_iterations"`            // Maximum agentic loop iterations (default: 50)
 	Temperature             float64 `yaml:"temperature"`               // Temperature for LLM sampling (default: 0.7)
 	CompactToolDescriptions string  `yaml:"compact_tool_descriptions"` // "auto" (default), "true", or "false"
 }
@@ -486,6 +487,7 @@ func defaultConfig() *Config {
 			GeminiAPIKey:    "",                       // Must be provided if using Gemini
 			OllamaURL:       "http://localhost:11434", // Default Ollama URL
 			MaxTokens:       4096,                     // Default max tokens
+			MaxIterations:   50,                       // Default max agentic loop iterations
 			Temperature:     0.7,                      // Default temperature
 		},
 		Knowledgebase: KnowledgebaseConfig{
@@ -636,6 +638,9 @@ func mergeConfig(dest, src *Config) {
 	}
 	if src.LLM.MaxTokens != 0 {
 		dest.LLM.MaxTokens = src.LLM.MaxTokens
+	}
+	if src.LLM.MaxIterations != 0 {
+		dest.LLM.MaxIterations = src.LLM.MaxIterations
 	}
 	if src.LLM.Temperature != 0 {
 		dest.LLM.Temperature = src.LLM.Temperature

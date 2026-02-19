@@ -10,6 +10,7 @@
 
 import { useState, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useAICapabilities } from '../contexts/AICapabilitiesContext';
 import { apiGet, apiPut } from '../utils/apiClient';
 import { formatConnectionContext } from '../utils/connectionContext';
 import {
@@ -253,6 +254,7 @@ const isMetricValueClose = (a: number, b: number): boolean => {
  */
 export const useAlertAnalysis = (): UseAlertAnalysisReturn => {
     const { user: _user } = useAuth();
+    const { maxIterations } = useAICapabilities();
     const [analysis, setAnalysis] = useState<string | null>(null);
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
@@ -334,7 +336,6 @@ Provide remediation recommendations and any threshold tuning suggestions.`;
 
         try {
             // Agentic loop - keep calling until no more tool use
-            const maxIterations = 10;
             let iterations = 0;
             let gotResponse = false; // Track completion with local variable (not state) to avoid stale closure
             let analysisText = '';
@@ -457,7 +458,7 @@ Provide remediation recommendations and any threshold tuning suggestions.`;
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [maxIterations]);
 
     const reset = useCallback((): void => {
         setAnalysis(null);

@@ -19,7 +19,11 @@ import (
 // processQuery handles sending a query to the LLM and processing the response,
 // including agentic tool calling loops.
 func (c *Client) processQuery(ctx context.Context, query string) error {
-	const maxAgenticLoops = 50 // Maximum iterations to prevent infinite loops
+	// Maximum iterations to prevent infinite loops (from config, default 50)
+	maxAgenticLoops := 50
+	if c.config != nil && c.config.LLM.MaxIterations > 0 {
+		maxAgenticLoops = c.config.LLM.MaxIterations
+	}
 
 	// Add user message to conversation history (skip if empty, used for prompts)
 	if query != "" {

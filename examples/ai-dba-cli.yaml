@@ -86,6 +86,11 @@ llm:
   # Default: 0.7
   temperature: 0.7
 
+  # Maximum tool-calling iterations per request
+  # Controls how many round-trips the LLM can perform during analysis
+  # Default: 50
+  max_iterations: 50
+
 #=========================================================================
 # USER INTERFACE SETTINGS
 #=========================================================================

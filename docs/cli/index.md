@@ -78,6 +78,7 @@ llm:
   model: claude-sonnet-4-5-20250929
   max_tokens: 4096
   temperature: 0.7
+  max_iterations: 50
 
 ui:
   no_color: false

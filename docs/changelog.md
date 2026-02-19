@@ -196,6 +196,13 @@ and this project adheres to
   three modes: `"auto"` detects localhost LLM endpoints and
   uses compact descriptions, `"true"` always uses compact
   descriptions, and `"false"` always uses verbose descriptions.
+- Configurable `max_iterations` option for LLM agentic
+  tool-calling loops; controls the maximum number of
+  round-trips the LLM can perform during analysis reports
+  and chat conversations (default: 50).
+- Human-readable tool display names in the Ellie chat
+  interface; tool usage indicators now show labels such as
+  "Querying metrics" instead of raw tool names.
 
 ### Changed
 

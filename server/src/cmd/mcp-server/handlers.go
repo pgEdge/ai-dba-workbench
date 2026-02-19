@@ -66,7 +66,11 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		mux.HandleFunc("/api/v1/openapi.json", handleOpenAPISpec)
 
 		// Capabilities endpoint (public - used by client to detect available features)
-		mux.HandleFunc("/api/v1/capabilities", handleCapabilities(deps.AIEnabled))
+		maxIterations := 50
+		if deps.Config != nil && deps.Config.LLM.MaxIterations > 0 {
+			maxIterations = deps.Config.LLM.MaxIterations
+		}
+		mux.HandleFunc("/api/v1/capabilities", handleCapabilities(deps.AIEnabled, maxIterations))
 
 		// Authentication endpoint (does NOT require auth - it IS the login endpoint)
 		// IPExtractor provides secure IP extraction that only trusts X-Forwarded-For
@@ -370,14 +374,15 @@ func handleOpenAPISpec(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleCapabilities returns server capability flags for the client
-func handleCapabilities(aiEnabled bool) http.HandlerFunc {
+func handleCapabilities(aiEnabled bool, maxIterations int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 		api.RespondJSON(w, http.StatusOK, map[string]interface{}{
-			"ai_enabled": aiEnabled,
+			"ai_enabled":     aiEnabled,
+			"max_iterations": maxIterations,
 		})
 	}
 }

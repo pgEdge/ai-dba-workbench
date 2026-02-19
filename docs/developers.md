@@ -40,7 +40,7 @@ The project consists of four main components:
 
 - The collector is a data collection service written in Go.
 - The server is an MCP server written in Go.
-- The cli is a command-line interface written in Go.
+- The alerter is an alert monitoring service written in Go.
 - The client is a web client written in React/TypeScript.
 
 Each component has its own directory with source code, tests, and a Makefile.
@@ -59,7 +59,6 @@ directory. Build individual components by changing to the component directory:
 ```bash
 cd collector && make build
 cd server && make build
-cd cli && make build
 ```
 
 Build the web client:
@@ -114,7 +113,6 @@ Run tests for a specific component by changing to the component directory:
 ```bash
 cd collector && make test
 cd server && make test
-cd cli && make test
 ```
 
 See the component development guides for detailed testing information:
@@ -178,9 +176,6 @@ The repository follows this structure:
 ```
 ai-dba-workbench/
 ├── alerter/           # Alert monitoring service
-│   ├── src/          # Source code
-│   └── README.md     # Component readme
-├── cli/              # Command-line interface
 │   ├── src/          # Source code
 │   └── README.md     # Component readme
 ├── client/           # Web client (React/TypeScript)

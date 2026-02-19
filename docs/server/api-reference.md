@@ -47,7 +47,8 @@ curl -H "Authorization: Bearer YOUR_TOKEN" \
 Tokens can be:
 
 - Session tokens are obtained via `/api/v1/auth/login`.
-- Service tokens are created via CLI for programmatic access.
+- Service tokens are created via the server command line for
+  programmatic access.
 
 ## Interactive API Browser
 

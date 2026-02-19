@@ -43,11 +43,11 @@ The pgEdge AI DBA Workbench consists of four sub-projects:
 
 - `/collector` - Data collector (Go).
 
-- `/client` - Web client application (React/TypeScript).
-
 - `/server` - MCP server (Go).
 
-- `/cli` - Command-line interface (Go).
+- `/alerter` - Alert monitoring service (Go).
+
+- `/client` - Web client application (React/TypeScript).
 
 Each sub-project follows this base structure:
 

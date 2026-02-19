@@ -666,7 +666,6 @@ func executeCommand(cmd string) { ... }
 - `.github/workflows/test-collector.yml`
 - `.github/workflows/test-server.yml`
 - `.github/workflows/test-integration.yml`
-- `.github/workflows/test-cli.yml`
 
 All workflows:
 

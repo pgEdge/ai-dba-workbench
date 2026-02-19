@@ -346,7 +346,6 @@ New users should start with the [Quick Start Guide](quickstart.md).
 
 ## Reference
 
-- [CLI Reference](reference/cli.md) - Command line options.
 - [Configuration Reference](reference/config.md) - All config options.
 
 ## Troubleshooting

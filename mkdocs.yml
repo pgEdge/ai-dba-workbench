@@ -119,7 +119,5 @@ nav:
   - Client:
       - Overview: client/index.md
       - Dashboards: client/dashboards.md
-  - CLI:
-      - Overview: cli/index.md
   - Changelog: changelog.md
   - License: LICENSE.md

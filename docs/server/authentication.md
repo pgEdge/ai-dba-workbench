@@ -424,8 +424,9 @@ The Tokens tab also displays API usage examples with sample
 
 ### For Machine-to-Machine (API Tokens)
 
-Create API tokens for service accounts or regular users via the
-CLI. Use the token directly in all requests as a Bearer token.
+Create API tokens for service accounts or regular users via
+the server command line. Use the token directly in all
+requests as a Bearer token.
 
 In the following example, an API token authenticates a request:
 

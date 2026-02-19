@@ -20,8 +20,6 @@ all:
 	@cd collector && $(MAKE) all BIN_DIR=../$(BIN_DIR)
 	@echo "Building server..."
 	@cd server && $(MAKE) all BIN_DIR=../$(BIN_DIR)
-	@echo "Building cli..."
-	@cd cli && $(MAKE) all BIN_DIR=../$(BIN_DIR)
 	@echo "Building alerter..."
 	@cd alerter && $(MAKE) all BIN_DIR=../$(BIN_DIR)
 	@echo "All sub-projects built successfully!"
@@ -34,8 +32,6 @@ test:
 	@cd collector && $(MAKE) test
 	@echo "Testing server..."
 	@cd server && $(MAKE) test
-	@echo "Testing cli..."
-	@cd cli && $(MAKE) test
 	@echo "Testing alerter..."
 	@cd alerter && $(MAKE) test
 	@echo "Testing client..."
@@ -49,8 +45,6 @@ coverage:
 	@cd collector && $(MAKE) coverage
 	@echo "Running coverage for server..."
 	@cd server && $(MAKE) coverage
-	@echo "Running coverage for cli..."
-	@cd cli && $(MAKE) coverage
 	@echo "Running coverage for alerter..."
 	@cd alerter && $(MAKE) coverage
 	@echo "Running coverage for client..."
@@ -64,8 +58,6 @@ lint:
 	@cd collector && $(MAKE) lint
 	@echo "Linting server..."
 	@cd server && $(MAKE) lint
-	@echo "Linting cli..."
-	@cd cli && $(MAKE) lint
 	@echo "Linting alerter..."
 	@cd alerter && $(MAKE) lint
 	@echo "Linting client..."
@@ -79,8 +71,6 @@ test-all:
 	@cd collector && $(MAKE) test-all
 	@echo "Running all tests for server..."
 	@cd server && $(MAKE) test-all
-	@echo "Running all tests for cli..."
-	@cd cli && $(MAKE) test-all
 	@echo "Running all tests for alerter..."
 	@cd alerter && $(MAKE) test-all
 	@echo "Running all tests for client..."
@@ -94,8 +84,6 @@ clean:
 	@cd collector && $(MAKE) clean BIN_DIR=../$(BIN_DIR)
 	@echo "Cleaning server..."
 	@cd server && $(MAKE) clean BIN_DIR=../$(BIN_DIR)
-	@echo "Cleaning cli..."
-	@cd cli && $(MAKE) clean BIN_DIR=../$(BIN_DIR)
 	@echo "Cleaning alerter..."
 	@cd alerter && $(MAKE) clean BIN_DIR=../$(BIN_DIR)
 	@echo "Cleaning client..."
@@ -111,8 +99,6 @@ killall:
 	@cd collector && $(MAKE) killall
 	@echo "Killing server processes..."
 	@cd server && $(MAKE) killall
-	@echo "Killing cli processes..."
-	@cd cli && $(MAKE) killall
 	@echo "Killing alerter processes..."
 	@cd alerter && $(MAKE) killall
 	@echo "All processes killed!"
@@ -134,7 +120,6 @@ help:
 	@echo "Sub-projects:"
 	@echo "  collector        - PostgreSQL metrics collector"
 	@echo "  server           - MCP server"
-	@echo "  cli              - AI CLI client"
 	@echo "  alerter          - Alert monitoring service"
 	@echo "  client           - Web client application"
 	@echo ""

@@ -10,8 +10,6 @@ site/
 # Binaries (legacy paths - for local builds in sub-project directories)
 collector/ai-dba-collector
 collector/ai-dba-collector-*
-cli/ai-dba-cli
-cli/ai-dba-cli-*
 server/ai-dba-server
 server/ai-dba-server-*
 *.exe

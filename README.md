@@ -1,7 +1,6 @@
 # pgEdge AI DBA Workbench
 
 [![CI - Alerter](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-alerter.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-alerter.yml)
-[![CI - CLI](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-cli.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-cli.yml)
 [![CI - Client](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-client.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-client.yml)
 [![CI - Collector](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-collector.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-collector.yml)
 [![CI - Docs](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-docs.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-docs.yml)
@@ -28,14 +27,12 @@ creation across the pgEdge ecosystem.
 
 ## Components
 
-The pgEdge AI DBA Workbench consists of five main components:
+The pgEdge AI DBA Workbench consists of four main components:
 
 - The [Collector](collector/README.md) monitors PostgreSQL
   servers and stores metrics in a centralized datastore.
 - The [Server](server/README.md) provides MCP tools and
   resources for interacting with PostgreSQL systems.
-- The [CLI](cli/README.md) offers a command-line interface
-  for communicating with the MCP server.
 - The [Alerter](alerter/README.md) evaluates collected
   metrics against thresholds and AI-powered anomaly
   detection to generate alerts.
@@ -49,8 +46,6 @@ directory:
 
 - The [Documentation Index](docs/index.md) serves as the
   main entry point for all project documentation.
-- The [CLI Documentation](docs/cli/index.md) covers
-  command-line interface usage and configuration.
 - The [Server Documentation](docs/server/index.md)
   describes MCP server configuration and authentication.
 - The [Collector Documentation](docs/collector/index.md)
@@ -120,7 +115,6 @@ Each sub-project and the top-level Makefile support these targets:
 
 For information on getting started with each component, please refer to:
 
-- [CLI Quick Start](docs/cli/index.md) - Get started with the CLI
 - [Collector Quick Start](docs/collector/quickstart.md) - Set up monitoring
 - [Server Configuration](docs/server/configuration.md) - Configure the server
 - [Alerter Overview](docs/alerter/index.md) - Set up alerting

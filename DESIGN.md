@@ -20,16 +20,13 @@ collect, store, retrieve, and age out metrics from the servers we are managing.
 
 ## Components
 
-The workbench consists of five components:
+The workbench consists of four components:
 
 - **Collector** (`/collector`) - Data collection service that monitors
   PostgreSQL servers and stores metrics in a PostgreSQL datastore.
 
 - **Server** (`/server`) - MCP protocol server providing tools, resources, and
   prompts for PostgreSQL interaction via HTTP/HTTPS or stdio.
-
-- **CLI** (`/cli`) - Interactive command-line interface for interacting with
-  the MCP server, supporting multiple LLM providers.
 
 - **Alerter** (`/alerter`) - Background service for threshold-based and
   anomaly-detection alerting on collected metrics.
@@ -282,7 +279,7 @@ their standbys nested beneath them.
 
 The MCP server provides tools, resources, and prompts for PostgreSQL
 interaction. It exposes three types of interfaces: MCP tools for LLMs, HTTP
-APIs for client applications, and CLI commands for server administration.
+APIs for client applications, and command-line flags for server administration.
 
 #### MCP Protocol
 
@@ -324,7 +321,7 @@ for database interaction:
 
 #### HTTP APIs
 
-HTTP APIs serve client applications (CLI, web client). These are not MCP tools
+HTTP APIs serve client applications such as the web client. These are not MCP tools
 and are not accessible to LLMs. All REST API endpoints are versioned with the
 `/api/v1/` prefix.
 
@@ -366,9 +363,9 @@ Link header pointing to the OpenAPI specification at `/api/v1/openapi.json`.
 
 - Endpoints for storing and retrieving conversation history
 
-#### CLI Commands
+#### Command-Line Flags
 
-Server administration uses CLI commands executed before the server starts.
+Server administration uses command-line flags executed before the server starts.
 These manage users, groups, privileges, and tokens.
 
 **User Management**:
@@ -399,27 +396,6 @@ These manage users, groups, privileges, and tokens.
 Resources return data from probes for given time periods and key information
 (server ID, database name, etc.). Additional resources return realtime
 snapshots from monitored servers.
-
-### CLI
-
-The CLI provides an interactive interface for working with the MCP server.
-
-#### Features
-
-- Interactive REPL with readline support
-- Multiple LLM providers: Anthropic, OpenAI, Ollama
-- Conversation history management
-- User preferences persistence
-- Connection selection (database context)
-- Tool, resource, and prompt listing
-- Platform-specific UI enhancements (macOS, Linux, Windows)
-
-#### Configuration
-
-- YAML configuration file
-- CLI flags override configuration
-- MCP server URL and credentials
-- LLM provider and model selection
 
 ### Web Client
 
@@ -564,7 +540,7 @@ functionality. Tests run under `go test` or `npm test` as appropriate.
 
 A `/tests` directory at the top level provides end-to-end integration testing.
 The collector and server start against a temporary test database, and the
-system is exercised using both the CLI and (eventually) the web client.
+system is exercised using the web client.
 
 Tests requiring a database create a temporary database with a timestamp in the
 name. The default PostgreSQL connection parameters apply unless overridden:

@@ -185,50 +185,7 @@ the user to select a connection:
 
 ```
 No database connection selected. Please select a database connection
-using your client interface (CLI or web client).
-```
-
-## CLI Usage
-
-The CLI provides slash commands for connection management:
-
-```
-/list connections              List available database connections
-/list databases                List databases on current connection
-/show connection               Show the current database connection
-/set connection <id> [database]  Select a database connection
-/set connection none           Clear the current connection
-```
-
-### Examples
-
-```
-> /list connections
-Available connections (2):
-
-  1: Production DB [monitored]
-     Host: db.example.com:5432, Database: myapp
-
-  2: Staging DB [monitored]
-     Host: staging.example.com:5432, Database: myapp_staging
-
-Use '/set connection <id>' to select a connection
-
-> /set connection 1
-Connected to: Production DB (db.example.com:5432)
-
-> /list databases
-Databases on Production DB (3):
-
-* myapp (owner: postgres, size: 125 MB, encoding: UTF8)
-  analytics (owner: postgres, size: 2 GB, encoding: UTF8)
-  archive (owner: postgres, size: 500 MB, encoding: UTF8)
-
-Use '/set connection <id> <database>' to select a database
-
-> /set connection 1 analytics
-Connected to: Production DB (db.example.com:5432,
-  database: analytics)
+using the web client.
 ```
 
 ## Error Handling

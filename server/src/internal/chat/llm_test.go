@@ -510,6 +510,213 @@ func TestExtractOpenAIErrorMessage(t *testing.T) {
 	}
 }
 
+func TestEstimateTokens(t *testing.T) {
+	tests := []struct {
+		name string
+		text string
+		want int
+	}{
+		{"empty string", "", 0},
+		{"short string", "hello", 2},                                    // (5 + 2) / 3 = 2
+		{"medium string", "hello world", 4},                             // (11 + 2) / 3 = 4
+		{"long string", "This is a longer string with more words.", 14}, // (42 + 2) / 3 = 14
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := EstimateTokens(tt.text)
+			if got != tt.want {
+				t.Errorf("EstimateTokens(%q) = %d, want %d", tt.text, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEstimateTotalTokens(t *testing.T) {
+	tests := []struct {
+		name     string
+		messages []Message
+		wantMin  int // We check for minimum since estimation includes overhead
+	}{
+		{
+			name:     "empty messages",
+			messages: []Message{},
+			wantMin:  0,
+		},
+		{
+			name: "single user message",
+			messages: []Message{
+				{Role: "user", Content: "hello"},
+			},
+			wantMin: 10, // 2 tokens for "hello" + 10 overhead
+		},
+		{
+			name: "multiple messages",
+			messages: []Message{
+				{Role: "user", Content: "hello"},
+				{Role: "assistant", Content: "hi there"},
+			},
+			wantMin: 20, // 2 + 10 + 3 + 10 = 25, but we just check minimum
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := EstimateTotalTokens(tt.messages)
+			if got < tt.wantMin {
+				t.Errorf("EstimateTotalTokens() = %d, want at least %d", got, tt.wantMin)
+			}
+		})
+	}
+}
+
+func TestGetBriefDescription(t *testing.T) {
+	tests := []struct {
+		name string
+		desc string
+		want string
+	}{
+		{
+			name: "single line with period",
+			desc: "This is a description.",
+			want: "This is a description.",
+		},
+		{
+			name: "single line without period",
+			desc: "This is a description",
+			want: "This is a description",
+		},
+		{
+			name: "multiple lines",
+			desc: "First line.\nSecond line.",
+			want: "First line.",
+		},
+		{
+			name: "sentence ending with period returns whole line",
+			desc: "First sentence. Second sentence continues here.",
+			want: "First sentence. Second sentence continues here.",
+		},
+		{
+			name: "sentence without trailing period extracts first",
+			desc: "First sentence. Second continues",
+			want: "First sentence.",
+		},
+		{
+			name: "empty string",
+			desc: "",
+			want: "",
+		},
+		{
+			name: "only whitespace lines",
+			desc: "\n\n\n",
+			want: "\n\n\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := GetBriefDescription(tt.desc)
+			if got != tt.want {
+				t.Errorf("GetBriefDescription(%q) = %q, want %q", tt.desc, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHasToolResults(t *testing.T) {
+	tests := []struct {
+		name string
+		msg  Message
+		want bool
+	}{
+		{
+			name: "message with ToolResult slice",
+			msg: Message{
+				Role: "user",
+				Content: []ToolResult{
+					{Type: "tool_result", ToolUseID: "123", Content: "result"},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "message with interface slice containing tool_result",
+			msg: Message{
+				Role: "user",
+				Content: []interface{}{
+					map[string]interface{}{
+						"type":        "tool_result",
+						"tool_use_id": "123",
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "message with string content",
+			msg: Message{
+				Role:    "user",
+				Content: "hello",
+			},
+			want: false,
+		},
+		{
+			name: "message with interface slice without tool_result",
+			msg: Message{
+				Role: "user",
+				Content: []interface{}{
+					map[string]interface{}{
+						"type": "text",
+						"text": "hello",
+					},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "message with empty ToolResult slice",
+			msg: Message{
+				Role:    "user",
+				Content: []ToolResult{},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := HasToolResults(tt.msg)
+			if got != tt.want {
+				t.Errorf("HasToolResults() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEstimateTotalTokensWithToolContent(t *testing.T) {
+	// Test with tool result content
+	messages := []Message{
+		{
+			Role: "user",
+			Content: []ToolResult{
+				{
+					Type:      "tool_result",
+					ToolUseID: "123",
+					Content: []mcp.ContentItem{
+						{Type: "text", Text: "This is the tool result"},
+					},
+				},
+			},
+		},
+	}
+
+	tokens := EstimateTotalTokens(messages)
+	// Should have some tokens for the content
+	if tokens < 10 {
+		t.Errorf("Expected at least 10 tokens, got %d", tokens)
+	}
+}
+
 func TestOpenAIClient_GPT5UsesMaxCompletionTokens(t *testing.T) {
 	tests := []struct {
 		name                      string

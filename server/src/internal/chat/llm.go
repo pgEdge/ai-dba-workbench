@@ -18,7 +18,6 @@ import (
 	"strings"
 	"time"
 
-	pkgchat "github.com/pgedge/ai-workbench/pkg/chat"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
 )
 
@@ -246,50 +245,155 @@ func extractTextFromContent(content interface{}) string {
 }
 
 // -------------------------------------------------------------------------
-// Types - Re-exported from pkg/chat for backward compatibility
+// Types
 // -------------------------------------------------------------------------
 
-// Message represents a chat message
-type Message = pkgchat.Message
+// Message represents a chat message.
+type Message struct {
+	Role         string                 `json:"role"`
+	Content      interface{}            `json:"content"`
+	CacheControl map[string]interface{} `json:"cache_control,omitempty"`
+}
 
-// ToolUse represents a tool invocation in a message
-type ToolUse = pkgchat.ToolUse
+// ToolUse represents a tool invocation in a message.
+type ToolUse struct {
+	Type  string                 `json:"type"`
+	ID    string                 `json:"id"`
+	Name  string                 `json:"name"`
+	Input map[string]interface{} `json:"input"`
+}
 
-// TextContent represents text content in a message
-type TextContent = pkgchat.TextContent
+// TextContent represents text content in a message.
+type TextContent struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
 
-// ToolResult represents the result of a tool execution
-type ToolResult = pkgchat.ToolResult
+// ToolResult represents the result of a tool execution.
+type ToolResult struct {
+	Type      string      `json:"type"`
+	ToolUseID string      `json:"tool_use_id"`
+	Content   interface{} `json:"content"`
+	IsError   bool        `json:"is_error,omitempty"`
+}
 
-// LLMResponse represents a response from the LLM
-type LLMResponse = pkgchat.LLMResponse
+// LLMResponse represents a response from the LLM.
+type LLMResponse struct {
+	Content    []interface{} // Can be TextContent or ToolUse
+	StopReason string
+	TokenUsage *TokenUsage `json:"token_usage,omitempty"`
+}
 
-// TokenUsage holds token usage information for debug purposes
-type TokenUsage = pkgchat.TokenUsage
+// TokenUsage holds token usage information for debug purposes.
+type TokenUsage struct {
+	Provider               string  `json:"provider"`
+	PromptTokens           int     `json:"prompt_tokens,omitempty"`
+	CompletionTokens       int     `json:"completion_tokens,omitempty"`
+	TotalTokens            int     `json:"total_tokens,omitempty"`
+	CacheCreationTokens    int     `json:"cache_creation_tokens,omitempty"`
+	CacheReadTokens        int     `json:"cache_read_tokens,omitempty"`
+	CacheSavingsPercentage float64 `json:"cache_savings_percentage,omitempty"`
+}
 
-// CompactionRequest represents a request to compact chat history
-type CompactionRequest = pkgchat.CompactionRequest
-
-// CompactionResponse contains the compacted messages and statistics
-type CompactionResponse = pkgchat.CompactionResponse
-
-// CompactionInfo provides statistics about the compaction operation
-type CompactionInfo = pkgchat.CompactionInfo
-
-// Re-export helper functions from pkg/chat
-var (
-	EstimateTokens      = pkgchat.EstimateTokens
-	EstimateTotalTokens = pkgchat.EstimateTotalTokens
-	HasToolResults      = pkgchat.HasToolResults
-	GetBriefDescription = pkgchat.GetBriefDescription
-)
-
-// LLMClient provides a unified interface for different LLM providers
+// LLMClient provides a unified interface for different LLM providers.
 type LLMClient interface {
 	// Chat sends messages and available tools to the LLM and returns the response.
 	// If customSystemPrompt is non-empty, it overrides the default system prompt.
 	Chat(ctx context.Context, messages []Message, tools interface{}, customSystemPrompt string) (LLMResponse, error)
 
-	// ListModels returns a list of available models from the provider
+	// ListModels returns a list of available models from the provider.
 	ListModels(ctx context.Context) ([]string, error)
+}
+
+// -------------------------------------------------------------------------
+// Helper functions
+// -------------------------------------------------------------------------
+
+// EstimateTokens estimates the number of tokens in a string.
+// Uses a rough heuristic of ~3.5 characters per token.
+func EstimateTokens(text string) int {
+	if text == "" {
+		return 0
+	}
+	return (len(text) + 2) / 3
+}
+
+// EstimateTotalTokens estimates the total tokens in a message array.
+func EstimateTotalTokens(messages []Message) int {
+	total := 0
+	for _, msg := range messages {
+		switch content := msg.Content.(type) {
+		case string:
+			total += EstimateTokens(content)
+		case []interface{}:
+			for _, item := range content {
+				if m, ok := item.(map[string]interface{}); ok {
+					if text, ok := m["text"].(string); ok {
+						total += EstimateTokens(text)
+					}
+					if input, ok := m["input"]; ok {
+						if jsonBytes, err := json.Marshal(input); err == nil {
+							total += EstimateTokens(string(jsonBytes))
+						}
+					}
+					if c, ok := m["content"]; ok {
+						if text, ok := c.(string); ok {
+							total += EstimateTokens(text)
+						}
+					}
+				}
+			}
+		case []ToolResult:
+			for _, tr := range content {
+				switch c := tr.Content.(type) {
+				case []mcp.ContentItem:
+					for _, item := range c {
+						total += EstimateTokens(item.Text)
+					}
+				case string:
+					total += EstimateTokens(c)
+				}
+			}
+		}
+		total += 10
+	}
+	return total
+}
+
+// HasToolResults checks if a message contains tool_result blocks.
+func HasToolResults(msg Message) bool {
+	content, ok := msg.Content.([]ToolResult)
+	if ok && len(content) > 0 {
+		return true
+	}
+
+	if contentSlice, ok := msg.Content.([]interface{}); ok {
+		for _, item := range contentSlice {
+			if itemMap, ok := item.(map[string]interface{}); ok {
+				if itemType, ok := itemMap["type"].(string); ok && itemType == "tool_result" {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// GetBriefDescription extracts the first line or sentence from a description.
+func GetBriefDescription(desc string) string {
+	lines := strings.Split(desc, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			if strings.HasSuffix(line, ".") {
+				return line
+			}
+			if idx := strings.Index(line, ". "); idx != -1 {
+				return line[:idx+1]
+			}
+			return line
+		}
+	}
+	return desc
 }

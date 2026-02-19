@@ -204,6 +204,12 @@ and this project adheres to
   interface; tool usage indicators now show labels such as
   "Querying metrics" instead of raw tool names.
 
+### Removed
+
+- The CLI sub-project (`/cli`); the web client now provides all
+  interactive functionality previously available through the
+  command-line interface.
+
 ### Changed
 
 - Metrics charts now use `generate_series` for full time-series

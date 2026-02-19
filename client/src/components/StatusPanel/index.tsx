@@ -12,6 +12,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
+    Alert,
     Box,
     Typography,
     alpha,
@@ -485,6 +486,12 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                 <Typography variant="body2" sx={EMPTY_STATE_DESC_SX}>
                     Choose a database server, cluster, or view the entire estate from the navigation panel
                 </Typography>
+                {aiEnabled && (
+                    <Alert severity="warning" sx={{ mt: 3, maxWidth: 600, textAlign: 'left' }}>
+                        AI can make mistakes. Quality and accuracy can vary based on the
+                        models in use. Check all AI responses for accuracy.
+                    </Alert>
+                )}
             </Box>
         );
     }

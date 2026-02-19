@@ -191,6 +191,9 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		if deps.OverviewGen != nil {
 			overviewHandler := overview.NewHandler(deps.OverviewGen)
 			overviewHandler.RegisterRoutes(mux, authWrapper)
+			deps.OverviewGen.OnRestart(func() {
+				serverInfoHandler.InvalidateCache()
+			})
 			fmt.Fprintf(os.Stderr, "AI Overview API: ENABLED\n")
 		}
 

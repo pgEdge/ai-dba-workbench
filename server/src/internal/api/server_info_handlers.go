@@ -170,6 +170,15 @@ func NewServerInfoHandler(
 	}
 }
 
+// InvalidateCache clears all cached AI analysis entries. This is
+// called when a monitored PostgreSQL server restarts, since cached
+// analysis may reference stale configuration or metrics.
+func (h *ServerInfoHandler) InvalidateCache() {
+	h.cacheMu.Lock()
+	h.cache = make(map[int]*aiCacheEntry)
+	h.cacheMu.Unlock()
+}
+
 // RegisterRoutes registers the server info endpoint on the mux.
 func (h *ServerInfoHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(http.HandlerFunc) http.HandlerFunc) {
 	if h.datastore == nil {

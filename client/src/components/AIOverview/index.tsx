@@ -28,6 +28,7 @@ import {
 } from '@mui/icons-material';
 import { apiGet } from '../../utils/apiClient';
 import { ApiError } from '../../utils/apiClient';
+import { clearAnalysisCache } from '../../hooks/useServerAnalysis';
 
 /**
  * Shape of the API response from GET /api/v1/overview.
@@ -38,6 +39,7 @@ interface OverviewResponse {
     generated_at: string;
     stale_at: string;
     snapshot?: Record<string, unknown>;
+    restart_detected?: boolean;
 }
 
 /**
@@ -163,6 +165,16 @@ const AIOverview: React.FC<AIOverviewProps> = ({ mode = 'light', selection, onAn
         return '/api/v1/overview';
     }, [selection?.type, selection?.id, selection?.serverIds, selection?.name]);
 
+    // Reset state synchronously when the URL changes so the stale
+    // overview is never painted to the screen.
+    const [lastFetchedUrl, setLastFetchedUrl] = useState(overviewUrl);
+
+    if (overviewUrl !== lastFetchedUrl) {
+        setOverview(null);
+        setLoading(true);
+        setLastFetchedUrl(overviewUrl);
+    }
+
     const fetchOverview = useCallback(async (isInitial: boolean) => {
         if (isInitial) {
             setLoading(true);
@@ -172,6 +184,9 @@ const AIOverview: React.FC<AIOverviewProps> = ({ mode = 'light', selection, onAn
         try {
             const data = await apiGet<OverviewResponse>(overviewUrl);
             setOverview(data);
+            if (data.restart_detected) {
+                clearAnalysisCache();
+            }
         } catch (err) {
             if (err instanceof ApiError && err.statusCode === 401) {
                 // User is not authenticated; suppress the error silently

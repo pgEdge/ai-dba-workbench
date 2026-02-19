@@ -518,6 +518,47 @@ func TestServerInfoGetAIAnalysis(t *testing.T) {
 	})
 }
 
+func TestServerInfoInvalidateCache(t *testing.T) {
+	now := time.Now().UTC()
+	h := &ServerInfoHandler{
+		llmConfig: &llmproxy.Config{Provider: "anthropic"},
+		cache: map[int]*aiCacheEntry{
+			1: {
+				analysis:    map[string]string{"db1": "Analysis 1"},
+				generatedAt: now,
+				expiresAt:   now.Add(5 * time.Minute),
+			},
+			2: {
+				analysis:    map[string]string{"db2": "Analysis 2"},
+				generatedAt: now,
+				expiresAt:   now.Add(5 * time.Minute),
+			},
+		},
+	}
+
+	// Verify cache is populated
+	if len(h.cache) != 2 {
+		t.Fatalf("expected 2 cache entries, got %d", len(h.cache))
+	}
+
+	// Invalidate
+	h.InvalidateCache()
+
+	// Verify cache is empty
+	if len(h.cache) != 0 {
+		t.Errorf("expected 0 cache entries after invalidation, got %d",
+			len(h.cache))
+	}
+
+	// Verify cache still works after invalidation (not nil)
+	h.cacheMu.RLock()
+	_, ok := h.cache[1]
+	h.cacheMu.RUnlock()
+	if ok {
+		t.Error("expected entry 1 to not exist after invalidation")
+	}
+}
+
 func containsString(s, substr string) bool {
 	return len(s) > 0 && len(substr) > 0 && // avoid trivial matches
 		len(s) >= len(substr) &&

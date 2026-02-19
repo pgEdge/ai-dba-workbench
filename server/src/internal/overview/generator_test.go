@@ -458,3 +458,212 @@ func TestGetOverview_ReturnsCurrent(t *testing.T) {
 		t.Errorf("expected summary %q, got %q", expected.Summary, got.Summary)
 	}
 }
+
+// --- containsRestart tests -------------------------------------------------
+
+func TestContainsRestart(t *testing.T) {
+	cutoff := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+
+	t.Run("restart after cutoff returns true", func(t *testing.T) {
+		snapshot := &database.EstateSnapshot{
+			RecentEvents: []database.EstateEventSummary{
+				{
+					EventType:  "restart",
+					OccurredAt: cutoff.Add(10 * time.Minute),
+				},
+			},
+		}
+		if !containsRestart(snapshot, cutoff) {
+			t.Error("expected true when restart is after cutoff")
+		}
+	})
+
+	t.Run("restart before cutoff returns false", func(t *testing.T) {
+		snapshot := &database.EstateSnapshot{
+			RecentEvents: []database.EstateEventSummary{
+				{
+					EventType:  "restart",
+					OccurredAt: cutoff.Add(-10 * time.Minute),
+				},
+			},
+		}
+		if containsRestart(snapshot, cutoff) {
+			t.Error("expected false when restart is before cutoff")
+		}
+	})
+
+	t.Run("restart at exact cutoff returns false", func(t *testing.T) {
+		snapshot := &database.EstateSnapshot{
+			RecentEvents: []database.EstateEventSummary{
+				{
+					EventType:  "restart",
+					OccurredAt: cutoff,
+				},
+			},
+		}
+		if containsRestart(snapshot, cutoff) {
+			t.Error("expected false when restart is at exact cutoff (not strictly after)")
+		}
+	})
+
+	t.Run("non-restart event after cutoff returns false", func(t *testing.T) {
+		snapshot := &database.EstateSnapshot{
+			RecentEvents: []database.EstateEventSummary{
+				{
+					EventType:  "config_change",
+					OccurredAt: cutoff.Add(10 * time.Minute),
+				},
+			},
+		}
+		if containsRestart(snapshot, cutoff) {
+			t.Error("expected false when only non-restart events are present")
+		}
+	})
+
+	t.Run("empty events returns false", func(t *testing.T) {
+		snapshot := &database.EstateSnapshot{
+			RecentEvents: []database.EstateEventSummary{},
+		}
+		if containsRestart(snapshot, cutoff) {
+			t.Error("expected false when no events")
+		}
+	})
+
+	t.Run("mixed events with restart after cutoff returns true", func(t *testing.T) {
+		snapshot := &database.EstateSnapshot{
+			RecentEvents: []database.EstateEventSummary{
+				{
+					EventType:  "config_change",
+					OccurredAt: cutoff.Add(5 * time.Minute),
+				},
+				{
+					EventType:  "restart",
+					OccurredAt: cutoff.Add(10 * time.Minute),
+				},
+			},
+		}
+		if !containsRestart(snapshot, cutoff) {
+			t.Error("expected true when restart event exists after cutoff")
+		}
+	})
+}
+
+// --- hasSignificantChange restart tests ------------------------------------
+
+func TestHasSignificantChange_RestartDetection(t *testing.T) {
+	g := &Generator{
+		scopedCache: make(map[string]*scopedEntry),
+	}
+
+	oldTime := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+
+	t.Run("restart after old timestamp is significant", func(t *testing.T) {
+		old := &database.EstateSnapshot{
+			Timestamp:       oldTime,
+			ServerTotal:     5,
+			ServerOnline:    4,
+			ServerOffline:   1,
+			AlertTotal:      3,
+			AlertCritical:   1,
+			AlertWarning:    1,
+			AlertInfo:       1,
+			ActiveBlackouts: []database.EstateBlackoutSummary{},
+			RecentEvents:    []database.EstateEventSummary{},
+		}
+		cur := &database.EstateSnapshot{
+			Timestamp:       oldTime.Add(time.Minute),
+			ServerTotal:     5,
+			ServerOnline:    4,
+			ServerOffline:   1,
+			AlertTotal:      3,
+			AlertCritical:   1,
+			AlertWarning:    1,
+			AlertInfo:       1,
+			ActiveBlackouts: []database.EstateBlackoutSummary{},
+			RecentEvents: []database.EstateEventSummary{
+				{
+					EventType:  "restart",
+					OccurredAt: oldTime.Add(30 * time.Second),
+				},
+			},
+		}
+		if !g.hasSignificantChange(old, cur) {
+			t.Error("expected true when restart event is newer than old snapshot")
+		}
+	})
+
+	t.Run("restart before old timestamp is not significant", func(t *testing.T) {
+		old := &database.EstateSnapshot{
+			Timestamp:       oldTime,
+			ServerTotal:     5,
+			ServerOnline:    4,
+			ServerOffline:   1,
+			AlertTotal:      3,
+			AlertCritical:   1,
+			AlertWarning:    1,
+			AlertInfo:       1,
+			ActiveBlackouts: []database.EstateBlackoutSummary{},
+			RecentEvents:    []database.EstateEventSummary{},
+		}
+		cur := &database.EstateSnapshot{
+			Timestamp:       oldTime.Add(time.Minute),
+			ServerTotal:     5,
+			ServerOnline:    4,
+			ServerOffline:   1,
+			AlertTotal:      3,
+			AlertCritical:   1,
+			AlertWarning:    1,
+			AlertInfo:       1,
+			ActiveBlackouts: []database.EstateBlackoutSummary{},
+			RecentEvents: []database.EstateEventSummary{
+				{
+					EventType:  "restart",
+					OccurredAt: oldTime.Add(-10 * time.Minute),
+				},
+			},
+		}
+		if g.hasSignificantChange(old, cur) {
+			t.Error("expected false when restart event is older than old snapshot")
+		}
+	})
+}
+
+// --- OnRestart callback and cache flush tests ------------------------------
+
+func TestOnRestart_CallbackAndCacheFlush(t *testing.T) {
+	g := &Generator{
+		scopedCache: make(map[string]*scopedEntry),
+	}
+
+	// Populate scoped cache
+	g.scopedCache["server:1"] = &scopedEntry{
+		overview:   newTestOverview("server 1 overview"),
+		lastAccess: time.Now().UTC(),
+	}
+	g.scopedCache["cluster:2"] = &scopedEntry{
+		overview:   newTestOverview("cluster 2 overview"),
+		lastAccess: time.Now().UTC(),
+	}
+
+	// Register callback
+	callbackCalled := false
+	g.OnRestart(func() {
+		callbackCalled = true
+	})
+
+	// Simulate what refresh() does on restart detection
+	g.mu.Lock()
+	g.scopedCache = make(map[string]*scopedEntry)
+	if g.onRestart != nil {
+		g.onRestart()
+	}
+	g.mu.Unlock()
+
+	if !callbackCalled {
+		t.Error("expected onRestart callback to be called")
+	}
+	if len(g.scopedCache) != 0 {
+		t.Errorf("expected empty scoped cache after restart, got %d entries",
+			len(g.scopedCache))
+	}
+}

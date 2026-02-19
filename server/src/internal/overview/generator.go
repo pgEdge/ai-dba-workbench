@@ -43,10 +43,11 @@ const (
 
 // Overview holds the current AI-generated estate summary and metadata.
 type Overview struct {
-	Summary     string                   `json:"summary"`
-	GeneratedAt time.Time                `json:"generated_at"`
-	StaleAt     time.Time                `json:"stale_at"`
-	Snapshot    *database.EstateSnapshot `json:"snapshot"`
+	Summary         string                   `json:"summary"`
+	GeneratedAt     time.Time                `json:"generated_at"`
+	StaleAt         time.Time                `json:"stale_at"`
+	Snapshot        *database.EstateSnapshot `json:"snapshot"`
+	RestartDetected bool                     `json:"restart_detected,omitempty"`
 }
 
 // scopedEntry is a cached scoped overview together with the time it
@@ -70,6 +71,7 @@ type Generator struct {
 	scopedCache  map[string]*scopedEntry
 	ctx          context.Context
 	cancel       context.CancelFunc
+	onRestart    func()
 }
 
 // NewGenerator creates a new overview generator. It does not start any
@@ -110,6 +112,27 @@ func (g *Generator) Stop() {
 	if g.cancel != nil {
 		g.cancel()
 	}
+}
+
+// OnRestart registers a callback that is invoked when a PostgreSQL
+// restart is detected during a refresh cycle. The callback runs
+// under the generator's write lock, so it must not call back into
+// the generator.
+func (g *Generator) OnRestart(fn func()) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.onRestart = fn
+}
+
+// containsRestart reports whether the snapshot contains any restart
+// events that occurred strictly after the given cutoff time.
+func containsRestart(snapshot *database.EstateSnapshot, after time.Time) bool {
+	for _, ev := range snapshot.RecentEvents {
+		if ev.EventType == "restart" && ev.OccurredAt.After(after) {
+			return true
+		}
+	}
+	return false
 }
 
 // GetOverview returns the current estate-wide overview in a thread-safe
@@ -313,11 +336,27 @@ func (g *Generator) refresh() {
 		Snapshot:    snapshot,
 	}
 
+	// Detect restarts: if the new snapshot has restart events newer
+	// than the previous snapshot, flush all caches and notify.
+	restartDetected := oldSnapshot != nil && containsRestart(snapshot, oldSnapshot.Timestamp)
+	if restartDetected {
+		overview.RestartDetected = true
+	}
+
 	g.mu.Lock()
 	g.current = overview
 	g.lastSnapshot = snapshot
+	if restartDetected {
+		g.scopedCache = make(map[string]*scopedEntry)
+		if g.onRestart != nil {
+			g.onRestart()
+		}
+	}
 	g.mu.Unlock()
 
+	if restartDetected {
+		fmt.Fprintf(os.Stderr, "Overview: restart detected, flushed all caches\n")
+	}
 	fmt.Fprintf(os.Stderr, "Overview: generated new summary at %s\n", now.Format(time.RFC3339))
 }
 
@@ -351,6 +390,12 @@ func (g *Generator) hasSignificantChange(old, current *database.EstateSnapshot) 
 
 	// Active blackout count changed.
 	if len(old.ActiveBlackouts) != len(current.ActiveBlackouts) {
+		return true
+	}
+
+	// A restart event newer than the previous snapshot triggers
+	// regeneration even when server/alert counts remain unchanged.
+	if containsRestart(current, old.Timestamp) {
 		return true
 	}
 

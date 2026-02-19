@@ -51,6 +51,14 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const analysisCache = new Map<string, { analysis: string; timestamp: number }>();
 
+/**
+ * Clear the analysis cache. Called when a server restart is detected
+ * to ensure stale analysis reports are not served.
+ */
+export function clearAnalysisCache(): void {
+    analysisCache.clear();
+}
+
 export interface ServerAnalysisInput {
     type: 'server' | 'cluster';
     id: number | string;

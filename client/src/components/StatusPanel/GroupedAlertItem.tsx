@@ -157,18 +157,20 @@ const GroupedAlertInstance = ({ alert, showServer, onAcknowledge, onUnacknowledg
             </Typography>
 
             {/* Analyze button */}
-            <Tooltip title={alert.aiAnalysis ? "View cached analysis" : "Analyze with AI"} placement="left">
-                <IconButton
-                    size="small"
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        onAnalyze?.(alert);
-                    }}
-                    sx={analyzeButtonSx}
-                >
-                    <AnalyzeIcon sx={{ ...ICON_14_SX, ...(alert.aiAnalysis && { color: 'success.main' }) }} />
-                </IconButton>
-            </Tooltip>
+            {onAnalyze && (
+                <Tooltip title={alert.aiAnalysis ? "View cached analysis" : "Analyze with AI"} placement="left">
+                    <IconButton
+                        size="small"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onAnalyze(alert);
+                        }}
+                        sx={analyzeButtonSx}
+                    >
+                        <AnalyzeIcon sx={{ ...ICON_14_SX, ...(alert.aiAnalysis && { color: 'success.main' }) }} />
+                    </IconButton>
+                </Tooltip>
+            )}
 
             {/* Edit override button */}
             {alert.ruleId && (

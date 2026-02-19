@@ -17,6 +17,7 @@ import { ChartAnalysisDialog } from '../../ChartAnalysisDialog';
 import { ChartAnalysisContext } from '../../Chart/types';
 import TileContainer from './TileContainer';
 import { ConnectionPerformance, CheckpointTimeSeries } from './types';
+import { useAICapabilities } from '../../../contexts/AICapabilitiesContext';
 import { hasCachedAnalysis } from '../../../hooks/useChartAnalysis';
 
 interface CheckpointTileProps {
@@ -33,6 +34,7 @@ const CheckpointTile: React.FC<CheckpointTileProps> = ({
     loading,
 }) => {
     const theme = useTheme();
+    const { aiEnabled } = useAICapabilities();
 
     const { chartData, hasData } = useMemo(() => {
         const allPoints: CheckpointTimeSeries[] = [];
@@ -136,7 +138,7 @@ const CheckpointTile: React.FC<CheckpointTileProps> = ({
                     />
                 </Box>
             )}
-            {analysisContext && chartData && (
+            {aiEnabled && analysisContext && chartData && (
                 <Tooltip title="AI Analysis">
                     <IconButton
                         size="small"
@@ -153,7 +155,7 @@ const CheckpointTile: React.FC<CheckpointTileProps> = ({
                     </IconButton>
                 </Tooltip>
             )}
-            {analysisContext && chartData && (
+            {aiEnabled && analysisContext && chartData && (
                 <ChartAnalysisDialog
                     open={analysisOpen}
                     onClose={handleAnalysisClose}

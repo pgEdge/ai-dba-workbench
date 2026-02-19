@@ -52,6 +52,7 @@ type HandlerDependencies struct {
 	Config       *config.Config
 	OverviewGen  *overview.Generator
 	ToolProvider api.ContextAwareToolProvider
+	AIEnabled    bool
 }
 
 // SetupHandlers configures all HTTP handlers for the server
@@ -62,6 +63,9 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 
 		// OpenAPI specification endpoint (public - used for API discovery)
 		mux.HandleFunc("/api/v1/openapi.json", handleOpenAPISpec)
+
+		// Capabilities endpoint (public - used by client to detect available features)
+		mux.HandleFunc("/api/v1/capabilities", handleCapabilities(deps.AIEnabled))
 
 		// Authentication endpoint (does NOT require auth - it IS the login endpoint)
 		// IPExtractor provides secure IP extraction that only trusts X-Forwarded-For
@@ -358,6 +362,19 @@ func handleOpenAPISpec(w http.ResponseWriter, r *http.Request) {
 	}
 	spec := api.BuildOpenAPISpec()
 	api.RespondJSON(w, http.StatusOK, spec)
+}
+
+// handleCapabilities returns server capability flags for the client
+func handleCapabilities(aiEnabled bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		api.RespondJSON(w, http.StatusOK, map[string]interface{}{
+			"ai_enabled": aiEnabled,
+		})
+	}
 }
 
 // setupLLMHandlers configures LLM proxy endpoints

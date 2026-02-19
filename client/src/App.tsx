@@ -17,6 +17,7 @@ import { DashboardProvider } from './contexts/DashboardContext';
 import { BlackoutProvider } from './contexts/BlackoutContext';
 import { ChatProvider, useChatContext } from './contexts/ChatContext';
 import { ConnectionStatusProvider } from './contexts/ConnectionStatusContext';
+import { AICapabilitiesProvider, useAICapabilities } from './contexts/AICapabilitiesContext';
 import ConnectionLostOverlay from './components/ConnectionLostOverlay';
 import ErrorBoundary from './components/ErrorBoundary';
 import Header from './components/Header';
@@ -104,6 +105,7 @@ const AppContent = () => {
             <CssBaseline />
             <ConnectionStatusProvider>
                 <ConnectionLostOverlay />
+                <AICapabilitiesProvider>
                 <ClusterProvider>
                     <DashboardProvider>
                         <AlertsProvider>
@@ -115,6 +117,7 @@ const AppContent = () => {
                         </AlertsProvider>
                     </DashboardProvider>
                 </ClusterProvider>
+                </AICapabilitiesProvider>
             </ConnectionStatusProvider>
         </ThemeProvider>
     );
@@ -137,6 +140,9 @@ const MainLayout: React.FC<MainLayoutProps> = ({ mode, onToggleTheme }) => {
         selectCluster,
         selectEstate,
     } = useCluster();
+
+    // AI capabilities
+    const { aiEnabled } = useAICapabilities();
 
     // Chat panel state from context
     const {
@@ -242,15 +248,17 @@ const MainLayout: React.FC<MainLayoutProps> = ({ mode, onToggleTheme }) => {
                     </Box>
 
                     {/* AI Chat Panel */}
-                    <ChatPanel
-                        open={chatOpen}
-                        onClose={handleCloseChat}
-                        mode={mode}
-                    />
+                    {aiEnabled && (
+                        <ChatPanel
+                            open={chatOpen}
+                            onClose={handleCloseChat}
+                            mode={mode}
+                        />
+                    )}
                 </Box>
 
                 {/* AI Chat FAB (hidden when panel is open) */}
-                {!chatOpen && (
+                {!chatOpen && aiEnabled && (
                     <ChatFAB
                         onClick={handleToggleChat}
                         isOpen={false}

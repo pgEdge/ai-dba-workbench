@@ -143,6 +143,15 @@ func (e *Engine) initLLMProviders() {
 			e.log("No reasoning provider configured, Tier 3 will be disabled")
 		}
 	}
+
+	// If anomaly detection is enabled but no LLM providers initialized
+	// successfully, disable anomaly detection entirely. Without AI to
+	// filter anomalies, raw statistical detection would generate too
+	// much noise.
+	if e.config.Anomaly.Enabled && e.embeddingProvider == nil && e.reasoningProvider == nil {
+		e.config.Anomaly.Enabled = false
+		e.log("Anomaly detection auto-disabled: no LLM providers available")
+	}
 }
 
 // Run starts the engine and runs until the context is canceled

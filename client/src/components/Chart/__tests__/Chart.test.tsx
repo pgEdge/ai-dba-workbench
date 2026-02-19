@@ -51,6 +51,11 @@ vi.mock('echarts/renderers', () => ({
     CanvasRenderer: {},
 }));
 
+// Mock AICapabilitiesContext so ChartToolbar can render without the provider
+vi.mock('../../../contexts/AICapabilitiesContext', () => ({
+    useAICapabilities: () => ({ aiEnabled: true, loading: false }),
+}));
+
 const theme = createTheme({
     palette: {
         mode: 'light',

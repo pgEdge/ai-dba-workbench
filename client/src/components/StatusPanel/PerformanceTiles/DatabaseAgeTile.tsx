@@ -17,6 +17,7 @@ import { ChartAnalysisDialog } from '../../ChartAnalysisDialog';
 import { ChartData, ChartAnalysisContext } from '../../Chart/types';
 import { ConnectionPerformance, XidAgeEntry } from './types';
 import { getXidColor } from './styles';
+import { useAICapabilities } from '../../../contexts/AICapabilitiesContext';
 import { hasCachedAnalysis } from '../../../hooks/useChartAnalysis';
 
 interface DatabaseAgeTileProps {
@@ -43,6 +44,7 @@ const DatabaseAgeTile: React.FC<DatabaseAgeTileProps> = ({
     isMultiServer,
 }) => {
     const theme = useTheme();
+    const { aiEnabled } = useAICapabilities();
     const [analysisOpen, setAnalysisOpen] = useState(false);
 
     const handleAnalyzeClick = useCallback((e: React.MouseEvent) => {
@@ -161,7 +163,7 @@ const DatabaseAgeTile: React.FC<DatabaseAgeTileProps> = ({
                     );
                 })}
             </Box>
-            {analysisContext && analysisChartData && (
+            {aiEnabled && analysisContext && analysisChartData && (
                 <Tooltip title="AI Analysis">
                     <IconButton
                         size="small"
@@ -178,7 +180,7 @@ const DatabaseAgeTile: React.FC<DatabaseAgeTileProps> = ({
                     </IconButton>
                 </Tooltip>
             )}
-            {analysisContext && analysisChartData && (
+            {aiEnabled && analysisContext && analysisChartData && (
                 <ChartAnalysisDialog
                     open={analysisOpen}
                     onClose={handleAnalysisClose}

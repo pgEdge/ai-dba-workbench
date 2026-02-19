@@ -17,6 +17,7 @@ import { ChartAnalysisDialog } from '../../ChartAnalysisDialog';
 import { ChartAnalysisContext } from '../../Chart/types';
 import TileContainer from './TileContainer';
 import { ConnectionPerformance, TransactionTimeSeries } from './types';
+import { useAICapabilities } from '../../../contexts/AICapabilitiesContext';
 import { hasCachedAnalysis } from '../../../hooks/useChartAnalysis';
 
 interface TransactionTileProps {
@@ -34,6 +35,7 @@ const TransactionTile: React.FC<TransactionTileProps> = ({
     loading,
 }) => {
     const theme = useTheme();
+    const { aiEnabled } = useAICapabilities();
 
     const { chartData, hasData, dualAxisOptions } = useMemo(() => {
         const allPoints: TransactionTimeSeries[] = [];
@@ -164,7 +166,7 @@ const TransactionTile: React.FC<TransactionTileProps> = ({
                     />
                 </Box>
             )}
-            {analysisContext && chartData && (
+            {aiEnabled && analysisContext && chartData && (
                 <Tooltip title="AI Analysis">
                     <IconButton
                         size="small"
@@ -181,7 +183,7 @@ const TransactionTile: React.FC<TransactionTileProps> = ({
                     </IconButton>
                 </Tooltip>
             )}
-            {analysisContext && chartData && (
+            {aiEnabled && analysisContext && chartData && (
                 <ChartAnalysisDialog
                     open={analysisOpen}
                     onClose={handleAnalysisClose}

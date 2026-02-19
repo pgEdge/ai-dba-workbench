@@ -52,6 +52,7 @@ type Server struct {
 	cancel        context.CancelFunc
 	dataDir       string
 	debug         bool
+	aiEnabled     bool
 }
 
 // ServerConfig holds configuration for creating a new server
@@ -341,10 +342,29 @@ func (s *Server) startTokenCleanup() {
 	}()
 }
 
+// hasValidLLMConfig returns true when the configured LLM provider has the
+// credentials required to make API calls.  Ollama is always considered
+// valid when selected because it uses a local URL with a compiled-in
+// default; the other providers require an explicit API key.
+func (s *Server) hasValidLLMConfig() bool {
+	switch s.cfg.LLM.Provider {
+	case "anthropic":
+		return s.cfg.LLM.AnthropicAPIKey != ""
+	case "openai":
+		return s.cfg.LLM.OpenAIAPIKey != ""
+	case "gemini":
+		return s.cfg.LLM.GeminiAPIKey != ""
+	case "ollama":
+		return s.cfg.LLM.OllamaURL != ""
+	default:
+		return false
+	}
+}
+
 // startOverviewGenerator initializes and starts the AI overview generator
 // if both the datastore and LLM configuration are available.
 func (s *Server) startOverviewGenerator() {
-	if s.datastore == nil || s.cfg.LLM.Provider == "" {
+	if s.datastore == nil || !s.hasValidLLMConfig() {
 		fmt.Fprintf(os.Stderr, "AI Overview: DISABLED (requires datastore and LLM configuration)\n")
 		return
 	}
@@ -366,6 +386,7 @@ func (s *Server) startOverviewGenerator() {
 	s.overviewGen = overview.NewGenerator(s.datastore, llmConfig)
 	s.overviewGen.Start(s.ctx)
 	fmt.Fprintf(os.Stderr, "AI Overview: ENABLED\n")
+	s.aiEnabled = true
 }
 
 // cleanupExpiredConnections cleans up database connections for expired tokens
@@ -418,6 +439,7 @@ func (s *Server) Run(flags *Flags, configPath string) error {
 		Config:       s.cfg,
 		OverviewGen:  s.overviewGen,
 		ToolProvider: s.toolProvider,
+		AIEnabled:    s.aiEnabled,
 	}
 	httpConfig.SetupHandlers = SetupHandlers(deps)
 

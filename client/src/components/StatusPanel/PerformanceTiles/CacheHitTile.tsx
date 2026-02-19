@@ -17,6 +17,7 @@ import { ChartAnalysisContext } from '../../Chart/types';
 import TileContainer from './TileContainer';
 import { ConnectionPerformance } from './types';
 import { TILE_VALUE_SX, getCacheColor } from './styles';
+import { useAICapabilities } from '../../../contexts/AICapabilitiesContext';
 import { hasCachedAnalysis } from '../../../hooks/useChartAnalysis';
 
 interface CacheHitTileProps {
@@ -36,6 +37,7 @@ const CacheHitTile: React.FC<CacheHitTileProps> = ({
     isMultiServer,
 }) => {
     const theme = useTheme();
+    const { aiEnabled } = useAICapabilities();
     // Find the headline value: worst ratio for multi-server, current for single
     const headlineValue = useMemo(() => {
         if (!connections.length) return null;
@@ -196,7 +198,7 @@ const CacheHitTile: React.FC<CacheHitTileProps> = ({
                     />
                 </Box>
             )}
-            {analysisContext && chartData && (
+            {aiEnabled && analysisContext && chartData && (
                 <Tooltip title="AI Analysis">
                     <IconButton
                         size="small"
@@ -213,7 +215,7 @@ const CacheHitTile: React.FC<CacheHitTileProps> = ({
                     </IconButton>
                 </Tooltip>
             )}
-            {analysisContext && chartData && (
+            {aiEnabled && analysisContext && chartData && (
                 <ChartAnalysisDialog
                     open={analysisOpen}
                     onClose={handleAnalysisClose}

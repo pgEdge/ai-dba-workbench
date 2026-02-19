@@ -22,6 +22,7 @@ import { ChartAnalysisContext, ChartData } from '../Chart/types';
 import { ChartAnalysisDialog } from '../ChartAnalysisDialog';
 import { KpiTileData, MetricDataPoint } from './types';
 import Sparkline from './Sparkline';
+import { useAICapabilities } from '../../contexts/AICapabilitiesContext';
 import { hasCachedAnalysis } from '../../hooks/useChartAnalysis';
 import {
     getDashboardTileSx,
@@ -114,6 +115,7 @@ const KpiTile: React.FC<KpiTileProps> = ({
     analysisContext,
 }) => {
     const theme = useTheme();
+    const { aiEnabled } = useAICapabilities();
     const [analysisOpen, setAnalysisOpen] = useState(false);
     const isDark = theme.palette.mode === 'dark';
     const tileSx = useMemo(() => getDashboardTileSx(theme), [theme]);
@@ -218,7 +220,7 @@ const KpiTile: React.FC<KpiTileProps> = ({
                     />
                 </Box>
             )}
-            {analysisContext && sparklineData && sparklineData.length > 0 && (
+            {aiEnabled && analysisContext && sparklineData && sparklineData.length > 0 && (
                 <IconButton
                     size="small"
                     color={isCached ? 'warning' : 'secondary'}
@@ -228,7 +230,7 @@ const KpiTile: React.FC<KpiTileProps> = ({
                     <PsychologyIcon sx={{ fontSize: 16 }} />
                 </IconButton>
             )}
-            {analysisContext && sparklineData && sparklineData.length > 0 && (
+            {aiEnabled && analysisContext && sparklineData && sparklineData.length > 0 && (
                 <ChartAnalysisDialog
                     open={analysisOpen}
                     onClose={handleAnalysisClose}

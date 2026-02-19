@@ -14,6 +14,7 @@ import Tooltip from '@mui/material/Tooltip';
 import PsychologyIcon from '@mui/icons-material/Psychology';
 import SaveAltIcon from '@mui/icons-material/SaveAlt';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import { useAICapabilities } from '../../contexts/AICapabilitiesContext';
 import { CHART_TOOLBAR_SX } from './styles';
 
 interface ChartToolbarProps {
@@ -35,9 +36,10 @@ export function ChartToolbar({
     showRefresh,
     cached,
 }: ChartToolbarProps) {
+    const { aiEnabled } = useAICapabilities();
     return (
         <Box sx={CHART_TOOLBAR_SX}>
-            {showAnalyze && onAnalyze && (
+            {aiEnabled && showAnalyze && onAnalyze && (
                 <Tooltip title="AI Analysis">
                     <IconButton size="small" onClick={onAnalyze} color={cached ? 'warning' : 'secondary'}>
                         <PsychologyIcon fontSize="small" />

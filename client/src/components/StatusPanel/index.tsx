@@ -27,6 +27,7 @@ import {
     MonitorHeart as MonitorHeartIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
+import { useAICapabilities } from '../../contexts/AICapabilitiesContext';
 import { useClusterData } from '../../contexts/ClusterDataContext';
 import { useDashboard } from '../../contexts/DashboardContext';
 import { apiPost, apiGet, apiDelete } from '../../utils/apiClient';
@@ -111,6 +112,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
     const theme = useTheme();
     const isDark = mode === 'dark';
     const { user } = useAuth();
+    const { aiEnabled } = useAICapabilities();
     const { lastRefresh } = useClusterData();
     const [alerts, setAlerts] = useState([]);
     const [loading, setLoading] = useState(false);
@@ -451,9 +453,29 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
     if (!selection) {
         return (
             <Box sx={EMPTY_STATE_CONTAINER_SX}>
-                <Box sx={{ width: '100%', maxWidth: 600, mb: 3 }}>
-                    <AIOverview mode={isDark ? 'dark' : 'light'} />
-                </Box>
+                {aiEnabled ? (
+                    <Box sx={{ width: '100%', maxWidth: 600, mb: 3 }}>
+                        <AIOverview mode={isDark ? 'dark' : 'light'} />
+                    </Box>
+                ) : (
+                    <Box sx={{
+                        width: '100%',
+                        maxWidth: 600,
+                        mb: 3,
+                        p: 3,
+                        borderRadius: 2,
+                        bgcolor: 'background.paper',
+                        textAlign: 'center',
+                    }}>
+                        <Typography variant="h6" sx={{ mb: 1, fontWeight: 600 }}>
+                            Welcome to AI DBA Workbench
+                        </Typography>
+                        <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                            AI features are currently disabled. To enable AI-powered
+                            analysis, configure an LLM provider in the server configuration.
+                        </Typography>
+                    </Box>
+                )}
                 <Box sx={emptyStateIconBoxSx}>
                     <ServerIcon sx={{ fontSize: 36, color: 'text.disabled' }} />
                 </Box>
@@ -478,9 +500,11 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                 <Box sx={dividerSx} />
 
                 {/* AI Overview */}
-                <Box sx={{ mb: 2 }}>
-                    <AIOverview mode={isDark ? 'dark' : 'light'} selection={selection} onAnalyze={handleServerAnalyze} analysisCached={serverAnalysisCached} />
-                </Box>
+                {aiEnabled && (
+                    <Box sx={{ mb: 2 }}>
+                        <AIOverview mode={isDark ? 'dark' : 'light'} selection={selection} onAnalyze={handleServerAnalyze} analysisCached={serverAnalysisCached} />
+                    </Box>
+                )}
 
                 {/* Server Info Card */}
                 {selection.type === 'server' && (
@@ -545,7 +569,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                     showServer={selection.type !== 'server'}
                     onAcknowledge={handleAcknowledge}
                     onUnacknowledge={handleUnacknowledge}
-                    onAnalyze={handleAnalyze}
+                    onAnalyze={aiEnabled ? handleAnalyze : undefined}
                     onEditOverride={handleEditOverride}
                 />
 
@@ -580,16 +604,18 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
             />
 
             {/* Alert Analysis Dialog */}
-            <AlertAnalysisDialog
-                open={analysisDialogOpen}
-                alert={analysisAlert}
-                onClose={() => {
-                    setAnalysisDialogOpen(false);
-                    setAnalysisAlert(null);
-                }}
-                onAnalysisComplete={handleAnalysisComplete}
-                isDark={isDark}
-            />
+            {aiEnabled && (
+                <AlertAnalysisDialog
+                    open={analysisDialogOpen}
+                    alert={analysisAlert}
+                    onClose={() => {
+                        setAnalysisDialogOpen(false);
+                        setAnalysisAlert(null);
+                    }}
+                    onAnalysisComplete={handleAnalysisComplete}
+                    isDark={isDark}
+                />
+            )}
 
             {/* Alert Override Edit Dialog */}
             <AlertOverrideEditDialog
@@ -609,12 +635,14 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
             />
 
             {/* Server Analysis Dialog */}
-            <ServerAnalysisDialog
-                open={serverAnalysisOpen}
-                selection={serverAnalysisSelection}
-                onClose={() => setServerAnalysisOpen(false)}
-                isDark={isDark}
-            />
+            {aiEnabled && (
+                <ServerAnalysisDialog
+                    open={serverAnalysisOpen}
+                    selection={serverAnalysisSelection}
+                    onClose={() => setServerAnalysisOpen(false)}
+                    isDark={isDark}
+                />
+            )}
         </Box>
     );
 };

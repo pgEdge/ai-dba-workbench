@@ -19,6 +19,11 @@ vi.mock('../Sparkline', () => ({
     default: () => <div data-testid="sparkline" />,
 }));
 
+// Mock AICapabilitiesContext so KpiTile can render without the provider
+vi.mock('../../../contexts/AICapabilitiesContext', () => ({
+    useAICapabilities: () => ({ aiEnabled: true, loading: false }),
+}));
+
 const theme = createTheme();
 
 const renderKpiTile = (props: Record<string, unknown> = {}) => {

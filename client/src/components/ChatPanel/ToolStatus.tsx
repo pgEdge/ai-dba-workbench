@@ -15,6 +15,7 @@ import {
     CheckCircle as CheckIcon,
     Warning as WarningIcon,
 } from '@mui/icons-material';
+import { getToolDisplayName } from '../../utils/toolDisplayNames';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -121,7 +122,7 @@ const ToolStatus: React.FC<ToolStatusProps> = ({ tools }) => {
                 <Chip
                     key={`${tool.name}-${index}`}
                     icon={getStatusIcon(tool.status)}
-                    label={tool.name}
+                    label={getToolDisplayName(tool.name)}
                     variant="outlined"
                     size="small"
                     sx={getChipSx(tool.status)}

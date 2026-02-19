@@ -13,6 +13,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { apiGet } from '../utils/apiClient';
 import { formatConnectionContext } from '../utils/connectionContext';
 import { getKnowledgebaseTool, AnalysisTool } from '../utils/mcpTools';
+import { getToolDisplayName } from '../utils/toolDisplayNames';
 import {
     LLMContentBlock,
     LLMResponse,
@@ -32,20 +33,6 @@ function stripPreamble(text: string): string {
     }
     return text;
 }
-
-// Human-readable display names for MCP tools used during server analysis
-const TOOL_DISPLAY_NAMES: Record<string, string> = {
-    query_metrics: 'Querying metrics',
-    get_metric_baselines: 'Fetching metric baselines',
-    get_alert_history: 'Reviewing alert history',
-    get_alert_rules: 'Checking alert rules',
-    query_database: 'Querying database',
-    get_schema_info: 'Inspecting schema',
-    list_probes: 'Listing probes',
-    describe_probe: 'Examining probe details',
-    get_blackouts: 'Checking blackouts',
-    search_knowledgebase: 'Searching knowledgebase',
-};
 
 // Module-level cache for analysis results (persists across dialog open/close)
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
@@ -470,7 +457,7 @@ Analyze performance metrics, schema design, security configuration, and replicat
                 messages.push({ role: 'assistant', content: data.content as LLMContentBlock[] });
 
                 // Update progress with tool names
-                const toolNames = toolUses.map(t => TOOL_DISPLAY_NAMES[t.name || ''] || t.name || 'unknown tool');
+                const toolNames = toolUses.map(t => getToolDisplayName(t.name || '') || 'unknown tool');
                 const uniqueNames = [...new Set(toolNames)];
                 setActiveTools(uniqueNames);
                 setProgressMessage(uniqueNames.length === 1

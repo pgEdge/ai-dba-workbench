@@ -17,6 +17,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { ThemeMode } from '../../types/theme';
 import { ToolActivity } from './ToolStatus';
+import { getToolDisplayName } from '../../utils/toolDisplayNames';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -491,7 +492,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, mode }) => {
                 {message.activity.map((tool, idx) => (
                     <Chip
                         key={`${tool.name}-${idx}`}
-                        label={tool.name}
+                        label={getToolDisplayName(tool.name)}
                         size="small"
                         color={
                             tool.status === 'error'

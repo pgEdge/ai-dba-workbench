@@ -20,6 +20,7 @@ import {
 } from '../types/llm';
 import { TimelineEvent } from '../components/EventTimeline/types';
 import { getKnowledgebaseTool, AnalysisTool } from '../utils/mcpTools';
+import { getToolDisplayName } from '../utils/toolDisplayNames';
 
 /**
  * Strip any conversational preamble before the first markdown heading.
@@ -32,16 +33,6 @@ function stripPreamble(text: string): string {
     }
     return text;
 }
-
-// Human-readable display names for MCP tools used during alert analysis
-const TOOL_DISPLAY_NAMES: Record<string, string> = {
-    query_metrics: 'Querying metrics',
-    get_metric_baselines: 'Fetching metric baselines',
-    get_alert_history: 'Reviewing alert history',
-    get_alert_rules: 'Checking alert rules',
-    get_blackouts: 'Checking blackouts',
-    search_knowledgebase: 'Searching knowledgebase',
-};
 
 // Module-level cache for analysis results (persists across dialog open/close)
 const analysisCache = new Map<number, { analysis: string; metricValue: number }>();
@@ -391,7 +382,7 @@ Provide remediation recommendations and any threshold tuning suggestions.`;
                 messages.push({ role: 'assistant', content: data.content as LLMContentBlock[] });
 
                 // Update progress with tool names
-                const toolNames = toolUses.map(t => TOOL_DISPLAY_NAMES[t.name || ''] || t.name || 'unknown tool');
+                const toolNames = toolUses.map(t => getToolDisplayName(t.name || '') || 'unknown tool');
                 const uniqueNames = [...new Set(toolNames)];
                 setActiveTools(uniqueNames);
                 setProgressMessage(uniqueNames.length === 1

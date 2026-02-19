@@ -361,8 +361,14 @@ func TestBuildPrompt_ContainsSnapshotData(t *testing.T) {
 		RecentEvents:      []database.EstateEventSummary{},
 	}
 
-	prompt := buildPrompt(s)
+	system, data := buildPrompt(s)
 
+	// The system prompt must contain the instruction text.
+	if !strings.Contains(system, "PostgreSQL DBA assistant") {
+		t.Error("system prompt missing instruction text")
+	}
+
+	// The data prompt must contain the snapshot values.
 	checks := []string{
 		"5 total",
 		"4 online",
@@ -374,8 +380,8 @@ func TestBuildPrompt_ContainsSnapshotData(t *testing.T) {
 	}
 
 	for _, c := range checks {
-		if !strings.Contains(prompt, c) {
-			t.Errorf("prompt missing expected text %q", c)
+		if !strings.Contains(data, c) {
+			t.Errorf("data prompt missing expected text %q", c)
 		}
 	}
 }
@@ -418,9 +424,10 @@ func TestBuildScopedPrompt_ContainsScopeContext(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.scopeType, func(t *testing.T) {
-			prompt := buildScopedPrompt(s, tc.scopeType, tc.scopeName)
+			system, data := buildScopedPrompt(s, tc.scopeType, tc.scopeName)
+			combined := system + data
 			for _, c := range tc.contains {
-				if !strings.Contains(prompt, c) {
+				if !strings.Contains(combined, c) {
 					t.Errorf("scoped prompt for %s missing %q", tc.scopeType, c)
 				}
 			}

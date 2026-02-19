@@ -168,8 +168,8 @@ func (g *Generator) GetScopedSummary(scopeType string, scopeID int) (*Overview, 
 		return nil, err
 	}
 
-	prompt := buildScopedPrompt(snapshot, scopeType, scopeName)
-	summary, err := g.generateSummaryFromPrompt(g.ctx, prompt)
+	system, data := buildScopedPrompt(snapshot, scopeType, scopeName)
+	summary, err := g.generateSummaryFromPrompt(g.ctx, system, data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate scoped summary: %w", err)
 	}
@@ -230,8 +230,8 @@ func (g *Generator) GetConnectionsSummary(connectionIDs []int, scopeName string)
 	// Generate a fresh snapshot from the explicit connection IDs.
 	snapshot := g.datastore.GetConnectionsSnapshot(g.ctx, connectionIDs)
 
-	prompt := buildScopedPrompt(snapshot, "connections", scopeName)
-	summary, err := g.generateSummaryFromPrompt(g.ctx, prompt)
+	system, data := buildScopedPrompt(snapshot, "connections", scopeName)
+	summary, err := g.generateSummaryFromPrompt(g.ctx, system, data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate connections summary: %w", err)
 	}
@@ -405,13 +405,15 @@ func (g *Generator) hasSignificantChange(old, current *database.EstateSnapshot) 
 // generateSummary builds a prompt from the snapshot data and sends it to
 // the configured LLM provider. It returns the text summary or an error.
 func (g *Generator) generateSummary(ctx context.Context, snapshot *database.EstateSnapshot) (string, error) {
-	prompt := buildPrompt(snapshot)
-	return g.generateSummaryFromPrompt(ctx, prompt)
+	system, data := buildPrompt(snapshot)
+	return g.generateSummaryFromPrompt(ctx, system, data)
 }
 
-// generateSummaryFromPrompt sends the given prompt to the configured
-// LLM provider and returns the text response.
-func (g *Generator) generateSummaryFromPrompt(ctx context.Context, prompt string) (string, error) {
+// generateSummaryFromPrompt sends the given system instruction and user
+// data to the configured LLM provider and returns the text response.
+// Separating the instruction from the data ensures that smaller models
+// respect the formatting rules delivered via the system prompt.
+func (g *Generator) generateSummaryFromPrompt(ctx context.Context, system, data string) (string, error) {
 	client := g.createLLMClient()
 	if client == nil {
 		return "", fmt.Errorf("no LLM provider configured")
@@ -420,11 +422,11 @@ func (g *Generator) generateSummaryFromPrompt(ctx context.Context, prompt string
 	messages := []chat.Message{
 		{
 			Role:    "user",
-			Content: prompt,
+			Content: data,
 		},
 	}
 
-	resp, err := client.Chat(ctx, messages, nil, "")
+	resp, err := client.Chat(ctx, messages, nil, system)
 	if err != nil {
 		return "", fmt.Errorf("LLM chat failed: %w", err)
 	}
@@ -493,29 +495,31 @@ func extractTextFromResponse(resp chat.LLMResponse) string {
 	return strings.Join(parts, "")
 }
 
-// buildPrompt constructs the system + estate-state prompt sent to the LLM.
-func buildPrompt(s *database.EstateSnapshot) string {
-	var b strings.Builder
-
-	b.WriteString(`You are a PostgreSQL DBA assistant providing a brief estate overview.
+// buildPrompt constructs the system instruction and user data sent to
+// the LLM. The system string contains behavioral instructions; the
+// data string contains the estate snapshot for the user message.
+func buildPrompt(s *database.EstateSnapshot) (system, data string) {
+	system = `You are a PostgreSQL DBA assistant providing a brief estate overview.
 Summarize the following estate state in 3-5 sentences. Be concise and
 focus on what a DBA needs to know right now. Use plain language.
 Focus on: server health, active alerts requiring attention, and any
 ongoing or upcoming blackouts. If everything is healthy, say so briefly.
 Do not use markdown formatting. Do not use bullet points or lists.
+Do not introduce yourself or use any greeting. Do not use casual or
+conversational language. Write in a professional, impersonal, third-person
+technical style. State facts directly without preamble.`
 
-Estate State:
-`)
-
+	var b strings.Builder
+	b.WriteString("Estate State:\n")
 	writeSnapshotData(&b, s)
-	return b.String()
+	data = b.String()
+	return system, data
 }
 
-// buildScopedPrompt constructs a prompt tailored to a specific scope
-// (server, cluster, group, or connections) rather than the entire estate.
-func buildScopedPrompt(s *database.EstateSnapshot, scopeType, scopeName string) string {
-	var b strings.Builder
-
+// buildScopedPrompt constructs a system instruction and user data
+// tailored to a specific scope (server, cluster, group, or connections)
+// rather than the entire estate.
+func buildScopedPrompt(s *database.EstateSnapshot, scopeType, scopeName string) (system, data string) {
 	scopeLabel := scopeType
 	switch scopeType {
 	case "server":
@@ -530,18 +534,21 @@ func buildScopedPrompt(s *database.EstateSnapshot, scopeType, scopeName string) 
 
 	titleLabel := strings.ToUpper(scopeLabel[:1]) + scopeLabel[1:]
 
-	fmt.Fprintf(&b, `You are a PostgreSQL DBA assistant providing a brief status overview for a specific %s.
+	system = fmt.Sprintf(`You are a PostgreSQL DBA assistant providing a brief status overview for a specific %s.
 Summarize the following state of %s "%s" in 3-5 sentences. Be concise and
 focus on what a DBA needs to know right now. Use plain language.
 Focus on: server health, active alerts requiring attention, and any
 ongoing or upcoming blackouts. If everything is healthy, say so briefly.
 Do not use markdown formatting. Do not use bullet points or lists.
+Do not introduce yourself or use any greeting. Do not use casual or
+conversational language. Write in a professional, impersonal, third-person
+technical style. State facts directly without preamble.`, scopeLabel, scopeLabel, scopeName)
 
-%s "%s" State:
-`, scopeLabel, scopeLabel, scopeName, titleLabel, scopeName)
-
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s \"%s\" State:\n", titleLabel, scopeName)
 	writeSnapshotData(&b, s)
-	return b.String()
+	data = b.String()
+	return system, data
 }
 
 // writeSnapshotData appends the snapshot data lines to the builder.

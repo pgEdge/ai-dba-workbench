@@ -345,13 +345,15 @@ func (s *Server) startTokenCleanup() {
 // hasValidLLMConfig returns true when the configured LLM provider has the
 // credentials required to make API calls.  Ollama is always considered
 // valid when selected because it uses a local URL with a compiled-in
-// default; the other providers require an explicit API key.
+// default.  OpenAI is valid with either an API key or a custom base URL
+// (for local servers like LM Studio that do not require auth).  The
+// remaining providers require an explicit API key.
 func (s *Server) hasValidLLMConfig() bool {
 	switch s.cfg.LLM.Provider {
 	case "anthropic":
 		return s.cfg.LLM.AnthropicAPIKey != ""
 	case "openai":
-		return s.cfg.LLM.OpenAIAPIKey != ""
+		return s.cfg.LLM.OpenAIAPIKey != "" || s.cfg.LLM.OpenAIBaseURL != ""
 	case "gemini":
 		return s.cfg.LLM.GeminiAPIKey != ""
 	case "ollama":

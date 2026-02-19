@@ -174,3 +174,21 @@ summaries without a valid LLM configuration.
 
 For LLM provider setup instructions, see
 [Configuration](configuration.md).
+
+## Running Without AI
+
+The AI Overview is automatically disabled when the server
+starts without valid LLM credentials. The web client
+hides the AI Overview panel and displays a static welcome
+message instead.
+
+The server logs the following message at startup when AI
+is not available:
+
+```
+AI Overview: DISABLED (requires datastore and LLM
+configuration)
+```
+
+All monitoring, alerting, and dashboard features continue
+to operate normally without AI.

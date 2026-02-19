@@ -60,6 +60,7 @@ import {
     Timeline as TimelineIcon,
     AccountTree as TopologyIcon,
 } from '@mui/icons-material';
+import { useAICapabilities } from '../contexts/AICapabilitiesContext';
 import { CLIENT_VERSION } from '../lib/version';
 
 // Help page identifiers
@@ -360,7 +361,7 @@ const FeatureItem = ({ title, description }) => (
 /**
  * Overview Page - Introduction to the workbench
  */
-const OverviewPage = () => (
+const OverviewPage = ({ aiEnabled }: { aiEnabled: boolean }) => (
     <Box>
         <Typography variant="h5" sx={styles.pageHeading}>
             Welcome to AI DBA Workbench
@@ -389,10 +390,17 @@ const OverviewPage = () => (
             title="Replication Support"
             description="Support for binary replication (primary/standby), Spock multi-master replication, and logical replication."
         />
-        <FeatureItem
-            title="AI-Powered Overview"
-            description="The status panel includes an AI-generated summary that provides context-aware insights for your current selection."
-        />
+        {aiEnabled ? (
+            <FeatureItem
+                title="AI-Powered Overview"
+                description="The status panel includes an AI-generated summary that provides context-aware insights for your current selection."
+            />
+        ) : (
+            <FeatureItem
+                title="AI Features (Disabled)"
+                description="AI-powered features such as the AI Overview, Ask Ellie chat assistant, and AI analysis are currently disabled. To enable these features, configure an LLM provider with valid API credentials in the server configuration file."
+            />
+        )}
 
         <SectionTitle>Getting Started</SectionTitle>
         <Typography sx={styles.bodyText}>
@@ -475,7 +483,7 @@ const NavigatorPage = () => (
 /**
  * Status Panel Page - Status panel and server details help
  */
-const StatusPanelPage = () => (
+const StatusPanelPage = ({ aiEnabled }: { aiEnabled: boolean }) => (
     <Box>
         <Typography variant="h5" sx={styles.pageHeading}>
             Status Panel
@@ -486,65 +494,69 @@ const StatusPanelPage = () => (
             estate.
         </Typography>
 
-        <SectionTitle icon={AutoAwesomeIcon}>AI Overview</SectionTitle>
-        <Typography sx={styles.bodyTextMb2}>
-            The AI Overview panel appears at the top of the status panel. It
-            provides an AI-generated summary of your current selection.
-        </Typography>
-        <Box sx={styles.indentedBlock}>
-            <FeatureItem
-                title="Context-Aware Summaries"
-                description="The summary adapts to your selection. It covers the full estate, a specific cluster, or an individual server."
-            />
-            <FeatureItem
-                title="Auto-Refresh"
-                description="The summary refreshes automatically every 30 seconds and displays how recently it was updated."
-            />
-            <FeatureItem
-                title="Stale Indicator"
-                description="A stale indicator appears if the summary has not refreshed in over five minutes."
-            />
-            <FeatureItem
-                title="Collapse and Expand"
-                description="Click the toggle button to collapse or expand the panel. The collapse state persists across sessions."
-            />
-            <FeatureItem
-                title="Generation Status"
-                description="While generating a new summary, the panel displays a 'Generating estate overview...' message."
-            />
-        </Box>
+        {aiEnabled && (
+            <>
+                <SectionTitle icon={AutoAwesomeIcon}>AI Overview</SectionTitle>
+                <Typography sx={styles.bodyTextMb2}>
+                    The AI Overview panel appears at the top of the status panel. It
+                    provides an AI-generated summary of your current selection.
+                </Typography>
+                <Box sx={styles.indentedBlock}>
+                    <FeatureItem
+                        title="Context-Aware Summaries"
+                        description="The summary adapts to your selection. It covers the full estate, a specific cluster, or an individual server."
+                    />
+                    <FeatureItem
+                        title="Auto-Refresh"
+                        description="The summary refreshes automatically every 30 seconds and displays how recently it was updated."
+                    />
+                    <FeatureItem
+                        title="Stale Indicator"
+                        description="A stale indicator appears if the summary has not refreshed in over five minutes."
+                    />
+                    <FeatureItem
+                        title="Collapse and Expand"
+                        description="Click the toggle button to collapse or expand the panel. The collapse state persists across sessions."
+                    />
+                    <FeatureItem
+                        title="Generation Status"
+                        description="While generating a new summary, the panel displays a 'Generating estate overview...' message."
+                    />
+                </Box>
 
-        <SectionTitle icon={AIIcon}>Server &amp; Cluster Analysis</SectionTitle>
-        <Typography sx={styles.bodyTextMb2}>
-            The AI Overview panel displays a brain icon for servers and clusters
-            that opens a full AI-powered analysis dialog.
-        </Typography>
-        <Box sx={styles.indentedBlock}>
-            <FeatureItem
-                title="Agentic Analysis"
-                description="The AI examines server metrics, alert history, configuration, and schema using an agentic tool loop to generate a comprehensive health report."
-            />
-            <FeatureItem
-                title="Cluster Analysis"
-                description="For clusters, the AI analyzes all member servers and compares metrics across the cluster to identify replication issues and performance disparities."
-            />
-            <FeatureItem
-                title="Progress Indicators"
-                description="The analysis dialog shows real-time progress as the AI gathers data using monitoring tools such as querying metrics, fetching baselines, and reviewing alert history."
-            />
-            <FeatureItem
-                title="Runnable SQL"
-                description="SQL code blocks in analysis reports include a Run button to execute queries against the server. Results appear inline below the code block."
-            />
-            <FeatureItem
-                title="Cached Reports"
-                description="An amber brain icon in the AI Overview panel indicates a cached analysis is available. Click it to view the report instantly."
-            />
-            <FeatureItem
-                title="Download"
-                description="Reports can be downloaded as markdown files for sharing or archiving."
-            />
-        </Box>
+                <SectionTitle icon={AIIcon}>Server &amp; Cluster Analysis</SectionTitle>
+                <Typography sx={styles.bodyTextMb2}>
+                    The AI Overview panel displays a brain icon for servers and clusters
+                    that opens a full AI-powered analysis dialog.
+                </Typography>
+                <Box sx={styles.indentedBlock}>
+                    <FeatureItem
+                        title="Agentic Analysis"
+                        description="The AI examines server metrics, alert history, configuration, and schema using an agentic tool loop to generate a comprehensive health report."
+                    />
+                    <FeatureItem
+                        title="Cluster Analysis"
+                        description="For clusters, the AI analyzes all member servers and compares metrics across the cluster to identify replication issues and performance disparities."
+                    />
+                    <FeatureItem
+                        title="Progress Indicators"
+                        description="The analysis dialog shows real-time progress as the AI gathers data using monitoring tools such as querying metrics, fetching baselines, and reviewing alert history."
+                    />
+                    <FeatureItem
+                        title="Runnable SQL"
+                        description="SQL code blocks in analysis reports include a Run button to execute queries against the server. Results appear inline below the code block."
+                    />
+                    <FeatureItem
+                        title="Cached Reports"
+                        description="An amber brain icon in the AI Overview panel indicates a cached analysis is available. Click it to view the report instantly."
+                    />
+                    <FeatureItem
+                        title="Download"
+                        description="Reports can be downloaded as markdown files for sharing or archiving."
+                    />
+                </Box>
+            </>
+        )}
 
         <SectionTitle icon={ServerIcon}>Server View</SectionTitle>
         <Typography sx={styles.bodyTextMb2}>
@@ -609,7 +621,7 @@ const StatusPanelPage = () => (
 /**
  * Alerts Page - Alert management help
  */
-const AlertsPage = () => (
+const AlertsPage = ({ aiEnabled }: { aiEnabled: boolean }) => (
     <Box>
         <Typography variant="h5" sx={styles.pageHeading}>
             Alert Management
@@ -728,53 +740,57 @@ const AlertsPage = () => (
             />
         </Box>
 
-        <SectionTitle icon={AIIcon}>AI Alert Analysis</SectionTitle>
-        <Typography sx={styles.bodyTextMb2}>
-            Each alert has an &quot;Analyze with AI&quot; button (brain icon)
-            that triggers AI-powered analysis of the alert.
-        </Typography>
-        <Box sx={styles.indentedBlock}>
-            <FeatureItem
-                title="Automated Analysis"
-                description="The AI examines historical patterns, baselines, and alert context to generate a detailed report."
-            />
-            <FeatureItem
-                title="Report Contents"
-                description="Reports include a Summary, Analysis, Remediation Steps, and Threshold Tuning recommendations."
-            />
-            <FeatureItem
-                title="Cached Reports"
-                description="A green brain icon indicates a cached analysis is available. Click it to view the report instantly without waiting for regeneration."
-            />
-            <FeatureItem
-                title="Download"
-                description="Reports can be downloaded as markdown files for sharing or archiving."
-            />
-        </Box>
+        {aiEnabled && (
+            <>
+                <SectionTitle icon={AIIcon}>AI Alert Analysis</SectionTitle>
+                <Typography sx={styles.bodyTextMb2}>
+                    Each alert has an &quot;Analyze with AI&quot; button (brain icon)
+                    that triggers AI-powered analysis of the alert.
+                </Typography>
+                <Box sx={styles.indentedBlock}>
+                    <FeatureItem
+                        title="Automated Analysis"
+                        description="The AI examines historical patterns, baselines, and alert context to generate a detailed report."
+                    />
+                    <FeatureItem
+                        title="Report Contents"
+                        description="Reports include a Summary, Analysis, Remediation Steps, and Threshold Tuning recommendations."
+                    />
+                    <FeatureItem
+                        title="Cached Reports"
+                        description="A green brain icon indicates a cached analysis is available. Click it to view the report instantly without waiting for regeneration."
+                    />
+                    <FeatureItem
+                        title="Download"
+                        description="Reports can be downloaded as markdown files for sharing or archiving."
+                    />
+                </Box>
 
-        <SectionTitle icon={RunIcon}>Running SQL from Analysis Reports</SectionTitle>
-        <Typography sx={styles.bodyTextMb2}>
-            SQL code blocks in analysis reports include a Run button (play
-            icon) in the top-right corner of the code block.
-        </Typography>
-        <Box sx={styles.indentedBlock}>
-            <FeatureItem
-                title="Execute Queries"
-                description="Click the Run button to execute the SQL query against the monitored database server. Results appear inline below the code block in a table format."
-            />
-            <FeatureItem
-                title="Read-Only Queries"
-                description="Read-only queries such as SELECT and SHOW execute immediately when the Run button is clicked."
-            />
-            <FeatureItem
-                title="Write Statements"
-                description="Write statements such as ALTER SYSTEM show a confirmation dialog before executing, to prevent accidental changes."
-            />
-            <FeatureItem
-                title="SQL Detection"
-                description="The Run button only appears on code blocks identified as SQL. Configuration snippets and shell commands do not show the Run button."
-            />
-        </Box>
+                <SectionTitle icon={RunIcon}>Running SQL from Analysis Reports</SectionTitle>
+                <Typography sx={styles.bodyTextMb2}>
+                    SQL code blocks in analysis reports include a Run button (play
+                    icon) in the top-right corner of the code block.
+                </Typography>
+                <Box sx={styles.indentedBlock}>
+                    <FeatureItem
+                        title="Execute Queries"
+                        description="Click the Run button to execute the SQL query against the monitored database server. Results appear inline below the code block in a table format."
+                    />
+                    <FeatureItem
+                        title="Read-Only Queries"
+                        description="Read-only queries such as SELECT and SHOW execute immediately when the Run button is clicked."
+                    />
+                    <FeatureItem
+                        title="Write Statements"
+                        description="Write statements such as ALTER SYSTEM show a confirmation dialog before executing, to prevent accidental changes."
+                    />
+                    <FeatureItem
+                        title="SQL Detection"
+                        description="The Run button only appears on code blocks identified as SQL. Configuration snippets and shell commands do not show the Run button."
+                    />
+                </Box>
+            </>
+        )}
 
         <HelpTip>
             Acknowledged alerts remain visible but are separated from active
@@ -1289,7 +1305,7 @@ const AskElliePage = () => (
 /**
  * Monitoring Dashboards Page - Dashboard hierarchy and features help
  */
-const MonitoringPage = () => (
+const MonitoringPage = ({ aiEnabled }: { aiEnabled: boolean }) => (
     <Box>
         <Typography variant="h5" sx={styles.pageHeading}>
             Monitoring Dashboards
@@ -1416,33 +1432,37 @@ const MonitoringPage = () => (
             />
         </Box>
 
-        <SectionTitle icon={AIIcon}>AI Chart Analysis</SectionTitle>
-        <Typography sx={styles.bodyTextMb2}>
-            Every chart and KPI tile displays a brain icon that triggers
-            AI-powered analysis of the displayed data.
-        </Typography>
-        <Box sx={styles.indentedBlock}>
-            <FeatureItem
-                title="Data Analysis"
-                description="The AI examines the chart data, identifies trends and anomalies, and generates a report with summary, patterns, and recommendations."
-            />
-            <FeatureItem
-                title="Timeline Correlation"
-                description="The analysis includes timeline events such as configuration changes, alerts, and server restarts to identify correlations with metric changes."
-            />
-            <FeatureItem
-                title="Cached Reports"
-                description="An amber brain icon indicates a cached analysis is available. Click it to view the report instantly without waiting for regeneration."
-            />
-            <FeatureItem
-                title="Runnable SQL"
-                description="SQL code blocks in analysis reports include a Run button to execute queries against the monitored server. Results appear inline below the code block."
-            />
-            <FeatureItem
-                title="Download"
-                description="Reports can be downloaded as markdown files for sharing or archiving."
-            />
-        </Box>
+        {aiEnabled && (
+            <>
+                <SectionTitle icon={AIIcon}>AI Chart Analysis</SectionTitle>
+                <Typography sx={styles.bodyTextMb2}>
+                    Every chart and KPI tile displays a brain icon that triggers
+                    AI-powered analysis of the displayed data.
+                </Typography>
+                <Box sx={styles.indentedBlock}>
+                    <FeatureItem
+                        title="Data Analysis"
+                        description="The AI examines the chart data, identifies trends and anomalies, and generates a report with summary, patterns, and recommendations."
+                    />
+                    <FeatureItem
+                        title="Timeline Correlation"
+                        description="The analysis includes timeline events such as configuration changes, alerts, and server restarts to identify correlations with metric changes."
+                    />
+                    <FeatureItem
+                        title="Cached Reports"
+                        description="An amber brain icon indicates a cached analysis is available. Click it to view the report instantly without waiting for regeneration."
+                    />
+                    <FeatureItem
+                        title="Runnable SQL"
+                        description="SQL code blocks in analysis reports include a Run button to execute queries against the monitored server. Results appear inline below the code block."
+                    />
+                    <FeatureItem
+                        title="Download"
+                        description="Reports can be downloaded as markdown files for sharing or archiving."
+                    />
+                </Box>
+            </>
+        )}
 
         <HelpTip>
             Select a server, cluster, or the estate header in the Cluster
@@ -1462,6 +1482,7 @@ interface HelpPanelProps {
 }
 
 const HelpPanel: React.FC<HelpPanelProps> = ({ open, onClose, helpContext }) => {
+    const { aiEnabled } = useAICapabilities();
     const [currentPage, setCurrentPage] = useState(HELP_PAGES.overview);
     const contentRef = useRef(null);
 
@@ -1497,9 +1518,9 @@ const HelpPanel: React.FC<HelpPanelProps> = ({ open, onClose, helpContext }) => 
             case HELP_PAGES.navigator:
                 return <NavigatorPage />;
             case HELP_PAGES.statusPanel:
-                return <StatusPanelPage />;
+                return <StatusPanelPage aiEnabled={aiEnabled} />;
             case HELP_PAGES.alerts:
-                return <AlertsPage />;
+                return <AlertsPage aiEnabled={aiEnabled} />;
             case HELP_PAGES.serverManagement:
                 return <ServerManagementPage />;
             case HELP_PAGES.settings:
@@ -1509,11 +1530,14 @@ const HelpPanel: React.FC<HelpPanelProps> = ({ open, onClose, helpContext }) => 
             case HELP_PAGES.blackouts:
                 return <BlackoutsPage />;
             case HELP_PAGES.askEllie:
-                return <AskElliePage />;
+                if (aiEnabled) {
+                    return <AskElliePage />;
+                }
+                return <OverviewPage aiEnabled={aiEnabled} />;
             case HELP_PAGES.monitoring:
-                return <MonitoringPage />;
+                return <MonitoringPage aiEnabled={aiEnabled} />;
             default:
-                return <OverviewPage />;
+                return <OverviewPage aiEnabled={aiEnabled} />;
         }
     };
 
@@ -1653,13 +1677,15 @@ const HelpPanel: React.FC<HelpPanelProps> = ({ open, onClose, helpContext }) => 
                                 currentPage={currentPage}
                                 onClick={setCurrentPage}
                             />
-                            <HelpNavItem
-                                icon={ChatBotIcon}
-                                label="Ask Ellie"
-                                pageId={HELP_PAGES.askEllie}
-                                currentPage={currentPage}
-                                onClick={setCurrentPage}
-                            />
+                            {aiEnabled && (
+                                <HelpNavItem
+                                    icon={ChatBotIcon}
+                                    label="Ask Ellie"
+                                    pageId={HELP_PAGES.askEllie}
+                                    currentPage={currentPage}
+                                    onClick={setCurrentPage}
+                                />
+                            )}
                         </List>
                     </Box>
 

@@ -321,8 +321,20 @@ user-created database connections.
 
 ### LLM Proxy (`llm`)
 
-The LLM proxy is always enabled; configure API keys for
-your chosen provider.
+The LLM proxy is optional. When no valid API key is
+configured for the chosen provider, the server
+automatically disables all AI features at startup. The
+web client detects the server's capabilities through
+the `/api/v1/capabilities` endpoint and hides all
+AI-dependent UI elements. The hidden elements include
+the AI Overview, Ask Ellie chat, alert analysis, chart
+analysis, and server analysis. The system continues to
+function as a monitoring tool without AI features.
+
+For Ollama, a valid URL is sufficient; Ollama does not
+require an API key. For Anthropic, OpenAI, and Gemini,
+the corresponding API key file must be configured and
+contain a valid key.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|

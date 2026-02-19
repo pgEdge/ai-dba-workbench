@@ -215,3 +215,25 @@ The LLM uses timeline events to identify potential root
 causes. A configuration change shortly before an alert
 may explain the metric deviation. The LLM notes these
 correlations in the analysis report.
+
+## Running Without AI
+
+The AI analysis buttons are automatically hidden when
+the server starts without valid LLM credentials. The
+alert list displays without brain icons, and users can
+still view, acknowledge, and manage alerts normally.
+
+The alerter component also auto-disables anomaly
+detection across all three tiers when no LLM embedding
+or reasoning providers are configured. Disabling
+anomaly detection prevents noise from raw statistical
+detection. The alerter logs the following message at
+startup when this occurs:
+
+```
+Anomaly detection auto-disabled: no LLM providers
+available
+```
+
+Threshold-based alerting continues to operate normally
+without AI.

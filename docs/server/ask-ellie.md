@@ -152,3 +152,16 @@ process chat messages without a valid LLM configuration.
 
 For LLM provider setup instructions, see
 [Configuration](configuration.md).
+
+## Running Without AI
+
+The Ask Ellie chat button and panel are automatically
+hidden when the server starts without valid LLM
+credentials. The web client detects the server's
+capabilities at startup and removes all chat UI
+elements. Users do not see any error or disabled state;
+the chat feature is simply absent from the interface.
+
+To enable Ask Ellie, configure an LLM provider with
+valid credentials as described in the
+[Configuration](#configuration) section.

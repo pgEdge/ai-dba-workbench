@@ -14,6 +14,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Header from '../Header';
 import { AuthProvider } from '../../contexts/AuthContext';
 
+// Mock AICapabilitiesContext so HelpPanel can render without the provider
+vi.mock('../../contexts/AICapabilitiesContext', () => ({
+    useAICapabilities: () => ({ aiEnabled: true, loading: false }),
+}));
+
 // Mock fetch for API calls
 global.fetch = vi.fn() as unknown as typeof fetch;
 

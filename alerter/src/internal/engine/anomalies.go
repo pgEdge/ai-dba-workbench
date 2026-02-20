@@ -145,6 +145,11 @@ func (e *Engine) processTier2And3(ctx context.Context) {
 		// Determine final decision
 		e.determineFinalDecision(candidate)
 
+		// If final decision is alert, create an alert record
+		if candidate.FinalDecision != nil && *candidate.FinalDecision == "alert" {
+			e.createAnomalyAlert(ctx, candidate)
+		}
+
 		// Store embedding if we have one
 		if len(embedding) > 0 {
 			if err := e.datastore.StoreAnomalyEmbedding(ctx, candidate.ID, embedding, e.embeddingProvider.ModelName()); err != nil {
@@ -337,6 +342,94 @@ func (e *Engine) determineFinalDecision(candidate *database.AnomalyCandidate) {
 	// Default to anomaly (Tier 1 already passed)
 	decision := "alert"
 	candidate.FinalDecision = &decision
+}
+
+// createAnomalyAlert creates an alert record for a confirmed anomaly candidate.
+// It deduplicates against existing active anomaly alerts for the same metric
+// and connection to prevent duplicate alerts.
+func (e *Engine) createAnomalyAlert(ctx context.Context, candidate *database.AnomalyCandidate) {
+	// Check for an existing active anomaly alert on this metric/connection
+	existing, err := e.datastore.GetActiveAnomalyAlert(ctx, candidate.MetricName, candidate.ConnectionID, candidate.DatabaseName)
+	if err == nil && existing != nil {
+		e.debugLog("Active anomaly alert already exists for %s on connection %d (alert %d), skipping",
+			candidate.MetricName, candidate.ConnectionID, existing.ID)
+		candidate.AlertID = &existing.ID
+		return
+	}
+
+	// Determine severity based on z-score magnitude
+	absZScore := candidate.ZScore
+	if absZScore < 0 {
+		absZScore = -absZScore
+	}
+	severity := "warning"
+	if absZScore >= 4.0 {
+		severity = "critical"
+	} else if absZScore >= 3.0 {
+		severity = "high"
+	}
+
+	// Build anomaly details from tier results
+	anomalyDetails := fmt.Sprintf(
+		`{"z_score": %.2f, "baseline_context": %s, "tier2_score": %s, "tier3_result": %s}`,
+		candidate.ZScore,
+		candidate.Context,
+		formatOptionalFloat(candidate.Tier2Score),
+		formatOptionalString(candidate.Tier3Result),
+	)
+
+	title := fmt.Sprintf("Anomaly detected: %s on connection %d", candidate.MetricName, candidate.ConnectionID)
+	description := fmt.Sprintf(
+		"Statistical anomaly detected for metric %s (value: %.4f, z-score: %.2f).",
+		candidate.MetricName, candidate.MetricValue, candidate.ZScore,
+	)
+
+	alert := &database.Alert{
+		AlertType:      "anomaly",
+		ConnectionID:   candidate.ConnectionID,
+		DatabaseName:   candidate.DatabaseName,
+		MetricName:     &candidate.MetricName,
+		MetricValue:    &candidate.MetricValue,
+		AnomalyScore:   &candidate.ZScore,
+		AnomalyDetails: &anomalyDetails,
+		Severity:       severity,
+		Title:          title,
+		Description:    description,
+		Status:         "active",
+		TriggeredAt:    time.Now(),
+	}
+
+	if err := e.datastore.CreateAlert(ctx, alert); err != nil {
+		e.log("ERROR: Failed to create anomaly alert for candidate %d: %v", candidate.ID, err)
+		return
+	}
+
+	candidate.AlertID = &alert.ID
+	e.log("Anomaly alert created: %s (z-score: %.2f, severity: %s)", title, candidate.ZScore, severity)
+
+	// Queue alert notification for async processing
+	e.queueNotification(alert, database.NotificationTypeAlertFire)
+}
+
+// formatOptionalFloat formats a *float64 as a JSON value string.
+func formatOptionalFloat(v *float64) string {
+	if v == nil {
+		return "null"
+	}
+	return fmt.Sprintf("%.4f", *v)
+}
+
+// formatOptionalString formats a *string as a JSON-quoted value string.
+func formatOptionalString(v *string) string {
+	if v == nil {
+		return "null"
+	}
+	// Use JSON marshaling to safely escape the string
+	b, err := json.Marshal(*v)
+	if err != nil {
+		return "null"
+	}
+	return string(b)
 }
 
 // buildContextText builds a text representation of the anomaly for embedding

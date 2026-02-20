@@ -1262,6 +1262,34 @@ func (d *Datastore) GetActiveThresholdAlert(ctx context.Context, ruleID int64, c
 	return &alert, nil
 }
 
+// GetActiveAnomalyAlert checks for an existing active anomaly alert for the
+// given metric name, connection, and optional database name.
+func (d *Datastore) GetActiveAnomalyAlert(ctx context.Context, metricName string, connectionID int, dbName *string) (*Alert, error) {
+	var alert Alert
+	err := d.pool.QueryRow(ctx, `
+        SELECT id, alert_type, rule_id, connection_id, database_name, object_name,
+               probe_name, metric_name, metric_value, threshold_value, operator,
+               severity, title, description, correlation_id, status, triggered_at,
+               cleared_at, last_updated, anomaly_score, anomaly_details
+        FROM alerts
+        WHERE alert_type = 'anomaly' AND metric_name = $1 AND connection_id = $2
+          AND status = 'active'
+          AND (database_name = $3 OR ($3 IS NULL AND database_name IS NULL))
+        LIMIT 1
+    `, metricName, connectionID, dbName).Scan(
+		&alert.ID, &alert.AlertType, &alert.RuleID, &alert.ConnectionID,
+		&alert.DatabaseName, &alert.ObjectName, &alert.ProbeName, &alert.MetricName,
+		&alert.MetricValue, &alert.ThresholdValue, &alert.Operator, &alert.Severity,
+		&alert.Title, &alert.Description, &alert.CorrelationID, &alert.Status,
+		&alert.TriggeredAt, &alert.ClearedAt, &alert.LastUpdated, &alert.AnomalyScore,
+		&alert.AnomalyDetails)
+
+	if err != nil {
+		return nil, err
+	}
+	return &alert, nil
+}
+
 // GetRecentlyClearedAlert checks if there's a recently cleared alert for the
 // same rule, connection, and database within the cooldown period.
 func (d *Datastore) GetRecentlyClearedAlert(ctx context.Context, ruleID int64, connectionID int, dbName *string, cooldown time.Duration) (bool, error) {

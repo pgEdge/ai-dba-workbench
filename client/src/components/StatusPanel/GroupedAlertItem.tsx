@@ -42,6 +42,8 @@ import {
     ICON_14_SX,
 
     SEVERITY_CHIP_BASE_SX,
+    ALERT_TYPE_CHIP_BASE_SX,
+    getAlertTypeColor,
     INSTANCE_TIME_SX,
     INSTANCE_THRESHOLD_SX,
     GROUP_TITLE_SX,
@@ -102,6 +104,16 @@ const GroupedAlertInstance = ({ alert, showServer, onAcknowledge, onUnacknowledg
         },
     }), [theme.palette.custom.status]);
 
+    const alertTypeLabel = alert.alertType === 'anomaly' ? 'Anomaly' : 'Threshold';
+    const alertTypeColor = getAlertTypeColor(theme, alert.alertType || 'threshold');
+
+    const alertTypeChipSx = useMemo(() => ({
+        ...ALERT_TYPE_CHIP_BASE_SX,
+        bgcolor: alpha(alertTypeColor, 0.15),
+        color: alertTypeColor,
+        '& .MuiChip-label': CHIP_LABEL_SX,
+    }), [alertTypeColor]);
+
     const analyzeButtonSx = useMemo(() => ({
         p: 0.25,
         color: theme.palette.secondary.main,
@@ -144,6 +156,7 @@ const GroupedAlertInstance = ({ alert, showServer, onAcknowledge, onUnacknowledg
                         sx={objectChipSx}
                     />
                 )}
+                <Chip label={alertTypeLabel} size="small" sx={alertTypeChipSx} />
                 {thresholdInfo && (
                     <Typography sx={INSTANCE_THRESHOLD_SX}>
                         {thresholdInfo}

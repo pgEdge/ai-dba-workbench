@@ -231,6 +231,13 @@ export const SEVERITY_CHIP_BASE_SX = {
     textTransform: 'uppercase',
 };
 
+export const ALERT_TYPE_CHIP_BASE_SX = {
+    height: 16,
+    fontSize: '0.875rem',
+    fontWeight: 600,
+    textTransform: 'capitalize',
+};
+
 // GroupedAlertInstance static styles
 export const INSTANCE_TIME_SX = {
     color: 'text.disabled',
@@ -406,6 +413,12 @@ export const getSeverityColors = (theme: Theme) => ({
     warning: theme.palette.warning.main,
     info: theme.palette.info.main,
 });
+
+export const getAlertTypeColor = (theme: Theme, alertType: string) => {
+    return alertType === 'anomaly'
+        ? theme.palette.secondary.main
+        : theme.palette.info.main;
+};
 
 /**
  * Group alerts by their title for consolidated display

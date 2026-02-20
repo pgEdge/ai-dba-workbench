@@ -42,6 +42,8 @@ import {
     ALERT_ACK_TEXT_SX,
     ALERT_TIME_SX,
     SEVERITY_CHIP_BASE_SX,
+    ALERT_TYPE_CHIP_BASE_SX,
+    getAlertTypeColor,
 } from './styles';
 
 /**
@@ -115,6 +117,16 @@ const AlertItem = ({ alert, showServer = false, onAcknowledge, onUnacknowledge, 
         '& .MuiChip-label': CHIP_LABEL_SX,
     }), [baseColor]);
 
+    const alertTypeLabel = alert.alertType === 'anomaly' ? 'Anomaly' : 'Threshold';
+    const alertTypeColor = getAlertTypeColor(theme, alert.alertType || 'threshold');
+
+    const alertTypeChipSx = useMemo(() => ({
+        ...ALERT_TYPE_CHIP_BASE_SX,
+        bgcolor: alpha(alertTypeColor, 0.15),
+        color: alertTypeColor,
+        '& .MuiChip-label': CHIP_LABEL_SX,
+    }), [alertTypeColor]);
+
     const analyzeButtonSx = useMemo(() => ({
         p: 0.5,
         color: theme.palette.secondary.main,
@@ -178,6 +190,7 @@ const AlertItem = ({ alert, showServer = false, onAcknowledge, onUnacknowledge, 
                             sx={objectChipSx}
                         />
                     )}
+                    <Chip label={alertTypeLabel} size="small" sx={alertTypeChipSx} />
                 </Box>
 
                 {/* Threshold info or description */}

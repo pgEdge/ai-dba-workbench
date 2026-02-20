@@ -9,6 +9,18 @@
  */
 
 /**
+ * Strip any conversational preamble before the first markdown heading.
+ * LLMs sometimes add introductory text despite instructions not to.
+ */
+export function stripPreamble(text: string): string {
+    const headingIndex = text.search(/^##\s/m);
+    if (headingIndex > 0) {
+        return text.substring(headingIndex);
+    }
+    return text;
+}
+
+/**
  * Truncate a description string to the first line, capped at a maximum
  * length. Returns an empty string for falsy input.
  */

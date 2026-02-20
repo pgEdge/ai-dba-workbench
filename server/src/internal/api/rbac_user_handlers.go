@@ -108,9 +108,11 @@ func (h *RBACHandler) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !isServiceAccount && len(req.Password) < 8 {
-		RespondError(w, http.StatusBadRequest, "Password must be at least 8 characters")
-		return
+	if !isServiceAccount {
+		if err := auth.ValidatePassword(req.Password); err != nil {
+			RespondError(w, http.StatusBadRequest, capitalizeFirst(err.Error()))
+			return
+		}
 	}
 
 	if isServiceAccount {
@@ -172,9 +174,11 @@ func (h *RBACHandler) updateUser(w http.ResponseWriter, r *http.Request, userID 
 	}
 
 	// Validate password complexity if being updated
-	if req.Password != nil && *req.Password != "" && len(*req.Password) < 8 {
-		RespondError(w, http.StatusBadRequest, "Password must be at least 8 characters")
-		return
+	if req.Password != nil && *req.Password != "" {
+		if err := auth.ValidatePassword(*req.Password); err != nil {
+			RespondError(w, http.StatusBadRequest, capitalizeFirst(err.Error()))
+			return
+		}
 	}
 
 	// Use atomic update to ensure all changes succeed or fail together
@@ -329,4 +333,12 @@ func (h *RBACHandler) getUserPrivileges(w http.ResponseWriter, r *http.Request, 
 	}
 
 	RespondJSON(w, http.StatusOK, resp)
+}
+
+// capitalizeFirst returns the string with its first character uppercased.
+func capitalizeFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }

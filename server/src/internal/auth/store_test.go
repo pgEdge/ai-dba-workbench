@@ -89,7 +89,7 @@ func TestCreateUserWithAllFields(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	err := store.CreateUser("testuser", "password123", "Test annotation", "Test User", "test@example.com")
+	err := store.CreateUser("testuser", "Password123", "Test annotation", "Test User", "test@example.com")
 	if err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestGetUserByID(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	if err := store.CreateUser("testuser", "password123", "Test", "Display", "email@test.com"); err != nil {
+	if err := store.CreateUser("testuser", "Password123", "Test", "Display", "email@test.com"); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
 	user, err := store.GetUser("testuser")
@@ -163,7 +163,7 @@ func TestUpdateUserDisplayName(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	if err := store.CreateUser("testuser", "password", "annotation", "Original", "email@test.com"); err != nil {
+	if err := store.CreateUser("testuser", "Password1", "annotation", "Original", "email@test.com"); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
 
@@ -192,7 +192,7 @@ func TestUpdateUserEmail(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	if err := store.CreateUser("testuser", "password", "annotation", "Name", "old@test.com"); err != nil {
+	if err := store.CreateUser("testuser", "Password1", "annotation", "Name", "old@test.com"); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
 
@@ -225,7 +225,7 @@ func TestAuthenticateUserSuccessUpdatesLastLogin(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	if err := store.CreateUser("testuser", "password123", "", "", ""); err != nil {
+	if err := store.CreateUser("testuser", "Password123", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
 
@@ -234,7 +234,7 @@ func TestAuthenticateUserSuccessUpdatesLastLogin(t *testing.T) {
 		t.Error("Expected nil last login before authentication")
 	}
 
-	_, _, err := store.AuthenticateUser("testuser", "password123")
+	_, _, err := store.AuthenticateUser("testuser", "Password123")
 	if err != nil {
 		t.Fatalf("Authentication failed: %v", err)
 	}
@@ -258,12 +258,12 @@ func TestAuthenticateUserResetsFailedAttempts(t *testing.T) {
 	}
 	defer store.Close()
 
-	if err := store.CreateUser("testuser", "password123", "", "", ""); err != nil {
+	if err := store.CreateUser("testuser", "Password123", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
 
 	// Failed login attempt
-	_, _, _ = store.AuthenticateUser("testuser", "wrongpassword")
+	_, _, _ = store.AuthenticateUser("testuser", "Wrongpassword1")
 
 	user, _ := store.GetUser("testuser")
 	if user.FailedAttempts != 1 {
@@ -271,7 +271,7 @@ func TestAuthenticateUserResetsFailedAttempts(t *testing.T) {
 	}
 
 	// Successful login
-	_, _, err = store.AuthenticateUser("testuser", "password123")
+	_, _, err = store.AuthenticateUser("testuser", "Password123")
 	if err != nil {
 		t.Fatalf("Authentication failed: %v", err)
 	}
@@ -296,13 +296,13 @@ func TestAuthenticateUserAccountLockout(t *testing.T) {
 	}
 	defer store.Close()
 
-	if err := store.CreateUser("testuser", "password123", "", "", ""); err != nil {
+	if err := store.CreateUser("testuser", "Password123", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
 
 	// Max failed attempts
 	for i := 0; i < maxAttempts; i++ {
-		_, _, _ = store.AuthenticateUser("testuser", "wrongpassword")
+		_, _, _ = store.AuthenticateUser("testuser", "Wrongpassword1")
 	}
 
 	// Verify account is locked
@@ -312,7 +312,7 @@ func TestAuthenticateUserAccountLockout(t *testing.T) {
 	}
 
 	// Attempt with correct password should fail
-	_, _, err = store.AuthenticateUser("testuser", "password123")
+	_, _, err = store.AuthenticateUser("testuser", "Password123")
 	if err == nil {
 		t.Error("Expected error for locked account")
 	}
@@ -322,14 +322,14 @@ func TestAuthenticateUserDisabledAccount(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	if err := store.CreateUser("testuser", "password123", "", "", ""); err != nil {
+	if err := store.CreateUser("testuser", "Password123", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
 	if err := store.DisableUser("testuser"); err != nil {
 		t.Fatalf("Failed to disable user: %v", err)
 	}
 
-	_, _, err := store.AuthenticateUser("testuser", "password123")
+	_, _, err := store.AuthenticateUser("testuser", "Password123")
 	if err == nil {
 		t.Error("Expected error for disabled account")
 	}
@@ -339,11 +339,11 @@ func TestAuthenticateUserWrongPassword(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	if err := store.CreateUser("testuser", "password123", "", "", ""); err != nil {
+	if err := store.CreateUser("testuser", "Password123", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
 
-	_, _, err := store.AuthenticateUser("testuser", "wrongpassword")
+	_, _, err := store.AuthenticateUser("testuser", "Wrongpassword1")
 	if err == nil {
 		t.Error("Expected error for wrong password")
 	}
@@ -353,7 +353,7 @@ func TestAuthenticateUserNonExistent(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	_, _, err := store.AuthenticateUser("nonexistent", "password")
+	_, _, err := store.AuthenticateUser("nonexistent", "Password1")
 	if err == nil {
 		t.Error("Expected error for non-existent user")
 	}
@@ -367,10 +367,10 @@ func TestValidateSessionTokenExpired(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	if err := store.CreateUser("testuser", "password123", "", "", ""); err != nil {
+	if err := store.CreateUser("testuser", "Password123", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
-	token, _, err := store.AuthenticateUser("testuser", "password123")
+	token, _, err := store.AuthenticateUser("testuser", "Password123")
 	if err != nil {
 		t.Fatalf("Failed to authenticate user: %v", err)
 	}
@@ -392,10 +392,10 @@ func TestValidateSessionTokenDisabledUser(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	if err := store.CreateUser("testuser", "password123", "", "", ""); err != nil {
+	if err := store.CreateUser("testuser", "Password123", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
-	token, _, err := store.AuthenticateUser("testuser", "password123")
+	token, _, err := store.AuthenticateUser("testuser", "Password123")
 	if err != nil {
 		t.Fatalf("Failed to authenticate user: %v", err)
 	}
@@ -416,10 +416,10 @@ func TestInvalidateSession(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	if err := store.CreateUser("testuser", "password123", "", "", ""); err != nil {
+	if err := store.CreateUser("testuser", "Password123", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
-	token, _, err := store.AuthenticateUser("testuser", "password123")
+	token, _, err := store.AuthenticateUser("testuser", "Password123")
 	if err != nil {
 		t.Fatalf("Failed to authenticate user: %v", err)
 	}
@@ -442,7 +442,7 @@ func TestCreateToken(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	if err := store.CreateUser("testuser", "password", "", "", ""); err != nil {
+	if err := store.CreateUser("testuser", "Password1", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
 
@@ -468,7 +468,7 @@ func TestCreateTokenWithExpiry(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	if err := store.CreateUser("testuser", "password", "", "", ""); err != nil {
+	if err := store.CreateUser("testuser", "Password1", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
 
@@ -497,7 +497,7 @@ func TestValidateTokenExpired(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	if err := store.CreateUser("testuser", "password", "", "", ""); err != nil {
+	if err := store.CreateUser("testuser", "Password1", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
 
@@ -547,7 +547,7 @@ func TestCreateTokenWithMaxDays(t *testing.T) {
 	}
 	defer store.Close()
 
-	if err := store.CreateUser("testuser", "password", "", "", ""); err != nil {
+	if err := store.CreateUser("testuser", "Password1", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
 
@@ -573,7 +573,7 @@ func TestCreateTokenSuperuserNoExpiry(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	if err := store.CreateUser("superuser", "password", "", "", ""); err != nil {
+	if err := store.CreateUser("superuser", "Password1", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
 	if err := store.SetUserSuperuser("superuser", true); err != nil {
@@ -595,7 +595,7 @@ func TestValidateTokenDisabledOwner(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	if err := store.CreateUser("testuser", "password", "", "", ""); err != nil {
+	if err := store.CreateUser("testuser", "Password1", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
 	rawToken, _, err := store.CreateToken("testuser", "Token", nil)
@@ -619,7 +619,7 @@ func TestListUserTokens(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	if err := store.CreateUser("testuser", "password", "", "", ""); err != nil {
+	if err := store.CreateUser("testuser", "Password1", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
 	if _, _, err := store.CreateToken("testuser", "Token 1", nil); err != nil {
@@ -643,7 +643,7 @@ func TestDeleteUserToken(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	if err := store.CreateUser("testuser", "password", "", "", ""); err != nil {
+	if err := store.CreateUser("testuser", "Password1", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
 	_, storedToken, err := store.CreateToken("testuser", "Token", nil)
@@ -666,10 +666,10 @@ func TestDeleteUserTokenNotOwned(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	if err := store.CreateUser("user1", "password", "", "", ""); err != nil {
+	if err := store.CreateUser("user1", "Password1", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user1: %v", err)
 	}
-	if err := store.CreateUser("user2", "password", "", "", ""); err != nil {
+	if err := store.CreateUser("user2", "Password1", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user2: %v", err)
 	}
 	_, storedToken, err := store.CreateToken("user1", "Token", nil)
@@ -692,7 +692,7 @@ func TestListAllTokens(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	if err := store.CreateUser("testuser", "password", "", "", ""); err != nil {
+	if err := store.CreateUser("testuser", "Password1", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
 	if _, _, err := store.CreateToken("testuser", "Token 1", nil); err != nil {
@@ -716,7 +716,7 @@ func TestDeleteTokenByID(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	if err := store.CreateUser("testuser", "password", "", "", ""); err != nil {
+	if err := store.CreateUser("testuser", "Password1", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
 	_, storedToken, err := store.CreateToken("testuser", "Token", nil)
@@ -733,7 +733,7 @@ func TestDeleteTokenByHashPrefix(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	if err := store.CreateUser("testuser", "password", "", "", ""); err != nil {
+	if err := store.CreateUser("testuser", "Password1", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
 	_, storedToken, err := store.CreateToken("testuser", "Token", nil)
@@ -772,7 +772,7 @@ func TestCleanupExpiredTokensStore(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	if err := store.CreateUser("testuser", "password", "", "", ""); err != nil {
+	if err := store.CreateUser("testuser", "Password1", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
 
@@ -965,8 +965,8 @@ func TestUserCount(t *testing.T) {
 		t.Errorf("Expected 0 users initially, got %d", count)
 	}
 
-	store.CreateUser("user1", "password", "", "", "")
-	store.CreateUser("user2", "password", "", "", "")
+	store.CreateUser("user1", "Password1", "", "", "")
+	store.CreateUser("user2", "Password1", "", "", "")
 
 	if count := store.UserCount(); count != 2 {
 		t.Errorf("Expected 2 users, got %d", count)
@@ -981,7 +981,7 @@ func TestTokenCount(t *testing.T) {
 		t.Errorf("Expected 0 tokens initially, got %d", count)
 	}
 
-	store.CreateUser("testuser", "password", "", "", "")
+	store.CreateUser("testuser", "Password1", "", "", "")
 	store.CreateToken("testuser", "Token 1", nil)
 	store.CreateToken("testuser", "Token 2", nil)
 
@@ -994,7 +994,7 @@ func TestGetCounts(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	store.CreateUser("user1", "password", "", "", "")
+	store.CreateUser("user1", "Password1", "", "", "")
 	store.CreateToken("user1", "Token", nil)
 
 	users, tokens := store.GetCounts()
@@ -1056,7 +1056,7 @@ func TestResetFailedAttemptsStore(t *testing.T) {
 	}
 	defer store.Close()
 
-	if err := store.CreateUser("testuser", "password", "", "", ""); err != nil {
+	if err := store.CreateUser("testuser", "Password1", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
 
@@ -1090,13 +1090,13 @@ func TestUpdateUserAtomic_AllFields(t *testing.T) {
 	defer cleanup()
 
 	// Create a user
-	err := store.CreateUser("testuser", "oldpass1", "old annotation", "Old Name", "old@example.com")
+	err := store.CreateUser("testuser", "Oldpass1", "old annotation", "Old Name", "old@example.com")
 	if err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
 
 	// Update all fields atomically
-	newPass := "newpass123"
+	newPass := "Newpass123"
 	newAnnotation := "new annotation"
 	newDisplayName := "New Name"
 	newEmail := "new@example.com"
@@ -1140,7 +1140,7 @@ func TestUpdateUserAtomic_AllFields(t *testing.T) {
 	}
 
 	// Verify password was changed by authenticating with new password
-	_, _, err = store.AuthenticateUser("testuser", "newpass123")
+	_, _, err = store.AuthenticateUser("testuser", "Newpass123")
 	// Authentication should fail because user is disabled
 	if err == nil {
 		t.Error("Expected authentication to fail for disabled user")
@@ -1148,7 +1148,7 @@ func TestUpdateUserAtomic_AllFields(t *testing.T) {
 
 	// Enable user and try again
 	store.EnableUser("testuser")
-	_, _, err = store.AuthenticateUser("testuser", "newpass123")
+	_, _, err = store.AuthenticateUser("testuser", "Newpass123")
 	if err != nil {
 		t.Errorf("Expected authentication with new password to succeed: %v", err)
 	}
@@ -1159,7 +1159,7 @@ func TestUpdateUserAtomic_PartialUpdate(t *testing.T) {
 	defer cleanup()
 
 	// Create a user with all fields
-	err := store.CreateUser("testuser", "password", "original annotation", "Original Name", "original@example.com")
+	err := store.CreateUser("testuser", "Password1", "original annotation", "Original Name", "original@example.com")
 	if err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
@@ -1192,7 +1192,7 @@ func TestUpdateUserAtomic_OnlyEnabledStatus(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	err := store.CreateUser("testuser", "password", "", "", "")
+	err := store.CreateUser("testuser", "Password1", "", "", "")
 	if err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
@@ -1234,7 +1234,7 @@ func TestUpdateUserAtomic_OnlySuperuserStatus(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	err := store.CreateUser("testuser", "password", "", "", "")
+	err := store.CreateUser("testuser", "Password1", "", "", "")
 	if err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
@@ -1276,7 +1276,7 @@ func TestUpdateUserAtomic_EmptyUpdate(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	err := store.CreateUser("testuser", "password", "annotation", "Name", "email@example.com")
+	err := store.CreateUser("testuser", "Password1", "annotation", "Name", "email@example.com")
 	if err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}

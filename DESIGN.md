@@ -124,19 +124,24 @@ ai-dba-server --create-user <username>
 
 #### Tokens
 
-Two types of tokens exist:
+All tokens use a unified model with a mandatory owner
+(`owner_id NOT NULL`). Service accounts are users with
+`is_service_account=TRUE`; service accounts cannot log in
+with a password.
 
-**User Tokens**: Issued upon successful login via the `/api/v1/auth/login`
-endpoint. Each user may have multiple tokens. Tokens are deleted upon logout
-or after 24 hours by default.
+Token scope restricts access using three restriction types:
 
-**Service Tokens**: Not associated with user accounts. Include a name, expiry
-timestamp, superuser status, and optional note describing the token's purpose.
-Created via command line:
+- Connection access with a per-connection access level.
+- MCP privilege restrictions for tools, resources, and prompts.
+- Admin permission restrictions for management operations.
 
-```bash
-ai-dba-server --create-token <name>
-```
+Wildcard scope options allow broad access: `connection_id=0`
+means all connections, `privilege_identifier_id=0` means all
+MCP items, and `permission="*"` means all admin permissions.
+
+Effective access equals the minimum of the user's group level
+and the token scope level. Tokens without explicit scope
+restrictions inherit full access from their owner.
 
 #### Groups and Privileges
 
@@ -216,7 +221,7 @@ The `MetricsProbe` interface defines:
 
 #### Available Probes
 
-The collector includes 46 probes covering:
+The collector includes 34 built-in probes covering:
 
 **System-level**: OS info, CPU info, memory info, disk info, load average,
 process info, network info.

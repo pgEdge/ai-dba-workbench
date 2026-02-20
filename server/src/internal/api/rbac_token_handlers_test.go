@@ -28,14 +28,14 @@ func TestRBACHandler_CreateToken_Valid(t *testing.T) {
 	defer cleanup()
 
 	// Setup admin with manage_token_scopes permission
-	store.CreateUser("admin", "password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
 	store.GrantAdminPermission(gID, auth.PermManageTokenScopes)
 
 	// Create a target user for the token
-	store.CreateUser("tokenowner", "password1", "Token Owner", "", "")
+	store.CreateUser("tokenowner", "Password1", "Token Owner", "", "")
 
 	body, _ := json.Marshal(map[string]string{
 		"owner_username": "tokenowner",
@@ -77,13 +77,13 @@ func TestRBACHandler_CreateToken_WithExpiry(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t, true)
 	defer cleanup()
 
-	store.CreateUser("admin", "password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
 	store.GrantAdminPermission(gID, auth.PermManageTokenScopes)
 
-	store.CreateUser("tokenowner", "password1", "Token Owner", "", "")
+	store.CreateUser("tokenowner", "Password1", "Token Owner", "", "")
 
 	body, _ := json.Marshal(map[string]string{
 		"owner_username": "tokenowner",
@@ -117,13 +117,13 @@ func TestRBACHandler_CreateToken_NeverExpiry(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t, true)
 	defer cleanup()
 
-	store.CreateUser("admin", "password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
 	store.GrantAdminPermission(gID, auth.PermManageTokenScopes)
 
-	store.CreateUser("tokenowner", "password1", "Token Owner", "", "")
+	store.CreateUser("tokenowner", "Password1", "Token Owner", "", "")
 
 	body, _ := json.Marshal(map[string]string{
 		"owner_username": "tokenowner",
@@ -148,7 +148,7 @@ func TestRBACHandler_CreateToken_MissingOwner(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t, true)
 	defer cleanup()
 
-	store.CreateUser("admin", "password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
@@ -185,13 +185,13 @@ func TestRBACHandler_CreateToken_InvalidExpiry(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t, true)
 	defer cleanup()
 
-	store.CreateUser("admin", "password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
 	store.GrantAdminPermission(gID, auth.PermManageTokenScopes)
 
-	store.CreateUser("tokenowner", "password1", "Token Owner", "", "")
+	store.CreateUser("tokenowner", "Password1", "Token Owner", "", "")
 
 	body, _ := json.Marshal(map[string]string{
 		"owner_username": "tokenowner",
@@ -217,7 +217,7 @@ func TestRBACHandler_CreateToken_PermissionDenied(t *testing.T) {
 	defer cleanup()
 
 	// Create user without manage_token_scopes permission
-	store.CreateUser("normie", "password1", "Normal user", "", "")
+	store.CreateUser("normie", "Password1", "Normal user", "", "")
 	userID, _ := store.GetUserID("normie")
 
 	body, _ := json.Marshal(map[string]string{
@@ -242,7 +242,7 @@ func TestRBACHandler_CreateToken_InvalidBody(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t, true)
 	defer cleanup()
 
-	store.CreateUser("admin", "password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
@@ -271,14 +271,14 @@ func TestRBACHandler_ListTokens_Admin(t *testing.T) {
 	defer cleanup()
 
 	// Setup admin with manage_token_scopes permission
-	store.CreateUser("admin", "password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
 	store.GrantAdminPermission(gID, auth.PermManageTokenScopes)
 
 	// Create tokens for listing
-	store.CreateUser("user1", "password1", "User One", "", "")
+	store.CreateUser("user1", "Password1", "User One", "", "")
 	store.CreateToken("admin", "Admin token", nil)
 	store.CreateToken("user1", "User1 token", nil)
 
@@ -326,7 +326,7 @@ func TestRBACHandler_ListTokens_NormalUser_PermissionDenied(t *testing.T) {
 	defer cleanup()
 
 	// Create user without manage_token_scopes permission
-	store.CreateUser("normie", "password1", "Normal user", "", "")
+	store.CreateUser("normie", "Password1", "Normal user", "", "")
 	userID, _ := store.GetUserID("normie")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/tokens", nil)
@@ -345,7 +345,7 @@ func TestRBACHandler_ListTokens_Superuser(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t, true)
 	defer cleanup()
 
-	store.CreateUser("user1", "password1", "User One", "", "")
+	store.CreateUser("user1", "Password1", "User One", "", "")
 	store.CreateToken("user1", "Token 1", nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/tokens", nil)
@@ -364,7 +364,7 @@ func TestRBACHandler_ListTokens_IncludesUsername(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t, true)
 	defer cleanup()
 
-	store.CreateUser("admin", "password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
@@ -413,13 +413,13 @@ func TestRBACHandler_DeleteToken_Valid(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t, true)
 	defer cleanup()
 
-	store.CreateUser("admin", "password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
 	store.GrantAdminPermission(gID, auth.PermManageTokenScopes)
 
-	store.CreateUser("user1", "password1", "User One", "", "")
+	store.CreateUser("user1", "Password1", "User One", "", "")
 	_, storedToken, _ := store.CreateToken("user1", "Deletable token", nil)
 
 	req := httptest.NewRequest(http.MethodDelete,
@@ -439,7 +439,7 @@ func TestRBACHandler_DeleteToken_NonExistent(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t, true)
 	defer cleanup()
 
-	store.CreateUser("admin", "password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
@@ -462,7 +462,7 @@ func TestRBACHandler_DeleteToken_PermissionDenied(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t, true)
 	defer cleanup()
 
-	store.CreateUser("normie", "password1", "Normal user", "", "")
+	store.CreateUser("normie", "Password1", "Normal user", "", "")
 	userID, _ := store.GetUserID("normie")
 	_, storedToken, _ := store.CreateToken("normie", "My token", nil)
 
@@ -484,14 +484,14 @@ func TestRBACHandler_DeleteToken_AdminCanDeleteOtherUsersToken(t *testing.T) {
 	defer cleanup()
 
 	// Setup admin with manage_token_scopes permission
-	store.CreateUser("admin", "password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
 	store.GrantAdminPermission(gID, auth.PermManageTokenScopes)
 
 	// Create another user's token
-	store.CreateUser("other", "password1", "Other user", "", "")
+	store.CreateUser("other", "Password1", "Other user", "", "")
 	_, otherToken, _ := store.CreateToken("other", "Other's token", nil)
 
 	req := httptest.NewRequest(http.MethodDelete,
@@ -515,7 +515,7 @@ func TestRBACHandler_GetTokenScope_NoScope(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t, true)
 	defer cleanup()
 
-	store.CreateUser("admin", "password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
@@ -550,7 +550,7 @@ func TestRBACHandler_SetTokenScope_Connections(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t, true)
 	defer cleanup()
 
-	store.CreateUser("admin", "password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
@@ -614,7 +614,7 @@ func TestRBACHandler_SetTokenScope_AdminPermissions(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t, true)
 	defer cleanup()
 
-	store.CreateUser("admin", "password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
@@ -677,7 +677,7 @@ func TestRBACHandler_ClearTokenScope(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t, true)
 	defer cleanup()
 
-	store.CreateUser("admin", "password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
@@ -730,7 +730,7 @@ func TestRBACHandler_GetTokenScope_PermissionDenied(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t, true)
 	defer cleanup()
 
-	store.CreateUser("normie", "password1", "Normal user", "", "")
+	store.CreateUser("normie", "Password1", "Normal user", "", "")
 	userID, _ := store.GetUserID("normie")
 	_, storedToken, _ := store.CreateToken("normie", "My token", nil)
 
@@ -751,7 +751,7 @@ func TestRBACHandler_SetTokenScope_PermissionDenied(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t, true)
 	defer cleanup()
 
-	store.CreateUser("normie", "password1", "Normal user", "", "")
+	store.CreateUser("normie", "Password1", "Normal user", "", "")
 	userID, _ := store.GetUserID("normie")
 	_, storedToken, _ := store.CreateToken("normie", "My token", nil)
 
@@ -779,7 +779,7 @@ func TestRBACHandler_SetTokenScope_InvalidBody(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t, true)
 	defer cleanup()
 
-	store.CreateUser("admin", "password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)

@@ -19,8 +19,8 @@ Before you begin, ensure you have:
 1. Clone the repository:
 
    ```bash
-   git clone https://github.com/pgedge/ai-workbench.git
-   cd ai-workbench/collector
+   git clone https://github.com/pgEdge/ai-dba-workbench.git
+   cd ai-dba-workbench/collector
    ```
 
 2. Build the Collector:

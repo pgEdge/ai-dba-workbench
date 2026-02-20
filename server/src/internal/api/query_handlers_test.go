@@ -271,8 +271,13 @@ func TestSplitStatements(t *testing.T) {
 			nil,
 		},
 		{
-			"comments between semicolons filtered out",
+			"line comment consumes rest of line",
 			"SELECT 1; -- just a comment; SELECT 2",
+			[]string{"SELECT 1"},
+		},
+		{
+			"comments between semicolons filtered out",
+			"SELECT 1; -- just a comment\n; SELECT 2",
 			[]string{"SELECT 1", "SELECT 2"},
 		},
 		{
@@ -284,6 +289,61 @@ func TestSplitStatements(t *testing.T) {
 			"comment-only block between statements",
 			"SELECT 1;\n-- middle comment\n;\nSELECT 2",
 			[]string{"SELECT 1", "SELECT 2"},
+		},
+		{
+			"single_quoted_semicolon",
+			"SELECT 'a;b'; SELECT 2",
+			[]string{"SELECT 'a;b'", "SELECT 2"},
+		},
+		{
+			"escaped_quotes",
+			"SELECT 'it''s;here'; SELECT 2",
+			[]string{"SELECT 'it''s;here'", "SELECT 2"},
+		},
+		{
+			"dollar_quoted",
+			"SELECT $$a;b$$; SELECT 2",
+			[]string{"SELECT $$a;b$$", "SELECT 2"},
+		},
+		{
+			"tagged_dollar",
+			"SELECT $tag$a;b$tag$; SELECT 2",
+			[]string{"SELECT $tag$a;b$tag$", "SELECT 2"},
+		},
+		{
+			"line_comment_semicolon",
+			"SELECT 1 -- comment; here\n; SELECT 2",
+			[]string{"SELECT 1 -- comment; here", "SELECT 2"},
+		},
+		{
+			"block_comment",
+			"SELECT /* ; */ 1; SELECT 2",
+			[]string{"SELECT /* ; */ 1", "SELECT 2"},
+		},
+		{
+			"nested_block_comment",
+			"SELECT /* outer /* inner ; */ ; */ 1; SELECT 2",
+			[]string{"SELECT /* outer /* inner ; */ ; */ 1", "SELECT 2"},
+		},
+		{
+			"trailing_semicolons",
+			"SELECT 1;",
+			[]string{"SELECT 1"},
+		},
+		{
+			"whitespace_only_segments",
+			"   ;  ;  ",
+			nil,
+		},
+		{
+			"block_comment_only",
+			"/* just a comment */",
+			nil,
+		},
+		{
+			"plpgsql_function_body",
+			"CREATE FUNCTION f() RETURNS void AS $$ BEGIN PERFORM 1; END; $$ LANGUAGE plpgsql; SELECT 1",
+			[]string{"CREATE FUNCTION f() RETURNS void AS $$ BEGIN PERFORM 1; END; $$ LANGUAGE plpgsql", "SELECT 1"},
 		},
 	}
 
@@ -622,6 +682,31 @@ func TestStripLeadingComments(t *testing.T) {
 			"-- header\nSELECT 1\nFROM foo",
 			"SELECT 1\nFROM foo",
 		},
+		{
+			"block comment",
+			"/* comment */ SELECT 1",
+			"SELECT 1",
+		},
+		{
+			"nested block comment",
+			"/* outer /* inner */ */ SELECT 1",
+			"SELECT 1",
+		},
+		{
+			"mixed line and block comments",
+			"-- line\n/* block */ SELECT 1",
+			"SELECT 1",
+		},
+		{
+			"multiple line comments",
+			"-- one\n-- two\nSELECT 1",
+			"SELECT 1",
+		},
+		{
+			"block comment with newlines",
+			"/* multi\n   line\n   comment */\nSELECT 1",
+			"SELECT 1",
+		},
 	}
 
 	for _, tt := range tests {
@@ -675,6 +760,8 @@ func TestIsReadOnlyStatement(t *testing.T) {
 		{"CTE with updated_at column", "WITH cte AS (SELECT updated_at FROM foo) SELECT * FROM cte", true},
 		{"CTE with delete_flag column", "WITH cte AS (SELECT delete_flag FROM foo) SELECT * FROM cte", true},
 		{"CTE pure SELECT", "WITH cte AS (SELECT 1) SELECT * FROM cte", true},
+		{"SELECT with block comment", "/* get data */ SELECT 1", true},
+		{"ALTER with block comment", "/* tune */ ALTER SYSTEM SET work_mem = '16MB'", false},
 	}
 
 	for _, tt := range tests {
@@ -865,5 +952,60 @@ func TestQueryConstants(t *testing.T) {
 	}
 	if queryTimeout != 30*time.Second {
 		t.Errorf("Expected queryTimeout=30s, got %v", queryTimeout)
+	}
+}
+
+func TestScanDollarTag(t *testing.T) {
+	tests := []struct {
+		name     string
+		sql      string
+		i        int
+		expected string
+	}{
+		{"empty_tag", "$$body$$", 0, "$$"},
+		{"named_tag", "$tag$body$tag$", 0, "$tag$"},
+		{"underscore_tag", "$_t1$body$_t1$", 0, "$_t1$"},
+		{"not_a_tag_digit_start", "$1abc$", 0, ""},
+		{"not_a_tag_no_close", "$abc", 0, ""},
+		{"mid_string", "SELECT $fn$code$fn$", 7, "$fn$"},
+		{"single_dollar", "$", 0, ""},
+		{"out_of_bounds", "abc", 5, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := scanDollarTag(tt.sql, tt.i)
+			if got != tt.expected {
+				t.Errorf("scanDollarTag(%q, %d) = %q, want %q",
+					tt.sql, tt.i, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestHasOnlyComments(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{"empty", "", true},
+		{"whitespace", "   \n\t  ", true},
+		{"line comment", "-- hello", true},
+		{"block comment", "/* hello */", true},
+		{"nested block", "/* outer /* inner */ */", true},
+		{"mixed", "-- line\n/* block */\n  ", true},
+		{"has sql", "-- comment\nSELECT 1", false},
+		{"just sql", "SELECT 1", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := hasOnlyComments(tt.input)
+			if got != tt.expected {
+				t.Errorf("hasOnlyComments(%q) = %v, want %v",
+					tt.input, got, tt.expected)
+			}
+		})
 	}
 }

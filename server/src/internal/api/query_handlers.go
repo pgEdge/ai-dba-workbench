@@ -60,35 +60,171 @@ const maxRowLimit = 1000
 // queryTimeout is the context timeout for query execution
 const queryTimeout = 30 * time.Second
 
-// splitStatements splits a SQL string into individual statements by
-// splitting on semicolons. It trims whitespace, strips SQL comments
-// when determining if a statement is empty, and filters out empty
-// statements. This is a pragmatic approach that does not handle
-// semicolons inside string literals.
-func splitStatements(sql string) []string {
-	parts := strings.Split(sql, ";")
-	var statements []string
+// scanDollarTag checks whether sql[i] starts a dollar-quote tag. If a
+// valid tag is found (either $$ or $identifier$), it returns the full
+// tag string. Otherwise it returns an empty string.
+func scanDollarTag(sql string, i int) string {
+	if i >= len(sql) || sql[i] != '$' {
+		return ""
+	}
+	// Check for $$ (empty tag)
+	if i+1 < len(sql) && sql[i+1] == '$' {
+		return "$$"
+	}
+	// Check for $identifier$ where identifier is [A-Za-z_][A-Za-z0-9_]*
+	j := i + 1
+	if j >= len(sql) {
+		return ""
+	}
+	ch := sql[j]
+	if !((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || ch == '_') {
+		return ""
+	}
+	j++
+	for j < len(sql) {
+		ch = sql[j]
+		if ch == '$' {
+			return sql[i : j+1]
+		}
+		if !((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+			(ch >= '0' && ch <= '9') || ch == '_') {
+			return ""
+		}
+		j++
+	}
+	return ""
+}
 
-	for _, part := range parts {
-		trimmed := strings.TrimSpace(part)
-		if trimmed == "" {
+// hasOnlyComments returns true when the string contains only SQL
+// comments (line and block) and whitespace but no real SQL content.
+func hasOnlyComments(s string) bool {
+	i := 0
+	for i < len(s) {
+		ch := s[i]
+		if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
+			i++
+			continue
+		}
+		if ch == '-' && i+1 < len(s) && s[i+1] == '-' {
+			for i < len(s) && s[i] != '\n' {
+				i++
+			}
+			continue
+		}
+		if ch == '/' && i+1 < len(s) && s[i+1] == '*' {
+			depth := 1
+			i += 2
+			for i < len(s) && depth > 0 {
+				if s[i] == '/' && i+1 < len(s) && s[i+1] == '*' {
+					depth++
+					i += 2
+				} else if s[i] == '*' && i+1 < len(s) && s[i+1] == '/' {
+					depth--
+					i += 2
+				} else {
+					i++
+				}
+			}
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// splitStatements splits a SQL string into individual statements by
+// scanning for semicolons that are outside of single-quoted strings,
+// dollar-quoted strings, line comments, and block comments (with
+// nesting). It trims whitespace and filters out empty or
+// comment-only statements.
+func splitStatements(sql string) []string {
+	var statements []string
+	start := 0
+	i := 0
+
+	for i < len(sql) {
+		ch := sql[i]
+
+		// Single-quoted string
+		if ch == '\'' {
+			i++
+			for i < len(sql) {
+				if sql[i] == '\'' {
+					if i+1 < len(sql) && sql[i+1] == '\'' {
+						i += 2 // escaped quote ''
+					} else {
+						i++ // closing quote
+						break
+					}
+				} else {
+					i++
+				}
+			}
 			continue
 		}
 
-		// Check if the statement is only comments (no actual SQL)
-		lines := strings.Split(trimmed, "\n")
-		hasContent := false
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if line == "" || strings.HasPrefix(line, "--") {
+		// Dollar-quoted string
+		if ch == '$' {
+			tag := scanDollarTag(sql, i)
+			if tag != "" {
+				i += len(tag)
+				closeIdx := strings.Index(sql[i:], tag)
+				if closeIdx < 0 {
+					i = len(sql)
+				} else {
+					i += closeIdx + len(tag)
+				}
 				continue
 			}
-			hasContent = true
-			break
+			i++
+			continue
 		}
 
-		if hasContent {
-			statements = append(statements, trimmed)
+		// Line comment
+		if ch == '-' && i+1 < len(sql) && sql[i+1] == '-' {
+			for i < len(sql) && sql[i] != '\n' {
+				i++
+			}
+			continue
+		}
+
+		// Block comment (with nesting)
+		if ch == '/' && i+1 < len(sql) && sql[i+1] == '*' {
+			depth := 1
+			i += 2
+			for i < len(sql) && depth > 0 {
+				if sql[i] == '/' && i+1 < len(sql) && sql[i+1] == '*' {
+					depth++
+					i += 2
+				} else if sql[i] == '*' && i+1 < len(sql) && sql[i+1] == '/' {
+					depth--
+					i += 2
+				} else {
+					i++
+				}
+			}
+			continue
+		}
+
+		// Semicolon: split point
+		if ch == ';' {
+			part := strings.TrimSpace(sql[start:i])
+			if part != "" && !hasOnlyComments(part) {
+				statements = append(statements, part)
+			}
+			i++
+			start = i
+			continue
+		}
+
+		i++
+	}
+
+	// Handle trailing statement (no final semicolon)
+	if start < len(sql) {
+		part := strings.TrimSpace(sql[start:])
+		if part != "" && !hasOnlyComments(part) {
+			statements = append(statements, part)
 		}
 	}
 
@@ -305,18 +441,50 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 	RespondJSON(w, http.StatusOK, resp)
 }
 
-// stripLeadingComments removes leading SQL line comments (-- ...) and
-// blank lines from a SQL string, returning the remaining statement body.
-// This allows detection of the first SQL keyword even when the statement
-// begins with comments.
+// stripLeadingComments removes leading SQL line comments (-- ...),
+// block comments (/* ... */ with nesting), and blank lines from a SQL
+// string, returning the remaining statement body. This allows
+// detection of the first SQL keyword even when the statement begins
+// with comments.
 func stripLeadingComments(sql string) string {
-	lines := strings.Split(sql, "\n")
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "--") {
+	i := 0
+	for i < len(sql) {
+		ch := sql[i]
+
+		// Skip whitespace
+		if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
+			i++
 			continue
 		}
-		return strings.Join(lines[i:], "\n")
+
+		// Line comment: skip to end of line
+		if ch == '-' && i+1 < len(sql) && sql[i+1] == '-' {
+			for i < len(sql) && sql[i] != '\n' {
+				i++
+			}
+			continue
+		}
+
+		// Block comment with nesting
+		if ch == '/' && i+1 < len(sql) && sql[i+1] == '*' {
+			depth := 1
+			i += 2
+			for i < len(sql) && depth > 0 {
+				if sql[i] == '/' && i+1 < len(sql) && sql[i+1] == '*' {
+					depth++
+					i += 2
+				} else if sql[i] == '*' && i+1 < len(sql) && sql[i+1] == '/' {
+					depth--
+					i += 2
+				} else {
+					i++
+				}
+			}
+			continue
+		}
+
+		// Found a non-comment, non-whitespace character
+		return sql[i:]
 	}
 	return ""
 }

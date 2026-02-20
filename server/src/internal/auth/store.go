@@ -19,8 +19,10 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	_ "github.com/mattn/go-sqlite3"
 	"golang.org/x/crypto/bcrypt"
@@ -611,11 +613,43 @@ func (s *AuthStore) Close() error {
 // MinPasswordLength is the minimum number of characters required for a password.
 const MinPasswordLength = 8
 
+// MaxPasswordLength is the maximum number of characters allowed for a password.
+// This is set to 72 because bcrypt silently truncates inputs beyond 72 bytes.
+const MaxPasswordLength = 72
+
 // ValidatePassword checks that a password meets complexity requirements.
-// Currently enforces a minimum length of 8 characters.
+// Passwords must be between MinPasswordLength and MaxPasswordLength characters
+// and contain at least one uppercase letter, one lowercase letter, and one digit.
 func ValidatePassword(password string) error {
+	var failures []string
 	if len(password) < MinPasswordLength {
-		return fmt.Errorf("password must be at least %d characters", MinPasswordLength)
+		failures = append(failures, fmt.Sprintf("must be at least %d characters", MinPasswordLength))
+	}
+	if len(password) > MaxPasswordLength {
+		failures = append(failures, fmt.Sprintf("must be at most %d characters", MaxPasswordLength))
+	}
+	var hasUpper, hasLower, hasDigit bool
+	for _, r := range password {
+		switch {
+		case unicode.IsUpper(r):
+			hasUpper = true
+		case unicode.IsLower(r):
+			hasLower = true
+		case unicode.IsDigit(r):
+			hasDigit = true
+		}
+	}
+	if !hasUpper {
+		failures = append(failures, "must contain at least one uppercase letter")
+	}
+	if !hasLower {
+		failures = append(failures, "must contain at least one lowercase letter")
+	}
+	if !hasDigit {
+		failures = append(failures, "must contain at least one digit")
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("password does not meet complexity requirements: %s", strings.Join(failures, "; "))
 	}
 	return nil
 }
@@ -623,6 +657,33 @@ func ValidatePassword(password string) error {
 // =============================================================================
 // User Management
 // =============================================================================
+
+// scannable is an interface satisfied by both *sql.Row and *sql.Rows,
+// allowing a single helper to scan user rows from either source.
+type scannable interface {
+	Scan(dest ...interface{}) error
+}
+
+// scanUser scans a user row into a StoredUser. It handles the NullString
+// conversion for display_name and email columns.
+func scanUser(row scannable) (*StoredUser, error) {
+	var user StoredUser
+	var displayName sql.NullString
+	var email sql.NullString
+	err := row.Scan(&user.ID, &user.Username, &user.PasswordHash, &user.CreatedAt,
+		&user.LastLogin, &user.Enabled, &user.Annotation, &displayName, &email,
+		&user.FailedAttempts, &user.IsSuperuser, &user.IsServiceAccount)
+	if err != nil {
+		return nil, err
+	}
+	if displayName.Valid {
+		user.DisplayName = displayName.String
+	}
+	if email.Valid {
+		user.Email = email.String
+	}
+	return &user, nil
+}
 
 // CreateUser creates a new user
 func (s *AuthStore) CreateUser(username, password, annotation, displayName, email string) error {
@@ -654,16 +715,12 @@ func (s *AuthStore) GetUser(username string) (*StoredUser, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	var user StoredUser
-	var displayName sql.NullString
-	var email sql.NullString
-	err := s.db.QueryRow(
+	row := s.db.QueryRow(
 		`SELECT id, username, password_hash, created_at, last_login, enabled, annotation, display_name, email, failed_attempts, is_superuser, is_service_account
          FROM users WHERE username = ?`,
 		username,
-	).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.CreatedAt,
-		&user.LastLogin, &user.Enabled, &user.Annotation, &displayName, &email, &user.FailedAttempts, &user.IsSuperuser, &user.IsServiceAccount)
-
+	)
+	user, err := scanUser(row)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -671,14 +728,7 @@ func (s *AuthStore) GetUser(username string) (*StoredUser, error) {
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
 
-	if displayName.Valid {
-		user.DisplayName = displayName.String
-	}
-	if email.Valid {
-		user.Email = email.String
-	}
-
-	return &user, nil
+	return user, nil
 }
 
 // GetUserByID retrieves a user by their ID
@@ -686,16 +736,12 @@ func (s *AuthStore) GetUserByID(id int64) (*StoredUser, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	var user StoredUser
-	var displayName sql.NullString
-	var email sql.NullString
-	err := s.db.QueryRow(
+	row := s.db.QueryRow(
 		`SELECT id, username, password_hash, created_at, last_login, enabled, annotation, display_name, email, failed_attempts, is_superuser, is_service_account
          FROM users WHERE id = ?`,
 		id,
-	).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.CreatedAt,
-		&user.LastLogin, &user.Enabled, &user.Annotation, &displayName, &email, &user.FailedAttempts, &user.IsSuperuser, &user.IsServiceAccount)
-
+	)
+	user, err := scanUser(row)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -703,14 +749,7 @@ func (s *AuthStore) GetUserByID(id int64) (*StoredUser, error) {
 		return nil, fmt.Errorf("failed to get user by ID: %w", err)
 	}
 
-	if displayName.Valid {
-		user.DisplayName = displayName.String
-	}
-	if email.Valid {
-		user.Email = email.String
-	}
-
-	return &user, nil
+	return user, nil
 }
 
 // UpdateUser updates a user's password, annotation, display name, and/or email
@@ -987,20 +1026,11 @@ func (s *AuthStore) ListUsers() ([]*StoredUser, error) {
 
 	var users []*StoredUser
 	for rows.Next() {
-		var user StoredUser
-		var displayName sql.NullString
-		var email sql.NullString
-		if err := rows.Scan(&user.ID, &user.Username, &user.PasswordHash, &user.CreatedAt,
-			&user.LastLogin, &user.Enabled, &user.Annotation, &displayName, &email, &user.FailedAttempts, &user.IsSuperuser, &user.IsServiceAccount); err != nil {
+		user, err := scanUser(rows)
+		if err != nil {
 			return nil, fmt.Errorf("failed to scan user: %w", err)
 		}
-		if displayName.Valid {
-			user.DisplayName = displayName.String
-		}
-		if email.Valid {
-			user.Email = email.String
-		}
-		users = append(users, &user)
+		users = append(users, user)
 	}
 
 	if err := rows.Err(); err != nil {

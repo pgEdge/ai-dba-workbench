@@ -27,6 +27,12 @@ func main() {
 	// Parse command-line flags
 	flags := ParseFlags(defaultConfigPath)
 
+	// Resolve passwords from flags, environment variables, or files
+	if err := flags.ResolvePasswords(); err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+		os.Exit(1)
+	}
+
 	// Resolve data directory
 	dataDir := flags.ResolveDataDir(execPath)
 

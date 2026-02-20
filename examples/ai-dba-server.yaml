@@ -387,6 +387,18 @@ builtins:
     query_metrics: true
     list_connections: true
 
+    # Datastore query tool (arbitrary SQL on the datastore)
+    query_datastore: true
+
+    # Resource tools
+    read_resource: true
+
+    # Alert tools
+    get_alert_rules: true
+    get_alert_history: true
+    get_blackouts: true
+    get_metric_baselines: true
+
     # Utility tools
     generate_embedding: true
     search_knowledgebase: true

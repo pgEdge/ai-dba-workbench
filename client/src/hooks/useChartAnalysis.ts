@@ -12,20 +12,10 @@ import { useState, useCallback } from 'react';
 import { ChartData } from '../components/Chart/types';
 import { apiGet } from '../utils/apiClient';
 import { formatConnectionContext } from '../utils/connectionContext';
+import { stripPreamble } from '../utils/textHelpers';
+import { SQL_CODE_BLOCK_RULES } from '../utils/analysisPrompts';
+import { fetchTimelineEventsForRange } from '../utils/timelineEvents';
 import { LLMResponse } from '../types/llm';
-import { TimelineEvent } from '../components/EventTimeline/types';
-
-/**
- * Strip any conversational preamble before the first markdown heading.
- * LLMs sometimes add introductory text despite instructions not to.
- */
-function stripPreamble(text: string): string {
-    const headingIndex = text.search(/^##\s/m);
-    if (headingIndex > 0) {
-        return text.substring(headingIndex);
-    }
-    return text;
-}
 
 export interface ChartAnalysisInput {
     metricDescription: string;
@@ -79,33 +69,6 @@ CRITICAL: Your output is rendered in a static, read-only report. The user CANNOT
 - Suggest that you can do additional work
 - End with a question of any kind
 Write your analysis as a final, self-contained report with no conversational elements.`;
-
-const SQL_RULES = `
-
-CRITICAL rules for SQL code blocks - the user executes SQL directly from the UI so accuracy is essential:
-
-1. SQL code blocks (\`\`\`sql) must ONLY contain executable SQL statements and SQL comments (lines starting with --). NEVER include any of the following in SQL code blocks:
-   - Configuration file snippets (e.g. shared_buffers = 8GB, work_mem = 16MB)
-   - File paths or filenames
-   - Shell commands
-   - Explanatory prose or notes
-   Use \`\`\`conf for postgresql.conf snippets, \`\`\`bash for shell commands, and \`\`\`text for other content.
-
-2. Place each SQL query in its own separate \`\`\`sql code block. NEVER combine multiple queries in one block.
-
-3. Every SQL query MUST be correct and executable. The user will run these directly. Incorrect SQL wastes their time and erodes trust. You MUST verify all column names against the actual PostgreSQL system catalog. The correct column names are:
-   - pg_stat_user_tables: schemaname, relname, seq_scan, seq_tup_read, idx_scan, idx_tup_fetch, n_tup_ins, n_tup_upd, n_tup_del, n_live_tup, n_dead_tup, last_vacuum, last_autovacuum, last_analyze, last_autoanalyze, vacuum_count, autovacuum_count, analyze_count, autoanalyze_count
-   - pg_statio_user_tables: schemaname, relname, heap_blks_read, heap_blks_hit, idx_blks_read, idx_blks_hit, toast_blks_read, toast_blks_hit, tidx_blks_read, tidx_blks_hit
-   - pg_stat_activity: datid, datname, pid, leader_pid, usesysid, usename, application_name, client_addr, client_hostname, client_port, backend_start, xact_start, query_start, state_change, wait_event_type, wait_event, state, backend_xid, backend_xmin, query, backend_type
-   - pg_stat_statements: userid, dbid, queryid, query, calls, total_exec_time, mean_exec_time, rows, shared_blks_hit, shared_blks_read, shared_blks_written, temp_blks_read, temp_blks_written
-   - pg_stat_bgwriter: checkpoints_timed, checkpoints_req, buffers_checkpoint, buffers_clean, maxwritten_clean, buffers_backend, buffers_alloc
-   - pg_class: oid, relname, relnamespace, reltype, relowner, relam, relfilenode, reltablespace, relpages, reltuples, relallvisible, reltoastrelid, relhasindex, relisshared, relpersistence, relkind, relnatts, relchecks, relhasrules, relhastriggers, relhassubclass
-   - pg_stat_database: datid, datname, numbackends, xact_commit, xact_rollback, blks_read, blks_hit, tup_returned, tup_fetched, tup_inserted, tup_updated, tup_deleted, conflicts, temp_files, temp_bytes, deadlocks
-   NEVER use "tablename" - the column is always "relname" in PostgreSQL catalogs. When in doubt, keep queries simple and use only columns you are certain exist.
-
-4. Ensure all SQL syntax, function names, and catalog column names are valid for the specific PostgreSQL version in use (provided in the server context below). Do not use features, functions, or columns introduced in newer versions. For example, pg_stat_statements column names changed between PostgreSQL 12 and 13.
-
-5. When suggesting ALTER SYSTEM or other DDL statements, place them in separate code blocks from diagnostic SELECT queries.`;
 
 /**
  * Compute a djb2 hash of the given string and return it as a string.
@@ -221,50 +184,6 @@ function serializeChartData(data: ChartData): string {
 }
 
 /**
- * Fetch timeline events for a connection within a time range.
- * Returns a formatted string for inclusion in the LLM prompt.
- */
-async function fetchTimelineEvents(
-    connectionId: number,
-    timeRange: string | undefined,
-): Promise<string> {
-    // Calculate absolute time range from relative string
-    const now = new Date();
-    let startTime: Date;
-    switch (timeRange) {
-        case '1h': startTime = new Date(now.getTime() - 60 * 60 * 1000); break;
-        case '6h': startTime = new Date(now.getTime() - 6 * 60 * 60 * 1000); break;
-        case '24h': startTime = new Date(now.getTime() - 24 * 60 * 60 * 1000); break;
-        case '7d': startTime = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000); break;
-        case '30d': startTime = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000); break;
-        default: startTime = new Date(now.getTime() - 24 * 60 * 60 * 1000); break;
-    }
-
-    const params = new URLSearchParams({
-        start_time: startTime.toISOString(),
-        end_time: now.toISOString(),
-        connection_id: String(connectionId),
-        limit: '100',
-    });
-
-    const data = await apiGet<{ events?: TimelineEvent[] }>(
-        `/api/v1/timeline/events?${params}`
-    ).catch(() => null);
-    if (!data) { return ''; }
-
-    const events = data.events;
-    if (!events || events.length === 0) { return ''; }
-
-    const lines = events.map(e => {
-        const time = new Date(e.occurred_at).toLocaleString();
-        const summary = e.summary ? `: ${e.summary}` : '';
-        return `  [${time}] ${e.event_type} - ${e.title}${summary}`;
-    });
-
-    return '\nTimeline Events:\n' + lines.join('\n');
-}
-
-/**
  * Hook for managing LLM-powered chart data analysis.
  * Performs a single-shot LLM call with serialized chart data as context.
  */
@@ -310,7 +229,7 @@ export const useChartAnalysis = (): UseChartAnalysisReturn => {
                     apiGet<Record<string, unknown>>(
                         `/api/v1/connections/${input.connectionId}/context`
                     ).then(data => formatConnectionContext(data)).catch(() => ''),
-                    fetchTimelineEvents(input.connectionId, input.timeRange),
+                    fetchTimelineEventsForRange(input.connectionId, input.timeRange),
                 ]);
                 if (ctxResult.status === 'fulfilled') {
                     connectionContext = ctxResult.value;
@@ -323,7 +242,7 @@ export const useChartAnalysis = (): UseChartAnalysisReturn => {
             // Build the system prompt, appending SQL rules only when
             // a connection is provided (indicating a database context)
             const systemPrompt = input.connectionId != null
-                ? CHART_ANALYSIS_SYSTEM_PROMPT + SQL_RULES
+                ? CHART_ANALYSIS_SYSTEM_PROMPT + SQL_CODE_BLOCK_RULES
                 : CHART_ANALYSIS_SYSTEM_PROMPT;
 
             // Build user message

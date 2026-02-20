@@ -494,7 +494,7 @@ func TestGetUserMCPPrivileges(t *testing.T) {
 	defer cleanup()
 
 	// Create user and group
-	store.CreateUser("testuser", "password", "Test user", "", "")
+	store.CreateUser("testuser", "Password1", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("test-group", "Test group")
 
@@ -531,7 +531,7 @@ func TestGetUserMCPPrivilegesInherited(t *testing.T) {
 	defer cleanup()
 
 	// Create user and groups (parent -> child)
-	store.CreateUser("testuser", "password", "Test user", "", "")
+	store.CreateUser("testuser", "Password1", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	parentID, _ := store.CreateGroup("parent-group", "Parent")
 	childID, _ := store.CreateGroup("child-group", "Child")
@@ -559,7 +559,7 @@ func TestGetUserMCPPrivilegesNoGroups(t *testing.T) {
 	store, cleanup := createTestAuthStoreForPrivileges(t)
 	defer cleanup()
 
-	store.CreateUser("testuser", "password", "Test user", "", "")
+	store.CreateUser("testuser", "Password1", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 
 	// User not in any groups
@@ -578,7 +578,7 @@ func TestGetUserConnectionPrivileges(t *testing.T) {
 	defer cleanup()
 
 	// Create user and group
-	store.CreateUser("testuser", "password", "Test user", "", "")
+	store.CreateUser("testuser", "Password1", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("test-group", "Test group")
 
@@ -613,7 +613,7 @@ func TestGetUserConnectionPrivilegesHighestWins(t *testing.T) {
 	defer cleanup()
 
 	// Create user and two groups
-	store.CreateUser("testuser", "password", "Test user", "", "")
+	store.CreateUser("testuser", "Password1", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	group1ID, _ := store.CreateGroup("group1", "Group 1")
 	group2ID, _ := store.CreateGroup("group2", "Group 2")
@@ -846,7 +846,7 @@ func TestGetUserAdminPermissions(t *testing.T) {
 	store, cleanup := createTestAuthStoreForPrivileges(t)
 	defer cleanup()
 
-	store.CreateUser("testuser", "password", "Test user", "", "")
+	store.CreateUser("testuser", "Password1", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("test-group", "Test group")
 	store.AddUserToGroup(groupID, userID)
@@ -876,7 +876,7 @@ func TestGetUserAdminPermissionsMultipleGroups(t *testing.T) {
 	store, cleanup := createTestAuthStoreForPrivileges(t)
 	defer cleanup()
 
-	store.CreateUser("testuser", "password", "Test user", "", "")
+	store.CreateUser("testuser", "Password1", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	group1ID, _ := store.CreateGroup("group1", "Group 1")
 	group2ID, _ := store.CreateGroup("group2", "Group 2")
@@ -908,7 +908,7 @@ func TestGetUserAdminPermissionsNestedGroups(t *testing.T) {
 	store, cleanup := createTestAuthStoreForPrivileges(t)
 	defer cleanup()
 
-	store.CreateUser("testuser", "password", "Test user", "", "")
+	store.CreateUser("testuser", "Password1", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	parentID, _ := store.CreateGroup("parent-group", "Parent")
 	childID, _ := store.CreateGroup("child-group", "Child")

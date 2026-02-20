@@ -196,7 +196,7 @@ func TestAddUserToGroup(t *testing.T) {
 	defer cleanup()
 
 	// Create a user
-	err := store.CreateUser("testuser", "password", "Test user", "", "")
+	err := store.CreateUser("testuser", "Password1", "Test user", "", "")
 	if err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
@@ -234,7 +234,7 @@ func TestRemoveUserFromGroup(t *testing.T) {
 	defer cleanup()
 
 	// Create user and group
-	err := store.CreateUser("testuser", "password", "Test user", "", "")
+	err := store.CreateUser("testuser", "Password1", "Test user", "", "")
 	if err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
@@ -268,7 +268,7 @@ func TestGroupHierarchy(t *testing.T) {
 	parentID, _ := store.CreateGroup("parent-group", "Parent")
 	childID, _ := store.CreateGroup("child-group", "Child")
 
-	err := store.CreateUser("testuser", "password", "Test user", "", "")
+	err := store.CreateUser("testuser", "Password1", "Test user", "", "")
 	if err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
@@ -357,11 +357,11 @@ func TestGetGroupMembers(t *testing.T) {
 	parentID, _ := store.CreateGroup("parent", "Parent group")
 	childID, _ := store.CreateGroup("child", "Child group")
 
-	err := store.CreateUser("user1", "password", "User 1", "", "")
+	err := store.CreateUser("user1", "Password1", "User 1", "", "")
 	if err != nil {
 		t.Fatalf("Failed to create user1: %v", err)
 	}
-	err = store.CreateUser("user2", "password", "User 2", "", "")
+	err = store.CreateUser("user2", "Password1", "User 2", "", "")
 	if err != nil {
 		t.Fatalf("Failed to create user2: %v", err)
 	}
@@ -394,7 +394,7 @@ func TestSetUserSuperuser(t *testing.T) {
 	defer cleanup()
 
 	// Create a user
-	err := store.CreateUser("testuser", "password", "Test user", "", "")
+	err := store.CreateUser("testuser", "Password1", "Test user", "", "")
 	if err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}

@@ -95,13 +95,11 @@ and this project adheres to
 - Comprehensive test coverage for the alerter engine.
 - Connection management REST APIs for selecting database connections
   (`/api/v1/connections`, `/api/v1/connections/current`)
-- CLI slash commands for connection management (`/list connections`,
-  `/set connection`, `/show connection`)
 - Session-based connection selection persisted in SQLite auth database
 - Documentation for connection management in `docs/server/connections.md`
 - New `pg://connection_info` resource that returns the currently selected
   database connection details without querying the database
-- Unified CI workflows for collector, server, CLI, and documentation
+- Unified CI workflows for collector, server, and documentation
 - Datastore metrics tools for querying collected metrics:
   - `list_probes`: List available metrics probes in the datastore
   - `describe_probe`: Get column details for a specific metrics probe
@@ -257,16 +255,6 @@ and this project adheres to
 - Server `main.go` refactored for improved code organization.
 - Context propagation added to MCP tools for better request handling.
 - Full 5-field cron parser implementation replaces the limited parser.
-- CLI commands refactored for consistency:
-  - Removed `llm-` prefix: `/set provider`, `/show provider`
-    (was `llm-provider`)
-  - Removed `llm-` prefix: `/set model`, `/show model` (was `llm-model`)
-  - Moved `/tools`, `/resources`, `/prompts` to `/list tools`,
-    `/list resources`, `/list prompts`
-  - Added `/list providers` to list available LLM providers
-  - Replaced `/connect` and `/disconnect` with `/set connection <id>`
-    (use `/set connection none` to disconnect)
-  - Reorganized help output into logical groups
 - Resources (like `pg://system_info`) now use the selected monitored
   database connection instead of the datastore
 - Error messages from database connections now show the root cause error

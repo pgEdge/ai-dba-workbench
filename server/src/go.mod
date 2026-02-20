@@ -3,7 +3,6 @@ module github.com/pgedge/ai-workbench/server
 go 1.24.0
 
 require (
-	github.com/fsnotify/fsnotify v1.9.0
 	github.com/jackc/pgx/v5 v5.7.6
 	github.com/mattn/go-sqlite3 v1.14.32
 	github.com/pgedge/ai-workbench/pkg v0.0.0

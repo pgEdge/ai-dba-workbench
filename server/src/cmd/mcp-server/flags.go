@@ -11,6 +11,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -33,12 +34,13 @@ type Flags struct {
 	ChainFile string
 
 	// Database connection
-	DBHost     string
-	DBPort     int
-	DBName     string
-	DBUser     string
-	DBPassword string
-	DBSSLMode  string
+	DBHost         string
+	DBPort         int
+	DBName         string
+	DBUser         string
+	DBPassword     string
+	DBPasswordFile string
+	DBSSLMode      string
 
 	// Token management commands
 	AddTokenCmd    bool
@@ -58,6 +60,7 @@ type Flags struct {
 	AddServiceAccountCmd bool
 	Username             string
 	UserPassword         string
+	UserPasswordFile     string
 	UserNote             string
 	FullName             string
 	Email                string
@@ -117,7 +120,8 @@ func ParseFlags(defaultConfigPath string) *Flags {
 	flag.IntVar(&f.DBPort, "db-port", 0, "Database port")
 	flag.StringVar(&f.DBName, "db-name", "", "Database name")
 	flag.StringVar(&f.DBUser, "db-user", "", "Database user")
-	flag.StringVar(&f.DBPassword, "db-password", "", "Database password")
+	flag.StringVar(&f.DBPassword, "db-password", "", "Database password (deprecated: use AIDBA_DB_PASSWORD env var or -db-password-file)")
+	flag.StringVar(&f.DBPasswordFile, "db-password-file", "", "Path to file containing the database password")
 	flag.StringVar(&f.DBSSLMode, "db-sslmode", "", "Database SSL mode (disable, require, verify-ca, verify-full)")
 
 	// Token management commands
@@ -137,7 +141,8 @@ func ParseFlags(defaultConfigPath string) *Flags {
 	flag.BoolVar(&f.DisableUserCmd, "disable-user", false, "Disable a user account")
 	flag.BoolVar(&f.AddServiceAccountCmd, "add-service-account", false, "Add a new service account")
 	flag.StringVar(&f.Username, "username", "", "Username for user management commands")
-	flag.StringVar(&f.UserPassword, "password", "", "Password for user management commands (prompted if not provided)")
+	flag.StringVar(&f.UserPassword, "password", "", "Password for user management commands (deprecated: use AIDBA_USER_PASSWORD env var or -password-file)")
+	flag.StringVar(&f.UserPasswordFile, "password-file", "", "Path to file containing the user password")
 	flag.StringVar(&f.UserNote, "user-note", "", "Notes for the user (used with -add-user, -update-user)")
 	flag.StringVar(&f.FullName, "full-name", "", "Full name for user management commands")
 	flag.StringVar(&f.Email, "email", "", "Email address for user management commands")
@@ -293,6 +298,45 @@ func (f *Flags) HasCLICommand() bool {
 	return f.HasTokenCommand() || f.HasUserCommand() ||
 		f.HasGroupCommand() || f.HasPrivilegeCommand() ||
 		f.HasTokenScopeCommand()
+}
+
+// isFlagSet returns true if the named flag was explicitly set on the command line.
+func isFlagSet(name string) bool {
+	found := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			found = true
+		}
+	})
+	return found
+}
+
+// ResolvePasswords resolves database and user passwords from flags,
+// environment variables, or files and updates the Flags struct in place.
+func (f *Flags) ResolvePasswords() error {
+	dbResult, err := ResolvePassword(
+		f.DBPassword, isFlagSet("db-password"),
+		"AIDBA_DB_PASSWORD", f.DBPasswordFile,
+	)
+	if err != nil {
+		return fmt.Errorf("resolving database password: %w", err)
+	}
+	if dbResult.Source != PasswordSourceNone {
+		f.DBPassword = dbResult.Value
+	}
+
+	userResult, err := ResolvePassword(
+		f.UserPassword, isFlagSet("password"),
+		"AIDBA_USER_PASSWORD", f.UserPasswordFile,
+	)
+	if err != nil {
+		return fmt.Errorf("resolving user password: %w", err)
+	}
+	if userResult.Source != PasswordSourceNone {
+		f.UserPassword = userResult.Value
+	}
+
+	return nil
 }
 
 // GetDefaultPaths returns default config and secret paths based on the executable path

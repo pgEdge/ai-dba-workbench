@@ -16,8 +16,8 @@ Collector.
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/pgedge/ai-workbench.git
-cd ai-workbench/collector
+git clone https://github.com/pgEdge/ai-dba-workbench.git
+cd ai-dba-workbench/collector
 ```
 
 ### 2. Install Dependencies

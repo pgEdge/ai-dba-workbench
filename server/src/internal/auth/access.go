@@ -16,14 +16,12 @@ import (
 // DatabaseAccessChecker handles database access control based on authentication context
 // With single database support, this is simplified to just check authentication
 type DatabaseAccessChecker struct {
-	tokenStore  *TokenStore
 	authEnabled bool
 }
 
 // NewDatabaseAccessChecker creates a new database access checker
-func NewDatabaseAccessChecker(tokenStore *TokenStore, authEnabled, _ bool) *DatabaseAccessChecker {
+func NewDatabaseAccessChecker(authEnabled bool) *DatabaseAccessChecker {
 	return &DatabaseAccessChecker{
-		tokenStore:  tokenStore,
 		authEnabled: authEnabled,
 	}
 }

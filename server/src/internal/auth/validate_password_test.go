@@ -22,8 +22,18 @@ func TestValidatePassword(t *testing.T) {
 		errSubstr string
 	}{
 		{
-			name:     "valid password 8+ chars",
-			password: "securepassword",
+			name:     "valid password with mixed case and digit",
+			password: "Secure1pass",
+			wantErr:  false,
+		},
+		{
+			name:     "valid password exactly 8 characters",
+			password: "Abcdef1x",
+			wantErr:  false,
+		},
+		{
+			name:     "valid password at max length",
+			password: strings.Repeat("a", 69) + "A1x",
 			wantErr:  false,
 		},
 		{
@@ -34,19 +44,67 @@ func TestValidatePassword(t *testing.T) {
 		},
 		{
 			name:      "7 character password",
-			password:  "abcdefg",
+			password:  "Abcde1x",
 			wantErr:   true,
 			errSubstr: "at least 8 characters",
 		},
 		{
-			name:     "exactly 8 characters",
-			password: "abcdefgh",
+			name:      "exceeds max length",
+			password:  strings.Repeat("a", 70) + "A1x",
+			wantErr:   true,
+			errSubstr: "at most 72 characters",
+		},
+		{
+			name:      "no uppercase letter",
+			password:  "abcdefg1",
+			wantErr:   true,
+			errSubstr: "uppercase letter",
+		},
+		{
+			name:      "no lowercase letter",
+			password:  "ABCDEFG1",
+			wantErr:   true,
+			errSubstr: "lowercase letter",
+		},
+		{
+			name:      "no digit",
+			password:  "Abcdefgh",
+			wantErr:   true,
+			errSubstr: "digit",
+		},
+		{
+			name:      "only lowercase",
+			password:  "abcdefgh",
+			wantErr:   true,
+			errSubstr: "complexity requirements",
+		},
+		{
+			name:      "only uppercase",
+			password:  "ABCDEFGH",
+			wantErr:   true,
+			errSubstr: "complexity requirements",
+		},
+		{
+			name:      "only digits",
+			password:  "12345678",
+			wantErr:   true,
+			errSubstr: "complexity requirements",
+		},
+		{
+			name:     "password with special characters",
+			password: "P@ssw0rd!",
 			wantErr:  false,
 		},
 		{
-			name:     "very long password",
-			password: strings.Repeat("a", 1000),
+			name:     "password with unicode letters",
+			password: "Passwort1",
 			wantErr:  false,
+		},
+		{
+			name:      "short password reports multiple failures",
+			password:  "ab",
+			wantErr:   true,
+			errSubstr: "at least 8 characters",
 		},
 	}
 

@@ -159,7 +159,7 @@ describe('ServerDialog', () => {
 
     describe('validation', () => {
         it('shows error when name is empty', async () => {
-            const user = userEvent.setup();
+            const user = userEvent.setup({ delay: null });
             render(<ServerDialog {...defaultProps} />);
 
             await user.click(screen.getByRole('button', { name: /save/i }));
@@ -170,7 +170,7 @@ describe('ServerDialog', () => {
         });
 
         it('shows error when host is empty', async () => {
-            const user = userEvent.setup();
+            const user = userEvent.setup({ delay: null });
             render(<ServerDialog {...defaultProps} />);
 
             await user.type(getNameField(), 'Test Server');
@@ -180,7 +180,7 @@ describe('ServerDialog', () => {
         });
 
         it('shows error for invalid port', async () => {
-            const user = userEvent.setup();
+            const user = userEvent.setup({ delay: null });
             render(<ServerDialog {...defaultProps} />);
 
             await user.type(getNameField(), 'Test Server');
@@ -193,7 +193,7 @@ describe('ServerDialog', () => {
         });
 
         it('shows error when maintenance database is empty', async () => {
-            const user = userEvent.setup();
+            const user = userEvent.setup({ delay: null });
             render(<ServerDialog {...defaultProps} />);
 
             await user.type(getNameField(), 'Test Server');
@@ -206,7 +206,7 @@ describe('ServerDialog', () => {
         });
 
         it('shows error when username is empty', async () => {
-            const user = userEvent.setup();
+            const user = userEvent.setup({ delay: null });
             render(<ServerDialog {...defaultProps} />);
 
             await user.type(getNameField(), 'Test Server');
@@ -220,7 +220,7 @@ describe('ServerDialog', () => {
         });
 
         it('shows error when password is empty in create mode', async () => {
-            const user = userEvent.setup();
+            const user = userEvent.setup({ delay: null });
             render(<ServerDialog {...defaultProps} />);
 
             await user.type(getNameField(), 'Test Server');
@@ -233,7 +233,7 @@ describe('ServerDialog', () => {
         });
 
         it('does not require password in edit mode', async () => {
-            const user = userEvent.setup();
+            const user = userEvent.setup({ delay: null });
             const onSave = vi.fn().mockResolvedValue();
             const existingServer = {
                 name: 'Test Server',
@@ -260,7 +260,7 @@ describe('ServerDialog', () => {
         });
 
         it('clears field error when user types', async () => {
-            const user = userEvent.setup();
+            const user = userEvent.setup({ delay: null });
             render(<ServerDialog {...defaultProps} />);
 
             // Trigger validation error
@@ -278,7 +278,7 @@ describe('ServerDialog', () => {
 
     describe('form submission', () => {
         it('calls onSave with trimmed form data', async () => {
-            const user = userEvent.setup();
+            const user = userEvent.setup({ delay: null });
             const onSave = vi.fn().mockResolvedValue();
             render(<ServerDialog {...defaultProps} onSave={onSave} />);
 
@@ -308,7 +308,7 @@ describe('ServerDialog', () => {
         });
 
         it('shows success message after successful save', async () => {
-            const user = userEvent.setup();
+            const user = userEvent.setup({ delay: null });
             const onSave = vi.fn().mockResolvedValue();
             render(<ServerDialog {...defaultProps} onSave={onSave} />);
 
@@ -326,7 +326,7 @@ describe('ServerDialog', () => {
         });
 
         it('shows error alert when save fails', async () => {
-            const user = userEvent.setup();
+            const user = userEvent.setup({ delay: null });
             const onSave = vi.fn().mockRejectedValue(new Error('Connection refused'));
             render(<ServerDialog {...defaultProps} onSave={onSave} />);
 
@@ -344,7 +344,7 @@ describe('ServerDialog', () => {
         });
 
         it('does not call onClose when save fails', async () => {
-            const user = userEvent.setup();
+            const user = userEvent.setup({ delay: null });
             const onSave = vi.fn().mockRejectedValue(new Error('Failed'));
             const onClose = vi.fn();
             render(<ServerDialog {...defaultProps} onSave={onSave} onClose={onClose} />);
@@ -365,7 +365,7 @@ describe('ServerDialog', () => {
         });
 
         it('disables form during save', async () => {
-            const user = userEvent.setup();
+            const user = userEvent.setup({ delay: null });
             // Create a promise that we control
             let resolvePromise: (value: unknown) => void;
             const savePromise = new Promise((resolve) => {
@@ -395,7 +395,7 @@ describe('ServerDialog', () => {
 
     describe('cancel behavior', () => {
         it('calls onClose when Cancel button is clicked', async () => {
-            const user = userEvent.setup();
+            const user = userEvent.setup({ delay: null });
             const onClose = vi.fn();
             render(<ServerDialog {...defaultProps} onClose={onClose} />);
 
@@ -405,7 +405,7 @@ describe('ServerDialog', () => {
         });
 
         it('resets form when reopened', async () => {
-            const user = userEvent.setup();
+            const user = userEvent.setup({ delay: null });
             const { rerender } = render(<ServerDialog {...defaultProps} />);
 
             await user.type(getNameField(), 'Test Server');
@@ -420,7 +420,7 @@ describe('ServerDialog', () => {
 
     describe('SSL settings', () => {
         it('expands SSL section when clicked', async () => {
-            const user = userEvent.setup();
+            const user = userEvent.setup({ delay: null });
             render(<ServerDialog {...defaultProps} />);
 
             // Click the accordion
@@ -435,7 +435,7 @@ describe('ServerDialog', () => {
         });
 
         it('includes SSL settings in save data', async () => {
-            const user = userEvent.setup();
+            const user = userEvent.setup({ delay: null });
             const onSave = vi.fn().mockResolvedValue();
             render(<ServerDialog {...defaultProps} onSave={onSave} />);
 
@@ -467,7 +467,7 @@ describe('ServerDialog', () => {
 
     describe('checkbox options', () => {
         it('includes is_monitored in save data', async () => {
-            const user = userEvent.setup();
+            const user = userEvent.setup({ delay: null });
             const onSave = vi.fn().mockResolvedValue();
             render(<ServerDialog {...defaultProps} onSave={onSave} />);
 
@@ -493,7 +493,7 @@ describe('ServerDialog', () => {
         });
 
         it('includes is_shared in save data when superuser', async () => {
-            const user = userEvent.setup();
+            const user = userEvent.setup({ delay: null });
             const onSave = vi.fn().mockResolvedValue();
             render(<ServerDialog {...defaultProps} onSave={onSave} isSuperuser={true} />);
 
@@ -550,7 +550,7 @@ describe('ServerDialog', () => {
         });
 
         it('renders AlertOverridesPanel when Alert Overrides tab is clicked', async () => {
-            const user = userEvent.setup();
+            const user = userEvent.setup({ delay: null });
             render(
                 <ServerDialog
                     {...defaultProps}
@@ -568,7 +568,7 @@ describe('ServerDialog', () => {
         });
 
         it('shows Save button on Details tab and Close button on Alert Overrides tab', async () => {
-            const user = userEvent.setup();
+            const user = userEvent.setup({ delay: null });
             render(
                 <ServerDialog
                     {...defaultProps}

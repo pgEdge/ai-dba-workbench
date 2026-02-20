@@ -76,7 +76,7 @@ func (h *MetricsHandler) handleMetricsQuery(
 	}
 
 	// RBAC check for each connection
-	rbacChecker := auth.NewRBACChecker(h.authStore, true)
+	rbacChecker := auth.NewRBACChecker(h.authStore)
 	for _, connID := range connectionIDs {
 		canAccess, _ := rbacChecker.CanAccessConnection(r.Context(), connID)
 		if !canAccess {
@@ -195,7 +195,7 @@ func (h *MetricsHandler) handleMetricsBaselines(
 	}
 
 	// RBAC check
-	rbacChecker := auth.NewRBACChecker(h.authStore, true)
+	rbacChecker := auth.NewRBACChecker(h.authStore)
 	canAccess, _ := rbacChecker.CanAccessConnection(r.Context(), connectionID)
 	if !canAccess {
 		RespondError(w, http.StatusForbidden,

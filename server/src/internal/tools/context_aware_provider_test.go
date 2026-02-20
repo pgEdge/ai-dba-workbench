@@ -27,9 +27,9 @@ func TestNewContextAwareProvider(t *testing.T) {
 
 	fallbackClient := database.NewClient(nil)
 	cfg := &config.Config{}
-	resourceReg := resources.NewContextAwareRegistry(clientManager, true, cfg, nil, nil)
+	resourceReg := resources.NewContextAwareRegistry(clientManager, cfg, nil, nil)
 
-	provider := NewContextAwareProvider(clientManager, resourceReg, true, fallbackClient, cfg, nil, nil, nil)
+	provider := NewContextAwareProvider(clientManager, resourceReg, fallbackClient, cfg, nil, nil, nil)
 
 	if provider == nil {
 		t.Fatal("Expected non-nil provider")
@@ -42,10 +42,6 @@ func TestNewContextAwareProvider(t *testing.T) {
 	if provider.clientManager != clientManager {
 		t.Error("Expected clientManager to be set correctly")
 	}
-
-	if provider.authEnabled != true {
-		t.Error("Expected authEnabled to be true")
-	}
 }
 
 // TestContextAwareProvider_List tests tool listing with smart filtering
@@ -55,9 +51,9 @@ func TestContextAwareProvider_List(t *testing.T) {
 
 	fallbackClient := database.NewClient(nil)
 	cfg := &config.Config{}
-	resourceReg := resources.NewContextAwareRegistry(clientManager, false, cfg, nil, nil)
+	resourceReg := resources.NewContextAwareRegistry(clientManager, cfg, nil, nil)
 
-	provider := NewContextAwareProvider(clientManager, resourceReg, false, fallbackClient, cfg, nil, nil, nil)
+	provider := NewContextAwareProvider(clientManager, resourceReg, fallbackClient, cfg, nil, nil, nil)
 
 	// Register tools
 	err := provider.RegisterTools(context.TODO())
@@ -107,37 +103,6 @@ func TestContextAwareProvider_List(t *testing.T) {
 	})
 }
 
-// TestContextAwareProvider_Execute_NoAuth tests execution without authentication
-func TestContextAwareProvider_Execute_NoAuth(t *testing.T) {
-	// This test doesn't require database connection, testing read_resource tool
-	clientManager := database.NewClientManager(nil)
-	defer clientManager.CloseAll()
-
-	fallbackClient := database.NewClient(nil)
-	cfg := &config.Config{}
-	resourceReg := resources.NewContextAwareRegistry(clientManager, false, cfg, nil, nil)
-
-	// Auth disabled - should use fallback client
-	provider := NewContextAwareProvider(clientManager, resourceReg, false, fallbackClient, cfg, nil, nil, nil)
-
-	// Context without token hash
-	ctx := context.Background()
-
-	// Execute read_resource with a non-existent resource (tests the tool works)
-	response, err := provider.Execute(ctx, "read_resource", map[string]interface{}{
-		"uri": "test://nonexistent",
-	})
-	if err != nil {
-		t.Fatalf("Execute failed: %v", err)
-	}
-
-	// read_resource should return an error for non-existent resource, but not fail
-	// Verify we got a response (error or not)
-	if len(response.Content) == 0 {
-		t.Fatal("Expected non-empty response content")
-	}
-}
-
 // TestContextAwareProvider_Execute_WithAuth tests execution with authentication
 func TestContextAwareProvider_Execute_WithAuth(t *testing.T) {
 	clientManager := database.NewClientManager(nil)
@@ -145,10 +110,10 @@ func TestContextAwareProvider_Execute_WithAuth(t *testing.T) {
 
 	fallbackClient := database.NewClient(nil)
 	cfg := &config.Config{}
-	resourceReg := resources.NewContextAwareRegistry(clientManager, true, cfg, nil, nil)
+	resourceReg := resources.NewContextAwareRegistry(clientManager, cfg, nil, nil)
 
 	// Auth enabled - should require token hash
-	provider := NewContextAwareProvider(clientManager, resourceReg, true, fallbackClient, cfg, nil, nil, nil)
+	provider := NewContextAwareProvider(clientManager, resourceReg, fallbackClient, cfg, nil, nil, nil)
 
 	t.Run("missing token hash returns error", func(t *testing.T) {
 		// Context without token hash
@@ -231,12 +196,12 @@ func TestContextAwareProvider_Execute_InvalidTool(t *testing.T) {
 
 	fallbackClient := database.NewClient(nil)
 	cfg := &config.Config{}
-	resourceReg := resources.NewContextAwareRegistry(clientManager, false, cfg, nil, nil)
+	resourceReg := resources.NewContextAwareRegistry(clientManager, cfg, nil, nil)
 
-	// Auth disabled for simplicity
-	provider := NewContextAwareProvider(clientManager, resourceReg, false, fallbackClient, cfg, nil, nil, nil)
+	provider := NewContextAwareProvider(clientManager, resourceReg, fallbackClient, cfg, nil, nil, nil)
 
-	ctx := context.Background()
+	// Provide a token hash since auth is always required
+	ctx := context.WithValue(context.Background(), auth.TokenHashContextKey, "test-token-hash")
 
 	// Execute non-existent tool
 	response, err := provider.Execute(ctx, "nonexistent_tool", map[string]interface{}{})
@@ -269,9 +234,9 @@ func TestContextAwareProvider_RegisterTools_WithContext(t *testing.T) {
 
 	fallbackClient := database.NewClient(nil)
 	cfg := &config.Config{}
-	resourceReg := resources.NewContextAwareRegistry(clientManager, true, cfg, nil, nil)
+	resourceReg := resources.NewContextAwareRegistry(clientManager, cfg, nil, nil)
 
-	provider := NewContextAwareProvider(clientManager, resourceReg, true, fallbackClient, cfg, nil, nil, nil)
+	provider := NewContextAwareProvider(clientManager, resourceReg, fallbackClient, cfg, nil, nil, nil)
 
 	// Register with context containing token hash
 	ctx := context.WithValue(context.Background(), auth.TokenHashContextKey, "registration-token")

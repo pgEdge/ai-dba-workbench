@@ -203,7 +203,7 @@ func TestChannelOverrideHandler_ValidScopes(t *testing.T) {
 	authStore, cleanup := createTestAuthStoreForChannelOverrides(t)
 	defer cleanup()
 
-	rbac := auth.NewRBACChecker(authStore, true)
+	rbac := auth.NewRBACChecker(authStore)
 	handler := NewChannelOverrideHandler(nil, nil, rbac)
 
 	scopes := []string{"server", "cluster", "group"}
@@ -248,7 +248,7 @@ func TestChannelOverrideHandler_UpsertRequiresPermission(t *testing.T) {
 	authStore, cleanup := createTestAuthStoreForChannelOverrides(t)
 	defer cleanup()
 
-	rbac := auth.NewRBACChecker(authStore, true)
+	rbac := auth.NewRBACChecker(authStore)
 	handler := NewChannelOverrideHandler(nil, nil, rbac)
 
 	body, _ := json.Marshal(map[string]interface{}{"enabled": true})
@@ -277,7 +277,7 @@ func TestChannelOverrideHandler_DeleteRequiresPermission(t *testing.T) {
 	authStore, cleanup := createTestAuthStoreForChannelOverrides(t)
 	defer cleanup()
 
-	rbac := auth.NewRBACChecker(authStore, true)
+	rbac := auth.NewRBACChecker(authStore)
 	handler := NewChannelOverrideHandler(nil, nil, rbac)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/channel-overrides/cluster/5/10", nil)
@@ -329,7 +329,7 @@ func TestChannelOverrideHandler_PermissionCheckAllScopes(t *testing.T) {
 	authStore, cleanup := createTestAuthStoreForChannelOverrides(t)
 	defer cleanup()
 
-	rbac := auth.NewRBACChecker(authStore, true)
+	rbac := auth.NewRBACChecker(authStore)
 	handler := NewChannelOverrideHandler(nil, nil, rbac)
 
 	scopes := []string{"server", "cluster", "group"}

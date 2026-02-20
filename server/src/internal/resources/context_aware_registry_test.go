@@ -41,16 +41,13 @@ func TestNewContextAwareRegistry(t *testing.T) {
 		},
 	}
 
-	registry := NewContextAwareRegistry(cm, false, cfg, nil, nil)
+	registry := NewContextAwareRegistry(cm, cfg, nil, nil)
 
 	if registry == nil {
 		t.Fatal("expected non-nil registry")
 	}
 	if registry.clientManager != cm {
 		t.Error("expected client manager to be set")
-	}
-	if registry.authEnabled {
-		t.Error("expected authEnabled to be false")
 	}
 }
 
@@ -67,7 +64,7 @@ func TestContextAwareRegistry_List(t *testing.T) {
 			},
 		}
 
-		registry := NewContextAwareRegistry(cm, false, cfg, nil, nil)
+		registry := NewContextAwareRegistry(cm, cfg, nil, nil)
 		resources := registry.List()
 
 		// Should have built-in resource
@@ -94,7 +91,7 @@ func TestContextAwareRegistry_List(t *testing.T) {
 			},
 		}
 
-		registry := NewContextAwareRegistry(cm, false, cfg, nil, nil)
+		registry := NewContextAwareRegistry(cm, cfg, nil, nil)
 		resources := registry.List()
 
 		// Should not have system info
@@ -120,7 +117,7 @@ func TestContextAwareRegistry_Read_DisabledResource(t *testing.T) {
 		},
 	}
 
-	registry := NewContextAwareRegistry(cm, false, cfg, nil, nil)
+	registry := NewContextAwareRegistry(cm, cfg, nil, nil)
 
 	// Reading disabled resource should return error content
 	content, err := registry.Read(context.Background(), URISystemInfo)
@@ -149,7 +146,7 @@ func TestContextAwareRegistry_Read_NotFound(t *testing.T) {
 		},
 	}
 
-	registry := NewContextAwareRegistry(cm, false, cfg, nil, nil)
+	registry := NewContextAwareRegistry(cm, cfg, nil, nil)
 
 	// Reading non-existent resource should return not found content
 	content, err := registry.Read(context.Background(), "pg://nonexistent")
@@ -179,7 +176,7 @@ func TestContextAwareRegistry_Read_AuthRequired(t *testing.T) {
 	}
 
 	// Auth enabled but no token in context
-	registry := NewContextAwareRegistry(cm, true, cfg, nil, nil)
+	registry := NewContextAwareRegistry(cm, cfg, nil, nil)
 
 	// Reading without token should return error
 	content, err := registry.Read(context.Background(), URISystemInfo)
@@ -208,7 +205,7 @@ func TestContextAwareRegistry_Read_WithToken(t *testing.T) {
 		},
 	}
 
-	registry := NewContextAwareRegistry(cm, true, cfg, nil, nil)
+	registry := NewContextAwareRegistry(cm, cfg, nil, nil)
 
 	// Add token to context
 	ctx := context.WithValue(context.Background(), auth.TokenHashContextKey, "test-token-hash")
@@ -237,7 +234,7 @@ func TestContextAwareRegistry_GetClient_AuthDisabled(t *testing.T) {
 		},
 	}
 
-	registry := NewContextAwareRegistry(cm, false, cfg, nil, nil)
+	registry := NewContextAwareRegistry(cm, cfg, nil, nil)
 
 	// When auth is disabled, getClient uses "default" key
 	// This exercises the code path - it may return an error or a client
@@ -252,7 +249,7 @@ func TestContextAwareRegistry_GetClient_AuthEnabled_NoToken(t *testing.T) {
 
 	cfg := &conf.Config{}
 
-	registry := NewContextAwareRegistry(cm, true, cfg, nil, nil)
+	registry := NewContextAwareRegistry(cm, cfg, nil, nil)
 
 	_, err := registry.getClient(context.Background())
 	if err == nil {
@@ -274,7 +271,7 @@ func TestContextAwareRegistry_DefaultNilConfig(t *testing.T) {
 		},
 	}
 
-	registry := NewContextAwareRegistry(cm, false, cfg, nil, nil)
+	registry := NewContextAwareRegistry(cm, cfg, nil, nil)
 	resources := registry.List()
 
 	// Should have built-in resource since nil defaults to enabled

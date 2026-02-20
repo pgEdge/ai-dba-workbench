@@ -129,7 +129,7 @@ func TestProbeConfigHandler_UpdateRequiresPermission(t *testing.T) {
 	}
 	defer authStore.Close()
 
-	rbac := auth.NewRBACChecker(authStore, true)
+	rbac := auth.NewRBACChecker(authStore)
 	handler := NewProbeConfigHandler(nil, nil, rbac)
 
 	body, _ := json.Marshal(map[string]bool{"is_enabled": false})
@@ -250,7 +250,7 @@ func TestProbeConfigHandler_ListProbeConfigs_InvalidConnectionID(t *testing.T) {
 }
 
 func TestProbeConfigHandler_UpdateProbeConfig_InvalidJSON(t *testing.T) {
-	rbac := auth.NewRBACChecker(nil, false)
+	rbac := auth.NewRBACChecker(nil)
 	handler := NewProbeConfigHandler(nil, nil, rbac)
 
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/probe-configs/1",

@@ -165,11 +165,10 @@ type HTTPConfig struct {
 
 // AuthConfig holds authentication settings
 type AuthConfig struct {
-	Enabled                        bool `yaml:"enabled"`                            // Whether authentication is required
-	MaxUserTokenDays               int  `yaml:"max_user_token_days"`                // Maximum lifetime for user-created tokens in days (0 = unlimited)
-	MaxFailedAttemptsBeforeLockout int  `yaml:"max_failed_attempts_before_lockout"` // Number of failed login attempts before account lockout (0 = disabled)
-	RateLimitWindowMinutes         int  `yaml:"rate_limit_window_minutes"`          // Time window in minutes for rate limiting (default: 15)
-	RateLimitMaxAttempts           int  `yaml:"rate_limit_max_attempts"`            // Maximum failed attempts per IP in the time window (default: 10)
+	MaxUserTokenDays               int `yaml:"max_user_token_days"`                // Maximum lifetime for user-created tokens in days (0 = unlimited)
+	MaxFailedAttemptsBeforeLockout int `yaml:"max_failed_attempts_before_lockout"` // Number of failed login attempts before account lockout (0 = disabled)
+	RateLimitWindowMinutes         int `yaml:"rate_limit_window_minutes"`          // Time window in minutes for rate limiting (default: 15)
+	RateLimitMaxAttempts           int `yaml:"rate_limit_max_attempts"`            // Maximum failed attempts per IP in the time window (default: 10)
 }
 
 // TLSConfig holds TLS/HTTPS settings
@@ -425,10 +424,6 @@ type CLIFlags struct {
 	TLSChainFile  string
 	TLSChainSet   bool
 
-	// Auth flags
-	AuthEnabled    bool
-	AuthEnabledSet bool
-
 	// Database flags
 	DBHost     string
 	DBHostSet  bool
@@ -464,11 +459,10 @@ func defaultConfig() *Config {
 				ChainFile: "",
 			},
 			Auth: AuthConfig{
-				Enabled:                        true, // Authentication enabled by default
-				MaxUserTokenDays:               0,    // Unlimited by default
-				MaxFailedAttemptsBeforeLockout: 0,    // Disabled by default (0 = no lockout)
-				RateLimitWindowMinutes:         15,   // 15 minute window for rate limiting
-				RateLimitMaxAttempts:           10,   // 10 attempts per IP per window
+				MaxUserTokenDays:               0,  // Unlimited by default
+				MaxFailedAttemptsBeforeLockout: 0,  // Disabled by default (0 = no lockout)
+				RateLimitWindowMinutes:         15, // 15 minute window for rate limiting
+				RateLimitMaxAttempts:           10, // 10 attempts per IP per window
 			},
 		},
 		Database: nil, // No database configured by default
@@ -544,11 +538,7 @@ func mergeConfig(dest, src *Config) {
 		dest.HTTP.TrustedProxies = src.HTTP.TrustedProxies
 	}
 
-	// Auth - note: we need to preserve false values
-	// Use a simple heuristic: if any auth config is set, assume auth config is intentional
-	if !src.HTTP.Auth.Enabled {
-		dest.HTTP.Auth.Enabled = src.HTTP.Auth.Enabled
-	}
+	// Auth - authentication is always required; the Enabled field is not overridable
 	if src.HTTP.Auth.MaxUserTokenDays > 0 {
 		dest.HTTP.Auth.MaxUserTokenDays = src.HTTP.Auth.MaxUserTokenDays
 	}
@@ -822,11 +812,6 @@ func applyCLIFlags(cfg *Config, flags CLIFlags) {
 		cfg.HTTP.TLS.ChainFile = flags.TLSChainFile
 	}
 
-	// Auth
-	if flags.AuthEnabledSet {
-		cfg.HTTP.Auth.Enabled = flags.AuthEnabled
-	}
-
 	// Database CLI flags
 	// Create a default database if none exists and any DB flag is set
 	if cfg.Database == nil && (flags.DBHostSet || flags.DBPortSet || flags.DBNameSet || flags.DBUserSet || flags.DBPassSet || flags.DBSSLSet) {
@@ -884,9 +869,6 @@ func validateConfig(cfg *Config) error {
 			return fmt.Errorf("TLS key file is required when HTTPS is enabled")
 		}
 	}
-
-	// Auth enabled - auth store will be created in data_dir
-	// No additional validation needed here
 
 	// Database configuration validation
 	if cfg.Database != nil && cfg.Database.User == "" {

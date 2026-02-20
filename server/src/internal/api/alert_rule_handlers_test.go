@@ -136,7 +136,7 @@ func TestAlertRuleHandler_UpdateRequiresPermission(t *testing.T) {
 	authStore, cleanup := createTestAuthStoreForAlertRules(t)
 	defer cleanup()
 
-	rbac := auth.NewRBACChecker(authStore, true)
+	rbac := auth.NewRBACChecker(authStore)
 	handler := NewAlertRuleHandler(nil, nil, rbac)
 
 	body, _ := json.Marshal(map[string]bool{"default_enabled": false})

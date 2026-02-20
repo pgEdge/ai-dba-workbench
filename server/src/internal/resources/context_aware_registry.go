@@ -28,7 +28,6 @@ type ContextAwareHandler func(ctx context.Context, dbClient *database.Client) (m
 // This ensures connection isolation in HTTP/HTTPS mode with authentication
 type ContextAwareRegistry struct {
 	clientManager   *database.ClientManager
-	authEnabled     bool
 	customResources map[string]customResource
 	cfg             *config.Config
 	authStore       *auth.AuthStore     // Auth store for connection sessions
@@ -43,15 +42,14 @@ type customResource struct {
 }
 
 // NewContextAwareRegistry creates a new context-aware resource registry
-func NewContextAwareRegistry(clientManager *database.ClientManager, authEnabled bool, cfg *config.Config, authStore *auth.AuthStore, datastore *database.Datastore) *ContextAwareRegistry {
+func NewContextAwareRegistry(clientManager *database.ClientManager, cfg *config.Config, authStore *auth.AuthStore, datastore *database.Datastore) *ContextAwareRegistry {
 	return &ContextAwareRegistry{
 		clientManager:   clientManager,
-		authEnabled:     authEnabled,
 		customResources: make(map[string]customResource),
 		cfg:             cfg,
 		authStore:       authStore,
 		datastore:       datastore,
-		rbacChecker:     auth.NewRBACChecker(authStore, authEnabled),
+		rbacChecker:     auth.NewRBACChecker(authStore),
 	}
 }
 
@@ -230,16 +228,6 @@ func (r *ContextAwareRegistry) Read(ctx context.Context, uri string) (mcp.Resour
 
 // readConnectionInfo returns the current connection context without querying a database
 func (r *ContextAwareRegistry) readConnectionInfo(ctx context.Context) (mcp.ResourceContent, error) {
-	// If auth is disabled, we're using default connection from config
-	if !r.authEnabled {
-		// In no-auth mode, connection is determined by server config
-		info := &ConnectionInfo{
-			Connected: true,
-			Message:   "Using default database connection (authentication disabled)",
-		}
-		return BuildConnectionInfoResponse(info)
-	}
-
 	// Get token hash from context
 	tokenHash := auth.GetTokenHashFromContext(ctx)
 	if tokenHash == "" {
@@ -304,16 +292,7 @@ func (r *ContextAwareRegistry) readConnectionInfo(ctx context.Context) (mcp.Reso
 
 // getClient returns the appropriate database client based on authentication state
 func (r *ContextAwareRegistry) getClient(ctx context.Context) (*database.Client, error) {
-	if !r.authEnabled {
-		// Authentication disabled - use "default" key in ClientManager
-		client, err := r.clientManager.GetOrCreateClient("default", true)
-		if err != nil {
-			return nil, fmt.Errorf("no database connection configured: %w", err)
-		}
-		return client, nil
-	}
-
-	// Authentication enabled - get per-token client
+	// Get per-token client
 	tokenHash := auth.GetTokenHashFromContext(ctx)
 	if tokenHash == "" {
 		return nil, fmt.Errorf("no authentication token found in request context")

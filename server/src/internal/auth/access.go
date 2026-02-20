@@ -15,25 +15,16 @@ import (
 
 // DatabaseAccessChecker handles database access control based on authentication context
 // With single database support, this is simplified to just check authentication
-type DatabaseAccessChecker struct {
-	authEnabled bool
-}
+type DatabaseAccessChecker struct{}
 
 // NewDatabaseAccessChecker creates a new database access checker
-func NewDatabaseAccessChecker(authEnabled bool) *DatabaseAccessChecker {
-	return &DatabaseAccessChecker{
-		authEnabled: authEnabled,
-	}
+func NewDatabaseAccessChecker() *DatabaseAccessChecker {
+	return &DatabaseAccessChecker{}
 }
 
 // CanAccessDatabase checks if the current request context has access to the database
 // With single database, we just check that authentication is valid
 func (dac *DatabaseAccessChecker) CanAccessDatabase(ctx context.Context) bool {
-	// Auth disabled - database accessible
-	if !dac.authEnabled {
-		return true
-	}
-
 	// Check if API token
 	if IsAPITokenFromContext(ctx) {
 		return true
@@ -56,23 +47,21 @@ func (dac *DatabaseAccessChecker) GetBoundDatabase(_ context.Context) string {
 
 // RBACChecker handles role-based access control checks
 type RBACChecker struct {
-	authStore   *AuthStore
-	authEnabled bool
+	authStore *AuthStore
 }
 
 // NewRBACChecker creates a new RBAC checker
-func NewRBACChecker(authStore *AuthStore, authEnabled bool) *RBACChecker {
+func NewRBACChecker(authStore *AuthStore) *RBACChecker {
 	return &RBACChecker{
-		authStore:   authStore,
-		authEnabled: authEnabled,
+		authStore: authStore,
 	}
 }
 
 // IsSuperuser checks if the current context has superuser privileges
 // Superusers bypass all privilege checks
 func (rc *RBACChecker) IsSuperuser(ctx context.Context) bool {
-	// Auth disabled - treat as superuser (full access)
-	if !rc.authEnabled || rc.authStore == nil {
+	// Nil store - treat as superuser (full access)
+	if rc.authStore == nil {
 		return true
 	}
 
@@ -81,14 +70,13 @@ func (rc *RBACChecker) IsSuperuser(ctx context.Context) bool {
 
 // CanAccessMCPItem checks if the current context can access a specific MCP item
 // Returns true if:
-// - Auth is disabled
 // - User/token is a superuser
 // - The item is not restricted (not assigned to any group)
 // - User has the privilege through their group memberships
 // - Token is scoped and includes this privilege (checked in token scope phase)
 func (rc *RBACChecker) CanAccessMCPItem(ctx context.Context, identifier string) bool {
-	// Auth disabled - full access
-	if !rc.authEnabled || rc.authStore == nil {
+	// Nil store - full access
+	if rc.authStore == nil {
 		return true
 	}
 
@@ -146,8 +134,8 @@ func (rc *RBACChecker) CanAccessMCPItem(ctx context.Context, identifier string) 
 // CanAccessConnection checks if the current context can access a specific database connection
 // Returns (canAccess bool, accessLevel string) where accessLevel is "read" or "read_write"
 func (rc *RBACChecker) CanAccessConnection(ctx context.Context, connectionID int) (bool, string) {
-	// Auth disabled - full access
-	if !rc.authEnabled || rc.authStore == nil {
+	// Nil store - full access
+	if rc.authStore == nil {
 		return true, AccessLevelReadWrite
 	}
 
@@ -221,8 +209,8 @@ func (rc *RBACChecker) GetEffectivePrivileges(ctx context.Context) *EffectivePri
 		AdminPermissions:     make(map[string]bool),
 	}
 
-	// Auth disabled - return empty (no restrictions means full access)
-	if !rc.authEnabled || rc.authStore == nil {
+	// Nil store - return empty (no restrictions means full access)
+	if rc.authStore == nil {
 		result.IsSuperuser = true
 		return result
 	}
@@ -375,8 +363,8 @@ func (rc *RBACChecker) GetAccessibleConnections(ctx context.Context) []int {
 
 // HasAdminPermission checks if the current context has a specific admin permission
 func (rc *RBACChecker) HasAdminPermission(ctx context.Context, permission string) bool {
-	// Auth disabled - full access
-	if !rc.authEnabled || rc.authStore == nil {
+	// Nil store - full access
+	if rc.authStore == nil {
 		return true
 	}
 

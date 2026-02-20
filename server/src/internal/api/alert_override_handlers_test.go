@@ -204,7 +204,7 @@ func TestAlertOverrideHandler_ValidScopes(t *testing.T) {
 	authStore, cleanup := createTestAuthStoreForAlertOverrides(t)
 	defer cleanup()
 
-	rbac := auth.NewRBACChecker(authStore, true)
+	rbac := auth.NewRBACChecker(authStore)
 	handler := NewAlertOverrideHandler(nil, nil, rbac)
 
 	scopes := []string{"server", "cluster", "group"}
@@ -249,7 +249,7 @@ func TestAlertOverrideHandler_UpsertRequiresPermission(t *testing.T) {
 	authStore, cleanup := createTestAuthStoreForAlertOverrides(t)
 	defer cleanup()
 
-	rbac := auth.NewRBACChecker(authStore, true)
+	rbac := auth.NewRBACChecker(authStore)
 	handler := NewAlertOverrideHandler(nil, nil, rbac)
 
 	body, _ := json.Marshal(map[string]interface{}{"enabled": false})
@@ -278,7 +278,7 @@ func TestAlertOverrideHandler_DeleteRequiresPermission(t *testing.T) {
 	authStore, cleanup := createTestAuthStoreForAlertOverrides(t)
 	defer cleanup()
 
-	rbac := auth.NewRBACChecker(authStore, true)
+	rbac := auth.NewRBACChecker(authStore)
 	handler := NewAlertOverrideHandler(nil, nil, rbac)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/alert-overrides/cluster/5/10", nil)
@@ -330,7 +330,7 @@ func TestAlertOverrideHandler_PermissionCheckAllScopes(t *testing.T) {
 	authStore, cleanup := createTestAuthStoreForAlertOverrides(t)
 	defer cleanup()
 
-	rbac := auth.NewRBACChecker(authStore, true)
+	rbac := auth.NewRBACChecker(authStore)
 	handler := NewAlertOverrideHandler(nil, nil, rbac)
 
 	scopes := []string{"server", "cluster", "group"}
@@ -446,7 +446,7 @@ func TestAlertOverrideHandler_ContextEndpoint_RequiresPermission(t *testing.T) {
 	authStore, cleanup := createTestAuthStoreForAlertOverrides(t)
 	defer cleanup()
 
-	rbac := auth.NewRBACChecker(authStore, true)
+	rbac := auth.NewRBACChecker(authStore)
 	handler := NewAlertOverrideHandler(nil, nil, rbac)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/alert-overrides/context/1/2", nil)

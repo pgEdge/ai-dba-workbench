@@ -359,7 +359,7 @@ func TestBlackoutHandler_RegisterRoutes_NotConfigured(t *testing.T) {
 
 func TestBlackoutHandler_CreateBlackout_ValidationErrors(t *testing.T) {
 	// Create handler with auth-disabled RBAC checker so permission checks pass
-	rbac := auth.NewRBACChecker(nil, false)
+	rbac := auth.NewRBACChecker(nil)
 	handler := NewBlackoutHandler(nil, nil, rbac)
 
 	tests := []struct {
@@ -427,7 +427,7 @@ func TestBlackoutHandler_CreateBlackout_ValidationErrors(t *testing.T) {
 }
 
 func TestBlackoutHandler_CreateSchedule_ValidationErrors(t *testing.T) {
-	rbac := auth.NewRBACChecker(nil, false)
+	rbac := auth.NewRBACChecker(nil)
 	handler := NewBlackoutHandler(nil, nil, rbac)
 
 	tests := []struct {
@@ -599,7 +599,7 @@ func TestBlackoutUpdateRequest_JSON(t *testing.T) {
 }
 
 func TestBlackoutHandler_CreateBlackout_InvalidEndTime(t *testing.T) {
-	rbac := auth.NewRBACChecker(nil, false)
+	rbac := auth.NewRBACChecker(nil)
 	handler := NewBlackoutHandler(nil, nil, rbac)
 
 	body := BlackoutCreateRequest{
@@ -631,7 +631,7 @@ func TestBlackoutHandler_CreateBlackout_InvalidEndTime(t *testing.T) {
 }
 
 func TestBlackoutHandler_UpdateSchedule_ValidationErrors(t *testing.T) {
-	rbac := auth.NewRBACChecker(nil, false)
+	rbac := auth.NewRBACChecker(nil)
 	handler := NewBlackoutHandler(nil, nil, rbac)
 
 	tests := []struct {

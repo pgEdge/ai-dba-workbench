@@ -25,7 +25,7 @@ import (
 // newTestConnectionHandlerWithRBAC creates a handler with auth disabled so
 // RBAC checks pass without requiring a database.
 func newTestConnectionHandlerWithRBAC() *ConnectionHandler {
-	rbac := auth.NewRBACChecker(nil, false)
+	rbac := auth.NewRBACChecker(nil)
 	return NewConnectionHandler(nil, nil, rbac)
 }
 

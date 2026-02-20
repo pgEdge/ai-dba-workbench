@@ -25,7 +25,7 @@ import (
 // =============================================================================
 
 func TestRBACHandler_ListUsers_WithAdmin(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	// Create admin with manage_users permission
@@ -80,7 +80,7 @@ func TestRBACHandler_ListUsers_WithAdmin(t *testing.T) {
 }
 
 func TestRBACHandler_ListUsers_Superuser(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	store.CreateUser("user1", "Password1", "User One", "", "")
@@ -98,7 +98,7 @@ func TestRBACHandler_ListUsers_Superuser(t *testing.T) {
 }
 
 func TestRBACHandler_ListUsers_NormalUser_PermissionDenied(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	// Create user without manage_users permission
@@ -122,7 +122,7 @@ func TestRBACHandler_ListUsers_NormalUser_PermissionDenied(t *testing.T) {
 // =============================================================================
 
 func TestRBACHandler_CreateUser_Valid(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	store.CreateUser("admin", "Password1", "Admin", "", "")
@@ -170,7 +170,7 @@ func TestRBACHandler_CreateUser_Valid(t *testing.T) {
 }
 
 func TestRBACHandler_CreateUser_MissingUsername_Handler(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	store.CreateUser("admin", "Password1", "Admin", "", "")
@@ -204,7 +204,7 @@ func TestRBACHandler_CreateUser_MissingUsername_Handler(t *testing.T) {
 }
 
 func TestRBACHandler_CreateUser_MissingPassword_Handler(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	store.CreateUser("admin", "Password1", "Admin", "", "")
@@ -238,7 +238,7 @@ func TestRBACHandler_CreateUser_MissingPassword_Handler(t *testing.T) {
 }
 
 func TestRBACHandler_CreateUser_ShortPassword(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	store.CreateUser("admin", "Password1", "Admin", "", "")
@@ -276,7 +276,7 @@ func TestRBACHandler_CreateUser_ShortPassword(t *testing.T) {
 }
 
 func TestRBACHandler_CreateUser_DuplicateUsername(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	store.CreateUser("admin", "Password1", "Admin", "", "")
@@ -308,7 +308,7 @@ func TestRBACHandler_CreateUser_DuplicateUsername(t *testing.T) {
 }
 
 func TestRBACHandler_CreateUser_PermissionDenied(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	// Create user without manage_users permission
@@ -334,7 +334,7 @@ func TestRBACHandler_CreateUser_PermissionDenied(t *testing.T) {
 }
 
 func TestRBACHandler_CreateUser_InvalidBody(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	store.CreateUser("admin", "Password1", "Admin", "", "")
@@ -358,7 +358,7 @@ func TestRBACHandler_CreateUser_InvalidBody(t *testing.T) {
 }
 
 func TestRBACHandler_CreateUser_WithDisabledFlag(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	store.CreateUser("admin", "Password1", "Admin", "", "")
@@ -402,7 +402,7 @@ func TestRBACHandler_CreateUser_WithDisabledFlag(t *testing.T) {
 // =============================================================================
 
 func TestRBACHandler_CreateServiceAccount(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	store.CreateUser("admin", "Password1", "Admin", "", "")
@@ -445,7 +445,7 @@ func TestRBACHandler_CreateServiceAccount(t *testing.T) {
 }
 
 func TestRBACHandler_CreateServiceAccount_NoPasswordRequired(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	store.CreateUser("admin", "Password1", "Admin", "", "")
@@ -479,7 +479,7 @@ func TestRBACHandler_CreateServiceAccount_NoPasswordRequired(t *testing.T) {
 // =============================================================================
 
 func TestRBACHandler_UpdateUser_PasswordChange(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	store.CreateUser("admin", "Password1", "Admin", "", "")
@@ -520,7 +520,7 @@ func TestRBACHandler_UpdateUser_PasswordChange(t *testing.T) {
 }
 
 func TestRBACHandler_UpdateUser_ShortPassword(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	store.CreateUser("admin", "Password1", "Admin", "", "")
@@ -562,7 +562,7 @@ func TestRBACHandler_UpdateUser_ShortPassword(t *testing.T) {
 }
 
 func TestRBACHandler_UpdateUser_EnableDisable(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	store.CreateUser("admin", "Password1", "Admin", "", "")
@@ -626,7 +626,7 @@ func TestRBACHandler_UpdateUser_EnableDisable(t *testing.T) {
 }
 
 func TestRBACHandler_UpdateUser_DisplayNameAndEmail(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	store.CreateUser("admin", "Password1", "Admin", "", "")
@@ -669,7 +669,7 @@ func TestRBACHandler_UpdateUser_DisplayNameAndEmail(t *testing.T) {
 }
 
 func TestRBACHandler_UpdateUser_NotFound(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	store.CreateUser("admin", "Password1", "Admin", "", "")
@@ -707,7 +707,7 @@ func TestRBACHandler_UpdateUser_NotFound(t *testing.T) {
 }
 
 func TestRBACHandler_UpdateUser_PermissionDenied(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	store.CreateUser("normie", "Password1", "Normal", "", "")
@@ -736,7 +736,7 @@ func TestRBACHandler_UpdateUser_PermissionDenied(t *testing.T) {
 }
 
 func TestRBACHandler_UpdateUser_InvalidBody(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	store.CreateUser("admin", "Password1", "Admin", "", "")
@@ -768,7 +768,7 @@ func TestRBACHandler_UpdateUser_InvalidBody(t *testing.T) {
 // =============================================================================
 
 func TestRBACHandler_DeleteUser_Valid(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	store.CreateUser("admin", "Password1", "Admin", "", "")
@@ -800,7 +800,7 @@ func TestRBACHandler_DeleteUser_Valid(t *testing.T) {
 }
 
 func TestRBACHandler_DeleteUser_SelfDeletion(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	store.CreateUser("admin", "Password1", "Admin", "", "")
@@ -826,7 +826,7 @@ func TestRBACHandler_DeleteUser_SelfDeletion(t *testing.T) {
 }
 
 func TestRBACHandler_DeleteUser_NonExistent(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	store.CreateUser("admin", "Password1", "Admin", "", "")
@@ -858,7 +858,7 @@ func TestRBACHandler_DeleteUser_NonExistent(t *testing.T) {
 }
 
 func TestRBACHandler_DeleteUser_PermissionDenied(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	store.CreateUser("normie", "Password1", "Normal", "", "")
@@ -885,7 +885,7 @@ func TestRBACHandler_DeleteUser_PermissionDenied(t *testing.T) {
 // =============================================================================
 
 func TestRBACHandler_UserSubpath_PutRoutesToUpdate(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	store.CreateUser("admin", "Password1", "Admin", "", "")
@@ -917,7 +917,7 @@ func TestRBACHandler_UserSubpath_PutRoutesToUpdate(t *testing.T) {
 }
 
 func TestRBACHandler_UserSubpath_DeleteRoutesToDelete(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	store.CreateUser("admin", "Password1", "Admin", "", "")
@@ -947,7 +947,7 @@ func TestRBACHandler_UserSubpath_DeleteRoutesToDelete(t *testing.T) {
 // =============================================================================
 
 func TestRBACHandler_GetUserPrivileges(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	store.CreateUser("admin", "Password1", "Admin", "", "")
@@ -988,7 +988,7 @@ func TestRBACHandler_GetUserPrivileges(t *testing.T) {
 }
 
 func TestRBACHandler_GetUserPrivileges_NotFound(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	store.CreateUser("admin", "Password1", "Admin", "", "")
@@ -1011,7 +1011,7 @@ func TestRBACHandler_GetUserPrivileges_NotFound(t *testing.T) {
 }
 
 func TestRBACHandler_GetUserPrivileges_PermissionDenied(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	store.CreateUser("normie", "Password1", "Normal", "", "")

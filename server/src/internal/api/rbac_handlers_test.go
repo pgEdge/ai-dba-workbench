@@ -23,7 +23,7 @@ import (
 )
 
 // createTestRBACHandler creates an RBACHandler with a temp auth store for testing
-func createTestRBACHandler(t *testing.T, authEnabled bool) (*RBACHandler, *auth.AuthStore, func()) {
+func createTestRBACHandler(t *testing.T) (*RBACHandler, *auth.AuthStore, func()) {
 	t.Helper()
 
 	tmpDir, err := os.MkdirTemp("", "rbac-handler-test-*")
@@ -37,7 +37,7 @@ func createTestRBACHandler(t *testing.T, authEnabled bool) (*RBACHandler, *auth.
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
 
-	checker := auth.NewRBACChecker(store, authEnabled)
+	checker := auth.NewRBACChecker(store)
 	handler := NewRBACHandler(store, checker)
 
 	cleanup := func() {
@@ -66,7 +66,7 @@ func withUser(req *http.Request, userID int64) *http.Request {
 // =============================================================================
 
 func TestRBACHandler_CreateAndListGroups(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	// Grant manage_groups to a group and assign user
@@ -106,7 +106,7 @@ func TestRBACHandler_CreateAndListGroups(t *testing.T) {
 }
 
 func TestRBACHandler_CreateGroup_MissingName(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	store.CreateUser("admin", "Password1", "Admin", "", "")
@@ -134,7 +134,7 @@ func TestRBACHandler_CreateGroup_MissingName(t *testing.T) {
 // =============================================================================
 
 func TestRBACHandler_AddAndRemoveMembers(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	// Setup admin user with manage_groups permission
@@ -185,7 +185,7 @@ func TestRBACHandler_AddAndRemoveMembers(t *testing.T) {
 // =============================================================================
 
 func TestRBACHandler_GrantAdminPermission_SuperuserRequired(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	groupID, _ := store.CreateGroup("target", "Target group")
@@ -215,7 +215,7 @@ func TestRBACHandler_GrantAdminPermission_SuperuserRequired(t *testing.T) {
 }
 
 func TestRBACHandler_RevokeAdminPermission(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	groupID, _ := store.CreateGroup("target", "Target group")
@@ -241,7 +241,7 @@ func TestRBACHandler_RevokeAdminPermission(t *testing.T) {
 }
 
 func TestRBACHandler_PermissionEnforcement_NonSuperuser403(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	// Create non-superuser without any admin permissions
@@ -268,7 +268,7 @@ func TestRBACHandler_PermissionEnforcement_NonSuperuser403(t *testing.T) {
 }
 
 func TestRBACHandler_ListGroupPermissions(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	groupID, _ := store.CreateGroup("target", "Target group")
@@ -306,7 +306,7 @@ func TestRBACHandler_ListGroupPermissions(t *testing.T) {
 // =============================================================================
 
 func TestRBACHandler_ListUsers(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	// Create admin with manage_users permission
@@ -344,7 +344,7 @@ func TestRBACHandler_ListUsers(t *testing.T) {
 }
 
 func TestRBACHandler_ListUsers_PermissionDenied(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	// Create user without manage_users permission
@@ -363,7 +363,7 @@ func TestRBACHandler_ListUsers_PermissionDenied(t *testing.T) {
 }
 
 func TestRBACHandler_HandleGroups_MethodNotAllowed(t *testing.T) {
-	handler, _, cleanup := createTestRBACHandler(t, true)
+	handler, _, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/rbac/groups", nil)
@@ -384,7 +384,7 @@ func TestRBACHandler_HandleGroups_MethodNotAllowed(t *testing.T) {
 }
 
 func TestRBACHandler_HandleUsers_MethodNotAllowed(t *testing.T) {
-	handler, _, cleanup := createTestRBACHandler(t, true)
+	handler, _, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/rbac/users", nil)
@@ -409,7 +409,7 @@ func TestRBACHandler_HandleUsers_MethodNotAllowed(t *testing.T) {
 // =============================================================================
 
 func TestRBACHandler_HandleUserSubpath_InvalidID(t *testing.T) {
-	handler, _, cleanup := createTestRBACHandler(t, true)
+	handler, _, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/users/abc", nil)
@@ -433,7 +433,7 @@ func TestRBACHandler_HandleUserSubpath_InvalidID(t *testing.T) {
 }
 
 func TestRBACHandler_HandleUserSubpath_EmptyPath(t *testing.T) {
-	handler, _, cleanup := createTestRBACHandler(t, true)
+	handler, _, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/users/", nil)
@@ -448,7 +448,7 @@ func TestRBACHandler_HandleUserSubpath_EmptyPath(t *testing.T) {
 }
 
 func TestRBACHandler_HandleUserSubpath_MethodNotAllowed(t *testing.T) {
-	handler, _, cleanup := createTestRBACHandler(t, true)
+	handler, _, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/rbac/users/1", nil)
@@ -468,7 +468,7 @@ func TestRBACHandler_HandleUserSubpath_MethodNotAllowed(t *testing.T) {
 }
 
 func TestRBACHandler_HandleUserSubpath_UnknownSubpath(t *testing.T) {
-	handler, _, cleanup := createTestRBACHandler(t, true)
+	handler, _, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/users/1/unknown", nil)
@@ -483,7 +483,7 @@ func TestRBACHandler_HandleUserSubpath_UnknownSubpath(t *testing.T) {
 }
 
 func TestRBACHandler_HandleUserSubpath_Privileges_MethodNotAllowed(t *testing.T) {
-	handler, _, cleanup := createTestRBACHandler(t, true)
+	handler, _, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/rbac/users/1/privileges", nil)
@@ -507,7 +507,7 @@ func TestRBACHandler_HandleUserSubpath_Privileges_MethodNotAllowed(t *testing.T)
 // =============================================================================
 
 func TestRBACHandler_HandleGroupSubpath_InvalidID(t *testing.T) {
-	handler, _, cleanup := createTestRBACHandler(t, true)
+	handler, _, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/groups/abc", nil)
@@ -522,7 +522,7 @@ func TestRBACHandler_HandleGroupSubpath_InvalidID(t *testing.T) {
 }
 
 func TestRBACHandler_HandleGroupSubpath_EmptyPath(t *testing.T) {
-	handler, _, cleanup := createTestRBACHandler(t, true)
+	handler, _, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/groups/", nil)
@@ -537,7 +537,7 @@ func TestRBACHandler_HandleGroupSubpath_EmptyPath(t *testing.T) {
 }
 
 func TestRBACHandler_HandleGroupSubpath_UnknownSubpath(t *testing.T) {
-	handler, _, cleanup := createTestRBACHandler(t, true)
+	handler, _, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/groups/1/unknown", nil)
@@ -556,7 +556,7 @@ func TestRBACHandler_HandleGroupSubpath_UnknownSubpath(t *testing.T) {
 // =============================================================================
 
 func TestRBACHandler_HandleMCPPrivileges_MethodNotAllowed(t *testing.T) {
-	handler, _, cleanup := createTestRBACHandler(t, true)
+	handler, _, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/rbac/privileges/mcp", nil)
@@ -580,7 +580,7 @@ func TestRBACHandler_HandleMCPPrivileges_MethodNotAllowed(t *testing.T) {
 // =============================================================================
 
 func TestRBACHandler_HandleTokens_MethodNotAllowed(t *testing.T) {
-	handler, _, cleanup := createTestRBACHandler(t, true)
+	handler, _, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/rbac/tokens", nil)
@@ -600,7 +600,7 @@ func TestRBACHandler_HandleTokens_MethodNotAllowed(t *testing.T) {
 }
 
 func TestRBACHandler_HandleTokenSubpath_InvalidID(t *testing.T) {
-	handler, _, cleanup := createTestRBACHandler(t, true)
+	handler, _, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/tokens/abc/scope", nil)
@@ -615,7 +615,7 @@ func TestRBACHandler_HandleTokenSubpath_InvalidID(t *testing.T) {
 }
 
 func TestRBACHandler_HandleTokenSubpath_NotScope(t *testing.T) {
-	handler, _, cleanup := createTestRBACHandler(t, true)
+	handler, _, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/tokens/1/unknown", nil)
@@ -630,7 +630,7 @@ func TestRBACHandler_HandleTokenSubpath_NotScope(t *testing.T) {
 }
 
 func TestRBACHandler_HandleTokenSubpath_Scope_MethodNotAllowed(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	// Grant manage_token_scopes permission
@@ -661,7 +661,7 @@ func TestRBACHandler_HandleTokenSubpath_Scope_MethodNotAllowed(t *testing.T) {
 // =============================================================================
 
 func TestRBACHandler_CreateUser_MissingUsername(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	store.CreateUser("admin", "Password1", "Admin", "", "")
@@ -694,7 +694,7 @@ func TestRBACHandler_CreateUser_MissingUsername(t *testing.T) {
 }
 
 func TestRBACHandler_CreateUser_MissingPassword(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	store.CreateUser("admin", "Password1", "Admin", "", "")
@@ -731,7 +731,7 @@ func TestRBACHandler_CreateUser_MissingPassword(t *testing.T) {
 // =============================================================================
 
 func TestRBACHandler_UpdateGroup_EmptyUpdate(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	store.CreateUser("admin", "Password1", "Admin", "", "")
@@ -769,7 +769,7 @@ func TestRBACHandler_UpdateGroup_EmptyUpdate(t *testing.T) {
 // =============================================================================
 
 func TestRBACHandler_AddGroupMember_MissingBothIDs(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	store.CreateUser("admin", "Password1", "Admin", "", "")
@@ -803,7 +803,7 @@ func TestRBACHandler_AddGroupMember_MissingBothIDs(t *testing.T) {
 }
 
 func TestRBACHandler_AddGroupMember_BothIDsProvided(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	store.CreateUser("admin", "Password1", "Admin", "", "")
@@ -837,7 +837,7 @@ func TestRBACHandler_AddGroupMember_BothIDsProvided(t *testing.T) {
 }
 
 func TestRBACHandler_RemoveGroupMember_InvalidType(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t, true)
+	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
 	store.CreateUser("admin", "Password1", "Admin", "", "")

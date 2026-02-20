@@ -29,10 +29,6 @@ func TestDefaultConfig(t *testing.T) {
 		t.Error("Expected TLS to be disabled by default")
 	}
 
-	if !cfg.HTTP.Auth.Enabled {
-		t.Error("Expected Auth to be enabled by default")
-	}
-
 	// Test embedding defaults
 	if cfg.Embedding.Enabled {
 		t.Error("Expected embedding to be disabled by default")
@@ -384,10 +380,7 @@ func TestLoadConfigWithTempFile(t *testing.T) {
 	// Create a minimal valid config file
 	configContent := `
 http:
-    enabled: true
     address: ":9000"
-    auth:
-        enabled: false
 database:
     host: localhost
     port: 5432
@@ -427,7 +420,7 @@ func TestLoadConfigNonExistentFile(t *testing.T) {
 
 	// Test with ConfigFileSet=false (should use defaults)
 	// Disable auth to avoid token file validation error
-	flags = CLIFlags{ConfigFileSet: false, AuthEnabledSet: true, AuthEnabled: false}
+	flags = CLIFlags{ConfigFileSet: false}
 	cfg, err := LoadConfig("/nonexistent/config.yaml", flags)
 	if err != nil {
 		t.Errorf("unexpected error for non-existent config file with ConfigFileSet=false: %v", err)

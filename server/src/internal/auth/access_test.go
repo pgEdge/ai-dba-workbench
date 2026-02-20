@@ -42,36 +42,11 @@ func createTestAuthStoreForAccess(t *testing.T) (*AuthStore, func()) {
 // RBACChecker Tests
 // =============================================================================
 
-func TestRBACCheckerAuthDisabled(t *testing.T) {
-	store, cleanup := createTestAuthStoreForAccess(t)
-	defer cleanup()
-
-	// Create checker with auth disabled
-	checker := NewRBACChecker(store, false)
-	ctx := context.Background()
-
-	// Should act as superuser when auth disabled
-	if !checker.IsSuperuser(ctx) {
-		t.Error("Expected superuser access when auth disabled")
-	}
-
-	// Should have access to all MCP items
-	if !checker.CanAccessMCPItem(ctx, "any_tool") {
-		t.Error("Expected MCP access when auth disabled")
-	}
-
-	// Should have full access to all connections
-	canAccess, level := checker.CanAccessConnection(ctx, 99)
-	if !canAccess || level != AccessLevelReadWrite {
-		t.Error("Expected read_write connection access when auth disabled")
-	}
-}
-
 func TestRBACCheckerSuperuserBypass(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	checker := NewRBACChecker(store, true)
+	checker := NewRBACChecker(store)
 
 	// Create a restricted privilege
 	store.RegisterMCPPrivilege("restricted_tool", MCPPrivilegeTypeTool, "Restricted")
@@ -101,7 +76,7 @@ func TestRBACCheckerUnrestrictedAccess(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	checker := NewRBACChecker(store, true)
+	checker := NewRBACChecker(store)
 
 	// Register a privilege but don't assign it to any group
 	store.RegisterMCPPrivilege("public_tool", MCPPrivilegeTypeTool, "Public")
@@ -126,7 +101,7 @@ func TestRBACCheckerRestrictedAccess(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	checker := NewRBACChecker(store, true)
+	checker := NewRBACChecker(store)
 
 	// Create user, group, and privileges
 	store.CreateUser("testuser", "Password1", "Test user", "", "")
@@ -162,7 +137,7 @@ func TestRBACCheckerDeniedAccess(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	checker := NewRBACChecker(store, true)
+	checker := NewRBACChecker(store)
 
 	// Create user without any group membership
 	store.CreateUser("testuser", "Password1", "Test user", "", "")
@@ -194,7 +169,7 @@ func TestRBACCheckerInheritedPrivileges(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	checker := NewRBACChecker(store, true)
+	checker := NewRBACChecker(store)
 
 	// Create user and hierarchical groups
 	store.CreateUser("testuser", "Password1", "Test user", "", "")
@@ -231,7 +206,7 @@ func TestRBACCheckerNoUserID(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	checker := NewRBACChecker(store, true)
+	checker := NewRBACChecker(store)
 
 	// Create restricted privilege
 	groupID, _ := store.CreateGroup("some-group", "Some group")
@@ -251,7 +226,7 @@ func TestRBACCheckerTokenScoping(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	checker := NewRBACChecker(store, true)
+	checker := NewRBACChecker(store)
 
 	// Create user with privileges
 	store.CreateUser("testuser", "Password1", "Test user", "", "")
@@ -312,7 +287,7 @@ func TestHasAdminPermissionSuperuser(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	checker := NewRBACChecker(store, true)
+	checker := NewRBACChecker(store)
 	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, true)
 
 	// Superuser always returns true regardless of permission
@@ -321,24 +296,11 @@ func TestHasAdminPermissionSuperuser(t *testing.T) {
 	}
 }
 
-func TestHasAdminPermissionAuthDisabled(t *testing.T) {
-	store, cleanup := createTestAuthStoreForAccess(t)
-	defer cleanup()
-
-	checker := NewRBACChecker(store, false)
-	ctx := context.Background()
-
-	// Auth disabled returns true for any permission
-	if !checker.HasAdminPermission(ctx, PermManageConnections) {
-		t.Error("Expected true when auth disabled")
-	}
-}
-
 func TestHasAdminPermissionGranted(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	checker := NewRBACChecker(store, true)
+	checker := NewRBACChecker(store)
 
 	// Create user in group with permission
 	store.CreateUser("testuser", "Password1", "Test user", "", "")
@@ -359,7 +321,7 @@ func TestHasAdminPermissionNotGranted(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	checker := NewRBACChecker(store, true)
+	checker := NewRBACChecker(store)
 
 	// Create user in group without the required permission
 	store.CreateUser("testuser", "Password1", "Test user", "", "")
@@ -381,7 +343,7 @@ func TestHasAdminPermissionNoUser(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	checker := NewRBACChecker(store, true)
+	checker := NewRBACChecker(store)
 
 	// Context without user ID
 	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
@@ -399,7 +361,7 @@ func TestGetEffectivePrivileges(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	checker := NewRBACChecker(store, true)
+	checker := NewRBACChecker(store)
 
 	// Create user with privileges
 	store.CreateUser("testuser", "Password1", "Test user", "", "")
@@ -451,7 +413,7 @@ func TestGetEffectivePrivilegesSuperuser(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	checker := NewRBACChecker(store, true)
+	checker := NewRBACChecker(store)
 
 	// Create superuser context
 	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, true)
@@ -472,7 +434,7 @@ func TestHasWriteAccess(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	checker := NewRBACChecker(store, true)
+	checker := NewRBACChecker(store)
 
 	// Create user with mixed access levels
 	store.CreateUser("testuser", "Password1", "Test user", "", "")
@@ -501,7 +463,7 @@ func TestGetAccessibleConnections(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	checker := NewRBACChecker(store, true)
+	checker := NewRBACChecker(store)
 
 	// Create user with connection access
 	store.CreateUser("testuser", "Password1", "Test user", "", "")
@@ -534,24 +496,15 @@ func TestGetAccessibleConnections(t *testing.T) {
 // =============================================================================
 
 func TestNewDatabaseAccessChecker(t *testing.T) {
-	checker := NewDatabaseAccessChecker(true)
+	checker := NewDatabaseAccessChecker()
 
 	if checker == nil {
 		t.Fatal("Expected non-nil checker")
 	}
 }
 
-func TestDatabaseAccessChecker_AuthDisabled(t *testing.T) {
-	checker := NewDatabaseAccessChecker(false)
-	ctx := context.Background()
-
-	if !checker.CanAccessDatabase(ctx) {
-		t.Error("Expected database access when auth disabled")
-	}
-}
-
 func TestDatabaseAccessChecker_APIToken(t *testing.T) {
-	checker := NewDatabaseAccessChecker(true)
+	checker := NewDatabaseAccessChecker()
 
 	ctx := context.WithValue(context.Background(), IsAPITokenContextKey, true)
 
@@ -561,7 +514,7 @@ func TestDatabaseAccessChecker_APIToken(t *testing.T) {
 }
 
 func TestDatabaseAccessChecker_SessionUser(t *testing.T) {
-	checker := NewDatabaseAccessChecker(true)
+	checker := NewDatabaseAccessChecker()
 
 	// With username in context
 	ctx := context.WithValue(context.Background(), UsernameContextKey, "testuser")
@@ -577,7 +530,7 @@ func TestDatabaseAccessChecker_SessionUser(t *testing.T) {
 }
 
 func TestDatabaseAccessChecker_GetBoundDatabase(t *testing.T) {
-	checker := NewDatabaseAccessChecker(true)
+	checker := NewDatabaseAccessChecker()
 	ctx := context.Background()
 
 	// Should always return empty string (single database mode)
@@ -591,7 +544,7 @@ func TestDatabaseAccessChecker_GetBoundDatabase(t *testing.T) {
 // =============================================================================
 
 func TestRBACCheckerNilStore(t *testing.T) {
-	checker := NewRBACChecker(nil, true)
+	checker := NewRBACChecker(nil)
 	ctx := context.Background()
 
 	// Should act as superuser when store is nil
@@ -621,7 +574,7 @@ func TestRBACCheckerAllConnectionsGrant(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	checker := NewRBACChecker(store, true)
+	checker := NewRBACChecker(store)
 
 	// Create user with "all connections" privilege
 	store.CreateUser("testuser", "Password1", "Test user", "", "")
@@ -649,7 +602,7 @@ func TestRBACCheckerAllConnectionsHigherLevel(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	checker := NewRBACChecker(store, true)
+	checker := NewRBACChecker(store)
 
 	// Create user with mixed privileges
 	store.CreateUser("testuser", "Password1", "Test user", "", "")
@@ -685,7 +638,7 @@ func TestGetEffectivePrivilegesWithTokenScope(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	checker := NewRBACChecker(store, true)
+	checker := NewRBACChecker(store)
 
 	// Create user with privileges
 	store.CreateUser("testuser", "Password1", "Test user", "", "")
@@ -734,7 +687,7 @@ func TestRBACCheckerTokenScopingMCPWildcard(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	checker := NewRBACChecker(store, true)
+	checker := NewRBACChecker(store)
 
 	// Create user with privileges
 	store.CreateUser("testuser", "Password1", "Test user", "", "")
@@ -769,7 +722,7 @@ func TestRBACCheckerTokenScopingAdminWildcard(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	checker := NewRBACChecker(store, true)
+	checker := NewRBACChecker(store)
 
 	// Create user with admin permissions
 	store.CreateUser("testuser", "Password1", "Test user", "", "")
@@ -800,7 +753,7 @@ func TestRBACCheckerTokenScopingConnectionWildcard(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	checker := NewRBACChecker(store, true)
+	checker := NewRBACChecker(store)
 
 	// Create user with connection privileges
 	store.CreateUser("testuser", "Password1", "Test user", "", "")
@@ -836,7 +789,7 @@ func TestGetEffectivePrivilegesWithMCPWildcard(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	checker := NewRBACChecker(store, true)
+	checker := NewRBACChecker(store)
 
 	// Create user with privileges
 	store.CreateUser("testuser", "Password1", "Test user", "", "")
@@ -887,7 +840,7 @@ func TestGetEffectivePrivilegesNoUser(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	checker := NewRBACChecker(store, true)
+	checker := NewRBACChecker(store)
 
 	// Context without user ID
 	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
@@ -915,7 +868,7 @@ func TestHasAdminPermissionInheritedFromNestedGroup(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	checker := NewRBACChecker(store, true)
+	checker := NewRBACChecker(store)
 
 	// Create user and group hierarchy
 	store.CreateUser("testuser", "Password1", "Test user", "", "")

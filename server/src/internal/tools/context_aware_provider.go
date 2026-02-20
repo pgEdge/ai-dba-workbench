@@ -31,8 +31,7 @@ type ContextAwareProvider struct {
 	baseRegistry   *Registry // Registry for tool definitions (List operation)
 	clientManager  *database.ClientManager
 	resourceReg    *resources.ContextAwareRegistry
-	authEnabled    bool
-	fallbackClient *database.Client    // Used when auth is disabled
+	fallbackClient *database.Client    // Fallback client when no session connection is selected
 	cfg            *config.Config      // Server configuration (for embedding settings)
 	authStore      *auth.AuthStore     // Auth store for users and tokens
 	rateLimiter    *auth.RateLimiter   // Rate limiter for authentication attempts
@@ -153,18 +152,17 @@ func (p *ContextAwareProvider) registerDatabaseTools(registry *Registry, client 
 }
 
 // NewContextAwareProvider creates a new context-aware tool provider
-func NewContextAwareProvider(clientManager *database.ClientManager, resourceReg *resources.ContextAwareRegistry, authEnabled bool, fallbackClient *database.Client, cfg *config.Config, authStore *auth.AuthStore, rateLimiter *auth.RateLimiter, datastore *database.Datastore) *ContextAwareProvider {
+func NewContextAwareProvider(clientManager *database.ClientManager, resourceReg *resources.ContextAwareRegistry, fallbackClient *database.Client, cfg *config.Config, authStore *auth.AuthStore, rateLimiter *auth.RateLimiter, datastore *database.Datastore) *ContextAwareProvider {
 	provider := &ContextAwareProvider{
 		baseRegistry:     NewRegistry(),
 		clientManager:    clientManager,
 		resourceReg:      resourceReg,
-		authEnabled:      authEnabled,
 		fallbackClient:   fallbackClient,
 		cfg:              cfg,
 		authStore:        authStore,
 		rateLimiter:      rateLimiter,
 		datastore:        datastore,
-		rbacChecker:      auth.NewRBACChecker(authStore, authEnabled),
+		rbacChecker:      auth.NewRBACChecker(authStore),
 		clientRegistries: make(map[*database.Client]*Registry),
 		hiddenRegistry:   NewRegistry(),
 	}
@@ -210,11 +208,6 @@ func (p *ContextAwareProvider) GetBaseRegistry() *Registry {
 // RegisterTools initializes tool registrations
 // This is called at startup to ensure the base registry is populated for List() operations
 func (p *ContextAwareProvider) RegisterTools(ctx context.Context) error {
-	// Pre-create a registry for the fallback client if auth is disabled and fallback exists
-	// This ensures tools are ready for immediate use
-	if !p.authEnabled && p.fallbackClient != nil {
-		_ = p.getOrCreateRegistryForClient(p.fallbackClient)
-	}
 	return nil
 }
 
@@ -346,11 +339,9 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 		}, nil)
 	}
 
-	// If authentication is enabled, validate token for ALL non-hidden tools
-	if p.authEnabled {
-		if tokenHash == "" {
-			return logAndReturn(mcp.ToolResponse{}, fmt.Errorf("no authentication token found in request context"))
-		}
+	// Validate token for ALL non-hidden tools
+	if tokenHash == "" {
+		return logAndReturn(mcp.ToolResponse{}, fmt.Errorf("no authentication token found in request context"))
 	}
 
 	// RBAC check: verify user has access to this tool
@@ -446,16 +437,7 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 
 // getClient returns the appropriate database client based on authentication state
 func (p *ContextAwareProvider) getClient(ctx context.Context) (*database.Client, error) {
-	if !p.authEnabled {
-		// Authentication disabled - use "default" key in ClientManager
-		client, err := p.clientManager.GetOrCreateClient("default", true)
-		if err != nil {
-			return nil, fmt.Errorf("no database connection configured: %w", err)
-		}
-		return client, nil
-	}
-
-	// Authentication enabled - get per-token client
+	// Get per-token client
 	tokenHash := auth.GetTokenHashFromContext(ctx)
 	if tokenHash == "" {
 		return nil, fmt.Errorf("no authentication token found in request context")

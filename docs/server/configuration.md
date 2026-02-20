@@ -277,7 +277,6 @@ builtins:
 | `tls.key_file` | string | | Path to private key file |
 | `tls.chain_file` | string | | Path to certificate chain |
 | `trusted_proxies` | list | `[]` | CIDR ranges of trusted reverse proxies |
-| `auth.enabled` | bool | `true` | Enable authentication |
 | `auth.max_failed_attempts_before_lockout` | int | `0` | Lock after N failures (0=disabled) |
 | `auth.max_user_token_days` | int | `0` | Max user token lifetime (0=unlimited) |
 | `auth.rate_limit_window_minutes` | int | `15` | Rate limit time window |

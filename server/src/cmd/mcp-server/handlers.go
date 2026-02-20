@@ -106,7 +106,7 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		}
 
 		// Create RBAC checker for permission-based access control in REST handlers
-		rbacChecker := auth.NewRBACChecker(deps.AuthStore, true)
+		rbacChecker := auth.NewRBACChecker(deps.AuthStore)
 
 		// Connection management endpoints (for selecting monitored database connections)
 		// Uses security configuration to prevent SSRF attacks

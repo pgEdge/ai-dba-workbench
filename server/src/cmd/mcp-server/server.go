@@ -156,10 +156,6 @@ func (s *Server) validateTLS() error {
 
 // initAuthStore initializes the authentication store
 func (s *Server) initAuthStore() error {
-	if !s.cfg.HTTP.Auth.Enabled {
-		return nil
-	}
-
 	// Create data directory if it doesn't exist
 	if err := os.MkdirAll(s.dataDir, 0750); err != nil {
 		return fmt.Errorf("failed to create data directory: %w", err)
@@ -195,10 +191,6 @@ func (s *Server) initAuthStore() error {
 
 // initRateLimiter initializes the rate limiter for authentication
 func (s *Server) initRateLimiter() error {
-	if !s.cfg.HTTP.Auth.Enabled {
-		return nil
-	}
-
 	s.rateLimiter = auth.NewRateLimiter(
 		s.cfg.HTTP.Auth.RateLimitWindowMinutes,
 		s.cfg.HTTP.Auth.RateLimitMaxAttempts,
@@ -266,20 +258,17 @@ func (s *Server) initClientManager() error {
 
 // initMCPServer initializes the MCP server with providers
 func (s *Server) initMCPServer() error {
-	// Authentication is always enabled in HTTP mode
-	authEnabled := true
-
 	// Create fallback client
 	fallbackClient := database.NewClient(s.cfg.Database)
 
 	// Context-aware resource provider
 	contextAwareResourceProvider := resources.NewContextAwareRegistry(
-		s.clientManager, authEnabled, s.cfg, s.authStore, s.datastore,
+		s.clientManager, s.cfg, s.authStore, s.datastore,
 	)
 
 	// Context-aware tool provider
 	contextAwareToolProvider := tools.NewContextAwareProvider(
-		s.clientManager, contextAwareResourceProvider, authEnabled,
+		s.clientManager, contextAwareResourceProvider,
 		fallbackClient, s.cfg, s.authStore, s.rateLimiter, s.datastore,
 	)
 	if err := contextAwareToolProvider.RegisterTools(s.ctx); err != nil {
@@ -316,7 +305,7 @@ func (s *Server) initConversationStore() error {
 
 // startTokenCleanup starts the periodic token cleanup goroutine
 func (s *Server) startTokenCleanup() {
-	if !s.cfg.HTTP.Auth.Enabled || s.authStore == nil {
+	if s.authStore == nil {
 		return
 	}
 
@@ -425,7 +414,6 @@ func (s *Server) Run(flags *Flags, configPath string) error {
 		CertFile:       s.cfg.HTTP.TLS.CertFile,
 		KeyFile:        s.cfg.HTTP.TLS.KeyFile,
 		ChainFile:      s.cfg.HTTP.TLS.ChainFile,
-		AuthEnabled:    s.cfg.HTTP.Auth.Enabled,
 		AuthStore:      s.authStore,
 		Debug:          s.debug,
 		TrustedProxies: s.cfg.HTTP.TrustedProxies,

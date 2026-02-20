@@ -230,7 +230,7 @@ func TestConnectionHandler_RegisterRoutes_NotConfigured(t *testing.T) {
 
 func TestConnectionHandler_CreateConnection_NoAuth(t *testing.T) {
 	// Test that createConnection requires authentication
-	rbac := auth.NewRBACChecker(nil, false)
+	rbac := auth.NewRBACChecker(nil)
 	handler := NewConnectionHandler(nil, nil, rbac)
 
 	body, _ := json.Marshal(ConnectionCreateRequest{
@@ -266,7 +266,7 @@ func TestConnectionHandler_CreateConnection_NoAuth(t *testing.T) {
 
 func TestConnectionHandler_UpdateConnection_NoAuth(t *testing.T) {
 	// Test that updateConnection requires authentication
-	rbac := auth.NewRBACChecker(nil, false)
+	rbac := auth.NewRBACChecker(nil)
 	handler := NewConnectionHandler(nil, nil, rbac)
 
 	body, _ := json.Marshal(ConnectionFullUpdateRequest{})

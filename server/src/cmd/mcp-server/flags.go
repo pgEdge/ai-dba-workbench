@@ -187,11 +187,7 @@ func ParseFlags(defaultConfigPath string) *Flags {
 
 // ToCLIFlags converts Flags to config.CLIFlags, tracking which flags were explicitly set
 func (f *Flags) ToCLIFlags() config.CLIFlags {
-	// Auth is always required
-	cliFlags := config.CLIFlags{
-		AuthEnabledSet: true,
-		AuthEnabled:    true,
-	}
+	cliFlags := config.CLIFlags{}
 
 	flag.Visit(func(fl *flag.Flag) {
 		switch fl.Name {

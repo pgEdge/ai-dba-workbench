@@ -683,13 +683,12 @@ func TestCreateErrorResponse(t *testing.T) {
 
 func TestHTTPConfigStruct(t *testing.T) {
 	config := HTTPConfig{
-		Addr:        ":8080",
-		TLSEnable:   true,
-		CertFile:    "/path/to/cert.pem",
-		KeyFile:     "/path/to/key.pem",
-		ChainFile:   "/path/to/chain.pem",
-		AuthEnabled: true,
-		Debug:       true,
+		Addr:      ":8080",
+		TLSEnable: true,
+		CertFile:  "/path/to/cert.pem",
+		KeyFile:   "/path/to/key.pem",
+		ChainFile: "/path/to/chain.pem",
+		Debug:     true,
 	}
 
 	if config.Addr != ":8080" {
@@ -706,9 +705,6 @@ func TestHTTPConfigStruct(t *testing.T) {
 	}
 	if config.ChainFile != "/path/to/chain.pem" {
 		t.Errorf("expected ChainFile '/path/to/chain.pem', got %q", config.ChainFile)
-	}
-	if !config.AuthEnabled {
-		t.Error("expected AuthEnabled=true")
 	}
 	if !config.Debug {
 		t.Error("expected Debug=true")

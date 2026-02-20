@@ -89,11 +89,6 @@ interface ConnPermission {
     access_level?: string;
 }
 
-interface AdminPermissionEntry {
-    permission?: string;
-    name?: string;
-}
-
 interface Connection {
     id: number;
     name: string;
@@ -151,7 +146,7 @@ const AdminPermissions: React.FC = () => {
     const [connections, setConnections] = useState<Connection[]>([]);
 
     // Admin permissions
-    const [adminPermissions, setAdminPermissions] = useState<AdminPermissionEntry[]>([]);
+    const [adminPermissions, setAdminPermissions] = useState<string[]>([]);
     const [adminPermsLoading, setAdminPermsLoading] = useState<boolean>(false);
     const [grantAdminOpen, setGrantAdminOpen] = useState<boolean>(false);
     const [selectedAdminPermission, setSelectedAdminPermission] = useState<string>('');
@@ -211,7 +206,7 @@ const AdminPermissions: React.FC = () => {
         if (!groupId || !isSuperuser) {return;}
         try {
             setAdminPermsLoading(true);
-            const data = await apiGet<{ permissions?: AdminPermissionEntry[] }>(
+            const data = await apiGet<{ permissions?: string[] }>(
                 `${API_BASE_URL}/rbac/groups/${groupId}/permissions`
             );
             setAdminPermissions(data.permissions || []);
@@ -362,11 +357,10 @@ const AdminPermissions: React.FC = () => {
         }
     };
 
-    const handleRevokeAdmin = async (permission: AdminPermissionEntry) => {
+    const handleRevokeAdmin = async (permission: string) => {
         try {
-            const permValue = permission.permission || permission.name || '';
             await apiDelete(
-                `${API_BASE_URL}/rbac/groups/${selectedGroupId}/permissions/${encodeURIComponent(permValue)}`
+                `${API_BASE_URL}/rbac/groups/${selectedGroupId}/permissions/${encodeURIComponent(permission)}`
             );
             fetchAdminPermissions(selectedGroupId);
         } catch (err: unknown) {
@@ -494,7 +488,7 @@ const AdminPermissions: React.FC = () => {
                                 <Typography variant="subtitle1" sx={sectionTitleSx}>
                                     Admin Permissions
                                 </Typography>
-                                {!adminPermissions.some(p => (p.permission || p.name || '') === '*') && (
+                                {!adminPermissions.includes('*') && (
                                     <Button
                                         size="small"
                                         startIcon={<AddIcon />}
@@ -530,12 +524,11 @@ const AdminPermissions: React.FC = () => {
                                             </TableRow>
                                         ) : adminPermissions.length > 0 ? (
                                             adminPermissions.map((p, i) => {
-                                                const permValue = p.permission || p.name || '';
-                                                const permLabel = permValue === '*'
+                                                const permLabel = p === '*'
                                                     ? 'All Admin Permissions'
                                                     : PERMISSION_TYPES.find(
-                                                        (pt) => pt.value === permValue
-                                                    )?.label || permValue;
+                                                        (pt) => pt.value === p
+                                                    )?.label || p;
                                                 return (
                                                     <TableRow key={i}>
                                                         <TableCell>{permLabel}</TableCell>
@@ -749,13 +742,11 @@ const AdminPermissions: React.FC = () => {
                             onChange={(e) => setSelectedAdminPermission(e.target.value)}
                             disabled={grantAdminLoading}
                         >
-                            {!adminPermissions.some(p => (p.permission || p.name || '') === '*') && (
+                            {!adminPermissions.includes('*') && (
                                 [
                                     <MenuItem key="*" value="*">All Admin Permissions</MenuItem>,
                                     ...PERMISSION_TYPES
-                                        .filter(pt => !adminPermissions.some(p =>
-                                            (p.permission || p.name || '') === pt.value
-                                        ))
+                                        .filter(pt => !adminPermissions.includes(pt.value))
                                         .map((pt) => (
                                             <MenuItem key={pt.value} value={pt.value}>{pt.label}</MenuItem>
                                         ))

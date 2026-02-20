@@ -301,6 +301,16 @@ func (h *RBACHandler) getUserPrivileges(w http.ResponseWriter, r *http.Request, 
 		resp.Groups = []string{}
 	}
 
+	// Superusers have full access to everything; return wildcard
+	// values instead of fetching explicit assignments.
+	if user.IsSuperuser {
+		resp.MCPPrivileges = []string{"*"}
+		resp.ConnectionPrivileges = map[int]string{0: "read_write"}
+		resp.AdminPermissions = []string{"*"}
+		RespondJSON(w, http.StatusOK, resp)
+		return
+	}
+
 	// Get MCP privileges
 	mcpPrivs, err := h.authStore.GetUserMCPPrivileges(user.ID)
 	if err == nil {

@@ -39,13 +39,12 @@ import {
     Add as AddIcon,
     Edit as EditIcon,
     Delete as DeleteIcon,
-    CheckCircle as CheckIcon,
-    Cancel as CancelIcon,
     ExpandMore as ExpandMoreIcon,
     ExpandLess as ExpandLessIcon,
 } from '@mui/icons-material';
 import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
 import EffectivePermissionsPanel from './EffectivePermissionsPanel';
+import { useAuth } from '../../contexts/AuthContext';
 import { apiGet, apiPost, apiPut, apiDelete } from '../../utils/apiClient';
 import {
     tableHeaderCellSx,
@@ -56,8 +55,6 @@ import {
     subsectionLabelSx,
     getContainedButtonSx,
     getDeleteIconSx,
-    getSuccessIconSx,
-    getInactiveIconSx,
     getTableContainerSx,
 } from './styles';
 
@@ -90,6 +87,7 @@ interface EditUserBody { [key: string]: any }
 
 const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
     const theme = useTheme();
+    const { user: currentUser } = useAuth();
     const [users, setUsers] = useState<RbacUser[]>([]);
     const [connections, setConnections] = useState<Array<{ id: number; name: string }>>([]);
     const [loading, setLoading] = useState<boolean>(true);
@@ -300,6 +298,41 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
         }
     };
 
+    // Inline toggle handlers
+    const handleToggleSuperuser = async (e: React.MouseEvent, rowUser: RbacUser) => {
+        e.stopPropagation();
+        try {
+            await apiPut(`/api/v1/rbac/users/${rowUser.id}`, {
+                is_superuser: !rowUser.is_superuser,
+            });
+            fetchUsers();
+            if (expandedUser === rowUser.id) {
+                const data = await apiGet<UserPermissions>(`/api/v1/rbac/users/${rowUser.id}/privileges`);
+                setPermissions(data);
+            }
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            setError(message);
+        }
+    };
+
+    const handleToggleEnabled = async (e: React.MouseEvent, rowUser: RbacUser) => {
+        e.stopPropagation();
+        try {
+            await apiPut(`/api/v1/rbac/users/${rowUser.id}`, {
+                enabled: !(rowUser.enabled !== false),
+            });
+            fetchUsers();
+            if (expandedUser === rowUser.id) {
+                const data = await apiGet<UserPermissions>(`/api/v1/rbac/users/${rowUser.id}/privileges`);
+                setPermissions(data);
+            }
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            setError(message);
+        }
+    };
+
     if (loading) {
         return (
             <Box sx={loadingContainerSx}>
@@ -314,8 +347,6 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
 
     const containedButtonSx = getContainedButtonSx(theme);
     const deleteIconSx = getDeleteIconSx(theme);
-    const successIconSx = getSuccessIconSx(theme);
-    const inactiveIconSx = getInactiveIconSx(theme);
     const tableContainerSx = getTableContainerSx(theme);
     const isDark = mode === 'dark';
 
@@ -399,18 +430,28 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
                                     <TableCell>{rowUser.email || '-'}</TableCell>
                                     <TableCell>{rowUser.annotation || '-'}</TableCell>
                                     <TableCell align="center">
-                                        {rowUser.is_superuser ? (
-                                            <CheckIcon sx={successIconSx} />
-                                        ) : (
-                                            <CancelIcon sx={inactiveIconSx} />
-                                        )}
+                                        <Switch
+                                            checked={rowUser.is_superuser || false}
+                                            size="small"
+                                            onClick={(e) => handleToggleSuperuser(e, rowUser)}
+                                            disabled={
+                                                rowUser.is_service_account === true ||
+                                                rowUser.username === currentUser?.username
+                                            }
+                                            inputProps={{ 'aria-label': 'Toggle superuser' }}
+                                        />
                                     </TableCell>
                                     <TableCell align="center">
-                                        {rowUser.enabled !== false ? (
-                                            <CheckIcon sx={successIconSx} />
-                                        ) : (
-                                            <CancelIcon sx={inactiveIconSx} />
-                                        )}
+                                        <Switch
+                                            checked={rowUser.enabled !== false}
+                                            size="small"
+                                            onClick={(e) => handleToggleEnabled(e, rowUser)}
+                                            disabled={
+                                                rowUser.is_service_account === true ||
+                                                rowUser.username === currentUser?.username
+                                            }
+                                            inputProps={{ 'aria-label': 'Toggle enabled' }}
+                                        />
                                     </TableCell>
                                     <TableCell align="right">
                                         <IconButton
@@ -454,7 +495,7 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
                                                             connectionPrivileges={permissions.connection_privileges}
                                                             adminPermissions={permissions.admin_permissions}
                                                             mcpPrivileges={permissions.mcp_privileges}
-                                                            isSuperuser={true}
+                                                            isSuperuser={rowUser.is_superuser || false}
                                                             isDark={isDark}
                                                             groups={permissions.groups}
                                                             connections={connections}

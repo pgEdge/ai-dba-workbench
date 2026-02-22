@@ -13,6 +13,7 @@ package database
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -91,7 +92,7 @@ func buildConnectionString(cfg *config.Config) string {
 	}
 
 	if cfg.Datastore.Password != "" {
-		connString += fmt.Sprintf(" password=%s", cfg.Datastore.Password)
+		connString += fmt.Sprintf(" password='%s'", strings.ReplaceAll(cfg.Datastore.Password, "'", "\\'"))
 	}
 
 	if cfg.Datastore.SSLCert != "" {

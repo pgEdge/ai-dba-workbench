@@ -13,6 +13,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	htmltemplate "html/template"
+	"strings"
 	"sync"
 	"text/template"
 	"time"
@@ -195,6 +197,7 @@ const (
 // Severity colors for templates
 const (
 	SeverityColorCritical = "#dc3545"
+	SeverityColorHigh     = "#fd7e14"
 	SeverityColorWarning  = "#ffc107"
 	SeverityColorInfo     = "#17a2b8"
 )
@@ -202,13 +205,15 @@ const (
 // Severity emojis for templates
 const (
 	SeverityEmojiCritical = "🔴"
+	SeverityEmojiHigh     = "🟠"
 	SeverityEmojiWarning  = "🟡"
 	SeverityEmojiInfo     = "🔵"
 )
 
 // templateRenderer implements TemplateRenderer
 type templateRenderer struct {
-	cache sync.Map // caches compiled *template.Template by template string
+	cache     sync.Map // caches compiled *template.Template by template string
+	htmlCache sync.Map // caches compiled *htmltemplate.Template by template string
 }
 
 // NewTemplateRenderer creates a new TemplateRenderer
@@ -228,16 +233,29 @@ func (r *templateRenderer) Render(templateStr string, payload *database.Notifica
 		return "", fmt.Errorf("no template provided")
 	}
 
-	// Get or compile template from cache
+	// Create enhanced data map with computed fields
+	data := r.enhancePayload(payload)
+
+	// Use html/template for HTML content to prevent XSS
+	if isHTMLTemplate(tmplStr) {
+		tmpl, err := r.getOrCompileHTMLTemplate(tmplStr)
+		if err != nil {
+			return "", fmt.Errorf("failed to compile HTML template: %w", err)
+		}
+
+		var buf bytes.Buffer
+		if err := tmpl.Execute(&buf, data); err != nil {
+			return "", fmt.Errorf("failed to execute HTML template: %w", err)
+		}
+		return buf.String(), nil
+	}
+
+	// Use text/template for plain text content
 	tmpl, err := r.getOrCompileTemplate(tmplStr)
 	if err != nil {
 		return "", fmt.Errorf("failed to compile template: %w", err)
 	}
 
-	// Create enhanced data map with computed fields
-	data := r.enhancePayload(payload)
-
-	// Execute template
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {
 		return "", fmt.Errorf("failed to execute template: %w", err)
@@ -316,7 +334,17 @@ func jsonEscapeString(s string) string {
 	return string(b[1 : len(b)-1])
 }
 
-// getOrCompileTemplate retrieves a compiled template from the cache or compiles it
+// isHTMLTemplate returns true if the template content appears to be HTML.
+func isHTMLTemplate(templateStr string) bool {
+	trimmed := strings.TrimSpace(templateStr)
+	lower := strings.ToLower(trimmed)
+	return strings.HasPrefix(lower, "<!doctype html") ||
+		strings.HasPrefix(lower, "<html") ||
+		strings.HasPrefix(lower, "<body") ||
+		strings.HasPrefix(lower, "<div")
+}
+
+// getOrCompileTemplate retrieves a compiled text template from the cache or compiles it
 func (r *templateRenderer) getOrCompileTemplate(templateStr string) (*template.Template, error) {
 	// Check cache first
 	if cached, ok := r.cache.Load(templateStr); ok {
@@ -335,6 +363,30 @@ func (r *templateRenderer) getOrCompileTemplate(templateStr string) (*template.T
 
 	// Store in cache
 	r.cache.Store(templateStr, tmpl)
+
+	return tmpl, nil
+}
+
+// getOrCompileHTMLTemplate retrieves a compiled HTML template from the cache or compiles it.
+// HTML templates automatically escape dynamic values to prevent XSS.
+func (r *templateRenderer) getOrCompileHTMLTemplate(templateStr string) (*htmltemplate.Template, error) {
+	// Check cache first
+	if cached, ok := r.htmlCache.Load(templateStr); ok {
+		tmpl, ok := cached.(*htmltemplate.Template)
+		if !ok {
+			return nil, fmt.Errorf("cached HTML template has unexpected type %T", cached)
+		}
+		return tmpl, nil
+	}
+
+	// Compile template
+	tmpl, err := htmltemplate.New("notification").Parse(templateStr)
+	if err != nil {
+		return nil, err
+	}
+
+	// Store in cache
+	r.htmlCache.Store(templateStr, tmpl)
 
 	return tmpl, nil
 }
@@ -429,6 +481,8 @@ func getSeverityColor(severity string) string {
 	switch severity {
 	case "critical":
 		return SeverityColorCritical
+	case "high":
+		return SeverityColorHigh
 	case "warning":
 		return SeverityColorWarning
 	case "info":
@@ -443,6 +497,8 @@ func getSeverityEmoji(severity string) string {
 	switch severity {
 	case "critical":
 		return SeverityEmojiCritical
+	case "high":
+		return SeverityEmojiHigh
 	case "warning":
 		return SeverityEmojiWarning
 	case "info":

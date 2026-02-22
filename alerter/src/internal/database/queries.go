@@ -13,6 +13,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // MonitoredConnection represents a connection and its error status
@@ -43,6 +45,10 @@ func (d *Datastore) GetMonitoredConnectionErrors(ctx context.Context) ([]Monitor
 		connections = append(connections, conn)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
+	}
+
 	return connections, nil
 }
 
@@ -55,8 +61,10 @@ func (d *Datastore) GetActiveConnectionAlert(ctx context.Context, connectionID i
 	`, connectionID).Scan(&alertID, &description)
 
 	if err != nil {
-		// No rows found is not an error, just means no active alert
-		return 0, "", false, nil
+		if err == pgx.ErrNoRows {
+			return 0, "", false, nil
+		}
+		return 0, "", false, fmt.Errorf("failed to get active connection alert: %w", err)
 	}
 	return alertID, description, true, nil
 }
@@ -137,6 +145,10 @@ func (d *Datastore) GetEnabledAlertRules(ctx context.Context) ([]*AlertRule, err
 			return nil, fmt.Errorf("failed to scan alert rule: %w", err)
 		}
 		rules = append(rules, &rule)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
 	}
 
 	return rules, nil
@@ -234,6 +246,10 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			results = append(results, mv)
 		}
 
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
+		}
+
 	case "connection_utilization_percent":
 		// Calculate connection utilization as percentage of max_connections
 		// Uses only the latest snapshot per connection to avoid inflation
@@ -275,6 +291,10 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			results = append(results, mv)
 		}
 
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
+		}
+
 	case "pg_stat_activity.count":
 		// Count of active sessions per connection using only the latest snapshot
 		rows, err := d.pool.Query(ctx, `
@@ -304,6 +324,10 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			results = append(results, mv)
 		}
 
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
+		}
+
 	case "pg_stat_replication.replay_lag_seconds":
 		// Get replication lag in seconds
 		rows, err := d.pool.Query(ctx, `
@@ -325,6 +349,10 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 				return nil, fmt.Errorf("failed to scan metric value: %w", err)
 			}
 			results = append(results, mv)
+		}
+
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
 		}
 
 	case "pg_stat_replication.lag_bytes":
@@ -362,6 +390,10 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			results = append(results, mv)
 		}
 
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
+		}
+
 	case "pg_replication_slots.retained_bytes":
 		rows, err := d.pool.Query(ctx, `
 			WITH recent_slots AS (
@@ -395,6 +427,10 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 				return nil, fmt.Errorf("failed to scan metric value: %w", err)
 			}
 			results = append(results, mv)
+		}
+
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
 		}
 
 	case "pg_replication_slots.inactive":
@@ -432,6 +468,10 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			results = append(results, mv)
 		}
 
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
+		}
+
 	case "pg_stat_activity.blocked_count":
 		// Count of blocked sessions per connection using only the latest snapshot
 		rows, err := d.pool.Query(ctx, `
@@ -460,6 +500,10 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 				return nil, fmt.Errorf("failed to scan metric value: %w", err)
 			}
 			results = append(results, mv)
+		}
+
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
 		}
 
 	case "pg_stat_activity.idle_in_transaction_seconds":
@@ -493,6 +537,10 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			results = append(results, mv)
 		}
 
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
+		}
+
 	case "pg_stat_activity.max_lock_wait_seconds":
 		// Max lock wait time per connection using only the latest snapshot
 		rows, err := d.pool.Query(ctx, `
@@ -522,6 +570,10 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 				return nil, fmt.Errorf("failed to scan metric value: %w", err)
 			}
 			results = append(results, mv)
+		}
+
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
 		}
 
 	case "pg_stat_activity.max_query_duration_seconds":
@@ -555,6 +607,10 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			results = append(results, mv)
 		}
 
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
+		}
+
 	case "pg_stat_activity.max_xact_duration_seconds":
 		// Max transaction duration per connection using only the latest snapshot
 		rows, err := d.pool.Query(ctx, `
@@ -583,6 +639,10 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 				return nil, fmt.Errorf("failed to scan metric value: %w", err)
 			}
 			results = append(results, mv)
+		}
+
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
 		}
 
 	case "pg_stat_all_tables.dead_tuple_percent":
@@ -648,6 +708,10 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			results = append(results, mv)
 		}
 
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
+		}
+
 	case "pg_stat_archiver.failed_count_delta":
 		// Failed archive count delta (compare current with previous collection)
 		rows, err := d.pool.Query(ctx, `
@@ -679,6 +743,10 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			results = append(results, mv)
 		}
 
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
+		}
+
 	case "pg_stat_checkpointer.checkpoints_req_delta":
 		// Requested checkpoints delta
 		rows, err := d.pool.Query(ctx, `
@@ -708,6 +776,10 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 				return nil, fmt.Errorf("failed to scan metric value: %w", err)
 			}
 			results = append(results, mv)
+		}
+
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
 		}
 
 	case "pg_stat_database.cache_hit_ratio":
@@ -768,6 +840,10 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			results = append(results, mv)
 		}
 
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
+		}
+
 	case "pg_stat_database.deadlocks_delta":
 		// Deadlock count delta per database
 		rows, err := d.pool.Query(ctx, `
@@ -806,6 +882,10 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			}
 			mv.DatabaseName = &dbName
 			results = append(results, mv)
+		}
+
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
 		}
 
 	case "pg_stat_database.temp_files_delta":
@@ -848,6 +928,10 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			results = append(results, mv)
 		}
 
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
+		}
+
 	case "pg_stat_statements.slow_query_count":
 		// Count of slow queries (mean_exec_time > 1000ms) per database
 		rows, err := d.pool.Query(ctx, `
@@ -888,6 +972,10 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			results = append(results, mv)
 		}
 
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
+		}
+
 	case "pg_sys_cpu_usage_info.processor_time_percent":
 		// CPU usage percentage per connection
 		rows, err := d.pool.Query(ctx, `
@@ -914,6 +1002,10 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 				return nil, fmt.Errorf("failed to scan metric value: %w", err)
 			}
 			results = append(results, mv)
+		}
+
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
 		}
 
 	case "pg_sys_disk_info.used_percent":
@@ -953,6 +1045,10 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			results = append(results, mv)
 		}
 
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
+		}
+
 	case "pg_sys_load_avg_info.load_avg_fifteen_minutes":
 		// 15-minute load average per connection
 		rows, err := d.pool.Query(ctx, `
@@ -979,6 +1075,10 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 				return nil, fmt.Errorf("failed to scan metric value: %w", err)
 			}
 			results = append(results, mv)
+		}
+
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
 		}
 
 	case "pg_sys_memory_info.used_percent":
@@ -1011,6 +1111,10 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 				return nil, fmt.Errorf("failed to scan metric value: %w", err)
 			}
 			results = append(results, mv)
+		}
+
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
 		}
 
 	case "age_percent":
@@ -1063,6 +1167,10 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 				return nil, fmt.Errorf("failed to scan metric value: %w", err)
 			}
 			results = append(results, mv)
+		}
+
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
 		}
 
 	case "table_bloat_ratio":
@@ -1128,6 +1236,10 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			mv.DatabaseName = &dbName
 			mv.ObjectName = &objectName
 			results = append(results, mv)
+		}
+
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
 		}
 
 	case "table_last_autovacuum_hours":
@@ -1210,6 +1322,10 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			mv.DatabaseName = &dbName
 			mv.ObjectName = &objectName
 			results = append(results, mv)
+		}
+
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
 		}
 
 	default:
@@ -1373,6 +1489,10 @@ func (d *Datastore) GetActiveAlerts(ctx context.Context) ([]*Alert, error) {
 		alerts = append(alerts, &alert)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
+	}
+
 	return alerts, nil
 }
 
@@ -1516,6 +1636,10 @@ func (d *Datastore) GetEnabledBlackoutSchedules(ctx context.Context) ([]*Blackou
 		schedules = append(schedules, &s)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
+	}
+
 	return schedules, nil
 }
 
@@ -1560,6 +1684,10 @@ func (d *Datastore) GetMetricBaselines(ctx context.Context, connectionID int, me
 		baselines = append(baselines, &b)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
+	}
+
 	return baselines, nil
 }
 
@@ -1598,6 +1726,10 @@ func (d *Datastore) GetActiveConnections(ctx context.Context) ([]int, error) {
 			return nil, fmt.Errorf("failed to scan connection id: %w", err)
 		}
 		ids = append(ids, id)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
 	}
 
 	return ids, nil
@@ -1643,6 +1775,10 @@ func (d *Datastore) GetUnprocessedAnomalyCandidates(ctx context.Context, limit i
 			return nil, fmt.Errorf("failed to scan anomaly candidate: %w", err)
 		}
 		candidates = append(candidates, &c)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
 	}
 
 	return candidates, nil
@@ -1691,6 +1827,10 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 			results = append(results, hv)
 		}
 
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
+		}
+
 	case "connection_utilization_percent":
 		rows, err := d.pool.Query(ctx, `
 			WITH activity_counts AS (
@@ -1725,6 +1865,10 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 			results = append(results, hv)
 		}
 
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
+		}
+
 	case "pg_stat_activity.count":
 		rows, err := d.pool.Query(ctx, `
 			SELECT connection_id, NULL::text as database_name,
@@ -1748,6 +1892,10 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 			results = append(results, hv)
 		}
 
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
+		}
+
 	case "pg_stat_activity.blocked_count":
 		rows, err := d.pool.Query(ctx, `
 			SELECT connection_id, NULL::text as database_name,
@@ -1769,6 +1917,10 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 				return nil, fmt.Errorf("failed to scan historical metric value: %w", err)
 			}
 			results = append(results, hv)
+		}
+
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
 		}
 
 	case "pg_stat_activity.idle_in_transaction_seconds":
@@ -1796,6 +1948,10 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 			results = append(results, hv)
 		}
 
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
+		}
+
 	case "pg_stat_activity.max_query_duration_seconds":
 		rows, err := d.pool.Query(ctx, `
 			SELECT connection_id, NULL::text as database_name,
@@ -1819,6 +1975,10 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 				return nil, fmt.Errorf("failed to scan historical metric value: %w", err)
 			}
 			results = append(results, hv)
+		}
+
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
 		}
 
 	case "pg_stat_activity.max_xact_duration_seconds":
@@ -1845,6 +2005,10 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 			results = append(results, hv)
 		}
 
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
+		}
+
 	case "pg_sys_cpu_usage_info.processor_time_percent":
 		rows, err := d.pool.Query(ctx, `
 			SELECT connection_id, NULL::text as database_name,
@@ -1865,6 +2029,10 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 				return nil, fmt.Errorf("failed to scan historical metric value: %w", err)
 			}
 			results = append(results, hv)
+		}
+
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
 		}
 
 	case "pg_sys_memory_info.used_percent":
@@ -1893,6 +2061,10 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 			results = append(results, hv)
 		}
 
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
+		}
+
 	case "pg_sys_load_avg_info.load_avg_fifteen_minutes":
 		rows, err := d.pool.Query(ctx, `
 			SELECT connection_id, NULL::text as database_name,
@@ -1913,6 +2085,10 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 				return nil, fmt.Errorf("failed to scan historical metric value: %w", err)
 			}
 			results = append(results, hv)
+		}
+
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
 		}
 
 	case "pg_sys_disk_info.used_percent":
@@ -1941,6 +2117,10 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 				return nil, fmt.Errorf("failed to scan historical metric value: %w", err)
 			}
 			results = append(results, hv)
+		}
+
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
 		}
 
 	case "pg_stat_database.cache_hit_ratio":
@@ -2000,6 +2180,10 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 			results = append(results, hv)
 		}
 
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
+		}
+
 	case "pg_stat_database.deadlocks_delta":
 		rows, err := d.pool.Query(ctx, `
 			WITH db_deadlocks AS (
@@ -2035,6 +2219,10 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 			results = append(results, hv)
 		}
 
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
+		}
+
 	case "pg_stat_database.temp_files_delta":
 		rows, err := d.pool.Query(ctx, `
 			WITH db_temp_files AS (
@@ -2068,6 +2256,10 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 			}
 			hv.DatabaseName = &dbName
 			results = append(results, hv)
+		}
+
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("row iteration error: %w", err)
 		}
 
 	default:
@@ -2155,6 +2347,10 @@ func (d *Datastore) FindSimilarAnomalies(ctx context.Context, embedding []float3
 		results = append(results, &sa)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
+	}
+
 	return results, nil
 }
 
@@ -2215,6 +2411,10 @@ func (d *Datastore) GetProbeStalenessByConnection(ctx context.Context) ([]ProbeS
 			return nil, fmt.Errorf("failed to scan probe staleness: %w", err)
 		}
 		results = append(results, ps)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
 	}
 
 	return results, nil

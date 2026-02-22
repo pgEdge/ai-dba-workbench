@@ -200,6 +200,12 @@ func (h *AuthHandler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Invalidate the server-side session before clearing the cookie
+	cookie, err := r.Cookie(SessionCookieName)
+	if err == nil && cookie.Value != "" {
+		h.authStore.InvalidateSession(cookie.Value)
+	}
+
 	// Clear the session cookie by setting it to expire immediately
 	// Auto-detect if this is a secure request (HTTPS or behind TLS-terminating proxy)
 	secureCookie := h.isSecureRequest(r)

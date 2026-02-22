@@ -222,6 +222,16 @@ func (m *Manager) ProcessReminders(ctx context.Context) error {
 
 		// Build payload with reminder count
 		payload := m.buildPayload(reminder.Alert, database.NotificationTypeReminder, serverName, serverHost, serverPort)
+
+		// Initialize state if nil (first reminder for this alert/channel)
+		if reminder.State == nil {
+			reminder.State = &database.NotificationReminderState{
+				AlertID:       reminder.Alert.ID,
+				ChannelID:     reminder.Channel.ID,
+				ReminderCount: 0,
+			}
+		}
+
 		payload.ReminderCount = reminder.State.ReminderCount + 1
 
 		// Create history record

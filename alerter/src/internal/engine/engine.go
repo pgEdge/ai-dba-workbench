@@ -251,6 +251,15 @@ func (e *Engine) ReloadConfig(cfg *config.Config) {
 	e.log("Configuration reloaded")
 }
 
+// getConfig returns the current configuration with proper read locking.
+// All background workers must use this method instead of accessing
+// e.config directly to avoid data races with ReloadConfig.
+func (e *Engine) getConfig() *config.Config {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.config
+}
+
 // StopNotificationWorkers gracefully shuts down the notification worker pool
 func (e *Engine) StopNotificationWorkers() {
 	e.notificationPool.Stop()
@@ -259,7 +268,8 @@ func (e *Engine) StopNotificationWorkers() {
 
 // runThresholdEvaluator evaluates threshold-based alert rules
 func (e *Engine) runThresholdEvaluator(ctx context.Context) {
-	interval := time.Duration(e.config.Threshold.EvaluationIntervalSeconds) * time.Second
+	cfg := e.getConfig()
+	interval := time.Duration(cfg.Threshold.EvaluationIntervalSeconds) * time.Second
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -281,7 +291,8 @@ func (e *Engine) runThresholdEvaluator(ctx context.Context) {
 
 // runBaselineCalculator periodically recalculates metric baselines
 func (e *Engine) runBaselineCalculator(ctx context.Context) {
-	interval := time.Duration(e.config.Baselines.RefreshIntervalSeconds) * time.Second
+	cfg := e.getConfig()
+	interval := time.Duration(cfg.Baselines.RefreshIntervalSeconds) * time.Second
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -303,7 +314,8 @@ func (e *Engine) runBaselineCalculator(ctx context.Context) {
 
 // runAnomalyDetector runs the tiered anomaly detection system
 func (e *Engine) runAnomalyDetector(ctx context.Context) {
-	interval := time.Duration(e.config.Anomaly.Tier1.EvaluationIntervalSeconds) * time.Second
+	cfg := e.getConfig()
+	interval := time.Duration(cfg.Anomaly.Tier1.EvaluationIntervalSeconds) * time.Second
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -402,13 +414,13 @@ func (e *Engine) runConnectionErrorEvaluator(ctx context.Context) {
 }
 
 // log outputs a message to stderr
-func (e *Engine) log(format string, args ...interface{}) {
+func (e *Engine) log(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
 	fmt.Fprintf(os.Stderr, "[alerter] %s\n", msg)
 }
 
 // debugLog outputs a message only if debug is enabled
-func (e *Engine) debugLog(format string, args ...interface{}) {
+func (e *Engine) debugLog(format string, args ...any) {
 	if e.debug {
 		e.log(format, args...)
 	}

@@ -562,7 +562,8 @@ func safeQueryError(prefix string, err error) string {
 		}
 		return fmt.Sprintf("%s: %s", prefix, pgErr.Message)
 	}
-	return fmt.Sprintf("%s: %v", prefix, err)
+	log.Printf("Query error (non-PgError): %v", err)
+	return fmt.Sprintf("%s: an internal error occurred", prefix)
 }
 
 // hasLimitClause reports whether sql already contains a LIMIT clause as a

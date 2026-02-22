@@ -40,7 +40,8 @@ func (e *Engine) calculateBaselines(ctx context.Context) {
 	}
 
 	// Get lookback days from config (default to 7 if not set)
-	lookbackDays := e.config.Baselines.LookbackDays
+	cfg := e.getConfig()
+	lookbackDays := cfg.Baselines.LookbackDays
 	if lookbackDays <= 0 {
 		lookbackDays = 7
 	}

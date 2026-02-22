@@ -23,7 +23,9 @@ import (
 func (e *Engine) detectAnomalies(ctx context.Context) {
 	e.debugLog("Running anomaly detection...")
 
-	if !e.config.Anomaly.Tier1.Enabled {
+	cfg := e.getConfig()
+
+	if !cfg.Anomaly.Tier1.Enabled {
 		return
 	}
 
@@ -41,7 +43,7 @@ func (e *Engine) detectAnomalies(ctx context.Context) {
 		return
 	}
 
-	sensitivity := e.config.Anomaly.Tier1.DefaultSensitivity
+	sensitivity := cfg.Anomaly.Tier1.DefaultSensitivity
 
 	// For each connection and metric, check for anomalies
 	for _, connID := range connections {
@@ -106,7 +108,7 @@ func (e *Engine) detectAnomalies(ctx context.Context) {
 	}
 
 	// Process tier 2 and tier 3 if enabled
-	if e.config.Anomaly.Tier2.Enabled || e.config.Anomaly.Tier3.Enabled {
+	if cfg.Anomaly.Tier2.Enabled || cfg.Anomaly.Tier3.Enabled {
 		e.processTier2And3(ctx)
 	}
 }
@@ -127,8 +129,10 @@ func (e *Engine) processTier2And3(ctx context.Context) {
 		var similarAnomalies []*database.SimilarAnomaly
 		var embedding []float32
 
+		cfg := e.getConfig()
+
 		// Tier 2: Embedding similarity
-		if e.config.Anomaly.Tier2.Enabled && e.embeddingProvider != nil {
+		if cfg.Anomaly.Tier2.Enabled && e.embeddingProvider != nil {
 			embedding, similarAnomalies = e.processTier2(ctx, candidate)
 		} else {
 			// Skip Tier 2, pass through to Tier 3
@@ -137,7 +141,7 @@ func (e *Engine) processTier2And3(ctx context.Context) {
 		}
 
 		// Tier 3: LLM classification (only if Tier 2 passed or was skipped)
-		if e.config.Anomaly.Tier3.Enabled && e.reasoningProvider != nil &&
+		if cfg.Anomaly.Tier3.Enabled && e.reasoningProvider != nil &&
 			(candidate.Tier2Pass == nil || *candidate.Tier2Pass) {
 			e.processTier3(ctx, candidate, similarAnomalies)
 		}
@@ -185,7 +189,8 @@ func (e *Engine) processTier2(ctx context.Context, candidate *database.AnomalyCa
 	}
 
 	// Search for similar past anomalies
-	threshold := e.config.Anomaly.Tier2.SimilarityThreshold
+	cfg := e.getConfig()
+	threshold := cfg.Anomaly.Tier2.SimilarityThreshold
 	if threshold <= 0 {
 		threshold = 0.3 // Default minimum similarity
 	}
@@ -222,7 +227,7 @@ func (e *Engine) processTier2(ctx context.Context, candidate *database.AnomalyCa
 		candidate.Tier2Score = &maxSimilarity
 
 		// Apply suppression logic based on similar anomalies
-		suppressionThreshold := e.config.Anomaly.Tier2.SuppressionThreshold
+		suppressionThreshold := cfg.Anomaly.Tier2.SuppressionThreshold
 		if suppressionThreshold <= 0 {
 			suppressionThreshold = 0.85 // Default high similarity threshold for suppression
 		}
@@ -267,7 +272,8 @@ func (e *Engine) processTier3(ctx context.Context, candidate *database.AnomalyCa
 	prompt := e.buildClassificationPrompt(candidate, similarAnomalies)
 
 	// Create a timeout context for Tier 3
-	timeout := time.Duration(e.config.Anomaly.Tier3.TimeoutSeconds) * time.Second
+	cfg := e.getConfig()
+	timeout := time.Duration(cfg.Anomaly.Tier3.TimeoutSeconds) * time.Second
 	if timeout <= 0 {
 		timeout = DefaultTier3Timeout
 	}
@@ -436,17 +442,17 @@ func formatOptionalString(v *string) string {
 func (e *Engine) buildContextText(candidate *database.AnomalyCandidate) string {
 	var sb strings.Builder
 
-	sb.WriteString(fmt.Sprintf("Metric: %s\n", candidate.MetricName))
-	sb.WriteString(fmt.Sprintf("Value: %.4f\n", candidate.MetricValue))
-	sb.WriteString(fmt.Sprintf("Z-Score: %.2f\n", candidate.ZScore))
-	sb.WriteString(fmt.Sprintf("Connection ID: %d\n", candidate.ConnectionID))
+	fmt.Fprintf(&sb, "Metric: %s\n", candidate.MetricName)
+	fmt.Fprintf(&sb, "Value: %.4f\n", candidate.MetricValue)
+	fmt.Fprintf(&sb, "Z-Score: %.2f\n", candidate.ZScore)
+	fmt.Fprintf(&sb, "Connection ID: %d\n", candidate.ConnectionID)
 
 	if candidate.DatabaseName != nil {
-		sb.WriteString(fmt.Sprintf("Database: %s\n", *candidate.DatabaseName))
+		fmt.Fprintf(&sb, "Database: %s\n", *candidate.DatabaseName)
 	}
 
-	sb.WriteString(fmt.Sprintf("Detected at: %s\n", candidate.DetectedAt.Format(time.RFC3339)))
-	sb.WriteString(fmt.Sprintf("Context: %s\n", candidate.Context))
+	fmt.Fprintf(&sb, "Detected at: %s\n", candidate.DetectedAt.Format(time.RFC3339))
+	fmt.Fprintf(&sb, "Context: %s\n", candidate.Context)
 
 	return sb.String()
 }
@@ -458,28 +464,28 @@ func (e *Engine) buildClassificationPrompt(candidate *database.AnomalyCandidate,
 	sb.WriteString("Analyze the following anomaly candidate and determine if it is a real issue that requires attention (alert) or a false positive that should be suppressed.\n\n")
 
 	sb.WriteString("## Current Anomaly\n")
-	sb.WriteString(fmt.Sprintf("- Metric: %s\n", candidate.MetricName))
-	sb.WriteString(fmt.Sprintf("- Value: %.4f\n", candidate.MetricValue))
-	sb.WriteString(fmt.Sprintf("- Z-Score: %.2f (standard deviations from mean)\n", candidate.ZScore))
-	sb.WriteString(fmt.Sprintf("- Connection ID: %d\n", candidate.ConnectionID))
+	fmt.Fprintf(&sb, "- Metric: %s\n", candidate.MetricName)
+	fmt.Fprintf(&sb, "- Value: %.4f\n", candidate.MetricValue)
+	fmt.Fprintf(&sb, "- Z-Score: %.2f (standard deviations from mean)\n", candidate.ZScore)
+	fmt.Fprintf(&sb, "- Connection ID: %d\n", candidate.ConnectionID)
 
 	if candidate.DatabaseName != nil {
-		sb.WriteString(fmt.Sprintf("- Database: %s\n", *candidate.DatabaseName))
+		fmt.Fprintf(&sb, "- Database: %s\n", *candidate.DatabaseName)
 	}
 
-	sb.WriteString(fmt.Sprintf("- Detected at: %s\n", candidate.DetectedAt.Format(time.RFC3339)))
+	fmt.Fprintf(&sb, "- Detected at: %s\n", candidate.DetectedAt.Format(time.RFC3339))
 
 	// Parse and include baseline info from context
-	var contextData map[string]interface{}
+	var contextData map[string]any
 	if err := json.Unmarshal([]byte(candidate.Context), &contextData); err == nil {
 		if mean, ok := contextData["baseline_mean"].(float64); ok {
-			sb.WriteString(fmt.Sprintf("- Baseline mean: %.4f\n", mean))
+			fmt.Fprintf(&sb, "- Baseline mean: %.4f\n", mean)
 		}
 		if stddev, ok := contextData["baseline_stddev"].(float64); ok {
-			sb.WriteString(fmt.Sprintf("- Baseline stddev: %.4f\n", stddev))
+			fmt.Fprintf(&sb, "- Baseline stddev: %.4f\n", stddev)
 		}
 		if periodType, ok := contextData["period_type"].(string); ok {
-			sb.WriteString(fmt.Sprintf("- Baseline period: %s\n", periodType))
+			fmt.Fprintf(&sb, "- Baseline period: %s\n", periodType)
 		}
 	}
 
@@ -488,15 +494,15 @@ func (e *Engine) buildClassificationPrompt(candidate *database.AnomalyCandidate,
 		sb.WriteString("\n## Similar Past Anomalies\n")
 		for i, sa := range similarAnomalies {
 			if i >= 5 {
-				sb.WriteString(fmt.Sprintf("... and %d more similar anomalies\n", len(similarAnomalies)-5))
+				fmt.Fprintf(&sb, "... and %d more similar anomalies\n", len(similarAnomalies)-5)
 				break
 			}
 			decision := "unknown"
 			if sa.FinalDecision != nil {
 				decision = *sa.FinalDecision
 			}
-			sb.WriteString(fmt.Sprintf("- Similarity: %.2f%%, Decision: %s, Metric: %s\n",
-				sa.Similarity*100, decision, sa.MetricName))
+			fmt.Fprintf(&sb, "- Similarity: %.2f%%, Decision: %s, Metric: %s\n",
+				sa.Similarity*100, decision, sa.MetricName)
 		}
 	} else {
 		sb.WriteString("\n## Similar Past Anomalies\nNo similar past anomalies found.\n")

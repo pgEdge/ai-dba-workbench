@@ -53,7 +53,8 @@ func (e *Engine) queueNotification(alert *database.Alert, notifTyp database.Noti
 
 // runNotificationWorker processes pending and retry notifications
 func (e *Engine) runNotificationWorker(ctx context.Context) {
-	interval := time.Duration(e.config.Notifications.ProcessIntervalSeconds) * time.Second
+	cfg := e.getConfig()
+	interval := time.Duration(cfg.Notifications.ProcessIntervalSeconds) * time.Second
 	if interval == 0 {
 		interval = DefaultNotificationProcessInterval
 	}
@@ -80,7 +81,8 @@ func (e *Engine) runNotificationWorker(ctx context.Context) {
 
 // runReminderWorker sends periodic reminder notifications for active alerts
 func (e *Engine) runReminderWorker(ctx context.Context) {
-	interval := time.Duration(e.config.Notifications.ReminderCheckIntervalMinutes) * time.Minute
+	cfg := e.getConfig()
+	interval := time.Duration(cfg.Notifications.ReminderCheckIntervalMinutes) * time.Minute
 	if interval == 0 {
 		interval = DefaultReminderCheckInterval
 	}

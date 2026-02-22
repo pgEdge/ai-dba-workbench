@@ -120,6 +120,10 @@ func (d *Datastore) GetNotificationChannelsForConnection(ctx context.Context, co
 		channels = append(channels, &channel)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
+	}
+
 	return channels, nil
 }
 
@@ -211,6 +215,10 @@ func (d *Datastore) GetEmailRecipients(ctx context.Context, channelID int64) ([]
 		recipients = append(recipients, &recipient)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
+	}
+
 	return recipients, nil
 }
 
@@ -282,6 +290,10 @@ func (d *Datastore) GetConnectionChannelLinks(ctx context.Context, connectionID 
 		links = append(links, &link)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
+	}
+
 	return links, nil
 }
 
@@ -345,6 +357,10 @@ func (d *Datastore) GetPendingNotifications(ctx context.Context) ([]*Notificatio
 		notifications = append(notifications, &n)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
+	}
+
 	return notifications, nil
 }
 
@@ -374,6 +390,10 @@ func (d *Datastore) GetNotificationHistoryForAlert(ctx context.Context, alertID 
 			return nil, fmt.Errorf("failed to scan notification history: %w", err)
 		}
 		notifications = append(notifications, &n)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
 	}
 
 	return notifications, nil
@@ -532,6 +552,10 @@ func (d *Datastore) GetDueReminders(ctx context.Context) ([]DueReminder, error) 
 			Channel: &channel,
 			State:   state,
 		})
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
 	}
 
 	return reminders, nil

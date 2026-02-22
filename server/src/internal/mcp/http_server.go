@@ -13,6 +13,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net"
@@ -133,8 +134,15 @@ func (s *Server) loadTLSConfig(config *HTTPConfig) (*tls.Config, error) {
 			return nil, fmt.Errorf("failed to read certificate chain: %w", err)
 		}
 
-		// Append chain to certificate
-		cert.Certificate = append(cert.Certificate, chainData)
+		// Parse PEM-encoded chain and append DER blocks to certificate
+		for {
+			block, rest := pem.Decode(chainData)
+			if block == nil {
+				break
+			}
+			cert.Certificate = append(cert.Certificate, block.Bytes)
+			chainData = rest
+		}
 		tlsConfig.Certificates = []tls.Certificate{cert}
 	}
 

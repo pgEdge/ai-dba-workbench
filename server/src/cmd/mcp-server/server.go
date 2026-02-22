@@ -417,6 +417,7 @@ func (s *Server) Run(flags *Flags, configPath string) error {
 		AuthStore:      s.authStore,
 		Debug:          s.debug,
 		TrustedProxies: s.cfg.HTTP.TrustedProxies,
+		CORSOrigin:     s.cfg.HTTP.CORSOrigin,
 	}
 
 	// Create secure IP extractor for rate limiting

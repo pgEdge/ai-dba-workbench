@@ -161,6 +161,7 @@ type HTTPConfig struct {
 	TLS            TLSConfig  `yaml:"tls"`
 	Auth           AuthConfig `yaml:"auth"`
 	TrustedProxies []string   `yaml:"trusted_proxies"` // CIDR ranges of trusted reverse proxies (e.g., ["10.0.0.0/8", "172.16.0.0/12"])
+	CORSOrigin     string     `yaml:"cors_origin"`     // Allowed CORS origin (e.g., "https://app.example.com"); empty disables CORS headers
 }
 
 // AuthConfig holds authentication settings
@@ -536,6 +537,11 @@ func mergeConfig(dest, src *Config) {
 	// Trusted proxies for secure IP extraction
 	if len(src.HTTP.TrustedProxies) > 0 {
 		dest.HTTP.TrustedProxies = src.HTTP.TrustedProxies
+	}
+
+	// CORS origin
+	if src.HTTP.CORSOrigin != "" {
+		dest.HTTP.CORSOrigin = src.HTTP.CORSOrigin
 	}
 
 	// Auth - authentication is always required; the Enabled field is not overridable

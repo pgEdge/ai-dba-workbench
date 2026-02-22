@@ -47,7 +47,6 @@ interface OverviewSelection {
  * Props accepted by the AIOverview component.
  */
 interface AIOverviewProps {
-    mode?: 'light' | 'dark';
     selection?: OverviewSelection | null;
     onAnalyze?: () => void;
     analysisCached?: boolean;
@@ -92,9 +91,9 @@ function formatRelativeTime(dateStr: string): string {
  * back to polling when the SSE connection is unavailable.  Handles
  * loading, generating, and ready states.
  */
-const AIOverview: React.FC<AIOverviewProps> = ({ mode = 'light', selection, onAnalyze, analysisCached }) => {
+const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisCached }) => {
     const theme = useTheme();
-    const isDark = mode === 'dark';
+    const isDark = theme.palette.mode === 'dark';
 
     const [overview, setOverview] = useState<OverviewResponse | null>(null);
     const [loading, setLoading] = useState(true);

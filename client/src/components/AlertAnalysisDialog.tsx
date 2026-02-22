@@ -170,11 +170,11 @@ interface AlertAnalysisDialogProps {
     alert: Record<string, unknown> | null;
     onClose: () => void;
     onAnalysisComplete?: (alertId: number, analysis: string) => void;
-    isDark: boolean;
 }
 
-const AlertAnalysisDialog: React.FC<AlertAnalysisDialogProps> = ({ open, alert, onClose, onAnalysisComplete, isDark }) => {
+const AlertAnalysisDialog: React.FC<AlertAnalysisDialogProps> = ({ open, alert, onClose, onAnalysisComplete }) => {
     const theme = useTheme();
+    const isDark = theme.palette.mode === 'dark';
     const { analysis, loading, error, progressMessage, activeTools, analyze, reset } = useAlertAnalysis();
 
     // Trigger analysis when dialog opens with an alert

@@ -8,14 +8,15 @@
  *-------------------------------------------------------------------------
  */
 
-import { useState, useCallback } from 'react';
+import { useCallback } from 'react';
 import { ChartData } from '../components/Chart/types';
-import { apiGet } from '../utils/apiClient';
+import { apiGet, apiFetch } from '../utils/apiClient';
 import { formatConnectionContext } from '../utils/connectionContext';
 import { stripPreamble } from '../utils/textHelpers';
 import { SQL_CODE_BLOCK_RULES } from '../utils/analysisPrompts';
 import { fetchTimelineEventsForRange } from '../utils/timelineEvents';
 import { LLMResponse } from '../types/llm';
+import { useAnalysisState } from './useAnalysisState';
 
 export interface ChartAnalysisInput {
     metricDescription: string;
@@ -192,11 +193,15 @@ function serializeChartData(data: ChartData): string {
  * Performs a single-shot LLM call with serialized chart data as context.
  */
 export const useChartAnalysis = (): UseChartAnalysisReturn => {
-    const [analysis, setAnalysis] = useState<string | null>(null);
-    const [loading, setLoading] = useState<boolean>(false);
-    const [error, setError] = useState<string | null>(null);
-    const [progressMessage, setProgressMessage] = useState<string>('Preparing chart data...');
-    const [activeTools, setActiveTools] = useState<string[]>([]);
+    const {
+        state,
+        setAnalysis,
+        setLoading,
+        setError,
+        setProgressMessage,
+        setActiveTools,
+        reset,
+    } = useAnalysisState('Preparing chart data...');
 
     const analyze = useCallback(async (input: ChartAnalysisInput): Promise<void> => {
         // Check cache first to avoid flash of empty state
@@ -270,9 +275,8 @@ Provide analysis of trends, anomalies, and actionable recommendations.`;
             setProgressMessage('Analyzing data...');
             setActiveTools(['Analyzing data']);
 
-            const response = await fetch('/api/v1/llm/chat', {
+            const response = await apiFetch('/api/v1/llm/chat', {
                 method: 'POST',
-                credentials: 'include',
                 headers: {
                     'Content-Type': 'application/json',
                 },
@@ -310,17 +314,17 @@ Provide analysis of trends, anomalies, and actionable recommendations.`;
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [setAnalysis, setLoading, setError, setProgressMessage, setActiveTools]);
 
-    const reset = useCallback((): void => {
-        setAnalysis(null);
-        setError(null);
-        setLoading(false);
-        setProgressMessage('Preparing chart data...');
-        setActiveTools([]);
-    }, []);
-
-    return { analysis, loading, error, progressMessage, activeTools, analyze, reset };
+    return {
+        analysis: state.analysis,
+        loading: state.loading,
+        error: state.error,
+        progressMessage: state.progressMessage,
+        activeTools: state.activeTools,
+        analyze,
+        reset,
+    };
 };
 
 export default useChartAnalysis;

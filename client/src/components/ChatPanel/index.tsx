@@ -29,7 +29,6 @@ import {
     History as HistoryIcon,
     Download as DownloadIcon,
 } from '@mui/icons-material';
-import { ThemeMode } from '../../types/theme';
 import { useChatContext } from '../../contexts/ChatContext';
 import ChatMessage, { ChatMessageData, ContentBlock } from './ChatMessage';
 import ChatInput from './ChatInput';
@@ -237,13 +236,11 @@ const getContentText = (content: string | ContentBlock[]): string => {
 interface ChatPanelProps {
     open: boolean;
     onClose: () => void;
-    mode: ThemeMode;
 }
 
 const ChatPanel: React.FC<ChatPanelProps> = ({
     open,
     onClose,
-    mode,
 }) => {
     // Panel width with localStorage persistence
     const [panelWidth, setPanelWidth] = useState<number>(() => {
@@ -572,7 +569,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
                                     <ChatMessage
                                         key={idx}
                                         message={msg}
-                                        mode={mode}
+                                        mode={theme.palette.mode}
                                     />
                                 ))}
                             </Box>

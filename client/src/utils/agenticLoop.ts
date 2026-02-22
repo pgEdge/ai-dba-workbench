@@ -8,6 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
+import { apiFetch } from './apiClient';
 import { AnalysisTool } from './mcpTools';
 import { getToolDisplayName } from './toolDisplayNames';
 import { stripPreamble } from './textHelpers';
@@ -63,9 +64,8 @@ export async function runAgenticLoop(
     while (iterations < maxIterations) {
         iterations++;
 
-        const response = await fetch('/api/v1/llm/chat', {
+        const response = await apiFetch('/api/v1/llm/chat', {
             method: 'POST',
-            credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 messages,
@@ -116,9 +116,8 @@ export async function runAgenticLoop(
         const toolResults: ToolResult[] = [];
         for (const toolUse of toolUses) {
             try {
-                const toolResponse = await fetch('/api/v1/mcp/tools/call', {
+                const toolResponse = await apiFetch('/api/v1/mcp/tools/call', {
                     method: 'POST',
-                    credentials: 'include',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         name: toolUse.name,

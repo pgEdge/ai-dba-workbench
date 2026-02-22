@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import { useState, useCallback } from 'react';
+import { useCallback } from 'react';
 import { useAICapabilities } from '../contexts/AICapabilitiesContext';
 import { apiGet, apiPut } from '../utils/apiClient';
 import { formatConnectionContext } from '../utils/connectionContext';
@@ -21,6 +21,7 @@ import {
     LLMContentBlock,
     ToolResult,
 } from '../types/llm';
+import { useAnalysisState } from './useAnalysisState';
 
 // Module-level cache for analysis results (persists across dialog open/close)
 const analysisCache = new Map<number, { analysis: string; metricValue: number }>();
@@ -113,11 +114,15 @@ const isMetricValueClose = (a: number, b: number): boolean => {
  */
 export const useAlertAnalysis = (): UseAlertAnalysisReturn => {
     const { maxIterations } = useAICapabilities();
-    const [analysis, setAnalysis] = useState<string | null>(null);
-    const [loading, setLoading] = useState<boolean>(false);
-    const [error, setError] = useState<string | null>(null);
-    const [progressMessage, setProgressMessage] = useState<string>('Gathering context...');
-    const [activeTools, setActiveTools] = useState<string[]>([]);
+    const {
+        state,
+        setAnalysis,
+        setLoading,
+        setError,
+        setProgressMessage,
+        setActiveTools,
+        reset,
+    } = useAnalysisState('Gathering context...');
 
     const analyze = useCallback(async (alert: AlertInput): Promise<void> => {
         setLoading(true);
@@ -228,17 +233,17 @@ Provide remediation recommendations and any threshold tuning suggestions.`;
         } finally {
             setLoading(false);
         }
-    }, [maxIterations]);
+    }, [maxIterations, setAnalysis, setLoading, setError, setProgressMessage, setActiveTools]);
 
-    const reset = useCallback((): void => {
-        setAnalysis(null);
-        setError(null);
-        setLoading(false);
-        setProgressMessage('Gathering context...');
-        setActiveTools([]);
-    }, []);
-
-    return { analysis, loading, error, progressMessage, activeTools, analyze, reset };
+    return {
+        analysis: state.analysis,
+        loading: state.loading,
+        error: state.error,
+        progressMessage: state.progressMessage,
+        activeTools: state.activeTools,
+        analyze,
+        reset,
+    };
 };
 
 export default useAlertAnalysis;

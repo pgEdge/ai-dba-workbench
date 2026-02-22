@@ -16,6 +16,7 @@ import CircularProgress from '@mui/material/CircularProgress';
 import ViewListIcon from '@mui/icons-material/ViewList';
 import { useTheme } from '@mui/material/styles';
 import { useAuth } from '../../../contexts/AuthContext';
+import { apiFetch } from '../../../utils/apiClient';
 import { useDashboard } from '../../../contexts/DashboardContext';
 import CollapsibleSection from '../CollapsibleSection';
 import Sparkline from '../Sparkline';
@@ -114,9 +115,7 @@ const DatabaseSummariesSection: React.FC<ServerSectionProps> = ({
         setError(null);
 
         try {
-            const response = await fetch(url, {
-                credentials: 'include',
-            });
+            const response = await apiFetch(url);
 
             if (!response.ok) {
                 const errorData = await response.json().catch(

@@ -29,6 +29,7 @@ import {
     alpha,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
+import { apiFetch } from '../utils/apiClient';
 import {
     dialogTitleSx,
     dialogActionsSx,
@@ -159,9 +160,8 @@ const AlertOverrideEditDialog: React.FC<AlertOverrideEditDialogProps> = ({
             setContext(null);
 
             try {
-                const response = await fetch(
+                const response = await apiFetch(
                     `${API_BASE_URL}/alert-overrides/context/${alert.connectionId}/${alert.ruleId}`,
-                    { credentials: 'include' }
                 );
 
                 if (!response.ok) {
@@ -279,12 +279,11 @@ const AlertOverrideEditDialog: React.FC<AlertOverrideEditDialogProps> = ({
             setSaving(true);
             setError(null);
 
-            const response = await fetch(
+            const response = await apiFetch(
                 `${API_BASE_URL}/alert-overrides/${selectedScope}/${scopeId}/${context.rule.id}`,
                 {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
-                    credentials: 'include',
                     body: JSON.stringify({
                         operator: editOperator,
                         threshold: thresholdNum,

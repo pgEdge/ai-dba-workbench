@@ -9,7 +9,6 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { ThemeMode } from '../../types/theme';
 import {
     Box,
     Typography,
@@ -70,9 +69,6 @@ import {
     getFocusedLabelSx,
 } from './styles';
 
-interface AdminGroupsProps {
-    mode: ThemeMode;
-}
 
 interface RbacGroup {
     id: number;
@@ -98,9 +94,9 @@ interface RbacUser {
     username: string;
 }
 
-const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
+const AdminGroups: React.FC = () => {
     const theme = useTheme();
-    const isDark = mode === 'dark';
+    const isDark = theme.palette.mode === 'dark';
     const { user } = useAuth();
     const isSuperuser = !!user?.isSuperuser;
     const [groups, setGroups] = useState<RbacGroup[]>([]);

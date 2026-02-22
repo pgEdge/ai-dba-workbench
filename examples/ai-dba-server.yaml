@@ -66,6 +66,17 @@ http:
   #   - "192.168.0.0/16"
 
   #-----------------------------------------------------------------------
+  # CORS Configuration
+  #-----------------------------------------------------------------------
+  #
+  # When the web client and server are on different origins,
+  # set cors_origin to the client URL to enable CORS headers.
+  # When empty (default), no CORS headers are sent, which is
+  # appropriate for same-origin deployments.
+  #
+  # cors_origin: "https://workbench.example.com"
+
+  #-----------------------------------------------------------------------
   # Authentication Configuration
   #-----------------------------------------------------------------------
   #
@@ -465,6 +476,7 @@ builtins:
 #     enabled: true
 #     cert_file: "/etc/ai-workbench/certs/server-cert.pem"
 #     key_file: "/etc/ai-workbench/certs/server-key.pem"
+#   cors_origin: "https://workbench.example.com"
 #   auth:
 #     enabled: true
 #     max_failed_attempts_before_lockout: 5

@@ -108,10 +108,8 @@ const DashboardOverlayContent: React.FC = () => {
  */
 const StatusPanel: React.FC<StatusPanelProps> = ({
     selection,
-    mode = 'light',
 }) => {
     const theme = useTheme();
-    const isDark = mode === 'dark';
     const { user } = useAuth();
     const { aiEnabled } = useAICapabilities();
     const { lastRefresh } = useClusterData();
@@ -456,7 +454,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
             <Box sx={EMPTY_STATE_CONTAINER_SX}>
                 {aiEnabled ? (
                     <Box sx={{ width: '100%', maxWidth: 600, mb: 3 }}>
-                        <AIOverview mode={isDark ? 'dark' : 'light'} />
+                        <AIOverview />
                     </Box>
                 ) : (
                     <Box sx={{
@@ -509,7 +507,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                 {/* AI Overview */}
                 {aiEnabled && (
                     <Box sx={{ mb: 2 }}>
-                        <AIOverview mode={isDark ? 'dark' : 'light'} selection={selection} onAnalyze={handleServerAnalyze} analysisCached={serverAnalysisCached} />
+                        <AIOverview selection={selection} onAnalyze={handleServerAnalyze} analysisCached={serverAnalysisCached} />
                     </Box>
                 )}
 
@@ -620,7 +618,6 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                         setAnalysisAlert(null);
                     }}
                     onAnalysisComplete={handleAnalysisComplete}
-                    isDark={isDark}
                 />
             )}
 
@@ -647,7 +644,6 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                     open={serverAnalysisOpen}
                     selection={serverAnalysisSelection}
                     onClose={() => setServerAnalysisOpen(false)}
-                    isDark={isDark}
                 />
             )}
         </Box>

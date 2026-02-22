@@ -9,13 +9,13 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { apiFetch } from '../utils/apiClient';
 import { useAICapabilities } from '../contexts/AICapabilitiesContext';
 import {
     ChatMessageData,
     ContentBlock,
 } from '../components/ChatPanel/ChatMessage';
 import { ToolActivity } from '../components/ChatPanel/ToolStatus';
-import { ConversationSummary } from '../components/ChatPanel/ConversationHistory';
 import {
     LLMContentBlock,
     LLMResponse,
@@ -30,7 +30,6 @@ import {
 export type ChatMessage = ChatMessageData;
 export type { ContentBlock };
 export type { ToolActivity };
-export type { ConversationSummary };
 
 // ---------------------------------------------------------------
 // Internal types (API wire format - not exported)
@@ -69,7 +68,6 @@ interface CompactResponse {
 export interface UseChatReturn {
     messages: ChatMessageData[];
     activeTools: ToolActivity[];
-    conversations: ConversationSummary[];
     currentConversationId: string | null;
     inputHistory: string[];
     isLoading: boolean;
@@ -78,10 +76,6 @@ export interface UseChatReturn {
     sendMessage: (text: string) => Promise<void>;
     newChat: () => void;
     loadConversation: (id: string) => Promise<void>;
-    deleteConversation: (id: string) => Promise<void>;
-    renameConversation: (id: string, title: string) => Promise<void>;
-    clearAllConversations: () => Promise<void>;
-    refreshConversations: () => Promise<void>;
 
     // Backward-compatible aliases for consuming modules that use
     // the previous hook interface (ChatContext, ChatPanel).
@@ -537,9 +531,6 @@ export function useChat(): UseChatReturn {
     const { maxIterations } = useAICapabilities();
     const [messages, setMessages] = useState<ChatMessageData[]>([]);
     const [activeTools, setActiveTools] = useState<ToolActivity[]>([]);
-    const [conversations, setConversations] = useState<ConversationSummary[]>(
-        [],
-    );
     const [currentConversationId, setCurrentConversationId] = useState<
         string | null
     >(null);
@@ -578,41 +569,11 @@ export function useChat(): UseChatReturn {
         setCurrentConversationId(id);
     }, []);
 
-    // ---------------------------------------------------------------
-    // Conversation list management
-    // ---------------------------------------------------------------
-
-    const refreshConversations = useCallback(async (): Promise<void> => {
-        try {
-            const response = await fetch(
-                '/api/v1/conversations?limit=50',
-                { credentials: 'include' },
-            );
-            if (response.ok) {
-                const data = await response.json();
-                // Handle both raw array and wrapped object responses
-                const list = Array.isArray(data)
-                    ? data
-                    : data.conversations || [];
-                setConversations(list);
-            }
-        } catch (err) {
-            console.error('Failed to fetch conversations:', err);
-        }
-    }, []);
-
-    // Load the conversation list on mount
-    useEffect(() => {
-        refreshConversations();
-    }, [refreshConversations]);
-
     // Fetch available tools from the server on mount
     useEffect(() => {
         const fetchTools = async () => {
             try {
-                const response = await fetch('/api/v1/mcp/tools', {
-                    credentials: 'include',
-                });
+                const response = await apiFetch('/api/v1/mcp/tools');
                 if (response.ok) {
                     const data = await response.json();
                     const tools = data.tools || [];
@@ -659,9 +620,8 @@ export function useChat(): UseChatReturn {
             }
 
             try {
-                const response = await fetch('/api/v1/chat/compact', {
+                const response = await apiFetch('/api/v1/chat/compact', {
                     method: 'POST',
-                    credentials: 'include',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         messages: msgs,
@@ -757,9 +717,8 @@ export function useChat(): UseChatReturn {
                     iterations++;
 
                     // Call the LLM with current message history and tools
-                    const response = await fetch('/api/v1/llm/chat', {
+                    const response = await apiFetch('/api/v1/llm/chat', {
                         method: 'POST',
-                        credentials: 'include',
                         headers: {
                             'Content-Type': 'application/json',
                         },
@@ -847,11 +806,10 @@ export function useChat(): UseChatReturn {
                         setActiveTools([...collectedActivity]);
 
                         try {
-                            const toolResponse = await fetch(
+                            const toolResponse = await apiFetch(
                                 '/api/v1/mcp/tools/call',
                                 {
                                     method: 'POST',
-                                    credentials: 'include',
                                     headers: {
                                         'Content-Type':
                                             'application/json',
@@ -953,11 +911,10 @@ export function useChat(): UseChatReturn {
                 try {
                     if (!conversationIdRef.current) {
                         // Create a new conversation on first response
-                        const createResponse = await fetch(
+                        const createResponse = await apiFetch(
                             '/api/v1/conversations',
                             {
                                 method: 'POST',
-                                credentials: 'include',
                                 headers: {
                                     'Content-Type':
                                         'application/json',
@@ -974,7 +931,6 @@ export function useChat(): UseChatReturn {
                             const createData: ConversationCreateResponse =
                                 await createResponse.json();
                             syncConversationId(createData.id);
-                            refreshConversations();
                         } else {
                             console.warn(
                                 'Failed to create conversation:',
@@ -984,11 +940,10 @@ export function useChat(): UseChatReturn {
                         }
                     } else {
                         // Update the existing conversation
-                        const updateResponse = await fetch(
+                        const updateResponse = await apiFetch(
                             `/api/v1/conversations/${conversationIdRef.current}`,
                             {
                                 method: 'PUT',
-                                credentials: 'include',
                                 headers: {
                                     'Content-Type':
                                         'application/json',
@@ -1005,7 +960,6 @@ export function useChat(): UseChatReturn {
                                 await updateResponse.text(),
                             );
                         }
-                        refreshConversations();
                     }
                 } catch (saveErr) {
                     console.error(
@@ -1056,7 +1010,7 @@ export function useChat(): UseChatReturn {
                 }
             }
         },
-        [availableTools, maxIterations, syncConversationId, refreshConversations, maybeCompact],
+        [availableTools, maxIterations, syncConversationId, maybeCompact],
     );
 
     // ---------------------------------------------------------------
@@ -1092,9 +1046,8 @@ export function useChat(): UseChatReturn {
             setActiveTools([]);
 
             try {
-                const response = await fetch(
+                const response = await apiFetch(
                     `/api/v1/conversations/${id}`,
-                    { credentials: 'include' },
                 );
 
                 if (!response.ok) {
@@ -1132,113 +1085,12 @@ export function useChat(): UseChatReturn {
     );
 
     // ---------------------------------------------------------------
-    // Delete conversation
-    // ---------------------------------------------------------------
-
-    const deleteConversation = useCallback(
-        async (id: string): Promise<void> => {
-            try {
-                const response = await fetch(
-                    `/api/v1/conversations/${id}`,
-                    {
-                        method: 'DELETE',
-                        credentials: 'include',
-                    },
-                );
-
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    throw new Error(
-                        `Failed to delete conversation: ${errorText}`,
-                    );
-                }
-
-                // If we deleted the active conversation, reset state
-                if (conversationIdRef.current === id) {
-                    newChat();
-                }
-
-                await refreshConversations();
-            } catch (err) {
-                console.error('Failed to delete conversation:', err);
-                setError((err as Error).message);
-            }
-        },
-        [newChat, refreshConversations],
-    );
-
-    // ---------------------------------------------------------------
-    // Rename conversation
-    // ---------------------------------------------------------------
-
-    const renameConversation = useCallback(
-        async (id: string, title: string): Promise<void> => {
-            try {
-                const response = await fetch(
-                    `/api/v1/conversations/${id}`,
-                    {
-                        method: 'PATCH',
-                        credentials: 'include',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({ title }),
-                    },
-                );
-
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    throw new Error(
-                        `Failed to rename conversation: ${errorText}`,
-                    );
-                }
-
-                await refreshConversations();
-            } catch (err) {
-                console.error('Failed to rename conversation:', err);
-                setError((err as Error).message);
-            }
-        },
-        [refreshConversations],
-    );
-
-    // ---------------------------------------------------------------
-    // Clear all conversations
-    // ---------------------------------------------------------------
-
-    const clearAllConversations = useCallback(async (): Promise<void> => {
-        try {
-            const response = await fetch(
-                '/api/v1/conversations?all=true',
-                {
-                    method: 'DELETE',
-                    credentials: 'include',
-                },
-            );
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(
-                    `Failed to clear conversations: ${errorText}`,
-                );
-            }
-
-            newChat();
-            setConversations([]);
-        } catch (err) {
-            console.error('Failed to clear conversations:', err);
-            setError((err as Error).message);
-        }
-    }, [newChat]);
-
-    // ---------------------------------------------------------------
     // Return value
     // ---------------------------------------------------------------
 
     return {
         messages,
         activeTools,
-        conversations,
         currentConversationId,
         inputHistory,
         isLoading,
@@ -1247,10 +1099,6 @@ export function useChat(): UseChatReturn {
         sendMessage,
         newChat,
         loadConversation,
-        deleteConversation,
-        renameConversation,
-        clearAllConversations,
-        refreshConversations,
 
         // Backward-compatible aliases
         conversationId: currentConversationId,

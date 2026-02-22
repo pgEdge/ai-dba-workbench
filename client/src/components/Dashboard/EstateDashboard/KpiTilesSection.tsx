@@ -13,6 +13,7 @@ import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
 import Typography from '@mui/material/Typography';
 import { useAuth } from '../../../contexts/AuthContext';
+import { apiFetch } from '../../../utils/apiClient';
 import { useClusterData } from '../../../contexts/ClusterDataContext';
 import KpiTile from '../KpiTile';
 import { KPI_GRID_SX } from '../styles';
@@ -95,13 +96,11 @@ const KpiTilesSection: React.FC<KpiTilesSectionProps> = ({ selection, serverIds 
 
         try {
             const [perfResponse, alertsResponse] = await Promise.all([
-                fetch(
+                apiFetch(
                     `/api/v1/metrics/performance-summary?connection_ids=${serverIds.join(',')}&time_range=24h`,
-                    { credentials: 'include' }
                 ),
-                fetch(
+                apiFetch(
                     '/api/v1/alerts?exclude_cleared=true&limit=200',
-                    { credentials: 'include' }
                 ),
             ]);
 

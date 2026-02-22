@@ -11,7 +11,6 @@
  */
 
 import React, { useState } from 'react';
-import { ThemeMode } from '../types/theme';
 import {
     AppBar,
     Toolbar,
@@ -26,6 +25,7 @@ import {
     Divider,
     Tooltip,
     alpha,
+    useTheme,
 } from '@mui/material';
 import { Theme } from '@mui/material/styles';
 import {
@@ -161,11 +161,11 @@ const signOutTypographyProps = {
 
 interface HeaderProps {
     onToggleTheme: () => void;
-    mode: ThemeMode;
     helpContext: string | null;
 }
 
-const Header: React.FC<HeaderProps> = ({ onToggleTheme, mode, helpContext }) => {
+const Header: React.FC<HeaderProps> = ({ onToggleTheme, helpContext }) => {
+    const theme = useTheme();
     const { user, logout, hasAnyAdminAccess } = useAuth();
     const userMenu = useMenu();
     const [helpOpen, setHelpOpen] = useState(false);
@@ -191,7 +191,7 @@ const Header: React.FC<HeaderProps> = ({ onToggleTheme, mode, helpContext }) => 
         return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
     };
 
-    const isDark = mode === 'dark';
+    const isDark = theme.palette.mode === 'dark';
 
     return (
         <>
@@ -332,7 +332,7 @@ const Header: React.FC<HeaderProps> = ({ onToggleTheme, mode, helpContext }) => 
             <HelpPanel open={helpOpen} onClose={handleHelpClose} helpContext={helpContext} />
 
             {/* Admin Panel */}
-            <AdminPanel open={adminOpen} onClose={() => setAdminOpen(false)} mode={mode} />
+            <AdminPanel open={adminOpen} onClose={() => setAdminOpen(false)} />
         </>
     );
 };

@@ -49,6 +49,9 @@ http:
   #   - "10.0.0.0/8"
   #   - "172.16.0.0/12"
 
+  # CORS origin for cross-origin deployments
+  # cors_origin: "https://workbench.example.com"
+
   # Authentication Configuration
   auth:
     enabled: true
@@ -277,6 +280,7 @@ builtins:
 | `tls.key_file` | string | | Path to private key file |
 | `tls.chain_file` | string | | Path to certificate chain |
 | `trusted_proxies` | list | `[]` | CIDR ranges of trusted reverse proxies |
+| `cors_origin` | string | `""` | Allowed CORS origin; empty disables CORS |
 | `auth.max_failed_attempts_before_lockout` | int | `0` | Lock after N failures (0=disabled) |
 | `auth.max_user_token_days` | int | `0` | Max user token lifetime (0=unlimited) |
 | `auth.rate_limit_window_minutes` | int | `15` | Rate limit time window |
@@ -544,6 +548,7 @@ http:
   trusted_proxies:
     - "10.0.0.0/8"
     - "172.16.0.0/12"
+  cors_origin: "https://workbench.example.com"
   auth:
     enabled: true
     max_failed_attempts_before_lockout: 5

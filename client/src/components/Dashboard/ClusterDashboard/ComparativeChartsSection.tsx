@@ -13,6 +13,7 @@ import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
 import { useAuth } from '../../../contexts/AuthContext';
+import { apiFetch } from '../../../utils/apiClient';
 import { useClusterData } from '../../../contexts/ClusterDataContext';
 import { Chart } from '../../Chart';
 import { CHART_SECTION_SX } from '../styles';
@@ -74,9 +75,8 @@ const ComparativeChartsSection: React.FC<ComparativeChartsSectionProps> = ({ ser
         setError(null);
 
         try {
-            const response = await fetch(
+            const response = await apiFetch(
                 `/api/v1/metrics/performance-summary?connection_ids=${serverIds.join(',')}&time_range=24h`,
-                { credentials: 'include' }
             );
 
             if (!response.ok) {

@@ -13,6 +13,7 @@ import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
 import { useAuth } from '../../../contexts/AuthContext';
+import { apiFetch } from '../../../utils/apiClient';
 import { useDashboard } from '../../../contexts/DashboardContext';
 import { useMetrics } from '../../../hooks/useMetrics';
 import { MetricQueryParams } from '../types';
@@ -112,9 +113,7 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
         setError(null);
 
         try {
-            const response = await fetch(url, {
-                credentials: 'include',
-            });
+            const response = await apiFetch(url);
 
             if (!response.ok) {
                 const errorData = await response.json().catch(

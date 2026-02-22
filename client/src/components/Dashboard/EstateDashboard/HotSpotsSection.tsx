@@ -15,6 +15,7 @@ import CircularProgress from '@mui/material/CircularProgress';
 import Chip from '@mui/material/Chip';
 import { alpha, useTheme } from '@mui/material/styles';
 import { useAuth } from '../../../contexts/AuthContext';
+import { apiFetch } from '../../../utils/apiClient';
 import { useClusterData } from '../../../contexts/ClusterDataContext';
 import { HotSpotEntry } from '../types';
 
@@ -157,9 +158,8 @@ const HotSpotsSection: React.FC<HotSpotsSectionProps> = ({ selection: _selection
         }
 
         try {
-            const response = await fetch(
+            const response = await apiFetch(
                 `/api/v1/metrics/performance-summary?connection_ids=${serverIds.join(',')}&time_range=24h`,
-                { credentials: 'include' }
             );
 
             if (response.ok && isMountedRef.current) {

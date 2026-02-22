@@ -215,17 +215,92 @@ type MetricValue struct {
 	CollectedAt  time.Time
 }
 
+// queryMetricValues executes a SQL query that returns rows with three columns
+// (connection_id, value, collected_at) and scans them into MetricValue structs.
+func (d *Datastore) queryMetricValues(ctx context.Context, sql string) ([]MetricValue, error) {
+	rows, err := d.pool.Query(ctx, sql)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []MetricValue
+	for rows.Next() {
+		var mv MetricValue
+		if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
+			return nil, err
+		}
+		results = append(results, mv)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+// queryMetricValuesWithDB executes a SQL query that returns rows with four columns
+// (connection_id, database_name, value, collected_at) and scans them into MetricValue structs.
+func (d *Datastore) queryMetricValuesWithDB(ctx context.Context, sql string) ([]MetricValue, error) {
+	rows, err := d.pool.Query(ctx, sql)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []MetricValue
+	for rows.Next() {
+		var mv MetricValue
+		var dbName string
+		if err := rows.Scan(&mv.ConnectionID, &dbName, &mv.Value, &mv.CollectedAt); err != nil {
+			return nil, err
+		}
+		mv.DatabaseName = &dbName
+		results = append(results, mv)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+// queryMetricValuesWithDBAndObject executes a SQL query that returns rows with five columns
+// (connection_id, database_name, object_name, value, collected_at) and scans them into MetricValue structs.
+func (d *Datastore) queryMetricValuesWithDBAndObject(ctx context.Context, sql string) ([]MetricValue, error) {
+	rows, err := d.pool.Query(ctx, sql)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []MetricValue
+	for rows.Next() {
+		var mv MetricValue
+		var dbName string
+		var objectName string
+		if err := rows.Scan(&mv.ConnectionID, &dbName, &objectName, &mv.Value, &mv.CollectedAt); err != nil {
+			return nil, err
+		}
+		mv.DatabaseName = &dbName
+		mv.ObjectName = &objectName
+		results = append(results, mv)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
 // GetLatestMetricValues retrieves the most recent values for a metric across all connections
 // This queries the collected data tables to find current metric values
 func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string) ([]MetricValue, error) {
 	var results []MetricValue
+	var err error
 
 	// Parse metric name to determine table and column/aggregation
 	// Format: table_name.column_name or computed_metric_name
 	switch metricName {
 	case "pg_settings.max_connections":
-		// Get max_connections setting value per connection
-		rows, err := d.pool.Query(ctx, `
+		results, err = d.queryMetricValues(ctx, `
 			SELECT DISTINCT ON (connection_id)
 			       connection_id, setting::float as value, collected_at
 			FROM metrics.pg_settings
@@ -234,26 +309,11 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			ORDER BY connection_id, collected_at DESC
 		`)
 		if err != nil {
-			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var mv MetricValue
-			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
-				return nil, fmt.Errorf("failed to scan metric value: %w", err)
-			}
-			results = append(results, mv)
-		}
-
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("row iteration error: %w", err)
+			return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
 		}
 
 	case "connection_utilization_percent":
-		// Calculate connection utilization as percentage of max_connections
-		// Uses only the latest snapshot per connection to avoid inflation
-		rows, err := d.pool.Query(ctx, `
+		results, err = d.queryMetricValues(ctx, `
 			WITH active_counts AS (
 				SELECT connection_id, COUNT(*) as active
 				FROM metrics.pg_stat_activity
@@ -279,25 +339,11 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			JOIN max_conns m ON a.connection_id = m.connection_id
 		`)
 		if err != nil {
-			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var mv MetricValue
-			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
-				return nil, fmt.Errorf("failed to scan metric value: %w", err)
-			}
-			results = append(results, mv)
-		}
-
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("row iteration error: %w", err)
+			return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
 		}
 
 	case "pg_stat_activity.count":
-		// Count of active sessions per connection using only the latest snapshot
-		rows, err := d.pool.Query(ctx, `
+		results, err = d.queryMetricValues(ctx, `
 			SELECT connection_id,
 			       COUNT(*)::float as value,
 			       collected_at
@@ -312,25 +358,11 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			GROUP BY connection_id, collected_at
 		`)
 		if err != nil {
-			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var mv MetricValue
-			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
-				return nil, fmt.Errorf("failed to scan metric value: %w", err)
-			}
-			results = append(results, mv)
-		}
-
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("row iteration error: %w", err)
+			return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
 		}
 
 	case "pg_stat_replication.replay_lag_seconds":
-		// Get replication lag in seconds
-		rows, err := d.pool.Query(ctx, `
+		results, err = d.queryMetricValues(ctx, `
 			SELECT connection_id,
 			       EXTRACT(EPOCH FROM (NOW() - replay_lsn_timestamp))::float as value,
 			       collected_at
@@ -339,26 +371,11 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			  AND replay_lsn_timestamp IS NOT NULL
 		`)
 		if err != nil {
-			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var mv MetricValue
-			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
-				return nil, fmt.Errorf("failed to scan metric value: %w", err)
-			}
-			results = append(results, mv)
-		}
-
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("row iteration error: %w", err)
+			return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
 		}
 
 	case "pg_stat_replication.lag_bytes":
-		// Get replication lag in bytes by calculating difference between sent and replay LSN
-		// Note: This requires parsing LSN values and calculating byte difference
-		rows, err := d.pool.Query(ctx, `
+		results, err = d.queryMetricValues(ctx, `
 			WITH recent_replication AS (
 				SELECT connection_id,
 				       sent_lsn,
@@ -378,24 +395,11 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			GROUP BY connection_id
 		`)
 		if err != nil {
-			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var mv MetricValue
-			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
-				return nil, fmt.Errorf("failed to scan metric value: %w", err)
-			}
-			results = append(results, mv)
-		}
-
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("row iteration error: %w", err)
+			return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
 		}
 
 	case "pg_replication_slots.retained_bytes":
-		rows, err := d.pool.Query(ctx, `
+		results, err = d.queryMetricValues(ctx, `
 			WITH recent_slots AS (
 				SELECT connection_id,
 				       slot_name,
@@ -417,28 +421,11 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			GROUP BY connection_id
 		`)
 		if err != nil {
-			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var mv MetricValue
-			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
-				return nil, fmt.Errorf("failed to scan metric value: %w", err)
-			}
-			results = append(results, mv)
-		}
-
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("row iteration error: %w", err)
+			return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
 		}
 
 	case "pg_replication_slots.inactive":
-		// Count inactive replication slots per connection
-		// This queries the pg_node_role data which includes slot information
-		// We need to query pg_replication_slots info from the server_info or a dedicated probe
-		// For now, we use 1 for any connection that has inactive slots detected
-		rows, err := d.pool.Query(ctx, `
+		results, err = d.queryMetricValues(ctx, `
 			WITH slot_status AS (
 				SELECT DISTINCT connection_id, 1 as has_inactive
 				FROM metrics.pg_stat_replication_slots s
@@ -456,25 +443,11 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			FROM slot_status
 		`)
 		if err != nil {
-			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var mv MetricValue
-			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
-				return nil, fmt.Errorf("failed to scan metric value: %w", err)
-			}
-			results = append(results, mv)
-		}
-
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("row iteration error: %w", err)
+			return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
 		}
 
 	case "pg_stat_activity.blocked_count":
-		// Count of blocked sessions per connection using only the latest snapshot
-		rows, err := d.pool.Query(ctx, `
+		results, err = d.queryMetricValues(ctx, `
 			SELECT connection_id,
 			       COUNT(*)::float as value,
 			       collected_at
@@ -490,25 +463,11 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			GROUP BY connection_id, collected_at
 		`)
 		if err != nil {
-			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var mv MetricValue
-			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
-				return nil, fmt.Errorf("failed to scan metric value: %w", err)
-			}
-			results = append(results, mv)
-		}
-
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("row iteration error: %w", err)
+			return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
 		}
 
 	case "pg_stat_activity.idle_in_transaction_seconds":
-		// Max idle in transaction time per connection using only the latest snapshot
-		rows, err := d.pool.Query(ctx, `
+		results, err = d.queryMetricValues(ctx, `
 			SELECT connection_id,
 			       COALESCE(MAX(EXTRACT(EPOCH FROM (collected_at - xact_start))), 0)::float as value,
 			       collected_at
@@ -525,25 +484,11 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			GROUP BY connection_id, collected_at
 		`)
 		if err != nil {
-			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var mv MetricValue
-			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
-				return nil, fmt.Errorf("failed to scan metric value: %w", err)
-			}
-			results = append(results, mv)
-		}
-
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("row iteration error: %w", err)
+			return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
 		}
 
 	case "pg_stat_activity.max_lock_wait_seconds":
-		// Max lock wait time per connection using only the latest snapshot
-		rows, err := d.pool.Query(ctx, `
+		results, err = d.queryMetricValues(ctx, `
 			SELECT connection_id,
 			       COALESCE(MAX(EXTRACT(EPOCH FROM (collected_at - query_start))), 0)::float as value,
 			       collected_at
@@ -560,25 +505,11 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			GROUP BY connection_id, collected_at
 		`)
 		if err != nil {
-			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var mv MetricValue
-			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
-				return nil, fmt.Errorf("failed to scan metric value: %w", err)
-			}
-			results = append(results, mv)
-		}
-
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("row iteration error: %w", err)
+			return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
 		}
 
 	case "pg_stat_activity.max_query_duration_seconds":
-		// Max query duration per connection using only the latest snapshot
-		rows, err := d.pool.Query(ctx, `
+		results, err = d.queryMetricValues(ctx, `
 			SELECT connection_id,
 			       COALESCE(MAX(EXTRACT(EPOCH FROM (collected_at - query_start))), 0)::float as value,
 			       collected_at
@@ -595,25 +526,11 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			GROUP BY connection_id, collected_at
 		`)
 		if err != nil {
-			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var mv MetricValue
-			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
-				return nil, fmt.Errorf("failed to scan metric value: %w", err)
-			}
-			results = append(results, mv)
-		}
-
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("row iteration error: %w", err)
+			return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
 		}
 
 	case "pg_stat_activity.max_xact_duration_seconds":
-		// Max transaction duration per connection using only the latest snapshot
-		rows, err := d.pool.Query(ctx, `
+		results, err = d.queryMetricValues(ctx, `
 			SELECT connection_id,
 			       COALESCE(MAX(EXTRACT(EPOCH FROM (collected_at - xact_start))), 0)::float as value,
 			       collected_at
@@ -629,26 +546,11 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			GROUP BY connection_id, collected_at
 		`)
 		if err != nil {
-			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var mv MetricValue
-			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
-				return nil, fmt.Errorf("failed to scan metric value: %w", err)
-			}
-			results = append(results, mv)
-		}
-
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("row iteration error: %w", err)
+			return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
 		}
 
 	case "pg_stat_all_tables.dead_tuple_percent":
-		// Dead tuple percentage per table
-		// Returns the table with the highest dead tuple percentage per connection/database
-		rows, err := d.pool.Query(ctx, `
+		results, err = d.queryMetricValuesWithDBAndObject(ctx, `
 			WITH recent_tables AS (
 				SELECT connection_id,
 				       database_name,
@@ -692,29 +594,11 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			WHERE rank = 1
 		`)
 		if err != nil {
-			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var mv MetricValue
-			var dbName string
-			var objectName string
-			if err := rows.Scan(&mv.ConnectionID, &dbName, &objectName, &mv.Value, &mv.CollectedAt); err != nil {
-				return nil, fmt.Errorf("failed to scan metric value: %w", err)
-			}
-			mv.DatabaseName = &dbName
-			mv.ObjectName = &objectName
-			results = append(results, mv)
-		}
-
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("row iteration error: %w", err)
+			return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
 		}
 
 	case "pg_stat_archiver.failed_count_delta":
-		// Failed archive count delta (compare current with previous collection)
-		rows, err := d.pool.Query(ctx, `
+		results, err = d.queryMetricValues(ctx, `
 			WITH archiver_data AS (
 				SELECT connection_id,
 				       failed_count,
@@ -731,25 +615,11 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			GROUP BY connection_id
 		`)
 		if err != nil {
-			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var mv MetricValue
-			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
-				return nil, fmt.Errorf("failed to scan metric value: %w", err)
-			}
-			results = append(results, mv)
-		}
-
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("row iteration error: %w", err)
+			return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
 		}
 
 	case "pg_stat_checkpointer.checkpoints_req_delta":
-		// Requested checkpoints delta
-		rows, err := d.pool.Query(ctx, `
+		results, err = d.queryMetricValues(ctx, `
 			WITH checkpointer_data AS (
 				SELECT connection_id,
 				       num_requested,
@@ -766,26 +636,11 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			GROUP BY connection_id
 		`)
 		if err != nil {
-			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var mv MetricValue
-			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
-				return nil, fmt.Errorf("failed to scan metric value: %w", err)
-			}
-			results = append(results, mv)
-		}
-
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("row iteration error: %w", err)
+			return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
 		}
 
 	case "pg_stat_database.cache_hit_ratio":
-		// Buffer cache hit ratio per database (delta-based)
-		// Uses the change in blks_hit/blks_read between snapshots
-		rows, err := d.pool.Query(ctx, `
+		results, err = d.queryMetricValuesWithDB(ctx, `
 			WITH db_blocks AS (
 				SELECT connection_id,
 				       database_name,
@@ -826,27 +681,11 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			FROM deltas
 		`)
 		if err != nil {
-			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var mv MetricValue
-			var dbName string
-			if err := rows.Scan(&mv.ConnectionID, &dbName, &mv.Value, &mv.CollectedAt); err != nil {
-				return nil, fmt.Errorf("failed to scan metric value: %w", err)
-			}
-			mv.DatabaseName = &dbName
-			results = append(results, mv)
-		}
-
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("row iteration error: %w", err)
+			return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
 		}
 
 	case "pg_stat_database.deadlocks_delta":
-		// Deadlock count delta per database
-		rows, err := d.pool.Query(ctx, `
+		results, err = d.queryMetricValuesWithDB(ctx, `
 			WITH db_deadlocks AS (
 				SELECT connection_id,
 				       database_name,
@@ -870,27 +709,11 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			GROUP BY connection_id, database_name
 		`)
 		if err != nil {
-			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var mv MetricValue
-			var dbName string
-			if err := rows.Scan(&mv.ConnectionID, &dbName, &mv.Value, &mv.CollectedAt); err != nil {
-				return nil, fmt.Errorf("failed to scan metric value: %w", err)
-			}
-			mv.DatabaseName = &dbName
-			results = append(results, mv)
-		}
-
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("row iteration error: %w", err)
+			return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
 		}
 
 	case "pg_stat_database.temp_files_delta":
-		// Temp files created delta per database
-		rows, err := d.pool.Query(ctx, `
+		results, err = d.queryMetricValuesWithDB(ctx, `
 			WITH db_temp_files AS (
 				SELECT connection_id,
 				       database_name,
@@ -914,27 +737,11 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			GROUP BY connection_id, database_name
 		`)
 		if err != nil {
-			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var mv MetricValue
-			var dbName string
-			if err := rows.Scan(&mv.ConnectionID, &dbName, &mv.Value, &mv.CollectedAt); err != nil {
-				return nil, fmt.Errorf("failed to scan metric value: %w", err)
-			}
-			mv.DatabaseName = &dbName
-			results = append(results, mv)
-		}
-
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("row iteration error: %w", err)
+			return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
 		}
 
 	case "pg_stat_statements.slow_query_count":
-		// Count of slow queries (mean_exec_time > 1000ms) per database
-		rows, err := d.pool.Query(ctx, `
+		results, err = d.queryMetricValuesWithDB(ctx, `
 			WITH recent_statements AS (
 				SELECT connection_id,
 				       database_name,
@@ -958,27 +765,11 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			GROUP BY connection_id, database_name
 		`)
 		if err != nil {
-			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var mv MetricValue
-			var dbName string
-			if err := rows.Scan(&mv.ConnectionID, &dbName, &mv.Value, &mv.CollectedAt); err != nil {
-				return nil, fmt.Errorf("failed to scan metric value: %w", err)
-			}
-			mv.DatabaseName = &dbName
-			results = append(results, mv)
-		}
-
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("row iteration error: %w", err)
+			return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
 		}
 
 	case "pg_sys_cpu_usage_info.processor_time_percent":
-		// CPU usage percentage per connection
-		rows, err := d.pool.Query(ctx, `
+		results, err = d.queryMetricValues(ctx, `
 			SELECT connection_id,
 			       COALESCE(processor_time_percent, 0)::float as value,
 			       collected_at
@@ -992,25 +783,11 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			  )
 		`)
 		if err != nil {
-			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var mv MetricValue
-			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
-				return nil, fmt.Errorf("failed to scan metric value: %w", err)
-			}
-			results = append(results, mv)
-		}
-
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("row iteration error: %w", err)
+			return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
 		}
 
 	case "pg_sys_disk_info.used_percent":
-		// Disk usage percentage per connection (max across all mount points)
-		rows, err := d.pool.Query(ctx, `
+		results, err = d.queryMetricValues(ctx, `
 			WITH recent_disk AS (
 				SELECT connection_id,
 				       mount_point,
@@ -1033,25 +810,11 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			GROUP BY connection_id
 		`)
 		if err != nil {
-			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var mv MetricValue
-			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
-				return nil, fmt.Errorf("failed to scan metric value: %w", err)
-			}
-			results = append(results, mv)
-		}
-
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("row iteration error: %w", err)
+			return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
 		}
 
 	case "pg_sys_load_avg_info.load_avg_fifteen_minutes":
-		// 15-minute load average per connection
-		rows, err := d.pool.Query(ctx, `
+		results, err = d.queryMetricValues(ctx, `
 			SELECT connection_id,
 			       COALESCE(load_avg_fifteen_minutes, 0)::float as value,
 			       collected_at
@@ -1065,25 +828,11 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			  )
 		`)
 		if err != nil {
-			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var mv MetricValue
-			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
-				return nil, fmt.Errorf("failed to scan metric value: %w", err)
-			}
-			results = append(results, mv)
-		}
-
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("row iteration error: %w", err)
+			return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
 		}
 
 	case "pg_sys_memory_info.used_percent":
-		// Memory usage percentage per connection
-		rows, err := d.pool.Query(ctx, `
+		results, err = d.queryMetricValues(ctx, `
 			SELECT connection_id,
 			       CASE
 			           WHEN total_memory > 0
@@ -1101,26 +850,11 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			  )
 		`)
 		if err != nil {
-			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var mv MetricValue
-			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
-				return nil, fmt.Errorf("failed to scan metric value: %w", err)
-			}
-			results = append(results, mv)
-		}
-
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("row iteration error: %w", err)
+			return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
 		}
 
 	case "age_percent":
-		// Transaction ID age as percentage of autovacuum_freeze_max_age
-		// This requires querying pg_settings for the threshold and comparing with current age
-		rows, err := d.pool.Query(ctx, `
+		results, err = d.queryMetricValues(ctx, `
 			WITH freeze_settings AS (
 				SELECT connection_id,
 				       setting::bigint as freeze_max_age
@@ -1157,27 +891,11 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			GROUP BY ta.connection_id
 		`)
 		if err != nil {
-			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var mv MetricValue
-			if err := rows.Scan(&mv.ConnectionID, &mv.Value, &mv.CollectedAt); err != nil {
-				return nil, fmt.Errorf("failed to scan metric value: %w", err)
-			}
-			results = append(results, mv)
-		}
-
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("row iteration error: %w", err)
+			return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
 		}
 
 	case "table_bloat_ratio":
-		// Table bloat ratio - estimated bloat as percentage
-		// This is a simplified estimate based on dead tuples vs live tuples
-		// Returns the table with the highest bloat ratio per connection/database
-		rows, err := d.pool.Query(ctx, `
+		results, err = d.queryMetricValuesWithDBAndObject(ctx, `
 			WITH recent_tables AS (
 				SELECT connection_id,
 				       database_name,
@@ -1222,32 +940,11 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			WHERE rank = 1
 		`)
 		if err != nil {
-			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var mv MetricValue
-			var dbName string
-			var objectName string
-			if err := rows.Scan(&mv.ConnectionID, &dbName, &objectName, &mv.Value, &mv.CollectedAt); err != nil {
-				return nil, fmt.Errorf("failed to scan metric value: %w", err)
-			}
-			mv.DatabaseName = &dbName
-			mv.ObjectName = &objectName
-			results = append(results, mv)
-		}
-
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("row iteration error: %w", err)
+			return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
 		}
 
 	case "table_last_autovacuum_hours":
-		// Hours since last autovacuum for tables that NEED vacuuming
-		// Only fires when dead tuples exceed PostgreSQL's autovacuum threshold
-		// (autovacuum_vacuum_threshold + autovacuum_vacuum_scale_factor * n_live_tup)
-		// Returns the worst offender per connection/database
-		rows, err := d.pool.Query(ctx, `
+		results, err = d.queryMetricValuesWithDBAndObject(ctx, `
 			WITH recent_tables AS (
 				SELECT connection_id,
 				       database_name,
@@ -1308,24 +1005,7 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			WHERE rank = 1
 		`)
 		if err != nil {
-			return nil, fmt.Errorf("failed to query %s: %w", metricName, err)
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var mv MetricValue
-			var dbName string
-			var objectName string
-			if err := rows.Scan(&mv.ConnectionID, &dbName, &objectName, &mv.Value, &mv.CollectedAt); err != nil {
-				return nil, fmt.Errorf("failed to scan metric value: %w", err)
-			}
-			mv.DatabaseName = &dbName
-			mv.ObjectName = &objectName
-			results = append(results, mv)
-		}
-
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("row iteration error: %w", err)
+			return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
 		}
 
 	default:

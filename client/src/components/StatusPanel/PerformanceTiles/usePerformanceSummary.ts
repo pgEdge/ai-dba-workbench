@@ -10,6 +10,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useAuth } from '../../../contexts/AuthContext';
+import { apiFetch } from '../../../utils/apiClient';
 import { useClusterData } from '../../../contexts/ClusterDataContext';
 import { PerformanceSummaryData } from './types';
 
@@ -103,9 +104,7 @@ export const usePerformanceSummary = (
         setError(null);
 
         try {
-            const response = await fetch(url, {
-                credentials: 'include',
-            });
+            const response = await apiFetch(url);
 
             if (!response.ok) {
                 const errorData = await response.json().catch(() => ({})) as { error?: string };

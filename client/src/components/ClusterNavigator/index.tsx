@@ -11,7 +11,6 @@
  */
 
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
-import { ThemeMode } from '../../types/theme';
 import { useAuth } from '../../contexts/AuthContext';
 import { useCluster } from '../../contexts/ClusterContext';
 import { useAlerts } from '../../contexts/AlertsContext';
@@ -48,6 +47,7 @@ import GroupDialog from '../GroupDialog';
 import ClusterConfigDialog from '../ClusterConfigDialog';
 import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
 import AddMenu from '../AddMenu';
+import { apiFetch } from '../../utils/apiClient';
 
 // Import sub-components
 import { STORAGE_KEYS } from './constants';
@@ -264,7 +264,6 @@ interface ClusterNavigatorProps {
     onSelectEstate?: () => void;
     onRefresh?: () => void;
     loading?: boolean;
-    mode?: ThemeMode;
     defaultWidth?: number;
     minWidth?: number;
     maxWidth?: number;
@@ -280,7 +279,6 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
     onSelectEstate,
     onRefresh,
     loading = false,
-    mode = 'light',
     defaultWidth = 280,
     minWidth = 200,
     maxWidth = 500,
@@ -331,7 +329,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
     // Drag and drop state
     const [activeDragItem, setActiveDragItem] = useState<Cluster | null>(null);
 
-    const isDark = mode === 'dark';
+    const isDark = theme.palette.mode === 'dark';
 
     // Get alert counts from context
     const { getServerAlertCount, getTotalAlertCount } = useAlerts();
@@ -551,9 +549,8 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
             body.auto_cluster_key = configCluster.auto_cluster_key;
         }
 
-        const response = await fetch(`/api/v1/clusters/${configCluster.id}`, {
+        const response = await apiFetch(`/api/v1/clusters/${configCluster.id}`, {
             method: 'PUT',
-            credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
         });

@@ -14,6 +14,7 @@ import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
 import { alpha, useTheme } from '@mui/material/styles';
 import { useAuth } from '../../../contexts/AuthContext';
+import { apiFetch } from '../../../utils/apiClient';
 import { useDashboard } from '../../../contexts/DashboardContext';
 import CollapsibleSection from '../CollapsibleSection';
 import {
@@ -228,9 +229,7 @@ const IndexLeaderboardSection: React.FC<DatabaseSectionProps> = ({
         setError(null);
 
         try {
-            const response = await fetch(url, {
-                credentials: 'include',
-            });
+            const response = await apiFetch(url);
 
             if (!response.ok) {
                 const errorData = await response.json().catch(

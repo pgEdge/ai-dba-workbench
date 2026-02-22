@@ -102,11 +102,11 @@ interface ServerAnalysisDialogProps {
     open: boolean;
     selection: ServerAnalysisInput | null;
     onClose: () => void;
-    isDark: boolean;
 }
 
-const ServerAnalysisDialog: React.FC<ServerAnalysisDialogProps> = ({ open, selection, onClose, isDark }) => {
+const ServerAnalysisDialog: React.FC<ServerAnalysisDialogProps> = ({ open, selection, onClose }) => {
     const theme = useTheme();
+    const isDark = theme.palette.mode === 'dark';
     const { analysis, loading, error, progressMessage, activeTools, analyze, reset } = useServerAnalysis();
 
     // Trigger analysis when dialog opens with a selection

@@ -9,7 +9,7 @@
  */
 import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeProvider } from '@mui/material/styles';
-import { Box, CircularProgress, CssBaseline } from '@mui/material';
+import { Box, CircularProgress, CssBaseline, PaletteMode } from '@mui/material';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ClusterProvider, useCluster } from './contexts/ClusterContext';
 import { AlertsProvider } from './contexts/AlertsContext';
@@ -27,7 +27,6 @@ import StatusPanel from './components/StatusPanel';
 import ChatPanel from './components/ChatPanel';
 import ChatFAB from './components/ChatPanel/ChatFAB';
 import { createPgedgeTheme, loginTheme } from './theme/pgedgeTheme';
-import { ThemeMode } from './types/theme';
 import { collectServers } from './utils/clusterHelpers';
 
 // Style constants
@@ -61,10 +60,13 @@ const styles = {
 };
 
 const AppContent = () => {
-    const [mode, setMode] = useState(() => {
+    const [mode, setMode] = useState<PaletteMode>(() => {
         // Load theme preference from localStorage
         const savedMode = localStorage.getItem('theme-mode');
-        return savedMode || 'light';
+        if (savedMode === 'light' || savedMode === 'dark') {
+            return savedMode;
+        }
+        return 'light';
     });
     const { user, loading } = useAuth();
 
@@ -111,7 +113,7 @@ const AppContent = () => {
                         <AlertsProvider>
                             <ChatProvider>
                                 <ErrorBoundary>
-                                    <MainLayout mode={mode} onToggleTheme={toggleTheme} />
+                                    <MainLayout onToggleTheme={toggleTheme} />
                                 </ErrorBoundary>
                             </ChatProvider>
                         </AlertsProvider>
@@ -124,11 +126,10 @@ const AppContent = () => {
 };
 
 interface MainLayoutProps {
-    mode: ThemeMode;
     onToggleTheme: () => void;
 }
 
-const MainLayout: React.FC<MainLayoutProps> = ({ mode, onToggleTheme }) => {
+const MainLayout: React.FC<MainLayoutProps> = ({ onToggleTheme }) => {
     const {
         clusterData,
         selectedServer,
@@ -219,7 +220,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({ mode, onToggleTheme }) => {
             <Box sx={styles.mainLayoutRoot}>
                 <Header
                     onToggleTheme={onToggleTheme}
-                    mode={mode}
                     helpContext={helpContext}
                 />
                 <Box sx={styles.mainLayoutBody}>
@@ -234,7 +234,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({ mode, onToggleTheme }) => {
                         onSelectEstate={selectEstate}
                         onRefresh={fetchClusterData}
                         loading={loading}
-                        mode={mode}
                     />
 
                     {/* Main content area */}
@@ -243,7 +242,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({ mode, onToggleTheme }) => {
                     >
                         <StatusPanel
                             selection={selection}
-                            mode={mode}
                         />
                     </Box>
 
@@ -252,7 +250,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({ mode, onToggleTheme }) => {
                         <ChatPanel
                             open={chatOpen}
                             onClose={handleCloseChat}
-                            mode={mode}
                         />
                     )}
                 </Box>

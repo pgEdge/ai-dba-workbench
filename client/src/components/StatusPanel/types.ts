@@ -8,15 +8,12 @@
  *-------------------------------------------------------------------------
  */
 
-import { ThemeMode } from '../../types/theme';
-
 /**
  * Shared types for StatusPanel sub-components
  */
 
 export interface StatusPanelProps {
     selection: Record<string, unknown> | null;
-    mode?: ThemeMode;
 }
 
 export interface TransformedAlert {

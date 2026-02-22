@@ -56,6 +56,8 @@ export interface ApiRequestOptions {
      * being parsed as JSON.  Defaults to false.
      */
     rawResponse?: boolean;
+    /** AbortSignal for cancellable requests. */
+    signal?: AbortSignal;
 }
 
 // ---------------------------------------------------------------
@@ -189,6 +191,10 @@ async function request<T>(
         fetchOptions.body = JSON.stringify(body);
     }
 
+    if (options?.signal) {
+        fetchOptions.signal = options.signal;
+    }
+
     let response: Response;
     try {
         response = await fetch(url, fetchOptions);
@@ -299,4 +305,47 @@ export async function apiDelete<T>(
     options?: ApiRequestOptions,
 ): Promise<T> {
     return request<T>(url, 'DELETE', undefined, options);
+}
+
+/**
+ * Perform a fetch request with credentials and connection health
+ * tracking, returning the raw Response object.  Use this for
+ * endpoints that require streaming, manual response handling, or
+ * other scenarios where the typed helpers above are insufficient.
+ *
+ * @example
+ *   const response = await apiFetch('/api/v1/llm/chat', {
+ *       method: 'POST',
+ *       body: JSON.stringify(payload),
+ *       signal: abortController.signal,
+ *   });
+ */
+export async function apiFetch(
+    url: string,
+    init?: RequestInit,
+): Promise<Response> {
+    const fetchOptions: RequestInit = {
+        ...init,
+        credentials: 'include',
+    };
+
+    let response: Response;
+    try {
+        response = await fetch(url, fetchOptions);
+    } catch (error) {
+        recordFailure('network');
+        throw error;
+    }
+
+    if (!response.ok) {
+        if (response.status === 401) {
+            recordFailure('auth');
+        } else if (response.status >= 500) {
+            recordFailure('server');
+        }
+    } else {
+        recordSuccess();
+    }
+
+    return response;
 }

@@ -9,7 +9,6 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { ThemeMode } from '../../types/theme';
 import {
     Box,
     Typography,
@@ -153,11 +152,7 @@ interface UserPrivilegesResponse {
     admin_permissions?: string[];
 }
 
-interface AdminTokenScopesProps {
-    mode: ThemeMode;
-}
-
-const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
+const AdminTokenScopes: React.FC = () => {
     const theme = useTheme();
     const [tokens, setTokens] = useState<Token[]>([]);
     const [connections, setConnections] = useState<Connection[]>([]);
@@ -671,7 +666,7 @@ const AdminTokenScopes: React.FC<AdminTokenScopesProps> = ({ mode }) => {
                                                                         : token.scope?.admin_permissions
                                                                 }
                                                                 isSuperuser={true}
-                                                                isDark={mode === 'dark'}
+                                                                isDark={theme.palette.mode === 'dark'}
                                                                 connections={connections}
                                                             />
                                                         ) : (

@@ -9,7 +9,6 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { ThemeMode } from '../../types/theme';
 import {
     Box,
     Typography,
@@ -58,9 +57,6 @@ import {
     getTableContainerSx,
 } from './styles';
 
-interface AdminUsersProps {
-    mode: ThemeMode;
-}
 
 interface RbacUser {
     id: number;
@@ -100,7 +96,7 @@ interface EditUserBody {
     is_superuser?: boolean;
 }
 
-const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
+const AdminUsers: React.FC = () => {
     const theme = useTheme();
     const { user: currentUser } = useAuth();
     const [users, setUsers] = useState<RbacUser[]>([]);
@@ -362,7 +358,7 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
     const containedButtonSx = getContainedButtonSx(theme);
     const deleteIconSx = getDeleteIconSx(theme);
     const tableContainerSx = getTableContainerSx(theme);
-    const isDark = mode === 'dark';
+    const isDark = theme.palette.mode === 'dark';
 
     return (
         <Box>

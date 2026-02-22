@@ -8,6 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
+import { apiFetch } from './apiClient';
+
 export interface AnalysisTool {
     name: string;
     description: string;
@@ -32,13 +34,7 @@ interface McpToolsResponse {
 
 export async function getKnowledgebaseTool(): Promise<AnalysisTool | null> {
     try {
-        const response = await fetch('/api/v1/mcp/tools', {
-            method: 'GET',
-            credentials: 'include',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-        });
+        const response = await apiFetch('/api/v1/mcp/tools');
 
         if (!response.ok) {
             return null;

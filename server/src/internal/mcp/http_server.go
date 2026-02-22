@@ -54,6 +54,7 @@ type HTTPConfig struct {
 	SetupHandlers  func(mux *http.ServeMux) error // Optional callback to add custom handlers before auth middleware
 	Debug          bool                           // Enable debug logging
 	TrustedProxies []string                       // CIDR ranges of trusted reverse proxies for secure IP extraction
+	CORSOrigin     string                         // Allowed CORS origin; empty disables CORS headers (same-origin deployment)
 }
 
 // RunHTTP starts the MCP server in HTTP/HTTPS mode
@@ -86,6 +87,11 @@ func (s *Server) RunHTTP(config *HTTPConfig) error {
 
 	// Apply request body size limit middleware to prevent memory exhaustion attacks
 	handler = MaxBytesMiddleware(MaxRequestBodySize)(handler)
+
+	// Apply CORS middleware if an origin is configured (skip for same-origin deployments)
+	if config.CORSOrigin != "" {
+		handler = CORSMiddleware(config.CORSOrigin)(handler)
+	}
 
 	// Apply security headers middleware (outermost to ensure headers on all responses)
 	handler = SecurityHeadersMiddleware(handler)
@@ -492,6 +498,28 @@ func MaxBytesMiddleware(maxBytes int64) func(http.Handler) http.Handler {
 			if r.Body != nil && r.Body != http.NoBody {
 				r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// CORSMiddleware adds Cross-Origin Resource Sharing headers for the specified origin.
+// It handles OPTIONS preflight requests by returning 204 No Content.
+// When origin is empty, the middleware should not be applied (same-origin deployment).
+func CORSMiddleware(allowedOrigin string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+
+			// Handle preflight requests
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+
 			next.ServeHTTP(w, r)
 		})
 	}

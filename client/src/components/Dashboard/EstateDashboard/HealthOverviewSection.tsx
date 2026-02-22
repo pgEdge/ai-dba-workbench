@@ -15,6 +15,7 @@ import CircularProgress from '@mui/material/CircularProgress';
 import { useTheme } from '@mui/material/styles';
 import { Chart } from '../../Chart';
 import { useAuth } from '../../../contexts/AuthContext';
+import { apiFetch } from '../../../utils/apiClient';
 
 interface HealthOverviewSectionProps {
     selection: Record<string, unknown>;
@@ -111,9 +112,7 @@ const HealthOverviewSection: React.FC<HealthOverviewSectionProps> = ({ selection
         }
 
         try {
-            const response = await fetch('/api/v1/alerts?exclude_cleared=true&limit=200', {
-                credentials: 'include',
-            });
+            const response = await apiFetch('/api/v1/alerts?exclude_cleared=true&limit=200');
 
             if (response.ok && isMountedRef.current) {
                 const data = await response.json();

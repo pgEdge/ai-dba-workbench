@@ -208,6 +208,9 @@ and this project adheres to
 - Human-readable tool display names in the Ellie chat
   interface; tool usage indicators now show labels such as
   "Querying metrics" instead of raw tool names.
+- CORS middleware with configurable `cors_origin` option
+  for cross-origin deployments where the client and
+  server run on different origins.
 
 ### Removed
 
@@ -261,6 +264,31 @@ and this project adheres to
 - All timestamp columns in the collector database now use TIMESTAMPTZ
   (timestamp with timezone) for unambiguous time representation. **Breaking
   change**: Existing collector databases must be dropped and recreated.
+- Server invalidates sessions on logout to prevent reuse
+  of expired session tokens.
+- HTML email templates use `html/template` instead of
+  `text/template` for automatic XSS prevention.
+- Error messages no longer expose internal Go error
+  details to users; the server returns generic messages.
+- TLS certificate chain files are now properly
+  PEM-decoded before use.
+- Default Anthropic model aligned between the server
+  configuration defaults and the application code.
+- Extracted helper functions to reduce code duplication
+  in metric value queries across the alerter service.
+- Consolidated raw `fetch()` calls in the client to use
+  the centralized API client with connection health
+  tracking.
+- Split the `MarkdownContent` component into focused
+  modules for improved maintainability.
+- Created a shared `useAnalysisState` hook to reduce
+  duplication across the client analysis hooks.
+- Removed redundant conversation management from the
+  `useChat` hook in the client.
+- Eliminated `mode` prop drilling in the client;
+  components now use `useTheme()` directly.
+- Fixed `PaletteMode` typing with proper `localStorage`
+  validation in the client theme system.
 - Server `main.go` refactored for improved code organization.
 - Context propagation added to MCP tools for better request handling.
 - Full 5-field cron parser implementation replaces the limited parser.
@@ -306,6 +334,18 @@ and this project adheres to
 - Server-level alert threshold unique index now uses COALESCE
   to handle NULL `database_name` values, preventing duplicate
   rows on upsert.
+- Fixed nil pointer dereference in alert reminder processing
+  when no prior alert state exists.
+- Fixed race condition on engine configuration in the
+  alerter service.
+- Added missing `rows.Err()` checks after database row
+  iterations in the alerter to detect incomplete reads.
+- Fixed password escaping in alerter database connection
+  strings for passwords containing special characters.
+- Added "high" severity to the notification color and
+  emoji mapping for alert notifications.
+- Fixed error swallowing in `GetActiveConnectionAlert`
+  that silently ignored database query failures.
 
 ### Breaking Changes
 

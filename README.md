@@ -53,10 +53,23 @@ directory:
 - The [Alerter Documentation](docs/alerter/index.md)
   covers alert generation and anomaly detection.
 
+## Prerequisites
+
+Before building the project, install the following tools:
+
+- [Go 1.24](https://go.dev/doc/install) or later for
+  building server-side components.
+- [Node.js 18](https://nodejs.org/) or later for building
+  the web client.
+- [PostgreSQL 14](https://www.postgresql.org/download/) or
+  later for the datastore.
+- [Make](https://www.gnu.org/software/make/) for build
+  automation.
+
 ## Building
 
-The project uses Makefiles for building and testing. All components can be
-built from the top-level directory:
+The project uses Makefiles for building and testing. All
+components can be built from the top-level directory:
 
 ```bash
 # Build all components
@@ -113,11 +126,27 @@ Each sub-project and the top-level Makefile support these targets:
 
 ## Getting Started
 
-For information on getting started with each component, please refer to:
+For information on getting started with each component,
+refer to the following guides:
 
-- [Collector Quick Start](docs/collector/quickstart.md) - Set up monitoring
-- [Server Configuration](docs/server/configuration.md) - Configure the server
-- [Alerter Overview](docs/alerter/index.md) - Set up alerting
+- [Collector Quick Start](docs/collector/quickstart.md)
+  covers monitoring setup.
+- [Server Configuration](docs/server/configuration.md)
+  covers server configuration.
+- [Alerter Quick Start](docs/alerter/quickstart.md)
+  covers alert setup.
+
+## Deployment
+
+For detailed installation, configuration, and usage
+instructions, see the following documentation:
+
+- [Collector Configuration](docs/collector/configuration.md)
+  covers all collector options.
+- [Server Configuration](docs/server/configuration.md)
+  covers all server options.
+- [Alerter Configuration](docs/alerter/configuration.md)
+  covers all alerter options.
 
 ## Issues
 

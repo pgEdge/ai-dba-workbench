@@ -23,9 +23,18 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	_ "github.com/mattn/go-sqlite3"
 	"golang.org/x/crypto/bcrypt"
+)
+
+const (
+	// bcryptCost is the cost factor for bcrypt password hashing.
+	bcryptCost = 12
+
+	// sessionTokenBytes is the size of generated session tokens in bytes.
+	sessionTokenBytes = 32
 )
 
 const (
@@ -622,7 +631,7 @@ const MaxPasswordLength = 72
 // and contain at least one uppercase letter, one lowercase letter, and one digit.
 func ValidatePassword(password string) error {
 	var failures []string
-	if len(password) < MinPasswordLength {
+	if utf8.RuneCountInString(password) < MinPasswordLength {
 		failures = append(failures, fmt.Sprintf("must be at least %d characters", MinPasswordLength))
 	}
 	if len(password) > MaxPasswordLength {
@@ -694,7 +703,7 @@ func (s *AuthStore) CreateUser(username, password, annotation, displayName, emai
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
 	if err != nil {
 		return fmt.Errorf("failed to hash password: %w", err)
 	}
@@ -764,7 +773,7 @@ func (s *AuthStore) UpdateUser(username, newPassword, newAnnotation, newDisplayN
 	defer s.mu.Unlock()
 
 	if newPassword != "" {
-		hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), 12)
+		hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcryptCost)
 		if err != nil {
 			return fmt.Errorf("failed to hash password: %w", err)
 		}
@@ -825,7 +834,7 @@ func (s *AuthStore) UpdateUserAtomic(username string, update UserUpdate) error {
 			err = valErr
 			return err
 		}
-		hash, hashErr := bcrypt.GenerateFromPassword([]byte(*update.Password), 12)
+		hash, hashErr := bcrypt.GenerateFromPassword([]byte(*update.Password), bcryptCost)
 		if hashErr != nil {
 			err = fmt.Errorf("failed to hash password: %w", hashErr)
 			return err
@@ -1101,7 +1110,7 @@ func (s *AuthStore) AuthenticateUser(username, password string) (string, time.Ti
 	}
 
 	// Generate session token
-	tokenBytes := make([]byte, 32)
+	tokenBytes := make([]byte, sessionTokenBytes)
 	if _, err := rand.Read(tokenBytes); err != nil {
 		return "", time.Time{}, fmt.Errorf("failed to generate session token: %w", err)
 	}
@@ -1226,7 +1235,7 @@ func (s *AuthStore) CreateToken(ownerUsername, annotation string, requestedExpir
 	// else: superuser with no explicit expiry gets no expiry (unlimited)
 
 	// Generate random token
-	tokenBytes := make([]byte, 32)
+	tokenBytes := make([]byte, sessionTokenBytes)
 	if _, err := rand.Read(tokenBytes); err != nil {
 		return "", nil, fmt.Errorf("failed to generate token: %w", err)
 	}

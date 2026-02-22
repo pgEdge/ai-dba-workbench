@@ -8,9 +8,12 @@ environment, building and testing the project, and submitting contributions.
 
 Before starting development, install the following tools:
 
-- [Go 1.23+](https://go.dev/doc/install) for building server-side components.
-- [Node.js 18+](https://nodejs.org/) for building the web client.
-- [PostgreSQL 14+](https://www.postgresql.org/download/) for running tests.
+- [Go 1.24](https://go.dev/doc/install) or later for
+  building server-side components.
+- [Node.js 18](https://nodejs.org/) or later for building
+  the web client.
+- [PostgreSQL 14](https://www.postgresql.org/download/) or
+  later for running tests.
 - [Git](https://git-scm.com/) for version control.
 - [Make](https://www.gnu.org/software/make/) for build automation.
 

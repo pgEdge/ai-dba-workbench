@@ -283,7 +283,7 @@ func (h *ClusterHandler) createClusterGroup(w http.ResponseWriter, r *http.Reque
 
 func (h *ClusterHandler) updateClusterGroup(w http.ResponseWriter, r *http.Request, id int) {
 	// Check user permissions
-	username, _, err := h.getUserInfoFromRequest(r)
+	username, _, err := getUserInfoCompat(r, h.authStore)
 	if err != nil {
 		RespondError(w, http.StatusUnauthorized, "Invalid or missing authentication token")
 		return
@@ -603,14 +603,4 @@ func (h *ClusterHandler) listServersInCluster(w http.ResponseWriter, r *http.Req
 	}
 
 	RespondJSON(w, http.StatusOK, servers)
-}
-
-// getUserInfoFromRequest extracts username and superuser status from the request.
-// Deprecated: Use GetUserInfoFromRequest from request_helpers.go instead.
-func (h *ClusterHandler) getUserInfoFromRequest(r *http.Request) (string, bool, error) {
-	info, err := GetUserInfoFromRequest(r, h.authStore)
-	if err != nil {
-		return "", false, err
-	}
-	return info.Username, info.IsSuperuser, nil
 }

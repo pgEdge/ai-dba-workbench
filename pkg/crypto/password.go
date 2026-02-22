@@ -12,8 +12,6 @@
 package crypto
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -76,31 +74,16 @@ func EncryptPassword(password string, serverSecret string) (string, error) {
 		}
 	}()
 
-	// Create cipher block
-	block, err := aes.NewCipher(key)
+	// Encrypt using shared GCM helper (returns nonce+ciphertext)
+	nonceCiphertext, err := EncryptGCM(key, []byte(password))
 	if err != nil {
-		return "", fmt.Errorf("failed to create cipher: %w", err)
+		return "", fmt.Errorf("failed to encrypt password: %w", err)
 	}
 
-	// Create GCM mode
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", fmt.Errorf("failed to create GCM: %w", err)
-	}
-
-	// Generate nonce
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return "", fmt.Errorf("failed to generate nonce: %w", err)
-	}
-
-	// Encrypt the password
-	ciphertext := gcm.Seal(nonce, nonce, []byte(password), nil)
-
-	// Prepend salt to ciphertext: [salt (16 bytes)][nonce + ciphertext]
-	result := make([]byte, saltSize+len(ciphertext))
+	// Prepend salt: [salt (16 bytes)][nonce + ciphertext]
+	result := make([]byte, saltSize+len(nonceCiphertext))
 	copy(result[:saltSize], salt)
-	copy(result[saltSize:], ciphertext)
+	copy(result[saltSize:], nonceCiphertext)
 
 	// Encode to base64 for storage
 	return base64.StdEncoding.EncodeToString(result), nil
@@ -136,28 +119,8 @@ func DecryptPassword(encryptedPassword string, serverSecret string) (string, err
 		}
 	}()
 
-	// Create cipher block
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return "", fmt.Errorf("failed to decrypt password: %w", err)
-	}
-
-	// Create GCM mode
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", fmt.Errorf("failed to decrypt password: %w", err)
-	}
-
-	// Extract nonce
-	nonceSize := gcm.NonceSize()
-	if len(ciphertext) < nonceSize {
-		return "", fmt.Errorf("failed to decrypt password: %w", fmt.Errorf("ciphertext too short"))
-	}
-
-	nonce, ciphertextBytes := ciphertext[:nonceSize], ciphertext[nonceSize:]
-
-	// Decrypt
-	plaintext, err := gcm.Open(nil, nonce, ciphertextBytes, nil)
+	// Decrypt using shared GCM helper (ciphertext contains nonce+ciphertext)
+	plaintext, err := DecryptGCM(key, ciphertext)
 	if err != nil {
 		return "", fmt.Errorf("failed to decrypt password: %w", err)
 	}

@@ -10,15 +10,13 @@
 package notifications
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"os"
 	"strings"
+
+	pkgcrypto "github.com/pgedge/ai-workbench/pkg/crypto"
 )
 
 // secretManager implements SecretManager using AES-256-GCM
@@ -68,29 +66,12 @@ func (s *secretManager) Encrypt(plaintext string) (string, error) {
 		return "", nil
 	}
 
-	// Create AES cipher with key
-	block, err := aes.NewCipher(s.key)
+	nonceCiphertext, err := pkgcrypto.EncryptGCM(s.key, []byte(plaintext))
 	if err != nil {
-		return "", fmt.Errorf("failed to create cipher: %w", err)
+		return "", err
 	}
 
-	// Create GCM mode
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", fmt.Errorf("failed to create GCM: %w", err)
-	}
-
-	// Generate random nonce
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return "", fmt.Errorf("failed to generate nonce: %w", err)
-	}
-
-	// Seal plaintext with nonce (prepends nonce to ciphertext)
-	ciphertext := gcm.Seal(nonce, nonce, []byte(plaintext), nil)
-
-	// Return base64(nonce + ciphertext)
-	return base64.StdEncoding.EncodeToString(ciphertext), nil
+	return base64.StdEncoding.EncodeToString(nonceCiphertext), nil
 }
 
 // Decrypt implements SecretManager.Decrypt.
@@ -100,38 +81,15 @@ func (s *secretManager) Decrypt(ciphertext string) (string, error) {
 		return "", nil
 	}
 
-	// Base64 decode
 	data, err := base64.StdEncoding.DecodeString(ciphertext)
 	if err != nil {
 		return "", fmt.Errorf("failed to decode base64 ciphertext: %w", err)
 	}
 
-	// Create AES cipher with key
-	block, err := aes.NewCipher(s.key)
+	plaintext, err := pkgcrypto.DecryptGCM(s.key, data)
 	if err != nil {
-		return "", fmt.Errorf("failed to create cipher: %w", err)
+		return "", err
 	}
 
-	// Create GCM mode
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", fmt.Errorf("failed to create GCM: %w", err)
-	}
-
-	// Extract nonce and ciphertext
-	nonceSize := gcm.NonceSize()
-	if len(data) < nonceSize {
-		return "", fmt.Errorf("ciphertext too short")
-	}
-
-	nonce, ciphertextBytes := data[:nonceSize], data[nonceSize:]
-
-	// Open/decrypt
-	plaintext, err := gcm.Open(nil, nonce, ciphertextBytes, nil)
-	if err != nil {
-		return "", fmt.Errorf("failed to decrypt: %w", err)
-	}
-
-	// Return plaintext string
 	return string(plaintext), nil
 }

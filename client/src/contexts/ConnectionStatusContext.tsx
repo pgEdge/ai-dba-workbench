@@ -14,6 +14,7 @@ import React, {
     useState,
     useCallback,
     useEffect,
+    useMemo,
 } from 'react';
 
 import { useAuth } from './AuthContext';
@@ -57,10 +58,13 @@ export const ConnectionStatusProvider = ({
         forceLogout();
     }, [forceLogout]);
 
+    const value = useMemo(
+        () => ({ disconnected, reason, reconnect }),
+        [disconnected, reason, reconnect],
+    );
+
     return (
-        <ConnectionStatusContext.Provider
-            value={{ disconnected, reason, reconnect }}
-        >
+        <ConnectionStatusContext.Provider value={value}>
             {children}
         </ConnectionStatusContext.Provider>
     );

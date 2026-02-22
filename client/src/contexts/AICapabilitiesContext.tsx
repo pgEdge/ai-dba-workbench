@@ -9,7 +9,8 @@
  */
 /* eslint-disable react-refresh/only-export-components */
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
+import { apiGet } from '../utils/apiClient';
 
 interface AICapabilitiesValue {
     aiEnabled: boolean;
@@ -36,16 +37,9 @@ export const AICapabilitiesProvider = ({
     useEffect(() => {
         const fetchCapabilities = async () => {
             try {
-                const response = await fetch('/api/v1/capabilities', {
-                    credentials: 'include',
-                });
-                if (response.ok) {
-                    const data: CapabilitiesResponse = await response.json();
-                    setAiEnabled(data.ai_enabled === true);
-                    setMaxIterations(data.max_iterations ?? 50);
-                } else {
-                    setAiEnabled(false);
-                }
+                const data = await apiGet<CapabilitiesResponse>('/api/v1/capabilities');
+                setAiEnabled(data.ai_enabled === true);
+                setMaxIterations(data.max_iterations ?? 50);
             } catch {
                 setAiEnabled(false);
             } finally {
@@ -56,8 +50,13 @@ export const AICapabilitiesProvider = ({
         fetchCapabilities();
     }, []);
 
+    const value = useMemo(
+        () => ({ aiEnabled, maxIterations, loading }),
+        [aiEnabled, maxIterations, loading],
+    );
+
     return (
-        <AICapabilitiesContext.Provider value={{ aiEnabled, maxIterations, loading }}>
+        <AICapabilitiesContext.Provider value={value}>
             {children}
         </AICapabilitiesContext.Provider>
     );

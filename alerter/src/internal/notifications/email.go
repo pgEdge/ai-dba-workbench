@@ -13,12 +13,19 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"net"
 	"net/smtp"
 	"strings"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 	"github.com/pgedge/ai-workbench/pkg/crypto"
 )
+
+// sanitizeHeader strips carriage-return and newline characters from a
+// string to prevent SMTP header injection.
+func sanitizeHeader(s string) string {
+	return strings.NewReplacer("\r", "", "\n", "").Replace(s)
+}
 
 // emailNotifier implements Notifier for SMTP email
 type emailNotifier struct {
@@ -157,11 +164,11 @@ func (n *emailNotifier) sendEmail(
 	smtpPort int,
 	smtpHost string,
 ) error {
-	// Build message with headers
+	// Build message with headers (sanitize to prevent header injection)
 	var msg strings.Builder
-	msg.WriteString(fmt.Sprintf("From: %s\r\n", fromHeader))
+	msg.WriteString(fmt.Sprintf("From: %s\r\n", sanitizeHeader(fromHeader)))
 	msg.WriteString(fmt.Sprintf("To: %s\r\n", strings.Join(to, ", ")))
-	msg.WriteString(fmt.Sprintf("Subject: %s\r\n", subject))
+	msg.WriteString(fmt.Sprintf("Subject: %s\r\n", sanitizeHeader(subject)))
 	msg.WriteString("MIME-Version: 1.0\r\n")
 	msg.WriteString("Content-Type: text/html; charset=\"UTF-8\"\r\n")
 	msg.WriteString("\r\n")
@@ -194,10 +201,16 @@ func (n *emailNotifier) sendWithTLS(
 		MinVersion: tls.VersionTLS12,
 	}
 
-	// Connect with TLS
-	conn, err := tls.Dial("tcp", addr, tlsConfig)
+	// Connect with context-aware dialer, then wrap with TLS
+	dialer := net.Dialer{}
+	rawConn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return fmt.Errorf("failed to connect with TLS: %w", err)
+		return fmt.Errorf("failed to connect to SMTP server: %w", err)
+	}
+	conn := tls.Client(rawConn, tlsConfig)
+	if err := conn.HandshakeContext(ctx); err != nil {
+		rawConn.Close()
+		return fmt.Errorf("TLS handshake failed: %w", err)
 	}
 	defer conn.Close()
 
@@ -229,10 +242,16 @@ func (n *emailNotifier) sendWithStartTLS(
 	msg []byte,
 	smtpHost string,
 ) error {
-	// Connect to SMTP server
-	client, err := smtp.Dial(addr)
+	// Connect to SMTP server with context-aware dialer
+	dialer := net.Dialer{}
+	rawConn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to connect to SMTP server: %w", err)
+	}
+	client, err := smtp.NewClient(rawConn, smtpHost)
+	if err != nil {
+		rawConn.Close()
+		return fmt.Errorf("failed to create SMTP client: %w", err)
 	}
 	defer client.Close()
 

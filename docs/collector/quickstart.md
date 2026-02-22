@@ -5,12 +5,14 @@ running quickly.
 
 ## Prerequisites
 
-Before you begin, ensure you have:
+Before you begin, ensure you have the following tools:
 
-- Go 1.23 or later installed
-- PostgreSQL 12 or later for the datastore
-- Network access to the PostgreSQL servers you want to monitor
-- Basic understanding of PostgreSQL administration
+- [Go 1.24](https://go.dev/doc/install) or later installed.
+- [PostgreSQL 14](https://www.postgresql.org/download/) or
+  later for the datastore.
+- Network access to the PostgreSQL servers you want to
+  monitor.
+- A basic understanding of PostgreSQL administration.
 
 ## Installation
 

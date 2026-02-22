@@ -17,7 +17,10 @@ import (
 	"strings"
 	"time"
 
+	"errors"
+
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/server/internal/tsv"
 )
@@ -419,7 +422,7 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 						connectionID, err)
 					results = append(results, statementResult{
 						Query: stmt,
-						Error: fmt.Sprintf("Execution error: %v", err),
+						Error: safeQueryError("Execution error", err),
 					})
 					break
 				}
@@ -548,6 +551,27 @@ func isIdentChar(b byte) bool {
 		b == '_'
 }
 
+// safeQueryError extracts a user-facing error message from a query error.
+// For PostgreSQL errors it returns only the database message; for other
+// errors it returns a generic message to avoid leaking Go internals.
+func safeQueryError(prefix string, err error) string {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		if pgErr.Detail != "" {
+			return fmt.Sprintf("%s: %s (%s)", prefix, pgErr.Message, pgErr.Detail)
+		}
+		return fmt.Sprintf("%s: %s", prefix, pgErr.Message)
+	}
+	return fmt.Sprintf("%s: %v", prefix, err)
+}
+
+// hasLimitClause reports whether sql already contains a LIMIT clause as a
+// standalone SQL keyword, avoiding false positives from column names such
+// as "credit_limit".
+func hasLimitClause(sql string) bool {
+	return containsSQLKeyword(strings.ToUpper(sql), "LIMIT")
+}
+
 // queryable is an interface satisfied by both pgx.Tx and *pgxpool.Pool,
 // allowing runStatement to execute queries against either.
 type queryable interface {
@@ -564,8 +588,7 @@ func runStatement(ctx context.Context, q queryable, stmt string, limit int, conn
 	upperBody := strings.ToUpper(stmtBody)
 	isSelect := strings.HasPrefix(upperBody, "SELECT") ||
 		strings.HasPrefix(upperBody, "WITH")
-	upperQuery := strings.ToUpper(sqlQuery)
-	hasExistingLimit := strings.Contains(upperQuery, "LIMIT")
+	hasExistingLimit := hasLimitClause(sqlQuery)
 	if isSelect && !hasExistingLimit {
 		sqlQuery = fmt.Sprintf("%s LIMIT %d", sqlQuery, limit+1)
 	}
@@ -576,7 +599,7 @@ func runStatement(ctx context.Context, q queryable, stmt string, limit int, conn
 		log.Printf("[ERROR] Query execution failed (connection=%d): %v", connectionID, err)
 		return statementResult{
 			Query: stmt,
-			Error: fmt.Sprintf("Query error: %v", err),
+			Error: safeQueryError("Query error", err),
 		}
 	}
 	defer rows.Close()
@@ -596,7 +619,7 @@ func runStatement(ctx context.Context, q queryable, stmt string, limit int, conn
 			log.Printf("[ERROR] Failed to read row: %v", err)
 			return statementResult{
 				Query: stmt,
-				Error: fmt.Sprintf("Failed to read row: %v", err),
+				Error: safeQueryError("Failed to read row", err),
 			}
 		}
 
@@ -611,7 +634,7 @@ func runStatement(ctx context.Context, q queryable, stmt string, limit int, conn
 		log.Printf("[ERROR] Error iterating query rows: %v", err)
 		return statementResult{
 			Query: stmt,
-			Error: fmt.Sprintf("Failed to read query results: %v", err),
+			Error: safeQueryError("Failed to read query results", err),
 		}
 	}
 

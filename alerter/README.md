@@ -32,8 +32,9 @@ The alerter provides the following capabilities:
 Before installing, ensure you have the following:
 
 - [Go 1.24](https://go.dev/doc/install) or later.
-- [PostgreSQL 12](https://www.postgresql.org/download/) or later with pgvector
-  extension for Tier 2 anomaly detection.
+- [PostgreSQL 14](https://www.postgresql.org/download/) or
+  later with pgvector extension for Tier 2 anomaly
+  detection.
 - Network access to the AI DBA Workbench datastore.
 - (Optional) [Ollama](https://ollama.ai/), OpenAI, Anthropic, or Voyage API
   access for Tier 3 LLM classification.

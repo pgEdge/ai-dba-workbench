@@ -16,10 +16,12 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+
+	"github.com/pgedge/ai-workbench/server/internal/apiconst"
 )
 
-// OpenAPISpecPath is the path to the OpenAPI specification for RFC 8631 API discovery.
-const OpenAPISpecPath = "/api/v1/openapi.json"
+// OpenAPISpecPath is re-exported from apiconst for backward compatibility.
+const OpenAPISpecPath = apiconst.OpenAPISpecPath
 
 // ErrorResponse is a standard error response.
 type ErrorResponse struct {

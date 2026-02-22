@@ -80,10 +80,25 @@ interface UserPermissions {
     groups?: unknown[];
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-interface CreateUserBody { [key: string]: any }
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-interface EditUserBody { [key: string]: any }
+interface CreateUserBody {
+    username: string;
+    password?: string;
+    is_service_account?: boolean;
+    display_name?: string;
+    email?: string;
+    annotation?: string;
+    enabled?: boolean;
+    is_superuser?: boolean;
+}
+
+interface EditUserBody {
+    password?: string;
+    display_name?: string;
+    email?: string;
+    annotation?: string;
+    enabled?: boolean;
+    is_superuser?: boolean;
+}
 
 const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
     const theme = useTheme();
@@ -131,14 +146,13 @@ const AdminUsers: React.FC<AdminUsersProps> = ({ mode }) => {
         try {
             setLoading(true);
             setError(null);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const [usersData, connResult] = await Promise.all([
-                apiGet<any>('/api/v1/rbac/users'),
-                apiGet<any>('/api/v1/connections').catch(() => null),
+                apiGet<{ users: RbacUser[] }>('/api/v1/rbac/users'),
+                apiGet<{ connections: Array<{ id: number; name: string }> }>('/api/v1/connections').catch(() => null),
             ]);
             setUsers(usersData.users || []);
             if (connResult) {
-                setConnections(connResult.connections || connResult || []);
+                setConnections(connResult.connections || []);
             }
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);

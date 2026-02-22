@@ -176,7 +176,7 @@ func (h *ConnectionHandler) listConnections(w http.ResponseWriter, r *http.Reque
 // createConnection handles POST /api/v1/connections
 func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Request) {
 	// Get current user info
-	username, _, err := h.getUserInfoFromRequest(r)
+	username, _, err := getUserInfoCompat(r, h.authStore)
 	if err != nil {
 		RespondError(w, http.StatusUnauthorized, "Invalid or missing authentication token")
 		return
@@ -341,6 +341,22 @@ func (h *ConnectionHandler) handleConnectionSubpath(w http.ResponseWriter, r *ht
 
 // getConnection handles GET /api/v1/connections/{id}
 func (h *ConnectionHandler) getConnection(w http.ResponseWriter, r *http.Request, id int) {
+	// Check RBAC access to this connection
+	accessibleIDs := h.rbacChecker.GetAccessibleConnections(r.Context())
+	if accessibleIDs != nil {
+		found := false
+		for _, aid := range accessibleIDs {
+			if aid == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			RespondError(w, http.StatusForbidden, "Access denied")
+			return
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -357,7 +373,7 @@ func (h *ConnectionHandler) getConnection(w http.ResponseWriter, r *http.Request
 // updateConnection handles PUT /api/v1/connections/{id}
 func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Request, id int) {
 	// Get current user info for permission check
-	username, _, err := h.getUserInfoFromRequest(r)
+	username, _, err := getUserInfoCompat(r, h.authStore)
 	if err != nil {
 		RespondError(w, http.StatusUnauthorized, "Invalid or missing authentication token")
 		return
@@ -453,7 +469,7 @@ func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Requ
 // deleteConnection handles DELETE /api/v1/connections/{id}
 func (h *ConnectionHandler) deleteConnection(w http.ResponseWriter, r *http.Request, id int) {
 	// Get current user info for permission check
-	username, _, err := h.getUserInfoFromRequest(r)
+	username, _, err := getUserInfoCompat(r, h.authStore)
 	if err != nil {
 		RespondError(w, http.StatusUnauthorized, "Invalid or missing authentication token")
 		return
@@ -507,20 +523,10 @@ func (h *ConnectionHandler) listDatabases(w http.ResponseWriter, r *http.Request
 	RespondJSON(w, http.StatusOK, databases)
 }
 
-// getUserInfoFromRequest extracts username and superuser status from the request.
-// Deprecated: Use GetUserInfoFromRequest from request_helpers.go instead.
-func (h *ConnectionHandler) getUserInfoFromRequest(r *http.Request) (string, bool, error) {
-	info, err := GetUserInfoFromRequest(r, h.authStore)
-	if err != nil {
-		return "", false, err
-	}
-	return info.Username, info.IsSuperuser, nil
-}
-
 // handleCurrentConnection handles GET/POST/DELETE /api/v1/connections/current
 func (h *ConnectionHandler) handleCurrentConnection(w http.ResponseWriter, r *http.Request) {
 	// Extract token hash from the request
-	tokenHash := h.getTokenHashFromRequest(r)
+	tokenHash := GetTokenHashFromRequest(r)
 	if tokenHash == "" {
 		RespondError(w, http.StatusUnauthorized, "Invalid or missing authentication token")
 		return
@@ -645,10 +651,4 @@ func (h *ConnectionHandler) getConnectionContext(w http.ResponseWriter, r *http.
 	}
 
 	RespondJSON(w, http.StatusOK, connCtx)
-}
-
-// getTokenHashFromRequest extracts and hashes the token from the Authorization header.
-// Deprecated: Use GetTokenHashFromRequest from request_helpers.go instead.
-func (h *ConnectionHandler) getTokenHashFromRequest(r *http.Request) string {
-	return GetTokenHashFromRequest(r)
 }

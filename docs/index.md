@@ -23,29 +23,61 @@ intelligent workflow creation across the pgEdge ecosystem.
 
 ## Architecture
 
-The AI DBA Workbench is composed of several components that work together:
+The AI DBA Workbench consists of four components that
+work together to provide monitoring, alerting, and
+AI-powered database management.
 
 ### Data Collection Layer
 
-The [Collector](collector/index.md) continuously monitors PostgreSQL servers
-and collects metrics into a centralized datastore. It provides:
+The [Collector](collector/index.md) continuously monitors
+PostgreSQL servers and collects metrics into a centralized
+datastore. The collector provides the following features:
 
-- Multi-server monitoring with independent connection pools
-- 34 built-in probes covering PostgreSQL system views
-- Automated data management with partitioning and retention
-- Secure connections with encryption and SSL/TLS support
+- Multi-server monitoring with independent connection pools.
+- 34 built-in probes covering PostgreSQL system views.
+- Automated data management with partitioning and retention.
+- Secure connections with encryption and SSL/TLS support.
 
 ### Intelligence Layer
 
-The [MCP Server](server/index.md) implements the Model Context Protocol,
-providing AI assistants with standardized access to PostgreSQL systems. It
-provides:
+The [MCP Server](server/index.md) implements the Model
+Context Protocol, providing AI assistants with standardized
+access to PostgreSQL systems. The server provides the
+following features:
 
-- HTTP/HTTPS transport with JSON-RPC 2.0
-- SQLite-based authentication with users and tokens
-- Database tools for queries, schema introspection, and analysis
-- LLM proxy support for Anthropic, OpenAI, and Ollama
-- Conversation history management
+- HTTP/HTTPS transport with JSON-RPC 2.0.
+- SQLite-based authentication with users and tokens.
+- Role-based access control with groups and privileges.
+- Database tools for queries, schema introspection, and
+  analysis.
+- LLM proxy support for Anthropic, OpenAI, Gemini, and
+  Ollama.
+- Conversation history management.
+
+### Alert Monitoring Layer
+
+The [Alerter](alerter/index.md) evaluates collected metrics
+against thresholds and uses AI-powered anomaly detection to
+generate alerts. The alerter provides the following features:
+
+- Threshold-based alerting with configurable rules.
+- Tiered anomaly detection using statistical analysis,
+  embeddings, and LLM classification.
+- Blackout scheduling for maintenance windows.
+- Notification delivery through email, Slack, Mattermost,
+  and webhooks.
+
+### Presentation Layer
+
+The [Client](client/index.md) provides a web-based user
+interface for cluster monitoring and management. The client
+provides the following features:
+
+- Hierarchical dashboards for estate, cluster, and server
+  monitoring.
+- Cluster topology visualization with replication edges.
+- AI-powered chat interface for natural language queries.
+- Administration panel for users, groups, and tokens.
 
 ## Getting Started
 
@@ -58,39 +90,121 @@ Start with the Collector to set up monitoring for your PostgreSQL servers:
 
 ### System Requirements
 
-- PostgreSQL 14 or higher
-- Go 1.23 or higher (for building from source)
-- Network connectivity between components
-- Appropriate database credentials and permissions
+- [PostgreSQL 14](https://www.postgresql.org/download/) or
+  higher for the datastore.
+- [Go 1.24](https://go.dev/doc/install) or higher for
+  building server-side components from source.
+- [Node.js 18](https://nodejs.org/) or higher for building
+  the web client from source.
+- Network connectivity between all components.
+- Database credentials with appropriate permissions.
 
 ## Component Documentation
 
 ### Collector Documentation
 
-The Collector monitors PostgreSQL servers and collects performance metrics.
+The Collector monitors PostgreSQL servers and collects
+performance metrics.
 
-**[Go to Collector Documentation →](collector/index.md)**
+**[Go to Collector Documentation](collector/index.md)**
 
 Key topics:
 
-- [Overview](collector/overview.md) - Architecture and concepts
-- [Quick Start](collector/quickstart.md) - Get running quickly
-- [Configuration](collector/configuration.md) - Setup and options
-- [Architecture](collector/architecture.md) - Detailed design
-- [Probes](collector/probes.md) - How data collection works
-- [Development](collector/development.md) - Contributing guide
+- [Overview](collector/overview.md) covers architecture and
+  concepts.
+- [Quick Start](collector/quickstart.md) helps you get
+  running quickly.
+- [Configuration](collector/configuration.md) describes
+  setup and options.
+- [Architecture](collector/architecture.md) explains the
+  detailed design.
+- [Probes](collector/probes.md) describes how data
+  collection works.
+- [Development](collector/development.md) provides the
+  contributing guide.
 
 ### Server Documentation
 
-The MCP Server provides AI assistants with access to PostgreSQL systems.
+The MCP Server provides AI assistants with access to
+PostgreSQL systems.
 
-**[Go to Server Documentation →](server/index.md)**
+**[Go to Server Documentation](server/index.md)**
 
 Key topics:
 
-- [Overview](server/index.md) - Architecture and features
-- [Authentication](server/authentication.md) - Users, tokens, and security
-- [Configuration](server/configuration.md) - Setup and options
+- [Overview](server/index.md) covers architecture and
+  features.
+- [API Reference](server/api-reference.md) documents all
+  REST API endpoints.
+- [Authentication](server/authentication.md) covers users,
+  tokens, and security.
+- [Configuration](server/configuration.md) describes setup
+  and options.
+
+### Alerter Documentation
+
+The Alerter evaluates collected metrics and generates
+alerts using threshold rules and anomaly detection.
+
+**[Go to Alerter Documentation](alerter/index.md)**
+
+Key topics:
+
+- [Overview](alerter/overview.md) covers architecture and
+  concepts.
+- [Quick Start](alerter/quickstart.md) helps you get
+  running quickly.
+- [Configuration](alerter/configuration.md) describes all
+  configuration options.
+- [Alert Rules](alerter/alert-rules.md) explains the
+  threshold rule system.
+- [Anomaly Detection](alerter/anomaly-detection.md)
+  covers AI-powered alerting.
+
+### Client Documentation
+
+The Client provides a web-based user interface for
+monitoring and management.
+
+**[Go to Client Documentation](client/index.md)**
+
+Key topics:
+
+- [Overview](client/index.md) covers features and
+  architecture.
+- [Dashboards](client/dashboards.md) describes the
+  monitoring dashboards.
+
+## Deployment
+
+The following guides cover deployment for each component.
+
+### Collector Deployment
+
+The Collector Quick Start guide includes systemd service
+configuration for Linux and launchd for macOS. See the
+[Collector Quick Start](collector/quickstart.md) for
+installation and service setup instructions.
+
+### Server Deployment
+
+The Server Configuration guide covers YAML configuration,
+environment variables, and TLS setup. See the
+[Server Configuration](server/configuration.md) for
+all server options.
+
+### Alerter Deployment
+
+The Alerter Quick Start guide includes a systemd service
+file and environment variable configuration. See the
+[Alerter Quick Start](alerter/quickstart.md) for
+installation and service setup instructions.
+
+### Client Deployment
+
+Build the web client for production using `npm run build`.
+The build output in the `dist` directory can be served by
+any static file server or reverse proxy.
 
 ## Common Configuration
 

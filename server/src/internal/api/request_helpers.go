@@ -86,10 +86,21 @@ func GetTokenHashFromRequest(r *http.Request) string {
 	return auth.GetTokenHashByRawToken(token)
 }
 
+// getUserInfoCompat is a convenience wrapper around GetUserInfoFromRequest
+// that returns the username and superuser status as separate values.
+func getUserInfoCompat(r *http.Request, authStore *auth.AuthStore) (string, bool, error) {
+	info, err := GetUserInfoFromRequest(r, authStore)
+	if err != nil {
+		return "", false, err
+	}
+	return info.Username, info.IsSuperuser, nil
+}
+
 // DecodeJSONBody decodes a JSON request body into the provided destination.
 // If decoding fails, it sends an error response and returns false.
 // If decoding succeeds, it returns true and the caller should continue.
 func DecodeJSONBody(w http.ResponseWriter, r *http.Request, dest interface{}) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB limit
 	if err := json.NewDecoder(r.Body).Decode(dest); err != nil {
 		RespondError(w, http.StatusBadRequest, "Invalid request body")
 		return false

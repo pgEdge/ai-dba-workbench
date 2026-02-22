@@ -204,6 +204,9 @@ func validateWhereClause(clause string) error {
 		{"pg_read_binary_file", "file system read access"},
 		{"pg_ls_dir", "directory listing"},
 		{"pg_stat_file", "file system stat access"},
+		{"generate_series", "denial of service via large result sets"},
+		{"pg_advisory_lock", "lock contention"},
+		{"current_setting", "configuration disclosure"},
 	}
 
 	for _, dp := range dangerousPatterns {

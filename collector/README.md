@@ -32,9 +32,9 @@ The Collector provides the following capabilities:
 
 Before installing the Collector, ensure you have the following:
 
-- [Go 1.23](https://go.dev/doc/install) or later installed.
-- [PostgreSQL 12](https://www.postgresql.org/download/) or later for the
-  datastore.
+- [Go 1.24](https://go.dev/doc/install) or later installed.
+- [PostgreSQL 14](https://www.postgresql.org/download/) or
+  later for the datastore.
 - Network access to the PostgreSQL servers you want to monitor.
 
 ## Installation

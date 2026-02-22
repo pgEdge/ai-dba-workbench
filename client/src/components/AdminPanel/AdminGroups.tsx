@@ -146,9 +146,8 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
         try {
             setLoading(true);
             setError(null);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const [groupsData, connResult] = await Promise.all([
-                apiGet<any>('/api/v1/rbac/groups'),
+                apiGet<{ groups: RbacGroup[] }>('/api/v1/rbac/groups'),
                 apiGet<{ connections?: Array<{ id: number; name: string }> }>('/api/v1/connections').catch(() => null),
             ]);
             setGroups(groupsData.groups || []);
@@ -171,10 +170,9 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
         try {
             setDetailLoading(true);
             setEffectivePermsLoading(true);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const [detailData, effectiveResult] = await Promise.all([
-                apiGet<any>(`/api/v1/rbac/groups/${groupId}`),
-                apiGet<any>(`/api/v1/rbac/groups/${groupId}/effective-privileges`).catch(() => null),
+                apiGet<GroupDetail>(`/api/v1/rbac/groups/${groupId}`),
+                apiGet<EffectivePermsData>(`/api/v1/rbac/groups/${groupId}/effective-privileges`).catch(() => null),
             ]);
             setGroupDetail(detailData);
             setEffectivePerms(effectiveResult);
@@ -286,10 +284,9 @@ const AdminGroups: React.FC<AdminGroupsProps> = ({ mode }) => {
         setSelectedMemberId('');
         setMemberType('user');
         try {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const [usersData, groupsData] = await Promise.all([
-                apiGet<any>('/api/v1/rbac/users').catch(() => null),
-                apiGet<any>('/api/v1/rbac/groups').catch(() => null),
+                apiGet<{ users: RbacUser[] }>('/api/v1/rbac/users').catch(() => null),
+                apiGet<{ groups: RbacGroup[] }>('/api/v1/rbac/groups').catch(() => null),
             ]);
             if (usersData) {
                 setAvailableUsers(usersData.users || []);

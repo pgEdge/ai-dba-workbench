@@ -11,7 +11,6 @@ package tools
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -128,51 +127,8 @@ To avoid rate limits (30,000 input tokens/minute):
 			}
 
 			sqlQuery := strings.TrimSpace(query)
-
-			// Determine the limit to use
-			limit := 100 // default
-			if limitVal, ok := args["limit"]; ok {
-				switch v := limitVal.(type) {
-				case float64:
-					limit = int(v)
-				case int:
-					limit = v
-				}
-			}
-			if limit < 1 {
-				limit = 1
-			}
-			if limit > 1000 {
-				limit = 1000
-			}
-
-			// Determine the offset to use
-			offset := 0 // default
-			if offsetVal, ok := args["offset"]; ok {
-				switch v := offsetVal.(type) {
-				case float64:
-					offset = int(v)
-				case int:
-					offset = v
-				}
-			}
-			if offset < 0 {
-				offset = 0
-			}
-
-			// Track if query already had LIMIT/OFFSET clauses
-			upperQuery := strings.ToUpper(sqlQuery)
-			hasExistingLimit := strings.Contains(upperQuery, "LIMIT")
-			hasExistingOffset := strings.Contains(upperQuery, "OFFSET")
-
-			// Only inject LIMIT/OFFSET if query doesn't already have them
-			// Fetch limit+1 to detect if more rows exist
-			if limit > 0 && !hasExistingLimit {
-				sqlQuery = fmt.Sprintf("%s LIMIT %d", sqlQuery, limit+1)
-			}
-			if offset > 0 && !hasExistingOffset {
-				sqlQuery = fmt.Sprintf("%s OFFSET %d", sqlQuery, offset)
-			}
+			limit, offset := parseLimitOffset(args)
+			sqlQuery, hadExistingLimit, _ := injectLimitOffset(sqlQuery, limit, offset)
 
 			// Extract context from args (injected by registry.Execute)
 			ctx, ok := args["__context"].(context.Context)
@@ -180,84 +136,23 @@ To avoid rate limits (30,000 input tokens/minute):
 				ctx = context.Background()
 			}
 
-			// Begin a read-only transaction with timeout and panic recovery
-			rot, errResp, cleanup := BeginReadOnlyTx(ctx, pool)
+			qr, errResp := executeReadOnlyQuery(ctx, pool, sqlQuery, limit, hadExistingLimit, "")
 			if errResp != nil {
 				return *errResp, nil
 			}
-			defer cleanup()
-
-			rows, err := rot.Tx.Query(ctx, sqlQuery)
-			if err != nil {
-				return mcp.NewToolError(fmt.Sprintf("SQL Query:\n%s\n\nError executing query: %v", sqlQuery, err))
-			}
-			defer rows.Close()
-
-			// Get column names
-			fieldDescriptions := rows.FieldDescriptions()
-			var columnNames []string
-			for _, fd := range fieldDescriptions {
-				columnNames = append(columnNames, string(fd.Name))
-			}
-
-			// Collect results as array of arrays for TSV formatting
-			var results [][]interface{}
-			for rows.Next() {
-				values, err := rows.Values()
-				if err != nil {
-					return mcp.NewToolError(fmt.Sprintf("Error reading row: %v", err))
-				}
-				results = append(results, values)
-			}
-
-			if err := rows.Err(); err != nil {
-				return mcp.NewToolError(fmt.Sprintf("Error iterating rows: %v", err))
-			}
-
-			// Check if results were truncated (we fetched limit+1 to detect this)
-			wasTruncated := false
-			if !hasExistingLimit && limit > 0 && len(results) > limit {
-				wasTruncated = true
-				results = results[:limit] // Truncate to requested limit
-			}
-
-			// Format results as TSV (tab-separated values)
-			resultsTSV := FormatResultsAsTSV(columnNames, results)
-
-			// Commit the read-only transaction
-			if err := rot.Commit(); err != nil {
-				return mcp.NewToolError(fmt.Sprintf("Failed to commit transaction: %v", err))
-			}
 
 			var sb strings.Builder
-
 			sb.WriteString("Datastore Query\n\n")
-			sb.WriteString(fmt.Sprintf("SQL Query:\n%s\n\n", sqlQuery))
 
-			// Build the results header with pagination info
-			if offset > 0 {
-				startRow := offset + 1
-				endRow := offset + len(results)
-				if wasTruncated {
-					sb.WriteString(fmt.Sprintf("Results (rows %d-%d, more available - use offset=%d for next page):\n%s",
-						startRow, endRow, offset+limit, resultsTSV))
-				} else {
-					sb.WriteString(fmt.Sprintf("Results (rows %d-%d):\n%s", startRow, endRow, resultsTSV))
-				}
-			} else if wasTruncated {
-				sb.WriteString(fmt.Sprintf("Results (%d rows shown, more available - use offset=%d for next page or increase limit):\n%s",
-					len(results), limit, resultsTSV))
-			} else {
-				sb.WriteString(fmt.Sprintf("Results (%d rows):\n%s", len(results), resultsTSV))
-			}
+			formatPaginatedResults(&sb, qr, sqlQuery, limit, offset, " or increase limit")
 
 			// Log execution metrics
 			logging.Info("query_datastore_executed",
 				"query_length", len(sqlQuery),
-				"rows_returned", len(results),
+				"rows_returned", len(qr.Rows),
 				"offset", offset,
-				"was_truncated", wasTruncated,
-				"estimated_tokens", len(resultsTSV)/4,
+				"was_truncated", qr.WasTruncated,
+				"estimated_tokens", len(qr.ResultsTSV)/4,
 			)
 
 			return mcp.NewToolSuccess(sb.String())

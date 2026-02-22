@@ -11,6 +11,13 @@ and this project adheres to
 
 ### Added
 
+- Visual indicator on alert panels showing whether each
+  alert was triggered by a threshold rule or by anomaly
+  detection.
+- Anomaly detection alerts now trigger correctly when
+  metrics deviate from established baselines.
+- Comprehensive authentication and RBAC test coverage
+  for the server component.
 - Support for custom base URLs on all LLM providers;
   the OpenAI provider API key is optional when using a
   custom base URL, enabling local OpenAI-compatible
@@ -210,6 +217,8 @@ and this project adheres to
 
 ### Changed
 
+- Authentication is now always required; the no-auth mode
+  has been removed to enforce security best practices.
 - Metrics charts now use `generate_series` for full time-series
   coverage; gaps in collected data no longer cause missing
   chart segments.

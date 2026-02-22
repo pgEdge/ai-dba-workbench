@@ -18,6 +18,7 @@ import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/pris
 import { ThemeMode } from '../../types/theme';
 import { ToolActivity } from './ToolStatus';
 import { getToolDisplayName } from '../../utils/toolDisplayNames';
+import { createCleanTheme, extractLanguage } from '../shared/MarkdownContent';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -37,38 +38,6 @@ export interface ChatMessageData {
     isError?: boolean;
     activity?: ToolActivity[];
 }
-
-// ---------------------------------------------------------------------------
-// Syntax theme helper
-// ---------------------------------------------------------------------------
-
-const createCleanTheme = (
-    baseTheme: Record<string, unknown>,
-    customBackground: string,
-): Record<string, unknown> => {
-    const cleanTheme: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(baseTheme)) {
-        if (typeof value === 'object' && value !== null) {
-            const {
-                background: _background,
-                backgroundColor: _backgroundColor,
-                ...rest
-            } = value as Record<string, unknown>;
-            cleanTheme[key] = rest;
-        } else {
-            cleanTheme[key] = value;
-        }
-    }
-    const preKey = 'pre[class*="language-"]';
-    const codeKey = 'code[class*="language-"]';
-    if (cleanTheme[preKey] && typeof cleanTheme[preKey] === 'object') {
-        (cleanTheme[preKey] as Record<string, unknown>).background = customBackground;
-    }
-    if (cleanTheme[codeKey] && typeof cleanTheme[codeKey] === 'object') {
-        (cleanTheme[codeKey] as Record<string, unknown>).background = 'transparent';
-    }
-    return cleanTheme;
-};
 
 // ---------------------------------------------------------------------------
 // Style constants and style-getter functions
@@ -314,15 +283,6 @@ const getMdTableSx = (theme: Theme) => ({
         fontWeight: 600,
     },
 });
-
-// ---------------------------------------------------------------------------
-// Helper: extract language from className
-// ---------------------------------------------------------------------------
-
-const extractLanguage = (className: string | undefined): string => {
-    const match = /language-(\w+)/.exec(className || '');
-    return match ? match[1] : '';
-};
 
 // ---------------------------------------------------------------------------
 // Helper: extract text from content blocks

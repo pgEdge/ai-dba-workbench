@@ -11,6 +11,9 @@
 
 import React, { createContext, useState, useContext, useEffect, useCallback, useMemo } from 'react';
 import { apiGet, apiPost } from '../utils/apiClient';
+import { clearAlertAnalysisCache } from '../hooks/useAlertAnalysis';
+import { clearChartAnalysisCache } from '../hooks/useChartAnalysis';
+import { clearAnalysisCache as clearServerAnalysisCache } from '../hooks/useServerAnalysis';
 
 export interface User {
     authenticated: boolean;
@@ -131,6 +134,9 @@ export const AuthProvider = ({ children }: AuthProviderProps): React.ReactElemen
             console.error('Logout request failed:', error);
             // Continue with local logout even if server request fails
         }
+        clearAlertAnalysisCache();
+        clearChartAnalysisCache();
+        clearServerAnalysisCache();
         setUser(null);
         setAdminPermissions([]);
     }, []);
@@ -153,6 +159,9 @@ export const AuthProvider = ({ children }: AuthProviderProps): React.ReactElemen
         } catch {
             // Ignore errors during force logout
         }
+        clearAlertAnalysisCache();
+        clearChartAnalysisCache();
+        clearServerAnalysisCache();
         setUser(null);
         setAdminPermissions([]);
     }, []);

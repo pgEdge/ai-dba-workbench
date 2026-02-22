@@ -10,13 +10,13 @@
 package crypto
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
 	"io"
 	"os"
+
+	pkgcrypto "github.com/pgedge/ai-workbench/pkg/crypto"
 )
 
 const (
@@ -90,27 +90,12 @@ func (k *EncryptionKey) Encrypt(plaintext string) (string, error) {
 		return "", nil
 	}
 
-	block, err := aes.NewCipher(k.key)
+	nonceCiphertext, err := pkgcrypto.EncryptGCM(k.key, []byte(plaintext))
 	if err != nil {
-		return "", fmt.Errorf("failed to create cipher: %w", err)
+		return "", err
 	}
 
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", fmt.Errorf("failed to create GCM: %w", err)
-	}
-
-	// Generate a random nonce
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return "", fmt.Errorf("failed to generate nonce: %w", err)
-	}
-
-	// Encrypt and authenticate
-	ciphertext := gcm.Seal(nonce, nonce, []byte(plaintext), nil)
-
-	// Encode as base64 for storage
-	return base64.StdEncoding.EncodeToString(ciphertext), nil
+	return base64.StdEncoding.EncodeToString(nonceCiphertext), nil
 }
 
 // Decrypt decrypts base64-encoded ciphertext using AES-256-GCM
@@ -119,31 +104,14 @@ func (k *EncryptionKey) Decrypt(ciphertext string) (string, error) {
 		return "", nil
 	}
 
-	// Decode base64
 	data, err := base64.StdEncoding.DecodeString(ciphertext)
 	if err != nil {
 		return "", fmt.Errorf("failed to decode ciphertext: %w", err)
 	}
 
-	block, err := aes.NewCipher(k.key)
+	plaintext, err := pkgcrypto.DecryptGCM(k.key, data)
 	if err != nil {
-		return "", fmt.Errorf("failed to create cipher: %w", err)
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", fmt.Errorf("failed to create GCM: %w", err)
-	}
-
-	nonceSize := gcm.NonceSize()
-	if len(data) < nonceSize {
-		return "", fmt.Errorf("ciphertext too short")
-	}
-
-	nonce, ciphertextBytes := data[:nonceSize], data[nonceSize:]
-	plaintext, err := gcm.Open(nil, nonce, ciphertextBytes, nil)
-	if err != nil {
-		return "", fmt.Errorf("failed to decrypt: %w", err)
+		return "", err
 	}
 
 	return string(plaintext), nil

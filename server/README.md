@@ -15,6 +15,15 @@ For complete documentation, visit [docs.pgedge.com](https://docs.pgedge.com).
 - [Configuration](#configuration)
 - [Documentation](#documentation)
 
+## Prerequisites
+
+Before building the server, install the following tools:
+
+- [Go 1.24](https://go.dev/doc/install) or later.
+- [PostgreSQL 14](https://www.postgresql.org/download/) or
+  later for the datastore.
+- Network access to the PostgreSQL datastore.
+
 ## Features
 
 - The server uses HTTP/HTTPS transport with JSON-RPC 2.0.
@@ -29,7 +38,8 @@ For complete documentation, visit [docs.pgedge.com](https://docs.pgedge.com).
 - MCP tools provide interfaces for database operations.
 - MCP resources expose schema and data access.
 - MCP prompts guide common workflows.
-- The LLM proxy supports Anthropic, OpenAI, and Ollama.
+- The LLM proxy supports Anthropic, OpenAI, Gemini, and
+  Ollama.
 - The server manages conversation history.
 
 ## Building

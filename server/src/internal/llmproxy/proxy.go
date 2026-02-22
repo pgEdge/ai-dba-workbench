@@ -16,6 +16,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/pgedge/ai-workbench/server/internal/apiconst"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/chat"
 	"github.com/pgedge/ai-workbench/server/internal/tracing"
@@ -100,8 +101,8 @@ type ChatResponse struct {
 	TokenUsage *chat.TokenUsage `json:"token_usage,omitempty"` // Optional token usage (when debug enabled)
 }
 
-// OpenAPISpecPath is the path to the OpenAPI specification for RFC 8631 API discovery.
-const OpenAPISpecPath = "/api/v1/openapi.json"
+// OpenAPISpecPath is re-exported from apiconst for local use.
+const OpenAPISpecPath = apiconst.OpenAPISpecPath
 
 // HandleProviders handles GET /api/v1/llm/providers
 func HandleProviders(w http.ResponseWriter, r *http.Request, config *Config) {

@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
@@ -40,7 +41,7 @@ func main() {
 	dbPort := flag.Int("db-port", 0, "Database port (overrides config)")
 	dbName := flag.String("db-name", "", "Database name (overrides config)")
 	dbUser := flag.String("db-user", "", "Database user (overrides config)")
-	dbPassword := flag.String("db-password", "", "Database password (overrides config)")
+	dbPasswordFile := flag.String("db-password-file", "", "Path to file containing the database password")
 	dbSSLMode := flag.String("db-sslmode", "", "Database SSL mode (overrides config)")
 
 	flag.Parse()
@@ -73,8 +74,13 @@ func main() {
 	if *dbUser != "" {
 		cfg.Datastore.Username = *dbUser
 	}
-	if *dbPassword != "" {
-		cfg.Datastore.Password = *dbPassword
+	if *dbPasswordFile != "" {
+		data, err := os.ReadFile(*dbPasswordFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: Failed to read password file: %v\n", err)
+			os.Exit(1)
+		}
+		cfg.Datastore.Password = strings.TrimSpace(string(data))
 	}
 	if *dbSSLMode != "" {
 		cfg.Datastore.SSLMode = *dbSSLMode

@@ -40,6 +40,10 @@ export interface UseChartAnalysisReturn {
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const analysisCache = new Map<string, { analysis: string; timestamp: number }>();
 
+export function clearChartAnalysisCache(): void {
+    analysisCache.clear();
+}
+
 const CHART_ANALYSIS_SYSTEM_PROMPT = `You are a PostgreSQL database expert analyzing metrics from the pgEdge AI DBA Workbench monitoring system.
 
 You are given chart data showing time-series metrics. Your task is to:

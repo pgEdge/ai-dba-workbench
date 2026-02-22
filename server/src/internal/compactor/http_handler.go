@@ -13,10 +13,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+
+	"github.com/pgedge/ai-workbench/server/internal/apiconst"
 )
 
-// OpenAPISpecPath is the path to the OpenAPI specification for RFC 8631 API discovery.
-const OpenAPISpecPath = "/api/v1/openapi.json"
+// OpenAPISpecPath is re-exported from apiconst for local use.
+const OpenAPISpecPath = apiconst.OpenAPISpecPath
 
 // HandleCompact is the HTTP handler for the /api/v1/chat/compact endpoint.
 func HandleCompact(w http.ResponseWriter, r *http.Request) {

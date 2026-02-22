@@ -25,6 +25,10 @@ import {
 // Module-level cache for analysis results (persists across dialog open/close)
 const analysisCache = new Map<number, { analysis: string; metricValue: number }>();
 
+export function clearAlertAnalysisCache(): void {
+    analysisCache.clear();
+}
+
 export interface AlertInput {
     id?: number;
     aiAnalysis?: string | null;

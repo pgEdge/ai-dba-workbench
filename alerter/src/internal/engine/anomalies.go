@@ -384,7 +384,7 @@ func (e *Engine) createAnomalyAlert(ctx context.Context, candidate *database.Ano
 		formatOptionalString(candidate.Tier3Result),
 	)
 
-	title := fmt.Sprintf("Anomaly detected: %s on connection %d", candidate.MetricName, candidate.ConnectionID)
+	title := fmt.Sprintf("Anomaly detected: %s", candidate.MetricName)
 	description := fmt.Sprintf(
 		"Statistical anomaly detected for metric %s (value: %.4f, z-score: %.2f).",
 		candidate.MetricName, candidate.MetricValue, candidate.ZScore,

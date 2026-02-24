@@ -20,6 +20,7 @@ export const FRIENDLY_ALERT_TITLES = {
     // Connection alerts
     'high_max_connections': 'High Max Connections',
     'connection_utilization': 'Connection Utilization',
+    'connection_utilization_percent': 'Connection Utilization',
     // Replication alerts
     'replication_lag_bytes': 'Replication Lag',
     'replication_slot_inactive': 'Replication Slot Inactive',
@@ -48,6 +49,16 @@ export const FRIENDLY_ALERT_TITLES = {
     'slow_query_count': 'Slow Query Count',
     'cache_hit_ratio_low': 'Low Cache Hit Ratio',
     'temp_files_created': 'Temporary Files Created',
+    // Anomaly metric names
+    'pg_stat_activity.count': 'Active Backends',
+    'pg_stat_activity.idle_in_transaction_seconds': 'Idle in Transaction',
+    'pg_stat_activity.max_query_duration_seconds': 'Long Running Query',
+    'pg_stat_activity.max_xact_duration_seconds': 'Long Running Transaction',
+    'pg_stat_all_tables.dead_tuple_percent': 'Dead Tuple Ratio',
+    'pg_stat_database.cache_hit_ratio': 'Cache Hit Ratio',
+    'pg_stat_database.deadlocks_delta': 'Deadlocks',
+    'pg_stat_database.temp_files_delta': 'Temporary Files',
+    'pg_sys_memory_info.used_percent': 'Memory Usage',
 };
 
 // Get friendly title for an alert
@@ -429,7 +440,7 @@ export const getAlertTypeColor = (theme: Theme, alertType: string) => {
  */
 export const groupAlertsByTitle = (alerts) => {
     return alerts.reduce((groups, alert) => {
-        const title = alert.title || 'Unknown Alert';
+        const title = getFriendlyTitle(alert.title);
         if (!groups[title]) {
             groups[title] = [];
         }

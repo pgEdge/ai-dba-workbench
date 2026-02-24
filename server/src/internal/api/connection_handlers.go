@@ -336,6 +336,20 @@ func (h *ConnectionHandler) handleConnectionSubpath(w http.ResponseWriter, r *ht
 		return
 	}
 
+	// Handle /api/v1/connections/{id}/cluster
+	if len(parts) == 2 && parts[1] == "cluster" {
+		switch r.Method {
+		case http.MethodGet:
+			h.handleGetConnectionCluster(w, r, connectionID)
+		case http.MethodPut:
+			h.handleUpdateConnectionCluster(w, r, connectionID)
+		default:
+			w.Header().Set("Allow", "GET, PUT")
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+		return
+	}
+
 	http.NotFound(w, r)
 }
 
@@ -651,4 +665,101 @@ func (h *ConnectionHandler) getConnectionContext(w http.ResponseWriter, r *http.
 	}
 
 	RespondJSON(w, http.StatusOK, connCtx)
+}
+
+// ConnectionClusterUpdateRequest is the request body for updating a
+// connection's cluster assignment.
+type ConnectionClusterUpdateRequest struct {
+	ClusterID       *int    `json:"cluster_id"`
+	Role            *string `json:"role"`
+	ClusterOverride bool    `json:"cluster_override"`
+}
+
+// connectionClusterResponse bundles current cluster info with available
+// clusters so the UI can populate a selector in a single round-trip.
+type connectionClusterResponse struct {
+	Info          *database.ConnectionClusterInfo `json:"info"`
+	Clusters      []database.ClusterSummary       `json:"clusters"`
+	Relationships []database.NodeRelationship     `json:"relationships"`
+}
+
+// handleGetConnectionCluster handles GET /api/v1/connections/{id}/cluster
+func (h *ConnectionHandler) handleGetConnectionCluster(w http.ResponseWriter, r *http.Request, connectionID int) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	info, err := h.datastore.GetConnectionClusterInfo(ctx, connectionID)
+	if err != nil {
+		log.Printf("[ERROR] Failed to get connection cluster info (id=%d): %v", connectionID, err)
+		RespondError(w, http.StatusNotFound, "Connection not found")
+		return
+	}
+
+	clusters, err := h.datastore.ListClustersForAutocomplete(ctx)
+	if err != nil {
+		log.Printf("[ERROR] Failed to list clusters for autocomplete: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to list clusters")
+		return
+	}
+
+	// Fetch relationships for this connection's cluster if assigned
+	var connRelationships []database.NodeRelationship
+	if info.ClusterID != nil {
+		allRels, err := h.datastore.GetClusterRelationships(ctx, *info.ClusterID)
+		if err != nil {
+			log.Printf("[WARN] Failed to get cluster relationships for connection %d: %v", connectionID, err)
+		} else {
+			for _, rel := range allRels {
+				if rel.SourceConnectionID == connectionID || rel.TargetConnectionID == connectionID {
+					connRelationships = append(connRelationships, rel)
+				}
+			}
+		}
+	}
+
+	if connRelationships == nil {
+		connRelationships = []database.NodeRelationship{}
+	}
+
+	RespondJSON(w, http.StatusOK, connectionClusterResponse{
+		Info:          info,
+		Clusters:      clusters,
+		Relationships: connRelationships,
+	})
+}
+
+// handleUpdateConnectionCluster handles PUT /api/v1/connections/{id}/cluster
+func (h *ConnectionHandler) handleUpdateConnectionCluster(w http.ResponseWriter, r *http.Request, connectionID int) {
+	var req ConnectionClusterUpdateRequest
+	if !DecodeJSONBody(w, r, &req) {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	if req.ClusterID == nil && !req.ClusterOverride {
+		// Reset to auto-detection
+		if err := h.datastore.ClearClusterOverride(ctx, connectionID); err != nil {
+			log.Printf("[ERROR] Failed to clear cluster override (id=%d): %v", connectionID, err)
+			RespondError(w, http.StatusInternalServerError, "Failed to clear cluster override")
+			return
+		}
+	} else {
+		if err := h.datastore.AssignConnectionToCluster(ctx, connectionID, req.ClusterID, req.Role, req.ClusterOverride); err != nil {
+			log.Printf("[ERROR] Failed to assign connection to cluster (id=%d): %v", connectionID, err)
+			RespondError(w, http.StatusInternalServerError, "Failed to assign connection to cluster")
+			return
+		}
+	}
+
+	// Return updated info
+	info, err := h.datastore.GetConnectionClusterInfo(ctx, connectionID)
+	if err != nil {
+		log.Printf("[ERROR] Failed to get updated connection cluster info (id=%d): %v", connectionID, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to get updated cluster info")
+		return
+	}
+
+	RespondJSON(w, http.StatusOK, info)
 }

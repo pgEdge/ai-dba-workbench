@@ -65,7 +65,7 @@ export interface ServerEditData {
 export interface ServerDialogProps {
     open: boolean;
     onClose: () => void;
-    onSave: (data: Record<string, unknown>) => Promise<void>;
+    onSave: (data: Record<string, unknown>) => Promise<unknown>;
     mode?: 'create' | 'edit';
     server?: ServerEditData | null;
     isSuperuser?: boolean;
@@ -102,3 +102,78 @@ export type FieldChangeHandler = (
     field: keyof ServerFormData,
     value: string | number | boolean
 ) => void;
+
+/**
+ * Summary of a cluster returned by the cluster list API.
+ */
+export interface ClusterSummary {
+    id: number;
+    name: string;
+    replication_type: string | null;
+    auto_cluster_key: string | null;
+}
+
+/**
+ * Cluster information associated with a connection.
+ */
+export interface ConnectionClusterInfo {
+    cluster_id: number | null;
+    role: string | null;
+    cluster_override: boolean;
+    cluster_name: string | null;
+    replication_type: string | null;
+    auto_cluster_key: string | null;
+}
+
+/**
+ * Form data for creating a new cluster inline.
+ */
+export interface NewClusterFormData {
+    name: string;
+    replication_type: string;
+}
+
+/**
+ * Value managed by the ClusterFields component.
+ */
+export interface ClusterFieldsValue {
+    clusterId: number | null;
+    role: string | null;
+    clusterOverride: boolean;
+    newCluster?: NewClusterFormData;
+}
+
+/**
+ * A node-to-node relationship within a cluster.
+ */
+export interface NodeRelationship {
+    id: number;
+    cluster_id: number;
+    source_connection_id: number;
+    target_connection_id: number;
+    source_name: string;
+    target_name: string;
+    relationship_type: string;
+    is_auto_detected: boolean;
+}
+
+/**
+ * Input payload for creating a relationship.
+ */
+export interface RelationshipInput {
+    target_connection_id: number;
+    relationship_type: string;
+}
+
+/**
+ * Summary of a server within a cluster.
+ */
+export interface ClusterServerInfo {
+    id: number;
+    name: string;
+    host: string;
+    port: number;
+    status: string;
+    role?: string;
+    database_name?: string;
+}

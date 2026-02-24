@@ -34,6 +34,7 @@ import {
     ServerDialogProps,
     getDefaultFormData,
     FormErrors,
+    ClusterFieldsValue,
 } from './ServerDialog.types';
 import {
     dialogPaperSx,
@@ -48,9 +49,11 @@ import { validateServerForm, prepareSaveData } from './ServerDialog.validation';
 import ConnectionFields from './ConnectionFields';
 import SSLSettings from './SSLSettings';
 import OptionsSection from './OptionsSection';
+import ClusterFields from './ClusterFields';
 import AlertOverridesPanel from '../AlertOverridesPanel';
 import ProbeOverridesPanel from '../ProbeOverridesPanel';
 import ChannelOverridesPanel from '../ChannelOverridesPanel';
+import { apiPost, apiPut } from '../../utils/apiClient';
 
 const Transition = React.forwardRef(function Transition(
     props: TransitionProps & { children: React.ReactElement },
@@ -77,6 +80,11 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
     const [saveSuccess, setSaveSuccess] = useState(false);
     const [sslExpanded, setSslExpanded] = useState(false);
     const [activeTab, setActiveTab] = useState(0);
+    const [clusterValue, setClusterValue] = useState<ClusterFieldsValue>({
+        clusterId: null,
+        role: null,
+        clusterOverride: false,
+    });
 
     const isEditMode = mode === 'edit';
 
@@ -110,6 +118,11 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
                 setFormData(getDefaultFormData());
                 setSslExpanded(false);
             }
+            setClusterValue({
+                clusterId: null,
+                role: null,
+                clusterOverride: false,
+            });
             setErrors({});
             setSubmitError(null);
             setSaveSuccess(false);
@@ -151,7 +164,45 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
 
         try {
             const saveData = prepareSaveData(formData);
-            await onSave(saveData);
+            const result = await onSave(saveData);
+
+            // In create mode, apply cluster assignment if set
+            if (
+                !isEditMode &&
+                (clusterValue.clusterId !== null ||
+                    clusterValue.newCluster)
+            ) {
+                // Attempt to get the new connection ID from the result
+                const newId = (result as Record<string, unknown>)?.id as
+                    | number
+                    | undefined;
+                if (newId) {
+                    let clusterId = clusterValue.clusterId;
+
+                    // Create a new cluster first if needed
+                    if (clusterValue.newCluster) {
+                        const created = await apiPost<{
+                            id: number;
+                            name: string;
+                        }>('/api/v1/clusters', {
+                            name: clusterValue.newCluster.name.trim(),
+                            replication_type:
+                                clusterValue.newCluster.replication_type,
+                        });
+                        clusterId = created.id;
+                    }
+
+                    await apiPut(
+                        `/api/v1/connections/${newId}/cluster`,
+                        {
+                            cluster_id: clusterId,
+                            role: clusterValue.role,
+                            cluster_override: true,
+                        },
+                    );
+                }
+            }
+
             setSaveSuccess(true);
         } catch (err: unknown) {
             setSubmitError(
@@ -218,6 +269,7 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
                     }}
                 >
                     <Tab label="Details" />
+                    <Tab label="Cluster" />
                     <Tab label="Alert overrides" />
                     <Tab label="Probe configuration" />
                     <Tab label="Notification channels" />
@@ -296,19 +348,30 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
                             </form>
                         </Box>
                     )}
-                    {activeTab === 1 && (
+                    <Box
+                        sx={{
+                            ...editFormContainerSx,
+                            display: activeTab === 1 ? 'flex' : 'none',
+                        }}
+                    >
+                        <ClusterFields
+                            mode="edit"
+                            serverId={server?.id as number}
+                        />
+                    </Box>
+                    {activeTab === 2 && (
                         <AlertOverridesPanel
                             scope="server"
                             scopeId={server?.id as number}
                         />
                     )}
-                    {activeTab === 2 && (
+                    {activeTab === 3 && (
                         <ProbeOverridesPanel
                             scope="server"
                             scopeId={server?.id as number}
                         />
                     )}
-                    {activeTab === 3 && (
+                    {activeTab === 4 && (
                         <ChannelOverridesPanel
                             scope="server"
                             scopeId={server?.id as number}
@@ -372,6 +435,12 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
                         isSaving={isSaving}
                         isSuperuser={isSuperuser}
                         onFieldChange={handleFieldChange}
+                    />
+
+                    <ClusterFields
+                        mode="create"
+                        value={clusterValue}
+                        onChange={setClusterValue}
                     />
                 </DialogContent>
 

@@ -470,13 +470,15 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
     };
 
     // Handler for saving a server (create or update)
-    const handleSaveServer = async (serverData: Record<string, unknown>) => {
+    const handleSaveServer = async (serverData: Record<string, unknown>): Promise<unknown> => {
+        let result: unknown;
         if (serverDialogMode === 'create') {
-            await createServer(serverData);
+            result = await createServer(serverData);
         } else {
-            await updateServer(editingServer.id, serverData);
+            result = await updateServer(editingServer.id, serverData);
         }
         setServerDialogOpen(false);
+        return result;
     };
 
     // Handler for deleting a server

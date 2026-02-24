@@ -58,6 +58,11 @@ const (
 	// AlertCooldownPeriod prevents flapping by suppressing new alerts for a
 	// rule+connection+database combination that was recently cleared.
 	AlertCooldownPeriod = 5 * time.Minute
+
+	// ReevaluationSuppressionPeriod is how long to suppress anomaly alerts
+	// after re-evaluation clears them based on user feedback. This is longer
+	// than the standard cooldown to respect the user's assessment.
+	ReevaluationSuppressionPeriod = 24 * time.Hour
 )
 
 // Engine is the main alerter engine that coordinates all background processing
@@ -182,6 +187,15 @@ func (e *Engine) Run(ctx context.Context) error {
 			defer wg.Done()
 			e.runAnomalyDetector(ctx)
 		}()
+
+		// Re-evaluation worker (if enabled and reasoning provider available)
+		if e.config.Anomaly.Reevaluation.Enabled && e.reasoningProvider != nil {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				e.runReevaluationWorker(ctx)
+			}()
+		}
 	}
 
 	// Blackout scheduler

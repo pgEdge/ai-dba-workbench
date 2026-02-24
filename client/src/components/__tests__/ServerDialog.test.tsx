@@ -23,6 +23,13 @@ vi.mock('../AlertOverridesPanel', () => ({
     ),
 }));
 
+// Mock ClusterFields to avoid fetch calls during ServerDialog tests
+vi.mock('../ServerDialog/ClusterFields', () => ({
+    default: () => (
+        <div data-testid="cluster-fields">ClusterFields</div>
+    ),
+}));
+
 // Helper functions to get form fields reliably
 const getNameField = () => screen.getByRole('textbox', { name: /^name/i });
 const getHostField = () => screen.getByRole('textbox', { name: /^host/i });

@@ -268,8 +268,27 @@ func (e *Engine) processTier2(ctx context.Context, candidate *database.AnomalyCa
 func (e *Engine) processTier3(ctx context.Context, candidate *database.AnomalyCandidate, similarAnomalies []*database.SimilarAnomaly) {
 	e.debugLog("Tier 3: Processing candidate %d with LLM", candidate.ID)
 
+	// Fetch acknowledgement history for this metric+connection to inform the LLM
+	var ackHistory []*database.AcknowledgedAnomalyAlert
+	ackHistory, err := e.datastore.GetAcknowledgmentHistoryForMetric(ctx, candidate.MetricName, candidate.ConnectionID, 0, 10)
+	if err != nil {
+		e.debugLog("Tier 3: Failed to fetch ack history for candidate %d: %v", candidate.ID, err)
+	}
+
+	// Fetch cluster context for the LLM prompt
+	clusterPeers, err := e.datastore.GetClusterPeers(ctx, candidate.ConnectionID)
+	if err != nil {
+		e.debugLog("Tier 3: Failed to fetch cluster peers for candidate %d: %v", candidate.ID, err)
+		clusterPeers = nil
+	}
+	clusterAlerts, err := e.datastore.GetAlertsByCluster(ctx, candidate.ConnectionID)
+	if err != nil {
+		e.debugLog("Tier 3: Failed to fetch cluster alerts for candidate %d: %v", candidate.ID, err)
+		clusterAlerts = nil
+	}
+
 	// Build the classification prompt
-	prompt := e.buildClassificationPrompt(candidate, similarAnomalies)
+	prompt := e.buildClassificationPrompt(candidate, similarAnomalies, ackHistory, clusterPeers, clusterAlerts)
 
 	// Create a timeout context for Tier 3
 	cfg := e.getConfig()
@@ -363,6 +382,27 @@ func (e *Engine) createAnomalyAlert(ctx context.Context, candidate *database.Ano
 		return
 	}
 
+	// Check if re-evaluation previously cleared this alert based on user
+	// feedback. Use a longer suppression window to respect the user's
+	// assessment.
+	suppressed, err := e.datastore.GetReevaluationSuppressedAlert(ctx, candidate.MetricName, candidate.ConnectionID, candidate.DatabaseName, ReevaluationSuppressionPeriod)
+	if err != nil {
+		e.debugLog("Error checking re-evaluation suppression for %s on connection %d: %v", candidate.MetricName, candidate.ConnectionID, err)
+	} else if suppressed {
+		e.debugLog("Skipping anomaly alert %s on connection %d: suppressed by re-evaluation feedback", candidate.MetricName, candidate.ConnectionID)
+		return
+	}
+
+	// Check if user has acknowledged a similar alert as a false positive.
+	// Respect the user's assessment for the same suppression period.
+	fpSuppressed, err := e.datastore.GetFalsePositiveSuppressedAlert(ctx, candidate.MetricName, candidate.ConnectionID, candidate.DatabaseName, ReevaluationSuppressionPeriod)
+	if err != nil {
+		e.debugLog("Error checking false positive suppression for %s on connection %d: %v", candidate.MetricName, candidate.ConnectionID, err)
+	} else if fpSuppressed {
+		e.debugLog("Skipping anomaly alert %s on connection %d: suppressed by user false positive acknowledgment", candidate.MetricName, candidate.ConnectionID)
+		return
+	}
+
 	// Determine severity based on z-score magnitude
 	absZScore := candidate.ZScore
 	if absZScore < 0 {
@@ -384,7 +424,7 @@ func (e *Engine) createAnomalyAlert(ctx context.Context, candidate *database.Ano
 		formatOptionalString(candidate.Tier3Result),
 	)
 
-	title := fmt.Sprintf("Anomaly detected: %s", candidate.MetricName)
+	title := candidate.MetricName
 	description := fmt.Sprintf(
 		"Statistical anomaly detected for metric %s (value: %.4f, z-score: %.2f).",
 		candidate.MetricName, candidate.MetricValue, candidate.ZScore,
@@ -458,7 +498,13 @@ func (e *Engine) buildContextText(candidate *database.AnomalyCandidate) string {
 }
 
 // buildClassificationPrompt builds the prompt for LLM classification
-func (e *Engine) buildClassificationPrompt(candidate *database.AnomalyCandidate, similarAnomalies []*database.SimilarAnomaly) string {
+func (e *Engine) buildClassificationPrompt(
+	candidate *database.AnomalyCandidate,
+	similarAnomalies []*database.SimilarAnomaly,
+	ackHistory []*database.AcknowledgedAnomalyAlert,
+	clusterPeers []*database.ClusterPeerInfo,
+	clusterAlerts []*database.Alert,
+) string {
 	var sb strings.Builder
 
 	sb.WriteString("Analyze the following anomaly candidate and determine if it is a real issue that requires attention (alert) or a false positive that should be suppressed.\n\n")
@@ -508,13 +554,85 @@ func (e *Engine) buildClassificationPrompt(candidate *database.AnomalyCandidate,
 		sb.WriteString("\n## Similar Past Anomalies\nNo similar past anomalies found.\n")
 	}
 
+	// Include past user feedback if available
+	if len(ackHistory) > 0 {
+		sb.WriteString("\n## Past User Feedback\n")
+		sb.WriteString("Users have previously acknowledged alerts for this same metric and server:\n")
+		for _, ack := range ackHistory {
+			if ack.AckMessage != nil && *ack.AckMessage != "" {
+				fmt.Fprintf(&sb, "- Note: %s", *ack.AckMessage)
+			} else {
+				sb.WriteString("- (no message)")
+			}
+			if ack.FalsePositive {
+				sb.WriteString(" [MARKED AS FALSE POSITIVE]")
+			}
+			if ack.AcknowledgedBy != nil {
+				fmt.Fprintf(&sb, " (by %s", *ack.AcknowledgedBy)
+				if ack.AcknowledgedAt != nil {
+					fmt.Fprintf(&sb, " at %s", ack.AcknowledgedAt.Format(time.RFC3339))
+				}
+				sb.WriteString(")")
+			}
+			sb.WriteString("\n")
+			if ack.MetricValue != nil {
+				fmt.Fprintf(&sb, "  Original alert: value=%.4f", *ack.MetricValue)
+			}
+			if ack.ZScore != nil {
+				fmt.Fprintf(&sb, ", z-score=%.2f", *ack.ZScore)
+			}
+			fmt.Fprintf(&sb, ", severity=%s\n", ack.Severity)
+		}
+	}
+
+	writeClusterContext(&sb, candidate.ConnectionID, clusterPeers, clusterAlerts)
+
 	sb.WriteString("\n## Instructions\n")
+	sb.WriteString("Consider any past user feedback, but evaluate whether it still applies. If the current anomaly is significantly more severe than when the user dismissed it (e.g., much higher z-score or value), the alert should still fire. Past feedback suggests context, not a blanket rule.\n")
 	sb.WriteString("Based on the above information, respond with a JSON object containing:\n")
 	sb.WriteString("- \"decision\": either \"alert\" (real issue) or \"suppress\" (false positive)\n")
 	sb.WriteString("- \"confidence\": a number from 0 to 1\n")
 	sb.WriteString("- \"reasoning\": a brief explanation\n")
 
 	return sb.String()
+}
+
+// writeClusterContext appends a "Cluster Context" section to the prompt
+// if the connection belongs to a replication cluster with peers.
+func writeClusterContext(
+	sb *strings.Builder,
+	connectionID int,
+	clusterPeers []*database.ClusterPeerInfo,
+	clusterAlerts []*database.Alert,
+) {
+	if len(clusterPeers) == 0 {
+		return
+	}
+
+	fmt.Fprintf(sb, "\n## Cluster Context\n")
+	fmt.Fprintf(sb, "This server belongs to a cluster with %d other node(s):\n", len(clusterPeers))
+
+	// Build a lookup map from connection ID to peer name
+	peerNames := make(map[int]string, len(clusterPeers))
+	for _, peer := range clusterPeers {
+		fmt.Fprintf(sb, "- %s (%s)\n", peer.ConnectionName, peer.NodeRole)
+		peerNames[peer.ConnectionID] = peer.ConnectionName
+	}
+
+	if len(clusterAlerts) > 0 {
+		sb.WriteString("\nActive alerts on cluster peers:\n")
+		for _, alert := range clusterAlerts {
+			name := peerNames[alert.ConnectionID]
+			if name == "" {
+				name = fmt.Sprintf("connection %d", alert.ConnectionID)
+			}
+			fmt.Fprintf(sb, "- %s (severity: %s, server: %s, triggered: %s)\n",
+				alert.Title, alert.Severity, name,
+				alert.TriggeredAt.Format(time.RFC3339))
+		}
+	} else {
+		sb.WriteString("\nNo active alerts on cluster peers.\n")
+	}
 }
 
 // parseLLMResponse parses the LLM response to extract the decision

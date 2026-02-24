@@ -65,8 +65,8 @@ func TestClusterHandler_HandleNotConfigured(t *testing.T) {
 func TestClusterHandler_HandleClusters_MethodNotAllowed(t *testing.T) {
 	handler := NewClusterHandler(nil, nil, nil)
 
-	// Test POST method (should be rejected even without datastore)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/clusters", nil)
+	// Test DELETE method (should be rejected; only GET and POST are allowed)
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/clusters", nil)
 	rec := httptest.NewRecorder()
 
 	// Note: We can only test the method check part here since datastore is nil
@@ -78,8 +78,8 @@ func TestClusterHandler_HandleClusters_MethodNotAllowed(t *testing.T) {
 	}
 
 	allowed := rec.Header().Get("Allow")
-	if allowed != "GET" {
-		t.Errorf("Expected Allow header 'GET', got %q", allowed)
+	if allowed != "GET, POST" {
+		t.Errorf("Expected Allow header 'GET, POST', got %q", allowed)
 	}
 }
 
@@ -544,5 +544,176 @@ func TestAutoDetectedClusterRequest_JSON(t *testing.T) {
 	}
 	if decoded.GroupID == nil || *decoded.GroupID != *req.GroupID {
 		t.Error("GroupID mismatch")
+	}
+}
+
+func TestClusterHandler_HandleClusterRelationships_MethodNotAllowed(t *testing.T) {
+	handler := NewClusterHandler(nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/clusters/1/relationships", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterRelationships(rec, req, 1)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("Expected status %d, got %d", http.StatusMethodNotAllowed, rec.Code)
+	}
+
+	allowed := rec.Header().Get("Allow")
+	if allowed != "GET" {
+		t.Errorf("Expected Allow header 'GET', got %q", allowed)
+	}
+}
+
+func TestClusterHandler_HandleConnectionRelationships_MethodNotAllowed(t *testing.T) {
+	handler := NewClusterHandler(nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/clusters/1/connections/2/relationships", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleConnectionRelationships(rec, req, 1, 2)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("Expected status %d, got %d", http.StatusMethodNotAllowed, rec.Code)
+	}
+
+	allowed := rec.Header().Get("Allow")
+	if allowed != "PUT, DELETE" {
+		t.Errorf("Expected Allow header 'PUT, DELETE', got %q", allowed)
+	}
+}
+
+func TestClusterHandler_HandleDeleteRelationship_MethodNotAllowed(t *testing.T) {
+	handler := NewClusterHandler(nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/clusters/1/relationships/5", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleDeleteRelationship(rec, req, 1, 5)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("Expected status %d, got %d", http.StatusMethodNotAllowed, rec.Code)
+	}
+
+	allowed := rec.Header().Get("Allow")
+	if allowed != "DELETE" {
+		t.Errorf("Expected Allow header 'DELETE', got %q", allowed)
+	}
+}
+
+func TestClusterHandler_SetRelationships_InvalidJSON(t *testing.T) {
+	handler := NewClusterHandler(nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/clusters/1/connections/2/relationships",
+		bytes.NewBufferString("invalid json"))
+	rec := httptest.NewRecorder()
+
+	handler.setConnectionRelationships(rec, req, 1, 2)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+}
+
+func TestClusterHandler_HandleClusterSubpath_Relationships_InvalidClusterID(t *testing.T) {
+	handler := NewClusterHandler(nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/clusters/abc/relationships", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterSubpath(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if response.Error != "Invalid cluster ID" {
+		t.Errorf("Expected 'Invalid cluster ID', got %q", response.Error)
+	}
+}
+
+func TestClusterHandler_HandleClusterSubpath_DeleteRelationship_InvalidRelID(t *testing.T) {
+	handler := NewClusterHandler(nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/clusters/1/relationships/abc", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterSubpath(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if response.Error != "Invalid relationship ID" {
+		t.Errorf("Expected 'Invalid relationship ID', got %q", response.Error)
+	}
+}
+
+func TestClusterHandler_HandleClusterSubpath_ConnectionRelationships_InvalidConnID(t *testing.T) {
+	handler := NewClusterHandler(nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/clusters/1/connections/abc/relationships", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterSubpath(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if response.Error != "Invalid connection ID" {
+		t.Errorf("Expected 'Invalid connection ID', got %q", response.Error)
+	}
+}
+
+func TestSetRelationshipsRequest_JSON(t *testing.T) {
+	body := `{"relationships":[{"target_connection_id":3,"relationship_type":"streams_from"}]}`
+
+	var req SetRelationshipsRequest
+	if err := json.Unmarshal([]byte(body), &req); err != nil {
+		t.Fatalf("Failed to unmarshal: %v", err)
+	}
+
+	if len(req.Relationships) != 1 {
+		t.Fatalf("Expected 1 relationship, got %d", len(req.Relationships))
+	}
+
+	if req.Relationships[0].TargetConnectionID != 3 {
+		t.Errorf("Expected target_connection_id=3, got %d", req.Relationships[0].TargetConnectionID)
+	}
+
+	if req.Relationships[0].RelationshipType != "streams_from" {
+		t.Errorf("Expected relationship_type='streams_from', got %q", req.Relationships[0].RelationshipType)
+	}
+}
+
+func TestValidRelationshipTypes(t *testing.T) {
+	validTypes := []string{"streams_from", "subscribes_to", "replicates_with"}
+	for _, rt := range validTypes {
+		if !validRelationshipTypes[rt] {
+			t.Errorf("Expected %q to be a valid relationship type", rt)
+		}
+	}
+
+	invalidTypes := []string{"invalid", "primary", "replica", ""}
+	for _, rt := range invalidTypes {
+		if validRelationshipTypes[rt] {
+			t.Errorf("Expected %q to be an invalid relationship type", rt)
+		}
 	}
 }

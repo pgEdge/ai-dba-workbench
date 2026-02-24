@@ -24,6 +24,12 @@ export interface ClusterServer {
     version?: string | null;
     connection_error?: string;
     children?: ClusterServer[];
+    relationships?: Array<{
+        target_server_id: number;
+        target_server_name: string;
+        relationship_type: string;
+        is_auto_detected: boolean;
+    }>;
 }
 
 export interface ClusterEntry {

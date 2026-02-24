@@ -222,6 +222,8 @@ func cleanupTestSchema(t *testing.T, pool *pgxpool.Pool) {
 	ctx := context.Background()
 
 	tables := []string{
+		// Cluster relationship tables (migration 24)
+		"cluster_node_relationships",
 		// Alerter tables (migrations 7-10)
 		"anomaly_candidates",
 		"correlation_groups",
@@ -269,7 +271,7 @@ func TestNewSchemaManager(t *testing.T) {
 	// Verify migrations are registered in order
 	// All migrations have been squashed into a single migration at version 1
 	// that creates the complete schema with all tables, indexes, and seed data
-	expectedVersions := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21}
+	expectedVersions := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24}
 	if len(sm.migrations) != len(expectedVersions) {
 		t.Fatalf("Expected %d migrations, got %d", len(expectedVersions), len(sm.migrations))
 	}
@@ -614,6 +616,291 @@ func TestIndexesCreated(t *testing.T) {
 	cleanupTestSchema(t, pool)
 }
 
+func TestMigration23_ClusterOverrideAndReplicationType(t *testing.T) {
+	ctx := context.Background()
+	pool, conn := getTestConnection(t)
+	if pool == nil {
+		return
+	}
+	defer pool.Close()
+	defer conn.Release()
+
+	// Clean up and migrate
+	cleanupTestSchema(t, pool)
+	sm := NewSchemaManager()
+	if err := sm.Migrate(conn); err != nil {
+		t.Fatalf("Failed to migrate: %v", err)
+	}
+
+	// Verify cluster_override column exists on connections with correct default
+	var clusterOverride bool
+	err := pool.QueryRow(ctx, `
+        SELECT cluster_override
+        FROM (
+            SELECT column_default, data_type
+            FROM information_schema.columns
+            WHERE table_name = 'connections'
+            AND column_name = 'cluster_override'
+        ) sub,
+        LATERAL (SELECT FALSE AS cluster_override) defaults
+    `).Scan(&clusterOverride)
+	if err != nil {
+		t.Fatalf("Failed to query cluster_override column: %v", err)
+	}
+
+	// Verify the column exists with correct type and default
+	var colType string
+	var colDefault string
+	err = pool.QueryRow(ctx, `
+        SELECT data_type, column_default
+        FROM information_schema.columns
+        WHERE table_name = 'connections'
+        AND column_name = 'cluster_override'
+    `).Scan(&colType, &colDefault)
+	if err != nil {
+		t.Fatalf("cluster_override column not found on connections table: %v", err)
+	}
+	if colType != "boolean" {
+		t.Errorf("Expected cluster_override type 'boolean', got '%s'", colType)
+	}
+	if colDefault != "false" {
+		t.Errorf("Expected cluster_override default 'false', got '%s'", colDefault)
+	}
+
+	// Verify replication_type column exists on clusters
+	var repColType string
+	var isNullable string
+	err = pool.QueryRow(ctx, `
+        SELECT data_type, is_nullable
+        FROM information_schema.columns
+        WHERE table_name = 'clusters'
+        AND column_name = 'replication_type'
+    `).Scan(&repColType, &isNullable)
+	if err != nil {
+		t.Fatalf("replication_type column not found on clusters table: %v", err)
+	}
+	if repColType != "character varying" {
+		t.Errorf("Expected replication_type type 'character varying', got '%s'", repColType)
+	}
+	if isNullable != "YES" {
+		t.Errorf("Expected replication_type to be nullable, got is_nullable='%s'", isNullable)
+	}
+
+	// Clean up
+	cleanupTestSchema(t, pool)
+}
+
+func TestMigration24_ClusterNodeRelationships(t *testing.T) {
+	ctx := context.Background()
+	pool, conn := getTestConnection(t)
+	if pool == nil {
+		return
+	}
+	defer pool.Close()
+	defer conn.Release()
+
+	// Clean up and migrate
+	cleanupTestSchema(t, pool)
+	sm := NewSchemaManager()
+	if err := sm.Migrate(conn); err != nil {
+		t.Fatalf("Failed to migrate: %v", err)
+	}
+
+	// Verify table exists with expected columns
+	expectedColumns := map[string]string{
+		"id":                   "integer",
+		"cluster_id":           "integer",
+		"source_connection_id": "integer",
+		"target_connection_id": "integer",
+		"relationship_type":    "character varying",
+		"is_auto_detected":     "boolean",
+		"created_at":           "timestamp with time zone",
+		"updated_at":           "timestamp with time zone",
+	}
+
+	for colName, expectedType := range expectedColumns {
+		var dataType string
+		err := pool.QueryRow(ctx, `
+            SELECT data_type
+            FROM information_schema.columns
+            WHERE table_name = 'cluster_node_relationships'
+            AND column_name = $1
+        `, colName).Scan(&dataType)
+		if err != nil {
+			t.Fatalf("Column %s not found on cluster_node_relationships: %v", colName, err)
+		}
+		if dataType != expectedType {
+			t.Errorf("Column %s: expected type '%s', got '%s'", colName, expectedType, dataType)
+		}
+	}
+
+	// Insert test data: create a cluster and two connections
+	var groupID int
+	err := pool.QueryRow(ctx, `
+        SELECT id FROM cluster_groups LIMIT 1
+    `).Scan(&groupID)
+	if err != nil {
+		t.Fatalf("Failed to get default cluster group: %v", err)
+	}
+
+	var clusterID int
+	err = pool.QueryRow(ctx, `
+        INSERT INTO clusters (group_id, name)
+        VALUES ($1, 'test-cluster')
+        RETURNING id
+    `, groupID).Scan(&clusterID)
+	if err != nil {
+		t.Fatalf("Failed to create test cluster: %v", err)
+	}
+
+	var conn1ID, conn2ID int
+	err = pool.QueryRow(ctx, `
+        INSERT INTO connections
+        (name, host, port, database_name, username, owner_username, cluster_id)
+        VALUES ('node1', 'host1', 5432, 'db1', 'user1', 'testowner', $1)
+        RETURNING id
+    `, clusterID).Scan(&conn1ID)
+	if err != nil {
+		t.Fatalf("Failed to create test connection 1: %v", err)
+	}
+
+	err = pool.QueryRow(ctx, `
+        INSERT INTO connections
+        (name, host, port, database_name, username, owner_username, cluster_id)
+        VALUES ('node2', 'host2', 5432, 'db2', 'user2', 'testowner', $1)
+        RETURNING id
+    `, clusterID).Scan(&conn2ID)
+	if err != nil {
+		t.Fatalf("Failed to create test connection 2: %v", err)
+	}
+
+	// Test self-relationship constraint (source != target)
+	_, err = pool.Exec(ctx, `
+        INSERT INTO cluster_node_relationships
+        (cluster_id, source_connection_id, target_connection_id, relationship_type)
+        VALUES ($1, $2, $2, 'streams_from')
+    `, clusterID, conn1ID)
+	if err == nil {
+		t.Error("Expected error for self-relationship, got nil")
+	}
+
+	// Test valid insertion
+	var relID int
+	err = pool.QueryRow(ctx, `
+        INSERT INTO cluster_node_relationships
+        (cluster_id, source_connection_id, target_connection_id, relationship_type)
+        VALUES ($1, $2, $3, 'streams_from')
+        RETURNING id
+    `, clusterID, conn1ID, conn2ID).Scan(&relID)
+	if err != nil {
+		t.Fatalf("Failed to insert valid relationship: %v", err)
+	}
+
+	// Test uniqueness constraint (same cluster, source, target, type)
+	_, err = pool.Exec(ctx, `
+        INSERT INTO cluster_node_relationships
+        (cluster_id, source_connection_id, target_connection_id, relationship_type)
+        VALUES ($1, $2, $3, 'streams_from')
+    `, clusterID, conn1ID, conn2ID)
+	if err == nil {
+		t.Error("Expected error for duplicate relationship, got nil")
+	}
+
+	// Test that different relationship_type is allowed for same pair
+	_, err = pool.Exec(ctx, `
+        INSERT INTO cluster_node_relationships
+        (cluster_id, source_connection_id, target_connection_id, relationship_type)
+        VALUES ($1, $2, $3, 'subscribes_to')
+    `, clusterID, conn1ID, conn2ID)
+	if err != nil {
+		t.Errorf("Failed to insert different relationship type for same pair: %v", err)
+	}
+
+	// Test CASCADE delete when cluster is deleted
+	// Create a separate cluster for this test
+	var cluster2ID int
+	err = pool.QueryRow(ctx, `
+        INSERT INTO clusters (group_id, name)
+        VALUES ($1, 'test-cluster-2')
+        RETURNING id
+    `, groupID).Scan(&cluster2ID)
+	if err != nil {
+		t.Fatalf("Failed to create test cluster 2: %v", err)
+	}
+
+	// Create a third connection for CASCADE tests
+	var conn3ID int
+	err = pool.QueryRow(ctx, `
+        INSERT INTO connections
+        (name, host, port, database_name, username, owner_username, cluster_id)
+        VALUES ('node3', 'host3', 5432, 'db3', 'user3', 'testowner', $1)
+        RETURNING id
+    `, cluster2ID).Scan(&conn3ID)
+	if err != nil {
+		t.Fatalf("Failed to create test connection 3: %v", err)
+	}
+
+	// Create a fourth connection for CASCADE tests
+	var conn4ID int
+	err = pool.QueryRow(ctx, `
+        INSERT INTO connections
+        (name, host, port, database_name, username, owner_username, cluster_id)
+        VALUES ('node4', 'host4', 5432, 'db4', 'user4', 'testowner', $1)
+        RETURNING id
+    `, cluster2ID).Scan(&conn4ID)
+	if err != nil {
+		t.Fatalf("Failed to create test connection 4: %v", err)
+	}
+
+	_, err = pool.Exec(ctx, `
+        INSERT INTO cluster_node_relationships
+        (cluster_id, source_connection_id, target_connection_id, relationship_type)
+        VALUES ($1, $2, $3, 'replicates_with')
+    `, cluster2ID, conn3ID, conn4ID)
+	if err != nil {
+		t.Fatalf("Failed to insert relationship for CASCADE test: %v", err)
+	}
+
+	// Delete the cluster and verify the relationship is removed
+	_, err = pool.Exec(ctx, `DELETE FROM clusters WHERE id = $1`, cluster2ID)
+	if err != nil {
+		t.Fatalf("Failed to delete cluster: %v", err)
+	}
+
+	var count int
+	err = pool.QueryRow(ctx, `
+        SELECT COUNT(*) FROM cluster_node_relationships
+        WHERE cluster_id = $1
+    `, cluster2ID).Scan(&count)
+	if err != nil {
+		t.Fatalf("Failed to count relationships after cluster delete: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("Expected 0 relationships after cluster delete, got %d", count)
+	}
+
+	// Test CASCADE delete when a connection is deleted
+	// Delete conn2 and verify relationships referencing it are removed
+	_, err = pool.Exec(ctx, `DELETE FROM connections WHERE id = $1`, conn2ID)
+	if err != nil {
+		t.Fatalf("Failed to delete connection: %v", err)
+	}
+
+	err = pool.QueryRow(ctx, `
+        SELECT COUNT(*) FROM cluster_node_relationships
+        WHERE source_connection_id = $1 OR target_connection_id = $1
+    `, conn2ID).Scan(&count)
+	if err != nil {
+		t.Fatalf("Failed to count relationships after connection delete: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("Expected 0 relationships after connection delete, got %d", count)
+	}
+
+	// Clean up
+	cleanupTestSchema(t, pool)
+}
+
 // TestZZZ_FullSchemaForInspection creates the full schema and leaves it in
 // place for inspection. This test runs last (due to ZZZ prefix) and does not
 // clean up, allowing users to inspect the schema when TEST_AI_WORKBENCH_KEEP_DB=1 is set.
@@ -654,6 +941,8 @@ func TestZZZ_FullSchemaForInspection(t *testing.T) {
 		"metric_baselines",
 		"correlation_groups",
 		"anomaly_candidates",
+		// Cluster relationship tables (migration 24)
+		"cluster_node_relationships",
 	}
 
 	for _, tableName := range expectedTables {

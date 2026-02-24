@@ -21,6 +21,8 @@ interface TopologyNodeProps {
     node: TopoNode;
     nodeWidth: number;
     onClick: (node: TopoNode) => void;
+    /** When true, the node receives a primary-color border. */
+    highlight?: boolean;
 }
 
 /**
@@ -72,6 +74,7 @@ const TopologyNode: React.FC<TopologyNodeProps> = ({
     node,
     nodeWidth,
     onClick,
+    highlight = false,
 }) => {
     const theme = useTheme();
     const isDark = theme.palette.mode === 'dark';
@@ -103,8 +106,16 @@ const TopologyNode: React.FC<TopologyNodeProps> = ({
                 bgcolor: isDark
                     ? alpha(theme.palette.grey[800], 0.8)
                     : theme.palette.grey[50],
-                border: '1px solid',
-                borderColor: theme.palette.divider,
+                border: highlight ? '2px solid' : '1px solid',
+                borderColor: highlight
+                    ? theme.palette.primary.main
+                    : theme.palette.divider,
+                boxShadow: highlight
+                    ? `0 0 0 2px ${alpha(
+                        theme.palette.primary.main,
+                        0.3,
+                    )}`
+                    : undefined,
                 cursor: 'pointer',
                 transition:
                     'border-color 0.2s, box-shadow 0.2s',

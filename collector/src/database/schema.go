@@ -2891,6 +2891,96 @@ func (sm *SchemaManager) registerMigrations() {
 			return err
 		},
 	})
+
+	// Migration #22: Add re-evaluation tracking columns to alerts
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     22,
+		Description: "Add re-evaluation tracking columns to alerts",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+			_, err := tx.Exec(ctx, `
+				ALTER TABLE alerts ADD COLUMN IF NOT EXISTS
+					last_reevaluated_at TIMESTAMPTZ;
+
+				ALTER TABLE alerts ADD COLUMN IF NOT EXISTS
+					reevaluation_count INTEGER NOT NULL DEFAULT 0;
+			`)
+			return err
+		},
+	})
+
+	// Migration #23: Add cluster_override to connections and replication_type to clusters
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     23,
+		Description: "Add cluster_override to connections and replication_type to clusters",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+			_, err := tx.Exec(ctx, `
+				ALTER TABLE connections ADD COLUMN IF NOT EXISTS
+					cluster_override BOOLEAN NOT NULL DEFAULT FALSE;
+
+				ALTER TABLE clusters ADD COLUMN IF NOT EXISTS
+					replication_type VARCHAR(50);
+			`)
+			return err
+		},
+	})
+
+	// Migration #24: Create cluster_node_relationships table
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     24,
+		Description: "Create cluster_node_relationships table",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+			_, err := tx.Exec(ctx, `
+				CREATE TABLE IF NOT EXISTS cluster_node_relationships (
+					id SERIAL PRIMARY KEY,
+					cluster_id INTEGER NOT NULL
+						REFERENCES clusters(id) ON DELETE CASCADE,
+					source_connection_id INTEGER NOT NULL
+						REFERENCES connections(id) ON DELETE CASCADE,
+					target_connection_id INTEGER NOT NULL
+						REFERENCES connections(id) ON DELETE CASCADE,
+					relationship_type VARCHAR(50) NOT NULL,
+					is_auto_detected BOOLEAN NOT NULL DEFAULT FALSE,
+					created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+					updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+					CONSTRAINT chk_no_self_relationship
+						CHECK (source_connection_id != target_connection_id),
+					CONSTRAINT uq_relationship
+						UNIQUE (cluster_id, source_connection_id,
+								target_connection_id, relationship_type)
+				);
+
+				COMMENT ON TABLE cluster_node_relationships IS
+					'Replication relationships between nodes within a cluster';
+				COMMENT ON COLUMN cluster_node_relationships.id IS
+					'Unique identifier for the relationship';
+				COMMENT ON COLUMN cluster_node_relationships.cluster_id IS
+					'Reference to the cluster containing both nodes';
+				COMMENT ON COLUMN cluster_node_relationships.source_connection_id IS
+					'Connection receiving data (e.g., standby or subscriber)';
+				COMMENT ON COLUMN cluster_node_relationships.target_connection_id IS
+					'Connection providing data (e.g., primary or publisher)';
+				COMMENT ON COLUMN cluster_node_relationships.relationship_type IS
+					'Type of replication: streams_from, subscribes_to, or replicates_with';
+				COMMENT ON COLUMN cluster_node_relationships.is_auto_detected IS
+					'TRUE when created by auto-detection, FALSE when manually created';
+				COMMENT ON COLUMN cluster_node_relationships.created_at IS
+					'Timestamp when the relationship was created';
+				COMMENT ON COLUMN cluster_node_relationships.updated_at IS
+					'Timestamp when the relationship was last updated';
+
+				CREATE INDEX IF NOT EXISTS idx_cnr_cluster_id
+					ON cluster_node_relationships(cluster_id);
+				CREATE INDEX IF NOT EXISTS idx_cnr_source_connection_id
+					ON cluster_node_relationships(source_connection_id);
+				CREATE INDEX IF NOT EXISTS idx_cnr_target_connection_id
+					ON cluster_node_relationships(target_connection_id);
+			`)
+			return err
+		},
+	})
 }
 
 // Migrate applies all pending migrations

@@ -63,6 +63,7 @@ func (h *ClusterHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(htt
 		// Datastore not configured, register handlers that return appropriate errors
 		notConfigured := HandleNotConfigured("Cluster management")
 		mux.HandleFunc("/api/v1/clusters", authWrapper(notConfigured))
+		mux.HandleFunc("/api/v1/clusters/list", authWrapper(notConfigured))
 		mux.HandleFunc("/api/v1/clusters/", authWrapper(notConfigured))
 		mux.HandleFunc("/api/v1/cluster-groups", authWrapper(notConfigured))
 		mux.HandleFunc("/api/v1/cluster-groups/", authWrapper(notConfigured))
@@ -72,6 +73,9 @@ func (h *ClusterHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(htt
 	// Cluster hierarchy endpoint (returns full hierarchy for ClusterNavigator)
 	mux.HandleFunc("/api/v1/clusters", authWrapper(h.handleClusters))
 
+	// Cluster list endpoint (flat list for autocomplete/selection UIs)
+	mux.HandleFunc("/api/v1/clusters/list", authWrapper(h.handleListClusters))
+
 	// Cluster CRUD endpoints
 	mux.HandleFunc("/api/v1/clusters/", authWrapper(h.handleClusterSubpath))
 
@@ -80,16 +84,28 @@ func (h *ClusterHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(htt
 	mux.HandleFunc("/api/v1/cluster-groups/", authWrapper(h.handleClusterGroupSubpath))
 }
 
-// handleClusters handles GET /api/v1/clusters (returns topology with manual groups and auto-detected servers)
+// handleClusters handles GET/POST /api/v1/clusters
 func (h *ClusterHandler) handleClusters(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", "GET")
+	switch r.Method {
+	case http.MethodGet:
+		h.getClusterTopology(w, r)
+	case http.MethodPost:
+		h.handleCreateCluster(w, r)
+	default:
+		w.Header().Set("Allow", "GET, POST")
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
 	}
+}
 
+// getClusterTopology returns the full cluster hierarchy for the ClusterNavigator
+func (h *ClusterHandler) getClusterTopology(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
+
+	// Sync cluster_id assignments before reading topology
+	if err := h.datastore.RefreshClusterAssignments(ctx); err != nil {
+		log.Printf("[WARN] Failed to refresh cluster assignments: %v", err)
+	}
 
 	topology, err := h.datastore.GetClusterTopology(ctx)
 	if err != nil {
@@ -109,7 +125,7 @@ func (h *ClusterHandler) handleClusterSubpath(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Check for servers sub-path: /api/v1/clusters/{id}/servers
+	// Check for sub-paths: /api/v1/clusters/{id}/servers, /api/v1/clusters/{id}/relationships, etc.
 	parts := strings.Split(path, "/")
 	if len(parts) == 2 && parts[1] == "servers" {
 		clusterID, err := strconv.Atoi(parts[0])
@@ -118,6 +134,49 @@ func (h *ClusterHandler) handleClusterSubpath(w http.ResponseWriter, r *http.Req
 			return
 		}
 		h.handleClusterServers(w, r, clusterID)
+		return
+	}
+
+	// GET /api/v1/clusters/{id}/relationships
+	if len(parts) == 2 && parts[1] == "relationships" {
+		clusterID, err := strconv.Atoi(parts[0])
+		if err != nil {
+			RespondError(w, http.StatusBadRequest, "Invalid cluster ID")
+			return
+		}
+		h.handleClusterRelationships(w, r, clusterID)
+		return
+	}
+
+	// DELETE /api/v1/clusters/{id}/relationships/{relationshipId}
+	if len(parts) == 3 && parts[1] == "relationships" {
+		clusterID, err := strconv.Atoi(parts[0])
+		if err != nil {
+			RespondError(w, http.StatusBadRequest, "Invalid cluster ID")
+			return
+		}
+		relationshipID, err := strconv.Atoi(parts[2])
+		if err != nil {
+			RespondError(w, http.StatusBadRequest, "Invalid relationship ID")
+			return
+		}
+		h.handleDeleteRelationship(w, r, clusterID, relationshipID)
+		return
+	}
+
+	// PUT/DELETE /api/v1/clusters/{id}/connections/{connId}/relationships
+	if len(parts) == 4 && parts[1] == "connections" && parts[3] == "relationships" {
+		clusterID, err := strconv.Atoi(parts[0])
+		if err != nil {
+			RespondError(w, http.StatusBadRequest, "Invalid cluster ID")
+			return
+		}
+		connID, err := strconv.Atoi(parts[2])
+		if err != nil {
+			RespondError(w, http.StatusBadRequest, "Invalid connection ID")
+			return
+		}
+		h.handleConnectionRelationships(w, r, clusterID, connID)
 		return
 	}
 
@@ -603,4 +662,259 @@ func (h *ClusterHandler) listServersInCluster(w http.ResponseWriter, r *http.Req
 	}
 
 	RespondJSON(w, http.StatusOK, servers)
+}
+
+// ManualClusterRequest is the request body for creating a cluster directly
+// (not through a cluster group sub-resource).
+type ManualClusterRequest struct {
+	Name            string `json:"name"`
+	Description     string `json:"description"`
+	ReplicationType string `json:"replication_type"`
+	GroupID         *int   `json:"group_id,omitempty"`
+}
+
+// handleListClusters handles GET /api/v1/clusters/list
+func (h *ClusterHandler) handleListClusters(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET")
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	clusters, err := h.datastore.ListClustersForAutocomplete(ctx)
+	if err != nil {
+		log.Printf("[ERROR] Failed to list clusters: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to list clusters")
+		return
+	}
+
+	RespondJSON(w, http.StatusOK, clusters)
+}
+
+// handleCreateCluster handles POST /api/v1/clusters
+func (h *ClusterHandler) handleCreateCluster(w http.ResponseWriter, r *http.Request) {
+	var req ManualClusterRequest
+	if !DecodeJSONBody(w, r, &req) {
+		return
+	}
+
+	if req.Name == "" {
+		RespondError(w, http.StatusBadRequest, "Name is required")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	clusterID, err := h.datastore.CreateManualCluster(ctx, req.Name, req.Description, req.ReplicationType, req.GroupID)
+	if err != nil {
+		log.Printf("[ERROR] Failed to create cluster %s: %v", req.Name, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to create cluster")
+		return
+	}
+
+	RespondJSON(w, http.StatusCreated, map[string]interface{}{
+		"id":   clusterID,
+		"name": req.Name,
+	})
+}
+
+// validRelationshipTypes defines the allowed relationship type values
+var validRelationshipTypes = map[string]bool{
+	"streams_from":    true,
+	"subscribes_to":   true,
+	"replicates_with": true,
+}
+
+// SetRelationshipsRequest is the request body for PUT
+// /api/v1/clusters/{id}/connections/{connId}/relationships
+type SetRelationshipsRequest struct {
+	Relationships []database.RelationshipInput `json:"relationships"`
+}
+
+// handleClusterRelationships handles GET /api/v1/clusters/{id}/relationships
+func (h *ClusterHandler) handleClusterRelationships(w http.ResponseWriter, r *http.Request, clusterID int) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET")
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	relationships, err := h.datastore.GetClusterRelationships(ctx, clusterID)
+	if err != nil {
+		log.Printf("[ERROR] Failed to get cluster relationships (cluster=%d): %v", clusterID, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to get cluster relationships")
+		return
+	}
+
+	if relationships == nil {
+		relationships = []database.NodeRelationship{}
+	}
+
+	RespondJSON(w, http.StatusOK, relationships)
+}
+
+// handleConnectionRelationships handles PUT and DELETE for
+// /api/v1/clusters/{id}/connections/{connId}/relationships
+func (h *ClusterHandler) handleConnectionRelationships(w http.ResponseWriter, r *http.Request, clusterID int, connID int) {
+	switch r.Method {
+	case http.MethodPut:
+		h.setConnectionRelationships(w, r, clusterID, connID)
+	case http.MethodDelete:
+		h.clearConnectionRelationships(w, r, clusterID, connID)
+	default:
+		w.Header().Set("Allow", "PUT, DELETE")
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// setConnectionRelationships handles PUT
+// /api/v1/clusters/{id}/connections/{connId}/relationships
+func (h *ClusterHandler) setConnectionRelationships(w http.ResponseWriter, r *http.Request, clusterID int, connID int) {
+	var req SetRelationshipsRequest
+	if !DecodeJSONBody(w, r, &req) {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	// Validate that the source connection belongs to this cluster
+	sourceInCluster, err := h.datastore.IsConnectionInCluster(ctx, clusterID, connID)
+	if err != nil {
+		log.Printf("[ERROR] Failed to check source cluster membership: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to validate cluster membership")
+		return
+	}
+	if !sourceInCluster {
+		RespondError(w, http.StatusBadRequest, "Source connection does not belong to this cluster")
+		return
+	}
+
+	// Validate each relationship entry
+	for _, rel := range req.Relationships {
+		// Validate relationship type
+		if !validRelationshipTypes[rel.RelationshipType] {
+			RespondError(w, http.StatusBadRequest,
+				"Invalid relationship type: "+rel.RelationshipType)
+			return
+		}
+
+		// Reject self-relationships
+		if rel.TargetConnectionID == connID {
+			RespondError(w, http.StatusBadRequest, "Self-relationships are not allowed")
+			return
+		}
+
+		// Validate that the target connection belongs to this cluster
+		targetInCluster, err := h.datastore.IsConnectionInCluster(ctx, clusterID, rel.TargetConnectionID)
+		if err != nil {
+			log.Printf("[ERROR] Failed to check target cluster membership: %v", err)
+			RespondError(w, http.StatusInternalServerError, "Failed to validate cluster membership")
+			return
+		}
+		if !targetInCluster {
+			RespondError(w, http.StatusBadRequest,
+				"Target connection does not belong to this cluster")
+			return
+		}
+	}
+
+	// Set the relationships for the source connection
+	if err := h.datastore.SetNodeRelationships(ctx, clusterID, connID, req.Relationships); err != nil {
+		log.Printf("[ERROR] Failed to set relationships (cluster=%d, conn=%d): %v", clusterID, connID, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to set relationships")
+		return
+	}
+
+	// For replicates_with entries, auto-create reverse rows
+	for _, rel := range req.Relationships {
+		if rel.RelationshipType != "replicates_with" {
+			continue
+		}
+
+		// Check if a reverse relationship already exists
+		existing, err := h.datastore.GetClusterRelationships(ctx, clusterID)
+		if err != nil {
+			log.Printf("[WARN] Failed to check existing reverse relationships: %v", err)
+			continue
+		}
+
+		reverseExists := false
+		for _, ex := range existing {
+			if ex.SourceConnectionID == rel.TargetConnectionID &&
+				ex.TargetConnectionID == connID &&
+				ex.RelationshipType == "replicates_with" {
+				reverseExists = true
+				break
+			}
+		}
+
+		if !reverseExists {
+			reverseRel := []database.RelationshipInput{
+				{TargetConnectionID: connID, RelationshipType: "replicates_with"},
+			}
+			if err := h.datastore.SetNodeRelationships(ctx, clusterID, rel.TargetConnectionID, reverseRel); err != nil {
+				log.Printf("[WARN] Failed to create reverse replicates_with relationship: %v", err)
+			}
+		}
+	}
+
+	// Return the updated relationships for this cluster
+	relationships, err := h.datastore.GetClusterRelationships(ctx, clusterID)
+	if err != nil {
+		log.Printf("[ERROR] Failed to get updated relationships: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Relationships saved but failed to retrieve updated list")
+		return
+	}
+
+	if relationships == nil {
+		relationships = []database.NodeRelationship{}
+	}
+
+	RespondJSON(w, http.StatusOK, relationships)
+}
+
+// handleDeleteRelationship handles DELETE
+// /api/v1/clusters/{id}/relationships/{relationshipId}
+func (h *ClusterHandler) handleDeleteRelationship(w http.ResponseWriter, r *http.Request, clusterID int, relationshipID int) {
+	_ = clusterID // clusterID is part of the URL for REST consistency
+
+	if r.Method != http.MethodDelete {
+		w.Header().Set("Allow", "DELETE")
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	if err := h.datastore.RemoveNodeRelationship(ctx, relationshipID); err != nil {
+		log.Printf("[ERROR] Failed to delete relationship (id=%d): %v", relationshipID, err)
+		RespondError(w, http.StatusNotFound, "Relationship not found")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// clearConnectionRelationships handles DELETE
+// /api/v1/clusters/{id}/connections/{connId}/relationships
+func (h *ClusterHandler) clearConnectionRelationships(w http.ResponseWriter, r *http.Request, clusterID int, connID int) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	if err := h.datastore.ClearNodeRelationships(ctx, clusterID, connID); err != nil {
+		log.Printf("[ERROR] Failed to clear relationships (cluster=%d, conn=%d): %v", clusterID, connID, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to clear relationships")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

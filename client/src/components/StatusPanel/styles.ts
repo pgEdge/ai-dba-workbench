@@ -68,6 +68,10 @@ export const getFriendlyTitle = (title) => {
             return value;
         }
     }
+    // Metric names (contain dots like pg_stat_activity.count) — display as-is
+    if (normalizedTitle.includes('.')) {
+        return title.trim();
+    }
     // Fallback: clean up the title by replacing underscores and capitalizing words
     return title
         .replace(/_/g, ' ')

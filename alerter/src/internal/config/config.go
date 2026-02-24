@@ -74,10 +74,11 @@ type ThresholdConfig struct {
 
 // AnomalyConfig holds anomaly detection settings
 type AnomalyConfig struct {
-	Enabled bool        `yaml:"enabled"`
-	Tier1   Tier1Config `yaml:"tier1"`
-	Tier2   Tier2Config `yaml:"tier2"`
-	Tier3   Tier3Config `yaml:"tier3"`
+	Enabled      bool               `yaml:"enabled"`
+	Tier1        Tier1Config        `yaml:"tier1"`
+	Tier2        Tier2Config        `yaml:"tier2"`
+	Tier3        Tier3Config        `yaml:"tier3"`
+	Reevaluation ReevaluationConfig `yaml:"reevaluation"`
 }
 
 // Tier1Config holds Tier 1 statistical detection settings
@@ -98,6 +99,14 @@ type Tier2Config struct {
 type Tier3Config struct {
 	Enabled        bool `yaml:"enabled"`
 	TimeoutSeconds int  `yaml:"timeout_seconds"`
+}
+
+// ReevaluationConfig holds re-evaluation settings for acknowledged anomaly alerts
+type ReevaluationConfig struct {
+	Enabled         bool `yaml:"enabled"`
+	IntervalSeconds int  `yaml:"interval_seconds"`
+	TimeoutSeconds  int  `yaml:"timeout_seconds"`
+	MaxPerCycle     int  `yaml:"max_per_cycle"`
 }
 
 // BaselineConfig holds baseline calculation settings
@@ -228,6 +237,12 @@ func NewConfig() *Config {
 			Tier3: Tier3Config{
 				Enabled:        true,
 				TimeoutSeconds: 30,
+			},
+			Reevaluation: ReevaluationConfig{
+				Enabled:         true,
+				IntervalSeconds: 300,
+				TimeoutSeconds:  30,
+				MaxPerCycle:     10,
 			},
 		},
 		Baselines: BaselineConfig{

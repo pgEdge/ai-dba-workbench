@@ -1069,7 +1069,7 @@ func (d *Datastore) GetActiveAnomalyAlert(ctx context.Context, metricName string
                cleared_at, last_updated, anomaly_score, anomaly_details
         FROM alerts
         WHERE alert_type = 'anomaly' AND metric_name = $1 AND connection_id = $2
-          AND status = 'active'
+          AND status IN ('active', 'acknowledged')
           AND (database_name = $3 OR ($3 IS NULL AND database_name IS NULL))
         LIMIT 1
     `, metricName, connectionID, dbName).Scan(
@@ -1101,6 +1101,57 @@ func (d *Datastore) GetRecentlyClearedAlert(ctx context.Context, ruleID int64, c
 
 	if err != nil {
 		return false, fmt.Errorf("failed to check recently cleared alert: %w", err)
+	}
+	return exists, nil
+}
+
+// GetReevaluationSuppressedAlert checks if a recently cleared anomaly alert
+// for this metric+connection was cleared by the re-evaluation system (based on
+// user feedback). These alerts are suppressed for longer to respect the user's
+// assessment.
+func (d *Datastore) GetReevaluationSuppressedAlert(ctx context.Context, metricName string, connectionID int, dbName *string, cooldown time.Duration) (bool, error) {
+	var exists bool
+	err := d.pool.QueryRow(ctx, `
+        SELECT EXISTS(
+            SELECT 1 FROM alerts
+            WHERE alert_type = 'anomaly'
+              AND metric_name = $1
+              AND connection_id = $2
+              AND status = 'cleared'
+              AND reevaluation_count > 0
+              AND cleared_at > NOW() - $3::interval
+              AND (database_name = $4 OR ($4 IS NULL AND database_name IS NULL))
+        )
+    `, metricName, connectionID, fmt.Sprintf("%d seconds", int(cooldown.Seconds())), dbName).Scan(&exists)
+
+	if err != nil {
+		return false, fmt.Errorf("failed to check re-evaluation suppressed alert: %w", err)
+	}
+	return exists, nil
+}
+
+// GetFalsePositiveSuppressedAlert checks if there is an acknowledged anomaly
+// alert for this metric+connection that was marked as a false positive within
+// the suppression window. This prevents re-firing alerts that users have
+// explicitly dismissed.
+func (d *Datastore) GetFalsePositiveSuppressedAlert(ctx context.Context, metricName string, connectionID int, dbName *string, cooldown time.Duration) (bool, error) {
+	var exists bool
+	err := d.pool.QueryRow(ctx, `
+        SELECT EXISTS(
+            SELECT 1 FROM alerts a
+            JOIN alert_acknowledgments ak ON ak.alert_id = a.id
+            WHERE a.alert_type = 'anomaly'
+              AND a.metric_name = $1
+              AND a.connection_id = $2
+              AND a.status = 'acknowledged'
+              AND ak.false_positive = true
+              AND ak.acknowledged_at > NOW() - $3::interval
+              AND (a.database_name = $4 OR ($4 IS NULL AND a.database_name IS NULL))
+        )
+    `, metricName, connectionID, fmt.Sprintf("%d seconds", int(cooldown.Seconds())), dbName).Scan(&exists)
+
+	if err != nil {
+		return false, fmt.Errorf("failed to check false positive suppressed alert: %w", err)
 	}
 	return exists, nil
 }
@@ -2118,6 +2169,237 @@ func (d *Datastore) GetAlertRuleByName(ctx context.Context, name string) (*Alert
 		return nil, err
 	}
 	return &rule, nil
+}
+
+// GetAcknowledgedAnomalyAlerts retrieves acknowledged anomaly alerts that are
+// due for re-evaluation. An alert is due if it has never been re-evaluated or
+// if the last re-evaluation was longer ago than the specified interval.
+func (d *Datastore) GetAcknowledgedAnomalyAlerts(ctx context.Context, intervalSeconds int, limit int) ([]*AcknowledgedAnomalyAlert, error) {
+	rows, err := d.pool.Query(ctx, `
+		SELECT a.id, a.connection_id, a.title, a.severity, a.metric_name,
+		       a.metric_value, a.anomaly_score, a.anomaly_details, a.triggered_at,
+		       ack.message, ack.false_positive, ack.acknowledged_by,
+		       ack.acknowledged_at, a.last_reevaluated_at, a.reevaluation_count
+		FROM alerts a
+		LEFT JOIN LATERAL (
+		    SELECT message, false_positive, acknowledged_by, acknowledged_at
+		    FROM alert_acknowledgments
+		    WHERE alert_id = a.id
+		    ORDER BY acknowledged_at DESC
+		    LIMIT 1
+		) ack ON true
+		WHERE a.status = 'acknowledged' AND a.alert_type = 'anomaly'
+		  AND (a.last_reevaluated_at IS NULL
+		       OR a.last_reevaluated_at < NOW() - INTERVAL '1 second' * $1)
+		ORDER BY a.triggered_at ASC
+		LIMIT $2
+	`, intervalSeconds, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get acknowledged anomaly alerts: %w", err)
+	}
+	defer rows.Close()
+
+	var alerts []*AcknowledgedAnomalyAlert
+	for rows.Next() {
+		var a AcknowledgedAnomalyAlert
+		err := rows.Scan(
+			&a.ID, &a.ConnectionID, &a.Title, &a.Severity, &a.MetricName,
+			&a.MetricValue, &a.ZScore, &a.AnomalyDetails, &a.TriggeredAt,
+			&a.AckMessage, &a.FalsePositive, &a.AcknowledgedBy,
+			&a.AcknowledgedAt, &a.LastReevaluatedAt, &a.ReevaluationCount)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan acknowledged anomaly alert: %w", err)
+		}
+		alerts = append(alerts, &a)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
+	}
+
+	return alerts, nil
+}
+
+// GetAcknowledgmentHistoryForMetric retrieves past acknowledgements for the
+// same metric and connection across different alert instances. This reveals
+// recurring patterns useful for LLM re-evaluation context.
+func (d *Datastore) GetAcknowledgmentHistoryForMetric(ctx context.Context, metricName string, connectionID int, excludeAlertID int64, limit int) ([]*AcknowledgedAnomalyAlert, error) {
+	rows, err := d.pool.Query(ctx, `
+		SELECT a.id, a.connection_id, a.title, a.severity, a.metric_name,
+		       a.metric_value, a.anomaly_score, a.anomaly_details, a.triggered_at,
+		       ack.message, ack.false_positive, ack.acknowledged_by,
+		       ack.acknowledged_at, a.last_reevaluated_at, a.reevaluation_count
+		FROM alerts a
+		JOIN alert_acknowledgments ack ON ack.alert_id = a.id
+		WHERE a.metric_name = $1 AND a.connection_id = $2
+		  AND a.id != $3 AND a.alert_type = 'anomaly'
+		ORDER BY ack.acknowledged_at DESC
+		LIMIT $4
+	`, metricName, connectionID, excludeAlertID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get acknowledgment history: %w", err)
+	}
+	defer rows.Close()
+
+	var alerts []*AcknowledgedAnomalyAlert
+	for rows.Next() {
+		var a AcknowledgedAnomalyAlert
+		err := rows.Scan(
+			&a.ID, &a.ConnectionID, &a.Title, &a.Severity, &a.MetricName,
+			&a.MetricValue, &a.ZScore, &a.AnomalyDetails, &a.TriggeredAt,
+			&a.AckMessage, &a.FalsePositive, &a.AcknowledgedBy,
+			&a.AcknowledgedAt, &a.LastReevaluatedAt, &a.ReevaluationCount)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan acknowledgment history: %w", err)
+		}
+		alerts = append(alerts, &a)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
+	}
+
+	return alerts, nil
+}
+
+// GetClusterPeers returns information about other connections in the same
+// cluster as the given connection, including their latest node role.
+// Returns an empty slice if the connection has no cluster.
+func (d *Datastore) GetClusterPeers(ctx context.Context, connectionID int) ([]*ClusterPeerInfo, error) {
+	rows, err := d.pool.Query(ctx, `
+		SELECT c.id, c.name, COALESCE(lr.primary_role, 'unknown')
+		FROM connections c
+		LEFT JOIN LATERAL (
+			SELECT primary_role
+			FROM metrics.pg_node_role
+			WHERE connection_id = c.id
+			ORDER BY collected_at DESC
+			LIMIT 1
+		) lr ON true
+		WHERE c.cluster_id = (SELECT cluster_id FROM connections WHERE id = $1)
+		  AND c.cluster_id IS NOT NULL
+		  AND c.id != $1
+		ORDER BY c.name
+	`, connectionID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get cluster peers: %w", err)
+	}
+	defer rows.Close()
+
+	var peers []*ClusterPeerInfo
+	for rows.Next() {
+		var peer ClusterPeerInfo
+		if err := rows.Scan(&peer.ConnectionID, &peer.ConnectionName, &peer.NodeRole); err != nil {
+			return nil, fmt.Errorf("failed to scan cluster peer: %w", err)
+		}
+		peers = append(peers, &peer)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
+	}
+
+	return peers, nil
+}
+
+// GetAlertsByCluster retrieves all active or acknowledged alerts across all
+// connections in the same cluster as the given connection, excluding alerts
+// from the given connection itself. Returns an empty slice if the connection
+// has no cluster.
+func (d *Datastore) GetAlertsByCluster(ctx context.Context, connectionID int) ([]*Alert, error) {
+	rows, err := d.pool.Query(ctx, `
+		SELECT id, alert_type, rule_id, connection_id, database_name, object_name,
+		       probe_name, metric_name, metric_value, threshold_value, operator,
+		       severity, title, description, correlation_id, status, triggered_at,
+		       cleared_at, last_updated, anomaly_score, anomaly_details
+		FROM alerts
+		WHERE connection_id IN (
+			SELECT id FROM connections
+			WHERE cluster_id = (SELECT cluster_id FROM connections WHERE id = $1)
+			  AND cluster_id IS NOT NULL
+		)
+		  AND connection_id != $1
+		  AND status IN ('active', 'acknowledged')
+		ORDER BY triggered_at DESC
+	`, connectionID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get alerts by cluster: %w", err)
+	}
+	defer rows.Close()
+
+	var alerts []*Alert
+	for rows.Next() {
+		var alert Alert
+		err := rows.Scan(
+			&alert.ID, &alert.AlertType, &alert.RuleID, &alert.ConnectionID,
+			&alert.DatabaseName, &alert.ObjectName, &alert.ProbeName, &alert.MetricName,
+			&alert.MetricValue, &alert.ThresholdValue, &alert.Operator, &alert.Severity,
+			&alert.Title, &alert.Description, &alert.CorrelationID, &alert.Status,
+			&alert.TriggeredAt, &alert.ClearedAt, &alert.LastUpdated, &alert.AnomalyScore,
+			&alert.AnomalyDetails)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan alert: %w", err)
+		}
+		alerts = append(alerts, &alert)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
+	}
+
+	return alerts, nil
+}
+
+// GetAlertsByConnection retrieves all active or acknowledged alerts for a
+// given connection, ordered by triggered time descending.
+func (d *Datastore) GetAlertsByConnection(ctx context.Context, connectionID int) ([]*Alert, error) {
+	rows, err := d.pool.Query(ctx, `
+		SELECT id, alert_type, rule_id, connection_id, database_name, object_name,
+		       probe_name, metric_name, metric_value, threshold_value, operator,
+		       severity, title, description, correlation_id, status, triggered_at,
+		       cleared_at, last_updated, anomaly_score, anomaly_details
+		FROM alerts
+		WHERE connection_id = $1 AND status IN ('active', 'acknowledged')
+		ORDER BY triggered_at DESC
+	`, connectionID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get alerts by connection: %w", err)
+	}
+	defer rows.Close()
+
+	var alerts []*Alert
+	for rows.Next() {
+		var alert Alert
+		err := rows.Scan(
+			&alert.ID, &alert.AlertType, &alert.RuleID, &alert.ConnectionID,
+			&alert.DatabaseName, &alert.ObjectName, &alert.ProbeName, &alert.MetricName,
+			&alert.MetricValue, &alert.ThresholdValue, &alert.Operator, &alert.Severity,
+			&alert.Title, &alert.Description, &alert.CorrelationID, &alert.Status,
+			&alert.TriggeredAt, &alert.ClearedAt, &alert.LastUpdated, &alert.AnomalyScore,
+			&alert.AnomalyDetails)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan alert: %w", err)
+		}
+		alerts = append(alerts, &alert)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
+	}
+
+	return alerts, nil
+}
+
+// UpdateAlertReevaluation increments the re-evaluation count and updates the
+// last re-evaluated timestamp for an alert.
+func (d *Datastore) UpdateAlertReevaluation(ctx context.Context, alertID int64) error {
+	_, err := d.pool.Exec(ctx, `
+		UPDATE alerts
+		SET reevaluation_count = reevaluation_count + 1,
+		    last_reevaluated_at = NOW()
+		WHERE id = $1
+	`, alertID)
+	return err
 }
 
 // float32SliceToVectorString converts a []float32 to a PostgreSQL vector string format

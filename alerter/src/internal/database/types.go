@@ -231,3 +231,34 @@ type AnomalyEmbedding struct {
 	ModelName   string
 	CreatedAt   time.Time
 }
+
+// AcknowledgedAnomalyAlert combines alert data with the latest acknowledgement
+type AcknowledgedAnomalyAlert struct {
+	// Alert fields
+	ID             int64     `json:"id"`
+	ConnectionID   int       `json:"connection_id"`
+	Title          string    `json:"title"`
+	Severity       string    `json:"severity"`
+	MetricName     *string   `json:"metric_name,omitempty"`
+	MetricValue    *float64  `json:"metric_value,omitempty"`
+	ZScore         *float64  `json:"z_score,omitempty"`
+	AnomalyDetails *string   `json:"anomaly_details,omitempty"`
+	TriggeredAt    time.Time `json:"triggered_at"`
+
+	// Acknowledgement fields
+	AckMessage     *string    `json:"ack_message,omitempty"`
+	FalsePositive  bool       `json:"false_positive"`
+	AcknowledgedBy *string    `json:"acknowledged_by,omitempty"`
+	AcknowledgedAt *time.Time `json:"acknowledged_at,omitempty"`
+
+	// Re-evaluation tracking
+	LastReevaluatedAt *time.Time `json:"last_reevaluated_at,omitempty"`
+	ReevaluationCount int        `json:"reevaluation_count"`
+}
+
+// ClusterPeerInfo holds lightweight cluster peer context for LLM prompts
+type ClusterPeerInfo struct {
+	ConnectionID   int
+	ConnectionName string
+	NodeRole       string // from metrics.pg_node_role.primary_role
+}

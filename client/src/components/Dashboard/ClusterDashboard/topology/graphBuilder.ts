@@ -86,11 +86,121 @@ const walkServers = (
 };
 
 /**
+ * Map a relationship_type string from the API to the edge
+ * replication type used in the topology diagram.
+ */
+const mapRelationshipType = (
+    relType: string,
+): 'streaming' | 'spock' | 'logical' => {
+    switch (relType) {
+        case 'streams_from':
+            return 'streaming';
+        case 'replicates_with':
+            return 'spock';
+        case 'subscribes_to':
+            return 'logical';
+        default:
+            return 'streaming';
+    }
+};
+
+/**
+ * Check whether any server in the list carries explicit
+ * relationship data from the API.
+ */
+const hasRelationships = (servers: ClusterServer[]): boolean => {
+    for (const server of servers) {
+        if (server.relationships && server.relationships.length > 0) {
+            return true;
+        }
+        if (server.children) {
+            if (hasRelationships(server.children)) {
+                return true;
+            }
+        }
+    }
+    return false;
+};
+
+/**
+ * Build edges from the explicit relationships field on servers.
+ * Deduplicates bidirectional pairs so that A-B and B-A become a
+ * single edge with bidirectional=true.
+ */
+const buildEdgesFromRelationships = (
+    nodes: TopoNode[],
+): TopoEdge[] => {
+    const edges: TopoEdge[] = [];
+    const seen = new Set<string>();
+    const nodeIds = new Set(nodes.map(n => n.id));
+
+    for (const node of nodes) {
+        const rels = node.server.relationships;
+        if (!rels) {
+            continue;
+        }
+        for (const rel of rels) {
+            if (!nodeIds.has(rel.target_server_id)) {
+                continue;
+            }
+            const repType = mapRelationshipType(rel.relationship_type);
+
+            // For directional relationships like "streams_from" and
+            // "subscribes_to", the API source is the node that
+            // receives data and the API target provides data.
+            // The visual convention is parent (provider) at the top
+            // with edges flowing down to children (receivers), so
+            // swap source and target to match the visual direction.
+            const isDirectional =
+                rel.relationship_type === 'streams_from' ||
+                rel.relationship_type === 'subscribes_to';
+            const edgeSource = isDirectional
+                ? rel.target_server_id
+                : node.id;
+            const edgeTarget = isDirectional
+                ? node.id
+                : rel.target_server_id;
+
+            // Create a canonical key to detect bidirectional pairs
+            const minId = Math.min(edgeSource, edgeTarget);
+            const maxId = Math.max(edgeSource, edgeTarget);
+            const key = `${minId}-${maxId}-${repType}`;
+
+            if (seen.has(key)) {
+                // Mark existing edge as bidirectional
+                const existing = edges.find(
+                    e =>
+                        ((e.sourceId === minId && e.targetId === maxId) ||
+                            (e.sourceId === maxId && e.targetId === minId)) &&
+                        e.replicationType === repType,
+                );
+                if (existing) {
+                    existing.bidirectional = true;
+                }
+                continue;
+            }
+            seen.add(key);
+
+            edges.push({
+                sourceId: edgeSource,
+                targetId: edgeTarget,
+                replicationType: repType,
+                bidirectional: false,
+            });
+        }
+    }
+
+    return edges;
+};
+
+/**
  * Build a TopologyGraph from a flat or hierarchical array of
  * ClusterServer objects.
  *
- * Edges are inferred from the parent-child hierarchy (streaming
- * replication) or from role analysis (spock mesh, logical flow).
+ * When servers carry explicit relationship data from the API,
+ * edges are built from those relationships. Otherwise edges are
+ * inferred from the parent-child hierarchy (streaming replication)
+ * or from role analysis (spock mesh, logical flow).
  */
 export const buildGraph = (servers: ClusterServer[]): TopologyGraph => {
     const nodes: TopoNode[] = [];
@@ -101,6 +211,15 @@ export const buildGraph = (servers: ClusterServer[]): TopologyGraph => {
     walkServers(servers, null, nodes, edges, roles, visited);
 
     const topologyType = detectTopologyType(roles);
+
+    // When explicit relationships are available, use them for edges
+    // instead of the inferred hierarchy-based edges.
+    if (hasRelationships(servers)) {
+        const relationshipEdges = buildEdgesFromRelationships(nodes);
+        edges.length = 0;
+        edges.push(...relationshipEdges);
+        return { nodes, edges, topologyType };
+    }
 
     // For spock clusters, replace spock-to-spock edges with a full
     // mesh of bidirectional connections, while preserving streaming

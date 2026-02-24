@@ -1573,18 +1573,20 @@ func (d *Datastore) getServersInClusterInternal(ctx context.Context, clusterID i
 	return servers, nil
 }
 
-// AssignConnectionToCluster assigns a connection to a cluster with a role
-func (d *Datastore) AssignConnectionToCluster(ctx context.Context, connectionID int, clusterID *int, role *string) error {
+// AssignConnectionToCluster assigns a connection to a cluster with a role.
+// When clusterOverride is true the connection stays pinned to the cluster
+// even when auto-detection would move it elsewhere.
+func (d *Datastore) AssignConnectionToCluster(ctx context.Context, connectionID int, clusterID *int, role *string, clusterOverride bool) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	query := `
         UPDATE connections
-        SET cluster_id = $2, role = $3, updated_at = CURRENT_TIMESTAMP
+        SET cluster_id = $2, role = $3, cluster_override = $4, updated_at = CURRENT_TIMESTAMP
         WHERE id = $1
     `
 
-	result, err := d.pool.Exec(ctx, query, connectionID, clusterID, role)
+	result, err := d.pool.Exec(ctx, query, connectionID, clusterID, role, clusterOverride)
 	if err != nil {
 		return fmt.Errorf("failed to assign connection to cluster: %w", err)
 	}
@@ -1598,25 +1600,62 @@ func (d *Datastore) AssignConnectionToCluster(ctx context.Context, connectionID 
 
 // TopologyServerInfo extends ServerInfo with topology and child servers
 type TopologyServerInfo struct {
-	ID               int                  `json:"id"`
-	Name             string               `json:"name"`
-	Description      string               `json:"description"`
-	Host             string               `json:"host"`
-	Port             int                  `json:"port"`
-	Status           string               `json:"status"`
-	ConnectionError  string               `json:"connection_error,omitempty"`
-	ActiveAlertCount int                  `json:"active_alert_count"`
-	Role             string               `json:"role,omitempty"`
-	PrimaryRole      string               `json:"primary_role"`
-	IsExpandable     bool                 `json:"is_expandable"`
-	OwnerUsername    string               `json:"owner_username,omitempty"`
-	Version          string               `json:"version,omitempty"`
-	OS               string               `json:"os,omitempty"`
-	SpockNodeName    string               `json:"spock_node_name,omitempty"`
-	SpockVersion     string               `json:"spock_version,omitempty"`
-	DatabaseName     string               `json:"database_name,omitempty"`
-	Username         string               `json:"username,omitempty"`
-	Children         []TopologyServerInfo `json:"children,omitempty"`
+	ID               int                    `json:"id"`
+	Name             string                 `json:"name"`
+	Description      string                 `json:"description"`
+	Host             string                 `json:"host"`
+	Port             int                    `json:"port"`
+	Status           string                 `json:"status"`
+	ConnectionError  string                 `json:"connection_error,omitempty"`
+	ActiveAlertCount int                    `json:"active_alert_count"`
+	Role             string                 `json:"role,omitempty"`
+	PrimaryRole      string                 `json:"primary_role"`
+	IsExpandable     bool                   `json:"is_expandable"`
+	OwnerUsername    string                 `json:"owner_username,omitempty"`
+	Version          string                 `json:"version,omitempty"`
+	OS               string                 `json:"os,omitempty"`
+	SpockNodeName    string                 `json:"spock_node_name,omitempty"`
+	SpockVersion     string                 `json:"spock_version,omitempty"`
+	DatabaseName     string                 `json:"database_name,omitempty"`
+	Username         string                 `json:"username,omitempty"`
+	Children         []TopologyServerInfo   `json:"children,omitempty"`
+	Relationships    []TopologyRelationship `json:"relationships,omitempty"`
+}
+
+// TopologyRelationship represents a directed edge from a source server to
+// a target server within a cluster
+type TopologyRelationship struct {
+	TargetServerID   int    `json:"target_server_id"`
+	TargetServerName string `json:"target_server_name"`
+	RelationshipType string `json:"relationship_type"`
+	IsAutoDetected   bool   `json:"is_auto_detected"`
+}
+
+// NodeRelationship represents a stored relationship between two nodes
+type NodeRelationship struct {
+	ID                 int    `json:"id"`
+	ClusterID          int    `json:"cluster_id"`
+	SourceConnectionID int    `json:"source_connection_id"`
+	TargetConnectionID int    `json:"target_connection_id"`
+	SourceName         string `json:"source_name"`
+	TargetName         string `json:"target_name"`
+	RelationshipType   string `json:"relationship_type"`
+	IsAutoDetected     bool   `json:"is_auto_detected"`
+}
+
+// RelationshipInput is the request body for setting manual relationships
+// from a source node
+type RelationshipInput struct {
+	TargetConnectionID int    `json:"target_connection_id"`
+	RelationshipType   string `json:"relationship_type"`
+}
+
+// AutoRelationshipInput describes a single auto-detected relationship
+// for use during topology refresh
+type AutoRelationshipInput struct {
+	SourceConnectionID int
+	TargetConnectionID int
+	RelationshipType   string
 }
 
 // TopologyCluster represents a replication-aware cluster
@@ -1666,9 +1705,29 @@ type connectionWithRole struct {
 	SpockVersion       sql.NullString // Spock extension version from metrics.pg_extension
 	BinaryStandbyCount int
 	IsStreamingStandby bool
+	ClusterOverride    bool
 	Status             string
 	ConnectionError    sql.NullString
 	ActiveAlertCount   int
+	SystemIdentifier   sql.NullInt64 // from metrics.pg_server_info
+}
+
+// ConnectionClusterInfo holds cluster-related information for a connection
+type ConnectionClusterInfo struct {
+	ClusterID       *int    `json:"cluster_id"`
+	Role            *string `json:"role"`
+	ClusterOverride bool    `json:"cluster_override"`
+	ClusterName     *string `json:"cluster_name"`
+	ReplicationType *string `json:"replication_type"`
+	AutoClusterKey  *string `json:"auto_cluster_key"`
+}
+
+// ClusterSummary holds minimal cluster information for autocomplete
+type ClusterSummary struct {
+	ID              int     `json:"id"`
+	Name            string  `json:"name"`
+	ReplicationType *string `json:"replication_type"`
+	AutoClusterKey  *string `json:"auto_cluster_key"`
 }
 
 // GetClusterTopology returns the combined topology including manually-created
@@ -1741,7 +1800,74 @@ func (d *Datastore) GetClusterTopology(ctx context.Context) ([]TopologyGroup, er
 	// Append the default group (contains auto-detected clusters)
 	result = append(result, defaultGroups...)
 
+	// Step 7: Populate relationships on each server in the topology
+	d.populateTopologyRelationships(ctx, result)
+
 	return result, nil
+}
+
+// populateTopologyRelationships loads relationships from the database
+// and attaches them to each server in the topology groups.
+func (d *Datastore) populateTopologyRelationships(ctx context.Context, groups []TopologyGroup) {
+	// Query all relationships at once, keyed by cluster ID
+	rows, err := d.pool.Query(ctx, `
+        SELECT r.cluster_id, r.source_connection_id,
+               r.target_connection_id, tc.name AS target_name,
+               r.relationship_type, r.is_auto_detected
+        FROM cluster_node_relationships r
+        JOIN connections tc ON tc.id = r.target_connection_id
+        ORDER BY r.cluster_id, r.source_connection_id
+    `)
+	if err != nil {
+		logger.Errorf("populateTopologyRelationships: failed to query relationships: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	// Build map: source_connection_id -> []TopologyRelationship
+	relsBySource := make(map[int][]TopologyRelationship)
+	for rows.Next() {
+		var clusterID, sourceID, targetID int
+		var targetName, relType string
+		var isAuto bool
+		if err := rows.Scan(&clusterID, &sourceID, &targetID, &targetName, &relType, &isAuto); err != nil {
+			logger.Errorf("populateTopologyRelationships: failed to scan relationship: %v", err)
+			continue
+		}
+		relsBySource[sourceID] = append(relsBySource[sourceID], TopologyRelationship{
+			TargetServerID:   targetID,
+			TargetServerName: targetName,
+			RelationshipType: relType,
+			IsAutoDetected:   isAuto,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		logger.Errorf("populateTopologyRelationships: error iterating relationships: %v", err)
+	}
+
+	if len(relsBySource) == 0 {
+		return
+	}
+
+	// Walk the topology and attach relationships to matching servers
+	for i := range groups {
+		for j := range groups[i].Clusters {
+			attachRelationshipsToServers(groups[i].Clusters[j].Servers, relsBySource)
+		}
+	}
+}
+
+// attachRelationshipsToServers recursively attaches relationships to
+// servers and their children.
+func attachRelationshipsToServers(servers []TopologyServerInfo, relsBySource map[int][]TopologyRelationship) {
+	for i := range servers {
+		if rels, ok := relsBySource[servers[i].ID]; ok {
+			servers[i].Relationships = rels
+		}
+		if len(servers[i].Children) > 0 {
+			attachRelationshipsToServers(servers[i].Children, relsBySource)
+		}
+	}
 }
 
 // collectServerIDsRecursive recursively collects all server IDs including children
@@ -1774,7 +1900,7 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
         ),
         latest_server_info AS (
             SELECT DISTINCT ON (connection_id)
-                connection_id, server_version
+                connection_id, server_version, system_identifier
             FROM metrics.pg_server_info
             ORDER BY connection_id, collected_at DESC
         ),
@@ -1800,6 +1926,7 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
         SELECT c.id, c.name, c.description, c.host, c.port, c.owner_username,
                c.database_name, c.username,
                lsi.server_version,
+               lsi.system_identifier,
                loi.os_name,
                COALESCE(lr.primary_role, 'unknown') as primary_role,
                lr.upstream_host, lr.upstream_port,
@@ -1809,6 +1936,7 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
                COALESCE(lr.binary_standby_count, 0) as binary_standby_count,
                COALESCE(lr.is_streaming_standby, false) as is_streaming_standby,
                lr.publisher_host, lr.publisher_port,
+               c.cluster_override,
                CASE
                    WHEN c.is_monitored AND c.connection_error IS NOT NULL
                    THEN 'offline'
@@ -1844,12 +1972,14 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
 			&conn.ID, &conn.Name, &conn.Description, &conn.Host, &conn.Port, &conn.OwnerUsername,
 			&conn.DatabaseName, &conn.Username,
 			&conn.Version,
+			&conn.SystemIdentifier,
 			&conn.OS,
 			&conn.PrimaryRole, &conn.UpstreamHost, &conn.UpstreamPort,
 			&conn.HasSpock, &conn.SpockNodeName,
 			&conn.SpockVersion,
 			&conn.BinaryStandbyCount, &conn.IsStreamingStandby,
 			&conn.PublisherHost, &conn.PublisherPort,
+			&conn.ClusterOverride,
 			&conn.Status,
 			&conn.ConnectionError,
 			&conn.ActiveAlertCount,
@@ -1936,6 +2066,40 @@ func (d *Datastore) buildAutoDetectedClusters(connections []connectionWithRole, 
 		}
 	}
 
+	// Second pass: use system_identifier to associate binary standbys
+	// that weren't linked by upstream info. All physical replicas of a
+	// PostgreSQL instance share the same system_identifier, making this
+	// a reliable grouping mechanism regardless of network topology.
+	alreadyChildren := make(map[int]bool)
+	for _, children := range childrenMap {
+		for _, childID := range children {
+			alreadyChildren[childID] = true
+		}
+	}
+
+	// Build a map of system_identifier -> primary connection ID
+	sysIDToPrimary := make(map[int64]int)
+	for i := range connections {
+		conn := &connections[i]
+		if conn.PrimaryRole == "binary_primary" && conn.SystemIdentifier.Valid {
+			sysIDToPrimary[conn.SystemIdentifier.Int64] = conn.ID
+		}
+	}
+
+	// Match unlinked binary standbys to their primary by system_identifier
+	for i := range connections {
+		conn := &connections[i]
+		if conn.PrimaryRole != "binary_standby" || alreadyChildren[conn.ID] {
+			continue
+		}
+		if !conn.SystemIdentifier.Valid {
+			continue
+		}
+		if primaryID, ok := sysIDToPrimary[conn.SystemIdentifier.Int64]; ok {
+			childrenMap[primaryID] = append(childrenMap[primaryID], conn.ID)
+		}
+	}
+
 	// Process Spock clusters
 	spockNodes := make([]*connectionWithRole, 0)
 	for i := range connections {
@@ -2013,6 +2177,251 @@ func (d *Datastore) buildAutoDetectedClusters(connections []connectionWithRole, 
 		result[autoKey] = cluster
 	}
 
+	return result
+}
+
+// serverIDAndRole pairs a connection ID with its detected role.
+type serverIDAndRole struct {
+	ID   int
+	Role string
+}
+
+// collectServerIDsAndRoles walks servers and their children recursively,
+// collecting each server's ID and Role.
+func collectServerIDsAndRoles(servers []TopologyServerInfo) []serverIDAndRole {
+	var result []serverIDAndRole
+	for i := range servers {
+		result = append(result, serverIDAndRole{
+			ID:   servers[i].ID,
+			Role: servers[i].PrimaryRole,
+		})
+		if len(servers[i].Children) > 0 {
+			result = append(result, collectServerIDsAndRoles(servers[i].Children)...)
+		}
+	}
+	return result
+}
+
+// syncAutoDetectedClusterAssignments ensures that auto-detected clusters
+// have corresponding records in the clusters table and that each
+// connection's cluster_id reflects the auto-detected topology.
+// This must be called from within a write-locked context (d.mu held).
+// It returns a map of auto_cluster_key -> database cluster ID for
+// clusters that were successfully upserted.
+func (d *Datastore) syncAutoDetectedClusterAssignments(ctx context.Context, autoDetectedClusters map[string]TopologyCluster, defaultGroupID int) map[string]int {
+	clusterIDMap := make(map[string]int)
+
+	for autoKey, cluster := range autoDetectedClusters {
+		serversAndRoles := collectServerIDsAndRoles(cluster.Servers)
+
+		if cluster.ClusterType == "server" {
+			// Standalone servers: clear cluster_id in case they were
+			// previously part of a cluster that no longer exists.
+			// Connections with cluster_override = TRUE are never cleared
+			// so they stay pinned to their manually assigned cluster.
+			for _, sr := range serversAndRoles {
+				_, err := d.pool.Exec(ctx,
+					`UPDATE connections SET cluster_id = NULL, role = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND cluster_override = FALSE`,
+					sr.ID,
+				)
+				if err != nil {
+					logger.Errorf("syncAutoDetectedClusterAssignments: failed to clear cluster_id for connection %d: %v", sr.ID, err)
+				}
+			}
+			continue
+		}
+
+		// For real clusters (spock, binary, logical, spock_ha):
+		// Upsert the cluster record. Only auto-update the name when the
+		// cluster is still in the default group (the user has not moved it).
+		var clusterID int
+		err := d.pool.QueryRow(ctx, `
+            INSERT INTO clusters (name, auto_cluster_key, group_id)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (auto_cluster_key) DO UPDATE SET
+                name = CASE WHEN clusters.group_id = $3 THEN EXCLUDED.name ELSE clusters.name END,
+                updated_at = CURRENT_TIMESTAMP
+            RETURNING id
+        `, cluster.Name, autoKey, defaultGroupID).Scan(&clusterID)
+		if err != nil {
+			logger.Errorf("syncAutoDetectedClusterAssignments: failed to upsert cluster %q: %v", autoKey, err)
+			continue
+		}
+
+		clusterIDMap[autoKey] = clusterID
+
+		// Update each connection's cluster_id and role.
+		// Non-overridden connections get both cluster_id and role updated.
+		// Overridden connections only get role updated so that role
+		// follows failover/switchover while cluster_id stays pinned.
+		for _, sr := range serversAndRoles {
+			_, err := d.pool.Exec(ctx,
+				`UPDATE connections SET cluster_id = $1, role = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3 AND cluster_override = FALSE`,
+				clusterID, sr.Role, sr.ID,
+			)
+			if err != nil {
+				logger.Errorf("syncAutoDetectedClusterAssignments: failed to update connection %d: %v", sr.ID, err)
+			}
+			_, err = d.pool.Exec(ctx,
+				`UPDATE connections SET role = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND cluster_override = TRUE`,
+				sr.Role, sr.ID,
+			)
+			if err != nil {
+				logger.Errorf("syncAutoDetectedClusterAssignments: failed to update role for overridden connection %d: %v", sr.ID, err)
+			}
+		}
+	}
+
+	return clusterIDMap
+}
+
+// RefreshClusterAssignments rebuilds auto-detected cluster topology and
+// syncs the cluster_id assignments on the connections table.
+func (d *Datastore) RefreshClusterAssignments(ctx context.Context) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	// Get default group
+	defaultGroup, err := d.getDefaultGroupInternal(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get default group: %w", err)
+	}
+
+	// Query all connections with roles
+	allConnections, err := d.getAllConnectionsWithRoles(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to query connections: %w", err)
+	}
+
+	// Get cluster overrides
+	clusterOverrides, err := d.getClusterOverridesInternal(ctx)
+	if err != nil {
+		clusterOverrides = make(map[string]clusterOverride)
+	}
+
+	// Build auto-detected clusters
+	autoDetectedClusters := d.buildAutoDetectedClusters(allConnections, clusterOverrides)
+
+	// Sync assignments and get mapping of auto_cluster_key -> db cluster ID
+	clusterIDMap := d.syncAutoDetectedClusterAssignments(ctx, autoDetectedClusters, defaultGroup.ID)
+
+	// Sync auto-detected relationships for each cluster
+	d.syncRelationshipsFromTopology(ctx, autoDetectedClusters, clusterIDMap)
+
+	return nil
+}
+
+// syncRelationshipsFromTopology extracts relationship edges from the
+// auto-detected cluster topology and syncs them to the database.
+func (d *Datastore) syncRelationshipsFromTopology(ctx context.Context, autoDetectedClusters map[string]TopologyCluster, clusterIDMap map[string]int) {
+	for autoKey, cluster := range autoDetectedClusters {
+		dbClusterID, ok := clusterIDMap[autoKey]
+		if !ok {
+			// Standalone or failed upsert; skip
+			continue
+		}
+
+		var detected []AutoRelationshipInput
+
+		switch cluster.ClusterType {
+		case "binary":
+			// Binary replication: children stream from their parent
+			// Servers[0] is the primary; its Children are standbys
+			detected = extractBinaryRelationships(cluster.Servers)
+
+		case "spock", "spock_ha":
+			// Spock bidirectional: every pair gets two replicates_with rows
+			// Spock nodes with binary children also get streams_from edges
+			detected = extractSpockRelationships(cluster.Servers)
+
+		case "logical":
+			// Logical replication: Servers[0] is the publisher with
+			// subscribers as Children
+			detected = extractLogicalRelationships(cluster.Servers)
+		}
+
+		if len(detected) > 0 {
+			if err := d.SyncAutoDetectedRelationships(ctx, dbClusterID, detected); err != nil {
+				logger.Errorf("syncRelationshipsFromTopology: failed to sync relationships for cluster %q (id=%d): %v", autoKey, dbClusterID, err)
+			}
+		}
+	}
+}
+
+// extractBinaryRelationships extracts streams_from relationships from
+// binary replication clusters. Each child (standby) streams_from its
+// parent (primary).
+func extractBinaryRelationships(servers []TopologyServerInfo) []AutoRelationshipInput {
+	var result []AutoRelationshipInput
+	for i := range servers {
+		result = append(result, extractBinaryChildRelationships(servers[i])...)
+	}
+	return result
+}
+
+// extractBinaryChildRelationships recursively extracts streams_from
+// relationships for a server and its children.
+func extractBinaryChildRelationships(server TopologyServerInfo) []AutoRelationshipInput {
+	var result []AutoRelationshipInput
+	for i := range server.Children {
+		child := &server.Children[i]
+		// Child (standby) streams_from parent (primary)
+		result = append(result, AutoRelationshipInput{
+			SourceConnectionID: child.ID,
+			TargetConnectionID: server.ID,
+			RelationshipType:   "streams_from",
+		})
+		// Recurse for cascading standbys
+		result = append(result, extractBinaryChildRelationships(*child)...)
+	}
+	return result
+}
+
+// extractSpockRelationships extracts replicates_with relationships for
+// all Spock node pairs and streams_from relationships for any binary
+// standbys attached to Spock nodes.
+func extractSpockRelationships(servers []TopologyServerInfo) []AutoRelationshipInput {
+	var result []AutoRelationshipInput
+
+	// Collect all top-level Spock node IDs (not their children)
+	for i := 0; i < len(servers); i++ {
+		for j := i + 1; j < len(servers); j++ {
+			// Bidirectional: two rows per pair
+			result = append(result, AutoRelationshipInput{
+				SourceConnectionID: servers[i].ID,
+				TargetConnectionID: servers[j].ID,
+				RelationshipType:   "replicates_with",
+			})
+			result = append(result, AutoRelationshipInput{
+				SourceConnectionID: servers[j].ID,
+				TargetConnectionID: servers[i].ID,
+				RelationshipType:   "replicates_with",
+			})
+		}
+		// Binary standbys of Spock nodes get streams_from edges
+		result = append(result, extractBinaryChildRelationships(servers[i])...)
+	}
+
+	return result
+}
+
+// extractLogicalRelationships extracts subscribes_to relationships from
+// logical replication clusters. Each subscriber (child) subscribes_to the
+// publisher (parent).
+func extractLogicalRelationships(servers []TopologyServerInfo) []AutoRelationshipInput {
+	var result []AutoRelationshipInput
+	for i := range servers {
+		publisher := &servers[i]
+		for j := range publisher.Children {
+			subscriber := &publisher.Children[j]
+			// Subscriber subscribes_to publisher
+			result = append(result, AutoRelationshipInput{
+				SourceConnectionID: subscriber.ID,
+				TargetConnectionID: publisher.ID,
+				RelationshipType:   "subscribes_to",
+			})
+		}
+	}
 	return result
 }
 
@@ -2257,6 +2666,36 @@ func (d *Datastore) buildTopologyHierarchy(connections []connectionWithRole, clu
 				// Fall back to name-based matching (upstream_host often contains hostname)
 				childrenMap[parent.ID] = append(childrenMap[parent.ID], conn.ID)
 			}
+		}
+	}
+
+	// Second pass: use system_identifier to associate binary standbys
+	// that weren't linked by upstream info.
+	alreadyChildren := make(map[int]bool)
+	for _, children := range childrenMap {
+		for _, childID := range children {
+			alreadyChildren[childID] = true
+		}
+	}
+
+	sysIDToPrimary := make(map[int64]int)
+	for i := range connections {
+		conn := &connections[i]
+		if conn.PrimaryRole == "binary_primary" && conn.SystemIdentifier.Valid {
+			sysIDToPrimary[conn.SystemIdentifier.Int64] = conn.ID
+		}
+	}
+
+	for i := range connections {
+		conn := &connections[i]
+		if conn.PrimaryRole != "binary_standby" || alreadyChildren[conn.ID] {
+			continue
+		}
+		if !conn.SystemIdentifier.Valid {
+			continue
+		}
+		if primaryID, ok := sysIDToPrimary[conn.SystemIdentifier.Int64]; ok {
+			childrenMap[primaryID] = append(childrenMap[primaryID], conn.ID)
 		}
 	}
 
@@ -3134,6 +3573,11 @@ func (d *Datastore) GetEstateSnapshot(ctx context.Context) (*EstateSnapshot, err
 // classified as offline (status is offline), warning (has active alerts
 // but not offline), or online (no alerts, not offline).
 func (d *Datastore) gatherEstateServerData(ctx context.Context, snapshot *EstateSnapshot) {
+	// Sync cluster_id assignments before reading topology
+	if err := d.RefreshClusterAssignments(ctx); err != nil {
+		logger.Infof("gatherEstateServerData: failed to refresh cluster assignments: %v", err)
+	}
+
 	groups, err := d.GetClusterTopology(ctx)
 	if err != nil {
 		logger.Errorf("GetEstateSnapshot: failed to get cluster topology: %v", err)
@@ -3452,6 +3896,11 @@ func (d *Datastore) gatherScopedServerData(ctx context.Context, snapshot *Estate
 	idSet := make(map[int]bool, len(connectionIDs))
 	for _, id := range connectionIDs {
 		idSet[id] = true
+	}
+
+	// Sync cluster_id assignments before reading topology
+	if err := d.RefreshClusterAssignments(ctx); err != nil {
+		logger.Infof("gatherScopedServerData: failed to refresh cluster assignments: %v", err)
 	}
 
 	groups, err := d.GetClusterTopology(ctx)
@@ -3837,4 +4286,278 @@ func (d *Datastore) GetConnectionContext(ctx context.Context, connectionID int) 
 	}
 
 	return result, nil
+}
+
+// CreateManualCluster creates a cluster with no auto_cluster_key and an
+// explicit replication_type. If groupID is nil the default group is used.
+func (d *Datastore) CreateManualCluster(ctx context.Context, name, description, replicationType string, groupID *int) (int, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	resolvedGroupID := 0
+	if groupID != nil {
+		resolvedGroupID = *groupID
+	} else {
+		info, err := d.getDefaultGroupInternal(ctx)
+		if err != nil {
+			return 0, fmt.Errorf("failed to get default group: %w", err)
+		}
+		resolvedGroupID = info.ID
+	}
+
+	var clusterID int
+	query := `
+        INSERT INTO clusters (name, description, replication_type, group_id)
+        VALUES ($1, $2, $3, $4)
+        RETURNING id
+    `
+	err := d.pool.QueryRow(ctx, query, name, description, replicationType, resolvedGroupID).Scan(&clusterID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create manual cluster: %w", err)
+	}
+
+	return clusterID, nil
+}
+
+// GetConnectionClusterInfo returns the cluster-related information for a
+// connection including the joined cluster details. Fields are nil when the
+// connection has no cluster assignment.
+func (d *Datastore) GetConnectionClusterInfo(ctx context.Context, connectionID int) (*ConnectionClusterInfo, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	query := `
+        SELECT c.cluster_id, c.role, c.cluster_override,
+               cl.name, cl.replication_type, cl.auto_cluster_key
+        FROM connections c
+        LEFT JOIN clusters cl ON c.cluster_id = cl.id
+        WHERE c.id = $1
+    `
+
+	var info ConnectionClusterInfo
+	err := d.pool.QueryRow(ctx, query, connectionID).Scan(
+		&info.ClusterID, &info.Role, &info.ClusterOverride,
+		&info.ClusterName, &info.ReplicationType, &info.AutoClusterKey,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrConnectionNotFound
+		}
+		return nil, fmt.Errorf("failed to get connection cluster info: %w", err)
+	}
+
+	return &info, nil
+}
+
+// ListClustersForAutocomplete returns all clusters ordered by name for use
+// in autocomplete and selection UIs.
+func (d *Datastore) ListClustersForAutocomplete(ctx context.Context) ([]ClusterSummary, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	query := `
+        SELECT id, name, replication_type, auto_cluster_key
+        FROM clusters
+        ORDER BY name
+    `
+
+	rows, err := d.pool.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list clusters: %w", err)
+	}
+	defer rows.Close()
+
+	var clusters []ClusterSummary
+	for rows.Next() {
+		var cs ClusterSummary
+		if err := rows.Scan(&cs.ID, &cs.Name, &cs.ReplicationType, &cs.AutoClusterKey); err != nil {
+			return nil, fmt.Errorf("failed to scan cluster: %w", err)
+		}
+		clusters = append(clusters, cs)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating clusters: %w", err)
+	}
+
+	return clusters, nil
+}
+
+// ClearClusterOverride sets cluster_override to FALSE on a connection so
+// that auto-detection resumes managing its cluster assignment.
+func (d *Datastore) ClearClusterOverride(ctx context.Context, connectionID int) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	query := `
+        UPDATE connections
+        SET cluster_override = FALSE, updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+    `
+
+	result, err := d.pool.Exec(ctx, query, connectionID)
+	if err != nil {
+		return fmt.Errorf("failed to clear cluster override: %w", err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return ErrConnectionNotFound
+	}
+
+	return nil
+}
+
+// GetClusterRelationships returns all node relationships for a cluster
+// with source and target connection names joined from the connections table.
+func (d *Datastore) GetClusterRelationships(ctx context.Context, clusterID int) ([]NodeRelationship, error) {
+	query := `
+        SELECT r.id, r.cluster_id,
+               r.source_connection_id, r.target_connection_id,
+               sc.name AS source_name, tc.name AS target_name,
+               r.relationship_type, r.is_auto_detected
+        FROM cluster_node_relationships r
+        JOIN connections sc ON sc.id = r.source_connection_id
+        JOIN connections tc ON tc.id = r.target_connection_id
+        WHERE r.cluster_id = $1
+        ORDER BY r.source_connection_id, r.target_connection_id
+    `
+
+	rows, err := d.pool.Query(ctx, query, clusterID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query cluster relationships: %w", err)
+	}
+	defer rows.Close()
+
+	var relationships []NodeRelationship
+	for rows.Next() {
+		var rel NodeRelationship
+		if err := rows.Scan(
+			&rel.ID, &rel.ClusterID,
+			&rel.SourceConnectionID, &rel.TargetConnectionID,
+			&rel.SourceName, &rel.TargetName,
+			&rel.RelationshipType, &rel.IsAutoDetected,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan relationship: %w", err)
+		}
+		relationships = append(relationships, rel)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating relationships: %w", err)
+	}
+
+	return relationships, nil
+}
+
+// SetNodeRelationships replaces manual (non-auto-detected) relationships
+// for a given source node in a cluster. This runs in a transaction:
+// first deleting existing manual rows for the source, then inserting
+// the new ones with is_auto_detected = FALSE.
+func (d *Datastore) SetNodeRelationships(ctx context.Context, clusterID int, sourceConnectionID int, relationships []RelationshipInput) error {
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // Rollback is no-op if already committed
+
+	// Delete existing manual relationships for this source in this cluster
+	_, err = tx.Exec(ctx,
+		`DELETE FROM cluster_node_relationships
+         WHERE cluster_id = $1 AND source_connection_id = $2 AND is_auto_detected = FALSE`,
+		clusterID, sourceConnectionID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to delete existing manual relationships: %w", err)
+	}
+
+	// Insert new relationships
+	for _, rel := range relationships {
+		_, err = tx.Exec(ctx,
+			`INSERT INTO cluster_node_relationships
+             (cluster_id, source_connection_id, target_connection_id, relationship_type, is_auto_detected)
+             VALUES ($1, $2, $3, $4, FALSE)
+             ON CONFLICT (cluster_id, source_connection_id, target_connection_id, relationship_type) DO NOTHING`,
+			clusterID, sourceConnectionID, rel.TargetConnectionID, rel.RelationshipType,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to insert relationship: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
+}
+
+// SyncAutoDetectedRelationships inserts auto-detected relationships for a
+// cluster. For each detected relationship it performs an INSERT ... ON
+// CONFLICT DO NOTHING so that existing rows are preserved. This method
+// NEVER removes existing rows; auto-detection only adds.
+func (d *Datastore) SyncAutoDetectedRelationships(ctx context.Context, clusterID int, detected []AutoRelationshipInput) error {
+	for _, rel := range detected {
+		_, err := d.pool.Exec(ctx,
+			`INSERT INTO cluster_node_relationships
+             (cluster_id, source_connection_id, target_connection_id, relationship_type, is_auto_detected)
+             VALUES ($1, $2, $3, $4, TRUE)
+             ON CONFLICT (cluster_id, source_connection_id, target_connection_id, relationship_type)
+             DO NOTHING`,
+			clusterID, rel.SourceConnectionID, rel.TargetConnectionID, rel.RelationshipType,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to sync auto-detected relationship: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// RemoveNodeRelationship deletes a single relationship by its ID.
+func (d *Datastore) RemoveNodeRelationship(ctx context.Context, relationshipID int) error {
+	result, err := d.pool.Exec(ctx,
+		`DELETE FROM cluster_node_relationships WHERE id = $1`,
+		relationshipID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to delete relationship: %w", err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("relationship not found")
+	}
+
+	return nil
+}
+
+// ClearNodeRelationships deletes all manual (is_auto_detected = FALSE)
+// relationships for a source node in a cluster.
+func (d *Datastore) ClearNodeRelationships(ctx context.Context, clusterID int, sourceConnectionID int) error {
+	_, err := d.pool.Exec(ctx,
+		`DELETE FROM cluster_node_relationships
+         WHERE cluster_id = $1 AND source_connection_id = $2 AND is_auto_detected = FALSE`,
+		clusterID, sourceConnectionID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to clear manual relationships: %w", err)
+	}
+
+	return nil
+}
+
+// IsConnectionInCluster returns true if the given connection belongs to the
+// specified cluster (i.e. connections.cluster_id matches).
+func (d *Datastore) IsConnectionInCluster(ctx context.Context, clusterID int, connectionID int) (bool, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	var exists bool
+	err := d.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM connections WHERE id = $1 AND cluster_id = $2)`,
+		connectionID, clusterID,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("failed to check connection cluster membership: %w", err)
+	}
+
+	return exists, nil
 }

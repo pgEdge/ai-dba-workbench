@@ -143,10 +143,16 @@ describe('computeLayout', () => {
 
         const result = computeLayout(graph, CONTAINER_WIDTH);
 
-        // All spock nodes should be on the same row
+        // All spock nodes should be on the same row, shifted down
+        // to reserve space for arcing edges above non-adjacent pairs.
+        // With 3 spock nodes there is 1 intermediate node, so the
+        // arc height is ceil((NODE_HEIGHT + 40) / 2) + 15 = 65.
         const ys = result.nodes.map(n => n.y);
         expect(new Set(ys).size).toBe(1);
-        expect(ys[0]).toBe(PADDING);
+        expect(ys[0]).toBe(
+            PADDING +
+            Math.ceil((NODE_HEIGHT + 40) / 2) + 15,
+        );
 
         // Nodes should be positioned left to right
         expect(result.nodes[1].x).toBeGreaterThan(result.nodes[0].x);

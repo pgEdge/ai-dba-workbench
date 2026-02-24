@@ -14,7 +14,7 @@ import CircularProgress from '@mui/material/CircularProgress';
 import StorageIcon from '@mui/icons-material/Storage';
 import { useDashboard } from '../../../contexts/DashboardContext';
 import { useMetrics } from '../../../hooks/useMetrics';
-import { MetricQueryParams, MetricSeries } from '../types';
+import { MetricDataPoint, MetricQueryParams, MetricSeries } from '../types';
 import { KPI_GRID_SX, CHART_SECTION_SX } from '../styles';
 import KpiTile from '../KpiTile';
 import CollapsibleSection from '../CollapsibleSection';
@@ -213,6 +213,24 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
         }
         return null;
     }, [blksHit, blksRead]);
+    const cacheHitRatioSparkline = useMemo(() => {
+        const hitData = extractSparklineData(cacheKpi.data, 'blks_hit');
+        const readData = extractSparklineData(cacheKpi.data, 'blks_read');
+        if (hitData.length === 0 && readData.length === 0) { return []; }
+        const len = Math.max(hitData.length, readData.length);
+        const result: MetricDataPoint[] = [];
+        for (let i = 0; i < len; i++) {
+            const hit = i < hitData.length ? hitData[i].value : 0;
+            const read = i < readData.length ? readData[i].value : 0;
+            const total = hit + read;
+            result.push({
+                time: (i < hitData.length
+                    ? hitData[i] : readData[i]).time,
+                value: total > 0 ? (hit / total) * 100 : 0,
+            });
+        }
+        return result;
+    }, [cacheKpi.data]);
     const tempBytes = extractLatestValue(
         tempKpi.data, 'temp_bytes'
     );
@@ -306,9 +324,7 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
                         ? formatValue(cacheHitRatio)
                         : '--'}
                     unit={cacheHitRatio !== null ? '%' : undefined}
-                    sparklineData={extractSparklineData(
-                        cacheKpi.data, 'blks_hit'
-                    )}
+                    sparklineData={cacheHitRatioSparkline}
                     analysisContext={{
                         metricDescription: 'Buffer cache hit ratio over time',
                         connectionId,

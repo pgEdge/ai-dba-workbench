@@ -12,7 +12,6 @@ import React, { useMemo } from 'react';
 import Box from '@mui/material/Box';
 import { BaseDashboardProps } from '../types';
 import CollapsibleSection from '../CollapsibleSection';
-import TopologySection from './TopologySection';
 import ReplicationLagSection from './ReplicationLagSection';
 import ComparativeChartsSection from './ComparativeChartsSection';
 
@@ -51,10 +50,6 @@ const ClusterDashboard: React.FC<BaseDashboardProps> = ({ selection }) => {
 
     return (
         <Box>
-            <CollapsibleSection title="Topology" defaultExpanded>
-                <TopologySection selection={selection} />
-            </CollapsibleSection>
-
             <CollapsibleSection title="Replication Lag" defaultExpanded>
                 <ReplicationLagSection
                     selection={selection}

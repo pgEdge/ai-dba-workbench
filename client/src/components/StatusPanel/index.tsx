@@ -26,6 +26,7 @@ import {
     Dns as ClusterIcon,
     Language as EstateIcon,
     MonitorHeart as MonitorHeartIcon,
+    AccountTree as AccountTreeIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
 import { useAICapabilities } from '../../contexts/AICapabilitiesContext';
@@ -49,6 +50,7 @@ import {
     ObjectDashboard,
     MetricOverlay,
 } from '../Dashboard';
+import TopologySection from '../Dashboard/ClusterDashboard/TopologySection';
 import CollapsibleSection from '../Dashboard/CollapsibleSection';
 import TimeRangeSelector from '../Dashboard/TimeRangeSelector';
 import SelectionHeader from './SelectionHeader';
@@ -135,6 +137,13 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
     const statusColors = useMemo(() => getStatusColors(theme), [theme]);
 
     const monitoringSx = useMemo(() => ({
+        mt: 2,
+        bgcolor: theme.palette.mode === 'dark'
+            ? alpha(theme.palette.background.paper, 0.4)
+            : theme.palette.grey[100],
+    }), [theme]);
+
+    const topologySx = useMemo(() => ({
         mt: 2,
         bgcolor: theme.palette.mode === 'dark'
             ? alpha(theme.palette.background.paper, 0.4)
@@ -577,6 +586,13 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                     onAnalyze={aiEnabled ? handleAnalyze : undefined}
                     onEditOverride={handleEditOverride}
                 />
+
+                {/* Topology (cluster only) */}
+                {selection.type === 'cluster' && (
+                    <CollapsibleSection title="Topology" icon={<AccountTreeIcon sx={{ fontSize: 16 }} />} defaultExpanded sx={topologySx}>
+                        <TopologySection selection={selection} />
+                    </CollapsibleSection>
+                )}
 
                 {/* Monitoring Dashboards */}
                 <CollapsibleSection title="Monitoring" icon={<MonitorHeartIcon sx={{ fontSize: 16 }} />} defaultExpanded sx={monitoringSx} headerRight={<TimeRangeSelector />}>

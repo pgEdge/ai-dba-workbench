@@ -1527,12 +1527,17 @@ func TestBuildConfigChangeQuery(t *testing.T) {
 func TestBuildConfigChangeQueryWithWhere(t *testing.T) {
 	query := buildConfigChangeQuery("WHERE connection_id = $1 AND event_time >= $2")
 
-	// Column names should be rewritten to table-qualified names
-	if !strings.Contains(query, "d.connection_id = $1") {
-		t.Error("expected connection_id rewritten to d.connection_id")
+	// Column names should be rewritten to table-qualified names for the
+	// outer filter (changes alias) and inner filter (collected_at)
+	if !strings.Contains(query, "changes.connection_id = $1") {
+		t.Error("expected connection_id rewritten to changes.connection_id")
 	}
-	if !strings.Contains(query, "d.collected_at >= $2") {
-		t.Error("expected event_time rewritten to d.collected_at")
+	if !strings.Contains(query, "changes.collected_at >= $2") {
+		t.Error("expected event_time rewritten to changes.collected_at")
+	}
+	// Inner subquery should use collected_at without alias
+	if !strings.Contains(query, "collected_at >= $2") {
+		t.Error("expected inner filter to use collected_at >= $2")
 	}
 }
 

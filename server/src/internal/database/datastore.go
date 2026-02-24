@@ -1888,6 +1888,7 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
             SELECT DISTINCT ON (connection_id)
                 connection_id, collected_at
             FROM metrics.pg_connectivity
+            WHERE collected_at > NOW() - INTERVAL '5 minutes'
             ORDER BY connection_id, collected_at DESC
         ),
         latest_roles AS (
@@ -1896,18 +1897,21 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
                 has_spock, spock_node_name, binary_standby_count, is_streaming_standby,
                 publisher_host, publisher_port
             FROM metrics.pg_node_role
+            WHERE collected_at > NOW() - INTERVAL '5 minutes'
             ORDER BY connection_id, collected_at DESC
         ),
         latest_server_info AS (
             SELECT DISTINCT ON (connection_id)
                 connection_id, server_version, system_identifier
             FROM metrics.pg_server_info
+            WHERE collected_at > NOW() - INTERVAL '5 minutes'
             ORDER BY connection_id, collected_at DESC
         ),
         latest_os_info AS (
             SELECT DISTINCT ON (connection_id)
                 connection_id, name as os_name
             FROM metrics.pg_sys_os_info
+            WHERE collected_at > NOW() - INTERVAL '5 minutes'
             ORDER BY connection_id, collected_at DESC
         ),
         latest_spock_version AS (
@@ -1915,6 +1919,7 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
                 connection_id, extversion as spock_version
             FROM metrics.pg_extension
             WHERE extname = 'spock'
+              AND collected_at > NOW() - INTERVAL '1 hour'
             ORDER BY connection_id, collected_at DESC
         ),
         active_alerts AS (

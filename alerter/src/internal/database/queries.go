@@ -773,14 +773,13 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			SELECT connection_id,
 			       COALESCE(processor_time_percent, 0)::float as value,
 			       collected_at
-			FROM metrics.pg_sys_cpu_usage_info
-			WHERE collected_at > NOW() - INTERVAL '15 minutes'
-			  AND (connection_id, collected_at) IN (
-			      SELECT connection_id, MAX(collected_at)
-			      FROM metrics.pg_sys_cpu_usage_info
-			      WHERE collected_at > NOW() - INTERVAL '15 minutes'
-			      GROUP BY connection_id
-			  )
+			FROM (
+			    SELECT DISTINCT ON (connection_id)
+			           connection_id, processor_time_percent, collected_at
+			    FROM metrics.pg_sys_cpu_usage_info
+			    WHERE collected_at > NOW() - INTERVAL '15 minutes'
+			    ORDER BY connection_id, collected_at DESC
+			) latest
 		`)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
@@ -818,14 +817,13 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			SELECT connection_id,
 			       COALESCE(load_avg_fifteen_minutes, 0)::float as value,
 			       collected_at
-			FROM metrics.pg_sys_load_avg_info
-			WHERE collected_at > NOW() - INTERVAL '15 minutes'
-			  AND (connection_id, collected_at) IN (
-			      SELECT connection_id, MAX(collected_at)
-			      FROM metrics.pg_sys_load_avg_info
-			      WHERE collected_at > NOW() - INTERVAL '15 minutes'
-			      GROUP BY connection_id
-			  )
+			FROM (
+			    SELECT DISTINCT ON (connection_id)
+			           connection_id, load_avg_fifteen_minutes, collected_at
+			    FROM metrics.pg_sys_load_avg_info
+			    WHERE collected_at > NOW() - INTERVAL '15 minutes'
+			    ORDER BY connection_id, collected_at DESC
+			) latest
 		`)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
@@ -840,14 +838,13 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			           ELSE 0
 			       END as value,
 			       collected_at
-			FROM metrics.pg_sys_memory_info
-			WHERE collected_at > NOW() - INTERVAL '15 minutes'
-			  AND (connection_id, collected_at) IN (
-			      SELECT connection_id, MAX(collected_at)
-			      FROM metrics.pg_sys_memory_info
-			      WHERE collected_at > NOW() - INTERVAL '15 minutes'
-			      GROUP BY connection_id
-			  )
+			FROM (
+			    SELECT DISTINCT ON (connection_id)
+			           connection_id, total_memory, used_memory, collected_at
+			    FROM metrics.pg_sys_memory_info
+			    WHERE collected_at > NOW() - INTERVAL '15 minutes'
+			    ORDER BY connection_id, collected_at DESC
+			) latest
 		`)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
@@ -856,18 +853,13 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 	case "age_percent":
 		results, err = d.queryMetricValues(ctx, `
 			WITH freeze_settings AS (
-				SELECT connection_id,
+				SELECT DISTINCT ON (connection_id)
+				       connection_id,
 				       setting::bigint as freeze_max_age
 				FROM metrics.pg_settings
 				WHERE name = 'autovacuum_freeze_max_age'
 				  AND collected_at > NOW() - INTERVAL '1 hour'
-				  AND (connection_id, collected_at) IN (
-				      SELECT connection_id, MAX(collected_at)
-				      FROM metrics.pg_settings
-				      WHERE name = 'autovacuum_freeze_max_age'
-				        AND collected_at > NOW() - INTERVAL '1 hour'
-				      GROUP BY connection_id
-				  )
+				ORDER BY connection_id, collected_at DESC
 			),
 			table_ages AS (
 				SELECT t.connection_id,
@@ -2059,10 +2051,9 @@ func (d *Datastore) FindSimilarAnomalies(ctx context.Context, embedding []float3
 		WHERE c.id != $2
 		  AND c.processed_at IS NOT NULL
 		  AND c.final_decision IS NOT NULL
-		  AND 1 - (e.embedding <=> $1::vector) >= $3
-		ORDER BY similarity DESC
-		LIMIT $4
-	`, vectorStr, excludeCandidateID, threshold, limit)
+		ORDER BY e.embedding <=> $1::vector
+		LIMIT $3
+	`, vectorStr, excludeCandidateID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find similar anomalies: %w", err)
 	}
@@ -2075,7 +2066,12 @@ func (d *Datastore) FindSimilarAnomalies(ctx context.Context, embedding []float3
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan similar anomaly: %w", err)
 		}
-		results = append(results, &sa)
+		// Apply similarity threshold filter in Go so the SQL query
+		// can use the HNSW index via ORDER BY <=> without a WHERE
+		// clause on the computed similarity value.
+		if sa.Similarity >= threshold {
+			results = append(results, &sa)
+		}
 	}
 
 	if err := rows.Err(); err != nil {

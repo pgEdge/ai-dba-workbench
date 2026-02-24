@@ -111,6 +111,7 @@ CRITICAL: Never silently analyze multiple connections. Always get explicit user 
                     SELECT DISTINCT ON (connection_id)
                         connection_id, collected_at
                     FROM metrics.pg_connectivity
+                    WHERE collected_at > NOW() - INTERVAL '5 minutes'
                     ORDER BY connection_id, collected_at DESC
                 )
                 SELECT

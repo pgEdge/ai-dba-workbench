@@ -130,6 +130,7 @@ func (e *Engine) processTier2And3(ctx context.Context) {
 		var embedding []float32
 
 		cfg := e.getConfig()
+		sensitivity := cfg.Anomaly.Tier1.DefaultSensitivity
 
 		// Tier 2: Embedding similarity
 		if cfg.Anomaly.Tier2.Enabled && e.embeddingProvider != nil {
@@ -151,7 +152,7 @@ func (e *Engine) processTier2And3(ctx context.Context) {
 
 		// If final decision is alert, create an alert record
 		if candidate.FinalDecision != nil && *candidate.FinalDecision == "alert" {
-			e.createAnomalyAlert(ctx, candidate)
+			e.createAnomalyAlert(ctx, candidate, sensitivity)
 		}
 
 		// Store embedding if we have one
@@ -372,7 +373,7 @@ func (e *Engine) determineFinalDecision(candidate *database.AnomalyCandidate) {
 // createAnomalyAlert creates an alert record for a confirmed anomaly candidate.
 // It deduplicates against existing active anomaly alerts for the same metric
 // and connection to prevent duplicate alerts.
-func (e *Engine) createAnomalyAlert(ctx context.Context, candidate *database.AnomalyCandidate) {
+func (e *Engine) createAnomalyAlert(ctx context.Context, candidate *database.AnomalyCandidate, sensitivity float64) {
 	// Check for an existing active anomaly alert on this metric/connection
 	existing, err := e.datastore.GetActiveAnomalyAlert(ctx, candidate.MetricName, candidate.ConnectionID, candidate.DatabaseName)
 	if err == nil && existing != nil {
@@ -403,16 +404,19 @@ func (e *Engine) createAnomalyAlert(ctx context.Context, candidate *database.Ano
 		return
 	}
 
-	// Determine severity based on z-score magnitude
+	// Determine severity based on z-score magnitude relative to
+	// the detection sensitivity.  Using multiples of the sensitivity
+	// prevents all alerts from clustering at "critical" when baselines
+	// have small standard deviations.
 	absZScore := candidate.ZScore
 	if absZScore < 0 {
 		absZScore = -absZScore
 	}
-	severity := "warning"
-	if absZScore >= 4.0 {
+	severity := "info"
+	if absZScore >= 4*sensitivity {
 		severity = "critical"
-	} else if absZScore >= 3.0 {
-		severity = "high"
+	} else if absZScore >= 2*sensitivity {
+		severity = "warning"
 	}
 
 	// Build anomaly details from tier results

@@ -157,9 +157,13 @@ const GroupedAlertInstance = ({ alert, showServer, onAcknowledge, onUnacknowledg
                     />
                 )}
                 <Chip label={alertTypeLabel} size="small" sx={alertTypeChipSx} />
-                {thresholdInfo && (
+                {thresholdInfo ? (
                     <Typography sx={INSTANCE_THRESHOLD_SX}>
                         {thresholdInfo}
+                    </Typography>
+                ) : alert.description && (
+                    <Typography sx={INSTANCE_THRESHOLD_SX}>
+                        {alert.description}
                     </Typography>
                 )}
             </Box>

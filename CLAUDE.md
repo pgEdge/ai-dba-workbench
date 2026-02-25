@@ -127,6 +127,11 @@ and general research tasks.
 Each sub-agent has a knowledge base in `/.claude/<agent-name>/` containing
 domain-specific patterns and project conventions.
 
+## Plans
+
+Store all plans in the `.claude/plans/` directory. Use descriptive
+filenames that reflect the task or feature being planned.
+
 ## Task Workflow
 
 The primary agent follows this workflow for all tasks:

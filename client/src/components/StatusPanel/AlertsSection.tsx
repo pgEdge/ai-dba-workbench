@@ -31,7 +31,7 @@ import GroupedAlertItem from './GroupedAlertItem';
 import {
     getSeverityColors,
     getSectionPanelSx,
-    groupAlertsByTitle,
+    groupAlertsByTitleAndSeverity,
     CHIP_LABEL_SX,
     EXPAND_BUTTON_SX,
     ICON_16_SX,
@@ -48,7 +48,7 @@ import {
 /**
  * AlertsSection - Collapsible alerts list with active/acknowledged separation
  */
-const AlertsSection = ({ alerts, loading, showServer = false, onAcknowledge, onUnacknowledge, onAnalyze, onEditOverride }) => {
+const AlertsSection = ({ alerts, loading, showServer = false, onAcknowledge, onUnacknowledge, onAnalyze, onEditOverride, onAcknowledgeGroup }) => {
     const theme = useTheme();
     const severityColors = getSeverityColors(theme);
     const [expanded, setExpanded] = useState(true);
@@ -58,16 +58,17 @@ const AlertsSection = ({ alerts, loading, showServer = false, onAcknowledge, onU
     const activeAlerts = alerts.filter(a => !a.acknowledgedAt);
     const acknowledgedAlerts = alerts.filter(a => !!a.acknowledgedAt);
 
-    // Group active alerts by title
-    const groupedActiveAlerts = useMemo(() => groupAlertsByTitle(activeAlerts), [activeAlerts]);
-    const groupedAcknowledgedAlerts = useMemo(() => groupAlertsByTitle(acknowledgedAlerts), [acknowledgedAlerts]);
+    // Group active alerts by title and severity
+    const groupedActiveAlerts = useMemo(() => groupAlertsByTitleAndSeverity(activeAlerts), [activeAlerts]);
+    const groupedAcknowledgedAlerts = useMemo(() => groupAlertsByTitleAndSeverity(acknowledgedAlerts), [acknowledgedAlerts]);
 
-    // Convert grouped object to sorted array of [title, alerts] pairs
+    // Convert grouped object to sorted array of [key, alerts] pairs
     const sortedActiveGroups = useMemo(() => {
         return Object.entries(groupedActiveAlerts).sort((a, b) => {
             const getSeverityWeight = (alerts) => {
-                if (alerts.some(a => a.severity === 'critical')) {return 3;}
-                if (alerts.some(a => a.severity === 'warning')) {return 2;}
+                const s = alerts[0].severity;
+                if (s === 'critical') {return 3;}
+                if (s === 'warning') {return 2;}
                 return 1;
             };
             const severityDiff = getSeverityWeight(b[1]) - getSeverityWeight(a[1]);
@@ -141,8 +142,10 @@ const AlertsSection = ({ alerts, loading, showServer = false, onAcknowledge, onU
         );
     }
 
-    // Render either a single AlertItem or a GroupedAlertItem depending on count
-    const renderAlertGroup = (title, alertsInGroup) => {
+    // Render either a single AlertItem or a GroupedAlertItem depending on count.
+    // groupKey is "title::severity"; extract the display title for GroupedAlertItem.
+    const renderAlertGroup = (groupKey, alertsInGroup) => {
+        const displayTitle = groupKey.split('::')[0];
         if (alertsInGroup.length === 1) {
             return (
                 <AlertItem
@@ -158,14 +161,15 @@ const AlertsSection = ({ alerts, loading, showServer = false, onAcknowledge, onU
         }
         return (
             <GroupedAlertItem
-                key={title}
-                title={title}
+                key={groupKey}
+                title={displayTitle}
                 alerts={alertsInGroup}
                 showServer={showServer}
                 onAcknowledge={onAcknowledge}
                 onUnacknowledge={onUnacknowledge}
                 onAnalyze={onAnalyze}
                 onEditOverride={onEditOverride}
+                onAcknowledgeGroup={onAcknowledgeGroup}
             />
         );
     };
@@ -205,8 +209,8 @@ const AlertsSection = ({ alerts, loading, showServer = false, onAcknowledge, onU
                             </Typography>
                         </Box>
                     ) : (
-                        sortedActiveGroups.map(([title, alertsInGroup]) =>
-                            renderAlertGroup(title, alertsInGroup)
+                        sortedActiveGroups.map(([groupKey, alertsInGroup]) =>
+                            renderAlertGroup(groupKey, alertsInGroup)
                         )
                     )}
                 </Box>
@@ -233,8 +237,8 @@ const AlertsSection = ({ alerts, loading, showServer = false, onAcknowledge, onU
 
                     <Collapse in={ackExpanded}>
                         <Box sx={ACK_LIST_SX}>
-                            {sortedAcknowledgedGroups.map(([title, alertsInGroup]) =>
-                                renderAlertGroup(title, alertsInGroup)
+                            {sortedAcknowledgedGroups.map(([groupKey, alertsInGroup]) =>
+                                renderAlertGroup(groupKey, alertsInGroup)
                             )}
                         </Box>
                     </Collapse>

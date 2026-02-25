@@ -90,7 +90,7 @@ const HeaderStatusIndicator = ({ status, alertCount = 0, size = 'large' }) => {
 
     // Healthy nodes - green checkmark
     return (
-        <Tooltip title="Online" placement="left">
+        <Tooltip title="OK" placement="left">
             <HealthyIcon sx={healthyIconSx} />
         </Tooltip>
     );

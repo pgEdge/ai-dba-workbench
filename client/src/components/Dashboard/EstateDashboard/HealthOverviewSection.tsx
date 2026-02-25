@@ -152,7 +152,7 @@ const HealthOverviewSection: React.FC<HealthOverviewSectionProps> = ({ selection
     }, [fetchAlertCounts]);
 
     const serverStatusData = useMemo(() => ({
-        categories: ['Online', 'Warning', 'Offline'],
+        categories: ['OK', 'Warning', 'Offline'],
         series: [{
             name: 'Servers',
             data: [serverCounts.online, serverCounts.warning, serverCounts.offline],

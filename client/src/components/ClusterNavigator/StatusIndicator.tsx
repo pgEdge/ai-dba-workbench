@@ -168,7 +168,7 @@ const StatusIndicator: React.FC<StatusIndicatorProps> = ({
 
     // Healthy nodes - green checkmark
     return withBlackoutOverlay(
-        <Tooltip title="Online" placement="right">
+        <Tooltip title="OK" placement="right">
             <HealthyIcon sx={getHealthyIconSx(theme)} />
         </Tooltip>
     );

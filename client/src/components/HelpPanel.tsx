@@ -592,8 +592,8 @@ const StatusPanelPage = ({ aiEnabled }: { aiEnabled: boolean }) => (
         </Typography>
         <Box sx={styles.indentedBlock}>
             <FeatureItem
-                title="Online Count"
-                description="Number of servers currently online and healthy."
+                title="OK Count"
+                description="Number of servers with no active alerts."
             />
             <FeatureItem
                 title="Warning Count"

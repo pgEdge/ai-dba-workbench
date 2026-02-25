@@ -138,7 +138,7 @@ IMPORTANT INSTRUCTIONS:
 // Since Ollama doesn't have native function calling, we include tool descriptions in the prompt
 // and append JSON-based tool calling instructions.
 func ollamaSystemPromptWithTools(toolsContext string) string {
-	return systemPrompt + "\n\nYou have access to the following tools:\n\n" +
+	return SystemPrompt + "\n\nYou have access to the following tools:\n\n" +
 		toolsContext + "\n" + ollamaToolInstructions
 }
 

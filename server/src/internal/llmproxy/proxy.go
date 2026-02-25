@@ -19,6 +19,7 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/apiconst"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/chat"
+	"github.com/pgedge/ai-workbench/server/internal/memory"
 	"github.com/pgedge/ai-workbench/server/internal/tracing"
 )
 
@@ -37,6 +38,7 @@ type Config struct {
 	Temperature            float64
 	UseCompactDescriptions bool
 	CompactDescriptions    map[string]string // tool name -> compact description
+	MemoryStore            *memory.Store     // Memory store for pinned memory injection (may be nil)
 }
 
 // Message represents a message in the chat conversation
@@ -355,9 +357,28 @@ func HandleChat(w http.ResponseWriter, r *http.Request, config *Config) {
 		}
 	}
 
+	// Inject pinned memories into the system prompt when available.
+	// This ensures the LLM always has access to important stored context.
+	effectiveSystemPrompt := req.System
+	if config.MemoryStore != nil {
+		username := auth.GetUsernameFromContext(ctx)
+		if username != "" {
+			pinnedMemories, memErr := config.MemoryStore.GetPinned(ctx, username)
+			if memErr != nil {
+				fmt.Fprintf(os.Stderr, "WARNING: Failed to fetch pinned memories: %v\n", memErr)
+			} else if len(pinnedMemories) > 0 {
+				base := effectiveSystemPrompt
+				if base == "" {
+					base = chat.SystemPrompt
+				}
+				effectiveSystemPrompt = chat.BuildSystemPrompt(base, pinnedMemories)
+			}
+		}
+	}
+
 	// Call LLM - pass tools as []interface{} to avoid import cycle
 	// The chat client will access tool fields which are structurally identical to mcp.Tool
-	llmResponse, err := client.Chat(ctx, chatMessages, req.Tools, req.System)
+	llmResponse, err := client.Chat(ctx, chatMessages, req.Tools, effectiveSystemPrompt)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: LLM chat request failed: %v\n", err)
 		if tracing.IsEnabled() {

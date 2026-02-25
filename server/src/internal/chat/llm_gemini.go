@@ -292,7 +292,7 @@ func (c *geminiClient) Chat(ctx context.Context, messages []Message, tools inter
 	}
 
 	// Build system instruction; use custom prompt if provided, otherwise default
-	activePrompt := systemPrompt
+	activePrompt := SystemPrompt
 	if customSystemPrompt != "" {
 		activePrompt = customSystemPrompt
 	}

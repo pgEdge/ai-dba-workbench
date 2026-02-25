@@ -134,7 +134,7 @@ func (c *anthropicClient) Chat(ctx context.Context, messages []Message, tools in
 	}
 
 	// Create system message; use custom prompt if provided, otherwise default
-	activePrompt := systemPrompt
+	activePrompt := SystemPrompt
 	if customSystemPrompt != "" {
 		activePrompt = customSystemPrompt
 	}

@@ -11,6 +11,13 @@ and this project adheres to
 
 ### Added
 
+- Chat memory feature for Ask Ellie; Ellie can store,
+  recall, and delete persistent memories across
+  conversations using three new tools: `store_memory`,
+  `recall_memories`, and `delete_memory`. Memories
+  support categories, user and system scopes, and
+  pinned memories that are automatically included in
+  every conversation.
 - Visual indicator on alert panels showing whether each
   alert was triggered by a threshold rule or by anomaly
   detection.

@@ -129,6 +129,13 @@ knowledgebase:
   # embedding_openai_base_url: "https://api.openai.com/v1"
 
 #=========================================================================
+# CHAT MEMORY CONFIGURATION
+#=========================================================================
+memory:
+  # Enable persistent chat memory (default: true)
+  enabled: true
+
+#=========================================================================
 # BUILT-IN TOOLS, RESOURCES, AND PROMPTS
 #=========================================================================
 builtins:
@@ -153,6 +160,10 @@ builtins:
     # Utility tools
     generate_embedding: true
     search_knowledgebase: true
+    # Memory tools
+    store_memory: true
+    recall_memories: true
+    delete_memory: true
   resources:
     system_info: true
     connection_info: true
@@ -431,6 +442,37 @@ llm:
 | `embedding_voyage_base_url` | string | `https://api.voyageai.com/v1/embeddings` | Override the Voyage AI API base URL |
 | `embedding_openai_base_url` | string | `https://api.openai.com/v1` | Override the OpenAI API base URL |
 
+### Memory (`memory`)
+
+The memory section controls the chat memory feature for
+Ask Ellie. Chat memory allows Ellie to store and recall
+information across conversations.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | bool | `true` | Enable persistent chat memory |
+
+The memory feature requires the PostgreSQL datastore to
+be configured in the `database` section. The server
+stores memories in the datastore alongside other
+persistent data. When memory is disabled, the three
+memory tools (`store_memory`, `recall_memories`,
+`delete_memory`) are unavailable even if they are
+enabled in the `builtins.tools` section.
+
+In the following example, the `memory` section disables
+chat memory:
+
+```yaml
+memory:
+  enabled: false
+```
+
+The `PGEDGE_MEMORY_ENABLED` environment variable can
+also control this setting; see
+[Environment Variables](#environment-variables) for
+details.
+
 ### Built-in Features (`builtins`)
 
 Enable or disable individual tools, resources, and prompts:
@@ -458,9 +500,41 @@ builtins:
     # Utility tools
     generate_embedding: true
     search_knowledgebase: true
+    # Memory tools
+    store_memory: true
+    recall_memories: true
+    delete_memory: true
   resources:
     system_info: true
     connection_info: true
+```
+
+#### Memory Tools
+
+The memory tools (`store_memory`, `recall_memories`,
+`delete_memory`) allow Ellie to store and recall
+information across conversations. The server stores
+memories in the PostgreSQL datastore; the database
+section must be configured for memory tools to
+function. When embedding generation is enabled, the
+`recall_memories` tool uses semantic similarity for
+searching. The tool falls back to text matching when
+embeddings are unavailable.
+
+Set any memory tool to `false` in the `builtins.tools`
+section to disable the tool. All three memory tools
+are enabled by default.
+
+In the following example, the configuration disables
+the `store_memory` and `delete_memory` tools while
+keeping `recall_memories` enabled:
+
+```yaml
+builtins:
+  tools:
+    store_memory: false
+    delete_memory: false
+    recall_memories: true
 ```
 
 ### Paths and Directories
@@ -623,6 +697,25 @@ In the following example, the variable enables debug logging:
 
 ```bash
 export PGEDGE_DB_LOG_LEVEL=debug
+```
+
+### `PGEDGE_MEMORY_ENABLED`
+
+The `PGEDGE_MEMORY_ENABLED` variable controls the chat
+memory feature for Ask Ellie. The server reads this
+variable at startup and applies the value as an
+override to the `memory.enabled` configuration option.
+
+The following values are supported:
+
+- `true` enables chat memory (default).
+- `false` disables chat memory.
+
+In the following example, the variable disables chat
+memory:
+
+```bash
+export PGEDGE_MEMORY_ENABLED=false
 ```
 
 ## Configuration Reload

@@ -16,8 +16,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
+	"github.com/pgedge/ai-workbench/server/internal/memory"
 )
 
 func TestAnthropicClient_TextResponse(t *testing.T) {
@@ -836,6 +838,73 @@ func TestOpenAIClient_GPT5UsesMaxCompletionTokens(t *testing.T) {
 				if val, ok := parsed["max_completion_tokens"].(float64); !ok || int(val) != 4096 {
 					t.Errorf("Expected max_completion_tokens=4096, got %v", parsed["max_completion_tokens"])
 				}
+			}
+		})
+	}
+}
+
+func TestBuildSystemPrompt(t *testing.T) {
+	now := time.Now().UTC()
+
+	tests := []struct {
+		name     string
+		base     string
+		memories []memory.Memory
+		want     string
+	}{
+		{
+			name:     "no memories returns base unchanged",
+			base:     "You are a helpful assistant.",
+			memories: nil,
+			want:     "You are a helpful assistant.",
+		},
+		{
+			name:     "empty slice returns base unchanged",
+			base:     "You are a helpful assistant.",
+			memories: []memory.Memory{},
+			want:     "You are a helpful assistant.",
+		},
+		{
+			name: "single memory appended",
+			base: "Base prompt.",
+			memories: []memory.Memory{
+				{
+					ID:        1,
+					Username:  "alice",
+					Scope:     "user",
+					Category:  "preference",
+					Content:   "Prefers JSON output format.",
+					Pinned:    true,
+					CreatedAt: now,
+					UpdatedAt: now,
+				},
+			},
+			want: "Base prompt.\n\nPERSISTENT MEMORIES:\nThe following are important memories that should inform your responses:\n\n- [user/preference] Prefers JSON output format.\n",
+		},
+		{
+			name: "multiple memories appended in order",
+			base: "Base prompt.",
+			memories: []memory.Memory{
+				{
+					Scope:    "system",
+					Category: "policy",
+					Content:  "Always use UTC timestamps.",
+				},
+				{
+					Scope:    "user",
+					Category: "context",
+					Content:  "Works on the analytics team.",
+				},
+			},
+			want: "Base prompt.\n\nPERSISTENT MEMORIES:\nThe following are important memories that should inform your responses:\n\n- [system/policy] Always use UTC timestamps.\n- [user/context] Works on the analytics team.\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := BuildSystemPrompt(tt.base, tt.memories)
+			if got != tt.want {
+				t.Errorf("BuildSystemPrompt() =\n%q\nwant:\n%q", got, tt.want)
 			}
 		})
 	}

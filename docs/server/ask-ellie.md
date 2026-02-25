@@ -26,6 +26,8 @@ capabilities:
 - The assistant analyzes query execution plans.
 - The assistant reviews alert history and alert rule
   configuration.
+- The assistant stores and recalls persistent memories
+  across conversations.
 
 ## Opening the Chat
 
@@ -104,6 +106,113 @@ table describes the available tools:
 | `describe_probe` | Provides details about a specific monitoring probe. |
 | `get_alert_history` | Retrieves historical alerts for a connection. |
 | `get_alert_rules` | Retrieves current alert rules and thresholds. |
+| `store_memory` | Stores a persistent memory for future recall. |
+| `recall_memories` | Searches stored memories by semantic similarity. |
+| `delete_memory` | Removes a stored memory by its ID. |
+
+## Chat Memory
+
+Ellie can store and recall information across
+conversations using persistent memories. Memories
+allow Ellie to remember facts, preferences, and
+instructions that persist beyond a single conversation.
+
+### What Memories Are
+
+A memory is a persistent piece of information that
+Ellie saves to the PostgreSQL datastore. Each memory
+contains a text content field, a category, a visibility
+scope, and an optional pinned flag. The system
+associates each memory with the authenticated user who
+created the memory.
+
+### Categories
+
+Categories organize memories by type. The following
+categories are available:
+
+- The `preference` category stores user preferences
+  such as output format or language style.
+- The `fact` category stores factual information about
+  databases, servers, or infrastructure.
+- The `instruction` category stores standing directives
+  that guide how Ellie responds.
+- The `context` category stores background information
+  about projects or environments.
+- The `policy` category stores organizational rules
+  and standards that Ellie should follow.
+
+### Scope
+
+Each memory has a visibility scope that controls who
+can access the memory. The two available scopes are:
+
+- The `user` scope makes a memory private to the user
+  who created the memory.
+- The `system` scope makes a memory visible to all
+  users in the organization.
+
+The default scope is `user` when no scope is specified.
+
+### Pinned Memories
+
+A pinned memory is automatically included in every
+conversation. The server appends pinned memories to
+the system prompt so that Ellie always has access to
+the pinned content. Use pinned memories for critical
+information that should inform every response.
+
+### Memory Tools
+
+Ellie uses three tools to manage memories during a
+conversation.
+
+The `store_memory` tool saves a new memory to the
+datastore. The tool requires a content string and a
+category. The scope and pinned parameters are optional.
+
+The `recall_memories` tool searches stored memories
+using semantic similarity when embeddings are enabled.
+The tool falls back to text matching when embeddings
+are unavailable. Pinned memories are always included
+in the search results regardless of the query.
+
+The `delete_memory` tool removes a memory by its
+numeric ID. A user can only delete memories that the
+user owns.
+
+### Example Interactions
+
+The following examples show how to use chat memory
+with Ellie.
+
+To store a preference, send a message such as:
+
+```
+Remember that I prefer JSON output for query results.
+```
+
+Ellie calls the `store_memory` tool with the category
+`preference` and stores the memory for future recall.
+
+To recall stored memories, send a message such as:
+
+```
+What do you remember about my preferences?
+```
+
+Ellie calls the `recall_memories` tool and returns
+matching memories from the datastore.
+
+To store a pinned instruction, send a message such as:
+
+```
+Always check replication lag before recommending
+schema changes. Pin this as an instruction.
+```
+
+Ellie stores the memory with the `instruction`
+category and sets the pinned flag to true.
 
 ## API Reference
 

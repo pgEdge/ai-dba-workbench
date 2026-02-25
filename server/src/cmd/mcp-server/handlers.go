@@ -23,6 +23,7 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/conversations"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/llmproxy"
+	"github.com/pgedge/ai-workbench/server/internal/memory"
 	"github.com/pgedge/ai-workbench/server/internal/overview"
 )
 
@@ -89,7 +90,12 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 			createUserInfoHandler(deps.AuthStore))
 
 		// LLM proxy handlers (always enabled)
-		setupLLMHandlers(mux, deps.Config, authWrapper, deps.ToolProvider)
+		// Create memory store for pinned memory injection into system prompt
+		var memoryStore *memory.Store
+		if deps.Datastore != nil {
+			memoryStore = memory.NewStore(deps.Datastore.GetPool())
+		}
+		setupLLMHandlers(mux, deps.Config, authWrapper, deps.ToolProvider, memoryStore)
 
 		// MCP tool REST bridge (exposes tools/list and tools/call over REST)
 		if deps.ToolProvider != nil {
@@ -258,10 +264,11 @@ func createAuthWrapper(authStore *auth.AuthStore) func(http.HandlerFunc) http.Ha
 			storedToken, err := authStore.ValidateToken(token)
 			if err == nil && storedToken != nil {
 				ctx = context.WithValue(ctx, auth.UserIDContextKey, storedToken.OwnerID)
-				// Look up user to determine superuser status
+				// Look up user to determine superuser status and username
 				user, userErr := authStore.GetUserByID(storedToken.OwnerID)
 				if userErr == nil && user != nil {
 					ctx = context.WithValue(ctx, auth.IsSuperuserContextKey, user.IsSuperuser)
+					ctx = context.WithValue(ctx, auth.UsernameContextKey, user.Username)
 				}
 			} else {
 				// Try session token
@@ -271,6 +278,7 @@ func createAuthWrapper(authStore *auth.AuthStore) func(http.HandlerFunc) http.Ha
 						http.StatusUnauthorized)
 					return
 				}
+				ctx = context.WithValue(ctx, auth.UsernameContextKey, username)
 				// Get user ID and superuser status for RBAC
 				user, userErr := authStore.GetUser(username)
 				if userErr == nil && user != nil {
@@ -388,7 +396,7 @@ func handleCapabilities(aiEnabled bool, maxIterations int) http.HandlerFunc {
 }
 
 // setupLLMHandlers configures LLM proxy endpoints
-func setupLLMHandlers(mux *http.ServeMux, cfg *config.Config, authWrapper func(http.HandlerFunc) http.HandlerFunc, toolProvider api.ContextAwareToolProvider) {
+func setupLLMHandlers(mux *http.ServeMux, cfg *config.Config, authWrapper func(http.HandlerFunc) http.HandlerFunc, toolProvider api.ContextAwareToolProvider, memoryStore *memory.Store) {
 	// Build a compact description lookup map from registered tools.
 	// The web client sends tools without CompactDescription populated,
 	// so we look them up server-side and apply them in HandleChat.
@@ -416,6 +424,7 @@ func setupLLMHandlers(mux *http.ServeMux, cfg *config.Config, authWrapper func(h
 		Temperature:            cfg.LLM.Temperature,
 		UseCompactDescriptions: cfg.LLM.UseCompactDescriptions(),
 		CompactDescriptions:    compactDescs,
+		MemoryStore:            memoryStore,
 	}
 
 	// Provider/model listing don't require auth (needed for login page)

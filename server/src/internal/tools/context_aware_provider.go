@@ -21,6 +21,7 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/config"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
+	"github.com/pgedge/ai-workbench/server/internal/memory"
 	"github.com/pgedge/ai-workbench/server/internal/resources"
 	"github.com/pgedge/ai-workbench/server/internal/tracing"
 )
@@ -37,6 +38,7 @@ type ContextAwareProvider struct {
 	rateLimiter    *auth.RateLimiter   // Rate limiter for authentication attempts
 	datastore      *database.Datastore // Datastore for monitored connection info
 	rbacChecker    *auth.RBACChecker   // RBAC checker for privilege-based access control
+	memoryStore    *memory.Store       // Memory store for chat memory persistence
 
 	// Cache of registries per client to avoid re-creating tools on every Execute()
 	mu               sync.RWMutex
@@ -99,6 +101,15 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_blackouts") {
 			registry.Register("get_blackouts", GetBlackoutsTool(datastorePool))
+		}
+		if p.cfg.Builtins.Tools.IsToolEnabled("store_memory") && p.memoryStore != nil {
+			registry.Register("store_memory", StoreMemoryTool(p.memoryStore, p.cfg))
+		}
+		if p.cfg.Builtins.Tools.IsToolEnabled("recall_memories") && p.memoryStore != nil {
+			registry.Register("recall_memories", RecallMemoriesTool(p.memoryStore, p.cfg))
+		}
+		if p.cfg.Builtins.Tools.IsToolEnabled("delete_memory") && p.memoryStore != nil {
+			registry.Register("delete_memory", DeleteMemoryTool(p.memoryStore))
 		}
 	} else {
 		// Register tools with nil pool - they'll return helpful errors
@@ -167,6 +178,11 @@ func NewContextAwareProvider(clientManager *database.ClientManager, resourceReg 
 		hiddenRegistry:   NewRegistry(),
 	}
 
+	// Initialize memory store from the datastore pool (only when memory is enabled)
+	if datastore != nil && cfg.Memory.Enabled {
+		provider.memoryStore = memory.NewStore(datastore.GetPool())
+	}
+
 	// Register ALL tools in base registry so they're always visible in tools/list
 	// Database-dependent tools will fail gracefully in Execute() if no connection exists
 	// This provides better UX - users can discover all tools even before connecting
@@ -203,6 +219,11 @@ func (p *ContextAwareProvider) createResourceAdapter() ResourceReader {
 // GetBaseRegistry returns the base registry for adding additional tools
 func (p *ContextAwareProvider) GetBaseRegistry() *Registry {
 	return p.baseRegistry
+}
+
+// GetMemoryStore returns the memory store instance
+func (p *ContextAwareProvider) GetMemoryStore() *memory.Store {
+	return p.memoryStore
 }
 
 // RegisterTools initializes tool registrations
@@ -372,6 +393,9 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 		"get_metric_baselines": true, // Datastore tool - uses shared datastore pool
 		"query_datastore":      true, // Datastore tool - uses shared datastore pool
 		"get_blackouts":        true, // Datastore tool - uses shared datastore pool
+		"store_memory":         true, // Datastore tool - uses shared datastore pool
+		"recall_memories":      true, // Datastore tool - uses shared datastore pool
+		"delete_memory":        true, // Datastore tool - uses shared datastore pool
 	}
 
 	if statelessTools[name] {

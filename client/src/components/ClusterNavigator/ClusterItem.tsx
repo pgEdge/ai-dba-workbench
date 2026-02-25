@@ -24,6 +24,7 @@ import {
     ChevronRight as CollapseIcon,
     Dns as ClusterIcon,
     Settings as SettingsIcon,
+    DeleteOutline as DeleteIcon,
 } from '@mui/icons-material';
 import InlineEditText from '../InlineEditText';
 import { getClusterType, countServersRecursive } from './utils';
@@ -57,6 +58,8 @@ const countChipBase = {
 
 const settingsIconSx = { fontSize: 14 };
 const settingsButtonSx = { p: 0.25, color: 'text.disabled', '&:hover': { color: 'primary.main' } };
+const deleteIconSx = { fontSize: 14 };
+const deleteButtonSx = { p: 0.25, color: 'text.disabled', '&:hover': { color: 'error.main' } };
 
 // -- Style-getter functions -----------------------------------------------
 
@@ -144,6 +147,7 @@ interface ClusterItemProps {
     onEditServer?: (server: Server) => void;
     onDeleteServer?: (server: Server) => void;
     onConfigureCluster?: (cluster: Cluster) => void;
+    onDeleteCluster?: (cluster: Cluster) => void;
     getServerAlertCount?: (serverId: number) => number;
     getServerBlackoutStatus?: (serverId: number) => { active: boolean; inherited: boolean };
     getClusterBlackoutStatus?: (clusterId: string) => { active: boolean; inherited: boolean };
@@ -169,6 +173,7 @@ const ClusterItem = memo<ClusterItemProps>(({
     onEditServer,
     onDeleteServer,
     onConfigureCluster,
+    onDeleteCluster,
     getServerAlertCount,
     getServerBlackoutStatus,
     getClusterBlackoutStatus,
@@ -263,18 +268,33 @@ const ClusterItem = memo<ClusterItemProps>(({
                         sx={getCountChipSx(theme)}
                     />
                 </Box>
-                {canEditCluster && onConfigureCluster && (
+                {canEditCluster && (onConfigureCluster || (onDeleteCluster && totalCount === 0)) && (
                     <Box sx={getClusterActionsSx(theme)}>
-                        <IconButton
-                            size="small"
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                onConfigureCluster(cluster);
-                            }}
-                            sx={settingsButtonSx}
-                        >
-                            <SettingsIcon sx={settingsIconSx} />
-                        </IconButton>
+                        {onConfigureCluster && (
+                            <IconButton
+                                size="small"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    onConfigureCluster(cluster);
+                                }}
+                                sx={settingsButtonSx}
+                            >
+                                <SettingsIcon sx={settingsIconSx} />
+                            </IconButton>
+                        )}
+                        {onDeleteCluster && totalCount === 0 && (
+                            <IconButton
+                                size="small"
+                                aria-label={`Delete cluster ${cluster.name}`}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    onDeleteCluster(cluster);
+                                }}
+                                sx={deleteButtonSx}
+                            >
+                                <DeleteIcon sx={deleteIconSx} />
+                            </IconButton>
+                        )}
                     </Box>
                 )}
             </Box>

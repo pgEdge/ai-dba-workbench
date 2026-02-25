@@ -670,9 +670,9 @@ func (h *ConnectionHandler) getConnectionContext(w http.ResponseWriter, r *http.
 // ConnectionClusterUpdateRequest is the request body for updating a
 // connection's cluster assignment.
 type ConnectionClusterUpdateRequest struct {
-	ClusterID       *int    `json:"cluster_id"`
-	Role            *string `json:"role"`
-	ClusterOverride bool    `json:"cluster_override"`
+	ClusterID        *int    `json:"cluster_id"`
+	Role             *string `json:"role"`
+	MembershipSource string  `json:"membership_source"`
 }
 
 // connectionClusterResponse bundles current cluster info with available
@@ -738,15 +738,19 @@ func (h *ConnectionHandler) handleUpdateConnectionCluster(w http.ResponseWriter,
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	if req.ClusterID == nil && !req.ClusterOverride {
+	if req.ClusterID == nil && req.MembershipSource != "manual" {
 		// Reset to auto-detection
-		if err := h.datastore.ClearClusterOverride(ctx, connectionID); err != nil {
-			log.Printf("[ERROR] Failed to clear cluster override (id=%d): %v", connectionID, err)
-			RespondError(w, http.StatusInternalServerError, "Failed to clear cluster override")
+		if err := h.datastore.ResetMembershipSource(ctx, connectionID); err != nil {
+			log.Printf("[ERROR] Failed to reset membership source (id=%d): %v", connectionID, err)
+			RespondError(w, http.StatusInternalServerError, "Failed to reset membership source")
 			return
 		}
 	} else {
-		if err := h.datastore.AssignConnectionToCluster(ctx, connectionID, req.ClusterID, req.Role, req.ClusterOverride); err != nil {
+		membershipSource := req.MembershipSource
+		if membershipSource == "" {
+			membershipSource = "auto"
+		}
+		if err := h.datastore.AssignConnectionToCluster(ctx, connectionID, req.ClusterID, req.Role, membershipSource); err != nil {
 			log.Printf("[ERROR] Failed to assign connection to cluster (id=%d): %v", connectionID, err)
 			RespondError(w, http.StatusInternalServerError, "Failed to assign connection to cluster")
 			return

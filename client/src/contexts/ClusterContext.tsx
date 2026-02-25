@@ -84,6 +84,7 @@ const ClusterCombinedProvider = ({ children }: ClusterProviderProps): React.Reac
         createServer: actionsContext.createServer,
         updateServer: actionsContext.updateServer,
         deleteServer: actionsContext.deleteServer,
+        deleteCluster: actionsContext.deleteCluster,
         createGroup: actionsContext.createGroup,
         deleteGroup: actionsContext.deleteGroup,
         moveClusterToGroup: actionsContext.moveClusterToGroup,

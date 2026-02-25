@@ -22,6 +22,7 @@ export interface Server {
     is_expandable?: boolean;
     children?: Server[];
     connection_error?: string;
+    membership_source?: string;
 }
 
 export interface Cluster {

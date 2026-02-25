@@ -35,6 +35,7 @@ export interface ClusterActionsContextValue {
     createServer: (serverData: ServerData) => Promise<unknown>;
     updateServer: (serverId: number, serverData: ServerData) => Promise<unknown>;
     deleteServer: (serverId: number) => Promise<void>;
+    deleteCluster: (clusterId: string) => Promise<void>;
     createGroup: (groupData: GroupData) => Promise<unknown>;
     deleteGroup: (groupId: string | number) => Promise<void>;
     moveClusterToGroup: (clusterId: string, targetGroupId: string | null, autoClusterKey?: string, clusterName?: string) => Promise<void>;
@@ -186,6 +187,17 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
     }, [user, fetchClusterData, selectedServer, clearSelection]);
 
     /**
+     * Delete a cluster (database-backed clusters only)
+     */
+    const deleteCluster = useCallback(async (clusterId: string): Promise<void> => {
+        if (!user) {throw new Error('Not authenticated');}
+
+        await apiDelete(`/api/v1/clusters/${clusterId}`);
+
+        await fetchClusterData();
+    }, [user, fetchClusterData]);
+
+    /**
      * Create a new cluster group
      */
     const createGroup = useCallback(async (groupData: GroupData): Promise<unknown> => {
@@ -257,6 +269,7 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
         createServer,
         updateServer,
         deleteServer,
+        deleteCluster,
         createGroup,
         deleteGroup,
         moveClusterToGroup,
@@ -268,6 +281,7 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
         createServer,
         updateServer,
         deleteServer,
+        deleteCluster,
         createGroup,
         deleteGroup,
         moveClusterToGroup,

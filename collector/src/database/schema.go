@@ -2981,6 +2981,30 @@ func (sm *SchemaManager) registerMigrations() {
 			return err
 		},
 	})
+
+	// Migration #25: Replace cluster_override with membership_source
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     25,
+		Description: "Replace cluster_override with membership_source column",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+			_, err := tx.Exec(ctx, `
+				ALTER TABLE connections ADD COLUMN IF NOT EXISTS
+					membership_source VARCHAR(20) NOT NULL DEFAULT 'auto';
+
+				UPDATE connections
+				SET membership_source = 'manual'
+				WHERE cluster_override = TRUE;
+
+				ALTER TABLE connections DROP COLUMN IF EXISTS
+					cluster_override;
+
+				COMMENT ON COLUMN connections.membership_source IS
+					'How the connection was assigned to its cluster: auto (by auto-detection) or manual (by a user)';
+			`)
+			return err
+		},
+	})
 }
 
 // Migrate applies all pending migrations

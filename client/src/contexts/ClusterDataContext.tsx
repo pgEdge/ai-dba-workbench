@@ -23,6 +23,7 @@ export interface ClusterServer {
     primary_role?: string;
     version?: string | null;
     connection_error?: string;
+    membership_source?: string;
     children?: ClusterServer[];
     relationships?: Array<{
         target_server_id: number;
@@ -113,7 +114,7 @@ export const collectServerFingerprints = (servers: ClusterServer[]): string => {
     if (!servers || servers.length === 0) {return '';}
     return servers.map(server => {
         const childFingerprints = collectServerFingerprints(server.children || []);
-        return `${server.id}:${server.name}:${server.description || ''}:${server.status}:${server.connection_error || ''}:${server.primary_role || server.role || ''}${childFingerprints ? ':' + childFingerprints : ''}`;
+        return `${server.id}:${server.name}:${server.description || ''}:${server.status}:${server.connection_error || ''}:${server.primary_role || server.role || ''}:${server.membership_source || ''}${childFingerprints ? ':' + childFingerprints : ''}`;
     }).join(',');
 };
 

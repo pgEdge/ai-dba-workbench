@@ -154,6 +154,11 @@ can access the memory. The two available scopes are:
 
 The default scope is `user` when no scope is specified.
 
+Storing system-scoped memories requires the
+`store_system_memory` admin permission. Administrators
+assign this permission to groups through the admin
+panel.
+
 ### Pinned Memories
 
 A pinned memory is automatically included in every
@@ -214,6 +219,31 @@ schema changes. Pin this as an instruction.
 Ellie stores the memory with the `instruction`
 category and sets the pinned flag to true.
 
+### User Context
+
+Ellie automatically receives information about the
+current user at the start of each conversation. This
+information includes the username, display name, group
+memberships, and effective permissions. Ellie uses
+this context to personalise responses.
+
+### Managing Memories
+
+The settings panel includes a Memories section under
+the AI category. This panel displays all memories
+visible to the current user, including private
+user-scoped memories and shared system-scoped memories.
+
+The panel provides the following actions:
+
+- Toggle the pinned switch to control whether a memory
+  is automatically included in every conversation.
+- Delete memories that are no longer needed using the
+  delete button.
+
+Deleting system-scoped memories requires the
+`store_system_memory` admin permission.
+
 ## API Reference
 
 The REST API exposes endpoints for managing chat
@@ -243,6 +273,16 @@ persistence:
 | `PATCH` | `/api/v1/conversations/{id}` | Renames a conversation. |
 | `DELETE` | `/api/v1/conversations/{id}` | Deletes a conversation. |
 | `DELETE` | `/api/v1/conversations?all=true` | Deletes all conversations. |
+
+### Memory Endpoints
+
+The following endpoints manage persistent memories:
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/v1/memories` | Lists all memories visible to the authenticated user. |
+| `DELETE` | `/api/v1/memories/{id}` | Deletes a memory by ID. |
+| `PATCH` | `/api/v1/memories/{id}` | Toggles the pinned status of a memory. |
 
 ### Tool Endpoints
 

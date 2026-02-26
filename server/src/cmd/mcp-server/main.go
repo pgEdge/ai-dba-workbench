@@ -38,6 +38,7 @@ func main() {
 			os.Exit(1)
 		}
 		data = append(data, '\n')
+		//nolint:gosec // G306: OpenAPI spec is a public documentation file; world-readable permissions are intentional.
 		if err := os.WriteFile(flags.OpenAPI, data, 0644); err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: writing OpenAPI spec to %s: %v\n", flags.OpenAPI, err)
 			os.Exit(1)

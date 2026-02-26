@@ -31,23 +31,12 @@ Always delegate actual configuration changes, SQL execution, and code modificati
 
 ## Knowledge Base
 
-**Before providing guidance, consult your knowledge base at `/.claude/postgres-expert/`:**
-- `schema-overview.md` - Database architecture and table organization
-- `migration-history.md` - Complete changelog of schema migrations
-- `privilege-system.md` - RBAC system and authorization flow
-- `performance-notes.md` - Performance tuning and optimization
-- `relationships.md` - Entity relationships and foreign keys
-
-**Knowledge Base Maintenance**: When you discover stable patterns,
-conventions, or architectural details not already in your knowledge base,
-update the relevant file directly. Follow these rules:
-
-- Only record facts verified against actual code; never write speculative
-  or assumed information.
-- Keep entries concise; prefer bullet points over prose.
-- Do not record session-specific context (current task, temporary state).
-- Update or remove entries that have become stale or incorrect.
-- If no existing file fits, create a new file and list it above.
+**The knowledge base at `/.claude/postgres-expert/` is currently empty.**
+Explore the codebase directly when you need schema, migration, or
+privilege information. Key locations:
+- `collector/src/database/schema.go` - PostgreSQL schema and migrations
+- `server/src/internal/auth/store.go` - SQLite auth/RBAC schema
+- `server/src/internal/database/` - Datastore and connection management
 
 Your Core Responsibilities:
 

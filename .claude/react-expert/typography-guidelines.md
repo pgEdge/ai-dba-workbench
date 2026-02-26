@@ -57,8 +57,10 @@ Use MUI Typography variants exclusively. The canonical sizes are:
 
 ### Strict Rules
 
-1. **No text smaller than 14px (0.875rem).** This is an absolute minimum.
-   Any existing text below 14px must be increased.
+1. **No text smaller than 14px (0.875rem) in new code.** This is the
+   target minimum. Many existing components use 12px and smaller;
+   these are known technical debt and do not need to be fixed in
+   unrelated changes.
 
 2. **Default readable text must be 18px (1.125rem).** Do not use smaller
    sizes for primary content.
@@ -71,13 +73,16 @@ Use MUI Typography variants exclusively. The canonical sizes are:
    secondary information that is less prominent than body text but more
    prominent than captions.
 
-5. **Always use MUI Typography variants from the theme.** Do not use
-   arbitrary `fontSize` values in `sx` props or inline styles. If a new
-   size is needed, add it to the theme first.
+5. **Prefer MUI Typography variants from the theme.** Avoid arbitrary
+   `fontSize` values in `sx` props or inline styles where a theme
+   variant would suffice. If a new size is needed, consider adding it
+   to the theme first.
 
-6. **Custom `fontSize` in sx props is prohibited** unless the value
-   exactly matches a theme variant. This prevents the proliferation of
-   arbitrary sizes (10px, 11px, 13px, 15px, etc.).
+6. **Custom `fontSize` in sx props is discouraged** unless the value
+   matches a theme variant or addresses a specific layout constraint
+   (e.g., chart labels, dense data tables). Many existing components
+   use custom `fontSize` values; these are accepted as known
+   exceptions. New code should prefer theme variants when possible.
 
 ## Header Capitalization Rules
 
@@ -105,9 +110,13 @@ conjunctions: a, an, the, and, but, or, for, in, of, on, to, etc.
 When using uppercase labels (overline variant), use consistent
 letter-spacing.
 
-- `letterSpacing: '0.08em'` is the single standard for all uppercase
-  labels.
-- Do not use varying letter-spacing values (0.05em, 0.1em, etc.).
+- The theme overline variant uses `letterSpacing: '0.08em'`.
+  New uppercase labels should prefer this value.
+- In practice, many existing components use `0.05em` for
+  uppercase labels. Both `0.05em` and `0.08em` are acceptable;
+  prefer `0.08em` for new code and maintain consistency within
+  each component.
+- Avoid other values such as `0.1em` or `0.15em`.
 
 ## Prohibited Patterns
 
@@ -121,10 +130,10 @@ code.
   (14px).
 - `fontSize: '0.9375rem'` (15px) — not a standard size; use
   subtitle2/button (16px).
-- Arbitrary font sizes in component styles that do not reference theme
-  typography variants.
-- Different letter-spacing values for uppercase labels; always use
-  0.08em.
+- Arbitrary font sizes in new code that do not reference theme
+  typography variants or address a documented layout constraint.
+- Unusual letter-spacing values for uppercase labels such as
+  0.1em or 0.15em. Use 0.08em or 0.05em.
 
 ## Theme Integration
 

@@ -15,34 +15,6 @@ This knowledge base provides:
 
 ## Documents
 
-### [security-sensitive-areas.md](security-sensitive-areas.md)
-
-High-risk code locations requiring careful review:
-
-- Authentication and authorization code
-- Input validation points
-- Database query construction
-- Credential handling
-- Session management
-
-### [credential-handling.md](credential-handling.md)
-
-How credentials are managed in the system:
-
-- Password hashing approach
-- Token generation and storage
-- Database connection credentials
-- Encryption at rest
-
-### [attack-surface.md](attack-surface.md)
-
-External interfaces and input points:
-
-- API endpoints
-- MCP protocol inputs
-- User-provided SQL queries
-- Configuration inputs
-
 ### [security-checklist.md](security-checklist.md)
 
 Security review checklist for common scenarios:
@@ -58,16 +30,17 @@ Security review checklist for common scenarios:
 
 | File | Risk Level | Reason |
 |------|------------|--------|
-| `/server/src/auth/` | **Critical** | Authentication logic |
-| `/server/src/mcp/tools/` | **High** | SQL execution |
-| `/server/src/database/` | **High** | Database operations |
+| `/server/src/internal/auth/` | **Critical** | Authentication logic |
+| `/server/src/internal/tools/` | **High** | SQL execution |
+| `/server/src/internal/database/` | **High** | Database operations |
 | `/collector/src/database/` | **High** | Database credentials |
+| `/alerter/src/` | **High** | Alert processing and notifications |
 
 ### Security Patterns in Use
 
-- Password hashing: bcrypt or SHA256 (see credential-handling.md)
+- Password hashing: bcrypt (cost 12); token hashing: SHA256
 - Token generation: crypto/rand for randomness
-- SQL: Parameterized queries only (pgx)
+- SQL: Parameterized queries (pgx for PostgreSQL, database/sql for SQLite auth store)
 - Session isolation: Per-user connection scoping
 
 ### Common Vulnerability Classes
@@ -78,13 +51,4 @@ Security review checklist for common scenarios:
 4. **Credential Exposure** - Logging, error messages
 5. **Session Hijacking** - Token management
 
-## Document Updates
-
-Update these documents when:
-
-- New security-sensitive features are added
-- Security vulnerabilities are found and fixed
-- Security patterns change
-- New attack vectors are identified
-
-Last Updated: 2026-01-09
+Last Updated: 2026-02-26

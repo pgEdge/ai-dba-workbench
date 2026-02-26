@@ -271,7 +271,6 @@ ai-workbench/
 │   ├── collector/     # Collector docs
 │   └── server/        # Server docs
 ├── examples/          # Example configurations
-├── DESIGN.md          # Overall system design
 └── README.md          # Project readme
 ```
 
@@ -373,9 +372,6 @@ See [Collector Quick Start](collector/quickstart.md) for detailed steps.
 - Check component-specific documentation
 - Review example configuration files in `/examples`
 - Examine test files for usage examples
-- Consult the [DESIGN.md][design] document for architecture details
-
-[design]: https://github.com/pgEdge/ai-dba-workbench/blob/main/DESIGN.md
 
 ## Version Information
 

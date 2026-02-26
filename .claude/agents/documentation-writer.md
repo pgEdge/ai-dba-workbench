@@ -29,20 +29,7 @@ report them for the main agent to address.
 ## Knowledge Base
 
 **Before writing documentation, consult your knowledge base at `/.claude/documentation-writer/`:**
-- `style-guide.md` - Complete style requirements from CLAUDE.md
 - `templates.md` - Standard templates for different document types
-- `examples.md` - Good documentation examples and anti-patterns
-
-**Knowledge Base Maintenance**: When you discover stable patterns,
-conventions, or architectural details not already in your knowledge base,
-update the relevant file directly. Follow these rules:
-
-- Only record facts verified against actual code; never write speculative
-  or assumed information.
-- Keep entries concise; prefer bullet points over prose.
-- Do not record session-specific context (current task, temporary state).
-- Update or remove entries that have become stale or incorrect.
-- If no existing file fits, create a new file and list it above.
 
 ## Documentation Standards (from CLAUDE.md)
 

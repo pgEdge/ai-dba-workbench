@@ -19,6 +19,8 @@ import { ThemeMode } from '../../types/theme';
 import { ToolActivity } from './ToolStatus';
 import { getToolDisplayName } from '../../utils/toolDisplayNames';
 import { createCleanTheme, extractLanguage } from '../shared/MarkdownContent';
+import CopyCodeButton from '../shared/CopyCodeButton';
+import { getCodeBlockButtonGroupSx } from '../shared/markdownStyles';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -383,7 +385,10 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, mode }) => {
                     : createCleanTheme(oneLight, theme.palette.grey[50]);
 
                 return (
-                    <Box sx={getMdCodeBlockWrapperSx(theme)}>
+                    <Box sx={{
+                        ...getMdCodeBlockWrapperSx(theme),
+                        position: 'relative',
+                    }}>
                         <SyntaxHighlighter
                             style={cleanTheme}
                             language={language || 'text'}
@@ -395,6 +400,9 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, mode }) => {
                         >
                             {codeString}
                         </SyntaxHighlighter>
+                        <Box sx={getCodeBlockButtonGroupSx()}>
+                            <CopyCodeButton code={codeString} theme={theme} />
+                        </Box>
                     </Box>
                 );
             },

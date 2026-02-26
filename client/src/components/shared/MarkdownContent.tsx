@@ -15,6 +15,7 @@ import {
     useTheme,
 } from '@mui/material';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import CopyCodeButton from './CopyCodeButton';
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -35,6 +36,7 @@ import {
     getInlineCodeSx,
     getCodeBlockWrapperSx,
     getCodeBlockCustomStyle,
+    getCodeBlockButtonGroupSx,
     getLinkSx,
     getBlockquoteSx,
     getTableSx,
@@ -225,7 +227,10 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
             }
 
             return (
-                <Box sx={getCodeBlockWrapperSx(theme)}>
+                <Box sx={{
+                    ...getCodeBlockWrapperSx(theme),
+                    position: 'relative',
+                }}>
                     <SyntaxHighlighter
                         style={cleanTheme}
                         language={language || 'sql'}
@@ -235,6 +240,9 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
                     >
                         {codeString}
                     </SyntaxHighlighter>
+                    <Box sx={getCodeBlockButtonGroupSx()}>
+                        <CopyCodeButton code={codeString} theme={theme} />
+                    </Box>
                 </Box>
             );
         },
@@ -288,6 +296,7 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
 export {
     RunnableCodeBlock,
     ConnectionSelectorCodeBlock,
+    CopyCodeButton,
     MarkdownContent,
     AnalysisSkeleton,
 };
@@ -326,6 +335,8 @@ export {
     getLinkSx,
     getBlockquoteSx,
     getTableSx,
+    getCodeBlockButtonGroupSx,
+    getCopyButtonSx,
     getRunButtonSx,
     getQueryResultWrapperSx,
     getQueryResultHeaderSx,

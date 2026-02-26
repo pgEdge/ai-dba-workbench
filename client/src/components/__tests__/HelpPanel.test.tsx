@@ -233,4 +233,11 @@ describe('HelpPanel Component', () => {
         expect(screen.getByText('Conversation History')).toBeInTheDocument();
         expect(screen.getByText('Available Tools')).toBeInTheDocument();
     });
+
+    it('mentions copy-to-clipboard for code blocks on Ask Ellie page', () => {
+        render(<HelpPanel {...defaultProps} />);
+        fireEvent.click(screen.getByText('Ask Ellie'));
+        expect(screen.getByText('Code Blocks')).toBeInTheDocument();
+        expect(screen.getByText(/copy-to-clipboard button/)).toBeInTheDocument();
+    });
 });

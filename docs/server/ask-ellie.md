@@ -41,6 +41,10 @@ send. The assistant processes the question and may
 execute one or more tools before responding. A status
 indicator shows active tool execution.
 
+Code blocks in the assistant's responses display a
+copy-to-clipboard button in the top-right corner.
+Click the button to copy the code block contents.
+
 Use Shift+Enter to add a new line without sending the
 message.
 

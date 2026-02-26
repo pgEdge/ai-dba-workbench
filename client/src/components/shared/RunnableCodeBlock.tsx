@@ -30,13 +30,15 @@ import {
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { apiFetch } from '../../utils/apiClient';
 import { extractExecutableSQL } from './sqlDetection';
+import CopyCodeButton from './CopyCodeButton';
 import {
     sxMonoFont,
     sxConfirmationActions,
     getCodeBlockWrapperSx,
     getCodeBlockCustomStyle,
     getTableSx,
-    getRunButtonSx,
+    getCodeBlockButtonGroupSx,
+    getCopyButtonSx,
     getQueryResultWrapperSx,
     getQueryResultHeaderSx,
     getQueryErrorSx,
@@ -249,28 +251,31 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
                 >
                     {codeContent}
                 </SyntaxHighlighter>
-                {isSql && (
-                    <Tooltip title={tooltipTitle} placement="left">
-                        <span style={{ position: 'absolute', top: 6, right: 6 }}>
-                            <IconButton
-                                size="small"
-                                onClick={() => handleRun()}
-                                disabled={queryState.loading}
-                                sx={getRunButtonSx(theme)}
-                            >
-                                {queryState.loading ? (
-                                    <CircularProgress
-                                        size={14}
-                                        sx={{ color: alpha(theme.palette.secondary.main, 0.7) }}
-                                        aria-label="Running query"
-                                    />
-                                ) : (
-                                    <PlayArrowIcon sx={{ fontSize: 18 }} />
-                                )}
-                            </IconButton>
-                        </span>
-                    </Tooltip>
-                )}
+                <Box sx={getCodeBlockButtonGroupSx()}>
+                    <CopyCodeButton code={codeContent} theme={theme} />
+                    {isSql && (
+                        <Tooltip title={tooltipTitle} placement="left">
+                            <span>
+                                <IconButton
+                                    size="small"
+                                    onClick={() => handleRun()}
+                                    disabled={queryState.loading}
+                                    sx={getCopyButtonSx(theme)}
+                                >
+                                    {queryState.loading ? (
+                                        <CircularProgress
+                                            size={14}
+                                            sx={{ color: alpha(theme.palette.secondary.main, 0.7) }}
+                                            aria-label="Running query"
+                                        />
+                                    ) : (
+                                        <PlayArrowIcon sx={{ fontSize: 18 }} />
+                                    )}
+                                </IconButton>
+                            </span>
+                        </Tooltip>
+                    )}
+                </Box>
             </Box>
 
             {/* Write-statement confirmation prompt */}

@@ -90,9 +90,11 @@ execute these queries directly from the report.
 
 ### Run Button
 
-Each SQL code block displays a play button in the upper
-right corner. Clicking the play button executes the SQL
-against the alert's connection and database. The tooltip
+Each code block displays a copy-to-clipboard button in
+the upper-right corner. SQL code blocks also display a
+play button to the right of the copy button. Clicking
+the play button executes the SQL against the alert's
+connection and database. The tooltip on the play button
 shows the target server and database name.
 
 ### Inline Results

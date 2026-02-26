@@ -547,8 +547,8 @@ const StatusPanelPage = ({ aiEnabled }: { aiEnabled: boolean }) => (
                         description="The AI validates all generated SQL queries before presenting them. Invalid queries are automatically corrected, ensuring that suggested SQL is syntactically correct."
                     />
                     <FeatureItem
-                        title="Runnable SQL"
-                        description="SQL code blocks in analysis reports include a Run button to execute queries against the server. Results appear inline below the code block."
+                        title="Code Block Actions"
+                        description="Code blocks in analysis reports include a copy-to-clipboard button. SQL code blocks also include a Run button to execute queries against the server. Results appear inline below the code block."
                     />
                     <FeatureItem
                         title="Cached Reports"
@@ -770,10 +770,12 @@ const AlertsPage = ({ aiEnabled }: { aiEnabled: boolean }) => (
                     />
                 </Box>
 
-                <SectionTitle icon={RunIcon}>Running SQL from Analysis Reports</SectionTitle>
+                <SectionTitle icon={RunIcon}>Code Block Actions</SectionTitle>
                 <Typography sx={styles.bodyTextMb2}>
-                    SQL code blocks in analysis reports include a Run button (play
-                    icon) in the top-right corner of the code block.
+                    Code blocks in analysis reports include action buttons in the
+                    top-right corner. All code blocks have a copy-to-clipboard
+                    button, and SQL code blocks also include a Run button (play
+                    icon) to execute queries.
                 </Typography>
                 <Box sx={styles.indentedBlock}>
                     <FeatureItem
@@ -1274,6 +1276,10 @@ const AskElliePage = () => (
                 title="Tool Execution"
                 description="Ellie has access to monitoring tools that run automatically as needed. A status indicator shows which tools are active during a response."
             />
+            <FeatureItem
+                title="Code Blocks"
+                description="Code blocks in responses include a copy-to-clipboard button in the top-right corner for easy copying of code snippets, SQL queries, and configuration examples."
+            />
         </Box>
 
         <SectionTitle icon={HistoryIcon}>Conversation History</SectionTitle>
@@ -1478,8 +1484,8 @@ const MonitoringPage = ({ aiEnabled }: { aiEnabled: boolean }) => (
                         description="An amber brain icon indicates a cached analysis is available. Click it to view the report instantly without waiting for regeneration."
                     />
                     <FeatureItem
-                        title="Runnable SQL"
-                        description="SQL code blocks in analysis reports include a Run button to execute queries against the monitored server. Results appear inline below the code block."
+                        title="Code Block Actions"
+                        description="Code blocks in analysis reports include a copy-to-clipboard button. SQL code blocks also include a Run button to execute queries against the monitored server. Results appear inline below the code block."
                     />
                     <FeatureItem
                         title="Download"

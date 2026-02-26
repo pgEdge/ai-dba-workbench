@@ -182,13 +182,18 @@ export const getTableSx = (theme: Theme) => ({
 });
 
 // ---------------------------------------------------------------------------
-// Style-getter functions (RunnableCodeBlock)
+// Style-getter functions (code block action buttons)
 // ---------------------------------------------------------------------------
 
-export const getRunButtonSx = (theme: Theme) => ({
+export const getCodeBlockButtonGroupSx = () => ({
     position: 'absolute',
     top: 6,
     right: 6,
+    display: 'flex',
+    gap: 0.5,
+});
+
+const getCodeBlockActionButtonSx = (theme: Theme) => ({
     minWidth: 0,
     width: 28,
     height: 28,
@@ -209,6 +214,17 @@ export const getRunButtonSx = (theme: Theme) => ({
         ),
         color: theme.palette.secondary.main,
     },
+});
+
+export const getCopyButtonSx = (theme: Theme) => ({
+    ...getCodeBlockActionButtonSx(theme),
+});
+
+export const getRunButtonSx = (theme: Theme) => ({
+    ...getCodeBlockActionButtonSx(theme),
+    position: 'absolute',
+    top: 6,
+    right: 6,
 });
 
 export const getQueryResultWrapperSx = (theme: Theme) => ({

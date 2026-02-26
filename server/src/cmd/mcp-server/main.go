@@ -10,9 +10,11 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 
+	"github.com/pgedge/ai-workbench/server/internal/api"
 	"github.com/pgedge/ai-workbench/server/internal/config"
 )
 
@@ -26,6 +28,22 @@ func main() {
 
 	// Parse command-line flags
 	flags := ParseFlags(defaultConfigPath)
+
+	// Handle -openapi flag: write spec to file and exit
+	if flags.OpenAPI != "" {
+		spec := api.BuildOpenAPISpec()
+		data, err := json.MarshalIndent(spec, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: marshaling OpenAPI spec: %v\n", err)
+			os.Exit(1)
+		}
+		data = append(data, '\n')
+		if err := os.WriteFile(flags.OpenAPI, data, 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: writing OpenAPI spec to %s: %v\n", flags.OpenAPI, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 
 	// Resolve passwords from flags, environment variables, or files
 	if err := flags.ResolvePasswords(); err != nil {

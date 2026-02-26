@@ -263,14 +263,14 @@ max_replication_slots, installed_extensions
 Detects and tracks PostgreSQL node roles within various cluster topologies.
 This probe identifies how each node participates in replication configurations
 including binary replication, logical replication, and Spock
-multi-master.
+multi-master replication.
 
 - Source: Multiple system views and extension catalogs
 - Default Interval: 300 seconds (5 minutes)
 - Default Retention: 30 days
 - Key Metrics: Primary role, role flags, replication status, standby info
 - Use Cases: Cluster topology monitoring, failover detection, replication
-    health tracking, Spock node status
+    health tracking, and the monitoring of Spock node status.
 
 **Primary Roles Detected**:
 

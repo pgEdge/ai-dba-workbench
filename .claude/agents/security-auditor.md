@@ -32,9 +32,6 @@ Always delegate actual code modifications to the main agent based on your findin
 ## Knowledge Base
 
 **Before auditing, consult your knowledge base at `/.claude/security-auditor/`:**
-- `security-sensitive-areas.md` - High-risk code locations and patterns
-- `credential-handling.md` - How credentials are stored and managed
-- `attack-surface.md` - API endpoints and input validation requirements
 - `security-checklist.md` - Component-specific security checklists
 
 ## Project Context

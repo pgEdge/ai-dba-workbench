@@ -26,7 +26,7 @@ The project theme defines these base values.
 - `background.paper`: #FFFFFF
 - `text.primary`: #1F2937
 - `text.secondary`: #6B7280
-- `divider`: #E5E7EB
+- `divider`: #D1D5DB (grey.300)
 
 **Dark mode:**
 
@@ -48,10 +48,14 @@ The project theme defines these base values.
 Panels placed on white (#FFFFFF) must be clearly distinguishable
 from the page surface.
 
-- Grey fills require a minimum alpha of 0.12. Values between
-  0.05 and 0.08 produce invisible panels.
-- Colored fills (info, warning, success, error) require a
-  minimum alpha of 0.10.
+- Grey fills should target a minimum alpha of 0.12 for strong
+  visibility. Values between 0.05 and 0.08 produce very faint
+  panels and should be avoided for standalone panel backgrounds.
+  Note: the theme uses `alpha('#15AABF', 0.06)` for
+  `action.hover`, which is acceptable for transient hover
+  states but not for persistent panel fills.
+- Colored fills (info, warning, success, error) should target a
+  minimum alpha of 0.10 for persistent backgrounds.
 - Border colors must achieve at least 3:1 contrast against the
   panel background.
 
@@ -66,12 +70,13 @@ from the page surface.
 
 ## Alpha Value Minimums for Backgrounds
 
-| Context                         | Minimum Alpha |
-|---------------------------------|---------------|
-| Grey panel fills in light mode  | 0.12          |
-| Colored status fills in light   | 0.10          |
-| Grey panel fills in dark mode   | 0.30          |
-| Any visible background element  | 0.05          |
+| Context                         | Target Alpha  | Notes                          |
+|---------------------------------|---------------|--------------------------------|
+| Grey panel fills in light mode  | 0.12          | Persistent backgrounds         |
+| Colored status fills in light   | 0.10          | Persistent backgrounds         |
+| Hover/transient states          | 0.06          | Theme uses 0.06 for action.hover|
+| Grey panel fills in dark mode   | 0.30          |                                |
+| Any visible background element  | 0.05          | Absolute floor                 |
 
 ## Borders
 
@@ -94,9 +99,11 @@ from the page surface.
 
 The following patterns produce invisible or unreadable results.
 
-- `alpha(grey, 0.05)` or `alpha(grey, 0.06)` for visible
-  panels. These are invisible on white backgrounds.
-- `alpha(color, 0.04)` for hover states. Use 0.08 as the
-  minimum hover alpha.
+- `alpha(grey, 0.05)` or `alpha(grey, 0.06)` for persistent
+  visible panels. These are nearly invisible on white
+  backgrounds. Note: the theme uses `alpha(color, 0.06)` for
+  transient hover states (`action.hover`), which is acceptable.
+- `alpha(color, 0.04)` for any background. This is below the
+  absolute floor even for hover states.
 - `text.disabled` for content that users need to read. Reserve
   `text.disabled` exclusively for truly disabled elements.

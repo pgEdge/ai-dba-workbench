@@ -31,12 +31,12 @@ Always delegate actual configuration changes, SQL execution, and code modificati
 
 ## Knowledge Base
 
-**Before providing guidance, consult your knowledge base at `/.claude/postgres-expert/`:**
-- `schema-overview.md` - Database architecture and table organization
-- `migration-history.md` - Complete changelog of schema migrations
-- `privilege-system.md` - RBAC system and authorization flow
-- `performance-notes.md` - Performance tuning and optimization
-- `relationships.md` - Entity relationships and foreign keys
+**The knowledge base at `/.claude/postgres-expert/` is currently empty.**
+Explore the codebase directly when you need schema, migration, or
+privilege information. Key locations:
+- `collector/src/database/schema.go` - PostgreSQL schema and migrations
+- `server/src/internal/auth/store.go` - SQLite auth/RBAC schema
+- `server/src/internal/database/` - Datastore and connection management
 
 Your Core Responsibilities:
 

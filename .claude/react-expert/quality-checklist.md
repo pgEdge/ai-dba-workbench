@@ -15,21 +15,25 @@ checklists for React and TypeScript code.
 
 ## CRITICAL: Font Size Rules
 
-**The absolute minimum font size is 14px (0.875rem). No exceptions.**
+**The target minimum font size is 14px (0.875rem) for new code.**
 
-This applies EVERYWHERE including:
+This target applies to:
 
 - ECharts axis labels (`fontSize` in `axisLabel` options)
 - Chart legends and tooltips
 - Small labels, captions, footnotes
 - Any text rendered in the UI
 
-Never use `fontSize: 10`, `fontSize: 11`, `fontSize: 12`, or
-`fontSize: 13`. These are all below the minimum and violate the
-project typography guidelines in `typography-guidelines.md`.
+Avoid `fontSize: 10`, `fontSize: 11`, `fontSize: 12`, or
+`fontSize: 13` in new code. These are below the target minimum
+defined in `typography-guidelines.md`.
 
-When configuring chart axis labels, use `fontSize: 14` not
+When configuring chart axis labels, prefer `fontSize: 14` over
 `fontSize: 10` or `fontSize: 12`.
+
+Note: many existing components use 12px and smaller sizes. These
+are known technical debt. Do not introduce new violations, but
+existing instances do not need to be fixed in unrelated changes.
 
 ## Common React Anti-Patterns
 
@@ -170,6 +174,10 @@ When configuring chart axis labels, use `fontSize: 14` not
 
 ## Coverage Requirements
 
-- Business logic and hooks: 90%.
-- API handlers and utilities: 80%.
-- UI components: 70%.
+These are project targets, not enforced thresholds. The
+`vitest.config.js` file does not currently configure coverage
+gates, so these serve as goals for code review.
+
+- Business logic and hooks: 90% target.
+- API handlers and utilities: 80% target.
+- UI components: 70% target.

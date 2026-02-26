@@ -124,6 +124,13 @@ codebase navigation and general research tasks.
 Each sub-agent has a knowledge base in `/.claude/<agent-name>/` containing
 domain-specific patterns and project conventions.
 
+When a task changes code that is documented in a knowledge base file,
+the sub-agent performing the work must update the affected KB file in
+the same change. The primary agent should verify that relevant KB
+entries remain accurate after each task completes. KB files that
+become stale or inaccurate are worse than having no KB file at all;
+delete or correct any entry that no longer matches the code.
+
 ## Task Workflow
 
 The primary agent follows this workflow for all tasks:

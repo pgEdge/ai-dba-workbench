@@ -47,23 +47,10 @@ server/src/
 ├── internal/auth/
 │   ├── store.go
 │   └── store_test.go
-└── integration/
-    └── privileges_integration_test.go
-
-tests/                           # Cross-component integration tests
-├── integration/
-│   └── user_test.go
-├── testutil/                    # Shared test utilities
-│   ├── database.go              # Database lifecycle
-│   ├── services.go              # Service process management
-│   ├── cli.go                   # CLI command execution
-│   ├── config.go                # Configuration templating
-│   └── common.go                # Common helpers
-├── config/
-│   └── test.conf.template
-├── logs/                        # Service logs (created during tests)
-├── Makefile
-└── go.mod
+├── internal/api/
+│   └── rbac_integration_test.go # Integration tests (co-located)
+├── internal/resources/
+│   └── integration_test.go
 ```
 
 ### Naming Conventions
@@ -85,17 +72,15 @@ cd collector && make coverage    # Tests with coverage
 cd collector && make lint        # Linter
 cd collector && make test-all    # Test + coverage + lint
 
-cd server && make test           # Unit tests (SKIP_DB_TESTS=1)
+cd server && make test           # Unit + integration tests
 cd server && make coverage
 cd server && make lint
 cd server && make test-all
 
-# Integration tests
-cd tests && make test            # Run integration tests
-cd tests && make coverage
-cd tests && make run-test TEST=TestName
-cd tests && make build-deps      # Build required binaries
-cd tests && make killall         # Kill orphaned processes
+cd alerter && make test          # Unit tests
+cd alerter && make coverage
+cd alerter && make lint
+cd alerter && make test-all
 
 # All projects from root
 make test-all
@@ -390,125 +375,18 @@ func TestDatabaseErrors(t *testing.T) {
 
 ## Integration Testing
 
-### Test Environment Pattern
+### Integration Test Approach
 
-```go
-type TestEnvironment struct {
-    DB         *testutil.TestDatabase
-    Server     *testutil.Service
-    CLI        *testutil.CLIClient
-    Config     string
-    AdminToken string
-}
+Integration tests live alongside the code they test (co-located).
+Each integration test file connects to a real PostgreSQL instance
+using the `TEST_AI_WORKBENCH_SERVER` environment variable and uses
+the `skipIfNoDatabase` helper to skip when no database is available.
 
-func SetupTestEnvironment(t *testing.T) *TestEnvironment {
-    t.Helper()
+For examples, see:
 
-    db, err := testutil.NewTestDatabase()
-    require.NoError(t, err)
+- `server/src/internal/api/rbac_integration_test.go`
+- `server/src/internal/resources/integration_test.go`
 
-    err = runSchemaMigrations(db)
-    require.NoError(t, err)
-
-    adminToken, err := createAdminUser(db)
-    require.NoError(t, err)
-
-    configPath, err := testutil.CreateTestConfig(db.Name)
-    require.NoError(t, err)
-
-    server, err := testutil.StartMCPServer(configPath, 18080)
-    require.NoError(t, err)
-
-    cli, err := testutil.NewCLIClient("http://localhost:18080")
-    require.NoError(t, err)
-    cli.SetToken(adminToken)
-
-    time.Sleep(3 * time.Second)
-
-    err = cli.Ping()
-    require.NoError(t, err, "Server not responding")
-
-    return &TestEnvironment{
-        DB: db, Server: server, CLI: cli,
-        Config: configPath, AdminToken: adminToken,
-    }
-}
-
-func (env *TestEnvironment) Teardown(t *testing.T) {
-    t.Helper()
-    if env.Server != nil { env.Server.Stop() }
-    if env.Config != "" { testutil.CleanupTestConfig(env.Config) }
-    if env.DB != nil { env.DB.Close() }
-}
-```
-
-### Test Utilities Reference
-
-Utilities live in `/tests/testutil/`:
-
-| File          | Purpose                                |
-|---------------|----------------------------------------|
-| `database.go` | `NewTestDatabase()`, `Close()`, pool   |
-| `services.go` | `StartCollector()`, `StartMCPServer()` |
-| `cli.go`      | `NewCLIClient()`, `RunTool()`, auth    |
-| `config.go`   | `CreateTestConfig()`, template vars    |
-| `common.go`   | `GetProjectRoot()`, shared helpers     |
-
-Key functions:
-
-- `testutil.NewTestDatabase() (*TestDatabase, error)` - Creates a
-  temporary database with unique name and connection pool.
-- `testutil.StartMCPServer(configPath string, port int) (*Service, error)`
-  \- Starts the MCP server, logs to `tests/logs/`.
-- `testutil.StartCollector(configPath string) (*Service, error)` - Starts
-  the collector service.
-- `testutil.NewCLIClient(serverURL string) (*CLIClient, error)` - Creates
-  a CLI client for executing MCP tools.
-- `testutil.CreateTestConfig(dbName string) (string, error)` - Generates
-  a config file from `tests/config/test.conf.template`.
-
-### CRUD Integration Test Example
-
-```go
-func TestUserCRUD(t *testing.T) {
-    if os.Getenv("SKIP_INTEGRATION_TESTS") != "" {
-        t.Skip("Skipping integration tests")
-    }
-
-    env := SetupTestEnvironment(t)
-    defer env.Teardown(t)
-
-    t.Run("Create", func(t *testing.T) {
-        result, err := env.CLI.RunTool("create_user", map[string]interface{}{
-            "username":  "testuser",
-            "email":     "test@example.com",
-            "full_name": "Test User",
-            "password":  "TestPassword123!",
-        })
-        require.NoError(t, err)
-        assert.Contains(t, result, "created")
-    })
-
-    t.Run("List", func(t *testing.T) {
-        result, err := env.CLI.RunTool("list_users", nil)
-        require.NoError(t, err)
-        users := result.([]map[string]interface{})
-        found := false
-        for _, u := range users {
-            if u["username"] == "testuser" { found = true }
-        }
-        assert.True(t, found)
-    })
-
-    t.Run("Delete", func(t *testing.T) {
-        result, err := env.CLI.RunTool("delete_user", map[string]interface{}{
-            "username": "testuser",
-        })
-        require.NoError(t, err)
-        assert.Contains(t, result, "deleted")
-    })
-}
-```
 
 ## Security Testing Patterns
 
@@ -600,7 +478,8 @@ go tool cover -func=coverage.out | awk '$3 < 80.0'   # Low-coverage files
 
 ### Linting with golangci-lint
 
-**Config file**: `/tests/.golangci.yml` (also used by collector and server)
+**Config files**: Each sub-project has its own config
+(`server/src/.golangci.yml`, `collector/.golangci.yml`).
 
 ```yaml
 linters-settings:
@@ -663,25 +542,28 @@ func executeCommand(cmd string) { ... }
 
 ### GitHub Actions Workflows
 
-- `.github/workflows/test-collector.yml`
-- `.github/workflows/test-server.yml`
-- `.github/workflows/test-integration.yml`
+- `.github/workflows/ci-collector.yml`
+- `.github/workflows/ci-server.yml`
+- `.github/workflows/ci-alerter.yml`
+- `.github/workflows/ci-client.yml`
+- `.github/workflows/ci-docs.yml`
 
 All workflows:
 
-1. **Matrix**: Go 1.23, 1.24, 1.25
-2. **Services**: PostgreSQL 16
+1. **Matrix**: Go 1.23, 1.24
+2. **Services**: PostgreSQL 14, 15, 16, 17, 18
 3. **Steps**: Build, test with coverage, lint, upload coverage HTML
-4. **Artifacts**: Coverage reports retained 30 days
+4. **Artifacts**: Coverage reports retained 7 days
 
-### Integration Test CI Example
+### CI Example (Server)
 
 ```yaml
 services:
   postgres:
-    image: postgres:16
+    image: postgres:${{ matrix.postgres-version }}
     env:
       POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
     options: >-
       --health-cmd pg_isready
       --health-interval 10s
@@ -695,19 +577,17 @@ steps:
 - name: Set up Go
   uses: actions/setup-go@v5
   with:
-    go-version: '1.23'
-- name: Build dependencies
-  run: cd tests && make build-deps
-- name: Run integration tests
+    go-version: ${{ matrix.go-version }}
+- name: Run tests
   env:
     TEST_AI_WORKBENCH_SERVER: postgres://postgres:postgres@localhost:5432/postgres
-  run: cd tests && make coverage
+  run: cd server && make coverage
 - name: Upload coverage
   uses: actions/upload-artifact@v4
   with:
-    name: integration-coverage
-    path: tests/coverage.html
-    retention-days: 30
+    name: server-coverage
+    path: server/src/coverage.html
+    retention-days: 7
 ```
 
 ## Best Practices
@@ -838,21 +718,13 @@ psql postgres://postgres@localhost:5432/ai_workbench_test_1699564823
 SELECT * FROM user_accounts;
 ```
 
-### Check Service Logs
-
-```bash
-ls tests/logs/
-tail -f tests/logs/mcp-server-<timestamp>.log
-tail -f tests/logs/collector-<timestamp>.log
-```
-
 ### Kill Orphaned Processes
 
 ```bash
-cd tests && make killall
+cd server && make killall
 # or manually:
-pkill -f mcp-server
-pkill -f collector
+pkill -f ai-dba-server
+pkill -f ai-dba-collector
 ```
 
 ## Common Pitfalls

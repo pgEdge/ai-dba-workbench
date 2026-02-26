@@ -27,11 +27,9 @@ advice or review, provide thorough analysis and recommendations.
 **Before providing guidance or implementing features, consult your knowledge
 base at `/.claude/react-expert/`:**
 
-- `api-integration.md` - API integration patterns
-- `mui-patterns.md` - Material-UI usage patterns and theming
-- `testing-approach.md` - React testing strategies
 - `quality-checklist.md` - Anti-patterns, standards, and review checklists
 - `color-contrast-guidelines.md` - WCAG AA color contrast requirements
+- `typography-guidelines.md` - Font sizes, weights, and typography rules
 
 ## Core Expertise Areas
 

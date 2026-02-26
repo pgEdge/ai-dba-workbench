@@ -27,12 +27,7 @@ advice or review, provide thorough analysis and recommendations.
 **Before providing guidance or implementing features, consult your knowledge
 base at `/.claude/golang-expert/`:**
 
-- `architecture-overview.md` - System architecture and component design
-- `mcp-implementation.md` - MCP protocol, auth, and handler implementation patterns
-- `mcp-tools-catalog.md` - Complete MCP tools and resources catalog
-- `authentication-flow.md` - Auth, RBAC, and authorization implementation
-- `database-patterns.md` - Database access patterns with pgx
-- `testing-strategy.md` - Go testing patterns and practices
+- `testing-strategy.md` - Go testing patterns, Makefile commands, and CI config
 
 ## Core Expertise Areas
 

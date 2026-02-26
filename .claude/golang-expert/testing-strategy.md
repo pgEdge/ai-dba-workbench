@@ -379,7 +379,7 @@ func TestDatabaseErrors(t *testing.T) {
 
 Integration tests live alongside the code they test (co-located).
 Each integration test file connects to a real PostgreSQL instance
-using the `TEST_AI_WORKBENCH_SERVER` environment variable and uses
+using the `TEST_AI_WORKBENCH_SERVER` environment variable. Tests use
 the `skipIfNoDatabase` helper to skip when no database is available.
 
 For examples, see:
@@ -477,8 +477,9 @@ go tool cover -func=coverage.out | awk '$3 < 80.0'   # Low-coverage files
 
 ### Linting with golangci-lint
 
-**Config files**: Each sub-project has its own config
-(`server/src/.golangci.yml`, `collector/.golangci.yml`).
+**Config files**: Each sub-project has its own config file
+(`server/src/.golangci.yml`, `collector/.golangci.yml`,
+`alerter/.golangci.yml`).
 
 ```yaml
 linters-settings:

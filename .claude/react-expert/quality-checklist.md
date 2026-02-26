@@ -174,9 +174,9 @@ existing instances do not need to be fixed in unrelated changes.
 
 ## Coverage Requirements
 
-These are project targets, not enforced thresholds. The
-`vitest.config.js` file does not currently configure coverage
-gates, so these serve as goals for code review.
+These are project coverage targets and should be enforced in CI.
+If `vitest.config.js` does not yet configure coverage gates,
+add them as a follow-up task with an owner and due date.
 
 - Business logic and hooks: 90% target.
 - API handlers and utilities: 80% target.

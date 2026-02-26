@@ -130,8 +130,8 @@ code.
   (14px).
 - `fontSize: '0.9375rem'` (15px) — not a standard size; use
   subtitle2/button (16px).
-- Arbitrary font sizes in component styles that do not reference theme
-  typography variants.
+- Arbitrary font sizes in new code that do not reference theme
+  typography variants or address a documented layout constraint.
 - Unusual letter-spacing values for uppercase labels such as
   0.1em or 0.15em. Use 0.08em or 0.05em.
 

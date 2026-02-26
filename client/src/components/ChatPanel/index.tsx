@@ -52,6 +52,7 @@ const STORAGE_KEY = 'chat-panel-width';
 
 const getPanelContainerSx =
     (width: number, open: boolean) => (theme: Theme) => ({
+        position: 'relative',
         width: open ? width : 0,
         flexShrink: 0,
         display: 'flex',

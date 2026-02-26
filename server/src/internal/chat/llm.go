@@ -188,7 +188,7 @@ const (
 	// injected into the system prompt to avoid context-window blowups.
 	maxPinnedMemoriesInPrompt = 20
 
-	// maxMemoryCharsInPrompt caps the character length of each
+	// maxMemoryCharsInPrompt caps the maximum number of runes in each
 	// individual memory's content field in the system prompt.
 	maxMemoryCharsInPrompt = 400
 )
@@ -222,8 +222,9 @@ func BuildSystemPrompt(base string, memories []memory.Memory) string {
 		scope := sanitizeMemoryField(pinned[i].Scope)
 		category := sanitizeMemoryField(pinned[i].Category)
 		content := sanitizeMemoryField(pinned[i].Content)
-		if len(content) > maxMemoryCharsInPrompt {
-			content = content[:maxMemoryCharsInPrompt] + "..."
+		runes := []rune(content)
+		if len(runes) > maxMemoryCharsInPrompt {
+			content = string(runes[:maxMemoryCharsInPrompt]) + "..."
 		}
 		sb.WriteString(fmt.Sprintf("- [%s/%s] %s\n", scope, category, content))
 	}

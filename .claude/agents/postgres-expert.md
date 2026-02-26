@@ -38,17 +38,6 @@ Always delegate actual configuration changes, SQL execution, and code modificati
 - `performance-notes.md` - Performance tuning and optimization
 - `relationships.md` - Entity relationships and foreign keys
 
-**Knowledge Base Maintenance**: When you discover stable patterns,
-conventions, or architectural details not already in your knowledge base,
-update the relevant file directly. Follow these rules:
-
-- Only record facts verified against actual code; never write speculative
-  or assumed information.
-- Keep entries concise; prefer bullet points over prose.
-- Do not record session-specific context (current task, temporary state).
-- Update or remove entries that have become stale or incorrect.
-- If no existing file fits, create a new file and list it above.
-
 Your Core Responsibilities:
 
 1. **Installation & Configuration Guidance**

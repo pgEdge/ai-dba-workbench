@@ -1,7 +1,6 @@
 # Claude Standing Instructions
 
-> Standing instructions for Claude Code when working on this project.
-> This document supplements the architectural design in DESIGN.md.
+> Standing instructions for Claude Code on this project.
 
 ## Primary Agent Role
 
@@ -63,8 +62,6 @@ Each sub-project follows this base structure:
 
 Reference these files for project context:
 
-- `DESIGN.md` - Architecture and design philosophy.
-
 - `docs/changelog.md` - Notable changes by release.
 
 - `mkdocs.yml` - Documentation site navigation.
@@ -120,9 +117,9 @@ present results to the user.
 
 - **security-auditor** - Security review, vulnerability detection, OWASP.
 
-Implementation agents read `DESIGN.md` directly to verify design
-compliance. Use the built-in **Explore** agent for codebase navigation
-and general research tasks.
+Implementation agents follow the conventions documented in CLAUDE.md
+and their own knowledge bases. Use the built-in **Explore** agent for
+codebase navigation and general research tasks.
 
 Each sub-agent has a knowledge base in `/.claude/<agent-name>/` containing
 domain-specific patterns and project conventions.

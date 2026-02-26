@@ -509,8 +509,6 @@ go mod verify
 
 ### Project Resources
 
-- [DESIGN.md](https://github.com/pgEdge/ai-dba-workbench/blob/main/DESIGN.md) -
-  Overall system design
 - [CLAUDE.md](https://github.com/pgEdge/ai-dba-workbench/blob/main/CLAUDE.md) -
   Project guidelines
 - [Testing Guide](testing.md) - Detailed testing information

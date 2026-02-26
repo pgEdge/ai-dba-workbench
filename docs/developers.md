@@ -193,7 +193,6 @@ ai-dba-workbench/
 ├── pkg/              # Shared Go packages
 ├── docs/             # Unified documentation
 ├── examples/         # Example configurations
-├── DESIGN.md         # System architecture
 ├── CLAUDE.md         # Development guidelines
 └── README.md         # Project overview
 ```
@@ -272,8 +271,6 @@ guidelines.
 
 Consult these resources for more information:
 
-- [DESIGN.md](https://github.com/pgEdge/ai-dba-workbench/blob/main/DESIGN.md)
-  describes the system architecture.
 - [CLAUDE.md](https://github.com/pgEdge/ai-dba-workbench/blob/main/CLAUDE.md)
   contains detailed coding standards.
 - [docs/index.md](index.md) provides the main documentation entry point.

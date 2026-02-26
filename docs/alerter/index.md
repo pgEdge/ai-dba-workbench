@@ -37,11 +37,9 @@ violations and uses AI-powered anomaly detection to generate alerts.
 - [Main Documentation](../index.md) returns to the main documentation index.
 - [Main README][readme] provides quick start and basic information.
 - [Example Configuration][example] shows a sample alerter configuration file.
-- [Project Design Document][design] describes the overall system architecture.
 
 [readme]: https://github.com/pgEdge/ai-dba-workbench/blob/main/README.md
 [example]: https://github.com/pgEdge/ai-dba-workbench/blob/main/examples/ai-dba-alerter.yaml
-[design]: https://github.com/pgEdge/ai-dba-workbench/blob/main/DESIGN.md
 
 ## Key Features
 
@@ -79,7 +77,6 @@ The Alerter implements a tiered anomaly detection system:
 - Check the documentation in this directory.
 - Review the sample configuration file.
 - Examine the test files for examples.
-- Consult the main DESIGN.md for system-wide architecture.
 
 ## Version
 

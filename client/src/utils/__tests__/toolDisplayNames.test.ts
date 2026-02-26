@@ -26,6 +26,18 @@ describe('getToolDisplayName', () => {
         expect(getToolDisplayName('count_rows')).toBe('Counting rows');
     });
 
+    it('returns "Storing memory" for store_memory', () => {
+        expect(getToolDisplayName('store_memory')).toBe('Storing memory');
+    });
+
+    it('returns "Recalling memories" for recall_memories', () => {
+        expect(getToolDisplayName('recall_memories')).toBe('Recalling memories');
+    });
+
+    it('returns "Deleting memory" for delete_memory', () => {
+        expect(getToolDisplayName('delete_memory')).toBe('Deleting memory');
+    });
+
     it('returns the raw tool name when no mapping exists', () => {
         expect(getToolDisplayName('unknown_tool')).toBe('unknown_tool');
     });

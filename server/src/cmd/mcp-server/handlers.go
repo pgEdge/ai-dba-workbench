@@ -209,6 +209,15 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 			fmt.Fprintf(os.Stderr, "AI Overview API: ENABLED\n")
 		}
 
+		// Memory management endpoints
+		memoryHandler := api.NewMemoryHandler(memoryStore, deps.AuthStore, rbacChecker)
+		memoryHandler.RegisterRoutes(mux, authWrapper)
+		if memoryStore != nil {
+			fmt.Fprintf(os.Stderr, "Memory management: ENABLED\n")
+		} else {
+			fmt.Fprintf(os.Stderr, "Memory management: DISABLED (memory not configured)\n")
+		}
+
 		// RBAC management endpoints
 		if deps.AuthStore != nil {
 			rbacHandler := api.NewRBACHandler(deps.AuthStore, rbacChecker)

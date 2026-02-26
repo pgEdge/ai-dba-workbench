@@ -305,6 +305,80 @@ func (s *Store) ListByUser(
 	)
 }
 
+// GetByID returns a single memory by its ID. It does not perform any
+// ownership checks; the caller is responsible for access control.
+func (s *Store) GetByID(ctx context.Context, id int64) (*Memory, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, username, scope, category, content, pinned,
+                model_name, created_at, updated_at
+         FROM chat_memories
+         WHERE id = $1`,
+		id,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query memory by id: %w", err)
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("error reading memory row: %w", err)
+		}
+		return nil, ErrNotFound
+	}
+
+	var m Memory
+	if err := rows.Scan(
+		&m.ID, &m.Username, &m.Scope, &m.Category,
+		&m.Content, &m.Pinned, &m.ModelName,
+		&m.CreatedAt, &m.UpdatedAt,
+	); err != nil {
+		return nil, fmt.Errorf("failed to scan memory row: %w", err)
+	}
+
+	return &m, nil
+}
+
+// DeleteByID removes a memory by ID without ownership checks. The caller
+// must verify that the user has permission to delete the memory before
+// calling this method.
+func (s *Store) DeleteByID(ctx context.Context, id int64) error {
+	tag, err := s.pool.Exec(ctx,
+		`DELETE FROM chat_memories WHERE id = $1`, id,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to delete memory: %w", err)
+	}
+
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+
+	return nil
+}
+
+// UpdatePinned sets the pinned status of a memory. The memory must belong
+// to the given username or be system-scoped. Returns ErrNotFound when no
+// matching row exists.
+func (s *Store) UpdatePinned(ctx context.Context, id int64, username string, pinned bool) error {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE chat_memories
+         SET pinned = $1, updated_at = NOW()
+         WHERE id = $2
+           AND (username = $3 OR scope = 'system')`,
+		pinned, id, username,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update pinned status: %w", err)
+	}
+
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+
+	return nil
+}
+
 // queryMemories is an internal helper that executes a query and scans
 // the result set into a slice of Memory values.
 func (s *Store) queryMemories(

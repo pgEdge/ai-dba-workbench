@@ -356,6 +356,9 @@ func (s *AuthStore) initSchema() error {
         UPDATE group_admin_permissions SET permission = 'manage_permissions'
             WHERE permission = 'manage_privileges';
 
+        -- Drop stale temp table if left from a failed migration
+        DROP TABLE IF EXISTS group_admin_permissions_new;
+
         -- Recreate table with updated CHECK constraint
         CREATE TABLE IF NOT EXISTS group_admin_permissions_new (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -418,6 +421,9 @@ func (s *AuthStore) initSchema() error {
 	// Apply migrations for schema version 9 (add manage_blackouts permission)
 	if currentVersion < 9 {
 		migrationV9 := `
+        -- Drop stale temp table if left from a failed migration
+        DROP TABLE IF EXISTS group_admin_permissions_new;
+
         -- Recreate table with updated CHECK constraint including manage_blackouts
         CREATE TABLE IF NOT EXISTS group_admin_permissions_new (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -448,6 +454,9 @@ func (s *AuthStore) initSchema() error {
 	// Apply migrations for schema version 10 (add manage_probes and manage_alert_rules permissions)
 	if currentVersion < 10 {
 		migrationV10 := `
+        -- Drop stale temp table if left from a failed migration
+        DROP TABLE IF EXISTS group_admin_permissions_new;
+
         -- Recreate table with updated CHECK constraint including manage_probes and manage_alert_rules
         CREATE TABLE IF NOT EXISTS group_admin_permissions_new (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -541,6 +550,9 @@ func (s *AuthStore) initSchema() error {
 	// Apply migrations for schema version 14 (add manage_notification_channels permission)
 	if currentVersion < 14 {
 		migrationV14 := `
+        -- Drop stale temp table if left from a failed migration
+        DROP TABLE IF EXISTS group_admin_permissions_new;
+
         -- Recreate table with updated CHECK constraint including manage_notification_channels
         CREATE TABLE IF NOT EXISTS group_admin_permissions_new (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -573,6 +585,9 @@ func (s *AuthStore) initSchema() error {
 	// Apply migrations for schema version 15 (add wildcard '*' to admin permissions CHECK constraint)
 	if currentVersion < 15 {
 		migrationV15 := `
+        -- Drop stale temp table if left from a failed migration
+        DROP TABLE IF EXISTS group_admin_permissions_new;
+
         CREATE TABLE IF NOT EXISTS group_admin_permissions_new (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             group_id INTEGER NOT NULL
@@ -604,6 +619,9 @@ func (s *AuthStore) initSchema() error {
 	// Apply migrations for schema version 16 (add store_system_memory permission)
 	if currentVersion < 16 {
 		migrationV16 := `
+        -- Drop stale temp table if left from a failed migration
+        DROP TABLE IF EXISTS group_admin_permissions_new;
+
         CREATE TABLE IF NOT EXISTS group_admin_permissions_new (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             group_id INTEGER NOT NULL

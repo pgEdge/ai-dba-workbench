@@ -139,6 +139,7 @@ builtins:
     similarity_search: true
     execute_explain: true
     count_rows: true
+    test_query: true
     # Datastore/metrics tools
     list_probes: true
     describe_probe: true
@@ -444,6 +445,7 @@ builtins:
     similarity_search: true
     execute_explain: true
     count_rows: true
+    test_query: true
     # Datastore/metrics tools
     list_probes: true
     describe_probe: true

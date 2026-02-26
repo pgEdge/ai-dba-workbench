@@ -188,7 +188,11 @@ The MCP server exposes these built-in tools:
 
 ### Monitored Database Tools
 
-These tools operate on the currently selected monitored database connection:
+These tools operate on monitored database connections.
+Each tool accepts optional `connection_id` and
+`database_name` parameters to target a specific database;
+the tool uses the currently selected connection when
+these parameters are omitted.
 
 | Tool | Description |
 |------|-------------|
@@ -197,6 +201,7 @@ These tools operate on the currently selected monitored database connection:
 | `execute_explain` | Run EXPLAIN/EXPLAIN ANALYZE on queries |
 | `similarity_search` | Vector similarity search (requires pgvector) |
 | `count_rows` | Count rows in tables |
+| `test_query` | Validate SQL query correctness without executing |
 
 ### Datastore Tools
 

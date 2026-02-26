@@ -37,7 +37,10 @@ CRITICAL rules for code blocks - the user executes SQL directly from the UI so a
 
 4. Ensure all SQL syntax, function names, and catalog column names are valid for the specific PostgreSQL version in use (provided in the server context below). Do not use features, functions, or columns introduced in newer versions. For example, pg_stat_statements column names changed between PostgreSQL 12 and 13.
 
-5. When suggesting ALTER SYSTEM or other DDL statements, place them in separate code blocks from diagnostic SELECT queries.`;
+5. When suggesting ALTER SYSTEM or other DDL statements, place them in separate code blocks from diagnostic SELECT queries.
+
+QUERY VALIDATION:
+If a test_query tool is available, you MUST validate every SQL query you generate by calling test_query with the appropriate connection_id before including it in your report. If validation fails, fix the query and re-validate. If you cannot validate a query (e.g., no connection available), clearly mark it as an unvalidated example by adding a SQL comment "-- NOTE: This query has not been validated against the target database" as the first line.`;
 
 /**
  * Additional SQL code-block rules for server analysis prompts that

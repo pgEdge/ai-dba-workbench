@@ -20,17 +20,19 @@ import (
 )
 
 // CountRowsTool creates the count_rows tool for lightweight row counting
-func CountRowsTool(dbClient *database.Client) Tool {
+func CountRowsTool(dbClient *database.Client, resolver *ConnectionResolver) Tool {
 	return Tool{
 		Definition: mcp.Tool{
 			Name: "count_rows",
 			Description: `Get the row count of a table with optional filtering.
 
 <database_context>
-This tool operates on the CURRENTLY SELECTED monitored database connection.
-If no database is selected, ask the user to select a database connection
-before proceeding. The user can select a connection using their client
-interface (CLI or web client).
+Specify connection_id to target a particular monitored database.
+Use list_connections to discover available connection IDs and
+their default databases. Optionally provide database_name to
+override the default database for the connection. If
+connection_id is omitted, the tool uses the currently selected
+connection.
 </database_context>
 
 <usecase>
@@ -54,10 +56,18 @@ Use count_rows to efficiently determine data volume:
 - WHERE clause is optional - omit for total count
 - Returns a single integer count - minimal token usage
 </important>`,
-			CompactDescription: `Get the row count of a table with optional WHERE filtering. Returns a single integer. More efficient than SELECT COUNT(*) via query_database for simple counts.`,
+			CompactDescription: `Get the row count of a table with optional WHERE filtering. Specify connection_id to target a database; use list_connections to discover IDs. Returns a single integer.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{
+					"connection_id": map[string]interface{}{
+						"type":        "integer",
+						"description": "ID of the monitored database connection to use. Use list_connections to discover available IDs. If omitted, uses the currently selected connection.",
+					},
+					"database_name": map[string]interface{}{
+						"type":        "string",
+						"description": "Database name to connect to. If omitted, uses the connection's default database.",
+					},
 					"table": map[string]interface{}{
 						"type":        "string",
 						"description": "Name of the table to count rows from",
@@ -111,16 +121,19 @@ Use count_rows to efficiently determine data volume:
 				whereClause = w
 			}
 
-			// Get connection
-			connStr := dbClient.GetDefaultConnection()
-			if !dbClient.IsMetadataLoadedFor(connStr) {
-				return mcp.NewToolError(mcp.DatabaseNotReadyError)
+			// Extract context from args (injected by registry.Execute)
+			ctx, ok := args["__context"].(context.Context)
+			if !ok {
+				ctx = context.Background()
 			}
 
-			pool := dbClient.GetPoolFor(connStr)
-			if pool == nil {
-				return mcp.NewToolError(fmt.Sprintf("Connection pool not found for: %s", database.SanitizeConnStr(connStr)))
+			// Resolve connection (explicit connection_id or fallback)
+			resolved, errResp := resolver.Resolve(ctx, args, dbClient)
+			if errResp != nil {
+				return *errResp, nil
 			}
+			pool := resolved.Pool
+			connStr := resolved.ConnStr
 
 			// Build the COUNT query with proper quoting
 			var sqlQuery string
@@ -135,16 +148,10 @@ Use count_rows to efficiently determine data volume:
 					quoteIdentifier(table))
 			}
 
-			// Extract context from args (injected by registry.Execute)
-			ctx, ok := args["__context"].(context.Context)
-			if !ok {
-				ctx = context.Background()
-			}
-
 			// Execute in a read-only transaction with timeout and panic recovery
-			rot, errResp, cleanup := BeginReadOnlyTx(ctx, pool)
-			if errResp != nil {
-				return *errResp, nil
+			rot, txErrResp, cleanup := BeginReadOnlyTx(ctx, pool)
+			if txErrResp != nil {
+				return *txErrResp, nil
 			}
 			defer cleanup()
 

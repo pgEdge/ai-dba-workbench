@@ -26,7 +26,7 @@ func TestGetSchemaInfoTool(t *testing.T) {
 		client := database.NewClient(nil)
 		// Don't add any connections - database is not ready
 
-		tool := GetSchemaInfoTool(client)
+		tool := GetSchemaInfoTool(client, nil)
 		response, err := tool.Handler(map[string]interface{}{})
 
 		if err != nil {
@@ -47,7 +47,7 @@ func TestGetSchemaInfoTool(t *testing.T) {
 	t.Run("empty metadata", func(t *testing.T) {
 		client := createMockClient(map[string]database.TableInfo{})
 
-		tool := GetSchemaInfoTool(client)
+		tool := GetSchemaInfoTool(client, nil)
 		response, err := tool.Handler(map[string]interface{}{})
 
 		if err != nil {
@@ -98,7 +98,7 @@ func TestGetSchemaInfoTool(t *testing.T) {
 		}
 
 		client := createMockClient(metadata)
-		tool := GetSchemaInfoTool(client)
+		tool := GetSchemaInfoTool(client, nil)
 		response, err := tool.Handler(map[string]interface{}{})
 
 		if err != nil {
@@ -153,7 +153,7 @@ func TestGetSchemaInfoTool(t *testing.T) {
 		}
 
 		client := createMockClient(metadata)
-		tool := GetSchemaInfoTool(client)
+		tool := GetSchemaInfoTool(client, nil)
 
 		// Request only public schema
 		response, err := tool.Handler(map[string]interface{}{
@@ -219,7 +219,7 @@ func TestGetSchemaInfoTool(t *testing.T) {
 		}
 
 		client := createMockClient(metadata)
-		tool := GetSchemaInfoTool(client)
+		tool := GetSchemaInfoTool(client, nil)
 		response, err := tool.Handler(map[string]interface{}{})
 
 		if err != nil {
@@ -258,7 +258,7 @@ func TestGetSchemaInfoTool(t *testing.T) {
 		}
 
 		client := createMockClient(metadata)
-		tool := GetSchemaInfoTool(client)
+		tool := GetSchemaInfoTool(client, nil)
 		response, err := tool.Handler(map[string]interface{}{})
 
 		if err != nil {
@@ -292,7 +292,7 @@ func TestGetSchemaInfoTool(t *testing.T) {
 		}
 
 		client := createMockClient(metadata)
-		tool := GetSchemaInfoTool(client)
+		tool := GetSchemaInfoTool(client, nil)
 		response, err := tool.Handler(map[string]interface{}{})
 
 		if err != nil {
@@ -338,7 +338,7 @@ func TestGetSchemaInfoTool(t *testing.T) {
 		}
 
 		client := createMockClient(metadata)
-		tool := GetSchemaInfoTool(client)
+		tool := GetSchemaInfoTool(client, nil)
 		response, err := tool.Handler(map[string]interface{}{})
 
 		if err != nil {
@@ -376,7 +376,7 @@ func TestGetSchemaInfoTool(t *testing.T) {
 		}
 
 		client := createMockClient(metadata)
-		tool := GetSchemaInfoTool(client)
+		tool := GetSchemaInfoTool(client, nil)
 
 		// Pass invalid type for schema_name (should be ignored and default to "")
 		response, err := tool.Handler(map[string]interface{}{
@@ -435,7 +435,7 @@ func TestGetSchemaInfoTool(t *testing.T) {
 		}
 
 		client := createMockClient(metadata)
-		tool := GetSchemaInfoTool(client)
+		tool := GetSchemaInfoTool(client, nil)
 
 		// Request only users table in public schema
 		response, err := tool.Handler(map[string]interface{}{
@@ -486,7 +486,7 @@ func TestGetSchemaInfoTool(t *testing.T) {
 		}
 
 		client := createMockClient(metadata)
-		tool := GetSchemaInfoTool(client)
+		tool := GetSchemaInfoTool(client, nil)
 
 		// Request table_name without schema_name
 		response, err := tool.Handler(map[string]interface{}{
@@ -523,7 +523,7 @@ func TestGetSchemaInfoTool(t *testing.T) {
 		}
 
 		client := createMockClient(metadata)
-		tool := GetSchemaInfoTool(client)
+		tool := GetSchemaInfoTool(client, nil)
 
 		// Request non-existent table
 		response, err := tool.Handler(map[string]interface{}{
@@ -578,7 +578,7 @@ func TestGetSchemaInfoTool(t *testing.T) {
 		}
 
 		client := createMockClient(metadata)
-		tool := GetSchemaInfoTool(client)
+		tool := GetSchemaInfoTool(client, nil)
 
 		// Request with both table_name and compact=true
 		// compact should be ignored when table_name is provided

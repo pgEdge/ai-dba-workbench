@@ -120,4 +120,5 @@ nav:
       - Overview: client/index.md
       - Dashboards: client/dashboards.md
   - Changelog: changelog.md
+  - Developers: developers.md
   - License: LICENSE.md

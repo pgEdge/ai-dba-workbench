@@ -17,9 +17,10 @@ the API structure.
 
 ## OpenAPI Specification
 
-The OpenAPI 3.0.3 specification is available at runtime:
+The OpenAPI 3.0.3 specification is available:
 
-- JSON format is available at `GET /api/v1/openapi.json`.
+- At runtime via `GET /api/v1/openapi.json`.
+- As a static file at `docs/server/openapi.json`.
 
 You can use this specification with tools like Postman, Insomnia, or any
 OpenAPI-compatible client.
@@ -60,7 +61,7 @@ structure.
 
 <script src="https://cdn.redoc.ly/redoc/latest/bundles/redoc.standalone.js"></script>
 <script>
-  Redoc.init('/api/v1/openapi.json', {
+  Redoc.init('openapi.json', {
     scrollYOffset: 60,
     hideDownloadButton: false,
     theme: {

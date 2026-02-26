@@ -335,12 +335,15 @@ At the end of each README:
 - Update the endpoint summary table in
   `docs/server/api-reference.md` to match the current API surface.
 
+- Regenerate the static OpenAPI file after any specification change:
+  `cd server && make openapi`.
+
 - Run the OpenAPI tests after any specification change:
   `cd server/src && go test ./internal/api/ -run OpenAPI -v`.
 
 - The interactive API browser at `docs/server/api-reference.md`
-  renders from the runtime OpenAPI spec; verify that new endpoints
-  appear correctly in the ReDoc output.
+  renders from the static file `docs/server/openapi.json`; verify
+  that new endpoints appear correctly in the ReDoc output.
 
 ## Security
 

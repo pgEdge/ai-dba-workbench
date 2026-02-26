@@ -7,7 +7,7 @@
 #
 #-------------------------------------------------------------------------
 
-.PHONY: all build test lint clean vet fmt fmt-check help killall test-all
+.PHONY: all build openapi test lint clean vet fmt fmt-check help killall test-all
 
 # Binary output directory (can be overridden by parent Makefile)
 BIN_DIR ?= .
@@ -26,6 +26,11 @@ build:
 	@echo "Building ai-dba-server..."
 	@mkdir -p $(ABS_BIN_DIR)
 	cd src && go build -o $(ABS_BIN_DIR)/$(BINARY) ./cmd/mcp-server
+
+# Generate static OpenAPI specification
+openapi:
+	@echo "Generating OpenAPI spec..."
+	cd src && go run ./cmd/gen-openapi/ ../../docs/server/openapi.json
 
 # Run tests
 test: killall
@@ -85,6 +90,7 @@ help:
 	@echo "Available targets:"
 	@echo "  all       - Build the server binary (default)"
 	@echo "  build     - Build the server binary"
+	@echo "  openapi   - Generate static OpenAPI specification"
 	@echo "  test      - Run tests"
 	@echo "  lint      - Run golangci-lint"
 	@echo "  vet       - Run go vet"

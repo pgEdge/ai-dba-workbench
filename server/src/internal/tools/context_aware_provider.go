@@ -179,7 +179,7 @@ func NewContextAwareProvider(clientManager *database.ClientManager, resourceReg 
 	}
 
 	// Initialize memory store from the datastore pool (only when memory is enabled)
-	if datastore != nil && cfg.Memory.Enabled {
+	if datastore != nil && cfg.Memory.IsEnabled() {
 		provider.memoryStore = memory.NewStore(datastore.GetPool())
 	}
 

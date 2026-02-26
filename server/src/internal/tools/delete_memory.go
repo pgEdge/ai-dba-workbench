@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
@@ -43,6 +44,9 @@ func DeleteMemoryTool(memoryStore *memory.Store) Tool {
 			if !ok {
 				return mcp.NewToolError("Missing or invalid 'id' parameter")
 			}
+			if math.IsNaN(idFloat) || math.IsInf(idFloat, 0) || idFloat != math.Trunc(idFloat) || idFloat < 1 {
+				return mcp.NewToolError("'id' must be a positive integer")
+			}
 			id := int64(idFloat)
 
 			// Extract context from args (injected by registry.Execute)
@@ -55,6 +59,11 @@ func DeleteMemoryTool(memoryStore *memory.Store) Tool {
 			username := auth.GetUsernameFromContext(ctx)
 			if username == "" {
 				return mcp.NewToolError("Unable to determine the current user")
+			}
+
+			// Guard against nil memory store
+			if memoryStore == nil {
+				return mcp.NewToolError("Memory store is not configured")
 			}
 
 			// Delete the memory

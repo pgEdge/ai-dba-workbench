@@ -453,7 +453,7 @@ func TestGetDefaultSecretPath(t *testing.T) {
 
 func TestMemoryEnabledByDefault(t *testing.T) {
 	cfg := defaultConfig()
-	if !cfg.Memory.Enabled {
+	if !cfg.Memory.IsEnabled() {
 		t.Error("Expected memory to be enabled by default")
 	}
 }
@@ -475,7 +475,7 @@ func TestMemoryEnabledEnvVar(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.Memory.Enabled {
+	if cfg.Memory.IsEnabled() {
 		t.Error("Expected memory to be disabled when PGEDGE_MEMORY_ENABLED=false")
 	}
 
@@ -485,7 +485,7 @@ func TestMemoryEnabledEnvVar(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !cfg.Memory.Enabled {
+	if !cfg.Memory.IsEnabled() {
 		t.Error("Expected memory to be enabled when PGEDGE_MEMORY_ENABLED=true")
 	}
 
@@ -495,7 +495,7 @@ func TestMemoryEnabledEnvVar(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !cfg.Memory.Enabled {
+	if !cfg.Memory.IsEnabled() {
 		t.Error("Expected memory to remain enabled when PGEDGE_MEMORY_ENABLED has invalid value")
 	}
 }

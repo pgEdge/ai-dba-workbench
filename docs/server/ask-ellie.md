@@ -188,7 +188,7 @@ with Ellie.
 
 To store a preference, send a message such as:
 
-```
+```text
 Remember that I prefer JSON output for query results.
 ```
 
@@ -197,7 +197,7 @@ Ellie calls the `store_memory` tool with the category
 
 To recall stored memories, send a message such as:
 
-```
+```text
 What do you remember about my preferences?
 ```
 
@@ -206,7 +206,7 @@ matching memories from the datastore.
 
 To store a pinned instruction, send a message such as:
 
-```
+```text
 Always check replication lag before recommending
 schema changes. Pin this as an instruction.
 ```

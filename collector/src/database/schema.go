@@ -2989,6 +2989,8 @@ func (sm *SchemaManager) registerMigrations() {
 		Up: func(tx pgx.Tx) error {
 			ctx := context.Background()
 
+			// Create the table without the embedding column first so the
+			// migration succeeds on databases without the pgvector extension.
 			_, err := tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS chat_memories (
 					id         BIGSERIAL PRIMARY KEY,
@@ -2998,7 +3000,6 @@ func (sm *SchemaManager) registerMigrations() {
 					category   TEXT NOT NULL,
 					content    TEXT NOT NULL,
 					pinned     BOOLEAN NOT NULL DEFAULT FALSE,
-					embedding  vector(1536),
 					model_name TEXT NOT NULL DEFAULT '',
 					created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 					updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -3027,8 +3028,6 @@ func (sm *SchemaManager) registerMigrations() {
 					'Text content of the memory';
 				COMMENT ON COLUMN chat_memories.pinned IS
 					'TRUE when memory is pinned and should not be auto-pruned';
-				COMMENT ON COLUMN chat_memories.embedding IS
-					'Vector embedding (1536 dimensions) for similarity search';
 				COMMENT ON COLUMN chat_memories.model_name IS
 					'Name of the model used to generate the embedding';
 				COMMENT ON COLUMN chat_memories.created_at IS
@@ -3037,10 +3036,10 @@ func (sm *SchemaManager) registerMigrations() {
 					'Timestamp when the memory was last modified';
 			`)
 			if err != nil {
-				return err
+				return fmt.Errorf("migration #25: %w", err)
 			}
 
-			// Create HNSW vector index if pgvector extension is available
+			// Add the embedding vector column only when pgvector is present.
 			var vectorAvailable bool
 			err = tx.QueryRow(ctx, `
 				SELECT EXISTS(
@@ -3048,16 +3047,22 @@ func (sm *SchemaManager) registerMigrations() {
 				)
 			`).Scan(&vectorAvailable)
 			if err != nil {
-				return fmt.Errorf("failed to check vector extension availability: %w", err)
+				return fmt.Errorf("migration #25: failed to check vector extension availability: %w", err)
 			}
 
 			if vectorAvailable {
 				_, err = tx.Exec(ctx, `
+					ALTER TABLE chat_memories
+						ADD COLUMN IF NOT EXISTS embedding vector(1536);
+
+					COMMENT ON COLUMN chat_memories.embedding IS
+						'Vector embedding (1536 dimensions) for similarity search';
+
 					CREATE INDEX IF NOT EXISTS idx_chat_memories_embedding
 						ON chat_memories USING hnsw (embedding vector_cosine_ops);
 				`)
 				if err != nil {
-					logger.Infof("Failed to create chat_memories embedding index: %v", err)
+					logger.Infof("Failed to add chat_memories embedding column/index: %v", err)
 				}
 			}
 

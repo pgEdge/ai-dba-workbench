@@ -383,7 +383,21 @@ type KnowledgebaseConfig struct {
 
 // MemoryConfig holds chat memory configuration
 type MemoryConfig struct {
-	Enabled bool `yaml:"enabled"` // Whether chat memory is enabled (default: true)
+	Enabled *bool `yaml:"enabled"` // Whether chat memory is enabled (default: true)
+}
+
+// IsEnabled returns the effective value of the Enabled field,
+// defaulting to true when the pointer is nil (omitted from config).
+func (m MemoryConfig) IsEnabled() bool {
+	if m.Enabled == nil {
+		return true
+	}
+	return *m.Enabled
+}
+
+// boolPtr returns a pointer to the given bool value.
+func boolPtr(b bool) *bool {
+	return &b
 }
 
 // LoadConfig loads configuration with proper priority:
@@ -516,7 +530,7 @@ func defaultConfig() *Config {
 			EmbeddingOpenAIAPIKey: "",                       // Must be provided if using OpenAI
 		},
 		Memory: MemoryConfig{
-			Enabled: true, // Enabled by default
+			Enabled: boolPtr(true), // Enabled by default
 		},
 		SecretFile: "", // Will be set to default path if not specified
 	}
@@ -704,8 +718,8 @@ func mergeConfig(dest, src *Config) {
 		}
 	}
 
-	// Memory - merge if enabled value differs from default
-	if src.Memory.Enabled != dest.Memory.Enabled {
+	// Memory - only override when explicitly set in the source config
+	if src.Memory.Enabled != nil {
 		dest.Memory.Enabled = src.Memory.Enabled
 	}
 
@@ -840,7 +854,7 @@ func loadAPIKeysFromFiles(cfg *Config) {
 func applyEnvOverrides(cfg *Config) {
 	if val := os.Getenv("PGEDGE_MEMORY_ENABLED"); val != "" {
 		if b, err := strconv.ParseBool(val); err == nil {
-			cfg.Memory.Enabled = b
+			cfg.Memory.Enabled = boolPtr(b)
 		}
 	}
 }

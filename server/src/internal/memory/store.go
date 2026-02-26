@@ -60,6 +60,17 @@ func (s *Store) Store(
 	embedding []float32,
 	modelName string,
 ) (*Memory, error) {
+	// Validate scope invariants
+	if scope != "user" && scope != "system" {
+		return nil, fmt.Errorf("invalid scope %q: must be \"user\" or \"system\"", scope)
+	}
+	if scope == "user" && username == "" {
+		return nil, fmt.Errorf("username must not be empty for user-scoped memories")
+	}
+	if strings.TrimSpace(content) == "" {
+		return nil, fmt.Errorf("content must not be empty")
+	}
+
 	now := time.Now().UTC()
 
 	var embeddingArg interface{}

@@ -350,9 +350,7 @@ func TestStoreMemoryNoAuthContext(t *testing.T) {
 
 func TestStoreMemoryWithAuthContextButNilStore(t *testing.T) {
 	// Verify that passing valid params and a valid user context but a
-	// nil memory store results in a panic-free error. The nil store
-	// causes a nil-pointer dereference when Store() is called, so we
-	// recover from it to confirm the code reached the store call.
+	// nil memory store returns a tool error instead of panicking.
 	tool := StoreMemoryTool(nil, &config.Config{})
 
 	ctx := context.WithValue(context.Background(),
@@ -363,14 +361,20 @@ func TestStoreMemoryWithAuthContextButNilStore(t *testing.T) {
 		"__context": ctx,
 	}
 
-	// The handler will try to call memoryStore.Store which panics on nil.
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("expected a panic from nil memory store, but none occurred")
-		}
-	}()
-
-	_, _ = tool.Handler(args)
+	response, err := tool.Handler(args)
+	if err != nil {
+		t.Fatalf("handler returned unexpected error: %v", err)
+	}
+	if !response.IsError {
+		t.Error("expected error response when memory store is nil")
+	}
+	if len(response.Content) == 0 {
+		t.Fatal("expected error message in response content")
+	}
+	if !strings.Contains(response.Content[0].Text, "not configured") {
+		t.Errorf("expected 'not configured' error, got: %s",
+			response.Content[0].Text)
+	}
 }
 
 // ---------------------------------------------------------------------------

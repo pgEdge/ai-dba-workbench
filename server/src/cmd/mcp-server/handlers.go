@@ -92,7 +92,7 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		// LLM proxy handlers (always enabled)
 		// Create memory store for pinned memory injection into system prompt
 		var memoryStore *memory.Store
-		if deps.Datastore != nil {
+		if deps.Datastore != nil && deps.Config != nil && deps.Config.Memory.IsEnabled() {
 			memoryStore = memory.NewStore(deps.Datastore.GetPool())
 		}
 		setupLLMHandlers(mux, deps.Config, authWrapper, deps.ToolProvider, memoryStore)

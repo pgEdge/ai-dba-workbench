@@ -105,6 +105,11 @@ func StoreMemoryTool(memoryStore *memory.Store, cfg *config.Config) Tool {
 				return mcp.NewToolError("Unable to determine the current user from the session context")
 			}
 
+			// Guard against nil memory store
+			if memoryStore == nil {
+				return mcp.NewToolError("Memory store is not configured")
+			}
+
 			// Generate an embedding for the content text
 			var embeddingVec []float32
 			var modelName string

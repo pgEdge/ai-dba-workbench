@@ -452,10 +452,11 @@ information across conversations.
 |--------|------|---------|-------------|
 | `enabled` | bool | `true` | Enable persistent chat memory |
 
-The memory feature requires the PostgreSQL datastore to
-be configured in the `database` section. The server
-stores memories in the datastore alongside other
-persistent data. When memory is disabled, the three
+The memory feature requires a configured PostgreSQL
+datastore connection (for example via the `database`
+section or `PGEDGE_POSTGRES_CONNECTION_STRING`). The
+server stores memories in the datastore alongside
+other persistent data. When memory is disabled, the three
 memory tools (`store_memory`, `recall_memories`,
 `delete_memory`) are unavailable even if they are
 enabled in the `builtins.tools` section.

@@ -71,11 +71,15 @@ func RecallMemoriesTool(memoryStore *memory.Store, cfg *config.Config) Tool {
 			}
 
 			// Extract optional parameters
-			category, _ := args["category"].(string)
-			category = strings.TrimSpace(category)
+			var category string
+			if c, ok := args["category"].(string); ok {
+				category = strings.TrimSpace(c)
+			}
 
-			scope, _ := args["scope"].(string)
-			scope = strings.TrimSpace(scope)
+			var scope string
+			if s, ok := args["scope"].(string); ok {
+				scope = strings.TrimSpace(s)
+			}
 
 			limit := 10
 			if l, ok := args["limit"].(float64); ok && l > 0 {
@@ -92,6 +96,11 @@ func RecallMemoriesTool(memoryStore *memory.Store, cfg *config.Config) Tool {
 			username := auth.GetUsernameFromContext(ctx)
 			if username == "" {
 				return mcp.NewToolError("Unable to determine the current user from the session context")
+			}
+
+			// Guard against nil memory store
+			if memoryStore == nil {
+				return mcp.NewToolError("Memory store is not configured")
 			}
 
 			// Generate an embedding for the query text
@@ -130,49 +139,17 @@ func RecallMemoriesTool(memoryStore *memory.Store, cfg *config.Config) Tool {
 				return mcp.NewToolError(fmt.Sprintf("Failed to retrieve pinned memories: %v", err))
 			}
 
-			// Build a set of IDs from search results for deduplication
-			searchIDs := make(map[int64]bool, len(searchResults))
-			for _, m := range searchResults {
-				searchIDs[m.ID] = true
-			}
-
-			// Merge results: pinned first (deduplicated), then search results
-			var merged []memory.Memory
-			for _, m := range pinnedMemories {
-				merged = append(merged, m)
-			}
-			for _, m := range searchResults {
-				if !m.Pinned || !searchIDs[m.ID] {
-					// Include non-pinned search results, and pinned results
-					// that were not already added from the pinned list
-					merged = append(merged, m)
-				}
-			}
-
-			// Deduplicate: remove search results that already appear in pinned
+			// Merge results: pinned first, then search results (deduplicated)
 			pinnedIDs := make(map[int64]bool, len(pinnedMemories))
-			for _, m := range pinnedMemories {
-				pinnedIDs[m.ID] = true
-			}
-
 			var final []memory.Memory
-			for _, m := range merged {
-				// The pinned memories are added first, so skip duplicates
-				// from the search results portion
-				if pinnedIDs[m.ID] && len(final) > 0 {
-					// Check if this ID is already in our final list
-					alreadyAdded := false
-					for _, f := range final {
-						if f.ID == m.ID {
-							alreadyAdded = true
-							break
-						}
-					}
-					if alreadyAdded {
-						continue
-					}
+			for i := range pinnedMemories {
+				pinnedIDs[pinnedMemories[i].ID] = true
+				final = append(final, pinnedMemories[i])
+			}
+			for i := range searchResults {
+				if !pinnedIDs[searchResults[i].ID] {
+					final = append(final, searchResults[i])
 				}
-				final = append(final, m)
 			}
 
 			// Format output for LLM consumption
@@ -200,18 +177,18 @@ func RecallMemoriesTool(memoryStore *memory.Store, cfg *config.Config) Tool {
 				return mcp.NewToolSuccess(sb.String())
 			}
 
-			for i, m := range final {
+			for i := range final {
 				sb.WriteString(fmt.Sprintf("--- Memory #%d ---\n", i+1))
-				sb.WriteString(fmt.Sprintf("  ID:       %d\n", m.ID))
-				sb.WriteString(fmt.Sprintf("  Scope:    %s\n", m.Scope))
-				sb.WriteString(fmt.Sprintf("  Category: %s\n", m.Category))
-				if m.Pinned {
+				sb.WriteString(fmt.Sprintf("  ID:       %d\n", final[i].ID))
+				sb.WriteString(fmt.Sprintf("  Scope:    %s\n", final[i].Scope))
+				sb.WriteString(fmt.Sprintf("  Category: %s\n", final[i].Category))
+				if final[i].Pinned {
 					sb.WriteString("  Pinned:   yes\n")
 				} else {
 					sb.WriteString("  Pinned:   no\n")
 				}
-				sb.WriteString(fmt.Sprintf("  Created:  %s\n", m.CreatedAt.Format("2006-01-02 15:04:05 UTC")))
-				sb.WriteString(fmt.Sprintf("  Content:\n    %s\n", m.Content))
+				sb.WriteString(fmt.Sprintf("  Created:  %s\n", final[i].CreatedAt.Format("2006-01-02 15:04:05 UTC")))
+				sb.WriteString(fmt.Sprintf("  Content:\n    %s\n", final[i].Content))
 				sb.WriteString("\n")
 			}
 

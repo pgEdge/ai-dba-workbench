@@ -31,6 +31,7 @@ const ADMIN_PERMISSION_LABELS: Record<string, string> = {
     manage_token_scopes: 'Manage Token Scopes',
     manage_notification_channels: 'Manage Notification Channels',
     manage_users: 'Manage Users',
+    store_system_memory: 'Store System Memories',
 };
 
 interface CategoryCardProps {

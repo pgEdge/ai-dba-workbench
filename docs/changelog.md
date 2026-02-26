@@ -11,6 +11,29 @@ and this project adheres to
 
 ### Added
 
+- Chat memory feature for Ask Ellie; Ellie can store,
+  recall, and delete persistent memories across
+  conversations using three new tools: `store_memory`,
+  `recall_memories`, and `delete_memory`. Memories
+  support categories, user and system scopes, and
+  pinned memories that are automatically included in
+  every conversation.
+- RBAC permission `store_system_memory` controls which
+  users can create system-scoped memories visible to
+  all users; administrators assign this permission
+  through the admin panel.
+- Memories management panel in the settings UI; users
+  can view, delete, and toggle the pinned status of
+  their memories and system-scoped memories.
+- Automatic user context injection; Ellie receives the
+  current user's profile, group memberships, and
+  effective permissions at the start of each
+  conversation.
+- REST API endpoints for memory management:
+  `GET /api/v1/memories` lists visible memories,
+  `DELETE /api/v1/memories/{id}` removes a memory, and
+  `PATCH /api/v1/memories/{id}` toggles the pinned
+  status.
 - The `test_query` MCP tool validates SQL query correctness
   without executing the query; the LLM uses this tool to
   verify all generated SQL before presenting results.

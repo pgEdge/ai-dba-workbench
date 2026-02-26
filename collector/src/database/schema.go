@@ -3005,6 +3005,94 @@ func (sm *SchemaManager) registerMigrations() {
 			return err
 		},
 	})
+
+	// Migration #26: Create chat_memories table for conversation memory
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     26,
+		Description: "Create chat_memories table for conversation memory",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			// Create the table without the embedding column first so the
+			// migration succeeds on databases without the pgvector extension.
+			_, err := tx.Exec(ctx, `
+				CREATE TABLE IF NOT EXISTS chat_memories (
+					id         BIGSERIAL PRIMARY KEY,
+					username   TEXT NOT NULL,
+					scope      TEXT NOT NULL DEFAULT 'user'
+						CHECK (scope IN ('user', 'system')),
+					category   TEXT NOT NULL,
+					content    TEXT NOT NULL,
+					pinned     BOOLEAN NOT NULL DEFAULT FALSE,
+					model_name TEXT NOT NULL DEFAULT '',
+					created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+
+				CREATE INDEX IF NOT EXISTS idx_chat_memories_username
+					ON chat_memories(username);
+				CREATE INDEX IF NOT EXISTS idx_chat_memories_category
+					ON chat_memories(category);
+				CREATE INDEX IF NOT EXISTS idx_chat_memories_pinned
+					ON chat_memories(pinned) WHERE pinned = TRUE;
+				CREATE INDEX IF NOT EXISTS idx_chat_memories_scope
+					ON chat_memories(scope);
+
+				COMMENT ON TABLE chat_memories IS
+					'Stores per-user and system-level chat memories with optional vector embeddings';
+				COMMENT ON COLUMN chat_memories.id IS
+					'Auto-generated unique identifier';
+				COMMENT ON COLUMN chat_memories.username IS
+					'Owner username for access control';
+				COMMENT ON COLUMN chat_memories.scope IS
+					'Memory scope: user for personal, system for shared';
+				COMMENT ON COLUMN chat_memories.category IS
+					'Classification category for the memory';
+				COMMENT ON COLUMN chat_memories.content IS
+					'Text content of the memory';
+				COMMENT ON COLUMN chat_memories.pinned IS
+					'TRUE when memory is pinned and should not be auto-pruned';
+				COMMENT ON COLUMN chat_memories.model_name IS
+					'Name of the model used to generate the embedding';
+				COMMENT ON COLUMN chat_memories.created_at IS
+					'Timestamp when the memory was created';
+				COMMENT ON COLUMN chat_memories.updated_at IS
+					'Timestamp when the memory was last modified';
+			`)
+			if err != nil {
+				return fmt.Errorf("migration #26: %w", err)
+			}
+
+			// Add the embedding vector column only when pgvector is present.
+			var vectorAvailable bool
+			err = tx.QueryRow(ctx, `
+				SELECT EXISTS(
+					SELECT 1 FROM pg_extension WHERE extname = 'vector'
+				)
+			`).Scan(&vectorAvailable)
+			if err != nil {
+				return fmt.Errorf("migration #26: failed to check vector extension availability: %w", err)
+			}
+
+			if vectorAvailable {
+				_, err = tx.Exec(ctx, `
+					ALTER TABLE chat_memories
+						ADD COLUMN IF NOT EXISTS embedding vector(1536);
+
+					COMMENT ON COLUMN chat_memories.embedding IS
+						'Vector embedding (1536 dimensions) for similarity search';
+
+					CREATE INDEX IF NOT EXISTS idx_chat_memories_embedding
+						ON chat_memories USING hnsw (embedding vector_cosine_ops);
+				`)
+				if err != nil {
+					logger.Infof("Failed to add chat_memories embedding column/index: %v", err)
+				}
+			}
+
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations

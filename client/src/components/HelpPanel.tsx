@@ -991,7 +991,8 @@ const AdministrationPage = () => (
         </Typography>
         <Typography sx={styles.bodyTextMb3}>
             The Administration panel provides tools for managing security,
-            monitoring configuration, and notification channels. Access the
+            monitoring configuration, notification channels, and AI assistant
+            settings. Access the
             admin panel from the settings icon in the header. Available
             sections depend on your assigned permissions.
         </Typography>
@@ -1063,6 +1064,26 @@ const AdministrationPage = () => (
             <FeatureItem
                 title="Estate Defaults"
                 description="Channels marked as estate defaults are active for all servers. Override the default at group, cluster, or server level to enable or disable specific channels."
+            />
+        </Box>
+
+        <SectionTitle icon={AIIcon}>AI</SectionTitle>
+        <Typography sx={styles.bodyTextMb2}>
+            Manage AI assistant features. This section appears when an
+            LLM provider is configured.
+        </Typography>
+        <Box sx={styles.indentedBlock}>
+            <FeatureItem
+                title="Memories"
+                description="View and manage persistent memories that Ellie uses across conversations. Memories store facts, preferences, instructions, and context. Toggle the pinned switch to control whether a memory is automatically included in every conversation. Delete memories that are no longer needed."
+            />
+            <FeatureItem
+                title="Scope"
+                description="User-scoped memories are private to the user who created them. System-scoped memories are visible to all users. Deleting system-scoped memories requires the Store System Memories admin permission."
+            />
+            <FeatureItem
+                title="Pinned Memories"
+                description="Pinned memories are automatically appended to every conversation with Ellie. Use pinned memories for critical preferences and instructions that should always inform responses."
             />
         </Box>
 

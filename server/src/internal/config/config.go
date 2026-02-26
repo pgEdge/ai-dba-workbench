@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
@@ -40,6 +41,9 @@ type Config struct {
 
 	// Knowledgebase configuration
 	Knowledgebase KnowledgebaseConfig `yaml:"knowledgebase"`
+
+	// Memory configuration
+	Memory MemoryConfig `yaml:"memory"`
 
 	// Built-in tools, resources, and prompts configuration
 	Builtins BuiltinsConfig `yaml:"builtins"`
@@ -83,6 +87,9 @@ type ToolsConfig struct {
 	GetAlertRules       *bool `yaml:"get_alert_rules"`      // Query alert rules and thresholds (default: true)
 	GetMetricBaselines  *bool `yaml:"get_metric_baselines"` // Query metric baselines for anomaly context (default: true)
 	QueryDatastore      *bool `yaml:"query_datastore"`      // Execute read-only SQL against the datastore (default: true)
+	StoreMemory         *bool `yaml:"store_memory"`         // Store chat memories for future recall (default: true)
+	RecallMemories      *bool `yaml:"recall_memories"`      // Recall stored chat memories by similarity (default: true)
+	DeleteMemory        *bool `yaml:"delete_memory"`        // Delete a stored chat memory by ID (default: true)
 }
 
 // ResourcesConfig holds configuration for enabling/disabling built-in resources
@@ -131,6 +138,12 @@ func (c *ToolsConfig) IsToolEnabled(toolName string) bool {
 		return c.GetMetricBaselines == nil || *c.GetMetricBaselines
 	case "query_datastore":
 		return c.QueryDatastore == nil || *c.QueryDatastore
+	case "store_memory":
+		return c.StoreMemory == nil || *c.StoreMemory
+	case "recall_memories":
+		return c.RecallMemories == nil || *c.RecallMemories
+	case "delete_memory":
+		return c.DeleteMemory == nil || *c.DeleteMemory
 	default:
 		return true // Unknown tools are enabled by default
 	}
@@ -368,6 +381,25 @@ type KnowledgebaseConfig struct {
 	EmbeddingOllamaURL        string `yaml:"embedding_ollama_url"`          // URL for Ollama service (default: http://localhost:11434)
 }
 
+// MemoryConfig holds chat memory configuration
+type MemoryConfig struct {
+	Enabled *bool `yaml:"enabled"` // Whether chat memory is enabled (default: true)
+}
+
+// IsEnabled returns the effective value of the Enabled field,
+// defaulting to true when the pointer is nil (omitted from config).
+func (m MemoryConfig) IsEnabled() bool {
+	if m.Enabled == nil {
+		return true
+	}
+	return *m.Enabled
+}
+
+// boolPtr returns a pointer to the given bool value.
+func boolPtr(b bool) *bool {
+	return &b
+}
+
 // LoadConfig loads configuration with proper priority:
 // 1. Command line flags (highest priority)
 // 2. Environment variables
@@ -394,6 +426,9 @@ func LoadConfig(configPath string, cliFlags CLIFlags) (*Config, error) {
 
 	// Load API keys from files if specified
 	loadAPIKeysFromFiles(cfg)
+
+	// Apply environment variable overrides
+	applyEnvOverrides(cfg)
 
 	// Override with command line flags (highest priority)
 	applyCLIFlags(cfg, cliFlags)
@@ -493,6 +528,9 @@ func defaultConfig() *Config {
 			EmbeddingOllamaURL:    "http://localhost:11434", // Default Ollama URL
 			EmbeddingVoyageAPIKey: "",                       // Must be provided if using Voyage
 			EmbeddingOpenAIAPIKey: "",                       // Must be provided if using OpenAI
+		},
+		Memory: MemoryConfig{
+			Enabled: boolPtr(true), // Enabled by default
 		},
 		SecretFile: "", // Will be set to default path if not specified
 	}
@@ -680,6 +718,11 @@ func mergeConfig(dest, src *Config) {
 		}
 	}
 
+	// Memory - only override when explicitly set in the source config
+	if src.Memory.Enabled != nil {
+		dest.Memory.Enabled = src.Memory.Enabled
+	}
+
 	// Secret file
 	if src.SecretFile != "" {
 		dest.SecretFile = src.SecretFile
@@ -743,6 +786,15 @@ func mergeConfig(dest, src *Config) {
 	if src.Builtins.Tools.QueryMetrics != nil {
 		dest.Builtins.Tools.QueryMetrics = src.Builtins.Tools.QueryMetrics
 	}
+	if src.Builtins.Tools.StoreMemory != nil {
+		dest.Builtins.Tools.StoreMemory = src.Builtins.Tools.StoreMemory
+	}
+	if src.Builtins.Tools.RecallMemories != nil {
+		dest.Builtins.Tools.RecallMemories = src.Builtins.Tools.RecallMemories
+	}
+	if src.Builtins.Tools.DeleteMemory != nil {
+		dest.Builtins.Tools.DeleteMemory = src.Builtins.Tools.DeleteMemory
+	}
 	// Resources
 	if src.Builtins.Resources.SystemInfo != nil {
 		dest.Builtins.Resources.SystemInfo = src.Builtins.Resources.SystemInfo
@@ -793,6 +845,16 @@ func loadAPIKeysFromFiles(cfg *Config) {
 	if cfg.Knowledgebase.EmbeddingOpenAIAPIKey == "" && cfg.Knowledgebase.EmbeddingOpenAIAPIKeyFile != "" {
 		if key, err := fileutil.ReadOptionalTrimmedFile(cfg.Knowledgebase.EmbeddingOpenAIAPIKeyFile); err == nil && key != "" {
 			cfg.Knowledgebase.EmbeddingOpenAIAPIKey = key
+		}
+	}
+}
+
+// applyEnvOverrides applies environment variable overrides to the configuration.
+// Environment variables take priority over config file values but are overridden by CLI flags.
+func applyEnvOverrides(cfg *Config) {
+	if val := os.Getenv("PGEDGE_MEMORY_ENABLED"); val != "" {
+		if b, err := strconv.ParseBool(val); err == nil {
+			cfg.Memory.Enabled = boolPtr(b)
 		}
 	}
 }

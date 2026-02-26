@@ -38,6 +38,7 @@ import {
 import logoLight from '../assets/images/logo-light.png';
 import logoDark from '../assets/images/logo-dark.png';
 import { useAuth } from '../contexts/AuthContext';
+import { useAICapabilities } from '../contexts/AICapabilitiesContext';
 import { useMenu } from '../hooks/useMenu';
 import HelpPanel from './HelpPanel';
 import AdminPanel from './AdminPanel';
@@ -167,6 +168,7 @@ interface HeaderProps {
 const Header: React.FC<HeaderProps> = ({ onToggleTheme, helpContext }) => {
     const theme = useTheme();
     const { user, logout, hasAnyAdminAccess } = useAuth();
+    const { aiEnabled } = useAICapabilities();
     const userMenu = useMenu();
     const [helpOpen, setHelpOpen] = useState(false);
     const [adminOpen, setAdminOpen] = useState(false);
@@ -237,8 +239,8 @@ const Header: React.FC<HeaderProps> = ({ onToggleTheme, helpContext }) => {
                         </Tooltip>
 
                         {/* Admin Settings Button */}
-                        {hasAnyAdminAccess && (
-                            <Tooltip title="Administration">
+                        {(hasAnyAdminAccess || aiEnabled) && (
+                            <Tooltip title="Settings">
                                 <IconButton
                                     onClick={() => setAdminOpen(true)}
                                     aria-label="open administration"

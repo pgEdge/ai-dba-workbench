@@ -26,6 +26,7 @@ import { useTheme } from '@mui/material/styles';
 import { TransitionProps } from '@mui/material/transitions';
 import { Close as CloseIcon } from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
+import { useAICapabilities } from '../../contexts/AICapabilitiesContext';
 import { subsectionLabelSx } from './styles';
 import AdminUsers from './AdminUsers';
 import AdminGroups from './AdminGroups';
@@ -37,6 +38,7 @@ import AdminEmailChannels from './AdminEmailChannels';
 import AdminSlackChannels from './AdminSlackChannels';
 import AdminMattermostChannels from './AdminMattermostChannels';
 import AdminWebhookChannels from './AdminWebhookChannels';
+import AdminMemories from './AdminMemories';
 
 const Transition = React.forwardRef(function Transition(
     props: TransitionProps & { children: React.ReactElement },
@@ -55,6 +57,8 @@ interface NavItem {
 interface NavSection {
     category: string;
     items: NavItem[];
+    /** When true the section is shown to all authenticated users. */
+    visibleToAll?: boolean;
 }
 
 const NAV_SECTIONS: NavSection[] = [
@@ -85,6 +89,17 @@ const NAV_SECTIONS: NavSection[] = [
     },
 ];
 
+/** Sections that only appear when AI capabilities are enabled. */
+const AI_NAV_SECTIONS: NavSection[] = [
+    {
+        category: 'AI',
+        visibleToAll: true,
+        items: [
+            { id: 'memories', label: 'Memories', permission: '', Component: AdminMemories },
+        ],
+    },
+];
+
 interface AdminPanelProps {
     open: boolean;
     onClose: () => void;
@@ -93,20 +108,35 @@ interface AdminPanelProps {
 const AdminPanel: React.FC<AdminPanelProps> = ({ open, onClose }) => {
     const theme = useTheme();
     const { user, hasPermission } = useAuth();
+    const { aiEnabled } = useAICapabilities();
     const [activeId, setActiveId] = useState<string>('');
+
+    // Build the full section list, appending AI sections when enabled
+    const allSections = useMemo(() => {
+        const sections = [...NAV_SECTIONS];
+        if (aiEnabled) {
+            sections.push(...AI_NAV_SECTIONS);
+        }
+        return sections;
+    }, [aiEnabled]);
 
     // Filter sections and items based on user permissions
     const visibleSections = useMemo(() => {
-        return NAV_SECTIONS.map((section) => ({
+        return allSections.map((section) => ({
             ...section,
             items: section.items.filter((item) => {
+                // Items with visibleToAll on the section are shown to
+                // every authenticated user (no permission check needed).
+                if (section.visibleToAll) {
+                    return true;
+                }
                 if (item.permission === null) {
                     return !!user?.isSuperuser;
                 }
                 return hasPermission(item.permission);
             }),
         })).filter((section) => section.items.length > 0);
-    }, [user?.isSuperuser, hasPermission]);
+    }, [allSections, user?.isSuperuser, hasPermission]);
 
     // Flat list of all visible items for lookup
     const allVisibleItems = useMemo(() => {

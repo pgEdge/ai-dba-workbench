@@ -143,7 +143,7 @@ func (c *openaiClient) Chat(ctx context.Context, messages []Message, tools inter
 
 	// Convert messages to OpenAI format
 	// Start with system message; use custom prompt if provided, otherwise default
-	activePrompt := systemPrompt
+	activePrompt := SystemPrompt
 	if customSystemPrompt != "" {
 		activePrompt = customSystemPrompt
 	}

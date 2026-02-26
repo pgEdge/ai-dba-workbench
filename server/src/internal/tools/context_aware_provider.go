@@ -21,6 +21,7 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/config"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
+	"github.com/pgedge/ai-workbench/server/internal/memory"
 	"github.com/pgedge/ai-workbench/server/internal/resources"
 	"github.com/pgedge/ai-workbench/server/internal/tracing"
 )
@@ -37,6 +38,7 @@ type ContextAwareProvider struct {
 	rateLimiter    *auth.RateLimiter   // Rate limiter for authentication attempts
 	datastore      *database.Datastore // Datastore for monitored connection info
 	rbacChecker    *auth.RBACChecker   // RBAC checker for privilege-based access control
+	memoryStore    *memory.Store       // Memory store for chat memory persistence
 	resolver       *ConnectionResolver // Resolver for explicit connection_id in tool args
 
 	// Cache of registries per client to avoid re-creating tools on every Execute()
@@ -87,19 +89,28 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 			registry.Register("list_connections", ListConnectionsTool(datastorePool))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_alert_history") {
-			registry.Register("get_alert_history", GetAlertHistoryTool(datastorePool))
+			registry.Register("get_alert_history", GetAlertHistoryTool(datastorePool, p.rbacChecker))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_alert_rules") {
 			registry.Register("get_alert_rules", GetAlertRulesTool(datastorePool))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_metric_baselines") {
-			registry.Register("get_metric_baselines", GetMetricBaselinesTool(datastorePool))
+			registry.Register("get_metric_baselines", GetMetricBaselinesTool(datastorePool, p.rbacChecker))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("query_datastore") {
 			registry.Register("query_datastore", QueryDatastoreTool(datastorePool))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_blackouts") {
-			registry.Register("get_blackouts", GetBlackoutsTool(datastorePool))
+			registry.Register("get_blackouts", GetBlackoutsTool(datastorePool, p.rbacChecker))
+		}
+		if p.cfg.Builtins.Tools.IsToolEnabled("store_memory") && p.memoryStore != nil {
+			registry.Register("store_memory", StoreMemoryTool(p.memoryStore, p.cfg, p.rbacChecker))
+		}
+		if p.cfg.Builtins.Tools.IsToolEnabled("recall_memories") && p.memoryStore != nil {
+			registry.Register("recall_memories", RecallMemoriesTool(p.memoryStore, p.cfg))
+		}
+		if p.cfg.Builtins.Tools.IsToolEnabled("delete_memory") && p.memoryStore != nil {
+			registry.Register("delete_memory", DeleteMemoryTool(p.memoryStore))
 		}
 	} else {
 		// Register tools with nil pool - they'll return helpful errors
@@ -116,19 +127,19 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 			registry.Register("list_connections", ListConnectionsTool(nil))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_alert_history") {
-			registry.Register("get_alert_history", GetAlertHistoryTool(nil))
+			registry.Register("get_alert_history", GetAlertHistoryTool(nil, p.rbacChecker))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_alert_rules") {
 			registry.Register("get_alert_rules", GetAlertRulesTool(nil))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_metric_baselines") {
-			registry.Register("get_metric_baselines", GetMetricBaselinesTool(nil))
+			registry.Register("get_metric_baselines", GetMetricBaselinesTool(nil, p.rbacChecker))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("query_datastore") {
 			registry.Register("query_datastore", QueryDatastoreTool(nil))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_blackouts") {
-			registry.Register("get_blackouts", GetBlackoutsTool(nil))
+			registry.Register("get_blackouts", GetBlackoutsTool(nil, p.rbacChecker))
 		}
 	}
 }
@@ -178,6 +189,11 @@ func NewContextAwareProvider(clientManager *database.ClientManager, resourceReg 
 		hiddenRegistry:   NewRegistry(),
 	}
 
+	// Initialize memory store from the datastore pool (only when memory is enabled)
+	if datastore != nil && cfg.Memory.IsEnabled() {
+		provider.memoryStore = memory.NewStore(datastore.GetPool())
+	}
+
 	// Register ALL tools in base registry so they're always visible in tools/list
 	// Database-dependent tools will fail gracefully in Execute() if no connection exists
 	// This provides better UX - users can discover all tools even before connecting
@@ -214,6 +230,11 @@ func (p *ContextAwareProvider) createResourceAdapter() ResourceReader {
 // GetBaseRegistry returns the base registry for adding additional tools
 func (p *ContextAwareProvider) GetBaseRegistry() *Registry {
 	return p.baseRegistry
+}
+
+// GetMemoryStore returns the memory store instance
+func (p *ContextAwareProvider) GetMemoryStore() *memory.Store {
+	return p.memoryStore
 }
 
 // RegisterTools initializes tool registrations
@@ -379,27 +400,30 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 
 	// Check if this is a stateless tool that doesn't require a per-token database client
 	statelessTools := map[string]bool{
-		"read_resource":        true, // Resource access tool
-		"generate_embedding":   true, // Embedding generation doesn't need database
-		"search_knowledgebase": true, // Knowledgebase search - uses independent SQLite DB
-		"list_probes":          true, // Datastore tool - uses shared datastore pool
-		"describe_probe":       true, // Datastore tool - uses shared datastore pool
-		"query_metrics":        true, // Datastore tool - uses shared datastore pool
-		"list_connections":     true, // Datastore tool - uses shared datastore pool
-		"get_alert_history":    true, // Datastore tool - uses shared datastore pool
-		"get_alert_rules":      true, // Datastore tool - uses shared datastore pool
-		"get_metric_baselines": true, // Datastore tool - uses shared datastore pool
-		"query_datastore":      true, // Datastore tool - uses shared datastore pool
-		"get_blackouts":        true, // Datastore tool - uses shared datastore pool
+		"read_resource":        true,                 // Resource access tool
+		"generate_embedding":   true,                 // Embedding generation doesn't need database
+		"search_knowledgebase": true,                 // Knowledgebase search - uses independent SQLite DB
+		"list_probes":          true,                 // Datastore tool - uses shared datastore pool
+		"describe_probe":       true,                 // Datastore tool - uses shared datastore pool
+		"query_metrics":        true,                 // Datastore tool - uses shared datastore pool
+		"list_connections":     true,                 // Datastore tool - uses shared datastore pool
+		"get_alert_history":    true,                 // Datastore tool - uses shared datastore pool
+		"get_alert_rules":      true,                 // Datastore tool - uses shared datastore pool
+		"get_metric_baselines": true,                 // Datastore tool - uses shared datastore pool
+		"query_datastore":      true,                 // Datastore tool - uses shared datastore pool
+		"get_blackouts":        true,                 // Datastore tool - uses shared datastore pool
+		"store_memory":         p.memoryStore != nil, // Memory tool - requires memory store
+		"recall_memories":      p.memoryStore != nil, // Memory tool - requires memory store
+		"delete_memory":        p.memoryStore != nil, // Memory tool - requires memory store
 	}
 
 	if statelessTools[name] {
-		// For datastore tools that use connection_id, inject the default from session if not provided
+		// For datastore tools that use connection_id, inject the default from session if not provided.
+		// Tools that support "all connections" mode (get_alert_history, get_metric_baselines,
+		// get_blackouts) are intentionally excluded so that omitting connection_id returns
+		// results across all accessible connections rather than defaulting to the session connection.
 		connectionIDTools := map[string]bool{
-			"query_metrics":        true,
-			"get_alert_history":    true,
-			"get_metric_baselines": true,
-			"get_blackouts":        true,
+			"query_metrics": true,
 		}
 		if connectionIDTools[name] {
 			if _, hasConnID := args["connection_id"]; !hasConnID && p.authStore != nil {

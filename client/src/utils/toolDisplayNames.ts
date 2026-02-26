@@ -28,6 +28,9 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
     similarity_search: 'Searching similarities',
     test_query: 'Validating query',
     count_rows: 'Counting rows',
+    store_memory: 'Storing memory',
+    recall_memories: 'Recalling memories',
+    delete_memory: 'Deleting memory',
 };
 
 /**

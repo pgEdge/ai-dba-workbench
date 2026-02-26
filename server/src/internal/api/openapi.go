@@ -742,6 +742,541 @@ func buildSchemas() map[string]*OpenAPISchema {
 				},
 			},
 		},
+
+		// --- New schemas for missing endpoints ---
+
+		"CapabilitiesResponse": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"ai_enabled":     {Type: "boolean", Description: "Whether AI features are enabled"},
+				"max_iterations": {Type: "integer", Description: "Maximum LLM tool-use iterations"},
+			},
+		},
+		"AlertRuleUpdate": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"default_operator":  {Type: "string", Description: "Default comparison operator"},
+				"default_threshold": {Type: "number", Description: "Default threshold value"},
+				"default_severity":  {Type: "string", Description: "Default severity level", Enum: []string{"info", "warning", "critical"}},
+				"default_enabled":   {Type: "boolean", Description: "Default enabled state"},
+			},
+		},
+		"SaveAnalysisRequest": {
+			Type:     "object",
+			Required: []string{"alert_id", "analysis"},
+			Properties: map[string]*OpenAPISchema{
+				"alert_id":     {Type: "integer", Format: "int64", Description: "Alert ID"},
+				"analysis":     {Type: "string", Description: "AI analysis text"},
+				"metric_value": {Type: "number", Description: "Metric value at time of analysis"},
+			},
+		},
+		"AddServerToClusterRequest": {
+			Type:     "object",
+			Required: []string{"connection_id"},
+			Properties: map[string]*OpenAPISchema{
+				"connection_id": {Type: "integer", Description: "Connection ID of the server to add"},
+				"role":          {Type: "string", Description: "Server role in the cluster"},
+			},
+		},
+		"Blackout": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"id":            {Type: "integer", Format: "int64", Description: "Blackout ID"},
+				"scope":         {Type: "string", Description: "Blackout scope (estate, group, cluster, server)"},
+				"group_id":      {Type: "integer", Description: "Group ID", Nullable: true},
+				"cluster_id":    {Type: "integer", Description: "Cluster ID", Nullable: true},
+				"connection_id": {Type: "integer", Description: "Connection ID", Nullable: true},
+				"database_name": {Type: "string", Description: "Database name", Nullable: true},
+				"reason":        {Type: "string", Description: "Reason for blackout"},
+				"start_time":    {Type: "string", Format: "date-time", Description: "Blackout start time"},
+				"end_time":      {Type: "string", Format: "date-time", Description: "Blackout end time"},
+				"created_by":    {Type: "string", Description: "Username who created the blackout"},
+				"created_at":    {Type: "string", Format: "date-time", Description: "Creation timestamp"},
+				"is_active":     {Type: "boolean", Description: "Whether the blackout is currently active"},
+			},
+		},
+		"BlackoutCreateRequest": {
+			Type:     "object",
+			Required: []string{"scope", "reason", "start_time", "end_time"},
+			Properties: map[string]*OpenAPISchema{
+				"scope":         {Type: "string", Description: "Blackout scope (estate, group, cluster, server)"},
+				"group_id":      {Type: "integer", Description: "Group ID (required for group scope)", Nullable: true},
+				"cluster_id":    {Type: "integer", Description: "Cluster ID (required for cluster scope)", Nullable: true},
+				"connection_id": {Type: "integer", Description: "Connection ID (required for server scope)", Nullable: true},
+				"database_name": {Type: "string", Description: "Database name", Nullable: true},
+				"reason":        {Type: "string", Description: "Reason for blackout"},
+				"start_time":    {Type: "string", Format: "date-time", Description: "Blackout start time (RFC3339)"},
+				"end_time":      {Type: "string", Format: "date-time", Description: "Blackout end time (RFC3339)"},
+			},
+		},
+		"BlackoutUpdateRequest": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"reason":   {Type: "string", Description: "Updated reason"},
+				"end_time": {Type: "string", Format: "date-time", Description: "Updated end time (RFC3339)"},
+			},
+		},
+		"BlackoutSchedule": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"id":               {Type: "integer", Format: "int64", Description: "Schedule ID"},
+				"scope":            {Type: "string", Description: "Schedule scope"},
+				"group_id":         {Type: "integer", Description: "Group ID", Nullable: true},
+				"cluster_id":       {Type: "integer", Description: "Cluster ID", Nullable: true},
+				"connection_id":    {Type: "integer", Description: "Connection ID", Nullable: true},
+				"database_name":    {Type: "string", Description: "Database name", Nullable: true},
+				"name":             {Type: "string", Description: "Schedule name"},
+				"cron_expression":  {Type: "string", Description: "Cron expression for scheduling"},
+				"duration_minutes": {Type: "integer", Description: "Duration in minutes"},
+				"timezone":         {Type: "string", Description: "Timezone for the schedule"},
+				"reason":           {Type: "string", Description: "Reason for blackout"},
+				"enabled":          {Type: "boolean", Description: "Whether the schedule is enabled"},
+				"created_by":       {Type: "string", Description: "Username who created the schedule"},
+				"created_at":       {Type: "string", Format: "date-time", Description: "Creation timestamp"},
+				"updated_at":       {Type: "string", Format: "date-time", Description: "Last update timestamp"},
+			},
+		},
+		"BlackoutScheduleRequest": {
+			Type:     "object",
+			Required: []string{"scope", "name", "cron_expression", "duration_minutes", "reason"},
+			Properties: map[string]*OpenAPISchema{
+				"scope":            {Type: "string", Description: "Schedule scope (estate, group, cluster, server)"},
+				"group_id":         {Type: "integer", Description: "Group ID", Nullable: true},
+				"cluster_id":       {Type: "integer", Description: "Cluster ID", Nullable: true},
+				"connection_id":    {Type: "integer", Description: "Connection ID", Nullable: true},
+				"database_name":    {Type: "string", Description: "Database name", Nullable: true},
+				"name":             {Type: "string", Description: "Schedule name"},
+				"cron_expression":  {Type: "string", Description: "Cron expression for scheduling"},
+				"duration_minutes": {Type: "integer", Description: "Duration in minutes"},
+				"timezone":         {Type: "string", Description: "Timezone (defaults to UTC)"},
+				"reason":           {Type: "string", Description: "Reason for blackout"},
+				"enabled":          {Type: "boolean", Description: "Whether the schedule is enabled"},
+			},
+		},
+		"ProbeConfig": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"id":                          {Type: "integer", Description: "Probe config ID"},
+				"connection_id":               {Type: "integer", Description: "Connection ID", Nullable: true},
+				"is_enabled":                  {Type: "boolean", Description: "Whether the probe is enabled"},
+				"name":                        {Type: "string", Description: "Probe name"},
+				"description":                 {Type: "string", Description: "Probe description"},
+				"collection_interval_seconds": {Type: "integer", Description: "Collection interval in seconds"},
+				"retention_days":              {Type: "integer", Description: "Data retention in days"},
+				"created_at":                  {Type: "string", Format: "date-time", Description: "Creation timestamp"},
+				"updated_at":                  {Type: "string", Format: "date-time", Description: "Last update timestamp"},
+			},
+		},
+		"ProbeConfigUpdate": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"is_enabled":                  {Type: "boolean", Description: "Whether the probe is enabled"},
+				"collection_interval_seconds": {Type: "integer", Description: "Collection interval in seconds"},
+				"retention_days":              {Type: "integer", Description: "Data retention in days"},
+			},
+		},
+		"ProbeOverride": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"name":                      {Type: "string", Description: "Probe name"},
+				"description":               {Type: "string", Description: "Probe description"},
+				"default_enabled":           {Type: "boolean", Description: "Default enabled state"},
+				"default_interval_seconds":  {Type: "integer", Description: "Default collection interval"},
+				"default_retention_days":    {Type: "integer", Description: "Default retention days"},
+				"has_override":              {Type: "boolean", Description: "Whether an override exists at this scope"},
+				"override_enabled":          {Type: "boolean", Description: "Override enabled state", Nullable: true},
+				"override_interval_seconds": {Type: "integer", Description: "Override collection interval", Nullable: true},
+				"override_retention_days":   {Type: "integer", Description: "Override retention days", Nullable: true},
+			},
+		},
+		"ProbeOverrideUpdate": {
+			Type:     "object",
+			Required: []string{"is_enabled", "collection_interval_seconds", "retention_days"},
+			Properties: map[string]*OpenAPISchema{
+				"is_enabled":                  {Type: "boolean", Description: "Whether the probe is enabled"},
+				"collection_interval_seconds": {Type: "integer", Description: "Collection interval in seconds"},
+				"retention_days":              {Type: "integer", Description: "Data retention in days"},
+			},
+		},
+		"NotificationChannel": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"id":                      {Type: "integer", Format: "int64", Description: "Channel ID"},
+				"owner_username":          {Type: "string", Description: "Owner username", Nullable: true},
+				"enabled":                 {Type: "boolean", Description: "Whether the channel is enabled"},
+				"channel_type":            {Type: "string", Description: "Channel type (email, slack, mattermost, webhook)"},
+				"name":                    {Type: "string", Description: "Channel name"},
+				"description":             {Type: "string", Description: "Channel description", Nullable: true},
+				"webhook_url":             {Type: "string", Description: "Webhook URL (Slack/Mattermost)", Nullable: true},
+				"endpoint_url":            {Type: "string", Description: "Endpoint URL (webhook)", Nullable: true},
+				"http_method":             {Type: "string", Description: "HTTP method for webhook"},
+				"smtp_host":               {Type: "string", Description: "SMTP host (email)", Nullable: true},
+				"smtp_port":               {Type: "integer", Description: "SMTP port (email)"},
+				"from_address":            {Type: "string", Description: "From address (email)", Nullable: true},
+				"from_name":               {Type: "string", Description: "From name (email)", Nullable: true},
+				"is_estate_default":       {Type: "boolean", Description: "Whether this is an estate default channel"},
+				"reminder_enabled":        {Type: "boolean", Description: "Whether reminders are enabled"},
+				"reminder_interval_hours": {Type: "integer", Description: "Reminder interval in hours"},
+				"created_at":              {Type: "string", Format: "date-time", Description: "Creation timestamp"},
+				"updated_at":              {Type: "string", Format: "date-time", Description: "Last update timestamp"},
+			},
+		},
+		"NotificationChannelCreateRequest": {
+			Type:     "object",
+			Required: []string{"channel_type", "name"},
+			Properties: map[string]*OpenAPISchema{
+				"channel_type":            {Type: "string", Description: "Channel type (email, slack, mattermost, webhook)"},
+				"name":                    {Type: "string", Description: "Channel name"},
+				"description":             {Type: "string", Description: "Channel description"},
+				"enabled":                 {Type: "boolean", Description: "Whether the channel is enabled"},
+				"is_estate_default":       {Type: "boolean", Description: "Whether this is an estate default channel"},
+				"webhook_url":             {Type: "string", Description: "Webhook URL (Slack/Mattermost)"},
+				"endpoint_url":            {Type: "string", Description: "Endpoint URL (webhook)"},
+				"http_method":             {Type: "string", Description: "HTTP method for webhook"},
+				"headers":                 {Type: "object", Description: "HTTP headers for webhook", AdditionalProperties: &OpenAPISchema{Type: "string"}},
+				"smtp_host":               {Type: "string", Description: "SMTP host (email)"},
+				"smtp_port":               {Type: "integer", Description: "SMTP port (email)"},
+				"smtp_username":           {Type: "string", Description: "SMTP username (email)"},
+				"smtp_password":           {Type: "string", Description: "SMTP password (email)"},
+				"smtp_use_tls":            {Type: "boolean", Description: "Use TLS for SMTP (email)"},
+				"from_address":            {Type: "string", Description: "From address (email)"},
+				"from_name":               {Type: "string", Description: "From name (email)"},
+				"reminder_enabled":        {Type: "boolean", Description: "Whether reminders are enabled"},
+				"reminder_interval_hours": {Type: "integer", Description: "Reminder interval in hours"},
+			},
+		},
+		"EmailRecipient": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"id":            {Type: "integer", Format: "int64", Description: "Recipient ID"},
+				"channel_id":    {Type: "integer", Format: "int64", Description: "Parent channel ID"},
+				"email_address": {Type: "string", Description: "Email address"},
+				"display_name":  {Type: "string", Description: "Display name", Nullable: true},
+				"enabled":       {Type: "boolean", Description: "Whether the recipient is enabled"},
+				"created_at":    {Type: "string", Format: "date-time", Description: "Creation timestamp"},
+			},
+		},
+		"EmailRecipientRequest": {
+			Type:     "object",
+			Required: []string{"email_address"},
+			Properties: map[string]*OpenAPISchema{
+				"email_address": {Type: "string", Description: "Email address"},
+				"display_name":  {Type: "string", Description: "Display name"},
+				"enabled":       {Type: "boolean", Description: "Whether the recipient is enabled"},
+			},
+		},
+		"TestChannelRequest": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"recipient_email": {Type: "string", Description: "Optional recipient email for testing"},
+			},
+		},
+		"ChannelOverride": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"channel_id":        {Type: "integer", Format: "int64", Description: "Channel ID"},
+				"channel_name":      {Type: "string", Description: "Channel name"},
+				"channel_type":      {Type: "string", Description: "Channel type"},
+				"description":       {Type: "string", Description: "Channel description", Nullable: true},
+				"is_estate_default": {Type: "boolean", Description: "Whether this is an estate default"},
+				"has_override":      {Type: "boolean", Description: "Whether an override exists at this scope"},
+				"override_enabled":  {Type: "boolean", Description: "Override enabled state", Nullable: true},
+			},
+		},
+		"ChannelOverrideUpdate": {
+			Type:     "object",
+			Required: []string{"enabled"},
+			Properties: map[string]*OpenAPISchema{
+				"enabled": {Type: "boolean", Description: "Whether the channel is enabled at this scope"},
+			},
+		},
+		"ServerInfoResponse": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"connection_id": {Type: "integer", Description: "Connection ID"},
+				"collected_at":  {Type: "string", Format: "date-time", Description: "Data collection timestamp", Nullable: true},
+				"system":        {Type: "object", Description: "System information (OS, CPU, memory, disks)"},
+				"postgresql":    {Type: "object", Description: "PostgreSQL server configuration"},
+				"databases":     {Type: "array", Items: &OpenAPISchema{Type: "object"}, Description: "Database information"},
+				"extensions":    {Type: "array", Items: &OpenAPISchema{Type: "object"}, Description: "Installed extensions"},
+				"key_settings":  {Type: "array", Items: &OpenAPISchema{Type: "object"}, Description: "Key PostgreSQL settings"},
+				"ai_analysis":   {Type: "object", Description: "AI-generated database analysis", Nullable: true},
+			},
+		},
+		"AIAnalysisResponse": {
+			Type:     "object",
+			Nullable: true,
+			Properties: map[string]*OpenAPISchema{
+				"databases":    {Type: "object", Description: "Per-database AI analysis", AdditionalProperties: &OpenAPISchema{Type: "string"}},
+				"generated_at": {Type: "string", Format: "date-time", Description: "When the analysis was generated"},
+			},
+		},
+		"MetricsQueryResult": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"probe_name":     {Type: "string", Description: "Probe name"},
+				"connection_ids": {Type: "array", Items: &OpenAPISchema{Type: "integer"}, Description: "Connection IDs queried"},
+				"time_range":     {Type: "string", Description: "Time range"},
+				"buckets":        {Type: "integer", Description: "Number of time buckets"},
+				"aggregation":    {Type: "string", Description: "Aggregation method"},
+				"series":         {Type: "array", Items: &OpenAPISchema{Type: "object"}, Description: "Time series data"},
+			},
+		},
+		"BaselinesResult": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"connection_id": {Type: "integer", Description: "Connection ID"},
+				"probe_name":    {Type: "string", Description: "Probe name"},
+				"baselines":     {Type: "object", Description: "Baseline values per metric", AdditionalProperties: &OpenAPISchema{Type: "object"}},
+			},
+		},
+		"PerfSummaryResponse": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"time_range":  {Type: "string", Description: "Time range used"},
+				"connections": {Type: "array", Items: &OpenAPISchema{Type: "object"}, Description: "Per-connection performance data"},
+				"aggregate":   {Type: "object", Description: "Aggregate performance metrics", Nullable: true},
+			},
+		},
+		"DatabaseSummaryResponse": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"connection_id": {Type: "integer", Description: "Connection ID"},
+				"time_range":    {Type: "string", Description: "Time range used"},
+				"databases":     {Type: "array", Items: &OpenAPISchema{Type: "object"}, Description: "Per-database summary data"},
+			},
+		},
+		"TopQueryRow": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"queryid":          {Type: "integer", Format: "int64", Description: "Query ID"},
+				"query":            {Type: "string", Description: "Query text"},
+				"calls":            {Type: "integer", Format: "int64", Description: "Total call count"},
+				"total_exec_time":  {Type: "number", Description: "Total execution time in ms"},
+				"mean_exec_time":   {Type: "number", Description: "Mean execution time in ms"},
+				"rows":             {Type: "integer", Format: "int64", Description: "Total rows returned"},
+				"shared_blks_hit":  {Type: "integer", Format: "int64", Description: "Shared blocks hit"},
+				"shared_blks_read": {Type: "integer", Format: "int64", Description: "Shared blocks read"},
+			},
+		},
+		"OverviewResponse": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"status":       {Type: "string", Description: "Overview status (ready, generating)"},
+				"summary":      {Type: "object", Description: "AI-generated summary", Nullable: true},
+				"generated_at": {Type: "string", Format: "date-time", Description: "When the overview was generated"},
+			},
+		},
+		"Memory": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"id":         {Type: "integer", Format: "int64", Description: "Memory ID"},
+				"username":   {Type: "string", Description: "Owner username"},
+				"scope":      {Type: "string", Description: "Memory scope (user, system)"},
+				"category":   {Type: "string", Description: "Memory category"},
+				"content":    {Type: "string", Description: "Memory content"},
+				"pinned":     {Type: "boolean", Description: "Whether the memory is pinned"},
+				"model_name": {Type: "string", Description: "Model that created the memory"},
+				"created_at": {Type: "string", Format: "date-time", Description: "Creation timestamp"},
+				"updated_at": {Type: "string", Format: "date-time", Description: "Last update timestamp"},
+			},
+		},
+		"MemoryListResponse": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"memories": {Type: "array", Items: &OpenAPISchema{Ref: "#/components/schemas/Memory"}},
+			},
+		},
+		"MCPTool": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"name":        {Type: "string", Description: "Tool name"},
+				"description": {Type: "string", Description: "Tool description"},
+				"inputSchema": {Type: "object", Description: "JSON Schema for tool input"},
+			},
+		},
+		"MCPToolListResponse": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"tools": {Type: "array", Items: &OpenAPISchema{Ref: "#/components/schemas/MCPTool"}},
+			},
+		},
+		"MCPToolCallRequest": {
+			Type:     "object",
+			Required: []string{"name"},
+			Properties: map[string]*OpenAPISchema{
+				"name":      {Type: "string", Description: "Tool name to execute"},
+				"arguments": {Type: "object", Description: "Tool arguments"},
+			},
+		},
+		"MCPToolCallResponse": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"content": {Type: "array", Items: &OpenAPISchema{Type: "object"}, Description: "Tool response content"},
+				"isError": {Type: "boolean", Description: "Whether the tool call resulted in an error"},
+			},
+		},
+		"RBACUser": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"id":                 {Type: "integer", Format: "int64", Description: "User ID"},
+				"username":           {Type: "string", Description: "Username"},
+				"display_name":       {Type: "string", Description: "Display name"},
+				"email":              {Type: "string", Description: "Email address"},
+				"enabled":            {Type: "boolean", Description: "Whether the user is enabled"},
+				"is_superuser":       {Type: "boolean", Description: "Whether the user is a superuser"},
+				"is_service_account": {Type: "boolean", Description: "Whether the user is a service account"},
+				"annotation":         {Type: "string", Description: "User annotation"},
+			},
+		},
+		"UserCreateRequest": {
+			Type:     "object",
+			Required: []string{"username"},
+			Properties: map[string]*OpenAPISchema{
+				"username":           {Type: "string", Description: "Username"},
+				"password":           {Type: "string", Description: "Password (required for non-service accounts)"},
+				"display_name":       {Type: "string", Description: "Display name"},
+				"email":              {Type: "string", Description: "Email address"},
+				"annotation":         {Type: "string", Description: "User annotation"},
+				"enabled":            {Type: "boolean", Description: "Whether the user is enabled"},
+				"is_superuser":       {Type: "boolean", Description: "Whether the user is a superuser"},
+				"is_service_account": {Type: "boolean", Description: "Whether the user is a service account"},
+			},
+		},
+		"UserUpdateRequest": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"password":     {Type: "string", Description: "New password"},
+				"display_name": {Type: "string", Description: "Display name"},
+				"email":        {Type: "string", Description: "Email address"},
+				"annotation":   {Type: "string", Description: "User annotation"},
+				"enabled":      {Type: "boolean", Description: "Whether the user is enabled"},
+				"is_superuser": {Type: "boolean", Description: "Whether the user is a superuser"},
+			},
+		},
+		"UserPrivilegesResponse": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"username":              {Type: "string", Description: "Username"},
+				"is_superuser":          {Type: "boolean", Description: "Whether the user is a superuser"},
+				"groups":                {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "Group names"},
+				"mcp_privileges":        {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "MCP privilege identifiers"},
+				"connection_privileges": {Type: "object", Description: "Connection ID to access level mapping", AdditionalProperties: &OpenAPISchema{Type: "string"}},
+				"admin_permissions":     {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "Admin permission names"},
+			},
+		},
+		"RBACGroup": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"id":           {Type: "integer", Format: "int64", Description: "Group ID"},
+				"name":         {Type: "string", Description: "Group name"},
+				"description":  {Type: "string", Description: "Group description"},
+				"member_count": {Type: "integer", Description: "Number of members"},
+			},
+		},
+		"RBACGroupDetail": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"id":                    {Type: "integer", Format: "int64", Description: "Group ID"},
+				"name":                  {Type: "string", Description: "Group name"},
+				"description":           {Type: "string", Description: "Group description"},
+				"user_members":          {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "User member names"},
+				"group_members":         {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "Group member names"},
+				"mcp_privileges":        {Type: "array", Items: &OpenAPISchema{Type: "object"}, Description: "MCP privileges"},
+				"connection_privileges": {Type: "array", Items: &OpenAPISchema{Type: "object"}, Description: "Connection privileges"},
+				"admin_permissions":     {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "Admin permissions"},
+			},
+		},
+		"GroupCreateRequest": {
+			Type:     "object",
+			Required: []string{"name"},
+			Properties: map[string]*OpenAPISchema{
+				"name":        {Type: "string", Description: "Group name"},
+				"description": {Type: "string", Description: "Group description"},
+			},
+		},
+		"GroupUpdateRequest": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"name":        {Type: "string", Description: "Group name"},
+				"description": {Type: "string", Description: "Group description"},
+			},
+		},
+		"GroupMemberRequest": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"user_id":  {Type: "integer", Format: "int64", Description: "User ID to add"},
+				"group_id": {Type: "integer", Format: "int64", Description: "Group ID to add (nested group)"},
+			},
+		},
+		"GroupEffectivePrivileges": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"group_name":            {Type: "string", Description: "Group name"},
+				"mcp_privileges":        {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "Effective MCP privilege names"},
+				"connection_privileges": {Type: "array", Items: &OpenAPISchema{Type: "object"}, Description: "Effective connection privileges"},
+				"admin_permissions":     {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "Effective admin permissions"},
+			},
+		},
+		"GroupPermissionsResponse": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"group_id":    {Type: "integer", Format: "int64", Description: "Group ID"},
+				"permissions": {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "Admin permissions"},
+			},
+		},
+		"RBACToken": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"id":                 {Type: "integer", Format: "int64", Description: "Token ID"},
+				"name":               {Type: "string", Description: "Token annotation/name"},
+				"token_prefix":       {Type: "string", Description: "Token hash prefix for identification"},
+				"user_id":            {Type: "integer", Format: "int64", Description: "Owner user ID"},
+				"username":           {Type: "string", Description: "Owner username"},
+				"is_service_account": {Type: "boolean", Description: "Whether the owner is a service account"},
+				"is_superuser":       {Type: "boolean", Description: "Whether the owner is a superuser"},
+				"expires_at":         {Type: "string", Format: "date-time", Description: "Token expiration time", Nullable: true},
+				"scope":              {Type: "object", Description: "Token scope restrictions", Nullable: true},
+			},
+		},
+		"TokenCreateRequest": {
+			Type:     "object",
+			Required: []string{"owner_username", "annotation"},
+			Properties: map[string]*OpenAPISchema{
+				"owner_username": {Type: "string", Description: "Username of the token owner"},
+				"annotation":     {Type: "string", Description: "Token description/name"},
+				"expires_in":     {Type: "string", Description: "Expiry duration (e.g., 24h, 30d, 1y, never)"},
+			},
+		},
+		"TokenCreateResponse": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"token":      {Type: "string", Description: "Raw token value (shown only once)"},
+				"id":         {Type: "integer", Format: "int64", Description: "Token ID"},
+				"owner":      {Type: "string", Description: "Owner username"},
+				"annotation": {Type: "string", Description: "Token annotation"},
+				"expires_at": {Type: "string", Format: "date-time", Description: "Token expiration time", Nullable: true},
+				"message":    {Type: "string", Description: "Status message"},
+			},
+		},
+		"TokenScopeResponse": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"token_id":          {Type: "integer", Format: "int64", Description: "Token ID"},
+				"scoped":            {Type: "boolean", Description: "Whether the token has scope restrictions"},
+				"connections":       {Type: "array", Items: &OpenAPISchema{Type: "object"}, Description: "Connection scope entries"},
+				"mcp_privileges":    {Type: "array", Items: &OpenAPISchema{Type: "integer", Format: "int64"}, Description: "MCP privilege IDs"},
+				"admin_permissions": {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "Admin permission names"},
+			},
+		},
+		"TokenScopeRequest": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"connections":       {Type: "array", Items: &OpenAPISchema{Type: "object"}, Description: "Connection scope entries"},
+				"mcp_privileges":    {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "MCP privilege names"},
+				"admin_permissions": {Type: "array", Items: &OpenAPISchema{Type: "string"}, Description: "Admin permission names"},
+			},
+		},
 	}
 }
 
@@ -928,6 +1463,20 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"503": jsonResponse("ErrorResponse", "Datastore not configured"),
 				},
 			},
+			Post: &OpenAPIOperation{
+				Summary:     "Create a cluster",
+				Description: "Creates a new cluster, optionally assigned to a group",
+				OperationID: "createCluster",
+				Tags:        []string{"Clusters"},
+				Security:    bearerAuth,
+				RequestBody: jsonRequestBody("ClusterRequest", "Cluster details", true),
+				Responses: map[string]OpenAPIResponse{
+					"201": jsonResponse("Cluster", "Cluster created"),
+					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Forbidden"),
+				},
+			},
 		},
 
 		"/clusters/{id}": {
@@ -988,6 +1537,21 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"200": jsonArrayResponse("ServerInfo", "List of servers"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"500": jsonResponse("ErrorResponse", "Failed to list servers"),
+				},
+			},
+			Post: &OpenAPIOperation{
+				Summary:     "Add server to cluster",
+				Description: "Assigns a server connection to a cluster with an optional role",
+				OperationID: "addServerToCluster",
+				Tags:        []string{"Clusters"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Cluster ID")},
+				RequestBody: jsonRequestBody("AddServerToClusterRequest", "Server assignment details", true),
+				Responses: map[string]OpenAPIResponse{
+					"204": {Description: "Server added to cluster"},
+					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Forbidden"),
 				},
 			},
 		},
@@ -1463,6 +2027,1556 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonResponse("CompactResponse", "Compacted messages"),
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+				},
+			},
+		},
+
+		// Auth - Logout
+		"/auth/logout": {
+			Post: &OpenAPIOperation{
+				Summary:     "User logout",
+				Description: "Clears the session cookie to log the user out",
+				OperationID: "logout",
+				Tags:        []string{"Authentication"},
+				Responses: map[string]OpenAPIResponse{
+					"200": {Description: "Logout successful"},
+					"405": {Description: "Method not allowed"},
+				},
+			},
+		},
+
+		// Capabilities
+		"/capabilities": {
+			Get: &OpenAPIOperation{
+				Summary:     "Get server capabilities",
+				Description: "Returns server capability flags including AI feature availability",
+				OperationID: "getCapabilities",
+				Tags:        []string{"Server"},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("CapabilitiesResponse", "Server capabilities"),
+				},
+			},
+		},
+
+		// Clusters - flat list
+		"/clusters/list": {
+			Get: &OpenAPIOperation{
+				Summary:     "List all clusters (flat)",
+				Description: "Returns a flat list of all clusters for autocomplete and selection UIs",
+				OperationID: "listClustersFlat",
+				Tags:        []string{"Clusters"},
+				Security:    bearerAuth,
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonArrayResponse("Cluster", "Flat list of clusters"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+				},
+			},
+		},
+
+		// Clusters - remove server
+		"/clusters/{id}/servers/{connectionId}": {
+			Delete: &OpenAPIOperation{
+				Summary:     "Remove server from cluster",
+				Description: "Removes a server connection from a cluster",
+				OperationID: "removeServerFromCluster",
+				Tags:        []string{"Clusters"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					pathParamInt("id", "Cluster ID"),
+					pathParamInt("connectionId", "Connection ID of server to remove"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"204": {Description: "Server removed from cluster"},
+					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Forbidden"),
+				},
+			},
+		},
+
+		// Clusters - relationships
+		"/clusters/{id}/relationships": {
+			Get: &OpenAPIOperation{
+				Summary:     "List cluster relationships",
+				Description: "Returns replication relationships for a cluster",
+				OperationID: "listClusterRelationships",
+				Tags:        []string{"Clusters"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Cluster ID")},
+				Responses: map[string]OpenAPIResponse{
+					"200": {
+						Description: "List of relationships",
+						Content: map[string]OpenAPIMediaType{
+							"application/json": {Schema: &OpenAPISchema{Type: "array", Items: &OpenAPISchema{Type: "object"}}},
+						},
+					},
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+				},
+			},
+		},
+
+		"/clusters/{id}/relationships/{relationshipId}": {
+			Delete: &OpenAPIOperation{
+				Summary:     "Delete cluster relationship",
+				Description: "Deletes a specific cluster relationship",
+				OperationID: "deleteClusterRelationship",
+				Tags:        []string{"Clusters"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					pathParamInt("id", "Cluster ID"),
+					pathParamInt("relationshipId", "Relationship ID"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"204": {Description: "Relationship deleted"},
+					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+				},
+			},
+		},
+
+		// Alerts - save analysis
+		"/alerts/analysis": {
+			Put: &OpenAPIOperation{
+				Summary:     "Save AI analysis for alert",
+				Description: "Saves an AI-generated analysis for a specific alert",
+				OperationID: "saveAlertAnalysis",
+				Tags:        []string{"Alerts"},
+				Security:    bearerAuth,
+				RequestBody: jsonRequestBody("SaveAnalysisRequest", "Analysis data", true),
+				Responses: map[string]OpenAPIResponse{
+					"200": {
+						Description: "Analysis saved",
+						Content: map[string]OpenAPIMediaType{
+							"application/json": {Schema: &OpenAPISchema{Type: "object", Properties: map[string]*OpenAPISchema{"status": {Type: "string"}}}},
+						},
+					},
+					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+				},
+			},
+		},
+
+		// Alert Rules
+		"/alert-rules": {
+			Get: &OpenAPIOperation{
+				Summary:     "List all alert rules",
+				Description: "Returns all configured alert rules",
+				OperationID: "listAlertRules",
+				Tags:        []string{"Alert Rules"},
+				Security:    bearerAuth,
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonArrayResponse("AlertRule", "List of alert rules"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+				},
+			},
+		},
+
+		"/alert-rules/{id}": {
+			Get: &OpenAPIOperation{
+				Summary:     "Get alert rule",
+				Description: "Returns a specific alert rule by ID",
+				OperationID: "getAlertRule",
+				Tags:        []string{"Alert Rules"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Alert rule ID")},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("AlertRule", "Alert rule details"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"404": jsonResponse("ErrorResponse", "Alert rule not found"),
+				},
+			},
+			Put: &OpenAPIOperation{
+				Summary:     "Update alert rule",
+				Description: "Updates an alert rule. Requires manage_alert_rules permission.",
+				OperationID: "updateAlertRule",
+				Tags:        []string{"Alert Rules"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Alert rule ID")},
+				RequestBody: jsonRequestBody("AlertRuleUpdate", "Updated rule fields", true),
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("AlertRule", "Updated alert rule"),
+					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_alert_rules permission"),
+					"404": jsonResponse("ErrorResponse", "Alert rule not found"),
+				},
+			},
+		},
+
+		// Blackouts
+		"/blackouts": {
+			Get: &OpenAPIOperation{
+				Summary:     "List blackouts",
+				Description: "Returns blackouts, optionally filtered by scope and status",
+				OperationID: "listBlackouts",
+				Tags:        []string{"Blackouts"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					queryParamString("scope", "Filter by scope (estate, group, cluster, server)"),
+					queryParamInt("group_id", "Filter by group ID"),
+					queryParamInt("cluster_id", "Filter by cluster ID"),
+					queryParamInt("connection_id", "Filter by connection ID"),
+					queryParamBool("active", "Filter by active status"),
+					queryParamInt("limit", "Maximum number of results"),
+					queryParamInt("offset", "Offset for pagination"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonArrayResponse("Blackout", "List of blackouts"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+				},
+			},
+			Post: &OpenAPIOperation{
+				Summary:     "Create a blackout",
+				Description: "Creates a new alert blackout window",
+				OperationID: "createBlackout",
+				Tags:        []string{"Blackouts"},
+				Security:    bearerAuth,
+				RequestBody: jsonRequestBody("BlackoutCreateRequest", "Blackout details", true),
+				Responses: map[string]OpenAPIResponse{
+					"201": jsonResponse("Blackout", "Blackout created"),
+					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_blackouts permission"),
+				},
+			},
+		},
+
+		"/blackouts/{id}": {
+			Get: &OpenAPIOperation{
+				Summary:     "Get blackout",
+				Description: "Returns a specific blackout by ID",
+				OperationID: "getBlackout",
+				Tags:        []string{"Blackouts"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Blackout ID")},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("Blackout", "Blackout details"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"404": jsonResponse("ErrorResponse", "Blackout not found"),
+				},
+			},
+			Put: &OpenAPIOperation{
+				Summary:     "Update blackout",
+				Description: "Updates a blackout's reason or end time",
+				OperationID: "updateBlackout",
+				Tags:        []string{"Blackouts"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Blackout ID")},
+				RequestBody: jsonRequestBody("BlackoutUpdateRequest", "Updated blackout fields", true),
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("Blackout", "Updated blackout"),
+					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_blackouts permission"),
+					"404": jsonResponse("ErrorResponse", "Blackout not found"),
+				},
+			},
+			Delete: &OpenAPIOperation{
+				Summary:     "Delete blackout",
+				Description: "Deletes a blackout",
+				OperationID: "deleteBlackout",
+				Tags:        []string{"Blackouts"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Blackout ID")},
+				Responses: map[string]OpenAPIResponse{
+					"200": {
+						Description: "Blackout deleted",
+						Content: map[string]OpenAPIMediaType{
+							"application/json": {Schema: &OpenAPISchema{Type: "object", Properties: map[string]*OpenAPISchema{"status": {Type: "string"}}}},
+						},
+					},
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_blackouts permission"),
+					"404": jsonResponse("ErrorResponse", "Blackout not found"),
+				},
+			},
+		},
+
+		"/blackouts/{id}/stop": {
+			Post: &OpenAPIOperation{
+				Summary:     "Stop active blackout",
+				Description: "Stops an active blackout early by setting its end time to now",
+				OperationID: "stopBlackout",
+				Tags:        []string{"Blackouts"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Blackout ID")},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("Blackout", "Stopped blackout"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_blackouts permission"),
+					"404": jsonResponse("ErrorResponse", "Blackout not found"),
+				},
+			},
+		},
+
+		// Blackout Schedules
+		"/blackout-schedules": {
+			Get: &OpenAPIOperation{
+				Summary:     "List blackout schedules",
+				Description: "Returns blackout schedules, optionally filtered by scope",
+				OperationID: "listBlackoutSchedules",
+				Tags:        []string{"Blackouts"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					queryParamString("scope", "Filter by scope (estate, group, cluster, server)"),
+					queryParamInt("group_id", "Filter by group ID"),
+					queryParamInt("cluster_id", "Filter by cluster ID"),
+					queryParamInt("connection_id", "Filter by connection ID"),
+					queryParamBool("enabled", "Filter by enabled status"),
+					queryParamInt("limit", "Maximum number of results"),
+					queryParamInt("offset", "Offset for pagination"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonArrayResponse("BlackoutSchedule", "List of blackout schedules"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+				},
+			},
+			Post: &OpenAPIOperation{
+				Summary:     "Create blackout schedule",
+				Description: "Creates a new recurring blackout schedule",
+				OperationID: "createBlackoutSchedule",
+				Tags:        []string{"Blackouts"},
+				Security:    bearerAuth,
+				RequestBody: jsonRequestBody("BlackoutScheduleRequest", "Schedule details", true),
+				Responses: map[string]OpenAPIResponse{
+					"201": jsonResponse("BlackoutSchedule", "Schedule created"),
+					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_blackouts permission"),
+				},
+			},
+		},
+
+		"/blackout-schedules/{id}": {
+			Get: &OpenAPIOperation{
+				Summary:     "Get blackout schedule",
+				Description: "Returns a specific blackout schedule by ID",
+				OperationID: "getBlackoutSchedule",
+				Tags:        []string{"Blackouts"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Schedule ID")},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("BlackoutSchedule", "Schedule details"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"404": jsonResponse("ErrorResponse", "Schedule not found"),
+				},
+			},
+			Put: &OpenAPIOperation{
+				Summary:     "Update blackout schedule",
+				Description: "Updates a blackout schedule",
+				OperationID: "updateBlackoutSchedule",
+				Tags:        []string{"Blackouts"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Schedule ID")},
+				RequestBody: jsonRequestBody("BlackoutScheduleRequest", "Updated schedule details", true),
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("BlackoutSchedule", "Updated schedule"),
+					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_blackouts permission"),
+					"404": jsonResponse("ErrorResponse", "Schedule not found"),
+				},
+			},
+			Delete: &OpenAPIOperation{
+				Summary:     "Delete blackout schedule",
+				Description: "Deletes a blackout schedule",
+				OperationID: "deleteBlackoutSchedule",
+				Tags:        []string{"Blackouts"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Schedule ID")},
+				Responses: map[string]OpenAPIResponse{
+					"200": {
+						Description: "Schedule deleted",
+						Content: map[string]OpenAPIMediaType{
+							"application/json": {Schema: &OpenAPISchema{Type: "object", Properties: map[string]*OpenAPISchema{"status": {Type: "string"}}}},
+						},
+					},
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_blackouts permission"),
+					"404": jsonResponse("ErrorResponse", "Schedule not found"),
+				},
+			},
+		},
+
+		// Probe Configuration
+		"/probe-configs": {
+			Get: &OpenAPIOperation{
+				Summary:     "List probe configurations",
+				Description: "Returns probe configurations, optionally filtered by connection ID",
+				OperationID: "listProbeConfigs",
+				Tags:        []string{"Probe Configuration"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{queryParamInt("connection_id", "Filter by connection ID")},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonArrayResponse("ProbeConfig", "List of probe configurations"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+				},
+			},
+		},
+
+		"/probe-configs/{id}": {
+			Get: &OpenAPIOperation{
+				Summary:     "Get probe configuration",
+				Description: "Returns a specific probe configuration by ID",
+				OperationID: "getProbeConfig",
+				Tags:        []string{"Probe Configuration"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Probe config ID")},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("ProbeConfig", "Probe configuration details"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"404": jsonResponse("ErrorResponse", "Probe config not found"),
+				},
+			},
+			Put: &OpenAPIOperation{
+				Summary:     "Update probe configuration",
+				Description: "Updates a probe configuration. Requires manage_probes permission.",
+				OperationID: "updateProbeConfig",
+				Tags:        []string{"Probe Configuration"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Probe config ID")},
+				RequestBody: jsonRequestBody("ProbeConfigUpdate", "Updated probe config fields", true),
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("ProbeConfig", "Updated probe configuration"),
+					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_probes permission"),
+					"404": jsonResponse("ErrorResponse", "Probe config not found"),
+				},
+			},
+		},
+
+		// Probe Overrides
+		"/probe-overrides/{scope}/{scopeId}": {
+			Get: &OpenAPIOperation{
+				Summary:     "List probe overrides",
+				Description: "Returns probe overrides for a specific scope (server, cluster, or group)",
+				OperationID: "listProbeOverrides",
+				Tags:        []string{"Probe Configuration"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					pathParamString("scope", "Override scope (server, cluster, or group)"),
+					pathParamInt("scopeId", "Scope entity ID"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonArrayResponse("ProbeOverride", "List of probe overrides"),
+					"400": jsonResponse("ErrorResponse", "Invalid scope"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+				},
+			},
+		},
+
+		"/probe-overrides/{scope}/{scopeId}/{probeName}": {
+			Put: &OpenAPIOperation{
+				Summary:     "Upsert probe override",
+				Description: "Creates or updates a probe override at the specified scope",
+				OperationID: "upsertProbeOverride",
+				Tags:        []string{"Probe Configuration"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					pathParamString("scope", "Override scope (server, cluster, or group)"),
+					pathParamInt("scopeId", "Scope entity ID"),
+					pathParamString("probeName", "Probe name"),
+				},
+				RequestBody: jsonRequestBody("ProbeOverrideUpdate", "Override settings", true),
+				Responses: map[string]OpenAPIResponse{
+					"200": {
+						Description: "Override saved",
+						Content: map[string]OpenAPIMediaType{
+							"application/json": {Schema: &OpenAPISchema{Type: "object", Properties: map[string]*OpenAPISchema{"status": {Type: "string"}}}},
+						},
+					},
+					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_probes permission"),
+				},
+			},
+			Delete: &OpenAPIOperation{
+				Summary:     "Delete probe override",
+				Description: "Deletes a probe override at the specified scope",
+				OperationID: "deleteProbeOverride",
+				Tags:        []string{"Probe Configuration"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					pathParamString("scope", "Override scope (server, cluster, or group)"),
+					pathParamInt("scopeId", "Scope entity ID"),
+					pathParamString("probeName", "Probe name"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"200": {
+						Description: "Override deleted",
+						Content: map[string]OpenAPIMediaType{
+							"application/json": {Schema: &OpenAPISchema{Type: "object", Properties: map[string]*OpenAPISchema{"status": {Type: "string"}}}},
+						},
+					},
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_probes permission"),
+				},
+			},
+		},
+
+		// Notification Channels
+		"/notification-channels": {
+			Get: &OpenAPIOperation{
+				Summary:     "List notification channels",
+				Description: "Returns all notification channels",
+				OperationID: "listNotificationChannels",
+				Tags:        []string{"Notification Channels"},
+				Security:    bearerAuth,
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonArrayResponse("NotificationChannel", "List of notification channels"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+				},
+			},
+			Post: &OpenAPIOperation{
+				Summary:     "Create notification channel",
+				Description: "Creates a new notification channel (email, Slack, Mattermost, or webhook)",
+				OperationID: "createNotificationChannel",
+				Tags:        []string{"Notification Channels"},
+				Security:    bearerAuth,
+				RequestBody: jsonRequestBody("NotificationChannelCreateRequest", "Channel details", true),
+				Responses: map[string]OpenAPIResponse{
+					"201": jsonResponse("NotificationChannel", "Channel created"),
+					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_notification_channels permission"),
+				},
+			},
+		},
+
+		"/notification-channels/{id}": {
+			Get: &OpenAPIOperation{
+				Summary:     "Get notification channel",
+				Description: "Returns a specific notification channel by ID",
+				OperationID: "getNotificationChannel",
+				Tags:        []string{"Notification Channels"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Channel ID")},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("NotificationChannel", "Channel details"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"404": jsonResponse("ErrorResponse", "Channel not found"),
+				},
+			},
+			Put: &OpenAPIOperation{
+				Summary:     "Update notification channel",
+				Description: "Updates a notification channel",
+				OperationID: "updateNotificationChannel",
+				Tags:        []string{"Notification Channels"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Channel ID")},
+				RequestBody: jsonRequestBody("NotificationChannelCreateRequest", "Updated channel details", true),
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("NotificationChannel", "Updated channel"),
+					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_notification_channels permission"),
+					"404": jsonResponse("ErrorResponse", "Channel not found"),
+				},
+			},
+			Delete: &OpenAPIOperation{
+				Summary:     "Delete notification channel",
+				Description: "Deletes a notification channel",
+				OperationID: "deleteNotificationChannel",
+				Tags:        []string{"Notification Channels"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Channel ID")},
+				Responses: map[string]OpenAPIResponse{
+					"200": {
+						Description: "Channel deleted",
+						Content: map[string]OpenAPIMediaType{
+							"application/json": {Schema: &OpenAPISchema{Type: "object", Properties: map[string]*OpenAPISchema{"status": {Type: "string"}}}},
+						},
+					},
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_notification_channels permission"),
+					"404": jsonResponse("ErrorResponse", "Channel not found"),
+				},
+			},
+		},
+
+		"/notification-channels/{id}/test": {
+			Post: &OpenAPIOperation{
+				Summary:     "Test notification channel",
+				Description: "Sends a test notification through the channel",
+				OperationID: "testNotificationChannel",
+				Tags:        []string{"Notification Channels"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Channel ID")},
+				RequestBody: jsonRequestBody("TestChannelRequest", "Optional test parameters", false),
+				Responses: map[string]OpenAPIResponse{
+					"200": {
+						Description: "Test notification sent",
+						Content: map[string]OpenAPIMediaType{
+							"application/json": {Schema: &OpenAPISchema{Type: "object", Properties: map[string]*OpenAPISchema{"status": {Type: "string"}}}},
+						},
+					},
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_notification_channels permission"),
+					"404": jsonResponse("ErrorResponse", "Channel not found"),
+				},
+			},
+		},
+
+		"/notification-channels/{id}/recipients": {
+			Get: &OpenAPIOperation{
+				Summary:     "List email recipients",
+				Description: "Returns all email recipients for a notification channel",
+				OperationID: "listEmailRecipients",
+				Tags:        []string{"Notification Channels"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Channel ID")},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonArrayResponse("EmailRecipient", "List of email recipients"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"404": jsonResponse("ErrorResponse", "Channel not found"),
+				},
+			},
+			Post: &OpenAPIOperation{
+				Summary:     "Add email recipient",
+				Description: "Adds an email recipient to a notification channel",
+				OperationID: "addEmailRecipient",
+				Tags:        []string{"Notification Channels"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Channel ID")},
+				RequestBody: jsonRequestBody("EmailRecipientRequest", "Recipient details", true),
+				Responses: map[string]OpenAPIResponse{
+					"201": jsonResponse("EmailRecipient", "Recipient added"),
+					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_notification_channels permission"),
+				},
+			},
+		},
+
+		"/notification-channels/{id}/recipients/{recipientId}": {
+			Put: &OpenAPIOperation{
+				Summary:     "Update email recipient",
+				Description: "Updates an email recipient",
+				OperationID: "updateEmailRecipient",
+				Tags:        []string{"Notification Channels"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					pathParamInt("id", "Channel ID"),
+					pathParamInt("recipientId", "Recipient ID"),
+				},
+				RequestBody: jsonRequestBody("EmailRecipientRequest", "Updated recipient details", true),
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("EmailRecipient", "Updated recipient"),
+					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_notification_channels permission"),
+				},
+			},
+			Delete: &OpenAPIOperation{
+				Summary:     "Delete email recipient",
+				Description: "Removes an email recipient from a notification channel",
+				OperationID: "deleteEmailRecipient",
+				Tags:        []string{"Notification Channels"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					pathParamInt("id", "Channel ID"),
+					pathParamInt("recipientId", "Recipient ID"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"200": {
+						Description: "Recipient deleted",
+						Content: map[string]OpenAPIMediaType{
+							"application/json": {Schema: &OpenAPISchema{Type: "object", Properties: map[string]*OpenAPISchema{"status": {Type: "string"}}}},
+						},
+					},
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_notification_channels permission"),
+				},
+			},
+		},
+
+		// Channel Overrides
+		"/channel-overrides/{scope}/{scopeId}": {
+			Get: &OpenAPIOperation{
+				Summary:     "List channel overrides",
+				Description: "Returns notification channel overrides for a specific scope",
+				OperationID: "listChannelOverrides",
+				Tags:        []string{"Notification Channels"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					pathParamString("scope", "Override scope (server, cluster, or group)"),
+					pathParamInt("scopeId", "Scope entity ID"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonArrayResponse("ChannelOverride", "List of channel overrides"),
+					"400": jsonResponse("ErrorResponse", "Invalid scope"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+				},
+			},
+		},
+
+		"/channel-overrides/{scope}/{scopeId}/{channelId}": {
+			Put: &OpenAPIOperation{
+				Summary:     "Upsert channel override",
+				Description: "Creates or updates a channel override at the specified scope",
+				OperationID: "upsertChannelOverride",
+				Tags:        []string{"Notification Channels"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					pathParamString("scope", "Override scope (server, cluster, or group)"),
+					pathParamInt("scopeId", "Scope entity ID"),
+					pathParamInt("channelId", "Channel ID"),
+				},
+				RequestBody: jsonRequestBody("ChannelOverrideUpdate", "Override settings", true),
+				Responses: map[string]OpenAPIResponse{
+					"200": {
+						Description: "Override saved",
+						Content: map[string]OpenAPIMediaType{
+							"application/json": {Schema: &OpenAPISchema{Type: "object", Properties: map[string]*OpenAPISchema{"status": {Type: "string"}}}},
+						},
+					},
+					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_notification_channels permission"),
+				},
+			},
+			Delete: &OpenAPIOperation{
+				Summary:     "Delete channel override",
+				Description: "Deletes a channel override at the specified scope",
+				OperationID: "deleteChannelOverride",
+				Tags:        []string{"Notification Channels"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					pathParamString("scope", "Override scope (server, cluster, or group)"),
+					pathParamInt("scopeId", "Scope entity ID"),
+					pathParamInt("channelId", "Channel ID"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"200": {
+						Description: "Override deleted",
+						Content: map[string]OpenAPIMediaType{
+							"application/json": {Schema: &OpenAPISchema{Type: "object", Properties: map[string]*OpenAPISchema{"status": {Type: "string"}}}},
+						},
+					},
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_notification_channels permission"),
+				},
+			},
+		},
+
+		// Server Info
+		"/server-info/{connection_id}": {
+			Get: &OpenAPIOperation{
+				Summary:     "Get server information",
+				Description: "Returns comprehensive server information including OS, PostgreSQL, databases, extensions, and settings",
+				OperationID: "getServerInfo",
+				Tags:        []string{"Server Info"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("connection_id", "Connection ID")},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("ServerInfoResponse", "Server information"),
+					"400": jsonResponse("ErrorResponse", "Invalid connection ID"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Permission denied"),
+				},
+			},
+		},
+
+		"/server-info/{id}/ai-analysis": {
+			Get: &OpenAPIOperation{
+				Summary:     "Get AI database analysis",
+				Description: "Returns AI-generated analysis of databases on the specified server",
+				OperationID: "getAIAnalysis",
+				Tags:        []string{"Server Info"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Connection ID")},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("AIAnalysisResponse", "AI analysis of databases"),
+					"400": jsonResponse("ErrorResponse", "Invalid connection ID"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Permission denied"),
+				},
+			},
+		},
+
+		// Metrics
+		"/metrics/query": {
+			Get: &OpenAPIOperation{
+				Summary:     "Query metrics",
+				Description: "Queries time-series metrics for one or more connections",
+				OperationID: "queryMetrics",
+				Tags:        []string{"Metrics"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					queryParamString("connection_ids", "Comma-separated connection IDs"),
+					queryParamInt("connection_id", "Single connection ID"),
+					queryParamStringRequired("probe_name", "Probe name to query"),
+					queryParamString("time_range", "Time range (1h, 6h, 24h, 7d, 30d)"),
+					queryParamString("database_name", "Filter by database name"),
+					queryParamString("schema_name", "Filter by schema name"),
+					queryParamString("table_name", "Filter by table name"),
+					queryParamInt("buckets", "Number of time buckets"),
+					queryParamString("aggregation", "Aggregation method"),
+					queryParamString("metrics", "Comma-separated metric names"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("MetricsQueryResult", "Metrics query results"),
+					"400": jsonResponse("ErrorResponse", "Invalid query parameters"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Permission denied"),
+				},
+			},
+		},
+
+		"/metrics/baselines": {
+			Get: &OpenAPIOperation{
+				Summary:     "Get metric baselines",
+				Description: "Returns baseline values for metrics on a specific connection",
+				OperationID: "getMetricBaselines",
+				Tags:        []string{"Metrics"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					queryParamIntRequired("connection_id", "Connection ID"),
+					queryParamStringRequired("probe_name", "Probe name"),
+					queryParamString("metrics", "Comma-separated metric names"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("BaselinesResult", "Baseline values"),
+					"400": jsonResponse("ErrorResponse", "Invalid query parameters"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+				},
+			},
+		},
+
+		"/metrics/performance-summary": {
+			Get: &OpenAPIOperation{
+				Summary:     "Get performance summary",
+				Description: "Returns a performance summary for one or more connections",
+				OperationID: "getPerformanceSummary",
+				Tags:        []string{"Metrics"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					queryParamString("connection_ids", "Comma-separated connection IDs"),
+					queryParamInt("connection_id", "Single connection ID"),
+					queryParamString("time_range", "Time range (1h, 6h, 24h, 7d, 30d)"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("PerfSummaryResponse", "Performance summary"),
+					"400": jsonResponse("ErrorResponse", "Invalid parameters"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Permission denied"),
+				},
+			},
+		},
+
+		"/metrics/database-summaries": {
+			Get: &OpenAPIOperation{
+				Summary:     "Get database summaries",
+				Description: "Returns per-database summaries for a connection",
+				OperationID: "getDatabaseSummaries",
+				Tags:        []string{"Metrics"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					queryParamIntRequired("connection_id", "Connection ID"),
+					queryParamString("time_range", "Time range (1h, 6h, 24h, 7d, 30d)"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("DatabaseSummaryResponse", "Database summaries"),
+					"400": jsonResponse("ErrorResponse", "Invalid parameters"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Permission denied"),
+				},
+			},
+		},
+
+		"/metrics/top-queries": {
+			Get: &OpenAPIOperation{
+				Summary:     "Get top queries",
+				Description: "Returns the top queries by execution time, calls, or other metrics",
+				OperationID: "getTopQueries",
+				Tags:        []string{"Metrics"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					queryParamIntRequired("connection_id", "Connection ID"),
+					queryParamInt("limit", "Maximum number of queries to return"),
+					queryParamString("order_by", "Column to sort by"),
+					queryParamString("order", "Sort order (asc or desc)"),
+					queryParamString("queryid", "Filter by specific query ID"),
+					queryParamBool("exclude_collector", "Exclude collector queries"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonArrayResponse("TopQueryRow", "Top queries"),
+					"400": jsonResponse("ErrorResponse", "Invalid parameters"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Permission denied"),
+				},
+			},
+		},
+
+		// Overview
+		"/overview": {
+			Get: &OpenAPIOperation{
+				Summary:     "Get AI-generated estate overview",
+				Description: "Returns an AI-generated overview of the monitored estate, optionally scoped",
+				OperationID: "getOverview",
+				Tags:        []string{"Overview"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					queryParamBool("refresh", "Force regeneration of the overview"),
+					queryParamString("connection_ids", "Comma-separated connection IDs"),
+					queryParamString("scope_type", "Scope type (estate, group, cluster, server)"),
+					queryParamString("scope_id", "Scope entity ID"),
+					queryParamString("scope_name", "Scope display name"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("OverviewResponse", "Estate overview"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+				},
+			},
+		},
+
+		"/overview/stream": {
+			Get: &OpenAPIOperation{
+				Summary:     "Stream overview generation",
+				Description: "Streams overview generation progress via Server-Sent Events (SSE)",
+				OperationID: "streamOverview",
+				Tags:        []string{"Overview"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					queryParamString("connection_ids", "Comma-separated connection IDs"),
+					queryParamString("scope_type", "Scope type (estate, group, cluster, server)"),
+					queryParamString("scope_id", "Scope entity ID"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"200": {
+						Description: "SSE event stream",
+						Content: map[string]OpenAPIMediaType{
+							"text/event-stream": {Schema: &OpenAPISchema{Type: "string", Description: "Server-Sent Events stream"}},
+						},
+					},
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+				},
+			},
+		},
+
+		// Memories
+		"/memories": {
+			Get: &OpenAPIOperation{
+				Summary:     "List pinned memories",
+				Description: "Returns chat memories for the current user",
+				OperationID: "listMemories",
+				Tags:        []string{"Memory"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					queryParamString("category", "Filter by memory category"),
+					queryParamInt("limit", "Maximum number of results (default 100, max 1000)"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("MemoryListResponse", "List of memories"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+				},
+			},
+		},
+
+		"/memories/{id}": {
+			Delete: &OpenAPIOperation{
+				Summary:     "Delete memory",
+				Description: "Deletes a specific memory by ID",
+				OperationID: "deleteMemory",
+				Tags:        []string{"Memory"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Memory ID")},
+				Responses: map[string]OpenAPIResponse{
+					"200": {
+						Description: "Memory deleted",
+						Content: map[string]OpenAPIMediaType{
+							"application/json": {Schema: &OpenAPISchema{Type: "object", Properties: map[string]*OpenAPISchema{"status": {Type: "string"}}}},
+						},
+					},
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Permission denied"),
+					"404": jsonResponse("ErrorResponse", "Memory not found"),
+				},
+			},
+			Patch: &OpenAPIOperation{
+				Summary:     "Update memory pin status",
+				Description: "Updates the pinned status of a memory",
+				OperationID: "updateMemoryPinned",
+				Tags:        []string{"Memory"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Memory ID")},
+				RequestBody: &OpenAPIRequestBody{
+					Description: "Pin status update",
+					Required:    true,
+					Content: map[string]OpenAPIMediaType{
+						"application/json": {
+							Schema: &OpenAPISchema{
+								Type:     "object",
+								Required: []string{"pinned"},
+								Properties: map[string]*OpenAPISchema{
+									"pinned": {Type: "boolean", Description: "Whether the memory should be pinned"},
+								},
+							},
+						},
+					},
+				},
+				Responses: map[string]OpenAPIResponse{
+					"200": {
+						Description: "Pin status updated",
+						Content: map[string]OpenAPIMediaType{
+							"application/json": {
+								Schema: &OpenAPISchema{
+									Type: "object",
+									Properties: map[string]*OpenAPISchema{
+										"id":     {Type: "integer", Format: "int64"},
+										"pinned": {Type: "boolean"},
+									},
+								},
+							},
+						},
+					},
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"404": jsonResponse("ErrorResponse", "Memory not found"),
+				},
+			},
+		},
+
+		// MCP Tools
+		"/mcp/tools": {
+			Get: &OpenAPIOperation{
+				Summary:     "List available MCP tools",
+				Description: "Returns the MCP tools available to the current user based on RBAC filtering",
+				OperationID: "listMCPTools",
+				Tags:        []string{"MCP Tools"},
+				Security:    bearerAuth,
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("MCPToolListResponse", "List of available MCP tools"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+				},
+			},
+		},
+
+		"/mcp/tools/call": {
+			Post: &OpenAPIOperation{
+				Summary:     "Execute MCP tool",
+				Description: "Executes a named MCP tool with the provided arguments",
+				OperationID: "callMCPTool",
+				Tags:        []string{"MCP Tools"},
+				Security:    bearerAuth,
+				RequestBody: jsonRequestBody("MCPToolCallRequest", "Tool name and arguments", true),
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("MCPToolCallResponse", "Tool execution result"),
+					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"500": jsonResponse("ErrorResponse", "Tool execution failed"),
+				},
+			},
+		},
+
+		// RBAC Users
+		"/rbac/users": {
+			Get: &OpenAPIOperation{
+				Summary:     "List all users",
+				Description: "Returns all users. Requires manage_users permission.",
+				OperationID: "listUsers",
+				Tags:        []string{"RBAC Users"},
+				Security:    bearerAuth,
+				Responses: map[string]OpenAPIResponse{
+					"200": {
+						Description: "User list",
+						Content: map[string]OpenAPIMediaType{
+							"application/json": {
+								Schema: &OpenAPISchema{
+									Type: "object",
+									Properties: map[string]*OpenAPISchema{
+										"users": {Type: "array", Items: &OpenAPISchema{Ref: "#/components/schemas/RBACUser"}},
+									},
+								},
+							},
+						},
+					},
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_users permission"),
+				},
+			},
+			Post: &OpenAPIOperation{
+				Summary:     "Create user",
+				Description: "Creates a new user or service account. Requires manage_users permission.",
+				OperationID: "createUser",
+				Tags:        []string{"RBAC Users"},
+				Security:    bearerAuth,
+				RequestBody: jsonRequestBody("UserCreateRequest", "User details", true),
+				Responses: map[string]OpenAPIResponse{
+					"201": {
+						Description: "User created",
+						Content: map[string]OpenAPIMediaType{
+							"application/json": {
+								Schema: &OpenAPISchema{
+									Type:       "object",
+									Properties: map[string]*OpenAPISchema{"message": {Type: "string"}},
+								},
+							},
+						},
+					},
+					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_users permission"),
+				},
+			},
+		},
+
+		"/rbac/users/{id}": {
+			Put: &OpenAPIOperation{
+				Summary:     "Update user",
+				Description: "Updates a user's details. Requires manage_users permission.",
+				OperationID: "updateUser",
+				Tags:        []string{"RBAC Users"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "User ID")},
+				RequestBody: jsonRequestBody("UserUpdateRequest", "Updated user fields", true),
+				Responses: map[string]OpenAPIResponse{
+					"200": {
+						Description: "User updated",
+						Content: map[string]OpenAPIMediaType{
+							"application/json": {
+								Schema: &OpenAPISchema{
+									Type:       "object",
+									Properties: map[string]*OpenAPISchema{"message": {Type: "string"}},
+								},
+							},
+						},
+					},
+					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_users permission"),
+					"404": jsonResponse("ErrorResponse", "User not found"),
+				},
+			},
+			Delete: &OpenAPIOperation{
+				Summary:     "Delete user",
+				Description: "Deletes a user. Requires manage_users permission.",
+				OperationID: "deleteUser",
+				Tags:        []string{"RBAC Users"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "User ID")},
+				Responses: map[string]OpenAPIResponse{
+					"204": {Description: "User deleted"},
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_users permission"),
+					"404": jsonResponse("ErrorResponse", "User not found"),
+				},
+			},
+		},
+
+		"/rbac/users/{id}/privileges": {
+			Get: &OpenAPIOperation{
+				Summary:     "Get user effective privileges",
+				Description: "Returns the effective privileges for a user, including inherited group privileges",
+				OperationID: "getUserPrivileges",
+				Tags:        []string{"RBAC Users"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "User ID")},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("UserPrivilegesResponse", "User privilege details"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_users permission"),
+					"404": jsonResponse("ErrorResponse", "User not found"),
+				},
+			},
+		},
+
+		// RBAC Groups
+		"/rbac/groups": {
+			Get: &OpenAPIOperation{
+				Summary:     "List all groups",
+				Description: "Returns all RBAC groups with member counts",
+				OperationID: "listGroups",
+				Tags:        []string{"RBAC Groups"},
+				Security:    bearerAuth,
+				Responses: map[string]OpenAPIResponse{
+					"200": {
+						Description: "Group list",
+						Content: map[string]OpenAPIMediaType{
+							"application/json": {
+								Schema: &OpenAPISchema{
+									Type: "object",
+									Properties: map[string]*OpenAPISchema{
+										"groups": {Type: "array", Items: &OpenAPISchema{Ref: "#/components/schemas/RBACGroup"}},
+									},
+								},
+							},
+						},
+					},
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_groups permission"),
+				},
+			},
+			Post: &OpenAPIOperation{
+				Summary:     "Create group",
+				Description: "Creates a new RBAC group",
+				OperationID: "createGroup",
+				Tags:        []string{"RBAC Groups"},
+				Security:    bearerAuth,
+				RequestBody: jsonRequestBody("GroupCreateRequest", "Group details", true),
+				Responses: map[string]OpenAPIResponse{
+					"201": {
+						Description: "Group created",
+						Content: map[string]OpenAPIMediaType{
+							"application/json": {
+								Schema: &OpenAPISchema{
+									Type: "object",
+									Properties: map[string]*OpenAPISchema{
+										"id":   {Type: "integer", Format: "int64"},
+										"name": {Type: "string"},
+									},
+								},
+							},
+						},
+					},
+					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_groups permission"),
+				},
+			},
+		},
+
+		"/rbac/groups/{id}": {
+			Get: &OpenAPIOperation{
+				Summary:     "Get group details",
+				Description: "Returns a group with its members, privileges, and permissions",
+				OperationID: "getGroup",
+				Tags:        []string{"RBAC Groups"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Group ID")},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("RBACGroupDetail", "Group details"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_groups permission"),
+					"404": jsonResponse("ErrorResponse", "Group not found"),
+				},
+			},
+			Put: &OpenAPIOperation{
+				Summary:     "Update group",
+				Description: "Updates a group's name or description",
+				OperationID: "updateGroup",
+				Tags:        []string{"RBAC Groups"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Group ID")},
+				RequestBody: jsonRequestBody("GroupUpdateRequest", "Updated group fields", true),
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("RBACGroup", "Updated group"),
+					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_groups permission"),
+					"404": jsonResponse("ErrorResponse", "Group not found"),
+				},
+			},
+			Delete: &OpenAPIOperation{
+				Summary:     "Delete group",
+				Description: "Deletes an RBAC group",
+				OperationID: "deleteGroup",
+				Tags:        []string{"RBAC Groups"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Group ID")},
+				Responses: map[string]OpenAPIResponse{
+					"204": {Description: "Group deleted"},
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_groups permission"),
+				},
+			},
+		},
+
+		"/rbac/groups/{id}/members": {
+			Post: &OpenAPIOperation{
+				Summary:     "Add group member",
+				Description: "Adds a user or nested group as a member. Provide either user_id or group_id.",
+				OperationID: "addGroupMember",
+				Tags:        []string{"RBAC Groups"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Group ID")},
+				RequestBody: jsonRequestBody("GroupMemberRequest", "Member to add", true),
+				Responses: map[string]OpenAPIResponse{
+					"204": {Description: "Member added"},
+					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_groups permission"),
+				},
+			},
+		},
+
+		"/rbac/groups/{id}/members/{type}/{memberId}": {
+			Delete: &OpenAPIOperation{
+				Summary:     "Remove group member",
+				Description: "Removes a user or group member from the group",
+				OperationID: "removeGroupMember",
+				Tags:        []string{"RBAC Groups"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					pathParamInt("id", "Group ID"),
+					pathParamString("type", "Member type (user or group)"),
+					pathParamInt("memberId", "Member ID"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"204": {Description: "Member removed"},
+					"400": jsonResponse("ErrorResponse", "Invalid member type"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_groups permission"),
+				},
+			},
+		},
+
+		"/rbac/groups/{id}/effective-privileges": {
+			Get: &OpenAPIOperation{
+				Summary:     "Get group effective privileges",
+				Description: "Returns the effective privileges for a group, including inherited privileges",
+				OperationID: "getGroupEffectivePrivileges",
+				Tags:        []string{"RBAC Groups"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Group ID")},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("GroupEffectivePrivileges", "Effective privilege details"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_permissions permission"),
+					"404": jsonResponse("ErrorResponse", "Group not found"),
+				},
+			},
+		},
+
+		"/rbac/groups/{id}/privileges/mcp": {
+			Get: &OpenAPIOperation{
+				Summary:     "Get group MCP privileges",
+				Description: "Returns the MCP tool privileges assigned to a group",
+				OperationID: "getGroupMCPPrivileges",
+				Tags:        []string{"RBAC Groups"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Group ID")},
+				Responses: map[string]OpenAPIResponse{
+					"200": {
+						Description: "MCP privileges",
+						Content: map[string]OpenAPIMediaType{
+							"application/json": {Schema: &OpenAPISchema{Type: "object"}},
+						},
+					},
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_permissions permission"),
+				},
+			},
+			Put: &OpenAPIOperation{
+				Summary:     "Set group MCP privileges",
+				Description: "Sets the MCP tool privileges for a group",
+				OperationID: "setGroupMCPPrivileges",
+				Tags:        []string{"RBAC Groups"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Group ID")},
+				RequestBody: &OpenAPIRequestBody{
+					Description: "MCP privileges to set",
+					Required:    true,
+					Content: map[string]OpenAPIMediaType{
+						"application/json": {Schema: &OpenAPISchema{Type: "object"}},
+					},
+				},
+				Responses: map[string]OpenAPIResponse{
+					"200": {Description: "Privileges updated"},
+					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_permissions permission"),
+				},
+			},
+		},
+
+		"/rbac/groups/{id}/privileges/connections": {
+			Get: &OpenAPIOperation{
+				Summary:     "Get group connection privileges",
+				Description: "Returns the connection-level privileges assigned to a group",
+				OperationID: "getGroupConnectionPrivileges",
+				Tags:        []string{"RBAC Groups"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Group ID")},
+				Responses: map[string]OpenAPIResponse{
+					"200": {
+						Description: "Connection privileges",
+						Content: map[string]OpenAPIMediaType{
+							"application/json": {Schema: &OpenAPISchema{Type: "object"}},
+						},
+					},
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_permissions permission"),
+				},
+			},
+			Put: &OpenAPIOperation{
+				Summary:     "Set group connection privileges",
+				Description: "Sets the connection-level privileges for a group",
+				OperationID: "setGroupConnectionPrivileges",
+				Tags:        []string{"RBAC Groups"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Group ID")},
+				RequestBody: &OpenAPIRequestBody{
+					Description: "Connection privileges to set",
+					Required:    true,
+					Content: map[string]OpenAPIMediaType{
+						"application/json": {Schema: &OpenAPISchema{Type: "object"}},
+					},
+				},
+				Responses: map[string]OpenAPIResponse{
+					"200": {Description: "Privileges updated"},
+					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_permissions permission"),
+				},
+			},
+		},
+
+		"/rbac/groups/{id}/permissions": {
+			Get: &OpenAPIOperation{
+				Summary:     "Get group admin permissions",
+				Description: "Returns the admin permissions assigned to a group",
+				OperationID: "getGroupPermissions",
+				Tags:        []string{"RBAC Groups"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Group ID")},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("GroupPermissionsResponse", "Group admin permissions"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_permissions permission"),
+				},
+			},
+			Put: &OpenAPIOperation{
+				Summary:     "Set group admin permissions",
+				Description: "Sets the admin permissions for a group",
+				OperationID: "setGroupPermissions",
+				Tags:        []string{"RBAC Groups"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Group ID")},
+				RequestBody: &OpenAPIRequestBody{
+					Description: "Permissions to set",
+					Required:    true,
+					Content: map[string]OpenAPIMediaType{
+						"application/json": {Schema: &OpenAPISchema{Type: "object"}},
+					},
+				},
+				Responses: map[string]OpenAPIResponse{
+					"200": {Description: "Permissions updated"},
+					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_permissions permission"),
+				},
+			},
+		},
+
+		// RBAC Tokens
+		"/rbac/tokens": {
+			Get: &OpenAPIOperation{
+				Summary:     "List all tokens",
+				Description: "Returns all API tokens with scope information. Requires manage_token_scopes permission.",
+				OperationID: "listTokens",
+				Tags:        []string{"RBAC Tokens"},
+				Security:    bearerAuth,
+				Responses: map[string]OpenAPIResponse{
+					"200": {
+						Description: "Token list",
+						Content: map[string]OpenAPIMediaType{
+							"application/json": {
+								Schema: &OpenAPISchema{
+									Type: "object",
+									Properties: map[string]*OpenAPISchema{
+										"tokens": {Type: "array", Items: &OpenAPISchema{Ref: "#/components/schemas/RBACToken"}},
+									},
+								},
+							},
+						},
+					},
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission"),
+				},
+			},
+			Post: &OpenAPIOperation{
+				Summary:     "Create token",
+				Description: "Creates a new API token for the specified user. The raw token is returned only once.",
+				OperationID: "createToken",
+				Tags:        []string{"RBAC Tokens"},
+				Security:    bearerAuth,
+				RequestBody: jsonRequestBody("TokenCreateRequest", "Token details", true),
+				Responses: map[string]OpenAPIResponse{
+					"201": jsonResponse("TokenCreateResponse", "Token created with raw value"),
+					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission"),
+				},
+			},
+		},
+
+		"/rbac/tokens/{id}": {
+			Delete: &OpenAPIOperation{
+				Summary:     "Delete token",
+				Description: "Deletes an API token",
+				OperationID: "deleteToken",
+				Tags:        []string{"RBAC Tokens"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Token ID")},
+				Responses: map[string]OpenAPIResponse{
+					"204": {Description: "Token deleted"},
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission"),
+				},
+			},
+		},
+
+		"/rbac/tokens/{id}/scope": {
+			Get: &OpenAPIOperation{
+				Summary:     "Get token scope",
+				Description: "Returns the scope restrictions for a token",
+				OperationID: "getTokenScope",
+				Tags:        []string{"RBAC Tokens"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Token ID")},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("TokenScopeResponse", "Token scope details"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission"),
+				},
+			},
+			Put: &OpenAPIOperation{
+				Summary:     "Set token scope",
+				Description: "Sets scope restrictions for a token including connections, MCP privileges, and admin permissions",
+				OperationID: "setTokenScope",
+				Tags:        []string{"RBAC Tokens"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Token ID")},
+				RequestBody: jsonRequestBody("TokenScopeRequest", "Scope configuration", true),
+				Responses: map[string]OpenAPIResponse{
+					"204": {Description: "Scope updated"},
+					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission"),
+				},
+			},
+			Delete: &OpenAPIOperation{
+				Summary:     "Clear token scope",
+				Description: "Removes all scope restrictions from a token",
+				OperationID: "clearTokenScope",
+				Tags:        []string{"RBAC Tokens"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Token ID")},
+				Responses: map[string]OpenAPIResponse{
+					"204": {Description: "Scope cleared"},
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission"),
+				},
+			},
+		},
+
+		// RBAC Privileges
+		"/rbac/privileges/mcp": {
+			Get: &OpenAPIOperation{
+				Summary:     "List MCP privilege identifiers",
+				Description: "Returns all available MCP privilege identifiers",
+				OperationID: "listMCPPrivileges",
+				Tags:        []string{"RBAC Privileges"},
+				Security:    bearerAuth,
+				Responses: map[string]OpenAPIResponse{
+					"200": {
+						Description: "MCP privilege identifiers",
+						Content: map[string]OpenAPIMediaType{
+							"application/json": {Schema: &OpenAPISchema{Type: "object"}},
+						},
+					},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 				},
 			},

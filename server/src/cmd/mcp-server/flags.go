@@ -25,6 +25,7 @@ type Flags struct {
 	HTTPAddr   string
 	DataDir    string
 	TraceFile  string
+	OpenAPI    string
 	Debug      bool
 
 	// TLS settings
@@ -114,6 +115,7 @@ func ParseFlags(defaultConfigPath string) *Flags {
 	flag.BoolVar(&f.Debug, "debug", false, "Enable debug logging (logs HTTP requests/responses)")
 	flag.StringVar(&f.DataDir, "data-dir", "", "Data directory for auth database and conversations")
 	flag.StringVar(&f.TraceFile, "trace-file", "", "Path to trace file for logging MCP requests/responses")
+	flag.StringVar(&f.OpenAPI, "openapi", "", "Write OpenAPI specification to file and exit")
 
 	// Database connection flags
 	flag.StringVar(&f.DBHost, "db-host", "", "Database host")

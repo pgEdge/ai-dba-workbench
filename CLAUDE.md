@@ -323,6 +323,28 @@ At the end of each README:
 
 - Run `make test-all` in the top-level directory before completing a task.
 
+## API Specification
+
+- Keep the OpenAPI specification in
+  `server/src/internal/api/openapi.go` synchronized with
+  the server code at all times.
+
+- When adding, modifying, or removing an HTTP endpoint, update the
+  corresponding path entry and schemas in `BuildOpenAPISpec`.
+
+- Update the endpoint summary table in
+  `docs/server/api-reference.md` to match the current API surface.
+
+- Regenerate the static OpenAPI file after any specification change:
+  `cd server && make openapi`.
+
+- Run the OpenAPI tests after any specification change:
+  `cd server/src && go test ./internal/api/ -run OpenAPI -v`.
+
+- The interactive API browser at `docs/server/api-reference.md`
+  renders from the static file `docs/server/openapi.json`; verify
+  that new endpoints appear correctly in the ReDoc output.
+
 ## Security
 
 - Maintain isolation between user sessions.

@@ -74,6 +74,7 @@ func (h *Handler) handleOverview(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Link", fmt.Sprintf("<%s>; rel=\"service-desc\"", openAPISpecPath))
 
+	refresh := r.URL.Query().Get("refresh") == "true"
 	connectionIDsStr := r.URL.Query().Get("connection_ids")
 	scopeName := r.URL.Query().Get("scope_name")
 	scopeType := r.URL.Query().Get("scope_type")
@@ -88,7 +89,7 @@ func (h *Handler) handleOverview(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		overview, err := h.generator.GetConnectionsSummary(connectionIDs, scopeName)
+		overview, err := h.generator.GetConnectionsSummary(connectionIDs, scopeName, refresh)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: overview: connections summary failed: %v\n", err)
 			http.Error(w, "Failed to generate connections summary", http.StatusInternalServerError)
@@ -104,6 +105,9 @@ func (h *Handler) handleOverview(w http.ResponseWriter, r *http.Request) {
 	// When no scope parameters are provided, return the estate-wide
 	// overview using the existing behavior.
 	if scopeType == "" && scopeIDStr == "" {
+		if refresh {
+			h.generator.ForceRefresh()
+		}
 		h.serveEstateOverview(w)
 		return
 	}
@@ -125,7 +129,7 @@ func (h *Handler) handleOverview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	overview, err := h.generator.GetScopedSummary(scopeType, scopeID)
+	overview, err := h.generator.GetScopedSummary(scopeType, scopeID, refresh)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: overview: scoped summary failed: %v\n", err)
 		http.Error(w, "Failed to generate scoped summary", http.StatusInternalServerError)
@@ -247,7 +251,7 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 			return // Already validated above.
 		}
 		go func() {
-			if _, err := h.generator.GetConnectionsSummary(connectionIDs, scopeName); err != nil {
+			if _, err := h.generator.GetConnectionsSummary(connectionIDs, scopeName, false); err != nil {
 				fmt.Fprintf(os.Stderr, "overview: scoped generation failed: %v\n", err)
 			}
 		}()
@@ -257,7 +261,7 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 			return // Already validated above.
 		}
 		go func() {
-			if _, err := h.generator.GetScopedSummary(scopeType, scopeID); err != nil {
+			if _, err := h.generator.GetScopedSummary(scopeType, scopeID, false); err != nil {
 				fmt.Fprintf(os.Stderr, "overview: scoped generation failed: %v\n", err)
 			}
 		}()

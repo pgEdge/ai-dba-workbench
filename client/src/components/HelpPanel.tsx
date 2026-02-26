@@ -511,6 +511,10 @@ const StatusPanelPage = ({ aiEnabled }: { aiEnabled: boolean }) => (
                         description="The summary refreshes automatically every 30 seconds and displays how recently it was updated."
                     />
                     <FeatureItem
+                        title="Manual Refresh"
+                        description="A refresh button next to the 'Updated N min ago' timestamp forces immediate regeneration of the overview."
+                    />
+                    <FeatureItem
                         title="Stale Indicator"
                         description="A stale indicator appears if the summary has not refreshed in over five minutes."
                     />

@@ -95,7 +95,7 @@ func (g *Generator) Start(ctx context.Context) {
 
 	go func() {
 		// Generate immediately on startup.
-		g.refresh()
+		g.refresh(false)
 
 		ticker := time.NewTicker(tickInterval)
 		defer ticker.Stop()
@@ -104,10 +104,17 @@ func (g *Generator) Start(ctx context.Context) {
 			case <-g.ctx.Done():
 				return
 			case <-ticker.C:
-				g.refresh()
+				g.refresh(false)
 			}
 		}
 	}()
+}
+
+// ForceRefresh unconditionally regenerates the estate-wide overview,
+// bypassing the significant-change check. The result is broadcast to
+// SSE clients via the hub so connected subscribers receive the update.
+func (g *Generator) ForceRefresh() {
+	g.refresh(true)
 }
 
 // Stop cancels the background goroutine.
@@ -161,24 +168,11 @@ func (g *Generator) GetOverview() *Overview {
 // otherwise a new summary is generated on demand. Concurrent requests
 // for the same scope are deduplicated so that only one LLM call is
 // made; subsequent callers wait for and share the result.
-func (g *Generator) GetScopedSummary(scopeType string, scopeID int) (*Overview, error) {
+func (g *Generator) GetScopedSummary(scopeType string, scopeID int, force bool) (*Overview, error) {
 	key := fmt.Sprintf("%s:%d", scopeType, scopeID)
 
 	// Fast path: return cached entry if still fresh.
-	g.mu.RLock()
-	if entry, ok := g.scopedCache[key]; ok {
-		if time.Now().UTC().Before(entry.overview.StaleAt) {
-			entry.lastAccess = time.Now().UTC()
-			g.mu.RUnlock()
-			return entry.overview, nil
-		}
-	}
-	g.mu.RUnlock()
-
-	// Deduplicate concurrent requests for the same key.
-	result, err, _ := g.inflight.Do(key, func() (interface{}, error) {
-		// Re-check cache; another goroutine may have populated it
-		// while we waited for the singleflight slot.
+	if !force {
 		g.mu.RLock()
 		if entry, ok := g.scopedCache[key]; ok {
 			if time.Now().UTC().Before(entry.overview.StaleAt) {
@@ -188,6 +182,23 @@ func (g *Generator) GetScopedSummary(scopeType string, scopeID int) (*Overview, 
 			}
 		}
 		g.mu.RUnlock()
+	}
+
+	// Deduplicate concurrent requests for the same key.
+	result, err, _ := g.inflight.Do(key, func() (interface{}, error) {
+		// Re-check cache; another goroutine may have populated it
+		// while we waited for the singleflight slot.
+		if !force {
+			g.mu.RLock()
+			if entry, ok := g.scopedCache[key]; ok {
+				if time.Now().UTC().Before(entry.overview.StaleAt) {
+					entry.lastAccess = time.Now().UTC()
+					g.mu.RUnlock()
+					return entry.overview, nil
+				}
+			}
+			g.mu.RUnlock()
+		}
 
 		// Generate a fresh scoped overview.
 		snapshot, scopeName, err := g.fetchScopedSnapshot(scopeType, scopeID)
@@ -246,7 +257,7 @@ func (g *Generator) GetScopedSummary(scopeType string, scopeID int) (*Overview, 
 // order in which the IDs were supplied. Concurrent requests for the
 // same set of connections are deduplicated so that only one LLM call
 // is made.
-func (g *Generator) GetConnectionsSummary(connectionIDs []int, scopeName string) (*Overview, error) {
+func (g *Generator) GetConnectionsSummary(connectionIDs []int, scopeName string, force bool) (*Overview, error) {
 	// Build a deterministic cache key from sorted connection IDs.
 	sorted := make([]int, len(connectionIDs))
 	copy(sorted, connectionIDs)
@@ -259,20 +270,7 @@ func (g *Generator) GetConnectionsSummary(connectionIDs []int, scopeName string)
 	key := "connections:" + strings.Join(parts, ",")
 
 	// Fast path: return cached entry if still fresh.
-	g.mu.RLock()
-	if entry, ok := g.scopedCache[key]; ok {
-		if time.Now().UTC().Before(entry.overview.StaleAt) {
-			entry.lastAccess = time.Now().UTC()
-			g.mu.RUnlock()
-			return entry.overview, nil
-		}
-	}
-	g.mu.RUnlock()
-
-	// Deduplicate concurrent requests for the same key.
-	result, err, _ := g.inflight.Do(key, func() (interface{}, error) {
-		// Re-check cache; another goroutine may have populated it
-		// while we waited for the singleflight slot.
+	if !force {
 		g.mu.RLock()
 		if entry, ok := g.scopedCache[key]; ok {
 			if time.Now().UTC().Before(entry.overview.StaleAt) {
@@ -282,6 +280,23 @@ func (g *Generator) GetConnectionsSummary(connectionIDs []int, scopeName string)
 			}
 		}
 		g.mu.RUnlock()
+	}
+
+	// Deduplicate concurrent requests for the same key.
+	result, err, _ := g.inflight.Do(key, func() (interface{}, error) {
+		// Re-check cache; another goroutine may have populated it
+		// while we waited for the singleflight slot.
+		if !force {
+			g.mu.RLock()
+			if entry, ok := g.scopedCache[key]; ok {
+				if time.Now().UTC().Before(entry.overview.StaleAt) {
+					entry.lastAccess = time.Now().UTC()
+					g.mu.RUnlock()
+					return entry.overview, nil
+				}
+			}
+			g.mu.RUnlock()
+		}
 
 		// Generate a fresh snapshot from the explicit connection IDs.
 		snapshot := g.datastore.GetConnectionsSnapshot(g.ctx, connectionIDs)
@@ -375,8 +390,10 @@ func (g *Generator) evictScopedCacheLocked() {
 }
 
 // refresh fetches the current estate snapshot, checks for significant
-// changes, and generates a new LLM summary when warranted.
-func (g *Generator) refresh() {
+// changes, and generates a new LLM summary when warranted. When force
+// is true the significant-change check is skipped and a new summary is
+// always generated.
+func (g *Generator) refresh(force bool) {
 	snapshot, err := g.datastore.GetEstateSnapshot(g.ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: overview: failed to get estate snapshot: %v\n", err)
@@ -387,7 +404,7 @@ func (g *Generator) refresh() {
 	oldSnapshot := g.lastSnapshot
 	g.mu.RUnlock()
 
-	if !g.hasSignificantChange(oldSnapshot, snapshot) {
+	if !force && !g.hasSignificantChange(oldSnapshot, snapshot) {
 		return
 	}
 

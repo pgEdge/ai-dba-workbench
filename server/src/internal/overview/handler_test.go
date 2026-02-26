@@ -343,6 +343,130 @@ func TestParseConnectionIDs(t *testing.T) {
 
 // --- SSE handler tests ------------------------------------------------------
 
+// --- forced refresh handler tests -------------------------------------------
+
+func TestHandleOverview_EstateWideRefresh(t *testing.T) {
+	// When refresh=true is provided for the estate-wide overview the
+	// handler calls ForceRefresh before serving the cached overview.
+	// ForceRefresh calls refresh(true) which accesses the datastore;
+	// with a nil datastore the call panics. Catching the panic proves
+	// that ForceRefresh was invoked (cache bypass) rather than silently
+	// returning the cached overview.
+	h := newTestHandler()
+	h.generator.ctx = context.Background()
+	h.generator.mu.Lock()
+	h.generator.current = newTestOverview("Cached estate overview.")
+	h.generator.mu.Unlock()
+
+	panicked := invokePanics(func() {
+		doRequest(t, h, http.MethodGet, "/api/v1/overview?refresh=true")
+	})
+	if !panicked {
+		t.Error("expected ForceRefresh to panic on nil datastore, proving cache bypass")
+	}
+}
+
+func TestHandleOverview_ScopedRefreshTrue(t *testing.T) {
+	// Verify that refresh=true for a scoped request bypasses the cache.
+	// A fresh cached entry exists for server:1, so refresh=false would
+	// return it. With refresh=true the generator attempts to regenerate
+	// from the datastore, which panics on nil datastore.
+	h := newTestHandler()
+	h.generator.ctx = context.Background()
+
+	// Pre-populate a fresh cached scoped entry.
+	now := time.Now().UTC()
+	h.generator.mu.Lock()
+	h.generator.scopedCache["server:1"] = &scopedEntry{
+		overview: &Overview{
+			Summary:     "Cached scoped overview.",
+			GeneratedAt: now,
+			StaleAt:     now.Add(5 * time.Minute),
+			Snapshot:    newTestSnapshot(),
+		},
+		lastAccess: now,
+	}
+	h.generator.mu.Unlock()
+
+	// refresh=false should return the cached entry.
+	rr := doRequest(t, h, http.MethodGet, "/api/v1/overview?scope_type=server&scope_id=1")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for cached scoped overview, got %d", rr.Code)
+	}
+	var resp Overview
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.Summary != "Cached scoped overview." {
+		t.Errorf("expected cached summary, got %q", resp.Summary)
+	}
+
+	// refresh=true should bypass the cache and attempt regeneration,
+	// which panics on nil datastore.
+	panicked := invokePanics(func() {
+		doRequest(t, h, http.MethodGet, "/api/v1/overview?scope_type=server&scope_id=1&refresh=true")
+	})
+	if !panicked {
+		t.Error("expected GetScopedSummary with force=true to panic on nil datastore, proving cache bypass")
+	}
+}
+
+func TestHandleOverview_ConnectionsRefreshTrue(t *testing.T) {
+	// Verify that refresh=true for a connections request bypasses the
+	// cache. A fresh cached entry exists, so refresh=false returns it.
+	// With refresh=true the generator tries to regenerate and panics.
+	h := newTestHandler()
+	h.generator.ctx = context.Background()
+
+	now := time.Now().UTC()
+	h.generator.mu.Lock()
+	h.generator.scopedCache["connections:1,2"] = &scopedEntry{
+		overview: &Overview{
+			Summary:     "Cached connections overview.",
+			GeneratedAt: now,
+			StaleAt:     now.Add(5 * time.Minute),
+			Snapshot:    newTestSnapshot(),
+		},
+		lastAccess: now,
+	}
+	h.generator.mu.Unlock()
+
+	// refresh=false should return the cached entry.
+	rr := doRequest(t, h, http.MethodGet, "/api/v1/overview?connection_ids=1,2")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for cached connections overview, got %d", rr.Code)
+	}
+	var resp Overview
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.Summary != "Cached connections overview." {
+		t.Errorf("expected cached summary, got %q", resp.Summary)
+	}
+
+	// refresh=true should bypass the cache and attempt regeneration,
+	// which panics on nil datastore.
+	panicked := invokePanics(func() {
+		doRequest(t, h, http.MethodGet, "/api/v1/overview?connection_ids=1,2&refresh=true")
+	})
+	if !panicked {
+		t.Error("expected GetConnectionsSummary with force=true to panic on nil datastore, proving cache bypass")
+	}
+}
+
+// invokePanics calls fn and returns true if fn panicked, false otherwise.
+func invokePanics(fn func()) (panicked bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			panicked = true
+		}
+	}()
+	fn()
+	return false
+}
+
+// --- SSE handler tests ------------------------------------------------------
+
 func TestHandleSSE_MethodNotAllowed(t *testing.T) {
 	h := newTestHandler()
 	methods := []string{http.MethodPost, http.MethodPut, http.MethodDelete}

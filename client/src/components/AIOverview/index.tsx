@@ -25,6 +25,7 @@ import {
     ExpandMore as ExpandMoreIcon,
     ExpandLess as ExpandLessIcon,
     Psychology as PsychologyIcon,
+    Refresh as RefreshIcon,
 } from '@mui/icons-material';
 import { apiGet } from '../../utils/apiClient';
 import { ApiError } from '../../utils/apiClient';
@@ -98,6 +99,7 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
     const [overview, setOverview] = useState<OverviewResponse | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [refreshing, setRefreshing] = useState(false);
 
     // Collapsed state with localStorage persistence
     const [collapsed, setCollapsed] = useState<boolean>(() => {
@@ -189,11 +191,35 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
         }
     }, [overviewUrl]);
 
+    // Dedicated refresh handler for the manual refresh button.
+    // Only replaces the overview when the server returns a real
+    // summary so that a "generating" response never hides existing
+    // content.  Errors are silently ignored.
+    const handleRefresh = useCallback(async () => {
+        setRefreshing(true);
+        try {
+            const sep = overviewUrl.includes('?') ? '&' : '?';
+            const refreshUrl = `${overviewUrl}${sep}refresh=true`;
+            const data = await apiGet<OverviewResponse>(refreshUrl);
+            if (data.summary != null) {
+                setOverview(data);
+                if (data.restart_detected) {
+                    clearAnalysisCache();
+                }
+            }
+        } catch {
+            // Silently ignore refresh errors
+        } finally {
+            setRefreshing(false);
+        }
+    }, [overviewUrl]);
+
     // SSE-driven updates: when SSE delivers data, update local state
     useEffect(() => {
         if (sseOverview) {
             setOverview(sseOverview);
             setLoading(false);
+            setRefreshing(false);
             if (sseOverview.restart_detected) {
                 clearAnalysisCache();
             }
@@ -374,16 +400,43 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
                     {overview.summary}
                 </Typography>
                 {overview.generated_at && (
-                    <Typography
-                        variant="caption"
-                        sx={{
-                            color: 'text.secondary',
-                            display: 'block',
-                            mt: 0.75,
-                        }}
-                    >
-                        {formatRelativeTime(overview.generated_at)}
-                    </Typography>
+                    <Box sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 0.5,
+                        mt: 0.75,
+                    }}>
+                        <Tooltip title={refreshing ? 'Refreshing...' : 'Refresh now'}>
+                            <IconButton
+                                size="small"
+                                onClick={handleRefresh}
+                                disabled={refreshing}
+                                aria-label="Refresh overview"
+                                sx={{
+                                    p: 0.25,
+                                    color: 'text.secondary',
+                                    '&:hover': {
+                                        bgcolor: 'action.hover',
+                                    },
+                                }}
+                            >
+                                <RefreshIcon sx={{
+                                    fontSize: 14,
+                                    animation: refreshing ? 'spin 1s linear infinite' : 'none',
+                                    '@keyframes spin': {
+                                        '0%': { transform: 'rotate(0deg)' },
+                                        '100%': { transform: 'rotate(360deg)' },
+                                    },
+                                }} />
+                            </IconButton>
+                        </Tooltip>
+                        <Typography
+                            variant="caption"
+                            sx={{ color: 'text.secondary' }}
+                        >
+                            {formatRelativeTime(overview.generated_at)}
+                        </Typography>
+                    </Box>
                 )}
             </Collapse>
         </Paper>

@@ -25,6 +25,8 @@ The AI Overview provides the following capabilities:
   summary expires.
 - Users can collapse the overview panel; the collapse
   state persists across sessions.
+- A refresh button forces immediate regeneration of
+  the current summary.
 
 ## Scope
 
@@ -165,6 +167,12 @@ The status panel displays a visual indicator when the
 displayed summary has passed its `stale_at` timestamp.
 The indicator signals that the summary may not reflect the
 most recent state.
+
+A refresh button appears next to the "Updated N min ago"
+timestamp. Clicking the refresh button forces the system
+to regenerate the summary immediately, bypassing the
+cache. The button displays a spinning animation while the
+system generates a new summary.
 
 ## Configuration
 

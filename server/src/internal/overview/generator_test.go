@@ -10,6 +10,7 @@
 package overview
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -553,6 +554,124 @@ func TestContainsRestart(t *testing.T) {
 			t.Error("expected true when restart event exists after cutoff")
 		}
 	})
+}
+
+// --- forced refresh tests --------------------------------------------------
+
+func TestForceRefresh_BypassesSignificantChangeCheck(t *testing.T) {
+	// ForceRefresh calls refresh(true) which skips hasSignificantChange.
+	// With a nil datastore, refresh(true) panics when it tries to fetch
+	// the estate snapshot. This panic proves that the significant-change
+	// gate was bypassed (refresh(false) with identical snapshots would
+	// return early without touching the datastore).
+	g := &Generator{
+		scopedCache: make(map[string]*scopedEntry),
+		ctx:         context.Background(),
+	}
+
+	// Set identical last and current snapshots so hasSignificantChange
+	// would return false.
+	g.mu.Lock()
+	g.lastSnapshot = newTestSnapshot()
+	g.mu.Unlock()
+
+	panicked := generatorInvokePanics(func() {
+		g.ForceRefresh()
+	})
+	if !panicked {
+		t.Error("expected ForceRefresh to panic on nil datastore, proving it bypassed hasSignificantChange")
+	}
+}
+
+func TestGetScopedSummary_ForceBypassesCache(t *testing.T) {
+	g := &Generator{
+		scopedCache: make(map[string]*scopedEntry),
+		ctx:         context.Background(),
+	}
+
+	// Pre-populate a fresh cached entry for server:1.
+	now := time.Now().UTC()
+	g.mu.Lock()
+	g.scopedCache["server:1"] = &scopedEntry{
+		overview: &Overview{
+			Summary:     "Cached server overview.",
+			GeneratedAt: now,
+			StaleAt:     now.Add(5 * time.Minute),
+			Snapshot:    newTestSnapshot(),
+		},
+		lastAccess: now,
+	}
+	g.mu.Unlock()
+
+	// force=false should return the cached entry without error.
+	ov, err := g.GetScopedSummary("server", 1, false)
+	if err != nil {
+		t.Fatalf("expected no error for cached entry, got %v", err)
+	}
+	if ov.Summary != "Cached server overview." {
+		t.Errorf("expected cached summary, got %q", ov.Summary)
+	}
+
+	// force=true should bypass the cache and attempt to regenerate.
+	// With a nil datastore, fetchScopedSnapshot panics; catching the
+	// panic proves the cache was bypassed.
+	panicked := generatorInvokePanics(func() {
+		_, _ = g.GetScopedSummary("server", 1, true)
+	})
+	if !panicked {
+		t.Error("expected GetScopedSummary with force=true to panic on nil datastore, proving cache bypass")
+	}
+}
+
+func TestGetConnectionsSummary_ForceBypassesCache(t *testing.T) {
+	g := &Generator{
+		scopedCache: make(map[string]*scopedEntry),
+		ctx:         context.Background(),
+	}
+
+	// Pre-populate a fresh cached entry for connections:1,2.
+	now := time.Now().UTC()
+	g.mu.Lock()
+	g.scopedCache["connections:1,2"] = &scopedEntry{
+		overview: &Overview{
+			Summary:     "Cached connections overview.",
+			GeneratedAt: now,
+			StaleAt:     now.Add(5 * time.Minute),
+			Snapshot:    newTestSnapshot(),
+		},
+		lastAccess: now,
+	}
+	g.mu.Unlock()
+
+	// force=false should return the cached entry without error.
+	ov, err := g.GetConnectionsSummary([]int{1, 2}, "test", false)
+	if err != nil {
+		t.Fatalf("expected no error for cached entry, got %v", err)
+	}
+	if ov.Summary != "Cached connections overview." {
+		t.Errorf("expected cached summary, got %q", ov.Summary)
+	}
+
+	// force=true should bypass the cache and attempt to regenerate.
+	// With a nil datastore, GetConnectionsSnapshot panics; catching
+	// the panic proves the cache was bypassed.
+	panicked := generatorInvokePanics(func() {
+		_, _ = g.GetConnectionsSummary([]int{1, 2}, "test", true)
+	})
+	if !panicked {
+		t.Error("expected GetConnectionsSummary with force=true to panic on nil datastore, proving cache bypass")
+	}
+}
+
+// generatorInvokePanics calls fn and returns true if fn panicked.
+func generatorInvokePanics(fn func()) (panicked bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			panicked = true
+		}
+	}()
+	fn()
+	return false
 }
 
 // --- hasSignificantChange restart tests ------------------------------------

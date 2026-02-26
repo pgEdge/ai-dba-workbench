@@ -99,7 +99,6 @@ func TestPgNodeRoleProbe_DetermineNodeRole_Standalone(t *testing.T) {
 		PublicationCount:  0,
 		SubscriptionCount: 0,
 		HasSpock:          false,
-		HasBDR:            false,
 	}
 
 	role, flags := probe.determineNodeRole(info)
@@ -126,7 +125,6 @@ func TestPgNodeRoleProbe_DetermineNodeRole_BinaryPrimary(t *testing.T) {
 		PublicationCount:   0,
 		SubscriptionCount:  0,
 		HasSpock:           false,
-		HasBDR:             false,
 	}
 
 	role, flags := probe.determineNodeRole(info)
@@ -153,7 +151,6 @@ func TestPgNodeRoleProbe_DetermineNodeRole_BinaryStandby(t *testing.T) {
 		PublicationCount:   0,
 		SubscriptionCount:  0,
 		HasSpock:           false,
-		HasBDR:             false,
 	}
 
 	role, flags := probe.determineNodeRole(info)
@@ -181,7 +178,6 @@ func TestPgNodeRoleProbe_DetermineNodeRole_BinaryCascading(t *testing.T) {
 		PublicationCount:   0,
 		SubscriptionCount:  0,
 		HasSpock:           false,
-		HasBDR:             false,
 	}
 
 	role, flags := probe.determineNodeRole(info)
@@ -212,7 +208,6 @@ func TestPgNodeRoleProbe_DetermineNodeRole_LogicalPublisher(t *testing.T) {
 		SubscriptionCount:     0,
 		HasActiveLogicalSlots: true, // Active subscribers are connected
 		HasSpock:              false,
-		HasBDR:                false,
 	}
 
 	role, flags := probe.determineNodeRole(info)
@@ -238,7 +233,6 @@ func TestPgNodeRoleProbe_DetermineNodeRole_LogicalSubscriber(t *testing.T) {
 		PublicationCount:  0,
 		SubscriptionCount: 2,
 		HasSpock:          false,
-		HasBDR:            false,
 	}
 
 	role, flags := probe.determineNodeRole(info)
@@ -266,7 +260,6 @@ func TestPgNodeRoleProbe_DetermineNodeRole_LogicalBidirectional(t *testing.T) {
 		SubscriptionCount:     2,
 		HasActiveLogicalSlots: true, // Active subscribers are connected
 		HasSpock:              false,
-		HasBDR:                false,
 	}
 
 	role, flags := probe.determineNodeRole(info)
@@ -297,7 +290,6 @@ func TestPgNodeRoleProbe_DetermineNodeRole_SpockNode(t *testing.T) {
 		SubscriptionCount: 0,
 		HasSpock:          true,
 		SpockNodeName:     &nodeName,
-		HasBDR:            false,
 	}
 
 	role, flags := probe.determineNodeRole(info)
@@ -329,7 +321,6 @@ func TestPgNodeRoleProbe_DetermineNodeRole_SpockStandby(t *testing.T) {
 		SubscriptionCount:  0,
 		HasSpock:           true,
 		SpockNodeName:      &nodeName, // Has Spock tables from replication, but not a true Spock member
-		HasBDR:             false,
 	}
 
 	role, flags := probe.determineNodeRole(info)
@@ -363,7 +354,6 @@ func TestPgNodeRoleProbe_DetermineNodeRole_CombinedRoles(t *testing.T) {
 		SubscriptionCount:     0,
 		HasActiveLogicalSlots: true, // Has active subscribers connected
 		HasSpock:              false,
-		HasBDR:                false,
 	}
 
 	role, flags := probe.determineNodeRole(info)
@@ -399,7 +389,6 @@ func TestPgNodeRoleProbe_InfoToMap(t *testing.T) {
 		SubscriptionCount:       1,
 		ActiveSubscriptionCount: 1,
 		HasSpock:                false,
-		HasBDR:                  false,
 		PrimaryRole:             RoleBinaryPrimary,
 		RoleFlags:               []string{FlagBinaryPrimary, FlagLogicalPublisher, FlagLogicalSubscriber},
 		RoleDetails:             make(map[string]interface{}),

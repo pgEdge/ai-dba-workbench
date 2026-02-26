@@ -2479,8 +2479,6 @@ func TestMapPrimaryRoleToDisplayRole(t *testing.T) {
 		{"binary_cascading", "standby"},
 		{"spock_node", "spock"},
 		{"spock_standby", "spock_standby"},
-		{"bdr_node", "bdr"},
-		{"bdr_standby", "bdr_standby"},
 		{"logical_publisher", "publisher"},
 		{"logical_subscriber", "subscriber"},
 		{"logical_bidirectional", "bidirectional"},

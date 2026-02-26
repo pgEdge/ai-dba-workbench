@@ -11,7 +11,6 @@ PostgreSQL servers can participate in various replication configurations:
 - Binary (physical/streaming) replication clusters
 - Native logical replication setups
 - Spock multi-master clusters
-- Future: EDB BDR clusters
 
 A single node may have multiple roles simultaneously (e.g., a Spock node that
 also has a binary standby for HA). The probe system must accurately detect
@@ -31,9 +30,6 @@ these configurations and store them for analysis.
 | `logical_subscriber` | Native logical replication target | Has subscriptions |
 | `spock_node` | Active Spock multi-master node | Spock extension, node in spock.node |
 | `spock_standby` | Binary standby of Spock node | In recovery, primary is Spock node |
-| `bdr_node` | Active BDR data node | BDR extension, active in bdr.node |
-| `bdr_witness` | BDR witness node | BDR extension, witness role |
-| `bdr_standby` | Binary standby of BDR node | In recovery, primary is BDR node |
 
 ### Role Flags (Non-Exclusive)
 
@@ -44,7 +40,6 @@ Since roles can combine, we track individual capability flags:
 - `has_publications` - Has logical replication publications
 - `has_subscriptions` - Has logical replication subscriptions
 - `has_spock` - Spock extension installed and active
-- `has_bdr` - BDR extension installed and active
 
 ## Database Schema
 
@@ -113,13 +108,6 @@ CREATE TABLE IF NOT EXISTS metrics.pg_node_role (
     spock_node_id BIGINT,
     spock_node_name TEXT,
     spock_subscription_count INTEGER DEFAULT 0,
-
-    -- BDR Status (future)
-    has_bdr BOOLEAN NOT NULL DEFAULT FALSE,
-    bdr_node_id TEXT,
-    bdr_node_name TEXT,
-    bdr_node_group TEXT,
-    bdr_node_state TEXT,
 
     -- Computed Primary Role
     primary_role TEXT NOT NULL,             -- Main role for filtering
@@ -210,24 +198,6 @@ FROM spock.local_node
 LIMIT 1;
 ```
 
-### Query: BDR Detection (Future)
-
-```sql
--- Check if BDR is installed
-SELECT EXISTS (
-    SELECT 1 FROM pg_extension WHERE extname = 'bdr'
-) as has_bdr;
-
--- If BDR exists, get node info
-SELECT
-    node_id::text as bdr_node_id,
-    node_name as bdr_node_name,
-    node_group_name as bdr_node_group,
-    node_state as bdr_node_state
-FROM bdr.local_node_info
-LIMIT 1;
-```
-
 ## Role Determination Algorithm
 
 ```go
@@ -250,9 +220,6 @@ func determineNodeRole(info *NodeRoleInfo) (string, []string) {
     if info.HasSpock && info.SpockNodeName != "" {
         flags = append(flags, "spock_node")
     }
-    if info.HasBDR && info.BDRNodeName != "" {
-        flags = append(flags, "bdr_node")
-    }
 
     // Determine primary role (most specific applicable role)
     var primaryRole string
@@ -262,12 +229,6 @@ func determineNodeRole(info *NodeRoleInfo) (string, []string) {
             primaryRole = "spock_standby"
         } else {
             primaryRole = "spock_node"
-        }
-    case info.HasBDR && info.BDRNodeName != "":
-        if info.IsInRecovery {
-            primaryRole = "bdr_standby"
-        } else {
-            primaryRole = "bdr_node"
         }
     case info.IsInRecovery:
         if info.HasBinaryStandbys {
@@ -325,10 +286,6 @@ data without schema changes:
     "spock": {
         "replication_sets": ["default", "ddl_sql"],
         "conflict_resolution": "last_update_wins"
-    },
-    "bdr": {
-        "raft_state": "LEADER",
-        "consensus_version": 5
     },
     "logical": {
         "publications": ["pub1", "pub2"],

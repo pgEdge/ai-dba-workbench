@@ -57,8 +57,6 @@ const (
 	RoleLogicalBidirectional = "logical_bidirectional"
 	RoleSpockNode            = "spock_node"
 	RoleSpockStandby         = "spock_standby"
-	RoleBDRNode              = "bdr_node"
-	RoleBDRStandby           = "bdr_standby"
 )
 
 // Role flag constants
@@ -68,7 +66,6 @@ const (
 	FlagLogicalPublisher  = "logical_publisher"
 	FlagLogicalSubscriber = "logical_subscriber"
 	FlagSpockNode         = "spock_node"
-	FlagBDRNode           = "bdr_node"
 )
 
 // PgNodeRoleProbe detects and stores node role information for cluster topology analysis
@@ -134,13 +131,6 @@ type NodeRoleInfo struct {
 	SpockNodeName          *string
 	SpockSubscriptionCount int
 
-	// BDR (future)
-	HasBDR       bool
-	BDRNodeID    *string
-	BDRNodeName  *string
-	BDRNodeGroup *string
-	BDRNodeState *string
-
 	// Computed
 	PrimaryRole string
 	RoleFlags   []string
@@ -174,13 +164,7 @@ func (p *PgNodeRoleProbe) Execute(ctx context.Context, connectionName string, mo
 		// Not a fatal error - Spock may not be installed
 	}
 
-	// 5. Check for BDR extension and get node info (future)
-	if err := p.getBDRStatus(ctx, connectionName, monitoredConn, info); err != nil {
-		logger.Infof("BDR status check: %v", err)
-		// Not a fatal error - BDR may not be installed
-	}
-
-	// 6. Determine primary role and flags
+	// 5. Determine primary role and flags
 	info.PrimaryRole, info.RoleFlags = p.determineNodeRole(info)
 
 	// Convert to map
@@ -356,43 +340,6 @@ func (p *PgNodeRoleProbe) getSpockStatus(ctx context.Context, connectionName str
 	return nil
 }
 
-// getBDRStatus checks for BDR extension and gets node info (future implementation)
-func (p *PgNodeRoleProbe) getBDRStatus(ctx context.Context, connectionName string, conn *pgxpool.Conn, info *NodeRoleInfo) error {
-	// Check if BDR extension exists
-	exists, err := CheckExtensionExists(ctx, connectionName, conn, "bdr")
-	if err != nil {
-		return err
-	}
-	info.HasBDR = exists
-
-	if !exists {
-		return nil
-	}
-
-	// Get local node info from BDR
-	// Note: BDR schema may vary by version, this is a basic implementation
-	nodeQuery := `
-        SELECT
-            node_id::text,
-            node_name,
-            node_group_name,
-            node_state
-        FROM bdr.local_node_info
-        LIMIT 1
-    `
-	row := conn.QueryRow(ctx, nodeQuery)
-	err = row.Scan(&info.BDRNodeID, &info.BDRNodeName, &info.BDRNodeGroup, &info.BDRNodeState)
-	if err != nil {
-		if !errors.Is(err, pgx.ErrNoRows) {
-			// BDR installed but local_node_info view may not exist in all versions
-			logger.Infof("BDR local_node_info query: %v", err)
-		}
-		return nil
-	}
-
-	return nil
-}
-
 // determineNodeRole computes the primary role and role flags
 func (p *PgNodeRoleProbe) determineNodeRole(info *NodeRoleInfo) (string, []string) {
 	flags := []string{}
@@ -416,12 +363,9 @@ func (p *PgNodeRoleProbe) determineNodeRole(info *NodeRoleInfo) (string, []strin
 	if info.HasSpock && info.SpockNodeName != nil && !info.IsInRecovery {
 		flags = append(flags, FlagSpockNode)
 	}
-	if info.HasBDR && info.BDRNodeName != nil && !info.IsInRecovery {
-		flags = append(flags, FlagBDRNode)
-	}
 
 	// Determine primary role (most specific applicable role)
-	// Priority: Spock/BDR > Binary replication > Logical replication > Standalone
+	// Priority: Spock > Binary replication > Logical replication > Standalone
 	var primaryRole string
 	switch {
 	// Spock node: has Spock extension configured AND is not in recovery
@@ -429,10 +373,6 @@ func (p *PgNodeRoleProbe) determineNodeRole(info *NodeRoleInfo) (string, []strin
 	// is NOT a Spock cluster member - it's a binary standby for HA
 	case info.HasSpock && info.SpockNodeName != nil && !info.IsInRecovery:
 		primaryRole = RoleSpockNode
-
-	// BDR node: has BDR extension configured AND is not in recovery
-	case info.HasBDR && info.BDRNodeName != nil && !info.IsInRecovery:
-		primaryRole = RoleBDRNode
 
 	// Any server in recovery mode is a binary standby (streaming replication)
 	case info.IsInRecovery:
@@ -479,15 +419,6 @@ func (p *PgNodeRoleProbe) infoToMap(info *NodeRoleInfo) map[string]interface{} {
 			"subscription_count": info.SpockSubscriptionCount,
 		}
 	}
-	if info.HasBDR && info.BDRNodeName != nil {
-		roleDetails["bdr"] = map[string]interface{}{
-			"node_id":    info.BDRNodeID,
-			"node_name":  info.BDRNodeName,
-			"node_group": info.BDRNodeGroup,
-			"node_state": info.BDRNodeState,
-		}
-	}
-
 	roleDetailsJSON, err := json.Marshal(roleDetails)
 	if err != nil {
 		roleDetailsJSON = []byte("{}")
@@ -515,11 +446,6 @@ func (p *PgNodeRoleProbe) infoToMap(info *NodeRoleInfo) map[string]interface{} {
 		"spock_node_id":             info.SpockNodeID,
 		"spock_node_name":           info.SpockNodeName,
 		"spock_subscription_count":  info.SpockSubscriptionCount,
-		"has_bdr":                   info.HasBDR,
-		"bdr_node_id":               info.BDRNodeID,
-		"bdr_node_name":             info.BDRNodeName,
-		"bdr_node_group":            info.BDRNodeGroup,
-		"bdr_node_state":            info.BDRNodeState,
 		"primary_role":              info.PrimaryRole,
 		"role_flags":                info.RoleFlags,
 		"role_details":              string(roleDetailsJSON),
@@ -548,7 +474,6 @@ func (p *PgNodeRoleProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn
 		"has_active_logical_slots", "active_logical_slot_count",
 		"publisher_host", "publisher_port",
 		"has_spock", "spock_node_id", "spock_node_name", "spock_subscription_count",
-		"has_bdr", "bdr_node_id", "bdr_node_name", "bdr_node_group", "bdr_node_state",
 		"primary_role", "role_flags", "role_details",
 	}
 
@@ -589,11 +514,6 @@ func (p *PgNodeRoleProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn
 			metric["spock_node_id"],
 			metric["spock_node_name"],
 			metric["spock_subscription_count"],
-			metric["has_bdr"],
-			metric["bdr_node_id"],
-			metric["bdr_node_name"],
-			metric["bdr_node_group"],
-			metric["bdr_node_state"],
 			metric["primary_role"],
 			roleFlagsArr,
 			metric["role_details"],

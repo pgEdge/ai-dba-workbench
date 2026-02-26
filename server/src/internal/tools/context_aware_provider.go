@@ -89,19 +89,19 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 			registry.Register("list_connections", ListConnectionsTool(datastorePool))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_alert_history") {
-			registry.Register("get_alert_history", GetAlertHistoryTool(datastorePool))
+			registry.Register("get_alert_history", GetAlertHistoryTool(datastorePool, p.rbacChecker))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_alert_rules") {
 			registry.Register("get_alert_rules", GetAlertRulesTool(datastorePool))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_metric_baselines") {
-			registry.Register("get_metric_baselines", GetMetricBaselinesTool(datastorePool))
+			registry.Register("get_metric_baselines", GetMetricBaselinesTool(datastorePool, p.rbacChecker))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("query_datastore") {
 			registry.Register("query_datastore", QueryDatastoreTool(datastorePool))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_blackouts") {
-			registry.Register("get_blackouts", GetBlackoutsTool(datastorePool))
+			registry.Register("get_blackouts", GetBlackoutsTool(datastorePool, p.rbacChecker))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("store_memory") && p.memoryStore != nil {
 			registry.Register("store_memory", StoreMemoryTool(p.memoryStore, p.cfg, p.rbacChecker))
@@ -127,19 +127,19 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 			registry.Register("list_connections", ListConnectionsTool(nil))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_alert_history") {
-			registry.Register("get_alert_history", GetAlertHistoryTool(nil))
+			registry.Register("get_alert_history", GetAlertHistoryTool(nil, p.rbacChecker))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_alert_rules") {
 			registry.Register("get_alert_rules", GetAlertRulesTool(nil))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_metric_baselines") {
-			registry.Register("get_metric_baselines", GetMetricBaselinesTool(nil))
+			registry.Register("get_metric_baselines", GetMetricBaselinesTool(nil, p.rbacChecker))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("query_datastore") {
 			registry.Register("query_datastore", QueryDatastoreTool(nil))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_blackouts") {
-			registry.Register("get_blackouts", GetBlackoutsTool(nil))
+			registry.Register("get_blackouts", GetBlackoutsTool(nil, p.rbacChecker))
 		}
 	}
 }
@@ -418,12 +418,12 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 	}
 
 	if statelessTools[name] {
-		// For datastore tools that use connection_id, inject the default from session if not provided
+		// For datastore tools that use connection_id, inject the default from session if not provided.
+		// Tools that support "all connections" mode (get_alert_history, get_metric_baselines,
+		// get_blackouts) are intentionally excluded so that omitting connection_id returns
+		// results across all accessible connections rather than defaulting to the session connection.
 		connectionIDTools := map[string]bool{
-			"query_metrics":        true,
-			"get_alert_history":    true,
-			"get_metric_baselines": true,
-			"get_blackouts":        true,
+			"query_metrics": true,
 		}
 		if connectionIDTools[name] {
 			if _, hasConnID := args["connection_id"]; !hasConnID && p.authStore != nil {

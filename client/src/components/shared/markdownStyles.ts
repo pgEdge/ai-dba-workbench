@@ -203,8 +203,8 @@ const getCodeBlockActionButtonSx = (theme: Theme) => ({
         theme.palette.background.paper,
         theme.palette.mode === 'dark' ? 0.6 : 0.8,
     ),
-    color: alpha(theme.palette.secondary.main, 0.7),
-    opacity: 0.5,
+    color: alpha(theme.palette.secondary.main, 0.9),
+    opacity: 0.8,
     transition: 'opacity 0.15s, background-color 0.15s, color 0.15s',
     '&:hover': {
         opacity: 1,

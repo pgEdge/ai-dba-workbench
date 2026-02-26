@@ -39,6 +39,7 @@ type Config struct {
 	UseCompactDescriptions bool
 	CompactDescriptions    map[string]string // tool name -> compact description
 	MemoryStore            *memory.Store     // Memory store for pinned memory injection (may be nil)
+	AuthStore              *auth.AuthStore   // Auth store for user context injection (may be nil)
 }
 
 // Message represents a message in the chat conversation
@@ -376,6 +377,23 @@ func HandleChat(w http.ResponseWriter, r *http.Request, config *Config) {
 		}
 	}
 
+	// Inject user context into the system prompt when available.
+	// This gives the LLM awareness of who it is talking to.
+	if config.AuthStore != nil {
+		userID := auth.GetUserIDFromContext(ctx)
+		username := auth.GetUsernameFromContext(ctx)
+		if userID > 0 && username != "" {
+			userInfo := buildUserInfo(config.AuthStore, userID, username)
+			if userInfo != nil {
+				base := effectiveSystemPrompt
+				if base == "" {
+					base = chat.SystemPrompt
+				}
+				effectiveSystemPrompt = chat.BuildUserContext(base, userInfo)
+			}
+		}
+	}
+
 	// Call LLM - pass tools as []interface{} to avoid import cycle
 	// The chat client will access tool fields which are structurally identical to mcp.Tool
 	llmResponse, err := client.Chat(ctx, chatMessages, req.Tools, effectiveSystemPrompt)
@@ -406,6 +424,48 @@ func HandleChat(w http.ResponseWriter, r *http.Request, config *Config) {
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: Failed to encode LLM chat response: %v\n", err)
 	}
+}
+
+// buildUserInfo fetches user data from the auth store and returns a
+// UserInfo struct for system prompt injection. Returns nil if the user
+// cannot be looked up. Errors are logged but do not fail the request.
+func buildUserInfo(authStore *auth.AuthStore, userID int64, username string) *chat.UserInfo {
+	user, err := authStore.GetUser(username)
+	if err != nil || user == nil {
+		fmt.Fprintf(os.Stderr, "WARNING: Failed to fetch user %q for context injection: %v\n", username, err)
+		return nil
+	}
+
+	info := &chat.UserInfo{
+		Username:    user.Username,
+		DisplayName: user.DisplayName,
+		Notes:       user.Annotation,
+		IsSuperuser: user.IsSuperuser,
+	}
+
+	// Fetch group names
+	groups, err := authStore.GetGroupsForUser(userID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "WARNING: Failed to fetch groups for user %q: %v\n", username, err)
+	} else {
+		for _, g := range groups {
+			info.Groups = append(info.Groups, g.Name)
+		}
+	}
+
+	// Fetch admin permissions
+	perms, err := authStore.GetUserAdminPermissions(userID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "WARNING: Failed to fetch admin permissions for user %q: %v\n", username, err)
+	} else {
+		for perm, enabled := range perms {
+			if enabled {
+				info.AdminPerms = append(info.AdminPerms, perm)
+			}
+		}
+	}
+
+	return info
 }
 
 // isValidModelName validates that a model name contains only safe

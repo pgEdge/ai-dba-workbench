@@ -843,6 +843,111 @@ func TestOpenAIClient_GPT5UsesMaxCompletionTokens(t *testing.T) {
 	}
 }
 
+func TestBuildUserContext(t *testing.T) {
+	tests := []struct {
+		name string
+		base string
+		info *UserInfo
+		want string
+	}{
+		{
+			name: "nil UserInfo returns base unchanged",
+			base: "You are a helpful assistant.",
+			info: nil,
+			want: "You are a helpful assistant.",
+		},
+		{
+			name: "full UserInfo produces expected block",
+			base: "Base prompt.",
+			info: &UserInfo{
+				Username:    "alice",
+				DisplayName: "Alice Smith",
+				Notes:       "DBA team lead, prefers verbose output",
+				IsSuperuser: true,
+				Groups:      []string{"dba-team", "admins"},
+				AdminPerms:  []string{"manage_connections", "manage_users"},
+			},
+			want: "Base prompt.\n\n<current-user>\n" +
+				"The following describes the current user. Use this to personalise responses.\n\n" +
+				"- Username: alice\n" +
+				"- Display name: Alice Smith\n" +
+				"- Notes: DBA team lead, prefers verbose output\n" +
+				"- Role: Superuser\n" +
+				"- Groups: dba-team, admins\n" +
+				"- Admin permissions: manage_connections, manage_users\n" +
+				"</current-user>",
+		},
+		{
+			name: "empty optional fields are omitted",
+			base: "Base prompt.",
+			info: &UserInfo{
+				Username:    "bob",
+				DisplayName: "",
+				Notes:       "",
+				IsSuperuser: false,
+				Groups:      nil,
+				AdminPerms:  nil,
+			},
+			want: "Base prompt.\n\n<current-user>\n" +
+				"The following describes the current user. Use this to personalise responses.\n\n" +
+				"- Username: bob\n" +
+				"- Role: Standard user\n" +
+				"- Groups: (none)\n" +
+				"- Admin permissions: (none)\n" +
+				"</current-user>",
+		},
+		{
+			name: "standard user with groups but no admin perms",
+			base: "Base prompt.",
+			info: &UserInfo{
+				Username:    "carol",
+				DisplayName: "Carol D.",
+				IsSuperuser: false,
+				Groups:      []string{"viewers"},
+				AdminPerms:  []string{},
+			},
+			want: "Base prompt.\n\n<current-user>\n" +
+				"The following describes the current user. Use this to personalise responses.\n\n" +
+				"- Username: carol\n" +
+				"- Display name: Carol D.\n" +
+				"- Role: Standard user\n" +
+				"- Groups: viewers\n" +
+				"- Admin permissions: (none)\n" +
+				"</current-user>",
+		},
+		{
+			name: "fields are sanitized",
+			base: "Base prompt.",
+			info: &UserInfo{
+				Username:    "evil\nuser",
+				DisplayName: "Evil\rName",
+				Notes:       "line1\nline2\rline3",
+				IsSuperuser: false,
+				Groups:      []string{"group\none"},
+				AdminPerms:  []string{"perm\none"},
+			},
+			want: "Base prompt.\n\n<current-user>\n" +
+				"The following describes the current user. Use this to personalise responses.\n\n" +
+				"- Username: evil user\n" +
+				"- Display name: Evil Name\n" +
+				"- Notes: line1 line2 line3\n" +
+				"- Role: Standard user\n" +
+				"- Groups: group one\n" +
+				"- Admin permissions: perm one\n" +
+				"</current-user>",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := BuildUserContext(tt.base, tt.info)
+			if got != tt.want {
+				t.Errorf("BuildUserContext() =\n%q\nwant:\n%q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestBuildSystemPrompt(t *testing.T) {
 	now := time.Now().UTC()
 

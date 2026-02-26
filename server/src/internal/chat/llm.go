@@ -239,6 +239,69 @@ func sanitizeMemoryField(s string) string {
 	return s
 }
 
+// UserInfo holds user data for injection into the system prompt.
+type UserInfo struct {
+	Username    string
+	DisplayName string
+	Notes       string
+	IsSuperuser bool
+	Groups      []string // group names
+	AdminPerms  []string // effective admin permission names
+}
+
+// BuildUserContext appends a current-user context block to the base
+// system prompt. If info is nil the base prompt is returned unchanged.
+// All fields are sanitized to prevent prompt injection.
+func BuildUserContext(base string, info *UserInfo) string {
+	if info == nil {
+		return base
+	}
+
+	var sb strings.Builder
+	sb.WriteString(base)
+	sb.WriteString("\n\n<current-user>\n")
+	sb.WriteString("The following describes the current user. Use this to personalise responses.\n\n")
+
+	sb.WriteString(fmt.Sprintf("- Username: %s\n", sanitizeMemoryField(info.Username)))
+
+	if info.DisplayName != "" {
+		sb.WriteString(fmt.Sprintf("- Display name: %s\n", sanitizeMemoryField(info.DisplayName)))
+	}
+
+	if info.Notes != "" {
+		sb.WriteString(fmt.Sprintf("- Notes: %s\n", sanitizeMemoryField(info.Notes)))
+	}
+
+	if info.IsSuperuser {
+		sb.WriteString("- Role: Superuser\n")
+	} else {
+		sb.WriteString("- Role: Standard user\n")
+	}
+
+	if len(info.Groups) > 0 {
+		sanitized := make([]string, len(info.Groups))
+		for i, g := range info.Groups {
+			sanitized[i] = sanitizeMemoryField(g)
+		}
+		sb.WriteString(fmt.Sprintf("- Groups: %s\n", strings.Join(sanitized, ", ")))
+	} else {
+		sb.WriteString("- Groups: (none)\n")
+	}
+
+	if len(info.AdminPerms) > 0 {
+		sanitized := make([]string, len(info.AdminPerms))
+		for i, p := range info.AdminPerms {
+			sanitized[i] = sanitizeMemoryField(p)
+		}
+		sb.WriteString(fmt.Sprintf("- Admin permissions: %s\n", strings.Join(sanitized, ", ")))
+	} else {
+		sb.WriteString("- Admin permissions: (none)\n")
+	}
+
+	sb.WriteString("</current-user>")
+	return sb.String()
+}
+
 // sharedHTTPClient is a reusable HTTP client for all LLM providers.
 // The timeout is set to 120 seconds to accommodate large LLM requests
 // with extensive context windows.

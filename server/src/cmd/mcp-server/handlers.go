@@ -95,7 +95,7 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		if deps.Datastore != nil && deps.Config != nil && deps.Config.Memory.IsEnabled() {
 			memoryStore = memory.NewStore(deps.Datastore.GetPool())
 		}
-		setupLLMHandlers(mux, deps.Config, authWrapper, deps.ToolProvider, memoryStore)
+		setupLLMHandlers(mux, deps.Config, authWrapper, deps.ToolProvider, memoryStore, deps.AuthStore)
 
 		// MCP tool REST bridge (exposes tools/list and tools/call over REST)
 		if deps.ToolProvider != nil {
@@ -396,7 +396,7 @@ func handleCapabilities(aiEnabled bool, maxIterations int) http.HandlerFunc {
 }
 
 // setupLLMHandlers configures LLM proxy endpoints
-func setupLLMHandlers(mux *http.ServeMux, cfg *config.Config, authWrapper func(http.HandlerFunc) http.HandlerFunc, toolProvider api.ContextAwareToolProvider, memoryStore *memory.Store) {
+func setupLLMHandlers(mux *http.ServeMux, cfg *config.Config, authWrapper func(http.HandlerFunc) http.HandlerFunc, toolProvider api.ContextAwareToolProvider, memoryStore *memory.Store, authStore *auth.AuthStore) {
 	// Build a compact description lookup map from registered tools.
 	// The web client sends tools without CompactDescription populated,
 	// so we look them up server-side and apply them in HandleChat.
@@ -425,6 +425,7 @@ func setupLLMHandlers(mux *http.ServeMux, cfg *config.Config, authWrapper func(h
 		UseCompactDescriptions: cfg.LLM.UseCompactDescriptions(),
 		CompactDescriptions:    compactDescs,
 		MemoryStore:            memoryStore,
+		AuthStore:              authStore,
 	}
 
 	// Provider/model listing don't require auth (needed for login page)

@@ -387,7 +387,6 @@ For examples, see:
 - `server/src/internal/api/rbac_integration_test.go`
 - `server/src/internal/resources/integration_test.go`
 
-
 ## Security Testing Patterns
 
 ### Input Validation

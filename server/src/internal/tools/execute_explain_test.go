@@ -15,7 +15,7 @@ import (
 )
 
 func TestExecuteExplainToolDefinition(t *testing.T) {
-	tool := ExecuteExplainTool(nil)
+	tool := ExecuteExplainTool(nil, nil)
 
 	if tool.Definition.Name != "execute_explain" {
 		t.Errorf("Tool name = %v, want execute_explain", tool.Definition.Name)
@@ -62,7 +62,7 @@ func TestExecuteExplainToolDefinition(t *testing.T) {
 }
 
 func TestExecuteExplainValidation(t *testing.T) {
-	tool := ExecuteExplainTool(nil)
+	tool := ExecuteExplainTool(nil, nil)
 
 	tests := []struct {
 		name        string
@@ -209,7 +209,7 @@ func TestAnalyzeExplainOutput(t *testing.T) {
 
 func TestExecuteExplainToolResponseFormat(t *testing.T) {
 	// This test verifies the tool definition format
-	tool := ExecuteExplainTool(nil)
+	tool := ExecuteExplainTool(nil, nil)
 
 	// Verify tool definition structure
 	if tool.Definition.Name != "execute_explain" {
@@ -232,7 +232,7 @@ func TestExecuteExplainToolResponseFormat(t *testing.T) {
 }
 
 func TestExecuteExplainBooleanDefaults(t *testing.T) {
-	tool := ExecuteExplainTool(nil)
+	tool := ExecuteExplainTool(nil, nil)
 
 	// Test that boolean parameters have proper defaults
 	schema := tool.Definition.InputSchema
@@ -262,7 +262,7 @@ func TestExecuteExplainBooleanDefaults(t *testing.T) {
 func TestExecuteExplainToolRegistration(t *testing.T) {
 	// Verify that execute_explain tool can be registered
 	registry := NewRegistry()
-	tool := ExecuteExplainTool(nil)
+	tool := ExecuteExplainTool(nil, nil)
 
 	registry.Register("execute_explain", tool)
 
@@ -278,7 +278,7 @@ func TestExecuteExplainToolRegistration(t *testing.T) {
 
 func TestExecuteExplainReturnsToolResponse(t *testing.T) {
 	// Test that validation errors return proper tool responses without requiring DB
-	tool := ExecuteExplainTool(nil)
+	tool := ExecuteExplainTool(nil, nil)
 
 	// Test with missing query (validation error, no DB needed)
 	response, _ := tool.Handler(map[string]interface{}{})
@@ -307,7 +307,7 @@ func TestExecuteExplainReturnsToolResponse(t *testing.T) {
 func TestExecuteExplainToolResponse(t *testing.T) {
 	// Test that execute_explain properly uses mcp.NewToolError and mcp.NewToolSuccess
 	// This is tested implicitly through the validation tests above
-	tool := ExecuteExplainTool(nil)
+	tool := ExecuteExplainTool(nil, nil)
 
 	// Test validation error response
 	response, _ := tool.Handler(map[string]interface{}{})

@@ -146,6 +146,7 @@ interface GroupItemProps {
     onDeleteGroup?: (group: GroupData) => void;
     onConfigureGroup?: (group: GroupData) => void;
     onConfigureCluster?: (cluster: Cluster) => void;
+    onDeleteCluster?: (cluster: Cluster) => void;
     getServerAlertCount?: (serverId: number) => number;
     getServerBlackoutStatus?: (serverId: number) => { active: boolean; inherited: boolean };
     getClusterBlackoutStatus?: (clusterId: string) => { active: boolean; inherited: boolean };
@@ -173,6 +174,7 @@ const GroupItem = memo<GroupItemProps>(({
     onDeleteGroup,
     onConfigureGroup,
     onConfigureCluster,
+    onDeleteCluster,
     getServerAlertCount,
     getServerBlackoutStatus,
     getClusterBlackoutStatus,
@@ -377,6 +379,7 @@ const GroupItem = memo<GroupItemProps>(({
                                     onEditServer={onEditServer}
                                     onDeleteServer={onDeleteServer}
                                     onConfigureCluster={onConfigureCluster}
+                                    onDeleteCluster={onDeleteCluster}
                                     getServerAlertCount={getServerAlertCount}
                                     getServerBlackoutStatus={getServerBlackoutStatus}
                                     getClusterBlackoutStatus={getClusterBlackoutStatus}

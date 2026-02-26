@@ -314,8 +314,8 @@ func TestClusterHandler_HandleClusterGroupSubpath_InvalidID(t *testing.T) {
 func TestClusterHandler_HandleClusterServers_MethodNotAllowed(t *testing.T) {
 	handler := NewClusterHandler(nil, nil, nil)
 
-	// Test POST method (should be rejected)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/clusters/1/servers", nil)
+	// Test DELETE method (should be rejected; only GET and POST are allowed)
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/clusters/1/servers", nil)
 	rec := httptest.NewRecorder()
 
 	handler.handleClusterServers(rec, req, 1)
@@ -325,8 +325,8 @@ func TestClusterHandler_HandleClusterServers_MethodNotAllowed(t *testing.T) {
 	}
 
 	allowed := rec.Header().Get("Allow")
-	if allowed != "GET" {
-		t.Errorf("Expected Allow header 'GET', got %q", allowed)
+	if allowed != "GET, POST" {
+		t.Errorf("Expected Allow header 'GET, POST', got %q", allowed)
 	}
 }
 

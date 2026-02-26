@@ -24,7 +24,7 @@ When reviewing a new MCP tool implementation:
 
 ### Database Operations
 
-- [ ] All queries use parameterization (`$1`, `$2`, etc.)
+- [ ] All queries use parameterization (`$1`, `$2` for PostgreSQL; `?` for SQLite auth store)
 - [ ] No string concatenation in SQL
 - [ ] Query results filtered by authorization
 - [ ] Transactions used where needed for consistency
@@ -119,7 +119,7 @@ query := fmt.Sprintf("SELECT * FROM %s WHERE id = %d", table, id)
 
 ### Password Handling
 
-- [ ] Passwords hashed with bcrypt (cost >= 10) or argon2
+- [ ] Passwords hashed with bcrypt (cost >= 12) or argon2
 - [ ] Plain passwords never stored
 - [ ] Plain passwords never logged
 - [ ] Password comparison is constant-time

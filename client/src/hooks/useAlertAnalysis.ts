@@ -93,7 +93,7 @@ ${SQL_CODE_BLOCK_RULES}
 
 Keep responses concise and actionable. Do not offer to perform additional actions, run further queries, or investigate anything else. Do not ask follow-up questions or ask what the user would like to do next. Your analysis is displayed in a read-only report that the user cannot respond to.
 
-If a search_knowledgebase tool is available, use it to look up unfamiliar PostgreSQL features, extensions, or pgEdge-specific concepts before making recommendations. If a get_blackouts tool is available, check whether the alert occurred during a maintenance window.`;
+If a search_knowledgebase tool is available, use it to look up unfamiliar PostgreSQL features, extensions, or pgEdge-specific concepts before making recommendations. If a get_blackouts tool is available, check whether the alert occurred during a maintenance window. If a test_query tool is available, validate all SQL queries before including them in the report.`;
 
 /**
  * Check if two metric values are close enough to consider the

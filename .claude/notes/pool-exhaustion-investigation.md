@@ -115,13 +115,15 @@ The following files are central to the pool management system:
 
 ## Remaining Concerns
 
-The debug tracing is verbose in production logs; the team
-should gate the tracing behind a flag or remove the tracing
-entirely.
+The following concerns from the original investigation have
+been resolved:
 
-Connection 17 (`ai-workbench.conx.page`) has a separate
-authentication failure for the `postgres` user. This issue is
-unrelated to pool exhaustion.
+- The debug tracing (`POOL DEBUG` and `PROBE DEBUG`) was
+  removed from the codebase; no trace entries remain in the
+  collector source.
+- The authentication failure on connection 17
+  (`ai-workbench.conx.page`) was deployment-specific and is
+  no longer relevant.
 
 All 33 probes can now open simultaneous connections to each
 monitored server. This is acceptable for the default PostgreSQL

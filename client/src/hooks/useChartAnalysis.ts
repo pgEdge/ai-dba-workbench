@@ -64,7 +64,7 @@ Analysis of trends, anomalies, and notable patterns in the data.
 ## Recommendations
 Numbered list of specific actions or considerations based on the data.
 
-If suggesting SQL queries, use \`\`\`sql code blocks. SQL should be correct and executable PostgreSQL.
+If suggesting SQL queries, use \`\`\`sql code blocks. SQL should be correct and executable PostgreSQL. Since queries cannot be validated in this context, add a SQL comment '-- NOTE: Verify column names before running' as the first line of each SQL code block.
 
 Keep responses concise and actionable.
 

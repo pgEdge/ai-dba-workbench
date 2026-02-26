@@ -10,6 +10,7 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -18,17 +19,19 @@ import (
 )
 
 // GetSchemaInfoTool creates the get_schema_info tool
-func GetSchemaInfoTool(dbClient *database.Client) Tool {
+func GetSchemaInfoTool(dbClient *database.Client, resolver *ConnectionResolver) Tool {
 	return Tool{
 		Definition: mcp.Tool{
 			Name: "get_schema_info",
 			Description: `PRIMARY TOOL for discovering database structure and available tables.
 
 <database_context>
-This tool operates on the CURRENTLY SELECTED monitored database connection.
-If no database is selected, ask the user to select a database connection
-before proceeding. The user can select a connection using their client
-interface (CLI or web client).
+Specify connection_id to target a particular monitored database.
+Use list_connections to discover available connection IDs and
+their default databases. Optionally provide database_name to
+override the default database for the connection. If
+connection_id is omitted, the tool uses the currently selected
+connection.
 </database_context>
 
 <usecase>
@@ -108,10 +111,18 @@ To avoid rate limits when calling this tool:
 - Call once and cache results in conversation rather than repeatedly
 - If exploring large schemas, filter by schema_name first
 </rate_limit_awareness>`,
-			CompactDescription: `Discover database structure: schemas, tables, columns, types, and constraints. Use compact=true for a quick table name overview. Filter by schema_name and table_name to reduce output size. Operates on the currently selected monitored database.`,
+			CompactDescription: `Discover database structure: schemas, tables, columns, types, and constraints. Specify connection_id to target a database; use list_connections to discover IDs. Use compact=true for a quick overview. Filter by schema_name and table_name to reduce output.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{
+					"connection_id": map[string]interface{}{
+						"type":        "integer",
+						"description": "ID of the monitored database connection to use. Use list_connections to discover available IDs. If omitted, uses the currently selected connection.",
+					},
+					"database_name": map[string]interface{}{
+						"type":        "string",
+						"description": "Database name to connect to. If omitted, uses the connection's default database.",
+					},
 					"schema_name": map[string]interface{}{
 						"type":        "string",
 						"description": "Optional: specific schema name to get info for. If not provided, returns all schemas.",
@@ -164,12 +175,45 @@ To avoid rate limits when calling this tool:
 				compactMode = false
 			}
 
+			// Extract context from args (injected by registry.Execute)
+			ctx, ok := args["__context"].(context.Context)
+			if !ok {
+				ctx = context.Background()
+			}
+
+			// Resolve connection (explicit connection_id or fallback)
+			// get_schema_info only needs metadata, not a pool connection.
+			// Check if connection_id was explicitly provided.
+			ca := parseConnectionArgs(args)
+			var activeClient *database.Client
+			var connStr string
+
+			if ca.HasConnID {
+				// Explicit connection_id: use full resolver path
+				resolved, errResp := resolver.Resolve(ctx, args, dbClient)
+				if errResp != nil {
+					return *errResp, nil
+				}
+				connStr = resolved.ConnStr
+				activeClient = resolved.Client
+			} else {
+				// Fallback: use the captured per-token client directly
+				activeClient = dbClient
+				if activeClient != nil {
+					connStr = activeClient.GetDefaultConnection()
+				}
+			}
+
+			if activeClient == nil {
+				return mcp.NewToolError("No database connection available. Specify connection_id or select a connection first.")
+			}
+
 			// Check if metadata is loaded
-			if !dbClient.IsMetadataLoaded() {
+			if !activeClient.IsMetadataLoaded() {
 				return mcp.NewToolError(mcp.DatabaseNotReadyError)
 			}
 
-			metadata := dbClient.GetMetadata()
+			metadata := activeClient.GetMetadata()
 
 			// Threshold for auto-summary mode (when no filters applied)
 			const summaryThreshold = 10
@@ -370,7 +414,6 @@ To avoid rate limits when calling this tool:
 
 			// Handle empty results with contextual guidance
 			if matchedTables == 0 {
-				connStr := dbClient.GetDefaultConnection()
 				sanitizedConn := database.SanitizeConnStr(connStr)
 
 				var emptyMsg strings.Builder
@@ -451,7 +494,6 @@ To avoid rate limits when calling this tool:
 			}
 
 			// Prepend database context to the response
-			connStr := dbClient.GetDefaultConnection()
 			sanitizedConn := database.SanitizeConnStr(connStr)
 			result := fmt.Sprintf("Database: %s\n\n%s", sanitizedConn, sb.String())
 

@@ -122,6 +122,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
     const [blackoutMgmtOpen, setBlackoutMgmtOpen] = useState(false);
     const [ackDialogOpen, setAckDialogOpen] = useState(false);
     const [selectedAlertForAck, setSelectedAlertForAck] = useState(null);
+    const [selectedAlertsForGroupAck, setSelectedAlertsForGroupAck] = useState(null);
     const [analysisDialogOpen, setAnalysisDialogOpen] = useState(false);
     const [analysisAlert, setAnalysisAlert] = useState(null);
     const [overrideDialogOpen, setOverrideDialogOpen] = useState(false);
@@ -260,7 +261,15 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
 
     // Handle opening ack dialog
     const handleAcknowledge = (alert) => {
+        setSelectedAlertsForGroupAck(null);
         setSelectedAlertForAck(alert);
+        setAckDialogOpen(true);
+    };
+
+    // Handle opening group ack dialog
+    const handleAcknowledgeGroup = (alerts) => {
+        setSelectedAlertForAck(null);
+        setSelectedAlertsForGroupAck(alerts);
         setAckDialogOpen(true);
     };
 
@@ -335,6 +344,29 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
         } finally {
             setAckDialogOpen(false);
             setSelectedAlertForAck(null);
+            setSelectedAlertsForGroupAck(null);
+        }
+    };
+
+    // Handle confirming group acknowledgment
+    const handleAckConfirmMultiple = async (alertIds, message, falsePositive = false) => {
+        if (!user || !alertIds?.length) {return;}
+
+        try {
+            for (const alertId of alertIds) {
+                await apiPost('/api/v1/alerts/acknowledge', {
+                    alert_id: alertId,
+                    message: message || '',
+                    false_positive: falsePositive,
+                });
+            }
+            fetchAlertsData();
+        } catch (err) {
+            console.error('Error acknowledging alerts:', err);
+        } finally {
+            setAckDialogOpen(false);
+            setSelectedAlertForAck(null);
+            setSelectedAlertsForGroupAck(null);
         }
     };
 
@@ -375,15 +407,13 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
         try {
             // Build query params based on selection type
             // Fetch active and acknowledged alerts, but exclude cleared ones
-            let url = '/api/v1/alerts?limit=50&exclude_cleared=true';
+            let url = '/api/v1/alerts?exclude_cleared=true';
             if (selection.type === 'server') {
-                // Use explicit check for ID - must be a number (including 0)
-                url += `&connection_id=${selection.id}`;
+                url += `&connection_id=${selection.id}&limit=50`;
             } else if (selection.type === 'cluster' && selection.serverIds?.length) {
-                // For cluster, filter by multiple connection IDs
-                url += `&connection_ids=${selection.serverIds.join(',')}`;
+                url += `&connection_ids=${selection.serverIds.join(',')}&limit=50`;
             }
-            // For estate, fetch all alerts (no connection filter)
+            // For estate, fetch all alerts (no connection filter, no limit)
 
             const data = await apiGet<{ alerts?: unknown[] }>(url);
             const transformedAlerts = transformAlerts(data.alerts || []);
@@ -531,7 +561,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                 {metrics && (selection.type === 'cluster' || selection.type === 'estate') && (
                     <Box sx={METRICS_GRID_SX}>
                         <MetricCard
-                            label="Online"
+                            label="OK"
                             value={metrics.servers.online}
                             icon={HealthyIcon}
                             color={statusColors.online}
@@ -585,6 +615,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                     onUnacknowledge={handleUnacknowledge}
                     onAnalyze={aiEnabled ? handleAnalyze : undefined}
                     onEditOverride={handleEditOverride}
+                    onAcknowledgeGroup={handleAcknowledgeGroup}
                 />
 
                 {/* Topology (cluster only) */}
@@ -617,11 +648,14 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
             <AcknowledgeDialog
                 open={ackDialogOpen}
                 alert={selectedAlertForAck}
+                alerts={selectedAlertsForGroupAck}
                 onClose={() => {
                     setAckDialogOpen(false);
                     setSelectedAlertForAck(null);
+                    setSelectedAlertsForGroupAck(null);
                 }}
                 onConfirm={handleAckConfirm}
+                onConfirmMultiple={handleAckConfirmMultiple}
             />
 
             {/* Alert Analysis Dialog */}

@@ -2982,9 +2982,33 @@ func (sm *SchemaManager) registerMigrations() {
 		},
 	})
 
-	// Migration #25: Create chat_memories table for conversation memory
+	// Migration #25: Replace cluster_override with membership_source
 	sm.migrations = append(sm.migrations, Migration{
 		Version:     25,
+		Description: "Replace cluster_override with membership_source column",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+			_, err := tx.Exec(ctx, `
+				ALTER TABLE connections ADD COLUMN IF NOT EXISTS
+					membership_source VARCHAR(20) NOT NULL DEFAULT 'auto';
+
+				UPDATE connections
+				SET membership_source = 'manual'
+				WHERE cluster_override = TRUE;
+
+				ALTER TABLE connections DROP COLUMN IF EXISTS
+					cluster_override;
+
+				COMMENT ON COLUMN connections.membership_source IS
+					'How the connection was assigned to its cluster: auto (by auto-detection) or manual (by a user)';
+			`)
+			return err
+		},
+	})
+
+	// Migration #26: Create chat_memories table for conversation memory
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     26,
 		Description: "Create chat_memories table for conversation memory",
 		Up: func(tx pgx.Tx) error {
 			ctx := context.Background()
@@ -3036,7 +3060,7 @@ func (sm *SchemaManager) registerMigrations() {
 					'Timestamp when the memory was last modified';
 			`)
 			if err != nil {
-				return fmt.Errorf("migration #25: %w", err)
+				return fmt.Errorf("migration #26: %w", err)
 			}
 
 			// Add the embedding vector column only when pgvector is present.
@@ -3047,7 +3071,7 @@ func (sm *SchemaManager) registerMigrations() {
 				)
 			`).Scan(&vectorAvailable)
 			if err != nil {
-				return fmt.Errorf("migration #25: failed to check vector extension availability: %w", err)
+				return fmt.Errorf("migration #26: failed to check vector extension availability: %w", err)
 			}
 
 			if vectorAvailable {

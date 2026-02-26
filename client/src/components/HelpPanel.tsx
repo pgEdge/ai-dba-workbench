@@ -543,6 +543,10 @@ const StatusPanelPage = ({ aiEnabled }: { aiEnabled: boolean }) => (
                         description="The analysis dialog shows real-time progress as the AI gathers data using monitoring tools such as querying metrics, fetching baselines, and reviewing alert history."
                     />
                     <FeatureItem
+                        title="Query Validation"
+                        description="The AI validates all generated SQL queries before presenting them. Invalid queries are automatically corrected, ensuring that suggested SQL is syntactically correct."
+                    />
+                    <FeatureItem
                         title="Runnable SQL"
                         description="SQL code blocks in analysis reports include a Run button to execute queries against the server. Results appear inline below the code block."
                     />
@@ -592,8 +596,8 @@ const StatusPanelPage = ({ aiEnabled }: { aiEnabled: boolean }) => (
         </Typography>
         <Box sx={styles.indentedBlock}>
             <FeatureItem
-                title="Online Count"
-                description="Number of servers currently online and healthy."
+                title="OK Count"
+                description="Number of servers with no active alerts."
             />
             <FeatureItem
                 title="Warning Count"

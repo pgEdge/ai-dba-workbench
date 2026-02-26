@@ -58,6 +58,7 @@ const TOOL_LABELS = [
     'Listing probes',
     'Examining probe details',
     'Checking blackouts',
+    'Validating query',
     'Searching knowledgebase',
 ];
 

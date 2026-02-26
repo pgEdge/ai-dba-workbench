@@ -7,23 +7,11 @@ AI DBA Workbench project.
 
 This knowledge base provides:
 
-- Complete documentation style guide
-- Templates for common document types
-- Examples of well-written documentation
-- Formatting rules and conventions
+- Templates for common document types.
+- Formatting rules and conventions stored in CLAUDE.md
+  and the documentation-writer agent prompt.
 
 ## Documents
-
-### [style-guide.md](style-guide.md)
-
-**AUTHORITATIVE** - Complete style guide derived from CLAUDE.md:
-
-- Writing style rules
-- Document structure requirements
-- List formatting
-- Code snippet formatting
-- Link and reference rules
-- README requirements
 
 ### [templates.md](templates.md)
 
@@ -33,14 +21,6 @@ Ready-to-use templates:
 - API documentation template
 - Feature documentation template
 - Changelog entry format
-
-### [examples.md](examples.md)
-
-Links to well-written documentation in the project:
-
-- Good README examples
-- Good API documentation
-- Good inline documentation
 
 ## Quick Reference
 
@@ -77,4 +57,4 @@ Update these documents when:
 - New templates needed
 - New patterns established
 
-Last Updated: 2026-01-09
+Last Updated: 2026-02-26

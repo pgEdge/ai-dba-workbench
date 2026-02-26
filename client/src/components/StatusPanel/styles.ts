@@ -436,15 +436,18 @@ export const getAlertTypeColor = (theme: Theme, alertType: string) => {
 };
 
 /**
- * Group alerts by their title for consolidated display
+ * Group alerts by their title and severity for consolidated display.
+ * The grouping key combines title and severity (e.g. "High CPU::critical")
+ * so alerts of different severities appear as separate groups.
  */
-export const groupAlertsByTitle = (alerts) => {
+export const groupAlertsByTitleAndSeverity = (alerts) => {
     return alerts.reduce((groups, alert) => {
         const title = getFriendlyTitle(alert.title);
-        if (!groups[title]) {
-            groups[title] = [];
+        const key = `${title}::${alert.severity || 'info'}`;
+        if (!groups[key]) {
+            groups[key] = [];
         }
-        groups[title].push(alert);
+        groups[key].push(alert);
         return groups;
     }, {});
 };

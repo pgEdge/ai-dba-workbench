@@ -46,6 +46,7 @@ import {
     getAlertTypeColor,
     INSTANCE_TIME_SX,
     INSTANCE_THRESHOLD_SX,
+    ALERT_ACK_TEXT_SX,
     GROUP_TITLE_SX,
     GROUP_INSTANCES_LIST_SX,
 } from './styles';
@@ -62,8 +63,8 @@ const GroupedAlertInstance = ({ alert, showServer, onAcknowledge, onUnacknowledg
 
     const containerSx = useMemo(() => ({
         display: 'flex',
-        alignItems: 'center',
-        gap: 1,
+        flexDirection: 'column',
+        gap: 0.25,
         px: 1,
         py: 0.5,
         borderRadius: 0.5,
@@ -132,100 +133,124 @@ const GroupedAlertInstance = ({ alert, showServer, onAcknowledge, onUnacknowledg
 
     const ackButtonSx = useMemo(() => ({
         p: 0.25,
-        color: isAcknowledged ? theme.palette.grey[500] : baseColor,
+        color: isAcknowledged ? theme.palette.grey[500] : theme.palette.success.main,
         '&:hover': {
-            bgcolor: alpha(baseColor, 0.1),
+            bgcolor: alpha(theme.palette.success.main, 0.1),
         },
-    }), [isAcknowledged, baseColor, theme.palette.grey]);
+    }), [isAcknowledged, theme.palette.grey, theme.palette.success]);
+
+    const falsePositiveChipSx = useMemo(() => ({
+        height: 14,
+        fontSize: '0.5rem',
+        fontWeight: 600,
+        bgcolor: alpha(theme.palette.error.main, 0.12),
+        color: theme.palette.error.main,
+        '& .MuiChip-label': CHIP_LABEL_SX,
+    }), [theme.palette.error]);
 
     return (
         <Box sx={containerSx}>
-            {/* Context chips */}
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
-                {showServer && alert.server && (
-                    <Chip label={alert.server} size="small" sx={serverChipSx} />
+            {/* Existing row with chips, time, buttons */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, width: '100%' }}>
+                {/* Context chips */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
+                    {showServer && alert.server && (
+                        <Chip label={alert.server} size="small" sx={serverChipSx} />
+                    )}
+                    {alert.databaseName && (
+                        <Chip label={alert.databaseName} size="small" sx={dbChipSx} />
+                    )}
+                    {alert.objectName && (
+                        <Chip
+                            icon={<TableIcon sx={{ fontSize: '0.875rem !important' }} />}
+                            label={alert.objectName}
+                            size="small"
+                            sx={objectChipSx}
+                        />
+                    )}
+                    <Chip label={alertTypeLabel} size="small" sx={alertTypeChipSx} />
+                    {thresholdInfo ? (
+                        <Typography sx={INSTANCE_THRESHOLD_SX}>
+                            {thresholdInfo}
+                        </Typography>
+                    ) : alert.description && (
+                        <Typography sx={INSTANCE_THRESHOLD_SX}>
+                            {alert.description}
+                        </Typography>
+                    )}
+                </Box>
+
+                {/* Time */}
+                <Typography sx={INSTANCE_TIME_SX}>
+                    {alert.time}
+                </Typography>
+
+                {/* Analyze button */}
+                {onAnalyze && (
+                    <Tooltip title={alert.aiAnalysis ? "View cached analysis" : "Analyze with AI"} placement="left">
+                        <IconButton
+                            size="small"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onAnalyze(alert);
+                            }}
+                            sx={analyzeButtonSx}
+                        >
+                            <AnalyzeIcon sx={{ ...ICON_14_SX, ...(alert.aiAnalysis && { color: 'success.main' }) }} />
+                        </IconButton>
+                    </Tooltip>
                 )}
-                {alert.databaseName && (
-                    <Chip label={alert.databaseName} size="small" sx={dbChipSx} />
+
+                {/* Edit override button */}
+                {alert.ruleId && (
+                    <Tooltip title="Edit alert override" placement="left">
+                        <IconButton
+                            size="small"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onEditOverride?.(alert);
+                            }}
+                            sx={overrideButtonSx}
+                        >
+                            <TuneRounded sx={ICON_14_SX} />
+                        </IconButton>
+                    </Tooltip>
                 )}
-                {alert.objectName && (
-                    <Chip
-                        icon={<TableIcon sx={{ fontSize: '0.875rem !important' }} />}
-                        label={alert.objectName}
+
+                {/* Ack/Unack button */}
+                <Tooltip title={isAcknowledged ? 'Restore to active' : 'Acknowledge'} placement="left">
+                    <IconButton
                         size="small"
-                        sx={objectChipSx}
-                    />
-                )}
-                <Chip label={alertTypeLabel} size="small" sx={alertTypeChipSx} />
-                {thresholdInfo ? (
-                    <Typography sx={INSTANCE_THRESHOLD_SX}>
-                        {thresholdInfo}
-                    </Typography>
-                ) : alert.description && (
-                    <Typography sx={INSTANCE_THRESHOLD_SX}>
-                        {alert.description}
-                    </Typography>
-                )}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            if (isAcknowledged) {
+                                onUnacknowledge?.(alert.id);
+                            } else {
+                                onAcknowledge?.(alert);
+                            }
+                        }}
+                        sx={ackButtonSx}
+                    >
+                        {isAcknowledged ? (
+                            <UnackIcon sx={ICON_14_SX} />
+                        ) : (
+                            <AckIcon sx={ICON_14_SX} />
+                        )}
+                    </IconButton>
+                </Tooltip>
             </Box>
 
-            {/* Time */}
-            <Typography sx={INSTANCE_TIME_SX}>
-                {alert.time}
-            </Typography>
-
-            {/* Analyze button */}
-            {onAnalyze && (
-                <Tooltip title={alert.aiAnalysis ? "View cached analysis" : "Analyze with AI"} placement="left">
-                    <IconButton
-                        size="small"
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            onAnalyze(alert);
-                        }}
-                        sx={analyzeButtonSx}
-                    >
-                        <AnalyzeIcon sx={{ ...ICON_14_SX, ...(alert.aiAnalysis && { color: 'success.main' }) }} />
-                    </IconButton>
-                </Tooltip>
-            )}
-
-            {/* Edit override button */}
-            {alert.ruleId && (
-                <Tooltip title="Edit alert override" placement="left">
-                    <IconButton
-                        size="small"
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            onEditOverride?.(alert);
-                        }}
-                        sx={overrideButtonSx}
-                    >
-                        <TuneRounded sx={ICON_14_SX} />
-                    </IconButton>
-                </Tooltip>
-            )}
-
-            {/* Ack/Unack button */}
-            <Tooltip title={isAcknowledged ? 'Restore to active' : 'Acknowledge'} placement="left">
-                <IconButton
-                    size="small"
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        if (isAcknowledged) {
-                            onUnacknowledge?.(alert.id);
-                        } else {
-                            onAcknowledge?.(alert);
-                        }
-                    }}
-                    sx={ackButtonSx}
-                >
-                    {isAcknowledged ? (
-                        <UnackIcon sx={ICON_14_SX} />
-                    ) : (
-                        <AckIcon sx={ICON_14_SX} />
+            {/* Ack info - only shown when acknowledged */}
+            {isAcknowledged && (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, ml: 1 }}>
+                    <Typography sx={ALERT_ACK_TEXT_SX}>
+                        Acked by {alert.acknowledgedBy}{alert.ackMessage ? `: ${alert.ackMessage}` : ''}
+                    </Typography>
+                    {alert.falsePositive && (
+                        <Chip label="False Positive" size="small" sx={falsePositiveChipSx} />
                     )}
-                </IconButton>
-            </Tooltip>
+                </Box>
+            )}
         </Box>
     );
 };
@@ -233,17 +258,13 @@ const GroupedAlertInstance = ({ alert, showServer, onAcknowledge, onUnacknowledg
 /**
  * GroupedAlertItem - Display a group of alerts with the same title in a single panel
  */
-const GroupedAlertItem = ({ title, alerts, showServer = false, onAcknowledge, onUnacknowledge, onAnalyze, onEditOverride }) => {
+const GroupedAlertItem = ({ title, alerts, showServer = false, onAcknowledge, onUnacknowledge, onAnalyze, onEditOverride, onAcknowledgeGroup }) => {
     const theme = useTheme();
     const severityColors = getSeverityColors(theme);
     const [expanded, setExpanded] = useState(true);
 
-    // Determine highest severity in the group
-    const highestSeverity = alerts.reduce((highest, alert) => {
-        if (alert.severity === 'critical') {return 'critical';}
-        if (alert.severity === 'warning' && highest !== 'critical') {return 'warning';}
-        return highest;
-    }, 'info');
+    // All alerts in the group share the same severity
+    const highestSeverity = alerts[0].severity || 'info';
 
     const baseColor = severityColors[highestSeverity] || severityColors.info;
     const SeverityIcon = highestSeverity === 'critical' ? ErrorIcon : WarningIcon;
@@ -286,6 +307,16 @@ const GroupedAlertItem = ({ title, alerts, showServer = false, onAcknowledge, on
         '& .MuiChip-label': CHIP_LABEL_SX,
     }), [baseColor]);
 
+    const hasUnacknowledged = alerts.some(a => !a.acknowledgedAt);
+
+    const groupAckButtonSx = useMemo(() => ({
+        p: 0.25,
+        color: theme.palette.success.main,
+        '&:hover': {
+            bgcolor: alpha(theme.palette.success.main, 0.1),
+        },
+    }), [theme.palette.success]);
+
     return (
         <Box sx={containerSx}>
             {/* Group header */}
@@ -300,6 +331,20 @@ const GroupedAlertItem = ({ title, alerts, showServer = false, onAcknowledge, on
                     sx={countChipSx}
                 />
                 <Chip label={highestSeverity} size="small" sx={severityChipSx} />
+                {hasUnacknowledged && onAcknowledgeGroup && (
+                    <Tooltip title="Acknowledge all in group" placement="left">
+                        <IconButton
+                            size="small"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onAcknowledgeGroup(alerts.filter(a => !a.acknowledgedAt));
+                            }}
+                            sx={groupAckButtonSx}
+                        >
+                            <AckIcon sx={ICON_14_SX} />
+                        </IconButton>
+                    </Tooltip>
+                )}
                 <IconButton size="small" sx={EXPAND_BUTTON_SX}>
                     {expanded ? (
                         <ExpandLessIcon sx={ICON_16_SX} />

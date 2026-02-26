@@ -72,6 +72,7 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
     mode = 'create',
     server = null,
     isSuperuser = false,
+    onOpenClusterConfig,
 }) => {
     const [formData, setFormData] = useState<ServerFormData>(getDefaultFormData());
     const [errors, setErrors] = useState<FormErrors>({});
@@ -83,7 +84,7 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
     const [clusterValue, setClusterValue] = useState<ClusterFieldsValue>({
         clusterId: null,
         role: null,
-        clusterOverride: false,
+        membershipSource: 'auto',
     });
 
     const isEditMode = mode === 'edit';
@@ -121,7 +122,7 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
             setClusterValue({
                 clusterId: null,
                 role: null,
-                clusterOverride: false,
+                membershipSource: 'auto',
             });
             setErrors({});
             setSubmitError(null);
@@ -197,7 +198,7 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
                         {
                             cluster_id: clusterId,
                             role: clusterValue.role,
-                            cluster_override: true,
+                            membership_source: 'manual',
                         },
                     );
                 }
@@ -357,6 +358,10 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
                         <ClusterFields
                             mode="edit"
                             serverId={server?.id as number}
+                            onOpenClusterConfig={(clusterId, clusterName) => {
+                                onClose();
+                                onOpenClusterConfig?.(clusterId, clusterName);
+                            }}
                         />
                     </Box>
                     {activeTab === 2 && (

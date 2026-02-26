@@ -32,21 +32,7 @@ Always delegate actual code modifications to the main agent based on your findin
 ## Knowledge Base
 
 **Before auditing, consult your knowledge base at `/.claude/security-auditor/`:**
-- `security-sensitive-areas.md` - High-risk code locations and patterns
-- `credential-handling.md` - How credentials are stored and managed
-- `attack-surface.md` - API endpoints and input validation requirements
 - `security-checklist.md` - Component-specific security checklists
-
-**Knowledge Base Maintenance**: When you discover stable patterns,
-conventions, or architectural details not already in your knowledge base,
-update the relevant file directly. Follow these rules:
-
-- Only record facts verified against actual code; never write speculative
-  or assumed information.
-- Keep entries concise; prefer bullet points over prose.
-- Do not record session-specific context (current task, temporary state).
-- Update or remove entries that have become stale or incorrect.
-- If no existing file fits, create a new file and list it above.
 
 ## Project Context
 

@@ -271,7 +271,7 @@ func TestNewSchemaManager(t *testing.T) {
 	// Verify migrations are registered in order
 	// All migrations have been squashed into a single migration at version 1
 	// that creates the complete schema with all tables, indexes, and seed data
-	expectedVersions := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25}
+	expectedVersions := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26}
 	if len(sm.migrations) != len(expectedVersions) {
 		t.Fatalf("Expected %d migrations, got %d", len(expectedVersions), len(sm.migrations))
 	}
@@ -616,7 +616,7 @@ func TestIndexesCreated(t *testing.T) {
 	cleanupTestSchema(t, pool)
 }
 
-func TestMigration23_ClusterOverrideAndReplicationType(t *testing.T) {
+func TestMigration23_MembershipSourceAndReplicationType(t *testing.T) {
 	ctx := context.Background()
 	pool, conn := getTestConnection(t)
 	if pool == nil {
@@ -632,39 +632,41 @@ func TestMigration23_ClusterOverrideAndReplicationType(t *testing.T) {
 		t.Fatalf("Failed to migrate: %v", err)
 	}
 
-	// Verify cluster_override column exists on connections with correct default
-	var clusterOverride bool
-	err := pool.QueryRow(ctx, `
-        SELECT cluster_override
-        FROM (
-            SELECT column_default, data_type
-            FROM information_schema.columns
-            WHERE table_name = 'connections'
-            AND column_name = 'cluster_override'
-        ) sub,
-        LATERAL (SELECT FALSE AS cluster_override) defaults
-    `).Scan(&clusterOverride)
-	if err != nil {
-		t.Fatalf("Failed to query cluster_override column: %v", err)
-	}
-
-	// Verify the column exists with correct type and default
+	// After all migrations, cluster_override should be replaced by
+	// membership_source (migration #25 drops cluster_override and adds
+	// membership_source). Verify membership_source exists with correct
+	// type and default.
 	var colType string
 	var colDefault string
-	err = pool.QueryRow(ctx, `
+	err := pool.QueryRow(ctx, `
         SELECT data_type, column_default
         FROM information_schema.columns
         WHERE table_name = 'connections'
-        AND column_name = 'cluster_override'
+        AND column_name = 'membership_source'
     `).Scan(&colType, &colDefault)
 	if err != nil {
-		t.Fatalf("cluster_override column not found on connections table: %v", err)
+		t.Fatalf("membership_source column not found on connections table: %v", err)
 	}
-	if colType != "boolean" {
-		t.Errorf("Expected cluster_override type 'boolean', got '%s'", colType)
+	if colType != "character varying" {
+		t.Errorf("Expected membership_source type 'character varying', got '%s'", colType)
 	}
-	if colDefault != "false" {
-		t.Errorf("Expected cluster_override default 'false', got '%s'", colDefault)
+	if colDefault != "'auto'::character varying" {
+		t.Errorf("Expected membership_source default \"'auto'::character varying\", got '%s'", colDefault)
+	}
+
+	// Verify cluster_override column no longer exists
+	var count int
+	err = pool.QueryRow(ctx, `
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_name = 'connections'
+        AND column_name = 'cluster_override'
+    `).Scan(&count)
+	if err != nil {
+		t.Fatalf("Failed to check for cluster_override column: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("Expected cluster_override column to be dropped, but it still exists")
 	}
 
 	// Verify replication_type column exists on clusters

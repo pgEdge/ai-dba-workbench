@@ -21,17 +21,19 @@ import (
 )
 
 // ExecuteExplainTool creates the execute_explain tool for query performance analysis
-func ExecuteExplainTool(dbClient *database.Client) Tool {
+func ExecuteExplainTool(dbClient *database.Client, resolver *ConnectionResolver) Tool {
 	return Tool{
 		Definition: mcp.Tool{
 			Name: "execute_explain",
 			Description: `Execute EXPLAIN ANALYZE on a query to diagnose performance.
 
 <database_context>
-This tool operates on the CURRENTLY SELECTED monitored database connection.
-If no database is selected, ask the user to select a database connection
-before proceeding. The user can select a connection using their client
-interface (CLI or web client).
+Specify connection_id to target a particular monitored database.
+Use list_connections to discover available connection IDs and
+their default databases. Optionally provide database_name to
+override the default database for the connection. If
+connection_id is omitted, the tool uses the currently selected
+connection.
 </database_context>
 
 <usecase>
@@ -75,10 +77,18 @@ READ ONLY transaction to prevent side effects. However, be cautious with:
 - Very long-running queries
 - Queries on production systems during peak load
 </safety>`,
-			CompactDescription: `Run EXPLAIN ANALYZE on SELECT queries to diagnose performance. Returns execution plan with timing and buffer statistics. Only works on SELECT queries; runs in a read-only transaction that is rolled back.`,
+			CompactDescription: `Run EXPLAIN ANALYZE on SELECT queries to diagnose performance. Specify connection_id to target a database; use list_connections to discover IDs. Returns execution plan with timing and buffer statistics.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{
+					"connection_id": map[string]interface{}{
+						"type":        "integer",
+						"description": "ID of the monitored database connection to use. Use list_connections to discover available IDs. If omitted, uses the currently selected connection.",
+					},
+					"database_name": map[string]interface{}{
+						"type":        "string",
+						"description": "Database name to connect to. If omitted, uses the connection's default database.",
+					},
 					"query": map[string]interface{}{
 						"type":        "string",
 						"description": "The SQL query to analyze (SELECT queries only)",
@@ -174,15 +184,19 @@ READ ONLY transaction to prevent side effects. However, be cautious with:
 
 			explainQuery := explainCmd.String()
 
-			// Get database connection
-			connStr := dbClient.GetDefaultConnection()
-			pool := dbClient.GetPoolFor(connStr)
-
 			// Extract context from args (injected by registry.Execute)
 			ctx, ok := args["__context"].(context.Context)
 			if !ok {
 				ctx = context.Background()
 			}
+
+			// Resolve connection (explicit connection_id or fallback)
+			resolved, errResp := resolver.Resolve(ctx, args, dbClient)
+			if errResp != nil {
+				return *errResp, nil
+			}
+			pool := resolved.Pool
+			connStr := resolved.ConnStr
 
 			// Execute EXPLAIN in a READ ONLY transaction with timeout
 			rot, errResp, cleanup := BeginReadOnlyTx(ctx, pool)

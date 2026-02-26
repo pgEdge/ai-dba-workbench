@@ -14,6 +14,7 @@ import {
     IconButton,
     Collapse,
     Chip,
+    Tooltip,
     alpha,
 } from '@mui/material';
 import {
@@ -22,6 +23,7 @@ import {
     Storage as ServerIcon,
     Settings as SettingsIcon,
     Delete as DeleteIcon,
+    PanTool as ManualIcon,
 } from '@mui/icons-material';
 import { useTheme, Theme } from '@mui/material/styles';
 import InlineEditText from '../InlineEditText';
@@ -317,7 +319,12 @@ const ServerItem = memo<ServerItemProps>(({
                         />
                     </Box>
                 ) : effectiveRole && ROLE_CONFIGS[effectiveRole] ? (
-                    <Box sx={trailingSx}>
+                    <Box sx={{ ...trailingSx, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                        {server.membership_source === 'manual' && (
+                            <Tooltip title="Manually assigned" arrow>
+                                <ManualIcon sx={{ fontSize: 12, color: 'text.disabled' }} />
+                            </Tooltip>
+                        )}
                         <RolePill role={effectiveRole} isDark={isDark} />
                     </Box>
                 ) : null}

@@ -318,6 +318,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
     const [deleteTarget, setDeleteTarget] = useState<{ type: string; item: { id: number | string; name?: string } } | null>(null);
     const [deleteLoading, setDeleteLoading] = useState(false);
     const [clusterConfigOpen, setClusterConfigOpen] = useState(false);
+    const [clusterConfigMode, setClusterConfigMode] = useState<'create' | 'edit'>('edit');
     const [configCluster, setConfigCluster] = useState<{
         id: string;
         numericId?: number;
@@ -435,6 +436,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
         createServer,
         updateServer,
         deleteServer,
+        deleteCluster,
         createGroup,
         deleteGroup,
         moveClusterToGroup,
@@ -487,6 +489,42 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
         setDeleteDialogOpen(true);
     };
 
+    // Handler for adding a cluster
+    const handleAddCluster = () => {
+        setAddMenuAnchor(null);
+        setConfigCluster({
+            id: '',
+            name: '',
+            description: '',
+        });
+        setClusterConfigMode('create');
+        setClusterConfigOpen(true);
+    };
+
+    // Handler for creating a cluster via ClusterConfigDialog
+    const handleCreateCluster = async (data: { name: string; description: string; replication_type: string }): Promise<{ id: number }> => {
+        const response = await apiFetch('/api/v1/clusters', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                name: data.name,
+                replication_type: data.replication_type,
+            }),
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || 'Failed to create cluster');
+        }
+
+        const result = await response.json();
+
+        // Refresh topology data
+        await fetchClusterData();
+
+        return { id: result.id };
+    };
+
     // Handler for adding a group
     const handleAddGroup = () => {
         setAddMenuAnchor(null);
@@ -513,6 +551,12 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
         setDeleteDialogOpen(true);
     };
 
+    // Handler for deleting an empty cluster
+    const handleDeleteCluster = (cluster: Cluster) => {
+        setDeleteTarget({ type: 'cluster', item: { id: cluster.id, name: cluster.name } });
+        setDeleteDialogOpen(true);
+    };
+
     // Handler for configuring a group (opens edit dialog on Alert Overrides tab)
     const handleConfigureGroup = (group: Record<string, unknown>) => {
         const groupId = group.id as string;
@@ -536,17 +580,21 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
             description: cluster.description,
             auto_cluster_key: cluster.auto_cluster_key,
         });
+        setClusterConfigMode('edit');
         setClusterConfigOpen(true);
     };
 
     // Handler for saving cluster details (name and description)
-    const handleClusterConfigSave = async (saveData: { name: string; description: string }) => {
+    const handleClusterConfigSave = async (saveData: { name: string; description: string; replication_type?: string }) => {
         if (!configCluster) {return;}
 
         const body: Record<string, unknown> = {
             name: saveData.name,
             description: saveData.description,
         };
+        if (saveData.replication_type) {
+            body.replication_type = saveData.replication_type;
+        }
         if (configCluster.auto_cluster_key) {
             body.auto_cluster_key = configCluster.auto_cluster_key;
         }
@@ -589,6 +637,8 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
         try {
             if (deleteTarget.type === 'server') {
                 await deleteServer(deleteTarget.item.id);
+            } else if (deleteTarget.type === 'cluster') {
+                await deleteCluster(deleteTarget.item.id as string);
             } else {
                 await deleteGroup(deleteTarget.item.id);
             }
@@ -931,6 +981,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
                             onDeleteGroup={handleDeleteGroup}
                             onConfigureGroup={handleConfigureGroup}
                             onConfigureCluster={handleConfigureCluster}
+                            onDeleteCluster={handleDeleteCluster}
                             getServerAlertCount={getServerAlertCount}
                             getServerBlackoutStatus={getServerBlackoutStatus}
                             getClusterBlackoutStatus={getClusterBlackoutStatus}
@@ -965,6 +1016,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
                 open={Boolean(addMenuAnchor)}
                 onClose={() => setAddMenuAnchor(null)}
                 onAddServer={handleAddServer}
+                onAddCluster={handleAddCluster}
                 onAddGroup={handleAddGroup}
             />
 
@@ -976,6 +1028,32 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
                 mode={serverDialogMode}
                 server={editingServer}
                 isSuperuser={user?.isSuperuser}
+                onOpenClusterConfig={(clusterId, clusterName) => {
+                    // Find the cluster data from the topology to get
+                    // description and auto_cluster_key
+                    let description: string | undefined;
+                    let autoClusterKey: string | undefined;
+                    for (const group of data) {
+                        const found = group.clusters?.find(
+                            (c) => c.id === `cluster-${clusterId}`,
+                        );
+                        if (found) {
+                            description = found.description;
+                            autoClusterKey = found.auto_cluster_key;
+                            break;
+                        }
+                    }
+
+                    setConfigCluster({
+                        id: `cluster-${clusterId}`,
+                        numericId: clusterId,
+                        name: clusterName,
+                        description,
+                        auto_cluster_key: autoClusterKey,
+                    });
+                    setClusterConfigMode('edit');
+                    setClusterConfigOpen(true);
+                }}
             />
 
             {/* Group Dialog */}
@@ -997,11 +1075,15 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
                         setClusterConfigOpen(false);
                         setConfigCluster(null);
                     }}
+                    mode={clusterConfigMode}
                     clusterId={configCluster.id}
                     numericClusterId={configCluster.numericId}
                     clusterName={configCluster.name}
                     clusterDescription={configCluster.description}
+                    autoClusterKey={configCluster.auto_cluster_key}
                     onSave={handleClusterConfigSave}
+                    onCreate={handleCreateCluster}
+                    onMembershipChange={fetchClusterData}
                 />
             )}
 
@@ -1013,10 +1095,12 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
                     setDeleteTarget(null);
                 }}
                 onConfirm={handleConfirmDelete}
-                title={deleteTarget?.type === 'server' ? 'Delete Server' : 'Delete Cluster Group'}
+                title={deleteTarget?.type === 'server' ? 'Delete Server' : deleteTarget?.type === 'cluster' ? 'Delete Cluster' : 'Delete Cluster Group'}
                 message={deleteTarget?.type === 'server'
                     ? 'Are you sure you want to delete this server? This action cannot be undone.'
-                    : 'Are you sure you want to delete this group? Servers in this group will be moved to Ungrouped.'}
+                    : deleteTarget?.type === 'cluster'
+                        ? 'Are you sure you want to delete this empty cluster? This action cannot be undone.'
+                        : 'Are you sure you want to delete this group? Servers in this group will be moved to Ungrouped.'}
                 itemName={deleteTarget?.item?.name}
                 loading={deleteLoading}
             />

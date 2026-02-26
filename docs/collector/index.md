@@ -41,11 +41,9 @@ the AI DBA Workbench system.
 - [Main Documentation](../index.md) returns to the main documentation index.
 - [Main README][readme] provides quick start and basic information.
 - [Example Configuration][example] shows a sample collector configuration file.
-- [Project Design Document][design] describes the overall system architecture.
 
 [readme]: https://github.com/pgEdge/ai-dba-workbench/blob/main/README.md
 [example]: https://github.com/pgEdge/ai-dba-workbench/blob/main/examples/ai-dba-collector.yaml
-[design]: https://github.com/pgEdge/ai-dba-workbench/blob/main/DESIGN.md
 
 ## Key Features
 
@@ -69,7 +67,6 @@ The Collector provides the following capabilities:
 - Check the documentation in this directory
 - Review the sample configuration file
 - Examine the test files for examples
-- Consult the main DESIGN.md for system-wide architecture
 
 ## Version
 

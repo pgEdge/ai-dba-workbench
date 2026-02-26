@@ -66,13 +66,16 @@ export interface GroupedAlertItemProps {
     onUnacknowledge?: (alertId: number | string) => void;
     onAnalyze?: (alert: TransformedAlert) => void;
     onEditOverride?: (alert: TransformedAlert) => void;
+    onAcknowledgeGroup?: (alerts: TransformedAlert[]) => void;
 }
 
 export interface AcknowledgeDialogProps {
     open: boolean;
     alert: TransformedAlert | null;
+    alerts?: TransformedAlert[];
     onClose: () => void;
     onConfirm: (alertId: number | string, message: string, falsePositive: boolean) => void;
+    onConfirmMultiple?: (alertIds: (number | string)[], message: string, falsePositive: boolean) => void;
 }
 
 export interface AlertsSectionProps {
@@ -83,6 +86,7 @@ export interface AlertsSectionProps {
     onUnacknowledge?: (alertId: number | string) => void;
     onAnalyze?: (alert: TransformedAlert) => void;
     onEditOverride?: (alert: TransformedAlert) => void;
+    onAcknowledgeGroup?: (alerts: TransformedAlert[]) => void;
 }
 
 export interface SelectionHeaderProps {

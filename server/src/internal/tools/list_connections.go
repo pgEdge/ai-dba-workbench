@@ -177,7 +177,9 @@ CRITICAL: Never silently analyze multiple connections. Always get explicit user 
 					conn.ID, conn.Name, conn.Host, conn.Port, conn.DatabaseName, conn.IsMonitored, conn.Status, conn.ConnectionError))
 			}
 
-			sb.WriteString("\nNote: Use the 'id' column value as the connection_id parameter in query_metrics.\n")
+			sb.WriteString("\nNote: Use the 'id' column value as the connection_id parameter in query_metrics and all monitored-database tools.\n")
+			sb.WriteString("Monitored-database tools (query_database, get_schema_info, execute_explain, similarity_search, count_rows, test_query) accept connection_id and an optional database_name parameter.\n")
+			sb.WriteString("The database_name column shows the default database for each connection; specify database_name to override it.\n")
 			sb.WriteString("Only monitored connections (is_monitored=true) will have metrics data available.\n")
 
 			return mcp.NewToolSuccess(sb.String())

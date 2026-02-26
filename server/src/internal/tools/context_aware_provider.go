@@ -39,6 +39,7 @@ type ContextAwareProvider struct {
 	datastore      *database.Datastore // Datastore for monitored connection info
 	rbacChecker    *auth.RBACChecker   // RBAC checker for privilege-based access control
 	memoryStore    *memory.Store       // Memory store for chat memory persistence
+	resolver       *ConnectionResolver // Resolver for explicit connection_id in tool args
 
 	// Cache of registries per client to avoid re-creating tools on every Execute()
 	mu               sync.RWMutex
@@ -146,24 +147,33 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 // registerDatabaseTools registers all database-dependent tools
 func (p *ContextAwareProvider) registerDatabaseTools(registry *Registry, client *database.Client) {
 	if p.cfg.Builtins.Tools.IsToolEnabled("query_database") {
-		registry.Register("query_database", QueryDatabaseTool(client))
+		registry.Register("query_database", QueryDatabaseTool(client, p.resolver))
 	}
 	if p.cfg.Builtins.Tools.IsToolEnabled("get_schema_info") {
-		registry.Register("get_schema_info", GetSchemaInfoTool(client))
+		registry.Register("get_schema_info", GetSchemaInfoTool(client, p.resolver))
 	}
 	if p.cfg.Builtins.Tools.IsToolEnabled("similarity_search") {
-		registry.Register("similarity_search", SimilaritySearchTool(client, p.cfg))
+		registry.Register("similarity_search", SimilaritySearchTool(client, p.resolver, p.cfg))
 	}
 	if p.cfg.Builtins.Tools.IsToolEnabled("execute_explain") {
-		registry.Register("execute_explain", ExecuteExplainTool(client))
+		registry.Register("execute_explain", ExecuteExplainTool(client, p.resolver))
 	}
 	if p.cfg.Builtins.Tools.IsToolEnabled("count_rows") {
-		registry.Register("count_rows", CountRowsTool(client))
+		registry.Register("count_rows", CountRowsTool(client, p.resolver))
+	}
+	if p.cfg.Builtins.Tools.IsToolEnabled("test_query") {
+		registry.Register("test_query", TestQueryTool(client, p.resolver))
 	}
 }
 
 // NewContextAwareProvider creates a new context-aware tool provider
 func NewContextAwareProvider(clientManager *database.ClientManager, resourceReg *resources.ContextAwareRegistry, fallbackClient *database.Client, cfg *config.Config, authStore *auth.AuthStore, rateLimiter *auth.RateLimiter, datastore *database.Datastore) *ContextAwareProvider {
+	rbacChecker := auth.NewRBACChecker(authStore)
+	var resolver *ConnectionResolver
+	if clientManager != nil && datastore != nil {
+		resolver = NewConnectionResolver(clientManager, datastore, rbacChecker)
+	}
+
 	provider := &ContextAwareProvider{
 		baseRegistry:     NewRegistry(),
 		clientManager:    clientManager,
@@ -173,7 +183,8 @@ func NewContextAwareProvider(clientManager *database.ClientManager, resourceReg 
 		authStore:        authStore,
 		rateLimiter:      rateLimiter,
 		datastore:        datastore,
-		rbacChecker:      auth.NewRBACChecker(authStore),
+		rbacChecker:      rbacChecker,
+		resolver:         resolver,
 		clientRegistries: make(map[*database.Client]*Registry),
 		hiddenRegistry:   NewRegistry(),
 	}
@@ -238,6 +249,13 @@ func (p *ContextAwareProvider) List() []mcp.Tool {
 	return p.baseRegistry.List()
 }
 
+// rbacExemptTools lists tools that bypass MCP tool RBAC filtering.
+// These tools are always visible and executable regardless of privilege
+// settings. Connection-level RBAC still applies within the tool handler.
+var rbacExemptTools = map[string]bool{
+	"test_query": true, // Query validation never returns data; gating it would prevent tokens from validating their own queries
+}
+
 // ListForContext returns tool definitions filtered by the user's RBAC privileges
 // This is the RBAC-aware version of List() that should be used in authenticated contexts
 func (p *ContextAwareProvider) ListForContext(ctx context.Context) []mcp.Tool {
@@ -251,7 +269,7 @@ func (p *ContextAwareProvider) ListForContext(ctx context.Context) []mcp.Tool {
 	// Filter tools based on user's privileges
 	var filtered []mcp.Tool
 	for _, tool := range allTools {
-		if p.rbacChecker.CanAccessMCPItem(ctx, tool.Name) {
+		if rbacExemptTools[tool.Name] || p.rbacChecker.CanAccessMCPItem(ctx, tool.Name) {
 			filtered = append(filtered, tool)
 		}
 	}
@@ -367,7 +385,8 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 
 	// RBAC check: verify user has access to this tool
 	// This check applies even for tools that are enabled in config
-	if !p.rbacChecker.CanAccessMCPItem(ctx, name) {
+	// RBAC-exempt tools bypass this check (connection RBAC still applies inside the handler)
+	if !rbacExemptTools[name] && !p.rbacChecker.CanAccessMCPItem(ctx, name) {
 		return logAndReturn(mcp.ToolResponse{
 			Content: []mcp.ContentItem{
 				{
@@ -425,29 +444,41 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 	// Get the appropriate database client for this request
 	dbClient, err := p.getClient(ctx)
 	if err != nil {
-		// Extract the root cause error for cleaner display
-		rootErr := err
-		for {
-			if unwrapped := errors.Unwrap(rootErr); unwrapped != nil {
-				rootErr = unwrapped
-			} else {
-				break
+		// When connection_id is present in args, the ConnectionResolver inside
+		// each tool handler resolves the connection independently - it does not
+		// need the per-session fallback client. Fall through to baseRegistry so
+		// the resolver gets a chance to run.
+		ca := parseConnectionArgs(args)
+		if !ca.HasConnID {
+			// Extract the root cause error for cleaner display
+			rootErr := err
+			for {
+				if unwrapped := errors.Unwrap(rootErr); unwrapped != nil {
+					rootErr = unwrapped
+				} else {
+					break
+				}
 			}
+
+			// Log the full error chain for debugging
+			fmt.Fprintf(os.Stderr, "ERROR: Failed to get database client for tool '%s': %v\n", name, err)
+
+			// Show the root cause to the client for actionable feedback
+			return logAndReturn(mcp.ToolResponse{
+				Content: []mcp.ContentItem{
+					{
+						Type: "text",
+						Text: fmt.Sprintf("Database connection error: %v", rootErr),
+					},
+				},
+				IsError: true,
+			}, nil) // Don't return error, just error response
 		}
 
-		// Log the full error chain for debugging
-		fmt.Fprintf(os.Stderr, "ERROR: Failed to get database client for tool '%s': %v\n", name, err)
-
-		// Show the root cause to the client for actionable feedback
-		return logAndReturn(mcp.ToolResponse{
-			Content: []mcp.ContentItem{
-				{
-					Type: "text",
-					Text: fmt.Sprintf("Database connection error: %v", rootErr),
-				},
-			},
-			IsError: true,
-		}, nil) // Don't return error, just error response
+		// connection_id is present - use baseRegistry which has database tools
+		// registered with nil fallback client; the resolver handles everything
+		response, err := p.baseRegistry.Execute(ctx, name, args)
+		return logAndReturn(response, err)
 	}
 
 	// Get the cached registry for this client (or create if first use)

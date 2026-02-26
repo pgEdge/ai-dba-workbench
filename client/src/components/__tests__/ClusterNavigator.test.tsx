@@ -31,6 +31,7 @@ vi.mock('../../contexts/ClusterContext', () => ({
         updateGroupName: vi.fn(),
         updateClusterName: vi.fn(),
         updateServerName: vi.fn(),
+        deleteCluster: vi.fn(),
     }),
 }));
 

@@ -10,6 +10,7 @@
 
 import React, { useState, useMemo } from 'react';
 import {
+    Alert,
     Box,
     Typography,
     Button,
@@ -36,13 +37,19 @@ import {
 /**
  * AcknowledgeDialog - Dialog for entering ack reason and false positive flag
  */
-const AcknowledgeDialog = ({ open, alert, onClose, onConfirm }) => {
+const AcknowledgeDialog = ({ open, alert, alerts, onClose, onConfirm, onConfirmMultiple }) => {
     const theme = useTheme();
     const [message, setMessage] = useState('');
     const [falsePositive, setFalsePositive] = useState(false);
 
+    const isGroupAck = alerts && alerts.length > 1;
+
     const handleConfirm = () => {
-        onConfirm(alert?.id, message, falsePositive);
+        if (isGroupAck && onConfirmMultiple) {
+            onConfirmMultiple(alerts.map(a => a.id), message, falsePositive);
+        } else {
+            onConfirm(alert?.id, message, falsePositive);
+        }
         setMessage('');
         setFalsePositive(false);
     };
@@ -93,12 +100,19 @@ const AcknowledgeDialog = ({ open, alert, onClose, onConfirm }) => {
             PaperProps={{ sx: dialogPaperSx }}
         >
             <DialogTitle sx={ACK_DIALOG_TITLE_SX}>
-                Acknowledge alert
+                {isGroupAck ? 'Acknowledge alerts' : 'Acknowledge alert'}
             </DialogTitle>
             <DialogContent>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                    {alert ? getFriendlyTitle(alert.title) : 'Alert'}
+                    {isGroupAck
+                        ? getFriendlyTitle(alerts[0].title)
+                        : (alert ? getFriendlyTitle(alert.title) : 'Alert')}
                 </Typography>
+                {isGroupAck && (
+                    <Alert severity="warning" sx={{ mb: 2 }}>
+                        This will acknowledge all {alerts.length} alerts in this group.
+                    </Alert>
+                )}
                 <TextField
                     autoFocus
                     label="Reason"
@@ -142,7 +156,7 @@ const AcknowledgeDialog = ({ open, alert, onClose, onConfirm }) => {
                     size="small"
                     startIcon={<AckIcon />}
                 >
-                    Acknowledge
+                    {isGroupAck ? 'Acknowledge all' : 'Acknowledge'}
                 </Button>
             </DialogActions>
         </Dialog>

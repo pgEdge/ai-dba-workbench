@@ -57,6 +57,7 @@ const TOOL_LABELS = [
     'Reviewing alert history',
     'Checking alert rules',
     'Checking blackouts',
+    'Validating query',
     'Searching knowledgebase',
 ];
 

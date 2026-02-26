@@ -86,7 +86,7 @@ ${SQL_CODE_BLOCK_RULES}${SQL_PLACEHOLDER_RULES}
 
 Keep responses concise and actionable. Do not offer to perform additional actions, run further queries, or investigate anything else. Do not ask follow-up questions or ask what the user would like to do next. Begin your response directly with the first section heading (## Performance Review). Do not include any introductory text, preamble, or conversational remarks before the report. Your analysis is displayed in a read-only report that the user cannot respond to.
 
-If a search_knowledgebase tool is available, use it to look up unfamiliar PostgreSQL features, extensions, or pgEdge-specific concepts before making recommendations. If a get_blackouts tool is available, check whether the server is in a maintenance window before raising concerns about anomalous metrics.`;
+If a search_knowledgebase tool is available, use it to look up unfamiliar PostgreSQL features, extensions, or pgEdge-specific concepts before making recommendations. If a get_blackouts tool is available, check whether the server is in a maintenance window before raising concerns about anomalous metrics. If a test_query tool is available, validate all SQL queries before including them in the report.`;
 
 const CLUSTER_ADDENDUM = `
 

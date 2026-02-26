@@ -145,11 +145,11 @@ const AlertItem = ({ alert, showServer = false, onAcknowledge, onUnacknowledge, 
 
     const ackButtonSx = useMemo(() => ({
         p: 0.5,
-        color: isAcknowledged ? theme.palette.grey[500] : baseColor,
+        color: isAcknowledged ? theme.palette.grey[500] : theme.palette.success.main,
         '&:hover': {
-            bgcolor: alpha(baseColor, 0.1),
+            bgcolor: alpha(theme.palette.success.main, 0.1),
         },
-    }), [isAcknowledged, baseColor, theme.palette.grey]);
+    }), [isAcknowledged, theme.palette.grey, theme.palette.success]);
 
     const serverChipSx = useMemo(() => ({
         height: 16,

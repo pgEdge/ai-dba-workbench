@@ -19,6 +19,7 @@ import {
 import {
     Storage as StorageIcon,
     Folder as FolderIcon,
+    Hub as HubIcon,
 } from '@mui/icons-material';
 
 interface AddMenuProps {
@@ -26,6 +27,7 @@ interface AddMenuProps {
     open: boolean;
     onClose: () => void;
     onAddServer?: () => void;
+    onAddCluster?: () => void;
     onAddGroup?: () => void;
 }
 
@@ -37,11 +39,19 @@ const AddMenu: React.FC<AddMenuProps> = ({
     open,
     onClose,
     onAddServer,
+    onAddCluster,
     onAddGroup,
 }) => {
     const handleAddServer = () => {
         if (onAddServer) {
             onAddServer();
+        }
+        onClose();
+    };
+
+    const handleAddCluster = () => {
+        if (onAddCluster) {
+            onAddCluster();
         }
         onClose();
     };
@@ -78,6 +88,12 @@ const AddMenu: React.FC<AddMenuProps> = ({
                     <StorageIcon fontSize="small" />
                 </ListItemIcon>
                 <ListItemText primary="Add Server" />
+            </MenuItem>
+            <MenuItem onClick={handleAddCluster}>
+                <ListItemIcon>
+                    <HubIcon fontSize="small" />
+                </ListItemIcon>
+                <ListItemText primary="Add Cluster" />
             </MenuItem>
             <Divider />
             <MenuItem onClick={handleAddGroup}>

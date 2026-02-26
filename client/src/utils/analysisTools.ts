@@ -127,6 +127,20 @@ export const TOOL_DESCRIBE_PROBE: AnalysisTool = {
     },
 };
 
+export const TOOL_TEST_QUERY: AnalysisTool = {
+    name: "test_query",
+    description: "Validate SQL query correctness without executing it. Uses EXPLAIN in a read-only transaction.",
+    inputSchema: {
+        type: "object",
+        properties: {
+            connection_id: { type: "integer", description: "Connection ID to validate against" },
+            query: { type: "string", description: "SQL query to validate" },
+            database_name: { type: "string", description: "Optional database name" },
+        },
+        required: ["connection_id", "query"],
+    },
+};
+
 export const TOOL_GET_BLACKOUTS: AnalysisTool = {
     name: "get_blackouts",
     description: "Get active and recent blackout (maintenance window) periods for a connection",
@@ -152,6 +166,7 @@ export const SERVER_ANALYSIS_TOOLS: AnalysisTool[] = [
     TOOL_LIST_PROBES,
     TOOL_DESCRIBE_PROBE,
     TOOL_GET_BLACKOUTS,
+    TOOL_TEST_QUERY,
 ];
 
 /** Tools used by the alert analysis hook. */
@@ -161,4 +176,5 @@ export const ALERT_ANALYSIS_TOOLS: AnalysisTool[] = [
     TOOL_GET_METRIC_BASELINES,
     TOOL_QUERY_METRICS,
     TOOL_GET_BLACKOUTS,
+    TOOL_TEST_QUERY,
 ];

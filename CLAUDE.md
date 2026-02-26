@@ -131,6 +131,11 @@ accurate after each task completes. KB files that
 become stale or inaccurate are worse than having no KB file at all;
 delete or correct any entry that no longer matches the code.
 
+## Plans
+
+Store all plans in the `.claude/plans/` directory. Use descriptive
+filenames that reflect the task or feature being planned.
+
 ## Task Workflow
 
 The primary agent follows this workflow for all tasks:

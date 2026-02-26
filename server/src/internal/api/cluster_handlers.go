@@ -57,6 +57,12 @@ type AssignServerRequest struct {
 	Role      *string `json:"role,omitempty"`
 }
 
+// AddServerToClusterRequest is the request body for adding a server to a cluster
+type AddServerToClusterRequest struct {
+	ConnectionID int     `json:"connection_id"`
+	Role         *string `json:"role,omitempty"`
+}
+
 // RegisterRoutes registers cluster management routes on the mux
 func (h *ClusterHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(http.HandlerFunc) http.HandlerFunc) {
 	if h.datastore == nil {
@@ -134,6 +140,22 @@ func (h *ClusterHandler) handleClusterSubpath(w http.ResponseWriter, r *http.Req
 			return
 		}
 		h.handleClusterServers(w, r, clusterID)
+		return
+	}
+
+	// DELETE /api/v1/clusters/{id}/servers/{connectionId}
+	if len(parts) == 3 && parts[1] == "servers" {
+		clusterID, err := strconv.Atoi(parts[0])
+		if err != nil {
+			RespondError(w, http.StatusBadRequest, "Invalid cluster ID")
+			return
+		}
+		connectionID, err := strconv.Atoi(parts[2])
+		if err != nil {
+			RespondError(w, http.StatusBadRequest, "Invalid connection ID")
+			return
+		}
+		h.handleRemoveServerFromCluster(w, r, clusterID, connectionID)
 		return
 	}
 
@@ -644,8 +666,10 @@ func (h *ClusterHandler) handleClusterServers(w http.ResponseWriter, r *http.Req
 	switch r.Method {
 	case http.MethodGet:
 		h.listServersInCluster(w, r, clusterID)
+	case http.MethodPost:
+		h.addServerToCluster(w, r, clusterID)
 	default:
-		w.Header().Set("Allow", "GET")
+		w.Header().Set("Allow", "GET, POST")
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
@@ -662,6 +686,68 @@ func (h *ClusterHandler) listServersInCluster(w http.ResponseWriter, r *http.Req
 	}
 
 	RespondJSON(w, http.StatusOK, servers)
+}
+
+// addServerToCluster handles POST /api/v1/clusters/{id}/servers
+func (h *ClusterHandler) addServerToCluster(w http.ResponseWriter, r *http.Request, clusterID int) {
+	var req AddServerToClusterRequest
+	if !DecodeJSONBody(w, r, &req) {
+		return
+	}
+
+	if req.ConnectionID <= 0 {
+		RespondError(w, http.StatusBadRequest, "A valid connection_id is required")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	err := h.datastore.AddServerToCluster(ctx, clusterID, req.ConnectionID, req.Role)
+	if err != nil {
+		if errors.Is(err, database.ErrClusterNotFound) {
+			RespondError(w, http.StatusNotFound, "Cluster not found")
+			return
+		}
+		if errors.Is(err, database.ErrConnectionNotFound) {
+			RespondError(w, http.StatusNotFound, "Connection not found")
+			return
+		}
+		log.Printf("[ERROR] Failed to add server %d to cluster %d: %v", req.ConnectionID, clusterID, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to add server to cluster")
+		return
+	}
+
+	RespondJSON(w, http.StatusOK, map[string]interface{}{
+		"cluster_id":    clusterID,
+		"connection_id": req.ConnectionID,
+		"role":          req.Role,
+	})
+}
+
+// handleRemoveServerFromCluster handles DELETE /api/v1/clusters/{id}/servers/{connectionId}
+func (h *ClusterHandler) handleRemoveServerFromCluster(w http.ResponseWriter, r *http.Request, clusterID int, connectionID int) {
+	if r.Method != http.MethodDelete {
+		w.Header().Set("Allow", "DELETE")
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	err := h.datastore.RemoveServerFromCluster(ctx, clusterID, connectionID)
+	if err != nil {
+		if errors.Is(err, database.ErrConnectionNotFound) {
+			RespondError(w, http.StatusNotFound, "Connection not found in this cluster")
+			return
+		}
+		log.Printf("[ERROR] Failed to remove server %d from cluster %d: %v", connectionID, clusterID, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to remove server from cluster")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ManualClusterRequest is the request body for creating a cluster directly

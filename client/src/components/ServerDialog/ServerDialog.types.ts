@@ -69,6 +69,7 @@ export interface ServerDialogProps {
     mode?: 'create' | 'edit';
     server?: ServerEditData | null;
     isSuperuser?: boolean;
+    onOpenClusterConfig?: (clusterId: number, clusterName: string) => void;
 }
 
 /**
@@ -119,7 +120,7 @@ export interface ClusterSummary {
 export interface ConnectionClusterInfo {
     cluster_id: number | null;
     role: string | null;
-    cluster_override: boolean;
+    membership_source: string;
     cluster_name: string | null;
     replication_type: string | null;
     auto_cluster_key: string | null;
@@ -139,7 +140,7 @@ export interface NewClusterFormData {
 export interface ClusterFieldsValue {
     clusterId: number | null;
     role: string | null;
-    clusterOverride: boolean;
+    membershipSource: string;
     newCluster?: NewClusterFormData;
 }
 
@@ -176,4 +177,20 @@ export interface ClusterServerInfo {
     status: string;
     role?: string;
     database_name?: string;
+}
+
+/**
+ * Extended server info for the Members tab that includes
+ * membership source and connection error details.
+ */
+export interface ClusterMemberInfo {
+    id: number;
+    name: string;
+    host: string;
+    port: number;
+    status: string;
+    role?: string;
+    database_name?: string;
+    membership_source?: string;
+    connection_error?: string;
 }

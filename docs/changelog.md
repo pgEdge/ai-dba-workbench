@@ -11,6 +11,18 @@ and this project adheres to
 
 ### Added
 
+- The `test_query` MCP tool validates SQL query correctness
+  without executing the query; the LLM uses this tool to
+  verify all generated SQL before presenting results.
+- Optional `connection_id` and `database_name` parameters
+  on all monitored-database tools (`query_database`,
+  `get_schema_info`, `similarity_search`, `execute_explain`,
+  `count_rows`, `test_query`); these parameters allow the
+  LLM to target a specific database without changing the
+  active connection.
+- Query validation in alert analysis and server analysis
+  reports; the LLM validates all SQL queries before
+  including them in generated reports.
 - Visual indicator on alert panels showing whether each
   alert was triggered by a threshold rule or by anomaly
   detection.

@@ -23,7 +23,7 @@ import (
 )
 
 // SimilaritySearchTool creates the similarity_search tool for hybrid semantic + lexical search
-func SimilaritySearchTool(dbClient *database.Client, cfg *config.Config) Tool {
+func SimilaritySearchTool(dbClient *database.Client, resolver *ConnectionResolver, cfg *config.Config) Tool {
 	return Tool{
 		Definition: mcp.Tool{
 			Name: "similarity_search",
@@ -32,10 +32,12 @@ func SimilaritySearchTool(dbClient *database.Client, cfg *config.Config) Tool {
 Semantic search for NATURAL LANGUAGE and CONCEPT-BASED queries.
 
 <database_context>
-This tool operates on the CURRENTLY SELECTED monitored database connection.
-If no database is selected, ask the user to select a database connection
-before proceeding. The user can select a connection using their client
-interface (CLI or web client).
+Specify connection_id to target a particular monitored database.
+Use list_connections to discover available connection IDs and
+their default databases. Optionally provide database_name to
+override the default database for the connection. If
+connection_id is omitted, the tool uses the currently selected
+connection.
 </database_context>
 
 <critical_usage_note>
@@ -126,10 +128,18 @@ To avoid rate limits (30,000 input tokens/minute):
 - Call get_schema_info(vector_tables_only=true) to find tables efficiently
 - If rate limited, switch to lighter queries or wait 60 seconds
 </rate_limit_awareness>`,
-			CompactDescription: `Semantic search on tables with vector columns. ALWAYS use this tool FIRST before answering questions about database content. Finds results by meaning rather than exact match. Requires table_name and query_text. Use get_schema_info(vector_tables_only=true) to find searchable tables.`,
+			CompactDescription: `Semantic search on tables with vector columns. Specify connection_id to target a database; use list_connections to discover IDs. ALWAYS use this tool FIRST before answering questions about database content. Requires table_name and query_text.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]interface{}{
+					"connection_id": map[string]interface{}{
+						"type":        "integer",
+						"description": "ID of the monitored database connection to use. Use list_connections to discover available IDs. If omitted, uses the currently selected connection.",
+					},
+					"database_name": map[string]interface{}{
+						"type":        "string",
+						"description": "Database name to connect to. If omitted, uses the connection's default database.",
+					},
 					"table_name": map[string]interface{}{
 						"type":        "string",
 						"description": "Name of the table to search (can include schema: 'schema.table')",
@@ -220,11 +230,18 @@ To avoid rate limits (30,000 input tokens/minute):
 				ctx = context.Background()
 			}
 
+			// Resolve connection (explicit connection_id or fallback)
+			resolved, resolveErrResp := resolver.Resolve(ctx, args, dbClient)
+			if resolveErrResp != nil {
+				return *resolveErrResp, nil
+			}
+			activeClient := resolved.Client
+			connStr := resolved.ConnStr
+
 			// Step 2: Get table metadata and discover columns
-			metadataMap := dbClient.GetMetadata()
+			metadataMap := activeClient.GetMetadata()
 			tableInfo, err := findTableInMetadataMap(metadataMap, tableName)
 			if err != nil {
-				connStr := dbClient.GetDefaultConnection()
 				sanitizedConn := database.SanitizeConnStr(connStr)
 
 				var errMsg strings.Builder
@@ -303,7 +320,7 @@ To avoid rate limits (30,000 input tokens/minute):
 			}
 
 			// Step 3: Sample data for smart column type detection
-			sampleData, err := sampleTableData(ctx, dbClient, tableName, textCols, 3)
+			sampleData, err := sampleTableData(ctx, activeClient, tableName, textCols, 3)
 			if err != nil {
 				// Non-fatal: proceed with default weights
 				sampleData = make(map[string]string)
@@ -338,7 +355,7 @@ To avoid rate limits (30,000 input tokens/minute):
 			// Step 5: Perform weighted vector search
 			results, err := performWeightedVectorSearch(
 				ctx,
-				dbClient,
+				activeClient,
 				tableName,
 				vectorCols,
 				textCols,
@@ -445,7 +462,6 @@ To avoid rate limits (30,000 input tokens/minute):
 			}
 
 			// Prepend database context
-			connStr := dbClient.GetDefaultConnection()
 			sanitizedConn := database.SanitizeConnStr(connStr)
 			result := fmt.Sprintf("Database: %s\nTable: %s\n\n%s", sanitizedConn, tableName, output)
 

@@ -26,6 +26,7 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
     read_resource: 'Reading resource',
     generate_embedding: 'Generating embedding',
     similarity_search: 'Searching similarities',
+    test_query: 'Validating query',
     count_rows: 'Counting rows',
 };
 

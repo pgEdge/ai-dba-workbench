@@ -60,6 +60,7 @@ const (
 	PermManageProbes               = "manage_probes"
 	PermManageAlertRules           = "manage_alert_rules"
 	PermManageNotificationChannels = "manage_notification_channels"
+	PermStoreSystemMemory          = "store_system_memory"
 )
 
 // AdminPermissionGrant represents a granted admin permission for a group

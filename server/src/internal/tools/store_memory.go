@@ -24,7 +24,7 @@ import (
 
 // StoreMemoryTool creates the store_memory tool for persisting memories
 // that Ellie can recall in future conversations.
-func StoreMemoryTool(memoryStore *memory.Store, cfg *config.Config) Tool {
+func StoreMemoryTool(memoryStore *memory.Store, cfg *config.Config, rbacChecker *auth.RBACChecker) Tool {
 	return Tool{
 		Definition: mcp.Tool{
 			Name: "store_memory",
@@ -103,6 +103,13 @@ func StoreMemoryTool(memoryStore *memory.Store, cfg *config.Config) Tool {
 			username := auth.GetUsernameFromContext(ctx)
 			if username == "" {
 				return mcp.NewToolError("Unable to determine the current user from the session context")
+			}
+
+			// Check RBAC permission for system-scoped memories
+			if scope == "system" {
+				if rbacChecker == nil || !rbacChecker.HasAdminPermission(ctx, auth.PermStoreSystemMemory) {
+					return mcp.NewToolError("Permission denied: you do not have permission to store system-scoped memories")
+				}
 			}
 
 			// Guard against nil memory store

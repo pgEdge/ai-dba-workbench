@@ -104,7 +104,7 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 			registry.Register("get_blackouts", GetBlackoutsTool(datastorePool))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("store_memory") && p.memoryStore != nil {
-			registry.Register("store_memory", StoreMemoryTool(p.memoryStore, p.cfg))
+			registry.Register("store_memory", StoreMemoryTool(p.memoryStore, p.cfg, p.rbacChecker))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("recall_memories") && p.memoryStore != nil {
 			registry.Register("recall_memories", RecallMemoriesTool(p.memoryStore, p.cfg))

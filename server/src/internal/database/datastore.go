@@ -3747,10 +3747,6 @@ func (d *Datastore) mapPrimaryRoleToDisplayRole(primaryRole string) string {
 		return "spock"
 	case "spock_standby":
 		return "spock_standby"
-	case "bdr_node":
-		return "bdr"
-	case "bdr_standby":
-		return "bdr_standby"
 	case "logical_publisher":
 		return "publisher"
 	case "logical_subscriber":

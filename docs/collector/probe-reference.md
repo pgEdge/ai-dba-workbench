@@ -262,14 +262,15 @@ max_replication_slots, installed_extensions
 
 Detects and tracks PostgreSQL node roles within various cluster topologies.
 This probe identifies how each node participates in replication configurations
-including binary replication, logical replication, Spock multi-master, and BDR.
+including binary replication, logical replication, and Spock
+multi-master replication.
 
 - Source: Multiple system views and extension catalogs
 - Default Interval: 300 seconds (5 minutes)
 - Default Retention: 30 days
 - Key Metrics: Primary role, role flags, replication status, standby info
 - Use Cases: Cluster topology monitoring, failover detection, replication
-    health tracking, Spock/BDR node status
+    health tracking, and the monitoring of Spock node status.
 
 **Primary Roles Detected**:
 
@@ -282,8 +283,6 @@ including binary replication, logical replication, Spock multi-master, and BDR.
 - `logical_bidirectional` - Both publisher and subscriber
 - `spock_node` - Active Spock multi-master node
 - `spock_standby` - Binary standby of Spock node
-- `bdr_node` - Active BDR data node (future)
-- `bdr_standby` - Binary standby of BDR node (future)
 
 **Role Flags**: Non-exclusive capability flags that indicate all replication
 capabilities (e.g., a node can be both `binary_primary` and `logical_publisher`
@@ -293,8 +292,7 @@ simultaneously).
 binary_standby_count, is_streaming_standby, upstream_host, upstream_port,
 received_lsn, replayed_lsn, publication_count, subscription_count,
 active_subscription_count, has_spock, spock_node_id, spock_node_name,
-spock_subscription_count, has_bdr, bdr_node_id, bdr_node_name, bdr_node_group,
-bdr_node_state, primary_role, role_flags, role_details
+spock_subscription_count, primary_role, role_flags, role_details
 
 **See Also**: [Node Role Probe Design](node-role-probe-design.md) for detailed
 architecture and detection algorithms.

@@ -446,6 +446,51 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 			return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
 		}
 
+	case "pg_stat_replication.standby_disconnected":
+		results, err = d.queryMetricValues(ctx, `
+			WITH recent_standby AS (
+				SELECT connection_id,
+				       receiver_status,
+				       collected_at,
+				       ROW_NUMBER() OVER (PARTITION BY connection_id ORDER BY collected_at DESC) as rn
+				FROM metrics.pg_stat_replication
+				WHERE collected_at > NOW() - INTERVAL '5 minutes'
+				  AND role = 'standby'
+			)
+			SELECT connection_id,
+			       CASE WHEN receiver_status IS NULL THEN 1 ELSE 0 END::float as value,
+			       collected_at
+			FROM recent_standby
+			WHERE rn = 1
+			  AND receiver_status IS NULL
+		`)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
+		}
+
+	case "pg_node_role.subscription_worker_down":
+		results, err = d.queryMetricValues(ctx, `
+			WITH recent_node_role AS (
+				SELECT connection_id,
+				       subscription_count,
+				       active_subscription_count,
+				       collected_at,
+				       ROW_NUMBER() OVER (PARTITION BY connection_id ORDER BY collected_at DESC) as rn
+				FROM metrics.pg_node_role
+				WHERE collected_at > NOW() - INTERVAL '5 minutes'
+				  AND subscription_count > 0
+			)
+			SELECT connection_id,
+			       1::float as value,
+			       collected_at
+			FROM recent_node_role
+			WHERE rn = 1
+			  AND active_subscription_count < subscription_count
+		`)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get %s values: %w", metricName, err)
+		}
+
 	case "pg_stat_activity.blocked_count":
 		results, err = d.queryMetricValues(ctx, `
 			SELECT connection_id,

@@ -2158,6 +2158,8 @@ func (sm *SchemaManager) registerMigrations() {
 					-- Replication alerts
 					('replication_lag_bytes', 'Replication lag in bytes exceeds threshold', 'replication', 'pg_stat_replication.lag_bytes', 'bytes', '>', 104857600, 'warning', TRUE, NULL, TRUE),
 					('replication_slot_inactive', 'Replication slot is inactive', 'replication', 'pg_replication_slots.inactive', NULL, '==', 1, 'critical', TRUE, NULL, TRUE),
+					('replication_standby_disconnected', 'Standby server is not receiving WAL from primary', 'replication', 'pg_stat_replication.standby_disconnected', NULL, '==', 1, 'critical', TRUE, NULL, TRUE),
+					('subscription_worker_down', 'Logical replication subscription worker is not running (includes Spock subscriptions)', 'replication', 'pg_node_role.subscription_worker_down', NULL, '==', 1, 'critical', TRUE, NULL, TRUE),
 
 					-- Storage alerts
 					('disk_usage_percent', 'Disk usage exceeds threshold', 'storage', 'pg_sys_disk_info.used_percent', 'percent', '>', 80, 'warning', TRUE, 'system_stats', TRUE),
@@ -3088,6 +3090,48 @@ func (sm *SchemaManager) registerMigrations() {
 				if err != nil {
 					logger.Infof("Failed to add chat_memories embedding column/index: %v", err)
 				}
+			}
+
+			return nil
+		},
+	})
+
+	// Migration #27: Add replication_standby_disconnected built-in alert rule
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     27,
+		Description: "Add replication_standby_disconnected built-in alert rule",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				INSERT INTO alert_rules (name, description, category, metric_name, metric_unit, default_operator, default_threshold, default_severity, default_enabled, required_extension, is_built_in)
+				VALUES
+					('replication_standby_disconnected', 'Standby server is not receiving WAL from primary', 'replication', 'pg_stat_replication.standby_disconnected', NULL, '==', 1, 'critical', TRUE, NULL, TRUE)
+				ON CONFLICT (name) DO NOTHING;
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to insert replication_standby_disconnected alert rule: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration #28: Add subscription_worker_down built-in alert rule
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     28,
+		Description: "Add subscription_worker_down built-in alert rule",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				INSERT INTO alert_rules (name, description, category, metric_name, metric_unit, default_operator, default_threshold, default_severity, default_enabled, required_extension, is_built_in)
+				VALUES
+					('subscription_worker_down', 'Logical replication subscription worker is not running (includes Spock subscriptions)', 'replication', 'pg_node_role.subscription_worker_down', NULL, '==', 1, 'critical', TRUE, NULL, TRUE)
+				ON CONFLICT (name) DO NOTHING;
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to insert subscription_worker_down alert rule: %w", err)
 			}
 
 			return nil

@@ -188,6 +188,50 @@ func (p *PgStatReplicationProbe) Execute(ctx context.Context, connectionName str
 	// Append receiver metrics to primary metrics
 	metrics = append(metrics, receiverMetrics...)
 
+	// If this is a standby with no WAL receiver, store a sentinel row so the
+	// alerter can detect the disconnected state.
+	if inRecovery && len(receiverMetrics) == 0 {
+		sentinel := map[string]interface{}{
+			"role":                  "standby",
+			"pid":                   0,
+			"usesysid":              nil,
+			"usename":               nil,
+			"application_name":      nil,
+			"client_addr":           nil,
+			"client_hostname":       nil,
+			"client_port":           nil,
+			"backend_start":         nil,
+			"backend_xmin":          nil,
+			"state":                 nil,
+			"sent_lsn":              nil,
+			"write_lsn":             nil,
+			"flush_lsn":             nil,
+			"replay_lsn":            nil,
+			"write_lag":             nil,
+			"flush_lag":             nil,
+			"replay_lag":            nil,
+			"sync_priority":         nil,
+			"sync_state":            nil,
+			"reply_time":            nil,
+			"receiver_pid":          nil,
+			"receiver_status":       nil,
+			"receive_start_lsn":     nil,
+			"receive_start_tli":     nil,
+			"written_lsn":           nil,
+			"receiver_flushed_lsn":  nil,
+			"received_tli":          nil,
+			"last_msg_send_time":    nil,
+			"last_msg_receipt_time": nil,
+			"latest_end_lsn":        nil,
+			"latest_end_time":       nil,
+			"receiver_slot_name":    nil,
+			"sender_host":           nil,
+			"sender_port":           nil,
+			"conninfo":              nil,
+		}
+		metrics = append(metrics, sentinel)
+	}
+
 	return metrics, nil
 }
 

@@ -246,6 +246,13 @@ and this project adheres to
 - CORS middleware with configurable `cors_origin` option
   for cross-origin deployments where the client and
   server run on different origins.
+- Critical alert for disconnected standby servers; the
+  alert fires when a standby is in recovery mode but has
+  no active WAL receiver process.
+- Critical alert for logical replication subscription
+  workers that are not running; the alert covers both
+  native PostgreSQL logical replication and Spock
+  subscriptions.
 
 ### Removed
 

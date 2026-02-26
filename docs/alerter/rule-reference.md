@@ -185,6 +185,42 @@ Large WAL retention by a replication slot can lead to disk
 exhaustion. Investigate the subscriber connection or consider
 dropping unused slots.
 
+### Standby Disconnected
+
+Alerts when a standby has no active WAL receiver process.
+
+| Property | Value |
+|----------|-------|
+| Metric | `pg_stat_replication.standby_disconnected` |
+| Operator | `==` |
+| Default Threshold | 1 |
+| Default Severity | critical |
+
+A disconnected standby is in recovery mode but not receiving
+WAL from the primary. The standby will fall further behind
+until the WAL receiver is restarted and replication resumes.
+Check the standby's PostgreSQL log for connection errors and
+verify the primary server is accessible.
+
+### Subscription Worker Down
+
+Alerts when a subscription's apply worker is not running.
+
+| Property | Value |
+|----------|-------|
+| Metric | `pg_node_role.subscription_worker_down` |
+| Operator | `==` |
+| Default Threshold | 1 |
+| Default Severity | critical |
+
+A subscription worker that is not running means logical
+replication has stopped for that subscription. This alert
+covers both native PostgreSQL logical replication and Spock
+subscriptions. Check the subscriber's PostgreSQL log for
+errors and verify the publisher is accessible. Use
+`ALTER SUBSCRIPTION ... ENABLE` to restart a disabled
+subscription.
+
 ## Storage Rules
 
 ### High Disk Usage

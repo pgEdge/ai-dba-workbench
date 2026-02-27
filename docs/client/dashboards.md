@@ -49,13 +49,6 @@ The cluster cards section shows a summary card for each
 cluster in the estate. Each card displays the cluster name,
 server count, and high-level health indicators.
 
-### Hot Spots
-
-The hot spots section highlights servers with concerning
-metric values. The section ranks servers by metrics such as
-CPU usage, memory pressure, or replication lag to draw
-attention to potential issues.
-
 ## Cluster Dashboard
 
 The cluster dashboard focuses on replication health and
@@ -218,6 +211,71 @@ The query detail view displays the following metrics:
 - Total and mean execution time.
 - Total rows returned and rows per call.
 - Call count with a time-series chart.
+
+### AI Query Overview
+
+The query detail view displays an AI Overview panel below
+the query text when an LLM provider is configured. The
+panel provides a brief plain-text summary of the query's
+performance characteristics in two to three sentences.
+
+The AI Overview panel includes the following behaviors:
+
+- The summary assesses whether the query appears healthy
+  or has potential performance issues.
+- A refresh button regenerates the summary on demand.
+- A relative timestamp shows when the summary was last
+  generated.
+- A brain icon button opens the full AI Query Analysis
+  dialog.
+- The system caches summaries for 30 minutes.
+- The panel is hidden when no LLM provider is configured.
+
+### AI Query Analysis
+
+Clicking the brain icon in the AI Overview panel opens a
+full-screen analysis dialog. The analysis uses an agentic
+LLM loop with tools to gather additional context before
+producing a structured report.
+
+The following tools are available to the LLM:
+
+- The query metrics tool retrieves historical metric
+  values with time-based aggregation.
+- The metric baselines tool provides statistical baselines
+  including mean, standard deviation, and extremes.
+- The database query tool executes diagnostic queries
+  against the relevant database.
+- The schema inspection tool retrieves table and index
+  definitions for referenced objects.
+- The query validation tool checks SQL syntax and
+  execution plans.
+- The knowledgebase search tool finds relevant entries
+  using similarity matching.
+
+The dialog displays real-time progress indicators showing
+which tools the LLM is currently using. The final report
+renders as formatted markdown.
+
+Each analysis report contains four sections:
+
+- The Summary section describes the query and its current
+  performance characteristics.
+- The Performance Analysis section examines execution
+  metrics, trends, and resource consumption.
+- The Optimization Opportunities section identifies
+  potential improvements to the query or schema.
+- The Recommendations section suggests specific actions
+  with supporting SQL examples.
+
+SQL code blocks in the report include a Run button that
+executes the query against the correct database server.
+Write statements display a confirmation dialog before
+the system executes the query.
+
+The system caches analysis results for 30 minutes. A
+Download button in the dialog footer saves the report as
+a markdown file.
 
 ## Time Range Selector
 

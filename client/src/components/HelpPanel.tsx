@@ -1469,6 +1469,38 @@ const MonitoringPage = ({ aiEnabled }: { aiEnabled: boolean }) => (
 
         {aiEnabled && (
             <>
+                <SectionTitle icon={AIIcon}>AI Query Analysis</SectionTitle>
+                <Typography sx={styles.bodyTextMb2}>
+                    The query detail view includes AI-powered analysis of
+                    individual query performance from pg_stat_statements.
+                </Typography>
+                <Box sx={styles.indentedBlock}>
+                    <FeatureItem
+                        title="AI Overview"
+                        description="The query detail view displays an AI Overview panel below the query text. The panel provides a brief summary of the query's performance characteristics and health status."
+                    />
+                    <FeatureItem
+                        title="Full Analysis"
+                        description="Click the brain icon in the AI Overview panel to open a full-screen analysis dialog. The analysis uses an agentic AI loop that gathers schema information, metric baselines, and query plans before generating its report."
+                    />
+                    <FeatureItem
+                        title="Available Tools"
+                        description="The AI uses tools to query metrics, fetch metric baselines, query the database, inspect schema, validate SQL queries, and search the knowledgebase during analysis."
+                    />
+                    <FeatureItem
+                        title="Cached Reports"
+                        description="Analysis results are cached for 30 minutes. The AI Overview panel shows when the summary was last generated and includes a refresh button to regenerate it."
+                    />
+                    <FeatureItem
+                        title="Code Block Actions"
+                        description="SQL code blocks in analysis reports include a Run button to execute queries against the monitored database. Write statements require confirmation before execution."
+                    />
+                </Box>
+            </>
+        )}
+
+        {aiEnabled && (
+            <>
                 <SectionTitle icon={AIIcon}>AI Chart Analysis</SectionTitle>
                 <Typography sx={styles.bodyTextMb2}>
                     Every chart and KPI tile displays a brain icon that triggers

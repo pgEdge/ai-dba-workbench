@@ -12,16 +12,29 @@ import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
+import IconButton from '@mui/material/IconButton';
+import Skeleton from '@mui/material/Skeleton';
+import { alpha, Paper, Collapse, Tooltip, useTheme } from '@mui/material';
+import {
+    AutoAwesome as SparkleIcon,
+    ExpandMore as ExpandMoreIcon,
+    ExpandLess as ExpandLessIcon,
+    Psychology as PsychologyIcon,
+    Refresh as RefreshIcon,
+} from '@mui/icons-material';
 import { useAuth } from '../../../contexts/AuthContext';
+import { useAICapabilities } from '../../../contexts/AICapabilitiesContext';
 import { apiFetch } from '../../../utils/apiClient';
 import { useDashboard } from '../../../contexts/DashboardContext';
 import { useMetrics } from '../../../hooks/useMetrics';
+import { useQueryOverview } from '../../../hooks/useQueryOverview';
 import { MetricQueryParams } from '../types';
 import { KPI_GRID_SX, CHART_SECTION_SX } from '../styles';
 import KpiTile from '../KpiTile';
 import CollapsibleSection from '../CollapsibleSection';
 import TimeRangeSelector from '../TimeRangeSelector';
 import { Chart } from '../../Chart';
+import { QueryAnalysisDialog } from '../../QueryAnalysisDialog';
 import {
     ObjectDetailProps,
     QueryDetailData,
@@ -67,6 +80,28 @@ const TOGGLE_SX = {
 };
 
 /**
+ * Format a Date as a human-readable relative time string.
+ */
+function formatRelativeTime(date: Date): string {
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffSecs = Math.floor(diffMs / 1000);
+    const diffMins = Math.floor(diffSecs / 60);
+    const diffHours = Math.floor(diffMins / 60);
+
+    if (diffSecs < 60) {
+        return 'Updated just now';
+    }
+    if (diffMins < 60) {
+        return `Updated ${diffMins} min ago`;
+    }
+    if (diffHours < 24) {
+        return `Updated ${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+    }
+    return `Updated ${date.toLocaleDateString()}`;
+}
+
+/**
  * Clean and format a query string for display.
  */
 const cleanQuery = (query: string): string => {
@@ -84,7 +119,10 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
     objectName,
 }) => {
     const { user } = useAuth();
-    const { timeRange, refreshTrigger } = useDashboard();
+    const { timeRange, refreshTrigger, currentOverlay } = useDashboard();
+    const { aiEnabled } = useAICapabilities();
+    const theme = useTheme();
+    const isDark = theme.palette.mode === 'dark';
 
     const [queryData, setQueryData] = useState<QueryDetailData | null>(
         null
@@ -92,8 +130,36 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
     const [expanded, setExpanded] = useState<boolean>(false);
+    const [analysisDialogOpen, setAnalysisDialogOpen] =
+        useState<boolean>(false);
+    const [insightsCollapsed, setInsightsCollapsed] =
+        useState<boolean>(false);
     const isMountedRef = useRef<boolean>(true);
     const initialLoadDoneRef = useRef<boolean>(false);
+
+    // AI query overview (brief plain-text summary)
+    const {
+        summary: overviewSummary,
+        loading: overviewLoading,
+        error: overviewError,
+        generatedAt: overviewGeneratedAt,
+        refresh: refreshOverview,
+    } = useQueryOverview(
+        aiEnabled && queryData ? {
+            queryText: queryData.query,
+            queryId: queryData.queryid,
+            calls: queryData.calls,
+            totalExecTime: queryData.total_exec_time,
+            meanExecTime: queryData.mean_exec_time,
+            rows: queryData.rows,
+            sharedBlksHit: queryData.shared_blks_hit,
+            sharedBlksRead: queryData.shared_blks_read,
+            connectionId,
+            databaseName,
+        } : null
+    );
+
+    const connectionName = currentOverlay?.connectionName;
 
     // objectName may be queryid or query text
     const fetchQueryData = useCallback(async (): Promise<void> => {
@@ -317,6 +383,233 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                     </Typography>
                 )}
             </Box>
+
+            {aiEnabled && queryData && !overviewError && (
+                <Paper
+                    elevation={0}
+                    sx={{
+                        p: 1.5,
+                        mb: 2,
+                        bgcolor: isDark
+                            ? alpha(theme.palette.background.paper, 0.4)
+                            : alpha(theme.palette.grey[50], 0.8),
+                        border: '1px solid',
+                        borderColor: 'divider',
+                    }}
+                >
+                    <Box sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 0.5,
+                        mb: insightsCollapsed ? 0 : 0.75,
+                    }}>
+                        <SparkleIcon sx={{
+                            fontSize: 16,
+                            color: 'primary.main',
+                        }} />
+                        <Typography sx={{
+                            fontSize: '1rem',
+                            fontWeight: 600,
+                            color: 'text.primary',
+                            lineHeight: 1,
+                        }}>
+                            AI Overview
+                        </Typography>
+                        <Tooltip title="Open full analysis">
+                            <IconButton
+                                size="small"
+                                onClick={() =>
+                                    setAnalysisDialogOpen(true)
+                                }
+                                aria-label="Open full analysis"
+                                sx={{
+                                    p: 0.25,
+                                    color: 'secondary.main',
+                                    '&:hover': {
+                                        bgcolor: alpha(
+                                            theme.palette.secondary.main,
+                                            0.1,
+                                        ),
+                                    },
+                                }}
+                            >
+                                <PsychologyIcon
+                                    sx={{ fontSize: 18 }}
+                                />
+                            </IconButton>
+                        </Tooltip>
+                        <Box sx={{ flexGrow: 1 }} />
+                        <IconButton
+                            size="small"
+                            onClick={() =>
+                                setInsightsCollapsed(
+                                    prev => !prev
+                                )
+                            }
+                            aria-label={
+                                insightsCollapsed
+                                    ? 'Expand AI Overview'
+                                    : 'Collapse AI Overview'
+                            }
+                            sx={{
+                                p: 0.25,
+                                color: 'text.secondary',
+                            }}
+                        >
+                            {insightsCollapsed
+                                ? <ExpandMoreIcon
+                                    sx={{ fontSize: 18 }}
+                                />
+                                : <ExpandLessIcon
+                                    sx={{ fontSize: 18 }}
+                                />
+                            }
+                        </IconButton>
+                    </Box>
+                    <Collapse in={!insightsCollapsed}>
+                        {overviewLoading && !overviewSummary && (
+                            <>
+                                <Skeleton
+                                    variant="text"
+                                    width="90%"
+                                    height={18}
+                                />
+                                <Skeleton
+                                    variant="text"
+                                    width="75%"
+                                    height={18}
+                                />
+                                <Skeleton
+                                    variant="text"
+                                    width="40%"
+                                    height={14}
+                                    sx={{ mt: 0.5 }}
+                                />
+                            </>
+                        )}
+
+                        {!overviewSummary
+                            && !overviewLoading && (
+                            <Typography
+                                variant="body2"
+                                sx={{
+                                    color: 'text.secondary',
+                                    fontStyle: 'italic',
+                                }}
+                            >
+                                Generating overview...
+                            </Typography>
+                        )}
+
+                        {overviewSummary && (
+                            <>
+                                <Typography
+                                    variant="body2"
+                                    sx={{
+                                        color: 'text.primary',
+                                        lineHeight: 1.5,
+                                        whiteSpace: 'pre-wrap',
+                                    }}
+                                >
+                                    {overviewSummary}
+                                </Typography>
+                                {overviewGeneratedAt && (
+                                    <Box sx={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: 0.5,
+                                        mt: 0.75,
+                                    }}>
+                                        <Tooltip title={
+                                            overviewLoading
+                                                ? 'Refreshing...'
+                                                : 'Refresh now'
+                                        }>
+                                            <IconButton
+                                                size="small"
+                                                onClick={
+                                                    refreshOverview
+                                                }
+                                                disabled={
+                                                    overviewLoading
+                                                }
+                                                aria-label="Refresh overview"
+                                                sx={{
+                                                    p: 0.25,
+                                                    color:
+                                                        'text.secondary',
+                                                    '&:hover': {
+                                                        bgcolor:
+                                                            'action.hover',
+                                                    },
+                                                }}
+                                            >
+                                                <RefreshIcon sx={{
+                                                    fontSize: 14,
+                                                    animation:
+                                                        overviewLoading
+                                                            ? 'spin 1s linear infinite'
+                                                            : 'none',
+                                                    '@keyframes spin':
+                                                        {
+                                                            '0%': {
+                                                                transform:
+                                                                    'rotate(0deg)',
+                                                            },
+                                                            '100%':
+                                                                {
+                                                                    transform:
+                                                                        'rotate(360deg)',
+                                                                },
+                                                        },
+                                                }} />
+                                            </IconButton>
+                                        </Tooltip>
+                                        <Typography
+                                            variant="caption"
+                                            sx={{
+                                                color:
+                                                    'text.secondary',
+                                            }}
+                                        >
+                                            {formatRelativeTime(
+                                                overviewGeneratedAt
+                                            )}
+                                        </Typography>
+                                    </Box>
+                                )}
+                            </>
+                        )}
+                    </Collapse>
+                </Paper>
+            )}
+
+            {aiEnabled && queryData && (
+                <QueryAnalysisDialog
+                    open={analysisDialogOpen}
+                    onClose={() =>
+                        setAnalysisDialogOpen(false)
+                    }
+                    isDark={isDark}
+                    queryText={queryData.query}
+                    queryId={queryData.queryid}
+                    stats={{
+                        calls: queryData.calls,
+                        totalExecTime:
+                            queryData.total_exec_time,
+                        meanExecTime:
+                            queryData.mean_exec_time,
+                        rows: queryData.rows,
+                        sharedBlksHit:
+                            queryData.shared_blks_hit,
+                        sharedBlksRead:
+                            queryData.shared_blks_read,
+                    }}
+                    connectionId={connectionId}
+                    connectionName={connectionName}
+                    databaseName={databaseName}
+                />
+            )}
 
             <CollapsibleSection
                 title="Query Statistics"

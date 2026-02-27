@@ -11,13 +11,16 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
@@ -1005,6 +1008,138 @@ func TestHasOnlyComments(t *testing.T) {
 			if got != tt.expected {
 				t.Errorf("hasOnlyComments(%q) = %v, want %v",
 					tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestSafeQueryError(t *testing.T) {
+	tests := []struct {
+		name     string
+		prefix   string
+		err      error
+		expected string
+	}{
+		{
+			"PgError with detail",
+			"Query error",
+			&pgconn.PgError{
+				Message: "relation does not exist",
+				Detail:  "table \"foo\" not found",
+			},
+			"Query error: relation does not exist (table \"foo\" not found)",
+		},
+		{
+			"PgError without detail",
+			"Query error",
+			&pgconn.PgError{
+				Message: "syntax error at or near SELECT",
+			},
+			"Query error: syntax error at or near SELECT",
+		},
+		{
+			"context.DeadlineExceeded",
+			"Query error",
+			context.DeadlineExceeded,
+			"Query error: query timed out",
+		},
+		{
+			"wrapped DeadlineExceeded",
+			"Query error",
+			fmt.Errorf("wrapped: %w", context.DeadlineExceeded),
+			"Query error: query timed out",
+		},
+		{
+			"context.Canceled",
+			"Query error",
+			context.Canceled,
+			"Query error: query was canceled",
+		},
+		{
+			"wrapped Canceled",
+			"Query error",
+			fmt.Errorf("wrapped: %w", context.Canceled),
+			"Query error: query was canceled",
+		},
+		{
+			"parameter placeholder error",
+			"Query error",
+			fmt.Errorf("expected 1 arguments, got 0"),
+			"Query error: query contains parameter placeholders ($1, $2, ...) " +
+				"that require values; these cannot be executed directly",
+		},
+		{
+			"connection error",
+			"Query error",
+			fmt.Errorf("dial tcp 127.0.0.1:5432: connection refused"),
+			"Query error: connection error; the database may be unreachable",
+		},
+		{
+			"generic unknown error",
+			"Query error",
+			fmt.Errorf("something unexpected happened"),
+			"Query error: an internal error occurred",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := safeQueryError(tt.prefix, tt.err)
+			if got != tt.expected {
+				t.Errorf("safeQueryError(%q, %v) = %q, want %q",
+					tt.prefix, tt.err, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestIsConnectionError(t *testing.T) {
+	tests := []struct {
+		name     string
+		msg      string
+		expected bool
+	}{
+		{"connection refused", "connection refused", true},
+		{"connection reset by peer", "connection reset by peer", true},
+		{"no such host", "no such host", true},
+		{"i/o timeout", "i/o timeout", true},
+		{"broken pipe", "broken pipe", true},
+		{"case insensitive", "Connection Refused", true},
+		{"random error", "some random error", false},
+		{"empty string", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isConnectionError(tt.msg)
+			if got != tt.expected {
+				t.Errorf("isConnectionError(%q) = %v, want %v",
+					tt.msg, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestIsParameterPlaceholderError(t *testing.T) {
+	tests := []struct {
+		name     string
+		msg      string
+		expected bool
+	}{
+		{"expected 1 arguments got 0", "expected 1 arguments, got 0", true},
+		{"expected 3 arguments got 0", "expected 3 arguments, got 0", true},
+		{"case insensitive", "EXPECTED 1 ARGUMENTS", true},
+		{"arguments got substring", "some error with arguments, got nothing", true},
+		{"random error", "some random error", false},
+		{"empty string", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isParameterPlaceholderError(tt.msg)
+			if got != tt.expected {
+				t.Errorf("isParameterPlaceholderError(%q) = %v, want %v",
+					tt.msg, got, tt.expected)
 			}
 		})
 	}

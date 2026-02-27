@@ -178,3 +178,12 @@ export const ALERT_ANALYSIS_TOOLS: AnalysisTool[] = [
     TOOL_GET_BLACKOUTS,
     TOOL_TEST_QUERY,
 ];
+
+/** Tools used by the query analysis hook. */
+export const QUERY_ANALYSIS_TOOLS: AnalysisTool[] = [
+    TOOL_QUERY_METRICS,
+    TOOL_GET_METRIC_BASELINES,
+    TOOL_QUERY_DATABASE,
+    TOOL_GET_SCHEMA_INFO,
+    TOOL_TEST_QUERY,
+];

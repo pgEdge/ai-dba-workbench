@@ -552,8 +552,9 @@ func isIdentChar(b byte) bool {
 }
 
 // safeQueryError extracts a user-facing error message from a query error.
-// For PostgreSQL errors it returns only the database message; for other
-// errors it returns a generic message to avoid leaking Go internals.
+// For PostgreSQL errors it returns only the database message; for known
+// safe error types it returns a descriptive message; for other errors it
+// returns a generic message to avoid leaking Go internals.
 func safeQueryError(prefix string, err error) string {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
@@ -562,8 +563,61 @@ func safeQueryError(prefix string, err error) string {
 		}
 		return fmt.Sprintf("%s: %s", prefix, pgErr.Message)
 	}
+
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Sprintf("%s: query timed out", prefix)
+	}
+
+	if errors.Is(err, context.Canceled) {
+		return fmt.Sprintf("%s: query was canceled", prefix)
+	}
+
+	msg := err.Error()
+	if isParameterPlaceholderError(msg) {
+		return fmt.Sprintf(
+			"%s: query contains parameter placeholders ($1, $2, ...) "+
+				"that require values; these cannot be executed directly",
+			prefix)
+	}
+
+	if isConnectionError(msg) {
+		return fmt.Sprintf("%s: connection error; the database may be unreachable", prefix)
+	}
+
 	log.Printf("Query error (non-PgError): %v", err)
 	return fmt.Sprintf("%s: an internal error occurred", prefix)
+}
+
+// isConnectionError checks whether an error message indicates a
+// network-level or connection-level failure that is safe to surface.
+func isConnectionError(msg string) bool {
+	lower := strings.ToLower(msg)
+	patterns := []string{
+		"connection refused",
+		"connection reset",
+		"connection timed out",
+		"no such host",
+		"i/o timeout",
+		"broken pipe",
+		"closed network connection",
+		"failed to connect",
+	}
+	for _, p := range patterns {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// isParameterPlaceholderError checks whether an error message indicates
+// a parameter count mismatch, which occurs when a query containing
+// placeholders ($1, $2, ...) is executed without supplying values.
+func isParameterPlaceholderError(msg string) bool {
+	lower := strings.ToLower(msg)
+	return (strings.Contains(lower, "expected") &&
+		strings.Contains(lower, "arguments")) ||
+		strings.Contains(lower, "arguments, got")
 }
 
 // hasLimitClause reports whether sql already contains a LIMIT clause as a

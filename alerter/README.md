@@ -118,7 +118,7 @@ The following environment variables override configuration file settings:
 | `AI_DBA_PG_SSLROOTCERT` | Path to CA certificate |
 
 For complete configuration documentation, see
-[docs/alerter/configuration.md](../docs/alerter/configuration.md).
+[docs/getting-started/configuration/alerter.md](../docs/getting-started/configuration/alerter.md).
 
 ## Running
 
@@ -167,14 +167,15 @@ approach provides the most sophisticated analysis for difficult cases.
 
 ## Documentation
 
-For detailed documentation, see [docs/alerter/index.md](../docs/alerter/index.md).
+For detailed documentation, see the
+[Developer's Guide](../docs/developer-guide/index.md).
 
 The documentation includes the following topics:
 
-- [Configuration Reference](../docs/alerter/configuration.md) covers all
-  configuration options, environment variables, and command-line flags.
-- [Cron Expressions](../docs/alerter/cron-expressions.md) explains the cron
-  syntax for scheduling blackout periods.
+- [Configuration](../docs/getting-started/configuration/alerter.md)
+  covers all configuration options and command-line flags.
+- [Cron Expressions](../docs/developer-guide/alerter/cron-expressions.md)
+  explains cron syntax for scheduling blackout periods.
 
 ## Testing and Linting
 
@@ -204,7 +205,7 @@ To report an issue with the software, visit:
 [GitHub Issues](https://github.com/pgEdge/ai-dba-workbench/issues)
 
 We welcome your project contributions; for more information, see
-[docs/developers.md](../docs/developers.md).
+[docs/developer-guide/contributing.md](../docs/developer-guide/contributing.md).
 
 For more information, visit [docs.pgedge.com](https://docs.pgedge.com)
 

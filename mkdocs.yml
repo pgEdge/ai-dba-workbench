@@ -22,6 +22,7 @@ plugins:
       j2_variable_end_string: ">>"
       j2_comment_start_string: "<#"
       j2_comment_end_string: "#>"
+  - redoc-tag
 
 theme:
   name: material
@@ -63,62 +64,73 @@ repo_url: https://github.com/pgEdge/ai-dba-workbench
 
 nav:
   - Home: index.md
-  - Collector:
-      - Overview: collector/index.md
-      - Getting Started:
-          - Quick Start: collector/quickstart.md
-          - Configuration: collector/configuration.md
-          - Configuration Reference: collector/config-reference.md
-      - Architecture:
-          - System Overview: collector/overview.md
-          - System Architecture: collector/architecture.md
-          - Scheduler: collector/scheduler.md
-      - Database:
-          - Schema Design: collector/schema.md
-          - Schema Management: collector/schema-management.md
-      - Probes:
-          - How Probes Work: collector/probes.md
-          - Probe Reference: collector/probe-reference.md
-          - pg_settings Usage: collector/pg-settings-usage.md
-      - Development:
-          - Development Guide: collector/development.md
-          - Testing: collector/testing.md
-          - Adding Probes: collector/adding-probes.md
-      - Design:
-          - Node Role Probe: collector/node-role-probe-design.md
-  - Alerter:
-      - Overview: alerter/index.md
-      - Getting Started:
-          - Quick Start: alerter/quickstart.md
-          - Configuration: alerter/configuration.md
-      - Architecture:
-          - System Overview: alerter/overview.md
-          - System Architecture: alerter/architecture.md
-      - Alert Rules:
-          - How Rules Work: alerter/alert-rules.md
-          - Rule Reference: alerter/rule-reference.md
-          - Adding Rules: alerter/adding-rules.md
-          - Cron Expressions: alerter/cron-expressions.md
-      - Anomaly Detection: alerter/anomaly-detection.md
-      - AI Alert Analysis: alerter/ai-analysis.md
-      - Development:
-          - Development Guide: alerter/development.md
-          - Testing: alerter/testing.md
-  - Server:
-      - Overview: server/index.md
-      - API Reference: server/api-reference.md
-      - Authentication: server/authentication.md
-      - Configuration: server/configuration.md
-      - Connections: server/connections.md
-      - Metrics: server/metrics.md
-      - Notification Channels: server/notification-channels.md
-      - Blackout Management: server/blackouts.md
-      - Server Information: server/server-info.md
-      - AI Overview: server/ai-overview.md
-      - Ask Ellie: server/ask-ellie.md
-  - Client:
-      - Overview: client/index.md
-      - Dashboards: client/dashboards.md
+
+  - Getting Started:
+    - Quick Start: getting-started/quick-start.md
+    - Installation: getting-started/installation.md
+    - Configuration:
+      - Server: getting-started/configuration/server.md
+      - Collector: getting-started/configuration/collector.md
+      - Alerter: getting-started/configuration/alerter.md
+      - Web Client: getting-started/configuration/client.md
+
+  - User Guide:
+    - Overview: user-guide/index.md
+    - Monitoring Dashboards:
+      - Dashboard Overview: user-guide/dashboards/index.md
+      - Estate Dashboard: user-guide/dashboards/estate.md
+      - Cluster Dashboard: user-guide/dashboards/cluster.md
+      - Server Dashboard: user-guide/dashboards/server.md
+      - Database Dashboard: user-guide/dashboards/database.md
+      - Object Dashboard: user-guide/dashboards/object.md
+    - Alerts:
+      - Understanding Alerts: user-guide/alerts/index.md
+      - Alert Reference: user-guide/alerts/rule-reference.md
+      - AI Alert Analysis: user-guide/alerts/ai-analysis.md
+    - Blackout Management: user-guide/blackouts.md
+    - AI Features:
+      - AI Overview: user-guide/ai/overview.md
+      - Ask Ellie: user-guide/ai/ask-ellie.md
+    - MCP Tools: user-guide/mcp-tools.md
+
+  - Administrator's Guide:
+    - Overview: admin-guide/index.md
+    - Users & Authentication: admin-guide/authentication.md
+    - Connection Management: admin-guide/connections.md
+    - Alert Rules & Thresholds: admin-guide/alert-rules.md
+    - Notification Channels: admin-guide/notification-channels.md
+    - Probe Configuration: admin-guide/probes.md
+    - REST API:
+      - API Reference: admin-guide/api/reference.md
+      - API Browser: admin-guide/api/browser.md
+      - Server Information: admin-guide/api/server-info.md
+      - Metrics API: admin-guide/api/metrics.md
+
+  - Developer's Guide:
+    - Overview: developer-guide/index.md
+    - Contributing: developer-guide/contributing.md
+    - Collector:
+      - Architecture: developer-guide/collector/architecture.md
+      - Schema Design: developer-guide/collector/schema.md
+      - Schema Management: developer-guide/collector/schema-management.md
+      - Scheduler: developer-guide/collector/scheduler.md
+      - Probes: developer-guide/collector/probes.md
+      - Adding Probes: developer-guide/collector/adding-probes.md
+      - Probe Reference: developer-guide/collector/probe-reference.md
+      - pg_settings Usage: developer-guide/collector/pg-settings-usage.md
+      - Testing: developer-guide/collector/testing.md
+    - Alerter:
+      - Architecture: developer-guide/alerter/architecture.md
+      - Anomaly Detection: developer-guide/alerter/anomaly-detection.md
+      - Adding Rules: developer-guide/alerter/adding-rules.md
+      - Cron Expressions: developer-guide/alerter/cron-expressions.md
+      - Testing: developer-guide/alerter/testing.md
+    - Server:
+      - Architecture: developer-guide/server/architecture.md
+    - Client:
+      - Architecture: developer-guide/client/architecture.md
+    - Design:
+      - Node Role Probe: developer-guide/design/node-role-probe.md
+
   - Changelog: changelog.md
-  - Developers: developers.md
   - License: LICENSE.md

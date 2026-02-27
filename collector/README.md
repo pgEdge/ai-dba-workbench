@@ -101,7 +101,7 @@ chmod 600 ./ai-dba-collector.secret
 ```
 
 For detailed configuration options, see
-[Configuration Guide](../docs/collector/configuration.md).
+[Configuration Guide](../docs/getting-started/configuration/collector.md).
 
 ### Command-Line Flags
 
@@ -140,7 +140,7 @@ Verbose mode displays detailed operational information including probe
 initialization, connection management, and data collection activities.
 
 For detailed usage instructions, see
-[Quick Start Guide](../docs/collector/quickstart.md).
+[Quick Start Guide](../docs/getting-started/quick-start.md).
 
 ## Testing
 
@@ -185,17 +185,19 @@ make help       # Show all available targets
 
 ## Documentation
 
-For complete documentation, see [docs/collector/](../docs/collector/).
+For complete documentation, see the
+[Developer's Guide](../docs/developer-guide/index.md).
 
 The documentation covers the following topics:
 
-- [Configuration Guide](../docs/collector/configuration.md) - Configuration
-  options and examples.
-- [Architecture](../docs/collector/architecture.md) - System design and
-  components.
-- [Probes](../docs/collector/probes.md) - Available probes and customization.
-- [Config Reference](../docs/collector/config-reference.md) - Complete
-  configuration reference.
+- [Configuration](../docs/getting-started/configuration/collector.md)
+  covers configuration options and examples.
+- [Architecture](../docs/developer-guide/collector/architecture.md)
+  covers system design and components.
+- [Probes](../docs/developer-guide/collector/probes.md) covers
+  available probes and customization.
+- [Probe Reference](../docs/developer-guide/collector/probe-reference.md)
+  covers all probe details.
 
 ---
 
@@ -203,7 +205,7 @@ To report an issue with the software, visit:
 [GitHub Issues](https://github.com/pgEdge/ai-dba-workbench/issues)
 
 We welcome your project contributions; for more information, see
-[docs/developers.md](../docs/developers.md).
+[docs/developer-guide/contributing.md](../docs/developer-guide/contributing.md).
 
 For more information, visit [docs.pgedge.com](https://docs.pgedge.com)
 

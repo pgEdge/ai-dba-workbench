@@ -46,12 +46,13 @@ directory:
 
 - The [Documentation Index](docs/index.md) serves as the
   main entry point for all project documentation.
-- The [Server Documentation](docs/server/index.md)
-  describes MCP server configuration and authentication.
-- The [Collector Documentation](docs/collector/index.md)
-  explains data collection and monitoring setup.
-- The [Alerter Documentation](docs/alerter/index.md)
-  covers alert generation and anomaly detection.
+- The [User Guide](docs/user-guide/index.md) covers
+  dashboards, alerts, and AI features.
+- The [Administrator's Guide](docs/admin-guide/index.md)
+  describes authentication, connections, and server
+  configuration.
+- The [Developer's Guide](docs/developer-guide/index.md)
+  explains architecture, testing, and contributing.
 
 ## Prerequisites
 
@@ -129,23 +130,23 @@ Each sub-project and the top-level Makefile support these targets:
 For information on getting started with each component,
 refer to the following guides:
 
-- [Collector Quick Start](docs/collector/quickstart.md)
-  covers monitoring setup.
-- [Server Configuration](docs/server/configuration.md)
+- [Quick Start](docs/getting-started/quick-start.md)
+  covers initial setup.
+- [Installation](docs/getting-started/installation.md)
+  covers detailed installation steps.
+- [Configuration](docs/getting-started/configuration/server.md)
   covers server configuration.
-- [Alerter Quick Start](docs/alerter/quickstart.md)
-  covers alert setup.
 
 ## Deployment
 
 For detailed installation, configuration, and usage
 instructions, see the following documentation:
 
-- [Collector Configuration](docs/collector/configuration.md)
-  covers all collector options.
-- [Server Configuration](docs/server/configuration.md)
+- [Server Configuration](docs/getting-started/configuration/server.md)
   covers all server options.
-- [Alerter Configuration](docs/alerter/configuration.md)
+- [Collector Configuration](docs/getting-started/configuration/collector.md)
+  covers all collector options.
+- [Alerter Configuration](docs/getting-started/configuration/alerter.md)
   covers all alerter options.
 
 ## Issues
@@ -156,7 +157,7 @@ To report an issue with the software, visit:
 ## Contributing
 
 We welcome your project contributions; for more information, see
-[docs/developers.md](docs/developers.md).
+[docs/developer-guide/contributing.md](docs/developer-guide/contributing.md).
 
 For more information, visit [docs.pgedge.com](https://docs.pgedge.com)
 

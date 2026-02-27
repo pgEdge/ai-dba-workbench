@@ -286,7 +286,7 @@ database:
 
 ## Documentation
 
-See the [Server Documentation](../docs/server/index.md) for detailed information.
+See the [Administrator's Guide](../docs/admin-guide/index.md) for detailed information.
 
 ---
 
@@ -294,7 +294,7 @@ To report an issue with the software, visit:
 [GitHub Issues](https://github.com/pgEdge/ai-dba-workbench/issues)
 
 We welcome your project contributions; for more information, see
-[docs/developers.md](../docs/developers.md).
+[docs/developer-guide/contributing.md](../docs/developer-guide/contributing.md).
 
 For more information, visit [docs.pgedge.com](https://docs.pgedge.com)
 

@@ -99,7 +99,7 @@ server running on port 8080. Configure the proxy in
 ## Documentation
 
 For detailed documentation, see the
-[Client Documentation](../docs/client/index.md).
+[Developer's Guide](../docs/developer-guide/index.md).
 
 ---
 
@@ -108,7 +108,7 @@ To report an issue with the software, visit:
 
 We welcome your project contributions; for more
 information, see
-[docs/developers.md](../docs/developers.md).
+[docs/developer-guide/contributing.md](../docs/developer-guide/contributing.md).
 
 For more information, visit
 [docs.pgedge.com](https://docs.pgedge.com)

@@ -65,7 +65,7 @@ jobs:
                   elapsed=0
                   while [ $elapsed -lt $timeout ]; do
                     if docker compose ps postgres | grep -q "healthy"; then
-                      echo "Postgres is healthy"
+                      echo "Postgres healthcheck passed"
                       break
                     fi
                     sleep 2
@@ -77,6 +77,22 @@ jobs:
                     docker compose logs postgres
                     exit 1
                   fi
+                  # Verify TCP connectivity from the host
+                  echo "Verifying TCP connectivity on port 5432..."
+                  elapsed=0
+                  while [ $elapsed -lt 30 ]; do
+                    if docker compose exec -T postgres pg_isready -U postgres -h 127.0.0.1 -p 5432; then
+                      echo "Postgres is accepting TCP connections"
+                      break
+                    fi
+                    sleep 2
+                    elapsed=$((elapsed + 2))
+                  done
+                  if [ $elapsed -ge 30 ]; then
+                    echo "ERROR: Postgres is not accepting TCP connections"
+                    docker compose logs postgres
+                    exit 1
+                  fi
               timeout-minutes: 2
 
             - name: Wait for all services to start
@@ -85,6 +101,25 @@ jobs:
                   sleep 15
                   echo "=== Service Status ==="
                   docker compose ps
+                  # Verify the server is responding, not stuck in a restart loop
+                  echo "Checking server is responsive..."
+                  timeout=30
+                  elapsed=0
+                  while [ $elapsed -lt $timeout ]; do
+                    if curl -sf http://localhost:8080/health > /dev/null 2>&1; then
+                      echo "Server is responsive"
+                      break
+                    fi
+                    sleep 3
+                    elapsed=$((elapsed + 3))
+                  done
+                  if [ $elapsed -ge $timeout ]; then
+                    echo "ERROR: Server is not responding"
+                    docker compose ps
+                    docker compose logs server
+                    docker compose logs postgres
+                    exit 1
+                  fi
 
             - name: Create admin user for testing
               run: |

@@ -50,6 +50,7 @@ import {
     getTableContainerSx,
 } from './styles';
 import { apiGet, apiPut } from '../../utils/apiClient';
+import { getFriendlyTitle } from '../../utils/friendlyNames';
 
 const OPERATORS = ['>', '>=', '<', '<=', '=', '!='];
 const SEVERITIES = ['info', 'warning', 'critical'];
@@ -145,7 +146,7 @@ const AdminAlertRules: React.FC = () => {
                 default_severity: editSeverity,
             });
             setEditOpen(false);
-            setSuccess(`Alert rule "${editRule.name}" updated successfully.`);
+            setSuccess(`Alert rule "${getFriendlyTitle(editRule.name)}" updated successfully.`);
             fetchRules();
         } catch (err: unknown) {
             if (err instanceof Error) {
@@ -228,7 +229,12 @@ const AdminAlertRules: React.FC = () => {
                                                 key={rule.id}
                                                 hover
                                             >
-                                                <TableCell>{rule.name}</TableCell>
+                                                <TableCell>
+                                                    {getFriendlyTitle(rule.name)}
+                                                    <Typography variant="caption" display="block" color="text.secondary">
+                                                        {rule.name}
+                                                    </Typography>
+                                                </TableCell>
                                                 <TableCell>{rule.metric_name}</TableCell>
                                                 <TableCell>
                                                     {rule.default_operator} {rule.default_threshold}
@@ -281,7 +287,7 @@ const AdminAlertRules: React.FC = () => {
                 fullWidth
             >
                 <DialogTitle sx={dialogTitleSx}>
-                    Edit alert rule: {editRule?.name}
+                    Edit alert rule: {editRule ? getFriendlyTitle(editRule.name) : ''}
                 </DialogTitle>
                 <DialogContent>
                     <Box sx={{ display: 'flex', alignItems: 'center', mt: 1, mb: 2 }}>

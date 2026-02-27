@@ -36,6 +36,7 @@ import {
 } from '@mui/icons-material';
 import { SELECT_FIELD_SX } from '../shared/formStyles';
 import { apiGet, apiPut } from '../../utils/apiClient';
+import { getFriendlyProbeName } from '../../utils/friendlyNames';
 import {
     tableHeaderCellSx,
     dialogTitleSx,
@@ -114,7 +115,7 @@ const AdminProbes: React.FC = () => {
                 retention_days: parseInt(editRetention, 10),
             });
             setEditOpen(false);
-            setSuccess(`Probe "${editProbe.name}" updated successfully.`);
+            setSuccess(`Probe "${getFriendlyProbeName(editProbe.name)}" updated successfully.`);
             fetchProbes();
         } catch (err: unknown) {
             if (err instanceof Error) {
@@ -178,7 +179,12 @@ const AdminProbes: React.FC = () => {
                                     key={probe.id}
                                     hover
                                 >
-                                    <TableCell>{probe.name}</TableCell>
+                                    <TableCell>
+                                        {getFriendlyProbeName(probe.name)}
+                                        <Typography variant="caption" display="block" color="text.secondary">
+                                            {probe.name}
+                                        </Typography>
+                                    </TableCell>
                                     <TableCell>{probe.description}</TableCell>
                                     <TableCell>
                                         <Switch
@@ -221,7 +227,7 @@ const AdminProbes: React.FC = () => {
                 fullWidth
             >
                 <DialogTitle sx={dialogTitleSx}>
-                    Edit probe: {editProbe?.name}
+                    Edit probe: {editProbe ? getFriendlyProbeName(editProbe.name) : ''}
                 </DialogTitle>
                 <DialogContent>
                     <Box sx={{ display: 'flex', alignItems: 'center', mt: 1, mb: 2 }}>

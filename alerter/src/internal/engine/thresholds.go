@@ -108,14 +108,24 @@ func (e *Engine) checkThreshold(value float64, operator string, threshold float6
 func (e *Engine) triggerThresholdAlert(ctx context.Context, rule *database.AlertRule, value, threshold float64, operator, severity string, connectionID int, dbName *string, objectName *string) {
 	e.log("Threshold violated: %s (%.2f %s %.2f) on connection %d", rule.Name, value, operator, threshold, connectionID)
 
-	// Check if there's already an active alert for this rule/connection
+	// Check if there's already an active or acknowledged alert for this rule/connection
 	existing, err := e.datastore.GetActiveThresholdAlert(ctx, rule.ID, connectionID, dbName)
 	if err == nil && existing != nil {
 		// Alert already exists - update metric_value, threshold, operator, severity, and last_updated timestamp
 		if err := e.datastore.UpdateAlertValues(ctx, existing.ID, value, threshold, operator, severity); err != nil {
 			e.log("ERROR: Failed to update alert values: %v", err)
 		} else {
-			e.debugLog("Updated metric value for active alert %s: %.2f -> %.2f", rule.Name, *existing.MetricValue, value)
+			e.debugLog("Updated metric value for existing alert %s: %.2f -> %.2f", rule.Name, *existing.MetricValue, value)
+		}
+
+		// If the alert was acknowledged but the severity has changed,
+		// reactivate it so the user sees the severity change.
+		if existing.Status == "acknowledged" && existing.Severity != severity {
+			if err := e.datastore.ReactivateAlert(ctx, existing.ID); err != nil {
+				e.log("ERROR: Failed to reactivate alert %d after severity change: %v", existing.ID, err)
+			} else {
+				e.debugLog("Reactivated acknowledged alert %d: severity changed from %s to %s", existing.ID, existing.Severity, severity)
+			}
 		}
 		return
 	}

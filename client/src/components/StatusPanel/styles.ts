@@ -14,81 +14,10 @@
 
 import { Theme } from '@mui/material/styles';
 import { alpha } from '@mui/material';
+import { getFriendlyTitle } from '../../utils/friendlyNames';
 
-// Map internal alert rule names to friendly display names
-export const FRIENDLY_ALERT_TITLES = {
-    // Connection alerts
-    'high_max_connections': 'High Max Connections',
-    'connection_utilization': 'Connection Utilization',
-    'connection_utilization_percent': 'Connection Utilization',
-    // Replication alerts
-    'replication_lag_bytes': 'Replication Lag',
-    'replication_slot_inactive': 'Replication Slot Inactive',
-    // Resource alerts
-    'disk_usage_percent': 'Disk Usage',
-    'disk_usage_critical': 'Critical Disk Usage',
-    'table_bloat_ratio': 'Table Bloat Ratio',
-    'cpu_usage_high': 'High CPU Usage',
-    'memory_usage_high': 'High Memory Usage',
-    'load_average_high': 'High Load Average',
-    // Query alerts
-    'long_running_queries': 'Long Running Queries',
-    'blocked_queries': 'Blocked Queries',
-    'long_running_transaction': 'Long Running Transaction',
-    'idle_in_transaction': 'Idle in Transaction',
-    // Transaction alerts
-    'transaction_wraparound': 'Transaction Wraparound',
-    'deadlocks_detected': 'Deadlocks Detected',
-    'lock_wait_time': 'Lock Wait Time',
-    // Maintenance alerts
-    'checkpoint_warning': 'Checkpoint Warning',
-    'wal_archive_failed': 'WAL Archive Failed',
-    'autovacuum_not_running': 'Autovacuum Not Running',
-    'dead_tuple_ratio': 'High Dead Tuple Ratio',
-    // Performance alerts
-    'slow_query_count': 'Slow Query Count',
-    'cache_hit_ratio_low': 'Low Cache Hit Ratio',
-    'temp_files_created': 'Temporary Files Created',
-    // Anomaly metric names
-    'pg_stat_activity.count': 'Active Backends',
-    'pg_stat_activity.idle_in_transaction_seconds': 'Idle in Transaction',
-    'pg_stat_activity.max_query_duration_seconds': 'Long Running Query',
-    'pg_stat_activity.max_xact_duration_seconds': 'Long Running Transaction',
-    'pg_stat_all_tables.dead_tuple_percent': 'Dead Tuple Ratio',
-    'pg_stat_database.cache_hit_ratio': 'Cache Hit Ratio',
-    'pg_stat_database.deadlocks_delta': 'Deadlocks',
-    'pg_stat_database.temp_files_delta': 'Temporary Files',
-    'pg_sys_memory_info.used_percent': 'Memory Usage',
-};
-
-// Get friendly title for an alert
-export const getFriendlyTitle = (title) => {
-    if (!title) {return 'Alert';}
-    // Connection error alerts: preserve hostname as-is
-    if (title.toLowerCase().startsWith('connection error:')) {
-        return 'Connection Error:' + title.substring('connection error:'.length);
-    }
-    // Check for exact match first (alert rule names are typically lowercase with underscores)
-    const normalizedTitle = title.toLowerCase().trim();
-    if (FRIENDLY_ALERT_TITLES[normalizedTitle]) {
-        return FRIENDLY_ALERT_TITLES[normalizedTitle];
-    }
-    // Check for partial matches (handle cases where title might have additional text)
-    for (const [key, value] of Object.entries(FRIENDLY_ALERT_TITLES)) {
-        if (normalizedTitle.includes(key) || normalizedTitle.startsWith(key)) {
-            return value;
-        }
-    }
-    // Metric names (contain dots like pg_stat_activity.count) — display as-is
-    if (normalizedTitle.includes('.')) {
-        return title.trim();
-    }
-    // Fallback: clean up the title by replacing underscores and capitalizing words
-    return title
-        .replace(/_/g, ' ')
-        .replace(/\b\w/g, (char) => char.toUpperCase())
-        .trim();
-};
+// Re-export so existing imports from this module continue to work
+export { getFriendlyTitle } from '../../utils/friendlyNames';
 
 // Format threshold info for display
 export const formatThresholdInfo = (alert) => {

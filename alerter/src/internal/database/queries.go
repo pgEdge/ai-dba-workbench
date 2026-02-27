@@ -1078,7 +1078,7 @@ func (d *Datastore) GetActiveThresholdAlert(ctx context.Context, ruleID int64, c
 		       severity, title, description, correlation_id, status, triggered_at,
 		       cleared_at, last_updated, anomaly_score, anomaly_details
 		FROM alerts
-		WHERE rule_id = $1 AND connection_id = $2 AND status = 'active'
+		WHERE rule_id = $1 AND connection_id = $2 AND status IN ('active', 'acknowledged')
 		  AND (database_name = $3 OR ($3 IS NULL AND database_name IS NULL))
 		LIMIT 1
 	`, ruleID, connectionID, dbName).Scan(
@@ -1294,6 +1294,18 @@ func (d *Datastore) ClearAlert(ctx context.Context, alertID int64) error {
 		UPDATE alerts
 		SET status = 'cleared', cleared_at = $1
 		WHERE id = $2
+	`, time.Now(), alertID)
+	return err
+}
+
+// ReactivateAlert sets an acknowledged alert back to active status.
+// This is used when the severity of a threshold alert changes while
+// the alert is acknowledged, so the user sees the severity change.
+func (d *Datastore) ReactivateAlert(ctx context.Context, alertID int64) error {
+	_, err := d.pool.Exec(ctx, `
+		UPDATE alerts
+		SET status = 'active', last_updated = $1
+		WHERE id = $2 AND status = 'acknowledged'
 	`, time.Now(), alertID)
 	return err
 }

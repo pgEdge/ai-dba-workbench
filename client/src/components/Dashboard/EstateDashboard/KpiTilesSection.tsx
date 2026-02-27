@@ -16,6 +16,7 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { apiFetch } from '../../../utils/apiClient';
 import { useClusterData } from '../../../contexts/ClusterDataContext';
 import KpiTile from '../KpiTile';
+import { formatNumber } from '../../../utils/formatters';
 import { KPI_GRID_SX } from '../styles';
 
 interface KpiTilesSectionProps {
@@ -191,21 +192,21 @@ const KpiTilesSection: React.FC<KpiTilesSectionProps> = ({ selection, serverIds 
         <Box sx={KPI_GRID_SX}>
             <KpiTile
                 label="Total Servers"
-                value={data.totalServers}
+                value={formatNumber(data.totalServers)}
                 status="good"
             />
             <KpiTile
                 label="Total Connections"
-                value={data.totalConnections}
+                value={formatNumber(data.totalConnections)}
             />
             <KpiTile
                 label="Transaction Rate"
-                value={data.transactionRate}
+                value={formatNumber(Math.round(data.transactionRate * 100) / 100)}
                 unit="tx/s"
             />
             <KpiTile
                 label="Active Alerts"
-                value={data.alertCount}
+                value={formatNumber(data.alertCount)}
                 status={data.alertCount > 0 ? 'warning' : 'good'}
             />
         </Box>

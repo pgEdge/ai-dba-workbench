@@ -10,6 +10,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { apiFetch } from '../utils/apiClient';
+import { formatTime } from '../utils/formatters';
 import { LLMResponse } from '../types/llm';
 import { useAnalysisState } from './useAnalysisState';
 
@@ -138,8 +139,8 @@ export function useQueryOverview(
                 const userMessage =
                     `Query: ${queryPreview}\n`
                     + `Calls: ${data.calls.toLocaleString()}`
-                    + ` | Mean Time: ${data.meanExecTime.toFixed(2)} ms`
-                    + ` | Total Time: ${data.totalExecTime.toFixed(2)} ms`
+                    + ` | Mean Time: ${formatTime(data.meanExecTime)}`
+                    + ` | Total Time: ${formatTime(data.totalExecTime)}`
                     + ` | Rows: ${data.rows.toLocaleString()}`
                     + ` | Buffer Hit Ratio: ${hitRatio}%`;
 

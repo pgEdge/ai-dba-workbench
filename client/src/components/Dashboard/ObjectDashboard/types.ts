@@ -13,6 +13,7 @@
  */
 
 import { MetricDataPoint, MetricSeries } from '../types';
+import { formatBytes, formatValue, formatNumber, formatTime } from '../../../utils/formatters';
 
 /** Props shared by all object detail components */
 export interface ObjectDetailProps {
@@ -139,52 +140,7 @@ export const buildChartData = (
     };
 };
 
-/**
- * Format byte values into a human-readable string.
- */
-export const formatBytes = (bytes: number | null): string => {
-    if (bytes === null) { return '--'; }
-    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    let size = bytes;
-    let unitIndex = 0;
-    while (size >= 1024 && unitIndex < units.length - 1) {
-        size /= 1024;
-        unitIndex++;
-    }
-    return `${size.toFixed(1)} ${units[unitIndex]}`;
-};
-
-/**
- * Format a numeric value for display.
- */
-export const formatValue = (
-    value: number | null,
-    decimals = 1,
-): string => {
-    if (value === null) { return '--'; }
-    return value.toFixed(decimals);
-};
-
-/**
- * Format large numbers with separators and abbreviations.
- */
-export const formatNumber = (num: number): string => {
-    if (num >= 1_000_000) {
-        return `${(num / 1_000_000).toFixed(1)}M`;
-    }
-    if (num >= 1_000) { return `${(num / 1_000).toFixed(1)}K`; }
-    return num.toLocaleString();
-};
-
-/**
- * Format a duration in milliseconds.
- */
-export const formatTime = (ms: number): string => {
-    if (ms < 1) { return `${(ms * 1000).toFixed(0)} us`; }
-    if (ms < 1000) { return `${ms.toFixed(1)} ms`; }
-    if (ms < 60000) { return `${(ms / 1000).toFixed(2)} s`; }
-    return `${(ms / 60000).toFixed(1)} min`;
-};
+export { formatBytes, formatValue, formatNumber, formatTime };
 
 /**
  * Format a timestamp for display.

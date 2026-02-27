@@ -15,6 +15,7 @@ import CircularProgress from '@mui/material/CircularProgress';
 import { useDashboard } from '../../../contexts/DashboardContext';
 import { useMetrics } from '../../../hooks/useMetrics';
 import { MetricQueryParams } from '../types';
+import { formatLag } from '../../../utils/formatters';
 import KpiTile from '../KpiTile';
 import { Chart } from '../../Chart';
 import { KPI_GRID_SX } from '../styles';
@@ -73,26 +74,6 @@ const findPrimaryServerId = (selection: Record<string, unknown>): number | null 
     };
 
     return findPrimary(servers);
-};
-
-/**
- * Format a lag value from seconds to a human-readable string.
- * The backend converts INTERVAL columns to seconds.
- */
-const formatLagValue = (seconds: number): string => {
-    if (seconds < 0.001) {
-        return '< 1 ms';
-    }
-    if (seconds < 1) {
-        return `${Math.round(seconds * 1000)} ms`;
-    }
-    if (seconds < 60) {
-        return `${seconds.toFixed(1)} s`;
-    }
-    if (seconds < 3600) {
-        return `${(seconds / 60).toFixed(1)} min`;
-    }
-    return `${(seconds / 3600).toFixed(1)} hr`;
 };
 
 /**
@@ -215,7 +196,7 @@ const ReplicationLagSection: React.FC<ReplicationLagSectionProps> = ({
                         <KpiTile
                             key={item.metric}
                             label={item.label}
-                            value={formatLagValue(item.value)}
+                            value={formatLag(item.value)}
                             status={status as 'good' | 'warning' | 'critical'}
                         />
                     );
@@ -240,12 +221,12 @@ const ReplicationLagSection: React.FC<ReplicationLagSectionProps> = ({
                             yAxis: {
                                 axisLabel: {
                                     formatter: (v: number) =>
-                                        formatLagValue(v),
+                                        formatLag(v),
                                 },
                             },
                             tooltip: {
                                 valueFormatter: (v: number) =>
-                                    formatLagValue(v),
+                                    formatLag(v),
                             },
                         }}
                     />

@@ -128,7 +128,7 @@ describe('PlanTree', () => {
             screen.getByText('Rows: 500'),
         ).toBeInTheDocument();
         expect(
-            screen.getByText('Width: 32'),
+            screen.getByText('Width: 32 bytes'),
         ).toBeInTheDocument();
         expect(
             screen.getByText(/Relation: orders/),

@@ -11,6 +11,7 @@
 import { useCallback } from 'react';
 import { useAICapabilities } from '../contexts/AICapabilitiesContext';
 import { apiGet } from '../utils/apiClient';
+import { formatTime } from '../utils/formatters';
 import { formatConnectionContext } from '../utils/connectionContext';
 import { getKnowledgebaseTool, AnalysisTool } from '../utils/mcpTools';
 import { QUERY_ANALYSIS_TOOLS } from '../utils/analysisTools';
@@ -200,8 +201,8 @@ ${input.queryText}
 
 Query Statistics (from pg_stat_statements):
 - Total Calls: ${input.calls.toLocaleString()}
-- Total Execution Time: ${input.totalExecTime.toFixed(2)} ms
-- Mean Execution Time: ${input.meanExecTime.toFixed(2)} ms
+- Total Execution Time: ${formatTime(input.totalExecTime)}
+- Mean Execution Time: ${formatTime(input.meanExecTime)}
 - Total Rows Returned: ${input.rows.toLocaleString()}
 - Shared Blocks Hit: ${input.sharedBlksHit.toLocaleString()}
 - Shared Blocks Read: ${input.sharedBlksRead.toLocaleString()}

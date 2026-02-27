@@ -15,6 +15,7 @@ import Popover from '@mui/material/Popover';
 import Typography from '@mui/material/Typography';
 import { alpha, useTheme } from '@mui/material/styles';
 import { PlanNode } from '../../../hooks/useQueryPlan';
+import { formatNumber } from '../../../utils/formatters';
 
 /** Monospace font stack for conditions and filters. */
 const MONO_FONT = '"JetBrains Mono", "SF Mono", monospace';
@@ -188,7 +189,7 @@ function getCostBorderColor(
  * Format a cost range as "startup..total".
  */
 function formatCostRange(startup: number, total: number): string {
-    return `${startup.toFixed(2)}..${total.toFixed(2)}`;
+    return `${startup.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}..${total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 /**
@@ -317,7 +318,7 @@ const PopoverContent: React.FC<PopoverContentProps> = ({ node }) => {
                 fontSize: '0.875rem',
                 color: 'text.secondary',
             }}>
-                Width: {node['Plan Width']}
+                Width: {formatNumber(node['Plan Width'])} bytes
             </Typography>
 
             {relationLabel && (

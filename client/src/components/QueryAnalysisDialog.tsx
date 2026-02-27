@@ -36,6 +36,7 @@ import {
     useQueryAnalysis,
     QueryAnalysisInput,
 } from '../hooks/useQueryAnalysis';
+import { formatTime } from '../utils/formatters';
 import {
     MarkdownContent,
     AnalysisSkeleton,
@@ -214,8 +215,8 @@ const QueryAnalysisDialog: React.FC<QueryAnalysisDialogProps> = ({
 
 - **Query ID:** ${queryId}
 ${connectionLine}${databaseLine}- **Total Calls:** ${stats.calls.toLocaleString()}
-- **Total Execution Time:** ${stats.totalExecTime.toFixed(2)} ms
-- **Mean Execution Time:** ${stats.meanExecTime.toFixed(2)} ms
+- **Total Execution Time:** ${formatTime(stats.totalExecTime)}
+- **Mean Execution Time:** ${formatTime(stats.meanExecTime)}
 
 ### Query Text
 

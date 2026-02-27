@@ -40,6 +40,7 @@ Tune as TuneIcon,
     Computer as ComputerIcon,
 } from '@mui/icons-material';
 import { apiGet } from '../utils/apiClient';
+import { formatPgSetting } from '../utils/formatters';
 
 const Transition = React.forwardRef(function Transition(
     props: TransitionProps & { children: React.ReactElement },
@@ -939,16 +940,7 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
                                                         ...sxMono,
                                                         textAlign: 'right',
                                                     }}>
-                                                        {s.setting || '—'}
-                                                        {s.unit && (
-                                                            <Typography component="span" sx={{
-                                                                fontSize: '0.875rem',
-                                                                color: 'text.disabled',
-                                                                ml: 0.5,
-                                                            }}>
-                                                                {s.unit}
-                                                            </Typography>
-                                                        )}
+                                                        {formatPgSetting(s.setting, s.unit)}
                                                     </Typography>
                                                 </Box>
                                             ))}

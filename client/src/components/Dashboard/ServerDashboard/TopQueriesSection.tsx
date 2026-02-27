@@ -20,6 +20,7 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { apiFetch } from '../../../utils/apiClient';
 import { useDashboard } from '../../../contexts/DashboardContext';
 import CollapsibleSection from '../CollapsibleSection';
+import { formatTime, formatNumber } from '../../../utils/formatters';
 import { ServerSectionProps, TopQueryRow } from './types';
 
 /** Maximum characters to display before truncating a query */
@@ -87,25 +88,6 @@ const NUMERIC_CELL_SX = {
     fontWeight: 500,
     textAlign: 'right' as const,
     color: 'text.primary',
-};
-
-/**
- * Format a duration in milliseconds.
- */
-const formatTime = (ms: number): string => {
-    if (ms < 1) { return `${(ms * 1000).toFixed(0)} us`; }
-    if (ms < 1000) { return `${ms.toFixed(1)} ms`; }
-    if (ms < 60000) { return `${(ms / 1000).toFixed(2)} s`; }
-    return `${(ms / 60000).toFixed(1)} min`;
-};
-
-/**
- * Format large numbers with separators.
- */
-const formatNumber = (num: number): string => {
-    if (num >= 1_000_000) { return `${(num / 1_000_000).toFixed(1)}M`; }
-    if (num >= 1_000) { return `${(num / 1_000).toFixed(1)}K`; }
-    return num.toLocaleString();
 };
 
 /**

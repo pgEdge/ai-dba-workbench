@@ -20,6 +20,7 @@ import KpiTile from '../KpiTile';
 import CollapsibleSection from '../CollapsibleSection';
 import { Chart } from '../../Chart';
 import ChartPanel from '../ChartPanel';
+import { formatBytes, formatLag, formatNumber } from '../../../utils/formatters';
 import { ServerSectionProps, extractSparklineData, extractLatestValue } from './types';
 
 /** Number of data buckets for KPI sparklines */
@@ -32,32 +33,6 @@ const CHART_BUCKETS = 150;
 const CHART_HEIGHT = 250;
 
 /**
- * Format byte values into a human-readable string.
- */
-const formatBytes = (bytes: number | null): string => {
-    if (bytes === null) { return '--'; }
-    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    let size = bytes;
-    let unitIndex = 0;
-    while (size >= 1024 && unitIndex < units.length - 1) {
-        size /= 1024;
-        unitIndex++;
-    }
-    return `${size.toFixed(1)} ${units[unitIndex]}`;
-};
-
-/**
- * Format a lag value (in seconds) into a human-readable string.
- */
-const formatLag = (lagSeconds: number | null): string => {
-    if (lagSeconds === null) { return '--'; }
-    if (lagSeconds < 1) { return `${(lagSeconds * 1000).toFixed(0)} ms`; }
-    if (lagSeconds < 60) { return `${lagSeconds.toFixed(1)} s`; }
-    if (lagSeconds < 3600) { return `${(lagSeconds / 60).toFixed(1)} min`; }
-    return `${(lagSeconds / 3600).toFixed(1)} h`;
-};
-
-/**
  * Determine replication lag status.
  */
 const getLagStatus = (
@@ -67,14 +42,6 @@ const getLagStatus = (
     if (lagSeconds > 30) { return 'critical'; }
     if (lagSeconds > 5) { return 'warning'; }
     return 'good';
-};
-
-/**
- * Format a numeric value for display.
- */
-const formatValue = (value: number | null, decimals = 0): string => {
-    if (value === null) { return '--'; }
-    return value.toFixed(decimals);
 };
 
 /**
@@ -294,7 +261,7 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
                 <KpiTile
                     label="WAL Records"
                     value={walRecords !== null
-                        ? formatValue(walRecords)
+                        ? formatNumber(Math.round(walRecords))
                         : '--'}
                     sparklineData={extractSparklineData(
                         walKpi.data, 'wal_records'
@@ -323,7 +290,7 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
                 <KpiTile
                     label="Checkpoints"
                     value={totalCheckpoints !== null
-                        ? formatValue(totalCheckpoints)
+                        ? formatNumber(Math.round(totalCheckpoints))
                         : '--'}
                     sparklineData={extractSparklineData(
                         checkpointKpi.data, 'num_timed'

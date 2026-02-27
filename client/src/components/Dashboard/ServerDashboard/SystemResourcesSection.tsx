@@ -20,6 +20,7 @@ import KpiTile from '../KpiTile';
 import CollapsibleSection from '../CollapsibleSection';
 import { Chart } from '../../Chart';
 import ChartPanel from '../ChartPanel';
+import { formatBytes, formatValue } from '../../../utils/formatters';
 import {
     ServerSectionProps, extractSparklineData, extractLatestValue, hasNonZeroData,
 } from './types';
@@ -43,29 +44,6 @@ const getPercentageStatus = (
     if (value >= 90) { return 'critical'; }
     if (value >= 75) { return 'warning'; }
     return 'good';
-};
-
-/**
- * Format a numeric value for display in a KPI tile.
- */
-const formatKpiValue = (value: number | null, decimals = 1): string => {
-    if (value === null) { return '--'; }
-    return value.toFixed(decimals);
-};
-
-/**
- * Format byte values into a human-readable string.
- */
-const formatBytes = (bytes: number | null): string => {
-    if (bytes === null) { return '--'; }
-    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    let size = bytes;
-    let unitIndex = 0;
-    while (size >= 1024 && unitIndex < units.length - 1) {
-        size /= 1024;
-        unitIndex++;
-    }
-    return `${size.toFixed(1)} ${units[unitIndex]}`;
 };
 
 /**
@@ -333,7 +311,7 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
             <Box sx={KPI_GRID_SX}>
                 <KpiTile
                     label="CPU Usage"
-                    value={formatKpiValue(cpuUsage)}
+                    value={formatValue(cpuUsage)}
                     unit="%"
                     status={getPercentageStatus(cpuUsage)}
                     sparklineData={extractSparklineData(
@@ -351,7 +329,7 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                     label="Memory Usage"
                     value={!hasSystemStats ? '--'
                         : memoryUsagePercent !== null
-                            ? formatKpiValue(memoryUsagePercent)
+                            ? formatValue(memoryUsagePercent)
                             : formatBytes(usedMemory)}
                     unit={!hasSystemStats ? undefined
                         : memoryUsagePercent !== null ? '%' : undefined}
@@ -371,7 +349,7 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                     label="Disk Usage"
                     value={!hasSystemStats ? '--'
                         : diskUsagePercent !== null
-                            ? formatKpiValue(diskUsagePercent)
+                            ? formatValue(diskUsagePercent)
                             : formatBytes(usedSpace)}
                     unit={!hasSystemStats ? undefined
                         : diskUsagePercent !== null ? '%' : undefined}
@@ -389,7 +367,7 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                 />
                 <KpiTile
                     label="Load Average"
-                    value={!hasSystemStats ? '--' : formatKpiValue(loadValue, 2)}
+                    value={!hasSystemStats ? '--' : formatValue(loadValue, 2)}
                     sparklineData={extractSparklineData(
                         loadKpi.data, 'load_avg_one_minute'
                     )}

@@ -20,6 +20,7 @@ import KpiTile from '../KpiTile';
 import CollapsibleSection from '../CollapsibleSection';
 import { Chart } from '../../Chart';
 import ChartPanel from '../ChartPanel';
+import { formatBytes, formatValue, formatNumber, formatCompactNumber } from '../../../utils/formatters';
 import { ServerSectionProps, extractSparklineData, extractLatestValue } from './types';
 
 /** Number of data buckets for KPI sparklines */
@@ -30,29 +31,6 @@ const CHART_BUCKETS = 150;
 
 /** Chart height in pixels */
 const CHART_HEIGHT = 250;
-
-/**
- * Format a numeric value for display.
- */
-const formatValue = (value: number | null, decimals = 1): string => {
-    if (value === null) { return '--'; }
-    return value.toFixed(decimals);
-};
-
-/**
- * Format byte values into a human-readable string.
- */
-const formatBytes = (bytes: number | null): string => {
-    if (bytes === null) { return '--'; }
-    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    let size = bytes;
-    let unitIndex = 0;
-    while (size >= 1024 && unitIndex < units.length - 1) {
-        size /= 1024;
-        unitIndex++;
-    }
-    return `${size.toFixed(1)} ${units[unitIndex]}`;
-};
 
 /**
  * Build chart data from metric series for the Chart component.
@@ -291,7 +269,7 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
                 <KpiTile
                     label="Backends"
                     value={numBackends !== null
-                        ? Math.round(numBackends).toString()
+                        ? formatNumber(Math.round(numBackends))
                         : '--'}
                     sparklineData={extractSparklineData(
                         connectionsKpi.data, 'numbackends'
@@ -306,7 +284,7 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
                 <KpiTile
                     label="Commits"
                     value={xactCommit !== null
-                        ? Math.round(xactCommit).toString()
+                        ? formatCompactNumber(Math.round(xactCommit))
                         : '--'}
                     sparklineData={extractSparklineData(
                         txnKpi.data, 'xact_commit'

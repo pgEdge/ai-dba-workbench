@@ -22,6 +22,7 @@ import CollapsibleSection from '../CollapsibleSection';
 import Sparkline from '../Sparkline';
 import { getDashboardTileSx } from '../styles';
 import { MetricDataPoint } from '../types';
+import { formatNumber } from '../../../utils/formatters';
 import {
     ServerSectionProps,
     DatabaseSummary,
@@ -291,7 +292,7 @@ const DatabaseSummariesSection: React.FC<ServerSectionProps> = ({
                                 </Typography>
                                 <Typography sx={STAT_VALUE_SX}>
                                     {db.transaction_rate !== undefined
-                                        ? `${db.transaction_rate.toFixed(1)}/s`
+                                        ? `${formatNumber(Math.round(db.transaction_rate * 10) / 10)}/s`
                                         : '--'}
                                 </Typography>
                             </Box>
@@ -320,7 +321,7 @@ const DatabaseSummariesSection: React.FC<ServerSectionProps> = ({
                                 </Typography>
                                 <Typography sx={STAT_VALUE_SX}>
                                     {db.active_connections !== undefined
-                                        ? db.active_connections.toString()
+                                        ? formatNumber(db.active_connections)
                                         : '--'}
                                 </Typography>
                             </Box>

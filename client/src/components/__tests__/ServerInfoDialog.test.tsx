@@ -433,7 +433,7 @@ describe('ServerInfoDialog', () => {
             fireEvent.click(screen.getByText('Configuration'));
 
             await waitFor(() => {
-                expect(screen.getByText('4096')).toBeInTheDocument();
+                expect(screen.getByText('4.0 GB')).toBeInTheDocument();
             });
             expect(screen.getByText('replica')).toBeInTheDocument();
         });

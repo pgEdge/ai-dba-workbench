@@ -1,0 +1,10 @@
+bin/
+node_modules/
+.git/
+*.md
+!README.md
+docker/secret/
+.claude/
+.env
+*.secret
+dist/

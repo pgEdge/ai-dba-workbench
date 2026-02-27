@@ -1,0 +1,166 @@
+name: CI - Docker
+
+on:
+    push:
+        branches: [ main, master ]
+        paths:
+            - 'collector/**'
+            - 'server/**'
+            - 'alerter/**'
+            - 'client/**'
+            - 'pkg/**'
+            - 'docker/**'
+            - 'docker-compose.yml'
+            - '**/Dockerfile'
+            - '.dockerignore'
+            - '.github/workflows/ci-docker.yml'
+    pull_request:
+        branches: [ main, master ]
+        paths:
+            - 'collector/**'
+            - 'server/**'
+            - 'alerter/**'
+            - 'client/**'
+            - 'pkg/**'
+            - 'docker/**'
+            - 'docker-compose.yml'
+            - '**/Dockerfile'
+            - '.dockerignore'
+            - '.github/workflows/ci-docker.yml'
+    workflow_dispatch:
+
+jobs:
+    docker-compose:
+        name: Docker Compose Build & Smoke Test
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@v3
+
+            - name: Create secret files
+              run: |
+                  mkdir -p docker/secret
+                  openssl rand -base64 32 > docker/secret/ai-dba.secret
+                  echo "postgres" > docker/secret/pg-password
+
+            - name: Build Docker images
+              run: docker compose build --parallel
+              timeout-minutes: 15
+
+            - name: Verify images were built
+              run: docker compose images
+
+            - name: Start services
+              run: docker compose up -d
+
+            - name: Wait for postgres to be healthy
+              run: |
+                  echo "Waiting for postgres..."
+                  timeout=60
+                  elapsed=0
+                  while [ $elapsed -lt $timeout ]; do
+                    if docker compose ps postgres | grep -q "healthy"; then
+                      echo "Postgres is healthy"
+                      break
+                    fi
+                    sleep 2
+                    elapsed=$((elapsed + 2))
+                  done
+                  if [ $elapsed -ge $timeout ]; then
+                    echo "ERROR: Postgres failed to become healthy"
+                    docker compose ps
+                    docker compose logs postgres
+                    exit 1
+                  fi
+              timeout-minutes: 2
+
+            - name: Wait for all services to start
+              run: |
+                  echo "Waiting for services to stabilize..."
+                  sleep 15
+                  echo "=== Service Status ==="
+                  docker compose ps
+
+            - name: Create admin user for testing
+              run: |
+                  echo "Creating test admin user..."
+                  docker compose exec -T server /usr/local/bin/ai-dba-server \
+                    --config /etc/pgedge/ai-dba-server.yaml \
+                    add-user --username admin --password testpass123
+                  echo "Admin user created"
+
+            - name: Test server health endpoint
+              run: |
+                  echo "Testing server health endpoint..."
+                  response=$(curl -sf http://localhost:8080/health)
+                  echo "Response: $response"
+                  if echo "$response" | grep -q '"status"'; then
+                    echo "Health endpoint responded correctly"
+                  else
+                    echo "Health endpoint response invalid"
+                    exit 1
+                  fi
+
+            - name: Test client UI is accessible
+              run: |
+                  echo "Testing client UI..."
+                  status=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/)
+                  echo "HTTP status: $status"
+                  if [ "$status" = "200" ]; then
+                    echo "Client UI is accessible"
+                  else
+                    echo "Client UI returned status: $status"
+                    docker compose logs client
+                    exit 1
+                  fi
+
+            - name: Test client API proxy
+              run: |
+                  echo "Testing API proxy through client..."
+                  response=$(curl -sf http://localhost:3000/health)
+                  echo "Response: $response"
+                  if echo "$response" | grep -q '"status"'; then
+                    echo "API proxy is working"
+                  else
+                    echo "API proxy failed"
+                    exit 1
+                  fi
+
+            - name: Check all services are still running
+              run: |
+                  echo "=== Final Service Status ==="
+                  docker compose ps
+                  # Check no services have exited
+                  if docker compose ps | grep -E "Exit|exited"; then
+                    echo "ERROR: Some services have exited"
+                    docker compose logs
+                    exit 1
+                  fi
+                  echo "All services are running"
+
+            - name: View service logs on failure
+              if: failure()
+              run: |
+                  echo "=== Postgres Logs ==="
+                  docker compose logs postgres
+                  echo ""
+                  echo "=== Server Logs ==="
+                  docker compose logs server
+                  echo ""
+                  echo "=== Collector Logs ==="
+                  docker compose logs collector
+                  echo ""
+                  echo "=== Alerter Logs ==="
+                  docker compose logs alerter
+                  echo ""
+                  echo "=== Client Logs ==="
+                  docker compose logs client
+
+            - name: Cleanup
+              if: always()
+              run: docker compose down -v

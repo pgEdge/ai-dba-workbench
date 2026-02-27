@@ -1,0 +1,84 @@
+# pgEdge AI DBA Workbench - Docker Compose
+#
+# Before starting, generate the shared secret and password files:
+#
+#   mkdir -p docker/secret
+#   openssl rand -base64 32 > docker/secret/ai-dba.secret
+#   echo "postgres" > docker/secret/pg-password
+#
+# Then start all services:
+#
+#   docker compose up -d
+#
+
+services:
+  postgres:
+    image: ghcr.io/pgedge/pgedge-postgres:18-spock5-standard
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ai_workbench
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+
+  collector:
+    build:
+      context: .
+      dockerfile: collector/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./docker/config/ai-dba-collector.yaml:/etc/pgedge/ai-dba-collector.yaml:ro
+      - ./docker/secret/ai-dba.secret:/etc/pgedge/ai-dba.secret:ro
+      - ./docker/secret/pg-password:/etc/pgedge/pg-password:ro
+    restart: unless-stopped
+
+  server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./docker/config/ai-dba-server.yaml:/etc/pgedge/ai-dba-server.yaml:ro
+      - ./docker/secret/ai-dba.secret:/etc/pgedge/ai-dba.secret:ro
+      - server-data:/data
+    ports:
+      - "${SERVER_PORT:-8080}:8080"
+    restart: unless-stopped
+
+  alerter:
+    build:
+      context: .
+      dockerfile: alerter/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./docker/config/ai-dba-alerter.yaml:/etc/pgedge/ai-dba-alerter.yaml:ro
+      - ./docker/secret/ai-dba.secret:/etc/pgedge/ai-dba.secret:ro
+      - ./docker/secret/pg-password:/etc/pgedge/pg-password:ro
+    restart: unless-stopped
+
+  client:
+    build:
+      context: .
+      dockerfile: client/Dockerfile
+    depends_on:
+      - server
+    ports:
+      - "${CLIENT_PORT:-3000}:80"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  server-data:

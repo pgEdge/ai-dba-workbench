@@ -39,7 +39,7 @@ import {
     Edit as EditIcon,
     RestartAlt as ResetIcon,
 } from '@mui/icons-material';
-import { SELECT_FIELD_DEFAULT_BG_SX } from './shared/formStyles';
+import { SELECT_FIELD_SX, SELECT_FIELD_DEFAULT_BG_SX } from './shared/formStyles';
 import {
     tableHeaderCellSx,
     dialogTitleSx,
@@ -416,11 +416,8 @@ const AlertOverridesPanel: React.FC<AlertOverridesPanelProps> = ({ scope, scopeI
                         value={editThreshold}
                         onChange={(e) => setEditThreshold(e.target.value)}
                         disabled={saving}
-                        sx={(sxTheme) => ({
-                            '& input[type=number]': {
-                                colorScheme: sxTheme.palette.mode === 'dark' ? 'dark' : 'light',
-                            },
-                        })}
+                        InputLabelProps={{ shrink: true }}
+                        sx={SELECT_FIELD_SX}
                     />
                     <TextField
                         select

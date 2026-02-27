@@ -301,6 +301,8 @@ const ClusterConfigDialog: React.FC<ClusterConfigDialogProps> = ({
                             required
                             disabled={isSaving || (isCreateMode && createdClusterId != null)}
                             margin="dense"
+                            InputLabelProps={{ shrink: true }}
+                            sx={SELECT_FIELD_DEFAULT_BG_SX}
                         />
                         <TextField
                             fullWidth
@@ -311,6 +313,8 @@ const ClusterConfigDialog: React.FC<ClusterConfigDialogProps> = ({
                             margin="dense"
                             multiline
                             minRows={3}
+                            InputLabelProps={{ shrink: true }}
+                            sx={SELECT_FIELD_DEFAULT_BG_SX}
                         />
                         <TextField
                             select

@@ -733,11 +733,6 @@ const AdminEmailChannels: React.FC = () => {
                             margin="dense"
                             inputProps={{ min: 1, max: 65535 }}
                             InputLabelProps={{ shrink: true }}
-                            sx={(sxTheme) => ({
-                                '& input[type=number]': {
-                                    colorScheme: sxTheme.palette.mode === 'dark' ? 'dark' : 'light',
-                                },
-                            })}
                         />
                         <TextField
                             fullWidth

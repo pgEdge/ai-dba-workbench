@@ -31,7 +31,7 @@ import {
     ClusterFieldsValue,
 } from './ServerDialog.types';
 import { sectionLabelSx } from './ServerDialog.styles';
-import { SELECT_FIELD_DEFAULT_BG_SX } from '../shared/formStyles';
+import { getSelectFieldSx } from '../shared/formStyles';
 
 /**
  * Sentinel option appended to the cluster autocomplete list.
@@ -170,6 +170,7 @@ const ClusterFields: React.FC<ClusterFieldsProps> = ({
     onOpenClusterConfig,
 }) => {
     const isEditMode = mode === 'edit';
+    const selectFieldSx = getSelectFieldSx(isEditMode ? 'background.default' : 'background.paper');
 
     // Cluster list for the autocomplete (create mode)
     const [clusters, setClusters] = useState<ClusterSummary[]>([]);
@@ -618,7 +619,7 @@ const ClusterFields: React.FC<ClusterFieldsProps> = ({
                             ...params.InputLabelProps,
                             shrink: true,
                         }}
-                        sx={SELECT_FIELD_DEFAULT_BG_SX}
+                        sx={selectFieldSx}
                     />
                 )}
                 disabled={saving}
@@ -633,7 +634,7 @@ const ClusterFields: React.FC<ClusterFieldsProps> = ({
                     value={getReplicationTypeLabel(effectiveReplicationType)}
                     margin="dense"
                     InputLabelProps={{ shrink: true }}
-                    sx={{ ...SELECT_FIELD_DEFAULT_BG_SX, mt: 1 }}
+                    sx={{ ...selectFieldSx, mt: 1 }}
                     slotProps={{
                         input: {
                             readOnly: true,
@@ -659,7 +660,7 @@ const ClusterFields: React.FC<ClusterFieldsProps> = ({
                         disabled={saving}
                         margin="dense"
                         InputLabelProps={{ shrink: true }}
-                        sx={SELECT_FIELD_DEFAULT_BG_SX}
+                        sx={selectFieldSx}
                     />
 
                     <TextField
@@ -676,7 +677,7 @@ const ClusterFields: React.FC<ClusterFieldsProps> = ({
                         disabled={saving}
                         margin="dense"
                         InputLabelProps={{ shrink: true }}
-                        sx={{ mt: 1, ...SELECT_FIELD_DEFAULT_BG_SX }}
+                        sx={{ mt: 1, ...selectFieldSx }}
                     >
                         {REPLICATION_TYPES.map((rt) => (
                             <MenuItem key={rt.value} value={rt.value}>
@@ -699,7 +700,7 @@ const ClusterFields: React.FC<ClusterFieldsProps> = ({
                     disabled={saving}
                     margin="dense"
                     InputLabelProps={{ shrink: true }}
-                    sx={{ mt: 1, ...SELECT_FIELD_DEFAULT_BG_SX }}
+                    sx={{ mt: 1, ...selectFieldSx }}
                 >
                     {roleOptions.map((ro) => (
                         <MenuItem key={ro.value} value={ro.value}>

@@ -11,10 +11,8 @@
 import React from 'react';
 import { TextField, Box, Typography } from '@mui/material';
 import { ServerFormData, FormErrors, FieldChangeHandler } from './ServerDialog.types';
-import {
-    textFieldSx,
-    sectionLabelSx,
-} from './ServerDialog.styles';
+import { sectionLabelSx } from './ServerDialog.styles';
+import { getSelectFieldSx } from '../shared/formStyles';
 
 interface ConnectionFieldsProps {
     formData: ServerFormData;
@@ -35,6 +33,8 @@ const ConnectionFields: React.FC<ConnectionFieldsProps> = ({
     isSaving,
     onFieldChange,
 }) => {
+    const selectFieldSx = getSelectFieldSx(isEditMode ? 'background.default' : 'background.paper');
+
     return (
         <>
             {/* Name field - above section heading */}
@@ -49,7 +49,8 @@ const ConnectionFields: React.FC<ConnectionFieldsProps> = ({
                 required
                 disabled={isSaving}
                 margin="dense"
-                sx={textFieldSx}
+                InputLabelProps={{ shrink: true }}
+                sx={selectFieldSx}
             />
 
             {/* Description field - optional */}
@@ -62,7 +63,8 @@ const ConnectionFields: React.FC<ConnectionFieldsProps> = ({
                 onChange={(e) => onFieldChange('description', e.target.value)}
                 disabled={isSaving}
                 margin="dense"
-                sx={textFieldSx}
+                InputLabelProps={{ shrink: true }}
+                sx={selectFieldSx}
             />
 
             {/* Connection Details Section Label */}
@@ -82,7 +84,8 @@ const ConnectionFields: React.FC<ConnectionFieldsProps> = ({
                     required
                     disabled={isSaving}
                     margin="dense"
-                    sx={{ flex: 2, ...textFieldSx }}
+                    InputLabelProps={{ shrink: true }}
+                    sx={{ flex: 2, ...selectFieldSx }}
                 />
                 <TextField
                     fullWidth
@@ -96,7 +99,8 @@ const ConnectionFields: React.FC<ConnectionFieldsProps> = ({
                     disabled={isSaving}
                     margin="dense"
                     inputProps={{ min: 1, max: 65535 }}
-                    sx={{ flex: 1, ...textFieldSx }}
+                    InputLabelProps={{ shrink: true }}
+                    sx={{ flex: 1, ...selectFieldSx }}
                 />
             </Box>
 
@@ -111,7 +115,8 @@ const ConnectionFields: React.FC<ConnectionFieldsProps> = ({
                 required
                 disabled={isSaving}
                 margin="dense"
-                sx={{ mt: 1, ...textFieldSx }}
+                InputLabelProps={{ shrink: true }}
+                sx={{ mt: 1, ...selectFieldSx }}
             />
 
             {/* Username and Password side by side */}
@@ -127,7 +132,8 @@ const ConnectionFields: React.FC<ConnectionFieldsProps> = ({
                     disabled={isSaving}
                     margin="dense"
                     autoComplete="off"
-                    sx={{ flex: 1, ...textFieldSx }}
+                    InputLabelProps={{ shrink: true }}
+                    sx={{ flex: 1, ...selectFieldSx }}
                 />
                 <TextField
                     fullWidth
@@ -144,7 +150,8 @@ const ConnectionFields: React.FC<ConnectionFieldsProps> = ({
                     disabled={isSaving}
                     margin="dense"
                     autoComplete="new-password"
-                    sx={{ flex: 1, ...textFieldSx }}
+                    InputLabelProps={{ shrink: true }}
+                    sx={{ flex: 1, ...selectFieldSx }}
                 />
             </Box>
         </>

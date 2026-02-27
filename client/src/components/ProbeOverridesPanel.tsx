@@ -37,6 +37,7 @@ import {
     Edit as EditIcon,
     RestartAlt as ResetIcon,
 } from '@mui/icons-material';
+import { SELECT_FIELD_SX } from './shared/formStyles';
 import {
     tableHeaderCellSx,
     dialogTitleSx,
@@ -332,11 +333,8 @@ const ProbeOverridesPanel: React.FC<ProbeOverridesPanelProps> = ({ scope, scopeI
                         onChange={(e) => setEditInterval(e.target.value)}
                         disabled={saving}
                         inputProps={{ min: 1 }}
-                        sx={(sxTheme) => ({
-                            '& input[type=number]': {
-                                colorScheme: sxTheme.palette.mode === 'dark' ? 'dark' : 'light',
-                            },
-                        })}
+                        InputLabelProps={{ shrink: true }}
+                        sx={SELECT_FIELD_SX}
                     />
                     <TextField
                         label="Retention Days"
@@ -347,11 +345,8 @@ const ProbeOverridesPanel: React.FC<ProbeOverridesPanelProps> = ({ scope, scopeI
                         onChange={(e) => setEditRetention(e.target.value)}
                         disabled={saving}
                         inputProps={{ min: 1 }}
-                        sx={(sxTheme) => ({
-                            '& input[type=number]': {
-                                colorScheme: sxTheme.palette.mode === 'dark' ? 'dark' : 'light',
-                            },
-                        })}
+                        InputLabelProps={{ shrink: true }}
+                        sx={SELECT_FIELD_SX}
                     />
                 </DialogContent>
                 <DialogActions sx={dialogActionsSx}>

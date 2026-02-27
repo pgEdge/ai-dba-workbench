@@ -25,6 +25,7 @@ import {
 } from '@mui/material';
 import { Theme } from '@mui/material/styles';
 import { useAuth } from '../contexts/AuthContext';
+import { SELECT_FIELD_SX } from './shared/formStyles';
 import logoLight from '../assets/images/logo-light.png';
 
 // Subtle floating animation for decorative elements
@@ -415,7 +416,8 @@ const Login = () => {
                                 inputProps={{
                                     autoComplete: 'off',
                                 }}
-                                sx={textFieldSx}
+                                InputLabelProps={{ shrink: true }}
+                                sx={{ ...textFieldSx, ...SELECT_FIELD_SX }}
                             />
 
                             <TextField
@@ -431,7 +433,8 @@ const Login = () => {
                                 inputProps={{
                                     autoComplete: 'current-password',
                                 }}
-                                sx={textFieldSx}
+                                InputLabelProps={{ shrink: true }}
+                                sx={{ ...textFieldSx, ...SELECT_FIELD_SX }}
                             />
 
                             <Button

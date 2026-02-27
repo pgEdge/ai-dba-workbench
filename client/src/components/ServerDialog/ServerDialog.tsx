@@ -308,6 +308,7 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
 
                                 <SSLSettings
                                     formData={formData}
+                                    isEditMode={isEditMode}
                                     isSaving={isSaving}
                                     expanded={sslExpanded}
                                     onExpandedChange={setSslExpanded}
@@ -429,6 +430,7 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
 
                     <SSLSettings
                         formData={formData}
+                        isEditMode={isEditMode}
                         isSaving={isSaving}
                         expanded={sslExpanded}
                         onExpandedChange={setSslExpanded}

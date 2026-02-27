@@ -42,6 +42,7 @@ import {
     ExpandLess as ExpandLessIcon,
 } from '@mui/icons-material';
 import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
+import { SELECT_FIELD_SX } from '../shared/formStyles';
 import EffectivePermissionsPanel from './EffectivePermissionsPanel';
 import { useAuth } from '../../contexts/AuthContext';
 import { apiGet, apiPost, apiPut, apiDelete } from '../../utils/apiClient';
@@ -545,6 +546,8 @@ const AdminUsers: React.FC = () => {
                         disabled={createLoading}
                         margin="dense"
                         required
+                        InputLabelProps={{ shrink: true }}
+                        sx={SELECT_FIELD_SX}
                     />
                     {!createServiceAccount && (
                         <TextField
@@ -556,6 +559,8 @@ const AdminUsers: React.FC = () => {
                             disabled={createLoading}
                             margin="dense"
                             required
+                            InputLabelProps={{ shrink: true }}
+                            sx={SELECT_FIELD_SX}
                         />
                     )}
                     <TextField

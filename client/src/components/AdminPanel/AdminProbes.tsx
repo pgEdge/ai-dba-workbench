@@ -34,6 +34,7 @@ import { useTheme } from '@mui/material/styles';
 import {
     Edit as EditIcon,
 } from '@mui/icons-material';
+import { SELECT_FIELD_SX } from '../shared/formStyles';
 import { apiGet, apiPut } from '../../utils/apiClient';
 import {
     tableHeaderCellSx,
@@ -240,11 +241,8 @@ const AdminProbes: React.FC = () => {
                         onChange={(e) => setEditInterval(e.target.value)}
                         disabled={saving}
                         inputProps={{ min: 1 }}
-                        sx={(sxTheme) => ({
-                            '& input[type=number]': {
-                                colorScheme: sxTheme.palette.mode === 'dark' ? 'dark' : 'light',
-                            },
-                        })}
+                        InputLabelProps={{ shrink: true }}
+                        sx={SELECT_FIELD_SX}
                     />
                     <TextField
                         label="Retention Days"
@@ -255,11 +253,8 @@ const AdminProbes: React.FC = () => {
                         onChange={(e) => setEditRetention(e.target.value)}
                         disabled={saving}
                         inputProps={{ min: 1 }}
-                        sx={(sxTheme) => ({
-                            '& input[type=number]': {
-                                colorScheme: sxTheme.palette.mode === 'dark' ? 'dark' : 'light',
-                            },
-                        })}
+                        InputLabelProps={{ shrink: true }}
+                        sx={SELECT_FIELD_SX}
                     />
                 </DialogContent>
                 <DialogActions sx={dialogActionsSx}>

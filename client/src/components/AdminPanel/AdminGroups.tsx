@@ -584,6 +584,8 @@ const AdminGroups: React.FC = () => {
                         disabled={createLoading}
                         margin="dense"
                         required
+                        InputLabelProps={{ shrink: true }}
+                        sx={SELECT_FIELD_SX}
                     />
                     <TextField
                         fullWidth
@@ -595,6 +597,7 @@ const AdminGroups: React.FC = () => {
                         multiline
                         rows={2}
                         InputLabelProps={{ shrink: true }}
+                        sx={SELECT_FIELD_SX}
                     />
                 </DialogContent>
                 <DialogActions sx={dialogActionsSx}>
@@ -628,6 +631,8 @@ const AdminGroups: React.FC = () => {
                         disabled={editLoading}
                         margin="dense"
                         required
+                        InputLabelProps={{ shrink: true }}
+                        sx={SELECT_FIELD_SX}
                     />
                     <TextField
                         fullWidth
@@ -639,6 +644,7 @@ const AdminGroups: React.FC = () => {
                         multiline
                         rows={2}
                         InputLabelProps={{ shrink: true }}
+                        sx={SELECT_FIELD_SX}
                     />
                 </DialogContent>
                 <DialogActions sx={dialogActionsSx}>

@@ -37,6 +37,7 @@ import {
     Storage as ServerIcon,
 } from '@mui/icons-material';
 import { useBlackouts } from '../contexts/BlackoutContext';
+import { SELECT_FIELD_SX } from './shared/formStyles';
 
 // ---- Style constants ----
 
@@ -470,6 +471,7 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
                 </Typography>
                 <TextField
                     fullWidth
+                    label="Name"
                     placeholder="e.g., Nightly maintenance window"
                     value={name}
                     onChange={(e) => {
@@ -481,7 +483,8 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
                     disabled={isSaving}
                     required
                     size="small"
-                    sx={textFieldSx}
+                    InputLabelProps={{ shrink: true }}
+                    sx={{ ...textFieldSx, ...SELECT_FIELD_SX }}
                 />
 
                 {/* Cron builder */}
@@ -517,13 +520,12 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
                             onChange={(e) => setHour(e.target.value)}
                             disabled={isSaving}
                             inputProps={{ min: 0, max: 23 }}
-                            sx={(sxTheme: Theme) => ({
+                            InputLabelProps={{ shrink: true }}
+                            sx={{
                                 width: 90,
                                 ...textFieldSx,
-                                '& input[type=number]': {
-                                    colorScheme: sxTheme.palette.mode === 'dark' ? 'dark' : 'light',
-                                },
-                            })}
+                                ...SELECT_FIELD_SX,
+                            }}
                         />
                         <TextField
                             label="Minute"
@@ -533,13 +535,12 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
                             onChange={(e) => setMinute(e.target.value)}
                             disabled={isSaving}
                             inputProps={{ min: 0, max: 59 }}
-                            sx={(sxTheme: Theme) => ({
+                            InputLabelProps={{ shrink: true }}
+                            sx={{
                                 width: 90,
                                 ...textFieldSx,
-                                '& input[type=number]': {
-                                    colorScheme: sxTheme.palette.mode === 'dark' ? 'dark' : 'light',
-                                },
-                            })}
+                                ...SELECT_FIELD_SX,
+                            }}
                         />
                     </Box>
                 )}
@@ -553,7 +554,8 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
                     InputProps={{ readOnly: !isCustom }}
                     disabled={isSaving}
                     size="small"
-                    sx={cronFieldSx}
+                    InputLabelProps={{ shrink: true }}
+                    sx={{ ...cronFieldSx, ...SELECT_FIELD_SX }}
                 />
                 {cronDescription && (
                     <Typography sx={{ fontSize: '0.875rem', color: 'text.disabled', mt: 0.5 }}>
@@ -586,13 +588,11 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
                     placeholder="e.g., 90"
                     InputLabelProps={{ shrink: true }}
                     inputProps={{ min: 1 }}
-                    sx={(sxTheme: Theme) => ({
+                    sx={{
                         width: 200,
                         ...textFieldSx,
-                        '& input[type=number]': {
-                            colorScheme: sxTheme.palette.mode === 'dark' ? 'dark' : 'light',
-                        },
-                    })}
+                        ...SELECT_FIELD_SX,
+                    }}
                 />
 
                 {/* Timezone */}
@@ -601,12 +601,14 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
                 </Typography>
                 <TextField
                     fullWidth
+                    label="Timezone"
                     value={timezone}
                     onChange={(e) => setTimezone(e.target.value)}
                     disabled={isSaving}
                     size="small"
                     placeholder="e.g., America/New_York, UTC, Europe/London"
-                    sx={textFieldSx}
+                    InputLabelProps={{ shrink: true }}
+                    sx={{ ...textFieldSx, ...SELECT_FIELD_SX }}
                 />
 
                 {/* Reason */}
@@ -615,6 +617,7 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
                 </Typography>
                 <TextField
                     fullWidth
+                    label="Reason"
                     placeholder="e.g., Nightly backup window"
                     multiline
                     rows={2}
@@ -622,7 +625,8 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
                     onChange={(e) => setReason(e.target.value)}
                     disabled={isSaving}
                     size="small"
-                    sx={textFieldSx}
+                    InputLabelProps={{ shrink: true }}
+                    sx={{ ...textFieldSx, ...SELECT_FIELD_SX }}
                 />
 
                 {/* Enabled toggle */}

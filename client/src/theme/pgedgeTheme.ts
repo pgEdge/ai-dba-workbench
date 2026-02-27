@@ -306,6 +306,9 @@ const getComponents = (mode: PaletteMode) => ({
                         borderWidth: 2,
                     },
                 },
+                '& input[type=number]': {
+                    colorScheme: mode === 'dark' ? 'dark' : 'light',
+                },
             },
         },
     },

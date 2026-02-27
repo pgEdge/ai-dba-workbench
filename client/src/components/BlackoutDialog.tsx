@@ -38,6 +38,7 @@ import {
     Storage as ServerIcon,
 } from '@mui/icons-material';
 import { useBlackouts, CreateBlackoutRequest } from '../contexts/BlackoutContext';
+import { SELECT_FIELD_SX } from './shared/formStyles';
 
 // ---- Style constants ----
 
@@ -417,13 +418,12 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
                                 onChange={(e) => handleCustomChange('hours', e.target.value)}
                                 disabled={isSaving}
                                 inputProps={{ min: 0, max: 72 }}
-                                sx={(sxTheme: Theme) => ({
+                                InputLabelProps={{ shrink: true }}
+                                sx={{
                                     width: 100,
                                     ...textFieldSx,
-                                    '& input[type=number]': {
-                                        colorScheme: sxTheme.palette.mode === 'dark' ? 'dark' : 'light',
-                                    },
-                                })}
+                                    ...SELECT_FIELD_SX,
+                                }}
                             />
                             <TextField
                                 label="Minutes"
@@ -433,13 +433,12 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
                                 onChange={(e) => handleCustomChange('minutes', e.target.value)}
                                 disabled={isSaving}
                                 inputProps={{ min: 0, max: 59 }}
-                                sx={(sxTheme: Theme) => ({
+                                InputLabelProps={{ shrink: true }}
+                                sx={{
                                     width: 100,
                                     ...textFieldSx,
-                                    '& input[type=number]': {
-                                        colorScheme: sxTheme.palette.mode === 'dark' ? 'dark' : 'light',
-                                    },
-                                })}
+                                    ...SELECT_FIELD_SX,
+                                }}
                             />
                         </Box>
                         {computedEndTimeLabel && (
@@ -484,6 +483,7 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
                 </Typography>
                 <TextField
                     fullWidth
+                    label="Reason"
                     placeholder="e.g., Scheduled maintenance window, Deployment in progress"
                     multiline
                     rows={2}
@@ -491,7 +491,8 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
                     onChange={(e) => setReason(e.target.value)}
                     disabled={isSaving}
                     size="small"
-                    sx={textFieldSx}
+                    InputLabelProps={{ shrink: true }}
+                    sx={{ ...textFieldSx, ...SELECT_FIELD_SX }}
                 />
             </DialogContent>
 

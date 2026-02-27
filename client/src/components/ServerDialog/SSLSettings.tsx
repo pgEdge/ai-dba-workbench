@@ -28,10 +28,11 @@ import {
     accordionSummarySx,
     sslLabelSx,
 } from './ServerDialog.styles';
-import { SELECT_FIELD_DEFAULT_BG_SX } from '../shared/formStyles';
+import { getSelectFieldSx } from '../shared/formStyles';
 
 interface SSLSettingsProps {
     formData: ServerFormData;
+    isEditMode: boolean;
     isSaving: boolean;
     expanded: boolean;
     onExpandedChange: (expanded: boolean) => void;
@@ -44,11 +45,14 @@ interface SSLSettingsProps {
  */
 const SSLSettings: React.FC<SSLSettingsProps> = ({
     formData,
+    isEditMode,
     isSaving,
     expanded,
     onExpandedChange,
     onFieldChange,
 }) => {
+    const selectFieldSx = getSelectFieldSx(isEditMode ? 'background.default' : 'background.paper');
+
     return (
         <Accordion
             expanded={expanded}
@@ -75,7 +79,7 @@ const SSLSettings: React.FC<SSLSettingsProps> = ({
                     disabled={isSaving}
                     margin="dense"
                     InputLabelProps={{ shrink: true }}
-                    sx={SELECT_FIELD_DEFAULT_BG_SX}
+                    sx={selectFieldSx}
                 >
                     {SSL_MODES.map((mode) => (
                         <MenuItem key={mode.value} value={mode.value}>
@@ -93,7 +97,7 @@ const SSLSettings: React.FC<SSLSettingsProps> = ({
                     disabled={isSaving}
                     margin="dense"
                     InputLabelProps={{ shrink: true }}
-                    sx={SELECT_FIELD_DEFAULT_BG_SX}
+                    sx={selectFieldSx}
                 />
 
                 {/* SSL Key Path */}
@@ -105,7 +109,7 @@ const SSLSettings: React.FC<SSLSettingsProps> = ({
                     disabled={isSaving}
                     margin="dense"
                     InputLabelProps={{ shrink: true }}
-                    sx={SELECT_FIELD_DEFAULT_BG_SX}
+                    sx={selectFieldSx}
                 />
 
                 {/* SSL Root Certificate Path */}
@@ -117,7 +121,7 @@ const SSLSettings: React.FC<SSLSettingsProps> = ({
                     disabled={isSaving}
                     margin="dense"
                     InputLabelProps={{ shrink: true }}
-                    sx={SELECT_FIELD_DEFAULT_BG_SX}
+                    sx={selectFieldSx}
                 />
             </AccordionDetails>
         </Accordion>

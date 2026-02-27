@@ -757,6 +757,8 @@ curl -s -X POST -H "Authorization: Bearer <token>" \\
                         disabled={createLoading}
                         margin="dense"
                         required
+                        InputLabelProps={{ shrink: true }}
+                        sx={SELECT_FIELD_SX}
                     />
                     <Autocomplete<User>
                         options={users}

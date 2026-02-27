@@ -108,16 +108,6 @@ export interface KpiTileData {
     status?: 'good' | 'warning' | 'critical';
 }
 
-/** Hot spot entry for estate dashboard */
-export interface HotSpotEntry {
-    connectionId: number;
-    serverName: string;
-    metric: string;
-    value: number;
-    unit?: string;
-    severity: 'warning' | 'critical';
-}
-
 /** Leaderboard entry for database dashboard */
 export interface LeaderboardEntry {
     name: string;

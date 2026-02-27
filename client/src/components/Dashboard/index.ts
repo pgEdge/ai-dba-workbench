@@ -33,7 +33,6 @@ export type {
     BaseDashboardProps,
     DashboardSection,
     KpiTileData,
-    HotSpotEntry,
     LeaderboardEntry,
     MetricQueryParams,
 } from './types';

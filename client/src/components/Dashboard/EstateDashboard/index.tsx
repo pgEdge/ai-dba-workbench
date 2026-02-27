@@ -15,7 +15,6 @@ import CollapsibleSection from '../CollapsibleSection';
 import HealthOverviewSection from './HealthOverviewSection';
 import KpiTilesSection from './KpiTilesSection';
 import ClusterCardsSection from './ClusterCardsSection';
-import HotSpotsSection from './HotSpotsSection';
 
 /**
  * Extract all server IDs from an estate selection by traversing
@@ -48,8 +47,7 @@ const extractAllServerIds = (selection: Record<string, unknown>): number[] => {
 /**
  * EstateDashboard displays fleet-wide health and provides a
  * fleet health assessment at a glance. Shows health overview
- * rings, KPI tiles, cluster cards, hot spots, and an event
- * timeline for the entire estate.
+ * rings, KPI tiles, and cluster cards for the entire estate.
  */
 const EstateDashboard: React.FC<BaseDashboardProps> = ({ selection }) => {
     const serverIds = useMemo(() => extractAllServerIds(selection), [selection]);
@@ -69,13 +67,6 @@ const EstateDashboard: React.FC<BaseDashboardProps> = ({ selection }) => {
 
             <CollapsibleSection title="Clusters" defaultExpanded>
                 <ClusterCardsSection selection={selection} />
-            </CollapsibleSection>
-
-            <CollapsibleSection title="Hot Spots" defaultExpanded>
-                <HotSpotsSection
-                    selection={selection}
-                    serverIds={serverIds}
-                />
             </CollapsibleSection>
         </Box>
     );

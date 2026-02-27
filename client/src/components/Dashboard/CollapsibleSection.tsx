@@ -27,6 +27,7 @@ interface CollapsibleSectionProps {
     icon?: React.ReactNode;
     headerRight?: React.ReactNode;
     defaultExpanded?: boolean;
+    storageKey?: string;
     sx?: SxProps<Theme>;
     children: React.ReactNode;
 }
@@ -44,14 +45,29 @@ const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
     icon,
     headerRight,
     defaultExpanded = true,
+    storageKey,
     sx,
     children,
 }) => {
-    const [expanded, setExpanded] = useState<boolean>(defaultExpanded);
+    const [expanded, setExpanded] = useState<boolean>(() => {
+        if (storageKey) {
+            const stored = localStorage.getItem(storageKey);
+            if (stored !== null) {
+                return stored === 'true';
+            }
+        }
+        return defaultExpanded;
+    });
 
     const handleToggle = useCallback((): void => {
-        setExpanded(prev => !prev);
-    }, []);
+        setExpanded(prev => {
+            const next = !prev;
+            if (storageKey) {
+                localStorage.setItem(storageKey, String(next));
+            }
+            return next;
+        });
+    }, [storageKey]);
 
     return (
         <Box sx={[SECTION_CONTAINER_SX, ...(Array.isArray(sx) ? sx : sx ? [sx] : [])]}>

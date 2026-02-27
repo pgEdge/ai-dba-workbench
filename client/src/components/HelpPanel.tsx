@@ -1447,6 +1447,34 @@ const MonitoringPage = ({ aiEnabled }: { aiEnabled: boolean }) => (
             item in any leaderboard or top queries list.
         </Typography>
 
+        <SectionTitle>Query Plan</SectionTitle>
+        <Typography sx={styles.bodyTextMb2}>
+            The query detail view includes a Query Plan section that
+            displays PostgreSQL EXPLAIN output in text and visual formats.
+        </Typography>
+        <Box sx={styles.indentedBlock}>
+            <FeatureItem
+                title="Text Tab"
+                description="Displays the standard EXPLAIN output in a monospace format. The text plan provides a concise overview of the execution strategy."
+            />
+            <FeatureItem
+                title="Visual Tab"
+                description="Renders a graphical flow diagram of the query plan. Leaf scan nodes appear on the left and the root node on the right, connected by bezier arrows."
+            />
+            <FeatureItem
+                title="Cost Coloring"
+                description="Each tile has a colored left border indicating its cost relative to the total plan cost. Red indicates nodes consuming over 80% of the total cost; orange indicates over 50%."
+            />
+            <FeatureItem
+                title="Node Details"
+                description="Click any tile in the visual diagram to open a popover with comprehensive details including cost range, estimated rows, width, output columns, conditions, and worker information."
+            />
+            <FeatureItem
+                title="Parameterized Queries"
+                description="Queries using parameter placeholders ($1, $2) use the GENERIC_PLAN option on PostgreSQL 16 and later. Older versions display an informational message."
+            />
+        </Box>
+
         <SectionTitle icon={TimelineIcon}>Key Features</SectionTitle>
         <Box sx={styles.indentedBlock}>
             <FeatureItem

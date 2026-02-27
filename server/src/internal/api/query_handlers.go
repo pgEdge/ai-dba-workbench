@@ -347,6 +347,35 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 	}
 	defer pool.Close()
 
+	// For EXPLAIN queries with $N parameter placeholders, bypass the
+	// standard query path and use pgconn's simple protocol directly.
+	// pgx.Conn.Query always parses $N as bind parameters even in
+	// simple protocol mode, but pgconn.Exec sends SQL text as-is.
+	if needsSimpleProtocol(statements) {
+		poolConn, err := pool.Acquire(ctx)
+		if err != nil {
+			log.Printf("[ERROR] Failed to acquire connection for EXPLAIN: %v", err)
+			RespondError(w, http.StatusInternalServerError,
+				"Failed to connect to database")
+			return
+		}
+		defer poolConn.Release()
+
+		results := make([]statementResult, 0, len(statements))
+		for _, stmt := range statements {
+			result := runSimpleStatement(ctx, poolConn.Conn().PgConn(), stmt, connectionID)
+			results = append(results, result)
+			if result.Error != "" {
+				break
+			}
+		}
+		RespondJSON(w, http.StatusOK, multiQueryResponse{
+			Results:         results,
+			TotalStatements: len(statements),
+		})
+		return
+	}
+
 	limit := defaultRowLimit
 	results := make([]statementResult, 0, len(statements))
 
@@ -542,6 +571,31 @@ func containsSQLKeyword(upperSQL, keyword string) bool {
 	}
 }
 
+// needsSimpleProtocol returns true when any statement is an EXPLAIN
+// that contains $N parameter placeholders.  These queries require the
+// simple query protocol so that pgx does not interpret the
+// placeholders as bind parameters.
+func needsSimpleProtocol(statements []string) bool {
+	for _, stmt := range statements {
+		body := strings.ToUpper(strings.TrimSpace(stripLeadingComments(stmt)))
+		if strings.HasPrefix(body, "EXPLAIN") && containsDollarParam(stmt) {
+			return true
+		}
+	}
+	return false
+}
+
+// containsDollarParam checks whether the string contains a $N
+// parameter placeholder (e.g. $1, $2).
+func containsDollarParam(s string) bool {
+	for i := 0; i < len(s)-1; i++ {
+		if s[i] == '$' && s[i+1] >= '1' && s[i+1] <= '9' {
+			return true
+		}
+	}
+	return false
+}
+
 // isIdentChar returns true if the byte is a valid SQL identifier character
 // (letter, digit, or underscore).
 func isIdentChar(b byte) bool {
@@ -711,6 +765,74 @@ func runStatement(ctx context.Context, q queryable, stmt string, limit int, conn
 		RowCount:  len(resultRows),
 		Truncated: truncated,
 		Query:     stmt,
+	}
+}
+
+// runSimpleStatement executes a statement using the pgconn simple
+// protocol which sends SQL text directly to PostgreSQL without
+// interpreting $N as bind parameters.  This is used for EXPLAIN
+// queries that contain parameter placeholders from pg_stat_statements.
+func runSimpleStatement(ctx context.Context, pgConn *pgconn.PgConn, stmt string, connectionID int) statementResult {
+	mrr := pgConn.Exec(ctx, stmt)
+
+	var columns []string
+	var resultRows [][]string
+
+	for mrr.NextResult() {
+		rr := mrr.ResultReader()
+
+		// Extract column names from field descriptions
+		fds := rr.FieldDescriptions()
+		if columns == nil {
+			columns = make([]string, len(fds))
+			for i, fd := range fds {
+				columns[i] = string(fd.Name)
+			}
+		}
+
+		for rr.NextRow() {
+			row := rr.Values()
+			values := make([]string, len(row))
+			for i, col := range row {
+				if col == nil {
+					values[i] = "NULL"
+				} else {
+					values[i] = string(col)
+				}
+			}
+			resultRows = append(resultRows, values)
+		}
+
+		_, err := rr.Close()
+		if err != nil {
+			log.Printf("[ERROR] Simple query close failed (connection=%d): %v",
+				connectionID, err)
+			return statementResult{
+				Query: stmt,
+				Error: safeQueryError("Query error", err),
+			}
+		}
+	}
+
+	err := mrr.Close()
+	if err != nil {
+		log.Printf("[ERROR] Simple query multi-result close failed (connection=%d): %v",
+			connectionID, err)
+		return statementResult{
+			Query: stmt,
+			Error: safeQueryError("Query error", err),
+		}
+	}
+
+	if resultRows == nil {
+		resultRows = [][]string{}
+	}
+
+	return statementResult{
+		Columns:  columns,
+		Rows:     resultRows,
+		RowCount: len(resultRows),
+		Query:    stmt,
 	}
 }
 

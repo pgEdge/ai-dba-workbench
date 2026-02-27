@@ -35,6 +35,7 @@ import CollapsibleSection from '../CollapsibleSection';
 import TimeRangeSelector from '../TimeRangeSelector';
 import { Chart } from '../../Chart';
 import { QueryAnalysisDialog } from '../../QueryAnalysisDialog';
+import QueryPlanPanel from './QueryPlanPanel';
 import {
     ObjectDetailProps,
     QueryDetailData,
@@ -608,6 +609,14 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                     connectionId={connectionId}
                     connectionName={connectionName}
                     databaseName={databaseName}
+                />
+            )}
+
+            {queryData && (
+                <QueryPlanPanel
+                    connectionId={connectionId}
+                    databaseName={databaseName}
+                    queryText={queryData.query}
                 />
             )}
 

@@ -234,6 +234,10 @@ export function Chart(props: ChartProps) {
             options.tooltip = tooltip;
         }
 
+        /* Allow the initial render to animate (ECharts default) but
+           make all subsequent data updates instant. */
+        options.animationDurationUpdate = 0;
+
         return options;
     }, [baseOptions, echartsTheme]);
 

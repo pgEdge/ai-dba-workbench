@@ -15,9 +15,6 @@ import {
     AccordionDetails,
     Typography,
     TextField,
-    FormControl,
-    InputLabel,
-    Select,
     MenuItem,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
@@ -27,12 +24,11 @@ import {
     SSL_MODES,
 } from './ServerDialog.types';
 import {
-    textFieldSx,
     sslAccordionSx,
     accordionSummarySx,
     sslLabelSx,
-    sslModeLabelSx,
 } from './ServerDialog.styles';
+import { SELECT_FIELD_DEFAULT_BG_SX } from '../shared/formStyles';
 
 interface SSLSettingsProps {
     formData: ServerFormData;
@@ -70,21 +66,23 @@ const SSLSettings: React.FC<SSLSettingsProps> = ({
             </AccordionSummary>
             <AccordionDetails sx={{ pt: 0 }}>
                 {/* SSL Mode */}
-                <FormControl fullWidth margin="dense" sx={textFieldSx}>
-                    <InputLabel sx={sslModeLabelSx}>SSL Mode</InputLabel>
-                    <Select
-                        value={formData.ssl_mode}
-                        label="SSL Mode"
-                        onChange={(e) => onFieldChange('ssl_mode', e.target.value)}
-                        disabled={isSaving}
-                    >
-                        {SSL_MODES.map((mode) => (
-                            <MenuItem key={mode.value} value={mode.value}>
-                                {mode.label}
-                            </MenuItem>
-                        ))}
-                    </Select>
-                </FormControl>
+                <TextField
+                    select
+                    fullWidth
+                    label="SSL Mode"
+                    value={formData.ssl_mode}
+                    onChange={(e) => onFieldChange('ssl_mode', e.target.value)}
+                    disabled={isSaving}
+                    margin="dense"
+                    InputLabelProps={{ shrink: true }}
+                    sx={SELECT_FIELD_DEFAULT_BG_SX}
+                >
+                    {SSL_MODES.map((mode) => (
+                        <MenuItem key={mode.value} value={mode.value}>
+                            {mode.label}
+                        </MenuItem>
+                    ))}
+                </TextField>
 
                 {/* SSL Certificate Path */}
                 <TextField
@@ -94,7 +92,8 @@ const SSLSettings: React.FC<SSLSettingsProps> = ({
                     onChange={(e) => onFieldChange('ssl_cert_path', e.target.value)}
                     disabled={isSaving}
                     margin="dense"
-                    sx={textFieldSx}
+                    InputLabelProps={{ shrink: true }}
+                    sx={SELECT_FIELD_DEFAULT_BG_SX}
                 />
 
                 {/* SSL Key Path */}
@@ -105,7 +104,8 @@ const SSLSettings: React.FC<SSLSettingsProps> = ({
                     onChange={(e) => onFieldChange('ssl_key_path', e.target.value)}
                     disabled={isSaving}
                     margin="dense"
-                    sx={textFieldSx}
+                    InputLabelProps={{ shrink: true }}
+                    sx={SELECT_FIELD_DEFAULT_BG_SX}
                 />
 
                 {/* SSL Root Certificate Path */}
@@ -116,7 +116,8 @@ const SSLSettings: React.FC<SSLSettingsProps> = ({
                     onChange={(e) => onFieldChange('ssl_root_cert_path', e.target.value)}
                     disabled={isSaving}
                     margin="dense"
-                    sx={textFieldSx}
+                    InputLabelProps={{ shrink: true }}
+                    sx={SELECT_FIELD_DEFAULT_BG_SX}
                 />
             </AccordionDetails>
         </Accordion>

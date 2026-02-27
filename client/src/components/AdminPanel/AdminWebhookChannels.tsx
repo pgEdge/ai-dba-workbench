@@ -45,6 +45,7 @@ import {
 import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
 import { apiGet, apiPost, apiPut, apiDelete } from '../../utils/apiClient';
 import { truncateDescription } from '../../utils/textHelpers';
+import { SELECT_FIELD_SX } from '../shared/formStyles';
 import {
     tableHeaderCellSx,
     dialogTitleSx,
@@ -735,6 +736,7 @@ const AdminWebhookChannels: React.FC = () => {
                             disabled={saving}
                             margin="dense"
                             InputLabelProps={{ shrink: true }}
+                            sx={SELECT_FIELD_SX}
                         >
                             {HTTP_METHODS.map((method) => (
                                 <MenuItem key={method} value={method}>
@@ -845,6 +847,7 @@ const AdminWebhookChannels: React.FC = () => {
                             disabled={saving}
                             margin="dense"
                             InputLabelProps={{ shrink: true }}
+                            sx={SELECT_FIELD_SX}
                         >
                             {AUTH_TYPES.map((type) => (
                                 <MenuItem key={type.value} value={type.value}>

@@ -44,6 +44,7 @@ import {
     ExpandLess as ExpandLessIcon,
 } from '@mui/icons-material';
 import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
+import { SELECT_FIELD_SX } from '../shared/formStyles';
 import EffectivePermissionsPanel from './EffectivePermissionsPanel';
 import { apiGet, apiPost, apiPut, apiDelete } from '../../utils/apiClient';
 import {
@@ -769,6 +770,11 @@ curl -s -X POST -H "Authorization: Bearer <token>" \\
                                 label="Owner"
                                 margin="dense"
                                 required
+                                InputLabelProps={{
+                                    ...params.InputLabelProps,
+                                    shrink: true,
+                                }}
+                                sx={SELECT_FIELD_SX}
                             />
                         )}
                         disabled={createLoading}
@@ -781,6 +787,8 @@ curl -s -X POST -H "Authorization: Bearer <token>" \\
                         onChange={(e) => setCreateExpiry(e.target.value)}
                         disabled={createLoading}
                         margin="dense"
+                        InputLabelProps={{ shrink: true }}
+                        sx={SELECT_FIELD_SX}
                     >
                         {EXPIRY_OPTIONS.map((option) => (
                             <MenuItem key={option.value} value={option.value}>
@@ -810,6 +818,11 @@ curl -s -X POST -H "Authorization: Bearer <token>" \\
                                 label="Add Connection"
                                 margin="dense"
                                 placeholder="Select a connection to add..."
+                                InputLabelProps={{
+                                    ...params.InputLabelProps,
+                                    shrink: true,
+                                }}
+                                sx={SELECT_FIELD_SX}
                             />
                         )}
                         disabled={createLoading}
@@ -837,7 +850,8 @@ curl -s -X POST -H "Authorization: Bearer <token>" \\
                                                         c.id === sc.id ? { ...c, access_level: e.target.value } : c
                                                     ));
                                                 }}
-                                                sx={{ minWidth: 130 }}
+                                                InputLabelProps={{ shrink: true }}
+                                                sx={{ minWidth: 130, ...SELECT_FIELD_SX }}
                                             >
                                                 <MenuItem value="read">Read Only</MenuItem>
                                                 {(ownerConnectionLevels[sc.id] === 'read_write' || ownerIsSuperuser) && (
@@ -888,6 +902,11 @@ curl -s -X POST -H "Authorization: Bearer <token>" \\
                                 {...params}
                                 label="Allowed MCP Privileges"
                                 margin="dense"
+                                InputLabelProps={{
+                                    ...params.InputLabelProps,
+                                    shrink: true,
+                                }}
+                                sx={SELECT_FIELD_SX}
                             />
                         )}
                         disabled={createLoading}
@@ -921,6 +940,11 @@ curl -s -X POST -H "Authorization: Bearer <token>" \\
                                 {...params}
                                 label="Allowed Admin Permissions"
                                 margin="dense"
+                                InputLabelProps={{
+                                    ...params.InputLabelProps,
+                                    shrink: true,
+                                }}
+                                sx={SELECT_FIELD_SX}
                             />
                         )}
                         disabled={createLoading}
@@ -1023,6 +1047,11 @@ curl -s -X POST -H "Authorization: Bearer <token>" \\
                                 label="Add Connection"
                                 margin="dense"
                                 placeholder="Select a connection to add..."
+                                InputLabelProps={{
+                                    ...params.InputLabelProps,
+                                    shrink: true,
+                                }}
+                                sx={SELECT_FIELD_SX}
                             />
                         )}
                         disabled={editLoading}
@@ -1050,7 +1079,8 @@ curl -s -X POST -H "Authorization: Bearer <token>" \\
                                                         c.id === sc.id ? { ...c, access_level: e.target.value } : c
                                                     ));
                                                 }}
-                                                sx={{ minWidth: 130 }}
+                                                InputLabelProps={{ shrink: true }}
+                                                sx={{ minWidth: 130, ...SELECT_FIELD_SX }}
                                             >
                                                 <MenuItem value="read">Read Only</MenuItem>
                                                 {(editOwnerConnectionLevels[sc.id] === 'read_write' || editOwnerIsSuperuser) && (
@@ -1107,6 +1137,11 @@ curl -s -X POST -H "Authorization: Bearer <token>" \\
                                 {...params}
                                 label="Allowed MCP Privileges"
                                 margin="dense"
+                                InputLabelProps={{
+                                    ...params.InputLabelProps,
+                                    shrink: true,
+                                }}
+                                sx={SELECT_FIELD_SX}
                             />
                         )}
                         disabled={editLoading}
@@ -1146,6 +1181,11 @@ curl -s -X POST -H "Authorization: Bearer <token>" \\
                                 {...params}
                                 label="Allowed Admin Permissions"
                                 margin="dense"
+                                InputLabelProps={{
+                                    ...params.InputLabelProps,
+                                    shrink: true,
+                                }}
+                                sx={SELECT_FIELD_SX}
                             />
                         )}
                         disabled={editLoading}

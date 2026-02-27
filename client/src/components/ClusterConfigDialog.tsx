@@ -31,6 +31,7 @@ import AlertOverridesPanel from './AlertOverridesPanel';
 import ProbeOverridesPanel from './ProbeOverridesPanel';
 import ChannelOverridesPanel from './ChannelOverridesPanel';
 import TopologyPanel from './TopologyPanel';
+import { SELECT_FIELD_DEFAULT_BG_SX } from './shared/formStyles';
 
 const Transition = React.forwardRef(function Transition(
     props: TransitionProps & { children: React.ReactElement },
@@ -38,23 +39,6 @@ const Transition = React.forwardRef(function Transition(
 ) {
     return <Slide direction="up" ref={ref} {...props} />;
 });
-
-/**
- * Shared sx overrides for TextField select components to bypass
- * the MUI notch measurement issue caused by Slide transitions.
- * Hides the fieldset legend and gives the floating label a solid
- * background so it covers the border line reliably.
- */
-const SELECT_FIELD_SX = {
-    '& .MuiOutlinedInput-notchedOutline legend': {
-        width: 0,
-    },
-    '& .MuiInputLabel-shrink': {
-        bgcolor: 'background.paper',
-        px: 0.75,
-        ml: -0.25,
-    },
-};
 
 /**
  * Replication type options displayed in the select dropdown.
@@ -342,7 +326,7 @@ const ClusterConfigDialog: React.FC<ClusterConfigDialogProps> = ({
                                 setReplicationTypeError('');
                             }}
                             InputLabelProps={{ shrink: true }}
-                            sx={SELECT_FIELD_SX}
+                            sx={SELECT_FIELD_DEFAULT_BG_SX}
                         >
                             {REPLICATION_TYPES.map((rt) => (
                                 <MenuItem key={rt.value} value={rt.value}>

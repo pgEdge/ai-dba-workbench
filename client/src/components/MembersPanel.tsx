@@ -19,9 +19,6 @@ import {
     IconButton,
     Autocomplete,
     TextField,
-    FormControl,
-    InputLabel,
-    Select,
     MenuItem,
     Dialog,
     DialogTitle,
@@ -40,6 +37,7 @@ import {
     PersonRemove as RemoveIcon,
 } from '@mui/icons-material';
 import { apiGet, apiPost, apiDelete } from '../utils/apiClient';
+import { SELECT_FIELD_DEFAULT_BG_SX } from './shared/formStyles';
 import type { ClusterMemberInfo } from './ServerDialog/ServerDialog.types';
 
 /**
@@ -372,36 +370,43 @@ const MembersPanel: React.FC<MembersPanelProps> = ({
                                     {...params}
                                     label="Server"
                                     placeholder="Search unassigned servers..."
-                                    size="small"
+                                    margin="dense"
+                                    InputLabelProps={{
+                                        ...params.InputLabelProps,
+                                        shrink: true,
+                                    }}
+                                    sx={SELECT_FIELD_DEFAULT_BG_SX}
                                 />
                             )}
                             sx={{ flex: 2 }}
                             disabled={addingServer}
                             isOptionEqualToValue={(a, b) => a.id === b.id}
                         />
-                        <FormControl
-                            size="small"
-                            sx={{ flex: 1, minWidth: 160 }}
+                        <TextField
+                            select
+                            label="Role"
+                            value={selectedRole}
+                            onChange={(e) =>
+                                setSelectedRole(e.target.value)
+                            }
                             disabled={addingServer}
+                            margin="dense"
+                            InputLabelProps={{ shrink: true }}
+                            sx={{
+                                flex: 1,
+                                minWidth: 160,
+                                ...SELECT_FIELD_DEFAULT_BG_SX,
+                            }}
                         >
-                            <InputLabel>Role</InputLabel>
-                            <Select
-                                value={selectedRole}
-                                onChange={(e) =>
-                                    setSelectedRole(e.target.value)
-                                }
-                                label="Role"
-                            >
-                                <MenuItem value="">
-                                    <em>Auto-detect</em>
+                            <MenuItem value="">
+                                <em>Auto-detect</em>
+                            </MenuItem>
+                            {ROLE_OPTIONS.map((r) => (
+                                <MenuItem key={r.value} value={r.value}>
+                                    {r.label}
                                 </MenuItem>
-                                {ROLE_OPTIONS.map((r) => (
-                                    <MenuItem key={r.value} value={r.value}>
-                                        {r.label}
-                                    </MenuItem>
-                                ))}
-                            </Select>
-                        </FormControl>
+                            ))}
+                        </TextField>
                         <Button
                             variant="contained"
                             size="small"

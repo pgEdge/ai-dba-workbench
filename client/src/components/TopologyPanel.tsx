@@ -43,26 +43,7 @@ import type {
     RelationshipInput,
     ClusterServerInfo,
 } from './ServerDialog/ServerDialog.types';
-
-/**
- * Shared sx overrides for TextField select components to bypass
- * the MUI notch measurement issue caused by Slide transitions.
- * Hides the fieldset legend and gives the floating label a solid
- * background so it covers the border line reliably.
- */
-const SELECT_FIELD_SX = {
-    '& .MuiOutlinedInput-notchedOutline legend': {
-        width: 0,
-    },
-    '& .MuiInputLabel-shrink': {
-        bgcolor: 'background.paper',
-        px: 0.75,
-        ml: -0.25,
-    },
-    '& .MuiOutlinedInput-root.Mui-disabled .MuiOutlinedInput-notchedOutline': {
-        borderColor: 'divider',
-    },
-};
+import { SELECT_FIELD_DEFAULT_BG_SX } from './shared/formStyles';
 
 /**
  * Replication role options based on cluster replication type.
@@ -644,7 +625,7 @@ const TopologyPanel: React.FC<TopologyPanelProps> = ({
                                         ...params.InputLabelProps,
                                         shrink: true,
                                     }}
-                                    sx={SELECT_FIELD_SX}
+                                    sx={SELECT_FIELD_DEFAULT_BG_SX}
                                 />
                             )}
                             sx={{ flex: 2 }}
@@ -657,7 +638,7 @@ const TopologyPanel: React.FC<TopologyPanelProps> = ({
                             <TextField
                                 select
                                 margin="dense"
-                                sx={{ flex: 1, minWidth: 160, ...SELECT_FIELD_SX }}
+                                sx={{ flex: 1, minWidth: 160, ...SELECT_FIELD_DEFAULT_BG_SX }}
                                 disabled={addingServer}
                                 label="Role"
                                 value={selectedRole}
@@ -939,7 +920,7 @@ const TopologyPanel: React.FC<TopologyPanelProps> = ({
                                 <TextField
                                     select
                                     margin="dense"
-                                    sx={{ flex: 1, ...SELECT_FIELD_SX }}
+                                    sx={{ flex: 1, ...SELECT_FIELD_DEFAULT_BG_SX }}
                                     label="Source"
                                     value={selectedSourceId}
                                     onChange={(e) => {
@@ -965,7 +946,7 @@ const TopologyPanel: React.FC<TopologyPanelProps> = ({
                                 <TextField
                                     select
                                     margin="dense"
-                                    sx={{ flex: 1, ...SELECT_FIELD_SX }}
+                                    sx={{ flex: 1, ...SELECT_FIELD_DEFAULT_BG_SX }}
                                     label="Target"
                                     value={selectedTargetId}
                                     onChange={(e) => {
@@ -994,7 +975,7 @@ const TopologyPanel: React.FC<TopologyPanelProps> = ({
                                 <TextField
                                     select
                                     margin="dense"
-                                    sx={{ flex: 1, ...SELECT_FIELD_SX }}
+                                    sx={{ flex: 1, ...SELECT_FIELD_DEFAULT_BG_SX }}
                                     label="Type"
                                     value={selectedRelType}
                                     onChange={(e) => {

@@ -21,9 +21,6 @@ import {
     Paper,
     Button,
     IconButton,
-    FormControl,
-    InputLabel,
-    Select,
     MenuItem,
     CircularProgress,
     Alert,
@@ -41,6 +38,7 @@ import {
 } from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
 import { apiGet, apiPost, apiDelete } from '../../utils/apiClient';
+import { SELECT_FIELD_SX, SELECT_FIELD_DEFAULT_BG_SX } from '../shared/formStyles';
 import {
     tableHeaderCellSx,
     dialogTitleSx,
@@ -55,7 +53,6 @@ import {
     getTextButtonSx,
     getDeleteIconSx,
     getTableContainerSx,
-    getFocusedLabelSx,
 } from './styles';
 
 const API_BASE_URL = '/api/v1';
@@ -382,7 +379,6 @@ const AdminPermissions: React.FC = () => {
     const textButtonSx = getTextButtonSx(theme);
     const deleteIconSx = getDeleteIconSx(theme);
     const tableContainerSx = getTableContainerSx(theme);
-    const focusedLabelSx = getFocusedLabelSx(theme);
 
     return (
         <Box>
@@ -397,20 +393,20 @@ const AdminPermissions: React.FC = () => {
             )}
 
             {/* Group Selector */}
-            <FormControl fullWidth sx={{ mb: 3 }}>
-                <InputLabel sx={focusedLabelSx}>
-                    Select Group
-                </InputLabel>
-                <Select
-                    value={selectedGroupId}
-                    label="Select Group"
-                    onChange={(e) => setSelectedGroupId(e.target.value)}
-                >
-                    {groups.map((g) => (
-                        <MenuItem key={g.id} value={g.id}>{g.name}</MenuItem>
-                    ))}
-                </Select>
-            </FormControl>
+            <TextField
+                select
+                fullWidth
+                label="Select Group"
+                value={selectedGroupId}
+                onChange={(e) => setSelectedGroupId(e.target.value)}
+                margin="dense"
+                InputLabelProps={{ shrink: true }}
+                sx={{ mb: 3, ...SELECT_FIELD_DEFAULT_BG_SX }}
+            >
+                {groups.map((g) => (
+                    <MenuItem key={g.id} value={g.id}>{g.name}</MenuItem>
+                ))}
+            </TextField>
 
             {selectedGroupId && (
                 <>
@@ -646,6 +642,11 @@ const AdminPermissions: React.FC = () => {
                                 {...params}
                                 label="Permission"
                                 margin="dense"
+                                InputLabelProps={{
+                                    ...params.InputLabelProps,
+                                    shrink: true,
+                                }}
+                                sx={SELECT_FIELD_SX}
                             />
                         )}
                         disabled={grantMcpLoading}
@@ -674,42 +675,42 @@ const AdminPermissions: React.FC = () => {
                     {grantConnError && (
                         <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }}>{grantConnError}</Alert>
                     )}
-                    <FormControl fullWidth margin="dense">
-                        <InputLabel sx={focusedLabelSx}>
-                            Connection
-                        </InputLabel>
-                        <Select
-                            value={selectedConnectionId}
-                            label="Connection"
-                            onChange={(e) => setSelectedConnectionId(e.target.value)}
-                            disabled={grantConnLoading}
-                        >
-                            {!connPermissions.some(p => p.connection_id === 0) && (
-                                [
-                                    <MenuItem key="all" value={0}>All Connections</MenuItem>,
-                                    ...availableConnections
-                                        .filter(c => !connPermissions.some(p => p.connection_id === c.id))
-                                        .map((c) => (
-                                            <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>
-                                        ))
-                                ]
-                            )}
-                        </Select>
-                    </FormControl>
-                    <FormControl fullWidth margin="dense">
-                        <InputLabel sx={focusedLabelSx}>
-                            Access Level
-                        </InputLabel>
-                        <Select
-                            value={selectedAccessLevel}
-                            label="Access Level"
-                            onChange={(e) => setSelectedAccessLevel(e.target.value)}
-                            disabled={grantConnLoading}
-                        >
-                            <MenuItem value="read">Read</MenuItem>
-                            <MenuItem value="read_write">Read/Write</MenuItem>
-                        </Select>
-                    </FormControl>
+                    <TextField
+                        select
+                        fullWidth
+                        label="Connection"
+                        value={selectedConnectionId}
+                        onChange={(e) => setSelectedConnectionId(e.target.value)}
+                        disabled={grantConnLoading}
+                        margin="dense"
+                        InputLabelProps={{ shrink: true }}
+                        sx={SELECT_FIELD_SX}
+                    >
+                        {!connPermissions.some(p => p.connection_id === 0) && (
+                            [
+                                <MenuItem key="all" value={0}>All Connections</MenuItem>,
+                                ...availableConnections
+                                    .filter(c => !connPermissions.some(p => p.connection_id === c.id))
+                                    .map((c) => (
+                                        <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>
+                                    ))
+                            ]
+                        )}
+                    </TextField>
+                    <TextField
+                        select
+                        fullWidth
+                        label="Access Level"
+                        value={selectedAccessLevel}
+                        onChange={(e) => setSelectedAccessLevel(e.target.value)}
+                        disabled={grantConnLoading}
+                        margin="dense"
+                        InputLabelProps={{ shrink: true }}
+                        sx={SELECT_FIELD_SX}
+                    >
+                        <MenuItem value="read">Read</MenuItem>
+                        <MenuItem value="read_write">Read/Write</MenuItem>
+                    </TextField>
                 </DialogContent>
                 <DialogActions sx={dialogActionsSx}>
                     <Button onClick={() => setGrantConnOpen(false)} disabled={grantConnLoading}>
@@ -733,28 +734,28 @@ const AdminPermissions: React.FC = () => {
                     {grantAdminError && (
                         <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }}>{grantAdminError}</Alert>
                     )}
-                    <FormControl fullWidth margin="dense">
-                        <InputLabel sx={focusedLabelSx}>
-                            Permission
-                        </InputLabel>
-                        <Select
-                            value={selectedAdminPermission}
-                            label="Permission"
-                            onChange={(e) => setSelectedAdminPermission(e.target.value)}
-                            disabled={grantAdminLoading}
-                        >
-                            {!adminPermissions.includes('*') && (
-                                [
-                                    <MenuItem key="*" value="*">All Admin Permissions</MenuItem>,
-                                    ...PERMISSION_TYPES
-                                        .filter(pt => !adminPermissions.includes(pt.value))
-                                        .map((pt) => (
-                                            <MenuItem key={pt.value} value={pt.value}>{pt.label}</MenuItem>
-                                        ))
-                                ]
-                            )}
-                        </Select>
-                    </FormControl>
+                    <TextField
+                        select
+                        fullWidth
+                        label="Permission"
+                        value={selectedAdminPermission}
+                        onChange={(e) => setSelectedAdminPermission(e.target.value)}
+                        disabled={grantAdminLoading}
+                        margin="dense"
+                        InputLabelProps={{ shrink: true }}
+                        sx={SELECT_FIELD_SX}
+                    >
+                        {!adminPermissions.includes('*') && (
+                            [
+                                <MenuItem key="*" value="*">All Admin Permissions</MenuItem>,
+                                ...PERMISSION_TYPES
+                                    .filter(pt => !adminPermissions.includes(pt.value))
+                                    .map((pt) => (
+                                        <MenuItem key={pt.value} value={pt.value}>{pt.label}</MenuItem>
+                                    ))
+                            ]
+                        )}
+                    </TextField>
                 </DialogContent>
                 <DialogActions sx={dialogActionsSx}>
                     <Button onClick={() => setGrantAdminOpen(false)} disabled={grantAdminLoading}>

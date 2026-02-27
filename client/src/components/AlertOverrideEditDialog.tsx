@@ -15,9 +15,6 @@ import {
     DialogContent,
     DialogActions,
     Button,
-    FormControl,
-    InputLabel,
-    Select,
     MenuItem,
     TextField,
     Switch,
@@ -30,11 +27,11 @@ import {
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import { apiFetch } from '../utils/apiClient';
+import { SELECT_FIELD_SX } from './shared/formStyles';
 import {
     dialogTitleSx,
     dialogActionsSx,
     getContainedButtonSx,
-    getFocusedLabelSx,
 } from './AdminPanel/styles';
 
 interface AlertOverrideEditDialogProps {
@@ -94,7 +91,6 @@ const AlertOverrideEditDialog: React.FC<AlertOverrideEditDialogProps> = ({
 }) => {
     const theme = useTheme();
     const containedButtonSx = getContainedButtonSx(theme);
-    const focusedLabelSx = getFocusedLabelSx(theme);
 
     const [loading, setLoading] = useState(false);
     const [saving, setSaving] = useState(false);
@@ -373,48 +369,50 @@ const AlertOverrideEditDialog: React.FC<AlertOverrideEditDialogProps> = ({
                         )}
 
                         {/* Scope selector */}
-                        <FormControl fullWidth margin="dense" sx={{ mt: 1 }}>
-                            <InputLabel sx={focusedLabelSx}>Scope</InputLabel>
-                            <Select
-                                value={selectedScope}
-                                label="Scope"
-                                onChange={(e) => handleScopeChange(e.target.value)}
-                                disabled={saving}
-                            >
-                                {scopeOptions.map((opt) => (
-                                    <MenuItem
-                                        key={opt.value}
-                                        value={opt.value}
-                                        disabled={opt.disabled}
+                        <TextField
+                            select
+                            fullWidth
+                            label="Scope"
+                            value={selectedScope}
+                            onChange={(e) => handleScopeChange(e.target.value)}
+                            disabled={saving}
+                            margin="dense"
+                            InputLabelProps={{ shrink: true }}
+                            sx={{ mt: 1, ...SELECT_FIELD_SX }}
+                        >
+                            {scopeOptions.map((opt) => (
+                                <MenuItem
+                                    key={opt.value}
+                                    value={opt.value}
+                                    disabled={opt.disabled}
+                                >
+                                    <Box
+                                        sx={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: 1,
+                                        }}
                                     >
-                                        <Box
-                                            sx={{
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                gap: 1,
-                                            }}
-                                        >
-                                            {opt.label}
-                                            {hasOverrideAtScope(opt.value) && (
-                                                <Chip
-                                                    label="override"
-                                                    size="small"
-                                                    sx={{
-                                                        height: 18,
-                                                        fontSize: '0.875rem',
-                                                        bgcolor: alpha(
-                                                            theme.palette.primary.main,
-                                                            0.12
-                                                        ),
-                                                        color: theme.palette.primary.main,
-                                                    }}
-                                                />
-                                            )}
-                                        </Box>
-                                    </MenuItem>
-                                ))}
-                            </Select>
-                        </FormControl>
+                                        {opt.label}
+                                        {hasOverrideAtScope(opt.value) && (
+                                            <Chip
+                                                label="override"
+                                                size="small"
+                                                sx={{
+                                                    height: 18,
+                                                    fontSize: '0.875rem',
+                                                    bgcolor: alpha(
+                                                        theme.palette.primary.main,
+                                                        0.12
+                                                    ),
+                                                    color: theme.palette.primary.main,
+                                                }}
+                                            />
+                                        )}
+                                    </Box>
+                                </MenuItem>
+                            ))}
+                        </TextField>
 
                         {/* Info alert when no override at selected scope */}
                         {!hasOverrideAtScope(selectedScope) && (
@@ -441,21 +439,23 @@ const AlertOverrideEditDialog: React.FC<AlertOverrideEditDialogProps> = ({
                         </Box>
 
                         {/* Operator select */}
-                        <FormControl fullWidth margin="dense">
-                            <InputLabel sx={focusedLabelSx}>Operator</InputLabel>
-                            <Select
-                                value={editOperator}
-                                label="Operator"
-                                onChange={(e) => setEditOperator(e.target.value)}
-                                disabled={saving}
-                            >
-                                {OPERATORS.map((op) => (
-                                    <MenuItem key={op} value={op}>
-                                        {op}
-                                    </MenuItem>
-                                ))}
-                            </Select>
-                        </FormControl>
+                        <TextField
+                            select
+                            fullWidth
+                            label="Operator"
+                            value={editOperator}
+                            onChange={(e) => setEditOperator(e.target.value)}
+                            disabled={saving}
+                            margin="dense"
+                            InputLabelProps={{ shrink: true }}
+                            sx={SELECT_FIELD_SX}
+                        >
+                            {OPERATORS.map((op) => (
+                                <MenuItem key={op} value={op}>
+                                    {op}
+                                </MenuItem>
+                            ))}
+                        </TextField>
 
                         {/* Threshold text field */}
                         <TextField
@@ -477,21 +477,23 @@ const AlertOverrideEditDialog: React.FC<AlertOverrideEditDialogProps> = ({
                         />
 
                         {/* Severity select */}
-                        <FormControl fullWidth margin="dense">
-                            <InputLabel sx={focusedLabelSx}>Severity</InputLabel>
-                            <Select
-                                value={editSeverity}
-                                label="Severity"
-                                onChange={(e) => setEditSeverity(e.target.value)}
-                                disabled={saving}
-                            >
-                                {SEVERITIES.map((s) => (
-                                    <MenuItem key={s} value={s}>
-                                        {s}
-                                    </MenuItem>
-                                ))}
-                            </Select>
-                        </FormControl>
+                        <TextField
+                            select
+                            fullWidth
+                            label="Severity"
+                            value={editSeverity}
+                            onChange={(e) => setEditSeverity(e.target.value)}
+                            disabled={saving}
+                            margin="dense"
+                            InputLabelProps={{ shrink: true }}
+                            sx={SELECT_FIELD_SX}
+                        >
+                            {SEVERITIES.map((s) => (
+                                <MenuItem key={s} value={s}>
+                                    {s}
+                                </MenuItem>
+                            ))}
+                        </TextField>
                     </>
                 ) : null}
             </DialogContent>

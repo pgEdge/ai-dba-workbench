@@ -12,9 +12,6 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
     Autocomplete,
     TextField,
-    FormControl,
-    InputLabel,
-    Select,
     MenuItem,
     Button,
     Alert,
@@ -33,10 +30,8 @@ import {
     NewClusterFormData,
     ClusterFieldsValue,
 } from './ServerDialog.types';
-import {
-    textFieldSx,
-    sectionLabelSx,
-} from './ServerDialog.styles';
+import { sectionLabelSx } from './ServerDialog.styles';
+import { SELECT_FIELD_DEFAULT_BG_SX } from '../shared/formStyles';
 
 /**
  * Sentinel option appended to the cluster autocomplete list.
@@ -619,7 +614,11 @@ const ClusterFields: React.FC<ClusterFieldsProps> = ({
                         label="Cluster"
                         placeholder="Search clusters..."
                         margin="dense"
-                        sx={textFieldSx}
+                        InputLabelProps={{
+                            ...params.InputLabelProps,
+                            shrink: true,
+                        }}
+                        sx={SELECT_FIELD_DEFAULT_BG_SX}
                     />
                 )}
                 disabled={saving}
@@ -633,7 +632,8 @@ const ClusterFields: React.FC<ClusterFieldsProps> = ({
                     label="Replication Type"
                     value={getReplicationTypeLabel(effectiveReplicationType)}
                     margin="dense"
-                    sx={{ ...textFieldSx, mt: 1 }}
+                    InputLabelProps={{ shrink: true }}
+                    sx={{ ...SELECT_FIELD_DEFAULT_BG_SX, mt: 1 }}
                     slotProps={{
                         input: {
                             readOnly: true,
@@ -658,74 +658,55 @@ const ClusterFields: React.FC<ClusterFieldsProps> = ({
                         required
                         disabled={saving}
                         margin="dense"
-                        sx={textFieldSx}
+                        InputLabelProps={{ shrink: true }}
+                        sx={SELECT_FIELD_DEFAULT_BG_SX}
                     />
 
-                    <FormControl
+                    <TextField
+                        select
                         fullWidth
-                        margin="dense"
+                        label="Replication Type"
+                        value={displayNewCluster.replication_type}
+                        onChange={(e) =>
+                            handleNewClusterFieldChange(
+                                'replication_type',
+                                e.target.value,
+                            )
+                        }
                         disabled={saving}
-                        sx={{ mt: 1 }}
+                        margin="dense"
+                        InputLabelProps={{ shrink: true }}
+                        sx={{ mt: 1, ...SELECT_FIELD_DEFAULT_BG_SX }}
                     >
-                        <InputLabel
-                            sx={{
-                                '&.Mui-focused': {
-                                    color: 'primary.main',
-                                },
-                            }}
-                        >
-                            Replication Type
-                        </InputLabel>
-                        <Select
-                            value={displayNewCluster.replication_type}
-                            onChange={(e) =>
-                                handleNewClusterFieldChange(
-                                    'replication_type',
-                                    e.target.value,
-                                )
-                            }
-                            label="Replication Type"
-                            sx={{ borderRadius: 1 }}
-                        >
-                            {REPLICATION_TYPES.map((rt) => (
-                                <MenuItem key={rt.value} value={rt.value}>
-                                    {rt.label}
-                                </MenuItem>
-                            ))}
-                        </Select>
-                    </FormControl>
+                        {REPLICATION_TYPES.map((rt) => (
+                            <MenuItem key={rt.value} value={rt.value}>
+                                {rt.label}
+                            </MenuItem>
+                        ))}
+                    </TextField>
                 </Box>
             )}
 
             {/* Role dropdown - shown when a cluster is selected or being
                 created, and replication type is known */}
             {roleOptions.length > 0 && (selectedOption || showNewClusterFields) && (
-                <FormControl
+                <TextField
+                    select
                     fullWidth
-                    margin="dense"
+                    label="Role"
+                    value={currentRole ?? ''}
+                    onChange={(e) => handleRoleChange(e.target.value)}
                     disabled={saving}
-                    sx={{ mt: 1 }}
+                    margin="dense"
+                    InputLabelProps={{ shrink: true }}
+                    sx={{ mt: 1, ...SELECT_FIELD_DEFAULT_BG_SX }}
                 >
-                    <InputLabel
-                        sx={{
-                            '&.Mui-focused': { color: 'primary.main' },
-                        }}
-                    >
-                        Role
-                    </InputLabel>
-                    <Select
-                        value={currentRole ?? ''}
-                        onChange={(e) => handleRoleChange(e.target.value)}
-                        label="Role"
-                        sx={{ borderRadius: 1 }}
-                    >
-                        {roleOptions.map((ro) => (
-                            <MenuItem key={ro.value} value={ro.value}>
-                                {ro.label}
-                            </MenuItem>
-                        ))}
-                    </Select>
-                </FormControl>
+                    {roleOptions.map((ro) => (
+                        <MenuItem key={ro.value} value={ro.value}>
+                            {ro.label}
+                        </MenuItem>
+                    ))}
+                </TextField>
             )}
         </Box>
     );

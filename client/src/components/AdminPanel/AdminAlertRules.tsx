@@ -23,9 +23,6 @@ import {
     IconButton,
     Switch,
     TextField,
-    FormControl,
-    InputLabel,
-    Select,
     MenuItem,
     Chip,
     CircularProgress,
@@ -39,6 +36,7 @@ import { useTheme } from '@mui/material/styles';
 import {
     Edit as EditIcon,
 } from '@mui/icons-material';
+import { SELECT_FIELD_SX } from '../shared/formStyles';
 import {
     tableHeaderCellSx,
     dialogTitleSx,
@@ -50,7 +48,6 @@ import {
     categoryLabelSx,
     getContainedButtonSx,
     getTableContainerSx,
-    getFocusedLabelSx,
 } from './styles';
 import { apiGet, apiPut } from '../../utils/apiClient';
 
@@ -171,7 +168,6 @@ const AdminAlertRules: React.FC = () => {
 
     const containedButtonSx = getContainedButtonSx(theme);
     const tableContainerSx = getTableContainerSx(theme);
-    const focusedLabelSx = getFocusedLabelSx(theme);
 
     // Group rules by category
     const categories = Array.from(new Set(rules.map((r) => r.category))).sort();
@@ -296,19 +292,21 @@ const AdminAlertRules: React.FC = () => {
                             disabled={saving}
                         />
                     </Box>
-                    <FormControl fullWidth margin="dense">
-                        <InputLabel sx={focusedLabelSx}>Operator</InputLabel>
-                        <Select
-                            value={editOperator}
-                            label="Operator"
-                            onChange={(e) => setEditOperator(e.target.value)}
-                            disabled={saving}
-                        >
-                            {OPERATORS.map((op) => (
-                                <MenuItem key={op} value={op}>{op}</MenuItem>
-                            ))}
-                        </Select>
-                    </FormControl>
+                    <TextField
+                        select
+                        fullWidth
+                        label="Operator"
+                        value={editOperator}
+                        onChange={(e) => setEditOperator(e.target.value)}
+                        disabled={saving}
+                        margin="dense"
+                        InputLabelProps={{ shrink: true }}
+                        sx={SELECT_FIELD_SX}
+                    >
+                        {OPERATORS.map((op) => (
+                            <MenuItem key={op} value={op}>{op}</MenuItem>
+                        ))}
+                    </TextField>
                     <TextField
                         label="Threshold"
                         type="number"
@@ -323,19 +321,21 @@ const AdminAlertRules: React.FC = () => {
                             },
                         })}
                     />
-                    <FormControl fullWidth margin="dense">
-                        <InputLabel sx={focusedLabelSx}>Severity</InputLabel>
-                        <Select
-                            value={editSeverity}
-                            label="Severity"
-                            onChange={(e) => setEditSeverity(e.target.value)}
-                            disabled={saving}
-                        >
-                            {SEVERITIES.map((s) => (
-                                <MenuItem key={s} value={s}>{s}</MenuItem>
-                            ))}
-                        </Select>
-                    </FormControl>
+                    <TextField
+                        select
+                        fullWidth
+                        label="Severity"
+                        value={editSeverity}
+                        onChange={(e) => setEditSeverity(e.target.value)}
+                        disabled={saving}
+                        margin="dense"
+                        InputLabelProps={{ shrink: true }}
+                        sx={SELECT_FIELD_SX}
+                    >
+                        {SEVERITIES.map((s) => (
+                            <MenuItem key={s} value={s}>{s}</MenuItem>
+                        ))}
+                    </TextField>
                 </DialogContent>
                 <DialogActions sx={dialogActionsSx}>
                     <Button onClick={() => setEditOpen(false)} disabled={saving}>

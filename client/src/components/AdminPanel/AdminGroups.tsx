@@ -33,9 +33,6 @@ import {
     ListItem,
     ListItemText,
     ListItemSecondaryAction,
-    FormControl,
-    InputLabel,
-    Select,
     MenuItem,
     RadioGroup,
     FormControlLabel,
@@ -54,6 +51,7 @@ import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
 import EffectivePermissionsPanel from './EffectivePermissionsPanel';
 import { useAuth } from '../../contexts/AuthContext';
 import { apiGet, apiPost, apiPut, apiDelete } from '../../utils/apiClient';
+import { SELECT_FIELD_SX } from '../shared/formStyles';
 import {
     tableHeaderCellSx,
     dialogTitleSx,
@@ -66,7 +64,6 @@ import {
     getDeleteIconSx,
     getTableContainerSx,
     getRadioSx,
-    getFocusedLabelSx,
 } from './styles';
 
 
@@ -383,8 +380,6 @@ const AdminGroups: React.FC = () => {
     const deleteIconSx = getDeleteIconSx(theme);
     const tableContainerSx = getTableContainerSx(theme);
     const radioSx = getRadioSx(theme);
-    const focusedLabelSx = getFocusedLabelSx(theme);
-
     return (
         <Box>
             <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
@@ -688,26 +683,26 @@ const AdminGroups: React.FC = () => {
                         <FormControlLabel value="user" control={<Radio sx={radioSx} />} label="User" />
                         <FormControlLabel value="group" control={<Radio sx={radioSx} />} label="Group" />
                     </RadioGroup>
-                    <FormControl fullWidth margin="dense">
-                        <InputLabel sx={focusedLabelSx}>
-                            {memberType === 'user' ? 'Select User' : 'Select Group'}
-                        </InputLabel>
-                        <Select
-                            value={selectedMemberId}
-                            label={memberType === 'user' ? 'Select User' : 'Select Group'}
-                            onChange={(e) => setSelectedMemberId(e.target.value)}
-                            disabled={addMemberLoading}
-                        >
-                            {memberType === 'user'
-                                ? availableUsers.map((u) => (
-                                    <MenuItem key={u.id} value={u.id}>{u.username}</MenuItem>
-                                ))
-                                : availableGroups.map((g) => (
-                                    <MenuItem key={g.id} value={g.id}>{g.name}</MenuItem>
-                                ))
-                            }
-                        </Select>
-                    </FormControl>
+                    <TextField
+                        select
+                        fullWidth
+                        label={memberType === 'user' ? 'Select User' : 'Select Group'}
+                        value={selectedMemberId}
+                        onChange={(e) => setSelectedMemberId(e.target.value)}
+                        disabled={addMemberLoading}
+                        margin="dense"
+                        InputLabelProps={{ shrink: true }}
+                        sx={SELECT_FIELD_SX}
+                    >
+                        {memberType === 'user'
+                            ? availableUsers.map((u) => (
+                                <MenuItem key={u.id} value={u.id}>{u.username}</MenuItem>
+                            ))
+                            : availableGroups.map((g) => (
+                                <MenuItem key={g.id} value={g.id}>{g.name}</MenuItem>
+                            ))
+                        }
+                    </TextField>
                 </DialogContent>
                 <DialogActions sx={dialogActionsSx}>
                     <Button onClick={() => setAddMemberOpen(false)} disabled={addMemberLoading}>

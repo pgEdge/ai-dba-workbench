@@ -24,7 +24,8 @@ export const CHART_TOOLBAR_SX = {
 
 export const CHART_PAPER_SX = {
     p: 2,
-    overflow: 'visible',
+    minWidth: 0,
+    overflow: 'hidden',
     borderRadius: 2,
     border: '1px solid',
     borderColor: 'divider',

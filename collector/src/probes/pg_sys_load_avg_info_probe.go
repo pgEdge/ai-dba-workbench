@@ -31,23 +31,9 @@ func NewPgSysLoadAvgInfoProbe(config *ProbeConfig) *PgSysLoadAvgInfoProbe {
 	}
 }
 
-// GetName returns the probe name
-func (p *PgSysLoadAvgInfoProbe) GetName() string {
-	return ProbeNamePgSysLoadAvgInfo
-}
-
+// GetExtensionName returns the required extension name
 func (p *PgSysLoadAvgInfoProbe) GetExtensionName() string {
 	return "system_stats"
-}
-
-// GetTableName returns the metrics table name
-func (p *PgSysLoadAvgInfoProbe) GetTableName() string {
-	return ProbeNamePgSysLoadAvgInfo
-}
-
-// IsDatabaseScoped returns false as pg_sys_load_avg_info is server-scoped
-func (p *PgSysLoadAvgInfoProbe) IsDatabaseScoped() bool {
-	return false
 }
 
 // GetQuery returns the SQL query to execute

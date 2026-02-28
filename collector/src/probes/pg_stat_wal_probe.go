@@ -31,21 +31,6 @@ func NewPgStatWalProbe(config *ProbeConfig) *PgStatWalProbe {
 	}
 }
 
-// GetName returns the probe name
-func (p *PgStatWalProbe) GetName() string {
-	return ProbeNamePgStatWAL
-}
-
-// GetTableName returns the metrics table name
-func (p *PgStatWalProbe) GetTableName() string {
-	return ProbeNamePgStatWAL
-}
-
-// IsDatabaseScoped returns false as pg_stat_wal is server-scoped
-func (p *PgStatWalProbe) IsDatabaseScoped() bool {
-	return false
-}
-
 // GetQuery returns the SQL query to execute
 func (p *PgStatWalProbe) GetQuery() string {
 	return ""

@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"strings"
 
 	"github.com/pgedge/ai-workbench/server/internal/api"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
@@ -230,27 +229,15 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 }
 
 // extractToken extracts a bearer or session token from the request.
-// It checks the Authorization header first (Bearer token), then falls
-// back to the session_token cookie.  Returns the raw token string and
-// a boolean indicating whether extraction succeeded plus an error
-// message suitable for the client when it fails.
+// It delegates to auth.ExtractBearerToken and returns the raw token
+// string, a boolean indicating whether extraction succeeded, and an
+// error message suitable for the client when it fails.
 func extractToken(r *http.Request) (string, bool, string) {
-	// Try Authorization header first (for API tokens and backwards compatibility)
-	authHeader := r.Header.Get("Authorization")
-	if authHeader != "" {
-		token := strings.TrimPrefix(authHeader, "Bearer ")
-		if token == authHeader {
-			return "", false, "Invalid Authorization header format"
-		}
-		return token, true, ""
+	token := auth.ExtractBearerToken(r)
+	if token == "" {
+		return "", false, "Missing or invalid authentication credentials"
 	}
-
-	// Try to get token from httpOnly session cookie
-	cookie, err := r.Cookie("session_token")
-	if err != nil || cookie.Value == "" {
-		return "", false, "Missing authentication credentials"
-	}
-	return cookie.Value, true, ""
+	return token, true, ""
 }
 
 // createAuthWrapper creates a handler wrapper that enforces authentication

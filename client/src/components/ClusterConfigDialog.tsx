@@ -16,7 +16,6 @@ import {
     IconButton,
     Typography,
     Box,
-    Slide,
     Tabs,
     Tab,
     TextField,
@@ -25,20 +24,13 @@ import {
     Alert,
     MenuItem,
 } from '@mui/material';
-import { TransitionProps } from '@mui/material/transitions';
 import { Close as CloseIcon } from '@mui/icons-material';
 import AlertOverridesPanel from './AlertOverridesPanel';
 import ProbeOverridesPanel from './ProbeOverridesPanel';
 import ChannelOverridesPanel from './ChannelOverridesPanel';
 import TopologyPanel from './TopologyPanel';
 import { SELECT_FIELD_DEFAULT_BG_SX } from './shared/formStyles';
-
-const Transition = React.forwardRef(function Transition(
-    props: TransitionProps & { children: React.ReactElement },
-    ref: React.Ref<unknown>,
-) {
-    return <Slide direction="up" ref={ref} {...props} />;
-});
+import SlideTransition from './shared/SlideTransition';
 
 /**
  * Replication type options displayed in the select dropdown.
@@ -193,7 +185,7 @@ const ClusterConfigDialog: React.FC<ClusterConfigDialogProps> = ({
             fullScreen
             open={open}
             onClose={onClose}
-            TransitionComponent={Transition}
+            TransitionComponent={SlideTransition}
         >
             <AppBar
                 position="static"

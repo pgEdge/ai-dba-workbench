@@ -26,6 +26,18 @@ administration and AI reasoning; it offers an extensible foundation
 for observability, troubleshooting, and intelligent workflow
 creation across the pgEdge ecosystem.
 
+## Table of Contents
+
+- [Components](#components)
+- [Documentation](#documentation)
+- [Prerequisites](#prerequisites)
+- [Building](#building)
+- [Testing](#testing)
+- [Getting Started](#getting-started)
+- [Deployment](#deployment)
+- [Issues](#issues)
+- [Contributing](#contributing)
+
 ## Components
 
 The pgEdge AI DBA Workbench consists of four main components:

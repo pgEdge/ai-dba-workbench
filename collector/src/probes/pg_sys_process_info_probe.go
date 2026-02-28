@@ -31,23 +31,9 @@ func NewPgSysProcessInfoProbe(config *ProbeConfig) *PgSysProcessInfoProbe {
 	}
 }
 
-// GetName returns the probe name
-func (p *PgSysProcessInfoProbe) GetName() string {
-	return ProbeNamePgSysProcessInfo
-}
-
+// GetExtensionName returns the required extension name
 func (p *PgSysProcessInfoProbe) GetExtensionName() string {
 	return "system_stats"
-}
-
-// GetTableName returns the metrics table name
-func (p *PgSysProcessInfoProbe) GetTableName() string {
-	return ProbeNamePgSysProcessInfo
-}
-
-// IsDatabaseScoped returns false as pg_sys_process_info is server-scoped
-func (p *PgSysProcessInfoProbe) IsDatabaseScoped() bool {
-	return false
 }
 
 // GetQuery returns the SQL query to execute

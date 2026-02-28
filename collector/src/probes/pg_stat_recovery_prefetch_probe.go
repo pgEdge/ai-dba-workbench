@@ -30,21 +30,6 @@ func NewPgStatRecoveryPrefetchProbe(config *ProbeConfig) *PgStatRecoveryPrefetch
 	}
 }
 
-// GetName returns the probe name
-func (p *PgStatRecoveryPrefetchProbe) GetName() string {
-	return ProbeNamePgStatRecoveryPrefetch
-}
-
-// GetTableName returns the metrics table name
-func (p *PgStatRecoveryPrefetchProbe) GetTableName() string {
-	return ProbeNamePgStatRecoveryPrefetch
-}
-
-// IsDatabaseScoped returns false as pg_stat_recovery_prefetch is server-scoped
-func (p *PgStatRecoveryPrefetchProbe) IsDatabaseScoped() bool {
-	return false
-}
-
 // GetQuery returns the SQL query to execute
 func (p *PgStatRecoveryPrefetchProbe) GetQuery() string {
 	return `

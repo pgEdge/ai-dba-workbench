@@ -727,8 +727,8 @@ func TestSecurityHeadersMiddleware(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	// Wrap with security headers middleware
-	handler := SecurityHeadersMiddleware(innerHandler)
+	// Wrap with security headers middleware (HSTS enabled)
+	handler := SecurityHeadersMiddleware(true)(innerHandler)
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	w := httptest.NewRecorder()
@@ -744,7 +744,7 @@ func TestSecurityHeadersMiddleware(t *testing.T) {
 		{"X-Content-Type-Options", "nosniff"},
 		{"X-Frame-Options", "DENY"},
 		{"X-XSS-Protection", "1; mode=block"},
-		{"Content-Security-Policy", "default-src 'self'"},
+		{"Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:"},
 		{"Referrer-Policy", "strict-origin-when-cross-origin"},
 	}
 
@@ -771,7 +771,7 @@ func TestSecurityHeadersMiddleware_PreservesExistingHeaders(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	handler := SecurityHeadersMiddleware(innerHandler)
+	handler := SecurityHeadersMiddleware(false)(innerHandler)
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	w := httptest.NewRecorder()

@@ -27,23 +27,8 @@ type PgStatAllTablesProbe struct {
 // NewPgStatAllTablesProbe creates a new pg_stat_all_tables probe
 func NewPgStatAllTablesProbe(config *ProbeConfig) *PgStatAllTablesProbe {
 	return &PgStatAllTablesProbe{
-		BaseMetricsProbe: BaseMetricsProbe{config: config},
+		BaseMetricsProbe: BaseMetricsProbe{config: config, databaseScoped: true},
 	}
-}
-
-// GetName returns the probe name
-func (p *PgStatAllTablesProbe) GetName() string {
-	return ProbeNamePgStatAllTables
-}
-
-// GetTableName returns the metrics table name
-func (p *PgStatAllTablesProbe) GetTableName() string {
-	return ProbeNamePgStatAllTables
-}
-
-// IsDatabaseScoped returns true as pg_stat_all_tables is database-scoped
-func (p *PgStatAllTablesProbe) IsDatabaseScoped() bool {
-	return true
 }
 
 // GetQuery returns the SQL query to execute

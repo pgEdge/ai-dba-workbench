@@ -574,5 +574,5 @@ If coverage is low, consider these approaches:
 ## Contributing
 
 Before contributing, review the project's contribution guidelines
-in `docs/developers.md`. Ensure all tests pass and the code
+in `docs/developer-guide/contributing.md`. Ensure all tests pass and the code
 follows the style guidelines before submitting a pull request.

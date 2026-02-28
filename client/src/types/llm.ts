@@ -47,6 +47,16 @@ export interface ToolResult {
 }
 
 /**
+ * A single message in an LLM conversation. The content field carries
+ * plain text for user messages and structured blocks for assistant or
+ * tool-result turns.
+ */
+export interface Message {
+    role: string;
+    content: string | LLMContentBlock[] | ToolResult[];
+}
+
+/**
  * JSON Schema fragment describing the input parameters of an MCP tool.
  */
 export interface ToolInputSchema {

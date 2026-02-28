@@ -36,6 +36,7 @@ import ToolStatus, { ToolActivity } from './ToolStatus';
 import ThinkingIndicator from './ThinkingIndicator';
 import ConversationHistory from './ConversationHistory';
 import { getDownloadButtonSx } from '../shared/MarkdownContent';
+import { downloadAsMarkdown } from '../../utils/downloadMarkdown';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -442,15 +443,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
         }
 
         const content = lines.join('\n');
-        const blob = new Blob([content], { type: 'text/markdown' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = filename;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
+        downloadAsMarkdown(content, filename);
     }, [messages, conversations, currentConversationId]);
 
     // -----------------------------------------------------------------------

@@ -26,23 +26,8 @@ type PgStatUserFunctionsProbe struct {
 // NewPgStatUserFunctionsProbe creates a new pg_stat_user_functions probe
 func NewPgStatUserFunctionsProbe(config *ProbeConfig) *PgStatUserFunctionsProbe {
 	return &PgStatUserFunctionsProbe{
-		BaseMetricsProbe: BaseMetricsProbe{config: config},
+		BaseMetricsProbe: BaseMetricsProbe{config: config, databaseScoped: true},
 	}
-}
-
-// GetName returns the probe name
-func (p *PgStatUserFunctionsProbe) GetName() string {
-	return ProbeNamePgStatUserFunctions
-}
-
-// GetTableName returns the metrics table name
-func (p *PgStatUserFunctionsProbe) GetTableName() string {
-	return ProbeNamePgStatUserFunctions
-}
-
-// IsDatabaseScoped returns true as pg_stat_user_functions is database-scoped
-func (p *PgStatUserFunctionsProbe) IsDatabaseScoped() bool {
-	return true
 }
 
 // GetQuery returns the SQL query to execute

@@ -268,7 +268,7 @@ At the end of each README:
 - Issues link: "To report an issue with the software, visit:"
 
 - Developer link: "We welcome your project contributions; for more
-  information, see docs/developers.md."
+  information, see docs/developer-guide/contributing.md."
 
 - Online docs link: "For more information, visit
   [docs.pgedge.com](https://docs.pgedge.com)"

@@ -79,6 +79,10 @@ type Engine struct {
 	// Notification worker pool using generic WorkerPool abstraction
 	notificationPool *worker.WorkerPool[notificationJob]
 
+	// ctx is the engine-wide context set during Run, used for
+	// background operations such as notification job processing.
+	ctx context.Context
+
 	// Synchronization
 	mu sync.RWMutex
 }
@@ -106,15 +110,16 @@ func NewEngine(cfg *config.Config, datastore *database.Datastore, debug bool) *E
 		e.initLLMProviders()
 	}
 
-	// Create and start notification worker pool using the generic WorkerPool abstraction.
-	// The pool handles bounded concurrency with non-blocking submission and graceful shutdown.
-	e.notificationPool = worker.NewWorkerPool(
-		NotificationWorkerPoolSize,
-		100, // Buffer for burst handling
-		e.processNotificationJob,
-	)
-	e.notificationPool.Start()
-	e.log("Started %d notification workers", NotificationWorkerPoolSize)
+	// Create and start notification worker pool only when notifications are enabled.
+	if e.notificationMgr != nil {
+		e.notificationPool = worker.NewWorkerPool(
+			NotificationWorkerPoolSize,
+			100, // Buffer for burst handling
+			e.processNotificationJob,
+		)
+		e.notificationPool.Start()
+		e.log("Started %d notification workers", NotificationWorkerPoolSize)
+	}
 
 	return e
 }
@@ -161,6 +166,7 @@ func (e *Engine) initLLMProviders() {
 
 // Run starts the engine and runs until the context is canceled
 func (e *Engine) Run(ctx context.Context) error {
+	e.ctx = ctx
 	e.log("Engine starting...")
 
 	// Start all background workers
@@ -276,6 +282,9 @@ func (e *Engine) getConfig() *config.Config {
 
 // StopNotificationWorkers gracefully shuts down the notification worker pool
 func (e *Engine) StopNotificationWorkers() {
+	if e.notificationPool == nil {
+		return
+	}
 	e.notificationPool.Stop()
 	e.log("Notification workers stopped")
 }
@@ -299,6 +308,14 @@ func (e *Engine) runThresholdEvaluator(ctx context.Context) {
 			return
 		case <-ticker.C:
 			e.evaluateThresholds(ctx)
+
+			newCfg := e.getConfig()
+			newInterval := time.Duration(newCfg.Threshold.EvaluationIntervalSeconds) * time.Second
+			if newInterval != interval {
+				interval = newInterval
+				ticker.Reset(interval)
+				e.log("Threshold evaluator interval updated to %v", interval)
+			}
 		}
 	}
 }
@@ -322,6 +339,14 @@ func (e *Engine) runBaselineCalculator(ctx context.Context) {
 			return
 		case <-ticker.C:
 			e.calculateBaselines(ctx)
+
+			newCfg := e.getConfig()
+			newInterval := time.Duration(newCfg.Baselines.RefreshIntervalSeconds) * time.Second
+			if newInterval != interval {
+				interval = newInterval
+				ticker.Reset(interval)
+				e.log("Baseline calculator interval updated to %v", interval)
+			}
 		}
 	}
 }
@@ -342,6 +367,14 @@ func (e *Engine) runAnomalyDetector(ctx context.Context) {
 			return
 		case <-ticker.C:
 			e.detectAnomalies(ctx)
+
+			newCfg := e.getConfig()
+			newInterval := time.Duration(newCfg.Anomaly.Tier1.EvaluationIntervalSeconds) * time.Second
+			if newInterval != interval {
+				interval = newInterval
+				ticker.Reset(interval)
+				e.log("Anomaly detector interval updated to %v", interval)
+			}
 		}
 	}
 }

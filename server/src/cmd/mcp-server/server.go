@@ -418,6 +418,7 @@ func (s *Server) Run(flags *Flags, configPath string) error {
 		Debug:          s.debug,
 		TrustedProxies: s.cfg.HTTP.TrustedProxies,
 		CORSOrigin:     s.cfg.HTTP.CORSOrigin,
+		HSTSEnabled:    s.cfg.HTTP.HSTSEnabled,
 	}
 
 	// Create secure IP extractor for rate limiting

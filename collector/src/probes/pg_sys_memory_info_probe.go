@@ -31,23 +31,9 @@ func NewPgSysMemoryInfoProbe(config *ProbeConfig) *PgSysMemoryInfoProbe {
 	}
 }
 
-// GetName returns the probe name
-func (p *PgSysMemoryInfoProbe) GetName() string {
-	return ProbeNamePgSysMemoryInfo
-}
-
+// GetExtensionName returns the required extension name
 func (p *PgSysMemoryInfoProbe) GetExtensionName() string {
 	return "system_stats"
-}
-
-// GetTableName returns the metrics table name
-func (p *PgSysMemoryInfoProbe) GetTableName() string {
-	return ProbeNamePgSysMemoryInfo
-}
-
-// IsDatabaseScoped returns false as pg_sys_memory_info is server-scoped
-func (p *PgSysMemoryInfoProbe) IsDatabaseScoped() bool {
-	return false
 }
 
 // GetQuery returns the SQL query to execute

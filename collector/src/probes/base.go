@@ -111,7 +111,23 @@ type ExtensionProbe interface {
 
 // BaseMetricsProbe provides common probe functionality
 type BaseMetricsProbe struct {
-	config *ProbeConfig
+	config         *ProbeConfig
+	databaseScoped bool
+}
+
+// GetName returns the probe name
+func (bp *BaseMetricsProbe) GetName() string {
+	return bp.config.Name
+}
+
+// GetTableName returns the metrics table name (without schema)
+func (bp *BaseMetricsProbe) GetTableName() string {
+	return bp.config.Name
+}
+
+// IsDatabaseScoped returns true if the probe should be executed for each database
+func (bp *BaseMetricsProbe) IsDatabaseScoped() bool {
+	return bp.databaseScoped
 }
 
 // GetConfig returns the probe configuration

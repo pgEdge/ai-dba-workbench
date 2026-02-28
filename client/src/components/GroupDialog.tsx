@@ -29,24 +29,14 @@ import {
     AppBar,
     Toolbar,
     IconButton,
-    Slide,
     alpha,
 } from '@mui/material';
 import { Theme } from '@mui/material/styles';
-import { TransitionProps } from '@mui/material/transitions';
 import { Close as CloseIcon } from '@mui/icons-material';
 import AlertOverridesPanel from './AlertOverridesPanel';
 import ProbeOverridesPanel from './ProbeOverridesPanel';
 import ChannelOverridesPanel from './ChannelOverridesPanel';
-
-// --- Slide transition for fullScreen dialog ---
-
-const Transition = React.forwardRef(function Transition(
-    props: TransitionProps & { children: React.ReactElement },
-    ref: React.Ref<unknown>,
-) {
-    return <Slide direction="up" ref={ref} {...props} />;
-});
+import SlideTransition from './shared/SlideTransition';
 
 // --- Style constants (Issue 23) ---
 
@@ -305,7 +295,7 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
                 fullScreen
                 open={open}
                 onClose={handleClose}
-                TransitionComponent={Transition}
+                TransitionComponent={SlideTransition}
             >
                 <AppBar
                     position="static"

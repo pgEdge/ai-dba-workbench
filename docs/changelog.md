@@ -138,7 +138,7 @@ and this project adheres to
 - Connection management REST APIs for selecting database connections
   (`/api/v1/connections`, `/api/v1/connections/current`)
 - Session-based connection selection persisted in SQLite auth database
-- Documentation for connection management in `docs/server/connections.md`
+- Documentation for connection management in `docs/admin-guide/connections.md`
 - New `pg://connection_info` resource that returns the currently selected
   database connection details without querying the database
 - Unified CI workflows for collector, server, and documentation
@@ -148,7 +148,7 @@ and this project adheres to
   - `query_metrics`: Query historical metrics with time-based aggregation
 - Enhanced LLM system prompts with PostgreSQL DBA expertise and two-tier
   database architecture guidance
-- Documentation for metrics tools in `docs/server/metrics.md`
+- Documentation for metrics tools in `docs/admin-guide/api/metrics.md`
 - Alerter configuration reference documentation with all options, environment
   variables, and command-line flags in `docs/alerter/configuration.md`
 - Cron expression documentation for blackout schedule configuration in

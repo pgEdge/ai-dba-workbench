@@ -31,21 +31,6 @@ func NewPgStatSubscriptionProbe(config *ProbeConfig) *PgStatSubscriptionProbe {
 	}
 }
 
-// GetName returns the probe name
-func (p *PgStatSubscriptionProbe) GetName() string {
-	return ProbeNamePgStatSubscription
-}
-
-// GetTableName returns the metrics table name
-func (p *PgStatSubscriptionProbe) GetTableName() string {
-	return ProbeNamePgStatSubscription
-}
-
-// IsDatabaseScoped returns false as pg_stat_subscription is server-scoped
-func (p *PgStatSubscriptionProbe) IsDatabaseScoped() bool {
-	return false
-}
-
 // GetQuery returns the SQL query to execute
 func (p *PgStatSubscriptionProbe) GetQuery() string {
 	return ""

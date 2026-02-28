@@ -21,7 +21,7 @@ import {
 } from '../utils/analysisPrompts';
 import { runAgenticLoop } from '../utils/agenticLoop';
 import { fetchTimelineEventsForRange } from '../utils/timelineEvents';
-import { LLMContentBlock, ToolResult } from '../types/llm';
+import { Message } from '../types/llm';
 import { useAnalysisState } from './useAnalysisState';
 
 export interface QueryAnalysisInput {
@@ -45,11 +45,6 @@ export interface UseQueryAnalysisReturn {
     activeTools: string[];
     analyze: (input: QueryAnalysisInput) => Promise<void>;
     reset: () => void;
-}
-
-interface Message {
-    role: string;
-    content: string | LLMContentBlock[] | ToolResult[];
 }
 
 // Module-level cache for query analysis results (persists across component mounts)

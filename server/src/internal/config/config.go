@@ -175,6 +175,7 @@ type HTTPConfig struct {
 	Auth           AuthConfig `yaml:"auth"`
 	TrustedProxies []string   `yaml:"trusted_proxies"` // CIDR ranges of trusted reverse proxies (e.g., ["10.0.0.0/8", "172.16.0.0/12"])
 	CORSOrigin     string     `yaml:"cors_origin"`     // Allowed CORS origin (e.g., "https://app.example.com"); empty disables CORS headers
+	HSTSEnabled    bool       `yaml:"hsts_enabled"`    // Enable Strict-Transport-Security header (default: false)
 }
 
 // AuthConfig holds authentication settings
@@ -496,7 +497,7 @@ func defaultConfig() *Config {
 			},
 			Auth: AuthConfig{
 				MaxUserTokenDays:               0,  // Unlimited by default
-				MaxFailedAttemptsBeforeLockout: 0,  // Disabled by default (0 = no lockout)
+				MaxFailedAttemptsBeforeLockout: 10, // Lock account after 10 failed attempts
 				RateLimitWindowMinutes:         15, // 15 minute window for rate limiting
 				RateLimitMaxAttempts:           10, // 10 attempts per IP per window
 			},
@@ -580,6 +581,11 @@ func mergeConfig(dest, src *Config) {
 	// CORS origin
 	if src.HTTP.CORSOrigin != "" {
 		dest.HTTP.CORSOrigin = src.HTTP.CORSOrigin
+	}
+
+	// HSTS
+	if src.HTTP.HSTSEnabled {
+		dest.HTTP.HSTSEnabled = src.HTTP.HSTSEnabled
 	}
 
 	// Auth - authentication is always required; the Enabled field is not overridable

@@ -28,7 +28,7 @@ func (e *Engine) processNotificationJob(job notificationJob) {
 		return
 	}
 
-	notifCtx, cancel := context.WithTimeout(context.Background(), NotificationTimeout)
+	notifCtx, cancel := context.WithTimeout(e.ctx, NotificationTimeout)
 	defer cancel()
 
 	if err := e.notificationMgr.SendAlertNotification(notifCtx, job.alert, job.notifTyp); err != nil {
@@ -45,6 +45,9 @@ func (e *Engine) processNotificationJob(job notificationJob) {
 
 // queueNotification queues a notification job for async processing by the worker pool
 func (e *Engine) queueNotification(alert *database.Alert, notifTyp database.NotificationType) {
+	if e.notificationPool == nil {
+		return
+	}
 	if !e.notificationPool.Submit(notificationJob{alert: alert, notifTyp: notifTyp}) {
 		// Queue full or pool stopped - log warning but don't block
 		e.log("WARNING: Notification queue full, dropping notification for alert %d", alert.ID)
@@ -74,6 +77,17 @@ func (e *Engine) runNotificationWorker(ctx context.Context) {
 				if err := e.notificationMgr.ProcessPendingNotifications(ctx); err != nil {
 					e.log("ERROR: Failed to process pending notifications: %v", err)
 				}
+			}
+
+			newCfg := e.getConfig()
+			newInterval := time.Duration(newCfg.Notifications.ProcessIntervalSeconds) * time.Second
+			if newInterval == 0 {
+				newInterval = DefaultNotificationProcessInterval
+			}
+			if newInterval != interval {
+				interval = newInterval
+				ticker.Reset(interval)
+				e.log("Notification worker interval updated to %v", interval)
 			}
 		}
 	}
@@ -109,6 +123,17 @@ func (e *Engine) runReminderWorker(ctx context.Context) {
 				if err := e.notificationMgr.ProcessReminders(ctx); err != nil {
 					e.log("ERROR: Failed to process reminders: %v", err)
 				}
+			}
+
+			newCfg := e.getConfig()
+			newInterval := time.Duration(newCfg.Notifications.ReminderCheckIntervalMinutes) * time.Minute
+			if newInterval == 0 {
+				newInterval = DefaultReminderCheckInterval
+			}
+			if newInterval != interval {
+				interval = newInterval
+				ticker.Reset(interval)
+				e.log("Reminder worker interval updated to %v", interval)
 			}
 		}
 	}

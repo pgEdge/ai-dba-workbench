@@ -31,23 +31,9 @@ func NewPgSysNetworkInfoProbe(config *ProbeConfig) *PgSysNetworkInfoProbe {
 	}
 }
 
-// GetName returns the probe name
-func (p *PgSysNetworkInfoProbe) GetName() string {
-	return ProbeNamePgSysNetworkInfo
-}
-
+// GetExtensionName returns the required extension name
 func (p *PgSysNetworkInfoProbe) GetExtensionName() string {
 	return "system_stats"
-}
-
-// GetTableName returns the metrics table name
-func (p *PgSysNetworkInfoProbe) GetTableName() string {
-	return ProbeNamePgSysNetworkInfo
-}
-
-// IsDatabaseScoped returns false as pg_sys_network_info is server-scoped
-func (p *PgSysNetworkInfoProbe) IsDatabaseScoped() bool {
-	return false
 }
 
 // GetQuery returns the SQL query to execute

@@ -17,10 +17,7 @@ import { ALERT_ANALYSIS_TOOLS } from '../utils/analysisTools';
 import { SQL_CODE_BLOCK_RULES } from '../utils/analysisPrompts';
 import { runAgenticLoop } from '../utils/agenticLoop';
 import { fetchTimelineEventsCentered } from '../utils/timelineEvents';
-import {
-    LLMContentBlock,
-    ToolResult,
-} from '../types/llm';
+import { Message } from '../types/llm';
 import { useAnalysisState } from './useAnalysisState';
 
 // Module-level cache for analysis results (persists across dialog open/close)
@@ -45,11 +42,6 @@ export interface AlertInput {
     connectionId: number;
     triggeredAt?: string;
     time?: string;
-}
-
-interface Message {
-    role: string;
-    content: string | LLMContentBlock[] | ToolResult[];
 }
 
 export interface UseAlertAnalysisReturn {

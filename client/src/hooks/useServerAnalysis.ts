@@ -20,10 +20,7 @@ import {
 } from '../utils/analysisPrompts';
 import { runAgenticLoop } from '../utils/agenticLoop';
 import { fetchTimelineEventsCentered } from '../utils/timelineEvents';
-import {
-    LLMContentBlock,
-    ToolResult,
-} from '../types/llm';
+import { Message } from '../types/llm';
 import { useAnalysisState } from './useAnalysisState';
 
 // Module-level cache for analysis results (persists across dialog open/close)
@@ -44,11 +41,6 @@ export interface ServerAnalysisInput {
     name: string;
     serverIds?: number[];
     servers?: Array<{ id: number; name: string }>;
-}
-
-interface Message {
-    role: string;
-    content: string | LLMContentBlock[] | ToolResult[];
 }
 
 export interface UseServerAnalysisReturn {

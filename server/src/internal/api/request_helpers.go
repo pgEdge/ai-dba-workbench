@@ -30,22 +30,9 @@ type UserInfo struct {
 // GetUserInfoFromRequest extracts username and superuser status from the
 // Authorization header. Returns an error if authentication fails.
 func GetUserInfoFromRequest(r *http.Request, authStore *auth.AuthStore) (*UserInfo, error) {
-	var token string
-
-	// Try Authorization header first (for API tokens and backwards compatibility)
-	authHeader := r.Header.Get("Authorization")
-	if authHeader != "" {
-		token = strings.TrimPrefix(authHeader, "Bearer ")
-		if token == authHeader {
-			return nil, fmt.Errorf("invalid authorization header format")
-		}
-	} else {
-		// Fall back to httpOnly session cookie (for browser sessions)
-		cookie, err := r.Cookie("session_token")
-		if err != nil || cookie.Value == "" {
-			return nil, fmt.Errorf("missing authentication credentials")
-		}
-		token = cookie.Value
+	token := auth.ExtractBearerToken(r)
+	if token == "" {
+		return nil, fmt.Errorf("missing authentication credentials")
 	}
 
 	// Validate session token and get username
@@ -67,22 +54,10 @@ func GetUserInfoFromRequest(r *http.Request, authStore *auth.AuthStore) (*UserIn
 // GetTokenHashFromRequest extracts and hashes the token from the Authorization
 // header. Returns an empty string if the token cannot be extracted.
 func GetTokenHashFromRequest(r *http.Request) string {
-	var token string
-
-	authHeader := r.Header.Get("Authorization")
-	if authHeader != "" {
-		token = strings.TrimPrefix(authHeader, "Bearer ")
-		if token == authHeader {
-			return ""
-		}
-	} else {
-		cookie, err := r.Cookie("session_token")
-		if err != nil || cookie.Value == "" {
-			return ""
-		}
-		token = cookie.Value
+	token := auth.ExtractBearerToken(r)
+	if token == "" {
+		return ""
 	}
-
 	return auth.GetTokenHashByRawToken(token)
 }
 

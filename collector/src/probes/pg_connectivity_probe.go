@@ -29,21 +29,6 @@ func NewPgConnectivityProbe(config *ProbeConfig) *PgConnectivityProbe {
 	}
 }
 
-// GetName returns the probe name
-func (p *PgConnectivityProbe) GetName() string {
-	return ProbeNamePgConnectivity
-}
-
-// GetTableName returns the metrics table name
-func (p *PgConnectivityProbe) GetTableName() string {
-	return ProbeNamePgConnectivity
-}
-
-// IsDatabaseScoped returns false as pg_connectivity is server-scoped
-func (p *PgConnectivityProbe) IsDatabaseScoped() bool {
-	return false
-}
-
 // GetQuery returns the SQL query to execute (not used)
 func (p *PgConnectivityProbe) GetQuery() string {
 	return "" // Not used - Execute() runs SELECT 1 directly

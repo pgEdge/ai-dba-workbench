@@ -32,21 +32,6 @@ func NewPgSettingsProbe(config *ProbeConfig) *PgSettingsProbe {
 	}
 }
 
-// GetName returns the probe name
-func (p *PgSettingsProbe) GetName() string {
-	return ProbeNamePgSettings
-}
-
-// GetTableName returns the metrics table name
-func (p *PgSettingsProbe) GetTableName() string {
-	return ProbeNamePgSettings
-}
-
-// IsDatabaseScoped returns false as pg_settings is server-scoped
-func (p *PgSettingsProbe) IsDatabaseScoped() bool {
-	return false
-}
-
 // GetQuery returns the SQL query to execute
 func (p *PgSettingsProbe) GetQuery() string {
 	return `

@@ -26,23 +26,8 @@ type PgStatioAllSequencesProbe struct {
 // NewPgStatioAllSequencesProbe creates a new pg_statio_all_sequences probe
 func NewPgStatioAllSequencesProbe(config *ProbeConfig) *PgStatioAllSequencesProbe {
 	return &PgStatioAllSequencesProbe{
-		BaseMetricsProbe: BaseMetricsProbe{config: config},
+		BaseMetricsProbe: BaseMetricsProbe{config: config, databaseScoped: true},
 	}
-}
-
-// GetName returns the probe name
-func (p *PgStatioAllSequencesProbe) GetName() string {
-	return ProbeNamePgStatioAllSequences
-}
-
-// GetTableName returns the metrics table name
-func (p *PgStatioAllSequencesProbe) GetTableName() string {
-	return ProbeNamePgStatioAllSequences
-}
-
-// IsDatabaseScoped returns true as pg_statio_all_sequences is database-scoped
-func (p *PgStatioAllSequencesProbe) IsDatabaseScoped() bool {
-	return true
 }
 
 // GetQuery returns the SQL query to execute

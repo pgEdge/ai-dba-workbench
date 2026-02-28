@@ -31,21 +31,6 @@ func NewPgStatReplicationProbe(config *ProbeConfig) *PgStatReplicationProbe {
 	}
 }
 
-// GetName returns the probe name
-func (p *PgStatReplicationProbe) GetName() string {
-	return ProbeNamePgStatReplication
-}
-
-// GetTableName returns the metrics table name
-func (p *PgStatReplicationProbe) GetTableName() string {
-	return ProbeNamePgStatReplication
-}
-
-// IsDatabaseScoped returns false as pg_stat_replication is server-scoped
-func (p *PgStatReplicationProbe) IsDatabaseScoped() bool {
-	return false
-}
-
 // GetQuery returns the SQL query to execute
 func (p *PgStatReplicationProbe) GetQuery() string {
 	return ""

@@ -80,21 +80,6 @@ func NewPgNodeRoleProbe(config *ProbeConfig) *PgNodeRoleProbe {
 	}
 }
 
-// GetName returns the probe name
-func (p *PgNodeRoleProbe) GetName() string {
-	return ProbeNamePgNodeRole
-}
-
-// GetTableName returns the metrics table name
-func (p *PgNodeRoleProbe) GetTableName() string {
-	return ProbeNamePgNodeRole
-}
-
-// IsDatabaseScoped returns false as pg_node_role is server-scoped
-func (p *PgNodeRoleProbe) IsDatabaseScoped() bool {
-	return false
-}
-
 // GetQuery returns the SQL query to execute (not used - we use multiple queries)
 func (p *PgNodeRoleProbe) GetQuery() string {
 	return "" // Not used - Execute() runs multiple queries

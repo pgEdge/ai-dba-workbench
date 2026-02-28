@@ -32,21 +32,6 @@ func NewPgStatIOProbe(config *ProbeConfig) *PgStatIOProbe {
 	}
 }
 
-// GetName returns the probe name
-func (p *PgStatIOProbe) GetName() string {
-	return ProbeNamePgStatIO
-}
-
-// GetTableName returns the metrics table name
-func (p *PgStatIOProbe) GetTableName() string {
-	return ProbeNamePgStatIO
-}
-
-// IsDatabaseScoped returns false as pg_stat_io is server-scoped
-func (p *PgStatIOProbe) IsDatabaseScoped() bool {
-	return false
-}
-
 // GetQuery returns the SQL query to execute
 func (p *PgStatIOProbe) GetQuery() string {
 	return ""

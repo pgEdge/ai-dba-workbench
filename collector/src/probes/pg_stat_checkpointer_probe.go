@@ -32,21 +32,6 @@ func NewPgStatCheckpointerProbe(config *ProbeConfig) *PgStatCheckpointerProbe {
 	}
 }
 
-// GetName returns the probe name
-func (p *PgStatCheckpointerProbe) GetName() string {
-	return ProbeNamePgStatCheckpointer
-}
-
-// GetTableName returns the metrics table name
-func (p *PgStatCheckpointerProbe) GetTableName() string {
-	return ProbeNamePgStatCheckpointer
-}
-
-// IsDatabaseScoped returns false as pg_stat_checkpointer is server-scoped
-func (p *PgStatCheckpointerProbe) IsDatabaseScoped() bool {
-	return false
-}
-
 // GetQuery returns the SQL query to execute
 func (p *PgStatCheckpointerProbe) GetQuery() string {
 	return ""

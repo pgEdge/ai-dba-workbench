@@ -69,8 +69,8 @@ func (g *GeminiReasoning) Classify(ctx context.Context, prompt string) (string, 
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/v1beta/models/%s:generateContent?key=%s",
-		g.baseURL, g.model, g.apiKey)
+	url := fmt.Sprintf("%s/v1beta/models/%s:generateContent",
+		g.baseURL, g.model)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonBody))
 	if err != nil {
@@ -78,6 +78,7 @@ func (g *GeminiReasoning) Classify(ctx context.Context, prompt string) (string, 
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-goog-api-key", g.apiKey)
 
 	resp, err := g.doRequestWithRetry(ctx, req)
 	if err != nil {

@@ -55,6 +55,7 @@ type HTTPConfig struct {
 	Debug          bool                           // Enable debug logging
 	TrustedProxies []string                       // CIDR ranges of trusted reverse proxies for secure IP extraction
 	CORSOrigin     string                         // Allowed CORS origin; empty disables CORS headers (same-origin deployment)
+	HSTSEnabled    bool                           // Enable Strict-Transport-Security header
 }
 
 // RunHTTP starts the MCP server in HTTP/HTTPS mode
@@ -94,7 +95,7 @@ func (s *Server) RunHTTP(config *HTTPConfig) error {
 	}
 
 	// Apply security headers middleware (outermost to ensure headers on all responses)
-	handler = SecurityHeadersMiddleware(handler)
+	handler = SecurityHeadersMiddleware(config.HSTSEnabled)(handler)
 
 	// Configure server with timeouts to prevent slowloris DoS attacks
 	httpServer := &http.Server{
@@ -525,27 +526,35 @@ func CORSMiddleware(allowedOrigin string) func(http.Handler) http.Handler {
 	}
 }
 
-// SecurityHeadersMiddleware adds security headers to protect against common web attacks
-func SecurityHeadersMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Strict-Transport-Security: Enforce HTTPS for 1 year including subdomains
-		w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+// SecurityHeadersMiddleware returns a middleware that adds security headers to
+// protect against common web attacks.  When hstsEnabled is true, the
+// Strict-Transport-Security header is included; otherwise it is omitted so
+// that plain-HTTP deployments do not advertise HSTS.
+func SecurityHeadersMiddleware(hstsEnabled bool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Strict-Transport-Security: only when explicitly enabled
+			if hstsEnabled {
+				w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+			}
 
-		// X-Content-Type-Options: Prevent MIME type sniffing
-		w.Header().Set("X-Content-Type-Options", "nosniff")
+			// X-Content-Type-Options: Prevent MIME type sniffing
+			w.Header().Set("X-Content-Type-Options", "nosniff")
 
-		// X-Frame-Options: Prevent clickjacking by denying framing
-		w.Header().Set("X-Frame-Options", "DENY")
+			// X-Frame-Options: Prevent clickjacking by denying framing
+			w.Header().Set("X-Frame-Options", "DENY")
 
-		// X-XSS-Protection: Enable XSS filter in legacy browsers
-		w.Header().Set("X-XSS-Protection", "1; mode=block")
+			// X-XSS-Protection: Enable XSS filter in legacy browsers
+			w.Header().Set("X-XSS-Protection", "1; mode=block")
 
-		// Content-Security-Policy: Restrict resource loading to same origin
-		w.Header().Set("Content-Security-Policy", "default-src 'self'")
+			// Content-Security-Policy: Restrict resource loading; allow inline
+			// styles and data: fonts required by MUI (Material UI)
+			w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:")
 
-		// Referrer-Policy: Control referrer information sent with requests
-		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+			// Referrer-Policy: Control referrer information sent with requests
+			w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 
-		next.ServeHTTP(w, r)
-	})
+			next.ServeHTTP(w, r)
+		})
+	}
 }

@@ -31,23 +31,9 @@ func NewPgSysIoAnalysisInfoProbe(config *ProbeConfig) *PgSysIoAnalysisInfoProbe 
 	}
 }
 
-// GetName returns the probe name
-func (p *PgSysIoAnalysisInfoProbe) GetName() string {
-	return ProbeNamePgSysIoAnalysisInfo
-}
-
+// GetExtensionName returns the required extension name
 func (p *PgSysIoAnalysisInfoProbe) GetExtensionName() string {
 	return "system_stats"
-}
-
-// GetTableName returns the metrics table name
-func (p *PgSysIoAnalysisInfoProbe) GetTableName() string {
-	return ProbeNamePgSysIoAnalysisInfo
-}
-
-// IsDatabaseScoped returns false as pg_sys_io_analysis_info is server-scoped
-func (p *PgSysIoAnalysisInfoProbe) IsDatabaseScoped() bool {
-	return false
 }
 
 // GetQuery returns the SQL query to execute

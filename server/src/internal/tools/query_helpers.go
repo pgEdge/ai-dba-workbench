@@ -101,13 +101,10 @@ func executeReadOnlyQuery(
 
 	rows, err := rot.Tx.Query(ctx, sqlQuery)
 	if err != nil {
-		resp, errNew := mcp.NewToolError(fmt.Sprintf(
+		resp, _ := mcp.NewToolError(fmt.Sprintf( //nolint:errcheck // NewToolError always succeeds
 			"%sSQL Query:\n%s\n\nError executing query: %v",
 			errorPrefix, sqlQuery, err,
 		))
-		if errNew != nil {
-			return nil, nil
-		}
 		return nil, &resp
 	}
 	defer rows.Close()
@@ -124,20 +121,14 @@ func executeReadOnlyQuery(
 	for rows.Next() {
 		values, err := rows.Values()
 		if err != nil {
-			resp, errNew := mcp.NewToolError(fmt.Sprintf("Error reading row: %v", err))
-			if errNew != nil {
-				return nil, nil
-			}
+			resp, _ := mcp.NewToolError(fmt.Sprintf("Error reading row: %v", err)) //nolint:errcheck // NewToolError always succeeds
 			return nil, &resp
 		}
 		results = append(results, values)
 	}
 
 	if err := rows.Err(); err != nil {
-		resp, errNew := mcp.NewToolError(fmt.Sprintf("Error iterating rows: %v", err))
-		if errNew != nil {
-			return nil, nil
-		}
+		resp, _ := mcp.NewToolError(fmt.Sprintf("Error iterating rows: %v", err)) //nolint:errcheck // NewToolError always succeeds
 		return nil, &resp
 	}
 
@@ -151,10 +142,7 @@ func executeReadOnlyQuery(
 	resultsTSV := FormatResultsAsTSV(columnNames, results)
 
 	if err := rot.Commit(); err != nil {
-		resp, errNew := mcp.NewToolError(fmt.Sprintf("Failed to commit transaction: %v", err))
-		if errNew != nil {
-			return nil, nil
-		}
+		resp, _ := mcp.NewToolError(fmt.Sprintf("Failed to commit transaction: %v", err)) //nolint:errcheck // NewToolError always succeeds
 		return nil, &resp
 	}
 

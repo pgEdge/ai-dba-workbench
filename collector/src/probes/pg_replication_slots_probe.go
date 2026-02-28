@@ -31,21 +31,6 @@ func NewPgReplicationSlotsProbe(config *ProbeConfig) *PgReplicationSlotsProbe {
 	}
 }
 
-// GetName returns the probe name
-func (p *PgReplicationSlotsProbe) GetName() string {
-	return ProbeNamePgReplicationSlots
-}
-
-// GetTableName returns the metrics table name
-func (p *PgReplicationSlotsProbe) GetTableName() string {
-	return ProbeNamePgReplicationSlots
-}
-
-// IsDatabaseScoped returns false as pg_replication_slots is server-scoped
-func (p *PgReplicationSlotsProbe) IsDatabaseScoped() bool {
-	return false
-}
-
 // GetQuery returns the SQL query to execute
 func (p *PgReplicationSlotsProbe) GetQuery() string {
 	return ""

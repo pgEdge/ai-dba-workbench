@@ -17,13 +17,11 @@ import {
     IconButton,
     Typography,
     Box,
-    Slide,
     List,
     ListItemButton,
     ListItemText,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
-import { TransitionProps } from '@mui/material/transitions';
 import { Close as CloseIcon } from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
 import { useAICapabilities } from '../../contexts/AICapabilitiesContext';
@@ -39,13 +37,7 @@ import AdminSlackChannels from './AdminSlackChannels';
 import AdminMattermostChannels from './AdminMattermostChannels';
 import AdminWebhookChannels from './AdminWebhookChannels';
 import AdminMemories from './AdminMemories';
-
-const Transition = React.forwardRef(function Transition(
-    props: TransitionProps & { children: React.ReactElement },
-    ref: React.Ref<unknown>,
-) {
-    return <Slide direction="up" ref={ref} {...props} />;
-});
+import SlideTransition from '../shared/SlideTransition';
 
 interface NavItem {
     id: string;
@@ -159,7 +151,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ open, onClose }) => {
             fullScreen
             open={open}
             onClose={onClose}
-            TransitionComponent={Transition}
+            TransitionComponent={SlideTransition}
             TransitionProps={{ onEnter: handleEnter }}
         >
             <AppBar

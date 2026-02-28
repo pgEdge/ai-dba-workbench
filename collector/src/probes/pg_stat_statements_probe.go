@@ -27,27 +27,13 @@ type PgStatStatementsProbe struct {
 // NewPgStatStatementsProbe creates a new pg_stat_statements probe
 func NewPgStatStatementsProbe(config *ProbeConfig) *PgStatStatementsProbe {
 	return &PgStatStatementsProbe{
-		BaseMetricsProbe: BaseMetricsProbe{config: config},
+		BaseMetricsProbe: BaseMetricsProbe{config: config, databaseScoped: true},
 	}
 }
 
-// GetName returns the probe name
-func (p *PgStatStatementsProbe) GetName() string {
-	return ProbeNamePgStatStatements
-}
-
+// GetExtensionName returns the required extension name
 func (p *PgStatStatementsProbe) GetExtensionName() string {
 	return "pg_stat_statements"
-}
-
-// GetTableName returns the metrics table name
-func (p *PgStatStatementsProbe) GetTableName() string {
-	return ProbeNamePgStatStatements
-}
-
-// IsDatabaseScoped returns true as pg_stat_statements is database-scoped
-func (p *PgStatStatementsProbe) IsDatabaseScoped() bool {
-	return true
 }
 
 // GetQuery returns the SQL query to execute (for PG <17)

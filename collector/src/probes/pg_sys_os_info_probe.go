@@ -31,23 +31,9 @@ func NewPgSysOsInfoProbe(config *ProbeConfig) *PgSysOsInfoProbe {
 	}
 }
 
-// GetName returns the probe name
-func (p *PgSysOsInfoProbe) GetName() string {
-	return ProbeNamePgSysOsInfo
-}
-
+// GetExtensionName returns the required extension name
 func (p *PgSysOsInfoProbe) GetExtensionName() string {
 	return "system_stats"
-}
-
-// GetTableName returns the metrics table name
-func (p *PgSysOsInfoProbe) GetTableName() string {
-	return ProbeNamePgSysOsInfo
-}
-
-// IsDatabaseScoped returns false as pg_sys_os_info is server-scoped
-func (p *PgSysOsInfoProbe) IsDatabaseScoped() bool {
-	return false
 }
 
 // GetQuery returns the SQL query to execute

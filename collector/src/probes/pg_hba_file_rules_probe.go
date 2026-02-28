@@ -32,21 +32,6 @@ func NewPgHbaFileRulesProbe(config *ProbeConfig) *PgHbaFileRulesProbe {
 	}
 }
 
-// GetName returns the probe name
-func (p *PgHbaFileRulesProbe) GetName() string {
-	return ProbeNamePgHbaFileRules
-}
-
-// GetTableName returns the metrics table name
-func (p *PgHbaFileRulesProbe) GetTableName() string {
-	return ProbeNamePgHbaFileRules
-}
-
-// IsDatabaseScoped returns false as pg_hba_file_rules is server-scoped
-func (p *PgHbaFileRulesProbe) IsDatabaseScoped() bool {
-	return false
-}
-
 // GetQuery returns the SQL query to execute (default for PG16+)
 func (p *PgHbaFileRulesProbe) GetQuery() string {
 	return p.GetQueryForVersion(16)

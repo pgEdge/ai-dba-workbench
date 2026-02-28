@@ -30,21 +30,6 @@ func NewPgStatActivityProbe(config *ProbeConfig) *PgStatActivityProbe {
 	}
 }
 
-// GetName returns the probe name
-func (p *PgStatActivityProbe) GetName() string {
-	return ProbeNamePgStatActivity
-}
-
-// GetTableName returns the metrics table name
-func (p *PgStatActivityProbe) GetTableName() string {
-	return ProbeNamePgStatActivity
-}
-
-// IsDatabaseScoped returns false as pg_stat_activity is server-scoped
-func (p *PgStatActivityProbe) IsDatabaseScoped() bool {
-	return false
-}
-
 // GetQuery returns the SQL query to execute
 func (p *PgStatActivityProbe) GetQuery() string {
 	return `

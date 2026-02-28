@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pgedge/ai-workbench/server/internal/api"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
 
@@ -36,21 +37,9 @@ func NewHandler(store *Store, authStore *auth.AuthStore) *Handler {
 
 // extractUsername extracts the username from the session token
 func (h *Handler) extractUsername(r *http.Request) (string, error) {
-	// Try Authorization header first (for API tokens)
-	var token string
-	authHeader := r.Header.Get("Authorization")
-	if authHeader != "" {
-		token = strings.TrimPrefix(authHeader, "Bearer ")
-		if token == authHeader {
-			return "", fmt.Errorf("invalid Authorization header format")
-		}
-	} else {
-		// Fall back to session cookie (for browser sessions)
-		cookie, err := r.Cookie("session_token")
-		if err != nil || cookie.Value == "" {
-			return "", fmt.Errorf("missing authentication credentials")
-		}
-		token = cookie.Value
+	token := auth.ExtractBearerToken(r)
+	if token == "" {
+		return "", fmt.Errorf("missing authentication credentials")
 	}
 
 	username, err := h.authStore.ValidateSessionToken(token)
@@ -61,30 +50,16 @@ func (h *Handler) extractUsername(r *http.Request) (string, error) {
 	return username, nil
 }
 
-// sendJSON sends a JSON response with RFC 8631 Link header for API discovery
-func sendJSON(w http.ResponseWriter, status int, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Link", "</api/v1/openapi.json>; rel=\"service-desc\"")
-	w.WriteHeader(status)
-	//nolint:errcheck // Encoding a simple map should never fail
-	json.NewEncoder(w).Encode(data)
-}
-
-// sendError sends an error response with RFC 8631 Link header
-func sendError(w http.ResponseWriter, status int, message string) {
-	sendJSON(w, status, map[string]string{"error": message})
-}
-
 // HandleList handles GET /api/conversations
 func (h *Handler) HandleList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		api.RespondError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
 
 	username, err := h.extractUsername(r)
 	if err != nil {
-		sendError(w, http.StatusUnauthorized, err.Error())
+		api.RespondError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 
@@ -105,7 +80,7 @@ func (h *Handler) HandleList(w http.ResponseWriter, r *http.Request) {
 
 	conversations, err := h.store.List(r.Context(), username, limit, offset)
 	if err != nil {
-		sendError(w, http.StatusInternalServerError, "Failed to list conversations")
+		api.RespondError(w, http.StatusInternalServerError, "Failed to list conversations")
 		return
 	}
 
@@ -114,7 +89,7 @@ func (h *Handler) HandleList(w http.ResponseWriter, r *http.Request) {
 		conversations = []ConversationSummary{}
 	}
 
-	sendJSON(w, http.StatusOK, map[string]interface{}{
+	api.RespondJSON(w, http.StatusOK, map[string]interface{}{
 		"conversations": conversations,
 	})
 }
@@ -122,34 +97,34 @@ func (h *Handler) HandleList(w http.ResponseWriter, r *http.Request) {
 // HandleGet handles GET /api/v1/conversations/{id}
 func (h *Handler) HandleGet(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		api.RespondError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
 
 	username, err := h.extractUsername(r)
 	if err != nil {
-		sendError(w, http.StatusUnauthorized, err.Error())
+		api.RespondError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 
 	// Extract ID from path
 	id := strings.TrimPrefix(r.URL.Path, "/api/v1/conversations/")
 	if id == "" {
-		sendError(w, http.StatusBadRequest, "Conversation ID required")
+		api.RespondError(w, http.StatusBadRequest, "Conversation ID required")
 		return
 	}
 
 	conv, err := h.store.Get(r.Context(), id, username)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			sendError(w, http.StatusNotFound, "Conversation not found")
+			api.RespondError(w, http.StatusNotFound, "Conversation not found")
 		} else {
-			sendError(w, http.StatusInternalServerError, "Failed to get conversation")
+			api.RespondError(w, http.StatusInternalServerError, "Failed to get conversation")
 		}
 		return
 	}
 
-	sendJSON(w, http.StatusOK, conv)
+	api.RespondJSON(w, http.StatusOK, conv)
 }
 
 // CreateRequest represents a request to create a conversation
@@ -163,34 +138,34 @@ type CreateRequest struct {
 // HandleCreate handles POST /api/conversations
 func (h *Handler) HandleCreate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		api.RespondError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
 
 	username, err := h.extractUsername(r)
 	if err != nil {
-		sendError(w, http.StatusUnauthorized, err.Error())
+		api.RespondError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 
 	var req CreateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendError(w, http.StatusBadRequest, "Invalid request body")
+		api.RespondError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	if len(req.Messages) == 0 {
-		sendError(w, http.StatusBadRequest, "Messages required")
+		api.RespondError(w, http.StatusBadRequest, "Messages required")
 		return
 	}
 
 	conv, err := h.store.Create(r.Context(), username, req.Provider, req.Model, req.Connection, req.Messages)
 	if err != nil {
-		sendError(w, http.StatusInternalServerError, "Failed to create conversation")
+		api.RespondError(w, http.StatusInternalServerError, "Failed to create conversation")
 		return
 	}
 
-	sendJSON(w, http.StatusCreated, conv)
+	api.RespondJSON(w, http.StatusCreated, conv)
 }
 
 // UpdateRequest represents a request to update a conversation
@@ -204,42 +179,42 @@ type UpdateRequest struct {
 // HandleUpdate handles PUT /api/v1/conversations/{id}
 func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
-		sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		api.RespondError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
 
 	username, err := h.extractUsername(r)
 	if err != nil {
-		sendError(w, http.StatusUnauthorized, err.Error())
+		api.RespondError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 
 	// Extract ID from path
 	id := strings.TrimPrefix(r.URL.Path, "/api/v1/conversations/")
 	if id == "" {
-		sendError(w, http.StatusBadRequest, "Conversation ID required")
+		api.RespondError(w, http.StatusBadRequest, "Conversation ID required")
 		return
 	}
 
 	var req UpdateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendError(w, http.StatusBadRequest, "Invalid request body")
+		api.RespondError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	conv, err := h.store.Update(r.Context(), id, username, req.Provider, req.Model, req.Connection, req.Messages)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			sendError(w, http.StatusNotFound, "Conversation not found")
+			api.RespondError(w, http.StatusNotFound, "Conversation not found")
 		} else if errors.Is(err, ErrAccessDenied) {
-			sendError(w, http.StatusForbidden, "Access denied")
+			api.RespondError(w, http.StatusForbidden, "Access denied")
 		} else {
-			sendError(w, http.StatusInternalServerError, "Failed to update conversation")
+			api.RespondError(w, http.StatusInternalServerError, "Failed to update conversation")
 		}
 		return
 	}
 
-	sendJSON(w, http.StatusOK, conv)
+	api.RespondJSON(w, http.StatusOK, conv)
 }
 
 // RenameRequest represents a request to rename a conversation
@@ -250,100 +225,100 @@ type RenameRequest struct {
 // HandleRename handles PATCH /api/v1/conversations/{id}
 func (h *Handler) HandleRename(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPatch {
-		sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		api.RespondError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
 
 	username, err := h.extractUsername(r)
 	if err != nil {
-		sendError(w, http.StatusUnauthorized, err.Error())
+		api.RespondError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 
 	// Extract ID from path
 	id := strings.TrimPrefix(r.URL.Path, "/api/v1/conversations/")
 	if id == "" {
-		sendError(w, http.StatusBadRequest, "Conversation ID required")
+		api.RespondError(w, http.StatusBadRequest, "Conversation ID required")
 		return
 	}
 
 	var req RenameRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendError(w, http.StatusBadRequest, "Invalid request body")
+		api.RespondError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	if req.Title == "" {
-		sendError(w, http.StatusBadRequest, "Title required")
+		api.RespondError(w, http.StatusBadRequest, "Title required")
 		return
 	}
 
 	err = h.store.Rename(r.Context(), id, username, req.Title)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrAccessDenied) {
-			sendError(w, http.StatusNotFound, "Conversation not found")
+			api.RespondError(w, http.StatusNotFound, "Conversation not found")
 		} else {
-			sendError(w, http.StatusInternalServerError, "Failed to rename conversation")
+			api.RespondError(w, http.StatusInternalServerError, "Failed to rename conversation")
 		}
 		return
 	}
 
-	sendJSON(w, http.StatusOK, map[string]bool{"success": true})
+	api.RespondJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
 // HandleDelete handles DELETE /api/v1/conversations/{id}
 func (h *Handler) HandleDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
-		sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		api.RespondError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
 
 	username, err := h.extractUsername(r)
 	if err != nil {
-		sendError(w, http.StatusUnauthorized, err.Error())
+		api.RespondError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 
 	// Extract ID from path
 	id := strings.TrimPrefix(r.URL.Path, "/api/v1/conversations/")
 	if id == "" {
-		sendError(w, http.StatusBadRequest, "Conversation ID required")
+		api.RespondError(w, http.StatusBadRequest, "Conversation ID required")
 		return
 	}
 
 	err = h.store.Delete(r.Context(), id, username)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrAccessDenied) {
-			sendError(w, http.StatusNotFound, "Conversation not found")
+			api.RespondError(w, http.StatusNotFound, "Conversation not found")
 		} else {
-			sendError(w, http.StatusInternalServerError, "Failed to delete conversation")
+			api.RespondError(w, http.StatusInternalServerError, "Failed to delete conversation")
 		}
 		return
 	}
 
-	sendJSON(w, http.StatusOK, map[string]bool{"success": true})
+	api.RespondJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
 // HandleDeleteAll handles DELETE /api/conversations (with query param all=true)
 func (h *Handler) HandleDeleteAll(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
-		sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		api.RespondError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
 
 	username, err := h.extractUsername(r)
 	if err != nil {
-		sendError(w, http.StatusUnauthorized, err.Error())
+		api.RespondError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 
 	count, err := h.store.DeleteAll(r.Context(), username)
 	if err != nil {
-		sendError(w, http.StatusInternalServerError, "Failed to delete conversations")
+		api.RespondError(w, http.StatusInternalServerError, "Failed to delete conversations")
 		return
 	}
 
-	sendJSON(w, http.StatusOK, map[string]interface{}{
+	api.RespondJSON(w, http.StatusOK, map[string]interface{}{
 		"success": true,
 		"deleted": count,
 	})
@@ -363,10 +338,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, authWrapper func(http.Handl
 			if r.URL.Query().Get("all") == "true" {
 				h.HandleDeleteAll(w, r)
 			} else {
-				sendError(w, http.StatusBadRequest, "Use ?all=true to delete all conversations")
+				api.RespondError(w, http.StatusBadRequest, "Use ?all=true to delete all conversations")
 			}
 		default:
-			sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			api.RespondError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		}
 	}))
 
@@ -382,7 +357,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, authWrapper func(http.Handl
 		case http.MethodDelete:
 			h.HandleDelete(w, r)
 		default:
-			sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			api.RespondError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		}
 	}))
 }

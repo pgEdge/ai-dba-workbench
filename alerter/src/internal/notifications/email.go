@@ -167,7 +167,11 @@ func (n *emailNotifier) sendEmail(
 	// Build message with headers (sanitize to prevent header injection)
 	var msg strings.Builder
 	msg.WriteString(fmt.Sprintf("From: %s\r\n", sanitizeHeader(fromHeader)))
-	msg.WriteString(fmt.Sprintf("To: %s\r\n", strings.Join(to, ", ")))
+	sanitizedTo := make([]string, len(to))
+	for i, addr := range to {
+		sanitizedTo[i] = sanitizeHeader(addr)
+	}
+	msg.WriteString(fmt.Sprintf("To: %s\r\n", strings.Join(sanitizedTo, ", ")))
 	msg.WriteString(fmt.Sprintf("Subject: %s\r\n", sanitizeHeader(subject)))
 	msg.WriteString("MIME-Version: 1.0\r\n")
 	msg.WriteString("Content-Type: text/html; charset=\"UTF-8\"\r\n")

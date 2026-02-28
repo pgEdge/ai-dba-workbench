@@ -31,23 +31,9 @@ func NewPgSysCPUMemoryByProcessProbe(config *ProbeConfig) *PgSysCPUMemoryByProce
 	}
 }
 
-// GetName returns the probe name
-func (p *PgSysCPUMemoryByProcessProbe) GetName() string {
-	return ProbeNamePgSysCPUMemoryByProcess
-}
-
+// GetExtensionName returns the required extension name
 func (p *PgSysCPUMemoryByProcessProbe) GetExtensionName() string {
 	return "system_stats"
-}
-
-// GetTableName returns the metrics table name
-func (p *PgSysCPUMemoryByProcessProbe) GetTableName() string {
-	return ProbeNamePgSysCPUMemoryByProcess
-}
-
-// IsDatabaseScoped returns false as pg_sys_cpu_memory_by_process is server-scoped
-func (p *PgSysCPUMemoryByProcessProbe) IsDatabaseScoped() bool {
-	return false
 }
 
 // GetQuery returns the SQL query to execute

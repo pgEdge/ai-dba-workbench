@@ -24,9 +24,7 @@ import {
     IconButton,
     Typography,
     Box,
-    Slide,
 } from '@mui/material';
-import { TransitionProps } from '@mui/material/transitions';
 import { Close as CloseIcon } from '@mui/icons-material';
 
 import {
@@ -54,13 +52,7 @@ import AlertOverridesPanel from '../AlertOverridesPanel';
 import ProbeOverridesPanel from '../ProbeOverridesPanel';
 import ChannelOverridesPanel from '../ChannelOverridesPanel';
 import { apiPost, apiPut } from '../../utils/apiClient';
-
-const Transition = React.forwardRef(function Transition(
-    props: TransitionProps & { children: React.ReactElement },
-    ref: React.Ref<unknown>,
-) {
-    return <Slide direction="up" ref={ref} {...props} />;
-});
+import SlideTransition from '../shared/SlideTransition';
 
 /**
  * ServerDialog - Dialog component for adding and editing server connections.
@@ -227,7 +219,7 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
                 fullScreen
                 open={open}
                 onClose={handleClose}
-                TransitionComponent={Transition}
+                TransitionComponent={SlideTransition}
             >
                 <AppBar
                     position="static"

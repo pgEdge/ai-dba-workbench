@@ -327,6 +327,14 @@ func (e *Engine) runReevaluationWorker(ctx context.Context) {
 			return
 		case <-ticker.C:
 			e.reevaluateAcknowledgedAlerts(ctx)
+
+			newCfg := e.getConfig()
+			newInterval := time.Duration(newCfg.Anomaly.Reevaluation.IntervalSeconds) * time.Second
+			if newInterval != interval {
+				interval = newInterval
+				ticker.Reset(interval)
+				e.log("Re-evaluation worker interval updated to %v", interval)
+			}
 		}
 	}
 }

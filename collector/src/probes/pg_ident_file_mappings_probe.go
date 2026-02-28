@@ -32,21 +32,6 @@ func NewPgIdentFileMappingsProbe(config *ProbeConfig) *PgIdentFileMappingsProbe 
 	}
 }
 
-// GetName returns the probe name
-func (p *PgIdentFileMappingsProbe) GetName() string {
-	return ProbeNamePgIdentFileMappings
-}
-
-// GetTableName returns the metrics table name
-func (p *PgIdentFileMappingsProbe) GetTableName() string {
-	return ProbeNamePgIdentFileMappings
-}
-
-// IsDatabaseScoped returns false as pg_ident_file_mappings is server-scoped
-func (p *PgIdentFileMappingsProbe) IsDatabaseScoped() bool {
-	return false
-}
-
 // GetQuery returns the SQL query to execute (default for PG16+)
 func (p *PgIdentFileMappingsProbe) GetQuery() string {
 	return p.GetQueryForVersion(16)

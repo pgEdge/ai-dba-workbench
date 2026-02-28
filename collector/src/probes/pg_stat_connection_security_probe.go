@@ -31,21 +31,6 @@ func NewPgStatConnectionSecurityProbe(config *ProbeConfig) *PgStatConnectionSecu
 	}
 }
 
-// GetName returns the probe name
-func (p *PgStatConnectionSecurityProbe) GetName() string {
-	return ProbeNamePgStatConnectionSecurity
-}
-
-// GetTableName returns the metrics table name
-func (p *PgStatConnectionSecurityProbe) GetTableName() string {
-	return ProbeNamePgStatConnectionSecurity
-}
-
-// IsDatabaseScoped returns false as this is server-scoped
-func (p *PgStatConnectionSecurityProbe) IsDatabaseScoped() bool {
-	return false
-}
-
 // GetQuery returns the SQL query to execute
 func (p *PgStatConnectionSecurityProbe) GetQuery() string {
 	return ""

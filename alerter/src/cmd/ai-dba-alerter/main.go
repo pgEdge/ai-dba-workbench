@@ -139,6 +139,49 @@ func main() {
 					}
 				}
 				newCfg.LoadFromEnv()
+
+				// Reapply CLI flag overrides
+				if *dbHost != "" {
+					newCfg.Datastore.Host = *dbHost
+				}
+				if *dbPort != 0 {
+					newCfg.Datastore.Port = *dbPort
+				}
+				if *dbName != "" {
+					newCfg.Datastore.Database = *dbName
+				}
+				if *dbUser != "" {
+					newCfg.Datastore.Username = *dbUser
+				}
+				if *dbPasswordFile != "" {
+					data, err := os.ReadFile(*dbPasswordFile)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "ERROR: Failed to read password file on reload: %v\n", err)
+						continue
+					}
+					newCfg.Datastore.Password = strings.TrimSpace(string(data))
+				}
+				if *dbSSLMode != "" {
+					newCfg.Datastore.SSLMode = *dbSSLMode
+				}
+
+				// Validate configuration
+				if err := newCfg.Validate(); err != nil {
+					fmt.Fprintf(os.Stderr, "ERROR: Reloaded config is invalid, skipping reload: %v\n", err)
+					continue
+				}
+
+				// Load password from file if needed
+				if err := newCfg.LoadPassword(); err != nil {
+					fmt.Fprintf(os.Stderr, "ERROR: Failed to load password on reload, skipping reload: %v\n", err)
+					continue
+				}
+
+				// Load API keys (non-critical)
+				if err := newCfg.LoadAPIKeys(); err != nil {
+					fmt.Fprintf(os.Stderr, "WARNING: Failed to load API keys on reload: %v\n", err)
+				}
+
 				// Apply reloadable settings to the engine
 				alerterEngine.ReloadConfig(newCfg)
 				fmt.Fprintf(os.Stderr, "Configuration reloaded\n")

@@ -25,10 +25,8 @@ import {
     Collapse,
     Fade,
     LinearProgress,
-    Slide,
 } from '@mui/material';
 import { useTheme, Theme } from '@mui/material/styles';
-import { TransitionProps } from '@mui/material/transitions';
 import {
     Close as CloseIcon,
     Memory as MemoryIcon,
@@ -41,13 +39,7 @@ Tune as TuneIcon,
 } from '@mui/icons-material';
 import { apiGet } from '../utils/apiClient';
 import { formatPgSetting } from '../utils/formatters';
-
-const Transition = React.forwardRef(function Transition(
-    props: TransitionProps & { children: React.ReactElement },
-    ref: React.Ref<unknown>,
-) {
-    return <Slide direction="up" ref={ref} {...props} />;
-});
+import SlideTransition from './shared/SlideTransition';
 
 // ---------------------------------------------------------------------------
 // Types matching the server API response
@@ -597,7 +589,7 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
             fullScreen
             open={open}
             onClose={onClose}
-            TransitionComponent={Transition}
+            TransitionComponent={SlideTransition}
         >
             <AppBar
                 position="static"

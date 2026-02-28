@@ -272,6 +272,23 @@ func extractIPFromRemoteAddr(remoteAddr string) string {
 	return host
 }
 
+// ExtractBearerToken extracts a bearer token from the request.  It checks the
+// Authorization header for a "Bearer " prefix first, then falls back to the
+// session_token cookie.  Returns an empty string if neither source provides a
+// token.
+func ExtractBearerToken(r *http.Request) string {
+	if authHeader := r.Header.Get("Authorization"); authHeader != "" {
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			return authHeader[len("Bearer "):]
+		}
+		return ""
+	}
+	if cookie, err := r.Cookie("session_token"); err == nil && cookie.Value != "" {
+		return cookie.Value
+	}
+	return ""
+}
+
 // AuthMiddleware creates an HTTP middleware that validates API tokens and session tokens
 // Uses the new AuthStore for all authentication
 func AuthMiddleware(authStore *AuthStore, enabled bool) func(http.Handler) http.Handler {
@@ -292,26 +309,10 @@ func AuthMiddleware(authStore *AuthStore, enabled bool) func(http.Handler) http.
 			}
 
 			// Get token from Authorization header or session cookie
-			// Priority: 1. Authorization header (for API tokens and backwards compatibility)
-			//           2. Session cookie (for XSS-safe browser sessions)
-			var token string
-			authHeader := r.Header.Get("Authorization")
-			if authHeader != "" {
-				// Parse Bearer token from header
-				parts := strings.SplitN(authHeader, " ", 2)
-				if len(parts) != 2 || parts[0] != "Bearer" {
-					http.Error(w, "Invalid Authorization header format. Expected: Bearer <token>", http.StatusUnauthorized)
-					return
-				}
-				token = parts[1]
-			} else {
-				// Try to get token from httpOnly session cookie
-				cookie, err := r.Cookie("session_token")
-				if err != nil || cookie.Value == "" {
-					http.Error(w, "Missing authentication credentials", http.StatusUnauthorized)
-					return
-				}
-				token = cookie.Value
+			token := ExtractBearerToken(r)
+			if token == "" {
+				http.Error(w, "Missing or invalid authentication credentials", http.StatusUnauthorized)
+				return
 			}
 
 			// Try to validate as API token first

@@ -92,7 +92,9 @@ func buildConnectionString(cfg *config.Config) string {
 	}
 
 	if cfg.Datastore.Password != "" {
-		connString += fmt.Sprintf(" password='%s'", strings.ReplaceAll(cfg.Datastore.Password, "'", "\\'"))
+		escaped := strings.ReplaceAll(cfg.Datastore.Password, `\`, `\\`)
+		escaped = strings.ReplaceAll(escaped, `'`, `''`)
+		connString += fmt.Sprintf(" password='%s'", escaped)
 	}
 
 	if cfg.Datastore.SSLCert != "" {

@@ -26,23 +26,8 @@ type PgStatDatabaseConflictsProbe struct {
 // NewPgStatDatabaseConflictsProbe creates a new pg_stat_database_conflicts probe
 func NewPgStatDatabaseConflictsProbe(config *ProbeConfig) *PgStatDatabaseConflictsProbe {
 	return &PgStatDatabaseConflictsProbe{
-		BaseMetricsProbe: BaseMetricsProbe{config: config},
+		BaseMetricsProbe: BaseMetricsProbe{config: config, databaseScoped: true},
 	}
-}
-
-// GetName returns the probe name
-func (p *PgStatDatabaseConflictsProbe) GetName() string {
-	return ProbeNamePgStatDatabaseConflicts
-}
-
-// GetTableName returns the metrics table name
-func (p *PgStatDatabaseConflictsProbe) GetTableName() string {
-	return ProbeNamePgStatDatabaseConflicts
-}
-
-// IsDatabaseScoped returns true as pg_stat_database_conflicts is database-scoped
-func (p *PgStatDatabaseConflictsProbe) IsDatabaseScoped() bool {
-	return true
 }
 
 // GetQuery returns the SQL query to execute (default for PG16+)

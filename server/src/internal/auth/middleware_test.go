@@ -116,23 +116,21 @@ func TestAuthMiddleware_MissingAuthHeader(t *testing.T) {
 	}
 
 	body := strings.TrimSpace(rr.Body.String())
-	if !strings.Contains(body, "Missing authentication credentials") {
-		t.Errorf("Expected 'Missing authentication credentials' in response, got %q", body)
+	if !strings.Contains(body, "Missing or invalid authentication credentials") {
+		t.Errorf("Expected 'Missing or invalid authentication credentials' in response, got %q", body)
 	}
 }
 
 // TestAuthMiddleware_MalformedAuthHeader tests rejection of malformed Authorization headers
 func TestAuthMiddleware_MalformedAuthHeader(t *testing.T) {
 	testCases := []struct {
-		name          string
-		header        string
-		expectFormat  bool // true if expecting "Invalid Authorization header format"
-		expectInvalid bool // true if expecting "Invalid or unknown token"
+		name   string
+		header string
 	}{
-		{"no bearer prefix", "sometoken123", true, false},
-		{"wrong prefix", "Basic sometoken123", true, false},
-		{"missing token", "Bearer", true, false},
-		{"empty token", "Bearer ", false, true}, // Empty token passes format check but fails validation
+		{"no bearer prefix", "sometoken123"},
+		{"wrong prefix", "Basic sometoken123"},
+		{"missing token", "Bearer"},
+		{"empty token", "Bearer "},
 	}
 
 	for _, tc := range testCases {
@@ -157,11 +155,10 @@ func TestAuthMiddleware_MalformedAuthHeader(t *testing.T) {
 			}
 
 			body := strings.TrimSpace(rr.Body.String())
-			if tc.expectFormat && !strings.Contains(body, "Invalid Authorization header format") {
-				t.Errorf("Expected 'Invalid Authorization header format' in response, got %q", body)
-			}
-			if tc.expectInvalid && !strings.Contains(body, "Invalid or unknown token") {
-				t.Errorf("Expected 'Invalid or unknown token' in response, got %q", body)
+			// ExtractBearerToken returns "" for all malformed headers,
+			// so the middleware responds with the missing credentials message.
+			if !strings.Contains(body, "Missing or invalid authentication credentials") {
+				t.Errorf("Expected 'Missing or invalid authentication credentials' in response, got %q", body)
 			}
 		})
 	}

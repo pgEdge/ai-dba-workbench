@@ -29,23 +29,8 @@ type PgExtensionProbe struct {
 // NewPgExtensionProbe creates a new pg_extension probe
 func NewPgExtensionProbe(config *ProbeConfig) *PgExtensionProbe {
 	return &PgExtensionProbe{
-		BaseMetricsProbe: BaseMetricsProbe{config: config},
+		BaseMetricsProbe: BaseMetricsProbe{config: config, databaseScoped: true},
 	}
-}
-
-// GetName returns the probe name
-func (p *PgExtensionProbe) GetName() string {
-	return ProbeNamePgExtension
-}
-
-// GetTableName returns the metrics table name
-func (p *PgExtensionProbe) GetTableName() string {
-	return ProbeNamePgExtension
-}
-
-// IsDatabaseScoped returns true as extensions can differ per database
-func (p *PgExtensionProbe) IsDatabaseScoped() bool {
-	return true
 }
 
 // GetQuery returns the SQL query to execute

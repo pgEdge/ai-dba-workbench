@@ -651,7 +651,7 @@ func sampleTableData(ctx context.Context, dbClient *database.Client, tableName s
 	// Calculate average lengths
 	if count > 0 {
 		for col := range sampleData {
-			sampleData[col] = sampleData[col][:minInt(len(sampleData[col]), 1000)] // Limit sample size
+			sampleData[col] = sampleData[col][:min(len(sampleData[col]), 1000)] // Limit sample size
 		}
 	}
 
@@ -991,11 +991,4 @@ func formatSearchResultsIDsOnly(
 	sb.WriteString("Use output_format='summary' for snippets or 'full' for complete content\n")
 
 	return sb.String()
-}
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

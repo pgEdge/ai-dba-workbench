@@ -27,23 +27,8 @@ type PgStatAllIndexesProbe struct {
 // NewPgStatAllIndexesProbe creates a new pg_stat_all_indexes probe
 func NewPgStatAllIndexesProbe(config *ProbeConfig) *PgStatAllIndexesProbe {
 	return &PgStatAllIndexesProbe{
-		BaseMetricsProbe: BaseMetricsProbe{config: config},
+		BaseMetricsProbe: BaseMetricsProbe{config: config, databaseScoped: true},
 	}
-}
-
-// GetName returns the probe name
-func (p *PgStatAllIndexesProbe) GetName() string {
-	return ProbeNamePgStatAllIndexes
-}
-
-// GetTableName returns the metrics table name
-func (p *PgStatAllIndexesProbe) GetTableName() string {
-	return ProbeNamePgStatAllIndexes
-}
-
-// IsDatabaseScoped returns true as pg_stat_all_indexes is database-scoped
-func (p *PgStatAllIndexesProbe) IsDatabaseScoped() bool {
-	return true
 }
 
 // GetQuery returns the SQL query to execute (default for PG16+)

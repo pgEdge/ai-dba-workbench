@@ -31,23 +31,9 @@ func NewPgSysCPUUsageInfoProbe(config *ProbeConfig) *PgSysCPUUsageInfoProbe {
 	}
 }
 
-// GetName returns the probe name
-func (p *PgSysCPUUsageInfoProbe) GetName() string {
-	return ProbeNamePgSysCPUUsageInfo
-}
-
+// GetExtensionName returns the required extension name
 func (p *PgSysCPUUsageInfoProbe) GetExtensionName() string {
 	return "system_stats"
-}
-
-// GetTableName returns the metrics table name
-func (p *PgSysCPUUsageInfoProbe) GetTableName() string {
-	return ProbeNamePgSysCPUUsageInfo
-}
-
-// IsDatabaseScoped returns false as pg_sys_cpu_usage_info is server-scoped
-func (p *PgSysCPUUsageInfoProbe) IsDatabaseScoped() bool {
-	return false
 }
 
 // GetQuery returns the SQL query to execute

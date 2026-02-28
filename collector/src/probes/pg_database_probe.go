@@ -30,21 +30,6 @@ func NewPgDatabaseProbe(config *ProbeConfig) *PgDatabaseProbe {
 	}
 }
 
-// GetName returns the probe name
-func (p *PgDatabaseProbe) GetName() string {
-	return ProbeNamePgDatabase
-}
-
-// GetTableName returns the metrics table name
-func (p *PgDatabaseProbe) GetTableName() string {
-	return ProbeNamePgDatabase
-}
-
-// IsDatabaseScoped returns false as pg_database is server-scoped
-func (p *PgDatabaseProbe) IsDatabaseScoped() bool {
-	return false
-}
-
 // GetQuery returns the SQL query to execute (default for PG16+)
 func (p *PgDatabaseProbe) GetQuery() string {
 	return p.GetQueryForVersion(16)

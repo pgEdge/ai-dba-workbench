@@ -15,14 +15,10 @@ import { stripPreamble } from './textHelpers';
 import {
     LLMContentBlock,
     LLMResponse,
+    Message,
     ToolCallResponse,
     ToolResult,
 } from '../types/llm';
-
-interface Message {
-    role: string;
-    content: string | LLMContentBlock[] | ToolResult[];
-}
 
 export interface AgenticLoopOptions {
     /** Initial messages (typically a single user message). */

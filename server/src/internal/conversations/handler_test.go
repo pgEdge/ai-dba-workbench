@@ -14,13 +14,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/pgedge/ai-workbench/server/internal/api"
 )
 
-func TestSendJSON(t *testing.T) {
+func TestRespondJSON(t *testing.T) {
 	rr := httptest.NewRecorder()
 
 	data := map[string]string{"message": "test"}
-	sendJSON(rr, http.StatusOK, data)
+	api.RespondJSON(rr, http.StatusOK, data)
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("Expected status %d, got %d", http.StatusOK, rr.Code)
@@ -41,10 +43,10 @@ func TestSendJSON(t *testing.T) {
 	}
 }
 
-func TestSendError(t *testing.T) {
+func TestRespondError(t *testing.T) {
 	rr := httptest.NewRecorder()
 
-	sendError(rr, http.StatusBadRequest, "test error")
+	api.RespondError(rr, http.StatusBadRequest, "test error")
 
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, rr.Code)
@@ -60,10 +62,10 @@ func TestSendError(t *testing.T) {
 	}
 }
 
-func TestSendJSON_LinkHeader(t *testing.T) {
+func TestRespondJSON_LinkHeader(t *testing.T) {
 	rr := httptest.NewRecorder()
 
-	sendJSON(rr, http.StatusOK, map[string]string{})
+	api.RespondJSON(rr, http.StatusOK, map[string]string{})
 
 	link := rr.Header().Get("Link")
 	if link == "" {
@@ -71,10 +73,10 @@ func TestSendJSON_LinkHeader(t *testing.T) {
 	}
 }
 
-func TestSendJSON_ResponseStructure(t *testing.T) {
+func TestRespondJSON_ResponseStructure(t *testing.T) {
 	rr := httptest.NewRecorder()
 
-	sendJSON(rr, http.StatusOK, map[string]string{"key": "value"})
+	api.RespondJSON(rr, http.StatusOK, map[string]string{"key": "value"})
 
 	var response map[string]string
 	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
@@ -88,10 +90,10 @@ func TestSendJSON_ResponseStructure(t *testing.T) {
 	}
 }
 
-func TestSendError_ResponseStructure(t *testing.T) {
+func TestRespondError_ResponseStructure(t *testing.T) {
 	rr := httptest.NewRecorder()
 
-	sendError(rr, http.StatusForbidden, "forbidden")
+	api.RespondError(rr, http.StatusForbidden, "forbidden")
 
 	if rr.Code != http.StatusForbidden {
 		t.Errorf("Expected status %d, got %d", http.StatusForbidden, rr.Code)

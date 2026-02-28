@@ -214,7 +214,7 @@ SELECT
         AS subscription_count,
     (SELECT count(*)
      FROM pg_stat_subscription
-     WHERE subrelid IS NULL
+     WHERE relid IS NULL
        AND pid IS NOT NULL)
         AS active_subscription_count
 ```

@@ -251,7 +251,7 @@ func (p *PgNodeRoleProbe) getLogicalReplicationStatus(ctx context.Context, conn 
 	activeSubQuery := `
         SELECT COUNT(DISTINCT subid)
         FROM pg_stat_subscription
-        WHERE subrelid IS NULL AND pid IS NOT NULL
+        WHERE relid IS NULL AND pid IS NOT NULL
     `
 	row = conn.QueryRow(ctx, activeSubQuery)
 	if err := row.Scan(&info.ActiveSubscriptionCount); err != nil {

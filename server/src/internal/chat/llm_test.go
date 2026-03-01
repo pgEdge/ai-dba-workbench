@@ -42,7 +42,7 @@ func TestAnthropicClient_TextResponse(t *testing.T) {
 			ID:   "msg_test",
 			Type: "message",
 			Role: "assistant",
-			Content: []map[string]interface{}{
+			Content: []map[string]any{
 				{
 					"type": "text",
 					"text": "This is a test response",
@@ -121,8 +121,8 @@ func TestOllamaClient_ToolCall(t *testing.T) {
 			Description: "A test tool",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
-				Properties: map[string]interface{}{
-					"param": map[string]interface{}{
+				Properties: map[string]any{
+					"param": map[string]any{
 						"type":        "string",
 						"description": "A parameter",
 					},
@@ -217,12 +217,12 @@ func TestFormatToolsForOllama(t *testing.T) {
 			Description: "A test tool",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
-				Properties: map[string]interface{}{
-					"param1": map[string]interface{}{
+				Properties: map[string]any{
+					"param1": map[string]any{
 						"type":        "string",
 						"description": "First parameter",
 					},
-					"param2": map[string]interface{}{
+					"param2": map[string]any{
 						"type":        "number",
 						"description": "Second parameter",
 					},
@@ -411,7 +411,7 @@ func TestOpenAIClient_ToolCall(t *testing.T) {
 		// Verify tools are formatted correctly
 		if req.Tools == nil {
 			t.Error("Expected tools in request")
-		} else if tools, ok := req.Tools.([]map[string]interface{}); !ok || len(tools) == 0 {
+		} else if tools, ok := req.Tools.([]map[string]any); !ok || len(tools) == 0 {
 			t.Error("Expected non-empty tools array in request")
 		}
 
@@ -426,11 +426,11 @@ func TestOpenAIClient_ToolCall(t *testing.T) {
 					Index: 0,
 					Message: openaiMessage{
 						Role: "assistant",
-						ToolCalls: []map[string]interface{}{
+						ToolCalls: []map[string]any{
 							{
 								"id":   "call_test123",
 								"type": "function",
-								"function": map[string]interface{}{
+								"function": map[string]any{
 									"name":      "test_tool",
 									"arguments": `{"param": "value"}`,
 								},
@@ -645,8 +645,8 @@ func TestHasToolResults(t *testing.T) {
 			name: "message with interface slice containing tool_result",
 			msg: Message{
 				Role: "user",
-				Content: []interface{}{
-					map[string]interface{}{
+				Content: []any{
+					map[string]any{
 						"type":        "tool_result",
 						"tool_use_id": "123",
 					},
@@ -666,8 +666,8 @@ func TestHasToolResults(t *testing.T) {
 			name: "message with interface slice without tool_result",
 			msg: Message{
 				Role: "user",
-				Content: []interface{}{
-					map[string]interface{}{
+				Content: []any{
+					map[string]any{
 						"type": "text",
 						"text": "hello",
 					},
@@ -797,7 +797,7 @@ func TestOpenAIClient_GPT5UsesMaxCompletionTokens(t *testing.T) {
 			}
 
 			// Parse back to check which field is present
-			var parsed map[string]interface{}
+			var parsed map[string]any
 			if err := json.Unmarshal(reqJSON, &parsed); err != nil {
 				t.Fatalf("Failed to unmarshal request: %v", err)
 			}

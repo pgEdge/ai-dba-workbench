@@ -62,7 +62,7 @@ func TestAllResources_Integration(t *testing.T) {
 			}
 
 			// Verify it's valid JSON
-			var data interface{}
+			var data any
 			if err := json.Unmarshal([]byte(content.Contents[0].Text), &data); err != nil {
 				t.Fatalf("Failed to parse JSON for %s: %v", tt.name, err)
 			}

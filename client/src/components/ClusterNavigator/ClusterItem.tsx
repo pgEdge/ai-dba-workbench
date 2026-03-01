@@ -90,7 +90,7 @@ const getClusterIconSx = (isSelected) => ({
     color: isSelected ? 'primary.main' : 'text.secondary',
 });
 
-const getClusterNameSx = (isSelected) => ({
+const getClusterNameSx = (_isSelected) => ({
     ...clusterNameBase,
     fontWeight: 600,
     color: 'text.primary',

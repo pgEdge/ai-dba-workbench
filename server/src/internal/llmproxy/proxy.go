@@ -44,9 +44,9 @@ type Config struct {
 
 // Message represents a message in the chat conversation
 type Message struct {
-	Role         string                 `json:"role"`
-	Content      interface{}            `json:"content"`
-	CacheControl map[string]interface{} `json:"cache_control,omitempty"`
+	Role         string         `json:"role"`
+	Content      any            `json:"content"`
+	CacheControl map[string]any `json:"cache_control,omitempty"`
 }
 
 // Tool represents an MCP tool definition
@@ -58,9 +58,9 @@ type Tool struct {
 
 // InputSchema defines the JSON schema for tool input
 type InputSchema struct {
-	Type       string                 `json:"type"`
-	Properties map[string]interface{} `json:"properties"`
-	Required   []string               `json:"required,omitempty"`
+	Type       string         `json:"type"`
+	Properties map[string]any `json:"properties"`
+	Required   []string       `json:"required,omitempty"`
 }
 
 // ProvidersResponse represents the response for GET /api/llm/providers
@@ -99,13 +99,10 @@ type ChatRequest struct {
 
 // ChatResponse represents the response body for POST /api/llm/chat
 type ChatResponse struct {
-	Content    []interface{}    `json:"content"`
+	Content    []any            `json:"content"`
 	StopReason string           `json:"stop_reason"`
 	TokenUsage *chat.TokenUsage `json:"token_usage,omitempty"` // Optional token usage (when debug enabled)
 }
-
-// OpenAPISpecPath is re-exported from apiconst for local use.
-const OpenAPISpecPath = apiconst.OpenAPISpecPath
 
 // HandleProviders handles GET /api/v1/llm/providers
 func HandleProviders(w http.ResponseWriter, r *http.Request, config *Config) {
@@ -155,7 +152,7 @@ func HandleProviders(w http.ResponseWriter, r *http.Request, config *Config) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Link", fmt.Sprintf("<%s>; rel=\"service-desc\"", OpenAPISpecPath))
+	w.Header().Set("Link", fmt.Sprintf("<%s>; rel=\"service-desc\"", apiconst.OpenAPISpecPath))
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: Failed to encode LLM providers response: %v\n", err)
 	}
@@ -239,7 +236,7 @@ func HandleModels(w http.ResponseWriter, r *http.Request, config *Config) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Link", fmt.Sprintf("<%s>; rel=\"service-desc\"", OpenAPISpecPath))
+	w.Header().Set("Link", fmt.Sprintf("<%s>; rel=\"service-desc\"", apiconst.OpenAPISpecPath))
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: Failed to encode LLM models response: %v\n", err)
 	}
@@ -394,7 +391,7 @@ func HandleChat(w http.ResponseWriter, r *http.Request, config *Config) {
 		}
 	}
 
-	// Call LLM - pass tools as []interface{} to avoid import cycle
+	// Call LLM - pass tools as []any to avoid import cycle
 	// The chat client will access tool fields which are structurally identical to mcp.Tool
 	llmResponse, err := client.Chat(ctx, chatMessages, req.Tools, effectiveSystemPrompt)
 	if err != nil {
@@ -420,7 +417,7 @@ func HandleChat(w http.ResponseWriter, r *http.Request, config *Config) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Link", fmt.Sprintf("<%s>; rel=\"service-desc\"", OpenAPISpecPath))
+	w.Header().Set("Link", fmt.Sprintf("<%s>; rel=\"service-desc\"", apiconst.OpenAPISpecPath))
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: Failed to encode LLM chat response: %v\n", err)
 	}

@@ -128,24 +128,24 @@ func TestStoreMemoryMissingContent(t *testing.T) {
 
 	tests := []struct {
 		name string
-		args map[string]interface{}
+		args map[string]any
 	}{
 		{
 			name: "content key absent",
-			args: map[string]interface{}{
+			args: map[string]any{
 				"category": "preference",
 			},
 		},
 		{
 			name: "content is empty string",
-			args: map[string]interface{}{
+			args: map[string]any{
 				"content":  "",
 				"category": "preference",
 			},
 		},
 		{
 			name: "content is wrong type",
-			args: map[string]interface{}{
+			args: map[string]any{
 				"content":  123,
 				"category": "preference",
 			},
@@ -175,7 +175,7 @@ func TestStoreMemoryMissingContent(t *testing.T) {
 func TestStoreMemoryWhitespaceOnlyContent(t *testing.T) {
 	tool := StoreMemoryTool(nil, &config.Config{}, nil)
 
-	args := map[string]interface{}{
+	args := map[string]any{
 		"content":  "   \t\n   ",
 		"category": "preference",
 	}
@@ -201,24 +201,24 @@ func TestStoreMemoryMissingCategory(t *testing.T) {
 
 	tests := []struct {
 		name string
-		args map[string]interface{}
+		args map[string]any
 	}{
 		{
 			name: "category key absent",
-			args: map[string]interface{}{
+			args: map[string]any{
 				"content": "Remember this fact.",
 			},
 		},
 		{
 			name: "category is empty string",
-			args: map[string]interface{}{
+			args: map[string]any{
 				"content":  "Remember this fact.",
 				"category": "",
 			},
 		},
 		{
 			name: "category is wrong type",
-			args: map[string]interface{}{
+			args: map[string]any{
 				"content":  "Remember this fact.",
 				"category": 42,
 			},
@@ -248,7 +248,7 @@ func TestStoreMemoryMissingCategory(t *testing.T) {
 func TestStoreMemoryWhitespaceOnlyCategory(t *testing.T) {
 	tool := StoreMemoryTool(nil, &config.Config{}, nil)
 
-	args := map[string]interface{}{
+	args := map[string]any{
 		"content":  "Remember this fact.",
 		"category": "   \t   ",
 	}
@@ -272,7 +272,7 @@ func TestStoreMemoryWhitespaceOnlyCategory(t *testing.T) {
 func TestStoreMemoryInvalidScope(t *testing.T) {
 	tool := StoreMemoryTool(nil, &config.Config{}, nil)
 
-	args := map[string]interface{}{
+	args := map[string]any{
 		"content":  "Remember this fact.",
 		"category": "preference",
 		"scope":    "invalid",
@@ -302,7 +302,7 @@ func TestStoreMemoryValidScopeValues(t *testing.T) {
 
 	for _, scope := range []string{"user", "system"} {
 		t.Run("scope="+scope, func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"content":  "Remember this fact.",
 				"category": "preference",
 				"scope":    scope,
@@ -329,7 +329,7 @@ func TestStoreMemorySystemScopeRequiresPermission(t *testing.T) {
 
 	ctx := context.WithValue(context.Background(),
 		auth.UsernameContextKey, "testuser")
-	args := map[string]interface{}{
+	args := map[string]any{
 		"content":   "A system-wide memory.",
 		"category":  "fact",
 		"scope":     "system",
@@ -356,7 +356,7 @@ func TestStoreMemoryNoAuthContext(t *testing.T) {
 	tool := StoreMemoryTool(nil, &config.Config{}, nil)
 
 	// Provide valid params but no __context with a username
-	args := map[string]interface{}{
+	args := map[string]any{
 		"content":  "Remember this fact.",
 		"category": "preference",
 	}
@@ -384,7 +384,7 @@ func TestStoreMemoryWithAuthContextButNilStore(t *testing.T) {
 
 	ctx := context.WithValue(context.Background(),
 		auth.UsernameContextKey, "testuser")
-	args := map[string]interface{}{
+	args := map[string]any{
 		"content":   "Remember this fact.",
 		"category":  "preference",
 		"__context": ctx,
@@ -415,21 +415,21 @@ func TestRecallMemoriesMissingQuery(t *testing.T) {
 
 	tests := []struct {
 		name string
-		args map[string]interface{}
+		args map[string]any
 	}{
 		{
 			name: "query key absent",
-			args: map[string]interface{}{},
+			args: map[string]any{},
 		},
 		{
 			name: "query is empty string",
-			args: map[string]interface{}{
+			args: map[string]any{
 				"query": "",
 			},
 		},
 		{
 			name: "query is wrong type",
-			args: map[string]interface{}{
+			args: map[string]any{
 				"query": 42,
 			},
 		},
@@ -458,7 +458,7 @@ func TestRecallMemoriesMissingQuery(t *testing.T) {
 func TestRecallMemoriesWhitespaceOnlyQuery(t *testing.T) {
 	tool := RecallMemoriesTool(nil, &config.Config{})
 
-	args := map[string]interface{}{
+	args := map[string]any{
 		"query": "   \t\n   ",
 	}
 
@@ -481,7 +481,7 @@ func TestRecallMemoriesWhitespaceOnlyQuery(t *testing.T) {
 func TestRecallMemoriesNoAuthContext(t *testing.T) {
 	tool := RecallMemoriesTool(nil, &config.Config{})
 
-	args := map[string]interface{}{
+	args := map[string]any{
 		"query": "database preferences",
 	}
 
@@ -510,21 +510,21 @@ func TestDeleteMemoryMissingID(t *testing.T) {
 
 	tests := []struct {
 		name string
-		args map[string]interface{}
+		args map[string]any
 	}{
 		{
 			name: "id key absent",
-			args: map[string]interface{}{},
+			args: map[string]any{},
 		},
 		{
 			name: "id is wrong type (string)",
-			args: map[string]interface{}{
+			args: map[string]any{
 				"id": "abc",
 			},
 		},
 		{
 			name: "id is wrong type (bool)",
-			args: map[string]interface{}{
+			args: map[string]any{
 				"id": true,
 			},
 		},
@@ -554,7 +554,7 @@ func TestDeleteMemoryNoAuthContext(t *testing.T) {
 	tool := DeleteMemoryTool(nil)
 
 	// Provide a valid numeric id but no authenticated user in context
-	args := map[string]interface{}{
+	args := map[string]any{
 		"id": float64(42),
 	}
 

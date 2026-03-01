@@ -35,8 +35,10 @@ creation across the pgEdge ecosystem.
 - [Testing](#testing)
 - [Getting Started](#getting-started)
 - [Deployment](#deployment)
+- [Changelog](docs/changelog.md)
 - [Issues](#issues)
 - [Contributing](#contributing)
+- [License](#license)
 
 ## Components
 
@@ -121,22 +123,25 @@ cd collector && make test
 
 ### Environment Variables for Testing
 
-- `TEST_AI_WORKBENCH_SERVER` - PostgreSQL connection string for test database
-  (default: `postgres://postgres@localhost:5432/postgres`)
-- `TEST_AI_WORKBENCH_KEEP_DB=1` - Keep test database after tests complete
+- `TEST_AI_WORKBENCH_SERVER` specifies the PostgreSQL
+  connection string for the test database; the default is
+  `postgres://postgres@localhost:5432/postgres`.
+- `TEST_AI_WORKBENCH_KEEP_DB=1` preserves the test
+  database after tests complete.
 
 ### Available Make Targets
 
-Each sub-project and the top-level Makefile support these targets:
+Each sub-project and the top-level Makefile support
+the following targets:
 
-- `all` - Build the project (default)
-- `test` - Run tests
-- `coverage` - Run tests with coverage report
-- `lint` - Run linter
-- `test-all` - Run tests, coverage, and linter
-- `clean` - Remove build artifacts
-- `killall` - Kill any running processes
-- `help` - Show available targets
+- `all` builds the project and is the default target.
+- `test` runs the test suite.
+- `coverage` runs tests with a coverage report.
+- `lint` runs the linter.
+- `test-all` runs tests, coverage, and the linter.
+- `clean` removes build artifacts.
+- `killall` kills any running processes.
+- `help` shows the available targets.
 
 ## Getting Started
 
@@ -172,6 +177,10 @@ To report an issue with the software, visit:
 We welcome your project contributions; for more information, see
 [docs/developer-guide/contributing.md](docs/developer-guide/contributing.md).
 
-For more information, visit [docs.pgedge.com](https://docs.pgedge.com)
+For more information, visit
+[docs.pgedge.com](https://docs.pgedge.com).
 
-This project is licensed under the [PostgreSQL License](LICENSE.md).
+## License
+
+This project is licensed under the
+[PostgreSQL License](LICENSE.md).

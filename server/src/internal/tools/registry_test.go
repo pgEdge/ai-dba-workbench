@@ -40,7 +40,7 @@ func TestRegister(t *testing.T) {
 			Name:        "test_tool",
 			Description: "A test tool",
 		},
-		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
+		Handler: func(args map[string]any) (mcp.ToolResponse, error) {
 			return mcp.ToolResponse{}, nil
 		},
 	}
@@ -69,7 +69,7 @@ func TestGet(t *testing.T) {
 			Name:        "existing_tool",
 			Description: "An existing tool",
 		},
-		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
+		Handler: func(args map[string]any) (mcp.ToolResponse, error) {
 			return mcp.ToolResponse{}, nil
 		},
 	}
@@ -110,7 +110,7 @@ func TestList(t *testing.T) {
 				Name:        "tool1",
 				Description: "First tool",
 			},
-			Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
+			Handler: func(args map[string]any) (mcp.ToolResponse, error) {
 				return mcp.ToolResponse{}, nil
 			},
 		}
@@ -120,7 +120,7 @@ func TestList(t *testing.T) {
 				Name:        "tool2",
 				Description: "Second tool",
 			},
-			Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
+			Handler: func(args map[string]any) (mcp.ToolResponse, error) {
 				return mcp.ToolResponse{}, nil
 			},
 		}
@@ -158,7 +158,7 @@ func TestExecute(t *testing.T) {
 				Name:        "counter",
 				Description: "Counts calls",
 			},
-			Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
+			Handler: func(args map[string]any) (mcp.ToolResponse, error) {
 				callCount++
 				value, ok := args["value"].(string)
 				if !ok {
@@ -178,7 +178,7 @@ func TestExecute(t *testing.T) {
 
 		registry.Register("counter", tool)
 
-		args := map[string]interface{}{
+		args := map[string]any{
 			"value": "test",
 		}
 
@@ -201,7 +201,7 @@ func TestExecute(t *testing.T) {
 	})
 
 	t.Run("non-existent tool", func(t *testing.T) {
-		response, err := registry.Execute(context.Background(), "non_existent", map[string]interface{}{})
+		response, err := registry.Execute(context.Background(), "non_existent", map[string]any{})
 		if err != nil {
 			t.Errorf("Execute() unexpected error: %v", err)
 		}
@@ -225,7 +225,7 @@ func TestExecute(t *testing.T) {
 				Name:        "error_tool",
 				Description: "Returns an error",
 			},
-			Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
+			Handler: func(args map[string]any) (mcp.ToolResponse, error) {
 				return mcp.ToolResponse{
 					Content: []mcp.ContentItem{
 						{
@@ -240,7 +240,7 @@ func TestExecute(t *testing.T) {
 
 		registry.Register("error_tool", tool)
 
-		response, err := registry.Execute(context.Background(), "error_tool", map[string]interface{}{})
+		response, err := registry.Execute(context.Background(), "error_tool", map[string]any{})
 		if err != nil {
 			t.Errorf("Execute() unexpected error: %v", err)
 		}
@@ -261,7 +261,7 @@ func TestExecute(t *testing.T) {
 				Name:        "versioned_tool",
 				Description: "Version 1",
 			},
-			Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
+			Handler: func(args map[string]any) (mcp.ToolResponse, error) {
 				return mcp.ToolResponse{
 					Content: []mcp.ContentItem{
 						{
@@ -281,7 +281,7 @@ func TestExecute(t *testing.T) {
 				Name:        "versioned_tool",
 				Description: "Version 2",
 			},
-			Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
+			Handler: func(args map[string]any) (mcp.ToolResponse, error) {
 				version = 2
 				return mcp.ToolResponse{
 					Content: []mcp.ContentItem{
@@ -296,7 +296,7 @@ func TestExecute(t *testing.T) {
 
 		registry.Register("versioned_tool", tool2)
 
-		response, err := registry.Execute(context.Background(), "versioned_tool", map[string]interface{}{})
+		response, err := registry.Execute(context.Background(), "versioned_tool", map[string]any{})
 		if err != nil {
 			t.Errorf("Execute() unexpected error: %v", err)
 		}

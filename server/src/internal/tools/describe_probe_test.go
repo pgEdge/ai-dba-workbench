@@ -23,7 +23,7 @@ func TestDescribeProbe_NilPool(t *testing.T) {
 	}
 
 	// Test with nil pool - should return error
-	resp, err := tool.Handler(map[string]interface{}{
+	resp, err := tool.Handler(map[string]any{
 		"probe_name": "pg_stat_database",
 	})
 	if err != nil {
@@ -39,7 +39,7 @@ func TestDescribeProbe_MissingProbeName(t *testing.T) {
 	tool := DescribeProbeTool(nil)
 
 	// Test without probe_name parameter
-	resp, err := tool.Handler(map[string]interface{}{})
+	resp, err := tool.Handler(map[string]any{})
 	if err != nil {
 		t.Errorf("Expected no error, got: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestDescribeProbe_InvalidProbeName(t *testing.T) {
 	// Note: With nil pool, the pool check happens first, so we get
 	// "Datastore not configured" instead of "Invalid probe name".
 	// The isValidIdentifier function is tested separately below.
-	resp, err := tool.Handler(map[string]interface{}{
+	resp, err := tool.Handler(map[string]any{
 		"probe_name": "pg_stat_database; DROP TABLE users;--",
 	})
 	if err != nil {

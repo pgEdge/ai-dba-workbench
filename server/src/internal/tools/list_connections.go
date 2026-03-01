@@ -90,11 +90,11 @@ CRITICAL: Never silently analyze multiple connections. Always get explicit user 
 			CompactDescription: `List all monitored database connections in the datastore. Returns connection IDs, names, hostnames, ports, and status. Use to discover available connections.`,
 			InputSchema: mcp.InputSchema{
 				Type:       "object",
-				Properties: map[string]interface{}{},
+				Properties: map[string]any{},
 				Required:   []string{},
 			},
 		},
-		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
+		Handler: func(args map[string]any) (mcp.ToolResponse, error) {
 			if pool == nil {
 				return mcp.NewToolError("Datastore not configured. The list_connections tool requires a datastore connection.")
 			}

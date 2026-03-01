@@ -47,14 +47,14 @@ func (p *PgStatReplicationProbe) checkIsInRecovery(ctx context.Context, conn *pg
 }
 
 // Execute runs the probe against a monitored connection
-func (p *PgStatReplicationProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
+func (p *PgStatReplicationProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]any, error) {
 	// Check if we're on a standby
 	inRecovery, err := p.checkIsInRecovery(ctx, monitoredConn)
 	if err != nil {
 		return nil, err
 	}
 
-	var metrics []map[string]interface{}
+	var metrics []map[string]any
 
 	if !inRecovery {
 		// Primary: collect from pg_stat_replication
@@ -176,7 +176,7 @@ func (p *PgStatReplicationProbe) Execute(ctx context.Context, connectionName str
 	// If this is a standby with no WAL receiver, store a sentinel row so the
 	// alerter can detect the disconnected state.
 	if inRecovery && len(receiverMetrics) == 0 {
-		sentinel := map[string]interface{}{
+		sentinel := map[string]any{
 			"role":                  "standby",
 			"pid":                   0,
 			"usesysid":              nil,
@@ -221,7 +221,7 @@ func (p *PgStatReplicationProbe) Execute(ctx context.Context, connectionName str
 }
 
 // Store stores the collected metrics in the datastore
-func (p *PgStatReplicationProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]interface{}) error {
+func (p *PgStatReplicationProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]any) error {
 	if len(metrics) == 0 {
 		return nil // Nothing to store
 	}
@@ -249,9 +249,9 @@ func (p *PgStatReplicationProbe) Store(ctx context.Context, datastoreConn *pgxpo
 	}
 
 	// Build values array
-	var values [][]interface{}
+	var values [][]any
 	for _, metric := range metrics {
-		row := []interface{}{
+		row := []any{
 			connectionID,
 			timestamp,
 			metric["role"],

@@ -12,10 +12,12 @@ package database
 import (
 	"context"
 	"fmt"
-	"github.com/pgedge/ai-workbench/pkg/logger"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/pgedge/ai-workbench/pkg/connstring"
+	"github.com/pgedge/ai-workbench/pkg/logger"
 )
 
 // Config interface defines the minimal configuration needed by Datastore
@@ -141,7 +143,7 @@ func (ds *Datastore) buildConnectionString() string {
 	// Set application name to identify datastore connections
 	params["application_name"] = "pgEdge AI DBA Workbench - Metric Storage"
 
-	return buildPostgresConnectionString(params)
+	return connstring.Build(params)
 }
 
 // initializeSchema creates the necessary database schema if it doesn't exist

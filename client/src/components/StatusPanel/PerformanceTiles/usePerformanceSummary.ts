@@ -65,24 +65,24 @@ export const usePerformanceSummary = (
     const initialLoadDoneRef = useRef<boolean>(false);
 
     const buildUrl = useCallback((): string | null => {
-        if (!selection) return null;
+        if (!selection) {return null;}
 
         const base = '/api/v1/metrics/performance-summary';
 
         if (selection.type === 'server') {
-            if (selection.id === undefined || selection.id === null) return null;
+            if (selection.id === undefined || selection.id === null) {return null;}
             return `${base}?connection_id=${selection.id}&time_range=24h`;
         }
 
         if (selection.type === 'cluster') {
             const serverIds = selection.serverIds as number[] | undefined;
-            if (!serverIds?.length) return null;
+            if (!serverIds?.length) {return null;}
             return `${base}?connection_ids=${serverIds.join(',')}&time_range=24h`;
         }
 
         if (selection.type === 'estate') {
             const serverIds = extractEstateServerIds(selection);
-            if (!serverIds.length) return null;
+            if (!serverIds.length) {return null;}
             return `${base}?connection_ids=${serverIds.join(',')}&time_range=24h`;
         }
 
@@ -90,7 +90,7 @@ export const usePerformanceSummary = (
     }, [selection]);
 
     const fetchData = useCallback(async (): Promise<void> => {
-        if (!user) return;
+        if (!user) {return;}
 
         const url = buildUrl();
         if (!url) {

@@ -1,6 +1,6 @@
-[![CI - Alerter](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-alerter.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-alerter.yml)
-
 # pgEdge AI DBA Workbench Alerter
+
+[![CI - Alerter](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-alerter.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-alerter.yml)
 
 The pgEdge AI DBA Workbench Alerter is a background monitoring service that
 evaluates collected metrics against thresholds and uses AI-powered anomaly

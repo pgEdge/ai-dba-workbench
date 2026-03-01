@@ -311,7 +311,7 @@ func TestManager_DecryptChannelSecrets_EmptyFields(t *testing.T) {
 
 func TestManager_DebugLog(t *testing.T) {
 	var loggedMessages []string
-	logFunc := func(format string, args ...interface{}) {
+	logFunc := func(format string, args ...any) {
 		loggedMessages = append(loggedMessages, format)
 	}
 

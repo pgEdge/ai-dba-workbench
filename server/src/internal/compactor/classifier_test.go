@@ -250,8 +250,8 @@ func TestClassifier_HasToolContent(t *testing.T) {
 	// Message with tool content
 	toolMsg := Message{
 		Role: "assistant",
-		Content: []interface{}{
-			map[string]interface{}{
+		Content: []any{
+			map[string]any{
 				"type": "tool_use",
 				"name": "query_database",
 			},
@@ -275,12 +275,12 @@ func TestClassifier_ExtractToolNames(t *testing.T) {
 
 	msg := Message{
 		Role: "assistant",
-		Content: []interface{}{
-			map[string]interface{}{
+		Content: []any{
+			map[string]any{
 				"type": "tool_use",
 				"name": "query_database",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"type": "tool_use",
 				"name": "get_schema_info",
 			},

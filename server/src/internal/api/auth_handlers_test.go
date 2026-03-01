@@ -51,7 +51,7 @@ func TestAuthHandler_HandleLogin(t *testing.T) {
 	tests := []struct {
 		name           string
 		method         string
-		body           interface{}
+		body           any
 		expectedStatus int
 		checkResponse  func(*testing.T, *httptest.ResponseRecorder)
 	}{

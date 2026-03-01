@@ -619,7 +619,7 @@ func (d *Datastore) UpsertChannelOverride(ctx context.Context, scope string, sco
 	defer d.mu.Unlock()
 
 	var query string
-	var args []interface{}
+	var args []any
 
 	switch scope {
 	case "server":
@@ -628,21 +628,21 @@ func (d *Datastore) UpsertChannelOverride(ctx context.Context, scope string, sco
 			VALUES ($1, 'server', $2, $3)
 			ON CONFLICT (channel_id, connection_id) WHERE scope = 'server'
 			DO UPDATE SET enabled = $3`
-		args = []interface{}{channelID, scopeID, update.Enabled}
+		args = []any{channelID, scopeID, update.Enabled}
 	case "cluster":
 		query = `
 			INSERT INTO notification_channel_overrides (channel_id, scope, cluster_id, enabled)
 			VALUES ($1, 'cluster', $2, $3)
 			ON CONFLICT (channel_id, cluster_id) WHERE scope = 'cluster'
 			DO UPDATE SET enabled = $3`
-		args = []interface{}{channelID, scopeID, update.Enabled}
+		args = []any{channelID, scopeID, update.Enabled}
 	case "group":
 		query = `
 			INSERT INTO notification_channel_overrides (channel_id, scope, group_id, enabled)
 			VALUES ($1, 'group', $2, $3)
 			ON CONFLICT (channel_id, group_id) WHERE scope = 'group'
 			DO UPDATE SET enabled = $3`
-		args = []interface{}{channelID, scopeID, update.Enabled}
+		args = []any{channelID, scopeID, update.Enabled}
 	default:
 		return fmt.Errorf("invalid scope: %s", scope)
 	}
@@ -660,18 +660,18 @@ func (d *Datastore) DeleteChannelOverride(ctx context.Context, scope string, sco
 	defer d.mu.Unlock()
 
 	var query string
-	var args []interface{}
+	var args []any
 
 	switch scope {
 	case "server":
 		query = `DELETE FROM notification_channel_overrides WHERE scope = 'server' AND channel_id = $1 AND connection_id = $2`
-		args = []interface{}{channelID, scopeID}
+		args = []any{channelID, scopeID}
 	case "cluster":
 		query = `DELETE FROM notification_channel_overrides WHERE scope = 'cluster' AND channel_id = $1 AND cluster_id = $2`
-		args = []interface{}{channelID, scopeID}
+		args = []any{channelID, scopeID}
 	case "group":
 		query = `DELETE FROM notification_channel_overrides WHERE scope = 'group' AND channel_id = $1 AND group_id = $2`
-		args = []interface{}{channelID, scopeID}
+		args = []any{channelID, scopeID}
 	default:
 		return fmt.Errorf("invalid scope: %s", scope)
 	}

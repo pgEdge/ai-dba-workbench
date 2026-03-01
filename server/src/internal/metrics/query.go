@@ -288,7 +288,7 @@ func BuildMetricsQuery(
 	buckets int,
 	aggregation string,
 	filters MetricFilters,
-) (string, []interface{}, error) {
+) (string, []any, error) {
 	// Calculate bucket width
 	duration := timeEnd.Sub(timeStart)
 	bucketWidth := duration / time.Duration(buckets)
@@ -298,7 +298,7 @@ func BuildMetricsQuery(
 
 	// Build WHERE clause
 	var whereClauses []string
-	queryArgs := []interface{}{
+	queryArgs := []any{
 		fmt.Sprintf("%d seconds", int(bucketWidth.Seconds())),
 		connectionID,
 		timeStart,
@@ -452,12 +452,12 @@ func QueryTimeSeries(
 		}
 
 		for rows.Next() {
-			values := make([]interface{}, len(metricCols)+1)
-			valuePtrs := make([]interface{}, len(metricCols)+1)
+			values := make([]any, len(metricCols)+1)
+			valuePtrs := make([]any, len(metricCols)+1)
 			var bucketTime time.Time
 			valuePtrs[0] = &bucketTime
 			for i := range metricCols {
-				var v interface{}
+				var v any
 				values[i+1] = &v
 				valuePtrs[i+1] = &values[i+1]
 			}
@@ -533,7 +533,7 @@ func QueryBaselines(
 ) ([]MetricBaseline, error) {
 	// Build the metric filter
 	var metricFilter string
-	var queryArgs []interface{}
+	var queryArgs []any
 	queryArgs = append(queryArgs, connectionID)
 
 	if probeName != "" {
@@ -648,13 +648,13 @@ func QueryBaselines(
 
 // toFloat64 converts a scanned database value to float64. It returns
 // false when the value cannot be converted.
-func toFloat64(v interface{}) (float64, bool) {
+func toFloat64(v any) (float64, bool) {
 	if v == nil {
 		return 0, false
 	}
 
 	// Dereference pointer
-	if ptr, ok := v.(*interface{}); ok {
+	if ptr, ok := v.(*any); ok {
 		if ptr == nil || *ptr == nil {
 			return 0, false
 		}

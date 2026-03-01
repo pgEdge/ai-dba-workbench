@@ -59,7 +59,7 @@ func (p *PgSettingsProbe) GetQuery() string {
 }
 
 // Execute runs the probe against a monitored connection
-func (p *PgSettingsProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
+func (p *PgSettingsProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]any, error) {
 	query := WrapQuery(ProbeNamePgSettings, p.GetQuery())
 	rows, err := monitoredConn.Query(ctx, query)
 	if err != nil {
@@ -71,7 +71,7 @@ func (p *PgSettingsProbe) Execute(ctx context.Context, connectionName string, mo
 }
 
 // Store stores the collected metrics in the datastore only if changes are detected
-func (p *PgSettingsProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]interface{}) error {
+func (p *PgSettingsProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]any) error {
 	if len(metrics) == 0 {
 		return nil // Nothing to store
 	}
@@ -103,9 +103,9 @@ func (p *PgSettingsProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn
 	}
 
 	// Build values array
-	var values [][]interface{}
+	var values [][]any
 	for _, metric := range metrics {
-		row := []interface{}{
+		row := []any{
 			connectionID,
 			timestamp,
 			metric["name"],
@@ -138,7 +138,7 @@ func (p *PgSettingsProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn
 }
 
 // hasDataChanged checks if the current settings differ from the most recently stored data
-func (p *PgSettingsProbe) hasDataChanged(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, currentMetrics []map[string]interface{}) (bool, error) {
+func (p *PgSettingsProbe) hasDataChanged(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, currentMetrics []map[string]any) (bool, error) {
 	// Compute hash of current metrics
 	currentHash, err := p.computeMetricsHash(currentMetrics)
 	if err != nil {
@@ -169,7 +169,7 @@ func (p *PgSettingsProbe) hasDataChanged(ctx context.Context, datastoreConn *pgx
 	defer rows.Close()
 
 	// Scan the most recent data
-	var storedMetrics []map[string]interface{}
+	var storedMetrics []map[string]any
 	storedMetrics, err = utils.ScanRowsToMaps(rows)
 	if err != nil {
 		return false, fmt.Errorf("failed to scan stored data: %w", err)
@@ -192,7 +192,7 @@ func (p *PgSettingsProbe) hasDataChanged(ctx context.Context, datastoreConn *pgx
 }
 
 // computeMetricsHash computes a hash of the metrics for comparison
-func (p *PgSettingsProbe) computeMetricsHash(metrics []map[string]interface{}) (string, error) {
+func (p *PgSettingsProbe) computeMetricsHash(metrics []map[string]any) (string, error) {
 	return ComputeMetricsHash(metrics)
 }
 

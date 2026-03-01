@@ -137,7 +137,7 @@ func TestLogConnectionDetails(t *testing.T) {
 	original := GetLogLevel()
 	defer SetLogLevel(original)
 
-	poolConfig := map[string]interface{}{
+	poolConfig := map[string]any{
 		"max_conns":         int32(10),
 		"min_conns":         int32(2),
 		"max_conn_lifetime": 1 * time.Hour,

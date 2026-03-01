@@ -292,17 +292,17 @@ func TestTestQueryValidation(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		args     map[string]interface{}
+		args     map[string]any
 		errorMsg string
 	}{
 		{
 			name:     "Missing query parameter",
-			args:     map[string]interface{}{},
+			args:     map[string]any{},
 			errorMsg: "query",
 		},
 		{
 			name: "Empty query parameter",
-			args: map[string]interface{}{
+			args: map[string]any{
 				"query": "",
 			},
 			errorMsg: "non-empty string",

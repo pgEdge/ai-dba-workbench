@@ -97,9 +97,9 @@ func ChunkText(text string, maxTokens int, overlapTokens int) []string {
 
 // ChunkRow processes all text columns in a row and returns chunks with metadata
 func ChunkRow(
-	rowData map[string]interface{},
+	rowData map[string]any,
 	textColumns []string,
-	rowID interface{},
+	rowID any,
 	tableName string,
 	rank int,
 	maxTokens int,

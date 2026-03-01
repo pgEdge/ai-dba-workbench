@@ -175,9 +175,6 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
     const xactCommit = extractLatestValue(
         txnKpi.data, 'xact_commit'
     );
-    const xactRollback = extractLatestValue(
-        txnKpi.data, 'xact_rollback'
-    );
     const blksHit = extractLatestValue(
         cacheKpi.data, 'blks_hit'
     );

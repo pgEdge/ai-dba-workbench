@@ -96,22 +96,22 @@ If include_schedules is true, a second section shows recurring schedules:
 			CompactDescription: `Query blackout (maintenance window) periods. Omit connection_id to see blackouts across all accessible connections and scopes. Filter by active_only=true for current blackouts. Set include_schedules=true to see recurring schedules.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
-				Properties: map[string]interface{}{
-					"connection_id": map[string]interface{}{
+				Properties: map[string]any{
+					"connection_id": map[string]any{
 						"type":        "integer",
 						"description": "ID of a monitored connection. Omit to return blackouts across all accessible connections and scopes.",
 					},
-					"active_only": map[string]interface{}{
+					"active_only": map[string]any{
 						"type":        "boolean",
 						"description": "If true, only return currently active blackouts. Default: false.",
 						"default":     false,
 					},
-					"include_schedules": map[string]interface{}{
+					"include_schedules": map[string]any{
 						"type":        "boolean",
 						"description": "If true, also return recurring blackout schedules. Default: false.",
 						"default":     false,
 					},
-					"limit": map[string]interface{}{
+					"limit": map[string]any{
 						"type":        "integer",
 						"description": "Maximum number of results to return (1-50). Default: 20",
 						"default":     20,
@@ -122,7 +122,7 @@ If include_schedules is true, a second section shows recurring schedules:
 				Required: []string{},
 			},
 		},
-		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
+		Handler: func(args map[string]any) (mcp.ToolResponse, error) {
 			if pool == nil {
 				return mcp.NewToolError("Datastore not configured. The get_blackouts tool requires a datastore connection.")
 			}
@@ -440,7 +440,7 @@ func blackoutsAllConnections(
 
 	// For the cluster/group sub-selects we reuse the same parameter values
 	// since they reference the same $1..$N placeholders. Append activeOnly and limit.
-	queryArgs := make([]interface{}, 0, len(connArgs)+2)
+	queryArgs := make([]any, 0, len(connArgs)+2)
 	queryArgs = append(queryArgs, connArgs...)
 	queryArgs = append(queryArgs, activeOnly, limit)
 
@@ -564,7 +564,7 @@ func blackoutSchedulesAllConnections(
 		paramIdx,
 	)
 
-	queryArgs := make([]interface{}, 0, len(connArgs)+1)
+	queryArgs := make([]any, 0, len(connArgs)+1)
 	queryArgs = append(queryArgs, connArgs...)
 	queryArgs = append(queryArgs, limit)
 

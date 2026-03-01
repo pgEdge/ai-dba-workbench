@@ -83,7 +83,7 @@ func TestPgServerInfoProbe_ComputeMetricsHash(t *testing.T) {
 	}
 	probe := NewPgServerInfoProbe(config)
 
-	metrics := []map[string]interface{}{
+	metrics := []map[string]any{
 		{
 			"server_version":        "17.0",
 			"server_version_num":    170000,
@@ -117,7 +117,7 @@ func TestPgServerInfoProbe_ComputeMetricsHash(t *testing.T) {
 	}
 
 	// Different metrics should produce different hash
-	metricsModified := []map[string]interface{}{
+	metricsModified := []map[string]any{
 		{
 			"server_version":        "17.1",
 			"server_version_num":    170100,
@@ -147,7 +147,7 @@ func TestPgServerInfoProbe_ComputeMetricsHash_EmptyMetrics(t *testing.T) {
 	}
 	probe := NewPgServerInfoProbe(config)
 
-	metrics := []map[string]interface{}{}
+	metrics := []map[string]any{}
 
 	hash, err := probe.computeMetricsHash(metrics)
 	if err != nil {

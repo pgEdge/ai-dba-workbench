@@ -16,8 +16,8 @@ export function formatConnectionContext(ctx: Record<string, unknown>): string {
 
     const pg = ctx.postgresql as Record<string, unknown> | undefined;
     if (pg) {
-        if (pg.version) lines.push(`PostgreSQL Version: ${pg.version}`);
-        if (pg.max_connections) lines.push(`Max Connections: ${pg.max_connections}`);
+        if (pg.version) {lines.push(`PostgreSQL Version: ${pg.version}`);}
+        if (pg.max_connections) {lines.push(`Max Connections: ${pg.max_connections}`);}
         if (pg.installed_extensions) {
             const exts = pg.installed_extensions as string[];
             lines.push(`Installed Extensions: ${exts.join(', ')}`);
@@ -33,13 +33,13 @@ export function formatConnectionContext(ctx: Record<string, unknown>): string {
 
     const sys = ctx.system as Record<string, unknown> | undefined;
     if (sys) {
-        if (sys.os_name) lines.push(`OS: ${sys.os_name} ${sys.os_version || ''}`);
-        if (sys.architecture) lines.push(`Architecture: ${sys.architecture}`);
+        if (sys.os_name) {lines.push(`OS: ${sys.os_name} ${sys.os_version || ''}`);}
+        if (sys.architecture) {lines.push(`Architecture: ${sys.architecture}`);}
 
         const cpu = sys.cpu as Record<string, unknown> | undefined;
         if (cpu) {
-            if (cpu.model) lines.push(`CPU: ${cpu.model}`);
-            if (cpu.cores) lines.push(`CPU Cores: ${cpu.cores} (${cpu.logical_processors || cpu.cores} logical)`);
+            if (cpu.model) {lines.push(`CPU: ${cpu.model}`);}
+            if (cpu.cores) {lines.push(`CPU Cores: ${cpu.cores} (${cpu.logical_processors || cpu.cores} logical)`);}
         }
 
         const mem = sys.memory as Record<string, unknown> | undefined;

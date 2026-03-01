@@ -37,7 +37,7 @@ func (p *PgStatWalProbe) GetQuery() string {
 }
 
 // Execute runs the probe against a monitored connection
-func (p *PgStatWalProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
+func (p *PgStatWalProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]any, error) {
 	// First check if the pg_stat_wal view exists (PG 14+)
 	var exists bool
 	err := monitoredConn.QueryRow(ctx, `
@@ -142,7 +142,7 @@ func (p *PgStatWalProbe) Execute(ctx context.Context, connectionName string, mon
 }
 
 // Store stores the collected metrics in the datastore
-func (p *PgStatWalProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]interface{}) error {
+func (p *PgStatWalProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]any) error {
 	if len(metrics) == 0 {
 		return nil // Nothing to store
 	}
@@ -164,9 +164,9 @@ func (p *PgStatWalProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn,
 	}
 
 	// Build values array
-	var values [][]interface{}
+	var values [][]any
 	for _, metric := range metrics {
-		row := []interface{}{
+		row := []any{
 			connectionID,
 			timestamp,
 			metric["wal_records"],

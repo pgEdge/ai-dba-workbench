@@ -72,7 +72,6 @@ const CONSECUTIVE_FAILURE_THRESHOLD = 3;
 
 let consecutiveFailures = 0;
 let disconnected = false;
-let disconnectReason: DisconnectReason | '' = '';
 let disconnectListener: DisconnectListener | null = null;
 
 /**
@@ -95,7 +94,6 @@ export function onDisconnect(listener: DisconnectListener): () => void {
 export function resetConnectionHealth(): void {
     consecutiveFailures = 0;
     disconnected = false;
-    disconnectReason = '';
 }
 
 function recordSuccess(): void {
@@ -110,7 +108,6 @@ function recordFailure(reason: DisconnectReason): void {
     if (reason === 'auth') {
         // Auth failures fire immediately.
         disconnected = true;
-        disconnectReason = reason;
         disconnectListener?.(reason);
         return;
     }
@@ -118,7 +115,6 @@ function recordFailure(reason: DisconnectReason): void {
     consecutiveFailures += 1;
     if (consecutiveFailures >= CONSECUTIVE_FAILURE_THRESHOLD) {
         disconnected = true;
-        disconnectReason = reason;
         disconnectListener?.(reason);
     }
 }

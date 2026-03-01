@@ -20,7 +20,7 @@ import (
 )
 
 // RowProcessor is a function that processes query rows and returns the result data
-type RowProcessor func(rows pgx.Rows) (interface{}, error)
+type RowProcessor func(rows pgx.Rows) (any, error)
 
 // ExecuteResourceQuery executes a SQL query and returns a formatted ResourceContent
 // This helper abstracts the common pattern used by all resource implementations:

@@ -25,7 +25,7 @@ func TestExecuteResourceQuery(t *testing.T) {
 		// Don't add any connections - database is not ready
 
 		query := "SELECT * FROM test"
-		processor := func(rows pgx.Rows) (interface{}, error) {
+		processor := func(rows pgx.Rows) (any, error) {
 			return nil, nil
 		}
 
@@ -64,7 +64,7 @@ func TestExecuteResourceQuery(t *testing.T) {
 func TestRowProcessor(t *testing.T) {
 	t.Run("processor function signature", func(t *testing.T) {
 		// Verify the RowProcessor type signature is correct
-		processor := RowProcessor(func(rows pgx.Rows) (interface{}, error) {
+		processor := RowProcessor(func(rows pgx.Rows) (any, error) {
 			return map[string]string{"test": "value"}, nil
 		})
 
@@ -76,13 +76,13 @@ func TestRowProcessor(t *testing.T) {
 	t.Run("processor can return various types", func(t *testing.T) {
 		// Test that processor can return different types
 		processors := []RowProcessor{
-			func(rows pgx.Rows) (interface{}, error) {
-				return []map[string]interface{}{{"key": "value"}}, nil
+			func(rows pgx.Rows) (any, error) {
+				return []map[string]any{{"key": "value"}}, nil
 			},
-			func(rows pgx.Rows) (interface{}, error) {
-				return map[string]interface{}{"count": 42}, nil
+			func(rows pgx.Rows) (any, error) {
+				return map[string]any{"count": 42}, nil
 			},
-			func(rows pgx.Rows) (interface{}, error) {
+			func(rows pgx.Rows) (any, error) {
 				return "string result", nil
 			},
 		}
@@ -99,7 +99,7 @@ func TestRowProcessor(t *testing.T) {
 	})
 
 	t.Run("processor can return errors", func(t *testing.T) {
-		processor := func(rows pgx.Rows) (interface{}, error) {
+		processor := func(rows pgx.Rows) (any, error) {
 			return nil, errors.New("test error")
 		}
 
@@ -120,9 +120,9 @@ func TestRowProcessor(t *testing.T) {
 func TestResourcePatterns(t *testing.T) {
 	t.Run("single row result pattern", func(t *testing.T) {
 		// Test pattern used by pg_stat_bgwriter (single row)
-		processor := func(rows pgx.Rows) (interface{}, error) {
+		processor := func(rows pgx.Rows) (any, error) {
 			// Simulates single-row query like pg_stat_bgwriter
-			data := map[string]interface{}{
+			data := map[string]any{
 				"checkpoints_timed": 100,
 				"checkpoints_req":   10,
 			}
@@ -134,9 +134,9 @@ func TestResourcePatterns(t *testing.T) {
 			t.Fatalf("Processor returned error: %v", err)
 		}
 
-		resultMap, ok := result.(map[string]interface{})
+		resultMap, ok := result.(map[string]any)
 		if !ok {
-			t.Fatal("Expected map[string]interface{} result")
+			t.Fatal("Expected map[string]any result")
 		}
 
 		if resultMap["checkpoints_timed"] != 100 {
@@ -146,13 +146,13 @@ func TestResourcePatterns(t *testing.T) {
 
 	t.Run("multi row result pattern", func(t *testing.T) {
 		// Test pattern used by most resources (multiple rows)
-		processor := func(rows pgx.Rows) (interface{}, error) {
+		processor := func(rows pgx.Rows) (any, error) {
 			// Simulates multi-row query like pg_stat_activity
-			activities := []map[string]interface{}{
+			activities := []map[string]any{
 				{"pid": 123, "state": "active"},
 				{"pid": 456, "state": "idle"},
 			}
-			return map[string]interface{}{
+			return map[string]any{
 				"activity_count": len(activities),
 				"activities":     activities,
 			}, nil
@@ -163,9 +163,9 @@ func TestResourcePatterns(t *testing.T) {
 			t.Fatalf("Processor returned error: %v", err)
 		}
 
-		resultMap, ok := result.(map[string]interface{})
+		resultMap, ok := result.(map[string]any)
 		if !ok {
-			t.Fatal("Expected map[string]interface{} result")
+			t.Fatal("Expected map[string]any result")
 		}
 
 		if resultMap["activity_count"] != 2 {
@@ -189,7 +189,7 @@ func TestResourcePatterns(t *testing.T) {
 
 	t.Run("enum parsing pattern", func(t *testing.T) {
 		// Test pattern used by pg_settings (parsing PostgreSQL arrays)
-		enumValsArray := []interface{}{"on", "off", "auto"}
+		enumValsArray := []any{"on", "off", "auto"}
 		var enumValues []string
 
 		for _, v := range enumValsArray {
@@ -213,7 +213,7 @@ func TestResourceHelperIntegration(t *testing.T) {
 		client := NewClient(nil)
 
 		query := "SELECT 1"
-		processor := func(rows pgx.Rows) (interface{}, error) {
+		processor := func(rows pgx.Rows) (any, error) {
 			return nil, nil
 		}
 

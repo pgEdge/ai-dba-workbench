@@ -25,8 +25,8 @@ func (s stringer) String() string {
 func TestNormalizeValue(t *testing.T) {
 	tests := []struct {
 		name     string
-		input    interface{}
-		expected interface{}
+		input    any
+		expected any
 	}{
 		{"nil", nil, nil},
 
@@ -72,12 +72,12 @@ func TestNormalizeValue(t *testing.T) {
 }
 
 func TestNormalizeValueSlices(t *testing.T) {
-	t.Run("[]string to []interface{}", func(t *testing.T) {
+	t.Run("[]string to []any", func(t *testing.T) {
 		input := []string{"a", "b", "c"}
 		got := normalizeValue(input)
-		result, ok := got.([]interface{})
+		result, ok := got.([]any)
 		if !ok {
-			t.Fatalf("expected []interface{}, got %T", got)
+			t.Fatalf("expected []any, got %T", got)
 		}
 		if len(result) != 3 {
 			t.Fatalf("expected length 3, got %d", len(result))
@@ -89,12 +89,12 @@ func TestNormalizeValueSlices(t *testing.T) {
 		}
 	})
 
-	t.Run("[]interface{} with mixed int types", func(t *testing.T) {
-		input := []interface{}{int32(1), int64(2), uint16(3)}
+	t.Run("[]any with mixed int types", func(t *testing.T) {
+		input := []any{int32(1), int64(2), uint16(3)}
 		got := normalizeValue(input)
-		result, ok := got.([]interface{})
+		result, ok := got.([]any)
 		if !ok {
-			t.Fatalf("expected []interface{}, got %T", got)
+			t.Fatalf("expected []any, got %T", got)
 		}
 		for i, expected := range []int64{1, 2, 3} {
 			if result[i] != expected {
@@ -106,19 +106,19 @@ func TestNormalizeValueSlices(t *testing.T) {
 }
 
 func TestNormalizeValueMap(t *testing.T) {
-	input := map[string]interface{}{
+	input := map[string]any{
 		"count":  int32(10),
 		"name":   "test",
 		"active": true,
-		"nested": map[string]interface{}{
+		"nested": map[string]any{
 			"val": uint16(5),
 		},
 	}
 
 	got := normalizeValue(input)
-	result, ok := got.(map[string]interface{})
+	result, ok := got.(map[string]any)
 	if !ok {
-		t.Fatalf("expected map[string]interface{}, got %T", got)
+		t.Fatalf("expected map[string]any, got %T", got)
 	}
 
 	if result["count"] != int64(10) {
@@ -131,9 +131,9 @@ func TestNormalizeValueMap(t *testing.T) {
 		t.Errorf("active: got %v, want true", result["active"])
 	}
 
-	nested, ok := result["nested"].(map[string]interface{})
+	nested, ok := result["nested"].(map[string]any)
 	if !ok {
-		t.Fatalf("nested: expected map[string]interface{}, got %T", result["nested"])
+		t.Fatalf("nested: expected map[string]any, got %T", result["nested"])
 	}
 	if nested["val"] != int64(5) {
 		t.Errorf("nested val: got %v [%T], want int64(5)", nested["val"], nested["val"])
@@ -142,10 +142,10 @@ func TestNormalizeValueMap(t *testing.T) {
 
 func TestComputeMetricsHashConsistency(t *testing.T) {
 	t.Run("int32 vs int64 produce same hash", func(t *testing.T) {
-		data1 := []map[string]interface{}{
+		data1 := []map[string]any{
 			{"id": int32(42), "name": "test"},
 		}
-		data2 := []map[string]interface{}{
+		data2 := []map[string]any{
 			{"id": int64(42), "name": "test"},
 		}
 
@@ -164,10 +164,10 @@ func TestComputeMetricsHashConsistency(t *testing.T) {
 	})
 
 	t.Run("uint32 vs int64 produce same hash", func(t *testing.T) {
-		data1 := []map[string]interface{}{
+		data1 := []map[string]any{
 			{"count": uint32(42)},
 		}
-		data2 := []map[string]interface{}{
+		data2 := []map[string]any{
 			{"count": int64(42)},
 		}
 
@@ -185,12 +185,12 @@ func TestComputeMetricsHashConsistency(t *testing.T) {
 		}
 	})
 
-	t.Run("[]string vs []interface{} produce same hash", func(t *testing.T) {
-		data1 := []map[string]interface{}{
+	t.Run("[]string vs []any produce same hash", func(t *testing.T) {
+		data1 := []map[string]any{
 			{"tags": []string{"a", "b"}},
 		}
-		data2 := []map[string]interface{}{
-			{"tags": []interface{}{"a", "b"}},
+		data2 := []map[string]any{
+			{"tags": []any{"a", "b"}},
 		}
 
 		hash1, err := ComputeMetricsHash(data1)
@@ -203,15 +203,15 @@ func TestComputeMetricsHashConsistency(t *testing.T) {
 		}
 
 		if hash1 != hash2 {
-			t.Errorf("[]string vs []interface{}: hashes differ\n  []string hash: %s\n  []interface{} hash: %s", hash1, hash2)
+			t.Errorf("[]string vs []any: hashes differ\n  []string hash: %s\n  []any hash: %s", hash1, hash2)
 		}
 	})
 
 	t.Run("float32 normalizes consistently", func(t *testing.T) {
-		data1 := []map[string]interface{}{
+		data1 := []map[string]any{
 			{"ratio": float32(3.14)},
 		}
-		data2 := []map[string]interface{}{
+		data2 := []map[string]any{
 			{"ratio": float32(3.14)},
 		}
 
@@ -230,10 +230,10 @@ func TestComputeMetricsHashConsistency(t *testing.T) {
 	})
 
 	t.Run("bool values hash correctly", func(t *testing.T) {
-		data1 := []map[string]interface{}{
+		data1 := []map[string]any{
 			{"active": true, "deleted": false},
 		}
-		data2 := []map[string]interface{}{
+		data2 := []map[string]any{
 			{"active": true, "deleted": false},
 		}
 
@@ -252,19 +252,19 @@ func TestComputeMetricsHashConsistency(t *testing.T) {
 	})
 
 	t.Run("nested maps with mixed types produce same hash", func(t *testing.T) {
-		data1 := []map[string]interface{}{
+		data1 := []map[string]any{
 			{
-				"info": map[string]interface{}{
+				"info": map[string]any{
 					"count": int32(10),
-					"items": []interface{}{int16(1), int32(2)},
+					"items": []any{int16(1), int32(2)},
 				},
 			},
 		}
-		data2 := []map[string]interface{}{
+		data2 := []map[string]any{
 			{
-				"info": map[string]interface{}{
+				"info": map[string]any{
 					"count": int64(10),
-					"items": []interface{}{int64(1), int64(2)},
+					"items": []any{int64(1), int64(2)},
 				},
 			},
 		}
@@ -284,10 +284,10 @@ func TestComputeMetricsHashConsistency(t *testing.T) {
 	})
 
 	t.Run("different values produce different hashes", func(t *testing.T) {
-		data1 := []map[string]interface{}{
+		data1 := []map[string]any{
 			{"id": int64(42)},
 		}
-		data2 := []map[string]interface{}{
+		data2 := []map[string]any{
 			{"id": int64(43)},
 		}
 

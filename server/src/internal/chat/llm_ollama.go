@@ -66,8 +66,8 @@ type ollamaResponse struct {
 
 // toolCallRequest represents a tool call parsed from Ollama's response
 type toolCallRequest struct {
-	Tool      string                 `json:"tool"`
-	Arguments map[string]interface{} `json:"arguments"`
+	Tool      string         `json:"tool"`
+	Arguments map[string]any `json:"arguments"`
 }
 
 type ollamaErrorResponse struct {
@@ -142,14 +142,14 @@ func ollamaSystemPromptWithTools(toolsContext string) string {
 		toolsContext + "\n" + ollamaToolInstructions
 }
 
-func (c *ollamaClient) Chat(ctx context.Context, messages []Message, tools interface{}, customSystemPrompt string) (LLMResponse, error) {
+func (c *ollamaClient) Chat(ctx context.Context, messages []Message, tools any, customSystemPrompt string) (LLMResponse, error) {
 	startTime := time.Now()
 	operation := "chat"
 	url := c.baseURL + "/api/chat"
 
 	embedding.LogLLMCallDetails("ollama", c.model, operation, url, len(messages))
 
-	// Convert interface{} tools to []mcp.Tool
+	// Convert any tools to []mcp.Tool
 	mcpTools, err := convertToMCPTools(tools)
 	if err != nil {
 		return LLMResponse{}, err
@@ -186,7 +186,7 @@ func (c *ollamaClient) Chat(ctx context.Context, messages []Message, tools inter
 				Role:    msg.Role,
 				Content: content,
 			})
-		case []interface{}:
+		case []any:
 			// Handle tool results
 			var parts []string
 			for _, item := range content {
@@ -294,7 +294,7 @@ func (c *ollamaClient) Chat(ctx context.Context, messages []Message, tools inter
 		}
 
 		return LLMResponse{
-			Content: []interface{}{
+			Content: []any{
 				ToolUse{
 					Type:  "tool_use",
 					ID:    "ollama-tool-1", // Ollama doesn't provide IDs, so we generate one
@@ -326,7 +326,7 @@ func (c *ollamaClient) Chat(ctx context.Context, messages []Message, tools inter
 			}
 
 			return LLMResponse{
-				Content: []interface{}{
+				Content: []any{
 					ToolUse{
 						Type:  "tool_use",
 						ID:    "ollama-tool-1",
@@ -355,7 +355,7 @@ func (c *ollamaClient) Chat(ctx context.Context, messages []Message, tools inter
 	}
 
 	return LLMResponse{
-		Content: []interface{}{
+		Content: []any{
 			TextContent{
 				Type: "text",
 				Text: content,
@@ -379,7 +379,7 @@ func (c *ollamaClient) formatToolsForOllama(tools []mcp.Tool) string {
 		if len(tool.InputSchema.Properties) > 0 {
 			var params []string
 			for paramName, paramInfo := range tool.InputSchema.Properties {
-				paramMap, ok := paramInfo.(map[string]interface{})
+				paramMap, ok := paramInfo.(map[string]any)
 				if !ok {
 					continue
 				}

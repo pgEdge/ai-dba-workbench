@@ -24,6 +24,7 @@ import RunnableCodeBlock from './RunnableCodeBlock';
 import ConnectionSelectorCodeBlock from './ConnectionSelectorCodeBlock';
 import AnalysisSkeleton from './AnalysisSkeleton';
 import { isSqlCodeBlock, extractLanguage } from './sqlDetection';
+import { createCleanTheme } from './markdownUtils';
 import {
     sxH3,
     sxParagraph,
@@ -41,42 +42,6 @@ import {
     getBlockquoteSx,
     getTableSx,
 } from './markdownStyles';
-
-/**
- * Create a modified Prism theme that removes token background colors.
- * This prevents subtle background color conflicts with our custom backgrounds.
- */
-const createCleanTheme = (
-    baseTheme: Record<string, unknown>,
-    customBackground: string,
-): Record<string, unknown> => {
-    const cleanTheme: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(baseTheme)) {
-        if (typeof value === 'object' && value !== null) {
-            // Remove background from token styles, keep other properties
-            const {
-                background: _background,
-                backgroundColor: _backgroundColor,
-                ...rest
-            } = value as Record<string, unknown>;
-            cleanTheme[key] = rest;
-        } else {
-            cleanTheme[key] = value;
-        }
-    }
-    // Set the base code block background
-    const preKey = 'pre[class*="language-"]';
-    const codeKey = 'code[class*="language-"]';
-    if (cleanTheme[preKey] && typeof cleanTheme[preKey] === 'object') {
-        (cleanTheme[preKey] as Record<string, unknown>).background =
-            customBackground;
-    }
-    if (cleanTheme[codeKey] && typeof cleanTheme[codeKey] === 'object') {
-        (cleanTheme[codeKey] as Record<string, unknown>).background =
-            'transparent';
-    }
-    return cleanTheme;
-};
 
 // ---------------------------------------------------------------------------
 // MarkdownContent component
@@ -289,10 +254,9 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
 };
 
 // ---------------------------------------------------------------------------
-// Re-exports: all consumers can continue importing from this file
+// Component exports only (non-component exports live in MarkdownExports.ts)
 // ---------------------------------------------------------------------------
 
-// Components
 export {
     RunnableCodeBlock,
     ConnectionSelectorCodeBlock,
@@ -301,67 +265,4 @@ export {
     AnalysisSkeleton,
 };
 
-// Utility functions
-export { createCleanTheme };
-export {
-    extractExecutableSQL,
-    isSqlCodeBlock,
-    extractLanguage,
-    SQL_KEYWORDS_RE,
-    SQL_STATEMENT_KEYWORDS,
-} from './sqlDetection';
-
-// Style constants and getters
-export {
-    sxMonoFont,
-    sxH3,
-    sxParagraph,
-    sxList,
-    sxUnorderedList,
-    sxStrong,
-    sxEm,
-    sxConfirmationActions,
-    sxContentFadeBox,
-    sxErrorFlexRow,
-    sxTitleFlexBox,
-    sxCloseIconSize,
-    sxTitleTypography,
-    getHeadingSx,
-    sxH1,
-    sxH2,
-    getInlineCodeSx,
-    getCodeBlockWrapperSx,
-    getCodeBlockCustomStyle,
-    getLinkSx,
-    getBlockquoteSx,
-    getTableSx,
-    getCodeBlockButtonGroupSx,
-    getCopyButtonSx,
-    getRunButtonSx,
-    getQueryResultWrapperSx,
-    getQueryResultHeaderSx,
-    getQueryErrorSx,
-    getConfirmationPanelSx,
-    getConfirmationTitleSx,
-    getConfirmationTextSx,
-    getConfirmationStatementSx,
-    getSkeletonBgSx,
-    getDialogPaperSx,
-    getDialogTitleSx,
-    getIconBoxSx,
-    getIconColorSx,
-    getContentSx,
-    getLoadingBannerSx,
-    getPulseDotSx,
-    getLoadingTextSx,
-    getErrorBoxSx,
-    getErrorTitleSx,
-    getAnalysisBoxSx,
-    getFooterSx,
-    getDownloadButtonSx,
-    getCloseButtonSx,
-} from './markdownStyles';
-
-// Type exports
 export type { MarkdownContentProps };
-export type { QueryResponse, StatementResult, QueryState } from './RunnableCodeBlock';

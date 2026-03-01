@@ -719,7 +719,7 @@ func ValidatePassword(password string) error {
 // scannable is an interface satisfied by both *sql.Row and *sql.Rows,
 // allowing a single helper to scan user rows from either source.
 type scannable interface {
-	Scan(dest ...interface{}) error
+	Scan(dest ...any) error
 }
 
 // scanUser scans a user row into a StoredUser. It handles the NullString
@@ -1153,6 +1153,8 @@ func (s *AuthStore) AuthenticateUser(username, password string) (string, time.Ti
 		if s.maxFailedAttempts > 0 && user.FailedAttempts >= s.maxFailedAttempts {
 			//nolint:errcheck // Best effort update, authentication already failed
 			s.db.Exec("UPDATE users SET enabled = FALSE WHERE id = ?", user.ID)
+			log.Printf("[AUTH] Account locked for user %s after %d failed attempts; invalidating sessions", username, user.FailedAttempts)
+			s.InvalidateUserSessions(username)
 		}
 
 		return "", time.Time{}, fmt.Errorf("invalid username or password")

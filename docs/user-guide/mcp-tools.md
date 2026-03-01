@@ -53,6 +53,17 @@ These tools query alert data from the monitoring system.
 | `get_alert_rules` | Queries alert rules and their effective thresholds. |
 | `get_metric_baselines` | Queries statistical baselines for anomaly detection. |
 
+## Memory Tools
+
+These tools manage persistent memories that the AI
+assistant can store and recall across conversations.
+
+| Tool | Description |
+|------|-------------|
+| `store_memory` | Stores a persistent memory with a category, scope, and optional pinned flag. |
+| `recall_memories` | Searches stored memories using semantic similarity; pinned memories are always included. |
+| `delete_memory` | Deletes a stored memory by its ID; only the owning user can delete a memory. |
+
 ## Utility Tools
 
 These tools provide general-purpose capabilities.

@@ -152,7 +152,7 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
 
         // Fallback: estate-wide overview
         return '/api/v1/overview';
-    }, [selection?.type, selection?.id, selection?.serverIds, selection?.name]);
+    }, [selection]);
 
     const { overview: sseOverview, connected: sseConnected } = useOverviewSSE(overviewUrl);
 

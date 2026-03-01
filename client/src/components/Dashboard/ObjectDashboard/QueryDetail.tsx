@@ -214,7 +214,7 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                 setLoading(false);
             }
         }
-    }, [user, connectionId, databaseName, objectName]);
+    }, [user, connectionId, objectName]);
 
     useEffect(() => {
         initialLoadDoneRef.current = false;

@@ -82,7 +82,7 @@ func (h *MemoryHandler) listMemories(w http.ResponseWriter, r *http.Request) {
 		memories = []memory.Memory{}
 	}
 
-	RespondJSON(w, http.StatusOK, map[string]interface{}{
+	RespondJSON(w, http.StatusOK, map[string]any{
 		"memories": memories,
 	})
 }
@@ -202,7 +202,7 @@ func (h *MemoryHandler) updateMemoryPinned(
 		return
 	}
 
-	RespondJSON(w, http.StatusOK, map[string]interface{}{
+	RespondJSON(w, http.StatusOK, map[string]any{
 		"id":     id,
 		"pinned": req.Pinned,
 	})

@@ -131,44 +131,44 @@ To avoid rate limits (30,000 input tokens/minute):
 			CompactDescription: `Semantic search on tables with vector columns. Specify connection_id to target a database; use list_connections to discover IDs. ALWAYS use this tool FIRST before answering questions about database content. Requires table_name and query_text.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
-				Properties: map[string]interface{}{
-					"connection_id": map[string]interface{}{
+				Properties: map[string]any{
+					"connection_id": map[string]any{
 						"type":        "integer",
 						"description": "ID of the monitored database connection to use. Use list_connections to discover available IDs. If omitted, uses the currently selected connection.",
 					},
-					"database_name": map[string]interface{}{
+					"database_name": map[string]any{
 						"type":        "string",
 						"description": "Database name to connect to. If omitted, uses the connection's default database.",
 					},
-					"table_name": map[string]interface{}{
+					"table_name": map[string]any{
 						"type":        "string",
 						"description": "Name of the table to search (can include schema: 'schema.table')",
 					},
-					"query_text": map[string]interface{}{
+					"query_text": map[string]any{
 						"type":        "string",
 						"description": "Natural language search query",
 					},
-					"top_n": map[string]interface{}{
+					"top_n": map[string]any{
 						"type":        "integer",
 						"description": "Number of rows to retrieve from vector search (default: 10)",
 					},
-					"chunk_size_tokens": map[string]interface{}{
+					"chunk_size_tokens": map[string]any{
 						"type":        "integer",
 						"description": "Maximum tokens per chunk (default: 100)",
 					},
-					"lambda": map[string]interface{}{
+					"lambda": map[string]any{
 						"type":        "number",
 						"description": "MMR diversity parameter: 0.0=max diversity, 1.0=max relevance (default: 0.6)",
 					},
-					"max_output_tokens": map[string]interface{}{
+					"max_output_tokens": map[string]any{
 						"type":        "integer",
 						"description": "Maximum total tokens to return (default: 1000)",
 					},
-					"distance_metric": map[string]interface{}{
+					"distance_metric": map[string]any{
 						"type":        "string",
 						"description": "Distance metric: 'cosine', 'l2', or 'inner_product' (default: 'cosine')",
 					},
-					"output_format": map[string]interface{}{
+					"output_format": map[string]any{
 						"type":        "string",
 						"enum":        []string{"full", "summary", "ids_only"},
 						"description": "Output format: 'full'=complete chunks (default), 'summary'=titles+snippets only (~50 tokens total, 10x more results), 'ids_only'=just row IDs for progressive disclosure",
@@ -178,7 +178,7 @@ To avoid rate limits (30,000 input tokens/minute):
 				Required: []string{"table_name", "query_text"},
 			},
 		},
-		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
+		Handler: func(args map[string]any) (mcp.ToolResponse, error) {
 			// Step 1: Validate and extract parameters
 			tableName, errResp := ValidateStringParam(args, "table_name")
 			if errResp != nil {
@@ -790,7 +790,7 @@ func performWeightedVectorSearch(
 			continue
 		}
 
-		rowData := make(map[string]interface{})
+		rowData := make(map[string]any)
 		var distance float64
 
 		for i, colName := range columnNames {
@@ -850,7 +850,7 @@ func chunkResults(
 
 	for rank, result := range results {
 		// Use first column value as row ID if available
-		var rowID interface{} = rank
+		var rowID any = rank
 		if id, ok := result.RowData["id"]; ok {
 			rowID = id
 		}
@@ -977,7 +977,7 @@ func formatSearchResultsIDsOnly(
 
 	// Show just IDs and distances
 	for i, result := range results {
-		var rowID interface{} = i
+		var rowID any = i
 		if id, ok := result.RowData["id"]; ok {
 			rowID = id
 		}

@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/pgedge/ai-workbench/pkg/datastoreconfig"
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
 	"gopkg.in/yaml.v3"
 )
@@ -22,7 +23,7 @@ import (
 // Config holds all configuration options for the collector
 type Config struct {
 	// Datastore connection settings
-	Datastore DatastoreConfig `yaml:"datastore"`
+	Datastore datastoreconfig.DatastoreConfig `yaml:"datastore"`
 
 	// Connection pool settings
 	Pool PoolConfig `yaml:"pool"`
@@ -33,21 +34,6 @@ type Config struct {
 
 	// Loaded server secret (not from YAML, loaded from SecretFile)
 	serverSecret string
-}
-
-// DatastoreConfig holds PostgreSQL connection settings for the datastore
-type DatastoreConfig struct {
-	Host         string `yaml:"host"`          // PostgreSQL server hostname or IP address
-	HostAddr     string `yaml:"hostaddr"`      // PostgreSQL server IP address (bypasses DNS)
-	Database     string `yaml:"database"`      // Database name
-	Username     string `yaml:"username"`      // Username for connection
-	Password     string `yaml:"password"`      // Password (discouraged - use password_file or env var)
-	PasswordFile string `yaml:"password_file"` // Path to file containing password
-	Port         int    `yaml:"port"`          // PostgreSQL server port
-	SSLMode      string `yaml:"sslmode"`       // SSL mode (disable, allow, prefer, require, verify-ca, verify-full)
-	SSLCert      string `yaml:"sslcert"`       // Path to client SSL certificate
-	SSLKey       string `yaml:"sslkey"`        // Path to client SSL private key
-	SSLRootCert  string `yaml:"sslrootcert"`   // Path to root CA certificate
 }
 
 // PoolConfig holds connection pool settings
@@ -66,7 +52,7 @@ type PoolConfig struct {
 // NewConfig creates a new Config with default values
 func NewConfig() *Config {
 	return &Config{
-		Datastore: DatastoreConfig{
+		Datastore: datastoreconfig.DatastoreConfig{
 			Host:     "localhost",
 			Database: "ai_workbench",
 			Username: "postgres",
@@ -140,7 +126,7 @@ func (c *Config) LoadPassword() error {
 	}
 
 	if c.Datastore.PasswordFile != "" {
-		password, err := readPasswordFile(c.Datastore.PasswordFile)
+		password, err := fileutil.ReadTrimmedFileWithTilde(c.Datastore.PasswordFile)
 		if err != nil {
 			return fmt.Errorf("failed to read password file: %w", err)
 		}
@@ -155,7 +141,7 @@ func (c *Config) LoadPassword() error {
 func (c *Config) LoadSecret(binaryPath string) error {
 	// If secret file is explicitly specified, use it
 	if c.SecretFile != "" {
-		secret, err := readSecretFile(c.SecretFile)
+		secret, err := fileutil.ReadTrimmedFileWithTilde(c.SecretFile)
 		if err != nil {
 			return fmt.Errorf("failed to read secret file: %w", err)
 		}
@@ -179,7 +165,7 @@ func (c *Config) LoadSecret(binaryPath string) error {
 
 	for _, path := range searchPaths {
 		if _, err := os.Stat(path); err == nil {
-			secret, err := readSecretFile(path)
+			secret, err := fileutil.ReadTrimmedFileWithTilde(path)
 			if err != nil {
 				return fmt.Errorf("failed to read secret file %s: %w", path, err)
 			}
@@ -191,19 +177,9 @@ func (c *Config) LoadSecret(binaryPath string) error {
 	return fmt.Errorf("server secret file not found. Create a secret file at one of: %v", searchPaths)
 }
 
-// readSecretFile reads a secret from a file
-func readSecretFile(filename string) (string, error) {
-	return fileutil.ReadTrimmedFileWithTilde(filename)
-}
-
 // GetServerSecret returns the loaded server secret
 func (c *Config) GetServerSecret() string {
 	return c.serverSecret
-}
-
-// readPasswordFile reads a password from a file
-func readPasswordFile(filename string) (string, error) {
-	return fileutil.ReadTrimmedFileWithTilde(filename)
 }
 
 // Validate checks if the configuration is valid
@@ -260,11 +236,5 @@ func (c *Config) GetMonitoredPoolMaxWaitSeconds() int { return c.Pool.MonitoredM
 // GetDefaultConfigPath returns the default config file path
 // Searches /etc/pgedge/ first, then binary directory
 func GetDefaultConfigPath(binaryPath string) string {
-	systemPath := "/etc/pgedge/ai-dba-collector.yaml"
-	if _, err := os.Stat(systemPath); err == nil {
-		return systemPath
-	}
-
-	dir := filepath.Dir(binaryPath)
-	return filepath.Join(dir, "ai-dba-collector.yaml")
+	return fileutil.GetDefaultConfigPath(binaryPath, "ai-dba-collector.yaml")
 }

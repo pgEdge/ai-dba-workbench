@@ -256,7 +256,7 @@ export function useQueryPlan(
                         } else {
                             newJsonPlan = parsed;
                         }
-                    } catch (parseErr) {
+                    } catch {
                         errors.push(
                             'JSON plan: failed to parse '
                             + 'response',

@@ -955,31 +955,18 @@ func validateConfig(cfg *Config) error {
 // GetDefaultConfigPath returns the default config file path
 // Searches /etc/pgedge/ first, then binary directory
 func GetDefaultConfigPath(binaryPath string) string {
-	systemPath := "/etc/pgedge/ai-dba-server.yaml"
-	if _, err := os.Stat(systemPath); err == nil {
-		return systemPath
-	}
-
-	dir := filepath.Dir(binaryPath)
-	return filepath.Join(dir, "ai-dba-server.yaml")
+	return fileutil.GetDefaultConfigPath(binaryPath, "ai-dba-server.yaml")
 }
 
 // GetDefaultSecretPath returns the default secret file path
 // Searches /etc/pgedge/ first, then binary directory
 func GetDefaultSecretPath(binaryPath string) string {
-	systemPath := "/etc/pgedge/ai-dba-server.secret"
-	if _, err := os.Stat(systemPath); err == nil {
-		return systemPath
-	}
-
-	dir := filepath.Dir(binaryPath)
-	return filepath.Join(dir, "ai-dba-server.secret")
+	return fileutil.GetDefaultConfigPath(binaryPath, "ai-dba-server.secret")
 }
 
 // ConfigFileExists checks if a config file exists at the given path
 func ConfigFileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
+	return fileutil.FileExists(path)
 }
 
 // SaveConfig saves the configuration to a YAML file

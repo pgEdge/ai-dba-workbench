@@ -33,11 +33,11 @@ type Manager struct {
 	debug        bool
 
 	// Logging function
-	log func(format string, args ...interface{})
+	log func(format string, args ...any)
 }
 
 // NewManager creates a new notification manager
-func NewManager(ds *database.Datastore, cfg *config.NotificationsConfig, debug bool, logFunc func(string, ...interface{})) (*Manager, error) {
+func NewManager(ds *database.Datastore, cfg *config.NotificationsConfig, debug bool, logFunc func(string, ...any)) (*Manager, error) {
 	// Return nil if notifications are disabled
 	if cfg == nil || !cfg.Enabled {
 		return nil, nil
@@ -415,7 +415,7 @@ func (m *Manager) getBackoffMinutes(attempt int) int {
 }
 
 // debugLog logs debug messages if debug mode is enabled
-func (m *Manager) debugLog(format string, args ...interface{}) {
+func (m *Manager) debugLog(format string, args ...any) {
 	if m.debug && m.log != nil {
 		m.log("DEBUG: "+format, args...)
 	}

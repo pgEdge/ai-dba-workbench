@@ -36,20 +36,20 @@ func StoreMemoryTool(memoryStore *memory.Store, cfg *config.Config, rbacChecker 
 			CompactDescription: `Store a persistent memory with category, scope, and optional pinned flag for future recall.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
-				Properties: map[string]interface{}{
-					"content": map[string]interface{}{
+				Properties: map[string]any{
+					"content": map[string]any{
 						"type":        "string",
 						"description": "The memory text to store",
 					},
-					"category": map[string]interface{}{
+					"category": map[string]any{
 						"type":        "string",
 						"description": `Category for organizing memories (e.g., "preference", "fact", "instruction", "context")`,
 					},
-					"scope": map[string]interface{}{
+					"scope": map[string]any{
 						"type":        "string",
 						"description": `Visibility scope: "user" (private to the current user) or "system" (visible to all users). Defaults to "user".`,
 					},
-					"pinned": map[string]interface{}{
+					"pinned": map[string]any{
 						"type":        "boolean",
 						"description": "If true, this memory is automatically included in every conversation. Defaults to false.",
 					},
@@ -57,7 +57,7 @@ func StoreMemoryTool(memoryStore *memory.Store, cfg *config.Config, rbacChecker 
 				Required: []string{"content", "category"},
 			},
 		},
-		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
+		Handler: func(args map[string]any) (mcp.ToolResponse, error) {
 			// Extract and validate the content parameter
 			content, ok := args["content"].(string)
 			if !ok || content == "" {

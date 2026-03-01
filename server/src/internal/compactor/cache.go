@@ -148,7 +148,7 @@ func (c *CompactionCache) cleanupExpired() {
 }
 
 // GetStats returns cache statistics
-func (c *CompactionCache) GetStats() map[string]interface{} {
+func (c *CompactionCache) GetStats() map[string]any {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -168,7 +168,7 @@ func (c *CompactionCache) GetStats() map[string]interface{} {
 		}
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"total_entries": len(c.entries),
 		"expired_count": expiredCount,
 		"oldest_entry":  oldestEntry,

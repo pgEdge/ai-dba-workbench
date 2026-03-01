@@ -13,12 +13,12 @@ package database
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
+	"github.com/pgedge/ai-workbench/pkg/connstring"
 )
 
 // Datastore provides access to the PostgreSQL datastore
@@ -29,7 +29,7 @@ type Datastore struct {
 
 // NewDatastore creates a new datastore connection
 func NewDatastore(cfg *config.Config) (*Datastore, error) {
-	connString := buildConnectionString(cfg)
+	connString := connstring.BuildFromConfig(cfg.Datastore, "pgEdge AI DBA Workbench - Alerter")
 
 	poolConfig, err := pgxpool.ParseConfig(connString)
 	if err != nil {
@@ -74,40 +74,4 @@ func (d *Datastore) Close() {
 // Pool returns the underlying connection pool
 func (d *Datastore) Pool() *pgxpool.Pool {
 	return d.pool
-}
-
-// buildConnectionString creates a PostgreSQL connection string from config
-func buildConnectionString(cfg *config.Config) string {
-	connString := fmt.Sprintf(
-		"host=%s port=%d dbname=%s user=%s sslmode=%s",
-		cfg.Datastore.Host,
-		cfg.Datastore.Port,
-		cfg.Datastore.Database,
-		cfg.Datastore.Username,
-		cfg.Datastore.SSLMode,
-	)
-
-	if cfg.Datastore.HostAddr != "" {
-		connString += fmt.Sprintf(" hostaddr=%s", cfg.Datastore.HostAddr)
-	}
-
-	if cfg.Datastore.Password != "" {
-		escaped := strings.ReplaceAll(cfg.Datastore.Password, `\`, `\\`)
-		escaped = strings.ReplaceAll(escaped, `'`, `''`)
-		connString += fmt.Sprintf(" password='%s'", escaped)
-	}
-
-	if cfg.Datastore.SSLCert != "" {
-		connString += fmt.Sprintf(" sslcert=%s", cfg.Datastore.SSLCert)
-	}
-
-	if cfg.Datastore.SSLKey != "" {
-		connString += fmt.Sprintf(" sslkey=%s", cfg.Datastore.SSLKey)
-	}
-
-	if cfg.Datastore.SSLRootCert != "" {
-		connString += fmt.Sprintf(" sslrootcert=%s", cfg.Datastore.SSLRootCert)
-	}
-
-	return connString
 }

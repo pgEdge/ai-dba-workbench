@@ -21,7 +21,7 @@ func TestListProbes_NilPool(t *testing.T) {
 	}
 
 	// Test with nil pool - should return error
-	resp, err := tool.Handler(map[string]interface{}{})
+	resp, err := tool.Handler(map[string]any{})
 	if err != nil {
 		t.Errorf("Expected no error, got: %v", err)
 	}

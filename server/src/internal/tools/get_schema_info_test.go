@@ -27,7 +27,7 @@ func TestGetSchemaInfoTool(t *testing.T) {
 		// Don't add any connections - database is not ready
 
 		tool := GetSchemaInfoTool(client, nil)
-		response, err := tool.Handler(map[string]interface{}{})
+		response, err := tool.Handler(map[string]any{})
 
 		if err != nil {
 			t.Errorf("Handler returned error: %v", err)
@@ -48,7 +48,7 @@ func TestGetSchemaInfoTool(t *testing.T) {
 		client := createMockClient(map[string]database.TableInfo{})
 
 		tool := GetSchemaInfoTool(client, nil)
-		response, err := tool.Handler(map[string]interface{}{})
+		response, err := tool.Handler(map[string]any{})
 
 		if err != nil {
 			t.Errorf("Handler returned error: %v", err)
@@ -99,7 +99,7 @@ func TestGetSchemaInfoTool(t *testing.T) {
 
 		client := createMockClient(metadata)
 		tool := GetSchemaInfoTool(client, nil)
-		response, err := tool.Handler(map[string]interface{}{})
+		response, err := tool.Handler(map[string]any{})
 
 		if err != nil {
 			t.Errorf("Handler returned error: %v", err)
@@ -156,7 +156,7 @@ func TestGetSchemaInfoTool(t *testing.T) {
 		tool := GetSchemaInfoTool(client, nil)
 
 		// Request only public schema
-		response, err := tool.Handler(map[string]interface{}{
+		response, err := tool.Handler(map[string]any{
 			"schema_name": "public",
 		})
 
@@ -220,7 +220,7 @@ func TestGetSchemaInfoTool(t *testing.T) {
 
 		client := createMockClient(metadata)
 		tool := GetSchemaInfoTool(client, nil)
-		response, err := tool.Handler(map[string]interface{}{})
+		response, err := tool.Handler(map[string]any{})
 
 		if err != nil {
 			t.Errorf("Handler returned error: %v", err)
@@ -259,7 +259,7 @@ func TestGetSchemaInfoTool(t *testing.T) {
 
 		client := createMockClient(metadata)
 		tool := GetSchemaInfoTool(client, nil)
-		response, err := tool.Handler(map[string]interface{}{})
+		response, err := tool.Handler(map[string]any{})
 
 		if err != nil {
 			t.Errorf("Handler returned error: %v", err)
@@ -293,7 +293,7 @@ func TestGetSchemaInfoTool(t *testing.T) {
 
 		client := createMockClient(metadata)
 		tool := GetSchemaInfoTool(client, nil)
-		response, err := tool.Handler(map[string]interface{}{})
+		response, err := tool.Handler(map[string]any{})
 
 		if err != nil {
 			t.Errorf("Handler returned error: %v", err)
@@ -339,7 +339,7 @@ func TestGetSchemaInfoTool(t *testing.T) {
 
 		client := createMockClient(metadata)
 		tool := GetSchemaInfoTool(client, nil)
-		response, err := tool.Handler(map[string]interface{}{})
+		response, err := tool.Handler(map[string]any{})
 
 		if err != nil {
 			t.Errorf("Handler returned error: %v", err)
@@ -379,7 +379,7 @@ func TestGetSchemaInfoTool(t *testing.T) {
 		tool := GetSchemaInfoTool(client, nil)
 
 		// Pass invalid type for schema_name (should be ignored and default to "")
-		response, err := tool.Handler(map[string]interface{}{
+		response, err := tool.Handler(map[string]any{
 			"schema_name": 123, // Invalid type
 		})
 
@@ -438,7 +438,7 @@ func TestGetSchemaInfoTool(t *testing.T) {
 		tool := GetSchemaInfoTool(client, nil)
 
 		// Request only users table in public schema
-		response, err := tool.Handler(map[string]interface{}{
+		response, err := tool.Handler(map[string]any{
 			"schema_name": "public",
 			"table_name":  "users",
 		})
@@ -489,7 +489,7 @@ func TestGetSchemaInfoTool(t *testing.T) {
 		tool := GetSchemaInfoTool(client, nil)
 
 		// Request table_name without schema_name
-		response, err := tool.Handler(map[string]interface{}{
+		response, err := tool.Handler(map[string]any{
 			"table_name": "users",
 		})
 
@@ -526,7 +526,7 @@ func TestGetSchemaInfoTool(t *testing.T) {
 		tool := GetSchemaInfoTool(client, nil)
 
 		// Request non-existent table
-		response, err := tool.Handler(map[string]interface{}{
+		response, err := tool.Handler(map[string]any{
 			"schema_name": "public",
 			"table_name":  "nonexistent",
 		})
@@ -582,7 +582,7 @@ func TestGetSchemaInfoTool(t *testing.T) {
 
 		// Request with both table_name and compact=true
 		// compact should be ignored when table_name is provided
-		response, err := tool.Handler(map[string]interface{}{
+		response, err := tool.Handler(map[string]any{
 			"schema_name": "public",
 			"table_name":  "users",
 			"compact":     true,

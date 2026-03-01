@@ -59,25 +59,25 @@ Use count_rows to efficiently determine data volume:
 			CompactDescription: `Get the row count of a table with optional WHERE filtering. Specify connection_id to target a database; use list_connections to discover IDs. Returns a single integer.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
-				Properties: map[string]interface{}{
-					"connection_id": map[string]interface{}{
+				Properties: map[string]any{
+					"connection_id": map[string]any{
 						"type":        "integer",
 						"description": "ID of the monitored database connection to use. Use list_connections to discover available IDs. If omitted, uses the currently selected connection.",
 					},
-					"database_name": map[string]interface{}{
+					"database_name": map[string]any{
 						"type":        "string",
 						"description": "Database name to connect to. If omitted, uses the connection's default database.",
 					},
-					"table": map[string]interface{}{
+					"table": map[string]any{
 						"type":        "string",
 						"description": "Name of the table to count rows from",
 					},
-					"schema": map[string]interface{}{
+					"schema": map[string]any{
 						"type":        "string",
 						"description": "Schema name (default: public)",
 						"default":     "public",
 					},
-					"where": map[string]interface{}{
+					"where": map[string]any{
 						"type":        "string",
 						"description": "Optional WHERE clause condition (without the WHERE keyword). Example: \"status = 'active' AND created_at > '2024-01-01'\"",
 					},
@@ -85,7 +85,7 @@ Use count_rows to efficiently determine data volume:
 				Required: []string{"table"},
 			},
 		},
-		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
+		Handler: func(args map[string]any) (mcp.ToolResponse, error) {
 			table, ok := args["table"].(string)
 			if !ok || table == "" {
 				return mcp.NewToolError("Missing or invalid 'table' parameter")

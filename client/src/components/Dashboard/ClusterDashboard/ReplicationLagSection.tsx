@@ -100,7 +100,7 @@ const ReplicationLagSection: React.FC<ReplicationLagSectionProps> = ({
 
     const primaryServerId = useMemo(
         () => findPrimaryServerId(selection),
-        [selection.servers],
+        [selection],
     );
 
     const metricsParams = useMemo((): MetricQueryParams | null => {

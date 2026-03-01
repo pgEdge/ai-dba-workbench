@@ -85,12 +85,12 @@ Returns TSV data with:
 			CompactDescription: `Query statistical baselines for metrics used in anomaly detection. Omit connection_id to see baselines across all accessible connections. Returns mean, stddev, min, max, and sample count. Filter by metric_name.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
-				Properties: map[string]interface{}{
-					"connection_id": map[string]interface{}{
+				Properties: map[string]any{
+					"connection_id": map[string]any{
 						"type":        "integer",
 						"description": "ID of a monitored connection. Omit to return baselines across all accessible connections.",
 					},
-					"metric_name": map[string]interface{}{
+					"metric_name": map[string]any{
 						"type":        "string",
 						"description": "Filter to a specific metric name.",
 					},
@@ -98,7 +98,7 @@ Returns TSV data with:
 				Required: []string{},
 			},
 		},
-		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
+		Handler: func(args map[string]any) (mcp.ToolResponse, error) {
 			if pool == nil {
 				return mcp.NewToolError("Datastore not configured. The get_metric_baselines tool requires a datastore connection.")
 			}
@@ -277,7 +277,7 @@ func baselinesAllConnections(
         ORDER BY c.name, mb.metric_name, mb.period_type, mb.day_of_week, mb.hour_of_day
     `, connFilter, paramIdx, paramIdx)
 
-	queryArgs := make([]interface{}, 0, len(connArgs)+1)
+	queryArgs := make([]any, 0, len(connArgs)+1)
 	queryArgs = append(queryArgs, connArgs...)
 	queryArgs = append(queryArgs, metricName)
 

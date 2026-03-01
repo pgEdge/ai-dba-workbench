@@ -76,7 +76,7 @@ func (p *PgStatConnectionSecurityProbe) checkCredentialsDelegatedColumn(ctx cont
 }
 
 // Execute runs the probe against a monitored connection
-func (p *PgStatConnectionSecurityProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
+func (p *PgStatConnectionSecurityProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]any, error) {
 	// Check if GSSAPI view is available
 	gssapiAvailable, err := cachedCheck(connectionName, "gssapi_available", func() (bool, error) {
 		return p.checkGSSAPIAvailable(ctx, monitoredConn)
@@ -165,7 +165,7 @@ func (p *PgStatConnectionSecurityProbe) Execute(ctx context.Context, connectionN
 }
 
 // Store stores the collected metrics in the datastore
-func (p *PgStatConnectionSecurityProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]interface{}) error {
+func (p *PgStatConnectionSecurityProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]any) error {
 	if len(metrics) == 0 {
 		return nil // Nothing to store
 	}
@@ -184,9 +184,9 @@ func (p *PgStatConnectionSecurityProbe) Store(ctx context.Context, datastoreConn
 	}
 
 	// Build values array
-	var values [][]interface{}
+	var values [][]any
 	for _, metric := range metrics {
-		row := []interface{}{
+		row := []any{
 			connectionID,
 			timestamp,
 			metric["pid"],

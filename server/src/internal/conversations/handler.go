@@ -89,7 +89,7 @@ func (h *Handler) HandleList(w http.ResponseWriter, r *http.Request) {
 		conversations = []ConversationSummary{}
 	}
 
-	api.RespondJSON(w, http.StatusOK, map[string]interface{}{
+	api.RespondJSON(w, http.StatusOK, map[string]any{
 		"conversations": conversations,
 	})
 }
@@ -318,7 +318,7 @@ func (h *Handler) HandleDeleteAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	api.RespondJSON(w, http.StatusOK, map[string]interface{}{
+	api.RespondJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"deleted": count,
 	})

@@ -11,7 +11,8 @@
 import React, { useMemo, useCallback, useRef, useState, useEffect } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
-import { alpha, useTheme } from '@mui/material/styles';
+import { useTheme } from '@mui/material/styles';
+import { blendColors } from '../../../utils/colors';
 import { useClusterSelection } from '../../../contexts/ClusterSelectionContext';
 import { ClusterServer } from '../../../contexts/ClusterDataContext';
 import { buildGraph } from './topology/graphBuilder';
@@ -29,27 +30,6 @@ const EMPTY_SX = {
     fontSize: '0.875rem',
     textAlign: 'center',
     py: 4,
-};
-
-/**
- * Blend two hex colors. Equivalent to layering `fg` at the
- * given opacity over `bg`.
- */
-const blendColors = (bg: string, fg: string, opacity: number): string => {
-    const parse = (hex: string): [number, number, number] => {
-        const h = hex.replace('#', '');
-        return [
-            parseInt(h.substring(0, 2), 16),
-            parseInt(h.substring(2, 4), 16),
-            parseInt(h.substring(4, 6), 16),
-        ];
-    };
-    const [br, bg2, bb] = parse(bg);
-    const [fr, fg2, fb] = parse(fg);
-    const r = Math.round(fr * opacity + br * (1 - opacity));
-    const g = Math.round(fg2 * opacity + bg2 * (1 - opacity));
-    const b = Math.round(fb * opacity + bb * (1 - opacity));
-    return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
 };
 
 /**

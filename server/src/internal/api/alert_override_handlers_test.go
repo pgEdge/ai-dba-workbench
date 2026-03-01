@@ -252,7 +252,7 @@ func TestAlertOverrideHandler_UpsertRequiresPermission(t *testing.T) {
 	rbac := auth.NewRBACChecker(authStore)
 	handler := NewAlertOverrideHandler(nil, nil, rbac)
 
-	body, _ := json.Marshal(map[string]interface{}{"enabled": false})
+	body, _ := json.Marshal(map[string]any{"enabled": false})
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/alert-overrides/server/1/2", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -335,7 +335,7 @@ func TestAlertOverrideHandler_PermissionCheckAllScopes(t *testing.T) {
 
 	scopes := []string{"server", "cluster", "group"}
 	for _, scope := range scopes {
-		body, _ := json.Marshal(map[string]interface{}{"enabled": true})
+		body, _ := json.Marshal(map[string]any{"enabled": true})
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/alert-overrides/"+scope+"/1/2", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()

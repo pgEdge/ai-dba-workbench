@@ -62,7 +62,7 @@ func (c *Classifier) Classify(msg Message) ClassificationResult {
 		Class:      ClassRoutine, // Default
 		Importance: 0.5,
 		Reasons:    []string{},
-		Metadata:   make(map[string]interface{}),
+		Metadata:   make(map[string]any),
 	}
 
 	// Check for tool content (MCP-specific)
@@ -295,9 +295,9 @@ func (c *Classifier) classifyToolMessage(msg Message, result *ClassificationResu
 
 // hasToolContent checks if a message contains tool use or tool result blocks.
 func (c *Classifier) hasToolContent(msg Message) bool {
-	if content, ok := msg.Content.([]interface{}); ok {
+	if content, ok := msg.Content.([]any); ok {
 		for _, block := range content {
-			if blockMap, ok := block.(map[string]interface{}); ok {
+			if blockMap, ok := block.(map[string]any); ok {
 				if blockType, ok := blockMap["type"].(string); ok {
 					if blockType == "tool_use" || blockType == "tool_result" {
 						return true
@@ -313,9 +313,9 @@ func (c *Classifier) hasToolContent(msg Message) bool {
 func (c *Classifier) extractToolNames(msg Message) []string {
 	var names []string
 
-	if content, ok := msg.Content.([]interface{}); ok {
+	if content, ok := msg.Content.([]any); ok {
 		for _, block := range content {
-			if blockMap, ok := block.(map[string]interface{}); ok {
+			if blockMap, ok := block.(map[string]any); ok {
 				if blockType, ok := blockMap["type"].(string); ok {
 					if blockType == "tool_use" {
 						if name, ok := blockMap["name"].(string); ok {
@@ -336,10 +336,10 @@ func (c *Classifier) getContentText(msg Message) string {
 	case string:
 		return content
 
-	case []interface{}:
+	case []any:
 		var texts []string
 		for _, block := range content {
-			if blockMap, ok := block.(map[string]interface{}); ok {
+			if blockMap, ok := block.(map[string]any); ok {
 				text := c.extractTextFromBlock(blockMap)
 				if text != "" {
 					texts = append(texts, text)
@@ -358,7 +358,7 @@ func (c *Classifier) getContentText(msg Message) string {
 }
 
 // extractTextFromBlock extracts text from a content block.
-func (c *Classifier) extractTextFromBlock(block map[string]interface{}) string {
+func (c *Classifier) extractTextFromBlock(block map[string]any) string {
 	blockType, ok := block["type"].(string)
 	if !ok {
 		return ""
@@ -388,10 +388,10 @@ func (c *Classifier) extractTextFromBlock(block map[string]interface{}) string {
 			switch contentVal := content.(type) {
 			case string:
 				return contentVal
-			case []interface{}:
+			case []any:
 				var texts []string
 				for _, item := range contentVal {
-					if itemMap, ok := item.(map[string]interface{}); ok {
+					if itemMap, ok := item.(map[string]any); ok {
 						if text, ok := itemMap["text"].(string); ok {
 							texts = append(texts, text)
 						}

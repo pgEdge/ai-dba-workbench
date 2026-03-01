@@ -26,8 +26,8 @@ func TestNewConfig(t *testing.T) {
 	// Verify datastore defaults
 	tests := []struct {
 		name     string
-		got      interface{}
-		expected interface{}
+		got      any
+		expected any
 	}{
 		{"datastore host", cfg.Datastore.Host, "localhost"},
 		{"datastore database", cfg.Datastore.Database, "ai_workbench"},

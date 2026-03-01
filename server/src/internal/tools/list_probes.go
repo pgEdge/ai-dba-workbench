@@ -61,11 +61,11 @@ Returns a TSV table with:
 			CompactDescription: `List available metrics probes in the datastore. Returns probe names, descriptions, and collection intervals. Use this to discover what metrics are available before calling query_metrics or describe_probe.`,
 			InputSchema: mcp.InputSchema{
 				Type:       "object",
-				Properties: map[string]interface{}{},
+				Properties: map[string]any{},
 				Required:   []string{},
 			},
 		},
-		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
+		Handler: func(args map[string]any) (mcp.ToolResponse, error) {
 			if pool == nil {
 				return mcp.NewToolError("Datastore not configured. The list_probes tool requires a datastore connection.")
 			}

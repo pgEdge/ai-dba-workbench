@@ -66,12 +66,12 @@ Native resources/read: Use if your client supports it
 			CompactDescription: `Read MCP resources. Use list=true to see all available resources, or provide a specific URI to read one resource.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
-				Properties: map[string]interface{}{
-					"uri": map[string]interface{}{
+				Properties: map[string]any{
+					"uri": map[string]any{
 						"type":        "string",
 						"description": "The URI of the resource to read. Example: 'pg://system_info'",
 					},
-					"list": map[string]interface{}{
+					"list": map[string]any{
 						"type":        "boolean",
 						"description": "Optional: if true, list all available resources with their full descriptions instead of reading a specific one",
 					},
@@ -79,7 +79,7 @@ Native resources/read: Use if your client supports it
 				Required: []string{},
 			},
 		},
-		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
+		Handler: func(args map[string]any) (mcp.ToolResponse, error) {
 			// Extract context from args (injected by registry.Execute)
 			ctx, ok := args["__context"].(context.Context)
 			if !ok {

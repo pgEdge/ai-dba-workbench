@@ -63,17 +63,17 @@ func (a *Analytics) Reset() {
 }
 
 // GetSummary returns a human-readable summary of metrics
-func (a *Analytics) GetSummary() map[string]interface{} {
+func (a *Analytics) GetSummary() map[string]any {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
 	if a.metrics.TotalCompactions == 0 {
-		return map[string]interface{}{
+		return map[string]any{
 			"status": "no compactions recorded",
 		}
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"total_compactions":   a.metrics.TotalCompactions,
 		"total_messages_in":   a.metrics.TotalMessagesIn,
 		"total_messages_out":  a.metrics.TotalMessagesOut,

@@ -93,49 +93,49 @@ To manage response sizes:
 			CompactDescription: `Query time-series metrics from the datastore with time bucketing and aggregation. Requires probe_name (from list_probes). Supports avg/sum/min/max/last aggregation over configurable time ranges and bucket counts. Filter by database_name, schema_name, or table_name.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
-				Properties: map[string]interface{}{
-					"probe_name": map[string]interface{}{
+				Properties: map[string]any{
+					"probe_name": map[string]any{
 						"type":        "string",
 						"description": "Name of the probe to query (from list_probes output)",
 					},
-					"connection_id": map[string]interface{}{
+					"connection_id": map[string]any{
 						"type":        "integer",
 						"description": "ID of the monitored connection to query metrics for. If not specified, uses the currently selected connection.",
 					},
-					"time_start": map[string]interface{}{
+					"time_start": map[string]any{
 						"type":        "string",
 						"description": "Start of time range. ISO 8601 format (2024-01-15T10:00:00Z) or relative duration (1h, 24h, 7d, 30d). Default: 1h",
 						"default":     "1h",
 					},
-					"time_end": map[string]interface{}{
+					"time_end": map[string]any{
 						"type":        "string",
 						"description": "End of time range. ISO 8601 format or 'now'. Default: now",
 						"default":     "now",
 					},
-					"buckets": map[string]interface{}{
+					"buckets": map[string]any{
 						"type":        "integer",
 						"description": "Number of time buckets for aggregation (1-500). Default: 150",
 						"default":     150,
 						"minimum":     1,
 						"maximum":     500,
 					},
-					"metrics": map[string]interface{}{
+					"metrics": map[string]any{
 						"type":        "string",
 						"description": "Comma-separated list of metric columns to include. Default: all numeric columns",
 					},
-					"database_name": map[string]interface{}{
+					"database_name": map[string]any{
 						"type":        "string",
 						"description": "Filter by database name (for database-scoped probes)",
 					},
-					"schema_name": map[string]interface{}{
+					"schema_name": map[string]any{
 						"type":        "string",
 						"description": "Filter by schema name (for table/index probes)",
 					},
-					"table_name": map[string]interface{}{
+					"table_name": map[string]any{
 						"type":        "string",
 						"description": "Filter by table name (for table/index probes)",
 					},
-					"aggregation": map[string]interface{}{
+					"aggregation": map[string]any{
 						"type":        "string",
 						"description": "Aggregation function: avg, sum, min, max, last. Default: avg",
 						"default":     "avg",
@@ -145,7 +145,7 @@ To manage response sizes:
 				Required: []string{"probe_name"},
 			},
 		},
-		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
+		Handler: func(args map[string]any) (mcp.ToolResponse, error) {
 			if pool == nil {
 				return mcp.NewToolError("Datastore not configured. The query_metrics tool requires a datastore connection.")
 			}
@@ -319,12 +319,12 @@ To manage response sizes:
 			rowCount := 0
 			for rows.Next() {
 				// Scan bucket time and all metrics
-				values := make([]interface{}, len(metricCols)+1)
-				valuePtrs := make([]interface{}, len(metricCols)+1)
+				values := make([]any, len(metricCols)+1)
+				valuePtrs := make([]any, len(metricCols)+1)
 				var bucketTime time.Time
 				valuePtrs[0] = &bucketTime
 				for i := range metricCols {
-					var v interface{}
+					var v any
 					values[i+1] = &v
 					valuePtrs[i+1] = &values[i+1]
 				}
@@ -359,7 +359,7 @@ To manage response sizes:
 }
 
 // parseIntArg parses an integer argument from the args map
-func parseIntArg(args map[string]interface{}, name string) (int, error) {
+func parseIntArg(args map[string]any, name string) (int, error) {
 	val, ok := args[name]
 	if !ok {
 		return 0, fmt.Errorf("parameter not found")
@@ -378,7 +378,7 @@ func parseIntArg(args map[string]interface{}, name string) (int, error) {
 }
 
 // parseTimeRange parses time_start and time_end from args
-func parseTimeRange(args map[string]interface{}) (time.Time, time.Time, error) {
+func parseTimeRange(args map[string]any) (time.Time, time.Time, error) {
 	now := time.Now().UTC()
 	timeEnd := now
 
@@ -457,13 +457,13 @@ func parseTimeArg(s string) (time.Time, error) {
 
 // formatMetricValue formats a metric value for TSV output.
 // Handles pointer dereferencing and delegates to tsv.FormatValue for type conversion.
-func formatMetricValue(v interface{}) string {
+func formatMetricValue(v any) string {
 	if v == nil {
 		return ""
 	}
 
 	// Dereference pointer if needed (common when scanning database rows)
-	if ptr, ok := v.(*interface{}); ok {
+	if ptr, ok := v.(*any); ok {
 		if ptr == nil || *ptr == nil {
 			return ""
 		}

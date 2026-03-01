@@ -311,7 +311,7 @@ func (r *templateRenderer) RenderJSON(templateStr string, payload *database.Noti
 // jsonEscapeStringValues iterates over a map and replaces every
 // string value with its JSON-escaped form (without surrounding
 // quotes).  Non-string values are left unchanged.
-func jsonEscapeStringValues(data map[string]interface{}) {
+func jsonEscapeStringValues(data map[string]any) {
 	for k, v := range data {
 		if s, ok := v.(string); ok {
 			data[k] = jsonEscapeString(s)
@@ -392,8 +392,8 @@ func (r *templateRenderer) getOrCompileHTMLTemplate(templateStr string) (*htmlte
 }
 
 // enhancePayload creates a map with all payload fields plus computed fields
-func (r *templateRenderer) enhancePayload(p *database.NotificationPayload) map[string]interface{} {
-	data := map[string]interface{}{
+func (r *templateRenderer) enhancePayload(p *database.NotificationPayload) map[string]any {
+	data := map[string]any{
 		// Alert info
 		"AlertID":          p.AlertID,
 		"AlertType":        p.AlertType,

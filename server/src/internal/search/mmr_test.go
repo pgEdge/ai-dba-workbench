@@ -112,7 +112,7 @@ func TestMMRSelectChunks_DiversitySelection(t *testing.T) {
 
 	// With max diversity, should prefer chunks from different rows
 	// After selecting first chunk (best score), second should be from different row
-	selectedRows := make(map[interface{}]bool)
+	selectedRows := make(map[any]bool)
 	for _, chunk := range result {
 		selectedRows[chunk.SourceRowID] = true
 	}

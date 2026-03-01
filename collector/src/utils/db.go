@@ -18,7 +18,7 @@ import (
 
 // ScanRowsToMaps scans all rows from a result set and returns them as a slice of maps.
 // Each map represents one row with column names as keys.
-func ScanRowsToMaps(rows pgx.Rows) ([]map[string]interface{}, error) {
+func ScanRowsToMaps(rows pgx.Rows) ([]map[string]any, error) {
 	// Get column descriptions
 	fieldDescs := rows.FieldDescriptions()
 	columns := make([]string, len(fieldDescs))
@@ -27,7 +27,7 @@ func ScanRowsToMaps(rows pgx.Rows) ([]map[string]interface{}, error) {
 	}
 
 	// Prepare result set
-	var results []map[string]interface{}
+	var results []map[string]any
 
 	for rows.Next() {
 		// Scan the row values
@@ -37,7 +37,7 @@ func ScanRowsToMaps(rows pgx.Rows) ([]map[string]interface{}, error) {
 		}
 
 		// Create a map for this row
-		rowMap := make(map[string]interface{})
+		rowMap := make(map[string]any)
 		for i, colName := range columns {
 			rowMap[colName] = values[i]
 		}

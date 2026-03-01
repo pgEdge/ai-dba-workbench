@@ -46,7 +46,7 @@ func (p *PgStatUserFunctionsProbe) GetQuery() string {
 }
 
 // Execute runs the probe against a monitored connection
-func (p *PgStatUserFunctionsProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
+func (p *PgStatUserFunctionsProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]any, error) {
 	query := WrapQuery(ProbeNamePgStatUserFunctions, p.GetQuery())
 	rows, err := monitoredConn.Query(ctx, query)
 	if err != nil {
@@ -58,7 +58,7 @@ func (p *PgStatUserFunctionsProbe) Execute(ctx context.Context, connectionName s
 }
 
 // Store stores the collected metrics in the datastore
-func (p *PgStatUserFunctionsProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]interface{}) error {
+func (p *PgStatUserFunctionsProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]any) error {
 	if len(metrics) == 0 {
 		return nil // Nothing to store
 	}
@@ -76,7 +76,7 @@ func (p *PgStatUserFunctionsProbe) Store(ctx context.Context, datastoreConn *pgx
 	}
 
 	// Build values array
-	var values [][]interface{}
+	var values [][]any
 	for _, metric := range metrics {
 		// Extract database_name from the metric (set by scheduler)
 		databaseName, ok := metric["_database_name"]
@@ -84,7 +84,7 @@ func (p *PgStatUserFunctionsProbe) Store(ctx context.Context, datastoreConn *pgx
 			return fmt.Errorf("database_name not found in metrics")
 		}
 
-		row := []interface{}{
+		row := []any{
 			connectionID,
 			timestamp,
 			databaseName,

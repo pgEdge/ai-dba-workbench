@@ -56,16 +56,16 @@ func NewOpenAIClient(apiKey, model string, maxTokens int, temperature float64, d
 }
 
 type openaiMessage struct {
-	Role       string      `json:"role"`
-	Content    interface{} `json:"content,omitempty"`
-	ToolCalls  interface{} `json:"tool_calls,omitempty"`
-	ToolCallID string      `json:"tool_call_id,omitempty"`
+	Role       string `json:"role"`
+	Content    any    `json:"content,omitempty"`
+	ToolCalls  any    `json:"tool_calls,omitempty"`
+	ToolCallID string `json:"tool_call_id,omitempty"`
 }
 
 type openaiRequest struct {
 	Model               string          `json:"model"`
 	Messages            []openaiMessage `json:"messages"`
-	Tools               interface{}     `json:"tools,omitempty"`
+	Tools               any             `json:"tools,omitempty"`
 	MaxTokens           int             `json:"max_tokens,omitempty"`
 	MaxCompletionTokens int             `json:"max_completion_tokens,omitempty"`
 	Temperature         float64         `json:"temperature,omitempty"`
@@ -109,30 +109,30 @@ func extractOpenAIError(body []byte) string {
 	return ""
 }
 
-func (c *openaiClient) Chat(ctx context.Context, messages []Message, tools interface{}, customSystemPrompt string) (LLMResponse, error) {
+func (c *openaiClient) Chat(ctx context.Context, messages []Message, tools any, customSystemPrompt string) (LLMResponse, error) {
 	startTime := time.Now()
 	operation := "chat"
 	url := c.baseURL + "/chat/completions"
 
 	embedding.LogLLMCallDetails("openai", c.model, operation, url, len(messages))
 
-	// Convert interface{} tools to []mcp.Tool
+	// Convert any tools to []mcp.Tool
 	mcpTools, err := convertToMCPTools(tools)
 	if err != nil {
 		return LLMResponse{}, err
 	}
 
 	// Convert MCP tools to OpenAI format
-	var openaiTools []map[string]interface{}
+	var openaiTools []map[string]any
 	if len(mcpTools) > 0 {
 		for _, tool := range mcpTools {
 			desc := tool.Description
 			if c.useCompactDescriptions && tool.CompactDescription != "" {
 				desc = tool.CompactDescription
 			}
-			openaiTools = append(openaiTools, map[string]interface{}{
+			openaiTools = append(openaiTools, map[string]any{
 				"type": "function",
-				"function": map[string]interface{}{
+				"function": map[string]any{
 					"name":        tool.Name,
 					"description": desc,
 					"parameters":  tool.InputSchema,
@@ -177,9 +177,9 @@ func (c *openaiClient) Chat(ctx context.Context, messages []Message, tools inter
 			}
 			// Don't add the parent message
 			continue
-		case []interface{}:
+		case []any:
 			// Handle complex content (text, tool use, and tool results)
-			var toolCalls []map[string]interface{}
+			var toolCalls []map[string]any
 			for _, item := range content {
 				// Handle typed structs (when messages are passed directly)
 				switch v := item.(type) {
@@ -191,10 +191,10 @@ func (c *openaiClient) Chat(ctx context.Context, messages []Message, tools inter
 					if err != nil {
 						argsJSON = []byte("{}")
 					}
-					toolCalls = append(toolCalls, map[string]interface{}{
+					toolCalls = append(toolCalls, map[string]any{
 						"id":   v.ID,
 						"type": "function",
-						"function": map[string]interface{}{
+						"function": map[string]any{
 							"name":      v.Name,
 							"arguments": string(argsJSON),
 						},
@@ -213,8 +213,8 @@ func (c *openaiClient) Chat(ctx context.Context, messages []Message, tools inter
 						ToolCallID: v.ToolUseID,
 					})
 				default:
-					// Handle map[string]interface{} (when items are unmarshaled from JSON)
-					itemMap, ok := item.(map[string]interface{})
+					// Handle map[string]any (when items are unmarshaled from JSON)
+					itemMap, ok := item.(map[string]any)
 					if !ok {
 						continue
 					}
@@ -233,7 +233,7 @@ func (c *openaiClient) Chat(ctx context.Context, messages []Message, tools inter
 						// ToolUse - convert to OpenAI tool_calls format
 						id, ok1 := itemMap["id"].(string)
 						name, ok2 := itemMap["name"].(string)
-						input, ok3 := itemMap["input"].(map[string]interface{})
+						input, ok3 := itemMap["input"].(map[string]any)
 						if !ok1 || !ok2 || !ok3 {
 							continue
 						}
@@ -242,10 +242,10 @@ func (c *openaiClient) Chat(ctx context.Context, messages []Message, tools inter
 						if err != nil {
 							argsJSON = []byte("{}")
 						}
-						toolCalls = append(toolCalls, map[string]interface{}{
+						toolCalls = append(toolCalls, map[string]any{
 							"id":   id,
 							"type": "function",
-							"function": map[string]interface{}{
+							"function": map[string]any{
 								"name":      name,
 								"arguments": string(argsJSON),
 							},
@@ -381,7 +381,7 @@ func (c *openaiClient) Chat(ctx context.Context, messages []Message, tools inter
 
 	// Check if there are tool calls
 	if choice.Message.ToolCalls != nil {
-		toolCalls, ok := choice.Message.ToolCalls.([]interface{})
+		toolCalls, ok := choice.Message.ToolCalls.([]any)
 		if ok && len(toolCalls) > 0 {
 			embedding.LogLLMResponseTrace("openai", c.model, operation, resp.StatusCode, "tool_calls")
 			embedding.LogLLMCall("openai", c.model, operation, openaiResp.Usage.PromptTokens, openaiResp.Usage.CompletionTokens, duration, nil)
@@ -404,14 +404,14 @@ func (c *openaiClient) Chat(ctx context.Context, messages []Message, tools inter
 			}
 
 			// Convert tool calls to our format
-			content := make([]interface{}, 0, len(toolCalls))
+			content := make([]any, 0, len(toolCalls))
 			for _, tc := range toolCalls {
-				toolCall, ok := tc.(map[string]interface{})
+				toolCall, ok := tc.(map[string]any)
 				if !ok {
 					continue
 				}
 
-				function, ok := toolCall["function"].(map[string]interface{})
+				function, ok := toolCall["function"].(map[string]any)
 				if !ok {
 					continue
 				}
@@ -425,9 +425,9 @@ func (c *openaiClient) Chat(ctx context.Context, messages []Message, tools inter
 					continue
 				}
 
-				var args map[string]interface{}
+				var args map[string]any
 				if err := json.Unmarshal([]byte(argsStr), &args); err != nil {
-					args = map[string]interface{}{}
+					args = map[string]any{}
 				}
 
 				id, ok := toolCall["id"].(string)
@@ -480,7 +480,7 @@ func (c *openaiClient) Chat(ctx context.Context, messages []Message, tools inter
 	}
 
 	return LLMResponse{
-		Content: []interface{}{
+		Content: []any{
 			TextContent{
 				Type: "text",
 				Text: messageContent,

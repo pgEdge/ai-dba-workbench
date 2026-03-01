@@ -139,7 +139,7 @@ func TestExecuteQuery_NoDatastore(t *testing.T) {
 func TestFormatValueForJSON(t *testing.T) {
 	tests := []struct {
 		name     string
-		input    interface{}
+		input    any
 		expected string
 	}{
 		{"nil returns NULL", nil, "NULL"},
@@ -166,7 +166,7 @@ func TestFormatValueForJSON(t *testing.T) {
 func TestFormatValueForJSON_PgTypes(t *testing.T) {
 	tests := []struct {
 		name     string
-		input    interface{}
+		input    any
 		expected string
 	}{
 		{
@@ -531,12 +531,12 @@ func TestMultiQueryResponse_EmptyRows(t *testing.T) {
 	}
 
 	// Verify the rows field is present as an empty array
-	var raw map[string]interface{}
+	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatalf("Failed to unmarshal raw: %v", err)
 	}
 
-	results, ok := raw["results"].([]interface{})
+	results, ok := raw["results"].([]any)
 	if !ok {
 		t.Fatal("Expected results to be an array")
 	}
@@ -544,12 +544,12 @@ func TestMultiQueryResponse_EmptyRows(t *testing.T) {
 		t.Fatalf("Expected 1 result, got %d", len(results))
 	}
 
-	firstResult, ok := results[0].(map[string]interface{})
+	firstResult, ok := results[0].(map[string]any)
 	if !ok {
 		t.Fatal("Expected first result to be an object")
 	}
 
-	rows, ok := firstResult["rows"].([]interface{})
+	rows, ok := firstResult["rows"].([]any)
 	if !ok {
 		t.Fatal("Expected rows to be an array")
 	}
@@ -572,7 +572,7 @@ func TestStatementResult_ErrorOmitsErrorField(t *testing.T) {
 		t.Fatalf("Failed to marshal: %v", err)
 	}
 
-	var raw map[string]interface{}
+	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatalf("Failed to unmarshal: %v", err)
 	}
@@ -593,7 +593,7 @@ func TestStatementResult_ErrorOmitsErrorField(t *testing.T) {
 		t.Fatalf("Failed to marshal: %v", err)
 	}
 
-	raw = map[string]interface{}{}
+	raw = map[string]any{}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatalf("Failed to unmarshal: %v", err)
 	}

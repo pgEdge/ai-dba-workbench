@@ -1139,7 +1139,7 @@ func (h *PerfSummaryHandler) handleTopQueries(
 	// are validated against whitelists above.
 	// Build optional queryid filter clause.
 	queryIDClause := ""
-	args := []interface{}{connID, limit}
+	args := []any{connID, limit}
 	if queryID != "" {
 		queryIDClause = fmt.Sprintf("AND queryid::text = $%d", len(args)+1)
 		args = append(args, queryID)

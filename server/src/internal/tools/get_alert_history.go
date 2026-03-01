@@ -100,38 +100,38 @@ Returns TSV data with:
 			CompactDescription: `Query alert history for monitored connections. Omit connection_id to see alerts across all accessible connections. Filter by status (active/cleared/acknowledged), time range, metric name, or rule ID. Defaults to last 7 days.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
-				Properties: map[string]interface{}{
-					"connection_id": map[string]interface{}{
+				Properties: map[string]any{
+					"connection_id": map[string]any{
 						"type":        "integer",
 						"description": "ID of a monitored connection. Omit to return alerts across all accessible connections.",
 					},
-					"status": map[string]interface{}{
+					"status": map[string]any{
 						"type":        "string",
 						"description": "Filter by alert status. Use 'active' to see all currently active alerts (ignores time_start). Values: active, cleared, acknowledged, all. Default: all",
 						"enum":        []string{"active", "cleared", "acknowledged", "all"},
 						"default":     "all",
 					},
-					"rule_id": map[string]interface{}{
+					"rule_id": map[string]any{
 						"type":        "integer",
 						"description": "Filter to alerts from a specific alert rule ID.",
 					},
-					"metric_name": map[string]interface{}{
+					"metric_name": map[string]any{
 						"type":        "string",
 						"description": "Filter to alerts for a specific metric name.",
 					},
-					"time_start": map[string]interface{}{
+					"time_start": map[string]any{
 						"type":        "string",
 						"description": "Start of time range. Relative duration (24h, 7d, 30d) or ISO 8601 format. Default: 7d. IGNORED when status='active'.",
 						"default":     "7d",
 					},
-					"limit": map[string]interface{}{
+					"limit": map[string]any{
 						"type":        "integer",
 						"description": "Maximum number of results to return (1-100). Default: 50",
 						"default":     50,
 						"minimum":     1,
 						"maximum":     100,
 					},
-					"offset": map[string]interface{}{
+					"offset": map[string]any{
 						"type":        "integer",
 						"description": "Pagination offset. Default: 0",
 						"default":     0,
@@ -141,7 +141,7 @@ Returns TSV data with:
 				Required: []string{},
 			},
 		},
-		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
+		Handler: func(args map[string]any) (mcp.ToolResponse, error) {
 			if pool == nil {
 				return mcp.NewToolError("Datastore not configured. The get_alert_history tool requires a datastore connection.")
 			}
@@ -436,7 +436,7 @@ func alertHistoryAllConnections(
 		paramIdx+4, paramIdx+5,
 	)
 
-	queryArgs := make([]interface{}, 0, len(connArgs)+6)
+	queryArgs := make([]any, 0, len(connArgs)+6)
 	queryArgs = append(queryArgs, connArgs...)
 	queryArgs = append(queryArgs, timeStart, statusParam, ruleID, metricName, limit, offset)
 

@@ -136,7 +136,7 @@ const MONO_FONT = '"JetBrains Mono", "SF Mono", monospace';
 const SECTION_STATE_KEY = 'serverInfoSectionState';
 
 function formatBytes(bytes: number | null | undefined): string {
-    if (bytes == null || bytes === 0) return '—';
+    if (bytes == null || bytes === 0) {return '—';}
     const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
     let val = bytes;
     let idx = 0;
@@ -148,14 +148,14 @@ function formatBytes(bytes: number | null | undefined): string {
 }
 
 function formatClockSpeed(hz: number | null | undefined): string {
-    if (hz == null) return '—';
-    if (hz >= 1_000_000_000) return `${(hz / 1_000_000_000).toFixed(2)} GHz`;
-    if (hz >= 1_000_000) return `${(hz / 1_000_000).toFixed(0)} MHz`;
+    if (hz == null) {return '—';}
+    if (hz >= 1_000_000_000) {return `${(hz / 1_000_000_000).toFixed(2)} GHz`;}
+    if (hz >= 1_000_000) {return `${(hz / 1_000_000).toFixed(0)} MHz`;}
     return `${hz} Hz`;
 }
 
 function pct(used: number | null, total: number | null): number | null {
-    if (used == null || total == null || total === 0) return null;
+    if (used == null || total == null || total === 0) {return null;}
     return Math.round((used / total) * 100);
 }
 
@@ -331,7 +331,7 @@ const Section: React.FC<{
             const stored = localStorage.getItem(SECTION_STATE_KEY);
             if (stored) {
                 const state = JSON.parse(stored);
-                if (sectionId in state) return state[sectionId];
+                if (sectionId in state) {return state[sectionId];}
             }
         } catch { /* ignore */ }
         return defaultOpen;
@@ -411,7 +411,7 @@ const UsageBar: React.FC<{
 }> = ({ label, used, total }) => {
     const theme = useTheme();
     const percentage = pct(used, total);
-    if (percentage == null) return null;
+    if (percentage == null) {return null;}
 
     return (
         <Box sx={{ gridColumn: '1 / -1' }}>
@@ -498,7 +498,7 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
     const [aiLoading, setAiLoading] = useState(false);
 
     const fetchInfo = useCallback(async () => {
-        if (!connectionId) return;
+        if (!connectionId) {return;}
         setLoading(true);
         setError(null);
         try {
@@ -523,19 +523,19 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
     }, [open, fetchInfo]);
 
     useEffect(() => {
-        if (!open || !data || !connectionId) return;
+        if (!open || !data || !connectionId) {return;}
         // Fetch AI analysis asynchronously
         let cancelled = false;
         setAiLoading(true);
         apiGet<AIAnalysisInfo>(`/api/v1/server-info/${connectionId}/ai-analysis`)
             .then((resp) => {
-                if (!cancelled) setAiAnalysis(resp);
+                if (!cancelled) {setAiAnalysis(resp);}
             })
             .catch((err) => {
                 console.error('Failed to fetch AI analysis:', err);
             })
             .finally(() => {
-                if (!cancelled) setAiLoading(false);
+                if (!cancelled) {setAiLoading(false);}
             });
         return () => { cancelled = true; };
     }, [open, data, connectionId]);
@@ -562,11 +562,11 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
 
     // Group settings by category
     const settingsByCategory = useMemo(() => {
-        if (!settings?.length) return null;
+        if (!settings?.length) {return null;}
         const groups: Record<string, SettingInfoItem[]> = {};
         for (const s of settings) {
             const cat = s.category || 'Other';
-            if (!groups[cat]) groups[cat] = [];
+            if (!groups[cat]) {groups[cat] = [];}
             groups[cat].push(s);
         }
         return groups;
@@ -574,11 +574,11 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
 
     // Group extensions by database
     const extsByDb = useMemo(() => {
-        if (!exts?.length) return null;
+        if (!exts?.length) {return null;}
         const groups: Record<string, ExtensionInfoItem[]> = {};
         for (const ext of exts) {
             const db = ext.database || 'unknown';
-            if (!groups[db]) groups[db] = [];
+            if (!groups[db]) {groups[db] = [];}
             groups[db].push(ext);
         }
         return groups;

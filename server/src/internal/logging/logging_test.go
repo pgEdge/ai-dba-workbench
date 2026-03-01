@@ -226,7 +226,7 @@ func TestLogWithMultipleKeyValuePairs(t *testing.T) {
 	}
 
 	// Verify all fields
-	expectedFields := map[string]interface{}{
+	expectedFields := map[string]any{
 		"table":       "users",
 		"rows":        float64(100),
 		"duration_ms": 45.6,

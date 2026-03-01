@@ -16,6 +16,7 @@ import (
 
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
+	"github.com/pgedge/ai-workbench/server/internal/tsv"
 )
 
 // GetSchemaInfoTool creates the get_schema_info tool
@@ -114,29 +115,29 @@ To avoid rate limits when calling this tool:
 			CompactDescription: `Discover database structure: schemas, tables, columns, types, and constraints. Specify connection_id to target a database; use list_connections to discover IDs. Use compact=true for a quick overview. Filter by schema_name and table_name to reduce output.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
-				Properties: map[string]interface{}{
-					"connection_id": map[string]interface{}{
+				Properties: map[string]any{
+					"connection_id": map[string]any{
 						"type":        "integer",
 						"description": "ID of the monitored database connection to use. Use list_connections to discover available IDs. If omitted, uses the currently selected connection.",
 					},
-					"database_name": map[string]interface{}{
+					"database_name": map[string]any{
 						"type":        "string",
 						"description": "Database name to connect to. If omitted, uses the connection's default database.",
 					},
-					"schema_name": map[string]interface{}{
+					"schema_name": map[string]any{
 						"type":        "string",
 						"description": "Optional: specific schema name to get info for. If not provided, returns all schemas.",
 					},
-					"table_name": map[string]interface{}{
+					"table_name": map[string]any{
 						"type":        "string",
 						"description": "Optional: specific table name to get columns for. Requires schema_name to also be provided.",
 					},
-					"vector_tables_only": map[string]interface{}{
+					"vector_tables_only": map[string]any{
 						"type":        "boolean",
 						"description": "Optional: if true, only return tables with vector columns (for semantic search). Reduces output significantly.",
 						"default":     false,
 					},
-					"compact": map[string]interface{}{
+					"compact": map[string]any{
 						"type":        "boolean",
 						"description": "Optional: if true, return table names only (no column details). Use for quick overview.",
 						"default":     false,
@@ -144,7 +145,7 @@ To avoid rate limits when calling this tool:
 				},
 			},
 		},
-		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
+		Handler: func(args map[string]any) (mcp.ToolResponse, error) {
 			schemaName, ok := args["schema_name"].(string)
 			if !ok {
 				schemaName = "" // Default to empty string (all schemas)
@@ -346,7 +347,7 @@ To avoid rate limits when calling this tool:
 							}
 						}
 
-						sb.WriteString(BuildTSVRow(
+						sb.WriteString(tsv.BuildRow(
 							table.SchemaName,
 							table.TableName,
 							table.TableType,
@@ -386,7 +387,7 @@ To avoid rate limits when calling this tool:
 						// Output one row per column
 						for i := range table.Columns {
 							col := &table.Columns[i]
-							sb.WriteString(BuildTSVRow(
+							sb.WriteString(tsv.BuildRow(
 								table.SchemaName,
 								table.TableName,
 								table.TableType,

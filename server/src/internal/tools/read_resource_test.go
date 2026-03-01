@@ -49,7 +49,7 @@ func TestReadResourceTool(t *testing.T) {
 		}
 
 		tool := ReadResourceTool(mockReader)
-		response, err := tool.Handler(map[string]interface{}{
+		response, err := tool.Handler(map[string]any{
 			"list": true,
 		})
 
@@ -82,7 +82,7 @@ func TestReadResourceTool(t *testing.T) {
 		}
 
 		tool := ReadResourceTool(mockReader)
-		response, err := tool.Handler(map[string]interface{}{
+		response, err := tool.Handler(map[string]any{
 			"list": true,
 		})
 
@@ -103,7 +103,7 @@ func TestReadResourceTool(t *testing.T) {
 		mockReader := &mockResourceReader{}
 		tool := ReadResourceTool(mockReader)
 
-		response, err := tool.Handler(map[string]interface{}{})
+		response, err := tool.Handler(map[string]any{})
 
 		if err != nil {
 			t.Errorf("Handler returned error: %v", err)
@@ -122,7 +122,7 @@ func TestReadResourceTool(t *testing.T) {
 		mockReader := &mockResourceReader{}
 		tool := ReadResourceTool(mockReader)
 
-		response, err := tool.Handler(map[string]interface{}{
+		response, err := tool.Handler(map[string]any{
 			"uri": "",
 		})
 
@@ -143,7 +143,7 @@ func TestReadResourceTool(t *testing.T) {
 		mockReader := &mockResourceReader{}
 		tool := ReadResourceTool(mockReader)
 
-		response, err := tool.Handler(map[string]interface{}{
+		response, err := tool.Handler(map[string]any{
 			"uri": 123, // Invalid type
 		})
 
@@ -180,7 +180,7 @@ func TestReadResourceTool(t *testing.T) {
 		}
 
 		tool := ReadResourceTool(mockReader)
-		response, err := tool.Handler(map[string]interface{}{
+		response, err := tool.Handler(map[string]any{
 			"uri": "pg://system_info",
 		})
 
@@ -208,7 +208,7 @@ func TestReadResourceTool(t *testing.T) {
 		}
 
 		tool := ReadResourceTool(mockReader)
-		response, err := tool.Handler(map[string]interface{}{
+		response, err := tool.Handler(map[string]any{
 			"uri": "pg://nonexistent",
 		})
 
@@ -245,7 +245,7 @@ func TestReadResourceTool(t *testing.T) {
 		}
 
 		tool := ReadResourceTool(mockReader)
-		response, err := tool.Handler(map[string]interface{}{
+		response, err := tool.Handler(map[string]any{
 			"uri":  "pg://system_info",
 			"list": false,
 		})

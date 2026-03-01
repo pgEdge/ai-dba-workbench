@@ -110,7 +110,7 @@ func TestBuildOpenAPISpec_JSONSerialization(t *testing.T) {
 	}
 
 	// Verify it's valid JSON by unmarshaling it back
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(data, &result); err != nil {
 		t.Fatalf("Failed to unmarshal OpenAPI spec JSON: %v", err)
 	}

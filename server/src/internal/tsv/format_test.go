@@ -20,7 +20,7 @@ import (
 func TestFormatValue(t *testing.T) {
 	tests := []struct {
 		name     string
-		input    interface{}
+		input    any
 		expected string
 	}{
 		{"nil value", nil, ""},
@@ -36,8 +36,8 @@ func TestFormatValue(t *testing.T) {
 		{"bool true", true, "true"},
 		{"bool false", false, "false"},
 		{"byte slice", []byte("bytes"), "bytes"},
-		{"array", []interface{}{"a", "b"}, `["a","b"]`},
-		{"map", map[string]interface{}{"key": "value"}, `{"key":"value"}`},
+		{"array", []any{"a", "b"}, `["a","b"]`},
+		{"map", map[string]any{"key": "value"}, `{"key":"value"}`},
 	}
 
 	for _, tt := range tests {
@@ -62,7 +62,7 @@ func TestFormatValue_Time(t *testing.T) {
 
 func TestFormatResults(t *testing.T) {
 	columnNames := []string{"id", "name", "active"}
-	results := [][]interface{}{
+	results := [][]any{
 		{1, "Alice", true},
 		{2, "Bob", false},
 	}
@@ -94,7 +94,7 @@ func TestBuildRow(t *testing.T) {
 func TestFormatValue_PgTypes(t *testing.T) {
 	tests := []struct {
 		name     string
-		input    interface{}
+		input    any
 		expected string
 	}{
 		// Numeric type
@@ -230,7 +230,7 @@ func TestFormatValue_PgTimestamps(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		input    interface{}
+		input    any
 		expected string
 	}{
 		{

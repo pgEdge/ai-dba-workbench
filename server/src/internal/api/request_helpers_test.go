@@ -49,7 +49,7 @@ func TestDecodeJSONBody(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewBufferString(tt.body))
 			rec := httptest.NewRecorder()
 
-			var dest map[string]interface{}
+			var dest map[string]any
 			result := DecodeJSONBody(rec, req, &dest)
 
 			if result != tt.expectSuccess {

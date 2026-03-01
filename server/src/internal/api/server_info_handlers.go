@@ -590,7 +590,7 @@ func (h *ServerInfoHandler) queryKeySettings(
 ) []SettingInfo {
 	// Build the IN clause for key settings
 	placeholders := make([]string, len(keySettings))
-	args := make([]interface{}, len(keySettings)+1)
+	args := make([]any, len(keySettings)+1)
 	args[0] = connectionID
 	for i, name := range keySettings {
 		placeholders[i] = fmt.Sprintf("$%d", i+2)
@@ -759,7 +759,7 @@ func parseDatabaseAnalysisResponse(
 		switch v := item.(type) {
 		case chat.TextContent:
 			text += v.Text
-		case map[string]interface{}:
+		case map[string]any:
 			if t, ok := v["type"].(string); ok && t == "text" {
 				if txt, ok := v["text"].(string); ok {
 					text += txt

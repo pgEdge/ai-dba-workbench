@@ -78,7 +78,7 @@ func (p *PgHbaFileRulesProbe) GetQueryForVersion(pgVersion int) string {
 }
 
 // Execute runs the probe against a monitored connection
-func (p *PgHbaFileRulesProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
+func (p *PgHbaFileRulesProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]any, error) {
 	query := WrapQuery(ProbeNamePgHbaFileRules, p.GetQueryForVersion(pgVersion))
 	rows, err := monitoredConn.Query(ctx, query)
 	if err != nil {
@@ -90,7 +90,7 @@ func (p *PgHbaFileRulesProbe) Execute(ctx context.Context, connectionName string
 }
 
 // Store stores the collected metrics in the datastore only if data has changed
-func (p *PgHbaFileRulesProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]interface{}) error {
+func (p *PgHbaFileRulesProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]any) error {
 	// Check if data has changed
 	changed, err := p.hasDataChanged(ctx, datastoreConn, connectionID, metrics)
 	if err != nil {
@@ -118,9 +118,9 @@ func (p *PgHbaFileRulesProbe) Store(ctx context.Context, datastoreConn *pgxpool.
 	}
 
 	// Build values array
-	var values [][]interface{}
+	var values [][]any
 	for _, metric := range metrics {
-		row := []interface{}{
+		row := []any{
 			connectionID,
 			timestamp,
 			metric["rule_number"],
@@ -147,7 +147,7 @@ func (p *PgHbaFileRulesProbe) Store(ctx context.Context, datastoreConn *pgxpool.
 }
 
 // hasDataChanged checks if the current HBA rules differ from the most recently stored data
-func (p *PgHbaFileRulesProbe) hasDataChanged(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, currentMetrics []map[string]interface{}) (bool, error) {
+func (p *PgHbaFileRulesProbe) hasDataChanged(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, currentMetrics []map[string]any) (bool, error) {
 	// Compute hash of current metrics
 	currentHash, err := p.computeMetricsHash(currentMetrics)
 	if err != nil {
@@ -197,7 +197,7 @@ func (p *PgHbaFileRulesProbe) hasDataChanged(ctx context.Context, datastoreConn 
 }
 
 // computeMetricsHash computes a SHA256 hash of metrics for comparison
-func (p *PgHbaFileRulesProbe) computeMetricsHash(metrics []map[string]interface{}) (string, error) {
+func (p *PgHbaFileRulesProbe) computeMetricsHash(metrics []map[string]any) (string, error) {
 	return ComputeMetricsHash(metrics)
 }
 

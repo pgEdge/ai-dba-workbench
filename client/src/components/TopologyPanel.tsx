@@ -391,11 +391,15 @@ const TopologyPanel: React.FC<TopologyPanelProps> = ({
     };
 
     // Existing relationship source-target pairs for filtering
-    const existingRelPairs = new Set(
-        relationships.map(
-            (r) =>
-                `${r.source_connection_id}-${r.target_connection_id}-${r.relationship_type}`,
-        ),
+    const existingRelPairs = useMemo(
+        () =>
+            new Set(
+                relationships.map(
+                    (r) =>
+                        `${r.source_connection_id}-${r.target_connection_id}-${r.relationship_type}`,
+                ),
+            ),
+        [relationships],
     );
 
     // Available targets for the selected source and relationship type

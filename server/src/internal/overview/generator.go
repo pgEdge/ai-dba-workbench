@@ -185,7 +185,7 @@ func (g *Generator) GetScopedSummary(scopeType string, scopeID int, force bool) 
 	}
 
 	// Deduplicate concurrent requests for the same key.
-	result, err, _ := g.inflight.Do(key, func() (interface{}, error) {
+	result, err, _ := g.inflight.Do(key, func() (any, error) {
 		// Re-check cache; another goroutine may have populated it
 		// while we waited for the singleflight slot.
 		if !force {
@@ -283,7 +283,7 @@ func (g *Generator) GetConnectionsSummary(connectionIDs []int, scopeName string,
 	}
 
 	// Deduplicate concurrent requests for the same key.
-	result, err, _ := g.inflight.Do(key, func() (interface{}, error) {
+	result, err, _ := g.inflight.Do(key, func() (any, error) {
 		// Re-check cache; another goroutine may have populated it
 		// while we waited for the singleflight slot.
 		if !force {
@@ -578,7 +578,7 @@ func extractTextFromResponse(resp chat.LLMResponse) string {
 		switch v := item.(type) {
 		case chat.TextContent:
 			parts = append(parts, v.Text)
-		case map[string]interface{}:
+		case map[string]any:
 			if t, ok := v["type"].(string); ok && t == "text" {
 				if text, ok := v["text"].(string); ok {
 					parts = append(parts, text)

@@ -21,7 +21,7 @@ import (
 
 // FormatValue converts a value to a TSV-safe string.
 // Handles NULLs, special characters, and complex types.
-func FormatValue(v interface{}) string {
+func FormatValue(v any) string {
 	if v == nil {
 		return "" // NULL represented as empty string
 	}
@@ -117,7 +117,7 @@ func FormatValue(v interface{}) string {
 	case [16]byte:
 		// Raw UUID bytes
 		s = formatUUID(val)
-	case []interface{}, map[string]interface{}:
+	case []any, map[string]any:
 		// Complex types (arrays, JSON objects) - serialize to JSON
 		jsonBytes, err := json.Marshal(val)
 		if err != nil {
@@ -141,7 +141,7 @@ func FormatValue(v interface{}) string {
 
 // FormatResults converts query results to TSV format.
 // Returns header row followed by data rows, tab-separated.
-func FormatResults(columnNames []string, results [][]interface{}) string {
+func FormatResults(columnNames []string, results [][]any) string {
 	if len(columnNames) == 0 {
 		return ""
 	}

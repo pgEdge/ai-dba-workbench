@@ -79,27 +79,27 @@ To avoid rate limits (30,000 input tokens/minute):
 			CompactDescription: `Execute read-only SQL queries against a monitored database. Specify connection_id to target a database; use list_connections to discover IDs. Returns results in TSV format. Use for exact matches, aggregations, joins, and filtering.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
-				Properties: map[string]interface{}{
-					"connection_id": map[string]interface{}{
+				Properties: map[string]any{
+					"connection_id": map[string]any{
 						"type":        "integer",
 						"description": "ID of the monitored database connection to use. Use list_connections to discover available IDs. If omitted, uses the currently selected connection.",
 					},
-					"database_name": map[string]interface{}{
+					"database_name": map[string]any{
 						"type":        "string",
 						"description": "Database name to connect to. If omitted, uses the connection's default database.",
 					},
-					"query": map[string]interface{}{
+					"query": map[string]any{
 						"type":        "string",
 						"description": "SQL query to execute against the database. All queries run in read-only transactions.",
 					},
-					"limit": map[string]interface{}{
+					"limit": map[string]any{
 						"type":        "integer",
 						"description": "Maximum number of rows to return (default: 100, max: 1000). Automatically appended to query if not already present. Use higher limits only when necessary to avoid excessive token usage.",
 						"default":     100,
 						"minimum":     1,
 						"maximum":     1000,
 					},
-					"offset": map[string]interface{}{
+					"offset": map[string]any{
 						"type":        "integer",
 						"description": "Number of rows to skip before returning results (for pagination). Use with limit to page through large result sets. Example: offset=100 with limit=100 returns rows 101-200.",
 						"default":     0,
@@ -109,7 +109,7 @@ To avoid rate limits (30,000 input tokens/minute):
 				Required: []string{"query"},
 			},
 		},
-		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
+		Handler: func(args map[string]any) (mcp.ToolResponse, error) {
 			query, ok := args["query"].(string)
 			if !ok {
 				return mcp.NewToolError("Missing or invalid 'query' parameter")

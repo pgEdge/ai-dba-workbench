@@ -74,27 +74,27 @@ If you get zero results:
 			CompactDescription: `Search the pre-built documentation knowledgebase for PostgreSQL and pgEdge product information. Filter by project name and version. Use list_products=true to see available documentation.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
-				Properties: map[string]interface{}{
-					"query": map[string]interface{}{
+				Properties: map[string]any{
+					"query": map[string]any{
 						"type":        "string",
 						"description": "Natural language search query (required unless list_products is true)",
 					},
-					"project_names": map[string]interface{}{
+					"project_names": map[string]any{
 						"type":        "array",
-						"items":       map[string]interface{}{"type": "string"},
+						"items":       map[string]any{"type": "string"},
 						"description": "Filter by project/product name(s) (e.g., ['PostgreSQL'], ['pgEdge', 'pgAdmin'])",
 					},
-					"project_versions": map[string]interface{}{
+					"project_versions": map[string]any{
 						"type":        "array",
-						"items":       map[string]interface{}{"type": "string"},
+						"items":       map[string]any{"type": "string"},
 						"description": "Filter by project/product version(s) (e.g., ['17'], ['16', '17'])",
 					},
-					"top_n": map[string]interface{}{
+					"top_n": map[string]any{
 						"type":        "integer",
 						"description": "Number of results to return (default: 5, max: 20)",
 						"default":     5,
 					},
-					"list_products": map[string]interface{}{
+					"list_products": map[string]any{
 						"type":        "boolean",
 						"description": "If true, returns only the list of available products and versions in the knowledgebase (ignores other parameters). Use this to discover what documentation is available before searching.",
 					},
@@ -102,7 +102,7 @@ If you get zero results:
 				Required: []string{},
 			},
 		},
-		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
+		Handler: func(args map[string]any) (mcp.ToolResponse, error) {
 			// Check for list_products mode first
 			if listProducts, ok := args["list_products"].(bool); ok && listProducts {
 				products, err := listKBProducts(kbPath)
@@ -128,7 +128,7 @@ If you get zero results:
 			topN := 5
 
 			// Extract project_names array
-			if pn, ok := args["project_names"].([]interface{}); ok {
+			if pn, ok := args["project_names"].([]any); ok {
 				for _, v := range pn {
 					if s, ok := v.(string); ok && s != "" {
 						projectNames = append(projectNames, s)
@@ -136,7 +136,7 @@ If you get zero results:
 				}
 			}
 			// Extract project_versions array
-			if pv, ok := args["project_versions"].([]interface{}); ok {
+			if pv, ok := args["project_versions"].([]any); ok {
 				for _, v := range pv {
 					if s, ok := v.(string); ok && s != "" {
 						projectVersions = append(projectVersions, s)
@@ -318,7 +318,7 @@ func searchKB(kbPath string, queryEmbedding []float32, projectNames, projectVers
         FROM chunks
         WHERE 1=1
     `
-	args := []interface{}{}
+	args := []any{}
 
 	// Add project_names filter with IN clause
 	if len(projectNames) > 0 {

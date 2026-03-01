@@ -76,7 +76,7 @@ func (p *PgReplicationSlotsProbe) checkHasTotalCount(ctx context.Context, conn *
 }
 
 // Execute runs the probe against a monitored connection
-func (p *PgReplicationSlotsProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
+func (p *PgReplicationSlotsProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]any, error) {
 	// Check if pg_stat_replication_slots is available (PG14+)
 	statsAvailable, err := cachedCheck(connectionName, "stat_replication_slots_available", func() (bool, error) {
 		return p.checkStatReplicationSlotsAvailable(ctx, monitoredConn)
@@ -172,7 +172,7 @@ func (p *PgReplicationSlotsProbe) Execute(ctx context.Context, connectionName st
 }
 
 // Store stores the collected metrics in the datastore
-func (p *PgReplicationSlotsProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]interface{}) error {
+func (p *PgReplicationSlotsProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]any) error {
 	if len(metrics) == 0 {
 		return nil // Nothing to store
 	}
@@ -194,9 +194,9 @@ func (p *PgReplicationSlotsProbe) Store(ctx context.Context, datastoreConn *pgxp
 	}
 
 	// Build values array
-	var values [][]interface{}
+	var values [][]any
 	for _, metric := range metrics {
-		row := []interface{}{
+		row := []any{
 			connectionID,
 			timestamp,
 			metric["slot_name"],

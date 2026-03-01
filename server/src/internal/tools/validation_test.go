@@ -16,35 +16,35 @@ import (
 func TestValidateStringParam(t *testing.T) {
 	tests := []struct {
 		name      string
-		args      map[string]interface{}
+		args      map[string]any
 		paramName string
 		wantValue string
 		wantError bool
 	}{
 		{
 			name:      "valid string parameter",
-			args:      map[string]interface{}{"test": "value"},
+			args:      map[string]any{"test": "value"},
 			paramName: "test",
 			wantValue: "value",
 			wantError: false,
 		},
 		{
 			name:      "missing parameter",
-			args:      map[string]interface{}{},
+			args:      map[string]any{},
 			paramName: "test",
 			wantValue: "",
 			wantError: true,
 		},
 		{
 			name:      "empty string",
-			args:      map[string]interface{}{"test": ""},
+			args:      map[string]any{"test": ""},
 			paramName: "test",
 			wantValue: "",
 			wantError: true,
 		},
 		{
 			name:      "wrong type (number)",
-			args:      map[string]interface{}{"test": 123},
+			args:      map[string]any{"test": 123},
 			paramName: "test",
 			wantValue: "",
 			wantError: true,
@@ -73,35 +73,35 @@ func TestValidateStringParam(t *testing.T) {
 func TestValidateOptionalStringParam(t *testing.T) {
 	tests := []struct {
 		name         string
-		args         map[string]interface{}
+		args         map[string]any
 		paramName    string
 		defaultValue string
 		want         string
 	}{
 		{
 			name:         "present parameter",
-			args:         map[string]interface{}{"test": "value"},
+			args:         map[string]any{"test": "value"},
 			paramName:    "test",
 			defaultValue: "default",
 			want:         "value",
 		},
 		{
 			name:         "missing parameter",
-			args:         map[string]interface{}{},
+			args:         map[string]any{},
 			paramName:    "test",
 			defaultValue: "default",
 			want:         "default",
 		},
 		{
 			name:         "wrong type",
-			args:         map[string]interface{}{"test": 123},
+			args:         map[string]any{"test": 123},
 			paramName:    "test",
 			defaultValue: "default",
 			want:         "default",
 		},
 		{
 			name:         "empty string returns empty",
-			args:         map[string]interface{}{"test": ""},
+			args:         map[string]any{"test": ""},
 			paramName:    "test",
 			defaultValue: "default",
 			want:         "",
@@ -121,35 +121,35 @@ func TestValidateOptionalStringParam(t *testing.T) {
 func TestValidateNumberParam(t *testing.T) {
 	tests := []struct {
 		name      string
-		args      map[string]interface{}
+		args      map[string]any
 		paramName string
 		wantValue float64
 		wantError bool
 	}{
 		{
 			name:      "valid number",
-			args:      map[string]interface{}{"test": 42.5},
+			args:      map[string]any{"test": 42.5},
 			paramName: "test",
 			wantValue: 42.5,
 			wantError: false,
 		},
 		{
 			name:      "missing parameter",
-			args:      map[string]interface{}{},
+			args:      map[string]any{},
 			paramName: "test",
 			wantValue: 0,
 			wantError: true,
 		},
 		{
 			name:      "wrong type (string)",
-			args:      map[string]interface{}{"test": "123"},
+			args:      map[string]any{"test": "123"},
 			paramName: "test",
 			wantValue: 0,
 			wantError: true,
 		},
 		{
 			name:      "zero is valid",
-			args:      map[string]interface{}{"test": 0.0},
+			args:      map[string]any{"test": 0.0},
 			paramName: "test",
 			wantValue: 0,
 			wantError: false,
@@ -174,35 +174,35 @@ func TestValidateNumberParam(t *testing.T) {
 func TestValidateOptionalNumberParam(t *testing.T) {
 	tests := []struct {
 		name         string
-		args         map[string]interface{}
+		args         map[string]any
 		paramName    string
 		defaultValue float64
 		want         float64
 	}{
 		{
 			name:         "present parameter",
-			args:         map[string]interface{}{"test": 42.5},
+			args:         map[string]any{"test": 42.5},
 			paramName:    "test",
 			defaultValue: 10.0,
 			want:         42.5,
 		},
 		{
 			name:         "missing parameter",
-			args:         map[string]interface{}{},
+			args:         map[string]any{},
 			paramName:    "test",
 			defaultValue: 10.0,
 			want:         10.0,
 		},
 		{
 			name:         "wrong type",
-			args:         map[string]interface{}{"test": "123"},
+			args:         map[string]any{"test": "123"},
 			paramName:    "test",
 			defaultValue: 10.0,
 			want:         10.0,
 		},
 		{
 			name:         "zero returns zero",
-			args:         map[string]interface{}{"test": 0.0},
+			args:         map[string]any{"test": 0.0},
 			paramName:    "test",
 			defaultValue: 10.0,
 			want:         0.0,
@@ -222,35 +222,35 @@ func TestValidateOptionalNumberParam(t *testing.T) {
 func TestValidateBoolParam(t *testing.T) {
 	tests := []struct {
 		name         string
-		args         map[string]interface{}
+		args         map[string]any
 		paramName    string
 		defaultValue bool
 		want         bool
 	}{
 		{
 			name:         "present true",
-			args:         map[string]interface{}{"test": true},
+			args:         map[string]any{"test": true},
 			paramName:    "test",
 			defaultValue: false,
 			want:         true,
 		},
 		{
 			name:         "present false",
-			args:         map[string]interface{}{"test": false},
+			args:         map[string]any{"test": false},
 			paramName:    "test",
 			defaultValue: true,
 			want:         false,
 		},
 		{
 			name:         "missing parameter",
-			args:         map[string]interface{}{},
+			args:         map[string]any{},
 			paramName:    "test",
 			defaultValue: true,
 			want:         true,
 		},
 		{
 			name:         "wrong type",
-			args:         map[string]interface{}{"test": "true"},
+			args:         map[string]any{"test": "true"},
 			paramName:    "test",
 			defaultValue: false,
 			want:         false,

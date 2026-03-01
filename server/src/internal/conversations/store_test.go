@@ -96,7 +96,7 @@ func TestGenerateTitle_NonStringContent(t *testing.T) {
 	messages := []Message{
 		{
 			Role: "user",
-			Content: []map[string]interface{}{
+			Content: []map[string]any{
 				{"type": "tool_use", "name": "query"},
 			},
 		},

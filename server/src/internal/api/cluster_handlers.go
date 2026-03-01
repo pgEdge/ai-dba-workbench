@@ -718,7 +718,7 @@ func (h *ClusterHandler) addServerToCluster(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	RespondJSON(w, http.StatusOK, map[string]interface{}{
+	RespondJSON(w, http.StatusOK, map[string]any{
 		"cluster_id":    clusterID,
 		"connection_id": req.ConnectionID,
 		"role":          req.Role,
@@ -802,7 +802,7 @@ func (h *ClusterHandler) handleCreateCluster(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	RespondJSON(w, http.StatusCreated, map[string]interface{}{
+	RespondJSON(w, http.StatusCreated, map[string]any{
 		"id":   clusterID,
 		"name": req.Name,
 	})

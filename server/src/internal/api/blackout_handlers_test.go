@@ -364,7 +364,7 @@ func TestBlackoutHandler_CreateBlackout_ValidationErrors(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		body        interface{}
+		body        any
 		wantStatus  int
 		errContains string
 	}{
@@ -432,7 +432,7 @@ func TestBlackoutHandler_CreateSchedule_ValidationErrors(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		body        interface{}
+		body        any
 		wantStatus  int
 		errContains string
 	}{
@@ -585,7 +585,7 @@ func TestBlackoutUpdateRequest_JSON(t *testing.T) {
 	}
 
 	// Test JSON keys
-	var rawJSON map[string]interface{}
+	var rawJSON map[string]any
 	if err := json.Unmarshal(data, &rawJSON); err != nil {
 		t.Fatalf("Failed to unmarshal to map: %v", err)
 	}
@@ -636,7 +636,7 @@ func TestBlackoutHandler_UpdateSchedule_ValidationErrors(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		body        interface{}
+		body        any
 		wantStatus  int
 		errContains string
 	}{

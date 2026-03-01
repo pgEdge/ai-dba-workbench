@@ -24,7 +24,7 @@ import (
 //
 // When accessibleIDs is non-nil the returned clause uses positional parameters
 // ($1, $2, ...) for each ID so the filter is injection-safe.
-func buildConnectionFilter(column string, accessibleIDs []int) (string, []interface{}) {
+func buildConnectionFilter(column string, accessibleIDs []int) (string, []any) {
 	if accessibleIDs == nil {
 		// Superuser: no restriction
 		return "TRUE", nil
@@ -36,7 +36,7 @@ func buildConnectionFilter(column string, accessibleIDs []int) (string, []interf
 	}
 
 	placeholders := make([]string, len(accessibleIDs))
-	args := make([]interface{}, len(accessibleIDs))
+	args := make([]any, len(accessibleIDs))
 	for i, id := range accessibleIDs {
 		placeholders[i] = fmt.Sprintf("$%d", i+1)
 		args[i] = id

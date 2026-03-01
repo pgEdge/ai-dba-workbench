@@ -391,7 +391,7 @@ func TestPgNodeRoleProbe_InfoToMap(t *testing.T) {
 		HasSpock:                false,
 		PrimaryRole:             RoleBinaryPrimary,
 		RoleFlags:               []string{FlagBinaryPrimary, FlagLogicalPublisher, FlagLogicalSubscriber},
-		RoleDetails:             make(map[string]interface{}),
+		RoleDetails:             make(map[string]any),
 	}
 
 	result := probe.infoToMap(info)

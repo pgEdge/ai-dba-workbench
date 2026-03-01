@@ -48,7 +48,7 @@ func (p *PgExtensionProbe) GetQuery() string {
 }
 
 // Execute runs the probe against a monitored connection
-func (p *PgExtensionProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
+func (p *PgExtensionProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]any, error) {
 	query := WrapQuery(ProbeNamePgExtension, p.GetQuery())
 	rows, err := monitoredConn.Query(ctx, query)
 	if err != nil {
@@ -61,7 +61,7 @@ func (p *PgExtensionProbe) Execute(ctx context.Context, connectionName string, m
 
 // Store stores the collected metrics in the datastore only if changes are
 // detected
-func (p *PgExtensionProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]interface{}) error {
+func (p *PgExtensionProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]any) error {
 	if len(metrics) == 0 {
 		return nil // Nothing to store
 	}
@@ -91,9 +91,9 @@ func (p *PgExtensionProbe) Store(ctx context.Context, datastoreConn *pgxpool.Con
 	}
 
 	// Build values array
-	var values [][]interface{}
+	var values [][]any
 	for _, metric := range metrics {
-		row := []interface{}{
+		row := []any{
 			connectionID,
 			metric["_database_name"], // Added by scheduler for database-scoped probes
 			timestamp,
@@ -115,12 +115,12 @@ func (p *PgExtensionProbe) Store(ctx context.Context, datastoreConn *pgxpool.Con
 
 // hasDataChanged checks if the current extensions differ from the most
 // recently stored data
-func (p *PgExtensionProbe) hasDataChanged(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, currentMetrics []map[string]interface{}) (bool, error) {
+func (p *PgExtensionProbe) hasDataChanged(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, currentMetrics []map[string]any) (bool, error) {
 	// Normalize current metrics to match stored format
 	// The scheduler adds _database_name but the DB stores it as database_name
-	normalizedMetrics := make([]map[string]interface{}, len(currentMetrics))
+	normalizedMetrics := make([]map[string]any, len(currentMetrics))
 	for i, m := range currentMetrics {
-		normalized := make(map[string]interface{})
+		normalized := make(map[string]any)
 		for k, v := range m {
 			if k == "_database_name" {
 				normalized["database_name"] = v
@@ -159,7 +159,7 @@ func (p *PgExtensionProbe) hasDataChanged(ctx context.Context, datastoreConn *pg
 	defer rows.Close()
 
 	// Scan the most recent data
-	var storedMetrics []map[string]interface{}
+	var storedMetrics []map[string]any
 	storedMetrics, err = utils.ScanRowsToMaps(rows)
 	if err != nil {
 		return false, fmt.Errorf("failed to scan stored data: %w", err)
@@ -182,7 +182,7 @@ func (p *PgExtensionProbe) hasDataChanged(ctx context.Context, datastoreConn *pg
 }
 
 // computeMetricsHash computes a hash of the metrics for comparison
-func (p *PgExtensionProbe) computeMetricsHash(metrics []map[string]interface{}) (string, error) {
+func (p *PgExtensionProbe) computeMetricsHash(metrics []map[string]any) (string, error) {
 	return ComputeMetricsHash(metrics)
 }
 

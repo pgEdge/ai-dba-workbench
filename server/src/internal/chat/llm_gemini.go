@@ -70,14 +70,14 @@ type geminiPart struct {
 
 // geminiFunctionCall represents a function call from the model
 type geminiFunctionCall struct {
-	Name string                 `json:"name"`
-	Args map[string]interface{} `json:"args"`
+	Name string         `json:"name"`
+	Args map[string]any `json:"args"`
 }
 
 // geminiFunctionResponse represents the result of a function call
 type geminiFunctionResponse struct {
-	Name     string                 `json:"name"`
-	Response map[string]interface{} `json:"response"`
+	Name     string         `json:"name"`
+	Response map[string]any `json:"response"`
 }
 
 // geminiTool represents a tool definition for Gemini
@@ -87,16 +87,16 @@ type geminiTool struct {
 
 // geminiFunctionDecl represents a function declaration
 type geminiFunctionDecl struct {
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	Parameters  interface{} `json:"parameters,omitempty"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Parameters  any    `json:"parameters,omitempty"`
 }
 
 type geminiRequest struct {
-	Contents          []geminiContent        `json:"contents"`
-	Tools             []geminiTool           `json:"tools,omitempty"`
-	SystemInstruction *geminiContent         `json:"systemInstruction,omitempty"`
-	GenerationConfig  map[string]interface{} `json:"generationConfig,omitempty"`
+	Contents          []geminiContent `json:"contents"`
+	Tools             []geminiTool    `json:"tools,omitempty"`
+	SystemInstruction *geminiContent  `json:"systemInstruction,omitempty"`
+	GenerationConfig  map[string]any  `json:"generationConfig,omitempty"`
 }
 
 type geminiCandidate struct {
@@ -132,14 +132,14 @@ func extractGeminiError(body []byte) string {
 	return ""
 }
 
-func (c *geminiClient) Chat(ctx context.Context, messages []Message, tools interface{}, customSystemPrompt string) (LLMResponse, error) {
+func (c *geminiClient) Chat(ctx context.Context, messages []Message, tools any, customSystemPrompt string) (LLMResponse, error) {
 	startTime := time.Now()
 	operation := "chat"
 	url := fmt.Sprintf("%s/v1beta/models/%s:generateContent?key=%s", c.baseURL, c.model, c.apiKey)
 
 	embedding.LogLLMCallDetails("gemini", c.model, operation, c.baseURL+"/v1beta/models/"+c.model+":generateContent", len(messages))
 
-	// Convert interface{} tools to []mcp.Tool
+	// Convert any tools to []mcp.Tool
 	mcpTools, err := convertToMCPTools(tools)
 	if err != nil {
 		return LLMResponse{}, err
@@ -188,7 +188,7 @@ func (c *geminiClient) Chat(ctx context.Context, messages []Message, tools inter
 				parts = append(parts, geminiPart{
 					FunctionResponse: &geminiFunctionResponse{
 						Name: tr.ToolUseID, // Use the tool name stored in ToolUseID
-						Response: map[string]interface{}{
+						Response: map[string]any{
 							"result": contentStr,
 						},
 					},
@@ -198,7 +198,7 @@ func (c *geminiClient) Chat(ctx context.Context, messages []Message, tools inter
 				Role:  "user",
 				Parts: parts,
 			})
-		case []interface{}:
+		case []any:
 			// Handle complex content (text, tool use, and tool results)
 			var modelParts []geminiPart
 			var userParts []geminiPart
@@ -222,13 +222,13 @@ func (c *geminiClient) Chat(ctx context.Context, messages []Message, tools inter
 					userParts = append(userParts, geminiPart{
 						FunctionResponse: &geminiFunctionResponse{
 							Name: v.ToolUseID,
-							Response: map[string]interface{}{
+							Response: map[string]any{
 								"result": contentStr,
 							},
 						},
 					})
 				default:
-					itemMap, ok := item.(map[string]interface{})
+					itemMap, ok := item.(map[string]any)
 					if !ok {
 						continue
 					}
@@ -243,7 +243,7 @@ func (c *geminiClient) Chat(ctx context.Context, messages []Message, tools inter
 						}
 					case "tool_use":
 						name, ok1 := itemMap["name"].(string)
-						input, ok2 := itemMap["input"].(map[string]interface{})
+						input, ok2 := itemMap["input"].(map[string]any)
 						if ok1 && ok2 {
 							modelParts = append(modelParts, geminiPart{
 								FunctionCall: &geminiFunctionCall{
@@ -265,7 +265,7 @@ func (c *geminiClient) Chat(ctx context.Context, messages []Message, tools inter
 						userParts = append(userParts, geminiPart{
 							FunctionResponse: &geminiFunctionResponse{
 								Name: toolUseID,
-								Response: map[string]interface{}{
+								Response: map[string]any{
 									"result": contentStr,
 								},
 							},
@@ -301,7 +301,7 @@ func (c *geminiClient) Chat(ctx context.Context, messages []Message, tools inter
 	}
 
 	// Build generation config
-	genConfig := map[string]interface{}{
+	genConfig := map[string]any{
 		"maxOutputTokens": c.maxTokens,
 		"temperature":     c.temperature,
 	}
@@ -375,7 +375,7 @@ func (c *geminiClient) Chat(ctx context.Context, messages []Message, tools inter
 	duration := time.Since(startTime)
 
 	// Convert response content to typed structs
-	responseContent := make([]interface{}, 0, len(candidate.Content.Parts))
+	responseContent := make([]any, 0, len(candidate.Content.Parts))
 	hasToolCalls := false
 
 	for i, part := range candidate.Content.Parts {

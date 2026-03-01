@@ -13,6 +13,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/pgedge/ai-workbench/pkg/datastoreconfig"
+	"github.com/pgedge/ai-workbench/pkg/fileutil"
 )
 
 func TestNewConfig(t *testing.T) {
@@ -103,7 +106,7 @@ func TestConfigValidate(t *testing.T) {
 		{
 			name: "valid config",
 			config: &Config{
-				Datastore: DatastoreConfig{
+				Datastore: datastoreconfig.DatastoreConfig{
 					Host:     "localhost",
 					Database: "testdb",
 					Username: "testuser",
@@ -122,7 +125,7 @@ func TestConfigValidate(t *testing.T) {
 		{
 			name: "missing host",
 			config: &Config{
-				Datastore: DatastoreConfig{
+				Datastore: datastoreconfig.DatastoreConfig{
 					Host:     "",
 					Database: "testdb",
 					Username: "testuser",
@@ -134,7 +137,7 @@ func TestConfigValidate(t *testing.T) {
 		{
 			name: "missing database",
 			config: &Config{
-				Datastore: DatastoreConfig{
+				Datastore: datastoreconfig.DatastoreConfig{
 					Host:     "localhost",
 					Database: "",
 					Username: "testuser",
@@ -146,7 +149,7 @@ func TestConfigValidate(t *testing.T) {
 		{
 			name: "invalid port",
 			config: &Config{
-				Datastore: DatastoreConfig{
+				Datastore: datastoreconfig.DatastoreConfig{
 					Host:     "localhost",
 					Database: "testdb",
 					Username: "testuser",
@@ -161,7 +164,7 @@ func TestConfigValidate(t *testing.T) {
 		{
 			name: "invalid pool_max_connections",
 			config: &Config{
-				Datastore: DatastoreConfig{
+				Datastore: datastoreconfig.DatastoreConfig{
 					Host:     "localhost",
 					Database: "testdb",
 					Username: "testuser",
@@ -176,7 +179,7 @@ func TestConfigValidate(t *testing.T) {
 		{
 			name: "invalid pool_max_idle_seconds",
 			config: &Config{
-				Datastore: DatastoreConfig{
+				Datastore: datastoreconfig.DatastoreConfig{
 					Host:     "localhost",
 					Database: "testdb",
 					Username: "testuser",
@@ -192,7 +195,7 @@ func TestConfigValidate(t *testing.T) {
 		{
 			name: "invalid datastore_pool_max_wait_seconds",
 			config: &Config{
-				Datastore: DatastoreConfig{
+				Datastore: datastoreconfig.DatastoreConfig{
 					Host:     "localhost",
 					Database: "testdb",
 					Username: "testuser",
@@ -210,7 +213,7 @@ func TestConfigValidate(t *testing.T) {
 		{
 			name: "invalid monitored_pool_max_wait_seconds",
 			config: &Config{
-				Datastore: DatastoreConfig{
+				Datastore: datastoreconfig.DatastoreConfig{
 					Host:     "localhost",
 					Database: "testdb",
 					Username: "testuser",
@@ -228,7 +231,7 @@ func TestConfigValidate(t *testing.T) {
 		{
 			name: "invalid max_connections_per_server",
 			config: &Config{
-				Datastore: DatastoreConfig{
+				Datastore: datastoreconfig.DatastoreConfig{
 					Host:     "localhost",
 					Database: "testdb",
 					Username: "testuser",
@@ -256,7 +259,7 @@ func TestConfigValidate(t *testing.T) {
 	}
 }
 
-func TestReadPasswordFile(t *testing.T) {
+func TestReadPasswordFromSecretFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	passwordFile := filepath.Join(tmpDir, "password.txt")
 
@@ -265,9 +268,9 @@ func TestReadPasswordFile(t *testing.T) {
 		t.Fatalf("Failed to write test password file: %v", err)
 	}
 
-	password, err := readPasswordFile(passwordFile)
+	password, err := fileutil.ReadTrimmedFileWithTilde(passwordFile)
 	if err != nil {
-		t.Fatalf("readPasswordFile() error = %v", err)
+		t.Fatalf("fileutil.ReadTrimmedFileWithTilde() error = %v", err)
 	}
 
 	if password != testPassword {
@@ -290,7 +293,7 @@ func TestGetDefaultConfigPath(t *testing.T) {
 
 func TestConfigGetters(t *testing.T) {
 	config := &Config{
-		Datastore: DatastoreConfig{
+		Datastore: datastoreconfig.DatastoreConfig{
 			Host:        "testhost",
 			HostAddr:    "192.168.1.1",
 			Database:    "testdb",
@@ -363,9 +366,9 @@ func TestReadSecretFile(t *testing.T) {
 		t.Fatalf("Failed to write test secret file: %v", err)
 	}
 
-	secret, err := readSecretFile(secretFile)
+	secret, err := fileutil.ReadTrimmedFileWithTilde(secretFile)
 	if err != nil {
-		t.Fatalf("readSecretFile() error = %v", err)
+		t.Fatalf("fileutil.ReadTrimmedFileWithTilde() error = %v", err)
 	}
 
 	if secret != testSecret {
@@ -374,7 +377,7 @@ func TestReadSecretFile(t *testing.T) {
 }
 
 func TestReadSecretFile_NotFound(t *testing.T) {
-	_, err := readSecretFile("/nonexistent/path/to/secret.txt")
+	_, err := fileutil.ReadTrimmedFileWithTilde("/nonexistent/path/to/secret.txt")
 	if err == nil {
 		t.Error("Expected error when reading non-existent secret file")
 	}

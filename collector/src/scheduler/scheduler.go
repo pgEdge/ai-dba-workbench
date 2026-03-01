@@ -340,7 +340,7 @@ func (ps *ProbeScheduler) executeProbeForConnection(ctx context.Context, probe p
 	defer cancel()
 
 	// Collect all metrics before storing
-	var allMetrics []map[string]interface{}
+	var allMetrics []map[string]any
 	var databases []string
 	timestamp := time.Now()
 
@@ -479,9 +479,9 @@ func isClosedPoolError(err error) bool {
 }
 
 // executeProbeForAllDatabases executes a database-scoped probe for all databases and returns all collected metrics and database list
-func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe probes.MetricsProbe, conn database.MonitoredConnection) ([]map[string]interface{}, []string, bool, string) {
+func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe probes.MetricsProbe, conn database.MonitoredConnection) ([]map[string]any, []string, bool, string) {
 	config := probe.GetConfig()
-	var allMetrics []map[string]interface{}
+	var allMetrics []map[string]any
 	var databases []string
 
 	// Check if context is already canceled
@@ -645,9 +645,9 @@ func (ps *ProbeScheduler) getDatabaseList(ctx context.Context, conn *pgxpool.Con
 }
 
 // executeProbeForServerWide executes a server-wide probe and returns collected metrics
-func (ps *ProbeScheduler) executeProbeForServerWide(ctx context.Context, probe probes.MetricsProbe, conn database.MonitoredConnection) ([]map[string]interface{}, bool, string) {
+func (ps *ProbeScheduler) executeProbeForServerWide(ctx context.Context, probe probes.MetricsProbe, conn database.MonitoredConnection) ([]map[string]any, bool, string) {
 	config := probe.GetConfig()
-	var metrics []map[string]interface{}
+	var metrics []map[string]any
 
 	// Check if context is already canceled
 	if ctx.Err() != nil {
@@ -710,7 +710,7 @@ func (ps *ProbeScheduler) executeProbeForServerWide(ctx context.Context, probe p
 }
 
 // storeMetrics stores collected metrics to the datastore and returns the number of metrics stored
-func (ps *ProbeScheduler) storeMetrics(ctx context.Context, probe probes.MetricsProbe, connectionID int, timestamp time.Time, metrics []map[string]interface{}) int {
+func (ps *ProbeScheduler) storeMetrics(ctx context.Context, probe probes.MetricsProbe, connectionID int, timestamp time.Time, metrics []map[string]any) int {
 	config := probe.GetConfig()
 
 	// Get datastore connection with configured timeout

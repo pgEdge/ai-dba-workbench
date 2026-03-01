@@ -108,7 +108,7 @@ func (d *Datastore) ListBlackouts(ctx context.Context, filter BlackoutFilter) (*
 	defer d.mu.RUnlock()
 
 	conditions := []string{}
-	args := []interface{}{}
+	args := []any{}
 	argNum := 1
 
 	if filter.Scope != nil {
@@ -353,7 +353,7 @@ func (d *Datastore) GetActiveBlackoutsForEntity(ctx context.Context, scope strin
         ORDER BY b.start_time DESC
     `, condition)
 
-	var args []interface{}
+	var args []any
 	if scope != string(BlackoutScopeEstate) {
 		args = append(args, entityID)
 	}
@@ -390,7 +390,7 @@ func (d *Datastore) ListBlackoutSchedules(ctx context.Context, filter BlackoutFi
 	defer d.mu.RUnlock()
 
 	conditions := []string{}
-	args := []interface{}{}
+	args := []any{}
 	argNum := 1
 
 	if filter.Scope != nil {

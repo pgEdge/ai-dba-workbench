@@ -90,7 +90,7 @@ func TestPgSettingsProbe_ComputeMetricsHash(t *testing.T) {
 	probe := NewPgSettingsProbe(config)
 
 	// Test with identical metrics
-	metrics1 := []map[string]interface{}{
+	metrics1 := []map[string]any{
 		{
 			"name":    "max_connections",
 			"setting": "100",
@@ -103,7 +103,7 @@ func TestPgSettingsProbe_ComputeMetricsHash(t *testing.T) {
 		},
 	}
 
-	metrics2 := []map[string]interface{}{
+	metrics2 := []map[string]any{
 		{
 			"name":    "max_connections",
 			"setting": "100",
@@ -131,7 +131,7 @@ func TestPgSettingsProbe_ComputeMetricsHash(t *testing.T) {
 	}
 
 	// Test with different metrics
-	metrics3 := []map[string]interface{}{
+	metrics3 := []map[string]any{
 		{
 			"name":    "max_connections",
 			"setting": "200", // Different value
@@ -160,7 +160,7 @@ func TestPgSettingsProbe_ComputeMetricsHash_EmptyMetrics(t *testing.T) {
 	}
 	probe := NewPgSettingsProbe(config)
 
-	metrics := []map[string]interface{}{}
+	metrics := []map[string]any{}
 
 	hash, err := probe.computeMetricsHash(metrics)
 	if err != nil {

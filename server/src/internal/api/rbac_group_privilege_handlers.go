@@ -198,7 +198,7 @@ func (h *RBACHandler) listGroupPermissions(w http.ResponseWriter, r *http.Reques
 		perms = []string{}
 	}
 
-	RespondJSON(w, http.StatusOK, map[string]interface{}{
+	RespondJSON(w, http.StatusOK, map[string]any{
 		"group_id":    groupID,
 		"permissions": perms,
 	})

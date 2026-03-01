@@ -157,7 +157,7 @@ func (h *RBACHandler) createToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	RespondJSON(w, http.StatusCreated, map[string]interface{}{
+	RespondJSON(w, http.StatusCreated, map[string]any{
 		"token":      rawToken,
 		"id":         storedToken.ID,
 		"owner":      req.OwnerUsername,
@@ -283,14 +283,14 @@ func (h *RBACHandler) getTokenScope(w http.ResponseWriter, r *http.Request, toke
 	}
 
 	if scope == nil {
-		RespondJSON(w, http.StatusOK, map[string]interface{}{
+		RespondJSON(w, http.StatusOK, map[string]any{
 			"token_id": tokenID,
 			"scoped":   false,
 		})
 		return
 	}
 
-	RespondJSON(w, http.StatusOK, map[string]interface{}{
+	RespondJSON(w, http.StatusOK, map[string]any{
 		"token_id":          tokenID,
 		"scoped":            true,
 		"connections":       scope.Connections,

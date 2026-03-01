@@ -111,7 +111,7 @@ func TestParseDatabaseAnalysisResponse(t *testing.T) {
 	}
 
 	resp := chat.LLMResponse{
-		Content: []interface{}{
+		Content: []any{
 			chat.TextContent{
 				Text: "myapp: A web application database.\nanalytics: A data warehouse for reporting.\n",
 			},
@@ -141,7 +141,7 @@ func TestParseDatabaseAnalysisResponseHandlesMarkdownFormatting(t *testing.T) {
 	}
 
 	resp := chat.LLMResponse{
-		Content: []interface{}{
+		Content: []any{
 			chat.TextContent{
 				Text: "- myapp: A web application database.\n" +
 					"* analytics: A data warehouse for reporting.\n" +
@@ -180,7 +180,7 @@ func TestParseDatabaseAnalysisResponseIgnoresUnknownDatabases(t *testing.T) {
 	}
 
 	resp := chat.LLMResponse{
-		Content: []interface{}{
+		Content: []any{
 			chat.TextContent{
 				Text: "myapp: A web app.\nunknown_db: Should be ignored.\n",
 			},
@@ -203,8 +203,8 @@ func TestParseDatabaseAnalysisResponseHandlesMapContent(t *testing.T) {
 	}
 
 	resp := chat.LLMResponse{
-		Content: []interface{}{
-			map[string]interface{}{
+		Content: []any{
+			map[string]any{
 				"type": "text",
 				"text": "testdb: A test database.\n",
 			},

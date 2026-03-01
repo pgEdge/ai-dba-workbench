@@ -286,12 +286,12 @@ func TestRBACHandler_ListGroupPermissions(t *testing.T) {
 		t.Errorf("Expected status %d, got %d", http.StatusOK, rec.Code)
 	}
 
-	var resp map[string]interface{}
+	var resp map[string]any
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	perms, ok := resp["permissions"].([]interface{})
+	perms, ok := resp["permissions"].([]any)
 	if !ok {
 		t.Fatal("Expected permissions array in response")
 	}
@@ -331,7 +331,7 @@ func TestRBACHandler_ListUsers(t *testing.T) {
 	}
 
 	var resp struct {
-		Users []map[string]interface{} `json:"users"`
+		Users []map[string]any `json:"users"`
 	}
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("Failed to decode response: %v", err)

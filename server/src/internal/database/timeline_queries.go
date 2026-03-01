@@ -86,7 +86,7 @@ func (d *Datastore) GetTimelineEvents(ctx context.Context, filter TimelineFilter
 	// to build a typeCondition or add typeArgs to the query arguments.
 
 	// Combine all conditions - create new slice to avoid modifying originals
-	allArgs := make([]interface{}, 0, len(connArgs)+len(timeArgs))
+	allArgs := make([]any, 0, len(connArgs)+len(timeArgs))
 	allArgs = append(allArgs, connArgs...)
 	allArgs = append(allArgs, timeArgs...)
 
@@ -141,9 +141,9 @@ func (d *Datastore) GetTimelineEvents(ctx context.Context, filter TimelineFilter
 }
 
 // buildConnectionFilter creates the connection filter portion of the WHERE clause
-func buildConnectionFilter(filter TimelineFilter) (string, []interface{}, int) {
+func buildConnectionFilter(filter TimelineFilter) (string, []any, int) {
 	var conditions []string
-	var args []interface{}
+	var args []any
 	argNum := 1
 
 	if filter.ConnectionID != nil {
@@ -170,9 +170,9 @@ func buildConnectionFilter(filter TimelineFilter) (string, []interface{}, int) {
 }
 
 // buildTimeFilter creates the time filter portion of the WHERE clause
-func buildTimeFilter(filter TimelineFilter, startArgNum int) (string, []interface{}, int) {
+func buildTimeFilter(filter TimelineFilter, startArgNum int) (string, []any, int) {
 	var conditions []string
-	var args []interface{}
+	var args []any
 	argNum := startArgNum
 
 	if !filter.StartTime.IsZero() {

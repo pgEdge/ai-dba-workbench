@@ -12,12 +12,14 @@ package tools
 import (
 	"testing"
 	"time"
+
+	"github.com/pgedge/ai-workbench/server/internal/tsv"
 )
 
-func TestFormatTSVValue(t *testing.T) {
+func TestTSVFormatValue(t *testing.T) {
 	tests := []struct {
 		name     string
-		input    interface{}
+		input    any
 		expected string
 	}{
 		{
@@ -82,65 +84,65 @@ func TestFormatTSVValue(t *testing.T) {
 		},
 		{
 			name:     "array",
-			input:    []interface{}{"a", "b", "c"},
+			input:    []any{"a", "b", "c"},
 			expected: `["a","b","c"]`,
 		},
 		{
 			name:     "map",
-			input:    map[string]interface{}{"key": "value"},
+			input:    map[string]any{"key": "value"},
 			expected: `{"key":"value"}`,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := FormatTSVValue(tt.input)
+			result := tsv.FormatValue(tt.input)
 			if result != tt.expected {
-				t.Errorf("FormatTSVValue(%v) = %q, want %q", tt.input, result, tt.expected)
+				t.Errorf("tsv.FormatValue(%v) = %q, want %q", tt.input, result, tt.expected)
 			}
 		})
 	}
 }
 
-func TestFormatTSVValue_Time(t *testing.T) {
+func TestTSVFormatValue_Time(t *testing.T) {
 	// Test time formatting separately since we need to construct a specific time
 	testTime := time.Date(2024, 6, 15, 10, 30, 0, 0, time.UTC)
-	result := FormatTSVValue(testTime)
+	result := tsv.FormatValue(testTime)
 	expected := "2024-06-15T10:30:00Z"
 	if result != expected {
-		t.Errorf("FormatTSVValue(time) = %q, want %q", result, expected)
+		t.Errorf("tsv.FormatValue(time) = %q, want %q", result, expected)
 	}
 }
 
-func TestFormatResultsAsTSV(t *testing.T) {
+func TestTSVFormatResults(t *testing.T) {
 	tests := []struct {
 		name        string
 		columnNames []string
-		results     [][]interface{}
+		results     [][]any
 		expected    string
 	}{
 		{
 			name:        "empty columns",
 			columnNames: []string{},
-			results:     [][]interface{}{},
+			results:     [][]any{},
 			expected:    "",
 		},
 		{
 			name:        "header only (no results)",
 			columnNames: []string{"id", "name", "email"},
-			results:     [][]interface{}{},
+			results:     [][]any{},
 			expected:    "id\tname\temail",
 		},
 		{
 			name:        "single row",
 			columnNames: []string{"id", "name"},
-			results:     [][]interface{}{{1, "Alice"}},
+			results:     [][]any{{1, "Alice"}},
 			expected:    "id\tname\n1\tAlice",
 		},
 		{
 			name:        "multiple rows",
 			columnNames: []string{"id", "name", "active"},
-			results: [][]interface{}{
+			results: [][]any{
 				{1, "Alice", true},
 				{2, "Bob", false},
 			},
@@ -149,7 +151,7 @@ func TestFormatResultsAsTSV(t *testing.T) {
 		{
 			name:        "with null values",
 			columnNames: []string{"id", "name", "email"},
-			results: [][]interface{}{
+			results: [][]any{
 				{1, "Alice", nil},
 				{2, nil, "bob@example.com"},
 			},
@@ -158,7 +160,7 @@ func TestFormatResultsAsTSV(t *testing.T) {
 		{
 			name:        "with special characters",
 			columnNames: []string{"id", "notes"},
-			results: [][]interface{}{
+			results: [][]any{
 				{1, "line1\nline2"},
 				{2, "col1\tcol2"},
 			},
@@ -168,9 +170,9 @@ func TestFormatResultsAsTSV(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := FormatResultsAsTSV(tt.columnNames, tt.results)
+			result := tsv.FormatResults(tt.columnNames, tt.results)
 			if result != tt.expected {
-				t.Errorf("FormatResultsAsTSV() = %q, want %q", result, tt.expected)
+				t.Errorf("tsv.FormatResults() = %q, want %q", result, tt.expected)
 			}
 		})
 	}

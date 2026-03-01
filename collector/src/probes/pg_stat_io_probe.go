@@ -70,8 +70,8 @@ func (p *PgStatIOProbe) checkSLRUViewExists(ctx context.Context, conn *pgxpool.C
 }
 
 // Execute runs the probe against a monitored connection
-func (p *PgStatIOProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
-	var allMetrics []map[string]interface{}
+func (p *PgStatIOProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]any, error) {
+	var allMetrics []map[string]any
 
 	// Check if pg_stat_io exists (PG 16+)
 	ioExists, err := cachedCheck(connectionName, "pg_stat_io_exists", func() (bool, error) {
@@ -217,7 +217,7 @@ func (p *PgStatIOProbe) Execute(ctx context.Context, connectionName string, moni
 }
 
 // Store stores the collected metrics in the datastore
-func (p *PgStatIOProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]interface{}) error {
+func (p *PgStatIOProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]any) error {
 	if len(metrics) == 0 {
 		return nil // Nothing to store
 	}
@@ -239,9 +239,9 @@ func (p *PgStatIOProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, 
 	}
 
 	// Build values array
-	var values [][]interface{}
+	var values [][]any
 	for _, metric := range metrics {
-		row := []interface{}{
+		row := []any{
 			connectionID,
 			timestamp,
 			metric["backend_type"],

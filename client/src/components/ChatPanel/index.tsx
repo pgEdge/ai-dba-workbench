@@ -35,7 +35,7 @@ import ChatInput from './ChatInput';
 import ToolStatus, { ToolActivity } from './ToolStatus';
 import ThinkingIndicator from './ThinkingIndicator';
 import ConversationHistory from './ConversationHistory';
-import { getDownloadButtonSx } from '../shared/MarkdownContent';
+import { getDownloadButtonSx } from '../shared/MarkdownExports';
 import { downloadAsMarkdown } from '../../utils/downloadMarkdown';
 
 // ---------------------------------------------------------------------------

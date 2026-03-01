@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/pkg/connstring"
 	"github.com/pgedge/ai-workbench/pkg/crypto"
 	"github.com/pgedge/ai-workbench/pkg/logger"
 )
@@ -573,5 +574,5 @@ func buildMonitoredConnectionStringForDatabase(conn MonitoredConnection, databas
 	// Set connection timeout (10 seconds)
 	params["connect_timeout"] = "10"
 
-	return buildPostgresConnectionString(params), nil
+	return connstring.Build(params), nil
 }

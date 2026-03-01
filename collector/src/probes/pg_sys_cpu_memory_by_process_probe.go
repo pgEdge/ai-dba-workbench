@@ -51,7 +51,7 @@ func (p *PgSysCPUMemoryByProcessProbe) GetQuery() string {
 }
 
 // Execute runs the probe against a monitored connection
-func (p *PgSysCPUMemoryByProcessProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
+func (p *PgSysCPUMemoryByProcessProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]any, error) {
 	// Check if system_stats extension is installed
 	exists, err := CheckExtensionExists(ctx, connectionName, monitoredConn, "system_stats")
 	if err != nil {
@@ -73,7 +73,7 @@ func (p *PgSysCPUMemoryByProcessProbe) Execute(ctx context.Context, connectionNa
 }
 
 // Store stores the collected metrics in the datastore
-func (p *PgSysCPUMemoryByProcessProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]interface{}) error {
+func (p *PgSysCPUMemoryByProcessProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]any) error {
 	if len(metrics) == 0 {
 		return nil // Nothing to store
 	}
@@ -91,9 +91,9 @@ func (p *PgSysCPUMemoryByProcessProbe) Store(ctx context.Context, datastoreConn 
 	}
 
 	// Build values array
-	var values [][]interface{}
+	var values [][]any
 	for _, metric := range metrics {
-		row := []interface{}{
+		row := []any{
 			connectionID,
 			timestamp,
 			metric["pid"],

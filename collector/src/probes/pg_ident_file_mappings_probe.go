@@ -89,7 +89,7 @@ func (p *PgIdentFileMappingsProbe) checkViewAvailable(ctx context.Context, conn 
 }
 
 // Execute runs the probe against a monitored connection
-func (p *PgIdentFileMappingsProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
+func (p *PgIdentFileMappingsProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]any, error) {
 	// Check if view exists (PG15+)
 	available, err := p.checkViewAvailable(ctx, monitoredConn)
 	if err != nil {
@@ -98,7 +98,7 @@ func (p *PgIdentFileMappingsProbe) Execute(ctx context.Context, connectionName s
 
 	if !available {
 		// View not available (PG14 and earlier), return empty metrics
-		return []map[string]interface{}{}, nil
+		return []map[string]any{}, nil
 	}
 
 	query := WrapQuery(ProbeNamePgIdentFileMappings, p.GetQueryForVersion(pgVersion))
@@ -112,7 +112,7 @@ func (p *PgIdentFileMappingsProbe) Execute(ctx context.Context, connectionName s
 }
 
 // Store stores the collected metrics in the datastore only if data has changed
-func (p *PgIdentFileMappingsProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]interface{}) error {
+func (p *PgIdentFileMappingsProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]any) error {
 	// Check if data has changed
 	changed, err := p.hasDataChanged(ctx, datastoreConn, connectionID, metrics)
 	if err != nil {
@@ -139,9 +139,9 @@ func (p *PgIdentFileMappingsProbe) Store(ctx context.Context, datastoreConn *pgx
 	}
 
 	// Build values array
-	var values [][]interface{}
+	var values [][]any
 	for _, metric := range metrics {
-		row := []interface{}{
+		row := []any{
 			connectionID,
 			timestamp,
 			metric["map_number"],
@@ -164,7 +164,7 @@ func (p *PgIdentFileMappingsProbe) Store(ctx context.Context, datastoreConn *pgx
 }
 
 // hasDataChanged checks if the current ident mappings differ from the most recently stored data
-func (p *PgIdentFileMappingsProbe) hasDataChanged(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, currentMetrics []map[string]interface{}) (bool, error) {
+func (p *PgIdentFileMappingsProbe) hasDataChanged(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, currentMetrics []map[string]any) (bool, error) {
 	// Compute hash of current metrics
 	currentHash, err := p.computeMetricsHash(currentMetrics)
 	if err != nil {
@@ -214,7 +214,7 @@ func (p *PgIdentFileMappingsProbe) hasDataChanged(ctx context.Context, datastore
 }
 
 // computeMetricsHash computes a SHA256 hash of metrics for comparison
-func (p *PgIdentFileMappingsProbe) computeMetricsHash(metrics []map[string]interface{}) (string, error) {
+func (p *PgIdentFileMappingsProbe) computeMetricsHash(metrics []map[string]any) (string, error) {
 	return ComputeMetricsHash(metrics)
 }
 

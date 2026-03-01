@@ -54,7 +54,7 @@ func TestRBACHandler_CreateToken_Valid(t *testing.T) {
 			http.StatusCreated, rec.Code, rec.Body.String())
 	}
 
-	var resp map[string]interface{}
+	var resp map[string]any
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestRBACHandler_CreateToken_WithExpiry(t *testing.T) {
 			http.StatusCreated, rec.Code, rec.Body.String())
 	}
 
-	var resp map[string]interface{}
+	var resp map[string]any
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
@@ -294,7 +294,7 @@ func TestRBACHandler_ListTokens_Admin(t *testing.T) {
 	}
 
 	var resp struct {
-		Tokens []map[string]interface{} `json:"tokens"`
+		Tokens []map[string]any `json:"tokens"`
 	}
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("Failed to decode response: %v", err)
@@ -383,7 +383,7 @@ func TestRBACHandler_ListTokens_IncludesUsername(t *testing.T) {
 	}
 
 	var resp struct {
-		Tokens []map[string]interface{} `json:"tokens"`
+		Tokens []map[string]any `json:"tokens"`
 	}
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("Failed to decode response: %v", err)
@@ -535,7 +535,7 @@ func TestRBACHandler_GetTokenScope_NoScope(t *testing.T) {
 			http.StatusOK, rec.Code, rec.Body.String())
 	}
 
-	var resp map[string]interface{}
+	var resp map[string]any
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
@@ -558,8 +558,8 @@ func TestRBACHandler_SetTokenScope_Connections(t *testing.T) {
 
 	_, storedToken, _ := store.CreateToken("admin", "Scoped token", nil)
 
-	body, _ := json.Marshal(map[string]interface{}{
-		"connections": []map[string]interface{}{
+	body, _ := json.Marshal(map[string]any{
+		"connections": []map[string]any{
 			{"connection_id": 1, "access_level": "read"},
 			{"connection_id": 2, "access_level": "read_write"},
 		},
@@ -591,7 +591,7 @@ func TestRBACHandler_SetTokenScope_Connections(t *testing.T) {
 			http.StatusOK, rec.Code, rec.Body.String())
 	}
 
-	var resp map[string]interface{}
+	var resp map[string]any
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
@@ -601,7 +601,7 @@ func TestRBACHandler_SetTokenScope_Connections(t *testing.T) {
 		t.Error("Expected 'scoped' to be true after setting scope")
 	}
 
-	conns, ok := resp["connections"].([]interface{})
+	conns, ok := resp["connections"].([]any)
 	if !ok {
 		t.Fatal("Expected 'connections' array in response")
 	}
@@ -622,7 +622,7 @@ func TestRBACHandler_SetTokenScope_AdminPermissions(t *testing.T) {
 
 	_, storedToken, _ := store.CreateToken("admin", "Admin scoped token", nil)
 
-	body, _ := json.Marshal(map[string]interface{}{
+	body, _ := json.Marshal(map[string]any{
 		"admin_permissions": []string{
 			auth.PermManageUsers,
 			auth.PermManageConnections,
@@ -654,7 +654,7 @@ func TestRBACHandler_SetTokenScope_AdminPermissions(t *testing.T) {
 		t.Errorf("Expected status %d, got %d", http.StatusOK, rec.Code)
 	}
 
-	var resp map[string]interface{}
+	var resp map[string]any
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
@@ -664,7 +664,7 @@ func TestRBACHandler_SetTokenScope_AdminPermissions(t *testing.T) {
 		t.Error("Expected 'scoped' to be true after setting admin permissions scope")
 	}
 
-	perms, ok := resp["admin_permissions"].([]interface{})
+	perms, ok := resp["admin_permissions"].([]any)
 	if !ok {
 		t.Fatal("Expected 'admin_permissions' array in response")
 	}
@@ -715,7 +715,7 @@ func TestRBACHandler_ClearTokenScope(t *testing.T) {
 		t.Errorf("Expected status %d, got %d", http.StatusOK, rec.Code)
 	}
 
-	var resp map[string]interface{}
+	var resp map[string]any
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
@@ -755,8 +755,8 @@ func TestRBACHandler_SetTokenScope_PermissionDenied(t *testing.T) {
 	userID, _ := store.GetUserID("normie")
 	_, storedToken, _ := store.CreateToken("normie", "My token", nil)
 
-	body, _ := json.Marshal(map[string]interface{}{
-		"connections": []map[string]interface{}{
+	body, _ := json.Marshal(map[string]any{
+		"connections": []map[string]any{
 			{"connection_id": 1, "access_level": "read"},
 		},
 	})

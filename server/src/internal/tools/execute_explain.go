@@ -80,30 +80,30 @@ READ ONLY transaction to prevent side effects. However, be cautious with:
 			CompactDescription: `Run EXPLAIN ANALYZE on SELECT queries to diagnose performance. Specify connection_id to target a database; use list_connections to discover IDs. Returns execution plan with timing and buffer statistics.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
-				Properties: map[string]interface{}{
-					"connection_id": map[string]interface{}{
+				Properties: map[string]any{
+					"connection_id": map[string]any{
 						"type":        "integer",
 						"description": "ID of the monitored database connection to use. Use list_connections to discover available IDs. If omitted, uses the currently selected connection.",
 					},
-					"database_name": map[string]interface{}{
+					"database_name": map[string]any{
 						"type":        "string",
 						"description": "Database name to connect to. If omitted, uses the connection's default database.",
 					},
-					"query": map[string]interface{}{
+					"query": map[string]any{
 						"type":        "string",
 						"description": "The SQL query to analyze (SELECT queries only)",
 					},
-					"analyze": map[string]interface{}{
+					"analyze": map[string]any{
 						"type":        "boolean",
 						"description": "Run EXPLAIN ANALYZE (executes query) vs plain EXPLAIN (planning only). Default: true",
 						"default":     true,
 					},
-					"buffers": map[string]interface{}{
+					"buffers": map[string]any{
 						"type":        "boolean",
 						"description": "Include buffer usage statistics. Default: true",
 						"default":     true,
 					},
-					"format": map[string]interface{}{
+					"format": map[string]any{
 						"type":        "string",
 						"enum":        []string{"text", "json"},
 						"description": "Output format: 'text' for human-readable (default), 'json' for structured data",
@@ -113,7 +113,7 @@ READ ONLY transaction to prevent side effects. However, be cautious with:
 				Required: []string{"query"},
 			},
 		},
-		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
+		Handler: func(args map[string]any) (mcp.ToolResponse, error) {
 			// Extract and validate parameters
 			query, ok := args["query"].(string)
 			if !ok || query == "" {

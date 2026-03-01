@@ -68,15 +68,15 @@ const SelectionHeader = ({ selection, alertCount = 0, alertSeverities = {}, onBl
     const status = selection.status;
 
     const iconColor = useMemo(() => {
-        if (status === 'offline') return 'error.main';
-        if (alertCount > 0) return 'warning.main';
+        if (status === 'offline') {return 'error.main';}
+        if (alertCount > 0) {return 'warning.main';}
         return 'success.main';
     }, [status, alertCount]);
 
     const iconBoxSx = useMemo(() => {
         let palette = theme.palette.success.main;
-        if (status === 'offline') palette = theme.palette.error.main;
-        else if (alertCount > 0) palette = theme.palette.warning.main;
+        if (status === 'offline') {palette = theme.palette.error.main;}
+        else if (alertCount > 0) {palette = theme.palette.warning.main;}
 
         return {
             ...HEADER_ICON_BOX_BASE_SX,
@@ -91,7 +91,7 @@ const SelectionHeader = ({ selection, alertCount = 0, alertSeverities = {}, onBl
             : selection.type === 'estate' ? 'Estate'
             : 'Selection';
 
-        if (status === 'offline') return `${typeName} is offline`;
+        if (status === 'offline') {return `${typeName} is offline`;}
 
         if (alertCount > 0) {
             const parts = Object.entries(alertSeverities)

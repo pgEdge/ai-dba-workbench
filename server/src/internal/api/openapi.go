@@ -93,9 +93,9 @@ type OpenAPISchema struct {
 	Required             []string                  `json:"required,omitempty"`
 	Ref                  string                    `json:"$ref,omitempty"`
 	Enum                 []string                  `json:"enum,omitempty"`
-	Default              interface{}               `json:"default,omitempty"`
+	Default              any                       `json:"default,omitempty"`
 	Nullable             bool                      `json:"nullable,omitempty"`
-	Example              interface{}               `json:"example,omitempty"`
+	Example              any                       `json:"example,omitempty"`
 }
 
 // OpenAPIComponents contains reusable components.

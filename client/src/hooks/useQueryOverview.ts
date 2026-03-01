@@ -206,7 +206,7 @@ export function useQueryOverview(
             generateSummary(input);
         }
     }, [
-        input?.queryId, input?.connectionId, input?.databaseName,
+        input, input?.queryId, input?.connectionId, input?.databaseName,
         generateSummary,
     ]);
 

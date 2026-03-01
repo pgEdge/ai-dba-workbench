@@ -38,20 +38,20 @@ func RecallMemoriesTool(memoryStore *memory.Store, cfg *config.Config) Tool {
 			CompactDescription: `Search stored memories by semantic similarity; pinned memories are always included.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
-				Properties: map[string]interface{}{
-					"query": map[string]interface{}{
+				Properties: map[string]any{
+					"query": map[string]any{
 						"type":        "string",
 						"description": "The search query text for semantic matching",
 					},
-					"category": map[string]interface{}{
+					"category": map[string]any{
 						"type":        "string",
 						"description": "Filter by category (e.g., \"preference\", \"fact\", \"instruction\", \"context\")",
 					},
-					"scope": map[string]interface{}{
+					"scope": map[string]any{
 						"type":        "string",
 						"description": "Filter by scope: \"user\" for personal memories or \"system\" for shared memories",
 					},
-					"limit": map[string]interface{}{
+					"limit": map[string]any{
 						"type":        "number",
 						"description": "Maximum number of results to return (default 10)",
 					},
@@ -59,7 +59,7 @@ func RecallMemoriesTool(memoryStore *memory.Store, cfg *config.Config) Tool {
 				Required: []string{"query"},
 			},
 		},
-		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
+		Handler: func(args map[string]any) (mcp.ToolResponse, error) {
 			// Extract and validate the query parameter
 			query, ok := args["query"].(string)
 			if !ok || query == "" {

@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"net"
 	"strings"
+
+	"github.com/pgedge/ai-workbench/pkg/hostvalidation"
 )
 
 // HostValidator validates database host addresses to prevent SSRF attacks.
@@ -36,39 +38,6 @@ type HostValidator struct {
 
 	// parsedBlocked contains parsed CIDR networks from BlockedHosts
 	parsedBlocked []*net.IPNet
-}
-
-// internalNetworks defines RFC 1918 private address ranges and other internal networks
-var internalNetworks = []string{
-	"10.0.0.0/8",      // RFC 1918 Class A private
-	"172.16.0.0/12",   // RFC 1918 Class B private
-	"192.168.0.0/16",  // RFC 1918 Class C private
-	"127.0.0.0/8",     // Loopback
-	"169.254.0.0/16",  // Link-local
-	"::1/128",         // IPv6 loopback
-	"fc00::/7",        // IPv6 unique local
-	"fe80::/10",       // IPv6 link-local
-	"0.0.0.0/8",       // Current network (invalid as destination)
-	"100.64.0.0/10",   // Carrier-grade NAT (RFC 6598)
-	"192.0.0.0/24",    // IETF protocol assignments
-	"192.0.2.0/24",    // TEST-NET-1
-	"198.51.100.0/24", // TEST-NET-2
-	"203.0.113.0/24",  // TEST-NET-3
-	"224.0.0.0/4",     // Multicast
-	"240.0.0.0/4",     // Reserved for future use
-}
-
-// parsedInternalNetworks contains pre-parsed internal network CIDRs
-var parsedInternalNetworks []*net.IPNet
-
-func init() {
-	parsedInternalNetworks = make([]*net.IPNet, 0, len(internalNetworks))
-	for _, cidr := range internalNetworks {
-		_, ipNet, err := net.ParseCIDR(cidr)
-		if err == nil {
-			parsedInternalNetworks = append(parsedInternalNetworks, ipNet)
-		}
-	}
 }
 
 // parseHostsToCIDR parses a slice of host strings into CIDR networks.
@@ -151,10 +120,8 @@ func (v *HostValidator) ValidateHost(host string) error {
 
 		// Check internal networks
 		if !v.AllowInternalNetworks {
-			for _, internal := range parsedInternalNetworks {
-				if internal.Contains(ip) {
-					return fmt.Errorf("connections to internal IP address '%s' are not allowed", host)
-				}
+			if hostvalidation.IsPrivateIP(ip) {
+				return fmt.Errorf("connections to internal IP address '%s' are not allowed", host)
 			}
 		}
 
@@ -190,12 +157,10 @@ func (v *HostValidator) ValidateHost(host string) error {
 
 		// Check internal networks
 		if !v.AllowInternalNetworks {
-			for _, internal := range parsedInternalNetworks {
-				if internal.Contains(resolvedIP) {
-					return fmt.Errorf("hostname '%s' resolves to internal IP address '%s'; "+
-						"connections to internal networks are not allowed",
-						host, resolvedIP.String())
-				}
+			if hostvalidation.IsPrivateIP(resolvedIP) {
+				return fmt.Errorf("hostname '%s' resolves to internal IP address '%s'; "+
+					"connections to internal networks are not allowed",
+					host, resolvedIP.String())
 			}
 		}
 	}

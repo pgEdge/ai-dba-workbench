@@ -13,8 +13,8 @@ package config
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
+	"github.com/pgedge/ai-workbench/pkg/datastoreconfig"
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
 	"gopkg.in/yaml.v3"
 )
@@ -22,7 +22,7 @@ import (
 // Config holds all configuration options for the alerter
 type Config struct {
 	// Datastore connection settings
-	Datastore DatastoreConfig `yaml:"datastore"`
+	Datastore datastoreconfig.DatastoreConfig `yaml:"datastore"`
 
 	// Connection pool settings
 	Pool PoolConfig `yaml:"pool"`
@@ -44,21 +44,6 @@ type Config struct {
 
 	// Notifications settings
 	Notifications NotificationsConfig `yaml:"notifications"`
-}
-
-// DatastoreConfig holds PostgreSQL connection settings for the datastore
-type DatastoreConfig struct {
-	Host         string `yaml:"host"`
-	HostAddr     string `yaml:"hostaddr"`
-	Database     string `yaml:"database"`
-	Username     string `yaml:"username"`
-	Password     string `yaml:"password"`
-	PasswordFile string `yaml:"password_file"`
-	Port         int    `yaml:"port"`
-	SSLMode      string `yaml:"sslmode"`
-	SSLCert      string `yaml:"sslcert"`
-	SSLKey       string `yaml:"sslkey"`
-	SSLRootCert  string `yaml:"sslrootcert"`
 }
 
 // PoolConfig holds connection pool settings
@@ -208,7 +193,7 @@ type GeminiConfig struct {
 // NewConfig creates a new Config with default values
 func NewConfig() *Config {
 	return &Config{
-		Datastore: DatastoreConfig{
+		Datastore: datastoreconfig.DatastoreConfig{
 			Host:     "localhost",
 			Database: "ai_workbench",
 			Username: "postgres",
@@ -301,7 +286,7 @@ func (c *Config) LoadPassword() error {
 	}
 
 	if c.Datastore.PasswordFile != "" {
-		password, err := readSecretFile(c.Datastore.PasswordFile)
+		password, err := fileutil.ReadTrimmedFileWithTilde(c.Datastore.PasswordFile)
 		if err != nil {
 			return fmt.Errorf("failed to read password file: %w", err)
 		}
@@ -314,7 +299,7 @@ func (c *Config) LoadPassword() error {
 // LoadAPIKeys loads API keys from their respective files
 func (c *Config) LoadAPIKeys() error {
 	if c.LLM.OpenAI.APIKeyFile != "" {
-		key, err := readSecretFile(c.LLM.OpenAI.APIKeyFile)
+		key, err := fileutil.ReadTrimmedFileWithTilde(c.LLM.OpenAI.APIKeyFile)
 		if err != nil {
 			return fmt.Errorf("failed to read OpenAI API key: %w", err)
 		}
@@ -322,7 +307,7 @@ func (c *Config) LoadAPIKeys() error {
 	}
 
 	if c.LLM.Anthropic.APIKeyFile != "" {
-		key, err := readSecretFile(c.LLM.Anthropic.APIKeyFile)
+		key, err := fileutil.ReadTrimmedFileWithTilde(c.LLM.Anthropic.APIKeyFile)
 		if err != nil {
 			return fmt.Errorf("failed to read Anthropic API key: %w", err)
 		}
@@ -330,7 +315,7 @@ func (c *Config) LoadAPIKeys() error {
 	}
 
 	if c.LLM.Voyage.APIKeyFile != "" {
-		key, err := readSecretFile(c.LLM.Voyage.APIKeyFile)
+		key, err := fileutil.ReadTrimmedFileWithTilde(c.LLM.Voyage.APIKeyFile)
 		if err != nil {
 			return fmt.Errorf("failed to read Voyage API key: %w", err)
 		}
@@ -338,7 +323,7 @@ func (c *Config) LoadAPIKeys() error {
 	}
 
 	if c.LLM.Gemini.APIKeyFile != "" {
-		key, err := readSecretFile(c.LLM.Gemini.APIKeyFile)
+		key, err := fileutil.ReadTrimmedFileWithTilde(c.LLM.Gemini.APIKeyFile)
 		if err != nil {
 			return fmt.Errorf("failed to read Gemini API key: %w", err)
 		}
@@ -368,11 +353,6 @@ func (c *Config) GetGeminiAPIKey() string {
 	return c.LLM.Gemini.apiKey
 }
 
-// readSecretFile reads a secret from a file
-func readSecretFile(filename string) (string, error) {
-	return fileutil.ReadTrimmedFileWithTilde(filename)
-}
-
 // Validate checks if the configuration is valid
 func (c *Config) Validate() error {
 	if c.Datastore.Host == "" {
@@ -395,19 +375,12 @@ func (c *Config) Validate() error {
 
 // GetDefaultConfigPath returns the default config file path
 func GetDefaultConfigPath(binaryPath string) string {
-	systemPath := "/etc/pgedge/ai-dba-alerter.yaml"
-	if _, err := os.Stat(systemPath); err == nil {
-		return systemPath
-	}
-
-	dir := filepath.Dir(binaryPath)
-	return filepath.Join(dir, "ai-dba-alerter.yaml")
+	return fileutil.GetDefaultConfigPath(binaryPath, "ai-dba-alerter.yaml")
 }
 
 // ConfigFileExists checks if a config file exists at the given path
 func ConfigFileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
+	return fileutil.FileExists(path)
 }
 
 // SetNotificationDefaults sets default values for notification config

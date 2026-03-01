@@ -25,7 +25,7 @@ func TestQueryMetrics_NilPool(t *testing.T) {
 	}
 
 	// Test with nil pool - should return error
-	resp, err := tool.Handler(map[string]interface{}{
+	resp, err := tool.Handler(map[string]any{
 		"probe_name":    "pg_stat_database",
 		"connection_id": float64(1),
 	})
@@ -43,23 +43,23 @@ func TestQueryMetrics_MissingParameters(t *testing.T) {
 
 	tests := []struct {
 		name string
-		args map[string]interface{}
+		args map[string]any
 	}{
 		{
 			name: "missing probe_name",
-			args: map[string]interface{}{
+			args: map[string]any{
 				"connection_id": float64(1),
 			},
 		},
 		{
 			name: "missing connection_id",
-			args: map[string]interface{}{
+			args: map[string]any{
 				"probe_name": "pg_stat_database",
 			},
 		},
 		{
 			name: "empty probe_name",
-			args: map[string]interface{}{
+			args: map[string]any{
 				"probe_name":    "",
 				"connection_id": float64(1),
 			},
@@ -149,31 +149,31 @@ func TestParseTimeArg(t *testing.T) {
 func TestParseTimeRange(t *testing.T) {
 	tests := []struct {
 		name    string
-		args    map[string]interface{}
+		args    map[string]any
 		wantErr bool
 	}{
 		{
 			name:    "default values",
-			args:    map[string]interface{}{},
+			args:    map[string]any{},
 			wantErr: false,
 		},
 		{
 			name: "relative start",
-			args: map[string]interface{}{
+			args: map[string]any{
 				"time_start": "24h",
 			},
 			wantErr: false,
 		},
 		{
 			name: "absolute start",
-			args: map[string]interface{}{
+			args: map[string]any{
 				"time_start": "2024-01-15T10:00:00Z",
 			},
 			wantErr: false,
 		},
 		{
 			name: "both times",
-			args: map[string]interface{}{
+			args: map[string]any{
 				"time_start": "2024-01-15T10:00:00Z",
 				"time_end":   "2024-01-15T12:00:00Z",
 			},
@@ -181,7 +181,7 @@ func TestParseTimeRange(t *testing.T) {
 		},
 		{
 			name: "start after end",
-			args: map[string]interface{}{
+			args: map[string]any{
 				"time_start": "2024-01-15T12:00:00Z",
 				"time_end":   "2024-01-15T10:00:00Z",
 			},
@@ -189,7 +189,7 @@ func TestParseTimeRange(t *testing.T) {
 		},
 		{
 			name: "invalid start",
-			args: map[string]interface{}{
+			args: map[string]any{
 				"time_start": "invalid",
 			},
 			wantErr: true,
@@ -219,42 +219,42 @@ func TestParseTimeRange(t *testing.T) {
 func TestParseIntArg(t *testing.T) {
 	tests := []struct {
 		name    string
-		args    map[string]interface{}
+		args    map[string]any
 		key     string
 		want    int
 		wantErr bool
 	}{
 		{
 			name:    "float64 value",
-			args:    map[string]interface{}{"num": float64(42)},
+			args:    map[string]any{"num": float64(42)},
 			key:     "num",
 			want:    42,
 			wantErr: false,
 		},
 		{
 			name:    "int value",
-			args:    map[string]interface{}{"num": 42},
+			args:    map[string]any{"num": 42},
 			key:     "num",
 			want:    42,
 			wantErr: false,
 		},
 		{
 			name:    "int64 value",
-			args:    map[string]interface{}{"num": int64(42)},
+			args:    map[string]any{"num": int64(42)},
 			key:     "num",
 			want:    42,
 			wantErr: false,
 		},
 		{
 			name:    "missing key",
-			args:    map[string]interface{}{},
+			args:    map[string]any{},
 			key:     "num",
 			want:    0,
 			wantErr: true,
 		},
 		{
 			name:    "wrong type",
-			args:    map[string]interface{}{"num": "42"},
+			args:    map[string]any{"num": "42"},
 			key:     "num",
 			want:    0,
 			wantErr: true,
@@ -284,7 +284,7 @@ func TestParseIntArg(t *testing.T) {
 func TestFormatMetricValue(t *testing.T) {
 	tests := []struct {
 		name     string
-		input    interface{}
+		input    any
 		expected string
 	}{
 		{"nil value", nil, ""},
@@ -321,7 +321,7 @@ func TestFormatMetricValue_PgTypes(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		input    interface{}
+		input    any
 		expected string
 	}{
 		// Integer types

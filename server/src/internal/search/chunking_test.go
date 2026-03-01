@@ -172,7 +172,7 @@ func TestChunkText_ExcessiveOverlap(t *testing.T) {
 }
 
 func TestChunkRow(t *testing.T) {
-	rowData := map[string]interface{}{
+	rowData := map[string]any{
 		"id":         1,
 		"title":      "Test Title",
 		"content":    "This is some test content that will be chunked.",
@@ -212,7 +212,7 @@ func TestChunkRow_LargeContent(t *testing.T) {
 	}
 	largeContent := strings.Join(words, " ")
 
-	rowData := map[string]interface{}{
+	rowData := map[string]any{
 		"id":      1,
 		"content": largeContent,
 	}
@@ -232,7 +232,7 @@ func TestChunkRow_LargeContent(t *testing.T) {
 }
 
 func TestChunkRow_EmptyColumns(t *testing.T) {
-	rowData := map[string]interface{}{
+	rowData := map[string]any{
 		"id": 1,
 	}
 
@@ -244,7 +244,7 @@ func TestChunkRow_EmptyColumns(t *testing.T) {
 }
 
 func TestChunkRow_NonStringValues(t *testing.T) {
-	rowData := map[string]interface{}{
+	rowData := map[string]any{
 		"id":     1,
 		"count":  42,    // integer
 		"active": true,  // boolean

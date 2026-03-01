@@ -66,16 +66,16 @@ DO NOT use for:
 			CompactDescription: `Validate SQL query correctness without executing it. Specify connection_id to target a database; use list_connections to discover IDs. Uses EXPLAIN in a read-only transaction.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
-				Properties: map[string]interface{}{
-					"connection_id": map[string]interface{}{
+				Properties: map[string]any{
+					"connection_id": map[string]any{
 						"type":        "integer",
 						"description": "ID of the monitored database connection to use. Use list_connections to discover available IDs. If omitted, uses the currently selected connection.",
 					},
-					"database_name": map[string]interface{}{
+					"database_name": map[string]any{
 						"type":        "string",
 						"description": "Database name to connect to. If omitted, uses the connection's default database.",
 					},
-					"query": map[string]interface{}{
+					"query": map[string]any{
 						"type":        "string",
 						"description": "The SQL query to validate",
 					},
@@ -83,7 +83,7 @@ DO NOT use for:
 				Required: []string{"query"},
 			},
 		},
-		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
+		Handler: func(args map[string]any) (mcp.ToolResponse, error) {
 			// Extract and validate parameters
 			query, ok := args["query"].(string)
 			if !ok || query == "" {

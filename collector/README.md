@@ -168,9 +168,12 @@ The test suite automatically creates a temporary test database, runs all
 tests, and drops the database when complete. Use the following environment
 variables to customize test behavior:
 
-- `TEST_AI_WORKBENCH_SERVER` - Specify a custom PostgreSQL server.
-- `TEST_AI_WORKBENCH_KEEP_DB=1` - Keep the test database for inspection.
-- `SKIP_DB_TESTS=1` - Skip all database tests.
+- `TEST_AI_WORKBENCH_SERVER` specifies a custom
+  PostgreSQL server for testing.
+- `TEST_AI_WORKBENCH_KEEP_DB=1` preserves the test
+  database for inspection after tests complete.
+- `SKIP_DB_TESTS=1` skips all database tests during
+  the test run.
 
 Additional make targets:
 

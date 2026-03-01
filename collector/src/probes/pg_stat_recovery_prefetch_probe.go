@@ -69,7 +69,7 @@ func (p *PgStatRecoveryPrefetchProbe) checkViewAvailable(ctx context.Context, co
 }
 
 // Execute runs the probe against a monitored connection
-func (p *PgStatRecoveryPrefetchProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
+func (p *PgStatRecoveryPrefetchProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]any, error) {
 	// Check if view is available
 	available, err := p.checkViewAvailable(ctx, monitoredConn)
 	if err != nil {
@@ -78,7 +78,7 @@ func (p *PgStatRecoveryPrefetchProbe) Execute(ctx context.Context, connectionNam
 
 	if !available {
 		// View not available, return empty metrics (not an error)
-		return []map[string]interface{}{}, nil
+		return []map[string]any{}, nil
 	}
 
 	query := WrapQuery(ProbeNamePgStatRecoveryPrefetch, p.GetQuery())
@@ -92,7 +92,7 @@ func (p *PgStatRecoveryPrefetchProbe) Execute(ctx context.Context, connectionNam
 }
 
 // Store stores the collected metrics in the datastore
-func (p *PgStatRecoveryPrefetchProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]interface{}) error {
+func (p *PgStatRecoveryPrefetchProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]any) error {
 	if len(metrics) == 0 {
 		return nil // Nothing to store
 	}
@@ -111,9 +111,9 @@ func (p *PgStatRecoveryPrefetchProbe) Store(ctx context.Context, datastoreConn *
 	}
 
 	// Build values array
-	var values [][]interface{}
+	var values [][]any
 	for _, metric := range metrics {
-		row := []interface{}{
+		row := []any{
 			connectionID,
 			timestamp,
 			metric["stats_reset"],

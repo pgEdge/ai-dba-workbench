@@ -64,8 +64,8 @@ Returns TSV with:
 			CompactDescription: `Get detailed column information for a specific metrics probe, including column names, types, and descriptions. Use after list_probes to understand what metrics a probe collects.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
-				Properties: map[string]interface{}{
-					"probe_name": map[string]interface{}{
+				Properties: map[string]any{
+					"probe_name": map[string]any{
 						"type":        "string",
 						"description": "Name of the probe to describe (from list_probes output)",
 					},
@@ -73,7 +73,7 @@ Returns TSV with:
 				Required: []string{"probe_name"},
 			},
 		},
-		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
+		Handler: func(args map[string]any) (mcp.ToolResponse, error) {
 			if pool == nil {
 				return mcp.NewToolError("Datastore not configured. The describe_probe tool requires a datastore connection.")
 			}

@@ -33,7 +33,7 @@ type routeRegistrar interface {
 
 // registerDatastoreHandler registers a handler that depends on the datastore and
 // logs its enabled/disabled status.  This eliminates the repeated if/else pattern.
-func registerDatastoreHandler(mux *http.ServeMux, handler routeRegistrar, authWrapper func(http.HandlerFunc) http.HandlerFunc, name string, datastore interface{}) {
+func registerDatastoreHandler(mux *http.ServeMux, handler routeRegistrar, authWrapper func(http.HandlerFunc) http.HandlerFunc, name string, datastore any) {
 	handler.RegisterRoutes(mux, authWrapper)
 	if datastore != nil {
 		fmt.Fprintf(os.Stderr, "%s: ENABLED\n", name)
@@ -298,7 +298,7 @@ func createUserInfoHandler(authStore *auth.AuthStore) http.HandlerFunc {
 		if !ok {
 			// For auth header format errors, report the issue;
 			// for missing credentials just report unauthenticated.
-			resp := map[string]interface{}{"authenticated": false}
+			resp := map[string]any{"authenticated": false}
 			if errMsg == "Invalid Authorization header format" {
 				resp["error"] = errMsg
 			}
@@ -316,7 +316,7 @@ func createUserInfoHandler(authStore *auth.AuthStore) http.HandlerFunc {
 			// Valid API token - look up the owner user
 			owner, ownerErr := authStore.GetUserByID(storedToken.OwnerID)
 			if ownerErr != nil || owner == nil {
-				api.RespondJSON(w, http.StatusOK, map[string]interface{}{
+				api.RespondJSON(w, http.StatusOK, map[string]any{
 					"authenticated": false,
 					"error":         "Invalid or expired token",
 				})
@@ -329,7 +329,7 @@ func createUserInfoHandler(authStore *auth.AuthStore) http.HandlerFunc {
 			// Try session token
 			sessionUsername, sessionErr := authStore.ValidateSessionToken(token)
 			if sessionErr != nil {
-				api.RespondJSON(w, http.StatusOK, map[string]interface{}{
+				api.RespondJSON(w, http.StatusOK, map[string]any{
 					"authenticated": false,
 					"error":         "Invalid or expired session",
 				})
@@ -358,7 +358,7 @@ func createUserInfoHandler(authStore *auth.AuthStore) http.HandlerFunc {
 		}
 
 		// Return user info as JSON
-		api.RespondJSON(w, http.StatusOK, map[string]interface{}{
+		api.RespondJSON(w, http.StatusOK, map[string]any{
 			"authenticated":     true,
 			"username":          username,
 			"is_superuser":      isSuperuser,
@@ -384,7 +384,7 @@ func handleCapabilities(aiEnabled bool, maxIterations int) http.HandlerFunc {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		api.RespondJSON(w, http.StatusOK, map[string]interface{}{
+		api.RespondJSON(w, http.StatusOK, map[string]any{
 			"ai_enabled":     aiEnabled,
 			"max_iterations": maxIterations,
 		})

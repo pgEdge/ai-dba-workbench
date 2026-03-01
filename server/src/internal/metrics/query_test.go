@@ -353,7 +353,7 @@ func TestGetCoalescedSelectCols(t *testing.T) {
 func TestToFloat64(t *testing.T) {
 	tests := []struct {
 		name       string
-		input      interface{}
+		input      any
 		expected   float64
 		expectedOk bool
 	}{

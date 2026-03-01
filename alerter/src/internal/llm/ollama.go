@@ -58,7 +58,7 @@ func (o *OllamaReasoning) Classify(ctx context.Context, prompt string) (string, 
 		Model:  o.model,
 		Prompt: fullPrompt,
 		Stream: false,
-		Options: map[string]interface{}{
+		Options: map[string]any{
 			"temperature": 0.1,
 			"num_predict": 500,
 		},
@@ -109,10 +109,10 @@ func (o *OllamaReasoning) ModelName() string {
 
 // Ollama API types
 type ollamaGenerateRequest struct {
-	Model   string                 `json:"model"`
-	Prompt  string                 `json:"prompt"`
-	Stream  bool                   `json:"stream"`
-	Options map[string]interface{} `json:"options,omitempty"`
+	Model   string         `json:"model"`
+	Prompt  string         `json:"prompt"`
+	Stream  bool           `json:"stream"`
+	Options map[string]any `json:"options,omitempty"`
 }
 
 type ollamaGenerateResponse struct {

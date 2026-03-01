@@ -718,27 +718,27 @@ const AdminTokenScopes: React.FC = () => {
                 >
 {`# List connections
 curl -s -H "Authorization: Bearer <token>" \\
-  http://localhost:8080/api/v1/connections
+  <server-url>/api/v1/connections
 
 # Get connection details
 curl -s -H "Authorization: Bearer <token>" \\
-  http://localhost:8080/api/v1/connections/1
+  <server-url>/api/v1/connections/1
 
 # Create a connection
 curl -s -X POST -H "Authorization: Bearer <token>" \\
   -H "Content-Type: application/json" \\
-  -d '{"name": "mydb", "host": "localhost", "port": 5432, "database": "mydb", "username": "postgres", "password": "secret"}' \\
-  http://localhost:8080/api/v1/connections
+  -d '{"name": "mydb", "host": "localhost", "port": 5432, "database": "mydb", "username": "postgres", "password": "<your-password>"}' \\
+  <server-url>/api/v1/connections
 
 # Delete a connection
 curl -s -X DELETE -H "Authorization: Bearer <token>" \\
-  http://localhost:8080/api/v1/connections/1
+  <server-url>/api/v1/connections/1
 
 # Chat with the AI assistant
 curl -s -X POST -H "Authorization: Bearer <token>" \\
   -H "Content-Type: application/json" \\
   -d '{"messages": [{"role": "user", "content": "What tables exist in the database?"}]}' \\
-  http://localhost:8080/api/v1/llm/chat`}
+  <server-url>/api/v1/llm/chat`}
                 </Box>
             </Box>
 

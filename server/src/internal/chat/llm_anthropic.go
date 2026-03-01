@@ -55,12 +55,12 @@ func NewAnthropicClient(apiKey, model string, maxTokens int, temperature float64
 }
 
 type anthropicRequest struct {
-	Model       string                   `json:"model"`
-	MaxTokens   int                      `json:"max_tokens"`
-	Messages    []Message                `json:"messages"`
-	Tools       []map[string]interface{} `json:"tools,omitempty"`
-	Temperature float64                  `json:"temperature,omitempty"`
-	System      []map[string]interface{} `json:"system,omitempty"` // Support for system messages with caching
+	Model       string           `json:"model"`
+	MaxTokens   int              `json:"max_tokens"`
+	Messages    []Message        `json:"messages"`
+	Tools       []map[string]any `json:"tools,omitempty"`
+	Temperature float64          `json:"temperature,omitempty"`
+	System      []map[string]any `json:"system,omitempty"` // Support for system messages with caching
 }
 
 type anthropicUsage struct {
@@ -71,12 +71,12 @@ type anthropicUsage struct {
 }
 
 type anthropicResponse struct {
-	ID         string                   `json:"id"`
-	Type       string                   `json:"type"`
-	Role       string                   `json:"role"`
-	Content    []map[string]interface{} `json:"content"`
-	StopReason string                   `json:"stop_reason"`
-	Usage      anthropicUsage           `json:"usage"`
+	ID         string           `json:"id"`
+	Type       string           `json:"type"`
+	Role       string           `json:"role"`
+	Content    []map[string]any `json:"content"`
+	StopReason string           `json:"stop_reason"`
+	Usage      anthropicUsage   `json:"usage"`
 }
 
 type anthropicErrorResponse struct {
@@ -96,27 +96,27 @@ func extractAnthropicError(body []byte) string {
 	return ""
 }
 
-func (c *anthropicClient) Chat(ctx context.Context, messages []Message, tools interface{}, customSystemPrompt string) (LLMResponse, error) {
+func (c *anthropicClient) Chat(ctx context.Context, messages []Message, tools any, customSystemPrompt string) (LLMResponse, error) {
 	startTime := time.Now()
 	operation := "chat"
 	url := c.baseURL + "/messages"
 
 	embedding.LogLLMCallDetails("anthropic", c.model, operation, url, len(messages))
 
-	// Convert interface{} tools to []mcp.Tool
+	// Convert any tools to []mcp.Tool
 	mcpTools, err := convertToMCPTools(tools)
 	if err != nil {
 		return LLMResponse{}, err
 	}
 
 	// Convert MCP tools to Anthropic format with caching
-	anthropicTools := make([]map[string]interface{}, 0, len(mcpTools))
+	anthropicTools := make([]map[string]any, 0, len(mcpTools))
 	for i, tool := range mcpTools {
 		desc := tool.Description
 		if c.useCompactDescriptions && tool.CompactDescription != "" {
 			desc = tool.CompactDescription
 		}
-		toolDef := map[string]interface{}{
+		toolDef := map[string]any{
 			"name":         tool.Name,
 			"description":  desc,
 			"input_schema": tool.InputSchema,
@@ -125,7 +125,7 @@ func (c *anthropicClient) Chat(ctx context.Context, messages []Message, tools in
 		// Add cache_control to the last tool definition to cache all tools
 		// This caches the entire tools array (must be on the last item)
 		if i == len(mcpTools)-1 {
-			toolDef["cache_control"] = map[string]interface{}{
+			toolDef["cache_control"] = map[string]any{
 				"type": "ephemeral",
 			}
 		}
@@ -138,7 +138,7 @@ func (c *anthropicClient) Chat(ctx context.Context, messages []Message, tools in
 	if customSystemPrompt != "" {
 		activePrompt = customSystemPrompt
 	}
-	systemMessage := []map[string]interface{}{
+	systemMessage := []map[string]any{
 		{
 			"type": "text",
 			"text": activePrompt,
@@ -211,7 +211,7 @@ func (c *anthropicClient) Chat(ctx context.Context, messages []Message, tools in
 	}
 
 	// Convert response content to typed structs
-	content := make([]interface{}, 0, len(anthropicResp.Content))
+	content := make([]any, 0, len(anthropicResp.Content))
 	for _, item := range anthropicResp.Content {
 		itemType, ok := item["type"].(string)
 		if !ok {
@@ -236,9 +236,9 @@ func (c *anthropicClient) Chat(ctx context.Context, messages []Message, tools in
 			if !ok {
 				continue
 			}
-			input, ok := item["input"].(map[string]interface{})
+			input, ok := item["input"].(map[string]any)
 			if !ok {
-				input = make(map[string]interface{})
+				input = make(map[string]any)
 			}
 			content = append(content, ToolUse{
 				Type:  "tool_use",

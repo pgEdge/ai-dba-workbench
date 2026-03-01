@@ -31,13 +31,13 @@ var (
 
 // Message represents a single message in a conversation
 type Message struct {
-	Role      string                   `json:"role"`
-	Content   interface{}              `json:"content"`
-	Timestamp string                   `json:"timestamp,omitempty"`
-	Provider  string                   `json:"provider,omitempty"`
-	Model     string                   `json:"model,omitempty"`
-	Activity  []map[string]interface{} `json:"activity,omitempty"`
-	IsError   bool                     `json:"isError,omitempty"`
+	Role      string           `json:"role"`
+	Content   any              `json:"content"`
+	Timestamp string           `json:"timestamp,omitempty"`
+	Provider  string           `json:"provider,omitempty"`
+	Model     string           `json:"model,omitempty"`
+	Activity  []map[string]any `json:"activity,omitempty"`
+	IsError   bool             `json:"isError,omitempty"`
 }
 
 // Conversation represents a stored conversation

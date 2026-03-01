@@ -218,7 +218,7 @@ func TestHasSignificantChange(t *testing.T) {
 func TestExtractTextFromResponse(t *testing.T) {
 	tests := []struct {
 		name    string
-		content []interface{}
+		content []any
 		want    string
 	}{
 		{
@@ -228,14 +228,14 @@ func TestExtractTextFromResponse(t *testing.T) {
 		},
 		{
 			name: "single TextContent",
-			content: []interface{}{
+			content: []any{
 				chat.TextContent{Type: "text", Text: "Hello"},
 			},
 			want: "Hello",
 		},
 		{
 			name: "multiple TextContent blocks",
-			content: []interface{}{
+			content: []any{
 				chat.TextContent{Type: "text", Text: "Hello "},
 				chat.TextContent{Type: "text", Text: "World"},
 			},
@@ -243,8 +243,8 @@ func TestExtractTextFromResponse(t *testing.T) {
 		},
 		{
 			name: "map-based text content",
-			content: []interface{}{
-				map[string]interface{}{
+			content: []any{
+				map[string]any{
 					"type": "text",
 					"text": "From map",
 				},
@@ -253,9 +253,9 @@ func TestExtractTextFromResponse(t *testing.T) {
 		},
 		{
 			name: "mixed content types",
-			content: []interface{}{
+			content: []any{
 				chat.TextContent{Type: "text", Text: "Part1"},
-				map[string]interface{}{
+				map[string]any{
 					"type": "text",
 					"text": "Part2",
 				},
@@ -264,8 +264,8 @@ func TestExtractTextFromResponse(t *testing.T) {
 		},
 		{
 			name: "non-text map ignored",
-			content: []interface{}{
-				map[string]interface{}{
+			content: []any{
+				map[string]any{
 					"type": "tool_use",
 					"name": "some_tool",
 				},

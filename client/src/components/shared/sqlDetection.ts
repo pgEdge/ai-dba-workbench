@@ -34,7 +34,7 @@ export const extractExecutableSQL = (code: string): string => {
 
     for (const part of parts) {
         const trimmed = part.trim();
-        if (!trimmed) continue;
+        if (!trimmed) {continue;}
 
         // Strip comment-only lines so we can inspect the real content
         const contentLines = trimmed

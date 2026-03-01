@@ -29,8 +29,8 @@ func GenerateEmbeddingTool(cfg *config.Config) Tool {
 			CompactDescription: `Generate an embedding vector from text using the configured embedding model. Returns a vector for storage or semantic search operations.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
-				Properties: map[string]interface{}{
-					"text": map[string]interface{}{
+				Properties: map[string]any{
+					"text": map[string]any{
 						"type":        "string",
 						"description": "The text to generate an embedding for (must be non-empty)",
 					},
@@ -38,7 +38,7 @@ func GenerateEmbeddingTool(cfg *config.Config) Tool {
 				Required: []string{"text"},
 			},
 		},
-		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
+		Handler: func(args map[string]any) (mcp.ToolResponse, error) {
 			// Check if embedding generation is enabled
 			if !cfg.Embedding.Enabled {
 				return mcp.NewToolError("Embedding generation is not enabled. Please enable it in the server configuration (PGEDGE_EMBEDDING_ENABLED=true) and configure a provider (Anthropic or Ollama).")

@@ -31,34 +31,34 @@ func IsVerbose() bool {
 }
 
 // Error logs error messages (always shown)
-func Error(v ...interface{}) {
+func Error(v ...any) {
 	log.Print(v...)
 }
 
 // Errorf logs formatted error messages (always shown)
-func Errorf(format string, v ...interface{}) {
+func Errorf(format string, v ...any) {
 	log.Printf(format, v...)
 }
 
 // Fatal logs a message and exits (always shown)
-func Fatal(v ...interface{}) {
+func Fatal(v ...any) {
 	log.Fatal(v...)
 }
 
 // Fatalf logs a formatted message and exits (always shown)
-func Fatalf(format string, v ...interface{}) {
+func Fatalf(format string, v ...any) {
 	log.Fatalf(format, v...)
 }
 
 // Info logs informational messages (only shown in verbose mode)
-func Info(v ...interface{}) {
+func Info(v ...any) {
 	if verbose {
 		log.Print(v...)
 	}
 }
 
 // Infof logs formatted informational messages (only shown in verbose mode)
-func Infof(format string, v ...interface{}) {
+func Infof(format string, v ...any) {
 	if verbose {
 		log.Printf(format, v...)
 	}
@@ -66,7 +66,7 @@ func Infof(format string, v ...interface{}) {
 
 // Debug logs debug messages (only shown in verbose mode)
 // Use for detailed diagnostic information that is typically not needed
-func Debug(v ...interface{}) {
+func Debug(v ...any) {
 	if verbose {
 		log.Print(v...)
 	}
@@ -74,19 +74,19 @@ func Debug(v ...interface{}) {
 
 // Debugf logs formatted debug messages (only shown in verbose mode)
 // Use for detailed diagnostic information that is typically not needed
-func Debugf(format string, v ...interface{}) {
+func Debugf(format string, v ...any) {
 	if verbose {
 		log.Printf(format, v...)
 	}
 }
 
 // Startup logs startup messages (always shown)
-func Startup(v ...interface{}) {
+func Startup(v ...any) {
 	log.Print(v...)
 }
 
 // Startupf logs formatted startup messages (always shown)
-func Startupf(format string, v ...interface{}) {
+func Startupf(format string, v ...any) {
 	log.Printf(format, v...)
 }
 

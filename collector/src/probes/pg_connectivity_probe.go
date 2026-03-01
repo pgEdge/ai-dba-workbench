@@ -35,7 +35,7 @@ func (p *PgConnectivityProbe) GetQuery() string {
 }
 
 // Execute runs the probe against a monitored connection
-func (p *PgConnectivityProbe) Execute(ctx context.Context, _ string, monitoredConn *pgxpool.Conn, _ int) ([]map[string]interface{}, error) {
+func (p *PgConnectivityProbe) Execute(ctx context.Context, _ string, monitoredConn *pgxpool.Conn, _ int) ([]map[string]any, error) {
 	// Create a 5-second timeout context for the connectivity check
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -51,15 +51,15 @@ func (p *PgConnectivityProbe) Execute(ctx context.Context, _ string, monitoredCo
 
 	responseTimeMs := float64(elapsed.Nanoseconds()) / 1e6
 
-	metric := map[string]interface{}{
+	metric := map[string]any{
 		"response_time_ms": responseTimeMs,
 	}
 
-	return []map[string]interface{}{metric}, nil
+	return []map[string]any{metric}, nil
 }
 
 // Store stores the collected metrics in the datastore
-func (p *PgConnectivityProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]interface{}) error {
+func (p *PgConnectivityProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]any) error {
 	if len(metrics) == 0 {
 		return nil // Nothing to store
 	}
@@ -75,9 +75,9 @@ func (p *PgConnectivityProbe) Store(ctx context.Context, datastoreConn *pgxpool.
 	}
 
 	// Build values array
-	var values [][]interface{}
+	var values [][]any
 	for _, metric := range metrics {
-		row := []interface{}{
+		row := []any{
 			connectionID,
 			timestamp,
 			metric["response_time_ms"],

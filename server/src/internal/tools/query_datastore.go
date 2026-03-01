@@ -94,19 +94,19 @@ To avoid rate limits (30,000 input tokens/minute):
 			CompactDescription: `Execute read-only SQL queries against the DATASTORE database (stores configuration, metrics, alerts, connections). Use for querying monitoring data, alert history, or system configuration. For monitored database queries, use query_database instead.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
-				Properties: map[string]interface{}{
-					"query": map[string]interface{}{
+				Properties: map[string]any{
+					"query": map[string]any{
 						"type":        "string",
 						"description": "SQL query to execute against the datastore. All queries run in read-only transactions.",
 					},
-					"limit": map[string]interface{}{
+					"limit": map[string]any{
 						"type":        "integer",
 						"description": "Maximum number of rows to return (default: 100, max: 1000). Automatically appended to query if not already present. Use higher limits only when necessary to avoid excessive token usage.",
 						"default":     100,
 						"minimum":     1,
 						"maximum":     1000,
 					},
-					"offset": map[string]interface{}{
+					"offset": map[string]any{
 						"type":        "integer",
 						"description": "Number of rows to skip before returning results (for pagination). Use with limit to page through large result sets. Example: offset=100 with limit=100 returns rows 101-200.",
 						"default":     0,
@@ -116,7 +116,7 @@ To avoid rate limits (30,000 input tokens/minute):
 				Required: []string{"query"},
 			},
 		},
-		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
+		Handler: func(args map[string]any) (mcp.ToolResponse, error) {
 			if pool == nil {
 				return mcp.NewToolError("Datastore not configured. The query_datastore tool requires a datastore connection.")
 			}

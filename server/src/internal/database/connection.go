@@ -128,7 +128,7 @@ func (c *Client) ConnectTo(connStr string) error {
 
 	// Log connection details if debug logging is enabled
 	if GetLogLevel() >= LogLevelDebug {
-		poolConfigMap := make(map[string]interface{})
+		poolConfigMap := make(map[string]any)
 		poolConfigMap["max_conns"] = poolConfig.MaxConns
 		poolConfigMap["min_conns"] = poolConfig.MinConns
 		poolConfigMap["max_conn_lifetime"] = poolConfig.MaxConnLifetime

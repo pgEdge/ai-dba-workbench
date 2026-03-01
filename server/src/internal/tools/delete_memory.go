@@ -29,8 +29,8 @@ func DeleteMemoryTool(memoryStore *memory.Store) Tool {
 			CompactDescription: "Delete a stored memory by ID. Only the owning user can delete a memory.",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
-				Properties: map[string]interface{}{
-					"id": map[string]interface{}{
+				Properties: map[string]any{
+					"id": map[string]any{
 						"type":        "number",
 						"description": "The ID of the memory to delete",
 					},
@@ -38,7 +38,7 @@ func DeleteMemoryTool(memoryStore *memory.Store) Tool {
 				Required: []string{"id"},
 			},
 		},
-		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
+		Handler: func(args map[string]any) (mcp.ToolResponse, error) {
 			// Extract and validate the id parameter
 			idFloat, ok := args["id"].(float64)
 			if !ok {

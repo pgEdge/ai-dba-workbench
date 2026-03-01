@@ -71,7 +71,7 @@ function buildTimeLabelFormatter(
 
     return (value: string) => {
         const d = new Date(value);
-        if (isNaN(d.getTime())) return value;
+        if (isNaN(d.getTime())) {return value;}
 
         if (spanMs < MS_PER_DAY) {
             return formatTime(d);
@@ -89,10 +89,10 @@ function buildTimeLabelFormatter(
  */
 function formatNumericValue(value: number): string {
     const abs = Math.abs(value);
-    if (abs >= 1e9) return (value / 1e9).toFixed(1) + 'B';
-    if (abs >= 1e6) return (value / 1e6).toFixed(1) + 'M';
-    if (abs >= 1e3) return (value / 1e3).toFixed(1) + 'K';
-    if (Number.isInteger(value)) return value.toString();
+    if (abs >= 1e9) {return (value / 1e9).toFixed(1) + 'B';}
+    if (abs >= 1e6) {return (value / 1e6).toFixed(1) + 'M';}
+    if (abs >= 1e3) {return (value / 1e3).toFixed(1) + 'K';}
+    if (Number.isInteger(value)) {return value.toString();}
     return value.toFixed(1);
 }
 
@@ -109,7 +109,7 @@ export function buildTooltip(show: boolean): object {
         trigger: 'axis',
         formatter: (params: TooltipParam | TooltipParam[]) => {
             const list = Array.isArray(params) ? params : [params];
-            if (list.length === 0) return '';
+            if (list.length === 0) {return '';}
 
             const d = new Date(list[0].axisValue);
             const header = isNaN(d.getTime())

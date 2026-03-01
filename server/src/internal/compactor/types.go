@@ -18,9 +18,9 @@ import (
 
 // Message represents a chat message with role and content.
 type Message struct {
-	Role         string      `json:"role"`
-	Content      interface{} `json:"content"`
-	CacheControl interface{} `json:"cache_control,omitempty"`
+	Role         string `json:"role"`
+	Content      any    `json:"content"`
+	CacheControl any    `json:"cache_control,omitempty"`
 }
 
 // CompactRequest represents a request to compact chat history.
@@ -135,10 +135,10 @@ func (mc MessageClass) String() string {
 
 // ClassificationResult contains the classification outcome for a message.
 type ClassificationResult struct {
-	Class      MessageClass           `json:"class"`
-	Importance float64                `json:"importance"`
-	Reasons    []string               `json:"reasons"`
-	Metadata   map[string]interface{} `json:"metadata,omitempty"`
+	Class      MessageClass   `json:"class"`
+	Importance float64        `json:"importance"`
+	Reasons    []string       `json:"reasons"`
+	Metadata   map[string]any `json:"metadata,omitempty"`
 }
 
 // ExtractedContext contains information extracted from a set of messages.

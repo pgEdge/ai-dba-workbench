@@ -76,21 +76,21 @@ func GetLogLevel() LogLevel {
 }
 
 // Info logs an informational message (connections, basic queries, errors)
-func (l *Logger) Info(format string, args ...interface{}) {
+func (l *Logger) Info(format string, args ...any) {
 	if l.level >= LogLevelInfo {
 		l.logger.Printf("[INFO] "+format, args...)
 	}
 }
 
 // Debug logs a debug message (metadata loading, connection pools, query details)
-func (l *Logger) Debug(format string, args ...interface{}) {
+func (l *Logger) Debug(format string, args ...any) {
 	if l.level >= LogLevelDebug {
 		l.logger.Printf("[DEBUG] "+format, args...)
 	}
 }
 
 // Trace logs a trace message (full queries, row counts, detailed timings)
-func (l *Logger) Trace(format string, args ...interface{}) {
+func (l *Logger) Trace(format string, args ...any) {
 	if l.level >= LogLevelTrace {
 		l.logger.Printf("[TRACE] "+format, args...)
 	}
@@ -110,7 +110,7 @@ func LogConnection(connStr string, duration time.Duration, err error) {
 }
 
 // LogConnectionDetails logs detailed connection information
-func LogConnectionDetails(connStr string, poolConfig map[string]interface{}) {
+func LogConnectionDetails(connStr string, poolConfig map[string]any) {
 	sanitized := SanitizeConnStr(connStr)
 	configStr := ""
 	for k, v := range poolConfig {
@@ -152,14 +152,14 @@ func LogQuery(query string, duration time.Duration, rowCount int, err error) {
 }
 
 // LogQueryDetails logs detailed query information
-func LogQueryDetails(query string, args []interface{}) {
+func LogQueryDetails(query string, args []any) {
 	queryPreview := truncate(strings.TrimSpace(query), 200)
 	globalLogger.Debug("Starting query: query=%s, arg_count=%d",
 		queryPreview, len(args))
 }
 
 // LogQueryTrace logs trace-level query information
-func LogQueryTrace(query string, args []interface{}) {
+func LogQueryTrace(query string, args []any) {
 	globalLogger.Trace("Query trace: query=%s, args=%v",
 		strings.TrimSpace(query), args)
 }

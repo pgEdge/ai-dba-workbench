@@ -68,17 +68,17 @@ Returns TSV data with:
 			CompactDescription: `Query alerting rules and their effective thresholds. Filter by category or connection_id. Shows default thresholds and any connection-specific overrides.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
-				Properties: map[string]interface{}{
-					"connection_id": map[string]interface{}{
+				Properties: map[string]any{
+					"connection_id": map[string]any{
 						"type":        "integer",
 						"description": "Get connection-specific thresholds. If provided, shows effective thresholds (connection overrides take precedence over defaults).",
 					},
-					"category": map[string]interface{}{
+					"category": map[string]any{
 						"type":        "string",
 						"description": "Filter by rule category: connections, replication, storage, performance, transactions, locks, wal, maintenance, queries, errors",
 						"enum":        []string{"connections", "replication", "storage", "performance", "transactions", "locks", "wal", "maintenance", "queries", "errors"},
 					},
-					"enabled_only": map[string]interface{}{
+					"enabled_only": map[string]any{
 						"type":        "boolean",
 						"description": "Only return enabled rules. Default: true",
 						"default":     true,
@@ -87,7 +87,7 @@ Returns TSV data with:
 				Required: []string{},
 			},
 		},
-		Handler: func(args map[string]interface{}) (mcp.ToolResponse, error) {
+		Handler: func(args map[string]any) (mcp.ToolResponse, error) {
 			if pool == nil {
 				return mcp.NewToolError("Datastore not configured. The get_alert_rules tool requires a datastore connection.")
 			}

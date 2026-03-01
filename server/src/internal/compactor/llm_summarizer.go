@@ -154,10 +154,10 @@ func (ls *LLMSummarizer) getMessageContent(msg Message) string {
 	switch content := msg.Content.(type) {
 	case string:
 		return content
-	case []interface{}:
+	case []any:
 		var texts []string
 		for _, block := range content {
-			if blockMap, ok := block.(map[string]interface{}); ok {
+			if blockMap, ok := block.(map[string]any); ok {
 				if text, ok := blockMap["text"].(string); ok {
 					texts = append(texts, text)
 				}

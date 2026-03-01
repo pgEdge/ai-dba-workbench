@@ -318,7 +318,7 @@ func (p *ContextAwareProvider) getOrCreateRegistryForClient(client *database.Cli
 
 // Execute runs a tool by name with the given arguments and context
 // Uses cached per-client registries to avoid re-creating tools on every request
-func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args map[string]interface{}) (mcp.ToolResponse, error) {
+func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args map[string]any) (mcp.ToolResponse, error) {
 	startTime := time.Now()
 	tokenHash := auth.GetTokenHashFromContext(ctx)
 	requestID := mcp.GetRequestIDFromContext(ctx)
@@ -333,7 +333,7 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 	logAndReturn := func(response mcp.ToolResponse, err error) (mcp.ToolResponse, error) {
 		if tracing.IsEnabled() {
 			duration := time.Since(startTime)
-			var result interface{}
+			var result any
 			if len(response.Content) > 0 {
 				// Extract text content for logging
 				texts := make([]string, 0, len(response.Content))

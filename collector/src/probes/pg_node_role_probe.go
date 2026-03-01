@@ -119,13 +119,13 @@ type NodeRoleInfo struct {
 	// Computed
 	PrimaryRole string
 	RoleFlags   []string
-	RoleDetails map[string]interface{}
+	RoleDetails map[string]any
 }
 
 // Execute runs the probe against a monitored connection
-func (p *PgNodeRoleProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
+func (p *PgNodeRoleProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]any, error) {
 	info := &NodeRoleInfo{
-		RoleDetails: make(map[string]interface{}),
+		RoleDetails: make(map[string]any),
 	}
 
 	// 1. Get fundamental status
@@ -154,7 +154,7 @@ func (p *PgNodeRoleProbe) Execute(ctx context.Context, connectionName string, mo
 
 	// Convert to map
 	metric := p.infoToMap(info)
-	return []map[string]interface{}{metric}, nil
+	return []map[string]any{metric}, nil
 }
 
 // getFundamentalStatus gets basic recovery status
@@ -388,17 +388,17 @@ func (p *PgNodeRoleProbe) determineNodeRole(info *NodeRoleInfo) (string, []strin
 }
 
 // infoToMap converts NodeRoleInfo to a map for storage
-func (p *PgNodeRoleProbe) infoToMap(info *NodeRoleInfo) map[string]interface{} {
+func (p *PgNodeRoleProbe) infoToMap(info *NodeRoleInfo) map[string]any {
 	// Build role details JSON
 	roleDetails := info.RoleDetails
 	if info.PublicationCount > 0 || info.SubscriptionCount > 0 {
-		roleDetails["logical"] = map[string]interface{}{
+		roleDetails["logical"] = map[string]any{
 			"publications":  info.PublicationCount,
 			"subscriptions": info.SubscriptionCount,
 		}
 	}
 	if info.HasSpock && info.SpockNodeName != nil {
-		roleDetails["spock"] = map[string]interface{}{
+		roleDetails["spock"] = map[string]any{
 			"node_id":            info.SpockNodeID,
 			"node_name":          info.SpockNodeName,
 			"subscription_count": info.SpockSubscriptionCount,
@@ -409,7 +409,7 @@ func (p *PgNodeRoleProbe) infoToMap(info *NodeRoleInfo) map[string]interface{} {
 		roleDetailsJSON = []byte("{}")
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"is_in_recovery":            info.IsInRecovery,
 		"timeline_id":               info.TimelineID,
 		"postmaster_start_time":     info.PostmasterStartTime,
@@ -438,7 +438,7 @@ func (p *PgNodeRoleProbe) infoToMap(info *NodeRoleInfo) map[string]interface{} {
 }
 
 // Store stores the collected metrics in the datastore
-func (p *PgNodeRoleProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]interface{}) error {
+func (p *PgNodeRoleProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]any) error {
 	if len(metrics) == 0 {
 		return nil // Nothing to store
 	}
@@ -463,7 +463,7 @@ func (p *PgNodeRoleProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn
 	}
 
 	// Build values array
-	var values [][]interface{}
+	var values [][]any
 	for _, metric := range metrics {
 		// Convert role_flags to PostgreSQL array
 		roleFlags := metric["role_flags"]
@@ -475,7 +475,7 @@ func (p *PgNodeRoleProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn
 		}
 		roleFlagsArr := pq.Array(roleFlagsSlice)
 
-		row := []interface{}{
+		row := []any{
 			connectionID,
 			timestamp,
 			metric["is_in_recovery"],

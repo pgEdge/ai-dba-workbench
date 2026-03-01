@@ -88,10 +88,10 @@ type MetricsProbe interface {
 
 	// Execute runs the probe against a monitored connection and returns metrics
 	// pgVersion is the PostgreSQL major version (e.g., 14, 15, 16, 17, 18)
-	Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error)
+	Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]any, error)
 
 	// Store stores the collected metrics in the datastore using COPY protocol
-	Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]interface{}) error
+	Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]any) error
 
 	// EnsurePartition ensures a partition exists for the given timestamp
 	EnsurePartition(ctx context.Context, datastoreConn *pgxpool.Conn, timestamp time.Time) error
@@ -340,7 +340,7 @@ func DropExpiredPartitions(ctx context.Context, conn *pgxpool.Conn, tableName st
 
 // StoreMetricsWithCopy stores metrics using batched INSERT statements
 // Note: Originally used COPY protocol, but pq.CopyIn() doesn't support partitioned tables
-func StoreMetricsWithCopy(ctx context.Context, conn *pgxpool.Conn, tableName string, columns []string, values [][]interface{}) error {
+func StoreMetricsWithCopy(ctx context.Context, conn *pgxpool.Conn, tableName string, columns []string, values [][]any) error {
 	if len(values) == 0 {
 		return nil // Nothing to store
 	}
@@ -382,7 +382,7 @@ func StoreMetricsWithCopy(ctx context.Context, conn *pgxpool.Conn, tableName str
 
 		// Build VALUES clause with placeholders
 		valuesClause := ""
-		args := make([]interface{}, 0, len(batch)*len(columns))
+		args := make([]any, 0, len(batch)*len(columns))
 		for rowIdx, row := range batch {
 			if rowIdx > 0 {
 				valuesClause += ", "
@@ -669,11 +669,11 @@ func CheckExtensionExists(ctx context.Context, connectionName string, conn *pgxp
 // ComputeMetricsHash computes a canonical hash of metrics for change detection.
 // This function normalizes the data to ensure consistent hashing regardless of
 // map iteration order or minor type differences between database drivers.
-func ComputeMetricsHash(metrics []map[string]interface{}) (string, error) {
+func ComputeMetricsHash(metrics []map[string]any) (string, error) {
 	// Build a canonical representation by sorting keys and normalizing values
-	var canonicalData []map[string]interface{}
+	var canonicalData []map[string]any
 	for _, m := range metrics {
-		normalized := make(map[string]interface{})
+		normalized := make(map[string]any)
 		for k, v := range m {
 			normalized[k] = normalizeValue(v)
 		}
@@ -715,7 +715,7 @@ func ComputeMetricsHash(metrics []map[string]interface{}) (string, error) {
 // This ensures that logically equivalent values from different sources
 // (e.g., pgx returning int32 vs datastore returning int64) produce
 // identical JSON serialization and therefore identical hashes.
-func normalizeValue(v interface{}) interface{} {
+func normalizeValue(v any) any {
 	if v == nil {
 		return nil
 	}
@@ -768,22 +768,22 @@ func normalizeValue(v interface{}) interface{} {
 		return string(val)
 
 	// Slices — normalize elements recursively
-	case []interface{}:
-		result := make([]interface{}, len(val))
+	case []any:
+		result := make([]any, len(val))
 		for i, elem := range val {
 			result[i] = normalizeValue(elem)
 		}
 		return result
 	case []string:
-		result := make([]interface{}, len(val))
+		result := make([]any, len(val))
 		for i, elem := range val {
 			result[i] = elem
 		}
 		return result
 
 	// Maps — normalize values recursively
-	case map[string]interface{}:
-		result := make(map[string]interface{}, len(val))
+	case map[string]any:
+		result := make(map[string]any, len(val))
 		for k, elem := range val {
 			result[k] = normalizeValue(elem)
 		}
@@ -800,7 +800,7 @@ func normalizeValue(v interface{}) interface{} {
 }
 
 // getSortedKeys returns the keys of a map in sorted order
-func getSortedKeys(m map[string]interface{}) []string {
+func getSortedKeys(m map[string]any) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)

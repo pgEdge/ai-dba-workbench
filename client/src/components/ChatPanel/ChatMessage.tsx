@@ -18,7 +18,7 @@ import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/pris
 import { ThemeMode } from '../../types/theme';
 import { ToolActivity } from './ToolStatus';
 import { getToolDisplayName } from '../../utils/toolDisplayNames';
-import { createCleanTheme, extractLanguage } from '../shared/MarkdownContent';
+import { createCleanTheme, extractLanguage } from '../shared/MarkdownExports';
 import CopyCodeButton from '../shared/CopyCodeButton';
 import { getCodeBlockButtonGroupSx } from '../shared/markdownStyles';
 
@@ -352,7 +352,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, mode }) => {
             code: ({
                 className,
                 children,
-                node,
+                node: _node,
                 ...props
             }: {
                 className?: string;

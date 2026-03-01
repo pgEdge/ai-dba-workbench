@@ -17,9 +17,6 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/apiconst"
 )
 
-// OpenAPISpecPath is re-exported from apiconst for local use.
-const OpenAPISpecPath = apiconst.OpenAPISpecPath
-
 // HandleCompact is the HTTP handler for the /api/v1/chat/compact endpoint.
 func HandleCompact(w http.ResponseWriter, r *http.Request) {
 	// Only accept POST requests
@@ -57,7 +54,7 @@ func HandleCompact(w http.ResponseWriter, r *http.Request) {
 
 	// Send response with RFC 8631 Link header
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Link", fmt.Sprintf("<%s>; rel=\"service-desc\"", OpenAPISpecPath))
+	w.Header().Set("Link", fmt.Sprintf("<%s>; rel=\"service-desc\"", apiconst.OpenAPISpecPath))
 	encoder := json.NewEncoder(w)
 	if err := encoder.Encode(response); err != nil {
 		http.Error(w, "Failed to encode response", http.StatusInternalServerError)

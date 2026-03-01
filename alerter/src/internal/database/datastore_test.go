@@ -14,9 +14,12 @@ import (
 	"testing"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
+	"github.com/pgedge/ai-workbench/pkg/connstring"
+	"github.com/pgedge/ai-workbench/pkg/datastoreconfig"
 )
 
-// TestBuildConnectionString tests the buildConnectionString function
+// TestBuildConnectionString tests that connstring.BuildFromConfig produces
+// the expected connection string from a DatastoreConfig.
 func TestBuildConnectionString(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -27,7 +30,7 @@ func TestBuildConnectionString(t *testing.T) {
 		{
 			name: "basic connection string",
 			config: &config.Config{
-				Datastore: config.DatastoreConfig{
+				Datastore: datastoreconfig.DatastoreConfig{
 					Host:     "localhost",
 					Port:     5432,
 					Database: "testdb",
@@ -36,11 +39,11 @@ func TestBuildConnectionString(t *testing.T) {
 				},
 			},
 			contains: []string{
-				"host=localhost",
-				"port=5432",
-				"dbname=testdb",
-				"user=testuser",
-				"sslmode=disable",
+				"host='localhost'",
+				"port='5432'",
+				"dbname='testdb'",
+				"user='testuser'",
+				"sslmode='disable'",
 			},
 			excludes: []string{
 				"hostaddr=",
@@ -53,7 +56,7 @@ func TestBuildConnectionString(t *testing.T) {
 		{
 			name: "connection string with password",
 			config: &config.Config{
-				Datastore: config.DatastoreConfig{
+				Datastore: datastoreconfig.DatastoreConfig{
 					Host:     "db.example.com",
 					Port:     5433,
 					Database: "production",
@@ -63,18 +66,18 @@ func TestBuildConnectionString(t *testing.T) {
 				},
 			},
 			contains: []string{
-				"host=db.example.com",
-				"port=5433",
-				"dbname=production",
-				"user=admin",
+				"host='db.example.com'",
+				"port='5433'",
+				"dbname='production'",
+				"user='admin'",
 				"password='secret123'",
-				"sslmode=require",
+				"sslmode='require'",
 			},
 		},
 		{
 			name: "connection string with hostaddr",
 			config: &config.Config{
-				Datastore: config.DatastoreConfig{
+				Datastore: datastoreconfig.DatastoreConfig{
 					Host:     "db.example.com",
 					HostAddr: "192.168.1.100",
 					Port:     5432,
@@ -84,15 +87,15 @@ func TestBuildConnectionString(t *testing.T) {
 				},
 			},
 			contains: []string{
-				"host=db.example.com",
-				"hostaddr=192.168.1.100",
-				"port=5432",
+				"host='db.example.com'",
+				"hostaddr='192.168.1.100'",
+				"port='5432'",
 			},
 		},
 		{
 			name: "connection string with SSL certificates",
 			config: &config.Config{
-				Datastore: config.DatastoreConfig{
+				Datastore: datastoreconfig.DatastoreConfig{
 					Host:        "secure.example.com",
 					Port:        5432,
 					Database:    "testdb",
@@ -104,17 +107,17 @@ func TestBuildConnectionString(t *testing.T) {
 				},
 			},
 			contains: []string{
-				"host=secure.example.com",
-				"sslmode=verify-full",
-				"sslcert=/path/to/client.crt",
-				"sslkey=/path/to/client.key",
-				"sslrootcert=/path/to/ca.crt",
+				"host='secure.example.com'",
+				"sslmode='verify-full'",
+				"sslcert='/path/to/client.crt'",
+				"sslkey='/path/to/client.key'",
+				"sslrootcert='/path/to/ca.crt'",
 			},
 		},
 		{
 			name: "connection string with all options",
 			config: &config.Config{
-				Datastore: config.DatastoreConfig{
+				Datastore: datastoreconfig.DatastoreConfig{
 					Host:        "db.example.com",
 					HostAddr:    "10.0.0.5",
 					Port:        5432,
@@ -128,23 +131,23 @@ func TestBuildConnectionString(t *testing.T) {
 				},
 			},
 			contains: []string{
-				"host=db.example.com",
-				"hostaddr=10.0.0.5",
-				"port=5432",
-				"dbname=mydb",
-				"user=myuser",
+				"host='db.example.com'",
+				"hostaddr='10.0.0.5'",
+				"port='5432'",
+				"dbname='mydb'",
+				"user='myuser'",
 				"password='mypass'",
-				"sslmode=verify-ca",
-				"sslcert=/ssl/client.crt",
-				"sslkey=/ssl/client.key",
-				"sslrootcert=/ssl/root.crt",
+				"sslmode='verify-ca'",
+				"sslcert='/ssl/client.crt'",
+				"sslkey='/ssl/client.key'",
+				"sslrootcert='/ssl/root.crt'",
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			connStr := buildConnectionString(tt.config)
+			connStr := connstring.BuildFromConfig(tt.config.Datastore, "")
 
 			for _, expected := range tt.contains {
 				if !strings.Contains(connStr, expected) {
@@ -161,44 +164,22 @@ func TestBuildConnectionString(t *testing.T) {
 	}
 }
 
-// TestBuildConnectionStringOrder tests that required fields come first
-func TestBuildConnectionStringOrder(t *testing.T) {
-	cfg := &config.Config{
-		Datastore: config.DatastoreConfig{
-			Host:     "localhost",
-			Port:     5432,
-			Database: "testdb",
-			Username: "testuser",
-			SSLMode:  "disable",
-		},
-	}
-
-	connStr := buildConnectionString(cfg)
-
-	// The connection string should start with "host="
-	if !strings.HasPrefix(connStr, "host=") {
-		t.Errorf("connection string should start with 'host=', got %q", connStr)
-	}
-}
-
 // TestBuildConnectionStringNoEmptyValues tests that empty values are not included
 func TestBuildConnectionStringNoEmptyValues(t *testing.T) {
-	cfg := &config.Config{
-		Datastore: config.DatastoreConfig{
-			Host:        "localhost",
-			Port:        5432,
-			Database:    "testdb",
-			Username:    "testuser",
-			SSLMode:     "disable",
-			Password:    "",
-			HostAddr:    "",
-			SSLCert:     "",
-			SSLKey:      "",
-			SSLRootCert: "",
-		},
+	cfg := datastoreconfig.DatastoreConfig{
+		Host:        "localhost",
+		Port:        5432,
+		Database:    "testdb",
+		Username:    "testuser",
+		SSLMode:     "disable",
+		Password:    "",
+		HostAddr:    "",
+		SSLCert:     "",
+		SSLKey:      "",
+		SSLRootCert: "",
 	}
 
-	connStr := buildConnectionString(cfg)
+	connStr := connstring.BuildFromConfig(cfg, "")
 
 	// Empty values should not be included
 	if strings.Contains(connStr, "password=") {

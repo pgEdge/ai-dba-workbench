@@ -129,7 +129,7 @@ func (p *PgStatStatementsProbe) checkExtensionAvailable(ctx context.Context, con
 }
 
 // Execute runs the probe against a monitored connection
-func (p *PgStatStatementsProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
+func (p *PgStatStatementsProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]any, error) {
 	// Check if extension is available
 	available, err := p.checkExtensionAvailable(ctx, monitoredConn)
 	if err != nil {
@@ -138,7 +138,7 @@ func (p *PgStatStatementsProbe) Execute(ctx context.Context, connectionName stri
 
 	if !available {
 		// Extension not available, return empty metrics (not an error)
-		return []map[string]interface{}{}, nil
+		return []map[string]any{}, nil
 	}
 
 	// Check if we have the new shared_blk_read_time column (PG 17+)
@@ -274,7 +274,7 @@ func (p *PgStatStatementsProbe) Execute(ctx context.Context, connectionName stri
 }
 
 // Store stores the collected metrics in the datastore
-func (p *PgStatStatementsProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]interface{}) error {
+func (p *PgStatStatementsProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]any) error {
 	if len(metrics) == 0 {
 		return nil // Nothing to store
 	}
@@ -299,7 +299,7 @@ func (p *PgStatStatementsProbe) Store(ctx context.Context, datastoreConn *pgxpoo
 
 	// Build values array, filtering out rows with NULL queryid and deduplicating
 	// (queryid is NULL for utility statements like VACUUM, ANALYZE, etc.)
-	var values [][]interface{}
+	var values [][]any
 	var skippedCount int
 	var duplicateCount int
 
@@ -307,10 +307,10 @@ func (p *PgStatStatementsProbe) Store(ctx context.Context, datastoreConn *pgxpoo
 	// (database_name, queryid, userid, dbid, toplevel)
 	type uniqueKey struct {
 		database string
-		queryid  interface{}
-		userid   interface{}
-		dbid     interface{}
-		toplevel interface{}
+		queryid  any
+		userid   any
+		dbid     any
+		toplevel any
 	}
 	seenKeys := make(map[uniqueKey]bool)
 
@@ -344,7 +344,7 @@ func (p *PgStatStatementsProbe) Store(ctx context.Context, datastoreConn *pgxpoo
 		}
 		seenKeys[key] = true
 
-		row := []interface{}{
+		row := []any{
 			connectionID,
 			timestamp,
 			databaseName,

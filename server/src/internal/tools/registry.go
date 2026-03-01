@@ -16,7 +16,7 @@ import (
 )
 
 // Handler is a function that executes a tool
-type Handler func(args map[string]interface{}) (mcp.ToolResponse, error)
+type Handler func(args map[string]any) (mcp.ToolResponse, error)
 
 // Tool represents a registered MCP tool
 type Tool struct {
@@ -57,7 +57,7 @@ func (r *Registry) List() []mcp.Tool {
 }
 
 // Execute runs a tool by name with the given arguments
-func (r *Registry) Execute(ctx context.Context, name string, args map[string]interface{}) (mcp.ToolResponse, error) {
+func (r *Registry) Execute(ctx context.Context, name string, args map[string]any) (mcp.ToolResponse, error) {
 	tool, exists := r.Get(name)
 	if !exists {
 		return mcp.ToolResponse{
@@ -74,7 +74,7 @@ func (r *Registry) Execute(ctx context.Context, name string, args map[string]int
 	// Inject context into args with a special key for tools that need it
 	// This allows handlers to access the context without changing the Handler signature
 	// Create a copy of args to avoid mutating the caller's map (race condition)
-	argsCopy := make(map[string]interface{}, len(args)+1)
+	argsCopy := make(map[string]any, len(args)+1)
 	for k, v := range args {
 		argsCopy[k] = v
 	}

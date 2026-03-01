@@ -353,8 +353,28 @@ func TestLoadSecretKey_FileNotFound(t *testing.T) {
 		t.Error("LoadSecretKey() expected error for nonexistent file")
 	}
 
-	if !strings.Contains(err.Error(), "read secret key file") {
-		t.Errorf("Error should mention reading file: %v", err)
+	if !strings.Contains(err.Error(), "secret key file") {
+		t.Errorf("Error should mention secret key file: %v", err)
+	}
+}
+
+func TestLoadSecretKey_InsecurePermissions(t *testing.T) {
+	tmpDir := t.TempDir()
+	keyFile := filepath.Join(tmpDir, "secret.key")
+
+	validKey := strings.Repeat("ab", 32) // 64 hex chars = 32 bytes
+	err := os.WriteFile(keyFile, []byte(validKey), 0644)
+	if err != nil {
+		t.Fatalf("Failed to write test key file: %v", err)
+	}
+
+	_, err = LoadSecretKey(keyFile)
+	if err == nil {
+		t.Error("LoadSecretKey() expected error for insecure permissions")
+	}
+
+	if !strings.Contains(err.Error(), "insecure permissions") {
+		t.Errorf("Error should mention insecure permissions: %v", err)
 	}
 }
 

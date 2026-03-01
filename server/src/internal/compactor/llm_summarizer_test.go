@@ -166,11 +166,11 @@ func TestLLMSummarizer_GetMessageContent(t *testing.T) {
 			name: "Block content",
 			msg: Message{
 				Role: "assistant",
-				Content: []interface{}{
-					map[string]interface{}{
+				Content: []any{
+					map[string]any{
 						"text": "First block",
 					},
-					map[string]interface{}{
+					map[string]any{
 						"text": "Second block",
 					},
 				},

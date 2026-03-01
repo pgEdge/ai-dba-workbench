@@ -457,13 +457,13 @@ func (c *Compactor) adjustStartForToolPairs(messages []Message, startIdx int) in
 
 // hasToolResults checks if a message contains tool_result blocks.
 func (c *Compactor) hasToolResults(msg Message) bool {
-	content, ok := msg.Content.([]interface{})
+	content, ok := msg.Content.([]any)
 	if !ok {
 		return false
 	}
 
 	for _, item := range content {
-		if itemMap, ok := item.(map[string]interface{}); ok {
+		if itemMap, ok := item.(map[string]any); ok {
 			if itemType, ok := itemMap["type"].(string); ok && itemType == "tool_result" {
 				return true
 			}
@@ -475,13 +475,13 @@ func (c *Compactor) hasToolResults(msg Message) bool {
 
 // hasToolUse checks if a message contains tool_use blocks.
 func (c *Compactor) hasToolUse(msg Message) bool {
-	content, ok := msg.Content.([]interface{})
+	content, ok := msg.Content.([]any)
 	if !ok {
 		return false
 	}
 
 	for _, item := range content {
-		if itemMap, ok := item.(map[string]interface{}); ok {
+		if itemMap, ok := item.(map[string]any); ok {
 			if itemType, ok := itemMap["type"].(string); ok && itemType == "tool_use" {
 				return true
 			}

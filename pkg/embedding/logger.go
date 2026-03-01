@@ -77,21 +77,21 @@ func GetLogLevel() LogLevel {
 }
 
 // Info logs an informational message (API calls, errors)
-func (l *Logger) Info(format string, args ...interface{}) {
+func (l *Logger) Info(format string, args ...any) {
 	if l.level >= LogLevelInfo {
 		l.logger.Printf("[INFO] "+format, args...)
 	}
 }
 
 // Debug logs a debug message (text lengths, dimensions, timing)
-func (l *Logger) Debug(format string, args ...interface{}) {
+func (l *Logger) Debug(format string, args ...any) {
 	if l.level >= LogLevelDebug {
 		l.logger.Printf("[DEBUG] "+format, args...)
 	}
 }
 
 // Trace logs a trace message (full request/response details)
-func (l *Logger) Trace(format string, args ...interface{}) {
+func (l *Logger) Trace(format string, args ...any) {
 	if l.level >= LogLevelTrace {
 		l.logger.Printf("[TRACE] "+format, args...)
 	}

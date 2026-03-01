@@ -586,8 +586,8 @@ func TestToolStruct(t *testing.T) {
 		Description: "Execute a SQL query",
 		InputSchema: InputSchema{
 			Type: "object",
-			Properties: map[string]interface{}{
-				"query": map[string]interface{}{
+			Properties: map[string]any{
+				"query": map[string]any{
 					"type":        "string",
 					"description": "The SQL query to execute",
 				},
@@ -670,8 +670,8 @@ func TestChatRequestStruct(t *testing.T) {
 
 func TestChatResponseStruct(t *testing.T) {
 	resp := ChatResponse{
-		Content: []interface{}{
-			map[string]interface{}{
+		Content: []any{
+			map[string]any{
 				"type": "text",
 				"text": "Hello!",
 			},

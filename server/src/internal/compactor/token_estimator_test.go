@@ -173,12 +173,12 @@ func TestTokenEstimator_ExtractTextFromBlocks(t *testing.T) {
 
 	msg := Message{
 		Role: "assistant",
-		Content: []interface{}{
-			map[string]interface{}{
+		Content: []any{
+			map[string]any{
 				"type": "text",
 				"text": "First block",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"type": "text",
 				"text": "Second block",
 			},
@@ -197,11 +197,11 @@ func TestTokenEstimator_ExtractTextFromToolUse(t *testing.T) {
 
 	msg := Message{
 		Role: "assistant",
-		Content: []interface{}{
-			map[string]interface{}{
+		Content: []any{
+			map[string]any{
 				"type": "tool_use",
 				"name": "query_database",
-				"input": map[string]interface{}{
+				"input": map[string]any{
 					"query": "SELECT * FROM users",
 				},
 			},
@@ -220,11 +220,11 @@ func TestTokenEstimator_ExtractTextFromToolResult(t *testing.T) {
 
 	msg := Message{
 		Role: "user",
-		Content: []interface{}{
-			map[string]interface{}{
+		Content: []any{
+			map[string]any{
 				"type": "tool_result",
-				"content": []interface{}{
-					map[string]interface{}{
+				"content": []any{
+					map[string]any{
 						"type": "text",
 						"text": "Query result data",
 					},

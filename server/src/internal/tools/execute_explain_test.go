@@ -66,19 +66,19 @@ func TestExecuteExplainValidation(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		args        map[string]interface{}
+		args        map[string]any
 		expectError bool
 		errorMsg    string
 	}{
 		{
 			name:        "Missing query parameter",
-			args:        map[string]interface{}{},
+			args:        map[string]any{},
 			expectError: true,
 			errorMsg:    "query",
 		},
 		{
 			name: "Empty query parameter",
-			args: map[string]interface{}{
+			args: map[string]any{
 				"query": "",
 			},
 			expectError: true,
@@ -86,7 +86,7 @@ func TestExecuteExplainValidation(t *testing.T) {
 		},
 		{
 			name: "Non-SELECT query rejected",
-			args: map[string]interface{}{
+			args: map[string]any{
 				"query": "INSERT INTO users (name) VALUES ('test')",
 			},
 			expectError: true,
@@ -94,7 +94,7 @@ func TestExecuteExplainValidation(t *testing.T) {
 		},
 		{
 			name: "UPDATE query rejected",
-			args: map[string]interface{}{
+			args: map[string]any{
 				"query": "UPDATE users SET name = 'test'",
 			},
 			expectError: true,
@@ -102,7 +102,7 @@ func TestExecuteExplainValidation(t *testing.T) {
 		},
 		{
 			name: "DELETE query rejected",
-			args: map[string]interface{}{
+			args: map[string]any{
 				"query": "DELETE FROM users WHERE id = 1",
 			},
 			expectError: true,
@@ -110,7 +110,7 @@ func TestExecuteExplainValidation(t *testing.T) {
 		},
 		{
 			name: "DDL query rejected",
-			args: map[string]interface{}{
+			args: map[string]any{
 				"query": "CREATE TABLE test (id INT)",
 			},
 			expectError: true,
@@ -238,21 +238,21 @@ func TestExecuteExplainBooleanDefaults(t *testing.T) {
 	schema := tool.Definition.InputSchema
 
 	// Check analyze default
-	if analyzeProps, ok := schema.Properties["analyze"].(map[string]interface{}); ok {
+	if analyzeProps, ok := schema.Properties["analyze"].(map[string]any); ok {
 		if analyzeProps["default"] != true {
 			t.Errorf("analyze default = %v, want true", analyzeProps["default"])
 		}
 	}
 
 	// Check buffers default
-	if buffersProps, ok := schema.Properties["buffers"].(map[string]interface{}); ok {
+	if buffersProps, ok := schema.Properties["buffers"].(map[string]any); ok {
 		if buffersProps["default"] != true {
 			t.Errorf("buffers default = %v, want true", buffersProps["default"])
 		}
 	}
 
 	// Check format default
-	if formatProps, ok := schema.Properties["format"].(map[string]interface{}); ok {
+	if formatProps, ok := schema.Properties["format"].(map[string]any); ok {
 		if formatProps["default"] != "text" {
 			t.Errorf("format default = %v, want 'text'", formatProps["default"])
 		}
@@ -281,7 +281,7 @@ func TestExecuteExplainReturnsToolResponse(t *testing.T) {
 	tool := ExecuteExplainTool(nil, nil)
 
 	// Test with missing query (validation error, no DB needed)
-	response, _ := tool.Handler(map[string]interface{}{})
+	response, _ := tool.Handler(map[string]any{})
 
 	// Verify response is a valid ToolResponse type
 	if response.Content == nil {
@@ -310,13 +310,13 @@ func TestExecuteExplainToolResponse(t *testing.T) {
 	tool := ExecuteExplainTool(nil, nil)
 
 	// Test validation error response
-	response, _ := tool.Handler(map[string]interface{}{})
+	response, _ := tool.Handler(map[string]any{})
 	if !response.IsError {
 		t.Error("Missing query should return error response")
 	}
 
 	// Test non-SELECT error response
-	response, _ = tool.Handler(map[string]interface{}{"query": "INSERT INTO test VALUES (1)"})
+	response, _ = tool.Handler(map[string]any{"query": "INSERT INTO test VALUES (1)"})
 	if !response.IsError {
 		t.Error("Non-SELECT query should return error response")
 	}

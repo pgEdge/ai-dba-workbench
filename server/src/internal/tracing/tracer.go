@@ -36,17 +36,17 @@ const (
 
 // TraceEntry represents a single trace log entry
 type TraceEntry struct {
-	Timestamp  time.Time              `json:"timestamp"`
-	SessionID  string                 `json:"session_id"`
-	Type       EntryType              `json:"type"`
-	Name       string                 `json:"name,omitempty"`        // Tool name, resource URI, endpoint
-	Parameters map[string]interface{} `json:"parameters,omitempty"`  // Input parameters
-	Result     interface{}            `json:"result,omitempty"`      // Output/response data
-	Error      string                 `json:"error,omitempty"`       // Error message if any
-	Duration   *time.Duration         `json:"duration_ms,omitempty"` // Duration in milliseconds
-	TokenHash  string                 `json:"token_hash,omitempty"`  // Truncated token hash for identification
-	RequestID  string                 `json:"request_id,omitempty"`  // Unique request identifier
-	Metadata   map[string]interface{} `json:"metadata,omitempty"`    // Additional context
+	Timestamp  time.Time      `json:"timestamp"`
+	SessionID  string         `json:"session_id"`
+	Type       EntryType      `json:"type"`
+	Name       string         `json:"name,omitempty"`        // Tool name, resource URI, endpoint
+	Parameters map[string]any `json:"parameters,omitempty"`  // Input parameters
+	Result     any            `json:"result,omitempty"`      // Output/response data
+	Error      string         `json:"error,omitempty"`       // Error message if any
+	Duration   *time.Duration `json:"duration_ms,omitempty"` // Duration in milliseconds
+	TokenHash  string         `json:"token_hash,omitempty"`  // Truncated token hash for identification
+	RequestID  string         `json:"request_id,omitempty"`  // Unique request identifier
+	Metadata   map[string]any `json:"metadata,omitempty"`    // Additional context
 }
 
 // MarshalJSON customizes JSON output for TraceEntry
@@ -156,7 +156,7 @@ func Log(entry TraceEntry) {
 }
 
 // LogToolCall logs a tool invocation
-func LogToolCall(sessionID, tokenHash, requestID, toolName string, params map[string]interface{}) {
+func LogToolCall(sessionID, tokenHash, requestID, toolName string, params map[string]any) {
 	Log(TraceEntry{
 		SessionID:  sessionID,
 		Type:       EntryTypeToolCall,
@@ -168,7 +168,7 @@ func LogToolCall(sessionID, tokenHash, requestID, toolName string, params map[st
 }
 
 // LogToolResult logs a tool result
-func LogToolResult(sessionID, tokenHash, requestID, toolName string, result interface{}, err error, duration time.Duration) {
+func LogToolResult(sessionID, tokenHash, requestID, toolName string, result any, err error, duration time.Duration) {
 	entry := TraceEntry{
 		SessionID: sessionID,
 		Type:      EntryTypeToolResult,
@@ -196,7 +196,7 @@ func LogResourceRead(sessionID, tokenHash, requestID, resourceURI string) {
 }
 
 // LogResourceResult logs a resource read result
-func LogResourceResult(sessionID, tokenHash, requestID, resourceURI string, result interface{}, err error, duration time.Duration) {
+func LogResourceResult(sessionID, tokenHash, requestID, resourceURI string, result any, err error, duration time.Duration) {
 	entry := TraceEntry{
 		SessionID: sessionID,
 		Type:      EntryTypeResourceResult,
@@ -213,12 +213,12 @@ func LogResourceResult(sessionID, tokenHash, requestID, resourceURI string, resu
 }
 
 // LogHTTPRequest logs an incoming HTTP request
-func LogHTTPRequest(sessionID, tokenHash, requestID, method, path string, body interface{}) {
+func LogHTTPRequest(sessionID, tokenHash, requestID, method, path string, body any) {
 	Log(TraceEntry{
 		SessionID: sessionID,
 		Type:      EntryTypeHTTPRequest,
 		Name:      method + " " + path,
-		Parameters: map[string]interface{}{
+		Parameters: map[string]any{
 			"method": method,
 			"path":   path,
 			"body":   body,
@@ -229,12 +229,12 @@ func LogHTTPRequest(sessionID, tokenHash, requestID, method, path string, body i
 }
 
 // LogHTTPResponse logs an outgoing HTTP response
-func LogHTTPResponse(sessionID, tokenHash, requestID, method, path string, statusCode int, body interface{}, duration time.Duration) {
+func LogHTTPResponse(sessionID, tokenHash, requestID, method, path string, statusCode int, body any, duration time.Duration) {
 	Log(TraceEntry{
 		SessionID: sessionID,
 		Type:      EntryTypeHTTPResponse,
 		Name:      method + " " + path,
-		Result: map[string]interface{}{
+		Result: map[string]any{
 			"status_code": statusCode,
 			"body":        body,
 		},
@@ -245,7 +245,7 @@ func LogHTTPResponse(sessionID, tokenHash, requestID, method, path string, statu
 }
 
 // LogUserPrompt logs a user's input prompt from chat
-func LogUserPrompt(sessionID, tokenHash, requestID string, prompt interface{}) {
+func LogUserPrompt(sessionID, tokenHash, requestID string, prompt any) {
 	Log(TraceEntry{
 		SessionID: sessionID,
 		Type:      EntryTypeUserPrompt,
@@ -256,7 +256,7 @@ func LogUserPrompt(sessionID, tokenHash, requestID string, prompt interface{}) {
 }
 
 // LogLLMResponse logs an LLM's response
-func LogLLMResponse(sessionID, tokenHash, requestID string, response interface{}, duration time.Duration) {
+func LogLLMResponse(sessionID, tokenHash, requestID string, response any, duration time.Duration) {
 	Log(TraceEntry{
 		SessionID: sessionID,
 		Type:      EntryTypeLLMResponse,
@@ -268,7 +268,7 @@ func LogLLMResponse(sessionID, tokenHash, requestID string, response interface{}
 }
 
 // LogSessionStart logs the start of a new session
-func LogSessionStart(sessionID, tokenHash string, metadata map[string]interface{}) {
+func LogSessionStart(sessionID, tokenHash string, metadata map[string]any) {
 	Log(TraceEntry{
 		SessionID: sessionID,
 		Type:      EntryTypeSessionStart,
@@ -278,7 +278,7 @@ func LogSessionStart(sessionID, tokenHash string, metadata map[string]interface{
 }
 
 // LogSessionEnd logs the end of a session
-func LogSessionEnd(sessionID, tokenHash string, metadata map[string]interface{}) {
+func LogSessionEnd(sessionID, tokenHash string, metadata map[string]any) {
 	Log(TraceEntry{
 		SessionID: sessionID,
 		Type:      EntryTypeSessionEnd,

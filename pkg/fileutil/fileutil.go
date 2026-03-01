@@ -87,9 +87,30 @@ func ReadOptionalTrimmedFile(path string) (string, error) {
 	return strings.TrimSpace(string(content)), nil
 }
 
+// FileExists checks if a file exists at the given path.
+func FileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// GetDefaultConfigPath returns the default config file path for a
+// service. The function checks /etc/pgedge/ first for a system-wide
+// config file, then falls back to the directory containing the
+// binary. The configFilename parameter is the base name of the
+// config file (e.g. "ai-dba-alerter.yaml").
+func GetDefaultConfigPath(binaryPath, configFilename string) string {
+	systemPath := filepath.Join("/etc/pgedge", configFilename)
+	if _, err := os.Stat(systemPath); err == nil {
+		return systemPath
+	}
+
+	dir := filepath.Dir(binaryPath)
+	return filepath.Join(dir, configFilename)
+}
+
 // LoadYAMLFile reads a YAML file and unmarshals its contents into the
 // provided value. The value must be a pointer to the target structure.
-func LoadYAMLFile(path string, v interface{}) error {
+func LoadYAMLFile(path string, v any) error {
 	// #nosec G304 - Config file path is provided by administrator
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -102,7 +123,7 @@ func LoadYAMLFile(path string, v interface{}) error {
 // LoadOptionalYAMLFile reads a YAML file and unmarshals its contents into
 // the provided value. If the file does not exist, it returns nil without
 // modifying the value.
-func LoadOptionalYAMLFile(path string, v interface{}) error {
+func LoadOptionalYAMLFile(path string, v any) error {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil
 	}

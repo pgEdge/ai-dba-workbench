@@ -20,18 +20,15 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/apiconst"
 )
 
-// OpenAPISpecPath is re-exported from apiconst for backward compatibility.
-const OpenAPISpecPath = apiconst.OpenAPISpecPath
-
 // ErrorResponse is a standard error response.
 type ErrorResponse struct {
 	Error string `json:"error"`
 }
 
 // RespondJSON sends a JSON response with RFC 8631 Link header for API discovery.
-func RespondJSON(w http.ResponseWriter, status int, data interface{}) {
+func RespondJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Link", fmt.Sprintf("<%s>; rel=\"service-desc\"", OpenAPISpecPath))
+	w.Header().Set("Link", fmt.Sprintf("<%s>; rel=\"service-desc\"", apiconst.OpenAPISpecPath))
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: Failed to encode JSON response: %v\n", err)

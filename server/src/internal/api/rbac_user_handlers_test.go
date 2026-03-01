@@ -51,7 +51,7 @@ func TestRBACHandler_ListUsers_WithAdmin(t *testing.T) {
 	}
 
 	var resp struct {
-		Users []map[string]interface{} `json:"users"`
+		Users []map[string]any `json:"users"`
 	}
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("Failed to decode response: %v", err)
@@ -368,7 +368,7 @@ func TestRBACHandler_CreateUser_WithDisabledFlag(t *testing.T) {
 	store.GrantAdminPermission(gID, auth.PermManageUsers)
 
 	enabled := false
-	body, _ := json.Marshal(map[string]interface{}{
+	body, _ := json.Marshal(map[string]any{
 		"username": "disableduser",
 		"password": "Securepassword1",
 		"enabled":  enabled,
@@ -412,7 +412,7 @@ func TestRBACHandler_CreateServiceAccount(t *testing.T) {
 	store.GrantAdminPermission(gID, auth.PermManageUsers)
 
 	isServiceAccount := true
-	body, _ := json.Marshal(map[string]interface{}{
+	body, _ := json.Marshal(map[string]any{
 		"username":           "svc-account",
 		"annotation":         "CI/CD service account",
 		"is_service_account": isServiceAccount,
@@ -456,7 +456,7 @@ func TestRBACHandler_CreateServiceAccount_NoPasswordRequired(t *testing.T) {
 
 	// Service account should not require a password
 	isServiceAccount := true
-	body, _ := json.Marshal(map[string]interface{}{
+	body, _ := json.Marshal(map[string]any{
 		"username":           "svc-nopw",
 		"is_service_account": isServiceAccount,
 	})
@@ -492,7 +492,7 @@ func TestRBACHandler_UpdateUser_PasswordChange(t *testing.T) {
 	targetID, _ := store.GetUserID("target")
 
 	newPassword := "Newpassword123"
-	body, _ := json.Marshal(map[string]interface{}{
+	body, _ := json.Marshal(map[string]any{
 		"password": newPassword,
 	})
 	req := httptest.NewRequest(http.MethodPut,
@@ -533,7 +533,7 @@ func TestRBACHandler_UpdateUser_ShortPassword(t *testing.T) {
 	targetID, _ := store.GetUserID("target")
 
 	shortPw := "short"
-	body, _ := json.Marshal(map[string]interface{}{
+	body, _ := json.Marshal(map[string]any{
 		"password": shortPw,
 	})
 	req := httptest.NewRequest(http.MethodPut,
@@ -576,7 +576,7 @@ func TestRBACHandler_UpdateUser_EnableDisable(t *testing.T) {
 
 	// Disable the user
 	disabled := false
-	body, _ := json.Marshal(map[string]interface{}{
+	body, _ := json.Marshal(map[string]any{
 		"enabled": disabled,
 	})
 	req := httptest.NewRequest(http.MethodPut,
@@ -601,7 +601,7 @@ func TestRBACHandler_UpdateUser_EnableDisable(t *testing.T) {
 
 	// Re-enable the user
 	enabled := true
-	body, _ = json.Marshal(map[string]interface{}{
+	body, _ = json.Marshal(map[string]any{
 		"enabled": enabled,
 	})
 	req = httptest.NewRequest(http.MethodPut,
@@ -640,7 +640,7 @@ func TestRBACHandler_UpdateUser_DisplayNameAndEmail(t *testing.T) {
 
 	newName := "New Name"
 	newEmail := "new@example.com"
-	body, _ := json.Marshal(map[string]interface{}{
+	body, _ := json.Marshal(map[string]any{
 		"display_name": newName,
 		"email":        newEmail,
 	})
@@ -679,7 +679,7 @@ func TestRBACHandler_UpdateUser_NotFound(t *testing.T) {
 	store.GrantAdminPermission(gID, auth.PermManageUsers)
 
 	newName := "Updated Name"
-	body, _ := json.Marshal(map[string]interface{}{
+	body, _ := json.Marshal(map[string]any{
 		"display_name": newName,
 	})
 	req := httptest.NewRequest(http.MethodPut,
@@ -717,7 +717,7 @@ func TestRBACHandler_UpdateUser_PermissionDenied(t *testing.T) {
 	targetID, _ := store.GetUserID("target")
 
 	newName := "Hacked Name"
-	body, _ := json.Marshal(map[string]interface{}{
+	body, _ := json.Marshal(map[string]any{
 		"display_name": newName,
 	})
 	req := httptest.NewRequest(http.MethodPut,
@@ -898,7 +898,7 @@ func TestRBACHandler_UserSubpath_PutRoutesToUpdate(t *testing.T) {
 	targetID, _ := store.GetUserID("target")
 
 	newName := "Updated Name"
-	body, _ := json.Marshal(map[string]interface{}{
+	body, _ := json.Marshal(map[string]any{
 		"display_name": newName,
 	})
 	req := httptest.NewRequest(http.MethodPut,
@@ -969,7 +969,7 @@ func TestRBACHandler_GetUserPrivileges(t *testing.T) {
 			http.StatusOK, rec.Code, rec.Body.String())
 	}
 
-	var resp map[string]interface{}
+	var resp map[string]any
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
@@ -978,7 +978,7 @@ func TestRBACHandler_GetUserPrivileges(t *testing.T) {
 		t.Errorf("Expected username 'admin', got %v", resp["username"])
 	}
 
-	groups, ok := resp["groups"].([]interface{})
+	groups, ok := resp["groups"].([]any)
 	if !ok {
 		t.Fatal("Expected 'groups' array in response")
 	}

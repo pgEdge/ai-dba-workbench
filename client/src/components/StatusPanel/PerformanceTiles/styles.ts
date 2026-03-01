@@ -79,13 +79,13 @@ export const NO_DATA_SX: SxProps<Theme> = {
 };
 
 export const getCacheColor = (value: number): string => {
-    if (value >= 95) return '#4caf50';
-    if (value >= 90) return '#ff9800';
+    if (value >= 95) {return '#4caf50';}
+    if (value >= 90) {return '#ff9800';}
     return '#f44336';
 };
 
 export const getXidColor = (percent: number): string => {
-    if (percent < 50) return '#4caf50';
-    if (percent <= 75) return '#ff9800';
+    if (percent < 50) {return '#4caf50';}
+    if (percent <= 75) {return '#ff9800';}
     return '#f44336';
 };

@@ -429,7 +429,7 @@ func (d *Datastore) UpdateConnectionFull(ctx context.Context, id int, params Con
 
 	// Build dynamic update query
 	setClauses := []string{"updated_at = CURRENT_TIMESTAMP"}
-	args := []interface{}{}
+	args := []any{}
 	argNum := 1
 
 	if params.Name != nil {
@@ -922,7 +922,7 @@ func (d *Datastore) UpdateClusterPartial(ctx context.Context, id int, groupID *i
 
 	// Build dynamic update based on what's provided
 	setClauses := []string{"updated_at = CURRENT_TIMESTAMP"}
-	args := []interface{}{}
+	args := []any{}
 	argNum := 1
 
 	if name != "" {
@@ -1095,7 +1095,7 @@ func (d *Datastore) UpsertAutoDetectedCluster(ctx context.Context, autoKey strin
 	// Cluster exists, update it
 	// Build dynamic update based on what's provided
 	setClauses := []string{"updated_at = CURRENT_TIMESTAMP"}
-	args := []interface{}{}
+	args := []any{}
 	argNum := 1
 
 	if name != "" {
@@ -3822,7 +3822,7 @@ func (d *Datastore) GetAlerts(ctx context.Context, filter AlertListFilter) (*Ale
 
 	// Build the WHERE clause
 	conditions := []string{}
-	args := []interface{}{}
+	args := []any{}
 	argNum := 1
 
 	if filter.ConnectionID != nil {

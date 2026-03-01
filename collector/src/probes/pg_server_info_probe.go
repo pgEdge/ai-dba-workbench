@@ -50,7 +50,7 @@ func (p *PgServerInfoProbe) GetQuery() string {
 }
 
 // Execute runs the probe against a monitored connection
-func (p *PgServerInfoProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]interface{}, error) {
+func (p *PgServerInfoProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]any, error) {
 	query := WrapQuery(ProbeNamePgServerInfo, p.GetQuery())
 	row := monitoredConn.QueryRow(ctx, query)
 
@@ -82,7 +82,7 @@ func (p *PgServerInfoProbe) Execute(ctx context.Context, connectionName string, 
 		return nil, fmt.Errorf("failed to scan server info: %w", err)
 	}
 
-	metric := map[string]interface{}{
+	metric := map[string]any{
 		"server_version":        serverVersion,
 		"server_version_num":    serverVersionNum,
 		"system_identifier":     systemIdentifier,
@@ -94,11 +94,11 @@ func (p *PgServerInfoProbe) Execute(ctx context.Context, connectionName string, 
 		"installed_extensions":  installedExtensions,
 	}
 
-	return []map[string]interface{}{metric}, nil
+	return []map[string]any{metric}, nil
 }
 
 // Store stores the collected metrics in the datastore only if changes are detected
-func (p *PgServerInfoProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]interface{}) error {
+func (p *PgServerInfoProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]any) error {
 	if len(metrics) == 0 {
 		return nil // Nothing to store
 	}
@@ -131,9 +131,9 @@ func (p *PgServerInfoProbe) Store(ctx context.Context, datastoreConn *pgxpool.Co
 	}
 
 	// Build values array
-	var values [][]interface{}
+	var values [][]any
 	for _, metric := range metrics {
-		row := []interface{}{
+		row := []any{
 			connectionID,
 			timestamp,
 			metric["server_version"],
@@ -158,7 +158,7 @@ func (p *PgServerInfoProbe) Store(ctx context.Context, datastoreConn *pgxpool.Co
 }
 
 // hasDataChanged checks if the current server info differs from the most recently stored data
-func (p *PgServerInfoProbe) hasDataChanged(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, currentMetrics []map[string]interface{}) (bool, error) {
+func (p *PgServerInfoProbe) hasDataChanged(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, currentMetrics []map[string]any) (bool, error) {
 	// Compute hash of current metrics
 	currentHash, err := p.computeMetricsHash(currentMetrics)
 	if err != nil {
@@ -210,7 +210,7 @@ func (p *PgServerInfoProbe) hasDataChanged(ctx context.Context, datastoreConn *p
 	}
 
 	// Build stored metrics for comparison
-	storedMetric := map[string]interface{}{
+	storedMetric := map[string]any{
 		"server_version":        serverVersion,
 		"server_version_num":    serverVersionNum,
 		"system_identifier":     systemIdentifier,
@@ -221,7 +221,7 @@ func (p *PgServerInfoProbe) hasDataChanged(ctx context.Context, datastoreConn *p
 		"max_replication_slots": maxReplicationSlots,
 		"installed_extensions":  installedExtensions,
 	}
-	storedMetrics := []map[string]interface{}{storedMetric}
+	storedMetrics := []map[string]any{storedMetric}
 
 	// Compute hash of stored metrics
 	storedHash, err := p.computeMetricsHash(storedMetrics)
@@ -234,7 +234,7 @@ func (p *PgServerInfoProbe) hasDataChanged(ctx context.Context, datastoreConn *p
 }
 
 // computeMetricsHash computes a hash of the metrics for comparison
-func (p *PgServerInfoProbe) computeMetricsHash(metrics []map[string]interface{}) (string, error) {
+func (p *PgServerInfoProbe) computeMetricsHash(metrics []map[string]any) (string, error) {
 	return ComputeMetricsHash(metrics)
 }
 

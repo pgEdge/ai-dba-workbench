@@ -310,9 +310,9 @@ var sharedHTTPClient = &http.Client{
 	Timeout: 120 * time.Second,
 }
 
-// convertToMCPTools converts an interface{} tools parameter to []mcp.Tool via JSON.
+// convertToMCPTools converts an any tools parameter to []mcp.Tool via JSON.
 // This is used by all clients to handle the dynamic tools parameter.
-func convertToMCPTools(tools interface{}) ([]mcp.Tool, error) {
+func convertToMCPTools(tools any) ([]mcp.Tool, error) {
 	if tools == nil {
 		return nil, nil
 	}
@@ -363,17 +363,17 @@ func logTokenUsage(provider string, promptTokens, completionTokens, totalTokens 
 
 // extractTextFromContent extracts text from tool result content
 // Content can be: string, []byte, array of text blocks, or other structures
-func extractTextFromContent(content interface{}) string {
+func extractTextFromContent(content any) string {
 	switch c := content.(type) {
 	case string:
 		return c
 	case []byte:
 		return string(c)
-	case []interface{}:
+	case []any:
 		// Content is an array of blocks - extract text from each
 		var texts []string
 		for _, block := range c {
-			if blockMap, ok := block.(map[string]interface{}); ok {
+			if blockMap, ok := block.(map[string]any); ok {
 				if blockType, ok := blockMap["type"].(string); ok && blockType == "text" {
 					if text, ok := blockMap["text"].(string); ok {
 						texts = append(texts, text)
@@ -398,17 +398,17 @@ func extractTextFromContent(content interface{}) string {
 
 // Message represents a chat message.
 type Message struct {
-	Role         string                 `json:"role"`
-	Content      interface{}            `json:"content"`
-	CacheControl map[string]interface{} `json:"cache_control,omitempty"`
+	Role         string         `json:"role"`
+	Content      any            `json:"content"`
+	CacheControl map[string]any `json:"cache_control,omitempty"`
 }
 
 // ToolUse represents a tool invocation in a message.
 type ToolUse struct {
-	Type  string                 `json:"type"`
-	ID    string                 `json:"id"`
-	Name  string                 `json:"name"`
-	Input map[string]interface{} `json:"input"`
+	Type  string         `json:"type"`
+	ID    string         `json:"id"`
+	Name  string         `json:"name"`
+	Input map[string]any `json:"input"`
 }
 
 // TextContent represents text content in a message.
@@ -419,15 +419,15 @@ type TextContent struct {
 
 // ToolResult represents the result of a tool execution.
 type ToolResult struct {
-	Type      string      `json:"type"`
-	ToolUseID string      `json:"tool_use_id"`
-	Content   interface{} `json:"content"`
-	IsError   bool        `json:"is_error,omitempty"`
+	Type      string `json:"type"`
+	ToolUseID string `json:"tool_use_id"`
+	Content   any    `json:"content"`
+	IsError   bool   `json:"is_error,omitempty"`
 }
 
 // LLMResponse represents a response from the LLM.
 type LLMResponse struct {
-	Content    []interface{} // Can be TextContent or ToolUse
+	Content    []any // Can be TextContent or ToolUse
 	StopReason string
 	TokenUsage *TokenUsage `json:"token_usage,omitempty"`
 }
@@ -447,7 +447,7 @@ type TokenUsage struct {
 type LLMClient interface {
 	// Chat sends messages and available tools to the LLM and returns the response.
 	// If customSystemPrompt is non-empty, it overrides the default system prompt.
-	Chat(ctx context.Context, messages []Message, tools interface{}, customSystemPrompt string) (LLMResponse, error)
+	Chat(ctx context.Context, messages []Message, tools any, customSystemPrompt string) (LLMResponse, error)
 
 	// ListModels returns a list of available models from the provider.
 	ListModels(ctx context.Context) ([]string, error)
@@ -473,9 +473,9 @@ func EstimateTotalTokens(messages []Message) int {
 		switch content := msg.Content.(type) {
 		case string:
 			total += EstimateTokens(content)
-		case []interface{}:
+		case []any:
 			for _, item := range content {
-				if m, ok := item.(map[string]interface{}); ok {
+				if m, ok := item.(map[string]any); ok {
 					if text, ok := m["text"].(string); ok {
 						total += EstimateTokens(text)
 					}
@@ -515,9 +515,9 @@ func HasToolResults(msg Message) bool {
 		return true
 	}
 
-	if contentSlice, ok := msg.Content.([]interface{}); ok {
+	if contentSlice, ok := msg.Content.([]any); ok {
 		for _, item := range contentSlice {
-			if itemMap, ok := item.(map[string]interface{}); ok {
+			if itemMap, ok := item.(map[string]any); ok {
 				if itemType, ok := itemMap["type"].(string); ok && itemType == "tool_result" {
 					return true
 				}

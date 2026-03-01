@@ -40,7 +40,7 @@ const CacheHitTile: React.FC<CacheHitTileProps> = ({
     const { aiEnabled } = useAICapabilities();
     // Find the headline value: worst ratio for multi-server, current for single
     const headlineValue = useMemo(() => {
-        if (!connections.length) return null;
+        if (!connections.length) {return null;}
 
         if (isMultiServer) {
             let worst = Infinity;
@@ -58,13 +58,13 @@ const CacheHitTile: React.FC<CacheHitTileProps> = ({
     // Build chart data: one series per connection for multi-server,
     // or a single series for single-server views
     const chartData = useMemo(() => {
-        if (!connections.length) return null;
+        if (!connections.length) {return null;}
 
         // For single server, use one series
         if (!isMultiServer || connections.length === 1) {
             const conn = connections[0];
             const ts = conn?.cache_hit_ratio?.time_series;
-            if (!ts?.length) return null;
+            if (!ts?.length) {return null;}
 
             return {
                 categories: ts.map(p => p.time),
@@ -78,7 +78,7 @@ const CacheHitTile: React.FC<CacheHitTileProps> = ({
 
         connections.forEach(conn => {
             const ts = conn.cache_hit_ratio?.time_series;
-            if (!ts?.length) return;
+            if (!ts?.length) {return;}
 
             if (categories.length === 0) {
                 categories = ts.map(p => p.time);
@@ -90,7 +90,7 @@ const CacheHitTile: React.FC<CacheHitTileProps> = ({
             });
         });
 
-        if (series.length === 0) return null;
+        if (series.length === 0) {return null;}
 
         return { categories, series };
     }, [connections, isMultiServer]);

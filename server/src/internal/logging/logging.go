@@ -70,14 +70,14 @@ func (l LogLevel) String() string {
 
 // logEntry represents a structured log entry
 type logEntry struct {
-	Timestamp string                 `json:"timestamp"`
-	Level     string                 `json:"level"`
-	Message   string                 `json:"message"`
-	Fields    map[string]interface{} `json:"fields,omitempty"`
+	Timestamp string         `json:"timestamp"`
+	Level     string         `json:"level"`
+	Message   string         `json:"message"`
+	Fields    map[string]any `json:"fields,omitempty"`
 }
 
 // log writes a structured log message if the level is enabled
-func log(level LogLevel, message string, keyvals ...interface{}) {
+func log(level LogLevel, message string, keyvals ...any) {
 	if level < currentLevel {
 		return
 	}
@@ -86,7 +86,7 @@ func log(level LogLevel, message string, keyvals ...interface{}) {
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		Level:     level.String(),
 		Message:   message,
-		Fields:    make(map[string]interface{}),
+		Fields:    make(map[string]any),
 	}
 
 	// Parse key-value pairs
@@ -109,22 +109,22 @@ func log(level LogLevel, message string, keyvals ...interface{}) {
 }
 
 // Debug logs a debug-level message with structured fields
-func Debug(message string, keyvals ...interface{}) {
+func Debug(message string, keyvals ...any) {
 	log(LevelDebug, message, keyvals...)
 }
 
 // Info logs an info-level message with structured fields
-func Info(message string, keyvals ...interface{}) {
+func Info(message string, keyvals ...any) {
 	log(LevelInfo, message, keyvals...)
 }
 
 // Warn logs a warning-level message with structured fields
-func Warn(message string, keyvals ...interface{}) {
+func Warn(message string, keyvals ...any) {
 	log(LevelWarn, message, keyvals...)
 }
 
 // Error logs an error-level message with structured fields
-func Error(message string, keyvals ...interface{}) {
+func Error(message string, keyvals ...any) {
 	log(LevelError, message, keyvals...)
 }
 

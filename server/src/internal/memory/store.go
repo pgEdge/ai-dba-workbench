@@ -73,7 +73,7 @@ func (s *Store) Store(
 
 	now := time.Now().UTC()
 
-	var embeddingArg interface{}
+	var embeddingArg any
 	if embedding != nil {
 		embeddingArg = formatEmbedding(embedding)
 	}
@@ -159,7 +159,7 @@ func (s *Store) searchByVector(
 	embStr := formatEmbedding(embedding)
 
 	var conditions []string
-	args := []interface{}{embStr}
+	args := []any{embStr}
 	paramIdx := 2
 
 	// Visibility: user's own memories OR system scope
@@ -207,7 +207,7 @@ func (s *Store) searchByText(
 	limit int,
 ) ([]Memory, error) {
 	var conditions []string
-	var args []interface{}
+	var args []any
 	paramIdx := 1
 
 	// Visibility: user's own memories OR system scope
@@ -384,7 +384,7 @@ func (s *Store) UpdatePinned(ctx context.Context, id int64, username string, pin
 func (s *Store) queryMemories(
 	ctx context.Context,
 	query string,
-	args ...interface{},
+	args ...any,
 ) ([]Memory, error) {
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {

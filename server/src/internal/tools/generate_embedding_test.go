@@ -46,7 +46,7 @@ func TestGenerateEmbeddingTool_NotEnabled(t *testing.T) {
 	}
 	tool := GenerateEmbeddingTool(cfg)
 
-	args := map[string]interface{}{
+	args := map[string]any{
 		"text": "test text",
 	}
 
@@ -76,7 +76,7 @@ func TestGenerateEmbeddingTool_MissingText(t *testing.T) {
 	}
 	tool := GenerateEmbeddingTool(cfg)
 
-	args := map[string]interface{}{}
+	args := map[string]any{}
 
 	response, err := tool.Handler(args)
 	if err != nil {
@@ -104,7 +104,7 @@ func TestGenerateEmbeddingTool_EmptyText(t *testing.T) {
 	}
 	tool := GenerateEmbeddingTool(cfg)
 
-	args := map[string]interface{}{
+	args := map[string]any{
 		"text": "",
 	}
 
@@ -126,7 +126,7 @@ func TestGenerateEmbeddingTool_WhitespaceOnlyText(t *testing.T) {
 	}
 	tool := GenerateEmbeddingTool(cfg)
 
-	args := map[string]interface{}{
+	args := map[string]any{
 		"text": "   \t\n   ",
 	}
 
@@ -156,7 +156,7 @@ func TestGenerateEmbeddingTool_InvalidTextType(t *testing.T) {
 	}
 	tool := GenerateEmbeddingTool(cfg)
 
-	args := map[string]interface{}{
+	args := map[string]any{
 		"text": 123, // Wrong type
 	}
 
@@ -179,7 +179,7 @@ func TestGenerateEmbeddingTool_InvalidProvider(t *testing.T) {
 	}
 	tool := GenerateEmbeddingTool(cfg)
 
-	args := map[string]interface{}{
+	args := map[string]any{
 		"text": "test text",
 	}
 

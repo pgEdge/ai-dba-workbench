@@ -64,7 +64,7 @@ type connectionArgs struct {
 // parseConnectionArgs extracts connection_id and database_name from the
 // tool argument map. connection_id arrives as float64 from JSON
 // unmarshalling.
-func parseConnectionArgs(args map[string]interface{}) connectionArgs {
+func parseConnectionArgs(args map[string]any) connectionArgs {
 	var ca connectionArgs
 
 	if raw, ok := args["connection_id"]; ok {
@@ -94,7 +94,7 @@ func parseConnectionArgs(args map[string]interface{}) connectionArgs {
 // and connection_id is present, an error is returned.
 func (r *ConnectionResolver) Resolve(
 	ctx context.Context,
-	args map[string]interface{},
+	args map[string]any,
 	fallbackClient *database.Client,
 ) (*ResolvedConnection, *mcp.ToolResponse) {
 	ca := parseConnectionArgs(args)

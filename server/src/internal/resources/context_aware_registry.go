@@ -117,7 +117,7 @@ func (r *ContextAwareRegistry) Read(ctx context.Context, uri string) (mcp.Resour
 	logAndReturn := func(content mcp.ResourceContent, err error) (mcp.ResourceContent, error) {
 		if tracing.IsEnabled() {
 			duration := time.Since(startTime)
-			var result interface{}
+			var result any
 			if len(content.Contents) > 0 {
 				// Extract text content for logging
 				texts := make([]string, 0, len(content.Contents))

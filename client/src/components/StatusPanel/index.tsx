@@ -299,7 +299,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
     }, []);
 
     const serverAnalysisSelection = useMemo((): ServerAnalysisInput | null => {
-        if (!selection) return null;
+        if (!selection) {return null;}
         if (selection.type === 'server' && typeof selection.id === 'number') {
             return {
                 type: 'server',

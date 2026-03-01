@@ -15,13 +15,15 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/pgedge/ai-workbench/server/internal/apiconst"
 )
 
 func TestRespondJSON(t *testing.T) {
 	tests := []struct {
 		name           string
 		status         int
-		data           interface{}
+		data           any
 		expectedStatus int
 		checkBody      func(t *testing.T, body string)
 	}{
@@ -103,7 +105,7 @@ func TestRespondJSON(t *testing.T) {
 			}
 
 			linkHeader := rec.Header().Get("Link")
-			expectedLink := "<" + OpenAPISpecPath + ">; rel=\"service-desc\""
+			expectedLink := "<" + apiconst.OpenAPISpecPath + ">; rel=\"service-desc\""
 			if linkHeader != expectedLink {
 				t.Errorf("Expected Link header %q, got %q", expectedLink, linkHeader)
 			}
@@ -199,7 +201,7 @@ func TestErrorResponse_JSON(t *testing.T) {
 	}
 
 	// Verify JSON structure
-	var rawJSON map[string]interface{}
+	var rawJSON map[string]any
 	if err := json.Unmarshal(data, &rawJSON); err != nil {
 		t.Fatalf("Failed to unmarshal to map: %v", err)
 	}
@@ -209,8 +211,8 @@ func TestErrorResponse_JSON(t *testing.T) {
 	}
 }
 
-func TestOpenAPISpecPath(t *testing.T) {
-	if OpenAPISpecPath != "/api/v1/openapi.json" {
-		t.Errorf("Expected OpenAPISpecPath to be '/api/v1/openapi.json', got %q", OpenAPISpecPath)
+func TestOpenAPISpecPathValue(t *testing.T) {
+	if apiconst.OpenAPISpecPath != "/api/v1/openapi.json" {
+		t.Errorf("Expected apiconst.OpenAPISpecPath to be '/api/v1/openapi.json', got %q", apiconst.OpenAPISpecPath)
 	}
 }

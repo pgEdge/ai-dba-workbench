@@ -75,7 +75,7 @@ func (h *RBACHandler) createGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	RespondJSON(w, http.StatusCreated, map[string]interface{}{
+	RespondJSON(w, http.StatusCreated, map[string]any{
 		"id":   groupID,
 		"name": req.Name,
 	})

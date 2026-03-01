@@ -219,7 +219,7 @@ func (h *AuthHandler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 	})
 
-	RespondJSON(w, http.StatusOK, map[string]interface{}{
+	RespondJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"message": "Logged out successfully",
 	})

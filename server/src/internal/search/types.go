@@ -11,21 +11,21 @@ package search
 
 // ScoredChunk represents a chunk of text with its relevance score
 type ScoredChunk struct {
-	SourceTable  string                 // Table name
-	SourceRowID  interface{}            // Primary key or row identifier
-	SourceColumn string                 // Which text column this came from
-	ChunkIndex   int                    // Index of chunk within the row
-	Text         string                 // Chunk text
-	Score        float64                // BM25 score
-	OriginalRank int                    // Original vector search rank
-	RowData      map[string]interface{} // Full row data for reference
+	SourceTable  string         // Table name
+	SourceRowID  any            // Primary key or row identifier
+	SourceColumn string         // Which text column this came from
+	ChunkIndex   int            // Index of chunk within the row
+	Text         string         // Chunk text
+	Score        float64        // BM25 score
+	OriginalRank int            // Original vector search rank
+	RowData      map[string]any // Full row data for reference
 }
 
 // VectorSearchResult represents a row from vector similarity search
 type VectorSearchResult struct {
-	RowData       map[string]interface{} // All row data
-	Distance      float64                // Combined/weighted distance score
-	VectorWeights map[string]float64     // Weight per vector column used
+	RowData       map[string]any     // All row data
+	Distance      float64            // Combined/weighted distance score
+	VectorWeights map[string]float64 // Weight per vector column used
 }
 
 // ColumnWeight contains weighting information for a column

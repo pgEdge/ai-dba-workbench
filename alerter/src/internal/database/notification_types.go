@@ -109,21 +109,21 @@ type ConnectionNotificationChannel struct {
 
 // NotificationHistory represents a notification delivery record
 type NotificationHistory struct {
-	ID               int64                  `json:"id"`
-	AlertID          *int64                 `json:"alert_id,omitempty"`
-	ChannelID        *int64                 `json:"channel_id,omitempty"`
-	ConnectionID     *int                   `json:"connection_id,omitempty"`
-	NotificationType NotificationType       `json:"notification_type"`
-	Status           NotificationStatus     `json:"status"`
-	PayloadJSON      map[string]interface{} `json:"payload_json,omitempty"`
-	ResponseCode     *int                   `json:"response_code,omitempty"`
-	ResponseBody     *string                `json:"response_body,omitempty"`
-	ErrorMessage     *string                `json:"error_message,omitempty"`
-	AttemptCount     int                    `json:"attempt_count"`
-	MaxAttempts      int                    `json:"max_attempts"`
-	NextRetryAt      *time.Time             `json:"next_retry_at,omitempty"`
-	CreatedAt        time.Time              `json:"created_at"`
-	SentAt           *time.Time             `json:"sent_at,omitempty"`
+	ID               int64              `json:"id"`
+	AlertID          *int64             `json:"alert_id,omitempty"`
+	ChannelID        *int64             `json:"channel_id,omitempty"`
+	ConnectionID     *int               `json:"connection_id,omitempty"`
+	NotificationType NotificationType   `json:"notification_type"`
+	Status           NotificationStatus `json:"status"`
+	PayloadJSON      map[string]any     `json:"payload_json,omitempty"`
+	ResponseCode     *int               `json:"response_code,omitempty"`
+	ResponseBody     *string            `json:"response_body,omitempty"`
+	ErrorMessage     *string            `json:"error_message,omitempty"`
+	AttemptCount     int                `json:"attempt_count"`
+	MaxAttempts      int                `json:"max_attempts"`
+	NextRetryAt      *time.Time         `json:"next_retry_at,omitempty"`
+	CreatedAt        time.Time          `json:"created_at"`
+	SentAt           *time.Time         `json:"sent_at,omitempty"`
 }
 
 // NotificationReminderState tracks reminder state for active alerts

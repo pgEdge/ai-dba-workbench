@@ -77,7 +77,7 @@ Use before:
 					COALESCE(inet_server_port(), 0) AS port
 			`
 
-			processor := func(rows pgx.Rows) (interface{}, error) {
+			processor := func(rows pgx.Rows) (any, error) {
 				if !rows.Next() {
 					return nil, fmt.Errorf("no system information returned")
 				}

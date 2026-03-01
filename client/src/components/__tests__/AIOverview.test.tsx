@@ -208,7 +208,7 @@ describe('AIOverview Component', () => {
             // remains null.  The component renders null for error/no-data.
             // First render will show loading; then SSE effect sets
             // loading=false.
-            const { container } = renderWithTheme(<AIOverview />);
+            renderWithTheme(<AIOverview />);
 
             // The SSE effect will fire and clear loading.  The component
             // should still show the loading skeleton since sseOverview is

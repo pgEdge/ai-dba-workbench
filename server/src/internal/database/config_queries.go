@@ -430,7 +430,7 @@ func (d *Datastore) UpsertAlertThreshold(ctx context.Context, scope string, scop
 	}
 
 	var query string
-	var args []interface{}
+	var args []any
 
 	switch scope {
 	case "server":
@@ -439,21 +439,21 @@ func (d *Datastore) UpsertAlertThreshold(ctx context.Context, scope string, scop
 			VALUES ($1, $2, 'server', $3, $4, $5, $6)
 			ON CONFLICT (rule_id, connection_id, COALESCE(database_name, '')) WHERE scope = 'server'
 			DO UPDATE SET operator = $3, threshold = $4, severity = $5, enabled = $6, updated_at = NOW()`
-		args = []interface{}{ruleID, scopeID, update.Operator, update.Threshold, update.Severity, update.Enabled}
+		args = []any{ruleID, scopeID, update.Operator, update.Threshold, update.Severity, update.Enabled}
 	case "cluster":
 		query = `
 			INSERT INTO alert_thresholds (rule_id, cluster_id, scope, operator, threshold, severity, enabled)
 			VALUES ($1, $2, 'cluster', $3, $4, $5, $6)
 			ON CONFLICT (rule_id, cluster_id) WHERE scope = 'cluster'
 			DO UPDATE SET operator = $3, threshold = $4, severity = $5, enabled = $6, updated_at = NOW()`
-		args = []interface{}{ruleID, scopeID, update.Operator, update.Threshold, update.Severity, update.Enabled}
+		args = []any{ruleID, scopeID, update.Operator, update.Threshold, update.Severity, update.Enabled}
 	case "group":
 		query = `
 			INSERT INTO alert_thresholds (rule_id, group_id, scope, operator, threshold, severity, enabled)
 			VALUES ($1, $2, 'group', $3, $4, $5, $6)
 			ON CONFLICT (rule_id, group_id) WHERE scope = 'group'
 			DO UPDATE SET operator = $3, threshold = $4, severity = $5, enabled = $6, updated_at = NOW()`
-		args = []interface{}{ruleID, scopeID, update.Operator, update.Threshold, update.Severity, update.Enabled}
+		args = []any{ruleID, scopeID, update.Operator, update.Threshold, update.Severity, update.Enabled}
 	default:
 		return fmt.Errorf("invalid scope: %s", scope)
 	}
@@ -468,18 +468,18 @@ func (d *Datastore) UpsertAlertThreshold(ctx context.Context, scope string, scop
 // DeleteAlertThreshold removes an alert threshold override at the specified scope.
 func (d *Datastore) DeleteAlertThreshold(ctx context.Context, scope string, scopeID int, ruleID int64) error {
 	var query string
-	var args []interface{}
+	var args []any
 
 	switch scope {
 	case "server":
 		query = `DELETE FROM alert_thresholds WHERE scope = 'server' AND rule_id = $1 AND connection_id = $2`
-		args = []interface{}{ruleID, scopeID}
+		args = []any{ruleID, scopeID}
 	case "cluster":
 		query = `DELETE FROM alert_thresholds WHERE scope = 'cluster' AND rule_id = $1 AND cluster_id = $2`
-		args = []interface{}{ruleID, scopeID}
+		args = []any{ruleID, scopeID}
 	case "group":
 		query = `DELETE FROM alert_thresholds WHERE scope = 'group' AND rule_id = $1 AND group_id = $2`
-		args = []interface{}{ruleID, scopeID}
+		args = []any{ruleID, scopeID}
 	default:
 		return fmt.Errorf("invalid scope: %s", scope)
 	}
@@ -804,7 +804,7 @@ func (d *Datastore) UpsertProbeOverride(ctx context.Context, scope string, scope
 	}
 
 	var query string
-	var args []interface{}
+	var args []any
 
 	switch scope {
 	case "server":
@@ -813,21 +813,21 @@ func (d *Datastore) UpsertProbeOverride(ctx context.Context, scope string, scope
 			VALUES ($1, (SELECT description FROM probe_configs WHERE name = $1 AND scope = 'global'), 'server', $2, $3, $4, $5, TRUE)
 			ON CONFLICT (name, connection_id) WHERE scope = 'server'
 			DO UPDATE SET is_enabled = $3, collection_interval_seconds = $4, retention_days = $5, user_modified = TRUE, updated_at = NOW()`
-		args = []interface{}{probeName, scopeID, update.IsEnabled, update.CollectionIntervalSeconds, update.RetentionDays}
+		args = []any{probeName, scopeID, update.IsEnabled, update.CollectionIntervalSeconds, update.RetentionDays}
 	case "cluster":
 		query = `
 			INSERT INTO probe_configs (name, description, scope, cluster_id, is_enabled, collection_interval_seconds, retention_days, user_modified)
 			VALUES ($1, (SELECT description FROM probe_configs WHERE name = $1 AND scope = 'global'), 'cluster', $2, $3, $4, $5, TRUE)
 			ON CONFLICT (name, cluster_id) WHERE scope = 'cluster'
 			DO UPDATE SET is_enabled = $3, collection_interval_seconds = $4, retention_days = $5, user_modified = TRUE, updated_at = NOW()`
-		args = []interface{}{probeName, scopeID, update.IsEnabled, update.CollectionIntervalSeconds, update.RetentionDays}
+		args = []any{probeName, scopeID, update.IsEnabled, update.CollectionIntervalSeconds, update.RetentionDays}
 	case "group":
 		query = `
 			INSERT INTO probe_configs (name, description, scope, group_id, is_enabled, collection_interval_seconds, retention_days, user_modified)
 			VALUES ($1, (SELECT description FROM probe_configs WHERE name = $1 AND scope = 'global'), 'group', $2, $3, $4, $5, TRUE)
 			ON CONFLICT (name, group_id) WHERE scope = 'group'
 			DO UPDATE SET is_enabled = $3, collection_interval_seconds = $4, retention_days = $5, user_modified = TRUE, updated_at = NOW()`
-		args = []interface{}{probeName, scopeID, update.IsEnabled, update.CollectionIntervalSeconds, update.RetentionDays}
+		args = []any{probeName, scopeID, update.IsEnabled, update.CollectionIntervalSeconds, update.RetentionDays}
 	default:
 		return fmt.Errorf("invalid scope: %s", scope)
 	}
@@ -842,18 +842,18 @@ func (d *Datastore) UpsertProbeOverride(ctx context.Context, scope string, scope
 // DeleteProbeOverride removes a probe config override at the specified scope.
 func (d *Datastore) DeleteProbeOverride(ctx context.Context, scope string, scopeID int, probeName string) error {
 	var query string
-	var args []interface{}
+	var args []any
 
 	switch scope {
 	case "server":
 		query = `DELETE FROM probe_configs WHERE scope = 'server' AND name = $1 AND connection_id = $2`
-		args = []interface{}{probeName, scopeID}
+		args = []any{probeName, scopeID}
 	case "cluster":
 		query = `DELETE FROM probe_configs WHERE scope = 'cluster' AND name = $1 AND cluster_id = $2`
-		args = []interface{}{probeName, scopeID}
+		args = []any{probeName, scopeID}
 	case "group":
 		query = `DELETE FROM probe_configs WHERE scope = 'group' AND name = $1 AND group_id = $2`
-		args = []interface{}{probeName, scopeID}
+		args = []any{probeName, scopeID}
 	default:
 		return fmt.Errorf("invalid scope: %s", scope)
 	}

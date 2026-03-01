@@ -62,10 +62,10 @@ func (te *TokenEstimator) extractText(msg Message) string {
 	case string:
 		return content
 
-	case []interface{}:
+	case []any:
 		var texts []string
 		for _, block := range content {
-			if blockMap, ok := block.(map[string]interface{}); ok {
+			if blockMap, ok := block.(map[string]any); ok {
 				text := te.extractTextFromBlock(blockMap)
 				if text != "" {
 					texts = append(texts, text)
@@ -85,7 +85,7 @@ func (te *TokenEstimator) extractText(msg Message) string {
 }
 
 // extractTextFromBlock extracts text from a content block.
-func (te *TokenEstimator) extractTextFromBlock(block map[string]interface{}) string {
+func (te *TokenEstimator) extractTextFromBlock(block map[string]any) string {
 	blockType, ok := block["type"].(string)
 	if !ok {
 		return ""
@@ -117,10 +117,10 @@ func (te *TokenEstimator) extractTextFromBlock(block map[string]interface{}) str
 			switch contentVal := content.(type) {
 			case string:
 				return contentVal
-			case []interface{}:
+			case []any:
 				var texts []string
 				for _, item := range contentVal {
-					if itemMap, ok := item.(map[string]interface{}); ok {
+					if itemMap, ok := item.(map[string]any); ok {
 						if text, ok := itemMap["text"].(string); ok {
 							texts = append(texts, text)
 						}

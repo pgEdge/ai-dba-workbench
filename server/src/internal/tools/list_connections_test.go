@@ -39,7 +39,7 @@ func TestListConnectionsTool_NoDatastore(t *testing.T) {
 	tool := ListConnectionsTool(nil)
 
 	// Execute with no datastore - should return error
-	response, err := tool.Handler(map[string]interface{}{})
+	response, err := tool.Handler(map[string]any{})
 
 	if err != nil {
 		t.Errorf("Handler should not return error, got: %v", err)

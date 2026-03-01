@@ -56,9 +56,7 @@ import {
  */
 const GroupedAlertInstance = ({ alert, showServer, onAcknowledge, onUnacknowledge, onAnalyze, onEditOverride }) => {
     const theme = useTheme();
-    const severityColors = getSeverityColors(theme);
     const isAcknowledged = !!alert.acknowledgedAt;
-    const baseColor = isAcknowledged ? theme.palette.grey[500] : (severityColors[alert.severity] || severityColors.info);
     const thresholdInfo = formatThresholdInfo(alert);
 
     const containerSx = useMemo(() => ({

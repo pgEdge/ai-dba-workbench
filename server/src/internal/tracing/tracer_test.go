@@ -95,7 +95,7 @@ func TestTraceEntryMarshalJSON(t *testing.T) {
 		SessionID: "sess_123",
 		Type:      EntryTypeToolCall,
 		Name:      "test_tool",
-		Parameters: map[string]interface{}{
+		Parameters: map[string]any{
 			"param1": "value1",
 		},
 		Duration:  &duration,
@@ -178,7 +178,7 @@ func TestInitializeAndLog(t *testing.T) {
 	}
 
 	// Log some entries
-	LogToolCall("sess_123", "token_abc", "req_001", "query_database", map[string]interface{}{
+	LogToolCall("sess_123", "token_abc", "req_001", "query_database", map[string]any{
 		"query": "SELECT 1",
 	})
 

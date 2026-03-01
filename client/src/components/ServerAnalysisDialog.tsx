@@ -33,6 +33,8 @@ import { useServerAnalysis, ServerAnalysisInput } from '../hooks/useServerAnalys
 import {
     MarkdownContent,
     AnalysisSkeleton,
+} from './shared/MarkdownContent';
+import {
     sxMonoFont,
     sxErrorFlexRow,
     getIconBoxSx,
@@ -44,7 +46,7 @@ import {
     getErrorTitleSx,
     getAnalysisBoxSx,
     getDownloadButtonSx,
-} from './shared/MarkdownContent';
+} from './shared/MarkdownExports';
 import SlideTransition from './shared/SlideTransition';
 import { downloadAsMarkdown } from '../utils/downloadMarkdown';
 
@@ -130,7 +132,7 @@ const ServerAnalysisDialog: React.FC<ServerAnalysisDialogProps> = ({ open, selec
 
     // Download analysis as markdown file
     const handleDownload = () => {
-        if (!analysis || !selection) return;
+        if (!analysis || !selection) {return;}
 
         const timestamp = new Date().toISOString().split('T')[0];
         const typeLabel = selection.type === 'cluster' ? 'cluster' : 'server';

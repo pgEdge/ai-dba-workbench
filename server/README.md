@@ -9,6 +9,7 @@ For complete documentation, visit [docs.pgedge.com](https://docs.pgedge.com).
 
 ## Table of Contents
 
+- [Prerequisites](#prerequisites)
 - [Features](#features)
 - [Building](#building)
 - [Quick Start](#quick-start)
@@ -25,6 +26,8 @@ Before building the server, install the following tools:
 - Network access to the PostgreSQL datastore.
 
 ## Features
+
+The MCP Server includes the following features:
 
 - The server uses HTTP/HTTPS transport with JSON-RPC 2.0.
 - The server provides SQLite-based authentication with
@@ -85,30 +88,37 @@ complete example configuration.
 
 ### Command Line Options
 
-**General Options:**
+The following general options configure the server:
 
-- `-config string` - Path to configuration file
-- `-addr string` - HTTP server address (default: `:8080`)
-- `-tls` - Enable TLS/HTTPS
-- `-cert string` - Path to TLS certificate file
-- `-key string` - Path to TLS key file
-- `-chain string` - Path to TLS certificate chain file
-- `-debug` - Enable debug logging
-- `-data-dir string` - Data directory for auth database and conversations
+- `-config string` sets the path to a configuration
+  file.
+- `-addr string` sets the HTTP server address; the
+  default is `:8080`.
+- `-tls` enables TLS/HTTPS transport.
+- `-cert string` sets the path to a TLS certificate
+  file.
+- `-key string` sets the path to a TLS key file.
+- `-chain string` sets the path to a TLS certificate
+  chain file.
+- `-debug` enables debug logging.
+- `-data-dir string` sets the data directory for the
+  auth database and conversations.
 
-**Database Connection Options:**
+The following options configure the database connection:
 
-- `-db-host string` - Database host
-- `-db-port int` - Database port
-- `-db-name string` - Database name
-- `-db-user string` - Database user
-- `-db-password string` - Database password
-- `-db-sslmode string` - Database SSL mode (disable, require, verify-ca,
-  verify-full)
+- `-db-host string` sets the database host.
+- `-db-port int` sets the database port.
+- `-db-name string` sets the database name.
+- `-db-user string` sets the database user.
+- `-db-password string` sets the database password.
+- `-db-sslmode string` sets the database SSL mode;
+  valid values are disable, require, verify-ca, and
+  verify-full.
 
-**Tracing Options:**
+The following option configures request tracing:
 
-- `-trace-file string` - Path to trace file for logging MCP requests/responses
+- `-trace-file string` sets the path to a trace file
+  for logging MCP requests and responses.
 
 ### Authentication Storage
 
@@ -248,11 +258,15 @@ permissions.
 
 ### Security Features
 
-- **Password hashing**: Bcrypt with cost factor 12
-- **Token hashing**: SHA256 for secure storage
-- **Rate limiting**: Configurable per-IP rate limiting
-- **Account lockout**: Automatic disabling after failed login attempts
-- **Session isolation**: Per-token database connection pools
+The server includes the following security features:
+
+- Passwords are hashed using bcrypt with cost factor 12.
+- Tokens are hashed using SHA256 for secure storage.
+- The server supports configurable per-IP rate limiting.
+- Accounts lock automatically after repeated failed
+  login attempts.
+- Each token receives an isolated database connection
+  pool for session separation.
 
 ### Configuration File
 

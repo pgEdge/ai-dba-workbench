@@ -55,7 +55,6 @@ import {
     AutoAwesome as AutoAwesomeIcon,
     SmartToyOutlined as ChatBotIcon,
     History as HistoryIcon,
-    Send as SendIcon,
     MonitorHeart as MonitoringIcon,
     Timeline as TimelineIcon,
     AccountTree as TopologyIcon,

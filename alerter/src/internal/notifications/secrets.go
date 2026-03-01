@@ -34,7 +34,21 @@ func NewSecretManager(key []byte) (SecretManager, error) {
 
 // LoadSecretKey loads a secret key from a file.
 // The file should contain a hex-encoded 32-byte key (64 hex characters).
+// The file must have 0600 permissions (owner read/write only).
 func LoadSecretKey(path string) ([]byte, error) {
+	// Check file permissions before loading
+	fileInfo, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat secret key file: %w", err)
+	}
+
+	mode := fileInfo.Mode().Perm()
+	if mode != 0600 {
+		return nil, fmt.Errorf(
+			"insecure permissions on secret key file %s: %04o (expected 0600). "+
+				"Please run: chmod 600 %s", path, mode, path)
+	}
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read secret key file: %w", err)

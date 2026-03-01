@@ -26,11 +26,11 @@ func createMessage(role, content string) Message {
 func createToolMessage(role string, toolName string, content string) Message {
 	return Message{
 		Role: role,
-		Content: []interface{}{
-			map[string]interface{}{
+		Content: []any{
+			map[string]any{
 				"type": "tool_use",
 				"name": toolName,
-				"input": map[string]interface{}{
+				"input": map[string]any{
 					"query": content,
 				},
 			},
@@ -175,9 +175,9 @@ func TestCompactor_PreservesToolMessages(t *testing.T) {
 	// Should preserve schema tool even if not in recent window
 	foundSchemaTool := false
 	for _, msg := range result.Messages {
-		if content, ok := msg.Content.([]interface{}); ok {
+		if content, ok := msg.Content.([]any); ok {
 			for _, block := range content {
-				if blockMap, ok := block.(map[string]interface{}); ok {
+				if blockMap, ok := block.(map[string]any); ok {
 					if name, ok := blockMap["name"].(string); ok && name == "get_schema_info" {
 						foundSchemaTool = true
 					}

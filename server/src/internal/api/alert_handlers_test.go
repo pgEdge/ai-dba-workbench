@@ -257,7 +257,7 @@ func TestAcknowledgeRequest_JSON(t *testing.T) {
 	}
 
 	// Verify JSON field names
-	var rawJSON map[string]interface{}
+	var rawJSON map[string]any
 	if err := json.Unmarshal(data, &rawJSON); err != nil {
 		t.Fatalf("Failed to unmarshal to map: %v", err)
 	}

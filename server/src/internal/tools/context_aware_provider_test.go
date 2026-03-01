@@ -121,7 +121,7 @@ func TestContextAwareProvider_Execute_WithAuth(t *testing.T) {
 		ctx := context.Background()
 
 		// Execute read_resource (even though it doesn't need DB, context validation happens first)
-		_, err := provider.Execute(ctx, "read_resource", map[string]interface{}{
+		_, err := provider.Execute(ctx, "read_resource", map[string]any{
 			"uri": "test://test",
 		})
 		if err == nil {
@@ -138,7 +138,7 @@ func TestContextAwareProvider_Execute_WithAuth(t *testing.T) {
 		ctx := context.WithValue(context.Background(), auth.TokenHashContextKey, "test-token-hash")
 
 		// Execute read_resource (doesn't require database queries)
-		response, err := provider.Execute(ctx, "read_resource", map[string]interface{}{
+		response, err := provider.Execute(ctx, "read_resource", map[string]any{
 			"uri": "test://test",
 		})
 		if err != nil {
@@ -159,7 +159,7 @@ func TestContextAwareProvider_Execute_WithAuth(t *testing.T) {
 	t.Run("multiple tokens get different clients", func(t *testing.T) {
 		// First token
 		ctx1 := context.WithValue(context.Background(), auth.TokenHashContextKey, "token-hash-1")
-		_, err := provider.Execute(ctx1, "read_resource", map[string]interface{}{
+		_, err := provider.Execute(ctx1, "read_resource", map[string]any{
 			"uri": "test://test1",
 		})
 		if err != nil {
@@ -168,7 +168,7 @@ func TestContextAwareProvider_Execute_WithAuth(t *testing.T) {
 
 		// Second token
 		ctx2 := context.WithValue(context.Background(), auth.TokenHashContextKey, "token-hash-2")
-		_, err = provider.Execute(ctx2, "read_resource", map[string]interface{}{
+		_, err = provider.Execute(ctx2, "read_resource", map[string]any{
 			"uri": "test://test2",
 		})
 		if err != nil {
@@ -177,7 +177,7 @@ func TestContextAwareProvider_Execute_WithAuth(t *testing.T) {
 
 		// Third token
 		ctx3 := context.WithValue(context.Background(), auth.TokenHashContextKey, "token-hash-3")
-		_, err = provider.Execute(ctx3, "read_resource", map[string]interface{}{
+		_, err = provider.Execute(ctx3, "read_resource", map[string]any{
 			"uri": "test://test3",
 		})
 		if err != nil {
@@ -205,7 +205,7 @@ func TestContextAwareProvider_Execute_InvalidTool(t *testing.T) {
 	ctx := context.WithValue(context.Background(), auth.TokenHashContextKey, "test-token-hash")
 
 	// Execute non-existent tool
-	response, err := provider.Execute(ctx, "nonexistent_tool", map[string]interface{}{})
+	response, err := provider.Execute(ctx, "nonexistent_tool", map[string]any{})
 	if err != nil {
 		t.Errorf("Expected nil error (error in response), got: %v", err)
 	}

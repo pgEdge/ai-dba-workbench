@@ -86,7 +86,7 @@ func TestPgHbaFileRulesProbe_ComputeMetricsHash(t *testing.T) {
 	probe := NewPgHbaFileRulesProbe(config)
 
 	// Test with identical metrics
-	metrics1 := []map[string]interface{}{
+	metrics1 := []map[string]any{
 		{
 			"rule_number": 1,
 			"auth_method": "trust",
@@ -99,7 +99,7 @@ func TestPgHbaFileRulesProbe_ComputeMetricsHash(t *testing.T) {
 		},
 	}
 
-	metrics2 := []map[string]interface{}{
+	metrics2 := []map[string]any{
 		{
 			"rule_number": 1,
 			"auth_method": "trust",
@@ -127,7 +127,7 @@ func TestPgHbaFileRulesProbe_ComputeMetricsHash(t *testing.T) {
 	}
 
 	// Test with different metrics
-	metrics3 := []map[string]interface{}{
+	metrics3 := []map[string]any{
 		{
 			"rule_number": 1,
 			"auth_method": "scram-sha-256", // Different value
@@ -156,7 +156,7 @@ func TestPgHbaFileRulesProbe_ComputeMetricsHash_EmptyMetrics(t *testing.T) {
 	}
 	probe := NewPgHbaFileRulesProbe(config)
 
-	metrics := []map[string]interface{}{}
+	metrics := []map[string]any{}
 
 	hash, err := probe.computeMetricsHash(metrics)
 	if err != nil {

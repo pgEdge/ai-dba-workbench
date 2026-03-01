@@ -36,6 +36,8 @@ import { useAlertAnalysis } from '../hooks/useAlertAnalysis';
 import {
     MarkdownContent,
     AnalysisSkeleton,
+} from './shared/MarkdownContent';
+import {
     sxMonoFont,
     sxErrorFlexRow,
     getIconBoxSx,
@@ -47,7 +49,7 @@ import {
     getErrorTitleSx,
     getAnalysisBoxSx,
     getDownloadButtonSx,
-} from './shared/MarkdownContent';
+} from './shared/MarkdownExports';
 import SlideTransition from './shared/SlideTransition';
 import { downloadAsMarkdown } from '../utils/downloadMarkdown';
 

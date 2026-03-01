@@ -20,21 +20,21 @@ import (
 func TestParseConnectionArgs(t *testing.T) {
 	tests := []struct {
 		name        string
-		args        map[string]interface{}
+		args        map[string]any
 		wantConnID  int
 		wantHasConn bool
 		wantDBName  string
 	}{
 		{
 			name:        "empty args",
-			args:        map[string]interface{}{},
+			args:        map[string]any{},
 			wantConnID:  0,
 			wantHasConn: false,
 			wantDBName:  "",
 		},
 		{
 			name: "connection_id as float64",
-			args: map[string]interface{}{
+			args: map[string]any{
 				"connection_id": float64(42),
 			},
 			wantConnID:  42,
@@ -43,7 +43,7 @@ func TestParseConnectionArgs(t *testing.T) {
 		},
 		{
 			name: "connection_id as int",
-			args: map[string]interface{}{
+			args: map[string]any{
 				"connection_id": int(7),
 			},
 			wantConnID:  7,
@@ -52,7 +52,7 @@ func TestParseConnectionArgs(t *testing.T) {
 		},
 		{
 			name: "connection_id with database_name",
-			args: map[string]interface{}{
+			args: map[string]any{
 				"connection_id": float64(10),
 				"database_name": "mydb",
 			},
@@ -62,7 +62,7 @@ func TestParseConnectionArgs(t *testing.T) {
 		},
 		{
 			name: "database_name only",
-			args: map[string]interface{}{
+			args: map[string]any{
 				"database_name": "otherdb",
 			},
 			wantConnID:  0,
@@ -71,7 +71,7 @@ func TestParseConnectionArgs(t *testing.T) {
 		},
 		{
 			name: "connection_id as string is not parsed",
-			args: map[string]interface{}{
+			args: map[string]any{
 				"connection_id": "42",
 			},
 			wantConnID:  0,
@@ -80,7 +80,7 @@ func TestParseConnectionArgs(t *testing.T) {
 		},
 		{
 			name: "empty database_name is ignored",
-			args: map[string]interface{}{
+			args: map[string]any{
 				"database_name": "",
 			},
 			wantConnID:  0,
@@ -89,7 +89,7 @@ func TestParseConnectionArgs(t *testing.T) {
 		},
 		{
 			name: "connection_id as float64 zero",
-			args: map[string]interface{}{
+			args: map[string]any{
 				"connection_id": float64(0),
 			},
 			wantConnID:  0,
@@ -122,7 +122,7 @@ func TestResolve_NilResolver_NoConnectionID(t *testing.T) {
 	var resolver *ConnectionResolver
 	fallbackClient := database.NewClient(nil)
 
-	resolved, errResp := resolver.Resolve(context.Background(), map[string]interface{}{}, fallbackClient)
+	resolved, errResp := resolver.Resolve(context.Background(), map[string]any{}, fallbackClient)
 
 	if resolved != nil {
 		t.Fatal("Expected nil resolved connection")
@@ -142,7 +142,7 @@ func TestResolve_NilResolver_WithConnectionID(t *testing.T) {
 	// A nil resolver with connection_id present should return an
 	// error about connection resolution not being available.
 	var resolver *ConnectionResolver
-	args := map[string]interface{}{
+	args := map[string]any{
 		"connection_id": float64(1),
 	}
 

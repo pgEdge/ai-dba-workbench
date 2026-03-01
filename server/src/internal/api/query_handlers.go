@@ -684,7 +684,7 @@ func hasLimitClause(sql string) bool {
 // queryable is an interface satisfied by both pgx.Tx and *pgxpool.Pool,
 // allowing runStatement to execute queries against either.
 type queryable interface {
-	Query(ctx context.Context, sql string, args ...interface{}) (pgx.Rows, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
 // runStatement executes a single SQL statement against a queryable target
@@ -839,7 +839,7 @@ func runSimpleStatement(ctx context.Context, pgConn *pgconn.PgConn, stmt string,
 // formatValueForJSON converts a database value to a string for JSON
 // serialization. This reuses the tsv.FormatValue logic but without TSV
 // escaping since JSON handles special characters natively.
-func formatValueForJSON(v interface{}) (result string) {
+func formatValueForJSON(v any) (result string) {
 	if v == nil {
 		return "NULL"
 	}

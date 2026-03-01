@@ -10,6 +10,7 @@
 
 import { useState, useCallback, useRef } from 'react';
 import { apiFetch } from '../utils/apiClient';
+import { djb2Hash } from '../utils/textHelpers';
 
 export interface PlanNode {
     'Node Type': string;
@@ -71,17 +72,6 @@ interface CacheEntry {
 
 /** Module-level cache for query plans. */
 const planCache = new Map<string, CacheEntry>();
-
-/**
- * Compute a djb2 hash of the given string.
- */
-function djb2Hash(str: string): string {
-    let hash = 5381;
-    for (let i = 0; i < str.length; i++) {
-        hash = ((hash << 5) + hash + str.charCodeAt(i)) | 0;
-    }
-    return String(hash >>> 0);
-}
 
 /**
  * Build a cache key from query plan identifiers.

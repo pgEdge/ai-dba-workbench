@@ -51,12 +51,3 @@ func ScanRowsToMaps(rows pgx.Rows) ([]map[string]any, error) {
 
 	return results, nil
 }
-
-// FormatDatabaseInfo formats a connection name and optional database name
-// into a display string like "ConnectionName" or "ConnectionName/database".
-func FormatDatabaseInfo(connectionName string, databaseName string) string {
-	if databaseName != "" {
-		return fmt.Sprintf("%s/%s", connectionName, databaseName)
-	}
-	return connectionName
-}

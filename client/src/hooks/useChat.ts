@@ -484,6 +484,10 @@ function toAPIMessages(chatMessages: ChatMessageData[]): APIMessage[] {
         }));
 }
 
+// NOTE: Chat input history is intentionally retained in localStorage
+// across sessions and is not cleared on logout. This preserves the
+// user's recent queries for a better experience.
+
 /**
  * Load input history from localStorage.
  */

@@ -95,8 +95,8 @@ http:
     enabled: true
 
     # Account lockout after N failed login attempts (0 = disabled)
-    # Default: 0 (disabled)
-    max_failed_attempts_before_lockout: 0
+    # Default: 10
+    max_failed_attempts_before_lockout: 10
 
     # Maximum days for user-created tokens (0 = unlimited)
     # This limits how long users can set their personal tokens to live

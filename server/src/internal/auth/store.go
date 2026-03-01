@@ -1023,6 +1023,8 @@ func (s *AuthStore) DeleteUser(username string) error {
 		return fmt.Errorf("user '%s' not found", username)
 	}
 
+	s.InvalidateUserSessions(username)
+
 	return nil
 }
 
@@ -1064,6 +1066,8 @@ func (s *AuthStore) DisableUser(username string) error {
 	if rows == 0 {
 		return fmt.Errorf("user '%s' not found", username)
 	}
+
+	s.InvalidateUserSessions(username)
 
 	return nil
 }

@@ -30,3 +30,26 @@ export const truncateDescription = (desc: string, maxLength = 60): string => {
     if (firstLine.length <= maxLength) {return firstLine;}
     return firstLine.substring(0, maxLength) + '...';
 };
+
+/**
+ * Compute a djb2 hash of the given string and return it as a string.
+ */
+export function djb2Hash(str: string): string {
+    let hash = 5381;
+    for (let i = 0; i < str.length; i++) {
+        hash = ((hash << 5) + hash + str.charCodeAt(i)) | 0;
+    }
+    return String(hash >>> 0);
+}
+
+/**
+ * Slugify a string for use in filenames.
+ */
+export const slugify = (text: string): string =>
+    text
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+
+/** Analysis cache time-to-live: 30 minutes. */
+export const ANALYSIS_CACHE_TTL_MS = 30 * 60 * 1000;

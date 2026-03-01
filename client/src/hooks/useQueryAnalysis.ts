@@ -22,6 +22,7 @@ import {
 import { runAgenticLoop } from '../utils/agenticLoop';
 import { fetchTimelineEventsForRange } from '../utils/timelineEvents';
 import { Message } from '../types/llm';
+import { djb2Hash, ANALYSIS_CACHE_TTL_MS } from '../utils/textHelpers';
 import { useAnalysisState } from './useAnalysisState';
 
 export interface QueryAnalysisInput {
@@ -48,7 +49,6 @@ export interface UseQueryAnalysisReturn {
 }
 
 // Module-level cache for query analysis results (persists across component mounts)
-const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const analysisCache = new Map<string, { analysis: string; timestamp: number }>();
 
 export function clearQueryAnalysisCache(): void {
@@ -84,17 +84,6 @@ Keep responses concise and actionable. Do not offer to perform additional action
 If a search_knowledgebase tool is available, use it to look up unfamiliar PostgreSQL features, extensions, or pgEdge-specific concepts before making recommendations. If a test_query tool is available, validate all SQL queries before including them in the report.`;
 
 /**
- * Compute a djb2 hash of the given string and return it as a string.
- */
-function djb2Hash(str: string): string {
-    let hash = 5381;
-    for (let i = 0; i < str.length; i++) {
-        hash = ((hash << 5) + hash + str.charCodeAt(i)) | 0;
-    }
-    return String(hash >>> 0);
-}
-
-/**
  * Compute a cache key from stable identifiers: query ID,
  * connection ID, and database name.
  */
@@ -117,7 +106,7 @@ export function hasCachedQueryAnalysis(
 ): boolean {
     const cacheKey = computeCacheKey(queryId, connectionId, databaseName);
     const cached = analysisCache.get(cacheKey);
-    return !!cached && (Date.now() - cached.timestamp) < CACHE_TTL_MS;
+    return !!cached && (Date.now() - cached.timestamp) < ANALYSIS_CACHE_TTL_MS;
 }
 
 /**
@@ -145,7 +134,7 @@ export const useQueryAnalysis = (): UseQueryAnalysisReturn => {
             input.databaseName,
         );
         const cached = analysisCache.get(cacheKey);
-        if (cached && (Date.now() - cached.timestamp) < CACHE_TTL_MS) {
+        if (cached && (Date.now() - cached.timestamp) < ANALYSIS_CACHE_TTL_MS) {
             setAnalysis(cached.analysis);
             setError(null);
             setLoading(false);

@@ -314,7 +314,7 @@ func isFlagSet(name string) bool {
 func (f *Flags) ResolvePasswords() error {
 	dbResult, err := ResolvePassword(
 		f.DBPassword, isFlagSet("db-password"),
-		"AIDBA_DB_PASSWORD", f.DBPasswordFile,
+		f.DBPasswordFile,
 	)
 	if err != nil {
 		return fmt.Errorf("resolving database password: %w", err)
@@ -325,7 +325,7 @@ func (f *Flags) ResolvePasswords() error {
 
 	userResult, err := ResolvePassword(
 		f.UserPassword, isFlagSet("password"),
-		"AIDBA_USER_PASSWORD", f.UserPasswordFile,
+		f.UserPasswordFile,
 	)
 	if err != nil {
 		return fmt.Errorf("resolving user password: %w", err)

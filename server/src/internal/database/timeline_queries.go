@@ -142,6 +142,8 @@ func (d *Datastore) GetTimelineEvents(ctx context.Context, filter TimelineFilter
 
 // buildConnectionFilter creates the connection filter portion of the WHERE clause
 func buildConnectionFilter(filter TimelineFilter) (string, []any, int) {
+	// SECURITY: The whereClause is composed from parameterized conditions ($1, $2, etc.).
+	// All user-supplied values MUST use positional parameters. Never interpolate values directly.
 	var conditions []string
 	var args []any
 	argNum := 1
@@ -171,6 +173,8 @@ func buildConnectionFilter(filter TimelineFilter) (string, []any, int) {
 
 // buildTimeFilter creates the time filter portion of the WHERE clause
 func buildTimeFilter(filter TimelineFilter, startArgNum int) (string, []any, int) {
+	// SECURITY: The whereClause is composed from parameterized conditions ($1, $2, etc.).
+	// All user-supplied values MUST use positional parameters. Never interpolate values directly.
 	var conditions []string
 	var args []any
 	argNum := startArgNum

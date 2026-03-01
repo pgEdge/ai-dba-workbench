@@ -12,6 +12,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { apiFetch } from '../utils/apiClient';
 import { formatTime } from '../utils/formatters';
 import { LLMResponse } from '../types/llm';
+import { djb2Hash, ANALYSIS_CACHE_TTL_MS } from '../utils/textHelpers';
 import { useAnalysisState } from './useAnalysisState';
 
 export interface QueryOverviewInput {
@@ -35,9 +36,6 @@ export interface UseQueryOverviewReturn {
     refresh: () => void;
 }
 
-/** Cache TTL: 30 minutes. */
-const CACHE_TTL_MS = 30 * 60 * 1000;
-
 /** Module-level cache for overview summaries. */
 const overviewCache = new Map<
     string,
@@ -54,17 +52,6 @@ Produce a concise 2-3 sentence plain-text summary covering:
 Do NOT use markdown formatting, headings, bullets, or code blocks. Write plain prose only. Keep it under 60 words.
 
 CRITICAL: Your output is rendered in a static, read-only panel. Do NOT ask questions or offer to investigate further.`;
-
-/**
- * Compute a djb2 hash of the given string.
- */
-function djb2Hash(str: string): string {
-    let hash = 5381;
-    for (let i = 0; i < str.length; i++) {
-        hash = ((hash << 5) + hash + str.charCodeAt(i)) | 0;
-    }
-    return String(hash >>> 0);
-}
 
 /**
  * Build a cache key from the query overview identifiers.
@@ -110,7 +97,7 @@ export function useQueryOverview(
             const cached = overviewCache.get(cacheKey);
             if (
                 cached
-                && (Date.now() - cached.timestamp) < CACHE_TTL_MS
+                && (Date.now() - cached.timestamp) < ANALYSIS_CACHE_TTL_MS
             ) {
                 setAnalysis(cached.summary);
                 setGeneratedAt(new Date(cached.timestamp));
@@ -205,10 +192,7 @@ export function useQueryOverview(
             triggeredRef.current = true;
             generateSummary(input);
         }
-    }, [
-        input, input?.queryId, input?.connectionId, input?.databaseName,
-        generateSummary,
-    ]);
+    }, [input, generateSummary]);
 
     // Refresh: clear cache and re-generate
     const refresh = useCallback((): void => {

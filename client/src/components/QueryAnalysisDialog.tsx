@@ -35,6 +35,7 @@ import {
     QueryAnalysisInput,
 } from '../hooks/useQueryAnalysis';
 import { formatTime } from '../utils/formatters';
+import { slugify } from '../utils/textHelpers';
 import {
     MarkdownContent,
     AnalysisSkeleton,
@@ -107,16 +108,6 @@ const sxMonoSmall = {
     color: 'text.secondary',
     ...sxMonoFont,
 };
-
-// ---------------------------------------------------------------------------
-// Helper: slugify a string for use in filenames
-// ---------------------------------------------------------------------------
-
-const slugify = (text: string): string =>
-    text
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '');
 
 // ---------------------------------------------------------------------------
 // Component

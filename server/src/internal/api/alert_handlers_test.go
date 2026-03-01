@@ -18,7 +18,7 @@ import (
 )
 
 func TestNewAlertHandler(t *testing.T) {
-	handler := NewAlertHandler(nil, nil)
+	handler := NewAlertHandler(nil, nil, nil)
 	if handler == nil {
 		t.Fatal("NewAlertHandler returned nil")
 	}
@@ -57,7 +57,7 @@ func TestAlertHandler_HandleNotConfigured(t *testing.T) {
 }
 
 func TestAlertHandler_HandleAlerts_MethodNotAllowed(t *testing.T) {
-	handler := NewAlertHandler(nil, nil)
+	handler := NewAlertHandler(nil, nil, nil)
 
 	tests := []struct {
 		name   string
@@ -84,7 +84,7 @@ func TestAlertHandler_HandleAlerts_MethodNotAllowed(t *testing.T) {
 }
 
 func TestAlertHandler_HandleAlertCounts_MethodNotAllowed(t *testing.T) {
-	handler := NewAlertHandler(nil, nil)
+	handler := NewAlertHandler(nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/alerts/counts", nil)
 	rec := httptest.NewRecorder()
@@ -97,7 +97,7 @@ func TestAlertHandler_HandleAlertCounts_MethodNotAllowed(t *testing.T) {
 }
 
 func TestAlertHandler_HandleAcknowledge_MethodNotAllowed(t *testing.T) {
-	handler := NewAlertHandler(nil, nil)
+	handler := NewAlertHandler(nil, nil, nil)
 
 	// PATCH is not allowed
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/alerts/acknowledge", nil)
@@ -120,7 +120,7 @@ func TestAlertHandler_HandleAcknowledge_MethodNotAllowed(t *testing.T) {
 }
 
 func TestAlertHandler_AcknowledgeAlert_MissingAlertID(t *testing.T) {
-	handler := NewAlertHandler(nil, nil)
+	handler := NewAlertHandler(nil, nil, nil)
 
 	body := `{"message": "test acknowledgment"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/alerts/acknowledge",
@@ -145,7 +145,7 @@ func TestAlertHandler_AcknowledgeAlert_MissingAlertID(t *testing.T) {
 }
 
 func TestAlertHandler_AcknowledgeAlert_InvalidJSON(t *testing.T) {
-	handler := NewAlertHandler(nil, nil)
+	handler := NewAlertHandler(nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/alerts/acknowledge",
 		bytes.NewBufferString("invalid json"))
@@ -169,7 +169,7 @@ func TestAlertHandler_AcknowledgeAlert_InvalidJSON(t *testing.T) {
 }
 
 func TestAlertHandler_UnacknowledgeAlert_MissingAlertID(t *testing.T) {
-	handler := NewAlertHandler(nil, nil)
+	handler := NewAlertHandler(nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/alerts/acknowledge", nil)
 	rec := httptest.NewRecorder()
@@ -191,7 +191,7 @@ func TestAlertHandler_UnacknowledgeAlert_MissingAlertID(t *testing.T) {
 }
 
 func TestAlertHandler_UnacknowledgeAlert_InvalidAlertID(t *testing.T) {
-	handler := NewAlertHandler(nil, nil)
+	handler := NewAlertHandler(nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodDelete,
 		"/api/v1/alerts/acknowledge?alert_id=invalid", nil)
@@ -205,7 +205,7 @@ func TestAlertHandler_UnacknowledgeAlert_InvalidAlertID(t *testing.T) {
 }
 
 func TestAlertHandler_RegisterRoutes_NotConfigured(t *testing.T) {
-	handler := NewAlertHandler(nil, nil)
+	handler := NewAlertHandler(nil, nil, nil)
 	mux := http.NewServeMux()
 	noopWrapper := func(h http.HandlerFunc) http.HandlerFunc { return h }
 
@@ -274,7 +274,7 @@ func TestAcknowledgeRequest_JSON(t *testing.T) {
 }
 
 func TestAlertHandler_HandleAcknowledge_Methods(t *testing.T) {
-	handler := NewAlertHandler(nil, nil)
+	handler := NewAlertHandler(nil, nil, nil)
 
 	tests := []struct {
 		name     string

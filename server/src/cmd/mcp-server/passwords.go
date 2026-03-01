@@ -23,8 +23,6 @@ const (
 	PasswordSourceNone PasswordSource = iota
 	// PasswordSourceFlag means the password came from a CLI flag.
 	PasswordSourceFlag
-	// PasswordSourceEnv means the password came from an environment variable.
-	PasswordSourceEnv
 	// PasswordSourceFile means the password was read from a file.
 	PasswordSourceFile
 )
@@ -35,30 +33,21 @@ type PasswordResult struct {
 	Source PasswordSource
 }
 
-// envLookupFunc allows tests to override environment variable lookups.
-var envLookupFunc = os.LookupEnv
-
 // ResolvePassword determines a password value using the following
-// precedence: CLI flag (highest), environment variable, file, none.
+// precedence: CLI flag (highest), file, none.
 // When the CLI flag is used, a deprecation warning is printed to
 // stderr because command-line arguments are visible in process
 // listings.
-func ResolvePassword(flagValue string, flagSet bool, envVar, filePath string) (PasswordResult, error) {
+func ResolvePassword(flagValue string, flagSet bool, filePath string) (PasswordResult, error) {
 	// 1. CLI flag (highest precedence, but deprecated)
 	if flagSet && flagValue != "" {
 		fmt.Fprintf(os.Stderr,
 			"WARNING: Passing passwords via command-line flags is insecure "+
-				"and deprecated. Use the environment variable %s or the "+
-				"corresponding -password-file flag instead.\n", envVar)
+				"and deprecated. Use the corresponding -password-file flag instead.\n")
 		return PasswordResult{Value: flagValue, Source: PasswordSourceFlag}, nil
 	}
 
-	// 2. Environment variable
-	if val, ok := envLookupFunc(envVar); ok && val != "" {
-		return PasswordResult{Value: val, Source: PasswordSourceEnv}, nil
-	}
-
-	// 3. Password file
+	// 2. Password file
 	if filePath != "" {
 		data, err := os.ReadFile(filePath)
 		if err != nil {

@@ -51,6 +51,7 @@ import {
 } from './shared/MarkdownExports';
 import SlideTransition from './shared/SlideTransition';
 import { downloadAsMarkdown } from '../utils/downloadMarkdown';
+import { slugify } from '../utils/textHelpers';
 
 // ---------------------------------------------------------------------------
 // Chart-specific style constants and style-getter functions
@@ -95,16 +96,6 @@ const sxMonoSmall = {
     color: 'text.secondary',
     ...sxMonoFont,
 };
-
-// ---------------------------------------------------------------------------
-// Helper: slugify a string for use in filenames
-// ---------------------------------------------------------------------------
-
-const slugify = (text: string): string =>
-    text
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '');
 
 const TOOL_LABELS = [
     'Preparing chart data',

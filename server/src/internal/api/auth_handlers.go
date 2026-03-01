@@ -178,9 +178,12 @@ func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Value:    token,
 		Path:     "/",
 		Expires:  expiration,
-		HttpOnly: true,                 // Prevents JavaScript access (XSS protection)
-		Secure:   secureCookie,         // Auto-detected: only send over HTTPS
-		SameSite: http.SameSiteLaxMode, // CSRF protection (Lax works with proxies)
+		HttpOnly: true,         // Prevents JavaScript access (XSS protection)
+		Secure:   secureCookie, // Auto-detected: only send over HTTPS
+		// NOTE: SameSite=Lax is appropriate for same-origin and proxied
+		// setups. For cross-origin deployments, use a reverse proxy to
+		// serve frontend and backend from the same origin.
+		SameSite: http.SameSiteLaxMode,
 	})
 
 	// Return success response (session token is in httpOnly cookie only)
@@ -216,6 +219,9 @@ func (h *AuthHandler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   -1, // Expire immediately
 		HttpOnly: true,
 		Secure:   secureCookie,
+		// NOTE: SameSite=Lax is appropriate for same-origin and proxied
+		// setups. For cross-origin deployments, use a reverse proxy to
+		// serve frontend and backend from the same origin.
 		SameSite: http.SameSiteLaxMode,
 	})
 

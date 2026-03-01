@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/pgedge/ai-workbench/pkg/connstring"
+	"github.com/pgedge/ai-workbench/pkg/datastoreconfig"
 	"github.com/pgedge/ai-workbench/pkg/logger"
 )
 
@@ -107,43 +108,20 @@ func (ds *Datastore) connect() error {
 func (ds *Datastore) buildConnectionString() string {
 	cfg := ds.config
 
-	// Start with basic connection parameters
-	params := make(map[string]string)
-	params["dbname"] = cfg.GetPgDatabase()
-	params["user"] = cfg.GetPgUsername()
-
-	if cfg.GetPgHostAddr() != "" {
-		params["hostaddr"] = cfg.GetPgHostAddr()
-	} else if cfg.GetPgHost() != "" {
-		params["host"] = cfg.GetPgHost()
+	dsCfg := datastoreconfig.DatastoreConfig{
+		Host:        cfg.GetPgHost(),
+		HostAddr:    cfg.GetPgHostAddr(),
+		Database:    cfg.GetPgDatabase(),
+		Username:    cfg.GetPgUsername(),
+		Password:    cfg.GetPgPassword(),
+		Port:        cfg.GetPgPort(),
+		SSLMode:     cfg.GetPgSSLMode(),
+		SSLCert:     cfg.GetPgSSLCert(),
+		SSLKey:      cfg.GetPgSSLKey(),
+		SSLRootCert: cfg.GetPgSSLRootCert(),
 	}
 
-	if cfg.GetPgPort() != 0 {
-		params["port"] = fmt.Sprintf("%d", cfg.GetPgPort())
-	}
-
-	if cfg.GetPgPassword() != "" {
-		params["password"] = cfg.GetPgPassword()
-	}
-
-	// SSL parameters
-	if cfg.GetPgSSLMode() != "" {
-		params["sslmode"] = cfg.GetPgSSLMode()
-	}
-	if cfg.GetPgSSLCert() != "" {
-		params["sslcert"] = cfg.GetPgSSLCert()
-	}
-	if cfg.GetPgSSLKey() != "" {
-		params["sslkey"] = cfg.GetPgSSLKey()
-	}
-	if cfg.GetPgSSLRootCert() != "" {
-		params["sslrootcert"] = cfg.GetPgSSLRootCert()
-	}
-
-	// Set application name to identify datastore connections
-	params["application_name"] = "pgEdge AI DBA Workbench - Metric Storage"
-
-	return connstring.Build(params)
+	return connstring.BuildFromConfig(dsCfg, "pgEdge AI DBA Workbench - Metric Storage")
 }
 
 // initializeSchema creates the necessary database schema if it doesn't exist

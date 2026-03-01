@@ -13,7 +13,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 )
 
@@ -31,26 +30,7 @@ var (
 	// currentLevel is the minimum log level to output
 	// Default to ERROR to avoid cluttering CLI output with operational logs
 	currentLevel = LevelError
-
-	// Environment variable to control log level
-	envLogLevel = "PGEDGE_MCP_LOG_LEVEL"
 )
-
-func init() {
-	// Read log level from environment
-	if level := os.Getenv(envLogLevel); level != "" {
-		switch strings.ToLower(level) {
-		case "debug":
-			currentLevel = LevelDebug
-		case "info":
-			currentLevel = LevelInfo
-		case "warn", "warning":
-			currentLevel = LevelWarn
-		case "error":
-			currentLevel = LevelError
-		}
-	}
-}
 
 // levelString returns the string representation of a log level
 func (l LogLevel) String() string {

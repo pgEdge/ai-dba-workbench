@@ -62,7 +62,9 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		// Helper to wrap handlers with authentication
 		authWrapper := createAuthWrapper(deps.AuthStore)
 
-		// OpenAPI specification endpoint (public - used for API discovery)
+		// NOTE: These endpoints are intentionally unauthenticated to allow
+		// API tooling (e.g. RESTish) to discover the API schema without
+		// requiring credentials.
 		mux.HandleFunc("/api/v1/openapi.json", handleOpenAPISpec)
 
 		// Capabilities endpoint (public - used by client to detect available features)
@@ -130,7 +132,7 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		registerDatastoreHandler(mux, clusterHandler, authWrapper, "Cluster management", deps.Datastore)
 
 		// Alert endpoints (for StatusPanel component)
-		alertHandler := api.NewAlertHandler(deps.Datastore, deps.AuthStore)
+		alertHandler := api.NewAlertHandler(deps.Datastore, deps.AuthStore, rbacChecker)
 		registerDatastoreHandler(mux, alertHandler, authWrapper, "Alert management", deps.Datastore)
 
 		// Blackout management endpoints (for alert suppression windows)

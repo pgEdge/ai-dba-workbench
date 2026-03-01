@@ -134,14 +134,16 @@ func TestBuildConnectionStringWithHostAddr(t *testing.T) {
 
 	connStr := ds.buildConnectionString()
 
-	// When hostaddr is provided, it should be used instead of host
+	// When hostaddr is provided, it should appear in the connection string
 	if !contains(connStr, "hostaddr") {
 		t.Error("Connection string should contain hostaddr when provided")
 	}
 
-	// Should not contain host parameter when hostaddr is present
-	if contains(connStr, "host=") {
-		t.Error("Connection string should not contain host when hostaddr is provided")
+	// host should still be present alongside hostaddr; PostgreSQL uses
+	// host for SSL certificate verification even when hostaddr supplies
+	// the IP address for the TCP connection.
+	if !contains(connStr, "host=") {
+		t.Error("Connection string should contain host for SSL verification when hostaddr is provided")
 	}
 }
 

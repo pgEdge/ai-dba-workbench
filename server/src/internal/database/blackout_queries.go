@@ -107,6 +107,8 @@ func (d *Datastore) ListBlackouts(ctx context.Context, filter BlackoutFilter) (*
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
+	// SECURITY: The whereClause is composed from parameterized conditions ($1, $2, etc.).
+	// All user-supplied values MUST use positional parameters. Never interpolate values directly.
 	conditions := []string{}
 	args := []any{}
 	argNum := 1
@@ -389,6 +391,8 @@ func (d *Datastore) ListBlackoutSchedules(ctx context.Context, filter BlackoutFi
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
+	// SECURITY: The whereClause is composed from parameterized conditions ($1, $2, etc.).
+	// All user-supplied values MUST use positional parameters. Never interpolate values directly.
 	conditions := []string{}
 	args := []any{}
 	argNum := 1

@@ -345,7 +345,7 @@ func StoreMetricsWithCopy(ctx context.Context, conn *pgxpool.Conn, tableName str
 		return nil // Nothing to store
 	}
 
-	fullTableName := fmt.Sprintf("metrics.%s", tableName)
+	fullTableName := pgx.Identifier{"metrics", tableName}.Sanitize()
 
 	// Begin transaction
 	txn, err := conn.Begin(ctx)
@@ -371,13 +371,13 @@ func StoreMetricsWithCopy(ctx context.Context, conn *pgxpool.Conn, tableName str
 		}
 		batch := values[i:end]
 
-		// Build column list
+		// Build column list with quoted identifiers
 		columnList := ""
 		for idx, col := range columns {
 			if idx > 0 {
 				columnList += ", "
 			}
-			columnList += col
+			columnList += pgx.Identifier{col}.Sanitize()
 		}
 
 		// Build VALUES clause with placeholders

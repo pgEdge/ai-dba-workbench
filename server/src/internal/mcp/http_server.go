@@ -533,7 +533,10 @@ func CORSMiddleware(allowedOrigin string) func(http.Handler) http.Handler {
 func SecurityHeadersMiddleware(hstsEnabled bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Strict-Transport-Security: only when explicitly enabled
+			// NOTE: HSTS is intentionally disabled by default. Users should
+			// only enable it after confirming their TLS configuration is
+			// correct, as HSTS is difficult to undo once browsers cache
+			// the policy.
 			if hstsEnabled {
 				w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 			}

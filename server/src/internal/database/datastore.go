@@ -4018,6 +4018,20 @@ func (d *Datastore) GetAlertCounts(ctx context.Context) (*AlertCountsResult, err
 	}, nil
 }
 
+// GetAlertConnectionID returns the connection_id for the given alert.
+func (d *Datastore) GetAlertConnectionID(ctx context.Context, alertID int64) (int, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	var connectionID int
+	err := d.pool.QueryRow(ctx,
+		"SELECT connection_id FROM alerts WHERE id = $1", alertID).Scan(&connectionID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get alert connection ID: %w", err)
+	}
+	return connectionID, nil
+}
+
 // SaveAlertAnalysis saves an AI analysis result for an alert
 func (d *Datastore) SaveAlertAnalysis(ctx context.Context, alertID int64, analysis string, metricValue float64) error {
 	d.mu.Lock()

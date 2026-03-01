@@ -64,7 +64,7 @@ const TOOL_LABELS = [
 ];
 
 // Severity color getter using theme palette
-const getSeverityColor = (severity, theme) => {
+const getSeverityColor = (severity: string | undefined, theme: Theme) => {
     switch (severity) {
         case 'critical':
             return theme.palette.error.main;
@@ -76,7 +76,7 @@ const getSeverityColor = (severity, theme) => {
 };
 
 // Get severity icon
-const getSeverityIcon = (severity) => {
+const getSeverityIcon = (severity: string | undefined) => {
     switch (severity) {
         case 'critical':
             return ErrorIcon;
@@ -91,7 +91,7 @@ const getSeverityIcon = (severity) => {
 // Alert-specific style constants and style-getter functions
 // ---------------------------------------------------------------------------
 
-const getSeverityDotSx = (severityColor, theme) => ({
+const getSeverityDotSx = (severityColor: string, theme: Theme) => ({
     position: 'absolute',
     top: -4,
     right: -4,
@@ -234,8 +234,8 @@ ${analysis}
         downloadAsMarkdown(content, filename);
     };
 
-    const severityColor = getSeverityColor(alert?.severity, theme);
-    const SeverityIcon = getSeverityIcon(alert?.severity);
+    const severityColor = getSeverityColor(alert?.severity as string | undefined, theme);
+    const SeverityIcon = getSeverityIcon(alert?.severity as string | undefined);
 
     return (
         <Dialog

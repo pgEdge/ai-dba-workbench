@@ -523,6 +523,22 @@ func (h *ConnectionHandler) deleteConnection(w http.ResponseWriter, r *http.Requ
 
 // listDatabases handles GET /api/v1/connections/{id}/databases
 func (h *ConnectionHandler) listDatabases(w http.ResponseWriter, r *http.Request, connectionID int) {
+	// Check RBAC access to this connection
+	accessibleIDs := h.rbacChecker.GetAccessibleConnections(r.Context())
+	if accessibleIDs != nil {
+		found := false
+		for _, aid := range accessibleIDs {
+			if aid == connectionID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			RespondError(w, http.StatusForbidden, "Access denied")
+			return
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
@@ -654,6 +670,22 @@ func (h *ConnectionHandler) clearCurrentConnection(w http.ResponseWriter, r *htt
 
 // getConnectionContext handles GET /api/v1/connections/{id}/context
 func (h *ConnectionHandler) getConnectionContext(w http.ResponseWriter, r *http.Request, connectionID int) {
+	// Check RBAC access to this connection
+	accessibleIDs := h.rbacChecker.GetAccessibleConnections(r.Context())
+	if accessibleIDs != nil {
+		found := false
+		for _, aid := range accessibleIDs {
+			if aid == connectionID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			RespondError(w, http.StatusForbidden, "Access denied")
+			return
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
@@ -685,6 +717,22 @@ type connectionClusterResponse struct {
 
 // handleGetConnectionCluster handles GET /api/v1/connections/{id}/cluster
 func (h *ConnectionHandler) handleGetConnectionCluster(w http.ResponseWriter, r *http.Request, connectionID int) {
+	// Check RBAC access to this connection
+	accessibleIDs := h.rbacChecker.GetAccessibleConnections(r.Context())
+	if accessibleIDs != nil {
+		found := false
+		for _, aid := range accessibleIDs {
+			if aid == connectionID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			RespondError(w, http.StatusForbidden, "Access denied")
+			return
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -730,6 +778,22 @@ func (h *ConnectionHandler) handleGetConnectionCluster(w http.ResponseWriter, r 
 
 // handleUpdateConnectionCluster handles PUT /api/v1/connections/{id}/cluster
 func (h *ConnectionHandler) handleUpdateConnectionCluster(w http.ResponseWriter, r *http.Request, connectionID int) {
+	// Check RBAC access to this connection
+	accessibleIDs := h.rbacChecker.GetAccessibleConnections(r.Context())
+	if accessibleIDs != nil {
+		found := false
+		for _, aid := range accessibleIDs {
+			if aid == connectionID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			RespondError(w, http.StatusForbidden, "Access denied")
+			return
+		}
+	}
+
 	var req ConnectionClusterUpdateRequest
 	if !DecodeJSONBody(w, r, &req) {
 		return

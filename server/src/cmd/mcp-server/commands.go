@@ -268,7 +268,7 @@ func runAddTokenCommand(f *Flags, dataDir string) error {
 		var err error
 		expiry, err = parseDuration(f.TokenExpiry)
 		if err != nil {
-			return fmt.Errorf("invalid expiry duration: %v", err)
+			return fmt.Errorf("invalid expiry duration: %w", err)
 		}
 	case f.TokenExpiry == "":
 		expiry = 0 // Will prompt user

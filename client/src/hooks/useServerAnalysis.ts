@@ -21,10 +21,10 @@ import {
 import { runAgenticLoop } from '../utils/agenticLoop';
 import { fetchTimelineEventsCentered } from '../utils/timelineEvents';
 import { Message } from '../types/llm';
+import { ANALYSIS_CACHE_TTL_MS } from '../utils/textHelpers';
 import { useAnalysisState } from './useAnalysisState';
 
 // Module-level cache for analysis results (persists across dialog open/close)
-const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const analysisCache = new Map<string, { analysis: string; timestamp: number }>();
 
 /**
@@ -143,7 +143,7 @@ export const useServerAnalysis = (): UseServerAnalysisReturn => {
 
         // Check client-side cache (with TTL validation)
         const cached = analysisCache.get(cacheKey);
-        if (cached && (Date.now() - cached.timestamp) < CACHE_TTL_MS) {
+        if (cached && (Date.now() - cached.timestamp) < ANALYSIS_CACHE_TTL_MS) {
             setAnalysis(cached.analysis);
             setLoading(false);
             return;
@@ -252,7 +252,7 @@ export function hasCachedServerAnalysis(
 ): boolean {
     const cacheKey = `${type}-${id}`;
     const cached = analysisCache.get(cacheKey);
-    return !!cached && (Date.now() - cached.timestamp) < CACHE_TTL_MS;
+    return !!cached && (Date.now() - cached.timestamp) < ANALYSIS_CACHE_TTL_MS;
 }
 
 export default useServerAnalysis;

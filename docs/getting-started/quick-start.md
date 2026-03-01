@@ -173,20 +173,18 @@ Start the server:
 ## Configure and Start the Alerter
 
 The alerter connects to the same datastore as the
-collector and server. You can configure the alerter
-using environment variables for a quick start:
+collector and server. Configure the alerter using a
+YAML configuration file or command-line flags.
+
+In the following example, the alerter starts with
+database connection flags and debug logging enabled:
 
 ```bash
-export AI_DBA_PG_HOST=localhost
-export AI_DBA_PG_DATABASE=ai_workbench
-export AI_DBA_PG_USERNAME=ai_workbench
-export AI_DBA_PG_PASSWORD=your-password
-```
-
-Start the alerter with debug logging enabled:
-
-```bash
-/opt/ai-workbench/ai-dba-alerter -debug
+/opt/ai-workbench/ai-dba-alerter -debug \
+    -db-host localhost \
+    -db-name ai_workbench \
+    -db-user ai_workbench \
+    -db-password your-password
 ```
 
 The alerter displays status messages during startup:

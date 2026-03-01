@@ -1,8 +1,8 @@
 # Alerter Configuration
 
 The pgEdge AI DBA Workbench Alerter supports
-configuration through YAML files, environment
-variables, and command-line flags.
+configuration through YAML files and command-line
+flags.
 
 ## Configuration Precedence
 
@@ -11,8 +11,7 @@ following order; later sources override earlier ones:
 
 1. Default values built into the application.
 2. Configuration file settings (YAML format).
-3. Environment variable overrides.
-4. Command-line flag overrides.
+3. Command-line flag overrides.
 
 ## Configuration File
 
@@ -62,36 +61,6 @@ specific database without a configuration file:
     -db-name ai_workbench \
     -db-user alerter \
     -db-password secret
-```
-
-## Environment Variables
-
-The alerter recognizes the following environment
-variables for datastore connection settings. The
-variables override configuration file values but are
-overridden by command-line flags.
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `AI_DBA_PG_HOST` | Database hostname | `localhost` |
-| `AI_DBA_PG_HOSTADDR` | Database IP address | None |
-| `AI_DBA_PG_DATABASE` | Database name | `ai_workbench` |
-| `AI_DBA_PG_USERNAME` | Database username | `postgres` |
-| `AI_DBA_PG_PASSWORD` | Database password | None |
-| `AI_DBA_PG_SSLMODE` | SSL connection mode | `prefer` |
-| `AI_DBA_PG_SSLCERT` | Client SSL certificate | None |
-| `AI_DBA_PG_SSLKEY` | Client SSL private key | None |
-| `AI_DBA_PG_SSLROOTCERT` | CA root certificate | None |
-
-In the following example, environment variables
-configure the database connection:
-
-```bash
-export AI_DBA_PG_HOST=db.example.com
-export AI_DBA_PG_DATABASE=ai_workbench
-export AI_DBA_PG_USERNAME=alerter
-export AI_DBA_PG_PASSWORD=secret
-./ai-dba-alerter
 ```
 
 ## Configuration File Reference

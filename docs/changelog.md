@@ -149,8 +149,9 @@ and this project adheres to
 - Enhanced LLM system prompts with PostgreSQL DBA expertise and two-tier
   database architecture guidance
 - Documentation for metrics tools in `docs/admin-guide/api/metrics.md`
-- Alerter configuration reference documentation with all options, environment
-  variables, and command-line flags in `docs/alerter/configuration.md`
+- Alerter configuration reference documentation with all
+  options and command-line flags in
+  `docs/alerter/configuration.md`
 - Cron expression documentation for blackout schedule configuration in
   `docs/alerter/cron-expressions.md`
 - Standardized indexes on all collector metrics tables for improved query
@@ -256,6 +257,9 @@ and this project adheres to
 
 ### Removed
 
+- Environment variable configuration support from the
+  alerter; use a YAML configuration file or
+  command-line flags instead.
 - The CLI sub-project (`/cli`); the web client now provides all
   interactive functionality previously available through the
   command-line interface.

@@ -151,7 +151,6 @@ ExecStart=/opt/ai-workbench/ai-dba-alerter \
     -config /etc/pgedge/ai-dba-alerter.yaml
 Restart=always
 RestartSec=10
-EnvironmentFile=/etc/ai-workbench/alerter.env
 
 [Install]
 WantedBy=multi-user.target

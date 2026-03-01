@@ -51,9 +51,9 @@ go build -o ai-dba-alerter ./cmd/ai-dba-alerter
 
 ## Configuration
 
-The alerter supports configuration through YAML files, environment variables,
-and command-line flags. Command-line flags take precedence over environment
-variables, which take precedence over configuration file settings.
+The alerter supports configuration through YAML files and
+command-line flags. Command-line flags take precedence over
+configuration file settings.
 
 ### Configuration File
 
@@ -102,22 +102,6 @@ The following table lists all command-line flags:
 | `-db-user` | Database user (overrides config) | None |
 | `-db-password` | Database password (overrides config) | None |
 | `-db-sslmode` | Database SSL mode (overrides config) | None |
-
-### Environment Variables
-
-The following environment variables override configuration file settings:
-
-| Variable | Description |
-|----------|-------------|
-| `AI_DBA_PG_HOST` | Database hostname |
-| `AI_DBA_PG_HOSTADDR` | Database IP address |
-| `AI_DBA_PG_DATABASE` | Database name |
-| `AI_DBA_PG_USERNAME` | Database username |
-| `AI_DBA_PG_PASSWORD` | Database password |
-| `AI_DBA_PG_SSLMODE` | SSL connection mode |
-| `AI_DBA_PG_SSLCERT` | Path to SSL certificate |
-| `AI_DBA_PG_SSLKEY` | Path to SSL key |
-| `AI_DBA_PG_SSLROOTCERT` | Path to CA certificate |
 
 For complete configuration documentation, see
 [docs/getting-started/configuration/alerter.md](../docs/getting-started/configuration/alerter.md).

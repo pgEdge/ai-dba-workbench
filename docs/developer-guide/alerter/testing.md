@@ -126,7 +126,7 @@ Run the alerter with debug logging:
 
 The `config` package handles all configuration loading and
 validation. Configuration sources are applied in order: defaults,
-file, environment variables, and command-line flags.
+file, and command-line flags.
 
 ### Database Package
 
@@ -353,7 +353,7 @@ The configuration package tests verify the following behaviors:
 
 - Default values are applied correctly.
 - Configuration files are loaded and parsed.
-- Environment variables override file values.
+- Command-line flags override file values.
 - Validation catches invalid configurations.
 
 ## Cron Tests
@@ -452,7 +452,7 @@ verify the following behaviors:
 - Error handling for database failures.
 
 To run database tests, ensure the test database is configured and
-set the appropriate environment variables.
+provide the connection details through a configuration file.
 
 ## Mocking
 
@@ -551,7 +551,7 @@ When tests fail, check the following areas:
 
 - The test output for specific assertion failures.
 - Whether dependencies are properly initialized.
-- Whether environment variables are set correctly.
+- Whether the configuration file is set correctly.
 - Whether the database is accessible for integration tests.
 
 ### Flaky Tests

@@ -58,9 +58,6 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Configuration loaded from %s\n", *configFile)
 	}
 
-	// Apply environment variables
-	cfg.LoadFromEnv()
-
 	// Apply command line overrides
 	if *dbHost != "" {
 		cfg.Datastore.Host = *dbHost
@@ -138,7 +135,6 @@ func main() {
 						continue
 					}
 				}
-				newCfg.LoadFromEnv()
 
 				// Reapply CLI flag overrides
 				if *dbHost != "" {

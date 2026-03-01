@@ -294,37 +294,6 @@ func (c *Config) LoadFromFile(filename string) error {
 	return nil
 }
 
-// LoadFromEnv applies environment variable overrides
-func (c *Config) LoadFromEnv() {
-	if v := os.Getenv("AI_DBA_PG_HOST"); v != "" {
-		c.Datastore.Host = v
-	}
-	if v := os.Getenv("AI_DBA_PG_HOSTADDR"); v != "" {
-		c.Datastore.HostAddr = v
-	}
-	if v := os.Getenv("AI_DBA_PG_DATABASE"); v != "" {
-		c.Datastore.Database = v
-	}
-	if v := os.Getenv("AI_DBA_PG_USERNAME"); v != "" {
-		c.Datastore.Username = v
-	}
-	if v := os.Getenv("AI_DBA_PG_PASSWORD"); v != "" {
-		c.Datastore.Password = v
-	}
-	if v := os.Getenv("AI_DBA_PG_SSLMODE"); v != "" {
-		c.Datastore.SSLMode = v
-	}
-	if v := os.Getenv("AI_DBA_PG_SSLCERT"); v != "" {
-		c.Datastore.SSLCert = v
-	}
-	if v := os.Getenv("AI_DBA_PG_SSLKEY"); v != "" {
-		c.Datastore.SSLKey = v
-	}
-	if v := os.Getenv("AI_DBA_PG_SSLROOTCERT"); v != "" {
-		c.Datastore.SSLRootCert = v
-	}
-}
-
 // LoadPassword loads the password from password file if specified
 func (c *Config) LoadPassword() error {
 	if c.Datastore.Password != "" {

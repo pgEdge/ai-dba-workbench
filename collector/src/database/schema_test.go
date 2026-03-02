@@ -222,13 +222,25 @@ func cleanupTestSchema(t *testing.T, pool *pgxpool.Pool) {
 	ctx := context.Background()
 
 	tables := []string{
-		// Cluster relationship tables (migration 24)
+		// Chat and conversation tables
+		"chat_memories",
+		"conversations",
+		// Cluster relationship tables
 		"cluster_node_relationships",
-		// Alerter tables (migrations 7-10)
+		// Notification tables
+		"notification_channel_overrides",
+		"notification_reminder_state",
+		"notification_history",
+		"connection_notification_channels",
+		"email_recipients",
+		"notification_channels",
+		// Anomaly tables
+		"anomaly_embeddings",
 		"anomaly_candidates",
 		"correlation_groups",
 		"metric_baselines",
 		"metric_definitions",
+		// Alerter tables
 		"blackout_schedules",
 		"blackouts",
 		"alert_acknowledgments",
@@ -237,9 +249,11 @@ func cleanupTestSchema(t *testing.T, pool *pgxpool.Pool) {
 		"alert_rules",
 		"probe_availability",
 		"alerter_settings",
-		// Core tables (migrations 1-5)
+		// Core tables
 		"probe_configs",
 		"connections",
+		"clusters",
+		"cluster_groups",
 		"schema_version",
 	}
 
@@ -268,10 +282,8 @@ func TestNewSchemaManager(t *testing.T) {
 		t.Fatal("NewSchemaManager created manager with no migrations")
 	}
 
-	// Verify migrations are registered in order
-	// All migrations have been squashed into a single migration at version 1
-	// that creates the complete schema with all tables, indexes, and seed data
-	expectedVersions := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29}
+	// Verify all migrations are consolidated into a single migration
+	expectedVersions := []int{1}
 	if len(sm.migrations) != len(expectedVersions) {
 		t.Fatalf("Expected %d migrations, got %d", len(expectedVersions), len(sm.migrations))
 	}
@@ -430,7 +442,7 @@ func TestGetCurrentVersion(t *testing.T) {
 	}
 
 	// Test when schema_version table exists
-	// The version should be the highest migration version (4), not the count of migrations
+	// The version should be the highest migration version, not the count of migrations
 	version, err = sm.getCurrentVersion(conn)
 	if err != nil {
 		t.Fatalf("Failed to get current version: %v", err)
@@ -616,7 +628,7 @@ func TestIndexesCreated(t *testing.T) {
 	cleanupTestSchema(t, pool)
 }
 
-func TestMigration23_MembershipSourceAndReplicationType(t *testing.T) {
+func TestClusterMembershipSourceAndReplicationType(t *testing.T) {
 	ctx := context.Background()
 	pool, conn := getTestConnection(t)
 	if pool == nil {
@@ -632,10 +644,7 @@ func TestMigration23_MembershipSourceAndReplicationType(t *testing.T) {
 		t.Fatalf("Failed to migrate: %v", err)
 	}
 
-	// After all migrations, cluster_override should be replaced by
-	// membership_source (migration #25 drops cluster_override and adds
-	// membership_source). Verify membership_source exists with correct
-	// type and default.
+	// Verify membership_source exists with correct type and default.
 	var colType string
 	var colDefault string
 	err := pool.QueryRow(ctx, `
@@ -692,7 +701,7 @@ func TestMigration23_MembershipSourceAndReplicationType(t *testing.T) {
 	cleanupTestSchema(t, pool)
 }
 
-func TestMigration24_ClusterNodeRelationships(t *testing.T) {
+func TestClusterNodeRelationships(t *testing.T) {
 	ctx := context.Background()
 	pool, conn := getTestConnection(t)
 	if pool == nil {
@@ -929,8 +938,10 @@ func TestZZZ_FullSchemaForInspection(t *testing.T) {
 	expectedTables := []string{
 		"schema_version",
 		"connections",
+		"cluster_groups",
+		"clusters",
 		"probe_configs",
-		// Alerter tables (migrations 7-10)
+		// Alerter tables
 		"alerter_settings",
 		"probe_availability",
 		"alert_rules",
@@ -943,7 +954,17 @@ func TestZZZ_FullSchemaForInspection(t *testing.T) {
 		"metric_baselines",
 		"correlation_groups",
 		"anomaly_candidates",
-		// Cluster relationship tables (migration 24)
+		// Notification tables
+		"notification_channels",
+		"email_recipients",
+		"connection_notification_channels",
+		"notification_history",
+		"notification_reminder_state",
+		"notification_channel_overrides",
+		// Conversation and chat tables
+		"conversations",
+		"chat_memories",
+		// Cluster relationship tables
 		"cluster_node_relationships",
 	}
 
@@ -964,7 +985,40 @@ func TestZZZ_FullSchemaForInspection(t *testing.T) {
 
 	// Verify metrics schema tables exist
 	expectedMetricsTables := []string{
+		"pg_stat_activity",
+		"pg_stat_all_tables",
+		"pg_stat_all_indexes",
+		"pg_stat_statements",
+		"pg_stat_database",
+		"pg_stat_database_conflicts",
+		"pg_stat_checkpointer",
+		"pg_stat_wal",
+		"pg_stat_replication",
+		"pg_replication_slots",
+		"pg_stat_subscription",
+		"pg_stat_recovery_prefetch",
+		"pg_stat_io",
+		"pg_stat_connection_security",
+		"pg_stat_user_functions",
+		"pg_statio_all_sequences",
+		"pg_database",
+		"pg_settings",
+		"pg_hba_file_rules",
+		"pg_ident_file_mappings",
+		"pg_server_info",
+		"pg_node_role",
+		"pg_extension",
 		"pg_connectivity",
+		"pg_sys_cpu_info",
+		"pg_sys_cpu_usage_info",
+		"pg_sys_cpu_memory_by_process",
+		"pg_sys_memory_info",
+		"pg_sys_disk_info",
+		"pg_sys_io_analysis_info",
+		"pg_sys_load_avg_info",
+		"pg_sys_network_info",
+		"pg_sys_os_info",
+		"pg_sys_process_info",
 	}
 
 	for _, tableName := range expectedMetricsTables {

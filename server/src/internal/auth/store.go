@@ -42,7 +42,7 @@ const (
 	DefaultSessionExpiry = 24 * time.Hour
 
 	// Schema version for migrations
-	schemaVersion = 16
+	schemaVersion = 1
 )
 
 // AuthStore manages users and tokens in SQLite
@@ -134,7 +134,8 @@ func (s *AuthStore) initSchema() error {
 		currentVersion = 0
 	}
 
-	schema := `
+	if currentVersion < schemaVersion {
+		schema := `
     -- Schema version tracking
     CREATE TABLE IF NOT EXISTS schema_version (
         version INTEGER PRIMARY KEY
@@ -169,494 +170,150 @@ func (s *AuthStore) initSchema() error {
     );
     CREATE INDEX IF NOT EXISTS idx_tokens_hash ON tokens(token_hash);
     CREATE INDEX IF NOT EXISTS idx_tokens_owner ON tokens(owner_id);
+
+    -- Connection sessions table (tracks selected database connection per token)
+    CREATE TABLE IF NOT EXISTS connection_sessions (
+        token_hash TEXT PRIMARY KEY NOT NULL,
+        connection_id INTEGER NOT NULL,
+        database_name TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_conn_sessions_hash ON connection_sessions(token_hash);
+
+    -- Hierarchical user groups
+    CREATE TABLE IF NOT EXISTS user_groups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT UNIQUE NOT NULL,
+        description TEXT DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_user_groups_name ON user_groups(name);
+
+    -- Group memberships (users and nested groups)
+    CREATE TABLE IF NOT EXISTS group_memberships (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        parent_group_id INTEGER NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
+        member_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        member_group_id INTEGER REFERENCES user_groups(id) ON DELETE CASCADE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(parent_group_id, member_user_id),
+        UNIQUE(parent_group_id, member_group_id),
+        CHECK (
+            (member_user_id IS NOT NULL AND member_group_id IS NULL) OR
+            (member_user_id IS NULL AND member_group_id IS NOT NULL)
+        ),
+        CHECK (parent_group_id != member_group_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_group_memberships_parent ON group_memberships(parent_group_id);
+    CREATE INDEX IF NOT EXISTS idx_group_memberships_user ON group_memberships(member_user_id);
+    CREATE INDEX IF NOT EXISTS idx_group_memberships_group ON group_memberships(member_group_id);
+
+    -- MCP privilege identifiers (tools, resources, prompts)
+    CREATE TABLE IF NOT EXISTS mcp_privilege_identifiers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        identifier TEXT UNIQUE NOT NULL,
+        item_type TEXT NOT NULL CHECK (item_type IN ('tool', 'resource', 'prompt')),
+        description TEXT DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_mcp_privileges_identifier ON mcp_privilege_identifiers(identifier);
+    CREATE INDEX IF NOT EXISTS idx_mcp_privileges_type ON mcp_privilege_identifiers(item_type);
+
+    -- Group-to-MCP privilege mappings
+    CREATE TABLE IF NOT EXISTS group_mcp_privileges (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_id INTEGER NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
+        privilege_identifier_id INTEGER NOT NULL
+            REFERENCES mcp_privilege_identifiers(id) ON DELETE CASCADE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(group_id, privilege_identifier_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_group_mcp_privs_group ON group_mcp_privileges(group_id);
+    CREATE INDEX IF NOT EXISTS idx_group_mcp_privs_priv ON group_mcp_privileges(privilege_identifier_id);
+
+    -- Group-to-connection privilege mappings
+    CREATE TABLE IF NOT EXISTS connection_privileges (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_id INTEGER NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
+        connection_id INTEGER NOT NULL,
+        access_level TEXT NOT NULL DEFAULT 'read'
+            CHECK (access_level IN ('read', 'read_write')),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(group_id, connection_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_conn_privs_group ON connection_privileges(group_id);
+    CREATE INDEX IF NOT EXISTS idx_conn_privs_conn ON connection_privileges(connection_id);
+
+    -- Token-to-connection scope restrictions
+    CREATE TABLE IF NOT EXISTS token_connection_scope (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        token_id INTEGER NOT NULL REFERENCES tokens(id) ON DELETE CASCADE,
+        connection_id INTEGER NOT NULL,
+        access_level TEXT NOT NULL DEFAULT 'read_write'
+            CHECK (access_level IN ('read', 'read_write')),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(token_id, connection_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_token_conn_scope_token ON token_connection_scope(token_id);
+
+    -- Token-to-MCP privilege scope restrictions
+    CREATE TABLE IF NOT EXISTS token_mcp_scope (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        token_id INTEGER NOT NULL REFERENCES tokens(id) ON DELETE CASCADE,
+        privilege_identifier_id INTEGER NOT NULL
+            REFERENCES mcp_privilege_identifiers(id) ON DELETE CASCADE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(token_id, privilege_identifier_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_token_mcp_scope_token ON token_mcp_scope(token_id);
+
+    -- Token admin permission scope
+    CREATE TABLE IF NOT EXISTS token_admin_scope (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        token_id INTEGER NOT NULL REFERENCES tokens(id) ON DELETE CASCADE,
+        permission TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(token_id, permission)
+    );
+    CREATE INDEX IF NOT EXISTS idx_token_admin_scope_token ON token_admin_scope(token_id);
+
+    -- Group admin permissions
+    CREATE TABLE IF NOT EXISTS group_admin_permissions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_id INTEGER NOT NULL
+            REFERENCES user_groups(id) ON DELETE CASCADE,
+        permission TEXT NOT NULL CHECK (permission IN (
+            'manage_connections', 'manage_groups',
+            'manage_permissions', 'manage_users',
+            'manage_token_scopes', 'manage_blackouts',
+            'manage_probes', 'manage_alert_rules',
+            'manage_notification_channels', 'store_system_memory', '*'
+        )),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(group_id, permission)
+    );
+    CREATE INDEX IF NOT EXISTS idx_admin_perms_group ON group_admin_permissions(group_id);
+    CREATE INDEX IF NOT EXISTS idx_admin_perms_perm ON group_admin_permissions(permission);
     `
 
-	_, err = s.db.Exec(schema)
-	if err != nil {
-		return fmt.Errorf("failed to create schema: %w", err)
-	}
-
-	// Apply migrations for schema version 2
-	if currentVersion < 2 {
-		migrationV2 := `
-        -- Connection sessions table (tracks selected database connection per token)
-        CREATE TABLE IF NOT EXISTS connection_sessions (
-            token_hash TEXT PRIMARY KEY NOT NULL,
-            connection_id INTEGER NOT NULL,
-            database_name TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-        CREATE INDEX IF NOT EXISTS idx_conn_sessions_hash ON connection_sessions(token_hash);
-        `
-		_, err = s.db.Exec(migrationV2)
+		_, err = s.db.Exec(schema)
 		if err != nil {
-			return fmt.Errorf("failed to apply schema migration v2: %w", err)
-		}
-	}
-
-	// Apply migrations for schema version 3 (RBAC)
-	if currentVersion < 3 {
-		migrationV3 := `
-        -- Hierarchical user groups
-        CREATE TABLE IF NOT EXISTS user_groups (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT UNIQUE NOT NULL,
-            description TEXT DEFAULT '',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-        CREATE INDEX IF NOT EXISTS idx_user_groups_name ON user_groups(name);
-
-        -- Group memberships (users and nested groups)
-        CREATE TABLE IF NOT EXISTS group_memberships (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            parent_group_id INTEGER NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
-            member_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-            member_group_id INTEGER REFERENCES user_groups(id) ON DELETE CASCADE,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(parent_group_id, member_user_id),
-            UNIQUE(parent_group_id, member_group_id),
-            CHECK (
-                (member_user_id IS NOT NULL AND member_group_id IS NULL) OR
-                (member_user_id IS NULL AND member_group_id IS NOT NULL)
-            ),
-            CHECK (parent_group_id != member_group_id)
-        );
-        CREATE INDEX IF NOT EXISTS idx_group_memberships_parent ON group_memberships(parent_group_id);
-        CREATE INDEX IF NOT EXISTS idx_group_memberships_user ON group_memberships(member_user_id);
-        CREATE INDEX IF NOT EXISTS idx_group_memberships_group ON group_memberships(member_group_id);
-
-        -- MCP privilege identifiers (tools, resources, prompts)
-        CREATE TABLE IF NOT EXISTS mcp_privilege_identifiers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            identifier TEXT UNIQUE NOT NULL,
-            item_type TEXT NOT NULL CHECK (item_type IN ('tool', 'resource', 'prompt')),
-            description TEXT DEFAULT '',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-        CREATE INDEX IF NOT EXISTS idx_mcp_privileges_identifier ON mcp_privilege_identifiers(identifier);
-        CREATE INDEX IF NOT EXISTS idx_mcp_privileges_type ON mcp_privilege_identifiers(item_type);
-
-        -- Group-to-MCP privilege mappings
-        CREATE TABLE IF NOT EXISTS group_mcp_privileges (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            group_id INTEGER NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
-            privilege_identifier_id INTEGER NOT NULL
-                REFERENCES mcp_privilege_identifiers(id) ON DELETE CASCADE,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(group_id, privilege_identifier_id)
-        );
-        CREATE INDEX IF NOT EXISTS idx_group_mcp_privs_group ON group_mcp_privileges(group_id);
-        CREATE INDEX IF NOT EXISTS idx_group_mcp_privs_priv ON group_mcp_privileges(privilege_identifier_id);
-
-        -- Group-to-connection privilege mappings
-        CREATE TABLE IF NOT EXISTS connection_privileges (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            group_id INTEGER NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
-            connection_id INTEGER NOT NULL,
-            access_level TEXT NOT NULL DEFAULT 'read'
-                CHECK (access_level IN ('read', 'read_write')),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(group_id, connection_id)
-        );
-        CREATE INDEX IF NOT EXISTS idx_conn_privs_group ON connection_privileges(group_id);
-        CREATE INDEX IF NOT EXISTS idx_conn_privs_conn ON connection_privileges(connection_id);
-
-        -- Token-to-connection scope restrictions
-        CREATE TABLE IF NOT EXISTS token_connection_scope (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            token_id INTEGER NOT NULL REFERENCES tokens(id) ON DELETE CASCADE,
-            connection_id INTEGER NOT NULL,
-            access_level TEXT NOT NULL DEFAULT 'read_write' CHECK(access_level IN ('read', 'read_write')),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(token_id, connection_id)
-        );
-        CREATE INDEX IF NOT EXISTS idx_token_conn_scope_token ON token_connection_scope(token_id);
-
-        -- Token-to-MCP privilege scope restrictions
-        CREATE TABLE IF NOT EXISTS token_mcp_scope (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            token_id INTEGER NOT NULL REFERENCES tokens(id) ON DELETE CASCADE,
-            privilege_identifier_id INTEGER NOT NULL
-                REFERENCES mcp_privilege_identifiers(id) ON DELETE CASCADE,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(token_id, privilege_identifier_id)
-        );
-        CREATE INDEX IF NOT EXISTS idx_token_mcp_scope_token ON token_mcp_scope(token_id);
-
-        -- Token admin permission scope
-        CREATE TABLE IF NOT EXISTS token_admin_scope (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            token_id INTEGER NOT NULL REFERENCES tokens(id) ON DELETE CASCADE,
-            permission TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(token_id, permission)
-        );
-        CREATE INDEX IF NOT EXISTS idx_token_admin_scope_token ON token_admin_scope(token_id);
-        `
-		// Execute each statement separately for SQLite (ALTER TABLE doesn't combine well)
-		statements := []string{
-			"ALTER TABLE users ADD COLUMN is_superuser BOOLEAN DEFAULT FALSE",
-			"ALTER TABLE tokens ADD COLUMN is_superuser BOOLEAN DEFAULT FALSE",
-		}
-		for _, stmt := range statements {
-			// Ignore errors for ALTER TABLE as column may already exist
-			//nolint:errcheck // Intentionally ignoring error - column may already exist
-			s.db.Exec(stmt)
+			return fmt.Errorf("failed to create schema: %w", err)
 		}
 
-		// Execute the rest of the migration
-		_, err = s.db.Exec(migrationV3)
+		// Set schema version
+		_, err = s.db.Exec("DELETE FROM schema_version")
 		if err != nil {
-			return fmt.Errorf("failed to apply schema migration v3: %w", err)
+			return fmt.Errorf("failed to clean schema version: %w", err)
 		}
-	}
-
-	// Apply migrations for schema version 4 (admin permissions)
-	if currentVersion < 4 {
-		migrationV4 := `
-        -- Group admin permissions
-        CREATE TABLE IF NOT EXISTS group_admin_permissions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            group_id INTEGER NOT NULL
-                REFERENCES user_groups(id) ON DELETE CASCADE,
-            permission TEXT NOT NULL CHECK (permission IN (
-                'manage_connections', 'manage_groups',
-                'manage_permissions', 'manage_users',
-                'manage_token_scopes', 'manage_blackouts'
-            )),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(group_id, permission)
-        );
-        CREATE INDEX IF NOT EXISTS idx_admin_perms_group ON group_admin_permissions(group_id);
-        CREATE INDEX IF NOT EXISTS idx_admin_perms_perm ON group_admin_permissions(permission);
-        `
-		_, err = s.db.Exec(migrationV4)
+		_, err = s.db.Exec("INSERT INTO schema_version (version) VALUES (?)", schemaVersion)
 		if err != nil {
-			return fmt.Errorf("failed to apply schema migration v4: %w", err)
+			return fmt.Errorf("failed to set schema version: %w", err)
 		}
 	}
 
-	// Apply migrations for schema version 5 (user profile fields)
-	if currentVersion < 5 {
-		statements := []string{
-			"ALTER TABLE users ADD COLUMN display_name TEXT DEFAULT ''",
-			"ALTER TABLE users ADD COLUMN email TEXT DEFAULT ''",
-		}
-		for _, stmt := range statements {
-			// Ignore errors for ALTER TABLE as column may already exist
-			//nolint:errcheck // Intentionally ignoring error - column may already exist
-			s.db.Exec(stmt)
-		}
-	}
-
-	// Apply migrations for schema version 6 (rename manage_privileges to manage_permissions)
-	if currentVersion < 6 {
-		migrationV6 := `
-        UPDATE group_admin_permissions SET permission = 'manage_permissions'
-            WHERE permission = 'manage_privileges';
-
-        -- Drop stale temp table if left from a failed migration
-        DROP TABLE IF EXISTS group_admin_permissions_new;
-
-        -- Recreate table with updated CHECK constraint
-        CREATE TABLE IF NOT EXISTS group_admin_permissions_new (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            group_id INTEGER NOT NULL
-                REFERENCES user_groups(id) ON DELETE CASCADE,
-            permission TEXT NOT NULL CHECK (permission IN (
-                'manage_connections', 'manage_groups',
-                'manage_permissions', 'manage_users',
-                'manage_token_scopes', 'manage_blackouts'
-            )),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(group_id, permission)
-        );
-        INSERT INTO group_admin_permissions_new (id, group_id, permission, created_at)
-            SELECT id, group_id, permission, created_at
-            FROM group_admin_permissions;
-        DROP TABLE group_admin_permissions;
-        ALTER TABLE group_admin_permissions_new RENAME TO group_admin_permissions;
-        CREATE INDEX IF NOT EXISTS idx_admin_perms_group ON group_admin_permissions(group_id);
-        CREATE INDEX IF NOT EXISTS idx_admin_perms_perm ON group_admin_permissions(permission);
-        `
-		_, err = s.db.Exec(migrationV6)
-		if err != nil {
-			return fmt.Errorf("failed to apply schema migration v6: %w", err)
-		}
-	}
-
-	// Apply migrations for schema version 7 (remove stale admin MCP privilege identifiers)
-	if currentVersion < 7 {
-		migrationV7 := `
-        DELETE FROM mcp_privilege_identifiers WHERE identifier IN (
-            'create_group', 'update_group', 'delete_group', 'list_groups',
-            'add_group_member', 'remove_group_member',
-            'grant_mcp_privilege', 'revoke_mcp_privilege',
-            'grant_connection_privilege', 'revoke_connection_privilege',
-            'list_privileges',
-            'set_token_scope', 'get_token_scope', 'clear_token_scope',
-            'set_superuser', 'list_users', 'get_user_privileges'
-        );
-        `
-		_, err = s.db.Exec(migrationV7)
-		if err != nil {
-			return fmt.Errorf("failed to apply schema migration v7: %w", err)
-		}
-	}
-
-	// Apply migrations for schema version 8 (remove obsolete privilege identifiers)
-	if currentVersion < 8 {
-		migrationV8 := `
-        DELETE FROM mcp_privilege_identifiers WHERE identifier IN (
-            'authenticate_user'
-        );
-        `
-		_, err = s.db.Exec(migrationV8)
-		if err != nil {
-			return fmt.Errorf("failed to apply schema migration v8: %w", err)
-		}
-	}
-
-	// Apply migrations for schema version 9 (add manage_blackouts permission)
-	if currentVersion < 9 {
-		migrationV9 := `
-        -- Drop stale temp table if left from a failed migration
-        DROP TABLE IF EXISTS group_admin_permissions_new;
-
-        -- Recreate table with updated CHECK constraint including manage_blackouts
-        CREATE TABLE IF NOT EXISTS group_admin_permissions_new (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            group_id INTEGER NOT NULL
-                REFERENCES user_groups(id) ON DELETE CASCADE,
-            permission TEXT NOT NULL CHECK (permission IN (
-                'manage_connections', 'manage_groups',
-                'manage_permissions', 'manage_users',
-                'manage_token_scopes', 'manage_blackouts'
-            )),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(group_id, permission)
-        );
-        INSERT INTO group_admin_permissions_new (id, group_id, permission, created_at)
-            SELECT id, group_id, permission, created_at
-            FROM group_admin_permissions;
-        DROP TABLE group_admin_permissions;
-        ALTER TABLE group_admin_permissions_new RENAME TO group_admin_permissions;
-        CREATE INDEX IF NOT EXISTS idx_admin_perms_group ON group_admin_permissions(group_id);
-        CREATE INDEX IF NOT EXISTS idx_admin_perms_perm ON group_admin_permissions(permission);
-        `
-		_, err = s.db.Exec(migrationV9)
-		if err != nil {
-			return fmt.Errorf("failed to apply schema migration v9: %w", err)
-		}
-	}
-
-	// Apply migrations for schema version 10 (add manage_probes and manage_alert_rules permissions)
-	if currentVersion < 10 {
-		migrationV10 := `
-        -- Drop stale temp table if left from a failed migration
-        DROP TABLE IF EXISTS group_admin_permissions_new;
-
-        -- Recreate table with updated CHECK constraint including manage_probes and manage_alert_rules
-        CREATE TABLE IF NOT EXISTS group_admin_permissions_new (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            group_id INTEGER NOT NULL
-                REFERENCES user_groups(id) ON DELETE CASCADE,
-            permission TEXT NOT NULL CHECK (permission IN (
-                'manage_connections', 'manage_groups',
-                'manage_permissions', 'manage_users',
-                'manage_token_scopes', 'manage_blackouts',
-                'manage_probes', 'manage_alert_rules'
-            )),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(group_id, permission)
-        );
-        INSERT INTO group_admin_permissions_new (id, group_id, permission, created_at)
-            SELECT id, group_id, permission, created_at
-            FROM group_admin_permissions;
-        DROP TABLE group_admin_permissions;
-        ALTER TABLE group_admin_permissions_new RENAME TO group_admin_permissions;
-        CREATE INDEX IF NOT EXISTS idx_admin_perms_group ON group_admin_permissions(group_id);
-        CREATE INDEX IF NOT EXISTS idx_admin_perms_perm ON group_admin_permissions(permission);
-        `
-		_, err = s.db.Exec(migrationV10)
-		if err != nil {
-			return fmt.Errorf("failed to apply schema migration v10: %w", err)
-		}
-	}
-
-	// Apply migrations for schema version 11 (unify service and user tokens)
-	if currentVersion < 11 {
-		// Add is_service_account column to users
-		//nolint:errcheck // Intentionally ignoring error - column may already exist
-		s.db.Exec("ALTER TABLE users ADD COLUMN is_service_account BOOLEAN DEFAULT FALSE")
-
-		// Delete orphaned service tokens (tokens without an owner)
-		_, err = s.db.Exec("DELETE FROM tokens WHERE owner_id IS NULL")
-		if err != nil {
-			return fmt.Errorf("failed to clean orphaned tokens in migration v11: %w", err)
-		}
-
-		migrationV11 := `
-        -- Recreate tokens table without token_type and is_superuser columns,
-        -- with owner_id as NOT NULL
-        CREATE TABLE tokens_new (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            token_hash TEXT UNIQUE NOT NULL,
-            owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            expires_at TIMESTAMP,
-            annotation TEXT DEFAULT '',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            database TEXT DEFAULT ''
-        );
-        INSERT INTO tokens_new (id, token_hash, owner_id, expires_at, annotation, created_at, database)
-            SELECT id, token_hash, owner_id, expires_at, annotation, created_at, database
-            FROM tokens;
-        DROP TABLE tokens;
-        ALTER TABLE tokens_new RENAME TO tokens;
-        CREATE INDEX IF NOT EXISTS idx_tokens_hash ON tokens(token_hash);
-        CREATE INDEX IF NOT EXISTS idx_tokens_owner ON tokens(owner_id);
-        `
-		_, err = s.db.Exec(migrationV11)
-		if err != nil {
-			return fmt.Errorf("failed to apply schema migration v11: %w", err)
-		}
-	}
-
-	// Apply migrations for schema version 12 (token admin scope)
-	if currentVersion < 12 {
-		migrationV12 := `
-        CREATE TABLE IF NOT EXISTS token_admin_scope (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            token_id INTEGER NOT NULL REFERENCES tokens(id) ON DELETE CASCADE,
-            permission TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(token_id, permission)
-        );
-        CREATE INDEX IF NOT EXISTS idx_token_admin_scope_token ON token_admin_scope(token_id);
-        `
-		_, err = s.db.Exec(migrationV12)
-		if err != nil {
-			return fmt.Errorf("failed to apply schema migration v12: %w", err)
-		}
-	}
-
-	// Apply migrations for schema version 13 (per-connection access level in token scope)
-	if currentVersion < 13 {
-		//nolint:errcheck // Column may already exist
-		s.db.Exec("ALTER TABLE token_connection_scope ADD COLUMN access_level TEXT NOT NULL DEFAULT 'read_write'")
-	}
-
-	// Apply migrations for schema version 14 (add manage_notification_channels permission)
-	if currentVersion < 14 {
-		migrationV14 := `
-        -- Drop stale temp table if left from a failed migration
-        DROP TABLE IF EXISTS group_admin_permissions_new;
-
-        -- Recreate table with updated CHECK constraint including manage_notification_channels
-        CREATE TABLE IF NOT EXISTS group_admin_permissions_new (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            group_id INTEGER NOT NULL
-                REFERENCES user_groups(id) ON DELETE CASCADE,
-            permission TEXT NOT NULL CHECK (permission IN (
-                'manage_connections', 'manage_groups',
-                'manage_permissions', 'manage_users',
-                'manage_token_scopes', 'manage_blackouts',
-                'manage_probes', 'manage_alert_rules',
-                'manage_notification_channels'
-            )),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(group_id, permission)
-        );
-        INSERT INTO group_admin_permissions_new (id, group_id, permission, created_at)
-            SELECT id, group_id, permission, created_at
-            FROM group_admin_permissions;
-        DROP TABLE group_admin_permissions;
-        ALTER TABLE group_admin_permissions_new RENAME TO group_admin_permissions;
-        CREATE INDEX IF NOT EXISTS idx_admin_perms_group ON group_admin_permissions(group_id);
-        CREATE INDEX IF NOT EXISTS idx_admin_perms_perm ON group_admin_permissions(permission);
-        `
-		_, err = s.db.Exec(migrationV14)
-		if err != nil {
-			return fmt.Errorf("failed to apply schema migration v14: %w", err)
-		}
-	}
-
-	// Apply migrations for schema version 15 (add wildcard '*' to admin permissions CHECK constraint)
-	if currentVersion < 15 {
-		migrationV15 := `
-        -- Drop stale temp table if left from a failed migration
-        DROP TABLE IF EXISTS group_admin_permissions_new;
-
-        CREATE TABLE IF NOT EXISTS group_admin_permissions_new (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            group_id INTEGER NOT NULL
-                REFERENCES user_groups(id) ON DELETE CASCADE,
-            permission TEXT NOT NULL CHECK (permission IN (
-                'manage_connections', 'manage_groups',
-                'manage_permissions', 'manage_users',
-                'manage_token_scopes', 'manage_blackouts',
-                'manage_probes', 'manage_alert_rules',
-                'manage_notification_channels', '*'
-            )),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(group_id, permission)
-        );
-        INSERT INTO group_admin_permissions_new (id, group_id, permission, created_at)
-            SELECT id, group_id, permission, created_at
-            FROM group_admin_permissions;
-        DROP TABLE group_admin_permissions;
-        ALTER TABLE group_admin_permissions_new RENAME TO group_admin_permissions;
-        CREATE INDEX IF NOT EXISTS idx_admin_perms_group ON group_admin_permissions(group_id);
-        CREATE INDEX IF NOT EXISTS idx_admin_perms_perm ON group_admin_permissions(permission);
-        `
-		_, err = s.db.Exec(migrationV15)
-		if err != nil {
-			return fmt.Errorf("failed to apply schema migration v15: %w", err)
-		}
-	}
-
-	// Apply migrations for schema version 16 (add store_system_memory permission)
-	if currentVersion < 16 {
-		migrationV16 := `
-        -- Drop stale temp table if left from a failed migration
-        DROP TABLE IF EXISTS group_admin_permissions_new;
-
-        CREATE TABLE IF NOT EXISTS group_admin_permissions_new (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            group_id INTEGER NOT NULL
-                REFERENCES user_groups(id) ON DELETE CASCADE,
-            permission TEXT NOT NULL CHECK (permission IN (
-                'manage_connections', 'manage_groups',
-                'manage_permissions', 'manage_users',
-                'manage_token_scopes', 'manage_blackouts',
-                'manage_probes', 'manage_alert_rules',
-                'manage_notification_channels', 'store_system_memory', '*'
-            )),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(group_id, permission)
-        );
-        INSERT INTO group_admin_permissions_new (id, group_id, permission, created_at)
-            SELECT id, group_id, permission, created_at
-            FROM group_admin_permissions;
-        DROP TABLE group_admin_permissions;
-        ALTER TABLE group_admin_permissions_new RENAME TO group_admin_permissions;
-        CREATE INDEX IF NOT EXISTS idx_admin_perms_group ON group_admin_permissions(group_id);
-        CREATE INDEX IF NOT EXISTS idx_admin_perms_perm ON group_admin_permissions(permission);
-        `
-		_, err = s.db.Exec(migrationV16)
-		if err != nil {
-			return fmt.Errorf("failed to apply schema migration v16: %w", err)
-		}
-	}
-
-	// Set schema version
-	_, err = s.db.Exec("DELETE FROM schema_version")
-	if err != nil {
-		return fmt.Errorf("failed to clean schema version: %w", err)
-	}
-	_, err = s.db.Exec("INSERT INTO schema_version (version) VALUES (?)", schemaVersion)
-	return err
+	return nil
 }
 
 // Close closes the database connection

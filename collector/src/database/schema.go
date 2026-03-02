@@ -105,6 +105,9 @@ func (sm *SchemaManager) registerMigrations() {
 					sslrootcert TEXT,
 					cluster_id INTEGER,
 					role VARCHAR(50) DEFAULT 'primary',
+					connection_error TEXT,
+					description TEXT DEFAULT '',
+					membership_source VARCHAR(20) NOT NULL DEFAULT 'auto',
 					created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 					updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 					CONSTRAINT chk_owner CHECK (
@@ -154,6 +157,12 @@ func (sm *SchemaManager) registerMigrations() {
 					'Reference to the cluster this connection belongs to (NULL if unassigned)';
 				COMMENT ON COLUMN connections.role IS
 					'Role of the server in the cluster (primary, replica, standby, etc.)';
+				COMMENT ON COLUMN connections.connection_error IS
+					'Last connection error message, NULL when connection is healthy';
+				COMMENT ON COLUMN connections.description IS
+					'User-provided description';
+				COMMENT ON COLUMN connections.membership_source IS
+					'How the connection was assigned to its cluster: auto (by auto-detection) or manual (by a user)';
 				COMMENT ON COLUMN connections.created_at IS
 					'Timestamp when the connection was created';
 				COMMENT ON COLUMN connections.updated_at IS
@@ -167,9 +176,7 @@ func (sm *SchemaManager) registerMigrations() {
 				CREATE INDEX IF NOT EXISTS idx_connections_owner_username ON connections(owner_username);
 				CREATE INDEX IF NOT EXISTS idx_connections_owner_token ON connections(owner_token);
 				CREATE INDEX IF NOT EXISTS idx_connections_is_monitored ON connections(is_monitored) WHERE is_monitored = TRUE;
-				CREATE INDEX IF NOT EXISTS idx_connections_enabled ON connections(enabled) WHERE enabled = TRUE;
 				CREATE INDEX IF NOT EXISTS idx_connections_cluster_id ON connections(cluster_id);
-				CREATE INDEX IF NOT EXISTS idx_connections_role ON connections(role);
 
 				COMMENT ON INDEX idx_connections_name IS
 					'Index for fast lookup of connections by name';
@@ -179,8 +186,6 @@ func (sm *SchemaManager) registerMigrations() {
 					'Index for fast lookup of connections by owner token';
 				COMMENT ON INDEX idx_connections_is_monitored IS
 					'Partial index for efficiently finding actively monitored connections';
-				COMMENT ON INDEX idx_connections_enabled IS
-					'Partial index for efficiently finding enabled connections for alerting';
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create connections table: %w", err)
@@ -246,6 +251,7 @@ func (sm *SchemaManager) registerMigrations() {
 					auto_cluster_key VARCHAR(255) UNIQUE,
 					name VARCHAR(255) NOT NULL,
 					description TEXT,
+					replication_type VARCHAR(50),
 					created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 					updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 					CONSTRAINT clusters_group_name_unique UNIQUE (group_id, name)
@@ -290,11 +296,23 @@ func (sm *SchemaManager) registerMigrations() {
 					description TEXT NOT NULL,
 					collection_interval_seconds INTEGER NOT NULL DEFAULT 60,
 					retention_days INTEGER NOT NULL DEFAULT 28,
+					scope TEXT NOT NULL DEFAULT 'global',
+					group_id INTEGER REFERENCES cluster_groups(id) ON DELETE CASCADE,
+					cluster_id INTEGER REFERENCES clusters(id) ON DELETE CASCADE,
+					user_modified BOOLEAN NOT NULL DEFAULT FALSE,
 					created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 					updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 					CONSTRAINT chk_name_not_empty CHECK (name <> ''),
 					CONSTRAINT chk_collection_interval_positive CHECK (collection_interval_seconds > 0),
-					CONSTRAINT chk_retention_days_positive CHECK (retention_days > 0)
+					CONSTRAINT chk_retention_days_positive CHECK (retention_days > 0),
+					CONSTRAINT probe_configs_scope_check
+						CHECK (scope IN ('global', 'group', 'cluster', 'server')),
+					CONSTRAINT probe_configs_scope_ids_check CHECK (
+						(scope = 'global' AND connection_id IS NULL AND group_id IS NULL AND cluster_id IS NULL)
+						OR (scope = 'group' AND group_id IS NOT NULL AND connection_id IS NULL AND cluster_id IS NULL)
+						OR (scope = 'cluster' AND cluster_id IS NOT NULL AND connection_id IS NULL AND group_id IS NULL)
+						OR (scope = 'server' AND connection_id IS NOT NULL AND group_id IS NULL AND cluster_id IS NULL)
+					)
 				);
 
 				COMMENT ON TABLE probe_configs IS
@@ -313,6 +331,14 @@ func (sm *SchemaManager) registerMigrations() {
 					'How often to run the probe (in seconds)';
 				COMMENT ON COLUMN probe_configs.retention_days IS
 					'How long to keep collected data (in days)';
+				COMMENT ON COLUMN probe_configs.scope IS
+					'Configuration scope level: global, group, cluster, or server';
+				COMMENT ON COLUMN probe_configs.group_id IS
+					'Cluster group targeted when scope is group';
+				COMMENT ON COLUMN probe_configs.cluster_id IS
+					'Cluster targeted when scope is cluster';
+				COMMENT ON COLUMN probe_configs.user_modified IS
+					'Whether this config was explicitly modified by a user via the UI';
 				COMMENT ON COLUMN probe_configs.created_at IS
 					'When the probe configuration was created';
 				COMMENT ON COLUMN probe_configs.updated_at IS
@@ -325,8 +351,16 @@ func (sm *SchemaManager) registerMigrations() {
 					'Retention days must be positive';
 
 				CREATE INDEX IF NOT EXISTS idx_probe_configs_enabled ON probe_configs(is_enabled);
-				CREATE UNIQUE INDEX IF NOT EXISTS probe_configs_name_global_key ON probe_configs(name) WHERE connection_id IS NULL;
-				CREATE UNIQUE INDEX IF NOT EXISTS probe_configs_name_connection_key ON probe_configs(name, COALESCE(connection_id, 0));
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_probe_configs_unique_global
+					ON probe_configs(name) WHERE scope = 'global';
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_probe_configs_unique_server
+					ON probe_configs(name, connection_id) WHERE scope = 'server';
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_probe_configs_unique_cluster
+					ON probe_configs(name, cluster_id) WHERE scope = 'cluster';
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_probe_configs_unique_group
+					ON probe_configs(name, group_id) WHERE scope = 'group';
+				CREATE INDEX IF NOT EXISTS idx_probe_configs_group_id ON probe_configs(group_id);
+				CREATE INDEX IF NOT EXISTS idx_probe_configs_cluster_id ON probe_configs(cluster_id);
 
 				COMMENT ON INDEX idx_probe_configs_enabled IS
 					'Index for efficiently finding enabled probes';
@@ -379,7 +413,9 @@ func (sm *SchemaManager) registerMigrations() {
 					(NULL, TRUE, 'pg_sys_load_avg_info', 'Monitors system load averages', 600, 7),
 					(NULL, TRUE, 'pg_sys_process_info', 'Monitors process information', 600, 7),
 					(NULL, TRUE, 'pg_sys_network_info', 'Monitors network statistics', 600, 7),
-					(NULL, TRUE, 'pg_sys_cpu_memory_by_process', 'Monitors CPU and memory usage by process', 600, 7)
+					(NULL, TRUE, 'pg_sys_cpu_memory_by_process', 'Monitors CPU and memory usage by process', 600, 7),
+					-- Connectivity probe
+					(NULL, TRUE, 'pg_connectivity', 'Monitors database connectivity and response time', 30, 7)
 				ON CONFLICT DO NOTHING;
 			`)
 			if err != nil {
@@ -1251,6 +1287,7 @@ func (sm *SchemaManager) registerMigrations() {
 					publisher_port INTEGER,
 					has_active_logical_slots BOOLEAN DEFAULT FALSE,
 					active_logical_slot_count INTEGER DEFAULT 0,
+					postmaster_start_time TIMESTAMPTZ,
 					collected_at TIMESTAMPTZ NOT NULL,
 					PRIMARY KEY (connection_id, collected_at)
 				) PARTITION BY RANGE (collected_at);
@@ -1262,10 +1299,11 @@ func (sm *SchemaManager) registerMigrations() {
 					ADD CONSTRAINT fk_pg_node_role_connection_id
 					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
 
+				COMMENT ON COLUMN metrics.pg_node_role.postmaster_start_time IS
+					'PostgreSQL postmaster start time for restart detection';
+
 				CREATE INDEX IF NOT EXISTS idx_pg_node_role_conn_time
 					ON metrics.pg_node_role(connection_id, collected_at DESC);
-				CREATE INDEX IF NOT EXISTS idx_pg_node_role_primary_role
-					ON metrics.pg_node_role(connection_id, primary_role, collected_at DESC);
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_node_role table: %w", err)
@@ -1293,11 +1331,29 @@ func (sm *SchemaManager) registerMigrations() {
 
 				CREATE INDEX IF NOT EXISTS idx_pg_extension_conn_time
 					ON metrics.pg_extension(connection_id, collected_at DESC);
-				CREATE INDEX IF NOT EXISTS idx_pg_extension_extname
-					ON metrics.pg_extension(connection_id, database_name, extname);
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_extension table: %w", err)
+			}
+
+			// metrics.pg_connectivity
+			_, err = tx.Exec(ctx, `
+				CREATE TABLE IF NOT EXISTS metrics.pg_connectivity (
+					connection_id INTEGER NOT NULL,
+					collected_at TIMESTAMPTZ NOT NULL,
+					response_time_ms DOUBLE PRECISION NOT NULL,
+					PRIMARY KEY (connection_id, collected_at),
+					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE
+				) PARTITION BY RANGE (collected_at);
+
+				COMMENT ON TABLE metrics.pg_connectivity IS
+					'Stores connectivity check results and response times for monitored connections';
+
+				CREATE INDEX IF NOT EXISTS idx_pg_connectivity_conn_time
+					ON metrics.pg_connectivity (connection_id, collected_at DESC);
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to create pg_connectivity table: %w", err)
 			}
 
 			// =====================================================================
@@ -1651,6 +1707,8 @@ func (sm *SchemaManager) registerMigrations() {
 					ON probe_availability(connection_id);
 				CREATE INDEX IF NOT EXISTS idx_probe_availability_probe
 					ON probe_availability(probe_name);
+				CREATE INDEX IF NOT EXISTS idx_probe_availability_conn_probe
+					ON probe_availability(connection_id, probe_name);
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create probe_availability table: %w", err)
@@ -1677,8 +1735,6 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON TABLE alert_rules IS
 					'Threshold-based alert rules for monitored metrics';
 
-				CREATE INDEX IF NOT EXISTS idx_alert_rules_category ON alert_rules(category);
-				CREATE INDEX IF NOT EXISTS idx_alert_rules_metric ON alert_rules(metric_name);
 				CREATE INDEX IF NOT EXISTS idx_alert_rules_enabled ON alert_rules(default_enabled) WHERE default_enabled = TRUE;
 			`)
 			if err != nil {
@@ -1696,16 +1752,45 @@ func (sm *SchemaManager) registerMigrations() {
 					threshold REAL NOT NULL,
 					severity TEXT NOT NULL CHECK (severity IN ('info', 'warning', 'critical')),
 					enabled BOOLEAN NOT NULL DEFAULT TRUE,
+					scope TEXT NOT NULL DEFAULT 'server',
+					group_id INTEGER REFERENCES cluster_groups(id) ON DELETE CASCADE,
+					cluster_id INTEGER REFERENCES clusters(id) ON DELETE CASCADE,
 					created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 					updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-					UNIQUE(rule_id, connection_id, database_name)
+					CONSTRAINT alert_thresholds_scope_check
+						CHECK (scope IN ('group', 'cluster', 'server')),
+					CONSTRAINT alert_thresholds_scope_ids_check CHECK (
+						(scope = 'group' AND group_id IS NOT NULL AND connection_id IS NULL AND cluster_id IS NULL)
+						OR (scope = 'cluster' AND cluster_id IS NOT NULL AND connection_id IS NULL AND group_id IS NULL)
+						OR (scope = 'server' AND connection_id IS NOT NULL AND group_id IS NULL AND cluster_id IS NULL)
+					)
 				);
 
 				COMMENT ON TABLE alert_thresholds IS
 					'Per-connection threshold overrides for alert rules';
+				COMMENT ON COLUMN alert_thresholds.scope IS
+					'Threshold scope level: group, cluster, or server';
+				COMMENT ON COLUMN alert_thresholds.group_id IS
+					'Cluster group targeted when scope is group';
+				COMMENT ON COLUMN alert_thresholds.cluster_id IS
+					'Cluster targeted when scope is cluster';
 
 				CREATE INDEX IF NOT EXISTS idx_alert_thresholds_rule ON alert_thresholds(rule_id);
 				CREATE INDEX IF NOT EXISTS idx_alert_thresholds_connection ON alert_thresholds(connection_id);
+				CREATE INDEX IF NOT EXISTS idx_alert_thresholds_group_id ON alert_thresholds(group_id);
+				CREATE INDEX IF NOT EXISTS idx_alert_thresholds_cluster_id ON alert_thresholds(cluster_id);
+
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_alert_thresholds_unique_server
+					ON alert_thresholds(rule_id, connection_id, COALESCE(database_name, ''))
+					WHERE scope = 'server';
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_alert_thresholds_unique_cluster
+					ON alert_thresholds(rule_id, cluster_id) WHERE scope = 'cluster';
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_alert_thresholds_unique_group
+					ON alert_thresholds(rule_id, group_id) WHERE scope = 'group';
+
+				CREATE INDEX IF NOT EXISTS idx_alert_thresholds_server_lookup
+					ON alert_thresholds(rule_id, connection_id, database_name)
+					WHERE scope = 'server';
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create alert_thresholds table: %w", err)
@@ -1715,7 +1800,7 @@ func (sm *SchemaManager) registerMigrations() {
 			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS alerts (
 					id BIGSERIAL PRIMARY KEY,
-					alert_type TEXT NOT NULL CHECK (alert_type IN ('threshold', 'anomaly')),
+					alert_type TEXT NOT NULL CHECK (alert_type IN ('threshold', 'anomaly', 'connection')),
 					rule_id BIGINT REFERENCES alert_rules(id) ON DELETE SET NULL,
 					connection_id INTEGER NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
 					database_name TEXT,
@@ -1734,18 +1819,30 @@ func (sm *SchemaManager) registerMigrations() {
 					cleared_at TIMESTAMPTZ,
 					last_updated TIMESTAMPTZ,
 					anomaly_score REAL,
-					anomaly_details JSONB
+					anomaly_details JSONB,
+					ai_analysis TEXT,
+					ai_analysis_metric_value REAL,
+					last_reevaluated_at TIMESTAMPTZ,
+					reevaluation_count INTEGER NOT NULL DEFAULT 0
 				);
 
 				COMMENT ON TABLE alerts IS
 					'Active and historical alerts from threshold and anomaly detection';
+				COMMENT ON COLUMN alerts.ai_analysis IS
+					'Cached AI analysis markdown report';
+				COMMENT ON COLUMN alerts.ai_analysis_metric_value IS
+					'The metric_value when the AI analysis was generated';
 
-				CREATE INDEX IF NOT EXISTS idx_alerts_status ON alerts(status);
 				CREATE INDEX IF NOT EXISTS idx_alerts_connection ON alerts(connection_id);
 				CREATE INDEX IF NOT EXISTS idx_alerts_triggered ON alerts(triggered_at DESC);
-				CREATE INDEX IF NOT EXISTS idx_alerts_active ON alerts(connection_id, status) WHERE status = 'active';
-				CREATE INDEX IF NOT EXISTS idx_alerts_correlation ON alerts(correlation_id) WHERE correlation_id IS NOT NULL;
-				CREATE INDEX IF NOT EXISTS idx_alerts_object_name ON alerts(object_name) WHERE object_name IS NOT NULL;
+				CREATE INDEX IF NOT EXISTS idx_alerts_active
+					ON alerts(connection_id, alert_type)
+					WHERE status = 'active';
+				CREATE INDEX IF NOT EXISTS idx_alerts_conn_triggered
+					ON alerts(connection_id, triggered_at DESC);
+				CREATE INDEX IF NOT EXISTS idx_alerts_active_triggered
+					ON alerts(triggered_at DESC)
+					WHERE status = 'active';
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create alerts table: %w", err)
@@ -1768,7 +1865,6 @@ func (sm *SchemaManager) registerMigrations() {
 
 				CREATE INDEX IF NOT EXISTS idx_alert_acknowledgments_alert ON alert_acknowledgments(alert_id);
 				CREATE INDEX IF NOT EXISTS idx_alert_acknowledgments_user ON alert_acknowledgments(acknowledged_by);
-				CREATE INDEX IF NOT EXISTS idx_alert_acknowledgments_false_positive ON alert_acknowledgments(false_positive) WHERE false_positive = TRUE;
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create alert_acknowledgments table: %w", err)
@@ -1784,15 +1880,34 @@ func (sm *SchemaManager) registerMigrations() {
 					start_time TIMESTAMPTZ NOT NULL,
 					end_time TIMESTAMPTZ NOT NULL,
 					created_by TEXT NOT NULL,
+					scope TEXT NOT NULL DEFAULT 'server',
+					group_id INTEGER REFERENCES cluster_groups(id) ON DELETE CASCADE,
+					cluster_id INTEGER REFERENCES clusters(id) ON DELETE CASCADE,
 					created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-					CHECK (end_time > start_time)
+					CHECK (end_time > start_time),
+					CONSTRAINT blackouts_scope_check
+						CHECK (scope IN ('estate', 'group', 'cluster', 'server')),
+					CONSTRAINT blackouts_scope_ids_check CHECK (
+						(scope = 'estate' AND connection_id IS NULL AND group_id IS NULL AND cluster_id IS NULL)
+						OR (scope = 'group' AND group_id IS NOT NULL AND connection_id IS NULL AND cluster_id IS NULL)
+						OR (scope = 'cluster' AND cluster_id IS NOT NULL AND connection_id IS NULL AND group_id IS NULL)
+						OR (scope = 'server')
+					)
 				);
 
 				COMMENT ON TABLE blackouts IS
 					'Manual blackout periods during which alerts are suppressed';
+				COMMENT ON COLUMN blackouts.scope IS
+					'Blackout scope level: estate, group, cluster, or server';
+				COMMENT ON COLUMN blackouts.group_id IS
+					'Cluster group targeted when scope is group';
+				COMMENT ON COLUMN blackouts.cluster_id IS
+					'Cluster targeted when scope is cluster';
 
 				CREATE INDEX IF NOT EXISTS idx_blackouts_active ON blackouts(start_time, end_time);
 				CREATE INDEX IF NOT EXISTS idx_blackouts_connection ON blackouts(connection_id);
+				CREATE INDEX IF NOT EXISTS idx_blackouts_group_id ON blackouts(group_id);
+				CREATE INDEX IF NOT EXISTS idx_blackouts_cluster_id ON blackouts(cluster_id);
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create blackouts table: %w", err)
@@ -1811,15 +1926,34 @@ func (sm *SchemaManager) registerMigrations() {
 					reason TEXT NOT NULL,
 					enabled BOOLEAN NOT NULL DEFAULT TRUE,
 					created_by TEXT NOT NULL,
+					scope TEXT NOT NULL DEFAULT 'server',
+					group_id INTEGER REFERENCES cluster_groups(id) ON DELETE CASCADE,
+					cluster_id INTEGER REFERENCES clusters(id) ON DELETE CASCADE,
 					created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-					updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+					updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+					CONSTRAINT blackout_schedules_scope_check
+						CHECK (scope IN ('estate', 'group', 'cluster', 'server')),
+					CONSTRAINT blackout_schedules_scope_ids_check CHECK (
+						(scope = 'estate' AND connection_id IS NULL AND group_id IS NULL AND cluster_id IS NULL)
+						OR (scope = 'group' AND group_id IS NOT NULL AND connection_id IS NULL AND cluster_id IS NULL)
+						OR (scope = 'cluster' AND cluster_id IS NOT NULL AND connection_id IS NULL AND group_id IS NULL)
+						OR (scope = 'server')
+					)
 				);
 
 				COMMENT ON TABLE blackout_schedules IS
 					'Scheduled recurring blackout periods using cron expressions';
+				COMMENT ON COLUMN blackout_schedules.scope IS
+					'Blackout scope level: estate, group, cluster, or server';
+				COMMENT ON COLUMN blackout_schedules.group_id IS
+					'Cluster group targeted when scope is group';
+				COMMENT ON COLUMN blackout_schedules.cluster_id IS
+					'Cluster targeted when scope is cluster';
 
 				CREATE INDEX IF NOT EXISTS idx_blackout_schedules_enabled ON blackout_schedules(enabled) WHERE enabled = TRUE;
 				CREATE INDEX IF NOT EXISTS idx_blackout_schedules_connection ON blackout_schedules(connection_id);
+				CREATE INDEX IF NOT EXISTS idx_blackout_schedules_group_id ON blackout_schedules(group_id);
+				CREATE INDEX IF NOT EXISTS idx_blackout_schedules_cluster_id ON blackout_schedules(cluster_id);
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create blackout_schedules table: %w", err)
@@ -1870,8 +2004,8 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON TABLE metric_baselines IS
 					'Statistical baselines for metrics used in anomaly detection';
 
-				CREATE INDEX IF NOT EXISTS idx_metric_baselines_connection ON metric_baselines(connection_id);
-				CREATE INDEX IF NOT EXISTS idx_metric_baselines_metric ON metric_baselines(metric_name);
+				CREATE INDEX IF NOT EXISTS idx_metric_baselines_conn_metric
+					ON metric_baselines(connection_id, metric_name, period_type);
 				CREATE UNIQUE INDEX IF NOT EXISTS idx_metric_baselines_unique
 					ON metric_baselines(
 						connection_id,
@@ -1936,7 +2070,9 @@ func (sm *SchemaManager) registerMigrations() {
 
 				CREATE INDEX IF NOT EXISTS idx_anomaly_candidates_connection ON anomaly_candidates(connection_id);
 				CREATE INDEX IF NOT EXISTS idx_anomaly_candidates_detected ON anomaly_candidates(detected_at DESC);
-				CREATE INDEX IF NOT EXISTS idx_anomaly_candidates_pending ON anomaly_candidates(final_decision) WHERE final_decision = 'pending';
+				CREATE INDEX IF NOT EXISTS idx_anomaly_candidates_lookup
+					ON anomaly_candidates(connection_id, metric_name, detected_at DESC)
+					WHERE final_decision = 'pending';
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create anomaly_candidates table: %w", err)
@@ -1974,6 +2110,7 @@ func (sm *SchemaManager) registerMigrations() {
 					template_reminder TEXT,
 					reminder_enabled BOOLEAN NOT NULL DEFAULT FALSE,
 					reminder_interval_hours INTEGER DEFAULT 24,
+					is_estate_default BOOLEAN NOT NULL DEFAULT FALSE,
 					created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 					updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 					CONSTRAINT chk_notification_channel_owner CHECK (
@@ -1984,8 +2121,9 @@ func (sm *SchemaManager) registerMigrations() {
 
 				COMMENT ON TABLE notification_channels IS
 					'Notification channels for delivering alerts (Slack, Mattermost, webhook, email)';
+				COMMENT ON COLUMN notification_channels.is_estate_default IS
+					'When true, this channel is enabled by default for all servers in the estate';
 
-				CREATE INDEX IF NOT EXISTS idx_notification_channels_channel_type ON notification_channels(channel_type);
 				CREATE INDEX IF NOT EXISTS idx_notification_channels_enabled ON notification_channels(enabled) WHERE enabled = TRUE;
 				CREATE INDEX IF NOT EXISTS idx_notification_channels_owner_username ON notification_channels(owner_username);
 				CREATE INDEX IF NOT EXISTS idx_notification_channels_owner_token ON notification_channels(owner_token);
@@ -2063,7 +2201,6 @@ func (sm *SchemaManager) registerMigrations() {
 
 				CREATE INDEX IF NOT EXISTS idx_notification_history_alert_id ON notification_history(alert_id);
 				CREATE INDEX IF NOT EXISTS idx_notification_history_channel_id ON notification_history(channel_id);
-				CREATE INDEX IF NOT EXISTS idx_notification_history_status ON notification_history(status);
 				CREATE INDEX IF NOT EXISTS idx_notification_history_pending_retry ON notification_history(status, next_retry_at) WHERE status IN ('pending', 'retrying');
 				CREATE INDEX IF NOT EXISTS idx_notification_history_created_at ON notification_history(created_at DESC);
 			`)
@@ -2087,420 +2224,14 @@ func (sm *SchemaManager) registerMigrations() {
 
 				CREATE INDEX IF NOT EXISTS idx_notification_reminder_state_alert_id ON notification_reminder_state(alert_id);
 				CREATE INDEX IF NOT EXISTS idx_notification_reminder_state_last_reminder ON notification_reminder_state(last_reminder_at);
+				CREATE INDEX IF NOT EXISTS idx_notification_reminder_state_alert_channel
+					ON notification_reminder_state(alert_id, channel_id);
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create notification_reminder_state table: %w", err)
 			}
 
-			// =====================================================================
-			// PART 7: pgvector Support (Optional)
-			// =====================================================================
-
-			// Check if pgvector extension is available
-			var vectorAvailable bool
-			err = tx.QueryRow(ctx, `
-				SELECT EXISTS(SELECT 1 FROM pg_available_extensions WHERE name = 'vector')
-			`).Scan(&vectorAvailable)
-			if err != nil {
-				return fmt.Errorf("failed to check vector extension availability: %w", err)
-			}
-
-			if vectorAvailable {
-				_, err = tx.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS vector;`)
-				if err != nil {
-					logger.Infof("Failed to create vector extension: %v", err)
-				} else {
-					// anomaly_embeddings table
-					_, err = tx.Exec(ctx, `
-						CREATE TABLE IF NOT EXISTS anomaly_embeddings (
-							id BIGSERIAL PRIMARY KEY,
-							candidate_id BIGINT REFERENCES anomaly_candidates(id) ON DELETE CASCADE,
-							embedding vector(1536),
-							model_name TEXT NOT NULL,
-							created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-							UNIQUE(candidate_id)
-						);
-
-						COMMENT ON TABLE anomaly_embeddings IS
-							'Embeddings for anomaly candidates used in Tier 2 similarity matching';
-
-						CREATE INDEX IF NOT EXISTS idx_anomaly_embeddings_candidate ON anomaly_embeddings(candidate_id);
-						CREATE INDEX IF NOT EXISTS idx_anomaly_embeddings_vector ON anomaly_embeddings USING hnsw (embedding vector_cosine_ops);
-
-						ALTER TABLE anomaly_candidates
-							ADD CONSTRAINT fk_anomaly_candidates_embedding
-							FOREIGN KEY (embedding_id) REFERENCES anomaly_embeddings(id) ON DELETE SET NULL;
-					`)
-					if err != nil {
-						logger.Infof("Failed to create anomaly_embeddings table: %v", err)
-					}
-				}
-			} else {
-				logger.Info("pgvector extension not available, skipping anomaly embeddings setup")
-			}
-
-			// =====================================================================
-			// PART 8: Seed Data - Built-in Alert Rules
-			// =====================================================================
-
-			_, err = tx.Exec(ctx, `
-				INSERT INTO alert_rules (name, description, category, metric_name, metric_unit, default_operator, default_threshold, default_severity, default_enabled, required_extension, is_built_in)
-				VALUES
-					-- Connection alerts
-					('high_max_connections', 'max_connections setting is very high; consider using a connection pooler', 'connections', 'pg_settings.max_connections', 'connections', '>', 500, 'warning', TRUE, NULL, TRUE),
-					('connection_utilization', 'Connection utilization above threshold', 'connections', 'pg_stat_activity.connection_utilization_percent', 'percent', '>', 80, 'warning', TRUE, NULL, TRUE),
-
-					-- Replication alerts
-					('replication_lag_bytes', 'Replication lag in bytes exceeds threshold', 'replication', 'pg_stat_replication.lag_bytes', 'bytes', '>', 104857600, 'warning', TRUE, NULL, TRUE),
-					('replication_slot_inactive', 'Replication slot is inactive', 'replication', 'pg_replication_slots.inactive', NULL, '==', 1, 'critical', TRUE, NULL, TRUE),
-					('replication_standby_disconnected', 'Standby server is not receiving WAL from primary', 'replication', 'pg_stat_replication.standby_disconnected', NULL, '==', 1, 'critical', TRUE, NULL, TRUE),
-					('subscription_worker_down', 'Logical replication subscription worker is not running (includes Spock subscriptions)', 'replication', 'pg_node_role.subscription_worker_down', NULL, '==', 1, 'critical', TRUE, NULL, TRUE),
-
-					-- Storage alerts
-					('disk_usage_percent', 'Disk usage exceeds threshold', 'storage', 'pg_sys_disk_info.used_percent', 'percent', '>', 80, 'warning', TRUE, 'system_stats', TRUE),
-					('disk_usage_critical', 'Disk usage critically high', 'storage', 'pg_sys_disk_info.used_percent', 'percent', '>', 95, 'critical', TRUE, 'system_stats', TRUE),
-					('table_bloat_ratio', 'Table bloat ratio exceeds threshold', 'storage', 'pg_stat_all_tables.bloat_ratio', 'percent', '>', 50, 'warning', TRUE, NULL, TRUE),
-
-					-- Performance alerts
-					('cpu_usage_high', 'CPU usage exceeds threshold', 'performance', 'pg_sys_cpu_usage_info.processor_time_percent', 'percent', '>', 80, 'warning', TRUE, 'system_stats', TRUE),
-					('memory_usage_high', 'Memory usage exceeds threshold', 'performance', 'pg_sys_memory_info.used_percent', 'percent', '>', 85, 'warning', TRUE, 'system_stats', TRUE),
-					('load_average_high', 'System load average exceeds threshold', 'performance', 'pg_sys_load_avg_info.load_avg_fifteen_minutes', 'load average', '>', 4, 'warning', TRUE, 'system_stats', TRUE),
-					('long_running_queries', 'Queries running longer than threshold', 'performance', 'pg_stat_activity.max_query_duration_seconds', 'seconds', '>', 600, 'warning', TRUE, NULL, TRUE),
-					('blocked_queries', 'Blocked queries detected', 'performance', 'pg_stat_activity.blocked_count', 'queries', '>', 5, 'warning', TRUE, NULL, TRUE),
-
-					-- Transaction alerts
-					('long_running_transaction', 'Transaction running too long', 'transactions', 'pg_stat_activity.max_xact_duration_seconds', 'seconds', '>', 3600, 'warning', TRUE, NULL, TRUE),
-					('idle_in_transaction', 'Connection idle in transaction too long', 'transactions', 'pg_stat_activity.idle_in_transaction_seconds', 'seconds', '>', 300, 'warning', TRUE, NULL, TRUE),
-					('transaction_wraparound', 'Transaction ID wraparound approaching', 'transactions', 'pg_class.age_percent', 'percent', '>', 75, 'critical', TRUE, NULL, TRUE),
-
-					-- Lock alerts
-					('deadlocks_detected', 'Deadlocks detected', 'locks', 'pg_stat_database.deadlocks_delta', 'deadlocks', '>', 0, 'warning', TRUE, NULL, TRUE),
-					('lock_wait_time', 'Lock wait time exceeds threshold', 'locks', 'pg_stat_activity.max_lock_wait_seconds', 'seconds', '>', 30, 'warning', TRUE, NULL, TRUE),
-
-					-- WAL and Checkpoint alerts
-					('checkpoint_warning', 'Checkpoints requested too frequently', 'wal', 'pg_stat_checkpointer.checkpoints_req_delta', 'checkpoints', '>', 50, 'warning', TRUE, NULL, TRUE),
-					('wal_archive_failed', 'WAL archiving failures detected', 'wal', 'pg_stat_wal.failed_count_delta', 'failures', '>', 0, 'critical', TRUE, NULL, TRUE),
-
-					-- Vacuum alerts
-					('autovacuum_not_running', 'Autovacuum has not run recently', 'maintenance', 'pg_stat_all_tables.last_autovacuum_hours', 'hours', '>', 24, 'warning', TRUE, NULL, TRUE),
-					('dead_tuple_ratio', 'Dead tuple ratio too high', 'maintenance', 'pg_stat_all_tables.dead_tuple_percent', 'percent', '>', 20, 'warning', TRUE, NULL, TRUE),
-
-					-- Statement alerts
-					('slow_query_count', 'High number of slow queries', 'queries', 'pg_stat_statements.slow_query_count', 'queries', '>', 10, 'warning', TRUE, 'pg_stat_statements', TRUE),
-					('cache_hit_ratio_low', 'Buffer cache hit ratio below threshold', 'queries', 'pg_stat_database.cache_hit_ratio', 'percent', '<', 80, 'warning', TRUE, NULL, TRUE),
-
-					-- Error alerts
-					('temp_files_created', 'Temporary files being created', 'performance', 'pg_stat_database.temp_files_delta', 'files', '>', 100, 'warning', TRUE, NULL, TRUE)
-				ON CONFLICT (name) DO NOTHING;
-			`)
-			if err != nil {
-				return fmt.Errorf("failed to insert built-in alert rules: %w", err)
-			}
-
-			return nil
-		},
-	})
-
-	// Migration #2: Add connection_error column to connections table
-	sm.migrations = append(sm.migrations, Migration{
-		Version:     2,
-		Description: "Add connection_error column to connections table",
-		Up: func(tx pgx.Tx) error {
-			ctx := context.Background()
-
-			_, err := tx.Exec(ctx, `
-				ALTER TABLE connections ADD COLUMN IF NOT EXISTS connection_error TEXT;
-
-				COMMENT ON COLUMN connections.connection_error IS
-					'Last connection error message, NULL when connection is healthy';
-			`)
-			if err != nil {
-				return fmt.Errorf("failed to add connection_error column: %w", err)
-			}
-
-			return nil
-		},
-	})
-
-	// Migration #3: Add connection alert type
-	sm.migrations = append(sm.migrations, Migration{
-		Version:     3,
-		Description: "Add connection alert type",
-		Up: func(tx pgx.Tx) error {
-			ctx := context.Background()
-
-			_, err := tx.Exec(ctx, `
-				ALTER TABLE alerts DROP CONSTRAINT IF EXISTS alerts_alert_type_check;
-				ALTER TABLE alerts ADD CONSTRAINT alerts_alert_type_check CHECK (alert_type IN ('threshold', 'anomaly', 'connection'));
-			`)
-			if err != nil {
-				return fmt.Errorf("failed to add connection alert type: %w", err)
-			}
-
-			return nil
-		},
-	})
-
-	// Migration #4: Add scope columns to blackouts and blackout_schedules
-	sm.migrations = append(sm.migrations, Migration{
-		Version:     4,
-		Description: "Add hierarchical scope to blackouts and blackout_schedules",
-		Up: func(tx pgx.Tx) error {
-			ctx := context.Background()
-
-			// Add scope columns and foreign keys to blackouts
-			_, err := tx.Exec(ctx, `
-				ALTER TABLE blackouts
-					ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'server',
-					ADD COLUMN IF NOT EXISTS group_id INTEGER REFERENCES cluster_groups(id) ON DELETE CASCADE,
-					ADD COLUMN IF NOT EXISTS cluster_id INTEGER REFERENCES clusters(id) ON DELETE CASCADE;
-
-				ALTER TABLE blackouts DROP CONSTRAINT IF EXISTS blackouts_scope_check;
-				ALTER TABLE blackouts ADD CONSTRAINT blackouts_scope_check
-					CHECK (scope IN ('estate', 'group', 'cluster', 'server'));
-
-				ALTER TABLE blackouts DROP CONSTRAINT IF EXISTS blackouts_scope_ids_check;
-				ALTER TABLE blackouts ADD CONSTRAINT blackouts_scope_ids_check CHECK (
-					(scope = 'estate' AND connection_id IS NULL AND group_id IS NULL AND cluster_id IS NULL)
-					OR (scope = 'group' AND group_id IS NOT NULL AND connection_id IS NULL AND cluster_id IS NULL)
-					OR (scope = 'cluster' AND cluster_id IS NOT NULL AND connection_id IS NULL AND group_id IS NULL)
-					OR (scope = 'server')
-				);
-
-				CREATE INDEX IF NOT EXISTS idx_blackouts_scope ON blackouts(scope);
-				CREATE INDEX IF NOT EXISTS idx_blackouts_group_id ON blackouts(group_id);
-				CREATE INDEX IF NOT EXISTS idx_blackouts_cluster_id ON blackouts(cluster_id);
-
-				COMMENT ON COLUMN blackouts.scope IS
-					'Blackout scope level: estate, group, cluster, or server';
-				COMMENT ON COLUMN blackouts.group_id IS
-					'Cluster group targeted when scope is group';
-				COMMENT ON COLUMN blackouts.cluster_id IS
-					'Cluster targeted when scope is cluster';
-			`)
-			if err != nil {
-				return fmt.Errorf("failed to add scope columns to blackouts: %w", err)
-			}
-
-			// Add scope columns and foreign keys to blackout_schedules
-			_, err = tx.Exec(ctx, `
-				ALTER TABLE blackout_schedules
-					ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'server',
-					ADD COLUMN IF NOT EXISTS group_id INTEGER REFERENCES cluster_groups(id) ON DELETE CASCADE,
-					ADD COLUMN IF NOT EXISTS cluster_id INTEGER REFERENCES clusters(id) ON DELETE CASCADE;
-
-				ALTER TABLE blackout_schedules DROP CONSTRAINT IF EXISTS blackout_schedules_scope_check;
-				ALTER TABLE blackout_schedules ADD CONSTRAINT blackout_schedules_scope_check
-					CHECK (scope IN ('estate', 'group', 'cluster', 'server'));
-
-				ALTER TABLE blackout_schedules DROP CONSTRAINT IF EXISTS blackout_schedules_scope_ids_check;
-				ALTER TABLE blackout_schedules ADD CONSTRAINT blackout_schedules_scope_ids_check CHECK (
-					(scope = 'estate' AND connection_id IS NULL AND group_id IS NULL AND cluster_id IS NULL)
-					OR (scope = 'group' AND group_id IS NOT NULL AND connection_id IS NULL AND cluster_id IS NULL)
-					OR (scope = 'cluster' AND cluster_id IS NOT NULL AND connection_id IS NULL AND group_id IS NULL)
-					OR (scope = 'server')
-				);
-
-				CREATE INDEX IF NOT EXISTS idx_blackout_schedules_scope ON blackout_schedules(scope);
-				CREATE INDEX IF NOT EXISTS idx_blackout_schedules_group_id ON blackout_schedules(group_id);
-				CREATE INDEX IF NOT EXISTS idx_blackout_schedules_cluster_id ON blackout_schedules(cluster_id);
-
-				COMMENT ON COLUMN blackout_schedules.scope IS
-					'Blackout scope level: estate, group, cluster, or server';
-				COMMENT ON COLUMN blackout_schedules.group_id IS
-					'Cluster group targeted when scope is group';
-				COMMENT ON COLUMN blackout_schedules.cluster_id IS
-					'Cluster targeted when scope is cluster';
-			`)
-			if err != nil {
-				return fmt.Errorf("failed to add scope columns to blackout_schedules: %w", err)
-			}
-
-			return nil
-		},
-	})
-
-	// Migration #5: Remove is_shared from notification_channels
-	sm.migrations = append(sm.migrations, Migration{
-		Version:     5,
-		Description: "Remove is_shared from notification_channels (all channels are shared)",
-		Up: func(tx pgx.Tx) error {
-			ctx := context.Background()
-
-			_, err := tx.Exec(ctx, `
-				ALTER TABLE notification_channels DROP COLUMN IF EXISTS is_shared;
-			`)
-			if err != nil {
-				return fmt.Errorf("failed to drop is_shared from notification_channels: %w", err)
-			}
-
-			return nil
-		},
-	})
-
-	// Migration #6: Add postmaster_start_time to pg_node_role
-	sm.migrations = append(sm.migrations, Migration{
-		Version:     6,
-		Description: "Add postmaster_start_time to pg_node_role for restart detection",
-		Up: func(tx pgx.Tx) error {
-			ctx := context.Background()
-
-			_, err := tx.Exec(ctx, `
-				ALTER TABLE metrics.pg_node_role
-					ADD COLUMN IF NOT EXISTS postmaster_start_time TIMESTAMPTZ;
-
-				COMMENT ON COLUMN metrics.pg_node_role.postmaster_start_time IS
-					'PostgreSQL postmaster start time for restart detection';
-			`)
-			return err
-		},
-	})
-
-	// Migration #7: Add AI analysis cache columns to alerts
-	sm.migrations = append(sm.migrations, Migration{
-		Version:     7,
-		Description: "Add AI analysis cache columns to alerts",
-		Up: func(tx pgx.Tx) error {
-			ctx := context.Background()
-
-			_, err := tx.Exec(ctx, `
-				ALTER TABLE alerts
-					ADD COLUMN IF NOT EXISTS ai_analysis TEXT;
-
-				ALTER TABLE alerts
-					ADD COLUMN IF NOT EXISTS ai_analysis_metric_value REAL;
-
-				COMMENT ON COLUMN alerts.ai_analysis IS
-					'Cached AI analysis markdown report';
-				COMMENT ON COLUMN alerts.ai_analysis_metric_value IS
-					'The metric_value when the AI analysis was generated';
-			`)
-			return err
-		},
-	})
-
-	// Migration #8: Add hierarchical scope to alert_thresholds
-	sm.migrations = append(sm.migrations, Migration{
-		Version:     8,
-		Description: "Add hierarchical scope to alert_thresholds",
-		Up: func(tx pgx.Tx) error {
-			ctx := context.Background()
-
-			_, err := tx.Exec(ctx, `
-				ALTER TABLE alert_thresholds
-					ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'server',
-					ADD COLUMN IF NOT EXISTS group_id INTEGER REFERENCES cluster_groups(id) ON DELETE CASCADE,
-					ADD COLUMN IF NOT EXISTS cluster_id INTEGER REFERENCES clusters(id) ON DELETE CASCADE;
-
-				ALTER TABLE alert_thresholds DROP CONSTRAINT IF EXISTS alert_thresholds_scope_check;
-				ALTER TABLE alert_thresholds ADD CONSTRAINT alert_thresholds_scope_check
-					CHECK (scope IN ('group', 'cluster', 'server'));
-
-				ALTER TABLE alert_thresholds DROP CONSTRAINT IF EXISTS alert_thresholds_scope_ids_check;
-				ALTER TABLE alert_thresholds ADD CONSTRAINT alert_thresholds_scope_ids_check CHECK (
-					(scope = 'group' AND group_id IS NOT NULL AND connection_id IS NULL AND cluster_id IS NULL)
-					OR (scope = 'cluster' AND cluster_id IS NOT NULL AND connection_id IS NULL AND group_id IS NULL)
-					OR (scope = 'server' AND connection_id IS NOT NULL AND group_id IS NULL AND cluster_id IS NULL)
-				);
-
-				ALTER TABLE alert_thresholds DROP CONSTRAINT IF EXISTS alert_thresholds_rule_id_connection_id_database_name_key;
-
-				CREATE UNIQUE INDEX IF NOT EXISTS idx_alert_thresholds_unique_server
-					ON alert_thresholds(rule_id, connection_id, database_name) WHERE scope = 'server';
-				CREATE UNIQUE INDEX IF NOT EXISTS idx_alert_thresholds_unique_cluster
-					ON alert_thresholds(rule_id, cluster_id) WHERE scope = 'cluster';
-				CREATE UNIQUE INDEX IF NOT EXISTS idx_alert_thresholds_unique_group
-					ON alert_thresholds(rule_id, group_id) WHERE scope = 'group';
-
-				CREATE INDEX IF NOT EXISTS idx_alert_thresholds_scope ON alert_thresholds(scope);
-				CREATE INDEX IF NOT EXISTS idx_alert_thresholds_group_id ON alert_thresholds(group_id);
-				CREATE INDEX IF NOT EXISTS idx_alert_thresholds_cluster_id ON alert_thresholds(cluster_id);
-
-				COMMENT ON COLUMN alert_thresholds.scope IS
-					'Threshold scope level: group, cluster, or server';
-				COMMENT ON COLUMN alert_thresholds.group_id IS
-					'Cluster group targeted when scope is group';
-				COMMENT ON COLUMN alert_thresholds.cluster_id IS
-					'Cluster targeted when scope is cluster';
-			`)
-			return err
-		},
-	})
-
-	// Migration #9: Add hierarchical scope to probe_configs
-	sm.migrations = append(sm.migrations, Migration{
-		Version:     9,
-		Description: "Add hierarchical scope to probe_configs",
-		Up: func(tx pgx.Tx) error {
-			ctx := context.Background()
-
-			_, err := tx.Exec(ctx, `
-				ALTER TABLE probe_configs
-					ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'global',
-					ADD COLUMN IF NOT EXISTS group_id INTEGER REFERENCES cluster_groups(id) ON DELETE CASCADE,
-					ADD COLUMN IF NOT EXISTS cluster_id INTEGER REFERENCES clusters(id) ON DELETE CASCADE;
-
-				UPDATE probe_configs SET scope = 'server' WHERE connection_id IS NOT NULL;
-
-				ALTER TABLE probe_configs DROP CONSTRAINT IF EXISTS probe_configs_scope_check;
-				ALTER TABLE probe_configs ADD CONSTRAINT probe_configs_scope_check
-					CHECK (scope IN ('global', 'group', 'cluster', 'server'));
-
-				ALTER TABLE probe_configs DROP CONSTRAINT IF EXISTS probe_configs_scope_ids_check;
-				ALTER TABLE probe_configs ADD CONSTRAINT probe_configs_scope_ids_check CHECK (
-					(scope = 'global' AND connection_id IS NULL AND group_id IS NULL AND cluster_id IS NULL)
-					OR (scope = 'group' AND group_id IS NOT NULL AND connection_id IS NULL AND cluster_id IS NULL)
-					OR (scope = 'cluster' AND cluster_id IS NOT NULL AND connection_id IS NULL AND group_id IS NULL)
-					OR (scope = 'server' AND connection_id IS NOT NULL AND group_id IS NULL AND cluster_id IS NULL)
-				);
-
-				DROP INDEX IF EXISTS probe_configs_name_global_key;
-				DROP INDEX IF EXISTS probe_configs_name_connection_key;
-
-				CREATE UNIQUE INDEX IF NOT EXISTS idx_probe_configs_unique_global
-					ON probe_configs(name) WHERE scope = 'global';
-				CREATE UNIQUE INDEX IF NOT EXISTS idx_probe_configs_unique_server
-					ON probe_configs(name, connection_id) WHERE scope = 'server';
-				CREATE UNIQUE INDEX IF NOT EXISTS idx_probe_configs_unique_cluster
-					ON probe_configs(name, cluster_id) WHERE scope = 'cluster';
-				CREATE UNIQUE INDEX IF NOT EXISTS idx_probe_configs_unique_group
-					ON probe_configs(name, group_id) WHERE scope = 'group';
-
-				CREATE INDEX IF NOT EXISTS idx_probe_configs_scope ON probe_configs(scope);
-				CREATE INDEX IF NOT EXISTS idx_probe_configs_group_id ON probe_configs(group_id);
-				CREATE INDEX IF NOT EXISTS idx_probe_configs_cluster_id ON probe_configs(cluster_id);
-
-				COMMENT ON COLUMN probe_configs.scope IS
-					'Configuration scope level: global, group, cluster, or server';
-				COMMENT ON COLUMN probe_configs.group_id IS
-					'Cluster group targeted when scope is group';
-				COMMENT ON COLUMN probe_configs.cluster_id IS
-					'Cluster targeted when scope is cluster';
-			`)
-			return err
-		},
-	})
-
-	// Migration #10: Add estate default and hierarchical notification channel overrides
-	sm.migrations = append(sm.migrations, Migration{
-		Version:     10,
-		Description: "Add estate default and hierarchical notification channel overrides",
-		Up: func(tx pgx.Tx) error {
-			ctx := context.Background()
-
-			// Add is_estate_default column to notification_channels
-			_, err := tx.Exec(ctx, `
-				ALTER TABLE notification_channels
-					ADD COLUMN IF NOT EXISTS is_estate_default BOOLEAN NOT NULL DEFAULT FALSE;
-
-				COMMENT ON COLUMN notification_channels.is_estate_default IS
-					'When true, this channel is enabled by default for all servers in the estate';
-			`)
-			if err != nil {
-				return fmt.Errorf("failed to add is_estate_default column: %w", err)
-			}
-
-			// Create notification_channel_overrides table
+			// notification_channel_overrides
 			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS notification_channel_overrides (
 					id BIGSERIAL PRIMARY KEY,
@@ -2566,112 +2297,8 @@ func (sm *SchemaManager) registerMigrations() {
 				return fmt.Errorf("failed to create notification_channel_overrides table: %w", err)
 			}
 
-			// Migrate existing connection_notification_channels rows
+			// conversations
 			_, err = tx.Exec(ctx, `
-				INSERT INTO notification_channel_overrides
-					(channel_id, scope, connection_id, enabled)
-				SELECT channel_id, 'server', connection_id, enabled
-				FROM connection_notification_channels
-				ON CONFLICT DO NOTHING;
-			`)
-			if err != nil {
-				return fmt.Errorf("failed to migrate connection_notification_channels: %w", err)
-			}
-
-			return nil
-		},
-	})
-
-	// Migration #11: Add user_modified flag to probe_configs
-	sm.migrations = append(sm.migrations, Migration{
-		Version:     11,
-		Description: "Add user_modified flag to probe_configs",
-		Up: func(tx pgx.Tx) error {
-			ctx := context.Background()
-			_, err := tx.Exec(ctx, `
-				ALTER TABLE probe_configs
-					ADD COLUMN IF NOT EXISTS user_modified BOOLEAN NOT NULL DEFAULT FALSE;
-
-				UPDATE probe_configs s SET user_modified = TRUE
-				FROM probe_configs g
-				WHERE s.scope IN ('server', 'cluster', 'group')
-					AND g.scope = 'global' AND g.name = s.name
-					AND (s.is_enabled != g.is_enabled
-						 OR s.collection_interval_seconds != g.collection_interval_seconds
-						 OR s.retention_days != g.retention_days);
-
-				COMMENT ON COLUMN probe_configs.user_modified IS
-					'Whether this config was explicitly modified by a user via the UI';
-			`)
-			return err
-		},
-	})
-
-	sm.migrations = append(sm.migrations, Migration{
-		Version:     12,
-		Description: "Replace high_connection_count with high_max_connections alert rule",
-		Up: func(tx pgx.Tx) error {
-			ctx := context.Background()
-			_, err := tx.Exec(ctx, `
-				-- Remove thresholds for the old rule
-				DELETE FROM alert_thresholds
-				WHERE rule_id IN (SELECT id FROM alert_rules WHERE name = 'high_connection_count');
-
-				-- Remove alerts for the old rule
-				DELETE FROM alerts
-				WHERE rule_id IN (SELECT id FROM alert_rules WHERE name = 'high_connection_count');
-
-				-- Remove the old rule
-				DELETE FROM alert_rules WHERE name = 'high_connection_count';
-
-				-- Add the new rule
-				INSERT INTO alert_rules (name, description, category, metric_name, metric_unit, default_operator, default_threshold, default_severity, default_enabled, required_extension, is_built_in)
-				VALUES ('high_max_connections', 'max_connections setting is very high; consider using a connection pooler', 'connections', 'pg_settings.max_connections', 'connections', '>', 500, 'warning', TRUE, NULL, TRUE)
-				ON CONFLICT (name) DO NOTHING;
-			`)
-			return err
-		},
-	})
-
-	// Migration #13: Update cache_hit_ratio_low default threshold
-	sm.migrations = append(sm.migrations, Migration{
-		Version:     13,
-		Description: "Update cache_hit_ratio_low default threshold to 90",
-		Up: func(tx pgx.Tx) error {
-			ctx := context.Background()
-			_, err := tx.Exec(ctx, `
-				UPDATE alert_rules
-				SET default_threshold = 90
-				WHERE name = 'cache_hit_ratio_low'
-				  AND default_threshold = 95;
-			`)
-			return err
-		},
-	})
-
-	// Migration #14: Fix unique index for server-scoped alert thresholds with NULL database_name
-	sm.migrations = append(sm.migrations, Migration{
-		Version:     14,
-		Description: "Fix server alert threshold unique index to handle NULL database_name",
-		Up: func(tx pgx.Tx) error {
-			ctx := context.Background()
-			_, err := tx.Exec(ctx, `
-				DROP INDEX IF EXISTS idx_alert_thresholds_unique_server;
-				CREATE UNIQUE INDEX idx_alert_thresholds_unique_server
-					ON alert_thresholds(rule_id, connection_id, COALESCE(database_name, ''))
-					WHERE scope = 'server';
-			`)
-			return err
-		},
-	})
-
-	// Migration #15: Create conversations table for chat history
-	sm.migrations = append(sm.migrations, Migration{
-		Version:     15,
-		Description: "Create conversations table for chat history",
-		Up: func(tx pgx.Tx) error {
-			ctx := context.Background()
-			_, err := tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS conversations (
 					id TEXT PRIMARY KEY,
 					username TEXT NOT NULL,
@@ -2689,6 +2316,9 @@ func (sm *SchemaManager) registerMigrations() {
 
 				CREATE INDEX IF NOT EXISTS idx_conversations_updated_at
 					ON conversations(updated_at DESC);
+
+				CREATE INDEX IF NOT EXISTS idx_conversations_username_updated
+					ON conversations(username, updated_at DESC);
 
 				COMMENT ON TABLE conversations IS
 					'Stores chat conversation history per user';
@@ -2711,225 +2341,12 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON COLUMN conversations.updated_at IS
 					'Timestamp of last message or modification';
 			`)
-			return err
-		},
-	})
-
-	// Migration #16: Fix alert rule metric names and add session count rule
-	sm.migrations = append(sm.migrations, Migration{
-		Version:     16,
-		Description: "Fix alert rule metric names to match collected metrics and add session count rule",
-		Up: func(tx pgx.Tx) error {
-			ctx := context.Background()
-			_, err := tx.Exec(ctx, `
-				-- Fix connection_utilization: wrong metric name
-				UPDATE alert_rules
-				SET metric_name = 'connection_utilization_percent'
-				WHERE name = 'connection_utilization'
-				  AND metric_name = 'pg_stat_activity.connection_utilization_percent';
-
-				-- Fix table_bloat_ratio: wrong metric name
-				UPDATE alert_rules
-				SET metric_name = 'table_bloat_ratio'
-				WHERE name = 'table_bloat_ratio'
-				  AND metric_name = 'pg_stat_all_tables.bloat_ratio';
-
-				-- Fix transaction_wraparound: wrong metric name
-				UPDATE alert_rules
-				SET metric_name = 'age_percent'
-				WHERE name = 'transaction_wraparound'
-				  AND metric_name = 'pg_class.age_percent';
-
-				-- Fix autovacuum_not_running: wrong metric name
-				UPDATE alert_rules
-				SET metric_name = 'table_last_autovacuum_hours'
-				WHERE name = 'autovacuum_not_running'
-				  AND metric_name = 'pg_stat_all_tables.last_autovacuum_hours';
-
-				-- Fix wal_archive_failed: references pg_stat_wal but handler uses pg_stat_archiver
-				UPDATE alert_rules
-				SET metric_name = 'pg_stat_archiver.failed_count_delta'
-				WHERE name = 'wal_archive_failed'
-				  AND metric_name = 'pg_stat_wal.failed_count_delta';
-
-				-- Add session count anomaly detection rule
-				INSERT INTO alert_rules (name, description, category, metric_name, metric_unit,
-				                         default_operator, default_threshold, default_severity,
-				                         default_enabled, required_extension, is_built_in)
-				VALUES ('session_count_anomaly',
-				        'Unusual session count detected; primarily used for anomaly detection of unexpected changes in active session counts',
-				        'connections', 'pg_stat_activity.count', 'sessions',
-				        '>', 200, 'warning', TRUE, NULL, TRUE)
-				ON CONFLICT (name) DO NOTHING;
-			`)
-			return err
-		},
-	})
-
-	// Migration #17: Update autovacuum_not_running alert rule semantics
-	sm.migrations = append(sm.migrations, Migration{
-		Version:     17,
-		Description: "Update autovacuum_not_running threshold and description for dead-tuple-aware semantics",
-		Up: func(tx pgx.Tx) error {
-			ctx := context.Background()
-			_, err := tx.Exec(ctx, `
-				UPDATE alert_rules
-				SET default_threshold = 1,
-				    description = 'Table has dead tuples exceeding the autovacuum threshold but has not been vacuumed; indicates autovacuum may be blocked or unable to keep up'
-				WHERE name = 'autovacuum_not_running';
-			`)
-			return err
-		},
-	})
-
-	// Migration #18: Add description column to connections table
-	sm.migrations = append(sm.migrations, Migration{
-		Version:     18,
-		Description: "Add description column to connections table",
-		Up: func(tx pgx.Tx) error {
-			ctx := context.Background()
-			_, err := tx.Exec(ctx, `
-				ALTER TABLE connections ADD COLUMN IF NOT EXISTS description TEXT DEFAULT '';
-				COMMENT ON COLUMN connections.description IS 'User-provided description';
-			`)
-			return err
-		},
-	})
-
-	// Migration #19: Add pg_connectivity probe table and seed data
-	sm.migrations = append(sm.migrations, Migration{
-		Version:     19,
-		Description: "Add pg_connectivity metrics table, probe config, and metric_staleness alert rule",
-		Up: func(tx pgx.Tx) error {
-			ctx := context.Background()
-
-			// Create metrics.pg_connectivity partitioned table
-			_, err := tx.Exec(ctx, `
-				CREATE TABLE IF NOT EXISTS metrics.pg_connectivity (
-					connection_id INTEGER NOT NULL,
-					collected_at TIMESTAMPTZ NOT NULL,
-					response_time_ms DOUBLE PRECISION NOT NULL,
-					PRIMARY KEY (connection_id, collected_at),
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE
-				) PARTITION BY RANGE (collected_at);
-
-				COMMENT ON TABLE metrics.pg_connectivity IS 'Stores connectivity check results and response times for monitored connections';
-
-				CREATE INDEX IF NOT EXISTS idx_pg_connectivity_conn_time
-					ON metrics.pg_connectivity (connection_id, collected_at DESC);
-			`)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to create conversations table: %w", err)
 			}
 
-			// Seed probe_configs for pg_connectivity
+			// cluster_node_relationships
 			_, err = tx.Exec(ctx, `
-				INSERT INTO probe_configs (cluster_id, is_enabled, name, description, collection_interval_seconds, retention_days)
-				VALUES (NULL, TRUE, 'pg_connectivity', 'Monitors database connectivity and response time', 30, 7)
-				ON CONFLICT DO NOTHING;
-			`)
-			if err != nil {
-				return err
-			}
-
-			// Seed alert_rules for metric_staleness
-			_, err = tx.Exec(ctx, `
-				INSERT INTO alert_rules (name, description, category, metric_name, metric_unit, default_operator, default_threshold, default_severity, default_enabled, required_extension, is_built_in)
-				VALUES ('metric_staleness', 'Metrics collection is stale; dashboards may show outdated data', 'availability', 'probe_staleness_ratio', 'ratio', '>', 3, 'warning', TRUE, NULL, TRUE)
-				ON CONFLICT DO NOTHING;
-			`)
-			return err
-		},
-	})
-
-	// Migration #20: Fix metric_staleness alert rule severity
-	sm.migrations = append(sm.migrations, Migration{
-		Version:     20,
-		Description: "Fix metric_staleness alert rule severity from critical to warning",
-		Up: func(tx pgx.Tx) error {
-			ctx := context.Background()
-			_, err := tx.Exec(ctx, `
-				UPDATE alert_rules
-				SET default_severity = 'warning'
-				WHERE name = 'metric_staleness'
-				  AND default_severity = 'critical';
-			`)
-			return err
-		},
-	})
-
-	// Migration #21: Adjust noisy alert rule default thresholds
-	sm.migrations = append(sm.migrations, Migration{
-		Version:     21,
-		Description: "Adjust noisy alert rule default thresholds to reduce flapping",
-		Up: func(tx pgx.Tx) error {
-			ctx := context.Background()
-			_, err := tx.Exec(ctx, `
-				UPDATE alert_rules
-				SET default_threshold = 5
-				WHERE name = 'blocked_queries'
-				  AND default_threshold = 0;
-
-				UPDATE alert_rules
-				SET default_threshold = 80
-				WHERE name = 'cache_hit_ratio_low'
-				  AND default_threshold = 90;
-
-				UPDATE alert_rules
-				SET default_threshold = 50
-				WHERE name = 'checkpoint_warning'
-				  AND default_threshold = 10;
-
-				UPDATE alert_rules
-				SET default_threshold = 600
-				WHERE name = 'long_running_queries'
-				  AND default_threshold = 300;
-			`)
-			return err
-		},
-	})
-
-	// Migration #22: Add re-evaluation tracking columns to alerts
-	sm.migrations = append(sm.migrations, Migration{
-		Version:     22,
-		Description: "Add re-evaluation tracking columns to alerts",
-		Up: func(tx pgx.Tx) error {
-			ctx := context.Background()
-			_, err := tx.Exec(ctx, `
-				ALTER TABLE alerts ADD COLUMN IF NOT EXISTS
-					last_reevaluated_at TIMESTAMPTZ;
-
-				ALTER TABLE alerts ADD COLUMN IF NOT EXISTS
-					reevaluation_count INTEGER NOT NULL DEFAULT 0;
-			`)
-			return err
-		},
-	})
-
-	// Migration #23: Add cluster_override to connections and replication_type to clusters
-	sm.migrations = append(sm.migrations, Migration{
-		Version:     23,
-		Description: "Add cluster_override to connections and replication_type to clusters",
-		Up: func(tx pgx.Tx) error {
-			ctx := context.Background()
-			_, err := tx.Exec(ctx, `
-				ALTER TABLE connections ADD COLUMN IF NOT EXISTS
-					cluster_override BOOLEAN NOT NULL DEFAULT FALSE;
-
-				ALTER TABLE clusters ADD COLUMN IF NOT EXISTS
-					replication_type VARCHAR(50);
-			`)
-			return err
-		},
-	})
-
-	// Migration #24: Create cluster_node_relationships table
-	sm.migrations = append(sm.migrations, Migration{
-		Version:     24,
-		Description: "Create cluster_node_relationships table",
-		Up: func(tx pgx.Tx) error {
-			ctx := context.Background()
-			_, err := tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS cluster_node_relationships (
 					id SERIAL PRIMARY KEY,
 					cluster_id INTEGER NOT NULL
@@ -2975,44 +2392,59 @@ func (sm *SchemaManager) registerMigrations() {
 				CREATE INDEX IF NOT EXISTS idx_cnr_target_connection_id
 					ON cluster_node_relationships(target_connection_id);
 			`)
-			return err
-		},
-	})
+			if err != nil {
+				return fmt.Errorf("failed to create cluster_node_relationships table: %w", err)
+			}
 
-	// Migration #25: Replace cluster_override with membership_source
-	sm.migrations = append(sm.migrations, Migration{
-		Version:     25,
-		Description: "Replace cluster_override with membership_source column",
-		Up: func(tx pgx.Tx) error {
-			ctx := context.Background()
-			_, err := tx.Exec(ctx, `
-				ALTER TABLE connections ADD COLUMN IF NOT EXISTS
-					membership_source VARCHAR(20) NOT NULL DEFAULT 'auto';
+			// =====================================================================
+			// PART 7: pgvector Support (Optional)
+			// =====================================================================
 
-				UPDATE connections
-				SET membership_source = 'manual'
-				WHERE cluster_override = TRUE;
+			// Check if pgvector extension is available
+			var vectorAvailable bool
+			err = tx.QueryRow(ctx, `
+				SELECT EXISTS(SELECT 1 FROM pg_available_extensions WHERE name = 'vector')
+			`).Scan(&vectorAvailable)
+			if err != nil {
+				return fmt.Errorf("failed to check vector extension availability: %w", err)
+			}
 
-				ALTER TABLE connections DROP COLUMN IF EXISTS
-					cluster_override;
+			if vectorAvailable {
+				_, err = tx.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS vector;`)
+				if err != nil {
+					logger.Infof("Failed to create vector extension: %v", err)
+				} else {
+					// anomaly_embeddings table
+					_, err = tx.Exec(ctx, `
+						CREATE TABLE IF NOT EXISTS anomaly_embeddings (
+							id BIGSERIAL PRIMARY KEY,
+							candidate_id BIGINT REFERENCES anomaly_candidates(id) ON DELETE CASCADE,
+							embedding vector(1536),
+							model_name TEXT NOT NULL,
+							created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+							UNIQUE(candidate_id)
+						);
 
-				COMMENT ON COLUMN connections.membership_source IS
-					'How the connection was assigned to its cluster: auto (by auto-detection) or manual (by a user)';
-			`)
-			return err
-		},
-	})
+						COMMENT ON TABLE anomaly_embeddings IS
+							'Embeddings for anomaly candidates used in Tier 2 similarity matching';
 
-	// Migration #26: Create chat_memories table for conversation memory
-	sm.migrations = append(sm.migrations, Migration{
-		Version:     26,
-		Description: "Create chat_memories table for conversation memory",
-		Up: func(tx pgx.Tx) error {
-			ctx := context.Background()
+						CREATE INDEX IF NOT EXISTS idx_anomaly_embeddings_candidate ON anomaly_embeddings(candidate_id);
+						CREATE INDEX IF NOT EXISTS idx_anomaly_embeddings_vector ON anomaly_embeddings USING hnsw (embedding vector_cosine_ops);
 
-			// Create the table without the embedding column first so the
-			// migration succeeds on databases without the pgvector extension.
-			_, err := tx.Exec(ctx, `
+						ALTER TABLE anomaly_candidates
+							ADD CONSTRAINT fk_anomaly_candidates_embedding
+							FOREIGN KEY (embedding_id) REFERENCES anomaly_embeddings(id) ON DELETE SET NULL;
+					`)
+					if err != nil {
+						logger.Infof("Failed to create anomaly_embeddings table: %v", err)
+					}
+				}
+			} else {
+				logger.Info("pgvector extension not available, skipping anomaly embeddings setup")
+			}
+
+			// chat_memories
+			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS chat_memories (
 					id         BIGSERIAL PRIMARY KEY,
 					username   TEXT NOT NULL,
@@ -3032,8 +2464,6 @@ func (sm *SchemaManager) registerMigrations() {
 					ON chat_memories(category);
 				CREATE INDEX IF NOT EXISTS idx_chat_memories_pinned
 					ON chat_memories(pinned) WHERE pinned = TRUE;
-				CREATE INDEX IF NOT EXISTS idx_chat_memories_scope
-					ON chat_memories(scope);
 
 				COMMENT ON TABLE chat_memories IS
 					'Stores per-user and system-level chat memories with optional vector embeddings';
@@ -3057,20 +2487,10 @@ func (sm *SchemaManager) registerMigrations() {
 					'Timestamp when the memory was last modified';
 			`)
 			if err != nil {
-				return fmt.Errorf("migration #26: %w", err)
+				return fmt.Errorf("failed to create chat_memories table: %w", err)
 			}
 
-			// Add the embedding vector column only when pgvector is present.
-			var vectorAvailable bool
-			err = tx.QueryRow(ctx, `
-				SELECT EXISTS(
-					SELECT 1 FROM pg_extension WHERE extname = 'vector'
-				)
-			`).Scan(&vectorAvailable)
-			if err != nil {
-				return fmt.Errorf("migration #26: failed to check vector extension availability: %w", err)
-			}
-
+			// Add vector embedding column to chat_memories when pgvector is available
 			if vectorAvailable {
 				_, err = tx.Exec(ctx, `
 					ALTER TABLE chat_memories
@@ -3087,123 +2507,72 @@ func (sm *SchemaManager) registerMigrations() {
 				}
 			}
 
-			return nil
-		},
-	})
+			// =====================================================================
+			// PART 8: Seed Data - Built-in Alert Rules
+			// =====================================================================
 
-	// Migration #27: Add replication_standby_disconnected built-in alert rule
-	sm.migrations = append(sm.migrations, Migration{
-		Version:     27,
-		Description: "Add replication_standby_disconnected built-in alert rule",
-		Up: func(tx pgx.Tx) error {
-			ctx := context.Background()
-
-			_, err := tx.Exec(ctx, `
+			_, err = tx.Exec(ctx, `
 				INSERT INTO alert_rules (name, description, category, metric_name, metric_unit, default_operator, default_threshold, default_severity, default_enabled, required_extension, is_built_in)
 				VALUES
-					('replication_standby_disconnected', 'Standby server is not receiving WAL from primary', 'replication', 'pg_stat_replication.standby_disconnected', NULL, '==', 1, 'critical', TRUE, NULL, TRUE)
+					-- Connection alerts
+					('high_max_connections', 'max_connections setting is very high; consider using a connection pooler', 'connections', 'pg_settings.max_connections', 'connections', '>', 500, 'warning', TRUE, NULL, TRUE),
+					('connection_utilization', 'Connection utilization above threshold', 'connections', 'connection_utilization_percent', 'percent', '>', 80, 'warning', TRUE, NULL, TRUE),
+					('session_count_anomaly', 'Unusual session count detected; primarily used for anomaly detection of unexpected changes in active session counts', 'connections', 'pg_stat_activity.count', 'sessions', '>', 200, 'warning', TRUE, NULL, TRUE),
+
+					-- Replication alerts
+					('replication_lag_bytes', 'Replication lag in bytes exceeds threshold', 'replication', 'pg_stat_replication.lag_bytes', 'bytes', '>', 104857600, 'warning', TRUE, NULL, TRUE),
+					('replication_slot_inactive', 'Replication slot is inactive', 'replication', 'pg_replication_slots.inactive', NULL, '==', 1, 'critical', TRUE, NULL, TRUE),
+					('replication_standby_disconnected', 'Standby server is not receiving WAL from primary', 'replication', 'pg_stat_replication.standby_disconnected', NULL, '==', 1, 'critical', TRUE, NULL, TRUE),
+					('subscription_worker_down', 'Logical replication subscription worker is not running (includes Spock subscriptions)', 'replication', 'pg_node_role.subscription_worker_down', NULL, '==', 1, 'critical', TRUE, NULL, TRUE),
+
+					-- Storage alerts
+					('disk_usage_percent', 'Disk usage exceeds threshold', 'storage', 'pg_sys_disk_info.used_percent', 'percent', '>', 80, 'warning', TRUE, 'system_stats', TRUE),
+					('disk_usage_critical', 'Disk usage critically high', 'storage', 'pg_sys_disk_info.used_percent', 'percent', '>', 95, 'critical', TRUE, 'system_stats', TRUE),
+					('table_bloat_ratio', 'Table bloat ratio exceeds threshold', 'storage', 'table_bloat_ratio', 'percent', '>', 50, 'warning', TRUE, NULL, TRUE),
+
+					-- Performance alerts
+					('cpu_usage_high', 'CPU usage exceeds threshold', 'performance', 'pg_sys_cpu_usage_info.processor_time_percent', 'percent', '>', 80, 'warning', TRUE, 'system_stats', TRUE),
+					('memory_usage_high', 'Memory usage exceeds threshold', 'performance', 'pg_sys_memory_info.used_percent', 'percent', '>', 85, 'warning', TRUE, 'system_stats', TRUE),
+					('load_average_high', 'System load average exceeds threshold', 'performance', 'pg_sys_load_avg_info.load_avg_fifteen_minutes', 'load average', '>', 4, 'warning', TRUE, 'system_stats', TRUE),
+					('long_running_queries', 'Queries running longer than threshold', 'performance', 'pg_stat_activity.max_query_duration_seconds', 'seconds', '>', 600, 'warning', TRUE, NULL, TRUE),
+					('blocked_queries', 'Blocked queries detected', 'performance', 'pg_stat_activity.blocked_count', 'queries', '>', 5, 'warning', TRUE, NULL, TRUE),
+
+					-- Transaction alerts
+					('long_running_transaction', 'Transaction running too long', 'transactions', 'pg_stat_activity.max_xact_duration_seconds', 'seconds', '>', 3600, 'warning', TRUE, NULL, TRUE),
+					('idle_in_transaction', 'Connection idle in transaction too long', 'transactions', 'pg_stat_activity.idle_in_transaction_seconds', 'seconds', '>', 300, 'warning', TRUE, NULL, TRUE),
+					('transaction_wraparound', 'Transaction ID wraparound approaching', 'transactions', 'age_percent', 'percent', '>', 75, 'critical', TRUE, NULL, TRUE),
+
+					-- Lock alerts
+					('deadlocks_detected', 'Deadlocks detected', 'locks', 'pg_stat_database.deadlocks_delta', 'deadlocks', '>', 0, 'warning', TRUE, NULL, TRUE),
+					('lock_wait_time', 'Lock wait time exceeds threshold', 'locks', 'pg_stat_activity.max_lock_wait_seconds', 'seconds', '>', 30, 'warning', TRUE, NULL, TRUE),
+
+					-- WAL and Checkpoint alerts
+					('checkpoint_warning', 'Checkpoints requested too frequently', 'wal', 'pg_stat_checkpointer.checkpoints_req_delta', 'checkpoints', '>', 50, 'warning', TRUE, NULL, TRUE),
+					('wal_archive_failed', 'WAL archiving failures detected', 'wal', 'pg_stat_archiver.failed_count_delta', 'failures', '>', 0, 'critical', TRUE, NULL, TRUE),
+
+					-- Vacuum alerts
+					('autovacuum_not_running', 'Table has dead tuples exceeding the autovacuum threshold but has not been vacuumed; indicates autovacuum may be blocked or unable to keep up', 'maintenance', 'table_last_autovacuum_hours', 'hours', '>', 1, 'warning', TRUE, NULL, TRUE),
+					('dead_tuple_ratio', 'Dead tuple ratio too high', 'maintenance', 'pg_stat_all_tables.dead_tuple_percent', 'percent', '>', 20, 'warning', TRUE, NULL, TRUE),
+
+					-- Statement alerts
+					('slow_query_count', 'High number of slow queries', 'queries', 'pg_stat_statements.slow_query_count', 'queries', '>', 10, 'warning', TRUE, 'pg_stat_statements', TRUE),
+					('cache_hit_ratio_low', 'Buffer cache hit ratio below threshold', 'queries', 'pg_stat_database.cache_hit_ratio', 'percent', '<', 80, 'warning', TRUE, NULL, TRUE),
+
+					-- Error alerts
+					('temp_files_created', 'Temporary files being created', 'performance', 'pg_stat_database.temp_files_delta', 'files', '>', 100, 'warning', TRUE, NULL, TRUE),
+
+					-- Availability alerts
+					('metric_staleness', 'Metrics collection is stale; dashboards may show outdated data', 'availability', 'probe_staleness_ratio', 'ratio', '>', 3, 'warning', TRUE, NULL, TRUE)
 				ON CONFLICT (name) DO NOTHING;
 			`)
 			if err != nil {
-				return fmt.Errorf("failed to insert replication_standby_disconnected alert rule: %w", err)
+				return fmt.Errorf("failed to insert built-in alert rules: %w", err)
 			}
 
 			return nil
 		},
 	})
 
-	// Migration #28: Add subscription_worker_down built-in alert rule
-	sm.migrations = append(sm.migrations, Migration{
-		Version:     28,
-		Description: "Add subscription_worker_down built-in alert rule",
-		Up: func(tx pgx.Tx) error {
-			ctx := context.Background()
-
-			_, err := tx.Exec(ctx, `
-				INSERT INTO alert_rules (name, description, category, metric_name, metric_unit, default_operator, default_threshold, default_severity, default_enabled, required_extension, is_built_in)
-				VALUES
-					('subscription_worker_down', 'Logical replication subscription worker is not running (includes Spock subscriptions)', 'replication', 'pg_node_role.subscription_worker_down', NULL, '==', 1, 'critical', TRUE, NULL, TRUE)
-				ON CONFLICT (name) DO NOTHING;
-			`)
-			if err != nil {
-				return fmt.Errorf("failed to insert subscription_worker_down alert rule: %w", err)
-			}
-
-			return nil
-		},
-	})
-
-	// Migration #29: Optimize indexes - drop unused, modify suboptimal, add missing
-	sm.migrations = append(sm.migrations, Migration{
-		Version:     29,
-		Description: "Optimize indexes - drop unused, modify suboptimal, add missing",
-		Up: func(tx pgx.Tx) error {
-			ctx := context.Background()
-
-			_, err := tx.Exec(ctx, `
-				-- Drop unused single-column indexes
-				DROP INDEX IF EXISTS idx_connections_role;
-				DROP INDEX IF EXISTS idx_connections_enabled;
-				DROP INDEX IF EXISTS idx_alert_rules_category;
-				DROP INDEX IF EXISTS idx_alert_rules_metric;
-				DROP INDEX IF EXISTS idx_alerts_status;
-				DROP INDEX IF EXISTS idx_alerts_correlation;
-				DROP INDEX IF EXISTS idx_alerts_object_name;
-				DROP INDEX IF EXISTS idx_alert_acknowledgments_false_positive;
-				DROP INDEX IF EXISTS idx_notification_channels_channel_type;
-				DROP INDEX IF EXISTS idx_notification_history_status;
-				DROP INDEX IF EXISTS idx_pg_node_role_primary_role;
-				DROP INDEX IF EXISTS idx_pg_extension_extname;
-				DROP INDEX IF EXISTS idx_blackouts_scope;
-				DROP INDEX IF EXISTS idx_chat_memories_scope;
-				DROP INDEX IF EXISTS idx_anomaly_candidates_pending;
-				DROP INDEX IF EXISTS idx_probe_configs_scope;
-				DROP INDEX IF EXISTS idx_metric_baselines_metric;
-
-				-- Replace idx_alerts_active: remove redundant status column,
-				-- add alert_type which is used in the actual query
-				DROP INDEX IF EXISTS idx_alerts_active;
-				CREATE INDEX idx_alerts_active
-					ON alerts(connection_id, alert_type)
-					WHERE status = 'active';
-
-				-- Replace two single-column baselines indexes with one composite
-				DROP INDEX IF EXISTS idx_metric_baselines_connection;
-				CREATE INDEX idx_metric_baselines_conn_metric
-					ON metric_baselines(connection_id, metric_name, period_type);
-
-				-- Add composite/filtered indexes for common query patterns
-				CREATE INDEX IF NOT EXISTS idx_anomaly_candidates_lookup
-					ON anomaly_candidates(connection_id, metric_name, detected_at DESC)
-					WHERE final_decision = 'pending';
-
-				CREATE INDEX IF NOT EXISTS idx_alerts_conn_triggered
-					ON alerts(connection_id, triggered_at DESC);
-
-				CREATE INDEX IF NOT EXISTS idx_alerts_active_triggered
-					ON alerts(triggered_at DESC)
-					WHERE status = 'active';
-
-				CREATE INDEX IF NOT EXISTS idx_alert_thresholds_server_lookup
-					ON alert_thresholds(rule_id, connection_id, database_name)
-					WHERE scope = 'server';
-
-				CREATE INDEX IF NOT EXISTS idx_notification_reminder_state_alert_channel
-					ON notification_reminder_state(alert_id, channel_id);
-
-				CREATE INDEX IF NOT EXISTS idx_probe_availability_conn_probe
-					ON probe_availability(connection_id, probe_name);
-
-				CREATE INDEX IF NOT EXISTS idx_conversations_username_updated
-					ON conversations(username, updated_at DESC);
-			`)
-			if err != nil {
-				return fmt.Errorf("failed to optimize indexes: %w", err)
-			}
-
-			return nil
-		},
-	})
 }
 
 // Migrate applies all pending migrations

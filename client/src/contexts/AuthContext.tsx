@@ -126,6 +126,9 @@ export const AuthProvider = ({ children }: AuthProviderProps): React.ReactElemen
         }
     }, []);
 
+    // Note: localStorage entries (including chat input history) are
+    // intentionally retained across sessions to preserve user preferences
+    // and command history between login sessions.
     const logout = useCallback(async (): Promise<void> => {
         try {
             // Call logout endpoint to clear the httpOnly cookie on the server

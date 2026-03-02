@@ -98,10 +98,10 @@ The Workbench requires the following software and
 resources.
 
 - [PostgreSQL 14](https://www.postgresql.org/download/)
-  or higher is required for the datastore.
-- [Go 1.24](https://go.dev/doc/install) or higher is
+  or later is required for the datastore.
+- [Go 1.24](https://go.dev/doc/install) or later is
   required to build server-side components from source.
-- [Node.js 18](https://nodejs.org/) or higher is required
+- [Node.js 18](https://nodejs.org/) or later is required
   to build the web client from source.
 - Network connectivity must exist between all components.
 - Database credentials must have appropriate permissions.

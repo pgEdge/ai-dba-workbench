@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
+	"github.com/pgedge/ai-workbench/pkg/worker"
 )
 
 // reevaluateAcknowledgedAlerts reviews acknowledged anomaly alerts using LLM
@@ -273,68 +274,21 @@ func (e *Engine) buildReevaluationPrompt(
 // decision. It returns the decision ("clear" or "keep") and a confidence
 // score. This is a package-level function for testability.
 func parseReevaluationResponse(response string) (string, float64) {
-	// Try to parse as JSON first
-	var result struct {
-		Decision   string  `json:"decision"`
-		Confidence float64 `json:"confidence"`
-		Reasoning  string  `json:"reasoning"`
-	}
-
-	if err := json.Unmarshal([]byte(response), &result); err == nil {
-		decision := strings.ToLower(result.Decision)
-		if decision == "clear" || decision == "keep" {
-			return decision, result.Confidence
-		}
-	}
-
-	// Fall back to text matching
-	lowerResponse := strings.ToLower(response)
-
-	if strings.Contains(lowerResponse, "\"clear\"") ||
-		strings.Contains(lowerResponse, "'clear'") ||
-		strings.Contains(lowerResponse, "should be cleared") ||
-		strings.Contains(lowerResponse, "safe to clear") ||
-		strings.Contains(lowerResponse, "recommend clearing") {
-		return "clear", 0.5
-	}
-
-	if strings.Contains(lowerResponse, "\"keep\"") ||
-		strings.Contains(lowerResponse, "'keep'") ||
-		strings.Contains(lowerResponse, "should be kept") ||
-		strings.Contains(lowerResponse, "keep active") ||
-		strings.Contains(lowerResponse, "remain active") {
-		return "keep", 0.5
-	}
-
-	// Conservative fallback: keep the alert
-	return "keep", 0.3
+	return parseLLMDecision(response, reevaluationDecisionConfig)
 }
 
 // runReevaluationWorker periodically re-evaluates acknowledged anomaly
 // alerts using LLM reasoning to determine whether they should be cleared.
 func (e *Engine) runReevaluationWorker(ctx context.Context) {
-	cfg := e.getConfig()
-	interval := time.Duration(cfg.Anomaly.Reevaluation.IntervalSeconds) * time.Second
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	e.log("Re-evaluation worker started (interval: %v)", interval)
-
-	for {
-		select {
-		case <-ctx.Done():
-			e.log("Re-evaluation worker stopping")
-			return
-		case <-ticker.C:
-			e.reevaluateAcknowledgedAlerts(ctx)
-
-			newCfg := e.getConfig()
-			newInterval := time.Duration(newCfg.Anomaly.Reevaluation.IntervalSeconds) * time.Second
-			if newInterval != interval {
-				interval = newInterval
-				ticker.Reset(interval)
-				e.log("Re-evaluation worker interval updated to %v", interval)
-			}
-		}
-	}
+	task := worker.NewDynamicPeriodicTask(
+		func() time.Duration {
+			return time.Duration(e.getConfig().Anomaly.Reevaluation.IntervalSeconds) * time.Second
+		},
+		e.reevaluateAcknowledgedAlerts,
+		worker.WithName("Re-evaluation worker"),
+		worker.WithLogFunc(e.log),
+	)
+	task.Start(ctx)
+	<-ctx.Done()
+	task.Stop()
 }

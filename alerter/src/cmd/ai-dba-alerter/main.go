@@ -15,12 +15,12 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 	"github.com/pgedge/ai-workbench/alerter/internal/engine"
+	"github.com/pgedge/ai-workbench/pkg/fileutil"
 )
 
 func main() {
@@ -59,28 +59,9 @@ func main() {
 	}
 
 	// Apply command line overrides
-	if *dbHost != "" {
-		cfg.Datastore.Host = *dbHost
-	}
-	if *dbPort != 0 {
-		cfg.Datastore.Port = *dbPort
-	}
-	if *dbName != "" {
-		cfg.Datastore.Database = *dbName
-	}
-	if *dbUser != "" {
-		cfg.Datastore.Username = *dbUser
-	}
-	if *dbPasswordFile != "" {
-		data, err := os.ReadFile(*dbPasswordFile)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: Failed to read password file: %v\n", err)
-			os.Exit(1)
-		}
-		cfg.Datastore.Password = strings.TrimSpace(string(data))
-	}
-	if *dbSSLMode != "" {
-		cfg.Datastore.SSLMode = *dbSSLMode
+	if err := applyFlagOverrides(cfg, *dbHost, *dbPort, *dbName, *dbUser, *dbPasswordFile, *dbSSLMode); err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+		os.Exit(1)
 	}
 
 	// Validate configuration
@@ -137,28 +118,9 @@ func main() {
 				}
 
 				// Reapply CLI flag overrides
-				if *dbHost != "" {
-					newCfg.Datastore.Host = *dbHost
-				}
-				if *dbPort != 0 {
-					newCfg.Datastore.Port = *dbPort
-				}
-				if *dbName != "" {
-					newCfg.Datastore.Database = *dbName
-				}
-				if *dbUser != "" {
-					newCfg.Datastore.Username = *dbUser
-				}
-				if *dbPasswordFile != "" {
-					data, err := os.ReadFile(*dbPasswordFile)
-					if err != nil {
-						fmt.Fprintf(os.Stderr, "ERROR: Failed to read password file on reload: %v\n", err)
-						continue
-					}
-					newCfg.Datastore.Password = strings.TrimSpace(string(data))
-				}
-				if *dbSSLMode != "" {
-					newCfg.Datastore.SSLMode = *dbSSLMode
+				if err := applyFlagOverrides(newCfg, *dbHost, *dbPort, *dbName, *dbUser, *dbPasswordFile, *dbSSLMode); err != nil {
+					fmt.Fprintf(os.Stderr, "ERROR: Failed to apply overrides on reload: %v\n", err)
+					continue
 				}
 
 				// Validate configuration
@@ -198,4 +160,32 @@ func main() {
 	}
 
 	fmt.Fprintf(os.Stderr, "Alerter stopped.\n")
+}
+
+// applyFlagOverrides applies CLI flag values to the configuration, allowing
+// command-line arguments to take precedence over the configuration file.
+func applyFlagOverrides(cfg *config.Config, dbHost string, dbPort int, dbName, dbUser, dbPasswordFile, dbSSLMode string) error {
+	if dbHost != "" {
+		cfg.Datastore.Host = dbHost
+	}
+	if dbPort != 0 {
+		cfg.Datastore.Port = dbPort
+	}
+	if dbName != "" {
+		cfg.Datastore.Database = dbName
+	}
+	if dbUser != "" {
+		cfg.Datastore.Username = dbUser
+	}
+	if dbPasswordFile != "" {
+		password, err := fileutil.ReadTrimmedFileWithTilde(dbPasswordFile)
+		if err != nil {
+			return fmt.Errorf("failed to read password file: %w", err)
+		}
+		cfg.Datastore.Password = password
+	}
+	if dbSSLMode != "" {
+		cfg.Datastore.SSLMode = dbSSLMode
+	}
+	return nil
 }

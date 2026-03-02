@@ -641,46 +641,5 @@ func writeClusterContext(
 
 // parseLLMResponse parses the LLM response to extract the decision
 func (e *Engine) parseLLMResponse(response string) (string, float64) {
-	// Try to parse as JSON first
-	var result struct {
-		Decision   string  `json:"decision"`
-		Confidence float64 `json:"confidence"`
-		Reasoning  string  `json:"reasoning"`
-	}
-
-	if err := json.Unmarshal([]byte(response), &result); err == nil {
-		return result.Decision, result.Confidence
-	}
-
-	// Fall back to text parsing
-	lowerResponse := strings.ToLower(response)
-
-	// Look for explicit decision keywords
-	if strings.Contains(lowerResponse, "\"decision\"") || strings.Contains(lowerResponse, "'decision'") {
-		// Try to find decision value
-		if strings.Contains(lowerResponse, "\"alert\"") || strings.Contains(lowerResponse, "'alert'") {
-			return "alert", 0.5
-		}
-		if strings.Contains(lowerResponse, "\"suppress\"") || strings.Contains(lowerResponse, "'suppress'") {
-			return "suppress", 0.5
-		}
-	}
-
-	// Look for decision keywords in natural language
-	if strings.Contains(lowerResponse, "should be suppressed") ||
-		strings.Contains(lowerResponse, "false positive") ||
-		strings.Contains(lowerResponse, "not a real issue") ||
-		strings.Contains(lowerResponse, "normal behavior") {
-		return "suppress", 0.5
-	}
-
-	if strings.Contains(lowerResponse, "real issue") ||
-		strings.Contains(lowerResponse, "should alert") ||
-		strings.Contains(lowerResponse, "requires attention") ||
-		strings.Contains(lowerResponse, "genuine anomaly") {
-		return "alert", 0.5
-	}
-
-	// Default to alert if we can't parse the response
-	return "alert", 0.3
+	return parseLLMDecision(response, anomalyDecisionConfig)
 }

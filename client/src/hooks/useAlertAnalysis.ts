@@ -221,7 +221,7 @@ Provide remediation recommendations and any threshold tuning suggestions.`;
         } catch (err) {
             console.error('Alert analysis error:', err);
             setActiveTools([]);
-            setError((err as Error).message);
+            setError(err instanceof Error ? err.message : String(err));
         } finally {
             setLoading(false);
         }

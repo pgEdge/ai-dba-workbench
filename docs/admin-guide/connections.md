@@ -53,7 +53,7 @@ GET /api/v1/connections
 Authorization: Bearer <token>
 ```
 
-**Response:**
+Response:
 
 ```json
 [
@@ -86,7 +86,7 @@ GET /api/v1/connections/{id}/databases
 Authorization: Bearer <token>
 ```
 
-**Response:**
+Response:
 
 ```json
 [
@@ -115,7 +115,7 @@ GET /api/v1/connections/current
 Authorization: Bearer <token>
 ```
 
-**Response (200 OK):**
+Response (200 OK):
 
 ```json
 {
@@ -127,7 +127,7 @@ Authorization: Bearer <token>
 }
 ```
 
-**Response (404 Not Found):**
+Response (404 Not Found):
 
 ```json
 {
@@ -154,7 +154,7 @@ Content-Type: application/json
 The `database_name` is optional. If not specified, the
 connection's default database is used.
 
-**Response:**
+Response:
 
 ```json
 {
@@ -176,7 +176,7 @@ DELETE /api/v1/connections/current
 Authorization: Bearer <token>
 ```
 
-**Response:** `204 No Content`
+Response: `204 No Content`
 
 ## Session Persistence
 

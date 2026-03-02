@@ -20,7 +20,6 @@ import {
     Fade,
     useTheme,
 } from '@mui/material';
-import { Theme } from '@mui/material/styles';
 import {
     Close as CloseIcon,
     Download as DownloadIcon,
@@ -35,7 +34,6 @@ import {
     AnalysisSkeleton,
 } from './shared/MarkdownContent';
 import {
-    sxMonoFont,
     sxErrorFlexRow,
     getIconBoxSx,
     getIconColorSx,
@@ -47,6 +45,10 @@ import {
     getAnalysisBoxSx,
     getDownloadButtonSx,
 } from './shared/MarkdownExports';
+import {
+    getServerBadgeSx,
+    sxMonoSmall,
+} from './analysisStyles';
 import SlideTransition from './shared/SlideTransition';
 import { downloadAsMarkdown } from '../utils/downloadMarkdown';
 
@@ -63,29 +65,6 @@ const TOOL_LABELS = [
     'Validating query',
     'Searching knowledgebase',
 ];
-
-// ---------------------------------------------------------------------------
-// Server-specific style constants and style-getter functions
-// ---------------------------------------------------------------------------
-
-const getServerBadgeSx = (theme: Theme) => ({
-    display: 'flex',
-    alignItems: 'center',
-    gap: 0.5,
-    px: 0.75,
-    py: 0.25,
-    borderRadius: 0.5,
-    bgcolor: alpha(
-        theme.palette.grey[500],
-        theme.palette.mode === 'dark' ? 0.2 : 0.1
-    ),
-});
-
-const sxMonoSmall = {
-    fontSize: '0.875rem',
-    color: 'text.secondary',
-    ...sxMonoFont,
-};
 
 // ---------------------------------------------------------------------------
 // Component

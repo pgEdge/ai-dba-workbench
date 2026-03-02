@@ -210,6 +210,6 @@ To report an issue with the software, visit:
 We welcome your project contributions; for more information, see
 [docs/developer-guide/contributing.md](../docs/developer-guide/contributing.md).
 
-For more information, visit [docs.pgedge.com](https://docs.pgedge.com)
+For more information, visit [docs.pgedge.com](https://docs.pgedge.com).
 
 This project is licensed under the [PostgreSQL License](../LICENSE.md).

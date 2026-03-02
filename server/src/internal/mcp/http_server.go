@@ -18,6 +18,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -91,6 +92,15 @@ func (s *Server) RunHTTP(config *HTTPConfig) error {
 
 	// Apply CORS middleware if an origin is configured (skip for same-origin deployments)
 	if config.CORSOrigin != "" {
+		if config.CORSOrigin == "*" {
+			fmt.Fprintf(os.Stderr, "WARNING: CORS origin is set to wildcard (*). "+
+				"Using a wildcard origin with credentials is not recommended "+
+				"for production deployments.\n")
+		} else {
+			if _, err := url.ParseRequestURI(config.CORSOrigin); err != nil {
+				return fmt.Errorf("invalid CORS origin %q: %w", config.CORSOrigin, err)
+			}
+		}
 		handler = CORSMiddleware(config.CORSOrigin)(handler)
 	}
 

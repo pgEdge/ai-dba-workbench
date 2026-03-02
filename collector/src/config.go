@@ -57,7 +57,11 @@ func NewConfig() *Config {
 			Database: "ai_workbench",
 			Username: "postgres",
 			Port:     5432,
-			SSLMode:  "prefer",
+			// The default SSLMode of "prefer" follows PostgreSQL's standard
+			// libpq connection behavior for maximum compatibility with diverse
+			// deployment configurations, including development environments
+			// and Docker setups where SSL may not be configured.
+			SSLMode: "prefer",
 		},
 		Pool: PoolConfig{
 			DatastoreMaxConnections: 25,

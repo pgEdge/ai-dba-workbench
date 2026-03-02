@@ -9,10 +9,10 @@ testing practices.
 Before starting development, ensure you have the
 following tools installed:
 
-- [Go](https://go.dev/doc/install) 1.23 or later
+- [Go 1.24](https://go.dev/doc/install) or later
   is required for building the Collector.
-- [PostgreSQL](https://www.postgresql.org/download/)
-  12 or later is required for testing.
+- [PostgreSQL 14](https://www.postgresql.org/download/)
+  or later is required for testing.
 - [Git](https://git-scm.com/) is required for
   version control.
 - Make is optional but recommended for build

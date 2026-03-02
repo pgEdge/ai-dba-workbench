@@ -297,7 +297,7 @@ Provide analysis of trends, anomalies, and actionable recommendations.`;
             });
         } catch (err) {
             console.error('Chart analysis error:', err);
-            setError((err as Error).message);
+            setError(err instanceof Error ? err.message : String(err));
             setActiveTools([]);
         } finally {
             setLoading(false);

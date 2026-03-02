@@ -57,6 +57,8 @@ var keySettings = []string{
 }
 
 // ServerInfoHandler handles GET /api/v1/server-info/{connection_id} requests.
+// Safety: llmConfig contains API keys but is used only internally by
+// createLLMClient; it is never serialized into HTTP responses.
 type ServerInfoHandler struct {
 	datastore   *database.Datastore
 	authStore   *auth.AuthStore

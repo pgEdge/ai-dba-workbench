@@ -352,20 +352,10 @@ func RequireMethod(w http.ResponseWriter, r *http.Request, allowed ...string) bo
 
 // RequireGET is a convenience method for RequireMethod(w, r, http.MethodGet).
 func RequireGET(w http.ResponseWriter, r *http.Request) bool {
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", "GET")
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return false
-	}
-	return true
+	return RequireMethod(w, r, http.MethodGet)
 }
 
 // RequirePOST is a convenience method for RequireMethod(w, r, http.MethodPost).
 func RequirePOST(w http.ResponseWriter, r *http.Request) bool {
-	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", "POST")
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return false
-	}
-	return true
+	return RequireMethod(w, r, http.MethodPost)
 }

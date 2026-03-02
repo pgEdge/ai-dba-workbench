@@ -257,6 +257,12 @@ func HandleChat(w http.ResponseWriter, r *http.Request, config *Config) {
 	sessionID := tokenHash // Use token hash as session ID
 	requestID := tracing.GenerateRequestID()
 
+	// Limit request body size to 5MB to accommodate tool definitions and
+	// message history, consistent with the DecodeJSONBody pattern used in
+	// the API layer.
+	const maxChatBodySize = 5 << 20 // 5 MB
+	r.Body = http.MaxBytesReader(w, r.Body, maxChatBodySize)
+
 	// Ensure request body is closed
 	defer func() {
 		if err := r.Body.Close(); err != nil {

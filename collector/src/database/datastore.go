@@ -12,6 +12,7 @@ package database
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -79,8 +80,8 @@ func (ds *Datastore) connect() error {
 
 	// Configure pool settings
 	maxConns := ds.config.GetDatastorePoolMaxConnections()
-	if maxConns > 2147483647 {
-		maxConns = 2147483647 // Limit to int32 max value
+	if maxConns > math.MaxInt32 {
+		maxConns = math.MaxInt32 // Limit to int32 max value
 	}
 	poolConfig.MaxConns = int32(maxConns) // #nosec G115 - safe after bounds check
 	poolConfig.MaxConnIdleTime = time.Duration(ds.config.GetDatastorePoolMaxIdleSeconds()) * time.Second
@@ -183,7 +184,8 @@ func (ds *Datastore) GetMonitoredConnections() ([]MonitoredConnection, error) {
 	}
 	defer ds.ReturnConnection(conn)
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	rows, err := conn.Query(ctx, `
         SELECT id, name, host, hostaddr, port, database_name, username,
                password_encrypted, sslmode, sslcert, sslkey, sslrootcert,
@@ -222,7 +224,8 @@ func (ds *Datastore) GetMonitoredConnectionByID(connectionID int) (MonitoredConn
 	}
 	defer ds.ReturnConnection(conn)
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	var c MonitoredConnection
 	err = conn.QueryRow(ctx, `
         SELECT id, name, host, hostaddr, port, database_name, username,

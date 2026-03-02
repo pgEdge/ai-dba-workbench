@@ -224,7 +224,7 @@ Analyze performance metrics, schema design, security configuration, and replicat
         } catch (err) {
             console.error('Server analysis error:', err);
             setActiveTools([]);
-            setError((err as Error).message);
+            setError(err instanceof Error ? err.message : String(err));
         } finally {
             setLoading(false);
         }

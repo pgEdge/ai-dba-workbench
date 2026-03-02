@@ -26,7 +26,8 @@ const SessionCookieName = "session_token"
 // AuthHandler handles authentication-related HTTP requests
 type AuthHandler struct {
 	authStore         *auth.AuthStore
-	rateLimiter       *auth.RateLimiter
+	rateLimiter       *auth.RateLimiter // Tracks failed login attempts per IP
+	totalRateLimiter  *auth.RateLimiter // Tracks total login requests per IP (20/min)
 	ipExtractor       *auth.IPExtractor
 	tlsEnabled        bool // Whether the server itself has TLS enabled
 	trustProxyHeaders bool // Whether to trust X-Forwarded-Proto for secure detection
@@ -45,6 +46,7 @@ func NewAuthHandler(authStore *auth.AuthStore, rateLimiter *auth.RateLimiter, ip
 	return &AuthHandler{
 		authStore:         authStore,
 		rateLimiter:       rateLimiter,
+		totalRateLimiter:  auth.NewRateLimiter(1, 20), // 20 total login requests per minute per IP
 		ipExtractor:       ipExtractor,
 		tlsEnabled:        tlsEnabled,
 		trustProxyHeaders: trustProxyHeaders,
@@ -142,6 +144,17 @@ func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// Get IP address for rate limiting using secure IP extraction
 	// Uses the IPExtractor which only trusts X-Forwarded-For from configured trusted proxies
 	ipAddress := h.extractIPFromRequest(r)
+
+	// Check total request rate limit before checking failed-attempt limiter.
+	// This prevents enumeration attacks that succeed on every attempt.
+	if h.totalRateLimiter != nil && ipAddress != "" {
+		if !h.totalRateLimiter.IsAllowed(ipAddress) {
+			RespondError(w, http.StatusTooManyRequests,
+				"Too many login requests, please try again later")
+			return
+		}
+		h.totalRateLimiter.RecordFailedAttempt(ipAddress)
+	}
 
 	// Check rate limit if rate limiter is configured
 	if h.rateLimiter != nil && ipAddress != "" {

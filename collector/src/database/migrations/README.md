@@ -5,7 +5,7 @@ for manual database administration.
 
 ## Important Note
 
-**No SQL files are required for deployment or runtime operation.**
+No SQL files are required for deployment or runtime operation.
 
 All migrations are embedded directly in the compiled binary via
 [schema.go](../schema.go). The migration system reads the embedded SQL from the
@@ -23,13 +23,13 @@ automatically apply pending migrations when it starts.
 
 When adding a new migration:
 
-**Required:**
+Required:
 - Edit [schema.go](../schema.go) and add your migration to the
   `registerMigrations()` function
 - Embed the SQL directly in the Go code as a string literal
 - Use `IF NOT EXISTS` clauses to make migrations idempotent
 
-**Optional:**
+Optional:
 - If desired for documentation purposes, you may create a standalone
   `NNN_description.sql` file in this directory
 - Such files are purely for reference and will not be used by the system

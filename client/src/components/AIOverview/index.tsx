@@ -32,6 +32,7 @@ import { ApiError } from '../../utils/apiClient';
 import { clearAnalysisCache } from '../../hooks/useServerAnalysis';
 import { useOverviewSSE } from '../../hooks/useOverviewSSE';
 import type { OverviewResponse } from '../../hooks/useOverviewSSE';
+import { spinKeyframes } from '../Dashboard/styles';
 
 /**
  * Selection object describing the current scope for the overview.
@@ -422,11 +423,7 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
                             >
                                 <RefreshIcon sx={{
                                     fontSize: 14,
-                                    animation: refreshing ? 'spin 1s linear infinite' : 'none',
-                                    '@keyframes spin': {
-                                        '0%': { transform: 'rotate(0deg)' },
-                                        '100%': { transform: 'rotate(360deg)' },
-                                    },
+                                    animation: refreshing ? `${spinKeyframes} 1s linear infinite` : 'none',
                                 }} />
                             </IconButton>
                         </Tooltip>

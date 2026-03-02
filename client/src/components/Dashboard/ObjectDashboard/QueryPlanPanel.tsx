@@ -21,6 +21,7 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import CollapsibleSection from '../CollapsibleSection';
 import PlanTree from './PlanTree';
 import { useQueryPlan } from '../../../hooks/useQueryPlan';
+import { spinKeyframes } from '../styles';
 
 interface QueryPlanPanelProps {
     connectionId: number;
@@ -44,11 +45,7 @@ const PLAN_TEXT_SX = {
 /** Spinning animation for the refresh icon. */
 const SPIN_ANIMATION_SX = {
     fontSize: 16,
-    animation: 'spin 1s linear infinite',
-    '@keyframes spin': {
-        '0%': { transform: 'rotate(0deg)' },
-        '100%': { transform: 'rotate(360deg)' },
-    },
+    animation: `${spinKeyframes} 1s linear infinite`,
 };
 
 /** Static refresh icon style. */

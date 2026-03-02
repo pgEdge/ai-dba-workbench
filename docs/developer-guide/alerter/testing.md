@@ -9,7 +9,7 @@ testing approach for different components.
 Before developing the alerter, ensure you have the following
 tools installed:
 
-- [Go 1.21](https://go.dev/doc/install) or higher.
+- [Go 1.24](https://go.dev/doc/install) or later.
 - A PostgreSQL 14+ instance for the datastore.
 - Git for version control.
 - Optionally, [Ollama](https://ollama.ai) for local LLM testing.
@@ -80,7 +80,8 @@ schema.
 Build the alerter binary:
 
 ```bash
-go build -o bin/ai-dba-alerter ./src
+cd src
+go build -o ../bin/ai-dba-alerter ./cmd/ai-dba-alerter
 ```
 
 Build with race detection for development:

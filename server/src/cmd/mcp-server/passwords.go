@@ -49,6 +49,9 @@ func ResolvePassword(flagValue string, flagSet bool, filePath string) (PasswordR
 
 	// 2. Password file
 	if filePath != "" {
+		if strings.Contains(filePath, "..") {
+			return PasswordResult{}, fmt.Errorf("password file path must not contain directory traversal sequences")
+		}
 		data, err := os.ReadFile(filePath)
 		if err != nil {
 			return PasswordResult{}, fmt.Errorf("reading password file %s: %w", filePath, err)

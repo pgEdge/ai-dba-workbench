@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
+	"github.com/pgedge/ai-workbench/pkg/worker"
 )
 
 // notificationJob represents a notification to be sent by a worker
@@ -56,85 +57,51 @@ func (e *Engine) queueNotification(alert *database.Alert, notifTyp database.Noti
 
 // runNotificationWorker processes pending and retry notifications
 func (e *Engine) runNotificationWorker(ctx context.Context) {
-	cfg := e.getConfig()
-	interval := time.Duration(cfg.Notifications.ProcessIntervalSeconds) * time.Second
-	if interval == 0 {
-		interval = DefaultNotificationProcessInterval
-	}
-
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	e.log("Notification worker started (interval: %v)", interval)
-
-	for {
-		select {
-		case <-ctx.Done():
-			e.log("Notification worker stopping")
-			return
-		case <-ticker.C:
+	task := worker.NewDynamicPeriodicTask(
+		func() time.Duration {
+			interval := time.Duration(e.getConfig().Notifications.ProcessIntervalSeconds) * time.Second
+			if interval == 0 {
+				interval = DefaultNotificationProcessInterval
+			}
+			return interval
+		},
+		func(ctx context.Context) {
 			if e.notificationMgr != nil {
 				if err := e.notificationMgr.ProcessPendingNotifications(ctx); err != nil {
 					e.log("ERROR: Failed to process pending notifications: %v", err)
 				}
 			}
-
-			newCfg := e.getConfig()
-			newInterval := time.Duration(newCfg.Notifications.ProcessIntervalSeconds) * time.Second
-			if newInterval == 0 {
-				newInterval = DefaultNotificationProcessInterval
-			}
-			if newInterval != interval {
-				interval = newInterval
-				ticker.Reset(interval)
-				e.log("Notification worker interval updated to %v", interval)
-			}
-		}
-	}
+		},
+		worker.WithName("Notification worker"),
+		worker.WithLogFunc(e.log),
+	)
+	task.Start(ctx)
+	<-ctx.Done()
+	task.Stop()
 }
 
 // runReminderWorker sends periodic reminder notifications for active alerts
 func (e *Engine) runReminderWorker(ctx context.Context) {
-	cfg := e.getConfig()
-	interval := time.Duration(cfg.Notifications.ReminderCheckIntervalMinutes) * time.Minute
-	if interval == 0 {
-		interval = DefaultReminderCheckInterval
-	}
-
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	e.log("Reminder worker started (interval: %v)", interval)
-
-	// Process reminders immediately on start
-	if e.notificationMgr != nil {
-		if err := e.notificationMgr.ProcessReminders(ctx); err != nil {
-			e.log("ERROR: Failed to process reminders: %v", err)
-		}
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			e.log("Reminder worker stopping")
-			return
-		case <-ticker.C:
+	task := worker.NewDynamicPeriodicTask(
+		func() time.Duration {
+			interval := time.Duration(e.getConfig().Notifications.ReminderCheckIntervalMinutes) * time.Minute
+			if interval == 0 {
+				interval = DefaultReminderCheckInterval
+			}
+			return interval
+		},
+		func(ctx context.Context) {
 			if e.notificationMgr != nil {
 				if err := e.notificationMgr.ProcessReminders(ctx); err != nil {
 					e.log("ERROR: Failed to process reminders: %v", err)
 				}
 			}
-
-			newCfg := e.getConfig()
-			newInterval := time.Duration(newCfg.Notifications.ReminderCheckIntervalMinutes) * time.Minute
-			if newInterval == 0 {
-				newInterval = DefaultReminderCheckInterval
-			}
-			if newInterval != interval {
-				interval = newInterval
-				ticker.Reset(interval)
-				e.log("Reminder worker interval updated to %v", interval)
-			}
-		}
-	}
+		},
+		worker.WithDynamicRunOnStart(),
+		worker.WithName("Reminder worker"),
+		worker.WithLogFunc(e.log),
+	)
+	task.Start(ctx)
+	<-ctx.Done()
+	task.Stop()
 }

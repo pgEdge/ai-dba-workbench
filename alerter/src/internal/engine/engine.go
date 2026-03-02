@@ -291,92 +291,49 @@ func (e *Engine) StopNotificationWorkers() {
 
 // runThresholdEvaluator evaluates threshold-based alert rules
 func (e *Engine) runThresholdEvaluator(ctx context.Context) {
-	cfg := e.getConfig()
-	interval := time.Duration(cfg.Threshold.EvaluationIntervalSeconds) * time.Second
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	e.log("Threshold evaluator started (interval: %v)", interval)
-
-	// Run immediately on start
-	e.evaluateThresholds(ctx)
-
-	for {
-		select {
-		case <-ctx.Done():
-			e.log("Threshold evaluator stopping")
-			return
-		case <-ticker.C:
-			e.evaluateThresholds(ctx)
-
-			newCfg := e.getConfig()
-			newInterval := time.Duration(newCfg.Threshold.EvaluationIntervalSeconds) * time.Second
-			if newInterval != interval {
-				interval = newInterval
-				ticker.Reset(interval)
-				e.log("Threshold evaluator interval updated to %v", interval)
-			}
-		}
-	}
+	task := worker.NewDynamicPeriodicTask(
+		func() time.Duration {
+			return time.Duration(e.getConfig().Threshold.EvaluationIntervalSeconds) * time.Second
+		},
+		e.evaluateThresholds,
+		worker.WithDynamicRunOnStart(),
+		worker.WithName("Threshold evaluator"),
+		worker.WithLogFunc(e.log),
+	)
+	task.Start(ctx)
+	<-ctx.Done()
+	task.Stop()
 }
 
 // runBaselineCalculator periodically recalculates metric baselines
 func (e *Engine) runBaselineCalculator(ctx context.Context) {
-	cfg := e.getConfig()
-	interval := time.Duration(cfg.Baselines.RefreshIntervalSeconds) * time.Second
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	e.log("Baseline calculator started (interval: %v)", interval)
-
-	// Run immediately on start
-	e.calculateBaselines(ctx)
-
-	for {
-		select {
-		case <-ctx.Done():
-			e.log("Baseline calculator stopping")
-			return
-		case <-ticker.C:
-			e.calculateBaselines(ctx)
-
-			newCfg := e.getConfig()
-			newInterval := time.Duration(newCfg.Baselines.RefreshIntervalSeconds) * time.Second
-			if newInterval != interval {
-				interval = newInterval
-				ticker.Reset(interval)
-				e.log("Baseline calculator interval updated to %v", interval)
-			}
-		}
-	}
+	task := worker.NewDynamicPeriodicTask(
+		func() time.Duration {
+			return time.Duration(e.getConfig().Baselines.RefreshIntervalSeconds) * time.Second
+		},
+		e.calculateBaselines,
+		worker.WithDynamicRunOnStart(),
+		worker.WithName("Baseline calculator"),
+		worker.WithLogFunc(e.log),
+	)
+	task.Start(ctx)
+	<-ctx.Done()
+	task.Stop()
 }
 
 // runAnomalyDetector runs the tiered anomaly detection system
 func (e *Engine) runAnomalyDetector(ctx context.Context) {
-	cfg := e.getConfig()
-	interval := time.Duration(cfg.Anomaly.Tier1.EvaluationIntervalSeconds) * time.Second
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	e.log("Anomaly detector started (interval: %v)", interval)
-
-	for {
-		select {
-		case <-ctx.Done():
-			e.log("Anomaly detector stopping")
-			return
-		case <-ticker.C:
-			e.detectAnomalies(ctx)
-
-			newCfg := e.getConfig()
-			newInterval := time.Duration(newCfg.Anomaly.Tier1.EvaluationIntervalSeconds) * time.Second
-			if newInterval != interval {
-				interval = newInterval
-				ticker.Reset(interval)
-				e.log("Anomaly detector interval updated to %v", interval)
-			}
-		}
-	}
+	task := worker.NewDynamicPeriodicTask(
+		func() time.Duration {
+			return time.Duration(e.getConfig().Anomaly.Tier1.EvaluationIntervalSeconds) * time.Second
+		},
+		e.detectAnomalies,
+		worker.WithName("Anomaly detector"),
+		worker.WithLogFunc(e.log),
+	)
+	task.Start(ctx)
+	<-ctx.Done()
+	task.Stop()
 }
 
 // runBlackoutScheduler checks and activates scheduled blackouts

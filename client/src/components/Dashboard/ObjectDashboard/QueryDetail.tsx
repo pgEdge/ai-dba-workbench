@@ -29,7 +29,7 @@ import { useDashboard } from '../../../contexts/DashboardContext';
 import { useMetrics } from '../../../hooks/useMetrics';
 import { useQueryOverview } from '../../../hooks/useQueryOverview';
 import { MetricQueryParams } from '../types';
-import { KPI_GRID_SX, CHART_SECTION_SX } from '../styles';
+import { KPI_GRID_SX, CHART_SECTION_SX, spinKeyframes } from '../styles';
 import KpiTile from '../KpiTile';
 import CollapsibleSection from '../CollapsibleSection';
 import TimeRangeSelector from '../TimeRangeSelector';
@@ -549,20 +549,8 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                                                     fontSize: 14,
                                                     animation:
                                                         overviewLoading
-                                                            ? 'spin 1s linear infinite'
+                                                            ? `${spinKeyframes} 1s linear infinite`
                                                             : 'none',
-                                                    '@keyframes spin':
-                                                        {
-                                                            '0%': {
-                                                                transform:
-                                                                    'rotate(0deg)',
-                                                            },
-                                                            '100%':
-                                                                {
-                                                                    transform:
-                                                                        'rotate(360deg)',
-                                                                },
-                                                        },
                                                 }} />
                                             </IconButton>
                                         </Tooltip>

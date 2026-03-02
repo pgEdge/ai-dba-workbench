@@ -228,7 +228,7 @@ Analyze performance, check schema context, validate any SQL suggestions, and pro
         } catch (err) {
             console.error('Query analysis error:', err);
             setActiveTools([]);
-            setError((err as Error).message);
+            setError(err instanceof Error ? err.message : String(err));
         } finally {
             setLoading(false);
         }

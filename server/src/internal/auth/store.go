@@ -35,7 +35,20 @@ const (
 
 	// sessionTokenBytes is the size of generated session tokens in bytes.
 	sessionTokenBytes = 32
+
+	// maxSessionsPerUser is the maximum number of concurrent sessions
+	// allowed per user. When this limit is reached, the oldest session
+	// is evicted to make room for the new one.
+	maxSessionsPerUser = 10
 )
+
+// dummyHash is a pre-computed bcrypt hash used during authentication
+// to prevent timing side-channel attacks that could reveal whether a
+// username exists. When a lookup returns no rows, we compare against
+// this hash so the response time is consistent with a real comparison.
+//
+//nolint:errcheck // bcrypt.GenerateFromPassword with a valid cost never fails
+var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("dummy-timing-equalizer"), bcryptCost)
 
 const (
 	// DefaultSessionExpiry is the default duration for session tokens
@@ -47,12 +60,13 @@ const (
 
 // AuthStore manages users and tokens in SQLite
 type AuthStore struct {
-	db                *sql.DB
-	mu                sync.RWMutex
-	path              string
-	maxUserTokenDays  int      // Maximum lifetime for user-created tokens (0 = unlimited)
-	maxFailedAttempts int      // Max failed login attempts before lockout (0 = disabled)
-	sessions          sync.Map // In-memory session store: token -> SessionInfo
+	db                 *sql.DB
+	mu                 sync.RWMutex
+	path               string
+	maxUserTokenDays   int           // Maximum lifetime for user-created tokens (0 = unlimited)
+	maxFailedAttempts  int           // Max failed login attempts before lockout (0 = disabled)
+	sessions           sync.Map      // In-memory session store: token -> SessionInfo
+	sessionCleanupStop chan struct{} // Signals the session cleanup goroutine to stop
 }
 
 // SessionInfo holds session information (in-memory only)
@@ -106,6 +120,12 @@ func NewAuthStore(dataDir string, maxUserTokenDays, maxFailedAttempts int) (*Aut
 	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open auth database: %w", err)
+	}
+
+	// Restrict database file permissions to owner-only (0600) so that
+	// other users on the system cannot read password hashes or tokens.
+	if chmodErr := os.Chmod(dbPath, 0600); chmodErr != nil {
+		log.Printf("[AUTH] WARNING: Failed to set permissions on %s: %v", dbPath, chmodErr)
 	}
 
 	store := &AuthStore{
@@ -316,8 +336,10 @@ func (s *AuthStore) initSchema() error {
 	return nil
 }
 
-// Close closes the database connection
+// Close stops the session cleanup goroutine (if running) and closes
+// the database connection.
 func (s *AuthStore) Close() error {
+	s.StopSessionCleanup()
 	return s.db.Close()
 }
 
@@ -784,6 +806,11 @@ func (s *AuthStore) AuthenticateUser(username, password string) (string, time.Ti
 	).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.Enabled, &user.FailedAttempts, &user.IsServiceAccount)
 
 	if err == sql.ErrNoRows {
+		// Perform a dummy bcrypt comparison to ensure consistent response
+		// timing regardless of whether the username exists, preventing
+		// user enumeration via timing side-channel.
+		//nolint:errcheck // Result is intentionally ignored
+		bcrypt.CompareHashAndPassword(dummyHash, []byte(password))
 		return "", time.Time{}, fmt.Errorf("invalid username or password")
 	}
 	if err != nil {
@@ -830,6 +857,39 @@ func (s *AuthStore) AuthenticateUser(username, password string) (string, time.Ti
 
 	// Set expiration
 	expiration := time.Now().Add(DefaultSessionExpiry)
+
+	// Enforce per-user session limit by evicting the oldest session when
+	// the user has reached maxSessionsPerUser active sessions.
+	type sessionEntry struct {
+		key       string
+		expiresAt time.Time
+	}
+	var userSessions []sessionEntry
+	s.sessions.Range(func(key, value any) bool {
+		session, ok := value.(*SessionInfo)
+		if !ok || session.Username != username {
+			return true
+		}
+		keyStr, ok := key.(string)
+		if !ok {
+			return true
+		}
+		userSessions = append(userSessions, sessionEntry{
+			key:       keyStr,
+			expiresAt: session.ExpiresAt,
+		})
+		return true
+	})
+	if len(userSessions) >= maxSessionsPerUser {
+		// Find and evict the oldest session
+		oldest := userSessions[0]
+		for _, entry := range userSessions[1:] {
+			if entry.expiresAt.Before(oldest.expiresAt) {
+				oldest = entry
+			}
+		}
+		s.sessions.Delete(oldest.key)
+	}
 
 	// Store session in memory using hashed token to prevent timing attacks
 	// The hash operation is constant-time with respect to the token content,
@@ -906,6 +966,53 @@ func (s *AuthStore) InvalidateUserSessions(username string) {
 	})
 	if count > 0 {
 		log.Printf("[AUTH] Invalidated %d active session(s) for user %s due to password change", count, username)
+	}
+}
+
+// StartSessionCleanup starts a background goroutine that periodically
+// sweeps expired sessions from the in-memory session store. Call
+// StopSessionCleanup (or Close) to terminate the goroutine.
+func (s *AuthStore) StartSessionCleanup(interval time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Prevent double-start
+	if s.sessionCleanupStop != nil {
+		return
+	}
+	stop := make(chan struct{})
+	s.sessionCleanupStop = stop
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				now := time.Now()
+				s.sessions.Range(func(key, value any) bool {
+					session, ok := value.(*SessionInfo)
+					if ok && session.ExpiresAt.Before(now) {
+						s.sessions.Delete(key)
+					}
+					return true
+				})
+			case <-stop:
+				return
+			}
+		}
+	}()
+}
+
+// StopSessionCleanup terminates the background session cleanup goroutine
+// started by StartSessionCleanup. It is safe to call multiple times.
+func (s *AuthStore) StopSessionCleanup() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.sessionCleanupStop != nil {
+		close(s.sessionCleanupStop)
+		s.sessionCleanupStop = nil
 	}
 }
 

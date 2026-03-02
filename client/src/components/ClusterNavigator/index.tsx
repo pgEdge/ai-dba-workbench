@@ -62,6 +62,7 @@ import {
 import StatusIndicator from './StatusIndicator';
 import GroupItem from './GroupItem';
 import { DragOverlayContent } from './DragDropComponents';
+import { spinKeyframes } from '../Dashboard/styles';
 
 // -- Static sx constants --------------------------------------------------
 
@@ -237,11 +238,7 @@ const getLastRefreshSx = (theme: Theme) => ({
 
 const getSpinnerSx = (loading: boolean) => ({
     fontSize: 18,
-    animation: loading ? 'spin 1s linear infinite' : 'none',
-    '@keyframes spin': {
-        '0%': { transform: 'rotate(0deg)' },
-        '100%': { transform: 'rotate(360deg)' },
-    },
+    animation: loading ? `${spinKeyframes} 1s linear infinite` : 'none',
 });
 
 /**

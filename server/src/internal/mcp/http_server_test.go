@@ -113,7 +113,7 @@ func TestHandleInitializeHTTP(t *testing.T) {
 			"protocolVersion": "2024-11-05",
 			"clientInfo": map[string]any{
 				"name":    "test-client",
-				"version": "1.0.0",
+				"version": "1.0.0-alpha1",
 			},
 		},
 	}

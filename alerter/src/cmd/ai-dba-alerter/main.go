@@ -23,7 +23,12 @@ import (
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
 )
 
+// Version information
+const Version = "1.0.0-alpha1"
+
 func main() {
+	fmt.Fprintf(os.Stderr, "pgEdge AI DBA Workbench Alerter v%s starting...\n", Version)
+
 	// Get executable path for default config location
 	execPath, err := os.Executable()
 	if err != nil {

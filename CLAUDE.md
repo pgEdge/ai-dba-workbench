@@ -333,7 +333,8 @@ At the end of each README:
   corresponding path entry and schemas in `BuildOpenAPISpec`.
 
 - Update the endpoint summary table in
-  `docs/server/api-reference.md` to match the current API surface.
+  `docs/admin-guide/api/reference.md` to match the current API
+  surface.
 
 - Regenerate the static OpenAPI file after any specification change:
   `cd server && make openapi`.
@@ -341,9 +342,9 @@ At the end of each README:
 - Run the OpenAPI tests after any specification change:
   `cd server/src && go test ./internal/api/ -run OpenAPI -v`.
 
-- The interactive API browser at `docs/server/api-reference.md`
-  renders from the static file `docs/server/openapi.json`; verify
-  that new endpoints appear correctly in the ReDoc output.
+- The interactive API browser at `docs/admin-guide/api/reference.md`
+  renders from the static file `docs/admin-guide/api/openapi.json`;
+  verify that new endpoints appear correctly in the ReDoc output.
 
 ## Security
 

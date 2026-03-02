@@ -30,7 +30,7 @@ build:
 # Generate static OpenAPI specification
 openapi:
 	@echo "Generating OpenAPI spec..."
-	cd src && go run ./cmd/mcp-server -openapi ../../docs/server/openapi.json
+	cd src && go run ./cmd/mcp-server -openapi ../../docs/admin-guide/api/openapi.json
 
 # Run tests
 test: killall

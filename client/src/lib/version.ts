@@ -9,6 +9,6 @@
  */
 
 // Web client version - keep in sync with server releases
-export const CLIENT_VERSION: string = '1.0.0';
+export const CLIENT_VERSION: string = '1.0.0-alpha1';
 
 export default CLIENT_VERSION;

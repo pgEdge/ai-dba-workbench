@@ -3132,6 +3132,78 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration #29: Optimize indexes - drop unused, modify suboptimal, add missing
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     29,
+		Description: "Optimize indexes - drop unused, modify suboptimal, add missing",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				-- Drop unused single-column indexes
+				DROP INDEX IF EXISTS idx_connections_role;
+				DROP INDEX IF EXISTS idx_connections_enabled;
+				DROP INDEX IF EXISTS idx_alert_rules_category;
+				DROP INDEX IF EXISTS idx_alert_rules_metric;
+				DROP INDEX IF EXISTS idx_alerts_status;
+				DROP INDEX IF EXISTS idx_alerts_correlation;
+				DROP INDEX IF EXISTS idx_alerts_object_name;
+				DROP INDEX IF EXISTS idx_alert_acknowledgments_false_positive;
+				DROP INDEX IF EXISTS idx_notification_channels_channel_type;
+				DROP INDEX IF EXISTS idx_notification_history_status;
+				DROP INDEX IF EXISTS idx_pg_node_role_primary_role;
+				DROP INDEX IF EXISTS idx_pg_extension_extname;
+				DROP INDEX IF EXISTS idx_blackouts_scope;
+				DROP INDEX IF EXISTS idx_chat_memories_scope;
+				DROP INDEX IF EXISTS idx_anomaly_candidates_pending;
+				DROP INDEX IF EXISTS idx_probe_configs_scope;
+				DROP INDEX IF EXISTS idx_metric_baselines_metric;
+
+				-- Replace idx_alerts_active: remove redundant status column,
+				-- add alert_type which is used in the actual query
+				DROP INDEX IF EXISTS idx_alerts_active;
+				CREATE INDEX idx_alerts_active
+					ON alerts(connection_id, alert_type)
+					WHERE status = 'active';
+
+				-- Replace two single-column baselines indexes with one composite
+				DROP INDEX IF EXISTS idx_metric_baselines_connection;
+				CREATE INDEX idx_metric_baselines_conn_metric
+					ON metric_baselines(connection_id, metric_name, period_type);
+
+				-- Add composite/filtered indexes for common query patterns
+				CREATE INDEX IF NOT EXISTS idx_anomaly_candidates_lookup
+					ON anomaly_candidates(connection_id, metric_name, detected_at DESC)
+					WHERE final_decision = 'pending';
+
+				CREATE INDEX IF NOT EXISTS idx_alerts_conn_triggered
+					ON alerts(connection_id, triggered_at DESC);
+
+				CREATE INDEX IF NOT EXISTS idx_alerts_active_triggered
+					ON alerts(triggered_at DESC)
+					WHERE status = 'active';
+
+				CREATE INDEX IF NOT EXISTS idx_alert_thresholds_server_lookup
+					ON alert_thresholds(rule_id, connection_id, database_name)
+					WHERE scope = 'server';
+
+				CREATE INDEX IF NOT EXISTS idx_notification_reminder_state_alert_channel
+					ON notification_reminder_state(alert_id, channel_id);
+
+				CREATE INDEX IF NOT EXISTS idx_probe_availability_conn_probe
+					ON probe_availability(connection_id, probe_name);
+
+				CREATE INDEX IF NOT EXISTS idx_conversations_username_updated
+					ON conversations(username, updated_at DESC);
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to optimize indexes: %w", err)
+			}
+
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations

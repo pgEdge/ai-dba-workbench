@@ -125,10 +125,9 @@ jobs:
               run: |
                   echo "Creating test admin user..."
                   docker compose exec -T \
-                    -e AIDBA_USER_PASSWORD=TestPass123! \
                     server /usr/local/bin/ai-dba-server \
                     -config /etc/pgedge/ai-dba-server.yaml \
-                    -add-user -username admin \
+                    -add-user -username admin -password "TestPass123!" \
                     -full-name "Test Admin" -email "admin@test.local" </dev/null
                   echo "Admin user created"
 

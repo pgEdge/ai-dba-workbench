@@ -122,7 +122,7 @@ func ParseFlags(defaultConfigPath string) *Flags {
 	flag.IntVar(&f.DBPort, "db-port", 0, "Database port")
 	flag.StringVar(&f.DBName, "db-name", "", "Database name")
 	flag.StringVar(&f.DBUser, "db-user", "", "Database user")
-	flag.StringVar(&f.DBPassword, "db-password", "", "Database password (deprecated: use AIDBA_DB_PASSWORD env var or -db-password-file)")
+	flag.StringVar(&f.DBPassword, "db-password", "", "Database password (prefer -db-password-file for production use)")
 	flag.StringVar(&f.DBPasswordFile, "db-password-file", "", "Path to file containing the database password")
 	flag.StringVar(&f.DBSSLMode, "db-sslmode", "", "Database SSL mode (disable, require, verify-ca, verify-full)")
 
@@ -143,7 +143,7 @@ func ParseFlags(defaultConfigPath string) *Flags {
 	flag.BoolVar(&f.DisableUserCmd, "disable-user", false, "Disable a user account")
 	flag.BoolVar(&f.AddServiceAccountCmd, "add-service-account", false, "Add a new service account")
 	flag.StringVar(&f.Username, "username", "", "Username for user management commands")
-	flag.StringVar(&f.UserPassword, "password", "", "Password for user management commands (deprecated: use AIDBA_USER_PASSWORD env var or -password-file)")
+	flag.StringVar(&f.UserPassword, "password", "", "Password for user management commands (prefer -password-file for production use)")
 	flag.StringVar(&f.UserPasswordFile, "password-file", "", "Path to file containing the user password")
 	flag.StringVar(&f.UserNote, "user-note", "", "Notes for the user (used with -add-user, -update-user)")
 	flag.StringVar(&f.FullName, "full-name", "", "Full name for user management commands")

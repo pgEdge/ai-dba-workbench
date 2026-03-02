@@ -127,6 +127,7 @@ type DatabaseSummary struct {
 // TopQueryRow holds a single row from pg_stat_statements.
 type TopQueryRow struct {
 	QueryID        string  `json:"queryid"`
+	DatabaseName   string  `json:"database_name"`
 	Query          string  `json:"query"`
 	Calls          int64   `json:"calls"`
 	TotalExecTime  float64 `json:"total_exec_time"`
@@ -1141,28 +1142,45 @@ func (h *PerfSummaryHandler) handleTopQueries(
 	queryIDClause := ""
 	args := []any{connID, limit}
 	if queryID != "" {
-		queryIDClause = fmt.Sprintf("AND queryid::text = $%d", len(args)+1)
+		queryIDClause = fmt.Sprintf(
+			"AND pss.queryid::text = $%d", len(args)+1)
 		args = append(args, queryID)
 	}
 
 	// Build optional clause to exclude collector probe queries.
 	excludeCollectorClause := ""
 	if excludeCollector {
-		excludeCollectorClause = "AND query NOT LIKE '%ai_dba_wb_probe%'"
+		excludeCollectorClause = "AND pss.query NOT LIKE '%ai_dba_wb_probe%'"
 	}
 
 	query := fmt.Sprintf(`
-        SELECT queryid::text, query, calls, total_exec_time,
-               mean_exec_time, rows, shared_blks_hit, shared_blks_read
-        FROM metrics.pg_stat_statements
-        WHERE connection_id = $1
-          AND collected_at = (
-              SELECT MAX(collected_at)
-              FROM metrics.pg_stat_statements
-              WHERE connection_id = $1
-          )
-          %s
-          %s
+        WITH db_names AS (
+            SELECT DISTINCT datid, datname
+            FROM metrics.pg_stat_activity
+            WHERE connection_id = $1
+              AND datid IS NOT NULL
+              AND datname IS NOT NULL
+        ),
+        deduped AS (
+            SELECT DISTINCT ON (pss.queryid)
+                pss.queryid::text,
+                COALESCE(dn.datname, pss.database_name) AS database_name,
+                pss.query, pss.calls, pss.total_exec_time,
+                pss.mean_exec_time, pss.rows,
+                pss.shared_blks_hit, pss.shared_blks_read
+            FROM metrics.pg_stat_statements pss
+            LEFT JOIN db_names dn ON pss.dbid = dn.datid
+            WHERE pss.connection_id = $1
+              AND pss.collected_at = (
+                  SELECT MAX(collected_at)
+                  FROM metrics.pg_stat_statements
+                  WHERE connection_id = $1
+              )
+              %s
+              %s
+            ORDER BY pss.queryid
+        )
+        SELECT * FROM deduped
         ORDER BY %s %s
         LIMIT $2
     `, queryIDClause, excludeCollectorClause, orderBy, order)
@@ -1180,7 +1198,7 @@ func (h *PerfSummaryHandler) handleTopQueries(
 	for rows.Next() {
 		var row TopQueryRow
 		if err := rows.Scan(
-			&row.QueryID, &row.Query, &row.Calls,
+			&row.QueryID, &row.DatabaseName, &row.Query, &row.Calls,
 			&row.TotalExecTime, &row.MeanExecTime, &row.Rows,
 			&row.SharedBlksHit, &row.SharedBlksRead,
 		); err != nil {

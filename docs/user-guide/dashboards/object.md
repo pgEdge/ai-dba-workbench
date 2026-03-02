@@ -44,10 +44,10 @@ header regenerates the plan on demand.
 
 Two tabs display the plan data:
 
-- The Text tab shows the standard `EXPLAIN` output in
-  monospace format for a concise view.
 - The Visual tab shows a graphical flow diagram built
   from the JSON `EXPLAIN` plan.
+- The Text tab shows the standard `EXPLAIN` output in
+  monospace format for a concise view.
 
 ### Visual Diagram
 

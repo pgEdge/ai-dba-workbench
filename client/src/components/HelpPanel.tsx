@@ -1416,7 +1416,7 @@ const MonitoringPage = ({ aiEnabled }: { aiEnabled: boolean }) => (
             />
             <FeatureItem
                 title="Top Queries"
-                description="Leaderboards showing the most resource-intensive queries by total time, calls, mean time, or rows returned; the Hide monitoring queries toggle filters out workbench monitoring queries by default."
+                description="Leaderboards showing the most resource-intensive queries by total time, calls, mean time, or rows returned; the Database column shows the source database for each query. The Hide monitoring queries toggle filters out workbench monitoring queries by default."
             />
         </Box>
 
@@ -1453,12 +1453,12 @@ const MonitoringPage = ({ aiEnabled }: { aiEnabled: boolean }) => (
         </Typography>
         <Box sx={styles.indentedBlock}>
             <FeatureItem
-                title="Text Tab"
-                description="Displays the standard EXPLAIN output in a monospace format. The text plan provides a concise overview of the execution strategy."
-            />
-            <FeatureItem
                 title="Visual Tab"
                 description="Renders a graphical flow diagram of the query plan. Leaf scan nodes appear on the left and the root node on the right, connected by bezier arrows."
+            />
+            <FeatureItem
+                title="Text Tab"
+                description="Displays the standard EXPLAIN output in a monospace format. The text plan provides a concise overview of the execution strategy."
             />
             <FeatureItem
                 title="Cost Coloring"

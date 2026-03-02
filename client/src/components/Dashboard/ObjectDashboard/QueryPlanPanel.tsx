@@ -168,7 +168,7 @@ const QueryPlanPanel: React.FC<QueryPlanPanelProps> = ({
                         sx={{ minHeight: 36, mb: 1 }}
                     >
                         <Tab
-                            label="Text"
+                            label="Visual"
                             sx={{
                                 minHeight: 36,
                                 py: 0,
@@ -177,7 +177,7 @@ const QueryPlanPanel: React.FC<QueryPlanPanelProps> = ({
                             }}
                         />
                         <Tab
-                            label="Visual"
+                            label="Text"
                             sx={{
                                 minHeight: 36,
                                 py: 0,
@@ -187,7 +187,22 @@ const QueryPlanPanel: React.FC<QueryPlanPanelProps> = ({
                         />
                     </Tabs>
 
-                    {tabIndex === 0 && textPlan && (
+                    {tabIndex === 0 && jsonPlan && (
+                        <PlanTree plan={jsonPlan} />
+                    )}
+
+                    {tabIndex === 0 && !jsonPlan && (
+                        <Typography
+                            variant="body2"
+                            color="text.secondary"
+                            sx={{ py: 2, textAlign: 'center' }}
+                        >
+                            Visual plan not available. The JSON
+                            format plan could not be generated.
+                        </Typography>
+                    )}
+
+                    {tabIndex === 1 && textPlan && (
                         <Typography
                             component="pre"
                             sx={PLAN_TEXT_SX}
@@ -196,28 +211,13 @@ const QueryPlanPanel: React.FC<QueryPlanPanelProps> = ({
                         </Typography>
                     )}
 
-                    {tabIndex === 0 && !textPlan && (
+                    {tabIndex === 1 && !textPlan && (
                         <Typography
                             variant="body2"
                             color="text.secondary"
                             sx={{ py: 2, textAlign: 'center' }}
                         >
                             Text plan not available.
-                        </Typography>
-                    )}
-
-                    {tabIndex === 1 && jsonPlan && (
-                        <PlanTree plan={jsonPlan} />
-                    )}
-
-                    {tabIndex === 1 && !jsonPlan && (
-                        <Typography
-                            variant="body2"
-                            color="text.secondary"
-                            sx={{ py: 2, textAlign: 'center' }}
-                        >
-                            Visual plan not available. The JSON
-                            format plan could not be generated.
                         </Typography>
                     )}
                 </>

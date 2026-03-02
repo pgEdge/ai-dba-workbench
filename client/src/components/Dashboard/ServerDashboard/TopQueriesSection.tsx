@@ -35,7 +35,7 @@ const TABLE_CONTAINER_SX = {
 /** Table header row */
 const TABLE_HEADER_SX = {
     display: 'grid',
-    gridTemplateColumns: '2fr 0.7fr 1fr 1fr 0.7fr',
+    gridTemplateColumns: '0.8fr 2fr 0.7fr 1fr 1fr 0.7fr',
     gap: 1,
     px: 1.5,
     py: 1,
@@ -55,7 +55,7 @@ const HEADER_CELL_SX = {
 /** Table row */
 const TABLE_ROW_SX = {
     display: 'grid',
-    gridTemplateColumns: '2fr 0.7fr 1fr 1fr 0.7fr',
+    gridTemplateColumns: '0.8fr 2fr 0.7fr 1fr 1fr 0.7fr',
     gap: 1,
     px: 1.5,
     py: 1,
@@ -192,13 +192,14 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
     const handleQueryClick = useCallback((query: TopQueryRow): void => {
         pushOverlay({
             level: 'object',
-            title: truncateQuery(query.query, 60),
+            title: `${query.database_name}: ${truncateQuery(query.query, 50)}`,
             entityId: query.queryid,
             entityName: query.query,
             objectName: query.queryid,
             objectType: 'query',
             connectionId,
             connectionName,
+            databaseName: query.database_name,
         });
     }, [pushOverlay, connectionId, connectionName]);
 
@@ -265,6 +266,9 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
                 <Box sx={TABLE_CONTAINER_SX}>
                     <Box sx={headerRowSx}>
                         <Typography sx={HEADER_CELL_SX}>
+                            Database
+                        </Typography>
+                        <Typography sx={HEADER_CELL_SX}>
                             Query
                         </Typography>
                         <Typography sx={{
@@ -308,6 +312,18 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
                                 }
                             }}
                         >
+                            <Typography
+                                sx={{
+                                    fontSize: '0.875rem',
+                                    whiteSpace: 'nowrap' as const,
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    color: 'text.primary',
+                                }}
+                                title={query.database_name}
+                            >
+                                {query.database_name}
+                            </Typography>
                             <Typography
                                 sx={QUERY_CELL_SX}
                                 title={query.query}

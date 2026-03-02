@@ -43,7 +43,15 @@ Users can click a database entry to navigate to the
 
 The top queries section ranks queries by resource
 consumption. The section displays execution time, call
-count, and rows returned for the most active queries.
+count, rows returned, and source database for the most
+active queries.
+
+The Database column resolves each query's source
+database from the `dbid` field in
+`pg_stat_statements` using `pg_stat_activity`.
+Because `pg_stat_statements` collects data
+cluster-wide, the section deduplicates queries so
+each entry reflects a single database context.
 
 The "Hide monitoring queries" toggle filters out the
 workbench's own monitoring queries from the list. The

@@ -1050,6 +1050,7 @@ func buildSchemas() map[string]*OpenAPISchema {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
 				"queryid":          {Type: "integer", Format: "int64", Description: "Query ID"},
+				"database_name":    {Type: "string", Description: "Database name where the query was executed"},
 				"query":            {Type: "string", Description: "Query text"},
 				"calls":            {Type: "integer", Format: "int64", Description: "Total call count"},
 				"total_exec_time":  {Type: "number", Description: "Total execution time in ms"},

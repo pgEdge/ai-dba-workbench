@@ -49,6 +49,7 @@ export interface TopQueryRow {
     rows: number;
     shared_blks_hit: number;
     shared_blks_read: number;
+    database_name: string;
 }
 
 /**

@@ -254,6 +254,12 @@ and this project adheres to
   workers that are not running; the alert covers both
   native PostgreSQL logical replication and Spock
   subscriptions.
+- Database column in the Top Queries table; the column
+  resolves each query's source database from the
+  `dbid` field in `pg_stat_statements`.
+- Query deduplication in the Top Queries section;
+  cluster-wide `pg_stat_statements` entries are now
+  deduplicated per database.
 
 ### Removed
 
@@ -266,6 +272,8 @@ and this project adheres to
 
 ### Changed
 
+- Query plan panel now displays the Visual tab first
+  by default instead of the Text tab.
 - Authentication is now always required; the no-auth mode
   has been removed to enforce security best practices.
 - Metrics charts now use `generate_series` for full time-series

@@ -164,7 +164,9 @@ describe('QueryPlanPanel', () => {
             />,
         );
 
-        // Text tab is selected by default (index 0)
+        // Visual is the default tab (index 0); click Text to switch
+        fireEvent.click(screen.getByText('Text'));
+
         const planElement = screen.getByText(planText);
         expect(planElement).toBeInTheDocument();
         expect(planElement.tagName).toBe('PRE');
@@ -193,9 +195,7 @@ describe('QueryPlanPanel', () => {
             />,
         );
 
-        // Click the Visual tab
-        fireEvent.click(screen.getByText('Visual'));
-
+        // Visual is the default tab (index 0); renders immediately
         expect(screen.getByText('Seq Scan')).toBeInTheDocument();
     });
 
@@ -216,12 +216,31 @@ describe('QueryPlanPanel', () => {
             />,
         );
 
-        // Click the Visual tab
-        fireEvent.click(screen.getByText('Visual'));
-
+        // Visual is the default tab (index 0); fallback renders immediately
         expect(
             screen.getByText(/Visual plan not available/),
         ).toBeInTheDocument();
+    });
+
+    it('shows Visual tab as the default selected tab', () => {
+        mockUseQueryPlan.mockReturnValue({
+            textPlan: 'Seq Scan on users',
+            jsonPlan: null,
+            loading: false,
+            error: null,
+            fetch: mockFetch,
+        });
+
+        render(
+            <QueryPlanPanel
+                connectionId={1}
+                databaseName="testdb"
+                queryText="SELECT 1"
+            />,
+        );
+
+        const visualTab = screen.getByRole('tab', { name: 'Visual' });
+        expect(visualTab).toHaveAttribute('aria-selected', 'true');
     });
 
     it('refresh button calls fetch', () => {

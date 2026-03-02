@@ -34,7 +34,7 @@ hide:
 
 </style>
 
-<redoc src="../openapi.json"/>
+<redoc src="./openapi.json"/>
 
 <script>
 document.addEventListener("DOMContentLoaded", function() {

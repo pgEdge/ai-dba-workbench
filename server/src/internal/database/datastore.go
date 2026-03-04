@@ -4963,7 +4963,7 @@ func (d *Datastore) ListClustersForAutocomplete(ctx context.Context) ([]ClusterS
 	}
 	defer rows.Close()
 
-	var clusters []ClusterSummary
+	clusters := make([]ClusterSummary, 0)
 	for rows.Next() {
 		var cs ClusterSummary
 		if err := rows.Scan(&cs.ID, &cs.Name, &cs.ReplicationType, &cs.AutoClusterKey); err != nil {

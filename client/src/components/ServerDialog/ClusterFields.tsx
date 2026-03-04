@@ -267,14 +267,14 @@ const ClusterFields: React.FC<ClusterFieldsProps> = ({
                     clusters: ClusterSummary[];
                 }>(`/api/v1/connections/${serverId}/cluster`);
                 setClusterInfo(resp.info);
-                setClusters(resp.clusters);
+                setClusters(resp.clusters ?? []);
                 setSelectedClusterId(resp.info.cluster_id);
                 setSelectedRole(resp.info.role);
                 setCreatingNew(false);
             } else {
                 const resp =
                     await apiGet<ClusterSummary[]>('/api/v1/clusters/list');
-                setClusters(resp);
+                setClusters(resp ?? []);
             }
             hasFetched.current = true;
         } catch (err) {

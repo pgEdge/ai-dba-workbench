@@ -10,6 +10,13 @@ project adheres to
 
 ## [Unreleased]
 
+## [1.0.0-alpha2] - 2026-03-04
+
+### Fixed
+
+- Fix a crash in the Add Server dialog when no clusters
+  exist in the database.
+
 ## [1.0.0-alpha1] - 2026-03-02
 
 Initial release.

@@ -540,17 +540,28 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 		return allMetrics, databases, false, ""
 	}
 
-	// Execute probe on the default/first database using the connection we already have
+	// Determine which database the existing connection is actually connected to.
+	// The default connection may not match databases[0] (the sorted list), so we
+	// must query current_database() to avoid labeling results with the wrong name.
+	var currentDB string
 	if len(databases) > 0 {
-		defaultDB := databases[0]
+		err = monitoredDB.QueryRow(ctx, "SELECT current_database()").Scan(&currentDB)
+		if err != nil {
+			ps.poolManager.ReturnConnection(conn.ID, monitoredDB)
+			logger.Errorf("Error querying current_database() for probe %s on %s: %v",
+				config.Name, conn.Name, err)
+			return allMetrics, databases, false, ""
+		}
+
+		// Execute probe on the current database using the existing connection
 		metrics, err := probe.Execute(ctx, conn.Name, monitoredDB, pgVersion)
 		if err != nil {
 			logger.Debugf("Error executing probe %s on default database %s/%s: %v",
-				config.Name, conn.Name, defaultDB, err)
+				config.Name, conn.Name, currentDB, err)
 		} else if len(metrics) > 0 {
 			// Add database name to metrics
 			for i := range metrics {
-				metrics[i]["_database_name"] = defaultDB
+				metrics[i]["_database_name"] = currentDB
 			}
 			allMetrics = append(allMetrics, metrics...)
 		}
@@ -559,9 +570,12 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 	// Return the connection now that we're done with the default database
 	ps.poolManager.ReturnConnection(conn.ID, monitoredDB)
 
-	// Execute probe for remaining databases (skip the first one we already did)
-	for i := 1; i < len(databases); i++ {
-		dbName := databases[i]
+	// Execute probe for remaining databases (skip the one we already did)
+	for _, dbName := range databases {
+		// Skip the database we already queried with the existing connection
+		if dbName == currentDB {
+			continue
+		}
 
 		// Check if context is canceled (e.g., during shutdown) before processing next database
 		if ctx.Err() != nil {

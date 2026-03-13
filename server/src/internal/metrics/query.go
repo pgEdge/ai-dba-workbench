@@ -21,9 +21,10 @@ import (
 
 // MetricFilters holds optional dimension filters for metric queries.
 type MetricFilters struct {
-	DatabaseName string
-	SchemaName   string
-	TableName    string
+	DatabaseName   string
+	DatabaseColumn string // Resolved column name: "datname", "database_name", or ""
+	SchemaName     string
+	TableName      string
 }
 
 // MetricDataPoint represents a single time-value pair in a metric series.
@@ -83,6 +84,7 @@ func IsMetricColumn(name, dataType string) bool {
 		"inserted_at":      true,
 		"datid":            true,
 		"datname":          true,
+		"database_name":    true,
 		"pid":              true,
 		"usesysid":         true,
 		"usename":          true,
@@ -216,6 +218,34 @@ func GetProbeMetricColumns(ctx context.Context, pool *pgxpool.Pool, probeName st
 	return metricCols, colTypes, rows.Err()
 }
 
+// ResolveDatabaseColumn discovers which database-name column exists in a
+// probe table. It prefers "database_name" and falls back to "datname".
+// If neither column exists, it returns an empty string.
+func ResolveDatabaseColumn(ctx context.Context, pool *pgxpool.Pool, probeName string) (string, error) {
+	query := `
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'metrics'
+            AND table_name = $1
+            AND column_name IN ('datname', 'database_name')
+        ORDER BY CASE WHEN column_name = 'database_name' THEN 0 ELSE 1 END
+        LIMIT 1
+    `
+
+	var col string
+	err := pool.QueryRow(ctx, query, probeName).Scan(&col)
+	if err != nil {
+		// pgx returns ErrNoRows when no column matches; treat as
+		// "table has no database column".
+		if err.Error() == "no rows in result set" {
+			return "", nil
+		}
+		return "", err
+	}
+
+	return col, nil
+}
+
 // GetAggSelectCols returns aggregated SELECT expressions with quoted
 // identifiers to prevent SQL injection.
 func GetAggSelectCols(metricCols []string, aggregation string) []string {
@@ -311,9 +341,9 @@ func BuildMetricsQuery(
 	whereClauses = append(whereClauses, "collected_at <= $4")
 
 	// Add optional filters
-	if filters.DatabaseName != "" {
+	if filters.DatabaseName != "" && filters.DatabaseColumn != "" {
 		whereClauses = append(whereClauses,
-			fmt.Sprintf("datname = $%d", argNum))
+			fmt.Sprintf("%s = $%d", QuoteIdentifier(filters.DatabaseColumn), argNum))
 		queryArgs = append(queryArgs, filters.DatabaseName)
 		argNum++
 	}
@@ -426,6 +456,15 @@ func QueryTimeSeries(
 
 	if len(metricCols) == 0 {
 		return nil, fmt.Errorf("no numeric metrics found in probe %q", probeName)
+	}
+
+	// Resolve the database column name for this probe table
+	if filters.DatabaseName != "" && filters.DatabaseColumn == "" {
+		dbCol, err := ResolveDatabaseColumn(ctx, pool, probeName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve database column: %w", err)
+		}
+		filters.DatabaseColumn = dbCol
 	}
 
 	// Collect data across all connections

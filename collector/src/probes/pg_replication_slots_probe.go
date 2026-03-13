@@ -86,7 +86,7 @@ func (p *PgReplicationSlotsProbe) Execute(ctx context.Context, connectionName st
 	}
 
 	var walStatusExpr, safeWalSizeExpr string
-	if pgVersion >= 130000 {
+	if pgVersion >= 13 {
 		walStatusExpr = "rs.wal_status"
 		safeWalSizeExpr = "rs.safe_wal_size"
 	} else {

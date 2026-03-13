@@ -1427,15 +1427,15 @@ const MonitoringPage = ({ aiEnabled }: { aiEnabled: boolean }) => (
         <Box sx={styles.indentedBlock}>
             <FeatureItem
                 title="Performance KPIs"
-                description="Database size, cache hit ratio, transactions per second, and dead tuple count with trend sparklines."
+                description="Database size, cache hit ratio, total transactions, and dead tuple ratio with sparklines and AI analysis."
             />
             <FeatureItem
                 title="Table & Index Leaderboards"
-                description="Ranked lists of tables and indexes by size, sequential scans, dead tuples, or index usage."
+                description="Tables ranked by rows, sequential scans, dead tuples, or modifications; indexes ranked by reads, scans, or unused. Click an entry to open the object dashboard. AI analysis covers all metrics."
             />
             <FeatureItem
                 title="Vacuum Status"
-                description="Overview of autovacuum activity and tables that may need manual vacuuming."
+                description="Tables sorted by dead tuple ratio with color-coded timestamps indicating vacuum freshness. AI analysis provides vacuum recommendations."
             />
         </Box>
 

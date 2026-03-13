@@ -4886,6 +4886,115 @@
         ]
       }
     },
+    "/metrics/latest": {
+      "get": {
+        "summary": "Get latest probe snapshot",
+        "description": "Returns the most recent collected row for each unique entity in a probe table, with optional filtering, sorting, and pagination",
+        "operationId": "getLatestSnapshot",
+        "tags": [
+          "Metrics"
+        ],
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "query",
+            "description": "Connection ID",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "probe_name",
+            "in": "query",
+            "description": "Probe table name (e.g. pg_stat_all_tables)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "database_name",
+            "in": "query",
+            "description": "Filter by database name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order_by",
+            "in": "query",
+            "description": "Column to sort by (default: collected_at)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "description": "Sort order: asc or desc (default: desc)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum rows to return (default 20, max 100)",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Latest snapshot rows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LatestSnapshotResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/metrics/performance-summary": {
       "get": {
         "summary": "Get performance summary",
@@ -10020,6 +10129,28 @@
           }
         }
       },
+      "LatestSnapshotResponse": {
+        "type": "object",
+        "properties": {
+          "rows": {
+            "type": "array",
+            "description": "Latest snapshot rows, one per entity",
+            "items": {
+              "type": "object",
+              "description": "Row with column names as keys",
+              "additionalProperties": {}
+            }
+          },
+          "total_count": {
+            "type": "integer",
+            "description": "Total number of distinct entities before pagination"
+          }
+        },
+        "required": [
+          "rows",
+          "total_count"
+        ]
+      },
       "LoginRequest": {
         "type": "object",
         "properties": {
@@ -11187,6 +11318,10 @@
             "type": "integer",
             "format": "int64",
             "description": "Total call count"
+          },
+          "database_name": {
+            "type": "string",
+            "description": "Database name where the query was executed"
           },
           "mean_exec_time": {
             "type": "number",

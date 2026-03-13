@@ -49,12 +49,20 @@ const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
     sx,
     children,
 }) => {
+    /** Derive a localStorage key from the title when none is given. */
+    const effectiveStorageKey = storageKey
+        ?? `dashboard-section-${title.toLowerCase().replace(/\s+/g, '-')}-expanded`;
+
     const [expanded, setExpanded] = useState<boolean>(() => {
-        if (storageKey) {
-            const stored = localStorage.getItem(storageKey);
-            if (stored !== null) {
+        try {
+            const stored = localStorage.getItem(
+                effectiveStorageKey
+            );
+            if (stored !== null && stored !== undefined) {
                 return stored === 'true';
             }
+        } catch {
+            // localStorage may be unavailable; fall through
         }
         return defaultExpanded;
     });
@@ -62,12 +70,16 @@ const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
     const handleToggle = useCallback((): void => {
         setExpanded(prev => {
             const next = !prev;
-            if (storageKey) {
-                localStorage.setItem(storageKey, String(next));
+            try {
+                localStorage.setItem(
+                    effectiveStorageKey, String(next)
+                );
+            } catch {
+                // localStorage may be unavailable; ignore
             }
             return next;
         });
-    }, [storageKey]);
+    }, [effectiveStorageKey]);
 
     return (
         <Box sx={[SECTION_CONTAINER_SX, ...(Array.isArray(sx) ? sx : sx ? [sx] : [])]}>

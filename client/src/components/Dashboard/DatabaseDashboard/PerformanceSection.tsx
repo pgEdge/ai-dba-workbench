@@ -14,7 +14,7 @@ import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
 import { useDashboard } from '../../../contexts/DashboardContext';
 import { useMetrics } from '../../../hooks/useMetrics';
-import { MetricQueryParams, MetricSeries } from '../types';
+import { MetricQueryParams, MetricSeries, MetricDataPoint } from '../types';
 import { KPI_GRID_SX, CHART_SECTION_SX } from '../styles';
 import KpiTile from '../KpiTile';
 import CollapsibleSection from '../CollapsibleSection';
@@ -107,13 +107,13 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
 
     // KPI queries (30 buckets)
     const sizeKpiParams = useMemo((): MetricQueryParams => ({
-        probeName: 'pg_stat_database',
+        probeName: 'pg_database',
         connectionId,
         databaseName,
         timeRange: timeRange.range,
         buckets: KPI_BUCKETS,
         aggregation: 'last',
-        metrics: ['database_size'],
+        metrics: ['database_size_bytes'],
     }), [connectionId, databaseName, timeRange.range]);
 
     const cacheKpiParams = useMemo((): MetricQueryParams => ({
@@ -122,8 +122,8 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
         databaseName,
         timeRange: timeRange.range,
         buckets: KPI_BUCKETS,
-        aggregation: 'avg',
-        metrics: ['cache_hit_ratio'],
+        aggregation: 'last',
+        metrics: ['blks_hit', 'blks_read'],
     }), [connectionId, databaseName, timeRange.range]);
 
     const txnKpiParams = useMemo((): MetricQueryParams => ({
@@ -132,8 +132,8 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
         databaseName,
         timeRange: timeRange.range,
         buckets: KPI_BUCKETS,
-        aggregation: 'avg',
-        metrics: ['xact_commit_per_sec', 'xact_rollback_per_sec'],
+        aggregation: 'last',
+        metrics: ['xact_commit', 'xact_rollback'],
     }), [connectionId, databaseName, timeRange.range]);
 
     const deadTupleKpiParams = useMemo((): MetricQueryParams => ({
@@ -142,8 +142,8 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
         databaseName,
         timeRange: timeRange.range,
         buckets: KPI_BUCKETS,
-        aggregation: 'avg',
-        metrics: ['dead_tuple_ratio'],
+        aggregation: 'last',
+        metrics: ['n_dead_tup', 'n_live_tup'],
     }), [connectionId, databaseName, timeRange.range]);
 
     // Chart queries (150 buckets)
@@ -153,8 +153,8 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
         databaseName,
         timeRange: timeRange.range,
         buckets: CHART_BUCKETS,
-        aggregation: 'avg',
-        metrics: ['xact_commit_per_sec', 'xact_rollback_per_sec'],
+        aggregation: 'last',
+        metrics: ['xact_commit', 'xact_rollback'],
     }), [connectionId, databaseName, timeRange.range]);
 
     const cacheChartParams = useMemo((): MetricQueryParams => ({
@@ -163,8 +163,8 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
         databaseName,
         timeRange: timeRange.range,
         buckets: CHART_BUCKETS,
-        aggregation: 'avg',
-        metrics: ['cache_hit_ratio'],
+        aggregation: 'last',
+        metrics: ['blks_hit', 'blks_read'],
     }), [connectionId, databaseName, timeRange.range]);
 
     // Fetch KPI data
@@ -179,43 +179,159 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
 
     // Extract current values
     const databaseSize = extractLatestValue(
-        sizeKpi.data, 'database_size'
+        sizeKpi.data, 'database_size_bytes'
     );
-    const cacheHitRatio = extractLatestValue(
-        cacheKpi.data, 'cache_hit_ratio'
+
+    // Compute cache hit ratio from raw blks_hit and blks_read
+    const blksHit = extractLatestValue(
+        cacheKpi.data, 'blks_hit'
     );
-    const commitRate = extractLatestValue(
-        txnKpi.data, 'xact_commit_per_sec'
+    const blksRead = extractLatestValue(
+        cacheKpi.data, 'blks_read'
     );
-    const rollbackRate = extractLatestValue(
-        txnKpi.data, 'xact_rollback_per_sec'
+    const cacheHitRatio = useMemo(() => {
+        if (blksHit === null && blksRead === null) { return null; }
+        const hit = blksHit ?? 0;
+        const read = blksRead ?? 0;
+        const total = hit + read;
+        if (total === 0) { return 100; }
+        return (hit / total) * 100;
+    }, [blksHit, blksRead]);
+
+    // Build per-point sparkline for cache hit ratio
+    const cacheHitSparkline = useMemo((): MetricDataPoint[] => {
+        if (!cacheKpi.data) { return []; }
+        const hitSeries = cacheKpi.data.find(
+            s => s.metric === 'blks_hit'
+        );
+        const readSeries = cacheKpi.data.find(
+            s => s.metric === 'blks_read'
+        );
+        if (!hitSeries || !readSeries) { return []; }
+
+        const len = Math.min(
+            hitSeries.data.length, readSeries.data.length
+        );
+        const points: MetricDataPoint[] = [];
+        for (let i = 0; i < len; i++) {
+            const h = hitSeries.data[i].value;
+            const r = readSeries.data[i].value;
+            const total = h + r;
+            points.push({
+                time: hitSeries.data[i].time,
+                value: total > 0 ? (h / total) * 100 : 0,
+            });
+        }
+        return points;
+    }, [cacheKpi.data]);
+
+    // Transaction rate: use raw cumulative xact_commit
+    const txnCommit = extractLatestValue(
+        txnKpi.data, 'xact_commit'
+    );
+    const txnRollback = extractLatestValue(
+        txnKpi.data, 'xact_rollback'
     );
     const txnRate = useMemo(() => {
-        if (commitRate === null && rollbackRate === null) { return null; }
-        return (commitRate ?? 0) + (rollbackRate ?? 0);
-    }, [commitRate, rollbackRate]);
-    const deadTupleRatio = extractLatestValue(
-        deadTupleKpi.data, 'dead_tuple_ratio'
+        if (txnCommit === null && txnRollback === null) {
+            return null;
+        }
+        return (txnCommit ?? 0) + (txnRollback ?? 0);
+    }, [txnCommit, txnRollback]);
+
+    // Dead tuple ratio from raw n_dead_tup and n_live_tup
+    const nDeadTup = extractLatestValue(
+        deadTupleKpi.data, 'n_dead_tup'
     );
+    const nLiveTup = extractLatestValue(
+        deadTupleKpi.data, 'n_live_tup'
+    );
+    const deadTupleRatio = useMemo(() => {
+        if (nDeadTup === null && nLiveTup === null) { return null; }
+        const dead = nDeadTup ?? 0;
+        const live = nLiveTup ?? 0;
+        const total = dead + live;
+        if (total === 0) { return 0; }
+        return (dead / total) * 100;
+    }, [nDeadTup, nLiveTup]);
+
+    // Build per-point sparkline for dead tuple ratio
+    const deadTupleSparkline = useMemo((): MetricDataPoint[] => {
+        if (!deadTupleKpi.data) { return []; }
+        const deadSeries = deadTupleKpi.data.find(
+            s => s.metric === 'n_dead_tup'
+        );
+        const liveSeries = deadTupleKpi.data.find(
+            s => s.metric === 'n_live_tup'
+        );
+        if (!deadSeries || !liveSeries) { return []; }
+
+        const len = Math.min(
+            deadSeries.data.length, liveSeries.data.length
+        );
+        const points: MetricDataPoint[] = [];
+        for (let i = 0; i < len; i++) {
+            const d = deadSeries.data[i].value;
+            const l = liveSeries.data[i].value;
+            const total = d + l;
+            points.push({
+                time: deadSeries.data[i].time,
+                value: total > 0 ? (d / total) * 100 : 0,
+            });
+        }
+        return points;
+    }, [deadTupleKpi.data]);
 
     // Build chart datasets
     const txnChartData = useMemo(
         () => buildChartData(
             txnChart.data,
-            ['xact_commit_per_sec', 'xact_rollback_per_sec'],
-            ['Commits/s', 'Rollbacks/s'],
+            ['xact_commit', 'xact_rollback'],
+            ['Commits', 'Rollbacks'],
         ),
         [txnChart.data]
     );
 
-    const cacheChartData = useMemo(
-        () => buildChartData(
-            cacheChart.data,
-            ['cache_hit_ratio'],
-            ['Cache Hit Ratio %'],
-        ),
-        [cacheChart.data]
-    );
+    // Build cache hit ratio chart from per-point computation
+    const cacheChartData = useMemo(() => {
+        if (!cacheChart.data) { return null; }
+        const hitSeries = cacheChart.data.find(
+            s => s.metric === 'blks_hit'
+        );
+        const readSeries = cacheChart.data.find(
+            s => s.metric === 'blks_read'
+        );
+        if (!hitSeries || !readSeries) { return null; }
+        if (
+            hitSeries.data.length === 0
+            && readSeries.data.length === 0
+        ) {
+            return null;
+        }
+
+        const len = Math.min(
+            hitSeries.data.length, readSeries.data.length
+        );
+        const ratioData: number[] = [];
+        const categories: string[] = [];
+        for (let i = 0; i < len; i++) {
+            const h = hitSeries.data[i].value;
+            const r = readSeries.data[i].value;
+            const total = h + r;
+            ratioData.push(
+                total > 0 ? (h / total) * 100 : 0
+            );
+            categories.push(hitSeries.data[i].time);
+        }
+
+        return {
+            categories,
+            series: [{
+                name: 'Cache Hit Ratio %',
+                data: ratioData,
+            }],
+        };
+    }, [cacheChart.data]);
 
     const isKpiLoading = sizeKpi.loading || cacheKpi.loading
         || txnKpi.loading || deadTupleKpi.loading;
@@ -236,7 +352,7 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
                     label="Database Size"
                     value={formatBytes(databaseSize)}
                     sparklineData={extractSparklineData(
-                        sizeKpi.data, 'database_size'
+                        sizeKpi.data, 'database_size_bytes'
                     )}
                     analysisContext={{
                         metricDescription: 'Database size over time',
@@ -250,9 +366,7 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
                     value={formatValue(cacheHitRatio)}
                     unit="%"
                     status={getCacheHitStatus(cacheHitRatio)}
-                    sparklineData={extractSparklineData(
-                        cacheKpi.data, 'cache_hit_ratio'
-                    )}
+                    sparklineData={cacheHitSparkline}
                     analysisContext={{
                         metricDescription: 'Buffer cache hit ratio over time',
                         connectionId,
@@ -261,14 +375,14 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
                     }}
                 />
                 <KpiTile
-                    label="Transaction Rate"
-                    value={formatValue(txnRate)}
-                    unit="txn/s"
+                    label="Transactions"
+                    value={formatValue(txnRate, 0)}
+                    unit="total"
                     sparklineData={extractSparklineData(
-                        txnKpi.data, 'xact_commit_per_sec'
+                        txnKpi.data, 'xact_commit'
                     )}
                     analysisContext={{
-                        metricDescription: 'Transaction commit rate over time',
+                        metricDescription: 'Transaction commit count over time',
                         connectionId,
                         databaseName,
                         timeRange: timeRange.range,
@@ -279,9 +393,7 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
                     value={formatValue(deadTupleRatio)}
                     unit="%"
                     status={getDeadTupleStatus(deadTupleRatio)}
-                    sparklineData={extractSparklineData(
-                        deadTupleKpi.data, 'dead_tuple_ratio'
-                    )}
+                    sparklineData={deadTupleSparkline}
                     analysisContext={{
                         metricDescription: 'Dead tuple ratio over time',
                         connectionId,
@@ -306,14 +418,14 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
                         <Chart
                             type="line"
                             data={txnChartData}
-                            title="Transaction Rate Over Time"
+                            title="Transactions Over Time"
                             height={CHART_HEIGHT}
                             smooth
                             showLegend
                             showTooltip
                             enableExport={false}
                             analysisContext={{
-                                metricDescription: 'Transaction commit and rollback rate for the database',
+                                metricDescription: 'Transaction commit and rollback counts for the database',
                                 connectionId,
                                 databaseName,
                                 timeRange: timeRange.range,

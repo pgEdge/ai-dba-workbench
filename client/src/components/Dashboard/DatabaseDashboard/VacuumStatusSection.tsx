@@ -10,13 +10,20 @@
 
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import Box from '@mui/material/Box';
+import IconButton from '@mui/material/IconButton';
+import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
+import PsychologyIcon from '@mui/icons-material/Psychology';
 import { useTheme, Theme } from '@mui/material/styles';
 import { useAuth } from '../../../contexts/AuthContext';
 import { apiFetch } from '../../../utils/apiClient';
 import { useDashboard } from '../../../contexts/DashboardContext';
+import { useAICapabilities } from '../../../contexts/AICapabilitiesContext';
+import { hasCachedAnalysis } from '../../../hooks/useChartAnalysis';
 import CollapsibleSection from '../CollapsibleSection';
+import { ChartAnalysisDialog } from '../../ChartAnalysisDialog';
+import { ChartAnalysisContext, ChartData } from '../../Chart/types';
 import {
     DatabaseSectionProps,
     TableLeaderboardRow,
@@ -118,9 +125,11 @@ const getStatusColor = (
  * Calculate the dead tuple ratio for a table row.
  */
 const getDeadTupleRatio = (row: TableLeaderboardRow): number => {
-    const total = row.n_live_tup + row.n_dead_tup;
+    const live = row.n_live_tup ?? 0;
+    const dead = row.n_dead_tup ?? 0;
+    const total = live + dead;
     if (total === 0) { return 0; }
-    return (row.n_dead_tup / total) * 100;
+    return (dead / total) * 100;
 };
 
 /**
@@ -155,12 +164,14 @@ const VacuumStatusSection: React.FC<DatabaseSectionProps> = ({
     const { user } = useAuth();
     const { refreshTrigger } = useDashboard();
     const theme = useTheme();
+    const { aiEnabled } = useAICapabilities();
 
     const [tables, setTables] = useState<TableLeaderboardRow[]>([]);
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
+    const [analysisOpen, setAnalysisOpen] = useState(false);
     const isMountedRef = useRef<boolean>(true);
-    const initialLoadDoneRef = useRef<boolean>(false);
+    const shouldClearRef = useRef<boolean>(true);
 
     const fetchData = useCallback(async (): Promise<void> => {
         if (!user) { return; }
@@ -173,10 +184,12 @@ const VacuumStatusSection: React.FC<DatabaseSectionProps> = ({
             order_by: 'n_dead_tup',
             order: 'desc',
         });
-        const url = `/api/v1/metrics/query?${params.toString()}`;
+        const url = `/api/v1/metrics/latest?${params.toString()}`;
 
-        if (!initialLoadDoneRef.current) {
+        if (shouldClearRef.current) {
             setLoading(true);
+            setTables([]);
+            shouldClearRef.current = false;
         }
         setError(null);
 
@@ -212,7 +225,6 @@ const VacuumStatusSection: React.FC<DatabaseSectionProps> = ({
                 });
 
                 setTables(rows);
-                initialLoadDoneRef.current = true;
             }
         } catch (err) {
             console.error('Error fetching vacuum status:', err);
@@ -231,7 +243,7 @@ const VacuumStatusSection: React.FC<DatabaseSectionProps> = ({
     }, [user, connectionId, databaseName]);
 
     useEffect(() => {
-        initialLoadDoneRef.current = false;
+        shouldClearRef.current = true;
     }, [connectionId, databaseName]);
 
     useEffect(() => {
@@ -250,6 +262,49 @@ const VacuumStatusSection: React.FC<DatabaseSectionProps> = ({
         ...TABLE_HEADER_SX,
         borderColor: theme.palette.divider,
     }), [theme.palette.divider]);
+
+    const chartData = useMemo((): ChartData | null => {
+        if (tables.length === 0) { return null; }
+
+        const tableNames = tables.map(
+            t => `${t.schemaname}.${t.relname}`
+        );
+
+        return {
+            categories: tableNames,
+            series: [
+                { name: 'Dead Tuples', data: tables.map(t => t.n_dead_tup ?? 0) },
+                { name: 'Live Tuples', data: tables.map(t => t.n_live_tup ?? 0) },
+                { name: 'Sequential Scans', data: tables.map(t => t.seq_scan ?? 0) },
+                { name: 'Index Scans', data: tables.map(t => t.idx_scan ?? 0) },
+                { name: 'Inserts', data: tables.map(t => t.n_tup_ins ?? 0) },
+                { name: 'Updates', data: tables.map(t => t.n_tup_upd ?? 0) },
+                { name: 'Deletes', data: tables.map(t => t.n_tup_del ?? 0) },
+            ],
+        };
+    }, [tables]);
+
+    const analysisContext = useMemo(
+        (): ChartAnalysisContext | undefined => {
+            if (tables.length === 0) { return undefined; }
+            return {
+                metricDescription:
+                    `Vacuum Status`,
+                connectionId,
+                databaseName,
+            };
+        },
+        [tables, connectionId, databaseName]
+    );
+
+    const isCached = analysisContext
+        ? hasCachedAnalysis(
+            analysisContext.metricDescription,
+            analysisContext.connectionId,
+            analysisContext.databaseName,
+            analysisContext.timeRange,
+        )
+        : false;
 
     return (
         <CollapsibleSection
@@ -284,6 +339,31 @@ const VacuumStatusSection: React.FC<DatabaseSectionProps> = ({
                 >
                     No vacuum status data available
                 </Typography>
+            )}
+
+            {tables.length > 0 && aiEnabled
+                && analysisContext && chartData && (
+                <Box sx={{
+                    display: 'flex',
+                    justifyContent: 'flex-end',
+                    mb: 1,
+                }}>
+                    <Tooltip title="AI Analysis">
+                        <IconButton
+                            size="small"
+                            color={
+                                isCached ? 'warning' : 'secondary'
+                            }
+                            onClick={
+                                () => setAnalysisOpen(true)
+                            }
+                        >
+                            <PsychologyIcon
+                                sx={{ fontSize: 16 }}
+                            />
+                        </IconButton>
+                    </Tooltip>
+                </Box>
             )}
 
             {tables.length > 0 && (
@@ -325,19 +405,19 @@ const VacuumStatusSection: React.FC<DatabaseSectionProps> = ({
                         return (
                             <Box
                                 key={
-                                    `${row.schemaname}`
-                                    + `.${row.relname}`
+                                    `${row.schemaname ?? 'public'}`
+                                    + `.${row.relname ?? 'unknown'}`
                                 }
                                 sx={TABLE_ROW_SX}
                             >
                                 <Typography
                                     sx={NAME_CELL_SX}
                                     title={
-                                        `${row.schemaname}`
-                                        + `.${row.relname}`
+                                        `${row.schemaname ?? 'public'}`
+                                        + `.${row.relname ?? 'unknown'}`
                                     }
                                 >
-                                    {row.schemaname}.{row.relname}
+                                    {row.schemaname ?? 'public'}.{row.relname ?? 'unknown'}
                                 </Typography>
                                 <Typography
                                     sx={{
@@ -386,6 +466,15 @@ const VacuumStatusSection: React.FC<DatabaseSectionProps> = ({
                     })}
                 </Box>
             )}
+            <ChartAnalysisDialog
+                open={analysisOpen}
+                onClose={() => setAnalysisOpen(false)}
+                isDark={theme.palette.mode === 'dark'}
+                analysisContext={
+                    analysisContext ?? { metricDescription: '' }
+                }
+                chartData={chartData ?? { series: [] }}
+            />
         </CollapsibleSection>
     );
 };

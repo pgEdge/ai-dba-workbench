@@ -8,15 +8,22 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import Box from '@mui/material/Box';
+import IconButton from '@mui/material/IconButton';
+import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
+import PsychologyIcon from '@mui/icons-material/Psychology';
 import { alpha, useTheme } from '@mui/material/styles';
 import { useAuth } from '../../../contexts/AuthContext';
 import { apiFetch } from '../../../utils/apiClient';
 import { useDashboard } from '../../../contexts/DashboardContext';
+import { useAICapabilities } from '../../../contexts/AICapabilitiesContext';
+import { hasCachedAnalysis } from '../../../hooks/useChartAnalysis';
 import CollapsibleSection from '../CollapsibleSection';
+import { ChartAnalysisDialog } from '../../ChartAnalysisDialog';
+import { ChartAnalysisContext, ChartData } from '../../Chart/types';
 import {
     LEADERBOARD_ROW_SX,
     LEADERBOARD_NAME_SX,
@@ -27,7 +34,6 @@ import {
     TableLeaderboardRow,
     TableSortCriteria,
     LeaderboardResponse,
-    formatBytes,
     formatNumber,
 } from './types';
 
@@ -38,7 +44,7 @@ const SORT_OPTIONS: {
     orderBy: string;
     order: string;
 }[] = [
-    { value: 'size', label: 'Size', orderBy: 'table_size', order: 'desc' },
+    { value: 'size', label: 'Rows', orderBy: 'n_live_tup', order: 'desc' },
     {
         value: 'seq_scans',
         label: 'Seq Scans',
@@ -63,7 +69,6 @@ const SORT_OPTIONS: {
 const TAB_CONTAINER_SX = {
     display: 'flex',
     gap: 0.5,
-    mb: 2,
     flexWrap: 'wrap' as const,
 };
 
@@ -120,6 +125,16 @@ const SECONDARY_SX = {
     color: 'text.secondary',
     fontFamily: '"JetBrains Mono", "SF Mono", monospace',
     whiteSpace: 'nowrap' as const,
+    minWidth: 80,
+    textAlign: 'right' as const,
+};
+
+/** Stats group on the right side of each row */
+const STATS_GROUP_SX = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 2,
+    flexShrink: 0,
 };
 
 /**
@@ -132,14 +147,16 @@ const getPrimaryValue = (
 ): string => {
     switch (criteria) {
         case 'size':
-            return row.table_size_pretty ?? formatBytes(row.table_size);
+            return `${formatNumber(row.n_live_tup)} rows`;
         case 'seq_scans':
             return formatNumber(row.seq_scan);
         case 'dead_tuples':
             return formatNumber(row.n_dead_tup);
         case 'modifications':
             return formatNumber(
-                row.n_tup_ins + row.n_tup_upd + row.n_tup_del
+                (row.n_tup_ins ?? 0)
+                + (row.n_tup_upd ?? 0)
+                + (row.n_tup_del ?? 0)
             );
         default:
             return '--';
@@ -155,13 +172,15 @@ const getSecondaryInfo = (
 ): string => {
     switch (criteria) {
         case 'size':
-            return `${formatNumber(row.n_live_tup)} rows`;
+            return `${formatNumber(row.n_dead_tup)} dead`;
         case 'seq_scans':
             return `${formatNumber(row.idx_scan)} idx scans`;
         case 'dead_tuples': {
-            const total = row.n_live_tup + row.n_dead_tup;
+            const live = row.n_live_tup ?? 0;
+            const dead = row.n_dead_tup ?? 0;
+            const total = live + dead;
             const ratio = total > 0
-                ? ((row.n_dead_tup / total) * 100).toFixed(1)
+                ? ((dead / total) * 100).toFixed(1)
                 : '0.0';
             return `${ratio}% dead`;
         }
@@ -181,13 +200,15 @@ const getNumericValue = (
 ): number => {
     switch (criteria) {
         case 'size':
-            return row.table_size;
+            return row.n_live_tup ?? 0;
         case 'seq_scans':
-            return row.seq_scan;
+            return row.seq_scan ?? 0;
         case 'dead_tuples':
-            return row.n_dead_tup;
+            return row.n_dead_tup ?? 0;
         case 'modifications':
-            return row.n_tup_ins + row.n_tup_upd + row.n_tup_del;
+            return (row.n_tup_ins ?? 0)
+                + (row.n_tup_upd ?? 0)
+                + (row.n_tup_del ?? 0);
         default:
             return 0;
     }
@@ -205,6 +226,7 @@ const TableLeaderboardSection: React.FC<DatabaseSectionProps> = ({
     const { user } = useAuth();
     const { refreshTrigger, pushOverlay } = useDashboard();
     const theme = useTheme();
+    const { aiEnabled } = useAICapabilities();
 
     const [sortCriteria, setSortCriteria] = useState<TableSortCriteria>(
         'size'
@@ -212,8 +234,8 @@ const TableLeaderboardSection: React.FC<DatabaseSectionProps> = ({
     const [tables, setTables] = useState<TableLeaderboardRow[]>([]);
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
-    const isMountedRef = useRef<boolean>(true);
-    const initialLoadDoneRef = useRef<boolean>(false);
+    const [analysisOpen, setAnalysisOpen] = useState(false);
+    const shouldClearRef = useRef<boolean>(true);
 
     const activeSortOption = useMemo(
         () => SORT_OPTIONS.find(o => o.value === sortCriteria)
@@ -232,10 +254,12 @@ const TableLeaderboardSection: React.FC<DatabaseSectionProps> = ({
             order_by: activeSortOption.orderBy,
             order: activeSortOption.order,
         });
-        const url = `/api/v1/metrics/query?${params.toString()}`;
+        const url = `/api/v1/metrics/latest?${params.toString()}`;
 
-        if (!initialLoadDoneRef.current) {
+        if (shouldClearRef.current) {
             setLoading(true);
+            setTables([]);
+            shouldClearRef.current = false;
         }
         setError(null);
 
@@ -252,48 +276,35 @@ const TableLeaderboardSection: React.FC<DatabaseSectionProps> = ({
                 );
             }
 
-            if (isMountedRef.current) {
-                const result = await response.json() as
-                    LeaderboardResponse<TableLeaderboardRow>
-                    | TableLeaderboardRow[];
+            const result = await response.json() as
+                LeaderboardResponse<TableLeaderboardRow>
+                | TableLeaderboardRow[];
 
-                if (Array.isArray(result)) {
-                    setTables(result);
-                } else {
-                    setTables(result.rows ?? []);
-                }
-                initialLoadDoneRef.current = true;
+            if (Array.isArray(result)) {
+                setTables(result);
+            } else {
+                setTables(result.rows ?? []);
             }
         } catch (err) {
             console.error('Error fetching table leaderboard:', err);
-            if (isMountedRef.current) {
-                setError(
-                    (err as Error).message
-                    || 'Failed to fetch table data'
-                );
-                setTables([]);
-            }
+            setError(
+                (err as Error).message
+                || 'Failed to fetch table data'
+            );
+            setTables([]);
         } finally {
-            if (isMountedRef.current) {
-                setLoading(false);
-            }
+            setLoading(false);
         }
     }, [user, connectionId, databaseName, activeSortOption]);
 
     useEffect(() => {
-        initialLoadDoneRef.current = false;
+        shouldClearRef.current = true;
     }, [connectionId, databaseName, sortCriteria]);
 
     useEffect(() => {
-        isMountedRef.current = true;
-
         if (user) {
             fetchData();
         }
-
-        return () => {
-            isMountedRef.current = false;
-        };
     }, [user, fetchData, refreshTrigger]);
 
     const handleTableClick = useCallback(
@@ -328,39 +339,114 @@ const TableLeaderboardSection: React.FC<DatabaseSectionProps> = ({
         );
     }, [tables, sortCriteria]);
 
+    const chartData = useMemo((): ChartData | null => {
+        if (tables.length === 0) { return null; }
+
+        const tableNames = tables.map(
+            t => `${t.schemaname}.${t.relname}`
+        );
+
+        return {
+            categories: tableNames,
+            series: [
+                { name: 'Live Rows', data: tables.map(t => t.n_live_tup ?? 0) },
+                { name: 'Dead Tuples', data: tables.map(t => t.n_dead_tup ?? 0) },
+                { name: 'Sequential Scans', data: tables.map(t => t.seq_scan ?? 0) },
+                { name: 'Index Scans', data: tables.map(t => t.idx_scan ?? 0) },
+                { name: 'Inserts', data: tables.map(t => t.n_tup_ins ?? 0) },
+                { name: 'Updates', data: tables.map(t => t.n_tup_upd ?? 0) },
+                { name: 'Deletes', data: tables.map(t => t.n_tup_del ?? 0) },
+            ],
+        };
+    }, [tables]);
+
+    const analysisContext = useMemo(
+        (): ChartAnalysisContext | undefined => {
+            if (tables.length === 0) { return undefined; }
+            return {
+                metricDescription:
+                    `Table Leaderboard — ${activeSortOption.label}`,
+                connectionId,
+                databaseName,
+            };
+        },
+        [tables, activeSortOption, connectionId, databaseName]
+    );
+
+    const isCached = analysisContext
+        ? hasCachedAnalysis(
+            analysisContext.metricDescription,
+            analysisContext.connectionId,
+            analysisContext.databaseName,
+            analysisContext.timeRange,
+        )
+        : false;
+
     return (
         <CollapsibleSection title="Table Leaderboard" defaultExpanded>
-            <Box sx={TAB_CONTAINER_SX}>
-                {SORT_OPTIONS.map(option => (
-                    <Box
-                        key={option.value}
-                        component="button"
-                        sx={sortCriteria === option.value
-                            ? TAB_BUTTON_ACTIVE_SX
-                            : TAB_BUTTON_SX}
-                        onClick={() => handleSortChange(option.value)}
-                        role="tab"
-                        tabIndex={0}
-                        aria-selected={sortCriteria === option.value}
-                        aria-label={
-                            `Sort tables by ${option.label}`
-                        }
-                        onKeyDown={(e: React.KeyboardEvent) => {
-                            if (
-                                e.key === 'Enter'
-                                || e.key === ' '
-                            ) {
-                                e.preventDefault();
-                                handleSortChange(option.value);
+            <Box sx={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                mb: 2,
+            }}>
+                <Box sx={TAB_CONTAINER_SX}>
+                    {SORT_OPTIONS.map(option => (
+                        <Box
+                            key={option.value}
+                            component="button"
+                            sx={sortCriteria === option.value
+                                ? TAB_BUTTON_ACTIVE_SX
+                                : TAB_BUTTON_SX}
+                            onClick={
+                                () => handleSortChange(option.value)
                             }
-                        }}
-                    >
-                        {option.label}
-                    </Box>
-                ))}
+                            role="tab"
+                            tabIndex={0}
+                            aria-selected={
+                                sortCriteria === option.value
+                            }
+                            aria-label={
+                                `Sort tables by ${option.label}`
+                            }
+                            onKeyDown={(
+                                e: React.KeyboardEvent
+                            ) => {
+                                if (
+                                    e.key === 'Enter'
+                                    || e.key === ' '
+                                ) {
+                                    e.preventDefault();
+                                    handleSortChange(
+                                        option.value
+                                    );
+                                }
+                            }}
+                        >
+                            {option.label}
+                        </Box>
+                    ))}
+                </Box>
+                {aiEnabled && analysisContext && chartData && (
+                    <Tooltip title="AI Analysis">
+                        <IconButton
+                            size="small"
+                            color={
+                                isCached ? 'warning' : 'secondary'
+                            }
+                            onClick={
+                                () => setAnalysisOpen(true)
+                            }
+                        >
+                            <PsychologyIcon
+                                sx={{ fontSize: 16 }}
+                            />
+                        </IconButton>
+                    </Tooltip>
+                )}
             </Box>
 
-            {loading && tables.length === 0 && (
+            {loading && (
                 <Box sx={{
                     display: 'flex',
                     justifyContent: 'center',
@@ -401,7 +487,7 @@ const TableLeaderboardSection: React.FC<DatabaseSectionProps> = ({
                         return (
                             <Box
                                 key={
-                                    `${row.schemaname}.${row.relname}`
+                                    `${row.schemaname ?? 'public'}.${row.relname ?? 'unknown'}`
                                 }
                                 sx={{
                                     ...LEADERBOARD_ROW_SX as object,
@@ -448,46 +534,64 @@ const TableLeaderboardSection: React.FC<DatabaseSectionProps> = ({
                                     >
                                         {row.schemaname}.{row.relname}
                                     </Typography>
-                                    <Box
-                                        sx={{
-                                            ...BAR_CONTAINER_SX,
-                                            bgcolor: alpha(
-                                                theme.palette
-                                                    .primary.main,
-                                                0.15,
-                                            ),
-                                        }}
-                                    >
+                                    <Box sx={STATS_GROUP_SX}>
+                                        <Typography
+                                            sx={SECONDARY_SX}
+                                        >
+                                            {getSecondaryInfo(
+                                                row, sortCriteria
+                                            )}
+                                        </Typography>
                                         <Box
                                             sx={{
-                                                width: `${barWidth}%`,
-                                                height: '100%',
-                                                bgcolor:
-                                                    'primary.main',
-                                                borderRadius: 3,
-                                                transition:
-                                                    'width 0.3s',
+                                                ...BAR_CONTAINER_SX,
+                                                bgcolor: alpha(
+                                                    theme.palette
+                                                        .primary.main,
+                                                    0.15,
+                                                ),
                                             }}
-                                        />
+                                        >
+                                            <Box
+                                                sx={{
+                                                    width:
+                                                        `${barWidth}%`,
+                                                    height: '100%',
+                                                    bgcolor:
+                                                        'primary.main',
+                                                    borderRadius: 3,
+                                                    transition:
+                                                        'width 0.3s',
+                                                }}
+                                            />
+                                        </Box>
+                                        <Typography
+                                            sx={{
+                                                ...(LEADERBOARD_VALUE_SX as object),
+                                                minWidth: 100,
+                                                textAlign: 'right',
+                                            }}
+                                        >
+                                            {getPrimaryValue(
+                                                row, sortCriteria
+                                            )}
+                                        </Typography>
                                     </Box>
-                                    <Typography sx={SECONDARY_SX}>
-                                        {getSecondaryInfo(
-                                            row, sortCriteria
-                                        )}
-                                    </Typography>
                                 </Box>
-                                <Typography
-                                    sx={LEADERBOARD_VALUE_SX}
-                                >
-                                    {getPrimaryValue(
-                                        row, sortCriteria
-                                    )}
-                                </Typography>
                             </Box>
                         );
                     })}
                 </Box>
             )}
+            <ChartAnalysisDialog
+                open={analysisOpen}
+                onClose={() => setAnalysisOpen(false)}
+                isDark={theme.palette.mode === 'dark'}
+                analysisContext={
+                    analysisContext ?? { metricDescription: '' }
+                }
+                chartData={chartData ?? { series: [] }}
+            />
         </CollapsibleSection>
     );
 };

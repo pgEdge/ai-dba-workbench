@@ -24,6 +24,10 @@ describe('formatBytes', () => {
         expect(formatBytes(null)).toBe('--');
     });
 
+    it('returns "--" for undefined', () => {
+        expect(formatBytes(undefined)).toBe('--');
+    });
+
     it('returns "0 B" for zero', () => {
         expect(formatBytes(0)).toBe('0 B');
     });
@@ -58,6 +62,14 @@ describe('formatBytes', () => {
 });
 
 describe('formatTime', () => {
+    it('returns "--" for null', () => {
+        expect(formatTime(null)).toBe('--');
+    });
+
+    it('returns "--" for undefined', () => {
+        expect(formatTime(undefined)).toBe('--');
+    });
+
     it('formats sub-millisecond values in microseconds', () => {
         expect(formatTime(0.5)).toBe('500 us');
     });
@@ -108,6 +120,14 @@ describe('formatTime', () => {
 });
 
 describe('formatNumber', () => {
+    it('returns "--" for null', () => {
+        expect(formatNumber(null)).toBe('--');
+    });
+
+    it('returns "--" for undefined', () => {
+        expect(formatNumber(undefined)).toBe('--');
+    });
+
     it('formats small numbers', () => {
         expect(formatNumber(42)).toBe('42');
     });
@@ -128,6 +148,14 @@ describe('formatNumber', () => {
 });
 
 describe('formatCompactNumber', () => {
+    it('returns "--" for null', () => {
+        expect(formatCompactNumber(null)).toBe('--');
+    });
+
+    it('returns "--" for undefined', () => {
+        expect(formatCompactNumber(undefined)).toBe('--');
+    });
+
     it('formats small numbers with locale string', () => {
         expect(formatCompactNumber(42)).toBe('42');
     });
@@ -155,6 +183,10 @@ describe('formatValue', () => {
         expect(formatValue(null)).toBe('--');
     });
 
+    it('returns "--" for undefined', () => {
+        expect(formatValue(undefined)).toBe('--');
+    });
+
     it('formats zero with default decimals', () => {
         expect(formatValue(0)).toBe('0.0');
     });
@@ -172,6 +204,10 @@ describe('formatValue', () => {
 describe('formatLag', () => {
     it('returns "--" for null', () => {
         expect(formatLag(null)).toBe('--');
+    });
+
+    it('returns "--" for undefined', () => {
+        expect(formatLag(undefined)).toBe('--');
     });
 
     it('formats zero as milliseconds', () => {

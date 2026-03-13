@@ -8,15 +8,22 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import Box from '@mui/material/Box';
+import IconButton from '@mui/material/IconButton';
+import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
+import PsychologyIcon from '@mui/icons-material/Psychology';
 import { alpha, useTheme } from '@mui/material/styles';
 import { useAuth } from '../../../contexts/AuthContext';
 import { apiFetch } from '../../../utils/apiClient';
 import { useDashboard } from '../../../contexts/DashboardContext';
+import { useAICapabilities } from '../../../contexts/AICapabilitiesContext';
+import { hasCachedAnalysis } from '../../../hooks/useChartAnalysis';
 import CollapsibleSection from '../CollapsibleSection';
+import { ChartAnalysisDialog } from '../../ChartAnalysisDialog';
+import { ChartAnalysisContext, ChartData } from '../../Chart/types';
 import {
     LEADERBOARD_ROW_SX,
     LEADERBOARD_NAME_SX,
@@ -27,7 +34,6 @@ import {
     IndexLeaderboardRow,
     IndexSortCriteria,
     LeaderboardResponse,
-    formatBytes,
     formatNumber,
 } from './types';
 
@@ -40,8 +46,8 @@ const SORT_OPTIONS: {
 }[] = [
     {
         value: 'size',
-        label: 'Size',
-        orderBy: 'index_size',
+        label: 'Reads',
+        orderBy: 'idx_tup_read',
         order: 'desc',
     },
     {
@@ -62,7 +68,6 @@ const SORT_OPTIONS: {
 const TAB_CONTAINER_SX = {
     display: 'flex',
     gap: 0.5,
-    mb: 2,
     flexWrap: 'wrap' as const,
 };
 
@@ -119,6 +124,16 @@ const SECONDARY_SX = {
     color: 'text.secondary',
     fontFamily: '"JetBrains Mono", "SF Mono", monospace',
     whiteSpace: 'nowrap' as const,
+    minWidth: 80,
+    textAlign: 'right' as const,
+};
+
+/** Stats group on the right side of each row */
+const STATS_GROUP_SX = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 2,
+    flexShrink: 0,
 };
 
 /**
@@ -131,10 +146,8 @@ const getPrimaryValue = (
 ): string => {
     switch (criteria) {
         case 'size':
-            return row.index_size_pretty
-                ?? formatBytes(row.index_size);
+            return `${formatNumber(row.idx_tup_read)} reads`;
         case 'scans':
-            return formatNumber(row.idx_scan);
         case 'unused':
             return formatNumber(row.idx_scan);
         default:
@@ -153,11 +166,9 @@ const getSecondaryInfo = (
         case 'size':
             return `${formatNumber(row.idx_scan)} scans`;
         case 'scans':
-            return row.index_size_pretty
-                ?? formatBytes(row.index_size);
+            return `${formatNumber(row.idx_tup_read)} reads`;
         case 'unused':
-            return row.index_size_pretty
-                ?? formatBytes(row.index_size);
+            return `${formatNumber(row.idx_tup_read)} reads`;
         default:
             return '';
     }
@@ -172,11 +183,11 @@ const getNumericValue = (
 ): number => {
     switch (criteria) {
         case 'size':
-            return row.index_size;
+            return row.idx_tup_read ?? 0;
         case 'scans':
-            return row.idx_scan;
+            return row.idx_scan ?? 0;
         case 'unused':
-            return row.index_size;
+            return row.idx_scan ?? 0;
         default:
             return 0;
     }
@@ -194,6 +205,7 @@ const IndexLeaderboardSection: React.FC<DatabaseSectionProps> = ({
     const { user } = useAuth();
     const { refreshTrigger, pushOverlay } = useDashboard();
     const theme = useTheme();
+    const { aiEnabled } = useAICapabilities();
 
     const [sortCriteria, setSortCriteria] = useState<IndexSortCriteria>(
         'size'
@@ -201,8 +213,8 @@ const IndexLeaderboardSection: React.FC<DatabaseSectionProps> = ({
     const [indexes, setIndexes] = useState<IndexLeaderboardRow[]>([]);
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
-    const isMountedRef = useRef<boolean>(true);
-    const initialLoadDoneRef = useRef<boolean>(false);
+    const [analysisOpen, setAnalysisOpen] = useState(false);
+    const shouldClearRef = useRef<boolean>(true);
 
     const activeSortOption = useMemo(
         () => SORT_OPTIONS.find(o => o.value === sortCriteria)
@@ -221,10 +233,12 @@ const IndexLeaderboardSection: React.FC<DatabaseSectionProps> = ({
             order_by: activeSortOption.orderBy,
             order: activeSortOption.order,
         });
-        const url = `/api/v1/metrics/query?${params.toString()}`;
+        const url = `/api/v1/metrics/latest?${params.toString()}`;
 
-        if (!initialLoadDoneRef.current) {
+        if (shouldClearRef.current) {
             setLoading(true);
+            setIndexes([]);
+            shouldClearRef.current = false;
         }
         setError(null);
 
@@ -241,48 +255,35 @@ const IndexLeaderboardSection: React.FC<DatabaseSectionProps> = ({
                 );
             }
 
-            if (isMountedRef.current) {
-                const result = await response.json() as
-                    LeaderboardResponse<IndexLeaderboardRow>
-                    | IndexLeaderboardRow[];
+            const result = await response.json() as
+                LeaderboardResponse<IndexLeaderboardRow>
+                | IndexLeaderboardRow[];
 
-                if (Array.isArray(result)) {
-                    setIndexes(result);
-                } else {
-                    setIndexes(result.rows ?? []);
-                }
-                initialLoadDoneRef.current = true;
+            if (Array.isArray(result)) {
+                setIndexes(result);
+            } else {
+                setIndexes(result.rows ?? []);
             }
         } catch (err) {
             console.error('Error fetching index leaderboard:', err);
-            if (isMountedRef.current) {
-                setError(
-                    (err as Error).message
-                    || 'Failed to fetch index data'
-                );
-                setIndexes([]);
-            }
+            setError(
+                (err as Error).message
+                || 'Failed to fetch index data'
+            );
+            setIndexes([]);
         } finally {
-            if (isMountedRef.current) {
-                setLoading(false);
-            }
+            setLoading(false);
         }
     }, [user, connectionId, databaseName, activeSortOption]);
 
     useEffect(() => {
-        initialLoadDoneRef.current = false;
+        shouldClearRef.current = true;
     }, [connectionId, databaseName, sortCriteria]);
 
     useEffect(() => {
-        isMountedRef.current = true;
-
         if (user) {
             fetchData();
         }
-
-        return () => {
-            isMountedRef.current = false;
-        };
     }, [user, fetchData, refreshTrigger]);
 
     const handleIndexClick = useCallback(
@@ -318,41 +319,112 @@ const IndexLeaderboardSection: React.FC<DatabaseSectionProps> = ({
         );
     }, [indexes, sortCriteria]);
 
+    const chartData = useMemo((): ChartData | null => {
+        if (indexes.length === 0) { return null; }
+
+        const indexNames = indexes.map(
+            i => `${i.schemaname}.${i.indexrelname}`
+        );
+
+        return {
+            categories: indexNames,
+            series: [
+                { name: 'Index Scans', data: indexes.map(i => i.idx_scan ?? 0) },
+                { name: 'Tuples Read', data: indexes.map(i => i.idx_tup_read ?? 0) },
+                { name: 'Tuples Fetched', data: indexes.map(i => i.idx_tup_fetch ?? 0) },
+            ],
+        };
+    }, [indexes]);
+
+    const analysisContext = useMemo(
+        (): ChartAnalysisContext | undefined => {
+            if (indexes.length === 0) { return undefined; }
+            return {
+                metricDescription:
+                    `Index Leaderboard — ${activeSortOption.label}`,
+                connectionId,
+                databaseName,
+            };
+        },
+        [indexes, activeSortOption, connectionId, databaseName]
+    );
+
+    const isCached = analysisContext
+        ? hasCachedAnalysis(
+            analysisContext.metricDescription,
+            analysisContext.connectionId,
+            analysisContext.databaseName,
+            analysisContext.timeRange,
+        )
+        : false;
+
     return (
         <CollapsibleSection title="Index Leaderboard" defaultExpanded>
-            <Box sx={TAB_CONTAINER_SX}>
-                {SORT_OPTIONS.map(option => (
-                    <Box
-                        key={option.value}
-                        component="button"
-                        sx={sortCriteria === option.value
-                            ? TAB_BUTTON_ACTIVE_SX
-                            : TAB_BUTTON_SX}
-                        onClick={() => handleSortChange(option.value)}
-                        role="tab"
-                        tabIndex={0}
-                        aria-selected={
-                            sortCriteria === option.value
-                        }
-                        aria-label={
-                            `Sort indexes by ${option.label}`
-                        }
-                        onKeyDown={(e: React.KeyboardEvent) => {
-                            if (
-                                e.key === 'Enter'
-                                || e.key === ' '
-                            ) {
-                                e.preventDefault();
-                                handleSortChange(option.value);
+            <Box sx={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                mb: 2,
+            }}>
+                <Box sx={TAB_CONTAINER_SX}>
+                    {SORT_OPTIONS.map(option => (
+                        <Box
+                            key={option.value}
+                            component="button"
+                            sx={sortCriteria === option.value
+                                ? TAB_BUTTON_ACTIVE_SX
+                                : TAB_BUTTON_SX}
+                            onClick={
+                                () => handleSortChange(
+                                    option.value
+                                )
                             }
-                        }}
-                    >
-                        {option.label}
-                    </Box>
-                ))}
+                            role="tab"
+                            tabIndex={0}
+                            aria-selected={
+                                sortCriteria === option.value
+                            }
+                            aria-label={
+                                `Sort indexes by ${option.label}`
+                            }
+                            onKeyDown={(
+                                e: React.KeyboardEvent
+                            ) => {
+                                if (
+                                    e.key === 'Enter'
+                                    || e.key === ' '
+                                ) {
+                                    e.preventDefault();
+                                    handleSortChange(
+                                        option.value
+                                    );
+                                }
+                            }}
+                        >
+                            {option.label}
+                        </Box>
+                    ))}
+                </Box>
+                {aiEnabled && analysisContext && chartData && (
+                    <Tooltip title="AI Analysis">
+                        <IconButton
+                            size="small"
+                            color={
+                                isCached ? 'warning' : 'secondary'
+                            }
+                            onClick={
+                                () => setAnalysisOpen(true)
+                            }
+                        >
+                            <PsychologyIcon
+                                sx={{ fontSize: 16 }}
+                            />
+                        </IconButton>
+                    </Tooltip>
+                )}
             </Box>
 
-            {loading && indexes.length === 0 && (
+            {loading && (
                 <Box sx={{
                     display: 'flex',
                     justifyContent: 'center',
@@ -455,50 +527,67 @@ const IndexLeaderboardSection: React.FC<DatabaseSectionProps> = ({
                                                     'text.secondary',
                                             }}
                                         >
-                                            on {row.relname}
+                                            on {row.relname ?? '--'}
                                         </Typography>
                                     </Box>
-                                    <Box
-                                        sx={{
-                                            ...BAR_CONTAINER_SX,
-                                            bgcolor: alpha(
-                                                theme.palette
-                                                    .primary.main,
-                                                0.15,
-                                            ),
-                                        }}
-                                    >
+                                    <Box sx={STATS_GROUP_SX}>
+                                        <Typography
+                                            sx={SECONDARY_SX}
+                                        >
+                                            {getSecondaryInfo(
+                                                row, sortCriteria
+                                            )}
+                                        </Typography>
                                         <Box
                                             sx={{
-                                                width:
-                                                    `${barWidth}%`,
-                                                height: '100%',
-                                                bgcolor:
-                                                    'primary.main',
-                                                borderRadius: 3,
-                                                transition:
-                                                    'width 0.3s',
+                                                ...BAR_CONTAINER_SX,
+                                                bgcolor: alpha(
+                                                    theme.palette
+                                                        .primary.main,
+                                                    0.15,
+                                                ),
                                             }}
-                                        />
+                                        >
+                                            <Box
+                                                sx={{
+                                                    width:
+                                                        `${barWidth}%`,
+                                                    height: '100%',
+                                                    bgcolor:
+                                                        'primary.main',
+                                                    borderRadius: 3,
+                                                    transition:
+                                                        'width 0.3s',
+                                                }}
+                                            />
+                                        </Box>
+                                        <Typography
+                                            sx={{
+                                                ...(LEADERBOARD_VALUE_SX as object),
+                                                minWidth: 100,
+                                                textAlign: 'right',
+                                            }}
+                                        >
+                                            {getPrimaryValue(
+                                                row, sortCriteria
+                                            )}
+                                        </Typography>
                                     </Box>
-                                    <Typography sx={SECONDARY_SX}>
-                                        {getSecondaryInfo(
-                                            row, sortCriteria
-                                        )}
-                                    </Typography>
                                 </Box>
-                                <Typography
-                                    sx={LEADERBOARD_VALUE_SX}
-                                >
-                                    {getPrimaryValue(
-                                        row, sortCriteria
-                                    )}
-                                </Typography>
                             </Box>
                         );
                     })}
                 </Box>
             )}
+            <ChartAnalysisDialog
+                open={analysisOpen}
+                onClose={() => setAnalysisOpen(false)}
+                isDark={theme.palette.mode === 'dark'}
+                analysisContext={
+                    analysisContext ?? { metricDescription: '' }
+                }
+                chartData={chartData ?? { series: [] }}
+            />
         </CollapsibleSection>
     );
 };

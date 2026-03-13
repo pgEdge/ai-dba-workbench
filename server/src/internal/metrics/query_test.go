@@ -205,23 +205,24 @@ func TestBuildMetricsQuery(t *testing.T) {
 		}
 	})
 
-	t.Run("with filters", func(t *testing.T) {
+	t.Run("with filters using datname", func(t *testing.T) {
 		query, args, err := BuildMetricsQuery(
 			"pg_stat_database",
 			[]string{"xact_commit"},
 			map[string]string{"xact_commit": "bigint"},
 			1, start, end, 60, "sum",
 			MetricFilters{
-				DatabaseName: "mydb",
-				SchemaName:   "public",
-				TableName:    "users",
+				DatabaseName:   "mydb",
+				DatabaseColumn: "datname",
+				SchemaName:     "public",
+				TableName:      "users",
 			},
 		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		if !strings.Contains(query, "datname = $5") {
+		if !strings.Contains(query, `"datname" = $5`) {
 			t.Error("query should filter by datname")
 		}
 		if !strings.Contains(query, "schemaname = $6") {
@@ -232,6 +233,56 @@ func TestBuildMetricsQuery(t *testing.T) {
 		}
 		if len(args) != 7 {
 			t.Errorf("expected 7 args, got %d", len(args))
+		}
+	})
+
+	t.Run("with filters using database_name", func(t *testing.T) {
+		query, args, err := BuildMetricsQuery(
+			"pg_stat_all_tables",
+			[]string{"seq_scan"},
+			map[string]string{"seq_scan": "bigint"},
+			1, start, end, 60, "avg",
+			MetricFilters{
+				DatabaseName:   "mydb",
+				DatabaseColumn: "database_name",
+				SchemaName:     "public",
+			},
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if !strings.Contains(query, `"database_name" = $5`) {
+			t.Error("query should filter by database_name")
+		}
+		if !strings.Contains(query, "schemaname = $6") {
+			t.Error("query should filter by schemaname")
+		}
+		if len(args) != 6 {
+			t.Errorf("expected 6 args, got %d", len(args))
+		}
+	})
+
+	t.Run("database filter skipped when column empty", func(t *testing.T) {
+		query, args, err := BuildMetricsQuery(
+			"pg_sys_cpu_info",
+			[]string{"cpu_user"},
+			map[string]string{"cpu_user": "double precision"},
+			1, start, end, 60, "avg",
+			MetricFilters{
+				DatabaseName:   "mydb",
+				DatabaseColumn: "",
+			},
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if strings.Contains(query, "datname") || strings.Contains(query, "database_name") {
+			t.Error("query should not filter by database when column is empty")
+		}
+		if len(args) != 4 {
+			t.Errorf("expected 4 args (no database filter), got %d", len(args))
 		}
 	})
 

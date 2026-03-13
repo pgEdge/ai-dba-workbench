@@ -217,6 +217,7 @@ The API provides endpoints in the following categories.
 | GET | `/api/v1/metrics/performance-summary` | Get a performance summary. |
 | GET | `/api/v1/metrics/database-summaries` | Get database-level summaries. |
 | GET | `/api/v1/metrics/top-queries` | Get the top queries by resource usage. |
+| GET | `/api/v1/metrics/latest` | Get the latest probe snapshot per entity. |
 
 ### Timeline
 

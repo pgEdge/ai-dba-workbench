@@ -83,7 +83,7 @@ func (p *PgStatWalProbe) Execute(ctx context.Context, connectionName string, mon
 	}
 
 	var query string
-	if pgVersion >= 180000 {
+	if pgVersion >= 18 {
 		// PG18: wal_write, wal_sync, wal_write_time, wal_sync_time columns were removed
 		query = `
             SELECT

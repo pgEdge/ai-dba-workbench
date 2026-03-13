@@ -200,6 +200,10 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		metricsHandler := api.NewMetricsHandler(deps.Datastore, deps.AuthStore)
 		registerDatastoreHandler(mux, metricsHandler, authWrapper, "Metrics query", deps.Datastore)
 
+		// Latest snapshot endpoint (for table/index leaderboards)
+		latestHandler := api.NewLatestSnapshotHandler(deps.Datastore, deps.AuthStore)
+		registerDatastoreHandler(mux, latestHandler, authWrapper, "Latest snapshot", deps.Datastore)
+
 		// AI Overview endpoint (for estate overview summary)
 		if deps.OverviewGen != nil {
 			overviewHandler := overview.NewHandler(deps.OverviewGen, deps.OverviewHub)

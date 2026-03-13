@@ -11,11 +11,11 @@
 /**
  * Format byte values into a human-readable string.
  *
- * @param bytes - The number of bytes, or null.
- * @returns A formatted string such as "1.2 GB" or "--" for null.
+ * @param bytes - The number of bytes, or null/undefined.
+ * @returns A formatted string such as "1.2 GB" or "--" for null/undefined.
  */
-export function formatBytes(bytes: number | null): string {
-    if (bytes === null) {
+export function formatBytes(bytes: number | null | undefined): string {
+    if (bytes === null || bytes === undefined) {
         return '--';
     }
 
@@ -39,10 +39,14 @@ export function formatBytes(bytes: number | null): string {
 /**
  * Format a duration in milliseconds into a human-readable string.
  *
- * @param ms - The duration in milliseconds.
- * @returns A formatted string such as "350 us", "45.2 ms", or "5.2 min".
+ * @param ms - The duration in milliseconds, or null/undefined.
+ * @returns A formatted string such as "350 us", "45.2 ms", "5.2 min",
+ *          or "--" for null/undefined.
  */
-export function formatTime(ms: number): string {
+export function formatTime(ms: number | null | undefined): string {
+    if (ms === null || ms === undefined) {
+        return '--';
+    }
     if (ms < 1) {
         return `${Math.round(ms * 1000)} us`;
     }
@@ -64,10 +68,14 @@ export function formatTime(ms: number): string {
 /**
  * Format large numbers with locale-appropriate separators.
  *
- * @param num - The number to format.
- * @returns A formatted string with comma separators.
+ * @param num - The number to format, or null/undefined.
+ * @returns A formatted string with comma separators, or "--" for
+ *          null/undefined.
  */
-export function formatNumber(num: number): string {
+export function formatNumber(num: number | null | undefined): string {
+    if (num === null || num === undefined) {
+        return '--';
+    }
     return num.toLocaleString();
 }
 
@@ -75,10 +83,14 @@ export function formatNumber(num: number): string {
  * Format large numbers with abbreviations for space-constrained contexts
  * such as KPI tiles.
  *
- * @param num - The number to format.
- * @returns A compact string such as "1.2B", "3.4M", "12.3K", or "9,999".
+ * @param num - The number to format, or null/undefined.
+ * @returns A compact string such as "1.2B", "3.4M", "12.3K", "9,999",
+ *          or "--" for null/undefined.
  */
-export function formatCompactNumber(num: number): string {
+export function formatCompactNumber(num: number | null | undefined): string {
+    if (num === null || num === undefined) {
+        return '--';
+    }
     if (num >= 1_000_000_000) {
         return `${(num / 1_000_000_000).toFixed(1)}B`;
     }
@@ -94,15 +106,15 @@ export function formatCompactNumber(num: number): string {
 /**
  * Format a numeric value with fixed decimal places and locale separators.
  *
- * @param value - The number to format, or null.
+ * @param value - The number to format, or null/undefined.
  * @param decimals - The number of decimal places (default: 1).
- * @returns A formatted string or "--" for null.
+ * @returns A formatted string or "--" for null/undefined.
  */
 export function formatValue(
-    value: number | null,
+    value: number | null | undefined,
     decimals: number = 1
 ): string {
-    if (value === null) {
+    if (value === null || value === undefined) {
         return '--';
     }
     return Number(value.toFixed(decimals)).toLocaleString(undefined, {
@@ -117,8 +129,8 @@ export function formatValue(
  * @param lagSeconds - The lag in seconds, or null.
  * @returns A formatted string such as "250 ms", "12.3 s", or "--" for null.
  */
-export function formatLag(lagSeconds: number | null): string {
-    if (lagSeconds === null) {
+export function formatLag(lagSeconds: number | null | undefined): string {
+    if (lagSeconds === null || lagSeconds === undefined) {
         return '--';
     }
 

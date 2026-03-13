@@ -83,7 +83,7 @@ func (p *PgStatIOProbe) Execute(ctx context.Context, connectionName string, moni
 
 	if ioExists {
 		var query string
-		if pgVersion >= 180000 {
+		if pgVersion >= 18 {
 			// PG18: op_bytes column was removed
 			query = `
                 SELECT

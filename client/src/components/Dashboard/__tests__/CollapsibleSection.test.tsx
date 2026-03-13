@@ -10,10 +10,15 @@
 
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import CollapsibleSection from '../CollapsibleSection';
 
 describe('CollapsibleSection', () => {
+    beforeEach(() => {
+        vi.mocked(localStorage.getItem).mockReturnValue(null);
+        vi.mocked(localStorage.setItem).mockClear();
+        vi.mocked(localStorage.clear).mockClear();
+    });
     it('renders the title', () => {
         render(
             <CollapsibleSection title="Performance">
@@ -148,5 +153,66 @@ describe('CollapsibleSection', () => {
         fireEvent.keyDown(header, { key: ' ' });
 
         expect(header).toHaveAttribute('aria-expanded', 'false');
+    });
+
+    it('persists collapsed state in localStorage', () => {
+        render(
+            <CollapsibleSection title="Persist Test">
+                <p>Content</p>
+            </CollapsibleSection>,
+        );
+
+        const header = screen.getByRole('button', {
+            name: /collapse persist test section/i,
+        });
+
+        // Collapse the section
+        fireEvent.click(header);
+
+        expect(localStorage.setItem).toHaveBeenCalledWith(
+            'dashboard-section-persist-test-expanded',
+            'false',
+        );
+    });
+
+    it('restores collapsed state from localStorage', () => {
+        const key = 'dashboard-section-restore-test-expanded';
+        vi.mocked(localStorage.getItem).mockImplementation(
+            (k: string) => (k === key ? 'false' : null),
+        );
+
+        render(
+            <CollapsibleSection title="Restore Test">
+                <p>Content</p>
+            </CollapsibleSection>,
+        );
+
+        const header = screen.getByRole('button', {
+            name: /expand restore test section/i,
+        });
+
+        expect(header).toHaveAttribute('aria-expanded', 'false');
+    });
+
+    it('uses explicit storageKey when provided', () => {
+        render(
+            <CollapsibleSection
+                title="Custom Key"
+                storageKey="my-custom-key"
+            >
+                <p>Content</p>
+            </CollapsibleSection>,
+        );
+
+        const header = screen.getByRole('button', {
+            name: /collapse custom key section/i,
+        });
+
+        fireEvent.click(header);
+
+        expect(localStorage.setItem).toHaveBeenCalledWith(
+            'my-custom-key',
+            'false',
+        );
     });
 });

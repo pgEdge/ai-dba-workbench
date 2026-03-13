@@ -280,6 +280,12 @@ To manage response sizes:
 			filters := metrics.MetricFilters{}
 			if dbName, fok := args["database_name"].(string); fok && dbName != "" {
 				filters.DatabaseName = dbName
+				// Resolve which column name this probe uses for database filtering
+				dbCol, err := metrics.ResolveDatabaseColumn(ctx, pool, probeName)
+				if err != nil {
+					return mcp.NewToolError(fmt.Sprintf("Failed to resolve database column: %v", err))
+				}
+				filters.DatabaseColumn = dbCol
 			}
 			if schemaName, fok := args["schema_name"].(string); fok && schemaName != "" {
 				filters.SchemaName = schemaName

@@ -85,6 +85,7 @@ const DashboardOverlayContent: React.FC = () => {
         return (
             <DatabaseDashboard
                 connectionId={currentOverlay.connectionId ?? 0}
+                connectionName={currentOverlay.connectionName ?? ''}
                 databaseName={currentOverlay.databaseName ?? currentOverlay.entityName}
             />
         );

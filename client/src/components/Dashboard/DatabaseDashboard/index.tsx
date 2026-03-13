@@ -19,6 +19,7 @@ import VacuumStatusSection from './VacuumStatusSection';
 
 interface DatabaseDashboardProps {
     connectionId: number;
+    connectionName?: string;
     databaseName: string;
 }
 
@@ -58,11 +59,12 @@ const DB_META_SX = {
  */
 const DatabaseDashboard: React.FC<DatabaseDashboardProps> = ({
     connectionId,
+    connectionName,
     databaseName,
 }) => {
     const connectionLabel = useMemo(() => {
-        return `Connection ${connectionId}`;
-    }, [connectionId]);
+        return connectionName || `Connection ${connectionId}`;
+    }, [connectionId, connectionName]);
 
     if (!databaseName) {
         return (

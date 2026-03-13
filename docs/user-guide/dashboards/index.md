@@ -77,9 +77,9 @@ recommendations.
 
 ### Triggering an Analysis
 
-Every chart and KPI tile displays a brain icon in the
-upper right corner. Clicking the icon opens an analysis
-dialog and starts the LLM analysis.
+Charts, KPI tiles, leaderboards, and the vacuum status
+section each display a brain icon. Clicking the icon
+opens an analysis dialog and starts the LLM analysis.
 
 The analysis follows these steps:
 

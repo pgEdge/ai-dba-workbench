@@ -1060,6 +1060,25 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"shared_blks_read": {Type: "integer", Format: "int64", Description: "Shared blocks read"},
 			},
 		},
+		"LatestSnapshotResponse": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"rows": {
+					Type:        "array",
+					Description: "Latest snapshot rows, one per entity",
+					Items: &OpenAPISchema{
+						Type:                 "object",
+						AdditionalProperties: &OpenAPISchema{},
+						Description:          "Row with column names as keys",
+					},
+				},
+				"total_count": {
+					Type:        "integer",
+					Description: "Total number of distinct entities before pagination",
+				},
+			},
+			Required: []string{"rows", "total_count"},
+		},
 		"OverviewResponse": {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
@@ -2904,6 +2923,30 @@ func buildPaths() map[string]OpenAPIPathItem {
 				},
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonArrayResponse("TopQueryRow", "Top queries"),
+					"400": jsonResponse("ErrorResponse", "Invalid parameters"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Permission denied"),
+				},
+			},
+		},
+
+		"/metrics/latest": {
+			Get: &OpenAPIOperation{
+				Summary:     "Get latest probe snapshot",
+				Description: "Returns the most recent collected row for each unique entity in a probe table, with optional filtering, sorting, and pagination",
+				OperationID: "getLatestSnapshot",
+				Tags:        []string{"Metrics"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					queryParamIntRequired("connection_id", "Connection ID"),
+					queryParamStringRequired("probe_name", "Probe table name (e.g. pg_stat_all_tables)"),
+					queryParamString("database_name", "Filter by database name"),
+					queryParamString("order_by", "Column to sort by (default: collected_at)"),
+					queryParamString("order", "Sort order: asc or desc (default: desc)"),
+					queryParamInt("limit", "Maximum rows to return (default 20, max 100)"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("LatestSnapshotResponse", "Latest snapshot rows"),
 					"400": jsonResponse("ErrorResponse", "Invalid parameters"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Permission denied"),

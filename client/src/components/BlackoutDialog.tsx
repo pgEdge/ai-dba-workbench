@@ -126,6 +126,93 @@ const extractNumericId = (prefixedId: string | number | undefined | null): numbe
     return match ? parseInt(match[1], 10) : undefined;
 };
 
+const DB_BACKED_GROUP = /^group-\d+$/;
+const DB_BACKED_CLUSTER = /^cluster-\d+$/;
+
+const isScopeAvailable = (
+    scopeValue: string,
+    selection: Record<string, unknown> | null | undefined,
+): boolean => {
+    if (!selection) {return scopeValue === 'estate';}
+    const selType = selection.type as string;
+
+    if (scopeValue === 'estate') {return true;}
+
+    if (scopeValue === 'group') {
+        const gid = selection.groupId as string | undefined;
+        return (selType === 'server' || selType === 'cluster')
+            && !!gid && DB_BACKED_GROUP.test(gid);
+    }
+
+    if (scopeValue === 'cluster') {
+        if (selType === 'server') {
+            const cid = selection.clusterId as string | undefined;
+            return !!cid && DB_BACKED_CLUSTER.test(cid)
+                && !selection.isStandalone;
+        }
+        if (selType === 'cluster') {
+            const cid = selection.id as string | undefined;
+            return !!cid && DB_BACKED_CLUSTER.test(String(cid));
+        }
+        return false;
+    }
+
+    if (scopeValue === 'server') {
+        return selType === 'server';
+    }
+
+    return false;
+};
+
+const scopeLabel = (
+    scopeValue: string,
+    selection: Record<string, unknown> | null | undefined,
+): string | undefined => {
+    if (!selection) {return undefined;}
+    const selType = selection.type as string;
+
+    if (scopeValue === 'estate') {return 'All Servers';}
+
+    if (scopeValue === 'group') {
+        return (selection.groupName as string) || undefined;
+    }
+
+    if (scopeValue === 'cluster') {
+        if (selType === 'server') {
+            return (selection.clusterName as string) || undefined;
+        }
+        return (selection.name as string) || undefined;
+    }
+
+    if (scopeValue === 'server') {
+        return (selection.name as string) || undefined;
+    }
+
+    return undefined;
+};
+
+const resolveEntityId = (
+    scopeValue: string,
+    selection: Record<string, unknown> | null | undefined,
+): number | undefined => {
+    if (!selection) {return undefined;}
+    const selType = selection.type as string;
+
+    if (scopeValue === 'server') {
+        return extractNumericId(selection.id as string | number | undefined);
+    }
+    if (scopeValue === 'cluster') {
+        if (selType === 'server') {
+            return extractNumericId(selection.clusterId as string | undefined);
+        }
+        return extractNumericId(selection.id as string | number | undefined);
+    }
+    if (scopeValue === 'group') {
+        return extractNumericId(selection.groupId as string | undefined);
+    }
+    return undefined;
+};
+
 // ---- Component ----
 
 interface BlackoutDialogProps {
@@ -162,7 +249,11 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
     useEffect(() => {
         if (open) {
             const selType = (selection?.type as string) || 'server';
-            setScope(selType);
+            const preferred = isScopeAvailable(selType, selection)
+                ? selType
+                : ['server', 'cluster', 'group', 'estate']
+                    .find(s => isScopeAvailable(s, selection)) || 'estate';
+            setScope(preferred);
             setMode('now');
             setSelectedPreset(60);
             setCustomHours('');
@@ -243,7 +334,7 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
                 endTime = new Date(endDateTime).toISOString();
             }
 
-            const entityId = extractNumericId(selection?.id as string | number | undefined);
+            const entityId = resolveEntityId(scope, selection);
             const payload: CreateBlackoutRequest = {
                 scope: scope as CreateBlackoutRequest['scope'],
                 start_time: startTime,
@@ -315,8 +406,6 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
         },
     }), [theme]);
 
-    const selectionName = (selection?.name as string) || '';
-
     return (
         <Dialog
             open={open}
@@ -350,23 +439,25 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
                 >
                     {SCOPE_OPTIONS.map((opt) => {
                         const Icon = opt.icon;
+                        const available = isScopeAvailable(opt.value, selection);
+                        const chipLabel = scopeLabel(opt.value, selection);
                         return (
                             <Box key={opt.value} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                 <FormControlLabel
                                     value={opt.value}
-                                    control={<Radio size="small" disabled={isSaving} />}
+                                    control={<Radio size="small" disabled={isSaving || !available} />}
                                     label={
                                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                                            <Icon sx={{ fontSize: 16, color: 'text.secondary' }} />
-                                            <Typography sx={{ fontSize: '1rem' }}>
+                                            <Icon sx={{ fontSize: 16, color: available ? 'text.secondary' : 'text.disabled' }} />
+                                            <Typography sx={{ fontSize: '1rem', color: available ? 'text.primary' : 'text.disabled' }}>
                                                 {opt.label}
                                             </Typography>
                                         </Box>
                                     }
                                     sx={{ mr: 0 }}
                                 />
-                                {scope === opt.value && selectionName && (
-                                    <Chip label={selectionName} size="small" sx={scopeChipSx} />
+                                {scope === opt.value && chipLabel && (
+                                    <Chip label={chipLabel} size="small" sx={scopeChipSx} />
                                 )}
                             </Box>
                         );

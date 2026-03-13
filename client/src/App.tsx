@@ -160,9 +160,31 @@ const MainLayout: React.FC<MainLayoutProps> = ({ onToggleTheme }) => {
         return null;
     }, [selectionType]);
 
-    // Build selection object based on current selection type
+    // Build selection object based on current selection type.
+    // Parent IDs are resolved from clusterData for blackout scope. #33
     const selection = useMemo(() => {
         if (selectionType === 'server' && selectedServer) {
+            let clusterId: string | undefined;
+            let clusterName: string | undefined;
+            let isStandalone: boolean | undefined;
+            let groupId: string | undefined;
+            let groupName: string | undefined;
+
+            for (const group of clusterData) {
+                for (const cluster of group.clusters) {
+                    const allServers = collectServers(cluster.servers);
+                    if (allServers.some(s => s.id === selectedServer.id)) {
+                        clusterId = cluster.id;
+                        clusterName = cluster.name;
+                        isStandalone = cluster.isStandalone;
+                        groupId = group.id;
+                        groupName = group.name;
+                        break;
+                    }
+                }
+                if (groupId) {break;}
+            }
+
             return {
                 type: 'server',
                 id: selectedServer.id,
@@ -173,20 +195,34 @@ const MainLayout: React.FC<MainLayoutProps> = ({ onToggleTheme }) => {
                 port: selectedServer.port,
                 role: selectedServer.role,
                 version: selectedServer.version,
-                // Extended server info (may not be available yet)
                 database: selectedServer.database_name || selectedServer.database,
                 username: selectedServer.username,
                 os: selectedServer.os,
                 platform: selectedServer.platform,
                 spockNodeName: selectedServer.spock_node_name,
                 spockVersion: selectedServer.spock_version,
+                clusterId,
+                clusterName,
+                isStandalone,
+                groupId,
+                groupName,
             };
         }
 
         if (selectionType === 'cluster' && selectedCluster) {
-            // Collect all servers in the cluster (including nested children)
             const servers = collectServers(selectedCluster.servers);
             const serverIds = servers.map(s => s.id);
+
+            let groupId: string | undefined;
+            let groupName: string | undefined;
+
+            for (const group of clusterData) {
+                if (group.clusters.some(c => c.id === selectedCluster.id)) {
+                    groupId = group.id;
+                    groupName = group.name;
+                    break;
+                }
+            }
 
             return {
                 type: 'cluster',
@@ -200,6 +236,8 @@ const MainLayout: React.FC<MainLayoutProps> = ({ onToggleTheme }) => {
                     : servers.some(s => s.status === 'offline' || s.status === 'warning')
                         ? 'warning'
                         : 'online',
+                groupId,
+                groupName,
             };
         }
 

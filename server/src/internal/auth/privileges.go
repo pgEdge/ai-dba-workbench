@@ -507,7 +507,10 @@ func (s *AuthStore) GetGroupWithPrivileges(groupID int64) (*GroupWithPrivileges,
 // =============================================================================
 
 // IsPrivilegeAssignedToAnyGroup checks if a privilege has been assigned to any group
-// This determines if the privilege is "restricted" (requires authorization) or "public"
+// This determines if the privilege is "restricted" (requires authorization) or "public".
+// A privilege is considered restricted when it is explicitly granted to a group OR
+// when any group has the wildcard MCP privilege (privilege_identifier_id = 0),
+// which means all MCP items are restricted.
 func (s *AuthStore) IsPrivilegeAssignedToAnyGroup(identifier string) (bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -516,8 +519,8 @@ func (s *AuthStore) IsPrivilegeAssignedToAnyGroup(identifier string) (bool, erro
 	err := s.db.QueryRow(`
         SELECT COUNT(*)
         FROM group_mcp_privileges gmp
-        JOIN mcp_privilege_identifiers mpi ON gmp.privilege_identifier_id = mpi.id
-        WHERE mpi.identifier = ?
+        LEFT JOIN mcp_privilege_identifiers mpi ON gmp.privilege_identifier_id = mpi.id
+        WHERE mpi.identifier = ? OR gmp.privilege_identifier_id = 0
     `, identifier).Scan(&count)
 	if err != nil {
 		return false, fmt.Errorf("failed to check privilege assignment: %w", err)

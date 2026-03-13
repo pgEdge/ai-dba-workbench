@@ -357,6 +357,12 @@ func registerMCPPrivileges(store *auth.AuthStore) {
 		{"get_alert_rules", "tool", "Query current alerting rules and effective thresholds"},
 		{"get_metric_baselines", "tool", "Query statistical baselines for metrics used in anomaly detection"},
 
+		// Memory and Datastore Tools
+		{"store_memory", "tool", "Store persistent memory"},
+		{"recall_memories", "tool", "Recall stored memories"},
+		{"delete_memory", "tool", "Delete stored memory"},
+		{"query_datastore", "tool", "Query the monitoring datastore"},
+
 		// Resources
 		{"pg://system_info", "resource", "PostgreSQL system information resource"},
 		{"pg://connection_info", "resource", "Current database connection information resource"},

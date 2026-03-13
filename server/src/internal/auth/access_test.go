@@ -893,3 +893,116 @@ func TestHasAdminPermissionInheritedFromNestedGroup(t *testing.T) {
 		t.Error("Expected user to inherit admin permission from parent through nested groups")
 	}
 }
+
+// =============================================================================
+// Wildcard MCP Privilege with Unregistered Tool Tests (Issue #28)
+// =============================================================================
+
+func TestRBACCheckerUnregisteredToolWithWildcardGrant(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store)
+
+	// Create a group with wildcard MCP privilege (All MCP Privileges)
+	store.CreateUser("wildcarduser", "Password1", "Wildcard user", "", "")
+	wildcardUserID, _ := store.GetUserID("wildcarduser")
+	groupID, _ := store.CreateGroup("wildcard-group", "Wildcard group")
+	store.AddUserToGroup(groupID, wildcardUserID)
+	store.GrantMCPPrivilegeByName(groupID, "*")
+
+	// Create a user NOT in any group
+	store.CreateUser("nogroup", "Password1", "No group user", "", "")
+	noGroupUserID, _ := store.GetUserID("nogroup")
+
+	// User in wildcarded group should access an unregistered tool
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, wildcardUserID)
+
+	if !checker.CanAccessMCPItem(ctx, "store_memory") {
+		t.Error("Expected user in wildcarded group to access unregistered tool 'store_memory'")
+	}
+
+	if !checker.CanAccessMCPItem(ctx, "completely_unknown_tool") {
+		t.Error("Expected user in wildcarded group to access any unregistered tool")
+	}
+
+	// User NOT in any group should be DENIED because the wildcard makes everything restricted
+	ctx2 := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx2 = context.WithValue(ctx2, UserIDContextKey, noGroupUserID)
+
+	if checker.CanAccessMCPItem(ctx2, "store_memory") {
+		t.Error("Expected user without group to be denied access to unregistered tool when wildcard grant exists")
+	}
+}
+
+func TestRBACCheckerUnregisteredToolWithoutAnyGrants(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store)
+
+	// Create a user (no groups have any MCP grants at all)
+	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	userID, _ := store.GetUserID("testuser")
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+
+	// When no groups have any MCP privileges at all, unregistered tools
+	// should be accessible (the "unrestricted" default behavior)
+	if !checker.CanAccessMCPItem(ctx, "store_memory") {
+		t.Error("Expected access to unregistered tool when no MCP grants exist at all")
+	}
+
+	if !checker.CanAccessMCPItem(ctx, "completely_unknown_tool") {
+		t.Error("Expected access to any tool when no MCP grants exist at all")
+	}
+}
+
+func TestRBACCheckerRegisteredToolWithWildcardGrant(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store)
+
+	// Register a tool
+	store.RegisterMCPPrivilege("query_database", MCPPrivilegeTypeTool, "Execute queries")
+
+	// Create a group with wildcard MCP privilege
+	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	userID, _ := store.GetUserID("testuser")
+	groupID, _ := store.CreateGroup("wildcard-group", "Wildcard group")
+	store.AddUserToGroup(groupID, userID)
+	store.GrantMCPPrivilegeByName(groupID, "*")
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+
+	// User in wildcarded group should access registered restricted tools
+	if !checker.CanAccessMCPItem(ctx, "query_database") {
+		t.Error("Expected user in wildcarded group to access registered tool 'query_database'")
+	}
+}
+
+func TestGetUserMCPPrivilegesIncludesWildcard(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	// Create user with wildcard MCP access via a group
+	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	userID, _ := store.GetUserID("testuser")
+	groupID, _ := store.CreateGroup("wildcard-group", "Wildcard group")
+	store.AddUserToGroup(groupID, userID)
+	store.GrantMCPPrivilegeByName(groupID, "*")
+
+	// GetUserMCPPrivileges should return "*": true
+	privileges, err := store.GetUserMCPPrivileges(userID)
+	if err != nil {
+		t.Fatalf("Failed to get user MCP privileges: %v", err)
+	}
+
+	if !privileges["*"] {
+		t.Error("Expected wildcard '*' in user MCP privileges when group has wildcard grant")
+	}
+}

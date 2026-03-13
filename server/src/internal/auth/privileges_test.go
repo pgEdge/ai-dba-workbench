@@ -1091,3 +1091,79 @@ func TestMCPPrivilegeCount(t *testing.T) {
 		t.Errorf("Expected 2 privileges, got %d", count)
 	}
 }
+
+// =============================================================================
+// IsPrivilegeAssignedToAnyGroup Wildcard Tests
+// =============================================================================
+
+func TestIsPrivilegeAssignedToAnyGroupWildcard(t *testing.T) {
+	store, cleanup := createTestAuthStoreForPrivileges(t)
+	defer cleanup()
+
+	// Register a tool and leave another unregistered
+	store.RegisterMCPPrivilege("registered_tool", MCPPrivilegeTypeTool, "Registered")
+
+	// Create a group with wildcard MCP privilege
+	groupID, _ := store.CreateGroup("wildcard-group", "Wildcard group")
+	store.GrantMCPPrivilegeByName(groupID, "*")
+
+	// Registered tool should be considered restricted (wildcard grant exists)
+	assigned, err := store.IsPrivilegeAssignedToAnyGroup("registered_tool")
+	if err != nil {
+		t.Fatalf("Failed to check assignment: %v", err)
+	}
+	if !assigned {
+		t.Error("Expected registered tool to be restricted when wildcard grant exists")
+	}
+
+	// Unregistered tool should also be considered restricted (wildcard grant exists)
+	assigned, err = store.IsPrivilegeAssignedToAnyGroup("unregistered_tool")
+	if err != nil {
+		t.Fatalf("Failed to check assignment: %v", err)
+	}
+	if !assigned {
+		t.Error("Expected unregistered tool to be restricted when wildcard grant exists")
+	}
+}
+
+func TestIsPrivilegeAssignedToAnyGroupNoGrants(t *testing.T) {
+	store, cleanup := createTestAuthStoreForPrivileges(t)
+	defer cleanup()
+
+	// No groups have any MCP grants at all
+	assigned, err := store.IsPrivilegeAssignedToAnyGroup("some_tool")
+	if err != nil {
+		t.Fatalf("Failed to check assignment: %v", err)
+	}
+	if assigned {
+		t.Error("Expected tool to NOT be restricted when no grants exist at all")
+	}
+}
+
+func TestIsPrivilegeAssignedToAnyGroupSpecificOnly(t *testing.T) {
+	store, cleanup := createTestAuthStoreForPrivileges(t)
+	defer cleanup()
+
+	// Register and assign only a specific tool (no wildcard)
+	store.RegisterMCPPrivilege("specific_tool", MCPPrivilegeTypeTool, "Specific")
+	groupID, _ := store.CreateGroup("specific-group", "Specific group")
+	store.GrantMCPPrivilegeByName(groupID, "specific_tool")
+
+	// The assigned tool should be restricted
+	assigned, err := store.IsPrivilegeAssignedToAnyGroup("specific_tool")
+	if err != nil {
+		t.Fatalf("Failed to check assignment: %v", err)
+	}
+	if !assigned {
+		t.Error("Expected specific_tool to be restricted")
+	}
+
+	// An unregistered tool should NOT be restricted (no wildcard grant)
+	assigned, err = store.IsPrivilegeAssignedToAnyGroup("other_tool")
+	if err != nil {
+		t.Fatalf("Failed to check assignment: %v", err)
+	}
+	if assigned {
+		t.Error("Expected other_tool to NOT be restricted when only specific grants exist")
+	}
+}

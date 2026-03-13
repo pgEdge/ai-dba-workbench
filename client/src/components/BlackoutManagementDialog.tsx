@@ -44,6 +44,7 @@ import {
 import { useBlackouts } from '../contexts/BlackoutContext';
 import BlackoutDialog from './BlackoutDialog';
 import BlackoutScheduleDialog from './BlackoutScheduleDialog';
+import DeleteConfirmationDialog from './DeleteConfirmationDialog';
 
 // ---- Static style constants ----
 
@@ -193,6 +194,8 @@ const BlackoutManagementDialog: React.FC<BlackoutManagementDialogProps> = ({
 
     const [blackoutDialogOpen, setBlackoutDialogOpen] = useState(false);
     const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false);
+    const [pendingDelete, setPendingDelete] = useState<{ id: number; type: 'blackout' | 'schedule'; isActive?: boolean } | null>(null);
+    const [deleteLoading, setDeleteLoading] = useState(false);
 
     // Filter non-active blackouts
     const nonActiveBlackouts = useMemo(() => {
@@ -293,6 +296,27 @@ const BlackoutManagementDialog: React.FC<BlackoutManagementDialogProps> = ({
         textTransform: 'none',
         fontWeight: 600,
     }), []);
+
+    const handleDeleteConfirm = async () => {
+        if (!pendingDelete) {return;}
+        setDeleteLoading(true);
+        try {
+            if (pendingDelete.type === 'blackout') {
+                await deleteBlackout(pendingDelete.id);
+            } else {
+                await deleteSchedule(pendingDelete.id);
+            }
+        } finally {
+            setDeleteLoading(false);
+            setPendingDelete(null);
+        }
+    };
+
+    const deleteDialogMessage = pendingDelete?.type === 'blackout' && pendingDelete?.isActive
+        ? 'Are you sure you want to delete this active blackout? This will immediately resume normal alert processing.'
+        : pendingDelete?.type === 'schedule'
+            ? 'Are you sure you want to delete this schedule? This action cannot be undone.'
+            : 'Are you sure you want to delete this blackout? This action cannot be undone.';
 
     const handleStartBlackout = () => {
         setBlackoutDialogOpen(true);
@@ -422,7 +446,7 @@ const BlackoutManagementDialog: React.FC<BlackoutManagementDialogProps> = ({
                                                     <Tooltip title="Delete blackout" placement="left">
                                                         <IconButton
                                                             size="small"
-                                                            onClick={() => deleteBlackout(blackout.id)}
+                                                            onClick={() => setPendingDelete({ id: blackout.id, type: 'blackout', isActive: false })}
                                                             sx={deleteButtonSx}
                                                         >
                                                             <DeleteIcon sx={ICON_16_SX} />
@@ -475,7 +499,7 @@ const BlackoutManagementDialog: React.FC<BlackoutManagementDialogProps> = ({
                                                     <Tooltip title="Delete schedule" placement="left">
                                                         <IconButton
                                                             size="small"
-                                                            onClick={() => deleteSchedule(schedule.id)}
+                                                            onClick={() => setPendingDelete({ id: schedule.id, type: 'schedule' })}
                                                             sx={deleteButtonSx}
                                                         >
                                                             <DeleteIcon sx={ICON_16_SX} />
@@ -526,6 +550,14 @@ const BlackoutManagementDialog: React.FC<BlackoutManagementDialogProps> = ({
                 open={scheduleDialogOpen}
                 onClose={() => setScheduleDialogOpen(false)}
                 selection={selection}
+            />
+            <DeleteConfirmationDialog
+                open={pendingDelete !== null}
+                onClose={() => setPendingDelete(null)}
+                onConfirm={handleDeleteConfirm}
+                title={pendingDelete?.type === 'schedule' ? 'Delete schedule' : 'Delete blackout'}
+                message={deleteDialogMessage}
+                loading={deleteLoading}
             />
         </>
     );

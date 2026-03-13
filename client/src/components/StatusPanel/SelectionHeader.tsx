@@ -14,6 +14,7 @@ import {
     Typography,
     IconButton,
     Tooltip,
+    Badge,
     alpha,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
@@ -30,12 +31,15 @@ import {
     HEADER_LABEL_SX,
     HEADER_NAME_SX,
 } from './styles';
+import { useBlackouts } from '../../contexts/BlackoutContext';
 
 /**
  * SelectionHeader - Header showing what's currently selected
  */
 const SelectionHeader = ({ selection, alertCount = 0, alertSeverities = {}, onBlackoutClick }) => {
     const theme = useTheme();
+    const { activeBlackoutsForSelection } = useBlackouts();
+    const hasActiveBlackouts = activeBlackoutsForSelection.length > 0;
 
     const getIcon = () => {
         switch (selection.type) {
@@ -156,13 +160,20 @@ const SelectionHeader = ({ selection, alertCount = 0, alertSeverities = {}, onBl
                     )}
                 </Box>
             </Box>
-            <Tooltip title="Blackout management" placement="bottom">
+            <Tooltip title={hasActiveBlackouts ? 'Blackout active' : 'Blackout management'} placement="bottom">
                 <IconButton
                     size="small"
                     onClick={onBlackoutClick}
-                    sx={{ color: 'text.secondary', mr: 1 }}
+                    sx={{ color: hasActiveBlackouts ? 'warning.main' : 'text.secondary', mr: 1 }}
                 >
-                    <BlackoutIcon sx={{ fontSize: 20 }} />
+                    <Badge
+                        variant="dot"
+                        invisible={!hasActiveBlackouts}
+                        color="warning"
+                        overlap="circular"
+                    >
+                        <BlackoutIcon sx={{ fontSize: 20 }} />
+                    </Badge>
                 </IconButton>
             </Tooltip>
         </Box>

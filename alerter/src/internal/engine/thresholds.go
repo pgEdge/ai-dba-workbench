@@ -276,6 +276,17 @@ func (e *Engine) evaluateConnectionErrors(ctx context.Context) {
 		}
 
 		if conn.ConnectionError != nil {
+			// Check if there's a blackout active for this connection
+			connID := conn.ConnectionID
+			active, err := e.datastore.IsBlackoutActive(ctx, &connID, nil)
+			if err != nil {
+				e.debugLog("Error checking blackout for connection %d: %v", connID, err)
+			}
+			if active {
+				e.debugLog("Skipping connection error alert for connection %d: blackout active", connID)
+				continue
+			}
+
 			// Connection has an error - create or update alert
 			alertID, desc, found, err := e.datastore.GetActiveConnectionAlert(ctx, conn.ConnectionID)
 			if err != nil {

@@ -51,6 +51,16 @@ func (e *Engine) detectAnomalies(ctx context.Context) {
 			return
 		}
 
+		// Check if there's a blackout active for this connection
+		active, err := e.datastore.IsBlackoutActive(ctx, &connID, nil)
+		if err != nil {
+			e.debugLog("Error checking blackout for connection %d: %v", connID, err)
+		}
+		if active {
+			e.debugLog("Skipping anomaly detection for connection %d: blackout active", connID)
+			continue
+		}
+
 		for _, rule := range rules {
 			// Get current metric value
 			values, err := e.datastore.GetLatestMetricValues(ctx, rule.MetricName)
@@ -374,6 +384,17 @@ func (e *Engine) determineFinalDecision(candidate *database.AnomalyCandidate) {
 // It deduplicates against existing active anomaly alerts for the same metric
 // and connection to prevent duplicate alerts.
 func (e *Engine) createAnomalyAlert(ctx context.Context, candidate *database.AnomalyCandidate, sensitivity float64) {
+	// Check if there's a blackout active for this connection
+	connID := candidate.ConnectionID
+	active, err := e.datastore.IsBlackoutActive(ctx, &connID, candidate.DatabaseName)
+	if err != nil {
+		e.debugLog("Error checking blackout for connection %d: %v", connID, err)
+	}
+	if active {
+		e.debugLog("Skipping anomaly alert for connection %d: blackout active", connID)
+		return
+	}
+
 	// Check for an existing active anomaly alert on this metric/connection
 	existing, err := e.datastore.GetActiveAnomalyAlert(ctx, candidate.MetricName, candidate.ConnectionID, candidate.DatabaseName)
 	if err == nil && existing != nil {

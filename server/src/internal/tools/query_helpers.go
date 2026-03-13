@@ -59,9 +59,17 @@ func parseLimitOffset(args map[string]any) (limit int, offset int) {
 }
 
 // injectLimitOffset appends LIMIT and OFFSET clauses to sqlQuery when
-// the query does not already contain them. The injected LIMIT is
-// limit+1 so the caller can detect whether additional rows exist.
+// the query is a SELECT-like statement and does not already contain
+// them. Non-SELECT queries (INSERT, UPDATE, DELETE, DDL, etc.) are
+// returned unchanged because LIMIT/OFFSET is not valid SQL for those
+// statement types. The injected LIMIT is limit+1 so the caller can
+// detect whether additional rows exist.
 func injectLimitOffset(sqlQuery string, limit, offset int) (modified string, hadLimit, hadOffset bool) {
+	// Only inject LIMIT/OFFSET for SELECT-like statements.
+	if !isSelectQuery(sqlQuery) {
+		return sqlQuery, false, false
+	}
+
 	hadLimit = hasLimitClause(sqlQuery)
 	hadOffset = hasOffsetClause(sqlQuery)
 
@@ -76,7 +84,7 @@ func injectLimitOffset(sqlQuery string, limit, offset int) (modified string, had
 	return modified, hadLimit, hadOffset
 }
 
-// queryResult holds the output of executeReadOnlyQuery.
+// queryResult holds the output of executeQuery / executeReadOnlyQuery.
 type queryResult struct {
 	ColumnNames  []string
 	Rows         [][]any
@@ -84,26 +92,37 @@ type queryResult struct {
 	ResultsTSV   string
 }
 
-// executeReadOnlyQuery runs sqlQuery inside a read-only transaction on
-// pool, collects rows, detects truncation against limit, and formats
-// the result as TSV. The hadExistingLimit flag indicates whether the
-// original query already contained a LIMIT clause (in which case
-// truncation detection is skipped).
-func executeReadOnlyQuery(
+// executeQuery runs sqlQuery inside a transaction on pool, collects
+// rows, detects truncation against limit, and formats the result as
+// TSV. When readOnly is true a read-only transaction is used;
+// otherwise a regular read-write transaction is started. The
+// hadExistingLimit flag indicates whether the original query already
+// contained a LIMIT clause (in which case truncation detection is
+// skipped).
+func executeQuery(
 	ctx context.Context,
 	pool *pgxpool.Pool,
 	sqlQuery string,
 	limit int,
 	hadExistingLimit bool,
 	errorPrefix string,
+	readOnly bool,
 ) (*queryResult, *mcp.ToolResponse) {
-	rot, errResp, cleanup := BeginReadOnlyTx(ctx, pool)
+	var mt *ManagedTx
+	var errResp *mcp.ToolResponse
+	var cleanup func()
+
+	if readOnly {
+		mt, errResp, cleanup = BeginReadOnlyTx(ctx, pool)
+	} else {
+		mt, errResp, cleanup = BeginTx(ctx, pool)
+	}
 	if errResp != nil {
 		return nil, errResp
 	}
 	defer cleanup()
 
-	rows, err := rot.Tx.Query(ctx, sqlQuery)
+	rows, err := mt.Tx.Query(ctx, sqlQuery)
 	if err != nil {
 		resp, _ := mcp.NewToolError(safeToolQueryError(errorPrefix, err)) //nolint:errcheck // NewToolError always succeeds
 		return nil, &resp
@@ -142,7 +161,7 @@ func executeReadOnlyQuery(
 
 	resultsTSV := tsv.FormatResults(columnNames, results)
 
-	if err := rot.Commit(); err != nil {
+	if err := mt.Commit(); err != nil {
 		resp, _ := mcp.NewToolError(fmt.Sprintf("Failed to commit transaction: %v", err)) //nolint:errcheck // NewToolError always succeeds
 		return nil, &resp
 	}
@@ -153,6 +172,20 @@ func executeReadOnlyQuery(
 		WasTruncated: wasTruncated,
 		ResultsTSV:   resultsTSV,
 	}, nil
+}
+
+// executeReadOnlyQuery runs sqlQuery inside a read-only transaction on
+// pool. This is a convenience wrapper around executeQuery with
+// readOnly=true, kept for backward compatibility with other tools.
+func executeReadOnlyQuery(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	sqlQuery string,
+	limit int,
+	hadExistingLimit bool,
+	errorPrefix string,
+) (*queryResult, *mcp.ToolResponse) {
+	return executeQuery(ctx, pool, sqlQuery, limit, hadExistingLimit, errorPrefix, true)
 }
 
 // formatPaginatedResults writes the results header with pagination

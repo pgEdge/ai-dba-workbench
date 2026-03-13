@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/logging"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
@@ -63,7 +64,8 @@ DO NOT use for:
 </examples>
 
 <important>
-- All queries run in READ-ONLY transactions (no data modifications possible)
+- SELECT queries run in READ-ONLY transactions for safety
+- Write operations (INSERT, UPDATE, DELETE, DDL) require read_write access to the connection
 - Results are limited to prevent excessive token usage
 - Results are returned in TSV (tab-separated values) format for efficiency
 </important>
@@ -76,7 +78,7 @@ To avoid rate limits (30,000 input tokens/minute):
 - Use get_schema_info(schema_name="specific") to reduce metadata size
 - If rate limited, wait 60 seconds before retrying
 </rate_limit_awareness>`,
-			CompactDescription: `Execute read-only SQL queries against a monitored database. Specify connection_id to target a database; use list_connections to discover IDs. Returns results in TSV format. Use for exact matches, aggregations, joins, and filtering.`,
+			CompactDescription: `Execute SQL queries against a monitored database. SELECT queries run read-only; write operations require read_write access. Specify connection_id to target a database; use list_connections to discover IDs. Returns results in TSV format.`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]any{
@@ -90,7 +92,7 @@ To avoid rate limits (30,000 input tokens/minute):
 					},
 					"query": map[string]any{
 						"type":        "string",
-						"description": "SQL query to execute against the database. All queries run in read-only transactions.",
+						"description": "SQL query to execute against the database. SELECT queries run in read-only transactions; write operations require read_write access.",
 					},
 					"limit": map[string]any{
 						"type":        "integer",
@@ -128,6 +130,7 @@ To avoid rate limits (30,000 input tokens/minute):
 			var connectionMessage string
 			var resolvedClient *database.Client
 			var sqlQuery string
+			var connID int
 
 			if ca.HasConnID {
 				// Explicit connection_id: use resolver, skip ParseQueryForConnection
@@ -137,6 +140,7 @@ To avoid rate limits (30,000 input tokens/minute):
 				}
 				connStr = resolved.ConnStr
 				resolvedClient = resolved.Client
+				connID = resolved.ConnID
 
 				sqlQuery = strings.TrimSpace(query)
 
@@ -194,6 +198,30 @@ To avoid rate limits (30,000 input tokens/minute):
 				sqlQuery = strings.TrimSpace(queryCtx.CleanedQuery)
 			}
 
+			readOnly := isSelectQuery(sqlQuery)
+
+			// For write queries, verify the user has read_write access.
+			if !readOnly {
+				if !ca.HasConnID {
+					return mcp.NewToolError(
+						"Write operations require an explicit connection_id parameter")
+				}
+				if resolver == nil || resolver.rbacChecker == nil {
+					return mcp.NewToolError(
+						"Write operations are unavailable: authorization service not configured")
+				}
+				rbac := resolver.rbacChecker
+				canAccess, accessLevel := rbac.CanAccessConnection(ctx, connID)
+				if !canAccess {
+					return mcp.NewToolError(fmt.Sprintf(
+						"Access denied: you do not have permission to access connection ID %d", connID))
+				}
+				if accessLevel != auth.AccessLevelReadWrite {
+					return mcp.NewToolError(
+						"Write operations require read_write access to this connection")
+				}
+			}
+
 			limit, offset := parseLimitOffset(args)
 			sqlQuery, hadExistingLimit, _ := injectLimitOffset(sqlQuery, limit, offset)
 
@@ -202,7 +230,7 @@ To avoid rate limits (30,000 input tokens/minute):
 				return mcp.NewToolError(fmt.Sprintf("Connection pool not found for: %s", database.SanitizeConnStr(connStr)))
 			}
 
-			qr, errResp := executeReadOnlyQuery(ctx, dbPool, sqlQuery, limit, hadExistingLimit, connectionMessage)
+			qr, errResp := executeQuery(ctx, dbPool, sqlQuery, limit, hadExistingLimit, connectionMessage, readOnly)
 			if errResp != nil {
 				return *errResp, nil
 			}
@@ -226,6 +254,7 @@ To avoid rate limits (30,000 input tokens/minute):
 				"offset", offset,
 				"was_truncated", qr.WasTruncated,
 				"estimated_tokens", len(qr.ResultsTSV)/4,
+				"read_only", readOnly,
 			)
 
 			return mcp.NewToolSuccess(sb.String())

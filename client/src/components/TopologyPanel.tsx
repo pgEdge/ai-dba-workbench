@@ -274,8 +274,13 @@ const TopologyPanel: React.FC<TopologyPanelProps> = ({
                     port: c.port,
                 })),
             );
-        } catch {
+        } catch (err) {
             setUnassignedConnections([]);
+            setError(
+                err instanceof Error
+                    ? err.message
+                    : 'Failed to load available servers',
+            );
         }
     }, []);
 

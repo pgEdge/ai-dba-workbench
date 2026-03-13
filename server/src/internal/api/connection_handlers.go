@@ -65,10 +65,10 @@ type ConnectionCreateRequest struct {
 	DatabaseName string  `json:"database_name"`
 	Username     string  `json:"username"`
 	Password     string  `json:"password"`
-	SSLMode      *string `json:"sslmode,omitempty"`
-	SSLCert      *string `json:"sslcert,omitempty"`
-	SSLKey       *string `json:"sslkey,omitempty"`
-	SSLRootCert  *string `json:"sslrootcert,omitempty"`
+	SSLMode      *string `json:"ssl_mode,omitempty"`
+	SSLCert      *string `json:"ssl_cert_path,omitempty"`
+	SSLKey       *string `json:"ssl_key_path,omitempty"`
+	SSLRootCert  *string `json:"ssl_root_cert_path,omitempty"`
 	IsShared     bool    `json:"is_shared"`
 	IsMonitored  bool    `json:"is_monitored"`
 }
@@ -83,10 +83,10 @@ type ConnectionFullUpdateRequest struct {
 	DatabaseName *string `json:"database_name,omitempty"`
 	Username     *string `json:"username,omitempty"`
 	Password     *string `json:"password,omitempty"`
-	SSLMode      *string `json:"sslmode,omitempty"`
-	SSLCert      *string `json:"sslcert,omitempty"`
-	SSLKey       *string `json:"sslkey,omitempty"`
-	SSLRootCert  *string `json:"sslrootcert,omitempty"`
+	SSLMode      *string `json:"ssl_mode,omitempty"`
+	SSLCert      *string `json:"ssl_cert_path,omitempty"`
+	SSLKey       *string `json:"ssl_key_path,omitempty"`
+	SSLRootCert  *string `json:"ssl_root_cert_path,omitempty"`
 	IsShared     *bool   `json:"is_shared,omitempty"`
 	IsMonitored  *bool   `json:"is_monitored,omitempty"`
 }

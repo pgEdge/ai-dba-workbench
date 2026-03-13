@@ -9582,7 +9582,7 @@
             "type": "integer",
             "description": "Database port"
           },
-          "sslmode": {
+          "ssl_mode": {
             "type": "string",
             "description": "SSL mode",
             "nullable": true
@@ -9633,19 +9633,19 @@
             "type": "integer",
             "description": "Database port"
           },
-          "sslcert": {
+          "ssl_cert_path": {
             "type": "string",
             "description": "SSL certificate path"
           },
-          "sslkey": {
+          "ssl_key_path": {
             "type": "string",
             "description": "SSL key path"
           },
-          "sslmode": {
+          "ssl_mode": {
             "type": "string",
             "description": "SSL mode"
           },
-          "sslrootcert": {
+          "ssl_root_cert_path": {
             "type": "string",
             "description": "SSL root certificate path"
           },
@@ -9698,19 +9698,19 @@
             "type": "integer",
             "description": "Database port"
           },
-          "sslcert": {
+          "ssl_cert_path": {
             "type": "string",
             "description": "SSL certificate path"
           },
-          "sslkey": {
+          "ssl_key_path": {
             "type": "string",
             "description": "SSL key path"
           },
-          "sslmode": {
+          "ssl_mode": {
             "type": "string",
             "description": "SSL mode"
           },
-          "sslrootcert": {
+          "ssl_root_cert_path": {
             "type": "string",
             "description": "SSL root certificate path"
           },

@@ -18,7 +18,7 @@ import (
 	"sort"
 	"strings"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 	"github.com/pgedge/ai-workbench/pkg/embedding"
 	"github.com/pgedge/ai-workbench/server/internal/config"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
@@ -203,7 +203,7 @@ type KBSearchResult struct {
 
 // listKBProducts returns a formatted list of all products and versions in the knowledgebase
 func listKBProducts(kbPath string) (string, error) {
-	db, err := sql.Open("sqlite3", kbPath)
+	db, err := sql.Open("sqlite", kbPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to open knowledgebase: %w", err)
 	}
@@ -305,7 +305,7 @@ func generateKBQueryEmbedding(ctx context.Context, serverCfg *config.Config, que
 
 func searchKB(kbPath string, queryEmbedding []float32, projectNames, projectVersions []string, topN int, provider string) ([]KBSearchResult, error) {
 	// Open database
-	db, err := sql.Open("sqlite3", kbPath)
+	db, err := sql.Open("sqlite", kbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open knowledgebase: %w", err)
 	}

@@ -2573,6 +2573,30 @@ func (sm *SchemaManager) registerMigrations() {
 		},
 	})
 
+	// Migration #2: Add dismissed column to clusters table
+	// Dismissed clusters are soft-deleted auto-detected clusters that
+	// should not be recreated by auto-detection refresh cycles.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     2,
+		Description: "Add dismissed column to clusters table",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				ALTER TABLE clusters
+					ADD COLUMN IF NOT EXISTS dismissed BOOLEAN NOT NULL DEFAULT FALSE;
+
+				COMMENT ON COLUMN clusters.dismissed IS
+					'Whether the cluster has been soft-deleted (dismissed) by a user; dismissed clusters are hidden from the UI and auto-detection will not reassign connections to them';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to add dismissed column to clusters: %w", err)
+			}
+
+			return nil
+		},
+	})
+
 }
 
 // Migrate applies all pending migrations

@@ -282,8 +282,8 @@ func TestNewSchemaManager(t *testing.T) {
 		t.Fatal("NewSchemaManager created manager with no migrations")
 	}
 
-	// Verify all migrations are consolidated into a single migration
-	expectedVersions := []int{1}
+	// Verify all migrations are registered
+	expectedVersions := []int{1, 2}
 	if len(sm.migrations) != len(expectedVersions) {
 		t.Fatalf("Expected %d migrations, got %d", len(expectedVersions), len(sm.migrations))
 	}

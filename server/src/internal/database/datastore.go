@@ -838,6 +838,7 @@ func (d *Datastore) GetClustersInGroup(ctx context.Context, groupID int) ([]Clus
         SELECT id, group_id, name, description, auto_cluster_key, created_at, updated_at
         FROM clusters
         WHERE group_id = $1
+          AND dismissed = FALSE
         ORDER BY name
     `
 
@@ -980,20 +981,52 @@ func (d *Datastore) UpdateClusterPartial(ctx context.Context, id int, groupID *i
 	return &c, nil
 }
 
-// DeleteCluster deletes a cluster by ID
+// DeleteCluster deletes a cluster by ID. Auto-detected clusters (those
+// with auto_cluster_key set) are soft-deleted by setting dismissed=TRUE
+// so that auto-detection does not recreate them. User-created clusters
+// (no auto_cluster_key) are hard-deleted.
 func (d *Datastore) DeleteCluster(ctx context.Context, id int) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	query := `DELETE FROM clusters WHERE id = $1`
-
-	result, err := d.pool.Exec(ctx, query, id)
+	// Check whether the cluster is auto-detected
+	var hasAutoKey bool
+	err := d.pool.QueryRow(ctx,
+		`SELECT auto_cluster_key IS NOT NULL FROM clusters WHERE id = $1`,
+		id,
+	).Scan(&hasAutoKey)
 	if err != nil {
-		return fmt.Errorf("failed to delete cluster: %w", err)
+		return ErrClusterNotFound
 	}
 
-	if result.RowsAffected() == 0 {
-		return ErrClusterNotFound
+	if hasAutoKey {
+		// Soft-delete: mark as dismissed so auto-detection skips it
+		_, err = d.pool.Exec(ctx,
+			`UPDATE clusters SET dismissed = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+			id,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to dismiss cluster: %w", err)
+		}
+
+		// Detach connections since the FK ON DELETE SET NULL won't
+		// fire for a soft delete
+		_, err = d.pool.Exec(ctx,
+			`UPDATE connections SET cluster_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE cluster_id = $1`,
+			id,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to detach connections from dismissed cluster: %w", err)
+		}
+	} else {
+		// Hard-delete user-created clusters
+		result, err := d.pool.Exec(ctx, `DELETE FROM clusters WHERE id = $1`, id)
+		if err != nil {
+			return fmt.Errorf("failed to delete cluster: %w", err)
+		}
+		if result.RowsAffected() == 0 {
+			return ErrClusterNotFound
+		}
 	}
 
 	return nil
@@ -1016,6 +1049,7 @@ func (d *Datastore) getClusterOverridesInternal(ctx context.Context) (map[string
         SELECT auto_cluster_key, name, COALESCE(description, '') as description
         FROM clusters
         WHERE auto_cluster_key IS NOT NULL
+          AND dismissed = FALSE
     `
 
 	rows, err := d.pool.Query(ctx, query)
@@ -1046,12 +1080,12 @@ func (d *Datastore) UpsertClusterByAutoKey(ctx context.Context, autoKey, name st
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	// Use INSERT ... ON CONFLICT to upsert
+	// Use INSERT ... ON CONFLICT to upsert; clear dismissed on explicit rename
 	query := `
         INSERT INTO clusters (name, auto_cluster_key)
         VALUES ($1, $2)
         ON CONFLICT (auto_cluster_key)
-        DO UPDATE SET name = EXCLUDED.name, updated_at = CURRENT_TIMESTAMP
+        DO UPDATE SET name = EXCLUDED.name, dismissed = FALSE, updated_at = CURRENT_TIMESTAMP
         RETURNING id, group_id, name, description, auto_cluster_key, created_at, updated_at
     `
 
@@ -1109,8 +1143,9 @@ func (d *Datastore) UpsertAutoDetectedCluster(ctx context.Context, autoKey strin
 	}
 
 	// Cluster exists, update it
-	// Build dynamic update based on what's provided
-	setClauses := []string{"updated_at = CURRENT_TIMESTAMP"}
+	// Build dynamic update based on what's provided; clear dismissed
+	// since the user is explicitly editing this cluster
+	setClauses := []string{"updated_at = CURRENT_TIMESTAMP", "dismissed = FALSE"}
 	args := []any{}
 	argNum := 1
 
@@ -1501,6 +1536,7 @@ func (d *Datastore) getClustersInGroupInternal(ctx context.Context, groupID int)
         SELECT id, group_id, name, description, auto_cluster_key, created_at, updated_at
         FROM clusters
         WHERE group_id = $1
+          AND dismissed = FALSE
         ORDER BY name
     `
 
@@ -2063,6 +2099,7 @@ func (d *Datastore) getClaimedAutoClusterKeys(ctx context.Context, defaultGroupI
         WHERE auto_cluster_key IS NOT NULL
           AND group_id IS NOT NULL
           AND group_id != $1
+          AND dismissed = FALSE
     `
 
 	rows, err := d.pool.Query(ctx, query, defaultGroupID)
@@ -2283,17 +2320,26 @@ func (d *Datastore) syncAutoDetectedClusterAssignments(ctx context.Context, auto
 		// For real clusters (spock, binary, logical, spock_ha):
 		// Upsert the cluster record. Only auto-update the name when the
 		// cluster is still in the default group (the user has not moved it).
+		// The UPSERT also returns the dismissed flag so we can skip
+		// assigning connections to dismissed clusters.
 		var clusterID int
+		var dismissed bool
 		err := d.pool.QueryRow(ctx, `
             INSERT INTO clusters (name, auto_cluster_key, group_id)
             VALUES ($1, $2, $3)
             ON CONFLICT (auto_cluster_key) DO UPDATE SET
                 name = CASE WHEN clusters.group_id = $3 THEN EXCLUDED.name ELSE clusters.name END,
                 updated_at = CURRENT_TIMESTAMP
-            RETURNING id
-        `, cluster.Name, autoKey, defaultGroupID).Scan(&clusterID)
+            RETURNING id, dismissed
+        `, cluster.Name, autoKey, defaultGroupID).Scan(&clusterID, &dismissed)
 		if err != nil {
 			logger.Errorf("syncAutoDetectedClusterAssignments: failed to upsert cluster %q: %v", autoKey, err)
+			continue
+		}
+
+		// Skip connection assignment for dismissed clusters; the
+		// dismissed row stays in the DB to prevent re-insertion.
+		if dismissed {
 			continue
 		}
 
@@ -2415,6 +2461,7 @@ func (d *Datastore) getPersistedClusterMembers(ctx context.Context, autoDetected
         LEFT JOIN active_alerts aa ON c.id = aa.connection_id
         WHERE c.cluster_id IS NOT NULL
           AND cl.auto_cluster_key IS NOT NULL
+          AND cl.dismissed = FALSE
         ORDER BY c.name
     `
 
@@ -2554,11 +2601,12 @@ func (d *Datastore) createShellClustersForUnmerged(ctx context.Context, groups [
 		return
 	}
 
-	// Query cluster metadata for unmerged keys
+	// Query cluster metadata for unmerged keys (exclude dismissed)
 	query := `
         SELECT id, name, COALESCE(description, ''), auto_cluster_key, group_id
         FROM clusters
         WHERE auto_cluster_key = ANY($1)
+          AND dismissed = FALSE
     `
 	rows, err := d.pool.Query(ctx, query, unmergedKeys)
 	if err != nil {
@@ -4970,6 +5018,7 @@ func (d *Datastore) ListClustersForAutocomplete(ctx context.Context) ([]ClusterS
 	query := `
         SELECT id, name, replication_type, auto_cluster_key
         FROM clusters
+        WHERE dismissed = FALSE
         ORDER BY name
     `
 
@@ -5163,10 +5212,10 @@ func (d *Datastore) AddServerToCluster(ctx context.Context, clusterID int, conne
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	// Verify the cluster exists
+	// Verify the cluster exists and is not dismissed
 	var clusterExists bool
 	err := d.pool.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM clusters WHERE id = $1)`,
+		`SELECT EXISTS(SELECT 1 FROM clusters WHERE id = $1 AND dismissed = FALSE)`,
 		clusterID,
 	).Scan(&clusterExists)
 	if err != nil {

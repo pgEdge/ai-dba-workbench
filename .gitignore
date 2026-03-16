@@ -1,5 +1,6 @@
 # Claude
 .claude/settings.local.json
+.playwright-cli/
 
 # Build output directory (including runtime configs copied there)
 bin/

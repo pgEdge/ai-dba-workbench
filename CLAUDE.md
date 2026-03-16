@@ -359,6 +359,41 @@ At the end of each README:
 
 - Review all changes for security implications; report potential issues.
 
+## Browser Automation (playwright-cli)
+
+The project has `playwright-cli` installed as a Claude Code skill at
+`.claude/skills/playwright-cli/SKILL.md`. Use this tool for browser
+testing, form filling, screenshots, and web interaction.
+
+- `playwright-cli` is a standalone CLI tool; it is NOT the Playwright
+  MCP server or the npm `playwright` package.
+
+- Do not attempt to install Playwright via `npx playwright install`,
+  `npm install playwright`, or `npx @anthropic-ai/playwright-mcp`.
+
+- Do not use `npx playwright` commands; use `playwright-cli` directly.
+
+- Run commands via `Bash(playwright-cli:*)` tool calls (for example,
+  `playwright-cli open`, `playwright-cli click e5`).
+
+- Use the `--headed` flag on `playwright-cli open` when the user
+  wants to see the browser window.
+
+- After each command, a snapshot YAML file is written to
+  `.playwright-cli/` (gitignored). Read the snapshot to find element
+  refs (for example, `e31`, `e37`) for subsequent interactions.
+
+- Refs change after navigation and interaction; take a fresh
+  `playwright-cli snapshot` if refs become stale.
+
+- The skill file at `.claude/skills/playwright-cli/SKILL.md` contains
+  the full command reference.
+
+- After completing UI changes, use `playwright-cli` to validate the
+  changes visually in a browser session. This supplements unit and
+  integration tests by catching rendering, interaction, and
+  navigation issues that automated tests may miss.
+
 ## Code Style
 
 - Use four spaces for indentation.

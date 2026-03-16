@@ -81,7 +81,7 @@ interface OverrideContextResponse {
 }
 
 const API_BASE_URL = '/api/v1';
-const OPERATORS = ['>', '>=', '<', '<=', '=', '!='];
+const OPERATORS = ['>', '>=', '<', '<=', '==', '!='];
 const SEVERITIES = ['info', 'warning', 'critical'];
 
 const AlertOverrideEditDialog: React.FC<AlertOverrideEditDialogProps> = ({

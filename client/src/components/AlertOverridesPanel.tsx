@@ -54,7 +54,7 @@ import {
 
 const API_BASE_URL = '/api/v1';
 
-const OPERATORS = ['>', '>=', '<', '<=', '=', '!='];
+const OPERATORS = ['>', '>=', '<', '<=', '==', '!='];
 const SEVERITIES = ['info', 'warning', 'critical'];
 
 interface AlertOverride {

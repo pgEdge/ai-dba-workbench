@@ -52,7 +52,7 @@ import {
 import { apiGet, apiPut } from '../../utils/apiClient';
 import { getFriendlyTitle } from '../../utils/friendlyNames';
 
-const OPERATORS = ['>', '>=', '<', '<=', '=', '!='];
+const OPERATORS = ['>', '>=', '<', '<=', '==', '!='];
 const SEVERITIES = ['info', 'warning', 'critical'];
 
 interface AlertRule {

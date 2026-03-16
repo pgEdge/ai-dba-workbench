@@ -302,7 +302,7 @@ ${analysis}
                                 ? alert.metricValue.toLocaleString(undefined, { maximumFractionDigits: 2 })
                                 : alert.metricValue}
                             {alert.metricUnit && ` ${alert.metricUnit}`}
-                            {' '}{alert.operator === '>' ? '>' : alert.operator === '<' ? '<' : '='}{' '}
+                            {' '}{alert.operator}{' '}
                             {typeof alert.thresholdValue === 'number'
                                 ? alert.thresholdValue.toLocaleString(undefined, { maximumFractionDigits: 2 })
                                 : alert.thresholdValue}

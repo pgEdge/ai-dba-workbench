@@ -701,7 +701,7 @@ func buildSchemas() map[string]*OpenAPISchema {
 			Type:     "object",
 			Required: []string{"operator", "threshold", "severity", "enabled"},
 			Properties: map[string]*OpenAPISchema{
-				"operator":  {Type: "string", Description: "Comparison operator", Enum: []string{">", ">=", "<", "<=", "=", "!="}},
+				"operator":  {Type: "string", Description: "Comparison operator", Enum: []string{">", ">=", "<", "<=", "==", "!="}},
 				"threshold": {Type: "number", Description: "Threshold value"},
 				"severity":  {Type: "string", Description: "Severity level", Enum: []string{"info", "warning", "critical"}},
 				"enabled":   {Type: "boolean", Description: "Whether the rule is enabled"},

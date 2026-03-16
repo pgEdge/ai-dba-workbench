@@ -302,7 +302,7 @@ func TestAlertRuleUpdateStruct(t *testing.T) {
 }
 
 func TestValidOperators(t *testing.T) {
-	expected := []string{">", ">=", "<", "<=", "=", "!="}
+	expected := []string{">", ">=", "<", "<=", "==", "!="}
 	for _, op := range expected {
 		if !validOperators[op] {
 			t.Errorf("expected operator %q to be valid", op)

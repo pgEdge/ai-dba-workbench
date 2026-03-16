@@ -126,7 +126,7 @@ type OverrideContext struct {
 
 // Valid operators for alert rules
 var validOperators = map[string]bool{
-	">": true, ">=": true, "<": true, "<=": true, "=": true, "!=": true,
+	">": true, ">=": true, "<": true, "<=": true, "==": true, "!=": true,
 }
 
 // Valid severities for alert rules

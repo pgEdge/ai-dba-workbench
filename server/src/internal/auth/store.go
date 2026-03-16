@@ -25,8 +25,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	_ "modernc.org/sqlite"
 	"golang.org/x/crypto/bcrypt"
+	_ "modernc.org/sqlite"
 )
 
 const (

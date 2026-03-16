@@ -18,10 +18,10 @@ import (
 	"sort"
 	"strings"
 
-	_ "modernc.org/sqlite"
 	"github.com/pgedge/ai-workbench/pkg/embedding"
 	"github.com/pgedge/ai-workbench/server/internal/config"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
+	_ "modernc.org/sqlite"
 )
 
 // SearchKnowledgebaseTool creates the search_knowledgebase tool for searching documentation

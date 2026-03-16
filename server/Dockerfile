@@ -23,8 +23,8 @@ COPY server/src/ /build/server/src/
 WORKDIR /build/server/src
 RUN go mod download
 
-# Build the binary (CGO required for go-sqlite3)
-RUN CGO_ENABLED=1 go build -o /build/ai-dba-server ./cmd/mcp-server
+# Build the binary (pure Go, no CGO required)
+RUN CGO_ENABLED=0 go build -o /build/ai-dba-server ./cmd/mcp-server
 
 # Stage 2: Runtime image
 FROM debian:bookworm-slim

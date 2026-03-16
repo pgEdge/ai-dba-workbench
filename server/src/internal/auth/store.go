@@ -25,8 +25,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	_ "github.com/mattn/go-sqlite3"
 	"golang.org/x/crypto/bcrypt"
+	_ "modernc.org/sqlite"
 )
 
 const (
@@ -117,7 +117,7 @@ func NewAuthStore(dataDir string, maxUserTokenDays, maxFailedAttempts int) (*Aut
 	}
 
 	dbPath := filepath.Join(dataDir, "auth.db")
-	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open auth database: %w", err)
 	}

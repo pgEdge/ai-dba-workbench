@@ -2058,12 +2058,14 @@ func TestMonitoredConnectionNullableFields(t *testing.T) {
 
 func TestConnectionListItemStruct(t *testing.T) {
 	item := ConnectionListItem{
-		ID:           5,
-		Name:         "staging-db",
-		Host:         "staging.example.com",
-		Port:         5433,
-		DatabaseName: "stagingdb",
-		IsMonitored:  true,
+		ID:            5,
+		Name:          "staging-db",
+		Host:          "staging.example.com",
+		Port:          5433,
+		DatabaseName:  "stagingdb",
+		IsMonitored:   true,
+		IsShared:      true,
+		OwnerUsername: "alice",
 	}
 
 	if item.ID != 5 {
@@ -2083,6 +2085,12 @@ func TestConnectionListItemStruct(t *testing.T) {
 	}
 	if !item.IsMonitored {
 		t.Error("expected IsMonitored true")
+	}
+	if !item.IsShared {
+		t.Error("expected IsShared true")
+	}
+	if item.OwnerUsername != "alice" {
+		t.Errorf("expected OwnerUsername 'alice', got %q", item.OwnerUsername)
 	}
 }
 

@@ -153,19 +153,40 @@ func (h *ConnectionHandler) listConnections(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Filter connections based on RBAC privileges
-	accessibleIDs := h.rbacChecker.GetAccessibleConnections(r.Context())
-	if accessibleIDs != nil {
-		// Build a set of accessible connection IDs for efficient lookup
-		accessibleSet := make(map[int]bool, len(accessibleIDs))
-		for _, id := range accessibleIDs {
-			accessibleSet[id] = true
+	// Filter connections based on RBAC privileges and sharing status
+	isSuperuser := h.rbacChecker.IsSuperuser(r.Context())
+	if !isSuperuser {
+		currentUsername := auth.GetUsernameFromContext(r.Context())
+		accessibleIDs := h.rbacChecker.GetAccessibleConnections(r.Context())
+
+		// Build a set of group-accessible connection IDs
+		var accessibleSet map[int]bool
+		if accessibleIDs != nil {
+			accessibleSet = make(map[int]bool, len(accessibleIDs))
+			for _, id := range accessibleIDs {
+				accessibleSet[id] = true
+			}
 		}
+
 		filtered := connections[:0]
 		for _, conn := range connections {
-			if accessibleSet[conn.ID] {
+			// Always include the user's own connections
+			if conn.OwnerUsername == currentUsername {
 				filtered = append(filtered, conn)
+				continue
 			}
+			// Include shared connections that are not group-restricted
+			if conn.IsShared && (accessibleSet == nil || accessibleSet[conn.ID]) {
+				filtered = append(filtered, conn)
+				continue
+			}
+			// Include group-accessible connections
+			if accessibleSet != nil && accessibleSet[conn.ID] {
+				filtered = append(filtered, conn)
+				continue
+			}
+			// If no group restrictions exist (accessibleSet is nil),
+			// only include shared connections (already handled above)
 		}
 		connections = filtered
 	}

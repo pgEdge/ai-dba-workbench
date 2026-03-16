@@ -64,14 +64,16 @@ type MonitoredConnection struct {
 
 // ConnectionListItem is a simplified connection for API responses
 type ConnectionListItem struct {
-	ID           int    `json:"id"`
-	Name         string `json:"name"`
-	Description  string `json:"description"`
-	Host         string `json:"host"`
-	Port         int    `json:"port"`
-	DatabaseName string `json:"database_name"`
-	IsMonitored  bool   `json:"is_monitored"`
-	ClusterID    *int   `json:"cluster_id"`
+	ID            int    `json:"id"`
+	Name          string `json:"name"`
+	Description   string `json:"description"`
+	Host          string `json:"host"`
+	Port          int    `json:"port"`
+	DatabaseName  string `json:"database_name"`
+	IsMonitored   bool   `json:"is_monitored"`
+	IsShared      bool   `json:"is_shared"`
+	OwnerUsername string `json:"owner_username"`
+	ClusterID     *int   `json:"cluster_id"`
 }
 
 // DatabaseInfo represents a database on a PostgreSQL server
@@ -212,7 +214,8 @@ func (d *Datastore) GetAllConnections(ctx context.Context) ([]ConnectionListItem
 	defer d.mu.RUnlock()
 
 	query := `
-        SELECT id, name, description, host, port, database_name, is_monitored, cluster_id
+        SELECT id, name, description, host, port, database_name,
+               is_monitored, is_shared, COALESCE(owner_username, ''), cluster_id
         FROM connections
         ORDER BY name
     `
@@ -226,7 +229,7 @@ func (d *Datastore) GetAllConnections(ctx context.Context) ([]ConnectionListItem
 	var connections []ConnectionListItem
 	for rows.Next() {
 		var conn ConnectionListItem
-		if err := rows.Scan(&conn.ID, &conn.Name, &conn.Description, &conn.Host, &conn.Port, &conn.DatabaseName, &conn.IsMonitored, &conn.ClusterID); err != nil {
+		if err := rows.Scan(&conn.ID, &conn.Name, &conn.Description, &conn.Host, &conn.Port, &conn.DatabaseName, &conn.IsMonitored, &conn.IsShared, &conn.OwnerUsername, &conn.ClusterID); err != nil {
 			return nil, fmt.Errorf("failed to scan connection: %w", err)
 		}
 		connections = append(connections, conn)
@@ -237,6 +240,19 @@ func (d *Datastore) GetAllConnections(ctx context.Context) ([]ConnectionListItem
 	}
 
 	return connections, nil
+}
+
+// GetConnectionSharingInfo returns the sharing status and owner of a connection
+func (d *Datastore) GetConnectionSharingInfo(ctx context.Context, id int) (isShared bool, ownerUsername string, err error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	query := `SELECT is_shared, COALESCE(owner_username, '') FROM connections WHERE id = $1`
+	err = d.pool.QueryRow(ctx, query, id).Scan(&isShared, &ownerUsername)
+	if err != nil {
+		return false, "", fmt.Errorf("failed to get connection sharing info: %w", err)
+	}
+	return isShared, ownerUsername, nil
 }
 
 // GetConnection returns a single connection by ID with decrypted password

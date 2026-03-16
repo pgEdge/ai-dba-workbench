@@ -45,9 +45,14 @@ func (dac *DatabaseAccessChecker) GetBoundDatabase(_ context.Context) string {
 // RBAC Access Control
 // =============================================================================
 
+// ConnectionSharingLookupFunc returns the sharing status and owner
+// username for a given connection ID.
+type ConnectionSharingLookupFunc func(ctx context.Context, connectionID int) (isShared bool, ownerUsername string, err error)
+
 // RBACChecker handles role-based access control checks
 type RBACChecker struct {
-	authStore *AuthStore
+	authStore           *AuthStore
+	connSharingLookupFn ConnectionSharingLookupFunc
 }
 
 // NewRBACChecker creates a new RBAC checker
@@ -55,6 +60,13 @@ func NewRBACChecker(authStore *AuthStore) *RBACChecker {
 	return &RBACChecker{
 		authStore: authStore,
 	}
+}
+
+// SetConnectionSharingLookup sets the function used to look up
+// connection sharing information. This must be called before
+// CanAccessConnection is used for non-superuser access checks.
+func (rc *RBACChecker) SetConnectionSharingLookup(fn ConnectionSharingLookupFunc) {
+	rc.connSharingLookupFn = fn
 }
 
 // IsSuperuser checks if the current context has superuser privileges
@@ -151,8 +163,23 @@ func (rc *RBACChecker) CanAccessConnection(ctx context.Context, connectionID int
 		return false, ""
 	}
 
-	// If not restricted, grant full access
+	// If not restricted by group assignment, check sharing status
 	if !isRestricted {
+		// If we have a sharing lookup function, check is_shared
+		if rc.connSharingLookupFn != nil {
+			isShared, ownerUsername, lookupErr := rc.connSharingLookupFn(ctx, connectionID)
+			if lookupErr != nil {
+				// On error, deny access for safety
+				return false, ""
+			}
+			if !isShared {
+				// Not shared: only the owner gets access
+				username := GetUsernameFromContext(ctx)
+				if ownerUsername == "" || username != ownerUsername {
+					return false, ""
+				}
+			}
+		}
 		return true, AccessLevelReadWrite
 	}
 

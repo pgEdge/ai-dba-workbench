@@ -11,6 +11,7 @@ package auth
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 )
@@ -1004,5 +1005,133 @@ func TestGetUserMCPPrivilegesIncludesWildcard(t *testing.T) {
 
 	if !privileges["*"] {
 		t.Error("Expected wildcard '*' in user MCP privileges when group has wildcard grant")
+	}
+}
+
+// mockSharingLookup returns a ConnectionSharingLookupFunc that serves
+// a fixed map of connection sharing info.
+func mockSharingLookup(info map[int]struct {
+	isShared      bool
+	ownerUsername string
+}) ConnectionSharingLookupFunc {
+	return func(_ context.Context, connectionID int) (bool, string, error) {
+		if entry, ok := info[connectionID]; ok {
+			return entry.isShared, entry.ownerUsername, nil
+		}
+		return false, "", fmt.Errorf("connection %d not found", connectionID)
+	}
+}
+
+func TestCanAccessConnection_UnsharedOwnerOnly(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store)
+
+	// Connection 10 is not shared and owned by "alice"
+	checker.SetConnectionSharingLookup(mockSharingLookup(map[int]struct {
+		isShared      bool
+		ownerUsername string
+	}{
+		10: {isShared: false, ownerUsername: "alice"},
+	}))
+
+	// Alice should have access
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, int64(1))
+	ctx = context.WithValue(ctx, UsernameContextKey, "alice")
+
+	canAccess, level := checker.CanAccessConnection(ctx, 10)
+	if !canAccess {
+		t.Error("Expected owner alice to access her own unshared connection")
+	}
+	if level != AccessLevelReadWrite {
+		t.Errorf("Expected read_write, got %s", level)
+	}
+
+	// Bob should NOT have access
+	ctx2 := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx2 = context.WithValue(ctx2, UserIDContextKey, int64(2))
+	ctx2 = context.WithValue(ctx2, UsernameContextKey, "bob")
+
+	canAccess, _ = checker.CanAccessConnection(ctx2, 10)
+	if canAccess {
+		t.Error("Expected non-owner bob to be denied access to unshared connection")
+	}
+}
+
+func TestCanAccessConnection_SharedAccessForAll(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store)
+
+	// Connection 20 is shared and owned by "alice"
+	checker.SetConnectionSharingLookup(mockSharingLookup(map[int]struct {
+		isShared      bool
+		ownerUsername string
+	}{
+		20: {isShared: true, ownerUsername: "alice"},
+	}))
+
+	// Bob should have access because the connection is shared
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, int64(2))
+	ctx = context.WithValue(ctx, UsernameContextKey, "bob")
+
+	canAccess, level := checker.CanAccessConnection(ctx, 20)
+	if !canAccess {
+		t.Error("Expected bob to access shared connection")
+	}
+	if level != AccessLevelReadWrite {
+		t.Errorf("Expected read_write, got %s", level)
+	}
+}
+
+func TestCanAccessConnection_SuperuserBypassesSharing(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store)
+
+	// Connection 30 is not shared
+	checker.SetConnectionSharingLookup(mockSharingLookup(map[int]struct {
+		isShared      bool
+		ownerUsername string
+	}{
+		30: {isShared: false, ownerUsername: "alice"},
+	}))
+
+	// Superuser should always have access
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, true)
+	ctx = context.WithValue(ctx, UserIDContextKey, int64(99))
+	ctx = context.WithValue(ctx, UsernameContextKey, "admin")
+
+	canAccess, level := checker.CanAccessConnection(ctx, 30)
+	if !canAccess {
+		t.Error("Expected superuser to access unshared connection")
+	}
+	if level != AccessLevelReadWrite {
+		t.Errorf("Expected read_write, got %s", level)
+	}
+}
+
+func TestCanAccessConnection_NoLookupFuncAllowsAccess(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store)
+	// No sharing lookup function set - backward compatibility
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, int64(1))
+
+	// Unrestricted connection without sharing lookup should be accessible
+	canAccess, level := checker.CanAccessConnection(ctx, 99)
+	if !canAccess {
+		t.Error("Expected access when no sharing lookup is configured")
+	}
+	if level != AccessLevelReadWrite {
+		t.Errorf("Expected read_write, got %s", level)
 	}
 }

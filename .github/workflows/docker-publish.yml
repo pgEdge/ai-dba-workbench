@@ -1,0 +1,256 @@
+# -------------------------------------------------------------------------
+#
+# pgEdge AI DBA Workbench
+#
+# Copyright (c) 2025 - 2026, pgEdge, Inc.
+# This software is released under The PostgreSQL License
+#
+# -------------------------------------------------------------------------
+
+name: Docker Publish
+
+on:
+    push:
+        branches: [main]
+        tags:
+            - 'v*'
+    pull_request:
+        branches: [main]
+    workflow_dispatch:
+        inputs:
+            publish:
+                description: 'Publish images to GHCR'
+                required: false
+                type: boolean
+                default: true
+
+permissions:
+    contents: read
+
+concurrency:
+    group: docker-publish-${{ github.ref }}
+    cancel-in-progress: true
+
+env:
+    REGISTRY: ghcr.io
+    IMAGE_SERVER: pgedge/ai-dba-server
+    IMAGE_COLLECTOR: pgedge/ai-dba-collector
+    IMAGE_ALERTER: pgedge/ai-dba-alerter
+    IMAGE_CLIENT: pgedge/ai-dba-client
+
+jobs:
+    # ------------------------------------------------------------------
+    # Build and publish the server image
+    # ------------------------------------------------------------------
+    build-server:
+        name: Build Server Image
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            packages: write
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Set up QEMU
+              uses: docker/setup-qemu-action@v3
+
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@v3
+
+            - name: Log in to GHCR
+              if: github.event_name != 'pull_request'
+              uses: docker/login-action@v3
+              with:
+                  registry: ${{ env.REGISTRY }}
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Extract metadata
+              id: meta
+              uses: docker/metadata-action@v5
+              with:
+                  images: ${{ env.REGISTRY }}/${{ env.IMAGE_SERVER }}
+                  tags: |
+                      type=ref,event=branch,enable=${{ github.ref != 'refs/heads/main' }}
+                      type=ref,event=pr
+                      type=semver,pattern={{version}}
+                      type=semver,pattern={{major}}.{{minor}}
+                      type=sha
+                      type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+                      type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
+
+            - name: Build and push
+              uses: docker/build-push-action@v5
+              with:
+                  context: .
+                  file: server/Dockerfile
+                  platforms: linux/amd64,linux/arm64
+                  push: ${{ github.event_name != 'pull_request' && github.event.inputs.publish != 'false' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+                  tags: ${{ steps.meta.outputs.tags }}
+                  labels: ${{ steps.meta.outputs.labels }}
+                  cache-from: type=gha
+                  cache-to: type=gha,mode=max
+
+    # ------------------------------------------------------------------
+    # Build and publish the collector image
+    # ------------------------------------------------------------------
+    build-collector:
+        name: Build Collector Image
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            packages: write
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Set up QEMU
+              uses: docker/setup-qemu-action@v3
+
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@v3
+
+            - name: Log in to GHCR
+              if: github.event_name != 'pull_request'
+              uses: docker/login-action@v3
+              with:
+                  registry: ${{ env.REGISTRY }}
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Extract metadata
+              id: meta
+              uses: docker/metadata-action@v5
+              with:
+                  images: ${{ env.REGISTRY }}/${{ env.IMAGE_COLLECTOR }}
+                  tags: |
+                      type=ref,event=branch,enable=${{ github.ref != 'refs/heads/main' }}
+                      type=ref,event=pr
+                      type=semver,pattern={{version}}
+                      type=semver,pattern={{major}}.{{minor}}
+                      type=sha
+                      type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+                      type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
+
+            - name: Build and push
+              uses: docker/build-push-action@v5
+              with:
+                  context: .
+                  file: collector/Dockerfile
+                  platforms: linux/amd64,linux/arm64
+                  push: ${{ github.event_name != 'pull_request' && github.event.inputs.publish != 'false' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+                  tags: ${{ steps.meta.outputs.tags }}
+                  labels: ${{ steps.meta.outputs.labels }}
+                  cache-from: type=gha
+                  cache-to: type=gha,mode=max
+
+    # ------------------------------------------------------------------
+    # Build and publish the alerter image
+    # ------------------------------------------------------------------
+    build-alerter:
+        name: Build Alerter Image
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            packages: write
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Set up QEMU
+              uses: docker/setup-qemu-action@v3
+
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@v3
+
+            - name: Log in to GHCR
+              if: github.event_name != 'pull_request'
+              uses: docker/login-action@v3
+              with:
+                  registry: ${{ env.REGISTRY }}
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Extract metadata
+              id: meta
+              uses: docker/metadata-action@v5
+              with:
+                  images: ${{ env.REGISTRY }}/${{ env.IMAGE_ALERTER }}
+                  tags: |
+                      type=ref,event=branch,enable=${{ github.ref != 'refs/heads/main' }}
+                      type=ref,event=pr
+                      type=semver,pattern={{version}}
+                      type=semver,pattern={{major}}.{{minor}}
+                      type=sha
+                      type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+                      type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
+
+            - name: Build and push
+              uses: docker/build-push-action@v5
+              with:
+                  context: .
+                  file: alerter/Dockerfile
+                  platforms: linux/amd64,linux/arm64
+                  push: ${{ github.event_name != 'pull_request' && github.event.inputs.publish != 'false' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+                  tags: ${{ steps.meta.outputs.tags }}
+                  labels: ${{ steps.meta.outputs.labels }}
+                  cache-from: type=gha
+                  cache-to: type=gha,mode=max
+
+    # ------------------------------------------------------------------
+    # Build and publish the client image
+    # ------------------------------------------------------------------
+    build-client:
+        name: Build Client Image
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            packages: write
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Set up QEMU
+              uses: docker/setup-qemu-action@v3
+
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@v3
+
+            - name: Log in to GHCR
+              if: github.event_name != 'pull_request'
+              uses: docker/login-action@v3
+              with:
+                  registry: ${{ env.REGISTRY }}
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Extract metadata
+              id: meta
+              uses: docker/metadata-action@v5
+              with:
+                  images: ${{ env.REGISTRY }}/${{ env.IMAGE_CLIENT }}
+                  tags: |
+                      type=ref,event=branch,enable=${{ github.ref != 'refs/heads/main' }}
+                      type=ref,event=pr
+                      type=semver,pattern={{version}}
+                      type=semver,pattern={{major}}.{{minor}}
+                      type=sha
+                      type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+                      type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
+
+            - name: Build and push
+              uses: docker/build-push-action@v5
+              with:
+                  context: .
+                  file: client/Dockerfile
+                  platforms: linux/amd64,linux/arm64
+                  push: ${{ github.event_name != 'pull_request' && github.event.inputs.publish != 'false' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+                  tags: ${{ steps.meta.outputs.tags }}
+                  labels: ${{ steps.meta.outputs.labels }}
+                  cache-from: type=gha
+                  cache-to: type=gha,mode=max

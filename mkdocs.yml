@@ -68,6 +68,7 @@ nav:
   - Getting Started:
     - Quick Start: getting-started/quick-start.md
     - Installation: getting-started/installation.md
+    - Docker Deployment: getting-started/docker.md
     - Configuration:
       - Server: getting-started/configuration/server.md
       - Collector: getting-started/configuration/collector.md

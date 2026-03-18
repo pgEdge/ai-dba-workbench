@@ -1,0 +1,256 @@
+# -------------------------------------------------------------------------
+#
+# pgEdge AI DBA Workbench
+#
+# Copyright (c) 2025 - 2026, pgEdge, Inc.
+# This software is released under The PostgreSQL License
+#
+# -------------------------------------------------------------------------
+
+name: Docker Publish
+
+on:
+    push:
+        branches: [main]
+        tags:
+            - 'v*'
+    pull_request:
+        branches: [main]
+    workflow_dispatch:
+        inputs:
+            publish:
+                description: 'Publish images to GHCR'
+                required: false
+                type: boolean
+                default: true
+
+permissions:
+    contents: read
+
+concurrency:
+    group: docker-publish-${{ github.ref }}
+    cancel-in-progress: true
+
+env:
+    REGISTRY: ghcr.io
+    IMAGE_SERVER: pgedge/ai-dba-server
+    IMAGE_COLLECTOR: pgedge/ai-dba-collector
+    IMAGE_ALERTER: pgedge/ai-dba-alerter
+    IMAGE_CLIENT: pgedge/ai-dba-client
+
+jobs:
+    # ------------------------------------------------------------------
+    # Build and publish the server image
+    # ------------------------------------------------------------------
+    build-server:
+        name: Build Server Image
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            packages: write
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+
+            - name: Set up QEMU
+              uses: docker/setup-qemu-action@29109295f81e9ac3b8e424e5a88be9c7fdd8a2d3 # v3
+
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+            - name: Log in to GHCR
+              if: github.event_name != 'pull_request'
+              uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3
+              with:
+                  registry: ${{ env.REGISTRY }}
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Extract metadata
+              id: meta
+              uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+              with:
+                  images: ${{ env.REGISTRY }}/${{ env.IMAGE_SERVER }}
+                  tags: |
+                      type=ref,event=branch
+                      type=ref,event=pr
+                      type=semver,pattern={{version}}
+                      type=semver,pattern={{major}}.{{minor}}
+                      type=sha
+                      type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+                      type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
+
+            - name: Build and push
+              uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+              with:
+                  context: .
+                  file: server/Dockerfile
+                  platforms: linux/amd64,linux/arm64
+                  push: ${{ github.event_name != 'pull_request' && github.event.inputs.publish != 'false' }}
+                  tags: ${{ steps.meta.outputs.tags }}
+                  labels: ${{ steps.meta.outputs.labels }}
+                  cache-from: type=gha
+                  cache-to: type=gha,mode=max
+
+    # ------------------------------------------------------------------
+    # Build and publish the collector image
+    # ------------------------------------------------------------------
+    build-collector:
+        name: Build Collector Image
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            packages: write
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+
+            - name: Set up QEMU
+              uses: docker/setup-qemu-action@29109295f81e9ac3b8e424e5a88be9c7fdd8a2d3 # v3
+
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+            - name: Log in to GHCR
+              if: github.event_name != 'pull_request'
+              uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3
+              with:
+                  registry: ${{ env.REGISTRY }}
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Extract metadata
+              id: meta
+              uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+              with:
+                  images: ${{ env.REGISTRY }}/${{ env.IMAGE_COLLECTOR }}
+                  tags: |
+                      type=ref,event=branch
+                      type=ref,event=pr
+                      type=semver,pattern={{version}}
+                      type=semver,pattern={{major}}.{{minor}}
+                      type=sha
+                      type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+                      type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
+
+            - name: Build and push
+              uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+              with:
+                  context: .
+                  file: collector/Dockerfile
+                  platforms: linux/amd64,linux/arm64
+                  push: ${{ github.event_name != 'pull_request' && github.event.inputs.publish != 'false' }}
+                  tags: ${{ steps.meta.outputs.tags }}
+                  labels: ${{ steps.meta.outputs.labels }}
+                  cache-from: type=gha
+                  cache-to: type=gha,mode=max
+
+    # ------------------------------------------------------------------
+    # Build and publish the alerter image
+    # ------------------------------------------------------------------
+    build-alerter:
+        name: Build Alerter Image
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            packages: write
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+
+            - name: Set up QEMU
+              uses: docker/setup-qemu-action@29109295f81e9ac3b8e424e5a88be9c7fdd8a2d3 # v3
+
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+            - name: Log in to GHCR
+              if: github.event_name != 'pull_request'
+              uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3
+              with:
+                  registry: ${{ env.REGISTRY }}
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Extract metadata
+              id: meta
+              uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+              with:
+                  images: ${{ env.REGISTRY }}/${{ env.IMAGE_ALERTER }}
+                  tags: |
+                      type=ref,event=branch
+                      type=ref,event=pr
+                      type=semver,pattern={{version}}
+                      type=semver,pattern={{major}}.{{minor}}
+                      type=sha
+                      type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+                      type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
+
+            - name: Build and push
+              uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+              with:
+                  context: .
+                  file: alerter/Dockerfile
+                  platforms: linux/amd64,linux/arm64
+                  push: ${{ github.event_name != 'pull_request' && github.event.inputs.publish != 'false' }}
+                  tags: ${{ steps.meta.outputs.tags }}
+                  labels: ${{ steps.meta.outputs.labels }}
+                  cache-from: type=gha
+                  cache-to: type=gha,mode=max
+
+    # ------------------------------------------------------------------
+    # Build and publish the client image
+    # ------------------------------------------------------------------
+    build-client:
+        name: Build Client Image
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            packages: write
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+
+            - name: Set up QEMU
+              uses: docker/setup-qemu-action@29109295f81e9ac3b8e424e5a88be9c7fdd8a2d3 # v3
+
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+            - name: Log in to GHCR
+              if: github.event_name != 'pull_request'
+              uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3
+              with:
+                  registry: ${{ env.REGISTRY }}
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Extract metadata
+              id: meta
+              uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+              with:
+                  images: ${{ env.REGISTRY }}/${{ env.IMAGE_CLIENT }}
+                  tags: |
+                      type=ref,event=branch
+                      type=ref,event=pr
+                      type=semver,pattern={{version}}
+                      type=semver,pattern={{major}}.{{minor}}
+                      type=sha
+                      type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+                      type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
+
+            - name: Build and push
+              uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+              with:
+                  context: .
+                  file: client/Dockerfile
+                  platforms: linux/amd64,linux/arm64
+                  push: ${{ github.event_name != 'pull_request' && github.event.inputs.publish != 'false' }}
+                  tags: ${{ steps.meta.outputs.tags }}
+                  labels: ${{ steps.meta.outputs.labels }}
+                  cache-from: type=gha
+                  cache-to: type=gha,mode=max

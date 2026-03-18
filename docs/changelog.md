@@ -10,6 +10,16 @@ project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- Add a Docker publish workflow that builds and pushes
+  multi-platform images to GitHub Container Registry
+  on version tags and main branch pushes.
+- Add a production Docker Compose configuration using
+  pre-built images with resource limits and log
+  rotation.
+- Add a Docker deployment guide to the documentation.
+
 ## [1.0.0-alpha2] - 2026-03-04
 
 ### Fixed

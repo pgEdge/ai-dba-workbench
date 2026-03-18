@@ -1,0 +1,167 @@
+# pgEdge AI DBA Workbench - Production Docker Compose
+#
+# This file uses pre-built images from GitHub Container Registry (GHCR).
+# Set the VERSION environment variable to pin a specific release:
+#
+#   export VERSION=1.2.3
+#
+# If VERSION is not set, the "latest" tag is used by default.
+#
+# Before starting, set the required POSTGRES_PASSWORD variable and
+# generate the shared secret and password files:
+#
+#   export POSTGRES_PASSWORD=<your-secure-password>
+#   mkdir -p docker/secret
+#   openssl rand -base64 32 > docker/secret/ai-dba.secret
+#   echo "$POSTGRES_PASSWORD" > docker/secret/pg-password
+#
+# Then start all services:
+#
+#   docker compose -f examples/docker-compose.production.yml up -d
+#
+
+services:
+    postgres:
+        image: ghcr.io/pgedge/pgedge-postgres:18-spock5-standard
+        environment:
+            POSTGRES_USER: postgres
+            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+            POSTGRES_DB: ai_workbench
+        volumes:
+            - pgdata:/var/lib/pgsql/18/data
+        ports:
+            - "${POSTGRES_PORT:-5432}:5432"
+        healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U postgres"]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+            start_period: 15s
+        restart: unless-stopped
+        deploy:
+            resources:
+                limits:
+                    cpus: '2'
+                    memory: 2G
+                reservations:
+                    cpus: '1'
+                    memory: 1G
+        networks:
+            - ai-dba-network
+
+    collector:
+        image: ghcr.io/pgedge/ai-dba-collector:${VERSION:-latest}
+        depends_on:
+            postgres:
+                condition: service_healthy
+        volumes:
+            - ./docker/config/ai-dba-collector.yaml:/etc/pgedge/ai-dba-collector.yaml:ro
+            - ./docker/secret/ai-dba.secret:/etc/pgedge/ai-dba.secret:ro
+            - ./docker/secret/pg-password:/etc/pgedge/pg-password:ro
+        restart: unless-stopped
+        deploy:
+            resources:
+                limits:
+                    cpus: '0.5'
+                    memory: 256M
+        logging:
+            driver: json-file
+            options:
+                max-size: "50m"
+                max-file: "5"
+        networks:
+            - ai-dba-network
+
+    server:
+        image: ghcr.io/pgedge/ai-dba-server:${VERSION:-latest}
+        depends_on:
+            postgres:
+                condition: service_healthy
+        volumes:
+            - ./docker/config/ai-dba-server.yaml:/etc/pgedge/ai-dba-server.yaml:ro
+            - ./docker/secret/ai-dba.secret:/etc/pgedge/ai-dba.secret:ro
+            - server-data:/data
+        ports:
+            - "${SERVER_PORT:-8080}:8080"
+        healthcheck:
+            test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/8080'"]
+            interval: 30s
+            timeout: 5s
+            retries: 3
+            start_period: 10s
+        restart: unless-stopped
+        deploy:
+            resources:
+                limits:
+                    cpus: '1'
+                    memory: 1G
+                reservations:
+                    cpus: '0.5'
+                    memory: 512M
+        logging:
+            driver: json-file
+            options:
+                max-size: "100m"
+                max-file: "10"
+        networks:
+            - ai-dba-network
+
+    alerter:
+        image: ghcr.io/pgedge/ai-dba-alerter:${VERSION:-latest}
+        depends_on:
+            postgres:
+                condition: service_healthy
+        volumes:
+            - ./docker/config/ai-dba-alerter.yaml:/etc/pgedge/ai-dba-alerter.yaml:ro
+            - ./docker/secret/ai-dba.secret:/etc/pgedge/ai-dba.secret:ro
+            - ./docker/secret/pg-password:/etc/pgedge/pg-password:ro
+        restart: unless-stopped
+        deploy:
+            resources:
+                limits:
+                    cpus: '0.5'
+                    memory: 256M
+        logging:
+            driver: json-file
+            options:
+                max-size: "50m"
+                max-file: "5"
+        networks:
+            - ai-dba-network
+
+    client:
+        image: ghcr.io/pgedge/ai-dba-client:${VERSION:-latest}
+        depends_on:
+            server:
+                condition: service_healthy
+        ports:
+            - "${CLIENT_PORT:-3000}:80"
+        healthcheck:
+            test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost/"]
+            interval: 30s
+            timeout: 5s
+            retries: 3
+            start_period: 10s
+        restart: unless-stopped
+        deploy:
+            resources:
+                limits:
+                    cpus: '0.5'
+                    memory: 256M
+        logging:
+            driver: json-file
+            options:
+                max-size: "50m"
+                max-file: "5"
+        networks:
+            - ai-dba-network
+
+volumes:
+    pgdata:
+        driver: local
+    server-data:
+        driver: local
+
+networks:
+    ai-dba-network:
+        driver: bridge

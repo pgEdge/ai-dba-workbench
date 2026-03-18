@@ -55,9 +55,9 @@ services:
             postgres:
                 condition: service_healthy
         volumes:
-            - ./docker/config/ai-dba-collector.yaml:/etc/pgedge/ai-dba-collector.yaml:ro
-            - ./docker/secret/ai-dba.secret:/etc/pgedge/ai-dba.secret:ro
-            - ./docker/secret/pg-password:/etc/pgedge/pg-password:ro
+            - ../docker/config/ai-dba-collector.yaml:/etc/pgedge/ai-dba-collector.yaml:ro
+            - ../docker/secret/ai-dba.secret:/etc/pgedge/ai-dba.secret:ro
+            - ../docker/secret/pg-password:/etc/pgedge/pg-password:ro
         restart: unless-stopped
         deploy:
             resources:
@@ -78,8 +78,8 @@ services:
             postgres:
                 condition: service_healthy
         volumes:
-            - ./docker/config/ai-dba-server.yaml:/etc/pgedge/ai-dba-server.yaml:ro
-            - ./docker/secret/ai-dba.secret:/etc/pgedge/ai-dba.secret:ro
+            - ../docker/config/ai-dba-server.yaml:/etc/pgedge/ai-dba-server.yaml:ro
+            - ../docker/secret/ai-dba.secret:/etc/pgedge/ai-dba.secret:ro
             - server-data:/data
         ports:
             - "${SERVER_PORT:-8080}:8080"
@@ -112,9 +112,9 @@ services:
             postgres:
                 condition: service_healthy
         volumes:
-            - ./docker/config/ai-dba-alerter.yaml:/etc/pgedge/ai-dba-alerter.yaml:ro
-            - ./docker/secret/ai-dba.secret:/etc/pgedge/ai-dba.secret:ro
-            - ./docker/secret/pg-password:/etc/pgedge/pg-password:ro
+            - ../docker/config/ai-dba-alerter.yaml:/etc/pgedge/ai-dba-alerter.yaml:ro
+            - ../docker/secret/ai-dba.secret:/etc/pgedge/ai-dba.secret:ro
+            - ../docker/secret/pg-password:/etc/pgedge/pg-password:ro
         restart: unless-stopped
         deploy:
             resources:

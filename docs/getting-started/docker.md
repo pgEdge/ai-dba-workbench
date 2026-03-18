@@ -17,6 +17,12 @@ proceeding.
   plugin must be available as a Docker CLI plugin.
 - Access to the GitHub Container Registry is required
   for pulling pre-built production images.
+- [Git](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git)
+  is required to clone the repository in the Quick
+  Start steps.
+- [OpenSSL](https://www.openssl.org/source/) is used
+  to generate the shared secret file; OpenSSL is
+  pre-installed on most Linux and macOS systems.
 
 ## Quick Start
 
@@ -100,25 +106,47 @@ the GitHub Container Registry.
 ## Image Variants
 
 Pre-built images are published to the GitHub Container
-Registry after each release. The following table lists
-the available images.
+Registry for each release and for each push to the
+`main` branch. The following table lists the available
+images and their tags.
 
 | Image | Tags | Description |
 |-------|------|-------------|
-| `ghcr.io/pgedge/ai-dba-server` | `latest`, `x.y.z` | The MCP server component. |
-| `ghcr.io/pgedge/ai-dba-collector` | `latest`, `x.y.z` | The metrics collector. |
-| `ghcr.io/pgedge/ai-dba-alerter` | `latest`, `x.y.z` | The alert monitoring service. |
-| `ghcr.io/pgedge/ai-dba-client` | `latest`, `x.y.z` | The React web client. |
+| `ghcr.io/pgedge/ai-dba-server` | `latest`, `x.y.z`, `x.y`, `edge` | The MCP server component. |
+| `ghcr.io/pgedge/ai-dba-collector` | `latest`, `x.y.z`, `x.y`, `edge` | The metrics collector. |
+| `ghcr.io/pgedge/ai-dba-alerter` | `latest`, `x.y.z`, `x.y`, `edge` | The alert monitoring service. |
+| `ghcr.io/pgedge/ai-dba-client` | `latest`, `x.y.z`, `x.y`, `edge` | The React web client. |
 
-The `latest` tag always points to the most recent
-release. You can pin to a specific version by setting
-the `VERSION` environment variable.
+Each image also receives a `sha-<hash>` tag that
+provides an immutable reference to a specific commit.
+The publishing workflow produces the following tag
+types:
 
-In the following example, the `VERSION` variable
-selects a specific image tag.
+- The `latest` tag points to the most recent stable
+  release and updates only on version tag pushes.
+- The `edge` tag tracks the `main` branch and may
+  contain unstable changes.
+- The `x.y` tag pins to a minor version and receives
+  automatic patch updates.
+- The `x.y.z` tag pins to an exact release and never
+  changes.
+
+You can select a tag by setting the `VERSION`
+environment variable. In the following examples, the
+`VERSION` variable controls which image tag the
+`docker compose` command pulls.
 
 ```bash
+# Pin to an exact release
 VERSION=1.2.3 docker compose \
+  -f examples/docker-compose.production.yml up -d
+
+# Pin to a minor version (receives patch updates)
+VERSION=1.2 docker compose \
+  -f examples/docker-compose.production.yml up -d
+
+# Use the latest main-branch build
+VERSION=edge docker compose \
   -f examples/docker-compose.production.yml up -d
 ```
 
@@ -185,9 +213,9 @@ docker compose up -d --build
 
 ## Health Checks
 
-Each service includes health checks that Docker
-monitors automatically. Use the following commands
-to verify the deployment status.
+The `postgres`, `server`, and `client` services include
+health checks that Docker monitors automatically. Use
+the following commands to verify the deployment status.
 
 In the following example, the `ps` subcommand displays
 the health status of each container.

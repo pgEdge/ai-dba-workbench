@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { memo } from 'react';
+import { memo } from 'react';
 import {
     Box,
     Typography,
@@ -274,7 +274,7 @@ const GroupItem = memo<GroupItemProps>(({
                         if (cluster.cluster_type === 'server') {
                             const serverCount = cluster.servers?.length || 0;
                             const hasMultipleServers = serverCount > 1;
-                            const hasChildServers = cluster.servers?.some(s => s.children?.length > 0);
+                            const hasChildServers = cluster.servers?.some(s => (s.children?.length ?? 0) > 0);
                             const clusterType = getClusterType(cluster);
 
                             // Empty cluster - render as a simple cluster item
@@ -300,7 +300,7 @@ const GroupItem = memo<GroupItemProps>(({
                                             isDark={isDark}
                                             expandedServers={expandedServers}
                                             onToggleServer={onToggleServer}
-                                            isLast={clusterIndex === group.clusters.length - 1}
+                                            isLast={clusterIndex === (group.clusters?.length ?? 0) - 1}
                                             user={user}
                                             onUpdateCluster={onUpdateCluster}
                                             onUpdateServer={onUpdateServer}
@@ -318,7 +318,7 @@ const GroupItem = memo<GroupItemProps>(({
 
                             // Single standalone server without children - no container
                             if (serverCount === 1 && !hasChildServers) {
-                                const server = cluster.servers[0];
+                                const server = cluster.servers![0];
                                 return (
                                     <DraggableCluster
                                         key={cluster.id}
@@ -373,7 +373,7 @@ const GroupItem = memo<GroupItemProps>(({
                                                 expandedServers={expandedServers}
                                                 onToggleServer={onToggleServer}
                                                 selectedServerId={selectedServerId}
-                                                isLast={serverIndex === cluster.servers.length - 1}
+                                                isLast={serverIndex === (cluster.servers?.length ?? 0) - 1}
                                                 showTreeLines={hasMultipleServers || hasChildServers}
                                                 clusterType={clusterType}
                                                 user={user}
@@ -411,7 +411,7 @@ const GroupItem = memo<GroupItemProps>(({
                                     isDark={isDark}
                                     expandedServers={expandedServers}
                                     onToggleServer={onToggleServer}
-                                    isLast={clusterIndex === group.clusters.length - 1}
+                                    isLast={clusterIndex === (group.clusters?.length ?? 0) - 1}
                                     user={user}
                                     onUpdateCluster={onUpdateCluster}
                                     onUpdateServer={onUpdateServer}

@@ -18,10 +18,17 @@ export interface ClusterServer {
     description?: string;
     host?: string;
     port?: number;
-    status: string;
+    status?: string;
     role?: string | null;
-    primary_role?: string;
+    primary_role?: string | null;
     version?: string | null;
+    database_name?: string;
+    database?: string;
+    username?: string;
+    os?: string;
+    platform?: string;
+    spock_node_name?: string;
+    spock_version?: string;
     connection_error?: string;
     membership_source?: string;
     children?: ClusterServer[];
@@ -31,6 +38,7 @@ export interface ClusterServer {
         relationship_type: string;
         is_auto_detected: boolean;
     }>;
+    [key: string]: unknown;
 }
 
 export interface ClusterEntry {
@@ -40,12 +48,14 @@ export interface ClusterEntry {
     servers: ClusterServer[];
     isStandalone?: boolean;
     auto_cluster_key?: string;
+    [key: string]: unknown;
 }
 
 export interface ClusterGroup {
     id: string;
     name: string;
     clusters: ClusterEntry[];
+    [key: string]: unknown;
 }
 
 export interface ClusterDataContextValue {

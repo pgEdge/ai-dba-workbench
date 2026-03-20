@@ -150,7 +150,7 @@ const getActionButtonsSx = (theme: Theme) => ({
  */
 interface ExtendedServer extends Server {
     owner_username?: string;
-    primary_role?: string;
+    primary_role?: string | null;
 }
 
 interface UserInfo {

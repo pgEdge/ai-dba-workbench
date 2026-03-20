@@ -17,21 +17,23 @@ export interface Server {
     port?: number;
     status?: string;
     role?: string | null;
-    primary_role?: string;
+    primary_role?: string | null;
     version?: string | null;
     is_expandable?: boolean;
     children?: Server[];
     connection_error?: string;
     membership_source?: string;
+    [key: string]: unknown;
 }
 
 export interface Cluster {
     id: string;
     name: string;
     description?: string;
-    servers?: Server[];
+    servers: Server[];
     isStandalone?: boolean;
     auto_cluster_key?: string;
+    [key: string]: unknown;
 }
 
 /**

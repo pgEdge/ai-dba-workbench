@@ -255,7 +255,7 @@ interface ClusterNavigatorProps {
     data?: GroupData[];
     selectedServerId?: number;
     selectedClusterId?: string;
-    selectionType?: string;
+    selectionType?: string | null;
     onSelectServer: (server: Server) => void;
     onSelectCluster?: (cluster: Cluster) => void;
     onSelectEstate?: () => void;

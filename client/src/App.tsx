@@ -172,7 +172,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ onToggleTheme }) => {
 
             for (const group of clusterData) {
                 for (const cluster of group.clusters) {
-                    const allServers = collectServers(cluster.servers);
+                    const allServers = collectServers(cluster.servers || []);
                     if (allServers.some(s => s.id === selectedServer.id)) {
                         clusterId = cluster.id;
                         clusterName = cluster.name;

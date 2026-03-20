@@ -277,6 +277,45 @@ const GroupItem = memo<GroupItemProps>(({
                             const hasChildServers = cluster.servers?.some(s => s.children?.length > 0);
                             const clusterType = getClusterType(cluster);
 
+                            // Empty cluster - render as a simple cluster item
+                            if (serverCount === 0) {
+                                return (
+                                    <DraggableCluster
+                                        key={cluster.id}
+                                        cluster={cluster}
+                                        groupId={group.id}
+                                        isDark={isDark}
+                                        canDrag={user?.isSuperuser}
+                                    >
+                                        <ClusterItem
+                                            cluster={cluster}
+                                            groupId={group.id}
+                                            isExpanded={expandedClusters.has(cluster.id)}
+                                            onToggle={() => onToggleCluster(cluster.id)}
+                                            selectedServerId={selectedServerId}
+                                            selectedClusterId={selectedClusterId}
+                                            onSelectServer={onSelectServer}
+                                            onSelectCluster={onSelectCluster}
+                                            depth={1}
+                                            isDark={isDark}
+                                            expandedServers={expandedServers}
+                                            onToggleServer={onToggleServer}
+                                            isLast={clusterIndex === group.clusters.length - 1}
+                                            user={user}
+                                            onUpdateCluster={onUpdateCluster}
+                                            onUpdateServer={onUpdateServer}
+                                            onEditServer={onEditServer}
+                                            onDeleteServer={onDeleteServer}
+                                            onConfigureCluster={onConfigureCluster}
+                                            onDeleteCluster={onDeleteCluster}
+                                            getServerAlertCount={getServerAlertCount}
+                                            getServerBlackoutStatus={getServerBlackoutStatus}
+                                            getClusterBlackoutStatus={getClusterBlackoutStatus}
+                                        />
+                                    </DraggableCluster>
+                                );
+                            }
+
                             // Single standalone server without children - no container
                             if (serverCount === 1 && !hasChildServers) {
                                 const server = cluster.servers[0];

@@ -210,7 +210,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ onToggleTheme }) => {
         }
 
         if (selectionType === 'cluster' && selectedCluster) {
-            const servers = collectServers(selectedCluster.servers);
+            const servers = selectedCluster.servers ? collectServers(selectedCluster.servers) : [];
             const serverIds = servers.map(s => s.id);
 
             let groupId: string | undefined;

@@ -2056,6 +2056,236 @@ func TestMonitoredConnectionNullableFields(t *testing.T) {
 	}
 }
 
+func TestMonitoredConnection_MarshalJSON(t *testing.T) {
+	tests := []struct {
+		name       string
+		conn       MonitoredConnection
+		wantKeys   map[string]interface{}
+		absentKeys []string
+	}{
+		{
+			name: "basic fields without nullable",
+			conn: MonitoredConnection{
+				ID:           1,
+				Name:         "prod",
+				Description:  "Production",
+				Host:         "db.example.com",
+				Port:         5432,
+				DatabaseName: "appdb",
+				Username:     "postgres",
+				IsMonitored:  true,
+				IsShared:     false,
+			},
+			wantKeys: map[string]interface{}{
+				"id":            float64(1),
+				"name":          "prod",
+				"description":   "Production",
+				"host":          "db.example.com",
+				"port":          float64(5432),
+				"database_name": "appdb",
+				"username":      "postgres",
+				"is_monitored":  true,
+				"is_shared":     false,
+			},
+			absentKeys: []string{
+				"ssl_mode", "ssl_cert_path", "ssl_key_path",
+				"ssl_root_cert_path", "password_encrypted",
+				"owner_username", "owner_token", "hostaddr",
+			},
+		},
+		{
+			name: "ssl_mode serializes as plain string",
+			conn: MonitoredConnection{
+				ID:       2,
+				Name:     "ssl-test",
+				Host:     "localhost",
+				Port:     5432,
+				Username: "user",
+				SSLMode: sql.NullString{
+					String: "require",
+					Valid:  true,
+				},
+			},
+			wantKeys: map[string]interface{}{
+				"ssl_mode": "require",
+			},
+			absentKeys: []string{"ssl_cert_path"},
+		},
+		{
+			name: "ssl paths are included when valid",
+			conn: MonitoredConnection{
+				ID:       3,
+				Name:     "full-ssl",
+				Host:     "localhost",
+				Port:     5432,
+				Username: "user",
+				SSLMode: sql.NullString{
+					String: "verify-full",
+					Valid:  true,
+				},
+				SSLCert: sql.NullString{
+					String: "/path/to/cert.pem",
+					Valid:  true,
+				},
+				SSLKey: sql.NullString{
+					String: "/path/to/key.pem",
+					Valid:  true,
+				},
+				SSLRootCert: sql.NullString{
+					String: "/path/to/ca.pem",
+					Valid:  true,
+				},
+			},
+			wantKeys: map[string]interface{}{
+				"ssl_mode":           "verify-full",
+				"ssl_cert_path":      "/path/to/cert.pem",
+				"ssl_key_path":       "/path/to/key.pem",
+				"ssl_root_cert_path": "/path/to/ca.pem",
+			},
+		},
+		{
+			name: "null ssl_mode is omitted",
+			conn: MonitoredConnection{
+				ID:       4,
+				Name:     "no-ssl",
+				Host:     "localhost",
+				Port:     5432,
+				Username: "user",
+				SSLMode: sql.NullString{
+					Valid: false,
+				},
+			},
+			absentKeys: []string{"ssl_mode"},
+		},
+		{
+			name: "sensitive fields are never included",
+			conn: MonitoredConnection{
+				ID:       5,
+				Name:     "secrets",
+				Host:     "localhost",
+				Port:     5432,
+				Username: "user",
+				PasswordEncrypted: sql.NullString{
+					String: "encrypted_password",
+					Valid:  true,
+				},
+				OwnerUsername: sql.NullString{
+					String: "admin",
+					Valid:  true,
+				},
+				OwnerToken: sql.NullString{
+					String: "token123",
+					Valid:  true,
+				},
+				HostAddr: sql.NullString{
+					String: "192.168.1.1",
+					Valid:  true,
+				},
+			},
+			absentKeys: []string{
+				"password_encrypted", "owner_username",
+				"owner_token", "hostaddr",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := json.Marshal(tt.conn)
+			if err != nil {
+				t.Fatalf("MarshalJSON failed: %v", err)
+			}
+
+			var m map[string]interface{}
+			if err := json.Unmarshal(data, &m); err != nil {
+				t.Fatalf("Unmarshal failed: %v", err)
+			}
+
+			for key, want := range tt.wantKeys {
+				got, ok := m[key]
+				if !ok {
+					t.Errorf("expected key %q in JSON output", key)
+					continue
+				}
+				if got != want {
+					t.Errorf("key %q = %v (%T), want %v (%T)",
+						key, got, got, want, want)
+				}
+			}
+
+			for _, key := range tt.absentKeys {
+				if _, ok := m[key]; ok {
+					t.Errorf("expected key %q to be absent from JSON output", key)
+				}
+			}
+		})
+	}
+}
+
+func TestMonitoredConnection_JSONRoundTrip(t *testing.T) {
+	// Simulate the GET -> PUT round trip that was failing.
+	// The GET response should produce JSON that the client can
+	// send back in a ConnectionFullUpdateRequest without errors.
+	conn := MonitoredConnection{
+		ID:           1,
+		Name:         "prod",
+		Description:  "Production",
+		Host:         "db.example.com",
+		Port:         5432,
+		DatabaseName: "appdb",
+		Username:     "postgres",
+		IsMonitored:  true,
+		IsShared:     false,
+		SSLMode: sql.NullString{
+			String: "disable",
+			Valid:  true,
+		},
+		SSLCert: sql.NullString{
+			String: "/etc/ssl/cert.pem",
+			Valid:  true,
+		},
+	}
+
+	data, err := json.Marshal(conn)
+	if err != nil {
+		t.Fatalf("MarshalJSON failed: %v", err)
+	}
+
+	// Parse the JSON into a generic map to verify the ssl_mode
+	// field is a plain string, not the nested sql.NullString format.
+	var m map[string]interface{}
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("Unmarshal to map failed: %v", err)
+	}
+
+	sslMode, ok := m["ssl_mode"]
+	if !ok {
+		t.Fatal("ssl_mode key missing from JSON output")
+	}
+	sslModeStr, ok := sslMode.(string)
+	if !ok {
+		t.Fatalf("ssl_mode should be a string, got %T: %v", sslMode, sslMode)
+	}
+	if sslModeStr != "disable" {
+		t.Errorf("ssl_mode = %q, want %q", sslModeStr, "disable")
+	}
+
+	// Verify the ssl_cert_path is present as a plain string
+	certPath, ok := m["ssl_cert_path"]
+	if !ok {
+		t.Fatal("ssl_cert_path key missing from JSON output")
+	}
+	certPathStr, ok := certPath.(string)
+	if !ok {
+		t.Fatalf("ssl_cert_path should be a string, got %T: %v",
+			certPath, certPath)
+	}
+	if certPathStr != "/etc/ssl/cert.pem" {
+		t.Errorf("ssl_cert_path = %q, want %q",
+			certPathStr, "/etc/ssl/cert.pem")
+	}
+}
+
 func TestConnectionListItemStruct(t *testing.T) {
 	item := ConnectionListItem{
 		ID:            5,

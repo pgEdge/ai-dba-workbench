@@ -12,6 +12,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -41,25 +42,82 @@ var (
 	ErrAlertNotFound = errors.New("alert not found")
 )
 
-// MonitoredConnection represents a connection stored in the datastore
+// MonitoredConnection represents a connection stored in the datastore.
+// The MarshalJSON method controls API serialization; sql.NullString
+// fields that should appear in JSON responses are converted to plain
+// strings (or omitted when NULL).
 type MonitoredConnection struct {
-	ID                int            `json:"id"`
-	Name              string         `json:"name"`
-	Description       string         `json:"description"`
-	Host              string         `json:"host"`
+	ID                int            `json:"-"`
+	Name              string         `json:"-"`
+	Description       string         `json:"-"`
+	Host              string         `json:"-"`
 	HostAddr          sql.NullString `json:"-"`
-	Port              int            `json:"port"`
-	DatabaseName      string         `json:"database_name"`
-	Username          string         `json:"username"`
+	Port              int            `json:"-"`
+	DatabaseName      string         `json:"-"`
+	Username          string         `json:"-"`
 	PasswordEncrypted sql.NullString `json:"-"`
-	SSLMode           sql.NullString `json:"ssl_mode,omitempty"`
+	SSLMode           sql.NullString `json:"-"`
 	SSLCert           sql.NullString `json:"-"`
 	SSLKey            sql.NullString `json:"-"`
 	SSLRootCert       sql.NullString `json:"-"`
 	OwnerUsername     sql.NullString `json:"-"`
 	OwnerToken        sql.NullString `json:"-"`
-	IsMonitored       bool           `json:"is_monitored"`
-	IsShared          bool           `json:"is_shared"`
+	IsMonitored       bool           `json:"-"`
+	IsShared          bool           `json:"-"`
+}
+
+// MarshalJSON serializes MonitoredConnection for API responses.
+// Nullable string fields are emitted as plain JSON strings when valid
+// and omitted when NULL, so the client receives flat values instead of
+// the nested {"String":"...","Valid":true} representation that
+// sql.NullString produces by default.
+func (mc MonitoredConnection) MarshalJSON() ([]byte, error) {
+	type jsonConn struct {
+		ID           int     `json:"id"`
+		Name         string  `json:"name"`
+		Description  string  `json:"description"`
+		Host         string  `json:"host"`
+		Port         int     `json:"port"`
+		DatabaseName string  `json:"database_name"`
+		Username     string  `json:"username"`
+		SSLMode      *string `json:"ssl_mode,omitempty"`
+		SSLCert      *string `json:"ssl_cert_path,omitempty"`
+		SSLKey       *string `json:"ssl_key_path,omitempty"`
+		SSLRootCert  *string `json:"ssl_root_cert_path,omitempty"`
+		IsMonitored  bool    `json:"is_monitored"`
+		IsShared     bool    `json:"is_shared"`
+	}
+
+	out := jsonConn{
+		ID:           mc.ID,
+		Name:         mc.Name,
+		Description:  mc.Description,
+		Host:         mc.Host,
+		Port:         mc.Port,
+		DatabaseName: mc.DatabaseName,
+		Username:     mc.Username,
+		IsMonitored:  mc.IsMonitored,
+		IsShared:     mc.IsShared,
+	}
+
+	if mc.SSLMode.Valid && mc.SSLMode.String != "" {
+		s := mc.SSLMode.String
+		out.SSLMode = &s
+	}
+	if mc.SSLCert.Valid && mc.SSLCert.String != "" {
+		s := mc.SSLCert.String
+		out.SSLCert = &s
+	}
+	if mc.SSLKey.Valid && mc.SSLKey.String != "" {
+		s := mc.SSLKey.String
+		out.SSLKey = &s
+	}
+	if mc.SSLRootCert.Valid && mc.SSLRootCert.String != "" {
+		s := mc.SSLRootCert.String
+		out.SSLRootCert = &s
+	}
+
+	return json.Marshal(out)
 }
 
 // ConnectionListItem is a simplified connection for API responses

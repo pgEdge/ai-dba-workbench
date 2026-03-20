@@ -113,7 +113,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
     selection,
 }) => {
     const theme = useTheme();
-    const { user } = useAuth();
+    const { user, hasPermission } = useAuth();
     const { aiEnabled } = useAICapabilities();
     const { lastRefresh } = useClusterData();
     const [alerts, setAlerts] = useState([]);
@@ -615,7 +615,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                     onAcknowledge={handleAcknowledge}
                     onUnacknowledge={handleUnacknowledge}
                     onAnalyze={aiEnabled ? handleAnalyze : undefined}
-                    onEditOverride={handleEditOverride}
+                    onEditOverride={hasPermission('manage_alert_rules') ? handleEditOverride : undefined}
                     onAcknowledgeGroup={handleAcknowledgeGroup}
                 />
 

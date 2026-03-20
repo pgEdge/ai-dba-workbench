@@ -242,7 +242,7 @@ const AlertItem = ({ alert, showServer = false, onAcknowledge, onUnacknowledge, 
             )}
 
             {/* Edit override button */}
-            {alert.ruleId && (
+            {alert.ruleId && onEditOverride && (
                 <Tooltip title="Edit alert override" placement="left">
                     <IconButton
                         size="small"

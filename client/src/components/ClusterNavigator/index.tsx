@@ -130,7 +130,7 @@ const searchInputSx = {
 
 // -- Style-getter functions -----------------------------------------------
 
-const getPanelSx = (theme: Theme, panelWidth: number) => ({
+const getPanelSx = (_theme: Theme, panelWidth: number) => ({
     width: panelWidth,
     height: '100%',
     display: 'flex',
@@ -462,7 +462,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
         try {
             // Fetch full server details including username and database_name
             const fullServerDetails = await getServer(server.id);
-            setEditingServer(fullServerDetails);
+            setEditingServer(fullServerDetails as Record<string, unknown>);
             setServerDialogMode('edit');
             setServerDialogOpen(true);
         } catch (err) {
@@ -480,7 +480,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
         if (serverDialogMode === 'create') {
             result = await createServer(serverData);
         } else {
-            result = await updateServer(editingServer.id, serverData);
+            result = await updateServer(editingServer!.id as number, serverData);
         }
         setServerDialogOpen(false);
         return result;
@@ -543,7 +543,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
             await createGroup(groupData);
         } else {
             // For edit, we just update the name using existing function
-            await updateGroupName(editingGroup.id, groupData.name);
+            await updateGroupName(editingGroup!.id as string, groupData.name);
         }
         setGroupDialogOpen(false);
     };
@@ -561,7 +561,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
     };
 
     // Handler for configuring a group (opens edit dialog on Alert Overrides tab)
-    const handleConfigureGroup = (group: Record<string, unknown>) => {
+    const handleConfigureGroup = (group: GroupData) => {
         const groupId = group.id as string;
         const numericId = parseInt(groupId.replace('group-', ''), 10);
         setEditingGroup({ ...group, id: numericId });
@@ -640,7 +640,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
         setDeleteLoading(true);
         try {
             if (deleteTarget.type === 'server') {
-                await deleteServer(deleteTarget.item.id);
+                await deleteServer(deleteTarget.item.id as number);
             } else if (deleteTarget.type === 'cluster') {
                 await deleteCluster(deleteTarget.item.id as string);
             } else {
@@ -749,13 +749,13 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
                     return { ...cluster, servers: filteredCount > 0 ? filteredServers : cluster.servers };
                 }
                 return null;
-            }).filter(Boolean);
+            }).filter(Boolean) as Array<Cluster & { cluster_type?: string; replication_type?: string | null }>;
 
-            if (filteredClusters?.length > 0 || group.name.toLowerCase().includes(query)) {
+            if ((filteredClusters?.length ?? 0) > 0 || group.name.toLowerCase().includes(query)) {
                 return { ...group, clusters: filteredClusters || group.clusters };
             }
             return null;
-        }).filter(Boolean);
+        }).filter(Boolean) as GroupData[];
     }, [data, searchQuery]);
 
     const toggleGroup = (groupId: string) => {
@@ -977,7 +977,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
                             isDark={isDark}
                             expandedServers={expandedServers}
                             onToggleServer={toggleServer}
-                            user={user}
+                            user={user ?? undefined}
                             onUpdateGroup={updateGroupName}
                             onUpdateCluster={updateClusterName}
                             onUpdateServer={updateServerName}

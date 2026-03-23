@@ -70,6 +70,7 @@ export interface ServerDialogProps {
     server?: ServerEditData | null;
     isSuperuser?: boolean;
     onOpenClusterConfig?: (clusterId: number, clusterName: string) => void;
+    onRefresh?: () => Promise<void>;
 }
 
 /**

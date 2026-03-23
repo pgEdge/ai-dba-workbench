@@ -65,6 +65,7 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
     server = null,
     isSuperuser = false,
     onOpenClusterConfig,
+    onRefresh,
 }) => {
     const [formData, setFormData] = useState<ServerFormData>(getDefaultFormData());
     const [errors, setErrors] = useState<FormErrors>({});
@@ -193,6 +194,8 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
                             membership_source: 'manual',
                         },
                     );
+
+                    await onRefresh?.();
                 }
             }
 

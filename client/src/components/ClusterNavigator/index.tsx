@@ -70,6 +70,7 @@ const headerRowSx = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
+    flexWrap: 'nowrap',
     mb: 1.5,
 };
 
@@ -78,6 +79,10 @@ const headerTitleSx = {
     fontSize: '1rem',
     fontWeight: 700,
     letterSpacing: '0.08em',
+    whiteSpace: 'nowrap',
+    minWidth: 0,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
 };
 
 const headerButtonGroupSx = { display: 'flex', gap: 0.5 };
@@ -1028,6 +1033,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
                 mode={serverDialogMode}
                 server={editingServer}
                 isSuperuser={user?.isSuperuser}
+                onRefresh={fetchClusterData}
                 onOpenClusterConfig={(clusterId, clusterName) => {
                     // Find the cluster data from the topology to get
                     // description, auto_cluster_key, and replication_type

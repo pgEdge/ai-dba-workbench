@@ -247,9 +247,11 @@ const TopologyPanel: React.FC<TopologyPanelProps> = ({
     }, [clusterId]);
 
     /**
-     * Fetches connections not assigned to any cluster.
-     * The connections API returns cluster_id on each connection;
-     * unassigned connections have cluster_id set to null.
+     * Fetches connections available for assignment to this cluster.
+     * A connection is available if it is unassigned (cluster_id is
+     * null) or belongs to an auto-detected cluster other than the
+     * current one. Connections manually assigned to another cluster
+     * are excluded because they were intentionally placed.
      */
     const fetchUnassigned = useCallback(async () => {
         try {
@@ -259,12 +261,16 @@ const TopologyPanel: React.FC<TopologyPanelProps> = ({
                 host: string;
                 port: number;
                 cluster_id?: number | null;
+                membership_source?: string;
             }
             const all = await apiGet<ConnectionListItem[]>(
                 '/api/v1/connections',
             );
             const unassigned = (all ?? []).filter(
-                (c) => c.cluster_id == null,
+                (c) =>
+                    c.cluster_id == null ||
+                    (c.membership_source === 'auto' &&
+                        c.cluster_id !== clusterId),
             );
             setUnassignedConnections(
                 unassigned.map((c) => ({
@@ -282,7 +288,7 @@ const TopologyPanel: React.FC<TopologyPanelProps> = ({
                     : 'Failed to load available servers',
             );
         }
-    }, []);
+    }, [clusterId]);
 
     useEffect(() => {
         fetchData();

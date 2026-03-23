@@ -736,9 +736,10 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
         return data.map(group => {
             const filteredClusters = group.clusters?.map(cluster => {
                 const filteredServers = filterServersRecursive(cluster.servers, query);
+                const filteredCount = filteredServers?.length ?? 0;
 
-                if (filteredServers?.length > 0 || cluster.name.toLowerCase().includes(query)) {
-                    return { ...cluster, servers: filteredServers.length > 0 ? filteredServers : cluster.servers };
+                if (filteredCount > 0 || cluster.name.toLowerCase().includes(query)) {
+                    return { ...cluster, servers: filteredCount > 0 ? filteredServers : cluster.servers };
                 }
                 return null;
             }).filter(Boolean);

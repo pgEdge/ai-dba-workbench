@@ -312,7 +312,7 @@ const ClusterItem = memo<ClusterItemProps>(({
                             expandedServers={expandedServers}
                             onToggleServer={onToggleServer}
                             selectedServerId={selectedServerId}
-                            isLast={index === cluster.servers.length - 1}
+                            isLast={index === (cluster.servers?.length ?? 0) - 1}
                             showTreeLines={true}
                             clusterType={clusterType}
                             user={user}

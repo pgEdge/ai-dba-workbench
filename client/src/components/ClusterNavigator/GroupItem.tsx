@@ -318,7 +318,8 @@ const GroupItem = memo<GroupItemProps>(({
 
                             // Single standalone server without children - no container
                             if (serverCount === 1 && !hasChildServers) {
-                                const server = cluster.servers![0];
+                                const server = cluster.servers?.[0];
+                                if (!server) {return null;}
                                 return (
                                     <DraggableCluster
                                         key={cluster.id}

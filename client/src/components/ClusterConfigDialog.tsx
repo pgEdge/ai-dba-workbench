@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
     Dialog,
     AppBar,
@@ -90,6 +90,7 @@ const ClusterConfigDialog: React.FC<ClusterConfigDialogProps> = ({
     const [createdClusterId, setCreatedClusterId] = useState<number | undefined>(
         undefined,
     );
+    const prevOpenRef = useRef(false);
 
     // The effective numeric ID is either the one passed in (edit mode)
     // or the one returned after creation (create mode)
@@ -98,9 +99,9 @@ const ClusterConfigDialog: React.FC<ClusterConfigDialogProps> = ({
     // The effective replication type for the topology panel
     const effectiveReplicationType = selectedReplicationType || replicationType || null;
 
-    // Reset form state when the dialog opens
+    // Reset form state only when the dialog opens (false -> true transition)
     useEffect(() => {
-        if (open) {
+        if (open && !prevOpenRef.current) {
             setName(clusterName || '');
             setDescription(clusterDescription || '');
             setSelectedReplicationType(replicationType || '');
@@ -111,6 +112,7 @@ const ClusterConfigDialog: React.FC<ClusterConfigDialogProps> = ({
             setActiveTab(0);
             setCreatedClusterId(undefined);
         }
+        prevOpenRef.current = open;
     }, [open, clusterName, clusterDescription, replicationType]);
 
     const handleSave = async () => {

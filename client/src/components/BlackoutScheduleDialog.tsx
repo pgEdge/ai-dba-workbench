@@ -10,7 +10,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
     Dialog,
     DialogTitle,
@@ -320,10 +320,11 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
     const [error, setError] = useState('');
     const [nameError, setNameError] = useState('');
     const [isSaving, setIsSaving] = useState(false);
+    const prevOpenRef = useRef(false);
 
-    // Reset form when dialog opens
+    // Reset form only when dialog opens (false -> true transition)
     useEffect(() => {
-        if (open) {
+        if (open && !prevOpenRef.current) {
             if (isEdit && schedule) {
                 setScope(schedule.scope || 'server');
                 setName(schedule.name || '');
@@ -367,6 +368,7 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
                 setNameError('');
             }
         }
+        prevOpenRef.current = open;
     }, [open, schedule, isEdit, selection]);
 
     // Compute the final cron expression

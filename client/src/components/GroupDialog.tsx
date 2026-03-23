@@ -10,7 +10,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
     Dialog,
     DialogTitle,
@@ -159,10 +159,11 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
     const [nameError, setNameError] = useState('');
     const [isSaving, setIsSaving] = useState(false);
     const [activeTab, setActiveTab] = useState(0);
+    const prevOpenRef = useRef(false);
 
-    // Reset form when dialog opens or group changes
+    // Reset form only when dialog opens (false -> true transition)
     useEffect(() => {
-        if (open) {
+        if (open && !prevOpenRef.current) {
             if (mode === 'edit' && group) {
                 setName(group.name || '');
                 setDescription(group.description || '');
@@ -176,6 +177,7 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
             setNameError('');
             setActiveTab(initialTab);
         }
+        prevOpenRef.current = open;
     }, [open, mode, group, initialTab]);
 
     const validateForm = () => {

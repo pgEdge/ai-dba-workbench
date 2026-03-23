@@ -10,7 +10,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
     Dialog,
     DialogTitle,
@@ -244,10 +244,11 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
     const [reason, setReason] = useState('');
     const [error, setError] = useState('');
     const [isSaving, setIsSaving] = useState(false);
+    const prevOpenRef = useRef(false);
 
-    // Reset form when dialog opens
+    // Reset form only when dialog opens (false -> true transition)
     useEffect(() => {
-        if (open) {
+        if (open && !prevOpenRef.current) {
             const selType = (selection?.type as string) || 'server';
             const preferred = isScopeAvailable(selType, selection)
                 ? selType
@@ -263,6 +264,7 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
             setReason('');
             setError('');
         }
+        prevOpenRef.current = open;
     }, [open, selection]);
 
     // Compute end time for "Start Now" mode

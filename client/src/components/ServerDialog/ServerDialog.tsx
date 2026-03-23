@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
     Dialog,
     DialogTitle,
@@ -81,10 +81,11 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
     });
 
     const isEditMode = mode === 'edit';
+    const prevOpenRef = useRef(false);
 
-    // Reset form when dialog opens or server changes
+    // Reset form only when dialog opens (false -> true transition)
     useEffect(() => {
-        if (open) {
+        if (open && !prevOpenRef.current) {
             setActiveTab(0);
             if (isEditMode && server) {
                 setFormData({
@@ -121,6 +122,7 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
             setSubmitError(null);
             setSaveSuccess(false);
         }
+        prevOpenRef.current = open;
     }, [open, isEditMode, server]);
 
     // Update a single form field and clear its error

@@ -9377,6 +9377,11 @@
             "type": "string",
             "description": "Cluster name"
           },
+          "replication_type": {
+            "type": "string",
+            "description": "Replication type for the cluster",
+            "nullable": true
+          },
           "updated_at": {
             "type": "string",
             "format": "date-time",
@@ -9447,6 +9452,10 @@
           "name": {
             "type": "string",
             "description": "Cluster name"
+          },
+          "replication_type": {
+            "type": "string",
+            "description": "Replication type for the cluster"
           }
         }
       },
@@ -11360,6 +11369,15 @@
       "TopologyCluster": {
         "type": "object",
         "properties": {
+          "auto_cluster_key": {
+            "type": "string",
+            "description": "Auto-detection key for the cluster",
+            "nullable": true
+          },
+          "cluster_type": {
+            "type": "string",
+            "description": "Auto-detected cluster type (spock, spock_ha, binary, logical, server, manual)"
+          },
           "description": {
             "type": "string",
             "description": "Cluster description",
@@ -11373,15 +11391,16 @@
             "type": "string",
             "description": "Cluster name"
           },
+          "replication_type": {
+            "type": "string",
+            "description": "User-set replication type from the database",
+            "nullable": true
+          },
           "servers": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/TopologyServer"
             }
-          },
-          "type": {
-            "type": "string",
-            "description": "Cluster type (spock, streaming, standalone)"
           }
         }
       },

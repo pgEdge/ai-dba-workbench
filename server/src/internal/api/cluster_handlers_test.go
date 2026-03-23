@@ -260,8 +260,8 @@ func TestClusterHandler_UpdateCluster_MissingBothNameAndGroupID(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	if response.Error != "At least name or group_id is required" {
-		t.Errorf("Expected 'At least name or group_id is required', got %q", response.Error)
+	if response.Error != "At least name, group_id, description, or replication_type is required" {
+		t.Errorf("Expected 'At least name, group_id, description, or replication_type is required', got %q", response.Error)
 	}
 }
 

@@ -719,13 +719,14 @@ type ClusterGroup struct {
 
 // Cluster represents a database cluster containing servers
 type Cluster struct {
-	ID             int            `json:"id"`
-	GroupID        sql.NullInt32  `json:"group_id,omitempty"`
-	Name           string         `json:"name"`
-	Description    *string        `json:"description,omitempty"`
-	AutoClusterKey sql.NullString `json:"auto_cluster_key,omitempty"`
-	CreatedAt      time.Time      `json:"created_at"`
-	UpdatedAt      time.Time      `json:"updated_at"`
+	ID              int            `json:"id"`
+	GroupID         sql.NullInt32  `json:"group_id,omitempty"`
+	Name            string         `json:"name"`
+	Description     *string        `json:"description,omitempty"`
+	ReplicationType *string        `json:"replication_type,omitempty"`
+	AutoClusterKey  sql.NullString `json:"auto_cluster_key,omitempty"`
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
 }
 
 // ServerInfo represents a server in the cluster hierarchy with status
@@ -893,7 +894,7 @@ func (d *Datastore) GetClustersInGroup(ctx context.Context, groupID int) ([]Clus
 	defer d.mu.RUnlock()
 
 	query := `
-        SELECT id, group_id, name, description, auto_cluster_key, created_at, updated_at
+        SELECT id, group_id, name, description, replication_type, auto_cluster_key, created_at, updated_at
         FROM clusters
         WHERE group_id = $1
           AND dismissed = FALSE
@@ -909,7 +910,7 @@ func (d *Datastore) GetClustersInGroup(ctx context.Context, groupID int) ([]Clus
 	var clusters []Cluster
 	for rows.Next() {
 		var c Cluster
-		if err := rows.Scan(&c.ID, &c.GroupID, &c.Name, &c.Description, &c.AutoClusterKey, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.GroupID, &c.Name, &c.Description, &c.ReplicationType, &c.AutoClusterKey, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan cluster: %w", err)
 		}
 		clusters = append(clusters, c)
@@ -928,14 +929,14 @@ func (d *Datastore) GetCluster(ctx context.Context, id int) (*Cluster, error) {
 	defer d.mu.RUnlock()
 
 	query := `
-        SELECT id, group_id, name, description, auto_cluster_key, created_at, updated_at
+        SELECT id, group_id, name, description, replication_type, auto_cluster_key, created_at, updated_at
         FROM clusters
         WHERE id = $1
     `
 
 	var c Cluster
 	err := d.pool.QueryRow(ctx, query, id).Scan(
-		&c.ID, &c.GroupID, &c.Name, &c.Description, &c.AutoClusterKey, &c.CreatedAt, &c.UpdatedAt,
+		&c.ID, &c.GroupID, &c.Name, &c.Description, &c.ReplicationType, &c.AutoClusterKey, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cluster: %w", err)
@@ -952,12 +953,12 @@ func (d *Datastore) CreateCluster(ctx context.Context, groupID int, name string,
 	query := `
         INSERT INTO clusters (group_id, name, description)
         VALUES ($1, $2, $3)
-        RETURNING id, group_id, name, description, auto_cluster_key, created_at, updated_at
+        RETURNING id, group_id, name, description, replication_type, auto_cluster_key, created_at, updated_at
     `
 
 	var c Cluster
 	err := d.pool.QueryRow(ctx, query, groupID, name, description).Scan(
-		&c.ID, &c.GroupID, &c.Name, &c.Description, &c.AutoClusterKey, &c.CreatedAt, &c.UpdatedAt,
+		&c.ID, &c.GroupID, &c.Name, &c.Description, &c.ReplicationType, &c.AutoClusterKey, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create cluster: %w", err)
@@ -975,12 +976,12 @@ func (d *Datastore) UpdateCluster(ctx context.Context, id int, groupID int, name
         UPDATE clusters
         SET group_id = $2, name = $3, description = $4, updated_at = CURRENT_TIMESTAMP
         WHERE id = $1
-        RETURNING id, group_id, name, description, auto_cluster_key, created_at, updated_at
+        RETURNING id, group_id, name, description, replication_type, auto_cluster_key, created_at, updated_at
     `
 
 	var c Cluster
 	err := d.pool.QueryRow(ctx, query, id, groupID, name, description).Scan(
-		&c.ID, &c.GroupID, &c.Name, &c.Description, &c.AutoClusterKey, &c.CreatedAt, &c.UpdatedAt,
+		&c.ID, &c.GroupID, &c.Name, &c.Description, &c.ReplicationType, &c.AutoClusterKey, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update cluster: %w", err)
@@ -991,7 +992,7 @@ func (d *Datastore) UpdateCluster(ctx context.Context, id int, groupID int, name
 
 // UpdateClusterPartial updates only the provided fields of a cluster.
 // Supports partial updates: name, group_id, description - any can be omitted.
-func (d *Datastore) UpdateClusterPartial(ctx context.Context, id int, groupID *int, name string, description *string) (*Cluster, error) {
+func (d *Datastore) UpdateClusterPartial(ctx context.Context, id int, groupID *int, name string, description *string, replicationType *string) (*Cluster, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -1018,6 +1019,12 @@ func (d *Datastore) UpdateClusterPartial(ctx context.Context, id int, groupID *i
 		argNum++
 	}
 
+	if replicationType != nil {
+		setClauses = append(setClauses, fmt.Sprintf("replication_type = $%d", argNum))
+		args = append(args, *replicationType)
+		argNum++
+	}
+
 	// Add the cluster ID for the WHERE clause
 	args = append(args, id)
 
@@ -1025,12 +1032,12 @@ func (d *Datastore) UpdateClusterPartial(ctx context.Context, id int, groupID *i
         UPDATE clusters
         SET %s
         WHERE id = $%d
-        RETURNING id, group_id, name, description, auto_cluster_key, created_at, updated_at
+        RETURNING id, group_id, name, description, replication_type, auto_cluster_key, created_at, updated_at
     `, strings.Join(setClauses, ", "), argNum)
 
 	var c Cluster
 	err := d.pool.QueryRow(ctx, query, args...).Scan(
-		&c.ID, &c.GroupID, &c.Name, &c.Description, &c.AutoClusterKey, &c.CreatedAt, &c.UpdatedAt,
+		&c.ID, &c.GroupID, &c.Name, &c.Description, &c.ReplicationType, &c.AutoClusterKey, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update cluster: %w", err)
@@ -1144,12 +1151,12 @@ func (d *Datastore) UpsertClusterByAutoKey(ctx context.Context, autoKey, name st
         VALUES ($1, $2)
         ON CONFLICT (auto_cluster_key)
         DO UPDATE SET name = EXCLUDED.name, dismissed = FALSE, updated_at = CURRENT_TIMESTAMP
-        RETURNING id, group_id, name, description, auto_cluster_key, created_at, updated_at
+        RETURNING id, group_id, name, description, replication_type, auto_cluster_key, created_at, updated_at
     `
 
 	var c Cluster
 	err := d.pool.QueryRow(ctx, query, name, autoKey).Scan(
-		&c.ID, &c.GroupID, &c.Name, &c.Description, &c.AutoClusterKey, &c.CreatedAt, &c.UpdatedAt,
+		&c.ID, &c.GroupID, &c.Name, &c.Description, &c.ReplicationType, &c.AutoClusterKey, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to upsert cluster by auto key: %w", err)
@@ -1168,13 +1175,13 @@ func (d *Datastore) UpsertAutoDetectedCluster(ctx context.Context, autoKey strin
 	// Check if cluster already exists
 	var existingCluster Cluster
 	checkQuery := `
-        SELECT id, group_id, name, description, auto_cluster_key, created_at, updated_at
+        SELECT id, group_id, name, description, replication_type, auto_cluster_key, created_at, updated_at
         FROM clusters
         WHERE auto_cluster_key = $1
     `
 	err := d.pool.QueryRow(ctx, checkQuery, autoKey).Scan(
 		&existingCluster.ID, &existingCluster.GroupID, &existingCluster.Name,
-		&existingCluster.Description, &existingCluster.AutoClusterKey,
+		&existingCluster.Description, &existingCluster.ReplicationType, &existingCluster.AutoClusterKey,
 		&existingCluster.CreatedAt, &existingCluster.UpdatedAt,
 	)
 
@@ -1188,11 +1195,11 @@ func (d *Datastore) UpsertAutoDetectedCluster(ctx context.Context, autoKey strin
 		insertQuery := `
             INSERT INTO clusters (name, description, auto_cluster_key, group_id)
             VALUES ($1, $2, $3, $4)
-            RETURNING id, group_id, name, description, auto_cluster_key, created_at, updated_at
+            RETURNING id, group_id, name, description, replication_type, auto_cluster_key, created_at, updated_at
         `
 		var c Cluster
 		err := d.pool.QueryRow(ctx, insertQuery, name, description, autoKey, groupID).Scan(
-			&c.ID, &c.GroupID, &c.Name, &c.Description, &c.AutoClusterKey, &c.CreatedAt, &c.UpdatedAt,
+			&c.ID, &c.GroupID, &c.Name, &c.Description, &c.ReplicationType, &c.AutoClusterKey, &c.CreatedAt, &c.UpdatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create cluster: %w", err)
@@ -1232,12 +1239,12 @@ func (d *Datastore) UpsertAutoDetectedCluster(ctx context.Context, autoKey strin
         UPDATE clusters
         SET %s
         WHERE auto_cluster_key = $%d
-        RETURNING id, group_id, name, description, auto_cluster_key, created_at, updated_at
+        RETURNING id, group_id, name, description, replication_type, auto_cluster_key, created_at, updated_at
     `, strings.Join(setClauses, ", "), argNum)
 
 	var c Cluster
 	err = d.pool.QueryRow(ctx, updateQuery, args...).Scan(
-		&c.ID, &c.GroupID, &c.Name, &c.Description, &c.AutoClusterKey, &c.CreatedAt, &c.UpdatedAt,
+		&c.ID, &c.GroupID, &c.Name, &c.Description, &c.ReplicationType, &c.AutoClusterKey, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update cluster: %w", err)
@@ -1591,7 +1598,7 @@ func (d *Datastore) getClusterGroupsInternal(ctx context.Context) ([]ClusterGrou
 
 func (d *Datastore) getClustersInGroupInternal(ctx context.Context, groupID int) ([]Cluster, error) {
 	query := `
-        SELECT id, group_id, name, description, auto_cluster_key, created_at, updated_at
+        SELECT id, group_id, name, description, replication_type, auto_cluster_key, created_at, updated_at
         FROM clusters
         WHERE group_id = $1
           AND dismissed = FALSE
@@ -1607,7 +1614,7 @@ func (d *Datastore) getClustersInGroupInternal(ctx context.Context, groupID int)
 	var clusters []Cluster
 	for rows.Next() {
 		var c Cluster
-		if err := rows.Scan(&c.ID, &c.GroupID, &c.Name, &c.Description, &c.AutoClusterKey, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.GroupID, &c.Name, &c.Description, &c.ReplicationType, &c.AutoClusterKey, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan cluster: %w", err)
 		}
 		clusters = append(clusters, c)
@@ -1774,12 +1781,13 @@ type AutoRelationshipInput struct {
 
 // TopologyCluster represents a replication-aware cluster
 type TopologyCluster struct {
-	ID             string               `json:"id"`
-	Name           string               `json:"name"`
-	Description    string               `json:"description,omitempty"`
-	ClusterType    string               `json:"cluster_type"` // spock, spock_ha, binary, logical, server
-	AutoClusterKey string               `json:"auto_cluster_key,omitempty"`
-	Servers        []TopologyServerInfo `json:"servers"`
+	ID              string               `json:"id"`
+	Name            string               `json:"name"`
+	Description     string               `json:"description,omitempty"`
+	ClusterType     string               `json:"cluster_type"`               // spock, spock_ha, binary, logical, server
+	ReplicationType string               `json:"replication_type,omitempty"` // user-set replication type from the database
+	AutoClusterKey  string               `json:"auto_cluster_key,omitempty"`
+	Servers         []TopologyServerInfo `json:"servers"`
 }
 
 // clusterOverride holds custom name and description for auto-detected clusters
@@ -2661,7 +2669,7 @@ func (d *Datastore) createShellClustersForUnmerged(ctx context.Context, groups [
 
 	// Query cluster metadata for unmerged keys (exclude dismissed)
 	query := `
-        SELECT id, name, COALESCE(description, ''), auto_cluster_key, group_id
+        SELECT id, name, COALESCE(description, ''), COALESCE(replication_type, ''), auto_cluster_key, group_id
         FROM clusters
         WHERE auto_cluster_key = ANY($1)
           AND dismissed = FALSE
@@ -2674,16 +2682,17 @@ func (d *Datastore) createShellClustersForUnmerged(ctx context.Context, groups [
 	defer rows.Close()
 
 	type shellInfo struct {
-		dbID           int
-		name           string
-		description    string
-		autoClusterKey string
-		groupID        int
+		dbID            int
+		name            string
+		description     string
+		replicationType string
+		autoClusterKey  string
+		groupID         int
 	}
 	var shells []shellInfo
 	for rows.Next() {
 		var s shellInfo
-		if err := rows.Scan(&s.dbID, &s.name, &s.description, &s.autoClusterKey, &s.groupID); err != nil {
+		if err := rows.Scan(&s.dbID, &s.name, &s.description, &s.replicationType, &s.autoClusterKey, &s.groupID); err != nil {
 			logger.Errorf("createShellClustersForUnmerged: failed to scan cluster: %v", err)
 			continue
 		}
@@ -2712,12 +2721,13 @@ func (d *Datastore) createShellClustersForUnmerged(ctx context.Context, groups [
 		servers := nestPersistedMembers(members, parentMap)
 
 		tc := TopologyCluster{
-			ID:             fmt.Sprintf("cluster-%d", s.dbID),
-			Name:           s.name,
-			Description:    s.description,
-			ClusterType:    clusterTypeFromKey(s.autoClusterKey),
-			AutoClusterKey: s.autoClusterKey,
-			Servers:        servers,
+			ID:              fmt.Sprintf("cluster-%d", s.dbID),
+			Name:            s.name,
+			Description:     s.description,
+			ReplicationType: s.replicationType,
+			ClusterType:     clusterTypeFromKey(s.autoClusterKey),
+			AutoClusterKey:  s.autoClusterKey,
+			Servers:         servers,
 		}
 
 		// Find the matching group and append the shell cluster
@@ -2881,12 +2891,17 @@ func (d *Datastore) getManualClustersInDefaultGroup(ctx context.Context, default
 		if c.Description != nil {
 			clusterDescription = *c.Description
 		}
+		replicationType := ""
+		if c.ReplicationType != nil {
+			replicationType = *c.ReplicationType
+		}
 		tc := TopologyCluster{
-			ID:          fmt.Sprintf("cluster-%d", c.ID),
-			Name:        c.Name,
-			Description: clusterDescription,
-			ClusterType: "manual",
-			Servers:     []TopologyServerInfo{},
+			ID:              fmt.Sprintf("cluster-%d", c.ID),
+			Name:            c.Name,
+			Description:     clusterDescription,
+			ReplicationType: replicationType,
+			ClusterType:     "manual",
+			Servers:         []TopologyServerInfo{},
 		}
 
 		servers, err := d.getServersInClusterWithRolesInternal(ctx, c.ID)
@@ -3112,13 +3127,18 @@ func (d *Datastore) buildManualGroupsTopology(ctx context.Context, autoDetectedC
 					if c.Description != nil {
 						clusterDescription = *c.Description
 					}
+					replicationType := ""
+					if c.ReplicationType != nil {
+						replicationType = *c.ReplicationType
+					}
 					topologyCluster := TopologyCluster{
-						ID:             fmt.Sprintf("cluster-%d", c.ID),
-						Name:           c.Name, // Use the custom name from the cluster record
-						Description:    clusterDescription,
-						ClusterType:    autoCluster.ClusterType,
-						AutoClusterKey: c.AutoClusterKey.String,
-						Servers:        autoCluster.Servers,
+						ID:              fmt.Sprintf("cluster-%d", c.ID),
+						Name:            c.Name, // Use the custom name from the cluster record
+						Description:     clusterDescription,
+						ReplicationType: replicationType,
+						ClusterType:     autoCluster.ClusterType,
+						AutoClusterKey:  c.AutoClusterKey.String,
+						Servers:         autoCluster.Servers,
 					}
 					topologyGroup.Clusters = append(topologyGroup.Clusters, topologyCluster)
 				}
@@ -3132,12 +3152,17 @@ func (d *Datastore) buildManualGroupsTopology(ctx context.Context, autoDetectedC
 			if c.Description != nil {
 				manualDescription = *c.Description
 			}
+			manualReplicationType := ""
+			if c.ReplicationType != nil {
+				manualReplicationType = *c.ReplicationType
+			}
 			topologyCluster := TopologyCluster{
-				ID:          fmt.Sprintf("cluster-%d", c.ID),
-				Name:        c.Name,
-				Description: manualDescription,
-				ClusterType: "manual",
-				Servers:     []TopologyServerInfo{},
+				ID:              fmt.Sprintf("cluster-%d", c.ID),
+				Name:            c.Name,
+				Description:     manualDescription,
+				ReplicationType: manualReplicationType,
+				ClusterType:     "manual",
+				Servers:         []TopologyServerInfo{},
 			}
 
 			// Get servers in this cluster with their role data

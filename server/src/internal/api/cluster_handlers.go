@@ -46,9 +46,10 @@ type ClusterGroupRequest struct {
 
 // ClusterRequest is the request body for creating/updating clusters
 type ClusterRequest struct {
-	GroupID     *int    `json:"group_id,omitempty"`
-	Name        string  `json:"name,omitempty"`
-	Description *string `json:"description,omitempty"`
+	GroupID         *int    `json:"group_id,omitempty"`
+	Name            string  `json:"name,omitempty"`
+	Description     *string `json:"description,omitempty"`
+	ReplicationType *string `json:"replication_type,omitempty"`
 }
 
 // AssignServerRequest is the request body for assigning a server to a cluster
@@ -508,16 +509,16 @@ func (h *ClusterHandler) updateCluster(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 
-	// At least name or group_id must be provided for update
-	if req.Name == "" && req.GroupID == nil {
-		RespondError(w, http.StatusBadRequest, "At least name or group_id is required")
+	// At least one field must be provided for update
+	if req.Name == "" && req.GroupID == nil && req.Description == nil && req.ReplicationType == nil {
+		RespondError(w, http.StatusBadRequest, "At least name, group_id, description, or replication_type is required")
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	cluster, err := h.datastore.UpdateClusterPartial(ctx, id, req.GroupID, req.Name, req.Description)
+	cluster, err := h.datastore.UpdateClusterPartial(ctx, id, req.GroupID, req.Name, req.Description, req.ReplicationType)
 	if err != nil {
 		log.Printf("[ERROR] Failed to update cluster (id=%d): %v", id, err)
 		RespondError(w, http.StatusInternalServerError, "Failed to update cluster")

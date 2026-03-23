@@ -247,7 +247,7 @@ const getSpinnerSx = (loading: boolean) => ({
 interface GroupData {
     id: string;
     name: string;
-    clusters?: Array<Cluster & { cluster_type?: string }>;
+    clusters?: Array<Cluster & { cluster_type?: string; replication_type?: string | null }>;
     [key: string]: unknown;
 }
 
@@ -322,6 +322,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
         name: string;
         description?: string;
         auto_cluster_key?: string;
+        replication_type?: string | null;
     } | null>(null);
 
     // Drag and drop state
@@ -576,6 +577,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
             name: cluster.name,
             description: cluster.description,
             auto_cluster_key: cluster.auto_cluster_key,
+            replication_type: cluster.replication_type,
         });
         setClusterConfigMode('edit');
         setClusterConfigOpen(true);
@@ -613,12 +615,12 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
             const result = await response.json();
             if (result.id) {
                 setConfigCluster(prev =>
-                    prev ? { ...prev, numericId: result.id, name: saveData.name, description: saveData.description } : null
+                    prev ? { ...prev, numericId: result.id, name: saveData.name, description: saveData.description, replication_type: saveData.replication_type ?? prev.replication_type } : null
                 );
             }
         } else {
             setConfigCluster(prev =>
-                prev ? { ...prev, name: saveData.name, description: saveData.description } : null
+                prev ? { ...prev, name: saveData.name, description: saveData.description, replication_type: saveData.replication_type ?? prev.replication_type } : null
             );
         }
 
@@ -1028,9 +1030,10 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
                 isSuperuser={user?.isSuperuser}
                 onOpenClusterConfig={(clusterId, clusterName) => {
                     // Find the cluster data from the topology to get
-                    // description and auto_cluster_key
+                    // description, auto_cluster_key, and replication_type
                     let description: string | undefined;
                     let autoClusterKey: string | undefined;
+                    let replicationType: string | null | undefined;
                     for (const group of data) {
                         const found = group.clusters?.find(
                             (c) => c.id === `cluster-${clusterId}`,
@@ -1038,6 +1041,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
                         if (found) {
                             description = found.description;
                             autoClusterKey = found.auto_cluster_key;
+                            replicationType = found.replication_type as string | null | undefined;
                             break;
                         }
                     }
@@ -1048,6 +1052,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
                         name: clusterName,
                         description,
                         auto_cluster_key: autoClusterKey,
+                        replication_type: replicationType,
                     });
                     setClusterConfigMode('edit');
                     setClusterConfigOpen(true);
@@ -1078,6 +1083,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
                     numericClusterId={configCluster.numericId}
                     clusterName={configCluster.name}
                     clusterDescription={configCluster.description}
+                    replicationType={configCluster.replication_type}
                     autoClusterKey={configCluster.auto_cluster_key}
                     onSave={handleClusterConfigSave}
                     onCreate={handleCreateCluster}

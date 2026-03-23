@@ -48,6 +48,7 @@ export interface ClusterEntry {
     servers: ClusterServer[];
     isStandalone?: boolean;
     auto_cluster_key?: string;
+    replication_type?: string | null;
     [key: string]: unknown;
 }
 
@@ -109,7 +110,7 @@ export const generateDataFingerprint = (data: ClusterGroup[]): string => {
     const fingerprint = data.map(group => {
         const clusterFingerprints = (group.clusters || []).map(cluster => {
             const serverFingerprints = collectServerFingerprints(cluster.servers || []);
-            return `${cluster.id}:${cluster.name}:${cluster.description || ''}:${serverFingerprints}`;
+            return `${cluster.id}:${cluster.name}:${cluster.description || ''}:${cluster.replication_type || ''}:${serverFingerprints}`;
         }).join('|');
         return `${group.id}:${group.name}:${clusterFingerprints}`;
     }).join('||');

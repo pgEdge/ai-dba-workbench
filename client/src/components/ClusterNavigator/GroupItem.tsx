@@ -121,7 +121,7 @@ interface GroupData {
     name: string;
     auto_group_key?: string;
     is_default?: boolean;
-    clusters?: Array<Cluster & { cluster_type?: string }>;
+    clusters?: Array<Cluster & { cluster_type?: string; replication_type?: string | null }>;
 }
 
 interface GroupItemProps {

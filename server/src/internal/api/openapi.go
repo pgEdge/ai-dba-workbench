@@ -294,20 +294,22 @@ func buildSchemas() map[string]*OpenAPISchema {
 		"Cluster": {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
-				"id":          {Type: "string", Description: "Cluster ID"},
-				"group_id":    {Type: "string", Description: "Parent group ID"},
-				"name":        {Type: "string", Description: "Cluster name"},
-				"description": {Type: "string", Description: "Cluster description", Nullable: true},
-				"created_at":  {Type: "string", Format: "date-time", Description: "Creation timestamp"},
-				"updated_at":  {Type: "string", Format: "date-time", Description: "Last update timestamp"},
+				"id":               {Type: "string", Description: "Cluster ID"},
+				"group_id":         {Type: "string", Description: "Parent group ID"},
+				"name":             {Type: "string", Description: "Cluster name"},
+				"description":      {Type: "string", Description: "Cluster description", Nullable: true},
+				"replication_type": {Type: "string", Description: "Replication type for the cluster", Nullable: true},
+				"created_at":       {Type: "string", Format: "date-time", Description: "Creation timestamp"},
+				"updated_at":       {Type: "string", Format: "date-time", Description: "Last update timestamp"},
 			},
 		},
 		"ClusterRequest": {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
-				"name":        {Type: "string", Description: "Cluster name"},
-				"description": {Type: "string", Description: "Cluster description"},
-				"group_id":    {Type: "integer", Description: "Group ID to assign cluster to"},
+				"name":             {Type: "string", Description: "Cluster name"},
+				"description":      {Type: "string", Description: "Cluster description"},
+				"group_id":         {Type: "integer", Description: "Group ID to assign cluster to"},
+				"replication_type": {Type: "string", Description: "Replication type for the cluster"},
 			},
 		},
 		"ServerInfo": {
@@ -346,10 +348,12 @@ func buildSchemas() map[string]*OpenAPISchema {
 		"TopologyCluster": {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
-				"id":          {Type: "string", Description: "Cluster ID"},
-				"name":        {Type: "string", Description: "Cluster name"},
-				"description": {Type: "string", Description: "Cluster description", Nullable: true},
-				"type":        {Type: "string", Description: "Cluster type (spock, streaming, standalone)"},
+				"id":               {Type: "string", Description: "Cluster ID"},
+				"name":             {Type: "string", Description: "Cluster name"},
+				"description":      {Type: "string", Description: "Cluster description", Nullable: true},
+				"cluster_type":     {Type: "string", Description: "Auto-detected cluster type (spock, spock_ha, binary, logical, server, manual)"},
+				"replication_type": {Type: "string", Description: "User-set replication type from the database", Nullable: true},
+				"auto_cluster_key": {Type: "string", Description: "Auto-detection key for the cluster", Nullable: true},
 				"servers": {
 					Type:  "array",
 					Items: &OpenAPISchema{Ref: "#/components/schemas/TopologyServer"},

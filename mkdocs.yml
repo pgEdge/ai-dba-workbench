@@ -92,6 +92,7 @@ nav:
     - AI Features:
       - AI Overview: user-guide/ai/overview.md
       - Ask Ellie: user-guide/ai/ask-ellie.md
+      - Connecting MCP Clients: user-guide/ai/mcp-clients.md
     - MCP Tools: user-guide/mcp-tools.md
 
   - Administrator's Guide:

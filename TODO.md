@@ -5,6 +5,12 @@ to be assessed as part of the initial work, and inclusion here does not
 represent a roadmap or any guarantee that any features will actually be
 implemented.
 
+## LLM Support
+
+- Add support for arbitrary request headers to be added to LLM request calls
+    to support servers such as Portkey which requires addition of headers such
+    as `x-portkey-provider: openai`
+
 ## Navigation
 
 - Consider options for alternate views of servers/clusters, e.g. tagging, or

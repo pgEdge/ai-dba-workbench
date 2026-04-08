@@ -18,7 +18,7 @@ jobs:
         runs-on: ubuntu-latest
         strategy:
             matrix:
-                go-version: ['1.25', '1.26']
+                go-version: ['1.26']
                 postgres-version: ['14', '15', '16', '17', '18']
             fail-fast: false
 

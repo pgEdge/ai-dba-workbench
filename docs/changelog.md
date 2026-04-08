@@ -10,6 +10,8 @@ project adheres to
 
 ## [Unreleased]
 
+## [1.0.0-alpha3] - 2026-04-08
+
 ### Added
 
 - Add a Docker publish workflow that builds and pushes
@@ -19,6 +21,55 @@ project adheres to
   pre-built images with resource limits and log
   rotation.
 - Add a Docker deployment guide to the documentation.
+- Add a favicon to the web client.
+- Replace the SQLite driver with a pure-Go
+  implementation to support CGO-free builds.
+
+### Changed
+
+- Improve blackout status indicators and require
+  confirmation before deleting a blackout. (#34)
+- Limit blackout scope options to relevant entries
+  only. (#33)
+- Allow servers from auto-detected clusters to be
+  reassigned to manual clusters. (#46)
+- Hide alert threshold links for users who lack the
+  required permission. (#40)
+- Display errors to users when fetching unassigned
+  servers fails.
+
+### Fixed
+
+- Fix the blackout dialog refreshing unnecessarily
+  when underlying components update. (#47)
+- Fix missing browser refresh after certain
+  navigation actions and prevent title wrapping. (#45)
+- Fix the replication type not carrying through to
+  the edit dialog. (#44)
+- Fix multiple potential crashes after a network
+  failure and recovery. (#43)
+- Fix a serialization error when updating server
+  details. (#42)
+- Fix a crash when clicking an empty cluster. (#39)
+- Fix inconsistent alert operator values. (#38)
+- Fix auto-detected clusters reappearing after
+  deletion. (#36)
+- Fix the is_shared flag for servers not being
+  respected in all cases. (#35)
+- Fix connection error alerts ignoring active
+  blackouts. (#32)
+- Fix MCP write access to databases. (#29)
+- Fix SSL settings being silently dropped when
+  creating or updating a server.
+- Fix various issues with the database summary popup.
+- Fix various TypeScript type safety issues in the
+  web client.
+
+### Security
+
+- Fix MCP memory tools bypassing RBAC checks; all
+  authenticated users could access the datastore
+  without proper authorization.
 
 ## [1.0.0-alpha2] - 2026-03-04
 

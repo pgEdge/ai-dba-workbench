@@ -17,6 +17,9 @@ import (
 	"time"
 )
 
+// contextKey is a private type for context keys to avoid staticcheck SA1029.
+type contextKey string
+
 func TestPeriodicTask_Basic(t *testing.T) {
 	var count atomic.Int32
 
@@ -155,7 +158,7 @@ func TestPeriodicTask_TaskReceivesContext(t *testing.T) {
 		receivedCtx = ctx
 	}, WithRunOnStart())
 
-	ctx := context.WithValue(context.Background(), "testkey", "testvalue")
+	ctx := context.WithValue(context.Background(), contextKey("testkey"), "testvalue")
 	task.Start(ctx)
 
 	time.Sleep(10 * time.Millisecond)
@@ -164,7 +167,7 @@ func TestPeriodicTask_TaskReceivesContext(t *testing.T) {
 	if receivedCtx == nil {
 		t.Error("Task should have received context")
 	}
-	if receivedCtx.Value("testkey") != "testvalue" {
+	if receivedCtx.Value(contextKey("testkey")) != "testvalue" {
 		t.Error("Task should have received context with values")
 	}
 }

@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "AI DBA Workbench API",
-    "version": "1.0.0-alpha1",
+    "version": "1.0.0-alpha3",
     "description": "REST API for AI DBA Workbench - PostgreSQL monitoring and AI-assisted database administration"
   },
   "servers": [

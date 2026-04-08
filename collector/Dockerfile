@@ -8,7 +8,7 @@
 #--------------------------------------------------------------------------
 
 # Stage 1: Build the collector binary
-FROM golang:1.24 AS builder
+FROM golang:1.26 AS builder
 
 WORKDIR /build
 

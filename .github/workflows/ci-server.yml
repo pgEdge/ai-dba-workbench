@@ -18,7 +18,7 @@ jobs:
         runs-on: ubuntu-latest
         strategy:
             matrix:
-                go-version: ['1.23', '1.24']
+                go-version: ['1.25', '1.26']
                 postgres-version: ['14', '15', '16', '17', '18']
             fail-fast: false
 
@@ -65,7 +65,7 @@ jobs:
               run: go mod download
 
             - name: Lint server code
-              if: matrix.go-version == '1.24' && matrix.postgres-version == '18'
+              if: matrix.go-version == '1.26' && matrix.postgres-version == '18'
               working-directory: server
               run: |
                   go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
@@ -73,12 +73,12 @@ jobs:
                   make lint
 
             - name: Run go vet
-              if: matrix.go-version == '1.24' && matrix.postgres-version == '18'
+              if: matrix.go-version == '1.26' && matrix.postgres-version == '18'
               working-directory: server/src
               run: go vet ./...
 
             - name: Check formatting
-              if: matrix.go-version == '1.24' && matrix.postgres-version == '18'
+              if: matrix.go-version == '1.26' && matrix.postgres-version == '18'
               working-directory: server
               run: |
                   gofmt -l ./src > /tmp/gofmt.out
@@ -111,13 +111,13 @@ jobs:
               run: make coverage
 
             - name: Generate coverage report
-              if: matrix.go-version == '1.24' && matrix.postgres-version == '18'
+              if: matrix.go-version == '1.26' && matrix.postgres-version == '18'
               working-directory: server/src
               run: |
                   go tool cover -func=coverage.out
 
             - name: Upload build artifact
-              if: matrix.go-version == '1.24' && matrix.postgres-version == '18'
+              if: matrix.go-version == '1.26' && matrix.postgres-version == '18'
               uses: actions/upload-artifact@v4
               with:
                   name: ai-dba-server-linux-amd64
@@ -125,7 +125,7 @@ jobs:
                   retention-days: 7
 
             - name: Upload coverage artifact
-              if: matrix.go-version == '1.24' && matrix.postgres-version == '18'
+              if: matrix.go-version == '1.26' && matrix.postgres-version == '18'
               uses: actions/upload-artifact@v4
               with:
                   name: server-coverage

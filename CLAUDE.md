@@ -131,10 +131,11 @@ accurate after each task completes. KB files that
 become stale or inaccurate are worse than having no KB file at all;
 delete or correct any entry that no longer matches the code.
 
-## Plans
+## Plans and Specs
 
-Store all plans in the `.claude/plans/` directory. Use descriptive
-filenames that reflect the task or feature being planned.
+Store all plans in the `.claude/plans/` directory. Store all design
+specs in the `.claude/specs/` directory. Use descriptive filenames
+that reflect the task or feature being planned.
 
 ## Task Workflow
 

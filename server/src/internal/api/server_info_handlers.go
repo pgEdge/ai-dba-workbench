@@ -820,6 +820,7 @@ func parseDatabaseAnalysisResponse(
 func (h *ServerInfoHandler) createLLMClient() chat.LLMClient {
 	switch h.llmConfig.Provider {
 	case "anthropic":
+		headers, _ := h.getProviderHeaders("anthropic")
 		return chat.NewAnthropicClient(
 			h.llmConfig.AnthropicAPIKey,
 			h.llmConfig.Model,
@@ -828,8 +829,10 @@ func (h *ServerInfoHandler) createLLMClient() chat.LLMClient {
 			false,
 			h.llmConfig.AnthropicBaseURL,
 			h.llmConfig.UseCompactDescriptions,
+			headers,
 		)
 	case "openai":
+		headers, _ := h.getProviderHeaders("openai")
 		return chat.NewOpenAIClient(
 			h.llmConfig.OpenAIAPIKey,
 			h.llmConfig.Model,
@@ -838,8 +841,10 @@ func (h *ServerInfoHandler) createLLMClient() chat.LLMClient {
 			false,
 			h.llmConfig.OpenAIBaseURL,
 			h.llmConfig.UseCompactDescriptions,
+			headers,
 		)
 	case "gemini":
+		headers, _ := h.getProviderHeaders("gemini")
 		return chat.NewGeminiClient(
 			h.llmConfig.GeminiAPIKey,
 			h.llmConfig.Model,
@@ -848,17 +853,29 @@ func (h *ServerInfoHandler) createLLMClient() chat.LLMClient {
 			false,
 			h.llmConfig.GeminiBaseURL,
 			h.llmConfig.UseCompactDescriptions,
+			headers,
 		)
 	case "ollama":
+		headers, _ := h.getProviderHeaders("ollama")
 		return chat.NewOllamaClient(
 			h.llmConfig.OllamaURL,
 			h.llmConfig.Model,
 			false,
 			h.llmConfig.UseCompactDescriptions,
+			headers,
 		)
 	default:
 		return nil
 	}
+}
+
+// getProviderHeaders retrieves custom headers for the given provider from the
+// LLMConfig. Returns nil if the config is nil or if header loading fails.
+func (h *ServerInfoHandler) getProviderHeaders(provider string) (map[string]string, error) {
+	if h.llmConfig == nil || h.llmConfig.LLMConfig == nil {
+		return nil, nil
+	}
+	return h.llmConfig.LLMConfig.GetProviderHeaders(provider)
 }
 
 // pgEncodingName converts a PostgreSQL encoding integer to its name.

@@ -105,7 +105,7 @@ func TestOllamaClient_ToolCall(t *testing.T) {
 	defer server.Close()
 
 	// Create client
-	client := NewOllamaClient(server.URL, "test-model", false, false)
+	client := NewOllamaClient(server.URL, "test-model", false, false, nil)
 
 	// Test tool call
 	ctx := context.Background()
@@ -173,7 +173,7 @@ func TestOllamaClient_TextResponse(t *testing.T) {
 	defer server.Close()
 
 	// Create client
-	client := NewOllamaClient(server.URL, "test-model", false, false)
+	client := NewOllamaClient(server.URL, "test-model", false, false, nil)
 
 	// Test text response
 	ctx := context.Background()
@@ -945,6 +945,32 @@ func TestBuildUserContext(t *testing.T) {
 				t.Errorf("BuildUserContext() =\n%q\nwant:\n%q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestInitHTTPClient_WithHeaders(t *testing.T) {
+	headers := map[string]string{"X-Test": "value"}
+	InitHTTPClient(headers)
+
+	if sharedHTTPClient == nil {
+		t.Fatal("sharedHTTPClient should not be nil")
+	}
+	if sharedHTTPClient.Transport == nil {
+		t.Fatal("Transport should be set when headers provided")
+	}
+	if _, ok := sharedHTTPClient.Transport.(*HeaderTransport); !ok {
+		t.Error("Transport should be HeaderTransport when headers provided")
+	}
+}
+
+func TestInitHTTPClient_WithoutHeaders(t *testing.T) {
+	InitHTTPClient(nil)
+
+	if sharedHTTPClient == nil {
+		t.Fatal("sharedHTTPClient should not be nil")
+	}
+	if _, ok := sharedHTTPClient.Transport.(*HeaderTransport); ok {
+		t.Error("Transport should not be HeaderTransport when no headers")
 	}
 }
 

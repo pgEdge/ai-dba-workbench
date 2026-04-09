@@ -306,8 +306,25 @@ func BuildUserContext(base string, info *UserInfo) string {
 // sharedHTTPClient is a reusable HTTP client for all LLM providers.
 // The timeout is set to 120 seconds to accommodate large LLM requests
 // with extensive context windows.
-var sharedHTTPClient = &http.Client{
-	Timeout: 120 * time.Second,
+var sharedHTTPClient *http.Client
+
+func init() {
+	InitHTTPClient(nil)
+}
+
+// InitHTTPClient creates the shared HTTP client with optional custom headers.
+// If headers is non-empty, a HeaderTransport is used to inject them.
+func InitHTTPClient(headers map[string]string) {
+	if len(headers) > 0 {
+		sharedHTTPClient = &http.Client{
+			Timeout:   120 * time.Second,
+			Transport: NewHeaderTransport(headers),
+		}
+	} else {
+		sharedHTTPClient = &http.Client{
+			Timeout: 120 * time.Second,
+		}
+	}
 }
 
 // convertToMCPTools converts an any tools parameter to []mcp.Tool via JSON.

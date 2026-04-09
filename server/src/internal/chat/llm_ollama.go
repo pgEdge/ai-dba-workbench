@@ -33,16 +33,18 @@ type ollamaClient struct {
 	model                  string
 	debug                  bool
 	useCompactDescriptions bool
+	customHeaders          map[string]string
 	client                 *http.Client
 }
 
 // NewOllamaClient creates a new Ollama client
-func NewOllamaClient(baseURL, model string, debug bool, useCompactDescriptions bool) LLMClient {
+func NewOllamaClient(baseURL, model string, debug bool, useCompactDescriptions bool, customHeaders map[string]string) LLMClient {
 	return &ollamaClient{
 		baseURL:                baseURL,
 		model:                  model,
 		debug:                  debug,
 		useCompactDescriptions: useCompactDescriptions,
+		customHeaders:          customHeaders,
 		client:                 sharedHTTPClient,
 	}
 }
@@ -235,6 +237,11 @@ func (c *ollamaClient) Chat(ctx context.Context, messages []Message, tools any, 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/chat", bytes.NewBuffer(reqData))
 	if err != nil {
 		return LLMResponse{}, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Apply custom headers
+	for k, v := range c.customHeaders {
+		httpReq.Header.Set(k, v)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")

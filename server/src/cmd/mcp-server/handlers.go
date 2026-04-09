@@ -193,6 +193,7 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 			MaxTokens:              deps.Config.LLM.MaxTokens,
 			Temperature:            deps.Config.LLM.Temperature,
 			UseCompactDescriptions: deps.Config.LLM.UseCompactDescriptions(),
+			LLMConfig:              &deps.Config.LLM,
 		}
 		serverInfoHandler := api.NewServerInfoHandler(deps.Datastore, deps.AuthStore, rbacChecker, serverInfoLLMConfig)
 		registerDatastoreHandler(mux, serverInfoHandler, authWrapper, "Server info", deps.Datastore)
@@ -437,6 +438,7 @@ func setupLLMHandlers(mux *http.ServeMux, cfg *config.Config, authWrapper func(h
 		CompactDescriptions:    compactDescs,
 		MemoryStore:            memoryStore,
 		AuthStore:              authStore,
+		LLMConfig:              &cfg.LLM,
 	}
 
 	// Provider/model listing don't require auth (needed for login page)

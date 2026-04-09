@@ -281,6 +281,13 @@ type LLMConfig struct {
 	MaxIterations           int     `yaml:"max_iterations"`            // Maximum agentic loop iterations (default: 50)
 	Temperature             float64 `yaml:"temperature"`               // Temperature for LLM sampling (default: 0.7)
 	CompactToolDescriptions string  `yaml:"compact_tool_descriptions"` // "auto" (default), "true", or "false"
+	// Custom headers for LLM requests
+	CustomHeaders          map[string]string `yaml:"custom_headers"`           // Global headers applied to all providers
+	CustomHeadersFiles     map[string]string `yaml:"custom_headers_files"`     // File paths for loading secret header values
+	AnthropicCustomHeaders map[string]string `yaml:"anthropic_custom_headers"` // Custom headers for Anthropic requests
+	OpenAICustomHeaders    map[string]string `yaml:"openai_custom_headers"`    // Custom headers for OpenAI requests
+	GeminiCustomHeaders    map[string]string `yaml:"gemini_custom_headers"`    // Custom headers for Gemini requests
+	OllamaCustomHeaders    map[string]string `yaml:"ollama_custom_headers"`    // Custom headers for Ollama requests
 }
 
 // UseCompactDescriptions resolves the compact_tool_descriptions setting

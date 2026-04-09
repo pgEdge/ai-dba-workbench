@@ -35,11 +35,12 @@ type geminiClient struct {
 	debug                  bool
 	baseURL                string
 	useCompactDescriptions bool
+	customHeaders          map[string]string
 	client                 *http.Client
 }
 
 // NewGeminiClient creates a new Google Gemini client
-func NewGeminiClient(apiKey, model string, maxTokens int, temperature float64, debug bool, baseURL string, useCompactDescriptions bool) LLMClient {
+func NewGeminiClient(apiKey, model string, maxTokens int, temperature float64, debug bool, baseURL string, useCompactDescriptions bool, customHeaders map[string]string) LLMClient {
 	if baseURL == "" {
 		baseURL = "https://generativelanguage.googleapis.com"
 	}
@@ -51,6 +52,7 @@ func NewGeminiClient(apiKey, model string, maxTokens int, temperature float64, d
 		debug:                  debug,
 		baseURL:                baseURL,
 		useCompactDescriptions: useCompactDescriptions,
+		customHeaders:          customHeaders,
 		client:                 sharedHTTPClient,
 	}
 }
@@ -323,6 +325,11 @@ func (c *geminiClient) Chat(ctx context.Context, messages []Message, tools any, 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(reqData))
 	if err != nil {
 		return LLMResponse{}, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Apply custom headers
+	for k, v := range c.customHeaders {
+		httpReq.Header.Set(k, v)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")

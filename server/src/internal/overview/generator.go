@@ -529,6 +529,7 @@ func (g *Generator) generateSummaryFromPrompt(ctx context.Context, system, data 
 func (g *Generator) createLLMClient() chat.LLMClient {
 	switch g.llmConfig.Provider {
 	case "anthropic":
+		headers, _ := g.getProviderHeaders("anthropic")
 		return chat.NewAnthropicClient(
 			g.llmConfig.AnthropicAPIKey,
 			g.llmConfig.Model,
@@ -537,8 +538,10 @@ func (g *Generator) createLLMClient() chat.LLMClient {
 			false,
 			g.llmConfig.AnthropicBaseURL,
 			g.llmConfig.UseCompactDescriptions,
+			headers,
 		)
 	case "openai":
+		headers, _ := g.getProviderHeaders("openai")
 		return chat.NewOpenAIClient(
 			g.llmConfig.OpenAIAPIKey,
 			g.llmConfig.Model,
@@ -547,8 +550,10 @@ func (g *Generator) createLLMClient() chat.LLMClient {
 			false,
 			g.llmConfig.OpenAIBaseURL,
 			g.llmConfig.UseCompactDescriptions,
+			headers,
 		)
 	case "gemini":
+		headers, _ := g.getProviderHeaders("gemini")
 		return chat.NewGeminiClient(
 			g.llmConfig.GeminiAPIKey,
 			g.llmConfig.Model,
@@ -557,17 +562,29 @@ func (g *Generator) createLLMClient() chat.LLMClient {
 			false,
 			g.llmConfig.GeminiBaseURL,
 			g.llmConfig.UseCompactDescriptions,
+			headers,
 		)
 	case "ollama":
+		headers, _ := g.getProviderHeaders("ollama")
 		return chat.NewOllamaClient(
 			g.llmConfig.OllamaURL,
 			g.llmConfig.Model,
 			false,
 			g.llmConfig.UseCompactDescriptions,
+			headers,
 		)
 	default:
 		return nil
 	}
+}
+
+// getProviderHeaders retrieves custom headers for the given provider from the
+// LLMConfig. Returns nil if the config is nil or if header loading fails.
+func (g *Generator) getProviderHeaders(provider string) (map[string]string, error) {
+	if g.llmConfig == nil || g.llmConfig.LLMConfig == nil {
+		return nil, nil
+	}
+	return g.llmConfig.LLMConfig.GetProviderHeaders(provider)
 }
 
 // extractTextFromResponse walks the LLM response content blocks and

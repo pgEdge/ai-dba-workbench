@@ -35,11 +35,12 @@ type openaiClient struct {
 	debug                  bool
 	baseURL                string
 	useCompactDescriptions bool
+	customHeaders          map[string]string
 	client                 *http.Client
 }
 
 // NewOpenAIClient creates a new OpenAI client
-func NewOpenAIClient(apiKey, model string, maxTokens int, temperature float64, debug bool, baseURL string, useCompactDescriptions bool) LLMClient {
+func NewOpenAIClient(apiKey, model string, maxTokens int, temperature float64, debug bool, baseURL string, useCompactDescriptions bool, customHeaders map[string]string) LLMClient {
 	if baseURL == "" {
 		baseURL = "https://api.openai.com/v1"
 	}
@@ -51,6 +52,7 @@ func NewOpenAIClient(apiKey, model string, maxTokens int, temperature float64, d
 		debug:                  debug,
 		baseURL:                baseURL,
 		useCompactDescriptions: useCompactDescriptions,
+		customHeaders:          customHeaders,
 		client:                 sharedHTTPClient,
 	}
 }
@@ -325,6 +327,11 @@ func (c *openaiClient) Chat(ctx context.Context, messages []Message, tools any, 
 		return LLMResponse{}, fmt.Errorf("failed to create request: %w", err)
 	}
 
+	// Apply custom headers
+	for k, v := range c.customHeaders {
+		req.Header.Set(k, v)
+	}
+
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 
@@ -499,6 +506,11 @@ func (c *openaiClient) ListModels(ctx context.Context) ([]string, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Apply custom headers
+	for k, v := range c.customHeaders {
+		req.Header.Set(k, v)
 	}
 
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)

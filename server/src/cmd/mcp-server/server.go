@@ -374,6 +374,7 @@ func (s *Server) startOverviewGenerator() {
 		MaxTokens:              s.cfg.LLM.MaxTokens,
 		Temperature:            s.cfg.LLM.Temperature,
 		UseCompactDescriptions: s.cfg.LLM.UseCompactDescriptions(),
+		LLMConfig:              &s.cfg.LLM,
 	}
 
 	s.overviewHub = overview.NewHub()

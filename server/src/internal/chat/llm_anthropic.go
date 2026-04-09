@@ -34,11 +34,12 @@ type anthropicClient struct {
 	debug                  bool
 	baseURL                string
 	useCompactDescriptions bool
+	customHeaders          map[string]string
 	client                 *http.Client
 }
 
 // NewAnthropicClient creates a new Anthropic client
-func NewAnthropicClient(apiKey, model string, maxTokens int, temperature float64, debug bool, baseURL string, useCompactDescriptions bool) LLMClient {
+func NewAnthropicClient(apiKey, model string, maxTokens int, temperature float64, debug bool, baseURL string, useCompactDescriptions bool, customHeaders map[string]string) LLMClient {
 	if baseURL == "" {
 		baseURL = "https://api.anthropic.com/v1"
 	}
@@ -50,6 +51,7 @@ func NewAnthropicClient(apiKey, model string, maxTokens int, temperature float64
 		debug:                  debug,
 		baseURL:                baseURL,
 		useCompactDescriptions: useCompactDescriptions,
+		customHeaders:          customHeaders,
 		client:                 sharedHTTPClient,
 	}
 }
@@ -164,6 +166,11 @@ func (c *anthropicClient) Chat(ctx context.Context, messages []Message, tools an
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(reqData))
 	if err != nil {
 		return LLMResponse{}, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Apply custom headers
+	for k, v := range c.customHeaders {
+		httpReq.Header.Set(k, v)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -295,6 +302,11 @@ func (c *anthropicClient) ListModels(ctx context.Context) ([]string, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Apply custom headers
+	for k, v := range c.customHeaders {
+		req.Header.Set(k, v)
 	}
 
 	req.Header.Set("x-api-key", c.apiKey)

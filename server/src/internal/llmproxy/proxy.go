@@ -19,6 +19,7 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/apiconst"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/chat"
+	"github.com/pgedge/ai-workbench/server/internal/config"
 	"github.com/pgedge/ai-workbench/server/internal/memory"
 	"github.com/pgedge/ai-workbench/server/internal/tracing"
 )
@@ -40,6 +41,7 @@ type Config struct {
 	CompactDescriptions    map[string]string // tool name -> compact description
 	MemoryStore            *memory.Store     // Memory store for pinned memory injection (may be nil)
 	AuthStore              *auth.AuthStore   // Auth store for user context injection (may be nil)
+	LLMConfig              *config.LLMConfig // LLMConfig for accessing custom headers (may be nil)
 }
 
 // Message represents a message in the chat conversation
@@ -194,25 +196,29 @@ func HandleModels(w http.ResponseWriter, r *http.Request, config *Config) {
 			http.Error(w, "Anthropic API key not configured", http.StatusBadRequest)
 			return
 		}
-		client = chat.NewAnthropicClient(config.AnthropicAPIKey, config.Model, config.MaxTokens, config.Temperature, false, config.AnthropicBaseURL, config.UseCompactDescriptions)
+		headers, _ := getProviderHeaders(config.LLMConfig, "anthropic")
+		client = chat.NewAnthropicClient(config.AnthropicAPIKey, config.Model, config.MaxTokens, config.Temperature, false, config.AnthropicBaseURL, config.UseCompactDescriptions, headers)
 	case "openai":
 		if config.OpenAIAPIKey == "" && config.OpenAIBaseURL == "" {
 			http.Error(w, "OpenAI API key not configured", http.StatusBadRequest)
 			return
 		}
-		client = chat.NewOpenAIClient(config.OpenAIAPIKey, config.Model, config.MaxTokens, config.Temperature, false, config.OpenAIBaseURL, config.UseCompactDescriptions)
+		headers, _ := getProviderHeaders(config.LLMConfig, "openai")
+		client = chat.NewOpenAIClient(config.OpenAIAPIKey, config.Model, config.MaxTokens, config.Temperature, false, config.OpenAIBaseURL, config.UseCompactDescriptions, headers)
 	case "gemini":
 		if config.GeminiAPIKey == "" {
 			http.Error(w, "Gemini API key not configured", http.StatusBadRequest)
 			return
 		}
-		client = chat.NewGeminiClient(config.GeminiAPIKey, config.Model, config.MaxTokens, config.Temperature, false, config.GeminiBaseURL, config.UseCompactDescriptions)
+		headers, _ := getProviderHeaders(config.LLMConfig, "gemini")
+		client = chat.NewGeminiClient(config.GeminiAPIKey, config.Model, config.MaxTokens, config.Temperature, false, config.GeminiBaseURL, config.UseCompactDescriptions, headers)
 	case "ollama":
 		if config.OllamaURL == "" {
 			http.Error(w, "Ollama URL not configured", http.StatusBadRequest)
 			return
 		}
-		client = chat.NewOllamaClient(config.OllamaURL, config.Model, false, config.UseCompactDescriptions)
+		headers, _ := getProviderHeaders(config.LLMConfig, "ollama")
+		client = chat.NewOllamaClient(config.OllamaURL, config.Model, false, config.UseCompactDescriptions, headers)
 	}
 
 	// List models
@@ -318,25 +324,29 @@ func HandleChat(w http.ResponseWriter, r *http.Request, config *Config) {
 			http.Error(w, "Anthropic API key not configured", http.StatusBadRequest)
 			return
 		}
-		client = chat.NewAnthropicClient(config.AnthropicAPIKey, model, config.MaxTokens, config.Temperature, req.Debug, config.AnthropicBaseURL, config.UseCompactDescriptions)
+		headers, _ := getProviderHeaders(config.LLMConfig, "anthropic")
+		client = chat.NewAnthropicClient(config.AnthropicAPIKey, model, config.MaxTokens, config.Temperature, req.Debug, config.AnthropicBaseURL, config.UseCompactDescriptions, headers)
 	case "openai":
 		if config.OpenAIAPIKey == "" && config.OpenAIBaseURL == "" {
 			http.Error(w, "OpenAI API key not configured", http.StatusBadRequest)
 			return
 		}
-		client = chat.NewOpenAIClient(config.OpenAIAPIKey, model, config.MaxTokens, config.Temperature, req.Debug, config.OpenAIBaseURL, config.UseCompactDescriptions)
+		headers, _ := getProviderHeaders(config.LLMConfig, "openai")
+		client = chat.NewOpenAIClient(config.OpenAIAPIKey, model, config.MaxTokens, config.Temperature, req.Debug, config.OpenAIBaseURL, config.UseCompactDescriptions, headers)
 	case "gemini":
 		if config.GeminiAPIKey == "" {
 			http.Error(w, "Gemini API key not configured", http.StatusBadRequest)
 			return
 		}
-		client = chat.NewGeminiClient(config.GeminiAPIKey, model, config.MaxTokens, config.Temperature, req.Debug, config.GeminiBaseURL, config.UseCompactDescriptions)
+		headers, _ := getProviderHeaders(config.LLMConfig, "gemini")
+		client = chat.NewGeminiClient(config.GeminiAPIKey, model, config.MaxTokens, config.Temperature, req.Debug, config.GeminiBaseURL, config.UseCompactDescriptions, headers)
 	case "ollama":
 		if config.OllamaURL == "" {
 			http.Error(w, "Ollama URL not configured", http.StatusBadRequest)
 			return
 		}
-		client = chat.NewOllamaClient(config.OllamaURL, model, req.Debug, config.UseCompactDescriptions)
+		headers, _ := getProviderHeaders(config.LLMConfig, "ollama")
+		client = chat.NewOllamaClient(config.OllamaURL, model, req.Debug, config.UseCompactDescriptions, headers)
 	}
 
 	// Convert proxy messages to chat messages
@@ -487,4 +497,13 @@ func isValidModelName(model string) bool {
 		}
 	}
 	return true
+}
+
+// getProviderHeaders retrieves custom headers for the given provider from the
+// LLMConfig. Returns nil if the config is nil or if header loading fails.
+func getProviderHeaders(llmConfig *config.LLMConfig, provider string) (map[string]string, error) {
+	if llmConfig == nil {
+		return nil, nil
+	}
+	return llmConfig.GetProviderHeaders(provider)
 }

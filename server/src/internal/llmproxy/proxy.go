@@ -196,28 +196,48 @@ func HandleModels(w http.ResponseWriter, r *http.Request, config *Config) {
 			http.Error(w, "Anthropic API key not configured", http.StatusBadRequest)
 			return
 		}
-		headers, _ := getProviderHeaders(config.LLMConfig, "anthropic")
+		headers, err := getProviderHeaders(config.LLMConfig, "anthropic")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: Failed to get Anthropic provider headers: %v\n", err)
+			http.Error(w, "Failed to load provider headers", http.StatusInternalServerError)
+			return
+		}
 		client = chat.NewAnthropicClient(config.AnthropicAPIKey, config.Model, config.MaxTokens, config.Temperature, false, config.AnthropicBaseURL, config.UseCompactDescriptions, headers)
 	case "openai":
 		if config.OpenAIAPIKey == "" && config.OpenAIBaseURL == "" {
 			http.Error(w, "OpenAI API key not configured", http.StatusBadRequest)
 			return
 		}
-		headers, _ := getProviderHeaders(config.LLMConfig, "openai")
+		headers, err := getProviderHeaders(config.LLMConfig, "openai")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: Failed to get OpenAI provider headers: %v\n", err)
+			http.Error(w, "Failed to load provider headers", http.StatusInternalServerError)
+			return
+		}
 		client = chat.NewOpenAIClient(config.OpenAIAPIKey, config.Model, config.MaxTokens, config.Temperature, false, config.OpenAIBaseURL, config.UseCompactDescriptions, headers)
 	case "gemini":
 		if config.GeminiAPIKey == "" {
 			http.Error(w, "Gemini API key not configured", http.StatusBadRequest)
 			return
 		}
-		headers, _ := getProviderHeaders(config.LLMConfig, "gemini")
+		headers, err := getProviderHeaders(config.LLMConfig, "gemini")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: Failed to get Gemini provider headers: %v\n", err)
+			http.Error(w, "Failed to load provider headers", http.StatusInternalServerError)
+			return
+		}
 		client = chat.NewGeminiClient(config.GeminiAPIKey, config.Model, config.MaxTokens, config.Temperature, false, config.GeminiBaseURL, config.UseCompactDescriptions, headers)
 	case "ollama":
 		if config.OllamaURL == "" {
 			http.Error(w, "Ollama URL not configured", http.StatusBadRequest)
 			return
 		}
-		headers, _ := getProviderHeaders(config.LLMConfig, "ollama")
+		headers, err := getProviderHeaders(config.LLMConfig, "ollama")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: Failed to get Ollama provider headers: %v\n", err)
+			http.Error(w, "Failed to load provider headers", http.StatusInternalServerError)
+			return
+		}
 		client = chat.NewOllamaClient(config.OllamaURL, config.Model, false, config.UseCompactDescriptions, headers)
 	}
 

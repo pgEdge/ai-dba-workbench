@@ -529,7 +529,10 @@ func (g *Generator) generateSummaryFromPrompt(ctx context.Context, system, data 
 func (g *Generator) createLLMClient() chat.LLMClient {
 	switch g.llmConfig.Provider {
 	case "anthropic":
-		headers, _ := g.getProviderHeaders("anthropic")
+		headers, err := g.getProviderHeaders("anthropic")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: Failed to get Anthropic provider headers: %v\n", err)
+		}
 		return chat.NewAnthropicClient(
 			g.llmConfig.AnthropicAPIKey,
 			g.llmConfig.Model,
@@ -541,7 +544,10 @@ func (g *Generator) createLLMClient() chat.LLMClient {
 			headers,
 		)
 	case "openai":
-		headers, _ := g.getProviderHeaders("openai")
+		headers, err := g.getProviderHeaders("openai")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: Failed to get OpenAI provider headers: %v\n", err)
+		}
 		return chat.NewOpenAIClient(
 			g.llmConfig.OpenAIAPIKey,
 			g.llmConfig.Model,
@@ -553,7 +559,10 @@ func (g *Generator) createLLMClient() chat.LLMClient {
 			headers,
 		)
 	case "gemini":
-		headers, _ := g.getProviderHeaders("gemini")
+		headers, err := g.getProviderHeaders("gemini")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: Failed to get Gemini provider headers: %v\n", err)
+		}
 		return chat.NewGeminiClient(
 			g.llmConfig.GeminiAPIKey,
 			g.llmConfig.Model,
@@ -565,7 +574,10 @@ func (g *Generator) createLLMClient() chat.LLMClient {
 			headers,
 		)
 	case "ollama":
-		headers, _ := g.getProviderHeaders("ollama")
+		headers, err := g.getProviderHeaders("ollama")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: Failed to get Ollama provider headers: %v\n", err)
+		}
 		return chat.NewOllamaClient(
 			g.llmConfig.OllamaURL,
 			g.llmConfig.Model,

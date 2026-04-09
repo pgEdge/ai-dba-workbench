@@ -820,7 +820,10 @@ func parseDatabaseAnalysisResponse(
 func (h *ServerInfoHandler) createLLMClient() chat.LLMClient {
 	switch h.llmConfig.Provider {
 	case "anthropic":
-		headers, _ := h.getProviderHeaders("anthropic")
+		headers, err := h.getProviderHeaders("anthropic")
+		if err != nil {
+			log.Printf("[ERROR] Failed to get Anthropic provider headers: %v", err)
+		}
 		return chat.NewAnthropicClient(
 			h.llmConfig.AnthropicAPIKey,
 			h.llmConfig.Model,
@@ -832,7 +835,10 @@ func (h *ServerInfoHandler) createLLMClient() chat.LLMClient {
 			headers,
 		)
 	case "openai":
-		headers, _ := h.getProviderHeaders("openai")
+		headers, err := h.getProviderHeaders("openai")
+		if err != nil {
+			log.Printf("[ERROR] Failed to get OpenAI provider headers: %v", err)
+		}
 		return chat.NewOpenAIClient(
 			h.llmConfig.OpenAIAPIKey,
 			h.llmConfig.Model,
@@ -844,7 +850,10 @@ func (h *ServerInfoHandler) createLLMClient() chat.LLMClient {
 			headers,
 		)
 	case "gemini":
-		headers, _ := h.getProviderHeaders("gemini")
+		headers, err := h.getProviderHeaders("gemini")
+		if err != nil {
+			log.Printf("[ERROR] Failed to get Gemini provider headers: %v", err)
+		}
 		return chat.NewGeminiClient(
 			h.llmConfig.GeminiAPIKey,
 			h.llmConfig.Model,
@@ -856,7 +865,10 @@ func (h *ServerInfoHandler) createLLMClient() chat.LLMClient {
 			headers,
 		)
 	case "ollama":
-		headers, _ := h.getProviderHeaders("ollama")
+		headers, err := h.getProviderHeaders("ollama")
+		if err != nil {
+			log.Printf("[ERROR] Failed to get Ollama provider headers: %v", err)
+		}
 		return chat.NewOllamaClient(
 			h.llmConfig.OllamaURL,
 			h.llmConfig.Model,

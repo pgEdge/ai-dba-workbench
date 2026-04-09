@@ -166,8 +166,8 @@ func TestSetTokenMCPScope(t *testing.T) {
 
 	// Create token and privileges
 	_, storedToken, _ := store.CreateToken("testuser", "Test token", nil)
-	priv1ID, _ := store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A")
-	priv2ID, _ := store.RegisterMCPPrivilege("tool_b", MCPPrivilegeTypeTool, "Tool B")
+	priv1ID, _ := store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A", false)
+	priv2ID, _ := store.RegisterMCPPrivilege("tool_b", MCPPrivilegeTypeTool, "Tool B", false)
 
 	// Set MCP scope
 	err := store.SetTokenMCPScope(storedToken.ID, []int64{priv1ID, priv2ID})
@@ -192,8 +192,8 @@ func TestSetTokenMCPScopeByNames(t *testing.T) {
 
 	// Create token and privileges
 	_, storedToken, _ := store.CreateToken("testuser", "Test token", nil)
-	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A")
-	store.RegisterMCPPrivilege("tool_b", MCPPrivilegeTypeTool, "Tool B")
+	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A", false)
+	store.RegisterMCPPrivilege("tool_b", MCPPrivilegeTypeTool, "Tool B", false)
 
 	// Set MCP scope by names
 	err := store.SetTokenMCPScopeByNames(storedToken.ID, []string{"tool_a", "tool_b"})
@@ -214,8 +214,8 @@ func TestIsMCPItemInTokenScope(t *testing.T) {
 
 	// Create token and privileges
 	_, storedToken, _ := store.CreateToken("testuser", "Test token", nil)
-	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A")
-	store.RegisterMCPPrivilege("tool_b", MCPPrivilegeTypeTool, "Tool B")
+	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A", false)
+	store.RegisterMCPPrivilege("tool_b", MCPPrivilegeTypeTool, "Tool B", false)
 
 	// No scope defined - should return true for any item
 	inScope, err := store.IsMCPItemInTokenScope(storedToken.ID, "tool_a")
@@ -263,7 +263,7 @@ func TestGetTokenScope(t *testing.T) {
 	}
 
 	// Set both scopes
-	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A")
+	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A", false)
 	store.SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
 		{ConnectionID: 1, AccessLevel: AccessLevelReadWrite},
 		{ConnectionID: 2, AccessLevel: AccessLevelRead},
@@ -295,7 +295,7 @@ func TestClearTokenScope(t *testing.T) {
 
 	// Create token with scope
 	_, storedToken, _ := store.CreateToken("testuser", "Test token", nil)
-	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A")
+	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A", false)
 	store.SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
 		{ConnectionID: 1, AccessLevel: AccessLevelReadWrite},
 		{ConnectionID: 2, AccessLevel: AccessLevelRead},
@@ -325,8 +325,8 @@ func TestSetTokenMCPScopeByNamesWildcard(t *testing.T) {
 
 	// Create token and privileges
 	_, storedToken, _ := store.CreateToken("testuser", "Test token", nil)
-	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A")
-	store.RegisterMCPPrivilege("tool_b", MCPPrivilegeTypeTool, "Tool B")
+	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A", false)
+	store.RegisterMCPPrivilege("tool_b", MCPPrivilegeTypeTool, "Tool B", false)
 
 	// Set MCP scope with wildcard
 	err := store.SetTokenMCPScopeByNames(storedToken.ID, []string{"*"})
@@ -375,7 +375,7 @@ func TestSetTokenMCPScopeByNamesWildcardSkipsRemainder(t *testing.T) {
 
 	// Create token and privileges
 	_, storedToken, _ := store.CreateToken("testuser", "Test token", nil)
-	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A")
+	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A", false)
 
 	// Set MCP scope with wildcard before other identifiers
 	err := store.SetTokenMCPScopeByNames(storedToken.ID, []string{"*", "tool_a"})
@@ -574,7 +574,7 @@ func TestHasTokenScope(t *testing.T) {
 
 	// Clear and add MCP scope
 	store.ClearTokenScope(storedToken.ID)
-	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A")
+	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A", false)
 	store.SetTokenMCPScopeByNames(storedToken.ID, []string{"tool_a"})
 
 	hasScope, _ = store.HasTokenScope(storedToken.ID)

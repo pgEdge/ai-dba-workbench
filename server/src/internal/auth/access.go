@@ -83,9 +83,13 @@ func (rc *RBACChecker) IsSuperuser(ctx context.Context) bool {
 // CanAccessMCPItem checks if the current context can access a specific MCP item
 // Returns true if:
 // - User/token is a superuser
-// - The item is not restricted (not assigned to any group)
-// - User has the privilege through their group memberships
-// - Token is scoped and includes this privilege (checked in token scope phase)
+// - The privilege is registered as public (is_public = true)
+// - User has the privilege through their group memberships (specific or wildcard)
+// - Token scope includes this privilege (if token-based access)
+//
+// Returns false if:
+// - The privilege is not registered (fail-safe for unknown tools)
+// - The privilege is registered but not public and user lacks group membership
 func (rc *RBACChecker) CanAccessMCPItem(ctx context.Context, identifier string) bool {
 	// Nil store - full access
 	if rc.authStore == nil {
@@ -97,18 +101,24 @@ func (rc *RBACChecker) CanAccessMCPItem(ctx context.Context, identifier string) 
 		return true
 	}
 
-	// Check if the privilege is restricted (assigned to any group)
-	isRestricted, err := rc.authStore.IsPrivilegeAssignedToAnyGroup(identifier)
+	// Check if the privilege is registered and whether it's public
+	isPublic, isRegistered, err := rc.authStore.IsPrivilegePublic(identifier)
 	if err != nil {
 		// On error, deny access for safety
 		return false
 	}
 
-	// If not restricted, grant access
-	if !isRestricted {
+	// If the privilege is not registered, deny access (fail-safe for unknown tools)
+	if !isRegistered {
+		return false
+	}
+
+	// If the privilege is public, grant access without group membership check
+	if isPublic {
 		return true
 	}
 
+	// Privilege is registered and not public - require group membership
 	// Get user ID from context
 	userID := GetUserIDFromContext(ctx)
 	if userID == 0 {

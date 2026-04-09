@@ -55,7 +55,7 @@ const (
 	DefaultSessionExpiry = 24 * time.Hour
 
 	// Schema version for migrations
-	schemaVersion = 1
+	schemaVersion = 2
 )
 
 // AuthStore manages users and tokens in SQLite
@@ -144,6 +144,32 @@ func NewAuthStore(dataDir string, maxUserTokenDays, maxFailedAttempts int) (*Aut
 	return store, nil
 }
 
+// migrateV1ToV2 adds the is_public column to mcp_privilege_identifiers table
+func (s *AuthStore) migrateV1ToV2() error {
+	// Add is_public column to mcp_privilege_identifiers
+	_, err := s.db.Exec(`
+		ALTER TABLE mcp_privilege_identifiers ADD COLUMN is_public BOOLEAN NOT NULL DEFAULT FALSE
+	`)
+	if err != nil {
+		// Column might already exist if migration was partially completed
+		if !strings.Contains(err.Error(), "duplicate column") {
+			return fmt.Errorf("failed to add is_public column: %w", err)
+		}
+	}
+
+	// Update schema version
+	_, err = s.db.Exec("DELETE FROM schema_version")
+	if err != nil {
+		return fmt.Errorf("failed to clear schema version: %w", err)
+	}
+	_, err = s.db.Exec("INSERT INTO schema_version (version) VALUES (?)", 2)
+	if err != nil {
+		return fmt.Errorf("failed to set schema version: %w", err)
+	}
+
+	return nil
+}
+
 // initSchema creates the database tables if they don't exist
 func (s *AuthStore) initSchema() error {
 	// Check current schema version
@@ -152,6 +178,14 @@ func (s *AuthStore) initSchema() error {
 	if err != nil {
 		// Table might not exist yet, that's fine
 		currentVersion = 0
+	}
+
+	// Run migrations for existing databases
+	if currentVersion == 1 {
+		if err := s.migrateV1ToV2(); err != nil {
+			return fmt.Errorf("failed to migrate from v1 to v2: %w", err)
+		}
+		currentVersion = 2
 	}
 
 	if currentVersion < schemaVersion {
@@ -235,6 +269,7 @@ func (s *AuthStore) initSchema() error {
         identifier TEXT UNIQUE NOT NULL,
         item_type TEXT NOT NULL CHECK (item_type IN ('tool', 'resource', 'prompt')),
         description TEXT DEFAULT '',
+        is_public BOOLEAN NOT NULL DEFAULT FALSE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     CREATE INDEX IF NOT EXISTS idx_mcp_privileges_identifier ON mcp_privilege_identifiers(identifier);

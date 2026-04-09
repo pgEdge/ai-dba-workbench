@@ -88,6 +88,7 @@ type Flags struct {
 	PrivilegeIdentifier    string
 	PrivilegeType          string
 	PrivilegeDescription   string
+	PrivilegeIsPublic      bool
 	ConnectionID           int
 	AccessLevel            string
 
@@ -171,6 +172,7 @@ func ParseFlags(defaultConfigPath string) *Flags {
 	flag.StringVar(&f.PrivilegeIdentifier, "privilege", "", "MCP privilege identifier")
 	flag.StringVar(&f.PrivilegeType, "privilege-type", "", "MCP privilege type (tool, resource, prompt)")
 	flag.StringVar(&f.PrivilegeDescription, "privilege-description", "", "Description for the privilege")
+	flag.BoolVar(&f.PrivilegeIsPublic, "privilege-public", false, "Mark privilege as public (accessible without group membership)")
 	flag.IntVar(&f.ConnectionID, "connection", 0, "Connection ID for connection privileges")
 	flag.StringVar(&f.AccessLevel, "access-level", "read", "Access level for connection privileges (read, read_write)")
 

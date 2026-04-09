@@ -39,6 +39,7 @@ type MCPPrivilege struct {
 	Identifier  string    `json:"identifier"`
 	ItemType    string    `json:"item_type"` // "tool", "resource", or "prompt"
 	Description string    `json:"description,omitempty"`
+	IsPublic    bool      `json:"is_public"` // If true, accessible without group membership
 	CreatedAt   time.Time `json:"created_at"`
 }
 

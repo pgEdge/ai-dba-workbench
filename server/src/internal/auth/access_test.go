@@ -50,7 +50,7 @@ func TestRBACCheckerSuperuserBypass(t *testing.T) {
 	checker := NewRBACChecker(store)
 
 	// Create a restricted privilege
-	store.RegisterMCPPrivilege("restricted_tool", MCPPrivilegeTypeTool, "Restricted")
+	store.RegisterMCPPrivilege("restricted_tool", MCPPrivilegeTypeTool, "Restricted", false)
 	groupID, _ := store.CreateGroup("restricted-group", "Restricted group")
 	store.GrantMCPPrivilegeByName(groupID, "restricted_tool")
 	store.GrantConnectionPrivilege(groupID, 1, AccessLevelRead)
@@ -73,28 +73,44 @@ func TestRBACCheckerSuperuserBypass(t *testing.T) {
 	}
 }
 
-func TestRBACCheckerUnrestrictedAccess(t *testing.T) {
+func TestRBACCheckerPublicAccess(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
 	checker := NewRBACChecker(store)
 
-	// Register a privilege but don't assign it to any group
-	store.RegisterMCPPrivilege("public_tool", MCPPrivilegeTypeTool, "Public")
+	// Register a public privilege (accessible without group membership)
+	store.RegisterMCPPrivilege("public_tool", MCPPrivilegeTypeTool, "Public", true)
 
 	// Create a non-superuser context
 	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
 	ctx = context.WithValue(ctx, UserIDContextKey, int64(1))
 
-	// Unrestricted item should be accessible
+	// Public item should be accessible without group membership
 	if !checker.CanAccessMCPItem(ctx, "public_tool") {
-		t.Error("Expected access to unrestricted tool")
+		t.Error("Expected access to public tool")
 	}
 
 	// Unrestricted connection should be accessible with full rights
 	canAccess, level := checker.CanAccessConnection(ctx, 99)
 	if !canAccess || level != AccessLevelReadWrite {
 		t.Error("Expected read_write access to unrestricted connection")
+	}
+}
+
+func TestRBACCheckerUnregisteredToolDenied(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store)
+
+	// Create a non-superuser context
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, int64(1))
+
+	// Unregistered tool should be denied (fail-safe)
+	if checker.CanAccessMCPItem(ctx, "unregistered_tool") {
+		t.Error("Expected denial for unregistered tool")
 	}
 }
 
@@ -111,7 +127,7 @@ func TestRBACCheckerRestrictedAccess(t *testing.T) {
 	store.AddUserToGroup(groupID, userID)
 
 	// Create and grant privileges
-	store.RegisterMCPPrivilege("restricted_tool", MCPPrivilegeTypeTool, "Restricted")
+	store.RegisterMCPPrivilege("restricted_tool", MCPPrivilegeTypeTool, "Restricted", false)
 	store.GrantMCPPrivilegeByName(groupID, "restricted_tool")
 	store.GrantConnectionPrivilege(groupID, 1, AccessLevelRead)
 
@@ -146,7 +162,7 @@ func TestRBACCheckerDeniedAccess(t *testing.T) {
 
 	// Create restricted privilege (assigned to a different group)
 	otherGroupID, _ := store.CreateGroup("other-group", "Other group")
-	store.RegisterMCPPrivilege("restricted_tool", MCPPrivilegeTypeTool, "Restricted")
+	store.RegisterMCPPrivilege("restricted_tool", MCPPrivilegeTypeTool, "Restricted", false)
 	store.GrantMCPPrivilegeByName(otherGroupID, "restricted_tool")
 	store.GrantConnectionPrivilege(otherGroupID, 1, AccessLevelReadWrite)
 
@@ -183,7 +199,7 @@ func TestRBACCheckerInheritedPrivileges(t *testing.T) {
 	store.AddUserToGroup(childGroupID, userID)
 
 	// Grant privilege to parent
-	store.RegisterMCPPrivilege("parent_tool", MCPPrivilegeTypeTool, "Parent Tool")
+	store.RegisterMCPPrivilege("parent_tool", MCPPrivilegeTypeTool, "Parent Tool", false)
 	store.GrantMCPPrivilegeByName(parentGroupID, "parent_tool")
 	store.GrantConnectionPrivilege(parentGroupID, 1, AccessLevelReadWrite)
 
@@ -211,7 +227,7 @@ func TestRBACCheckerNoUserID(t *testing.T) {
 
 	// Create restricted privilege
 	groupID, _ := store.CreateGroup("some-group", "Some group")
-	store.RegisterMCPPrivilege("restricted_tool", MCPPrivilegeTypeTool, "Restricted")
+	store.RegisterMCPPrivilege("restricted_tool", MCPPrivilegeTypeTool, "Restricted", false)
 	store.GrantMCPPrivilegeByName(groupID, "restricted_tool")
 
 	// Create context without user ID (e.g., service token)
@@ -236,8 +252,8 @@ func TestRBACCheckerTokenScoping(t *testing.T) {
 	store.AddUserToGroup(groupID, userID)
 
 	// Grant multiple privileges
-	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A")
-	store.RegisterMCPPrivilege("tool_b", MCPPrivilegeTypeTool, "Tool B")
+	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A", false)
+	store.RegisterMCPPrivilege("tool_b", MCPPrivilegeTypeTool, "Tool B", false)
 	store.GrantMCPPrivilegeByName(groupID, "tool_a")
 	store.GrantMCPPrivilegeByName(groupID, "tool_b")
 	store.GrantConnectionPrivilege(groupID, 1, AccessLevelReadWrite)
@@ -371,8 +387,8 @@ func TestGetEffectivePrivileges(t *testing.T) {
 	store.AddUserToGroup(groupID, userID)
 
 	// Grant privileges
-	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A")
-	store.RegisterMCPPrivilege("tool_b", MCPPrivilegeTypeTool, "Tool B")
+	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A", false)
+	store.RegisterMCPPrivilege("tool_b", MCPPrivilegeTypeTool, "Tool B", false)
 	store.GrantMCPPrivilegeByName(groupID, "tool_a")
 	store.GrantMCPPrivilegeByName(groupID, "tool_b")
 	store.GrantConnectionPrivilege(groupID, 1, AccessLevelRead)
@@ -648,8 +664,8 @@ func TestGetEffectivePrivilegesWithTokenScope(t *testing.T) {
 	store.AddUserToGroup(groupID, userID)
 
 	// Grant multiple privileges
-	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A")
-	store.RegisterMCPPrivilege("tool_b", MCPPrivilegeTypeTool, "Tool B")
+	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A", false)
+	store.RegisterMCPPrivilege("tool_b", MCPPrivilegeTypeTool, "Tool B", false)
 	store.GrantMCPPrivilegeByName(groupID, "tool_a")
 	store.GrantMCPPrivilegeByName(groupID, "tool_b")
 	store.GrantConnectionPrivilege(groupID, 1, AccessLevelReadWrite)
@@ -697,8 +713,8 @@ func TestRBACCheckerTokenScopingMCPWildcard(t *testing.T) {
 	store.AddUserToGroup(groupID, userID)
 
 	// Grant multiple privileges
-	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A")
-	store.RegisterMCPPrivilege("tool_b", MCPPrivilegeTypeTool, "Tool B")
+	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A", false)
+	store.RegisterMCPPrivilege("tool_b", MCPPrivilegeTypeTool, "Tool B", false)
 	store.GrantMCPPrivilegeByName(groupID, "tool_a")
 	store.GrantMCPPrivilegeByName(groupID, "tool_b")
 
@@ -798,8 +814,8 @@ func TestGetEffectivePrivilegesWithMCPWildcard(t *testing.T) {
 	groupID, _ := store.CreateGroup("test-group", "Test")
 	store.AddUserToGroup(groupID, userID)
 
-	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A")
-	store.RegisterMCPPrivilege("tool_b", MCPPrivilegeTypeTool, "Tool B")
+	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A", false)
+	store.RegisterMCPPrivilege("tool_b", MCPPrivilegeTypeTool, "Tool B", false)
 	store.GrantMCPPrivilegeByName(groupID, "tool_a")
 	store.GrantMCPPrivilegeByName(groupID, "tool_b")
 	store.GrantAdminPermission(groupID, PermManageUsers)
@@ -899,11 +915,14 @@ func TestHasAdminPermissionInheritedFromNestedGroup(t *testing.T) {
 // Wildcard MCP Privilege with Unregistered Tool Tests (Issue #28)
 // =============================================================================
 
-func TestRBACCheckerUnregisteredToolWithWildcardGrant(t *testing.T) {
+func TestRBACCheckerPublicToolWithWildcardGrant(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
 	checker := NewRBACChecker(store)
+
+	// Register store_memory as a public tool (like in production)
+	store.RegisterMCPPrivilege("store_memory", MCPPrivilegeTypeTool, "Store memory", true)
 
 	// Create a group with wildcard MCP privilege (All MCP Privileges)
 	store.CreateUser("wildcarduser", "Password1", "Wildcard user", "", "")
@@ -916,28 +935,29 @@ func TestRBACCheckerUnregisteredToolWithWildcardGrant(t *testing.T) {
 	store.CreateUser("nogroup", "Password1", "No group user", "", "")
 	noGroupUserID, _ := store.GetUserID("nogroup")
 
-	// User in wildcarded group should access an unregistered tool
+	// User in wildcarded group should access the public tool
 	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
 	ctx = context.WithValue(ctx, UserIDContextKey, wildcardUserID)
 
 	if !checker.CanAccessMCPItem(ctx, "store_memory") {
-		t.Error("Expected user in wildcarded group to access unregistered tool 'store_memory'")
+		t.Error("Expected user in wildcarded group to access public tool 'store_memory'")
 	}
 
-	if !checker.CanAccessMCPItem(ctx, "completely_unknown_tool") {
-		t.Error("Expected user in wildcarded group to access any unregistered tool")
-	}
-
-	// User NOT in any group should be DENIED because the wildcard makes everything restricted
+	// User NOT in any group should ALSO access the public tool (it's public!)
 	ctx2 := context.WithValue(context.Background(), IsSuperuserContextKey, false)
 	ctx2 = context.WithValue(ctx2, UserIDContextKey, noGroupUserID)
 
-	if checker.CanAccessMCPItem(ctx2, "store_memory") {
-		t.Error("Expected user without group to be denied access to unregistered tool when wildcard grant exists")
+	if !checker.CanAccessMCPItem(ctx2, "store_memory") {
+		t.Error("Expected user without group to access public tool 'store_memory'")
+	}
+
+	// But user without group should be denied unregistered tools (fail-safe)
+	if checker.CanAccessMCPItem(ctx2, "completely_unknown_tool") {
+		t.Error("Expected user without group to be denied access to unregistered tool")
 	}
 }
 
-func TestRBACCheckerUnregisteredToolWithoutAnyGrants(t *testing.T) {
+func TestRBACCheckerUnregisteredToolDeniedByDefault(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
@@ -950,14 +970,16 @@ func TestRBACCheckerUnregisteredToolWithoutAnyGrants(t *testing.T) {
 	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
 	ctx = context.WithValue(ctx, UserIDContextKey, userID)
 
-	// When no groups have any MCP privileges at all, unregistered tools
-	// should be accessible (the "unrestricted" default behavior)
-	if !checker.CanAccessMCPItem(ctx, "store_memory") {
-		t.Error("Expected access to unregistered tool when no MCP grants exist at all")
+	// With the new "restrictive by default" RBAC model, unregistered tools
+	// should be DENIED (fail-safe for unknown tools - Issue #28 fix)
+	if checker.CanAccessMCPItem(ctx, "completely_unknown_tool") {
+		t.Error("Expected denial for unregistered tool (fail-safe behavior)")
 	}
 
-	if !checker.CanAccessMCPItem(ctx, "completely_unknown_tool") {
-		t.Error("Expected access to any tool when no MCP grants exist at all")
+	// But registered PUBLIC tools should still be accessible without group membership
+	store.RegisterMCPPrivilege("store_memory", MCPPrivilegeTypeTool, "Store memory", true)
+	if !checker.CanAccessMCPItem(ctx, "store_memory") {
+		t.Error("Expected access to registered public tool even without group membership")
 	}
 }
 
@@ -968,7 +990,7 @@ func TestRBACCheckerRegisteredToolWithWildcardGrant(t *testing.T) {
 	checker := NewRBACChecker(store)
 
 	// Register a tool
-	store.RegisterMCPPrivilege("query_database", MCPPrivilegeTypeTool, "Execute queries")
+	store.RegisterMCPPrivilege("query_database", MCPPrivilegeTypeTool, "Execute queries", false)
 
 	// Create a group with wildcard MCP privilege
 	store.CreateUser("testuser", "Password1", "Test user", "", "")

@@ -274,7 +274,8 @@ func showGroupPrivilegesCommand(dataDir, groupName string) error {
 }
 
 // registerPrivilegeCommand registers a new MCP privilege identifier
-func registerPrivilegeCommand(dataDir, identifier, itemType, description string) error {
+// The isPublic parameter controls whether the privilege is accessible without group membership.
+func registerPrivilegeCommand(dataDir, identifier, itemType, description string, isPublic bool) error {
 	if identifier == "" {
 		return fmt.Errorf("privilege identifier is required")
 	}
@@ -290,12 +291,12 @@ func registerPrivilegeCommand(dataDir, identifier, itemType, description string)
 	defer store.Close()
 
 	// Register privilege
-	id, err := store.RegisterMCPPrivilege(identifier, itemType, description)
+	id, err := store.RegisterMCPPrivilege(identifier, itemType, description, isPublic)
 	if err != nil {
 		return fmt.Errorf("failed to register privilege: %w", err)
 	}
 
-	fmt.Printf("Privilege '%s' registered (ID: %d)\n", identifier, id)
+	fmt.Printf("Privilege '%s' registered (ID: %d, public: %v)\n", identifier, id, isPublic)
 	return nil
 }
 
@@ -327,51 +328,56 @@ func parseConnectionIDs(s string) ([]int, error) {
 // This is called on server startup to ensure all tools and resources are registered
 func registerMCPPrivileges(store *auth.AuthStore) {
 	// Define all MCP privileges to register
+	// isPublic: if true, the tool is accessible without group membership
+	// Memory tools are public because they have their own internal authorization (user-scoped)
 	privileges := []struct {
 		identifier  string
 		itemType    string
 		description string
+		isPublic    bool
 	}{
 		// Database Query Tools
-		{"query_database", "tool", "Execute read-only SQL queries against the database"},
-		{"get_schema_info", "tool", "Retrieve database schema information (tables, columns, indexes)"},
-		{"execute_explain", "tool", "Execute EXPLAIN on queries to analyze execution plans"},
-		{"count_rows", "tool", "Count rows in database tables"},
+		{"query_database", "tool", "Execute read-only SQL queries against the database", false},
+		{"get_schema_info", "tool", "Retrieve database schema information (tables, columns, indexes)", false},
+		{"execute_explain", "tool", "Execute EXPLAIN on queries to analyze execution plans", false},
+		{"count_rows", "tool", "Count rows in database tables", false},
 
 		// Metrics and Monitoring Tools
-		{"list_probes", "tool", "List available metric collection probes"},
-		{"describe_probe", "tool", "Get detailed information about a specific probe"},
-		{"query_metrics", "tool", "Query historical metrics data from the datastore"},
+		{"list_probes", "tool", "List available metric collection probes", false},
+		{"describe_probe", "tool", "Get detailed information about a specific probe", false},
+		{"query_metrics", "tool", "Query historical metrics data from the datastore", false},
 
 		// Connection Management Tools
-		{"list_connections", "tool", "List available database connections"},
+		{"list_connections", "tool", "List available database connections", false},
 
 		// Knowledge Base and Search Tools
-		{"generate_embedding", "tool", "Generate vector embeddings for text"},
-		{"search_knowledgebase", "tool", "Search the knowledge base for relevant information"},
-		{"similarity_search", "tool", "Perform vector similarity search on database tables"},
-		{"read_resource", "tool", "Read MCP resource content"},
+		{"generate_embedding", "tool", "Generate vector embeddings for text", false},
+		{"search_knowledgebase", "tool", "Search the knowledge base for relevant information", false},
+		{"similarity_search", "tool", "Perform vector similarity search on database tables", false},
+		{"read_resource", "tool", "Read MCP resource content", false},
 
 		// Alert and Baseline Tools
-		{"get_alert_history", "tool", "Query alert history for monitored connections"},
-		{"get_alert_rules", "tool", "Query current alerting rules and effective thresholds"},
-		{"get_metric_baselines", "tool", "Query statistical baselines for metrics used in anomaly detection"},
+		{"get_alert_history", "tool", "Query alert history for monitored connections", false},
+		{"get_alert_rules", "tool", "Query current alerting rules and effective thresholds", false},
+		{"get_metric_baselines", "tool", "Query statistical baselines for metrics used in anomaly detection", false},
 
-		// Memory and Datastore Tools
-		{"store_memory", "tool", "Store persistent memory"},
-		{"recall_memories", "tool", "Recall stored memories"},
-		{"delete_memory", "tool", "Delete stored memory"},
-		{"query_datastore", "tool", "Query the monitoring datastore"},
+		// Memory Tools - PUBLIC (have their own internal user-scoped authorization)
+		{"store_memory", "tool", "Store persistent memory", true},
+		{"recall_memories", "tool", "Recall stored memories", true},
+		{"delete_memory", "tool", "Delete stored memory", true},
+
+		// Datastore Query Tool
+		{"query_datastore", "tool", "Query the monitoring datastore", false},
 
 		// Resources
-		{"pg://system_info", "resource", "PostgreSQL system information resource"},
-		{"pg://connection_info", "resource", "Current database connection information resource"},
+		{"pg://system_info", "resource", "PostgreSQL system information resource", false},
+		{"pg://connection_info", "resource", "Current database connection information resource", false},
 	}
 
 	// Register each privilege (RegisterMCPPrivilege handles duplicates gracefully)
 	registered := 0
 	for _, p := range privileges {
-		_, err := store.RegisterMCPPrivilege(p.identifier, p.itemType, p.description)
+		_, err := store.RegisterMCPPrivilege(p.identifier, p.itemType, p.description, p.isPublic)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: Failed to register privilege '%s': %v\n", p.identifier, err)
 		} else {

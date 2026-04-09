@@ -536,18 +536,18 @@ func TestRBACEnforcement_MCPToolAccess(t *testing.T) {
 	checker := auth.NewRBACChecker(store)
 
 	// Register two MCP privileges.
-	toolAID, err := store.RegisterMCPPrivilege("tool_a", "tool", "Tool A")
+	toolAID, err := store.RegisterMCPPrivilege("tool_a", "tool", "Tool A", false)
 	if err != nil {
 		t.Fatalf("Failed to register tool_a: %v", err)
 	}
-	toolBID, err := store.RegisterMCPPrivilege("tool_b", "tool", "Tool B")
+	toolBID, err := store.RegisterMCPPrivilege("tool_b", "tool", "Tool B", false)
 	if err != nil {
 		t.Fatalf("Failed to register tool_b: %v", err)
 	}
-	// Register a tool that will not be assigned to any group (unrestricted).
-	_, err = store.RegisterMCPPrivilege("tool_unrestricted", "tool", "Unrestricted Tool")
+	// Register a public tool that will be accessible without group membership.
+	_, err = store.RegisterMCPPrivilege("tool_public", "tool", "Public Tool", true)
 	if err != nil {
-		t.Fatalf("Failed to register tool_unrestricted: %v", err)
+		t.Fatalf("Failed to register tool_public: %v", err)
 	}
 
 	// Create a group and grant tool_a to it.
@@ -586,11 +586,11 @@ func TestRBACEnforcement_MCPToolAccess(t *testing.T) {
 		t.Fatalf("Failed to set superuser: %v", err)
 	}
 
-	t.Run("UnrestrictedTool_AccessibleByAll", func(t *testing.T) {
+	t.Run("PublicTool_AccessibleByAll", func(t *testing.T) {
 		ctx := context.WithValue(context.Background(), auth.UserIDContextKey, outsiderID)
 		ctx = context.WithValue(ctx, auth.IsSuperuserContextKey, false)
-		if !checker.CanAccessMCPItem(ctx, "tool_unrestricted") {
-			t.Error("Unrestricted tool should be accessible by any user")
+		if !checker.CanAccessMCPItem(ctx, "tool_public") {
+			t.Error("Public tool should be accessible by any user")
 		}
 	})
 
@@ -891,7 +891,7 @@ func TestRBACEnforcement_GetUserPrivileges(t *testing.T) {
 		t.Fatalf("Failed to grant connection privilege: %v", err)
 	}
 
-	toolID, err := store.RegisterMCPPrivilege("priv_tool", "tool", "Privilege test tool")
+	toolID, err := store.RegisterMCPPrivilege("priv_tool", "tool", "Privilege test tool", false)
 	if err != nil {
 		t.Fatalf("Failed to register MCP privilege: %v", err)
 	}

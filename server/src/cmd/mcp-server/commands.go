@@ -214,7 +214,7 @@ func RunCLICommands(f *Flags, dataDir string) bool {
 		}
 
 		if f.RegisterPrivilegeCmd {
-			if err := registerPrivilegeCommand(dataDir, f.PrivilegeIdentifier, f.PrivilegeType, f.PrivilegeDescription); err != nil {
+			if err := registerPrivilegeCommand(dataDir, f.PrivilegeIdentifier, f.PrivilegeType, f.PrivilegeDescription, f.PrivilegeIsPublic); err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 				os.Exit(1)
 			}

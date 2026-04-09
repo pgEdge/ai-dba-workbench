@@ -46,7 +46,7 @@ func TestRegisterMCPPrivilege(t *testing.T) {
 	defer cleanup()
 
 	// Register a tool privilege
-	id, err := store.RegisterMCPPrivilege("query_database", MCPPrivilegeTypeTool, "Execute read-only SQL queries")
+	id, err := store.RegisterMCPPrivilege("query_database", MCPPrivilegeTypeTool, "Execute read-only SQL queries", false)
 	if err != nil {
 		t.Fatalf("Failed to register MCP privilege: %v", err)
 	}
@@ -76,6 +76,39 @@ func TestRegisterMCPPrivilege(t *testing.T) {
 	if priv.Description != "Execute read-only SQL queries" {
 		t.Errorf("Expected description 'Execute read-only SQL queries', got %q", priv.Description)
 	}
+
+	if priv.IsPublic {
+		t.Error("Expected privilege to not be public")
+	}
+}
+
+func TestRegisterMCPPrivilegePublic(t *testing.T) {
+	store, cleanup := createTestAuthStoreForPrivileges(t)
+	defer cleanup()
+
+	// Register a public tool privilege
+	id, err := store.RegisterMCPPrivilege("store_memory", MCPPrivilegeTypeTool, "Store persistent memory", true)
+	if err != nil {
+		t.Fatalf("Failed to register MCP privilege: %v", err)
+	}
+
+	if id <= 0 {
+		t.Errorf("Expected positive privilege ID, got %d", id)
+	}
+
+	// Verify the privilege is marked as public
+	priv, err := store.GetMCPPrivilege("store_memory")
+	if err != nil {
+		t.Fatalf("Failed to get privilege: %v", err)
+	}
+
+	if priv == nil {
+		t.Fatal("Expected privilege to exist")
+	}
+
+	if !priv.IsPublic {
+		t.Error("Expected privilege to be public")
+	}
 }
 
 func TestRegisterMCPPrivilegeDuplicate(t *testing.T) {
@@ -83,13 +116,13 @@ func TestRegisterMCPPrivilegeDuplicate(t *testing.T) {
 	defer cleanup()
 
 	// Register first privilege
-	id1, err := store.RegisterMCPPrivilege("test_tool", MCPPrivilegeTypeTool, "First description")
+	id1, err := store.RegisterMCPPrivilege("test_tool", MCPPrivilegeTypeTool, "First description", false)
 	if err != nil {
 		t.Fatalf("Failed to register first privilege: %v", err)
 	}
 
 	// Register duplicate (should return existing ID)
-	id2, err := store.RegisterMCPPrivilege("test_tool", MCPPrivilegeTypeTool, "Second description")
+	id2, err := store.RegisterMCPPrivilege("test_tool", MCPPrivilegeTypeTool, "Second description", false)
 	if err != nil {
 		t.Fatalf("Failed to register duplicate privilege: %v", err)
 	}
@@ -99,11 +132,44 @@ func TestRegisterMCPPrivilegeDuplicate(t *testing.T) {
 	}
 }
 
+func TestRegisterMCPPrivilegeUpdatePublicFlag(t *testing.T) {
+	store, cleanup := createTestAuthStoreForPrivileges(t)
+	defer cleanup()
+
+	// Register as non-public
+	id1, err := store.RegisterMCPPrivilege("test_tool", MCPPrivilegeTypeTool, "Test", false)
+	if err != nil {
+		t.Fatalf("Failed to register privilege: %v", err)
+	}
+
+	// Verify it's not public
+	priv, _ := store.GetMCPPrivilege("test_tool")
+	if priv.IsPublic {
+		t.Error("Expected privilege to not be public initially")
+	}
+
+	// Re-register as public (should update the flag)
+	id2, err := store.RegisterMCPPrivilege("test_tool", MCPPrivilegeTypeTool, "Test", true)
+	if err != nil {
+		t.Fatalf("Failed to re-register privilege: %v", err)
+	}
+
+	if id1 != id2 {
+		t.Errorf("Expected same ID, got %d and %d", id1, id2)
+	}
+
+	// Verify it's now public
+	priv, _ = store.GetMCPPrivilege("test_tool")
+	if !priv.IsPublic {
+		t.Error("Expected privilege to be public after update")
+	}
+}
+
 func TestRegisterMCPPrivilegeInvalidType(t *testing.T) {
 	store, cleanup := createTestAuthStoreForPrivileges(t)
 	defer cleanup()
 
-	_, err := store.RegisterMCPPrivilege("test", "invalid", "Description")
+	_, err := store.RegisterMCPPrivilege("test", "invalid", "Description", false)
 	if err == nil {
 		t.Error("Expected error for invalid item type")
 	}
@@ -114,7 +180,7 @@ func TestGetMCPPrivilegeByID(t *testing.T) {
 	defer cleanup()
 
 	// Register a privilege
-	id, _ := store.RegisterMCPPrivilege("test_resource", MCPPrivilegeTypeResource, "Test resource")
+	id, _ := store.RegisterMCPPrivilege("test_resource", MCPPrivilegeTypeResource, "Test resource", false)
 
 	// Get by ID
 	priv, err := store.GetMCPPrivilegeByID(id)
@@ -145,9 +211,9 @@ func TestListMCPPrivileges(t *testing.T) {
 	defer cleanup()
 
 	// Register multiple privileges
-	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A")
-	store.RegisterMCPPrivilege("resource_b", MCPPrivilegeTypeResource, "Resource B")
-	store.RegisterMCPPrivilege("prompt_c", MCPPrivilegeTypePrompt, "Prompt C")
+	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A", false)
+	store.RegisterMCPPrivilege("resource_b", MCPPrivilegeTypeResource, "Resource B", false)
+	store.RegisterMCPPrivilege("prompt_c", MCPPrivilegeTypePrompt, "Prompt C", false)
 
 	// List all privileges
 	privileges, err := store.ListMCPPrivileges()
@@ -165,9 +231,9 @@ func TestListMCPPrivilegesByType(t *testing.T) {
 	defer cleanup()
 
 	// Register multiple privileges
-	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A")
-	store.RegisterMCPPrivilege("tool_b", MCPPrivilegeTypeTool, "Tool B")
-	store.RegisterMCPPrivilege("resource_c", MCPPrivilegeTypeResource, "Resource C")
+	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A", false)
+	store.RegisterMCPPrivilege("tool_b", MCPPrivilegeTypeTool, "Tool B", false)
+	store.RegisterMCPPrivilege("resource_c", MCPPrivilegeTypeResource, "Resource C", false)
 
 	// List only tools
 	tools, err := store.ListMCPPrivilegesByType(MCPPrivilegeTypeTool)
@@ -200,7 +266,7 @@ func TestGrantMCPPrivilege(t *testing.T) {
 
 	// Create group and privilege
 	groupID, _ := store.CreateGroup("test-group", "Test group")
-	privID, _ := store.RegisterMCPPrivilege("test_tool", MCPPrivilegeTypeTool, "Test tool")
+	privID, _ := store.RegisterMCPPrivilege("test_tool", MCPPrivilegeTypeTool, "Test tool", false)
 
 	// Grant privilege
 	err := store.GrantMCPPrivilege(groupID, privID)
@@ -229,7 +295,7 @@ func TestGrantMCPPrivilegeByName(t *testing.T) {
 
 	// Create group and privilege
 	groupID, _ := store.CreateGroup("test-group", "Test group")
-	store.RegisterMCPPrivilege("test_tool", MCPPrivilegeTypeTool, "Test tool")
+	store.RegisterMCPPrivilege("test_tool", MCPPrivilegeTypeTool, "Test tool", false)
 
 	// Grant by name
 	err := store.GrantMCPPrivilegeByName(groupID, "test_tool")
@@ -266,7 +332,7 @@ func TestRevokeMCPPrivilege(t *testing.T) {
 
 	// Setup
 	groupID, _ := store.CreateGroup("test-group", "Test group")
-	privID, _ := store.RegisterMCPPrivilege("test_tool", MCPPrivilegeTypeTool, "Test tool")
+	privID, _ := store.RegisterMCPPrivilege("test_tool", MCPPrivilegeTypeTool, "Test tool", false)
 	store.GrantMCPPrivilege(groupID, privID)
 
 	// Revoke privilege
@@ -287,7 +353,7 @@ func TestRevokeMCPPrivilegeNotFound(t *testing.T) {
 	defer cleanup()
 
 	groupID, _ := store.CreateGroup("test-group", "Test group")
-	privID, _ := store.RegisterMCPPrivilege("test_tool", MCPPrivilegeTypeTool, "Test tool")
+	privID, _ := store.RegisterMCPPrivilege("test_tool", MCPPrivilegeTypeTool, "Test tool", false)
 
 	// Try to revoke non-existent grant
 	err := store.RevokeMCPPrivilege(groupID, privID)
@@ -302,7 +368,7 @@ func TestRevokeMCPPrivilegeByName(t *testing.T) {
 
 	// Setup
 	groupID, _ := store.CreateGroup("test-group", "Test group")
-	store.RegisterMCPPrivilege("test_tool", MCPPrivilegeTypeTool, "Test tool")
+	store.RegisterMCPPrivilege("test_tool", MCPPrivilegeTypeTool, "Test tool", false)
 	store.GrantMCPPrivilegeByName(groupID, "test_tool")
 
 	// Revoke by name
@@ -449,7 +515,7 @@ func TestGetGroupWithPrivileges(t *testing.T) {
 	groupID, _ := store.CreateGroup("test-group", "Test group")
 
 	// Add MCP privileges
-	privID, _ := store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A")
+	privID, _ := store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A", false)
 	store.GrantMCPPrivilege(groupID, privID)
 
 	// Add connection privileges
@@ -502,8 +568,8 @@ func TestGetUserMCPPrivileges(t *testing.T) {
 	store.AddUserToGroup(groupID, userID)
 
 	// Grant privileges to group
-	priv1ID, _ := store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A")
-	priv2ID, _ := store.RegisterMCPPrivilege("tool_b", MCPPrivilegeTypeTool, "Tool B")
+	priv1ID, _ := store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A", false)
+	priv2ID, _ := store.RegisterMCPPrivilege("tool_b", MCPPrivilegeTypeTool, "Tool B", false)
 	store.GrantMCPPrivilege(groupID, priv1ID)
 	store.GrantMCPPrivilege(groupID, priv2ID)
 
@@ -541,7 +607,7 @@ func TestGetUserMCPPrivilegesInherited(t *testing.T) {
 	store.AddUserToGroup(childID, userID)
 
 	// Grant privilege to parent only
-	privID, _ := store.RegisterMCPPrivilege("parent_tool", MCPPrivilegeTypeTool, "Parent Tool")
+	privID, _ := store.RegisterMCPPrivilege("parent_tool", MCPPrivilegeTypeTool, "Parent Tool", false)
 	store.GrantMCPPrivilege(parentID, privID)
 
 	// User should inherit privilege through group hierarchy
@@ -646,7 +712,7 @@ func TestIsPrivilegeAssignedToAnyGroup(t *testing.T) {
 	defer cleanup()
 
 	// Register privilege but don't assign
-	store.RegisterMCPPrivilege("unassigned_tool", MCPPrivilegeTypeTool, "Unassigned")
+	store.RegisterMCPPrivilege("unassigned_tool", MCPPrivilegeTypeTool, "Unassigned", false)
 
 	// Check - should not be assigned
 	assigned, err := store.IsPrivilegeAssignedToAnyGroup("unassigned_tool")
@@ -946,8 +1012,8 @@ func TestGetGroupEffectiveMCPPrivileges(t *testing.T) {
 	store.AddGroupToGroup(groupB, groupC)
 
 	// Assign MCP privileges to GroupA and GroupC
-	privA, _ := store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A")
-	privC, _ := store.RegisterMCPPrivilege("tool_c", MCPPrivilegeTypeTool, "Tool C")
+	privA, _ := store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A", false)
+	privC, _ := store.RegisterMCPPrivilege("tool_c", MCPPrivilegeTypeTool, "Tool C", false)
 	store.GrantMCPPrivilege(groupA, privA)
 	store.GrantMCPPrivilege(groupC, privC)
 
@@ -1084,8 +1150,8 @@ func TestMCPPrivilegeCount(t *testing.T) {
 		t.Errorf("Expected 0 privileges initially, got %d", count)
 	}
 
-	store.RegisterMCPPrivilege("tool1", MCPPrivilegeTypeTool, "")
-	store.RegisterMCPPrivilege("tool2", MCPPrivilegeTypeTool, "")
+	store.RegisterMCPPrivilege("tool1", MCPPrivilegeTypeTool, "", false)
+	store.RegisterMCPPrivilege("tool2", MCPPrivilegeTypeTool, "", false)
 
 	if count := store.MCPPrivilegeCount(); count != 2 {
 		t.Errorf("Expected 2 privileges, got %d", count)
@@ -1101,7 +1167,7 @@ func TestIsPrivilegeAssignedToAnyGroupWildcard(t *testing.T) {
 	defer cleanup()
 
 	// Register a tool and leave another unregistered
-	store.RegisterMCPPrivilege("registered_tool", MCPPrivilegeTypeTool, "Registered")
+	store.RegisterMCPPrivilege("registered_tool", MCPPrivilegeTypeTool, "Registered", false)
 
 	// Create a group with wildcard MCP privilege
 	groupID, _ := store.CreateGroup("wildcard-group", "Wildcard group")
@@ -1145,7 +1211,7 @@ func TestIsPrivilegeAssignedToAnyGroupSpecificOnly(t *testing.T) {
 	defer cleanup()
 
 	// Register and assign only a specific tool (no wildcard)
-	store.RegisterMCPPrivilege("specific_tool", MCPPrivilegeTypeTool, "Specific")
+	store.RegisterMCPPrivilege("specific_tool", MCPPrivilegeTypeTool, "Specific", false)
 	groupID, _ := store.CreateGroup("specific-group", "Specific group")
 	store.GrantMCPPrivilegeByName(groupID, "specific_tool")
 
@@ -1165,5 +1231,52 @@ func TestIsPrivilegeAssignedToAnyGroupSpecificOnly(t *testing.T) {
 	}
 	if assigned {
 		t.Error("Expected other_tool to NOT be restricted when only specific grants exist")
+	}
+}
+
+// =============================================================================
+// IsPrivilegePublic Tests
+// =============================================================================
+
+func TestIsPrivilegePublic(t *testing.T) {
+	store, cleanup := createTestAuthStoreForPrivileges(t)
+	defer cleanup()
+
+	// Test unregistered privilege
+	isPublic, isRegistered, err := store.IsPrivilegePublic("unregistered_tool")
+	if err != nil {
+		t.Fatalf("Failed to check public status: %v", err)
+	}
+	if isRegistered {
+		t.Error("Expected unregistered tool to not be registered")
+	}
+	if isPublic {
+		t.Error("Expected unregistered tool to not be public")
+	}
+
+	// Register a non-public tool
+	store.RegisterMCPPrivilege("private_tool", MCPPrivilegeTypeTool, "Private", false)
+	isPublic, isRegistered, err = store.IsPrivilegePublic("private_tool")
+	if err != nil {
+		t.Fatalf("Failed to check public status: %v", err)
+	}
+	if !isRegistered {
+		t.Error("Expected private_tool to be registered")
+	}
+	if isPublic {
+		t.Error("Expected private_tool to not be public")
+	}
+
+	// Register a public tool
+	store.RegisterMCPPrivilege("public_tool", MCPPrivilegeTypeTool, "Public", true)
+	isPublic, isRegistered, err = store.IsPrivilegePublic("public_tool")
+	if err != nil {
+		t.Fatalf("Failed to check public status: %v", err)
+	}
+	if !isRegistered {
+		t.Error("Expected public_tool to be registered")
+	}
+	if !isPublic {
+		t.Error("Expected public_tool to be public")
 	}
 }

@@ -19,7 +19,9 @@ import (
 // =============================================================================
 
 // RegisterMCPPrivilege registers a new MCP privilege identifier (tool, resource, or prompt)
-func (s *AuthStore) RegisterMCPPrivilege(identifier, itemType, description string) (int64, error) {
+// The isPublic parameter indicates whether the privilege should be accessible without
+// group membership. Public tools are accessible to any authenticated user.
+func (s *AuthStore) RegisterMCPPrivilege(identifier, itemType, description string, isPublic bool) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -30,15 +32,16 @@ func (s *AuthStore) RegisterMCPPrivilege(identifier, itemType, description strin
 
 	// Use INSERT OR IGNORE to handle duplicates gracefully
 	result, err := s.db.Exec(
-		`INSERT OR IGNORE INTO mcp_privilege_identifiers (identifier, item_type, description)
-         VALUES (?, ?, ?)`,
-		identifier, itemType, description,
+		`INSERT OR IGNORE INTO mcp_privilege_identifiers (identifier, item_type, description, is_public)
+         VALUES (?, ?, ?, ?)`,
+		identifier, itemType, description, isPublic,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("failed to register MCP privilege: %w", err)
 	}
 
 	// If no rows were inserted (due to INSERT OR IGNORE), get the existing ID
+	// and update the is_public flag (in case it changed)
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		return 0, fmt.Errorf("failed to check insert result: %w", err)
@@ -51,6 +54,14 @@ func (s *AuthStore) RegisterMCPPrivilege(identifier, itemType, description strin
 		).Scan(&existingID)
 		if err != nil {
 			return 0, fmt.Errorf("failed to get existing privilege ID: %w", err)
+		}
+		// Update is_public flag in case it changed
+		_, err = s.db.Exec(
+			"UPDATE mcp_privilege_identifiers SET is_public = ? WHERE id = ?",
+			isPublic, existingID,
+		)
+		if err != nil {
+			return 0, fmt.Errorf("failed to update privilege is_public flag: %w", err)
 		}
 		return existingID, nil
 	}
@@ -70,10 +81,10 @@ func (s *AuthStore) GetMCPPrivilege(identifier string) (*MCPPrivilege, error) {
 
 	var priv MCPPrivilege
 	err := s.db.QueryRow(
-		`SELECT id, identifier, item_type, description, created_at
+		`SELECT id, identifier, item_type, description, is_public, created_at
          FROM mcp_privilege_identifiers WHERE identifier = ?`,
 		identifier,
-	).Scan(&priv.ID, &priv.Identifier, &priv.ItemType, &priv.Description, &priv.CreatedAt)
+	).Scan(&priv.ID, &priv.Identifier, &priv.ItemType, &priv.Description, &priv.IsPublic, &priv.CreatedAt)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -92,10 +103,10 @@ func (s *AuthStore) GetMCPPrivilegeByID(id int64) (*MCPPrivilege, error) {
 
 	var priv MCPPrivilege
 	err := s.db.QueryRow(
-		`SELECT id, identifier, item_type, description, created_at
+		`SELECT id, identifier, item_type, description, is_public, created_at
          FROM mcp_privilege_identifiers WHERE id = ?`,
 		id,
-	).Scan(&priv.ID, &priv.Identifier, &priv.ItemType, &priv.Description, &priv.CreatedAt)
+	).Scan(&priv.ID, &priv.Identifier, &priv.ItemType, &priv.Description, &priv.IsPublic, &priv.CreatedAt)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -113,7 +124,7 @@ func (s *AuthStore) ListMCPPrivileges() ([]*MCPPrivilege, error) {
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.Query(
-		`SELECT id, identifier, item_type, description, created_at
+		`SELECT id, identifier, item_type, description, is_public, created_at
          FROM mcp_privilege_identifiers
          ORDER BY item_type, identifier`,
 	)
@@ -125,7 +136,7 @@ func (s *AuthStore) ListMCPPrivileges() ([]*MCPPrivilege, error) {
 	var privileges []*MCPPrivilege
 	for rows.Next() {
 		var priv MCPPrivilege
-		if err := rows.Scan(&priv.ID, &priv.Identifier, &priv.ItemType, &priv.Description, &priv.CreatedAt); err != nil {
+		if err := rows.Scan(&priv.ID, &priv.Identifier, &priv.ItemType, &priv.Description, &priv.IsPublic, &priv.CreatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan privilege: %w", err)
 		}
 		privileges = append(privileges, &priv)
@@ -144,7 +155,7 @@ func (s *AuthStore) ListMCPPrivilegesByType(itemType string) ([]*MCPPrivilege, e
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.Query(
-		`SELECT id, identifier, item_type, description, created_at
+		`SELECT id, identifier, item_type, description, is_public, created_at
          FROM mcp_privilege_identifiers
          WHERE item_type = ?
          ORDER BY identifier`,
@@ -158,7 +169,7 @@ func (s *AuthStore) ListMCPPrivilegesByType(itemType string) ([]*MCPPrivilege, e
 	var privileges []*MCPPrivilege
 	for rows.Next() {
 		var priv MCPPrivilege
-		if err := rows.Scan(&priv.ID, &priv.Identifier, &priv.ItemType, &priv.Description, &priv.CreatedAt); err != nil {
+		if err := rows.Scan(&priv.ID, &priv.Identifier, &priv.ItemType, &priv.Description, &priv.IsPublic, &priv.CreatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan privilege: %w", err)
 		}
 		privileges = append(privileges, &priv)
@@ -396,7 +407,7 @@ func (s *AuthStore) ListGroupMCPPrivileges(groupID int64) ([]*MCPPrivilege, erro
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.Query(
-		`SELECT mpi.id, mpi.identifier, mpi.item_type, mpi.description, mpi.created_at
+		`SELECT mpi.id, mpi.identifier, mpi.item_type, mpi.description, mpi.is_public, mpi.created_at
          FROM mcp_privilege_identifiers mpi
          JOIN group_mcp_privileges gmp ON mpi.id = gmp.privilege_identifier_id
          WHERE gmp.group_id = ?
@@ -411,7 +422,7 @@ func (s *AuthStore) ListGroupMCPPrivileges(groupID int64) ([]*MCPPrivilege, erro
 	var privileges []*MCPPrivilege
 	for rows.Next() {
 		var priv MCPPrivilege
-		if err := rows.Scan(&priv.ID, &priv.Identifier, &priv.ItemType, &priv.Description, &priv.CreatedAt); err != nil {
+		if err := rows.Scan(&priv.ID, &priv.Identifier, &priv.ItemType, &priv.Description, &priv.IsPublic, &priv.CreatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan privilege: %w", err)
 		}
 		privileges = append(privileges, &priv)
@@ -527,6 +538,31 @@ func (s *AuthStore) IsPrivilegeAssignedToAnyGroup(identifier string) (bool, erro
 	}
 
 	return count > 0, nil
+}
+
+// IsPrivilegePublic checks if a privilege is marked as public (accessible without group membership).
+// Returns (isPublic, isRegistered, error).
+// - If the privilege is not registered, returns (false, false, nil).
+// - If the privilege is registered and public, returns (true, true, nil).
+// - If the privilege is registered and not public, returns (false, true, nil).
+func (s *AuthStore) IsPrivilegePublic(identifier string) (isPublic bool, isRegistered bool, err error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var publicFlag bool
+	err = s.db.QueryRow(
+		"SELECT is_public FROM mcp_privilege_identifiers WHERE identifier = ?",
+		identifier,
+	).Scan(&publicFlag)
+
+	if err == sql.ErrNoRows {
+		return false, false, nil
+	}
+	if err != nil {
+		return false, false, fmt.Errorf("failed to check privilege public status: %w", err)
+	}
+
+	return publicFlag, true, nil
 }
 
 // GetUserMCPPrivileges returns all MCP privilege identifiers accessible to a user (through all groups)

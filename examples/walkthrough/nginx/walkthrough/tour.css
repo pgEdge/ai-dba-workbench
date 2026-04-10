@@ -1,0 +1,382 @@
+/*-------------------------------------------------------------------------
+ *
+ * pgEdge AI DBA Workbench
+ *
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-------------------------------------------------------------------------
+ */
+
+/* pgEdge Walkthrough Tour — Custom Styles */
+
+/* -----------------------------------------------------------------------
+ * 1. Driver.js popover overrides
+ * ----------------------------------------------------------------------- */
+
+.driver-popover {
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    max-width: 420px;
+}
+
+.driver-popover .driver-popover-title {
+    color: #0d9488;
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+.driver-popover .driver-popover-description {
+    font-size: 0.95rem;
+    line-height: 1.5;
+    color: #374151;
+}
+
+/* -----------------------------------------------------------------------
+ * 2. Dark mode support
+ * ----------------------------------------------------------------------- */
+
+.dark .driver-popover {
+    background: #1f2937;
+    border-color: #374151;
+}
+
+.dark .driver-popover .driver-popover-title {
+    color: #2dd4bf;
+}
+
+.dark .driver-popover .driver-popover-description {
+    color: #d1d5db;
+}
+
+/* -----------------------------------------------------------------------
+ * 3. Next / Previous buttons
+ * ----------------------------------------------------------------------- */
+
+.driver-popover .driver-popover-navigation-btns
+    .driver-popover-next-btn {
+    background: #0d9488;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 16px;
+}
+
+.driver-popover .driver-popover-navigation-btns
+    .driver-popover-next-btn:hover {
+    background: #0f766e;
+}
+
+.driver-popover .driver-popover-navigation-btns
+    .driver-popover-prev-btn {
+    color: #6b7280;
+}
+
+.dark .driver-popover .driver-popover-navigation-btns
+    .driver-popover-prev-btn {
+    color: #9ca3af;
+}
+
+/* -----------------------------------------------------------------------
+ * 4. Step counter
+ * ----------------------------------------------------------------------- */
+
+.wt-step-counter {
+    font-size: 0.8rem;
+    color: #9ca3af;
+    margin-bottom: 4px;
+}
+
+/* -----------------------------------------------------------------------
+ * 5. Skip to end link
+ * ----------------------------------------------------------------------- */
+
+.wt-skip-link {
+    display: inline-block;
+    margin-top: 8px;
+    font-size: 0.85rem;
+    color: #f97316;
+    cursor: pointer;
+    text-decoration: none;
+}
+
+.wt-skip-link:hover {
+    text-decoration: underline;
+}
+
+/* -----------------------------------------------------------------------
+ * 6. Minimize floating pill
+ * ----------------------------------------------------------------------- */
+
+.wt-resume-pill {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 100000;
+    background: #0d9488;
+    color: white;
+    border: none;
+    border-radius: 24px;
+    padding: 10px 20px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+    display: none;
+}
+
+.wt-resume-pill:hover {
+    background: #0f766e;
+}
+
+.wt-resume-pill.visible {
+    display: block;
+}
+
+/* -----------------------------------------------------------------------
+ * 7. Add API Key button (inline in popover)
+ * ----------------------------------------------------------------------- */
+
+.wt-api-key-btn {
+    display: inline-block;
+    margin-top: 8px;
+    padding: 6px 14px;
+    background: #f97316;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.wt-api-key-btn:hover {
+    background: #ea580c;
+}
+
+/* -----------------------------------------------------------------------
+ * 8. Make It Yours overlay
+ * ----------------------------------------------------------------------- */
+
+.wt-make-yours-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100001;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.wt-make-yours-card {
+    background: white;
+    border-radius: 16px;
+    padding: 32px;
+    max-width: 520px;
+    width: 90%;
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.3);
+}
+
+.dark .wt-make-yours-card {
+    background: #1f2937;
+    color: #f3f4f6;
+}
+
+.wt-make-yours-card h2 {
+    color: #0d9488;
+    margin: 0 0 16px;
+    font-size: 1.3rem;
+}
+
+.dark .wt-make-yours-card h2 {
+    color: #2dd4bf;
+}
+
+/* -----------------------------------------------------------------------
+ * 9. Choice buttons
+ * ----------------------------------------------------------------------- */
+
+.wt-choice-btn {
+    display: block;
+    width: 100%;
+    padding: 12px 16px;
+    margin: 8px 0;
+    border: 2px solid #e5e7eb;
+    border-radius: 8px;
+    background: transparent;
+    text-align: left;
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: border-color 0.2s;
+}
+
+.wt-choice-btn:hover {
+    border-color: #0d9488;
+}
+
+.wt-choice-btn strong {
+    display: block;
+    color: #0d9488;
+    margin-bottom: 2px;
+}
+
+.dark .wt-choice-btn {
+    border-color: #4b5563;
+    color: #d1d5db;
+}
+
+.dark .wt-choice-btn:hover {
+    border-color: #2dd4bf;
+}
+
+.dark .wt-choice-btn strong {
+    color: #2dd4bf;
+}
+
+/* -----------------------------------------------------------------------
+ * 10. Connection form
+ * ----------------------------------------------------------------------- */
+
+.wt-connect-form {
+    margin-top: 16px;
+}
+
+.wt-connect-form label {
+    display: block;
+    margin-top: 10px;
+    font-size: 0.85rem;
+    color: #6b7280;
+}
+
+.dark .wt-connect-form label {
+    color: #9ca3af;
+}
+
+.wt-connect-form input,
+.wt-connect-form select {
+    display: block;
+    width: 100%;
+    padding: 8px 10px;
+    margin-top: 4px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    box-sizing: border-box;
+}
+
+.dark .wt-connect-form input,
+.dark .wt-connect-form select {
+    background: #374151;
+    border-color: #4b5563;
+    color: #f3f4f6;
+}
+
+.wt-connect-form button[type="submit"] {
+    margin-top: 16px;
+    padding: 10px 20px;
+    background: #0d9488;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.95rem;
+    cursor: pointer;
+}
+
+.wt-connect-form button[type="submit"]:hover {
+    background: #0f766e;
+}
+
+/* -----------------------------------------------------------------------
+ * 11. Fallback screenshot image in popover
+ * ----------------------------------------------------------------------- */
+
+.wt-fallback-img {
+    max-width: 100%;
+    border-radius: 8px;
+    margin-top: 8px;
+    border: 1px solid #e5e7eb;
+}
+
+.dark .wt-fallback-img {
+    border-color: #4b5563;
+}
+
+/* -----------------------------------------------------------------------
+ * 12. API Key modal
+ * ----------------------------------------------------------------------- */
+
+.wt-apikey-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 100002;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.wt-apikey-card {
+    background: white;
+    border-radius: 12px;
+    padding: 24px;
+    max-width: 400px;
+    width: 90%;
+}
+
+.dark .wt-apikey-card {
+    background: #1f2937;
+    color: #f3f4f6;
+}
+
+.wt-apikey-card h3 {
+    color: #0d9488;
+    margin: 0 0 12px;
+}
+
+.dark .wt-apikey-card h3 {
+    color: #2dd4bf;
+}
+
+.wt-apikey-card input {
+    width: 100%;
+    padding: 8px 10px;
+    margin: 12px 0;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-family: monospace;
+    font-size: 0.9rem;
+    box-sizing: border-box;
+}
+
+.dark .wt-apikey-card input {
+    background: #374151;
+    border-color: #4b5563;
+    color: #f3f4f6;
+}
+
+.wt-apikey-card button {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    cursor: pointer;
+    margin-right: 8px;
+}
+
+.wt-apikey-card button[type="submit"] {
+    background: #0d9488;
+    color: white;
+}
+
+.wt-apikey-card button[type="submit"]:hover {
+    background: #0f766e;
+}
+
+.wt-apikey-card button[type="button"] {
+    background: #e5e7eb;
+    color: #374151;
+}
+
+.dark .wt-apikey-card button[type="button"] {
+    background: #4b5563;
+    color: #d1d5db;
+}

@@ -7,6 +7,14 @@
  * Architecture:
  *   24 steps across 6 parts, plus helper functions for minimize,
  *   resume, skip-to-end, API key modal, and Make It Yours overlay.
+ *
+ * DOM Selector Strategy:
+ *   The React/MUI app does not emit data-testid attributes. Steps
+ *   target elements via aria-label, MUI class names (.MuiAppBar-root,
+ *   .MuiDialog-root, .MuiFab-root), semantic roles, and structural
+ *   CSS selectors (.server-item-row, .cluster-header). Steps that
+ *   cannot reliably target an element use a centered popover with
+ *   no element property.
  */
 (function () {
     "use strict";
@@ -27,9 +35,9 @@
     // Utility helpers
     // -----------------------------------------------------------------------
 
-    /** Wait for a selector to appear in the DOM. */
+    /** Wait for a selector to appear in the DOM (returns a Promise). */
     function waitForElement(selector, timeout) {
-        timeout = timeout || 5000;
+        timeout = timeout || 8000;
         return new Promise(function (resolve, reject) {
             var el = document.querySelector(selector);
             if (el) { return resolve(el); }
@@ -48,27 +56,26 @@
         });
     }
 
-    /** Detect whether the page is using dark mode. */
-    function isDark() {
-        return document.documentElement.classList.contains("dark") ||
-            document.querySelector(".MuiCssBaseline-root")?.closest("[data-mui-color-scheme='dark']") !== null ||
-            getComputedStyle(document.body).backgroundColor.match(/rgb\((\d+)/) ?
-                parseInt(getComputedStyle(document.body).backgroundColor.match(/rgb\((\d+)/)[1]) < 50 : false;
+    /**
+     * Mark a description as AI-dependent. Returns a marker object
+     * that onPopoverRender resolves at display time based on the
+     * current apiKeyConfigured state.
+     */
+    function aiDesc(normalText) {
+        return { __aiDesc: true, normal: normalText };
     }
 
-    /** Build an AI-dependent description, with fallback if no API key. */
-    function aiDesc(normalText, fallbackImage) {
-        if (apiKeyConfigured) {
-            return normalText;
-        }
-        var html = normalText +
-            '<br><br><em>An API key is required for live AI features.</em>';
-        if (fallbackImage) {
-            html += '<br><img class="wt-fallback-img" src="/walkthrough/images/' +
-                fallbackImage + '" alt="Example screenshot">';
-        }
-        html += '<br><button class="wt-api-key-btn" onclick="window.__wtShowApiKeyModal()">Add API Key</button>';
-        return html;
+    /** Resolve an aiDesc marker to HTML at render time. */
+    function resolveAiDesc(desc) {
+        if (!desc || !desc.__aiDesc) { return desc; }
+        if (apiKeyConfigured) { return desc.normal; }
+        return desc.normal +
+            '<br><br><div style="background:#f0f9ff;border:1px solid #0ea5e9;' +
+            'border-radius:8px;padding:10px 14px;margin:4px 0;color:#0c4a6e;' +
+            'font-size:0.9rem;">' +
+            'This feature requires an API key. The rest of the workbench ' +
+            'works without one.' +
+            '</div>';
     }
 
     // -----------------------------------------------------------------------
@@ -94,6 +101,14 @@
         var existing = document.querySelector(".wt-apikey-modal");
         if (existing) { existing.remove(); }
 
+        // Temporarily hide the Driver.js overlay so the modal
+        // is fully interactive. It will be restored when the
+        // modal closes (via key save or cancel).
+        var driverOverlay = document.querySelector(".driver-overlay");
+        if (driverOverlay) { driverOverlay.style.display = "none"; }
+        var driverPopover = document.querySelector(".driver-popover");
+        if (driverPopover) { driverPopover.style.display = "none"; }
+
         var overlay = document.createElement("div");
         overlay.className = "wt-apikey-modal";
         overlay.innerHTML =
@@ -110,8 +125,16 @@
             '</div>';
         document.body.appendChild(overlay);
 
+        function restoreDriver() {
+            var dov = document.querySelector(".driver-overlay");
+            if (dov) { dov.style.display = ""; }
+            var dpop = document.querySelector(".driver-popover");
+            if (dpop) { dpop.style.display = ""; }
+        }
+
         overlay.querySelector("#wt-apikey-cancel").addEventListener("click", function () {
             overlay.remove();
+            restoreDriver();
         });
 
         overlay.querySelector("#wt-apikey-form").addEventListener("submit", function (e) {
@@ -125,13 +148,28 @@
             })
                 .then(function (r) { return r.json(); })
                 .then(function (data) {
-                    if (data.success) {
-                        apiKeyConfigured = true;
-                        overlay.remove();
+                    if (!data.success) {
+                        throw new Error("Server returned success=false");
                     }
+                    // Verify the key was actually persisted by
+                    // checking the status endpoint.
+                    return fetch(HELPER_BASE + "/status");
                 })
-                .catch(function () {
-                    alert("Failed to save API key. Please try again.");
+                .then(function (r) { return r.json(); })
+                .then(function (status) {
+                    if (!status.api_key_configured) {
+                        throw new Error("Key was not persisted");
+                    }
+                    apiKeyConfigured = true;
+                    overlay.remove();
+                    var nextStep = Math.max(currentStep, 4);
+                    if (driverInstance) {
+                        driverInstance.destroy();
+                    }
+                    startTourAtStep(nextStep);
+                })
+                .catch(function (err) {
+                    alert("Failed to save API key: " + err.message + ". Please try again.");
                 });
         });
     }
@@ -246,7 +284,6 @@
                             localStorage.setItem("wt-tour-closed", "true");
                             sessionStorage.removeItem("wt-current-step");
                             overlay.remove();
-                            // Reload to pick up the new connection
                             window.location.reload();
                         } else {
                             alert("Connection failed: " + (data.error || "unknown error"));
@@ -325,6 +362,60 @@
 
         var wrapper = popover.wrapper;
 
+        // If this step has no element (centered popover), force
+        // viewport-center positioning. Driver.js uses position:
+        // relative with inset, which places it in document flow.
+        var stepDef = steps[currentStep];
+        if (stepDef && !stepDef.element) {
+            wrapper.style.position = "fixed";
+            wrapper.style.inset = "auto";
+            wrapper.style.top = "50%";
+            wrapper.style.left = "50%";
+            wrapper.style.transform = "translate(-50%, -50%)";
+            wrapper.style.zIndex = "100001";
+        }
+
+        // Resolve dynamic descriptions at render time
+        if (stepDef && stepDef.popover && stepDef.popover.description) {
+            var desc = stepDef.popover.description;
+            var descEl = wrapper.querySelector(".driver-popover-description");
+
+            // Welcome step: show API key choice if not yet configured
+            if (desc.__welcomeStep && descEl) {
+                var html =
+                    "This guided tour walks you through every major feature " +
+                    "in about 15 minutes.<br><br>" +
+                    "The workbench has three areas: a <strong>navigator</strong> " +
+                    "on the left lists your database servers, the <strong>main " +
+                    "panel</strong> in the center shows status and metrics, and " +
+                    "an <strong>AI chat</strong> assistant is available at the " +
+                    "bottom right.";
+                if (!apiKeyConfigured) {
+                    html += '<br><br><div style="background:#f0f9ff;border:1px solid #0ea5e9;' +
+                        'border-radius:8px;padding:10px 14px;color:#0c4a6e;font-size:0.9rem;">' +
+                        '<strong>AI features are optional.</strong> Some features in this tour ' +
+                        '(like AI analysis and Ask Ellie) use an Anthropic API key. ' +
+                        'The workbench works without one \u2014 you just won\u2019t see the AI features live.' +
+                        '<br><br>' +
+                        '<button class="wt-api-key-btn" onclick="window.__wtShowApiKeyModal()">' +
+                        'Add API Key Now</button>' +
+                        '  <span style="color:#64748b;font-size:0.85rem;">or click Next to continue without</span>' +
+                        '</div>';
+                } else {
+                    html += '<br><br><div style="background:#ecfdf5;border:1px solid #10b981;' +
+                        'border-radius:8px;padding:10px 14px;color:#065f46;font-size:0.9rem;">' +
+                        '\u2705 AI features are enabled. You\u2019ll see live AI analysis throughout the tour.' +
+                        '</div>';
+                }
+                descEl.innerHTML = html;
+            }
+
+            // AI-dependent steps: show gentle note if no key
+            if (desc.__aiDesc && descEl) {
+                descEl.innerHTML = resolveAiDesc(desc);
+            }
+        }
+
         // Step counter
         var counter = document.createElement("div");
         counter.className = "wt-step-counter";
@@ -340,28 +431,36 @@
         minBtn.textContent = "\u2013";
         minBtn.title = "Minimize tour";
         minBtn.style.cssText =
-            "position:absolute;top:8px;right:36px;background:none;" +
-            "border:none;font-size:1.2rem;cursor:pointer;color:#9ca3af;" +
-            "line-height:1;padding:2px 6px;";
+            "position:absolute;top:8px;right:8px;" +
+            "background:#f3f4f6;border:1px solid #d1d5db;" +
+            "border-radius:4px;font-size:1rem;cursor:pointer;" +
+            "color:#6b7280;line-height:1;padding:2px 8px;" +
+            "z-index:1;font-weight:bold;";
         minBtn.addEventListener("click", function (e) {
             e.stopPropagation();
             minimize();
         });
-        wrapper.style.position = "relative";
+        // Do NOT set wrapper.style.position here — it breaks
+        // Driver.js element-anchored positioning. The minimize
+        // button uses fixed positioning instead.
         wrapper.appendChild(minBtn);
 
-        // Skip to end link
+        // Skip to end link — on its own line below nav buttons
         var footerArea = wrapper.querySelector(".driver-popover-footer") ||
             wrapper.querySelector(".driver-popover-navigation-btns");
         if (footerArea) {
+            var skipRow = document.createElement("div");
+            skipRow.style.cssText =
+                "text-align:center;padding-top:8px;border-top:1px solid #e5e7eb;margin-top:8px;";
             var skip = document.createElement("span");
             skip.className = "wt-skip-link";
-            skip.textContent = "Skip to end";
+            skip.textContent = "Skip to end \u2192";
             skip.addEventListener("click", function (e) {
                 e.stopPropagation();
                 skipToEnd();
             });
-            footerArea.appendChild(skip);
+            skipRow.appendChild(skip);
+            footerArea.parentNode.insertBefore(skipRow, footerArea.nextSibling);
         }
     }
 
@@ -374,6 +473,41 @@
         var items = document.querySelectorAll(".server-item-row");
         if (items.length > 0) {
             items[0].click();
+        }
+    }
+
+    /** Expand the first cluster in the navigator if collapsed. */
+    function expandFirstCluster() {
+        var clusterHeaders = document.querySelectorAll(".cluster-header");
+        for (var i = 0; i < clusterHeaders.length; i++) {
+            var header = clusterHeaders[i];
+            // Check if this cluster is collapsed by looking for the
+            // ChevronRight icon (CollapseIcon means collapsed state)
+            var chevron = header.querySelector('[data-testid="ChevronRightIcon"]');
+            if (chevron) {
+                // Find the expand/collapse IconButton
+                var expandBtn = chevron.closest(".MuiIconButton-root");
+                if (expandBtn) {
+                    expandBtn.click();
+                    return;
+                }
+            }
+        }
+    }
+
+    /** Click the estate summary row to show estate overview. */
+    function clickEstateOverview() {
+        // The estate summary row is inside a Tooltip with title
+        // "View estate overview". Find the clickable Box inside it.
+        var rows = document.querySelectorAll('[role="button"], [class*="MuiBox-root"]');
+        // Look for the text that contains "online of" which is
+        // the estate status row
+        for (var i = 0; i < rows.length; i++) {
+            var text = rows[i].textContent || "";
+            if (text.match(/\d+ online of \d+ servers/)) {
+                rows[i].click();
+                return;
+            }
         }
     }
 
@@ -407,8 +541,67 @@
         if (fab) { fab.click(); }
     }
 
+    /** Close the Ask Ellie chat panel. */
+    function closeChatPanel() {
+        var btn = document.querySelector('[aria-label="Close chat panel"]');
+        if (btn) { btn.click(); }
+    }
+
+    /** Open the blackout management dialog from the status panel header. */
+    function openBlackoutDialog() {
+        // The blackout icon is DarkModeIcon inside a Badge, which is
+        // inside the SelectionHeader (not the theme toggle in the Header).
+        // The MuiBadge-root wrapper distinguishes it from the header
+        // theme toggle.
+        var icons = document.querySelectorAll('svg[data-testid="DarkModeIcon"]');
+        for (var i = 0; i < icons.length; i++) {
+            if (icons[i].closest(".MuiBadge-root")) {
+                var btn = icons[i].closest("button");
+                if (btn) {
+                    btn.click();
+                    return;
+                }
+            }
+        }
+    }
+
+    /** Close any open MUI Dialog by clicking its close button. */
+    function closeAnyDialog() {
+        var dialogs = document.querySelectorAll(".MuiDialog-root");
+        dialogs.forEach(function (d) {
+            // Try standard close buttons: aria-label="close" for
+            // regular dialogs, aria-label="close administration"
+            // for the admin panel.
+            var closeBtn = d.querySelector('[aria-label="close"]') ||
+                d.querySelector('[aria-label="close administration"]');
+            if (closeBtn) {
+                closeBtn.click();
+            }
+        });
+    }
+
     // -----------------------------------------------------------------------
-    // Step definitions
+    // Step definitions — 24 steps across 6 parts
+    //
+    // Selector notes (from reading the React source):
+    //   - ClusterNavigator: Box with bgcolor=background.paper,
+    //     borderRight, contains header "Database Servers". The
+    //     first child of the mainLayoutBody flex row.
+    //   - StatusPanel: Box with PANEL_ROOT_SX (overflow:auto, flex:1,
+    //     p:3). The second child of the content area.
+    //   - Header: MuiAppBar-root (AppBar position=static elevation=0)
+    //   - ChatFAB: Fab with aria-label="open chat"
+    //   - ChatPanel: Box with role="complementary"
+    //     and aria-label="AI Chat Panel"
+    //   - AdminPanel: fullScreen Dialog (.MuiDialog-root)
+    //   - CollapsibleSection: aria-label="Collapse X section"
+    //     or "Expand X section"
+    //   - AIOverview: Paper containing SparkleIcon (AutoAwesome)
+    //     with the label "AI Overview"
+    //   - EventTimeline: collapsed section with "Timeline" header
+    //   - SelectionHeader: first Box child inside PANEL_ROOT_SX
+    //   - server-item-row: className on each ServerItem Box
+    //   - cluster-header: className on each ClusterItem header Box
     // -----------------------------------------------------------------------
 
     var steps = [
@@ -417,61 +610,76 @@
         // Part 1: The Big Picture (steps 0-2)
         // -------------------------------------------------------------------
 
-        // Step 0 — Estate Dashboard
+        // Step 0 — Welcome (centered popover, no element highlight)
+        //
+        // On initial load the StatusPanel shows an empty state.
+        // Show a centered welcome that explains the layout AND
+        // offers the API key choice upfront. The description is
+        // built dynamically in onPopoverRender so it reflects the
+        // live apiKeyConfigured state.
         {
             popover: {
                 title: "Welcome to AI DBA Workbench",
-                description:
-                    "This is the estate dashboard. It shows every PostgreSQL " +
-                    "server under management, organized into clusters and " +
-                    "groups. The left panel is the navigator; the right panel " +
-                    "shows status details for whatever you select.",
+                description: { __welcomeStep: true },
                 side: "over",
                 align: "center",
             },
         },
 
-        // Step 1 — AI Overview
+        // Step 1 — Cluster Navigator panel
+        //
+        // The ClusterNavigator is the first flex child inside the
+        // mainLayoutBody. It is a Box with bgcolor=background.paper and
+        // borderRight. No stable ID; target the first child of the
+        // layout body (after the AppBar) that contains the header
+        // "Database Servers".
         {
-            element: ".MuiPaper-root:has(> .MuiBox-root > svg[data-testid='AutoAwesomeIcon'])",
+            element: ".MuiAppBar-root ~ div > div:first-child",
             popover: {
-                title: "AI Overview",
-                description: aiDesc(
-                    "The AI Overview summarizes the current state of your " +
-                    "estate in plain language. It updates automatically as " +
-                    "conditions change, highlighting issues that need attention.",
-                    "ai-overview.png"
-                ),
-                side: "bottom",
+                title: "The Navigator",
+                description:
+                    "The navigator organizes your PostgreSQL servers into " +
+                    "groups and clusters. The demo environment includes a " +
+                    "<strong>Demo Cluster</strong> with a " +
+                    "<strong>demo-ecommerce</strong> server.<br><br>" +
+                    "Click any server to view its dashboard. Click the " +
+                    "estate summary row at the top to see an overview of " +
+                    "all servers.",
+                side: "right",
                 align: "start",
             },
             onHighlightStarted: function () {
-                // Ensure estate view is selected so AI Overview is visible
-                var estateRow = document.querySelector('[title="View estate overview"]');
-                if (!estateRow) {
-                    // Try the tooltip wrapper
-                    var tooltips = document.querySelectorAll(".MuiTooltip-tooltip");
-                    tooltips.forEach(function (t) {
-                        if (t.textContent.includes("estate")) {
-                            var parent = t.closest("[role='button']");
-                            if (parent) parent.click();
-                        }
-                    });
-                }
+                // Ensure the first cluster is expanded so the server
+                // items are visible inside the navigator.
+                expandFirstCluster();
             },
         },
 
-        // Step 2 — Event Timeline
+        // Step 2 — Click into a server (select demo-ecommerce)
+        //
+        // Target the first .server-item-row and programmatically
+        // click it. The StatusPanel will load the server dashboard.
         {
-            element: ".MuiBox-root:has(> .MuiBox-root > svg[data-testid='TimelineIcon'])",
+            element: ".server-item-row",
             popover: {
-                title: "Event Timeline",
+                title: "Select a Server",
                 description:
-                    "The event timeline displays a chronological view of " +
-                    "configuration changes, restarts, and anomalies across " +
-                    "your servers. Click any marker to see event details.",
-                side: "bottom",
+                    "Let's click the <strong>demo-ecommerce</strong> server " +
+                    "to see its live dashboard. The main panel updates to " +
+                    "show alerts, metrics, and monitoring charts for the " +
+                    "selected server.",
+                side: "right",
                 align: "start",
+            },
+            onHighlightStarted: function () {
+                // Ensure the cluster is expanded (in case the user
+                // resumed the tour at this step)
+                expandFirstCluster();
+                // Give the Collapse animation time to reveal the
+                // server rows before clicking
+                setTimeout(function () {
+                    clickFirstServer();
+                }, 400);
             },
         },
 
@@ -479,26 +687,70 @@
         // Part 2: Diagnosing a Problem (steps 3-9)
         // -------------------------------------------------------------------
 
-        // Step 3 — Click into a server
+        // Step 3 — AI Overview
+        //
+        // The AIOverview component renders a Paper when AI is active.
+        // Target it via the collapse button aria-label. If not present
+        // (no API key), Driver.js will show a centered popover
+        // automatically since the element won't be found.
         {
-            element: ".server-item-row",
+            element: '[aria-label="Collapse AI Overview"], [aria-label="Expand AI Overview"]',
             popover: {
-                title: "Select a Server",
-                description:
-                    "Click a server in the navigator to view its detailed " +
-                    "status. The panel updates to show that server's alerts, " +
-                    "metrics, and monitoring dashboards.",
-                side: "right",
+                title: "AI Overview",
+                description: aiDesc(
+                    "The AI Overview summarizes the current state of this " +
+                    "server in plain language. It updates automatically as " +
+                    "conditions change, highlighting issues that need attention."
+                ),
+                side: "bottom",
                 align: "start",
-            },
-            onHighlightStarted: function () {
-                clickFirstServer();
             },
         },
 
-        // Step 4 — Top Queries
+        // Step 4 — Event Timeline
+        //
+        // The EventTimeline section is rendered inside the StatusPanel.
+        // It does not use CollapsibleSection; it has its own header
+        // component (TimelineHeader). Target the outer container.
         {
-            element: "[aria-label='Collapse Top Queries section'], [aria-label='Expand Top Queries section']",
+            element: '[aria-label="Collapse Monitoring section"], [aria-label="Expand Monitoring section"]',
+            popover: {
+                title: "Monitoring Dashboard",
+                description:
+                    "The monitoring section contains an event timeline and " +
+                    "detailed metric charts. It shows system resources, " +
+                    "PostgreSQL performance, WAL replication status, " +
+                    "database summaries, and top queries.",
+                side: "top",
+                align: "start",
+            },
+        },
+
+        // Step 5 — System Resources section
+        //
+        // Inside the Monitoring CollapsibleSection, the ServerDashboard
+        // renders SystemResourcesSection as a CollapsibleSection with
+        // title "System Resources".
+        {
+            element: '[aria-label="Collapse System Resources section"], [aria-label="Expand System Resources section"]',
+            popover: {
+                title: "System Resources",
+                description:
+                    "System resource charts show CPU usage, memory " +
+                    "utilization, disk I/O, and network throughput. " +
+                    "Each chart tracks real-time metrics collected from " +
+                    "the server.",
+                side: "top",
+                align: "start",
+            },
+        },
+
+        // Step 6 — Top Queries
+        //
+        // CollapsibleSection with title "Top Queries" inside
+        // ServerDashboard > TopQueriesSection.
+        {
+            element: '[aria-label="Collapse Top Queries section"], [aria-label="Expand Top Queries section"]',
             popover: {
                 title: "Top Queries",
                 description:
@@ -508,34 +760,14 @@
                 side: "top",
                 align: "start",
             },
-            onHighlightStarted: function () {
-                // Ensure the monitoring section is expanded
-                var monitoringBtn = document.querySelector(
-                    "[aria-label='Expand Monitoring section']"
-                );
-                if (monitoringBtn) { monitoringBtn.click(); }
-            },
         },
 
-        // Step 5 — Chart AI Analysis brain icon on a KPI tile
+        // Step 7 — Database Summaries section
+        //
+        // CollapsibleSection with title "Database Summaries" inside
+        // ServerDashboard > DatabaseSummariesSection.
         {
-            element: ".MuiPaper-root .MuiIconButton-root:has(svg[data-testid='PsychologyIcon'])",
-            popover: {
-                title: "Chart AI Analysis",
-                description: aiDesc(
-                    "Every metric chart has a brain icon. Click it to get an " +
-                    "AI-powered analysis of the metric trend, including " +
-                    "anomaly detection and recommendations.",
-                    "chart-analysis.png"
-                ),
-                side: "bottom",
-                align: "start",
-            },
-        },
-
-        // Step 6 — Database drill-down
-        {
-            element: "[aria-label='Collapse Database Summaries section'], [aria-label='Expand Database Summaries section']",
+            element: '[aria-label="Collapse Database Summaries section"], [aria-label="Expand Database Summaries section"]',
             popover: {
                 title: "Database Drill-Down",
                 description:
@@ -548,41 +780,33 @@
             },
         },
 
-        // Step 7 — Object drill-down
-        {
-            element: "[aria-label='Collapse Table Leaderboard section'], [aria-label='Expand Table Leaderboard section']",
-            popover: {
-                title: "Object Drill-Down",
-                description:
-                    "After drilling into a database, the Table Leaderboard " +
-                    "ranks tables by activity. Click any table to inspect " +
-                    "sequential scan counts, dead tuple ratios, and " +
-                    "index efficiency.",
-                side: "top",
-                align: "start",
-            },
-        },
-
         // Step 8 — Alerts Section
+        //
+        // The AlertsSection renders inside the StatusPanel without a
+        // unique aria-label. Use a centered popover to describe alerts.
         {
-            element: ".MuiBox-root:has(> .MuiBox-root > svg[data-testid='NotificationsActiveIcon'])",
             popover: {
                 title: "Alert Details",
                 description: aiDesc(
-                    "Each alert shows severity, threshold values, and timing. " +
-                    "Click the brain icon on any alert to request an AI " +
-                    "analysis that explains the root cause and suggests " +
-                    "remediation steps.",
+                    "The Active Alerts section (above the monitoring " +
+                    "charts) lists every alert for the selected server. " +
+                    "Each alert shows severity, threshold values, and " +
+                    "timing. Click the brain icon on any alert to request " +
+                    "an AI analysis that explains the root cause and " +
+                    "suggests remediation steps.",
                     "alert-analysis.png"
                 ),
-                side: "top",
-                align: "start",
+                side: "over",
+                align: "center",
             },
         },
 
-        // Step 9 — Server Analysis button
+        // Step 9 — Full Server Analysis button
+        //
+        // The "Run full analysis" button (PsychologyIcon) appears in
+        // the AIOverview header row, next to the "AI Overview" label.
         {
-            element: "[aria-label='Run full analysis']",
+            element: '[aria-label="Run full analysis"]',
             popover: {
                 title: "Full Server Analysis",
                 description: aiDesc(
@@ -602,6 +826,10 @@
         // -------------------------------------------------------------------
 
         // Step 10 — Chat toggle button (FAB)
+        //
+        // The ChatFAB renders a Fab with aria-label="open chat" at
+        // position:fixed bottom:24px right:24px. It is only rendered
+        // when the chat panel is closed AND aiEnabled is true.
         {
             element: '[aria-label="open chat"]',
             popover: {
@@ -617,12 +845,14 @@
             },
             onHighlightStarted: function () {
                 // Close chat if already open so we can highlight the FAB
-                var closeBtn = document.querySelector('[aria-label="Close chat panel"]');
-                if (closeBtn) { closeBtn.click(); }
+                closeChatPanel();
             },
         },
 
-        // Step 11 — Chat input
+        // Step 11 — Chat panel open
+        //
+        // The ChatPanel is a Box with role="complementary" and
+        // aria-label="AI Chat Panel". Open the panel and highlight it.
         {
             element: '[aria-label="AI Chat Panel"]',
             popover: {
@@ -642,7 +872,9 @@
             },
         },
 
-        // Step 12 — Run in Database button
+        // Step 12 — Run in Database button (in chat)
+        //
+        // Highlight the chat panel again with a different description.
         {
             element: '[aria-label="AI Chat Panel"]',
             popover: {
@@ -658,7 +890,10 @@
             },
         },
 
-        // Step 13 — Follow-up query suggestion
+        // Step 13 — Chat input field
+        //
+        // The ChatInput renders a TextField with
+        // aria-label="Chat message input".
         {
             element: '[aria-label="Chat message input"]',
             popover: {
@@ -670,13 +905,20 @@
                 side: "top",
                 align: "start",
             },
+            onDeselected: function () {
+                // Close the chat panel when leaving the Ellie section
+                closeChatPanel();
+            },
         },
 
         // -------------------------------------------------------------------
         // Part 4: How It's Configured (steps 14-19)
         // -------------------------------------------------------------------
 
-        // Step 14 — Admin panel: Connections / Probe Defaults
+        // Step 14 — Admin panel: Probe Defaults
+        //
+        // The AdminPanel is a fullScreen Dialog. Open it and navigate
+        // to the Probe Defaults page.
         {
             element: ".MuiDialog-root",
             popover: {
@@ -689,14 +931,15 @@
                 align: "start",
             },
             onHighlightStarted: function () {
+                closeChatPanel();
                 openAdminPanel();
                 setTimeout(function () {
                     clickAdminNavItem("Probe Defaults");
-                }, 300);
+                }, 400);
             },
         },
 
-        // Step 15 — Probes
+        // Step 15 — Admin panel: Alert Defaults
         {
             element: ".MuiDialog-root",
             popover: {
@@ -714,7 +957,7 @@
             },
         },
 
-        // Step 16 — Alert Rules
+        // Step 16 — Admin panel: Email Channels
         {
             element: ".MuiDialog-root",
             popover: {
@@ -732,7 +975,10 @@
             },
         },
 
-        // Step 17 — Close admin, show Alert Overrides
+        // Step 17 — Close admin, explain Alert Overrides
+        //
+        // This is a centered popover (no element) that explains
+        // alert overrides on the main panel.
         {
             popover: {
                 title: "Alert Overrides",
@@ -749,7 +995,7 @@
             },
         },
 
-        // Step 18 — Reopen admin: Notification Channels
+        // Step 18 — Admin panel: Slack Channels
         {
             element: ".MuiDialog-root",
             popover: {
@@ -765,11 +1011,14 @@
                 openAdminPanel();
                 setTimeout(function () {
                     clickAdminNavItem("Slack Channels");
-                }, 300);
+                }, 400);
             },
         },
 
-        // Step 19 — Blackout Management
+        // Step 19 — Blackout Windows
+        //
+        // The BlackoutManagementDialog is a standard MUI Dialog opened
+        // from the SelectionHeader's blackout icon button.
         {
             element: ".MuiDialog-root",
             popover: {
@@ -784,21 +1033,12 @@
             },
             onHighlightStarted: function () {
                 closeAdminPanel();
-                // Open blackout management from the status panel header.
-                // The blackout icon is DarkModeIcon inside a Badge. Find
-                // all DarkModeIcon SVGs and pick the one inside a Badge
-                // (which distinguishes it from the theme toggle in the header).
+                // Wait for the fullScreen admin Dialog slide-out
+                // animation to complete before opening the blackout
+                // management dialog.
                 setTimeout(function () {
-                    var icons = document.querySelectorAll(
-                        'svg[data-testid="DarkModeIcon"]'
-                    );
-                    for (var i = 0; i < icons.length; i++) {
-                        if (icons[i].closest(".MuiBadge-root")) {
-                            var btn = icons[i].closest("button");
-                            if (btn) { btn.click(); break; }
-                        }
-                    }
-                }, 400);
+                    openBlackoutDialog();
+                }, 700);
             },
         },
 
@@ -819,21 +1059,14 @@
                 align: "start",
             },
             onHighlightStarted: function () {
-                // Close the blackout management dialog first
-                var dialogs = document.querySelectorAll(".MuiDialog-root");
-                dialogs.forEach(function (d) {
-                    var title = d.querySelector(".MuiDialogTitle-root");
-                    if (title && title.textContent.includes("Blackout")) {
-                        var btn = d.querySelector('[aria-label="close"]');
-                        if (btn) { btn.click(); }
-                    }
-                });
+                // Close any open dialogs (blackout dialog from step 19)
+                closeAnyDialog();
                 setTimeout(function () {
                     openAdminPanel();
                     setTimeout(function () {
                         clickAdminNavItem("Users");
-                    }, 300);
-                }, 300);
+                    }, 400);
+                }, 400);
             },
         },
 
@@ -874,9 +1107,33 @@
                 clickAdminNavItem("Memories");
             },
         },
-    ];
 
-    // Step 23 is the Make It Yours overlay, not a Driver.js step.
+        // -------------------------------------------------------------------
+        // Part 6: Wrap Up (step 23)
+        // -------------------------------------------------------------------
+
+        // Step 23 — Tour complete (centered popover)
+        //
+        // Close the admin panel and present a summary before showing
+        // the Make It Yours overlay.
+        {
+            popover: {
+                title: "Tour Complete",
+                description:
+                    "You have seen the major features of the AI DBA " +
+                    "Workbench: real-time monitoring, AI-powered analysis, " +
+                    "Ask Ellie, administration, alerts, and access control." +
+                    "<br><br>Click <strong>Next</strong> to choose your " +
+                    "next step: connect your own database, add an API key, " +
+                    "or keep exploring the demo.",
+                side: "over",
+                align: "center",
+            },
+            onHighlightStarted: function () {
+                closeAdminPanel();
+            },
+        },
+    ];
 
     // -----------------------------------------------------------------------
     // Build the Driver.js configuration and start the tour
@@ -886,6 +1143,11 @@
         return {
             showProgress: false,
             showButtons: ["next", "previous"],
+            animate: true,
+            overlayOpacity: 0.5,
+            stagePadding: 8,
+            stageRadius: 8,
+            allowClose: false,
             steps: steps.map(function (step, i) {
                 return {
                     element: step.element || undefined,
@@ -900,11 +1162,11 @@
                         },
                     },
                     onHighlightStarted: step.onHighlightStarted || undefined,
+                    onDeselected: step.onDeselected || undefined,
                 };
             }),
             onDestroyStarted: function () {
                 if (!driverInstance) { return; }
-                // Always allow the destroy to proceed.
                 driverInstance.destroy();
                 driverInstance = null;
                 // When on the last Driver.js step, show Make It Yours.
@@ -948,9 +1210,6 @@
 
         var config = buildDriverConfig(stepIndex);
         driverInstance = driverFn(config);
-
-        // Driver.js calls onHighlightStarted automatically when
-        // rendering a step. No need to call it manually here.
         driverInstance.drive(stepIndex);
     }
 
@@ -986,36 +1245,35 @@
      * Wait for the dashboard to be ready. The app renders a
      * login form first; once the user logs in, the main layout
      * with the ClusterNavigator appears.
+     *
+     * Detection strategy:
+     *   - MuiAppBar-root indicates the main layout header is
+     *     rendered (login page uses a different theme and layout).
+     *   - .server-item-row or [aria-label="open chat"] indicates
+     *     cluster data has loaded or AI capabilities are active.
      */
     function waitForDashboard() {
         return new Promise(function (resolve) {
-            // If the dashboard is already visible, resolve immediately
-            if (document.querySelector(".MuiAppBar-root") &&
-                document.querySelector(".server-item-row, [aria-label='open chat']")) {
-                resolve();
+            function isDashboardReady() {
+                // The main app bar only renders after successful login.
+                // The login page does NOT have MuiAppBar-root.
+                return document.querySelector(".MuiAppBar-root") != null;
+            }
+
+            if (isDashboardReady()) {
+                setTimeout(resolve, 1000);
                 return;
             }
 
-            // Use MutationObserver to detect when the dashboard renders
-            var observer = new MutationObserver(function (mutations, obs) {
-                if (document.querySelector(".MuiAppBar-root") &&
-                    document.querySelector(".server-item-row, [aria-label='open chat']")) {
-                    obs.disconnect();
-                    // Small extra delay for rendering to stabilize
-                    setTimeout(resolve, 800);
+            // Poll every second until the dashboard renders.
+            // No fallback timeout — the tour should never start
+            // on the login page.
+            var interval = setInterval(function () {
+                if (isDashboardReady()) {
+                    clearInterval(interval);
+                    setTimeout(resolve, 1000);
                 }
-            });
-
-            observer.observe(document.body, {
-                childList: true,
-                subtree: true,
-            });
-
-            // Fallback timeout: if dashboard never appears, try anyway
-            setTimeout(function () {
-                observer.disconnect();
-                resolve();
-            }, 30000);
+            }, 1000);
         });
     }
 

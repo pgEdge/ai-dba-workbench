@@ -10,6 +10,18 @@
 
 /* pgEdge Walkthrough Tour — Custom Styles */
 
+/* Force centered popovers (no highlighted element) to be
+   viewport-centered. Driver.js sets inline inset/position,
+   so we need !important on everything and must also handle
+   the inset shorthand which overrides top/left. */
+.driver-popover[style*="position: relative"] {
+    position: fixed !important;
+    inset: auto !important;
+    top: 50% !important;
+    left: 50% !important;
+    transform: translate(-50%, -50%) !important;
+}
+
 /* -----------------------------------------------------------------------
  * 1. Driver.js popover overrides
  * ----------------------------------------------------------------------- */
@@ -312,6 +324,10 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    pointer-events: auto !important;
+}
+.wt-apikey-modal * {
+    pointer-events: auto !important;
 }
 
 .wt-apikey-card {

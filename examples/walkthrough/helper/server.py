@@ -98,10 +98,13 @@ class Handler(BaseHTTPRequestHandler):
             f.write(key)
         os.chmod(API_KEY_FILE, 0o600)
 
-        # Send SIGHUP to server for config reload
+        # Restart the server container so the AI Overview generator
+        # picks up the new API key. SIGHUP reloads config but does
+        # not restart subsystems that check credentials at boot.
         subprocess.run(
-            ["docker", "kill", "-s", "HUP", "wt-server"],
+            ["docker", "restart", "wt-server"],
             capture_output=True,
+            timeout=30,
         )
 
         self.respond(200, {"success": True})

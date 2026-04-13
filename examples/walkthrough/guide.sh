@@ -222,8 +222,33 @@ echo ""
 
 # ── Connection and cluster ───────────────────────────────────────────
 # The demo connection, cluster group, and cluster are pre-baked in the
-# datastore seed. No API calls needed — the collector will pick up the
-# connection automatically on its next poll cycle.
+# datastore seed. However, the encrypted password was created by the
+# recording session's server instance. Re-encrypt it with the current
+# server so the collector can decrypt it and connect to pg-demo.
+
+explain "Re-encrypting demo connection password..."
+
+if [[ -n "$TOKEN" ]]; then
+  SESSION=$(curl -sf -D - -H 'Content-Type: application/json' \
+    -d '{"username":"admin","password":"DemoPass2026"}' \
+    "http://localhost:${WT_SERVER_PORT}/api/v1/auth/login" 2>&1 \
+    | grep session_token | sed 's/.*session_token=//;s/;.*//' | tr -d '\r\n')
+
+  curl -sf -X PUT \
+    -H "Cookie: session_token=$SESSION" \
+    -H "Content-Type: application/json" \
+    -d '{"password":"postgres"}' \
+    "http://localhost:${WT_SERVER_PORT}/api/v1/connections/1" \
+    >/dev/null 2>&1 \
+    || warn "Could not re-encrypt connection password (continuing)."
+
+  info "Demo connection password re-encrypted."
+else
+  warn "Skipping password re-encryption (no token)."
+fi
+
+# Restart collector to pick up the re-encrypted password
+(cd "$SCRIPT_DIR" && docker compose restart collector 2>/dev/null) || true
 
 info "Demo connection and cluster loaded from seed data."
 echo ""

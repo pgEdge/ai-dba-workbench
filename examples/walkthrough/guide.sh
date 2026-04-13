@@ -190,11 +190,11 @@ echo ""
 explain "Creating admin user..."
 
 docker exec wt-server sh -c \
-  'echo "DemoPass2026" > /tmp/pw && ai-dba-server -add-user -username admin -password-file /tmp/pw -full-name "Demo Admin" -email "admin@demo.local" -user-note "Walkthrough admin" -config /etc/pgedge/ai-dba-server.yaml && rm /tmp/pw' \
+  'echo "DemoPass2026" > /tmp/pw && ai-dba-server -add-user -username admin -password-file /tmp/pw -full-name "Demo Admin" -email "admin@demo.local" -user-note "Walkthrough admin" -data-dir /data -config /etc/pgedge/ai-dba-server.yaml && rm /tmp/pw' \
   2>/dev/null || warn "Admin user may already exist (continuing)."
 
 docker exec wt-server \
-  ai-dba-server -set-superuser -username admin -config /etc/pgedge/ai-dba-server.yaml \
+  ai-dba-server -set-superuser -username admin -data-dir /data -config /etc/pgedge/ai-dba-server.yaml \
   2>/dev/null || warn "Could not set superuser flag (continuing)."
 
 info "Admin user created."
@@ -205,7 +205,7 @@ echo ""
 explain "Creating service token for walkthrough helper..."
 
 TOKEN_OUTPUT=$(docker exec wt-server \
-  ai-dba-server -add-token -user admin -token-note "walkthrough-helper" -token-expiry never -config /etc/pgedge/ai-dba-server.yaml \
+  ai-dba-server -add-token -user admin -token-note "walkthrough-helper" -token-expiry never -data-dir /data -config /etc/pgedge/ai-dba-server.yaml \
   2>&1) || true
 
 TOKEN=$(echo "$TOKEN_OUTPUT" | grep "^Token:" | awk '{print $2}' || true)

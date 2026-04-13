@@ -13,6 +13,49 @@ trap 'stty echo 2>/dev/null || true' EXIT
 
 OS="$(uname -s)"
 
+# ── Check for existing stack ────────────────────────────────────────
+
+EXISTING=$(docker compose ls --filter "name=workbench-walkthrough" --format json 2>/dev/null \
+  | grep -c "workbench-walkthrough" 2>/dev/null || echo "0")
+
+if [[ "$EXISTING" -gt 0 ]] || docker ps --filter "name=wt-" --format "{{.Names}}" 2>/dev/null | grep -q "wt-"; then
+  echo ""
+  warn "An existing walkthrough stack is running."
+  echo ""
+  explain "  1) Tear down and start fresh"
+  explain "  2) Clean up and exit"
+  explain "  3) Cancel (leave it running)"
+  echo ""
+  read -rp "  Choose [1/2/3]: " choice < /dev/tty 2>/dev/null || choice="3"
+
+  case "$choice" in
+    1)
+      info "Tearing down existing stack..."
+      (cd "$SCRIPT_DIR" && docker compose down -v 2>/dev/null) || true
+      rm -f "$SCRIPT_DIR/secret/ai-dba.secret" \
+            "$SCRIPT_DIR/secret/pg-password" \
+            "$SCRIPT_DIR/secret/anthropic-api-key" \
+            "$SCRIPT_DIR/secret/helper-token" 2>/dev/null
+      info "Clean. Starting fresh..."
+      echo ""
+      ;;
+    2)
+      info "Cleaning up..."
+      (cd "$SCRIPT_DIR" && docker compose down -v 2>/dev/null) || true
+      rm -f "$SCRIPT_DIR/secret/ai-dba.secret" \
+            "$SCRIPT_DIR/secret/pg-password" \
+            "$SCRIPT_DIR/secret/anthropic-api-key" \
+            "$SCRIPT_DIR/secret/helper-token" 2>/dev/null
+      info "Cleaned up. Goodbye."
+      exit 0
+      ;;
+    *)
+      info "Leaving the stack running. Goodbye."
+      exit 0
+      ;;
+  esac
+fi
+
 # ── Port detection ──────────────────────────────────────────────────
 
 port_in_use() {

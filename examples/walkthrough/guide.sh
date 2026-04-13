@@ -13,6 +13,34 @@ trap 'stty echo 2>/dev/null || true' EXIT
 
 OS="$(uname -s)"
 
+# ── Port detection ──────────────────────────────────────────────────
+
+port_in_use() {
+  if [[ "$OS" == "Darwin" ]]; then
+    lsof -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1
+  else
+    ss -tln 2>/dev/null | grep -q ":${1} "
+  fi
+}
+
+find_free_port() {
+  local start="$1"
+  local p="$start"
+  while port_in_use "$p"; do
+    p=$((p + 1))
+    if [[ $p -gt 65530 ]]; then
+      echo "$start"
+      return
+    fi
+  done
+  echo "$p"
+}
+
+export WT_CLIENT_PORT=$(find_free_port 3000)
+export WT_SERVER_PORT=$(find_free_port 8080)
+export WT_DATASTORE_PORT=$(find_free_port 5432)
+export WT_DEMO_PORT=$(find_free_port $((WT_DATASTORE_PORT + 1)))
+
 # ── Prerequisites ────────────────────────────────────────────────────
 
 bash "$SCRIPT_DIR/setup.sh" || exit 1
@@ -26,6 +54,9 @@ explain "  1. Prompt for an optional Anthropic API key"
 explain "  2. Generate secrets and start the walkthrough stack"
 explain "  3. Create an admin user and register a demo database"
 explain "  4. Open the workbench in your browser"
+echo ""
+
+info "Ports: client=${WT_CLIENT_PORT}, server=${WT_SERVER_PORT}, datastore=${WT_DATASTORE_PORT}, demo-db=${WT_DEMO_PORT}"
 echo ""
 
 # ── Prompt for Anthropic API key ─────────────────────────────────────
@@ -105,11 +136,11 @@ while [[ $ELAPSED -lt $TIMEOUT ]]; do
   SERVER_OK=false
   CLIENT_OK=false
 
-  if curl -sf http://localhost:8080/health >/dev/null 2>&1; then
+  if curl -sf http://localhost:${WT_SERVER_PORT}/health >/dev/null 2>&1; then
     SERVER_OK=true
   fi
 
-  if curl -sf http://localhost:3000 >/dev/null 2>&1; then
+  if curl -sf http://localhost:${WT_CLIENT_PORT} >/dev/null 2>&1; then
     CLIENT_OK=true
   fi
 
@@ -206,7 +237,7 @@ echo ""
 
 explain "Opening the AI DBA Workbench in your browser..."
 
-OPEN_URL="http://localhost:3000"
+OPEN_URL="http://localhost:${WT_CLIENT_PORT}"
 if [[ "$OS" == "Darwin" ]]; then
   open "$OPEN_URL" 2>/dev/null || warn "Could not open browser automatically."
 elif command -v xdg-open &>/dev/null; then
@@ -222,10 +253,10 @@ header "Walkthrough Ready"
 
 explain "The pgEdge AI DBA Workbench is running and ready to explore."
 echo ""
-explain "${BOLD}Web Interface:${RESET}  http://localhost:3000"
+explain "${BOLD}Web Interface:${RESET}  http://localhost:${WT_CLIENT_PORT}"
 explain "${BOLD}Login:${RESET}          admin / DemoPass2026"
 echo ""
-explain "${BOLD}API Server:${RESET}     http://localhost:8080"
+explain "${BOLD}API Server:${RESET}     http://localhost:${WT_SERVER_PORT}"
 echo ""
 
 if [[ -n "$API_KEY" ]]; then

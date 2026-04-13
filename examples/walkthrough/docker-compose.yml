@@ -38,6 +38,10 @@ services:
             context: ../../
             dockerfile: server/Dockerfile
         container_name: wt-server
+        # Override CMD to pass --data-dir explicitly. The server
+        # resolves data_dir from CLI flags before loading the YAML
+        # config, so the YAML data_dir setting is ignored.
+        command: ["--config", "/etc/pgedge/ai-dba-server.yaml", "--data-dir", "/data"]
         depends_on:
             postgres:
                 condition: service_healthy

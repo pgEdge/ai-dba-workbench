@@ -72,7 +72,7 @@ The walkthrough stack creates a default administrator
 account with the following credentials:
 
 - Username: `admin`
-- Password: `Demo2026!`
+- Password: `DemoPass2026`
 
 The guided tour enters these credentials for you during the
 login step.

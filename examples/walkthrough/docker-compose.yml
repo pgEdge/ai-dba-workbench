@@ -30,8 +30,10 @@ services:
             interval: 5s
             timeout: 5s
             retries: 10
-        ports:
-            - "${WT_DATASTORE_PORT:-5432}:5432"
+        # Datastore port not exposed to host by default to avoid
+        # conflicts with local PostgreSQL. Uncomment for debugging:
+        # ports:
+        #     - "${WT_DATASTORE_PORT:-5440}:5432"
 
     server:
         build:
@@ -121,8 +123,10 @@ services:
             timeout: 5s
             retries: 15
             start_period: 30s
-        ports:
-            - "${WT_DEMO_PORT:-5433}:5432"
+        # Demo DB port not exposed to host by default.
+        # To expose for debugging, add:
+        #   ports:
+        #     - "${WT_DEMO_PORT:-5433}:5432"
 
     workload:
         image: postgres:18

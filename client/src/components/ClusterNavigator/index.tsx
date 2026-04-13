@@ -511,6 +511,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 name: data.name,
+                description: data.description,
                 replication_type: data.replication_type,
             }),
         });

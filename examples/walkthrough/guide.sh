@@ -73,7 +73,11 @@ echo ""
 explain "Generating secrets..."
 
 mkdir -p "$SCRIPT_DIR/secret"
-openssl rand -base64 32 > "$SCRIPT_DIR/secret/ai-dba.secret"
+# Use the fixed secret that matches the pre-baked seed data.
+# The seed contains encrypted passwords that were encrypted with
+# this exact secret. Using a different secret would prevent the
+# collector from decrypting connection passwords.
+echo "q0xZ579yK4gFREb5LHlqhlyPgmKHt0S5j4O2deRKRhs=" > "$SCRIPT_DIR/secret/ai-dba.secret"
 echo "postgres" > "$SCRIPT_DIR/secret/pg-password"
 echo "$API_KEY" > "$SCRIPT_DIR/secret/anthropic-api-key"
 chmod 600 "$SCRIPT_DIR/secret/"*
@@ -129,12 +133,27 @@ else
   echo ""
 fi
 
+# ── Rebase timestamps ───────────────────────────────────────────────
+# Shift all pre-baked metric timestamps so the data looks like it was
+# collected in the last few hours, not whenever the seed was recorded.
+
+explain "Rebasing metric timestamps to current time..."
+
+if [[ -x "$SCRIPT_DIR/seed/rebase-timestamps.sh" ]]; then
+  "$SCRIPT_DIR/seed/rebase-timestamps.sh" wt-datastore ai_workbench \
+    || warn "Timestamp rebase had issues (continuing)."
+  info "Timestamps rebased."
+else
+  warn "rebase-timestamps.sh not found (skipping)."
+fi
+echo ""
+
 # ── Create admin user ────────────────────────────────────────────────
 
 explain "Creating admin user..."
 
 docker exec wt-server sh -c \
-  'echo "Demo2026!" > /tmp/pw && ai-dba-server -add-user -username admin -password-file /tmp/pw -full-name "Demo Admin" -email "admin@demo.local" -user-note "Walkthrough admin" -config /etc/pgedge/ai-dba-server.yaml && rm /tmp/pw' \
+  'echo "DemoPass2026" > /tmp/pw && ai-dba-server -add-user -username admin -password-file /tmp/pw -full-name "Demo Admin" -email "admin@demo.local" -user-note "Walkthrough admin" -config /etc/pgedge/ai-dba-server.yaml && rm /tmp/pw' \
   2>/dev/null || warn "Admin user may already exist (continuing)."
 
 docker exec wt-server \
@@ -164,92 +183,14 @@ else
 fi
 echo ""
 
-# ── Register demo connection ─────────────────────────────────────────
+# ── Connection and cluster ───────────────────────────────────────────
+# The demo connection, cluster group, and cluster are pre-baked in the
+# datastore seed. No API calls needed — the collector will pick up the
+# connection automatically on its next poll cycle.
 
-explain "Registering demo database connection..."
-
-if [[ -n "$TOKEN" ]]; then
-  CONN_RESPONSE=$(curl -sf -X POST http://localhost:8080/api/v1/connections \
-    -H "Authorization: Bearer $TOKEN" \
-    -H "Content-Type: application/json" \
-    -d '{
-      "name": "demo-ecommerce",
-      "host": "pg-demo",
-      "port": 5432,
-      "database_name": "ecommerce",
-      "username": "postgres",
-      "password": "postgres",
-      "ssl_mode": "disable",
-      "is_shared": true,
-      "is_monitored": true
-    }' 2>&1) || warn "Could not register demo connection (continuing)."
-
-  if [[ -n "${CONN_RESPONSE:-}" ]]; then
-    info "Demo connection registered."
-  fi
-else
-  warn "Skipping connection registration (no service token)."
-fi
+info "Demo connection and cluster loaded from seed data."
 echo ""
 
-# ── Create cluster group and cluster ─────────────────────────────────
-
-explain "Creating demo cluster group and cluster..."
-
-if [[ -n "$TOKEN" ]]; then
-  # Create cluster group
-  GROUP_RESPONSE=$(curl -sf -X POST http://localhost:8080/api/v1/cluster-groups \
-    -H "Authorization: Bearer $TOKEN" \
-    -H "Content-Type: application/json" \
-    -d '{
-      "name": "demo-group",
-      "description": "Walkthrough demo cluster group"
-    }' 2>&1) || warn "Could not create cluster group (continuing)."
-
-  GROUP_ID=""
-  if [[ -n "${GROUP_RESPONSE:-}" ]] && command -v python3 &>/dev/null; then
-    GROUP_ID=$(python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('id',''))" <<< "$GROUP_RESPONSE" 2>/dev/null) || true
-  fi
-
-  if [[ -n "$GROUP_ID" ]]; then
-    # Create cluster
-    CLUSTER_RESPONSE=$(curl -sf -X POST http://localhost:8080/api/v1/clusters \
-      -H "Authorization: Bearer $TOKEN" \
-      -H "Content-Type: application/json" \
-      -d "{
-        \"name\": \"demo-cluster\",
-        \"cluster_group_id\": \"$GROUP_ID\",
-        \"description\": \"Walkthrough demo cluster\"
-      }" 2>&1) || warn "Could not create cluster (continuing)."
-
-    CLUSTER_ID=""
-    if [[ -n "${CLUSTER_RESPONSE:-}" ]]; then
-      CLUSTER_ID=$(python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('id',''))" <<< "$CLUSTER_RESPONSE" 2>/dev/null) || true
-    fi
-
-    # Get the connection ID for the demo connection
-    CONN_ID=""
-    if [[ -n "${CONN_RESPONSE:-}" ]]; then
-      CONN_ID=$(python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('id',''))" <<< "$CONN_RESPONSE" 2>/dev/null) || true
-    fi
-
-    # Assign server to cluster
-    if [[ -n "$CLUSTER_ID" && -n "$CONN_ID" ]]; then
-      curl -sf -X PUT "http://localhost:8080/api/v1/clusters/${CLUSTER_ID}/servers/${CONN_ID}" \
-        -H "Authorization: Bearer $TOKEN" \
-        -H "Content-Type: application/json" \
-        2>/dev/null || warn "Could not assign server to cluster (continuing)."
-      info "Cluster group, cluster, and server assignment created."
-    else
-      warn "Could not complete cluster setup (missing IDs)."
-    fi
-  else
-    warn "Could not extract cluster group ID (continuing)."
-  fi
-else
-  warn "Skipping cluster setup (no service token)."
-fi
-echo ""
 
 # ── Restart helper sidecar ───────────────────────────────────────────
 
@@ -282,7 +223,7 @@ header "Walkthrough Ready"
 explain "The pgEdge AI DBA Workbench is running and ready to explore."
 echo ""
 explain "${BOLD}Web Interface:${RESET}  http://localhost:3000"
-explain "${BOLD}Login:${RESET}          admin / Demo2026!"
+explain "${BOLD}Login:${RESET}          admin / DemoPass2026"
 echo ""
 explain "${BOLD}API Server:${RESET}     http://localhost:8080"
 echo ""

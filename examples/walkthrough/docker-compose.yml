@@ -24,8 +24,7 @@ services:
         command: ["postgres", "-c", "listen_addresses=*"]
         volumes:
             - wt-datastore-data:/var/lib/pgsql/18/data
-            # Uncomment after generating the seed:
-            # - ./seed/datastore-seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+            - ./seed/datastore-seed-4h.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
         healthcheck:
             test: ["CMD-SHELL", "pg_isready -U postgres"]
             interval: 5s

@@ -167,8 +167,12 @@ fi
 # ── Rebase timestamps ───────────────────────────────────────────────
 # Shift all pre-baked metric timestamps so the data looks like it was
 # collected in the last few hours, not whenever the seed was recorded.
+# Stop the collector first so its fresh data doesn't mask the seed's
+# old timestamps (MAX would find collector data, not seed data).
 
 explain "Rebasing metric timestamps to current time..."
+
+(cd "$SCRIPT_DIR" && docker compose stop collector alerter 2>/dev/null) || true
 
 if [[ -x "$SCRIPT_DIR/seed/rebase-timestamps.sh" ]]; then
   "$SCRIPT_DIR/seed/rebase-timestamps.sh" wt-datastore ai_workbench \
@@ -177,6 +181,8 @@ if [[ -x "$SCRIPT_DIR/seed/rebase-timestamps.sh" ]]; then
 else
   warn "rebase-timestamps.sh not found (skipping)."
 fi
+
+(cd "$SCRIPT_DIR" && docker compose start collector alerter 2>/dev/null) || true
 echo ""
 
 # ── Create admin user ────────────────────────────────────────────────
@@ -202,7 +208,7 @@ TOKEN_OUTPUT=$(docker exec wt-server \
   ai-dba-server -add-token -user admin -token-note "walkthrough-helper" -token-expiry never -config /etc/pgedge/ai-dba-server.yaml \
   2>&1) || true
 
-TOKEN=$(echo "$TOKEN_OUTPUT" | grep -oE 'aidba_[a-zA-Z0-9_]+' || true)
+TOKEN=$(echo "$TOKEN_OUTPUT" | grep "^Token:" | awk '{print $2}' || true)
 
 if [[ -n "$TOKEN" ]]; then
   echo "$TOKEN" > "$SCRIPT_DIR/secret/helper-token"

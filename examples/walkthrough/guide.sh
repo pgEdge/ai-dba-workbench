@@ -356,9 +356,11 @@ echo ""
 # ── Build and start the stack ────────────────────────────────────────
 
 start_spinner "Building and starting AI DBA Workbench..."
-# Pull pre-built images by default. Use --build to build from source
-# if developing locally with the full repository.
-(cd "$SCRIPT_DIR" && docker compose up -d 2>"$SCRIPT_DIR/build.log")
+# Start everything EXCEPT collector and alerter. The collector would
+# add fresh data that pollutes the timestamp rebase calculation, and
+# the alerter would clear pre-baked alerts before fresh evidence exists.
+# Both are started later after the rebase and password re-encryption.
+(cd "$SCRIPT_DIR" && docker compose up -d --scale collector=0 --scale alerter=0 2>"$SCRIPT_DIR/build.log")
 stop_spinner
 
 info "Docker containers started."
@@ -412,7 +414,7 @@ fi
 
 explain "Rebasing metric timestamps to current time..."
 
-(cd "$SCRIPT_DIR" && docker compose stop collector alerter 2>/dev/null) || true
+# Collector and alerter are not running yet (started with --scale=0)
 
 if [[ -x "$SCRIPT_DIR/seed/rebase-timestamps.sh" ]]; then
   "$SCRIPT_DIR/seed/rebase-timestamps.sh" wt-datastore ai_workbench \
@@ -422,11 +424,9 @@ else
   warn "rebase-timestamps.sh not found (skipping)."
 fi
 
-# Start the collector but NOT the alerter yet. The alerter would
-# immediately evaluate the pre-baked alerts against empty fresh
-# metrics and clear them. Let the collector gather a few cycles
-# first so the problems are confirmed before the alerter runs.
-(cd "$SCRIPT_DIR" && docker compose start collector 2>/dev/null) || true
+# Now start the collector (alerter stays stopped until later).
+(cd "$SCRIPT_DIR" && docker compose up -d collector 2>/dev/null) || true
+info "Collector started."
 echo ""
 
 # ── Create admin user ────────────────────────────────────────────────
@@ -485,7 +485,7 @@ echo ""
 
 (
   sleep 120
-  cd "$SCRIPT_DIR" && docker compose start alerter 2>/dev/null
+  cd "$SCRIPT_DIR" && docker compose up -d alerter 2>/dev/null
 ) &
 info "Alert evaluation will start in ~2 minutes (collector gathering data)."
 echo ""

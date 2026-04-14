@@ -56,20 +56,21 @@ The walkthrough requires the following tools and resources:
 - Approximately 4 GB of available RAM allows Docker to run
   all services.
 - Ports 3000 and 8080 must be available on the host machine.
-- An [Anthropic API key](https://console.anthropic.com/) is
-  optional; the tour prompts you to add the key later.
+- An API key for Anthropic, OpenAI, or Google Gemini is
+  optional; the script prompts you during setup. Ollama
+  works locally without a key.
 
 ## What You Will Experience
 
 The walkthrough consists of three phases.
 
 1. Install (terminal, approximately 2-3 minutes): The script
-   downloads files, starts the Docker stack, and opens the
-   browser.
+   downloads files, starts 7 Docker containers, and opens
+   the browser.
 2. Guided Tour (browser, approximately 15-18 minutes): A
    Driver.js overlay walks you through every feature.
-3. Make It Yours (optional): Connect your own database or
-   clean up all resources.
+3. Make It Yours (optional): Add your own database, keep
+   exploring, or clean up all resources.
 
 ## Login Credentials
 
@@ -96,8 +97,8 @@ The in-browser tour covers six sections across 24 steps.
   configuration, and cluster settings.
 - Alerting and Notifications walks through threshold
   configuration, alert history, and blackout windows.
-- Make It Yours offers the option to connect a real
-  database or clean up the demo environment.
+- Make It Yours offers the option to add a real database
+  or clean up the demo environment.
 
 ## Cleaning Up
 
@@ -137,12 +138,12 @@ metric timestamps so the data appears to have been collected
 recently. The `guide.sh` script runs the rebase automatically
 after starting the stack.
 
-### Helper Sidecar
+### LLM Configuration
 
-The `helper/` directory contains a Go sidecar API that
-handles API key injection and connection management during
-the tour. The helper communicates with the workbench server
-over the internal Docker network.
+The `guide.sh` script prompts for an LLM provider and API
+key during initial setup. It supports Anthropic, OpenAI,
+Google Gemini, and Ollama. Run `guide.sh` again to change
+the LLM configuration on an existing stack.
 
 ## File Structure
 
@@ -159,10 +160,6 @@ examples/walkthrough/
 │   ├── ai-dba-alerter.yaml
 │   ├── ai-dba-collector.yaml
 │   └── ai-dba-server.yaml
-├── helper/
-│   ├── Dockerfile
-│   ├── go.mod
-│   └── main.go
 ├── nginx/
 │   ├── nginx.conf
 │   └── walkthrough/
@@ -200,9 +197,8 @@ The stack requires approximately 4 GB of memory. Open
 Docker Desktop and navigate to Settings, then Resources,
 to allocate at least 4 GB.
 
-### API Key Issues
+### LLM Provider Issues
 
-An Anthropic API key is not required to complete the tour.
-The tour prompts you to add a key during the AI Analysis
-section. You can also add the key later through the
-workbench settings page.
+An LLM API key is not required to complete the tour. Run
+`guide.sh` again and choose option 4 to change the LLM
+configuration on a running stack.

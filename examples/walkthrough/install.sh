@@ -39,7 +39,6 @@ echo ""
 echo "  Downloading walkthrough files..."
 
 mkdir -p "$WORK_DIR/examples/walkthrough/config"
-mkdir -p "$WORK_DIR/examples/walkthrough/helper"
 mkdir -p "$WORK_DIR/examples/walkthrough/nginx/walkthrough/images"
 mkdir -p "$WORK_DIR/examples/walkthrough/seed"
 mkdir -p "$WORK_DIR/examples/walkthrough/secret"
@@ -52,9 +51,6 @@ FILES=(
   examples/walkthrough/config/ai-dba-server.yaml
   examples/walkthrough/config/ai-dba-collector.yaml
   examples/walkthrough/config/ai-dba-alerter.yaml
-  examples/walkthrough/helper/Dockerfile
-  examples/walkthrough/helper/main.go
-  examples/walkthrough/helper/go.mod
   examples/walkthrough/nginx/nginx.conf
   examples/walkthrough/nginx/walkthrough/driver.min.css
   examples/walkthrough/nginx/walkthrough/driver.min.js

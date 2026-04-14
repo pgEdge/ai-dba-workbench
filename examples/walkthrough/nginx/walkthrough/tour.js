@@ -15,7 +15,7 @@
  *
  * Architecture:
  *   24 steps across 6 parts, plus helper functions for minimize,
- *   resume, skip-to-end, API key modal, and Make It Yours overlay.
+ *   resume, skip-to-end, and Make It Yours overlay.
  *
  * DOM Selector Strategy:
  *   The React/MUI app does not emit data-testid attributes. Steps
@@ -27,8 +27,6 @@
  */
 (function () {
     "use strict";
-
-    var HELPER_BASE = "/walkthrough/api";
 
     // -----------------------------------------------------------------------
     // State
@@ -83,109 +81,28 @@
             '<br><br><div style="background:#f0f9ff;border:1px solid #0ea5e9;' +
             'border-radius:8px;padding:10px 14px;margin:4px 0;color:#0c4a6e;' +
             'font-size:0.9rem;">' +
-            'This feature requires an API key. The rest of the workbench ' +
-            'works without one.' +
+            'This feature uses AI. To enable AI features, run ' +
+            '<code>guide.sh</code> again from your terminal.' +
             '</div>';
     }
 
     // -----------------------------------------------------------------------
-    // Check API key status from the walkthrough helper
+    // Detect AI availability from the DOM
     // -----------------------------------------------------------------------
 
-    function checkStatus() {
-        return fetch(HELPER_BASE + "/status")
-            .then(function (r) { return r.json(); })
-            .then(function (data) {
-                apiKeyConfigured = !!data.api_key_configured;
-            })
-            .catch(function () {
-                apiKeyConfigured = false;
-            });
+    /**
+     * Check whether AI features are configured by looking for the
+     * Ellie chat FAB (aria-label="open chat") or the AI Overview
+     * section in the DOM. These elements only render when the
+     * server has a valid LLM provider configured.
+     */
+    function detectAiFromDom() {
+        var chatFab = document.querySelector('[aria-label="open chat"]');
+        var aiOverview = document.querySelector(
+            '[aria-label="Collapse AI Overview"], [aria-label="Expand AI Overview"]'
+        );
+        apiKeyConfigured = !!(chatFab || aiOverview);
     }
-
-    // -----------------------------------------------------------------------
-    // API Key modal
-    // -----------------------------------------------------------------------
-
-    function showApiKeyModal() {
-        var existing = document.querySelector(".wt-apikey-modal");
-        if (existing) { existing.remove(); }
-
-        // Temporarily hide the Driver.js overlay so the modal
-        // is fully interactive. It will be restored when the
-        // modal closes (via key save or cancel).
-        var driverOverlay = document.querySelector(".driver-overlay");
-        if (driverOverlay) { driverOverlay.style.display = "none"; }
-        var driverPopover = document.querySelector(".driver-popover");
-        if (driverPopover) { driverPopover.style.display = "none"; }
-
-        var overlay = document.createElement("div");
-        overlay.className = "wt-apikey-modal";
-        overlay.innerHTML =
-            '<div class="wt-apikey-card">' +
-            '  <h3>Add an AI Provider API Key</h3>' +
-            '  <p>Enter your Anthropic API key to enable AI features ' +
-            '  such as AI Overview, alert analysis, and Ask Ellie.</p>' +
-            '  <form id="wt-apikey-form">' +
-            '    <input type="password" id="wt-apikey-input" ' +
-            '      placeholder="sk-ant-..." autocomplete="off">' +
-            '    <button type="submit">Save Key</button>' +
-            '    <button type="button" id="wt-apikey-cancel">Cancel</button>' +
-            '  </form>' +
-            '</div>';
-        document.body.appendChild(overlay);
-
-        function restoreDriver() {
-            var dov = document.querySelector(".driver-overlay");
-            if (dov) { dov.style.display = ""; }
-            var dpop = document.querySelector(".driver-popover");
-            if (dpop) { dpop.style.display = ""; }
-        }
-
-        overlay.querySelector("#wt-apikey-cancel").addEventListener("click", function () {
-            overlay.remove();
-            restoreDriver();
-        });
-
-        overlay.querySelector("#wt-apikey-form").addEventListener("submit", function (e) {
-            e.preventDefault();
-            var key = overlay.querySelector("#wt-apikey-input").value.trim();
-            if (!key) { return; }
-            fetch(HELPER_BASE + "/set-api-key", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ api_key: key }),
-            })
-                .then(function (r) { return r.json(); })
-                .then(function (data) {
-                    if (!data.success) {
-                        throw new Error("Server returned success=false");
-                    }
-                    // Verify the key was actually persisted by
-                    // checking the status endpoint.
-                    return fetch(HELPER_BASE + "/status");
-                })
-                .then(function (r) { return r.json(); })
-                .then(function (status) {
-                    if (!status.api_key_configured) {
-                        throw new Error("Key was not persisted");
-                    }
-                    apiKeyConfigured = true;
-                    overlay.remove();
-                    var nextStep = Math.max(currentStep, 4);
-                    if (driverInstance) {
-                        driverInstance.destroy();
-                    }
-                    startTourAtStep(nextStep);
-                })
-                .catch(function (err) {
-                    alert("Failed to save API key: " + err.message + ". Please try again.");
-                });
-        });
-    }
-
-    // Expose for inline onclick in popover HTML
-    window.__wtShowApiKeyModal = showApiKeyModal;
 
     // -----------------------------------------------------------------------
     // Make It Yours overlay
@@ -201,26 +118,29 @@
             '<div class="wt-make-yours-card">' +
             '  <h2>Make It Yours</h2>' +
             '  <p>You have seen what the AI DBA Workbench can do with ' +
-            '  the demo data. Ready to try it with your own database?</p>' +
+            '  the demo data. What would you like to do next?</p>' +
             '  <button class="wt-choice-btn" id="wt-choice-connect">' +
-            '    <strong>Connect my database</strong>' +
-            '    Replace the demo with your own PostgreSQL server.' +
-            '  </button>' +
-            '  <button class="wt-choice-btn" id="wt-choice-apikey">' +
-            '    <strong>Add my API key</strong>' +
-            '    Enable AI features with your Anthropic key.' +
+            '    <strong>Add your own database</strong>' +
+            '    Click the + button in the navigator to add your database ' +
+            '    using the built-in Add Server dialog.' +
             '  </button>' +
             '  <button class="wt-choice-btn" id="wt-choice-explore">' +
-            '    <strong>Keep exploring</strong>' +
+            '    <strong>Keep exploring the demo</strong>' +
             '    Continue using the demo data on your own.' +
             '  </button>' +
             '  <button class="wt-choice-btn" id="wt-choice-dismiss">' +
-            '    <strong>Dismiss the tour</strong>' +
-            '    Close and do not show the tour again.' +
+            '    <strong>Clean up everything</strong>' +
+            '    Stop and remove all walkthrough containers and data.' +
             '  </button>' +
-            '  <div id="wt-connect-form-area"></div>' +
             '</div>';
         document.body.appendChild(overlay);
+
+        // Add your own database — close the overlay so they can use the UI
+        overlay.querySelector("#wt-choice-connect").addEventListener("click", function () {
+            localStorage.setItem("wt-tour-closed", "true");
+            sessionStorage.removeItem("wt-current-step");
+            overlay.remove();
+        });
 
         // Keep exploring
         overlay.querySelector("#wt-choice-explore").addEventListener("click", function () {
@@ -228,80 +148,25 @@
             overlay.remove();
         });
 
-        // Dismiss permanently
+        // Clean up everything
         overlay.querySelector("#wt-choice-dismiss").addEventListener("click", function () {
             localStorage.setItem("wt-tour-closed", "true");
             sessionStorage.removeItem("wt-current-step");
-            overlay.remove();
-        });
-
-        // Add API key
-        overlay.querySelector("#wt-choice-apikey").addEventListener("click", function () {
-            overlay.remove();
-            showApiKeyModal();
-        });
-
-        // Connect database
-        overlay.querySelector("#wt-choice-connect").addEventListener("click", function () {
-            var area = overlay.querySelector("#wt-connect-form-area");
-            if (area.querySelector(".wt-connect-form")) { return; }
-            area.innerHTML =
-                '<form class="wt-connect-form" id="wt-connect-real-form">' +
-                '  <label>Connection name' +
-                '    <input type="text" name="name" value="my-database"></label>' +
-                '  <label>Host' +
-                '    <input type="text" name="host" placeholder="db.example.com" required></label>' +
-                '  <label>Port' +
-                '    <input type="number" name="port" value="5432"></label>' +
-                '  <label>Database' +
-                '    <input type="text" name="database_name" placeholder="mydb" required></label>' +
-                '  <label>Username' +
-                '    <input type="text" name="username" placeholder="postgres" required></label>' +
-                '  <label>Password' +
-                '    <input type="password" name="password" required></label>' +
-                '  <label>SSL mode' +
-                '    <select name="ssl_mode">' +
-                '      <option value="prefer">prefer</option>' +
-                '      <option value="require">require</option>' +
-                '      <option value="disable">disable</option>' +
-                '    </select></label>' +
-                '  <label>Anthropic API key (optional)' +
-                '    <input type="password" name="api_key" placeholder="sk-ant-..."></label>' +
-                '  <button type="submit">Connect</button>' +
-                '</form>';
-
-            area.querySelector("#wt-connect-real-form").addEventListener("submit", function (e) {
-                e.preventDefault();
-                var form = e.target;
-                var payload = {
-                    name: form.name.value,
-                    host: form.host.value,
-                    port: parseInt(form.port.value, 10) || 5432,
-                    database_name: form.database_name.value,
-                    username: form.username.value,
-                    password: form.password.value,
-                    ssl_mode: form.ssl_mode.value,
-                    api_key: form.api_key.value,
-                };
-                fetch(HELPER_BASE + "/add-connection", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(payload),
-                })
-                    .then(function (r) { return r.json(); })
-                    .then(function (data) {
-                        if (data.success) {
-                            localStorage.setItem("wt-tour-closed", "true");
-                            sessionStorage.removeItem("wt-current-step");
-                            overlay.remove();
-                            window.location.reload();
-                        } else {
-                            alert("Connection failed: " + (data.error || "unknown error"));
-                        }
-                    })
-                    .catch(function () {
-                        alert("Request failed. Check the connection details and try again.");
-                    });
+            overlay.innerHTML =
+                '<div class="wt-make-yours-card">' +
+                '  <h2>Clean Up</h2>' +
+                '  <p>Run the following command in your terminal to stop ' +
+                '  and remove all walkthrough containers and data:</p>' +
+                '  <pre style="background:#1e293b;color:#e2e8f0;' +
+                '  padding:12px 16px;border-radius:8px;font-size:0.9rem;' +
+                '  overflow-x:auto;">cd examples/walkthrough\n' +
+                'docker compose down -v</pre>' +
+                '  <button class="wt-choice-btn" id="wt-close-cleanup">' +
+                '    <strong>Close</strong>' +
+                '  </button>' +
+                '</div>';
+            overlay.querySelector("#wt-close-cleanup").addEventListener("click", function () {
+                overlay.remove();
             });
         });
     }
@@ -390,7 +255,7 @@
             var desc = stepDef.popover.description;
             var descEl = wrapper.querySelector(".driver-popover-description");
 
-            // Welcome step: show API key choice if not yet configured
+            // Welcome step: show API key status
             if (desc.__welcomeStep && descEl) {
                 var html =
                     "This guided tour walks you through every major feature " +
@@ -403,13 +268,9 @@
                 if (!apiKeyConfigured) {
                     html += '<br><br><div style="background:#f0f9ff;border:1px solid #0ea5e9;' +
                         'border-radius:8px;padding:10px 14px;color:#0c4a6e;font-size:0.9rem;">' +
-                        '<strong>AI features are optional.</strong> Some features in this tour ' +
-                        '(like AI analysis and Ask Ellie) use an Anthropic API key. ' +
-                        'The workbench works without one \u2014 you just won\u2019t see the AI features live.' +
-                        '<br><br>' +
-                        '<button class="wt-api-key-btn" onclick="window.__wtShowApiKeyModal()">' +
-                        'Add API Key Now</button>' +
-                        '  <span style="color:#64748b;font-size:0.85rem;">or click Next to continue without</span>' +
+                        'The workbench has many built-in AI features to assist you, but you ' +
+                        'don\u2019t need AI to find it useful. If you want to enable AI features, ' +
+                        'run <code>guide.sh</code> again from your terminal after the tour.' +
                         '</div>';
                 } else {
                     html += '<br><br><div style="background:#ecfdf5;border:1px solid #10b981;' +
@@ -624,9 +485,9 @@
         //
         // On initial load the StatusPanel shows an empty state.
         // Show a centered welcome that explains the layout AND
-        // offers the API key choice upfront. The description is
-        // built dynamically in onPopoverRender so it reflects the
-        // live apiKeyConfigured state.
+        // the AI key status. The description is built dynamically
+        // in onPopoverRender so it reflects the live
+        // apiKeyConfigured state.
         {
             popover: {
                 title: "Welcome to AI DBA Workbench",
@@ -1128,8 +989,8 @@
                     "Workbench: real-time monitoring, AI-powered analysis, " +
                     "Ask Ellie, administration, alerts, and access control." +
                     "<br><br>Click <strong>Next</strong> to choose your " +
-                    "next step: connect your own database, add an API key, " +
-                    "or keep exploring the demo.",
+                    "next step: add your own database, keep exploring " +
+                    "the demo, or clean up.",
                 side: "over",
                 align: "center",
             },
@@ -1237,9 +1098,7 @@
         // Wait for the app to fully load (dashboard or login screen)
         waitForDashboard()
             .then(function () {
-                return checkStatus();
-            })
-            .then(function () {
+                detectAiFromDom();
                 startTourAtStep(0);
             })
             .catch(function (err) {

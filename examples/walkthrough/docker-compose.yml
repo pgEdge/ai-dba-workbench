@@ -145,21 +145,6 @@ services:
             PGPASSWORD: postgres
         restart: unless-stopped
 
-    walkthrough-helper:
-        build:
-            context: ./helper
-            dockerfile: Dockerfile
-        container_name: wt-helper
-        depends_on:
-            - server
-        volumes:
-            - ./secret:/etc/pgedge/secret
-            - /var/run/docker.sock:/var/run/docker.sock
-        environment:
-            SERVER_URL: http://server:8080
-            SECRET_DIR: /etc/pgedge/secret
-        restart: unless-stopped
-
 volumes:
     wt-datastore-data:
     wt-server-data:

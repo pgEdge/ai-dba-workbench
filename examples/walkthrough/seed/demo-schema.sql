@@ -226,3 +226,15 @@ ANALYZE products;
 ANALYZE orders;
 ANALYZE order_items;
 ANALYZE inventory;
+
+-- -----------------------------------------------------------------------
+-- Disable autovacuum via ALTER SYSTEM (not command-line flag)
+-- -----------------------------------------------------------------------
+-- This preserves dead tuples for the demo, but unlike a command-line
+-- override, it can be reversed from within the workbench:
+--   ALTER SYSTEM SET autovacuum = on;
+--   SELECT pg_reload_conf();
+-- This lets users follow the AI's advice and actually fix the problem.
+
+ALTER SYSTEM SET autovacuum = off;
+SELECT pg_reload_conf();

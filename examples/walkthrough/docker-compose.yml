@@ -106,8 +106,6 @@ services:
             - max_connections=30
             - -c
             - track_io_timing=on
-            - -c
-            - autovacuum=off
         volumes:
             - wt-pg-demo-data:/var/lib/pgsql/18/data
             - ./seed/demo-schema.sql:/docker-entrypoint-initdb.d/01-init.sql:ro

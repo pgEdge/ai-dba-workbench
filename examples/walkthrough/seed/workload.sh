@@ -1,4 +1,12 @@
 #!/bin/bash
+#--------------------------------------------------------------------------
+#
+# pgEdge AI DBA Workbench
+#
+# Copyright (c) 2025 - 2026, pgEdge, Inc.
+# This software is released under The PostgreSQL License
+#
+#--------------------------------------------------------------------------
 # Production workload generator
 # Generates: slow queries, lock contention, connection pressure,
 #            session churn (bloat), and INSERT traffic.

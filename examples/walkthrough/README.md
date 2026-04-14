@@ -118,10 +118,19 @@ Custom styles for the tour overlay live in `tour.css`.
 
 ### Regenerating the Datastore Seed
 
-The `seed/datastore-seed.sql` file contains a snapshot of
+The seed directory contains tiered snapshot files
+(`datastore-seed-4h.sql`, `datastore-seed-8h.sql`,
+`datastore-seed-16h.sql`, `datastore-seed-24h.sql`) with
 collector metrics and alert history. To regenerate the seed
-data, run the full stack for two to three hours and then dump
-the datastore with `pg_dump`.
+data, run the full stack for the desired duration and then
+dump the datastore with `pg_dump`.
+
+### Rebasing Timestamps
+
+The `seed/rebase-timestamps.sh` script shifts all pre-baked
+metric timestamps so the data appears to have been collected
+recently. The `guide.sh` script runs the rebase automatically
+after starting the stack.
 
 ### Helper Sidecar
 
@@ -160,8 +169,12 @@ examples/walkthrough/
 ├── secret/
 │   └── .gitkeep
 └── seed/
-    ├── datastore-seed.sql
+    ├── datastore-seed-4h.sql
+    ├── datastore-seed-8h.sql
+    ├── datastore-seed-16h.sql
+    ├── datastore-seed-24h.sql
     ├── demo-schema.sql
+    ├── rebase-timestamps.sh
     └── workload.sh
 ```
 
@@ -171,14 +184,9 @@ This section covers common issues and their solutions.
 
 ### Port Conflict
 
-If ports 3000 or 8080 are already in use, set the
-`WT_CLIENT_PORT` and `WT_SERVER_PORT` environment variables
-before running the install script.
-
-```bash
-export WT_CLIENT_PORT=3001
-export WT_SERVER_PORT=8081
-```
+The `guide.sh` script detects port conflicts automatically
+and selects available alternatives. No manual configuration
+is required.
 
 ### Docker Memory
 

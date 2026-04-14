@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
+#--------------------------------------------------------------------------
+#
+# pgEdge AI DBA Workbench
+#
+# Copyright (c) 2025 - 2026, pgEdge, Inc.
+# This software is released under The PostgreSQL License
+#
+#--------------------------------------------------------------------------
 set -euo pipefail
 
 # setup.sh -- Check prerequisites for the AI DBA Workbench walkthrough.

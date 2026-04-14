@@ -1,18 +1,16 @@
 #!/usr/bin/env bash
+#--------------------------------------------------------------------------
+#
+# pgEdge AI DBA Workbench
+#
+# Copyright (c) 2025 - 2026, pgEdge, Inc.
+# This software is released under The PostgreSQL License
+#
+#--------------------------------------------------------------------------
 set -euo pipefail
 
 # Entrypoint for curl-pipe installation:
 #   curl -fsSL https://raw.githubusercontent.com/pgEdge/ai-dba-workbench/main/examples/walkthrough/install.sh | bash
-
-# --- Codespaces check ---
-
-if [ -n "${CODESPACES:-}" ]; then
-  echo ""
-  echo "  Running in Codespaces — everything is already set up."
-  echo "  Continue with the walkthrough or run: bash examples/walkthrough/guide.sh"
-  echo ""
-  exit 0
-fi
 
 WORK_DIR="${WALKTHROUGH_DIR:-pgedge-workbench-walkthrough}"
 BRANCH="${PGEDGE_BRANCH:-main}"

@@ -1,3 +1,12 @@
+/*-------------------------------------------------------------------------
+ *
+ * pgEdge AI DBA Workbench
+ *
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-------------------------------------------------------------------------
+ */
 /*
  * pgEdge AI DBA Workbench — Guided Tour
  *
@@ -30,6 +39,7 @@
     var isMinimized = false;
     var driverInstance = null;
     var resumePill = null;
+    var destroying = false;
 
     // -----------------------------------------------------------------------
     // Utility helpers
@@ -1160,13 +1170,15 @@
                 };
             }),
             onDestroyStarted: function () {
-                if (!driverInstance) { return; }
+                if (destroying) { return; }
+                destroying = true;
                 driverInstance.destroy();
                 driverInstance = null;
                 // When on the last Driver.js step, show Make It Yours.
                 if (currentStep >= steps.length - 1) {
                     showMakeYoursOverlay();
                 }
+                destroying = false;
             },
             onNextClick: function () {
                 // On the last step, trigger Make It Yours

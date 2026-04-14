@@ -1,4 +1,12 @@
 # shellcheck shell=bash
+#--------------------------------------------------------------------------
+#
+# pgEdge AI DBA Workbench
+#
+# Copyright (c) 2025 - 2026, pgEdge, Inc.
+# This software is released under The PostgreSQL License
+#
+#--------------------------------------------------------------------------
 # runner.sh — Terminal UX framework for interactive walkthrough scripts.
 # Source this file from guide.sh; do not execute directly.
 #

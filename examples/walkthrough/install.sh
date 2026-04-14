@@ -81,7 +81,8 @@ fi
 
 chmod +x "$WORK_DIR/examples/walkthrough/guide.sh" \
          "$WORK_DIR/examples/walkthrough/setup.sh" \
-         "$WORK_DIR/examples/walkthrough/seed/workload.sh"
+         "$WORK_DIR/examples/walkthrough/seed/workload.sh" \
+         "$WORK_DIR/examples/walkthrough/seed/rebase-timestamps.sh"
 
 echo "  Downloaded ${#FILES[@]} files."
 echo ""

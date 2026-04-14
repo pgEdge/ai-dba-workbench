@@ -16,10 +16,10 @@ database:
     password: postgres
     sslmode: disable
 
+secret_file: /etc/pgedge/secret/ai-dba.secret
+data_dir: /data
+
 llm:
     provider: anthropic
     model: claude-sonnet-4-5
     anthropic_api_key_file: /etc/pgedge/secret/llm-api-key
-
-secret_file: /etc/pgedge/secret/ai-dba.secret
-data_dir: /data

@@ -32,10 +32,8 @@ up all containers and data with a single command.
 
 ## Quick Start
 
-In the following example, the `install.sh` script downloads
-the repository, starts the Docker stack, and opens the
-walkthrough in your browser. Run the command in Terminal
-(macOS/Linux) or Git Bash (Windows).
+Run the following command in Terminal (macOS/Linux) or
+Git Bash (Windows).
 
 ```bash
 curl -fsSL \
@@ -55,7 +53,8 @@ The walkthrough requires the following tools and resources:
   container runtime.
 - Approximately 4 GB of available RAM allows Docker to run
   all services.
-- Ports 3000 and 8080 must be available on the host machine.
+- Ports 3000 and 8080 are used by default; the setup script
+  finds available alternatives automatically if they are busy.
 - An API key for Anthropic, OpenAI, or Google Gemini is
   optional; the script prompts you during setup. Ollama
   works locally without a key.
@@ -80,8 +79,8 @@ account with the following credentials:
 - Username: `admin`
 - Password: `DemoPass2026`
 
-The guided tour enters these credentials for you during the
-login step.
+Enter these credentials on the login page. The guided tour
+starts automatically after you log in.
 
 ## Tour Sections
 

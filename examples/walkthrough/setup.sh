@@ -131,7 +131,7 @@ echo ""
 
 # ── Check port availability ──────────────────────────────────────────
 
-explain "Checking required ports are available..."
+explain "Checking default ports (guide.sh will find alternatives if busy)..."
 
 PORTS_NEEDED=(3000 8080)
 PORTS_BUSY=()

@@ -64,6 +64,9 @@ prompt_continue() {
   echo ""
 }
 
+# SAFETY: prompt_run uses eval to execute commands. Only call
+# this function with trusted, static command strings. Never
+# pass user-supplied or external input as the cmd argument.
 prompt_run() {
   local cmd="$1"
   local slow="${2:-}"

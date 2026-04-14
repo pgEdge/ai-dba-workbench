@@ -1132,10 +1132,30 @@
                 return;
             }
 
+            // Pre-fill login credentials if the login form is visible.
+            // Uses the React-compatible nativeInputValueSetter pattern
+            // so React's controlled input state picks up the values.
+            var loginFilled = false;
+            function prefillLogin() {
+                if (loginFilled) { return; }
+                var userInput = document.querySelector('input[type="text"]');
+                var passInput = document.querySelector('input[type="password"]');
+                if (userInput && passInput) {
+                    var setter = Object.getOwnPropertyDescriptor(
+                        window.HTMLInputElement.prototype, "value").set;
+                    setter.call(userInput, "admin");
+                    userInput.dispatchEvent(new Event("input", { bubbles: true }));
+                    setter.call(passInput, "DemoPass2026");
+                    passInput.dispatchEvent(new Event("input", { bubbles: true }));
+                    loginFilled = true;
+                }
+            }
+
             // Poll every second until the dashboard renders.
             var elapsed = 0;
             var interval = setInterval(function () {
                 elapsed += 1000;
+                prefillLogin();
                 if (isDashboardReady()) {
                     clearInterval(interval);
                     setTimeout(resolve, 1000);

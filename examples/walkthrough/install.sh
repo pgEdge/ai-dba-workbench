@@ -18,6 +18,17 @@ WORK_DIR="${WALKTHROUGH_DIR:-pgedge-workbench-walkthrough}"
 BRANCH="${PGEDGE_BRANCH:-main}"
 BASE_URL="https://raw.githubusercontent.com/pgEdge/ai-dba-workbench/${BRANCH}"
 
+# NOTE: The walkthrough currently builds Docker images from source,
+# which requires the full ai-dba-workbench repository. For now,
+# clone the repo and run guide.sh directly:
+#
+#   git clone https://github.com/pgEdge/ai-dba-workbench.git
+#   cd ai-dba-workbench/examples/walkthrough
+#   bash guide.sh
+#
+# A future release will use pre-built images from GHCR, enabling
+# the curl-pipe install without cloning.
+
 # --- Header ---
 
 echo ""
@@ -50,7 +61,10 @@ FILES=(
   examples/walkthrough/nginx/walkthrough/driver.min.js
   examples/walkthrough/nginx/walkthrough/loader.js
   examples/walkthrough/nginx/walkthrough/tour.css
+  examples/walkthrough/nginx/walkthrough/tour.js
   examples/walkthrough/seed/demo-schema.sql
+  examples/walkthrough/seed/rebase-timestamps.sh
+  examples/walkthrough/seed/datastore-seed-4h.sql
   examples/walkthrough/seed/workload.sh
 )
 

@@ -41,7 +41,7 @@ while true; do
         run_query "UPDATE inventory SET quantity = quantity - 1,
                    last_updated = now()
                    WHERE product_id = $((RANDOM % 100 + 1))
-                   AND warehouse = 'warehouse-a';" &
+                   AND warehouse = 'warehouse-east';" &
     done
 
     # --- New orders (INSERT traffic) ---

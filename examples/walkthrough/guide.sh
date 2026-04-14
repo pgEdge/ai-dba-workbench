@@ -277,15 +277,19 @@ if [[ -n "$TOKEN" ]]; then
     "http://localhost:${WT_SERVER_PORT}/api/v1/auth/login" 2>&1 \
     | grep session_token | sed 's/.*session_token=//;s/;.*//' | tr -d '\r\n')
 
-  curl -sf -X PUT \
-    -H "Cookie: session_token=$SESSION" \
-    -H "Content-Type: application/json" \
-    -d '{"password":"postgres"}' \
-    "http://localhost:${WT_SERVER_PORT}/api/v1/connections/1" \
-    >/dev/null 2>&1 \
-    || warn "Could not re-encrypt connection password (continuing)."
+  if [[ -z "$SESSION" ]]; then
+    warn "Could not authenticate for password re-encryption (continuing)."
+  else
+    curl -sf -X PUT \
+      -H "Cookie: session_token=$SESSION" \
+      -H "Content-Type: application/json" \
+      -d '{"password":"postgres"}' \
+      "http://localhost:${WT_SERVER_PORT}/api/v1/connections/1" \
+      >/dev/null 2>&1 \
+      || warn "Could not re-encrypt connection password (continuing)."
 
-  info "Demo connection password re-encrypted."
+    info "Demo connection password re-encrypted."
+  fi
 else
   warn "Skipping password re-encryption (no token)."
 fi

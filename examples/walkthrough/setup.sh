@@ -141,7 +141,7 @@ for port in "${PORTS_NEEDED[@]}"; do
   fi
 
   if [[ "$busy" == "true" ]]; then
-    error "Port $port is already in use"
+    warn "Port $port is in use (guide.sh will find an alternative)."
     PORTS_BUSY+=("$port")
   else
     info "Port $port is available"
@@ -151,12 +151,7 @@ done
 echo ""
 
 if [[ ${#PORTS_BUSY[@]} -gt 0 ]]; then
-  warn "Ports in use: ${PORTS_BUSY[*]}"
-  explain ""
-  explain "Free the ports above and re-run:"
-  explain "  ${DIM}bash ${SCRIPT_DIR}/guide.sh${RESET}"
-  echo ""
-  exit 1
+  warn "Default ports in use: ${PORTS_BUSY[*]}. guide.sh will select alternatives."
 fi
 
 # ── Done ─────────────────────────────────────────────────────────────

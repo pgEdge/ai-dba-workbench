@@ -144,9 +144,13 @@ class Handler(BaseHTTPRequestHandler):
             with open(API_KEY_FILE, "w") as f:
                 f.write(api_key)
             os.chmod(API_KEY_FILE, 0o600)
+            # Restart the server container so the AI Overview generator
+            # picks up the new API key. SIGHUP reloads config but does
+            # not restart subsystems that check credentials at boot.
             subprocess.run(
-                ["docker", "kill", "-s", "HUP", "wt-server"],
+                ["docker", "restart", "wt-server"],
                 capture_output=True,
+                timeout=30,
             )
 
         conn_id = result.get("id", "unknown")
@@ -158,6 +162,9 @@ class Handler(BaseHTTPRequestHandler):
     def read_body(self):
         """Read and parse JSON request body."""
         length = int(self.headers.get("Content-Length", 0))
+        if length > 65536:
+            self.respond(413, {"error": "Request body too large"})
+            return {}
         raw = self.rfile.read(length)
         return json.loads(raw) if raw else {}
 

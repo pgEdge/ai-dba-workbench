@@ -793,8 +793,7 @@
                     "Each alert shows severity, threshold values, and " +
                     "timing. Click the brain icon on any alert to request " +
                     "an AI analysis that explains the root cause and " +
-                    "suggests remediation steps.",
-                    "alert-analysis.png"
+                    "suggests remediation steps."
                 ),
                 side: "over",
                 align: "center",
@@ -813,8 +812,7 @@
                     "The brain icon next to the AI Overview triggers a " +
                     "comprehensive server analysis. The AI examines metrics, " +
                     "active alerts, query patterns, and replication status " +
-                    "to produce a detailed health report.",
-                    "server-analysis.png"
+                    "to produce a detailed health report."
                 ),
                 side: "bottom",
                 align: "start",
@@ -837,8 +835,7 @@
                 description: aiDesc(
                     "Ellie is the AI assistant built into the workbench. " +
                     "Click this button to open the chat panel and start " +
-                    "a conversation about your databases.",
-                    "ellie-fab.png"
+                    "a conversation about your databases."
                 ),
                 side: "left",
                 align: "end",
@@ -861,8 +858,7 @@
                     "Type a question in natural language. For example: " +
                     '"Why is CPU usage high on my primary server?" ' +
                     "Ellie can query metrics, run diagnostics, and explain " +
-                    "what she finds.",
-                    "ellie-chat.png"
+                    "what she finds."
                 ),
                 side: "left",
                 align: "start",
@@ -882,8 +878,7 @@
                 description: aiDesc(
                     "When Ellie suggests SQL queries, a \"Run in Database\" " +
                     "button appears on each code block. Click it to execute " +
-                    "the query directly and see the results inline.",
-                    "run-in-db.png"
+                    "the query directly and see the results inline."
                 ),
                 side: "left",
                 align: "center",
@@ -1097,8 +1092,7 @@
                     "AI Memories are facts that Ellie remembers between " +
                     "conversations. She learns about your environment over " +
                     "time: server roles, maintenance windows, team " +
-                    "preferences. You can review and edit these memories here.",
-                    "ai-memories.png"
+                    "preferences. You can review and edit these memories here."
                 ),
                 side: "left",
                 align: "start",
@@ -1253,7 +1247,9 @@
      *     cluster data has loaded or AI capabilities are active.
      */
     function waitForDashboard() {
-        return new Promise(function (resolve) {
+        return new Promise(function (resolve, reject) {
+            var TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+
             function isDashboardReady() {
                 // The main app bar only renders after successful login.
                 // The login page does NOT have MuiAppBar-root.
@@ -1266,12 +1262,16 @@
             }
 
             // Poll every second until the dashboard renders.
-            // No fallback timeout — the tour should never start
-            // on the login page.
+            var elapsed = 0;
             var interval = setInterval(function () {
+                elapsed += 1000;
                 if (isDashboardReady()) {
                     clearInterval(interval);
                     setTimeout(resolve, 1000);
+                } else if (elapsed >= TIMEOUT_MS) {
+                    clearInterval(interval);
+                    console.warn("Walkthrough: timed out waiting for dashboard after 5 minutes.");
+                    reject(new Error("Dashboard did not appear within 5 minutes"));
                 }
             }, 1000);
         });

@@ -121,8 +121,7 @@
             '  the demo data. What would you like to do next?</p>' +
             '  <button class="wt-choice-btn" id="wt-choice-connect">' +
             '    <strong>Add your own database</strong>' +
-            '    Click the + button in the navigator to add your database ' +
-            '    using the built-in Add Server dialog.' +
+            '    Open the Add Server dialog and connect to your PostgreSQL database.' +
             '  </button>' +
             '  <button class="wt-choice-btn" id="wt-choice-explore">' +
             '    <strong>Keep exploring the demo</strong>' +
@@ -135,11 +134,16 @@
             '</div>';
         document.body.appendChild(overlay);
 
-        // Add your own database — close the overlay so they can use the UI
+        // Add your own database — open the Add Server dialog
         overlay.querySelector("#wt-choice-connect").addEventListener("click", function () {
             sessionStorage.setItem("wt-tour-closed", "true");
             sessionStorage.removeItem("wt-current-step");
             overlay.remove();
+            // Click the "Add server or group" button in the navigator
+            var addBtn = document.querySelector('[aria-label="Add server or group"]');
+            if (addBtn) {
+                setTimeout(function () { addBtn.click(); }, 300);
+            }
         });
 
         // Keep exploring
@@ -155,12 +159,18 @@
             overlay.innerHTML =
                 '<div class="wt-make-yours-card">' +
                 '  <h2>Clean Up</h2>' +
-                '  <p>Run the following command in your terminal to stop ' +
-                '  and remove all walkthrough containers and data:</p>' +
+                '  <p>To stop and remove the walkthrough, re-run the setup ' +
+                '  script and choose the clean-up option:</p>' +
                 '  <pre style="background:#1e293b;color:#e2e8f0;' +
                 '  padding:12px 16px;border-radius:8px;font-size:0.9rem;' +
-                '  overflow-x:auto;">cd examples/walkthrough\n' +
-                'docker compose down -v</pre>' +
+                '  overflow-x:auto;">bash guide.sh</pre>' +
+                '  <h3 style="margin-top:16px;color:#0d9488;">Learn More</h3>' +
+                '  <p style="font-size:0.9rem;">' +
+                '    <a href="https://github.com/pgEdge/ai-dba-workbench/blob/main/docs/getting-started/quick-start.md" ' +
+                '       target="_blank" style="color:#0d9488;">Quick Start Guide on GitHub</a><br>' +
+                '    <a href="https://docs.pgedge.com/ai-dba-toolkit" ' +
+                '       target="_blank" style="color:#0d9488;">Full Documentation on docs.pgedge.com</a>' +
+                '  </p>' +
                 '  <button class="wt-choice-btn" id="wt-close-cleanup">' +
                 '    <strong>Close</strong>' +
                 '  </button>' +

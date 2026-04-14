@@ -82,7 +82,16 @@ select_llm_provider() {
     printf '\e[?2004l' >/dev/tty 2>/dev/null || true
     stty -echo 2>/dev/null || true
     llm_key=""
-    read -r llm_key </dev/tty || true
+    # Read char-by-char, printing * for each, to give visual
+    # feedback that the paste/typing is being received.
+    while IFS= read -r -s -n1 char </dev/tty; do
+      if [[ -z "$char" ]]; then
+        # Enter pressed (empty char = newline)
+        break
+      fi
+      llm_key+="$char"
+      printf '*'
+    done
     stty echo 2>/dev/null || true
     printf '\e[?2004h' >/dev/tty 2>/dev/null || true
     echo ""
@@ -99,7 +108,11 @@ select_llm_provider() {
         llm_model=""
         llm_key=""
       else
-        info "API key accepted."
+        # Show masked preview so the user can confirm it's the right key
+        local key_len=${#llm_key}
+        local prefix="${llm_key:0:6}"
+        local suffix="${llm_key: -4}"
+        info "Key received: ${prefix}****...****${suffix} (${key_len} characters)"
       fi
     else
       warn "No API key provided. Skipping AI features."

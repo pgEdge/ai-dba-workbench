@@ -422,7 +422,11 @@ else
   warn "rebase-timestamps.sh not found (skipping)."
 fi
 
-(cd "$SCRIPT_DIR" && docker compose start collector alerter 2>/dev/null) || true
+# Start the collector but NOT the alerter yet. The alerter would
+# immediately evaluate the pre-baked alerts against empty fresh
+# metrics and clear them. Let the collector gather a few cycles
+# first so the problems are confirmed before the alerter runs.
+(cd "$SCRIPT_DIR" && docker compose start collector 2>/dev/null) || true
 echo ""
 
 # ── Create admin user ────────────────────────────────────────────────
@@ -471,6 +475,19 @@ fi
 (cd "$SCRIPT_DIR" && docker compose restart collector 2>/dev/null) || true
 
 info "Demo connection and cluster loaded from seed data."
+echo ""
+
+# ── Delayed alerter start ────────────────────────────────────────────
+# Start the alerter after a delay so the collector has time to gather
+# fresh metrics confirming the demo problems. Without this, the
+# alerter clears pre-baked alerts because it has no fresh evidence.
+# Run in background so the user isn't waiting.
+
+(
+  sleep 120
+  cd "$SCRIPT_DIR" && docker compose start alerter 2>/dev/null
+) &
+info "Alert evaluation will start in ~2 minutes (collector gathering data)."
 echo ""
 
 # ── Open browser ─────────────────────────────────────────────────────

@@ -191,10 +191,7 @@ YAML
 
 # ── Check for existing stack ────────────────────────────────────────
 
-EXISTING=$(docker compose ls --filter "name=workbench-walkthrough" --format json 2>/dev/null \
-  | grep -c "workbench-walkthrough" 2>/dev/null || echo "0")
-
-if [[ "$EXISTING" -gt 0 ]] || docker ps --filter "name=wt-" --format "{{.Names}}" 2>/dev/null | grep -q "wt-"; then
+if docker ps --filter "name=wt-" --format "{{.Names}}" 2>/dev/null | grep -q "wt-"; then
   echo ""
   warn "An existing walkthrough stack is running."
   echo ""

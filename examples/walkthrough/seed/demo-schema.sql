@@ -137,16 +137,16 @@ CREATE INDEX idx_inventory_product_id ON inventory (product_id);
 -- Seed Data
 -- -----------------------------------------------------------------------
 
--- Customers: 100,000 rows across four regions
+-- Customers: 10,000 rows across four regions
 INSERT INTO customers (name, email, region, created_at)
 SELECT
     'Customer ' || gs.id,
     'customer' || gs.id || '@example.com',
     (ARRAY['north', 'south', 'east', 'west'])[1 + (gs.id % 4)],
     now() - (random() * INTERVAL '730 days')
-FROM generate_series(1, 100000) AS gs(id);
+FROM generate_series(1, 10000) AS gs(id);
 
--- Products: 5,000 rows across eight categories
+-- Products: 1,000 rows across eight categories
 INSERT INTO products (name, category, price, created_at)
 SELECT
     'Product ' || gs.id,
@@ -156,49 +156,50 @@ SELECT
     ])[1 + (gs.id % 8)],
     round((random() * 499 + 1)::NUMERIC, 2),
     now() - (random() * INTERVAL '365 days')
-FROM generate_series(1, 5000) AS gs(id);
+FROM generate_series(1, 1000) AS gs(id);
 
--- Orders: 500,000 rows with five statuses
+-- Orders: 50,000 rows with five statuses
 INSERT INTO orders (customer_id, order_date, status, total_amount)
 SELECT
-    1 + (gs.id % 100000),
+    1 + (gs.id % 10000),
     now() - (random() * INTERVAL '365 days'),
     (ARRAY[
         'pending', 'processing', 'shipped', 'delivered', 'cancelled'
     ])[1 + (gs.id % 5)],
     round((random() * 999 + 1)::NUMERIC, 2)
-FROM generate_series(1, 500000) AS gs(id);
+FROM generate_series(1, 50000) AS gs(id);
 
--- Order items: ~1,200,000 rows (two to three items per order on average)
+-- Order items: ~120,000 rows (two to three items per order on average)
 INSERT INTO order_items (order_id, product_id, quantity, unit_price)
 SELECT
-    1 + (gs.id % 500000),
-    1 + (gs.id % 5000),
+    1 + (gs.id % 50000),
+    1 + (gs.id % 1000),
     1 + (gs.id % 10),
     round((random() * 199 + 1)::NUMERIC, 2)
-FROM generate_series(1, 1200000) AS gs(id);
+FROM generate_series(1, 120000) AS gs(id);
 
--- Inventory: 10,000 rows across five warehouses
+-- Inventory: 2,000 rows across five warehouses
 INSERT INTO inventory (product_id, warehouse, quantity, last_updated)
 SELECT
-    1 + (gs.id % 5000),
+    1 + (gs.id % 1000),
     (ARRAY[
         'warehouse-east', 'warehouse-west', 'warehouse-central',
         'warehouse-north', 'warehouse-south'
     ])[1 + (gs.id % 5)],
     (random() * 500)::INTEGER,
     now() - (random() * INTERVAL '30 days')
-FROM generate_series(1, 10000) AS gs(id);
+FROM generate_series(1, 2000) AS gs(id);
 
 -- -----------------------------------------------------------------------
 -- Bloat Simulation: Sessions Table
 -- -----------------------------------------------------------------------
--- Insert 200K sessions then delete 80% to leave 160K dead tuples.
+-- Insert 20K sessions then delete 80% to leave 16K dead tuples.
 -- Autovacuum is disabled on this container so dead tuples persist.
+-- The dead_tuple_ratio alert triggers on the ratio, not absolute count.
 
 INSERT INTO sessions (user_id, token, expires_at, created_at, data)
 SELECT
-    1 + (gs.id % 100000),
+    1 + (gs.id % 10000),
     md5(random()::TEXT),
     now() + (random() * INTERVAL '24 hours') - INTERVAL '12 hours',
     now() - (random() * INTERVAL '7 days'),
@@ -208,10 +209,10 @@ SELECT
             'Mozilla/5.0', 'Chrome/120', 'Safari/17', 'Edge/120'
         ])[1 + (gs.id % 4)]
     )
-FROM generate_series(1, 200000) AS gs(id);
+FROM generate_series(1, 20000) AS gs(id);
 
 -- Delete 80% of sessions, keeping only rows where id is divisible by 5.
--- This leaves approximately 40K live rows and 160K dead tuples.
+-- This leaves approximately 4K live rows and 16K dead tuples.
 DELETE FROM sessions WHERE id % 5 != 0;
 
 -- -----------------------------------------------------------------------

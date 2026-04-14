@@ -35,9 +35,6 @@ services:
 
     server:
         image: ghcr.io/pgedge/ai-dba-server:latest
-        build:
-            context: ../../
-            dockerfile: server/Dockerfile
         container_name: wt-server
         # Override CMD to pass --data-dir explicitly. The server
         # resolves data_dir from CLI flags before loading the YAML
@@ -56,9 +53,6 @@ services:
 
     collector:
         image: ghcr.io/pgedge/ai-dba-collector:latest
-        build:
-            context: ../../
-            dockerfile: collector/Dockerfile
         container_name: wt-collector
         depends_on:
             postgres:
@@ -70,9 +64,6 @@ services:
 
     alerter:
         image: ghcr.io/pgedge/ai-dba-alerter:latest
-        build:
-            context: ../../
-            dockerfile: alerter/Dockerfile
         container_name: wt-alerter
         depends_on:
             postgres:
@@ -84,9 +75,6 @@ services:
 
     client:
         image: ghcr.io/pgedge/ai-dba-client:latest
-        build:
-            context: ../../
-            dockerfile: client/Dockerfile
         container_name: wt-client
         depends_on:
             - server
@@ -124,11 +112,12 @@ services:
             - wt-pg-demo-data:/var/lib/pgsql/18/data
             - ./seed/demo-schema.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
         healthcheck:
-            test: ["CMD-SHELL", "pg_isready -U postgres -d ecommerce"]
+            # Verify seed data is loaded, not just pg_isready
+            test: ["CMD-SHELL", "psql -U postgres -d ecommerce -tAc 'SELECT 1 FROM orders LIMIT 1;' | grep -q 1"]
             interval: 5s
             timeout: 5s
-            retries: 15
-            start_period: 30s
+            retries: 30
+            start_period: 10s
         ports:
             - "${WT_DEMO_PORT:-5433}:5432"
 

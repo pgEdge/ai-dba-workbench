@@ -331,10 +331,11 @@ echo ""
 explain "Generating secrets..."
 
 mkdir -p "$SCRIPT_DIR/secret"
-# Use the fixed secret that matches the pre-baked seed data.
+# DEMO ONLY: This is a fixed secret that matches the pre-baked seed data.
 # The seed contains encrypted passwords that were encrypted with
 # this exact secret. Using a different secret would prevent the
 # collector from decrypting connection passwords.
+# Do NOT reuse this secret in production deployments.
 echo "q0xZ579yK4gFREb5LHlqhlyPgmKHt0S5j4O2deRKRhs=" > "$SCRIPT_DIR/secret/ai-dba.secret"
 echo "postgres" > "$SCRIPT_DIR/secret/pg-password"
 echo "$SELECTED_LLM_KEY" > "$SCRIPT_DIR/secret/llm-api-key"
@@ -355,7 +356,9 @@ echo ""
 # ── Build and start the stack ────────────────────────────────────────
 
 start_spinner "Building and starting AI DBA Workbench..."
-(cd "$SCRIPT_DIR" && docker compose up -d --build 2>/dev/null)
+# Pull pre-built images by default. Use --build to build from source
+# if developing locally with the full repository.
+(cd "$SCRIPT_DIR" && docker compose up -d 2>"$SCRIPT_DIR/build.log")
 stop_spinner
 
 info "Docker containers started."
@@ -394,6 +397,7 @@ if [[ $ELAPSED -ge $TIMEOUT ]]; then
   warn "Timed out waiting for services after ${TIMEOUT}s."
   warn "Check status with: cd $SCRIPT_DIR && docker compose ps"
   warn "View logs with:    cd $SCRIPT_DIR && docker compose logs"
+  warn "Check build.log for details: cat $SCRIPT_DIR/build.log"
   echo ""
 else
   info "Server and client are healthy."
@@ -446,7 +450,7 @@ explain "Re-encrypting demo connection password..."
 
 SESSION=$(curl -sf -D - -H 'Content-Type: application/json' \
   -d '{"username":"admin","password":"DemoPass2026"}' \
-  "http://localhost:${WT_SERVER_PORT}/api/v1/auth/login" 2>&1 \
+  "http://localhost:${WT_SERVER_PORT}/api/v1/auth/login" 2>/dev/null \
   | grep session_token | sed 's/.*session_token=//;s/;.*//' | tr -d '\r\n')
 
 if [[ -z "$SESSION" ]]; then
@@ -504,6 +508,9 @@ else
   warn "AI features are disabled. Run guide.sh again to add an LLM provider."
 fi
 
+echo ""
+explain "${DIM}Note: This uses a demo-only encryption secret.${RESET}"
+explain "${DIM}Do not reuse this installation for production.${RESET}"
 echo ""
 explain "${DIM}To reconfigure or${RESET}"
 explain "${DIM}  uninstall:${RESET}       cd $SCRIPT_DIR && bash guide.sh"

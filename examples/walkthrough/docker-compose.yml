@@ -34,6 +34,7 @@ services:
             - "${WT_DATASTORE_PORT:-5432}:5432"
 
     server:
+        image: ghcr.io/pgedge/ai-dba-server:latest
         build:
             context: ../../
             dockerfile: server/Dockerfile
@@ -54,6 +55,7 @@ services:
         restart: unless-stopped
 
     collector:
+        image: ghcr.io/pgedge/ai-dba-collector:latest
         build:
             context: ../../
             dockerfile: collector/Dockerfile
@@ -67,6 +69,7 @@ services:
         restart: unless-stopped
 
     alerter:
+        image: ghcr.io/pgedge/ai-dba-alerter:latest
         build:
             context: ../../
             dockerfile: alerter/Dockerfile
@@ -80,6 +83,7 @@ services:
         restart: unless-stopped
 
     client:
+        image: ghcr.io/pgedge/ai-dba-client:latest
         build:
             context: ../../
             dockerfile: client/Dockerfile

@@ -18,7 +18,7 @@
   "use strict";
 
   // Skip if tour was permanently dismissed
-  if (localStorage.getItem("wt-tour-closed") === "true") {
+  if (sessionStorage.getItem("wt-tour-closed") === "true") {
     return;
   }
 

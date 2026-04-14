@@ -137,7 +137,7 @@
 
         // Add your own database — close the overlay so they can use the UI
         overlay.querySelector("#wt-choice-connect").addEventListener("click", function () {
-            localStorage.setItem("wt-tour-closed", "true");
+            sessionStorage.setItem("wt-tour-closed", "true");
             sessionStorage.removeItem("wt-current-step");
             overlay.remove();
         });
@@ -150,7 +150,7 @@
 
         // Clean up everything
         overlay.querySelector("#wt-choice-dismiss").addEventListener("click", function () {
-            localStorage.setItem("wt-tour-closed", "true");
+            sessionStorage.setItem("wt-tour-closed", "true");
             sessionStorage.removeItem("wt-current-step");
             overlay.innerHTML =
                 '<div class="wt-make-yours-card">' +

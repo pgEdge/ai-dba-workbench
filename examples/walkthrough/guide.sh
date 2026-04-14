@@ -492,6 +492,8 @@ else
 fi
 
 echo ""
+explain "${DIM}To reconfigure or${RESET}"
+explain "${DIM}  uninstall:${RESET}       cd $SCRIPT_DIR && bash guide.sh"
 explain "${DIM}To stop the stack:${RESET}  cd $SCRIPT_DIR && docker compose down -v"
 explain "${DIM}To view logs:${RESET}       cd $SCRIPT_DIR && docker compose logs -f"
 echo ""

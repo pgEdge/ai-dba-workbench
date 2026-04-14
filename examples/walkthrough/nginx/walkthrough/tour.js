@@ -507,31 +507,25 @@
             },
         },
 
-        // Step 1 — Cluster Navigator panel
+        // Step 1 — Cluster Navigator panel (centered popover)
         //
-        // The ClusterNavigator is the first flex child inside the
-        // mainLayoutBody. It is a Box with bgcolor=background.paper and
-        // borderRight. No stable ID; target the first child of the
-        // layout body (after the AppBar) that contains the header
-        // "Database Servers".
+        // Use a centered popover to avoid the highlight going off
+        // the top of the screen on smaller viewports.
         {
-            element: ".MuiAppBar-root ~ div > div:first-child",
             popover: {
                 title: "The Navigator",
                 description:
-                    "The navigator organizes your PostgreSQL servers into " +
-                    "groups and clusters. The demo environment includes a " +
-                    "<strong>Demo Cluster</strong> with a " +
-                    "<strong>demo-ecommerce</strong> server.<br><br>" +
+                    "The panel on the left is the <strong>navigator</strong>. " +
+                    "It organizes your PostgreSQL servers into groups and " +
+                    "clusters. The demo includes a <strong>Demo Cluster</strong> " +
+                    "with a <strong>demo-ecommerce</strong> server.<br><br>" +
                     "Click any server to view its dashboard. Click the " +
                     "estate summary row at the top to see an overview of " +
                     "all servers.",
-                side: "right",
-                align: "start",
+                side: "over",
+                align: "center",
             },
             onHighlightStarted: function () {
-                // Ensure the first cluster is expanded so the server
-                // items are visible inside the navigator.
                 expandFirstCluster();
             },
         },
@@ -570,12 +564,12 @@
 
         // Step 3 — AI Overview
         //
-        // The AIOverview component renders a Paper when AI is active.
-        // Target it via the collapse button aria-label. If not present
-        // (no API key), Driver.js will show a centered popover
-        // automatically since the element won't be found.
+        // The AIOverview component renders inside a MuiPaper-root that
+        // contains the collapse button. Target the Paper itself so the
+        // entire block is highlighted. If AI is off, the element won't
+        // exist and Driver.js shows a centered popover.
         {
-            element: '[aria-label="Collapse AI Overview"], [aria-label="Expand AI Overview"]',
+            element: '.MuiPaper-root:has([aria-label="Collapse AI Overview"], [aria-label="Expand AI Overview"])',
             popover: {
                 title: "AI Overview",
                 description: aiDesc(
@@ -588,18 +582,48 @@
             },
         },
 
-        // Step 4 — Event Timeline
+        // Step 4 — Event Timeline bar
         //
-        // The EventTimeline section is rendered inside the StatusPanel.
-        // It does not use CollapsibleSection; it has its own header
-        // component (TimelineHeader). Target the outer container.
+        // The EventTimeline has no aria-label. Use a centered popover
+        // and scroll the timeline into view for context.
+        {
+            popover: {
+                title: "Event Timeline",
+                description:
+                    "The event timeline bar at the top shows every alert " +
+                    "and event as it happens — color-coded by severity. " +
+                    "Hover over events to see details, or click to " +
+                    "investigate.<br><br>" +
+                    "This is your first stop when something goes wrong: " +
+                    "the timeline tells you <em>what</em> happened, " +
+                    "<em>when</em>, and <em>where</em>.",
+                side: "over",
+                align: "center",
+            },
+            onHighlightStarted: function () {
+                // Scroll the Event Timeline into view
+                var headings = document.querySelectorAll("p");
+                for (var i = 0; i < headings.length; i++) {
+                    if (headings[i].textContent === "Event Timeline") {
+                        headings[i].scrollIntoView({
+                            behavior: "smooth", block: "center"
+                        });
+                        break;
+                    }
+                }
+            },
+        },
+
+        // Step 5 — Monitoring Dashboard
+        //
+        // The CollapsibleSection wrapping all metric charts.
         {
             element: '[aria-label="Collapse Monitoring section"], [aria-label="Expand Monitoring section"]',
             popover: {
                 title: "Monitoring Dashboard",
                 description:
-                    "The monitoring section contains an event timeline and " +
-                    "detailed metric charts. It shows system resources, " +
+                    "Below the timeline, the monitoring section shows " +
+                    "detailed metric charts: system resources, " +
                     "PostgreSQL performance, WAL replication status, " +
                     "database summaries, and top queries.",
                 side: "top",

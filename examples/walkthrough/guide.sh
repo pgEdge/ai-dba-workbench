@@ -28,23 +28,18 @@ select_llm_provider() {
   local llm_provider=""
   local llm_model=""
   local llm_key=""
-  local llm_ollama_url=""
-
   echo ""
   explain "The AI DBA Workbench has many built-in AI features — like AI"
   explain "Overview, alert analysis, and Ask Ellie — but you don't need"
   explain "AI to find the workbench useful. You can add a key later by"
   explain "re-running this script."
   echo ""
-  explain "Supported providers: Anthropic, OpenAI, Google Gemini, Ollama (local)"
-  echo ""
   explain "  1) Anthropic (Claude)"
   explain "  2) OpenAI (GPT)"
   explain "  3) Google Gemini"
-  explain "  4) Ollama (local, no key needed)"
-  explain "  5) Skip — continue without AI features"
+  explain "  4) Skip — continue without AI features"
   echo ""
-  read -rp "  Choose [1-5]: " llm_choice < /dev/tty 2>/dev/null || llm_choice="5"
+  read -rp "  Choose [1-4]: " llm_choice < /dev/tty 2>/dev/null || llm_choice="4"
 
   case "$llm_choice" in
     1)
@@ -59,21 +54,14 @@ select_llm_provider() {
       llm_provider="gemini"
       llm_model="gemini-2.0-flash"
       ;;
-    4)
-      llm_provider="ollama"
-      llm_model="qwen2.5:7b-instruct"
-      echo ""
-      read -rp "  Ollama URL [http://host.docker.internal:11434]: " llm_ollama_url < /dev/tty 2>/dev/null || llm_ollama_url=""
-      llm_ollama_url="${llm_ollama_url:-http://host.docker.internal:11434}"
-      ;;
     *)
       llm_provider=""
       llm_model=""
       ;;
   esac
 
-  # Prompt for API key (skip for Ollama and Skip)
-  if [[ -n "$llm_provider" && "$llm_provider" != "ollama" ]]; then
+  # Prompt for API key
+  if [[ -n "$llm_provider" ]]; then
     echo ""
     printf "%s" "Enter your API key"
     echo ""
@@ -125,7 +113,6 @@ select_llm_provider() {
   SELECTED_LLM_PROVIDER="$llm_provider"
   SELECTED_LLM_MODEL="$llm_model"
   SELECTED_LLM_KEY="$llm_key"
-  SELECTED_LLM_OLLAMA_URL="$llm_ollama_url"
 }
 
 # ── Write server config ────────────────────────────────────────────
@@ -134,7 +121,6 @@ select_llm_provider() {
 write_server_config() {
   local provider="$1"
   local model="$2"
-  local ollama_url="$3"
 
   cat > "$SCRIPT_DIR/config/ai-dba-server.yaml" <<YAML
 http:
@@ -187,15 +173,6 @@ llm:
     gemini_api_key_file: /etc/pgedge/secret/llm-api-key
 YAML
       ;;
-    ollama)
-      cat >> "$SCRIPT_DIR/config/ai-dba-server.yaml" <<YAML
-
-llm:
-    provider: ollama
-    model: $model
-    ollama_url: $ollama_url
-YAML
-      ;;
     *)
       # No LLM section — AI features disabled
       ;;
@@ -238,7 +215,7 @@ if docker ps --filter "name=wt-" --format "{{.Names}}" 2>/dev/null | grep -q "wt
       info "Changing LLM configuration..."
       select_llm_provider
 
-      write_server_config "$SELECTED_LLM_PROVIDER" "$SELECTED_LLM_MODEL" "$SELECTED_LLM_OLLAMA_URL"
+      write_server_config "$SELECTED_LLM_PROVIDER" "$SELECTED_LLM_MODEL"
       info "Server config updated."
 
       if [[ -n "$SELECTED_LLM_KEY" ]]; then
@@ -348,7 +325,7 @@ echo ""
 
 explain "Writing server configuration..."
 
-write_server_config "$SELECTED_LLM_PROVIDER" "$SELECTED_LLM_MODEL" "$SELECTED_LLM_OLLAMA_URL"
+write_server_config "$SELECTED_LLM_PROVIDER" "$SELECTED_LLM_MODEL"
 
 info "Server config written to $SCRIPT_DIR/config/ai-dba-server.yaml"
 echo ""

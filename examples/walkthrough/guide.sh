@@ -69,6 +69,8 @@ fi
 port_in_use() {
   if [[ "$OS" == "Darwin" ]]; then
     lsof -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1
+  elif [[ "$OS" == MINGW* || "$OS" == MSYS* ]]; then
+    netstat -an 2>/dev/null | grep -q "[:.]${1} .*LISTEN"
   else
     ss -tln 2>/dev/null | grep -q ":${1} "
   fi
@@ -326,10 +328,13 @@ explain "Opening the AI DBA Workbench in your browser..."
 OPEN_URL="http://localhost:${WT_CLIENT_PORT}"
 if [[ "$OS" == "Darwin" ]]; then
   open "$OPEN_URL" 2>/dev/null || warn "Could not open browser automatically."
+elif [[ "$OS" == MINGW* || "$OS" == MSYS* ]]; then
+  start "$OPEN_URL" 2>/dev/null || warn "Could not open browser automatically."
 elif command -v xdg-open &>/dev/null; then
   xdg-open "$OPEN_URL" 2>/dev/null || warn "Could not open browser automatically."
 else
-  warn "Open this URL in your browser: $OPEN_URL"
+  warn "Could not open browser automatically."
+  explain "Open ${OPEN_URL} in your browser."
 fi
 
 # ── Done ─────────────────────────────────────────────────────────────

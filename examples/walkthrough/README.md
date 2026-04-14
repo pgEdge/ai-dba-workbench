@@ -34,7 +34,8 @@ up all containers and data with a single command.
 
 In the following example, the `install.sh` script downloads
 the repository, starts the Docker stack, and opens the
-walkthrough in your browser.
+walkthrough in your browser. Run the command in Terminal
+(macOS/Linux) or Git Bash (Windows).
 
 ```bash
 curl -fsSL \
@@ -48,6 +49,10 @@ The walkthrough requires the following tools and resources:
 
 - [Docker Engine 24.0+](https://docs.docker.com/get-docker/)
   or Docker Desktop provides container runtime support.
+- On Windows,
+  [Git for Windows](https://gitforwindows.org/) provides
+  Git Bash; Docker Desktop for Windows provides the
+  container runtime.
 - Approximately 4 GB of available RAM allows Docker to run
   all services.
 - Ports 3000 and 8080 must be available on the host machine.
@@ -134,7 +139,7 @@ after starting the stack.
 
 ### Helper Sidecar
 
-The `helper/` directory contains a Python sidecar API that
+The `helper/` directory contains a Go sidecar API that
 handles API key injection and connection management during
 the tour. The helper communicates with the workbench server
 over the internal Docker network.
@@ -156,7 +161,8 @@ examples/walkthrough/
 │   └── ai-dba-server.yaml
 ├── helper/
 │   ├── Dockerfile
-│   └── server.py
+│   ├── go.mod
+│   └── main.go
 ├── nginx/
 │   ├── nginx.conf
 │   └── walkthrough/

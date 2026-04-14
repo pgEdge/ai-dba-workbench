@@ -88,7 +88,7 @@ explain "Verifying Docker daemon is accessible..."
 
 if ! docker info &>/dev/null; then
   echo ""
-  if [[ "$OS" == "Darwin" ]]; then
+  if [[ "$OS" == "Darwin" || "$OS" == MINGW* || "$OS" == MSYS* ]]; then
     error "Docker does not appear to be running."
     explain ""
     explain "Open Docker Desktop and wait for it to start, then re-run:"
@@ -140,6 +140,10 @@ for port in "${PORTS_NEEDED[@]}"; do
   busy=false
   if [[ "$OS" == "Darwin" ]]; then
     if lsof -iTCP:"$port" -sTCP:LISTEN &>/dev/null; then
+      busy=true
+    fi
+  elif [[ "$OS" == MINGW* || "$OS" == MSYS* ]]; then
+    if netstat -an 2>/dev/null | grep -q "[:.]${port} .*LISTEN"; then
       busy=true
     fi
   else

@@ -53,7 +53,8 @@ FILES=(
   examples/walkthrough/config/ai-dba-collector.yaml
   examples/walkthrough/config/ai-dba-alerter.yaml
   examples/walkthrough/helper/Dockerfile
-  examples/walkthrough/helper/server.py
+  examples/walkthrough/helper/main.go
+  examples/walkthrough/helper/go.mod
   examples/walkthrough/nginx/nginx.conf
   examples/walkthrough/nginx/walkthrough/driver.min.css
   examples/walkthrough/nginx/walkthrough/driver.min.js

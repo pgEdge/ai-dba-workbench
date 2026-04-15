@@ -1438,6 +1438,10 @@
                     showMakeYoursOverlay();
                     return;
                 }
+                // Re-tag dynamic elements before every step.
+                // React re-renders replace DOM elements, losing
+                // any data-wt attributes we set earlier.
+                tagDynamicElements();
                 if (driverInstance) {
                     driverInstance.moveNext();
                 }
@@ -1456,6 +1460,7 @@
                         closeAnyDialog();
                     }
                 }
+                tagDynamicElements();
                 if (driverInstance) {
                     driverInstance.movePrevious();
                 }

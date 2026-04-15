@@ -108,6 +108,7 @@
                 var outer = grid ? grid.parentElement : null; // outer div
                 if (outer) {
                     outer.setAttribute("data-wt", "server-info");
+                    outer.id = "wt-server-info";
                 }
             }
         }
@@ -718,19 +719,20 @@
             },
         },
 
-        // Step 5 — Server Information (centered popover)
+        // Step 5 — Server Information
         //
-        // The server info bar shows connection details. No single
-        // stable element to highlight, so use a centered popover.
+        // The server info bar shows connection details. Tagged with
+        // id="wt-server-info" by tagDynamicElements().
         {
+            element: "#wt-server-info",
             popover: {
                 title: "Server Information",
                 description:
                     "The server information bar shows connection details: " +
-                    "host, port, database, user, and the server's role in " +
-                    "its cluster.",
-                side: "over",
-                align: "center",
+                    "host, port, database, user, PostgreSQL version, " +
+                    "operating system, and the server's role in its cluster.",
+                side: "bottom",
+                align: "start",
             },
             onHighlightStarted: function () {
                 scrollPanelToTop();

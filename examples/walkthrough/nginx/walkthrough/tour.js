@@ -995,9 +995,8 @@
 
         // Step 17 — Chat toggle button (FAB)
         //
-        // The ChatFAB renders a Fab with aria-label="open chat" at
-        // position:fixed bottom:24px right:24px. It is only rendered
-        // when the chat panel is closed AND aiEnabled is true.
+        // Close any open dialogs/overlays and return to the main
+        // dashboard before showing the chat FAB.
         {
             element: '[aria-label="open chat"]',
             popover: {
@@ -1011,8 +1010,11 @@
                 align: "end",
             },
             onHighlightStarted: function () {
-                // Close chat if already open so we can highlight the FAB
+                // Return to main dashboard first
+                closeAnyDialog();
                 closeChatPanel();
+                // Scroll the panel back to top
+                scrollPanelToTop();
             },
         },
 

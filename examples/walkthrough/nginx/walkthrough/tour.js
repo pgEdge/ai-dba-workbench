@@ -1012,10 +1012,14 @@
                 align: "end",
             },
             onHighlightStarted: function () {
-                // Return to main dashboard first
+                // Return to main dashboard first — close dialogs,
+                // dashboard overlays (query detail), and chat panel
                 closeAnyDialog();
+                var closeOverlay = document.querySelector(
+                    '[aria-label="Close overlay"]'
+                );
+                if (closeOverlay) { closeOverlay.click(); }
                 closeChatPanel();
-                // Scroll the panel back to top
                 scrollPanelToTop();
             },
         },

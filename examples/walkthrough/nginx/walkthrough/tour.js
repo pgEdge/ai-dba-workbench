@@ -100,15 +100,14 @@
             }
 
             // Tag the server info section (HOST label)
-            // p -> column div -> grid container -> info bar -> outer container
+            // DOM: p(HOST) -> column div -> grid div -> outer div
+            // From your Chrome DOM extract: div.css-1erjwy0 is the outer
             if (text === "HOST") {
-                var infoRow = ps[i].parentElement;
-                if (infoRow && infoRow.parentElement &&
-                    infoRow.parentElement.parentElement &&
-                    infoRow.parentElement.parentElement.parentElement) {
-                    infoRow.parentElement.parentElement.parentElement.setAttribute(
-                        "data-wt", "server-info"
-                    );
+                var col = ps[i].parentElement;       // column div
+                var grid = col ? col.parentElement : null;  // grid div
+                var outer = grid ? grid.parentElement : null; // outer div
+                if (outer) {
+                    outer.setAttribute("data-wt", "server-info");
                 }
             }
         }
@@ -977,21 +976,15 @@
                 align: "center",
             },
             onHighlightStarted: function () {
-                // Click the first query row in Top Queries
-                var section = document.querySelector(
-                    '[aria-label="Collapse Top Queries section"]'
+                // Click the first query row in Top Queries.
+                // Query rows have role="button" and aria-label
+                // starting with "View details for query:"
+                var row = document.querySelector(
+                    '[aria-label^="View details for query"]'
                 );
-                if (section) {
-                    var container = section.closest(".MuiBox-root");
-                    if (container) {
-                        var rows = container.querySelectorAll(
-                            "tr, [role=\"row\"], .MuiTableRow-root"
-                        );
-                        if (rows.length > 1) {
-                            // Skip header row, click first data row
-                            rows[1].click();
-                        }
-                    }
+                if (row) {
+                    scrollPanelTo(row);
+                    setTimeout(function () { row.click(); }, 300);
                 }
             },
         },
@@ -1231,57 +1224,61 @@
         // Part 5: Blackout Windows (steps 27-28)
         // -------------------------------------------------------------------
 
-        // Step 27 — Blackout Windows (centered popover)
+        // Step 27 — Blackout Windows
         //
-        // Introduce blackout windows and open the blackout management
-        // dialog. The next step highlights the dialog itself.
+        // Close any open dialog, return to main dashboard, then
+        // open the blackout management dialog.
         {
+            element: ".MuiDialog-root",
             popover: {
                 title: "Blackout Windows",
                 description:
                     "Schedule maintenance windows during which alerts are " +
-                    "suppressed. Create one-time blackouts or recurring " +
-                    "schedules. Opening the blackout manager now...",
-                side: "over",
-                align: "center",
+                    "suppressed. Create one-time blackouts for immediate " +
+                    "use, or recurring schedules using cron expressions. " +
+                    "Blackouts can be scoped to specific servers, clusters, " +
+                    "or the entire estate.",
+                side: "right",
+                align: "start",
             },
             onHighlightStarted: function () {
+                // Close any admin dialog first
                 closeAnyDialog();
-                // Click the blackout management button
-                var btn = document.querySelector(
-                    '[aria-label="Blackout management"]'
-                );
-                if (btn) {
-                    setTimeout(function () { btn.click(); }, 300);
-                }
+                // Open the blackout management dialog after a delay
+                // to let the admin dialog close
+                setTimeout(function () {
+                    var btn = document.querySelector(
+                        '[aria-label="Blackout management"]'
+                    );
+                    if (btn) { btn.click(); }
+                }, 500);
             },
         },
 
-        // Step 28 — Blackout Manager dialog
+        // Step 28 — Create Blackout Schedule
         //
-        // Highlight the blackout dialog and click the scheduled
-        // blackout button to show the form.
+        // Click the "New Scheduled Blackout" button inside the
+        // blackout dialog to show the schedule creation form.
         {
             element: ".MuiDialog-root",
             popover: {
-                title: "Blackout Manager",
+                title: "Create Blackout Schedule",
                 description:
-                    "View active and scheduled blackouts. Each blackout " +
-                    "can be scoped to specific servers, clusters, or the " +
-                    "entire estate. Alerts are automatically suppressed " +
-                    "during active blackouts.",
+                    "Define recurring maintenance windows with cron " +
+                    "expressions. Each schedule specifies when alerts " +
+                    "should be suppressed, for how long, and which " +
+                    "servers are affected.",
                 side: "right",
-                align: "center",
+                align: "start",
             },
             onHighlightStarted: function () {
-                // Find and click the new scheduled blackout button
+                // Find and click "New Scheduled Blackout" button
                 var dialog = document.querySelector(".MuiDialog-root");
                 if (dialog) {
                     var btns = dialog.querySelectorAll("button");
                     for (var i = 0; i < btns.length; i++) {
-                        if (btns[i].textContent.indexOf("scheduled") !== -1 ||
-                            btns[i].textContent.indexOf("Schedule") !== -1 ||
-                            btns[i].textContent.indexOf("New") !== -1) {
+                        if (btns[i].textContent.indexOf(
+                                "New Scheduled Blackout") !== -1) {
                             btns[i].click();
                             break;
                         }

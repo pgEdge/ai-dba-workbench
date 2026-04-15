@@ -14,7 +14,7 @@
  * Loaded by loader.js after the Driver.js library is available.
  *
  * Architecture:
- *   32 steps across 7 parts, plus helper functions for minimize,
+ *   33 steps across 7 parts, plus helper functions for minimize,
  *   resume, skip-to-end, and Make It Yours overlay.
  *
  * DOM Selector Strategy:
@@ -82,11 +82,11 @@
             var text = ps[i].textContent;
 
             // Tag the Event Timeline container
-            // p -> header row div -> outer container Box
+            // p -> left-side wrapper -> TimelineHeader wrapper -> outer Box
             if (text === "Event Timeline") {
                 var container = ps[i].parentElement;
-                if (container && container.parentElement) {
-                    container.parentElement.setAttribute("data-wt", "event-timeline");
+                if (container && container.parentElement && container.parentElement.parentElement) {
+                    container.parentElement.parentElement.setAttribute("data-wt", "event-timeline");
                 }
             }
 
@@ -100,11 +100,15 @@
             }
 
             // Tag the server info section (HOST label)
-            // p -> info row -> info bar -> outer container
+            // p -> column div -> grid container -> info bar -> outer container
             if (text === "HOST") {
                 var infoRow = ps[i].parentElement;
-                if (infoRow && infoRow.parentElement && infoRow.parentElement.parentElement) {
-                    infoRow.parentElement.parentElement.setAttribute("data-wt", "server-info");
+                if (infoRow && infoRow.parentElement &&
+                    infoRow.parentElement.parentElement &&
+                    infoRow.parentElement.parentElement.parentElement) {
+                    infoRow.parentElement.parentElement.parentElement.setAttribute(
+                        "data-wt", "server-info"
+                    );
                 }
             }
         }
@@ -530,7 +534,7 @@
     }
 
     // -----------------------------------------------------------------------
-    // Step definitions — 32 steps across 7 parts
+    // Step definitions — 33 steps across 7 parts
     //
     // Selector notes (from reading the React source):
     //   - ClusterNavigator: Box with bgcolor=background.paper,
@@ -558,12 +562,12 @@
     /**
      * Returns true if the given step index is an admin-panel step
      * (any step that opens or expects the admin dialog to be open).
-     * Steps 21-24 are configuration admin steps, 28-30 are access
-     * control admin steps. Steps 25-27 (server settings, blackout)
+     * Steps 21-24 are configuration admin steps, 29-31 are access
+     * control admin steps. Steps 25-28 (server settings, blackout)
      * are NOT admin steps.
      */
     function isAdminStep(idx) {
-        return (idx >= 21 && idx <= 24) || (idx >= 28 && idx <= 30);
+        return (idx >= 21 && idx <= 24) || (idx >= 29 && idx <= 31);
     }
 
     /**
@@ -959,18 +963,36 @@
 
         // Step 16 — Query Details (centered popover)
         //
-        // Encourage the user to click a query row. No programmatic
-        // click — just describe what they will see.
+        // Click into the first query row in the Top Queries section
+        // to show query details. The popover explains what opened.
         {
             popover: {
                 title: "Query Details",
                 description:
-                    "Click on any query row above to see the full query " +
-                    "text, execution plan, and detailed statistics. This " +
-                    "helps identify optimization opportunities like missing " +
-                    "indexes or inefficient joins.",
+                    "Clicking a query row opens its full text, execution " +
+                    "plan, and detailed statistics. This helps identify " +
+                    "optimization opportunities like missing indexes or " +
+                    "inefficient joins.",
                 side: "over",
                 align: "center",
+            },
+            onHighlightStarted: function () {
+                // Click the first query row in Top Queries
+                var section = document.querySelector(
+                    '[aria-label="Collapse Top Queries section"]'
+                );
+                if (section) {
+                    var container = section.closest(".MuiBox-root");
+                    if (container) {
+                        var rows = container.querySelectorAll(
+                            "tr, [role=\"row\"], .MuiTableRow-root"
+                        );
+                        if (rows.length > 1) {
+                            // Skip header row, click first data row
+                            rows[1].click();
+                        }
+                    }
+                }
             },
         },
 
@@ -1062,7 +1084,7 @@
         },
 
         // -------------------------------------------------------------------
-        // Part 4: How It's Configured (steps 21-25)
+        // Part 4: How It's Configured (steps 21-26)
         // -------------------------------------------------------------------
 
         // Step 21 — Admin panel: Probe Defaults
@@ -1157,67 +1179,47 @@
         // Step 25 — Server Settings (centered popover)
         //
         // Server settings are accessed by hovering over the server row
-        // to reveal a gear icon. No stable selector for the hover-
-        // revealed icon, so use a centered popover.
+        // to reveal a gear icon. Force the icon visible and click it
+        // to open the server settings dialog.
         {
             popover: {
                 title: "Server Settings",
                 description:
-                    "Each server in the navigator has a settings menu. " +
-                    "Hover over the server name to reveal the settings " +
-                    "icon, which opens server-specific configuration for " +
-                    "alert overrides, probe intervals, and notification " +
-                    "channels.",
+                    "Each server has its own settings for alert overrides, " +
+                    "probe intervals, and notification channels. Opening " +
+                    "the settings now...",
                 side: "over",
                 align: "center",
             },
             onHighlightStarted: function () {
                 closeAdminPanel();
-            },
-        },
-
-        // -------------------------------------------------------------------
-        // Part 5: Blackout Windows (steps 26-27)
-        // -------------------------------------------------------------------
-
-        // Step 26 — Blackout Windows dialog
-        //
-        // Open the blackout management dialog from the status panel
-        // header, then highlight the dialog.
-        {
-            element: ".MuiDialog-root",
-            popover: {
-                title: "Blackout Windows",
-                description:
-                    "Schedule maintenance windows during which alerts are " +
-                    "suppressed. Create one-time blackouts for immediate " +
-                    "use, or recurring schedules using cron expressions.",
-                side: "left",
-                align: "center",
-            },
-            onHighlightStarted: function () {
-                closeAnyDialog();
+                // Force the action buttons visible on the server row
+                var btns = document.querySelector(".action-buttons");
+                if (btns) { btns.style.opacity = "1"; }
+                // Click the first icon button (settings)
                 setTimeout(function () {
-                    var btn = document.querySelector(
-                        '[aria-label="Blackout management"]'
+                    var settingsBtn = document.querySelector(
+                        ".action-buttons .MuiIconButton-root"
                     );
-                    if (btn) { btn.click(); }
+                    if (settingsBtn) { settingsBtn.click(); }
                 }, 500);
             },
         },
 
-        // Step 27 — New Scheduled Blackout (centered popover)
+        // Step 26 — Server Configuration dialog
         //
-        // Inside the blackout modal, describe the scheduling feature.
+        // Highlight the server settings dialog that opened in the
+        // previous step.
         {
+            element: ".MuiDialog-root",
             popover: {
-                title: "Create Blackout Schedule",
+                title: "Server Configuration",
                 description:
-                    "Define recurring maintenance windows with cron " +
-                    "expressions. Blackouts can be scoped to specific " +
-                    "servers, clusters, or the entire estate. Alerts are " +
-                    "automatically suppressed during active blackouts.",
-                side: "over",
+                    "The server settings dialog lets you configure alert " +
+                    "overrides, probe collection intervals, and notification " +
+                    "channels specific to this server. Changes here override " +
+                    "the global defaults.",
+                side: "left",
                 align: "center",
             },
             onDeselected: function () {
@@ -1226,10 +1228,76 @@
         },
 
         // -------------------------------------------------------------------
-        // Part 6: Who Can Access What (steps 28-30)
+        // Part 5: Blackout Windows (steps 27-28)
         // -------------------------------------------------------------------
 
-        // Step 28 — Admin: Users
+        // Step 27 — Blackout Windows (centered popover)
+        //
+        // Introduce blackout windows and open the blackout management
+        // dialog. The next step highlights the dialog itself.
+        {
+            popover: {
+                title: "Blackout Windows",
+                description:
+                    "Schedule maintenance windows during which alerts are " +
+                    "suppressed. Create one-time blackouts or recurring " +
+                    "schedules. Opening the blackout manager now...",
+                side: "over",
+                align: "center",
+            },
+            onHighlightStarted: function () {
+                closeAnyDialog();
+                // Click the blackout management button
+                var btn = document.querySelector(
+                    '[aria-label="Blackout management"]'
+                );
+                if (btn) {
+                    setTimeout(function () { btn.click(); }, 300);
+                }
+            },
+        },
+
+        // Step 28 — Blackout Manager dialog
+        //
+        // Highlight the blackout dialog and click the scheduled
+        // blackout button to show the form.
+        {
+            element: ".MuiDialog-root",
+            popover: {
+                title: "Blackout Manager",
+                description:
+                    "View active and scheduled blackouts. Each blackout " +
+                    "can be scoped to specific servers, clusters, or the " +
+                    "entire estate. Alerts are automatically suppressed " +
+                    "during active blackouts.",
+                side: "right",
+                align: "center",
+            },
+            onHighlightStarted: function () {
+                // Find and click the new scheduled blackout button
+                var dialog = document.querySelector(".MuiDialog-root");
+                if (dialog) {
+                    var btns = dialog.querySelectorAll("button");
+                    for (var i = 0; i < btns.length; i++) {
+                        if (btns[i].textContent.indexOf("scheduled") !== -1 ||
+                            btns[i].textContent.indexOf("Schedule") !== -1 ||
+                            btns[i].textContent.indexOf("New") !== -1) {
+                            btns[i].click();
+                            break;
+                        }
+                    }
+                }
+            },
+            onDeselected: function () {
+                closeAnyDialog();
+            },
+        },
+
+        // -------------------------------------------------------------------
+        // Part 6: Who Can Access What (steps 29-31)
+        // -------------------------------------------------------------------
+
+        // Step 29 — Admin: Users
         {
             element: ".MuiDialog-root",
             popover: {
@@ -1252,7 +1320,7 @@
             },
         },
 
-        // Step 29 — Admin: Tokens
+        // Step 30 — Admin: Tokens
         {
             element: ".MuiDialog-root",
             popover: {
@@ -1273,7 +1341,7 @@
             },
         },
 
-        // Step 30 — Admin: AI Memories
+        // Step 31 — Admin: AI Memories
         {
             element: ".MuiDialog-root",
             popover: {
@@ -1296,10 +1364,10 @@
         },
 
         // -------------------------------------------------------------------
-        // Part 7: Wrap Up (step 31)
+        // Part 7: Wrap Up (step 32)
         // -------------------------------------------------------------------
 
-        // Step 31 — Tour complete (centered popover)
+        // Step 32 — Tour complete (centered popover)
         //
         // Close the admin panel and present a summary before showing
         // the Make It Yours overlay.
@@ -1384,9 +1452,9 @@
                 var prevStep = currentStep - 1;
                 if (prevStep >= 0) {
                     var curIsDialog = isAdminStep(currentStep) ||
-                        currentStep === 26;
+                        currentStep === 26 || currentStep === 28;
                     var prevIsDialog = isAdminStep(prevStep) ||
-                        prevStep === 26;
+                        prevStep === 26 || prevStep === 28;
                     if (curIsDialog && !prevIsDialog) {
                         closeAnyDialog();
                     }

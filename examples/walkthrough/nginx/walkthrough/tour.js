@@ -247,17 +247,15 @@
 
         var wrapper = popover.wrapper;
 
-        // If this step has no element (centered popover), force
-        // viewport-center positioning. Driver.js uses position:
-        // relative with inset, which places it in document flow.
+        // Force viewport-center for steps with no element.
+        // Apply to .driver-popover directly (not wrapper, which may
+        // be a child). CSS !important overrides inline styles.
         var stepDef = steps[currentStep];
-        if (stepDef && !stepDef.element) {
-            wrapper.style.position = "fixed";
-            wrapper.style.inset = "auto";
-            wrapper.style.top = "50%";
-            wrapper.style.left = "50%";
-            wrapper.style.transform = "translate(-50%, -50%)";
-            wrapper.style.zIndex = "100001";
+        var popoverEl = document.querySelector(".driver-popover");
+        if (stepDef && !stepDef.element && popoverEl) {
+            popoverEl.classList.add("wt-centered-popover");
+        } else if (popoverEl) {
+            popoverEl.classList.remove("wt-centered-popover");
         }
 
         // Resolve dynamic descriptions at render time
@@ -507,23 +505,24 @@
             },
         },
 
-        // Step 1 — Cluster Navigator panel (centered popover)
+        // Step 1 — Cluster Navigator panel
         //
-        // Use a centered popover to avoid the highlight going off
-        // the top of the screen on smaller viewports.
+        // The ClusterNavigator is the first flex child inside the
+        // mainLayoutBody.
         {
+            element: ".MuiAppBar-root ~ div > div:first-child",
             popover: {
                 title: "The Navigator",
                 description:
-                    "The panel on the left is the <strong>navigator</strong>. " +
-                    "It organizes your PostgreSQL servers into groups and " +
-                    "clusters. The demo includes a <strong>Demo Cluster</strong> " +
-                    "with a <strong>demo-ecommerce</strong> server.<br><br>" +
+                    "The navigator organizes your PostgreSQL servers into " +
+                    "groups and clusters. The demo environment includes a " +
+                    "<strong>Demo Cluster</strong> with a " +
+                    "<strong>demo-ecommerce</strong> server.<br><br>" +
                     "Click any server to view its dashboard. Click the " +
                     "estate summary row at the top to see an overview of " +
                     "all servers.",
-                side: "over",
-                align: "center",
+                side: "right",
+                align: "start",
             },
             onHighlightStarted: function () {
                 expandFirstCluster();
@@ -626,8 +625,14 @@
                     "detailed metric charts: system resources, " +
                     "PostgreSQL performance, WAL replication status, " +
                     "database summaries, and top queries.",
-                side: "top",
+                side: "bottom",
                 align: "start",
+            },
+            onHighlightStarted: function () {
+                var el = document.querySelector('[aria-label="Collapse Monitoring section"]');
+                if (el) {
+                    el.scrollIntoView({ behavior: "smooth", block: "start" });
+                }
             },
         },
 
@@ -645,8 +650,14 @@
                     "utilization, disk I/O, and network throughput. " +
                     "Each chart tracks real-time metrics collected from " +
                     "the server.",
-                side: "top",
+                side: "bottom",
                 align: "start",
+            },
+            onHighlightStarted: function () {
+                var el = document.querySelector('[aria-label="Collapse System Resources section"]');
+                if (el) {
+                    el.scrollIntoView({ behavior: "smooth", block: "start" });
+                }
             },
         },
 
@@ -662,8 +673,14 @@
                     "The top queries section shows the most resource-intensive " +
                     "queries on this server, ranked by total execution time. " +
                     "Click any query to see its full text and execution plan.",
-                side: "top",
+                side: "bottom",
                 align: "start",
+            },
+            onHighlightStarted: function () {
+                var el = document.querySelector('[aria-label="Collapse Top Queries section"]');
+                if (el) {
+                    el.scrollIntoView({ behavior: "smooth", block: "start" });
+                }
             },
         },
 
@@ -680,8 +697,14 @@
                     "this server with key metrics. Click a database card to " +
                     "drill down into table sizes, index usage, cache hit " +
                     "ratios, and more.",
-                side: "top",
+                side: "bottom",
                 align: "start",
+            },
+            onHighlightStarted: function () {
+                var el = document.querySelector('[aria-label="Collapse Database Summaries section"]');
+                if (el) {
+                    el.scrollIntoView({ behavior: "smooth", block: "start" });
+                }
             },
         },
 
@@ -703,6 +726,9 @@
                 side: "over",
                 align: "center",
             },
+            onHighlightStarted: function () {
+                window.scrollTo({ top: 0, behavior: "smooth" });
+            },
         },
 
         // Step 9 — Full Server Analysis button
@@ -721,6 +747,12 @@
                 ),
                 side: "bottom",
                 align: "start",
+            },
+            onHighlightStarted: function () {
+                var el = document.querySelector('[aria-label="Run full analysis"]');
+                if (el) {
+                    el.scrollIntoView({ behavior: "smooth", block: "center" });
+                }
             },
         },
 

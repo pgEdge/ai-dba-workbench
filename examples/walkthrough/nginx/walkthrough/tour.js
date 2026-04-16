@@ -1611,9 +1611,23 @@
 
                     // Going back from Create Blackout Schedule (28)
                     // to Blackout Manager (27) — close everything and
-                    // let step 27 rebuild from scratch.
+                    // Going back from Create Blackout Schedule (28) to
+                    // Blackout Manager (27) — click Cancel on the schedule
+                    // form only, leaving the blackout manager dialog open.
                     if (currentStep === 28) {
-                        closeAnyDialog();
+                        var schDlg = document.querySelectorAll(".MuiDialog-root");
+                        // The schedule form is the LAST dialog; find its Cancel
+                        if (schDlg.length > 0) {
+                            var lastDlg = schDlg[schDlg.length - 1];
+                            var cbtns = lastDlg.querySelectorAll("button");
+                            for (var ci = 0; ci < cbtns.length; ci++) {
+                                var ctxt = (cbtns[ci].innerText || cbtns[ci].textContent || "").trim();
+                                if (ctxt === "Cancel") {
+                                    cbtns[ci].click();
+                                    break;
+                                }
+                            }
+                        }
                     }
 
                     // Going back from User Management (29) to Create

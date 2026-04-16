@@ -594,19 +594,13 @@
     function reHighlightCurrentStep(delayMs) {
         if (reHighlighting) { return; }
         reHighlighting = true;
-        // Hide the popover during the transition to prevent
-        // the visual flicker of it appearing in the wrong place
-        // then jumping to the correct position.
-        var pop = document.querySelector(".driver-popover");
-        if (pop) { pop.style.visibility = "hidden"; }
+        document.body.classList.add("wt-transitioning");
         setTimeout(function () {
             if (driverInstance) {
                 driverInstance.moveTo(currentStep);
             }
             // Show the popover after re-evaluation
-            var pop2 = document.querySelector(".driver-popover");
-            if (pop2) { pop2.style.visibility = "visible"; }
-            // Reset guard after a tick so future calls work
+            document.body.classList.remove("wt-transitioning");
             setTimeout(function () { reHighlighting = false; }, 100);
         }, delayMs || 500);
     }
@@ -1365,10 +1359,11 @@
 
         // Step 28 — Create Blackout Schedule
         //
-        // Click "New Scheduled Blackout", then re-highlight to
-        // target the new dialog.
+        // Click "New Scheduled Blackout" to open a second dialog.
+        // Tag the new dialog with an id so we target it (not the
+        // first/smaller blackout manager dialog behind it).
         {
-            element: '[role="dialog"]',
+            element: '#wt-schedule-dialog',
             popover: {
                 title: "Create Blackout Schedule",
                 description:
@@ -1394,7 +1389,15 @@
                     }
                     if (target) {
                         target.click();
-                        reHighlightCurrentStep(500);
+                        // Wait for the new dialog, then tag it
+                        setTimeout(function () {
+                            // The newest dialog is the last one in the DOM
+                            var dialogs = document.querySelectorAll('[role="dialog"]');
+                            if (dialogs.length > 0) {
+                                dialogs[dialogs.length - 1].id = "wt-schedule-dialog";
+                            }
+                            reHighlightCurrentStep(200);
+                        }, 400);
                     }
                 }
             },
@@ -1572,13 +1575,13 @@
                 }
                 // Re-tag dynamic elements before every step.
                 tagDynamicElements();
-                // Hide the popover during transition for steps that
-                // will re-highlight (prevents flicker).
+                // Hide popover during transition for steps that will
+                // re-highlight. Uses a body class so it persists
+                // even when Driver.js recreates the popover element.
                 var nextIdx = currentStep + 1;
                 if (isAdminStep(nextIdx) || nextIdx === 25 ||
                     isBlackoutStep(nextIdx)) {
-                    var pop = document.querySelector(".driver-popover");
-                    if (pop) { pop.style.visibility = "hidden"; }
+                    document.body.classList.add("wt-transitioning");
                 }
                 if (driverInstance) {
                     driverInstance.moveNext();

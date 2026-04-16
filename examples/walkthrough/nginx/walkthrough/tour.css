@@ -22,6 +22,13 @@
     z-index: 100001 !important;
 }
 
+/* Hide the Driver.js popover during step transitions that
+   involve re-highlighting (dialog steps). Prevents the
+   popover from appearing at the wrong position then jumping. */
+body.wt-transitioning .driver-popover {
+    visibility: hidden !important;
+}
+
 /* Hide the Driver.js grey overlay when the body has this class.
    Added/removed by tour.js for steps that show dialogs. */
 body.wt-no-overlay .driver-overlay {

@@ -1136,8 +1136,6 @@
         },
 
         // Step 19 — Run in Database button (in chat)
-        //
-        // Highlight the chat panel again with a different description.
         {
             element: '[aria-label="AI Chat Panel"]',
             popover: {
@@ -1150,12 +1148,12 @@
                 side: "left",
                 align: "center",
             },
+            onHighlightStarted: function () {
+                openChatPanel();
+            },
         },
 
         // Step 20 — Chat input field
-        //
-        // The ChatInput renders a TextField with
-        // aria-label="Chat message input".
         {
             element: '[aria-label="Chat message input"]',
             popover: {
@@ -1167,10 +1165,11 @@
                 side: "top",
                 align: "start",
             },
-            onDeselected: function () {
-                // Close the chat panel when leaving the Ellie section
-                closeChatPanel();
+            onHighlightStarted: function () {
+                openChatPanel();
             },
+            // Note: chat is closed by step 21's onHighlightStarted,
+            // not here, so backward navigation can reopen it.
         },
 
         // -------------------------------------------------------------------

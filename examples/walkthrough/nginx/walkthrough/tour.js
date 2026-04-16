@@ -594,10 +594,18 @@
     function reHighlightCurrentStep(delayMs) {
         if (reHighlighting) { return; }
         reHighlighting = true;
+        // Hide the popover during the transition to prevent
+        // the visual flicker of it appearing in the wrong place
+        // then jumping to the correct position.
+        var pop = document.querySelector(".driver-popover");
+        if (pop) { pop.style.visibility = "hidden"; }
         setTimeout(function () {
             if (driverInstance) {
                 driverInstance.moveTo(currentStep);
             }
+            // Show the popover after re-evaluation
+            var pop2 = document.querySelector(".driver-popover");
+            if (pop2) { pop2.style.visibility = "visible"; }
             // Reset guard after a tick so future calls work
             setTimeout(function () { reHighlighting = false; }, 100);
         }, delayMs || 500);
@@ -1302,9 +1310,10 @@
                     }
                 }
             },
-            onDeselected: function () {
-                closeAnyDialog();
-            },
+            // Note: no onDeselected here — closing the dialog is
+            // handled by step 26's onHighlightStarted. We can't
+            // close in onDeselected because reHighlightCurrentStep
+            // triggers onDeselected on the same step.
         },
 
         // -------------------------------------------------------------------
@@ -1390,6 +1399,8 @@
                 }
             },
             onDeselected: function () {
+                // Skip cleanup during re-highlight (moveTo same step)
+                if (reHighlighting) { return; }
                 var dialog = document.querySelector(".MuiDialog-root");
                 if (dialog) {
                     var btns = dialog.querySelectorAll("button");
@@ -1560,9 +1571,15 @@
                     return;
                 }
                 // Re-tag dynamic elements before every step.
-                // React re-renders replace DOM elements, losing
-                // any data-wt attributes we set earlier.
                 tagDynamicElements();
+                // Hide the popover during transition for steps that
+                // will re-highlight (prevents flicker).
+                var nextIdx = currentStep + 1;
+                if (isAdminStep(nextIdx) || nextIdx === 25 ||
+                    isBlackoutStep(nextIdx)) {
+                    var pop = document.querySelector(".driver-popover");
+                    if (pop) { pop.style.visibility = "hidden"; }
+                }
                 if (driverInstance) {
                     driverInstance.moveNext();
                 }

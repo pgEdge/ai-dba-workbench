@@ -38,6 +38,7 @@
     var driverInstance = null;
     var resumePill = null;
     var destroying = false;
+    var reHighlighting = false; // guard for moveTo re-evaluation
 
     // -----------------------------------------------------------------------
     // Utility helpers
@@ -328,8 +329,12 @@
             popoverEl.classList.remove("wt-bottom-left-popover");
             if (stepDef && stepDef._bottomLeft) {
                 popoverEl.classList.add("wt-bottom-left-popover");
-            } else if (stepDef && !stepDef.element) {
-                popoverEl.classList.add("wt-centered-popover");
+                document.body.classList.add("wt-no-overlay");
+            } else {
+                document.body.classList.remove("wt-no-overlay");
+                if (stepDef && !stepDef.element) {
+                    popoverEl.classList.add("wt-centered-popover");
+                }
             }
         }
 
@@ -577,6 +582,25 @@
         // Also close dashboard overlays (query detail, etc.)
         var overlayClose = document.querySelector('[aria-label="Close overlay"]');
         if (overlayClose) { overlayClose.click(); }
+    }
+
+    /**
+     * Re-evaluate the current step after a dialog opens.
+     * Driver.js evaluates the element selector when the step
+     * first activates — if the dialog isn't open yet, the
+     * element isn't found. This calls moveTo(currentStep) to
+     * re-evaluate, with a guard to prevent infinite loops.
+     */
+    function reHighlightCurrentStep(delayMs) {
+        if (reHighlighting) { return; }
+        reHighlighting = true;
+        setTimeout(function () {
+            if (driverInstance) {
+                driverInstance.moveTo(currentStep);
+            }
+            // Reset guard after a tick so future calls work
+            setTimeout(function () { reHighlighting = false; }, 100);
+        }, delayMs || 500);
     }
 
     // -----------------------------------------------------------------------
@@ -1143,112 +1167,98 @@
 
         // Step 21 — Admin panel: Probe Defaults
         //
-        // The AdminPanel is a fullScreen Dialog. Open it and navigate
-        // to the Probe Defaults page. No element highlight — the
-        // popover sits bottom-left to avoid covering the dialog.
-        // A teal outline highlights the active nav item.
+        // Open admin, click nav item, then re-highlight so Driver.js
+        // targets the selected nav item.
         {
-            _bottomLeft: true,
+            element: ".MuiListItemButton-root.Mui-selected",
             popover: {
                 title: "Probe Defaults",
                 description:
-                    "Look at <strong>Probe Defaults</strong> in the left " +
-                    "sidebar. This page controls which metrics are " +
-                    "collected and how frequently. Each probe can be enabled, " +
-                    "disabled, or have its polling interval adjusted.",
-                side: "over",
-                align: "center",
+                    "This page controls which metrics are collected and " +
+                    "how frequently. Each probe can be enabled, disabled, " +
+                    "or have its polling interval adjusted.",
+                side: "right",
+                align: "start",
             },
             onHighlightStarted: function () {
+                if (reHighlighting) { return; }
                 closeChatPanel();
                 closeAnyDialog();
                 setTimeout(function () {
                     openAdminPanel();
                     setTimeout(function () {
                         clickAdminNavItem("Probe Defaults");
-                        highlightAdminNavItem("Probe Defaults");
+                        reHighlightCurrentStep(300);
                     }, 400);
                 }, 300);
-            },
-            onDeselected: function () {
-                clearAdminNavHighlight();
             },
         },
 
         // Step 22 — Admin panel: Alert Defaults
         {
-            _bottomLeft: true,
+            element: ".MuiListItemButton-root.Mui-selected",
             popover: {
                 title: "Alert Defaults",
                 description:
-                    "Look at <strong>Alert Defaults</strong> in the left " +
-                    "sidebar. These define the built-in thresholds for each " +
+                    "These define the built-in thresholds for each " +
                     "metric. When a metric crosses its threshold, the system " +
                     "fires an alert. You can customize thresholds and " +
                     "severities here.",
-                side: "over",
-                align: "center",
+                side: "right",
+                align: "start",
             },
             onHighlightStarted: function () {
+                if (reHighlighting) { return; }
                 openAdminPanel();
                 setTimeout(function () {
                     clickAdminNavItem("Alert Defaults");
-                    highlightAdminNavItem("Alert Defaults");
+                    reHighlightCurrentStep(300);
                 }, 400);
-            },
-            onDeselected: function () {
-                clearAdminNavHighlight();
             },
         },
 
         // Step 23 — Admin panel: Email Channels
         {
-            _bottomLeft: true,
+            element: ".MuiListItemButton-root.Mui-selected",
             popover: {
                 title: "Email Notification Channels",
                 description:
-                    "Look at <strong>Email Channels</strong> in the left " +
-                    "sidebar. Notification channels control where alerts " +
-                    "are delivered. Email channels send formatted alert " +
-                    "messages to the configured recipients. You can also " +
+                    "Notification channels control where alerts are " +
+                    "delivered. Email channels send formatted alert " +
+                    "messages to configured recipients. You can also " +
                     "set up Slack, Mattermost, and webhook channels.",
-                side: "over",
-                align: "center",
+                side: "right",
+                align: "start",
             },
             onHighlightStarted: function () {
+                if (reHighlighting) { return; }
                 openAdminPanel();
                 setTimeout(function () {
                     clickAdminNavItem("Email Channels");
-                    highlightAdminNavItem("Email Channels");
+                    reHighlightCurrentStep(300);
                 }, 400);
-            },
-            onDeselected: function () {
-                clearAdminNavHighlight();
             },
         },
 
         // Step 24 — Admin panel: Slack Channels
         {
-            _bottomLeft: true,
+            element: ".MuiListItemButton-root.Mui-selected",
             popover: {
                 title: "Slack Channels",
                 description:
-                    "Look at <strong>Slack Channels</strong> in the left " +
-                    "sidebar. Slack channels deliver alert notifications " +
-                    "to your team's Slack workspace. Configure the webhook " +
-                    "URL and choose which alert severities trigger a message.",
-                side: "over",
-                align: "center",
+                    "Slack channels deliver alert notifications to your " +
+                    "team's workspace. Configure the webhook URL and choose " +
+                    "which alert severities trigger a message.",
+                side: "right",
+                align: "start",
             },
             onHighlightStarted: function () {
+                if (reHighlighting) { return; }
                 openAdminPanel();
                 setTimeout(function () {
                     clickAdminNavItem("Slack Channels");
-                    highlightAdminNavItem("Slack Channels");
+                    reHighlightCurrentStep(300);
                 }, 400);
-            },
-            onDeselected: function () {
-                clearAdminNavHighlight();
             },
         },
 
@@ -1261,7 +1271,7 @@
         // action buttons specifically (not a group-level button).
         // A teal outline highlights the dialog's tab bar.
         {
-            _bottomLeft: true,
+            element: '[role="tablist"]',
             popover: {
                 title: "Server Settings",
                 description:
@@ -1269,12 +1279,12 @@
                     "probe collection intervals, and notification channels. " +
                     "Changes here override the global defaults shown in the " +
                     "administration panel.",
-                side: "over",
-                align: "center",
+                side: "bottom",
+                align: "start",
             },
             onHighlightStarted: function () {
+                if (reHighlighting) { return; }
                 closeAdminPanel();
-                // Find the server-item-row's action buttons specifically
                 var serverRow = document.querySelector(".server-item-row");
                 if (serverRow) {
                     var actionBtns = serverRow.querySelector(".action-buttons");
@@ -1284,21 +1294,15 @@
                             ".MuiIconButton-root"
                         );
                         if (settingsBtn) {
-                            setTimeout(function () { settingsBtn.click(); }, 500);
+                            setTimeout(function () {
+                                settingsBtn.click();
+                                reHighlightCurrentStep(500);
+                            }, 500);
                         }
                     }
                 }
-                // Highlight the dialog's tab bar once it opens
-                setTimeout(function () {
-                    var tabBar = document.querySelector('[role="tablist"]');
-                    if (tabBar) {
-                        tabBar.style.outline = "2px solid #0d9488";
-                        tabBar.style.outlineOffset = "2px";
-                    }
-                }, 800);
             },
             onDeselected: function () {
-                clearAdminNavHighlight();
                 closeAnyDialog();
             },
         },
@@ -1332,29 +1336,30 @@
 
         // Step 27 — Blackout Management dialog
         //
-        // Open the blackout dialog. No element highlight — the
-        // popover sits bottom-left to not cover the dialog.
+        // Open the blackout dialog, then re-highlight to target it.
         {
-            _bottomLeft: true,
+            element: '[role="dialog"]',
             popover: {
                 title: "Blackout Manager",
                 description:
                     "View active and scheduled blackouts. Use the buttons " +
                     "at the bottom to create one-time or recurring blackouts.",
-                side: "over",
-                align: "center",
+                side: "right",
+                align: "start",
             },
             onHighlightStarted: function () {
+                if (reHighlighting) { return; }
                 openBlackoutDialog();
+                reHighlightCurrentStep(500);
             },
         },
 
         // Step 28 — Create Blackout Schedule
         //
-        // Click "New Scheduled Blackout" inside the dialog.
-        // Popover sits bottom-left to not cover the form.
+        // Click "New Scheduled Blackout", then re-highlight to
+        // target the new dialog.
         {
-            _bottomLeft: true,
+            element: '[role="dialog"]',
             popover: {
                 title: "Create Blackout Schedule",
                 description:
@@ -1362,11 +1367,11 @@
                     "expressions. Each schedule specifies when alerts " +
                     "should be suppressed, for how long, and which " +
                     "servers are affected.",
-                side: "over",
-                align: "center",
+                side: "right",
+                align: "start",
             },
             onHighlightStarted: function () {
-                // Find and click "New Scheduled Blackout" button.
+                if (reHighlighting) { return; }
                 var dialog = document.querySelector(".MuiDialog-root");
                 if (dialog) {
                     var target = null;
@@ -1379,13 +1384,12 @@
                         }
                     }
                     if (target) {
-                        setTimeout(function () { target.click(); }, 300);
+                        target.click();
+                        reHighlightCurrentStep(500);
                     }
                 }
             },
             onDeselected: function () {
-                // Click Cancel on the Create Blackout Schedule form,
-                // then close any remaining dialogs
                 var dialog = document.querySelector(".MuiDialog-root");
                 if (dialog) {
                     var btns = dialog.querySelectorAll("button");
@@ -1407,23 +1411,24 @@
 
         // Step 29 — Admin: Users
         {
-            _bottomLeft: true,
+            element: ".MuiListItemButton-root.Mui-selected",
             popover: {
                 title: "User Management",
                 description:
-                    "Look at <strong>Users</strong> in the left sidebar. " +
-                    "This page lets administrators create and manage " +
-                    "user accounts. Each user can be assigned to groups that " +
-                    "control their access to connections and features.",
-                side: "over",
-                align: "center",
+                    "Create and manage user accounts. Each user can be " +
+                    "assigned to groups that control their access to " +
+                    "connections and features.",
+                side: "right",
+                align: "start",
             },
             onHighlightStarted: function () {
+                if (reHighlighting) { return; }
                 closeAnyDialog();
                 setTimeout(function () {
                     openAdminPanel();
                     setTimeout(function () {
                         clickAdminNavItem("Users");
+                        reHighlightCurrentStep(300);
                     }, 400);
                 }, 400);
             },
@@ -1431,45 +1436,47 @@
 
         // Step 30 — Admin: Tokens
         {
-            _bottomLeft: true,
+            element: ".MuiListItemButton-root.Mui-selected",
             popover: {
                 title: "API Tokens",
                 description:
-                    "Look at <strong>Tokens</strong> in the left sidebar. " +
                     "Tokens provide programmatic access to the workbench " +
                     "API. Each token has scoped permissions so you can " +
                     "grant exactly the access that automation scripts and " +
                     "integrations need.",
-                side: "over",
-                align: "center",
+                side: "right",
+                align: "start",
             },
             onHighlightStarted: function () {
+                if (reHighlighting) { return; }
                 openAdminPanel();
                 setTimeout(function () {
                     clickAdminNavItem("Tokens");
+                    reHighlightCurrentStep(300);
                 }, 400);
             },
         },
 
         // Step 31 — Admin: AI Memories
         {
-            _bottomLeft: true,
+            element: ".MuiListItemButton-root.Mui-selected",
             popover: {
                 title: "AI Memories",
                 description: aiDesc(
-                    "Look at <strong>Memories</strong> in the left sidebar. " +
                     "AI Memories are facts that Ellie remembers between " +
                     "conversations. She learns about your environment over " +
                     "time: server roles, maintenance windows, team " +
-                    "preferences. You can review and edit these memories here."
+                    "preferences. Review and edit them here."
                 ),
-                side: "over",
-                align: "center",
+                side: "right",
+                align: "start",
             },
             onHighlightStarted: function () {
+                if (reHighlighting) { return; }
                 openAdminPanel();
                 setTimeout(function () {
                     clickAdminNavItem("Memories");
+                    reHighlightCurrentStep(300);
                 }, 400);
             },
         },

@@ -11,16 +11,19 @@ This walkthrough launches the AI DBA Workbench with a
 pre-seeded demo database and guides you through every
 feature. One command gets you from zero to a working
 monitoring dashboard in under three minutes. An in-browser
-tour walks you through 24 steps covering monitoring, AI
-analysis, administration, and alerting in 15 to 18 minutes.
+tour walks you through 33 steps covering monitoring, AI
+analysis, administration, alerting, and blackout scheduling
+in 15 to 20 minutes.
 
-At the end of the tour, you can connect your own PostgreSQL
-database and keep the workbench running. You can also clean
-up all containers and data with a single command.
+A database with known problems and several hours of
+pre-seeded runtime metrics are included for illustrative
+purposes. At the end of the tour, you can connect your own
+PostgreSQL database and keep the workbench running.
 
 ## Table of Contents
 
 - [Quick Start](#quick-start)
+- [Running from a Clone](#running-from-a-clone)
 - [Prerequisites](#prerequisites)
 - [What You Will Experience](#what-you-will-experience)
 - [Login Credentials](#login-credentials)
@@ -37,8 +40,20 @@ Git Bash (Windows).
 
 ```bash
 curl -fsSL \
-  https://raw.githubusercontent.com/pgEdge/ai-dba-workbench/main/examples/walkthrough/install.sh \
+  https://raw.githubusercontent.com/AntTheLimey/ai-dba-walkthrough/main/install.sh \
   | bash
+```
+
+## Running from a Clone
+
+You can also clone this repository and run the walkthrough
+directly. This is useful for development or when you want
+to modify the tour.
+
+```bash
+git clone https://github.com/AntTheLimey/ai-dba-walkthrough.git
+cd ai-dba-walkthrough
+bash guide.sh
 ```
 
 ## Prerequisites
@@ -54,22 +69,26 @@ The walkthrough requires the following tools and resources:
 - Approximately 4 GB of available RAM allows Docker to run
   all services.
 - Ports 3000 and 8080 are used by default; the setup script
-  finds available alternatives automatically if they are busy.
+  finds available alternatives automatically if they are
+  busy.
 - An API key for Anthropic, OpenAI, or Google Gemini is
-  optional; the script prompts you during setup. Ollama
-  works locally without a key.
+  optional; the script prompts you during setup. AI features
+  work without a key; you just will not see live AI
+  analysis.
 
 ## What You Will Experience
 
 The walkthrough consists of three phases.
 
 1. Install (terminal, approximately 2-3 minutes): The script
-   downloads files, starts 7 Docker containers, and opens
-   the browser.
-2. Guided Tour (browser, approximately 15-18 minutes): A
-   Driver.js overlay walks you through every feature.
-3. Make It Yours (optional): Add your own database, keep
-   exploring, or clean up all resources.
+   downloads files, pulls pre-built Docker images, starts 7
+   containers, and opens the browser.
+2. Guided Tour (browser, approximately 15-20 minutes): A
+   Driver.js overlay walks you through 33 steps covering
+   every major feature.
+3. Make It Yours (optional): Add your own database using
+   the built-in Add Server dialog, keep exploring the demo,
+   or clean up all resources.
 
 ## Login Credentials
 
@@ -79,30 +98,36 @@ account with the following credentials:
 - Username: `admin`
 - Password: `DemoPass2026`
 
-Enter these credentials on the login page. The guided tour
-starts automatically after you log in.
+The login fields are pre-filled automatically. Click
+Sign In to start the tour.
 
 ## Tour Sections
 
-The in-browser tour covers six sections across 24 steps.
+The in-browser tour covers seven sections.
 
-- Welcome and Login introduces the workbench and
-  authenticates with the demo account.
-- Monitoring Dashboard explores real-time metrics, charts,
-  and server health indicators.
-- AI Analysis demonstrates intelligent query analysis and
-  optimization recommendations.
-- Database Administration covers connection management,
-  configuration, and cluster settings.
-- Alerting and Notifications walks through threshold
-  configuration, alert history, and blackout windows.
-- Make It Yours offers the option to add a real database
-  or clean up the demo environment.
+- **The Big Picture** introduces the estate dashboard,
+  navigator, and server selection.
+- **Diagnosing a Problem** explores the AI overview, event
+  timeline, server metrics, active alerts, and AI alert
+  analysis.
+- **Ask Ellie** demonstrates the AI chat assistant with
+  natural language queries, SQL execution, and follow-up
+  questions.
+- **How It's Configured** covers probe defaults, alert
+  rules, email and Slack notification channels.
+- **Server Settings** shows per-server configuration for
+  alert overrides, probe intervals, and notification
+  channels.
+- **Blackout Windows** walks through blackout scheduling
+  with one-time and recurring maintenance windows.
+- **Who Can Access What** covers user management, API
+  tokens, and AI memories.
 
 ## Cleaning Up
 
-The following commands stop all containers and remove the
-walkthrough data from your machine.
+Run `guide.sh` again and choose the clean-up option. Or
+run the following commands to stop all containers and
+remove the walkthrough data.
 
 ```bash
 cd pgedge-workbench-walkthrough/examples/walkthrough
@@ -117,41 +142,40 @@ This section explains how to modify the guided tour.
 
 ### Editing Tour Steps
 
-The Driver.js tour definition lives in the `nginx/walkthrough/`
-directory. Edit `tour.js` to add, remove, or reorder steps.
-Custom styles for the tour overlay live in `tour.css`.
+The Driver.js tour definition lives in the
+`nginx/walkthrough/` directory. Edit `tour.js` to add,
+remove, or reorder steps. Custom styles for the tour
+overlay live in `tour.css`.
 
 ### Regenerating the Datastore Seed
 
 The seed directory contains tiered snapshot files
 (`datastore-seed-4h.sql`, `datastore-seed-8h.sql`,
 `datastore-seed-16h.sql`, `datastore-seed-24h.sql`) with
-collector metrics and alert history. To regenerate the seed
-data, run the full stack for the desired duration and then
-dump the datastore with `pg_dump`.
+collector metrics and alert history. To regenerate the
+seed data, run the full stack for the desired duration
+and then dump the datastore with `pg_dump`.
 
 ### Rebasing Timestamps
 
-The `seed/rebase-timestamps.sh` script shifts all pre-baked
-metric timestamps so the data appears to have been collected
-recently. The `guide.sh` script runs the rebase automatically
-after starting the stack.
+The `seed/rebase-timestamps.sh` script shifts all
+pre-baked metric timestamps so the data appears to have
+been collected recently. The `guide.sh` script runs the
+rebase automatically after starting the stack.
 
 ### LLM Configuration
 
-The `guide.sh` script prompts for an LLM provider and API
-key during initial setup. It supports Anthropic, OpenAI,
-Google Gemini, and Ollama. Run `guide.sh` again to change
+The `guide.sh` script prompts for an LLM provider and
+API key during initial setup. It supports Anthropic,
+OpenAI, and Google Gemini. Run `guide.sh` again to change
 the LLM configuration on an existing stack.
 
 ## File Structure
 
-The walkthrough directory contains the following files.
-
 ```text
-examples/walkthrough/
 ├── README.md
 ├── docker-compose.yml
+├── guide.sh
 ├── install.sh
 ├── runner.sh
 ├── setup.sh
@@ -168,8 +192,6 @@ examples/walkthrough/
 │       ├── loader.js
 │       ├── tour.css
 │       └── tour.js
-├── secret/
-│   └── .gitkeep
 └── seed/
     ├── datastore-seed-4h.sql
     ├── datastore-seed-8h.sql
@@ -198,6 +220,8 @@ to allocate at least 4 GB.
 
 ### LLM Provider Issues
 
-An LLM API key is not required to complete the tour. Run
-`guide.sh` again and choose option 4 to change the LLM
-configuration on a running stack.
+An LLM API key is not required to complete the tour. AI
+features like Ask Ellie and alert analysis will be
+unavailable without a key. Run `guide.sh` again and
+choose option 4 to change the LLM configuration on a
+running stack.

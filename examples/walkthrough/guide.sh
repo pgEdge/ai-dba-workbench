@@ -332,13 +332,30 @@ echo ""
 
 # ── Build and start the stack ────────────────────────────────────────
 
-start_spinner "Building and starting AI DBA Workbench..."
 # Start everything EXCEPT collector and alerter. The collector would
 # add fresh data that pollutes the timestamp rebase calculation, and
 # the alerter would clear pre-baked alerts before fresh evidence exists.
 # Both are started later after the rebase and password re-encryption.
-(cd "$SCRIPT_DIR" && docker compose up -d --scale collector=0 --scale alerter=0 2>"$SCRIPT_DIR/build.log")
-stop_spinner
+
+explain "Pulling Docker images and starting containers..."
+explain "(This may take a few minutes on first run)"
+echo ""
+
+(cd "$SCRIPT_DIR" && docker compose up -d --scale collector=0 --scale alerter=0 2>&1) | while IFS= read -r line; do
+  # Show image pull progress and container status
+  case "$line" in
+    *Pulling*|*Pulled*|*Downloaded*|*Waiting*|*Started*|*Created*|*Healthy*|*Error*|*error*)
+      explain "  $line"
+      ;;
+  esac
+done
+
+# Check if compose actually succeeded
+if ! docker ps --filter "name=wt-" --format "{{.Names}}" 2>/dev/null | grep -q "wt-"; then
+  error "Docker containers failed to start."
+  warn "Check build.log for details: cat $SCRIPT_DIR/build.log"
+  exit 1
+fi
 
 info "Docker containers started."
 echo ""

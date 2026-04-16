@@ -236,5 +236,20 @@ ANALYZE inventory;
 --   SELECT pg_reload_conf();
 -- This lets users follow the AI's advice and actually fix the problem.
 
+-- -----------------------------------------------------------------------
+-- Seed pg_stat_statements with a heavy SELECT query
+-- -----------------------------------------------------------------------
+-- Run an expensive query multiple times so it appears as the top query
+-- in the workbench dashboard. This uses the deliberately-missing index
+-- on orders.customer_id, producing a sequential scan visible in the
+-- query plan.
+
+SELECT c.name, COUNT(o.id), SUM(o.total_amount)
+FROM orders o JOIN customers c ON o.customer_id = c.id
+WHERE c.region = 'west'
+GROUP BY c.name
+ORDER BY SUM(o.total_amount) DESC
+LIMIT 20;
+
 ALTER SYSTEM SET autovacuum = off;
 SELECT pg_reload_conf();

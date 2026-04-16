@@ -577,6 +577,16 @@
                 d.querySelector('[data-testid="CloseIcon"]')?.closest("button");
             if (closeBtn) {
                 closeBtn.click();
+                return;
+            }
+            // Fallback: look for a Cancel text button (e.g., blackout schedule form)
+            var btns = d.querySelectorAll("button");
+            for (var i = 0; i < btns.length; i++) {
+                var txt = (btns[i].innerText || btns[i].textContent || "").trim();
+                if (txt === "Cancel") {
+                    btns[i].click();
+                    return;
+                }
             }
         });
         // Also close dashboard overlays (query detail, etc.)
@@ -1389,12 +1399,13 @@
                     }
                     if (target) {
                         target.click();
-                        // Wait for the new dialog, then tag it
+                        // Wait for the new dialog, then tag it.
+                        // Tag the LAST MuiDialog-paper (the schedule form).
+                        // The blackout manager paper is behind it.
                         setTimeout(function () {
-                            // The newest dialog is the last one in the DOM
-                            var dialogs = document.querySelectorAll('[role="dialog"]');
-                            if (dialogs.length > 0) {
-                                dialogs[dialogs.length - 1].id = "wt-schedule-dialog";
+                            var papers = document.querySelectorAll(".MuiDialog-paper");
+                            if (papers.length > 0) {
+                                papers[papers.length - 1].id = "wt-schedule-dialog";
                             }
                             reHighlightCurrentStep(200);
                         }, 400);

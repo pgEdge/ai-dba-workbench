@@ -1617,17 +1617,17 @@
                     }
 
                     // Going back from User Management (29) to Create
-                    // Blackout Schedule (28) — close admin panel,
-                    // re-open blackout dialog, click New Scheduled
-                    // Blackout.
+                    // Blackout Schedule (28) — close admin, rebuild
+                    // the blackout schedule state, then navigate.
+                    // Must be async so dialogs open before movePrevious.
                     if (currentStep === 29) {
-                        closeAdminPanel();
+                        document.body.classList.add("wt-transitioning");
+                        closeAnyDialog();
                         setTimeout(function () {
                             openBlackoutDialog();
                             setTimeout(function () {
-                                var dlg = document.querySelector(
-                                    ".MuiDialog-root"
-                                );
+                                // Click "New Scheduled Blackout"
+                                var dlg = document.querySelector(".MuiDialog-root");
                                 if (dlg) {
                                     var dbtns = dlg.querySelectorAll("button");
                                     for (var j = 0; j < dbtns.length; j++) {
@@ -1639,8 +1639,21 @@
                                         }
                                     }
                                 }
+                                // Tag the schedule dialog and navigate
+                                setTimeout(function () {
+                                    var papers = document.querySelectorAll(".MuiDialog-paper");
+                                    if (papers.length > 0) {
+                                        papers[papers.length - 1].id = "wt-schedule-dialog";
+                                    }
+                                    tagDynamicElements();
+                                    if (driverInstance) {
+                                        driverInstance.movePrevious();
+                                    }
+                                    document.body.classList.remove("wt-transitioning");
+                                }, 400);
                             }, 500);
                         }, 400);
+                        return; // Don't fall through to movePrevious below
                     }
 
                     // Close dialogs when navigating backward from a

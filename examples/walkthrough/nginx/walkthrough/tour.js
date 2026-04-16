@@ -1317,7 +1317,20 @@
                 }
             },
             onDeselected: function () {
-                closeAnyDialog();
+                // Click Cancel on the Create Blackout Schedule form,
+                // then close any remaining dialogs
+                var dialog = document.querySelector(".MuiDialog-root");
+                if (dialog) {
+                    var btns = dialog.querySelectorAll("button");
+                    for (var i = 0; i < btns.length; i++) {
+                        var txt = (btns[i].innerText || btns[i].textContent || "").trim();
+                        if (txt === "Cancel") {
+                            btns[i].click();
+                            break;
+                        }
+                    }
+                }
+                setTimeout(function () { closeAnyDialog(); }, 300);
             },
         },
 

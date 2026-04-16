@@ -1601,10 +1601,9 @@
             onPrevClick: function () {
                 var prevStep = currentStep - 1;
                 if (prevStep >= 0) {
-                    // Issue 1: Going back from Meet Ellie (17) to
-                    // Query Details (16) — close the query detail
-                    // overlay so step 16 can re-open it cleanly.
-                    if (currentStep === 17) {
+                    // Close query detail overlay when going back from
+                    // Query Details (16) or Meet Ellie (17)
+                    if (currentStep === 16 || currentStep === 17) {
                         var overlayClose = document.querySelector(
                             '[aria-label="Close overlay"]'
                         );
@@ -1612,21 +1611,10 @@
                     }
 
                     // Going back from Create Blackout Schedule (28)
-                    // to Blackout Manager (27) — click Cancel on the
-                    // schedule form; the blackout dialog stays open.
+                    // to Blackout Manager (27) — close everything and
+                    // let step 27 rebuild from scratch.
                     if (currentStep === 28) {
-                        var dialog = document.querySelector(".MuiDialog-root");
-                        if (dialog) {
-                            var btns = dialog.querySelectorAll("button");
-                            for (var i = 0; i < btns.length; i++) {
-                                var txt = (btns[i].innerText ||
-                                    btns[i].textContent || "").trim();
-                                if (txt === "Cancel") {
-                                    btns[i].click();
-                                    break;
-                                }
-                            }
-                        }
+                        closeAnyDialog();
                     }
 
                     // Going back from User Management (29) to Create
@@ -1670,6 +1658,12 @@
                     }
                 }
                 tagDynamicElements();
+                // Hide popover during backward transitions to
+                // dialog steps (same as forward transitions)
+                if (isAdminStep(prevStep) || prevStep === 25 ||
+                    isBlackoutStep(prevStep)) {
+                    document.body.classList.add("wt-transitioning");
+                }
                 if (driverInstance) {
                     driverInstance.movePrevious();
                 }

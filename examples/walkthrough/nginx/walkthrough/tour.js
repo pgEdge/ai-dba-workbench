@@ -492,6 +492,45 @@
         }
     }
 
+    /** Find an admin sidebar nav item by its label text. */
+    function findAdminNavItem(label) {
+        var items = document.querySelectorAll(".MuiListItemButton-root");
+        for (var i = 0; i < items.length; i++) {
+            if ((items[i].textContent || "").trim() === label) {
+                return items[i];
+            }
+        }
+        return null;
+    }
+
+    /** Highlight an admin sidebar nav item with a teal outline. */
+    function highlightAdminNavItem(label) {
+        // Clear any previous highlights
+        var items = document.querySelectorAll(".MuiListItemButton-root");
+        items.forEach(function (item) {
+            item.style.outline = "";
+            item.style.outlineOffset = "";
+        });
+        // Highlight the target
+        var item = findAdminNavItem(label);
+        if (item) {
+            item.style.outline = "2px solid #0d9488";
+            item.style.outlineOffset = "2px";
+            item.style.borderRadius = "4px";
+        }
+    }
+
+    /** Remove highlights from admin nav items and tab bars. */
+    function clearAdminNavHighlight() {
+        var items = document.querySelectorAll(".MuiListItemButton-root");
+        items.forEach(function (item) {
+            item.style.outline = "";
+            item.style.outlineOffset = "";
+        });
+        var tabBar = document.querySelector('[role="tablist"]');
+        if (tabBar) { tabBar.style.outline = ""; }
+    }
+
     /** Open the Ask Ellie chat panel by clicking the FAB. */
     function openChatPanel() {
         var fab = document.querySelector('[aria-label="open chat"]');
@@ -767,10 +806,6 @@
                 side: "left",
                 align: "start",
             },
-            onHighlightStarted: function () {
-                var el = document.querySelector('[aria-label="Server details"]');
-                scrollPanelTo(el);
-            },
         },
 
         // Step 7 — Event Timeline bar
@@ -977,11 +1012,14 @@
             },
         },
 
-        // Step 16 — Query Details (centered popover)
+        // Step 16 — Query Details (bottom-left popover)
         //
         // Click into the first query row in the Top Queries section
         // to show query details. The popover explains what opened.
+        // Uses _bottomLeft to avoid a grey overlay covering the
+        // query detail panel.
         {
+            _bottomLeft: true,
             popover: {
                 title: "Query Details",
                 description:
@@ -1108,6 +1146,7 @@
         // The AdminPanel is a fullScreen Dialog. Open it and navigate
         // to the Probe Defaults page. No element highlight — the
         // popover sits bottom-left to avoid covering the dialog.
+        // A teal outline highlights the active nav item.
         {
             _bottomLeft: true,
             popover: {
@@ -1127,8 +1166,12 @@
                     openAdminPanel();
                     setTimeout(function () {
                         clickAdminNavItem("Probe Defaults");
+                        highlightAdminNavItem("Probe Defaults");
                     }, 400);
                 }, 300);
+            },
+            onDeselected: function () {
+                clearAdminNavHighlight();
             },
         },
 
@@ -1150,7 +1193,11 @@
                 openAdminPanel();
                 setTimeout(function () {
                     clickAdminNavItem("Alert Defaults");
+                    highlightAdminNavItem("Alert Defaults");
                 }, 400);
+            },
+            onDeselected: function () {
+                clearAdminNavHighlight();
             },
         },
 
@@ -1172,7 +1219,11 @@
                 openAdminPanel();
                 setTimeout(function () {
                     clickAdminNavItem("Email Channels");
+                    highlightAdminNavItem("Email Channels");
                 }, 400);
+            },
+            onDeselected: function () {
+                clearAdminNavHighlight();
             },
         },
 
@@ -1193,7 +1244,11 @@
                 openAdminPanel();
                 setTimeout(function () {
                     clickAdminNavItem("Slack Channels");
+                    highlightAdminNavItem("Slack Channels");
                 }, 400);
+            },
+            onDeselected: function () {
+                clearAdminNavHighlight();
             },
         },
 
@@ -1202,7 +1257,9 @@
         // Close the admin panel, force the action buttons visible on
         // the server row, and click the settings icon to open the
         // server settings dialog. Popover sits bottom-left so it
-        // does not cover the dialog.
+        // does not cover the dialog. Targets the server-item-row's
+        // action buttons specifically (not a group-level button).
+        // A teal outline highlights the dialog's tab bar.
         {
             _bottomLeft: true,
             popover: {
@@ -1217,18 +1274,31 @@
             },
             onHighlightStarted: function () {
                 closeAdminPanel();
-                // Force the action buttons visible on the server row
-                var btns = document.querySelector(".action-buttons");
-                if (btns) { btns.style.opacity = "1"; }
-                // Click the first icon button (settings)
+                // Find the server-item-row's action buttons specifically
+                var serverRow = document.querySelector(".server-item-row");
+                if (serverRow) {
+                    var actionBtns = serverRow.querySelector(".action-buttons");
+                    if (actionBtns) {
+                        actionBtns.style.opacity = "1";
+                        var settingsBtn = actionBtns.querySelector(
+                            ".MuiIconButton-root"
+                        );
+                        if (settingsBtn) {
+                            setTimeout(function () { settingsBtn.click(); }, 500);
+                        }
+                    }
+                }
+                // Highlight the dialog's tab bar once it opens
                 setTimeout(function () {
-                    var settingsBtn = document.querySelector(
-                        ".action-buttons .MuiIconButton-root"
-                    );
-                    if (settingsBtn) { settingsBtn.click(); }
-                }, 500);
+                    var tabBar = document.querySelector('[role="tablist"]');
+                    if (tabBar) {
+                        tabBar.style.outline = "2px solid #0d9488";
+                        tabBar.style.outlineOffset = "2px";
+                    }
+                }, 800);
             },
             onDeselected: function () {
+                clearAdminNavHighlight();
                 closeAnyDialog();
             },
         },

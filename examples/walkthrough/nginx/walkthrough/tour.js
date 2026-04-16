@@ -14,8 +14,8 @@
  * Loaded by loader.js after the Driver.js library is available.
  *
  * Architecture:
- *   33 steps across 7 parts, plus helper functions for minimize,
- *   resume, skip-to-end, and Make It Yours overlay.
+ *   33 steps (indices 0-32) across 7 parts, plus helper functions
+ *   for minimize, resume, skip-to-end, and Make It Yours overlay.
  *
  * DOM Selector Strategy:
  *   The React/MUI app does not emit data-testid attributes. Steps
@@ -541,7 +541,7 @@
     }
 
     // -----------------------------------------------------------------------
-    // Step definitions — 33 steps across 7 parts
+    // Step definitions — 33 steps (indices 0-32) across 7 parts
     //
     // Selector notes (from reading the React source):
     //   - ClusterNavigator: Box with bgcolor=background.paper,
@@ -575,6 +575,14 @@
      */
     function isAdminStep(idx) {
         return (idx >= 21 && idx <= 24) || (idx >= 29 && idx <= 31);
+    }
+
+    /**
+     * Returns true if the given step index is a blackout-dialog step
+     * (the blackout manager or create blackout schedule steps).
+     */
+    function isBlackoutStep(idx) {
+        return idx === 27 || idx === 28;
     }
 
     /**
@@ -1092,23 +1100,25 @@
         },
 
         // -------------------------------------------------------------------
-        // Part 4: How It's Configured (steps 21-26)
+        // Part 4: How It's Configured (steps 21-25)
         // -------------------------------------------------------------------
 
         // Step 21 — Admin panel: Probe Defaults
         //
         // The AdminPanel is a fullScreen Dialog. Open it and navigate
-        // to the Probe Defaults page.
+        // to the Probe Defaults page. No element highlight — the
+        // popover sits bottom-left to avoid covering the dialog.
         {
-            element: ".MuiDialog-root",
+            _bottomLeft: true,
             popover: {
                 title: "Probe Defaults",
                 description:
-                    "The Probe Defaults page controls which metrics are " +
+                    "Look at <strong>Probe Defaults</strong> in the left " +
+                    "sidebar. This page controls which metrics are " +
                     "collected and how frequently. Each probe can be enabled, " +
                     "disabled, or have its polling interval adjusted.",
-                side: "left",
-                align: "start",
+                side: "over",
+                align: "center",
             },
             onHighlightStarted: function () {
                 closeChatPanel();
@@ -1124,16 +1134,17 @@
 
         // Step 22 — Admin panel: Alert Defaults
         {
-            element: ".MuiDialog-root",
+            _bottomLeft: true,
             popover: {
                 title: "Alert Defaults",
                 description:
-                    "Alert Defaults define the built-in thresholds for each " +
+                    "Look at <strong>Alert Defaults</strong> in the left " +
+                    "sidebar. These define the built-in thresholds for each " +
                     "metric. When a metric crosses its threshold, the system " +
                     "fires an alert. You can customize thresholds and " +
                     "severities here.",
-                side: "left",
-                align: "start",
+                side: "over",
+                align: "center",
             },
             onHighlightStarted: function () {
                 openAdminPanel();
@@ -1145,16 +1156,17 @@
 
         // Step 23 — Admin panel: Email Channels
         {
-            element: ".MuiDialog-root",
+            _bottomLeft: true,
             popover: {
                 title: "Email Notification Channels",
                 description:
-                    "Notification channels control where alerts are delivered. " +
-                    "Email channels send formatted alert messages to the " +
-                    "configured recipients. You can also set up Slack, " +
-                    "Mattermost, and webhook channels.",
-                side: "left",
-                align: "start",
+                    "Look at <strong>Email Channels</strong> in the left " +
+                    "sidebar. Notification channels control where alerts " +
+                    "are delivered. Email channels send formatted alert " +
+                    "messages to the configured recipients. You can also " +
+                    "set up Slack, Mattermost, and webhook channels.",
+                side: "over",
+                align: "center",
             },
             onHighlightStarted: function () {
                 openAdminPanel();
@@ -1166,15 +1178,16 @@
 
         // Step 24 — Admin panel: Slack Channels
         {
-            element: ".MuiDialog-root",
+            _bottomLeft: true,
             popover: {
                 title: "Slack Channels",
                 description:
-                    "Slack channels deliver alert notifications to your " +
-                    "team's Slack workspace. Configure the webhook URL and " +
-                    "choose which alert severities trigger a message.",
-                side: "left",
-                align: "start",
+                    "Look at <strong>Slack Channels</strong> in the left " +
+                    "sidebar. Slack channels deliver alert notifications " +
+                    "to your team's Slack workspace. Configure the webhook " +
+                    "URL and choose which alert severities trigger a message.",
+                side: "over",
+                align: "center",
             },
             onHighlightStarted: function () {
                 openAdminPanel();
@@ -1184,18 +1197,21 @@
             },
         },
 
-        // Step 25 — Server Settings (centered popover)
+        // Step 25 — Server Settings
         //
-        // Server settings are accessed by hovering over the server row
-        // to reveal a gear icon. Force the icon visible and click it
-        // to open the server settings dialog.
+        // Close the admin panel, force the action buttons visible on
+        // the server row, and click the settings icon to open the
+        // server settings dialog. Popover sits bottom-left so it
+        // does not cover the dialog.
         {
+            _bottomLeft: true,
             popover: {
                 title: "Server Settings",
                 description:
                     "Each server has its own settings for alert overrides, " +
-                    "probe intervals, and notification channels. Opening " +
-                    "the settings now...",
+                    "probe collection intervals, and notification channels. " +
+                    "Changes here override the global defaults shown in the " +
+                    "administration panel.",
                 side: "over",
                 align: "center",
             },
@@ -1212,47 +1228,31 @@
                     if (settingsBtn) { settingsBtn.click(); }
                 }, 500);
             },
-        },
-
-        // Step 26 — Server Configuration dialog
-        //
-        // Highlight the server settings dialog that opened in the
-        // previous step.
-        {
-            element: ".MuiDialog-root",
-            popover: {
-                title: "Server Configuration",
-                description:
-                    "The server settings dialog lets you configure alert " +
-                    "overrides, probe collection intervals, and notification " +
-                    "channels specific to this server. Changes here override " +
-                    "the global defaults.",
-                side: "left",
-                align: "center",
-            },
             onDeselected: function () {
                 closeAnyDialog();
             },
         },
 
         // -------------------------------------------------------------------
-        // Part 5: Blackout Windows (steps 27-28)
+        // Part 5: Blackout Windows (steps 26-28)
         // -------------------------------------------------------------------
 
-        // Step 27 — Blackout Windows (intro)
+        // Step 26 — Blackout Windows icon
         //
-        // Close everything, return to dashboard. The next step
-        // opens the blackout dialog.
+        // Close everything, return to dashboard. Target the blackout
+        // management button (moon icon) in the status panel header.
         {
+            element: '[aria-label="Blackout management"]',
             popover: {
                 title: "Blackout Windows",
                 description:
-                    "Next we will look at blackout scheduling — " +
-                    "maintenance windows during which alerts are suppressed. " +
-                    "Blackouts can be one-time or recurring, and scoped to " +
-                    "specific servers, clusters, or the entire estate.",
-                side: "over",
-                align: "center",
+                    "This moon icon opens the blackout manager. Blackout " +
+                    "windows are maintenance periods during which alerts " +
+                    "are suppressed. They can be one-time or recurring, " +
+                    "and scoped to specific servers, clusters, or the " +
+                    "entire estate.",
+                side: "bottom",
+                align: "start",
             },
             onHighlightStarted: function () {
                 closeAnyDialog();
@@ -1260,7 +1260,7 @@
             },
         },
 
-        // Step 28 — Blackout Management dialog
+        // Step 27 — Blackout Management dialog
         //
         // Open the blackout dialog. No element highlight — the
         // popover sits bottom-left to not cover the dialog.
@@ -1275,14 +1275,11 @@
                 align: "center",
             },
             onHighlightStarted: function () {
-                var btn = document.querySelector(
-                    '[aria-label="Blackout management"]'
-                );
-                if (btn) { btn.click(); }
+                openBlackoutDialog();
             },
         },
 
-        // Step 29 — Create Blackout Schedule
+        // Step 28 — Create Blackout Schedule
         //
         // Click "New Scheduled Blackout" inside the dialog.
         // Popover sits bottom-left to not cover the form.
@@ -1295,8 +1292,8 @@
                     "expressions. Each schedule specifies when alerts " +
                     "should be suppressed, for how long, and which " +
                     "servers are affected.",
-                side: "right",
-                align: "start",
+                side: "over",
+                align: "center",
             },
             onHighlightStarted: function () {
                 // Find and click "New Scheduled Blackout" button.
@@ -1340,15 +1337,16 @@
 
         // Step 29 — Admin: Users
         {
-            element: ".MuiDialog-root",
+            _bottomLeft: true,
             popover: {
                 title: "User Management",
                 description:
-                    "The Users page lets administrators create and manage " +
+                    "Look at <strong>Users</strong> in the left sidebar. " +
+                    "This page lets administrators create and manage " +
                     "user accounts. Each user can be assigned to groups that " +
                     "control their access to connections and features.",
-                side: "left",
-                align: "start",
+                side: "over",
+                align: "center",
             },
             onHighlightStarted: function () {
                 closeAnyDialog();
@@ -1363,16 +1361,17 @@
 
         // Step 30 — Admin: Tokens
         {
-            element: ".MuiDialog-root",
+            _bottomLeft: true,
             popover: {
                 title: "API Tokens",
                 description:
+                    "Look at <strong>Tokens</strong> in the left sidebar. " +
                     "Tokens provide programmatic access to the workbench " +
                     "API. Each token has scoped permissions so you can " +
                     "grant exactly the access that automation scripts and " +
                     "integrations need.",
-                side: "left",
-                align: "start",
+                side: "over",
+                align: "center",
             },
             onHighlightStarted: function () {
                 openAdminPanel();
@@ -1384,17 +1383,18 @@
 
         // Step 31 — Admin: AI Memories
         {
-            element: ".MuiDialog-root",
+            _bottomLeft: true,
             popover: {
                 title: "AI Memories",
                 description: aiDesc(
+                    "Look at <strong>Memories</strong> in the left sidebar. " +
                     "AI Memories are facts that Ellie remembers between " +
                     "conversations. She learns about your environment over " +
                     "time: server roles, maintenance windows, team " +
                     "preferences. You can review and edit these memories here."
                 ),
-                side: "left",
-                align: "start",
+                side: "over",
+                align: "center",
             },
             onHighlightStarted: function () {
                 openAdminPanel();
@@ -1408,7 +1408,7 @@
         // Part 7: Wrap Up (step 32)
         // -------------------------------------------------------------------
 
-        // Step 32 — Tour complete (centered popover)
+        // Step 32 — Tour Complete (centered popover)
         //
         // Close the admin panel and present a summary before showing
         // the Make It Yours overlay.
@@ -1491,15 +1491,72 @@
                 }
             },
             onPrevClick: function () {
-                // Close dialogs when navigating backward from a step
-                // that has a dialog open to one that does not. This
-                // covers both admin-panel steps and blackout steps.
                 var prevStep = currentStep - 1;
                 if (prevStep >= 0) {
+                    // Issue 1: Going back from Meet Ellie (17) to
+                    // Query Details (16) — close the query detail
+                    // overlay so step 16 can re-open it cleanly.
+                    if (currentStep === 17) {
+                        var overlayClose = document.querySelector(
+                            '[aria-label="Close overlay"]'
+                        );
+                        if (overlayClose) { overlayClose.click(); }
+                    }
+
+                    // Going back from Create Blackout Schedule (28)
+                    // to Blackout Manager (27) — click Cancel on the
+                    // schedule form; the blackout dialog stays open.
+                    if (currentStep === 28) {
+                        var dialog = document.querySelector(".MuiDialog-root");
+                        if (dialog) {
+                            var btns = dialog.querySelectorAll("button");
+                            for (var i = 0; i < btns.length; i++) {
+                                var txt = (btns[i].innerText ||
+                                    btns[i].textContent || "").trim();
+                                if (txt === "Cancel") {
+                                    btns[i].click();
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    // Going back from User Management (29) to Create
+                    // Blackout Schedule (28) — close admin panel,
+                    // re-open blackout dialog, click New Scheduled
+                    // Blackout.
+                    if (currentStep === 29) {
+                        closeAdminPanel();
+                        setTimeout(function () {
+                            openBlackoutDialog();
+                            setTimeout(function () {
+                                var dlg = document.querySelector(
+                                    ".MuiDialog-root"
+                                );
+                                if (dlg) {
+                                    var dbtns = dlg.querySelectorAll("button");
+                                    for (var j = 0; j < dbtns.length; j++) {
+                                        var t = (dbtns[j].innerText ||
+                                            dbtns[j].textContent || "").trim();
+                                        if (t.indexOf("Scheduled Blackout") !== -1) {
+                                            dbtns[j].click();
+                                            break;
+                                        }
+                                    }
+                                }
+                            }, 500);
+                        }, 400);
+                    }
+
+                    // Close dialogs when navigating backward from a
+                    // dialog step to a non-dialog step. This covers
+                    // both admin-panel steps and blackout steps.
                     var curIsDialog = isAdminStep(currentStep) ||
-                        currentStep === 26 || currentStep === 28;
+                        isBlackoutStep(currentStep) ||
+                        currentStep === 25;
                     var prevIsDialog = isAdminStep(prevStep) ||
-                        prevStep === 26 || prevStep === 28;
+                        isBlackoutStep(prevStep) ||
+                        prevStep === 25;
                     if (curIsDialog && !prevIsDialog) {
                         closeAnyDialog();
                     }

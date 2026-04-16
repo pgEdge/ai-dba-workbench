@@ -22,6 +22,20 @@
     z-index: 100001 !important;
 }
 
+/* Bottom-left positioning for tour steps shown alongside
+   a modal dialog (e.g., blackout management). Prevents the
+   tour popover from overlaying the dialog content. */
+.wt-bottom-left-popover {
+    position: fixed !important;
+    inset: auto !important;
+    bottom: 24px !important;
+    left: 24px !important;
+    top: auto !important;
+    transform: none !important;
+    z-index: 100001 !important;
+    max-width: 360px !important;
+}
+
 /* -----------------------------------------------------------------------
  * 1. Driver.js popover overrides
  * ----------------------------------------------------------------------- */

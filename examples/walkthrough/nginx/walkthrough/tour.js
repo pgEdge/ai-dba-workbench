@@ -323,10 +323,14 @@
         // be a child). CSS !important overrides inline styles.
         var stepDef = steps[currentStep];
         var popoverEl = document.querySelector(".driver-popover");
-        if (stepDef && !stepDef.element && popoverEl) {
-            popoverEl.classList.add("wt-centered-popover");
-        } else if (popoverEl) {
+        if (popoverEl) {
             popoverEl.classList.remove("wt-centered-popover");
+            popoverEl.classList.remove("wt-bottom-left-popover");
+            if (stepDef && stepDef._bottomLeft) {
+                popoverEl.classList.add("wt-bottom-left-popover");
+            } else if (stepDef && !stepDef.element) {
+                popoverEl.classList.add("wt-centered-popover");
+            }
         }
 
         // Resolve dynamic descriptions at render time
@@ -1258,16 +1262,17 @@
 
         // Step 28 — Blackout Management dialog
         //
-        // Open and highlight the blackout dialog.
+        // Open the blackout dialog. No element highlight — the
+        // popover sits bottom-left to not cover the dialog.
         {
-            element: ".MuiDialog-root",
+            _bottomLeft: true,
             popover: {
                 title: "Blackout Manager",
                 description:
                     "View active and scheduled blackouts. Use the buttons " +
                     "at the bottom to create one-time or recurring blackouts.",
-                side: "right",
-                align: "start",
+                side: "over",
+                align: "center",
             },
             onHighlightStarted: function () {
                 var btn = document.querySelector(
@@ -1277,12 +1282,12 @@
             },
         },
 
-        // Step 28 — Create Blackout Schedule
+        // Step 29 — Create Blackout Schedule
         //
-        // Click the "New Scheduled Blackout" button inside the
-        // blackout dialog to show the schedule creation form.
+        // Click "New Scheduled Blackout" inside the dialog.
+        // Popover sits bottom-left to not cover the form.
         {
-            element: ".MuiDialog-root",
+            _bottomLeft: true,
             popover: {
                 title: "Create Blackout Schedule",
                 description:

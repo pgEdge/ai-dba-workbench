@@ -522,15 +522,18 @@
     function closeAnyDialog() {
         var dialogs = document.querySelectorAll(".MuiDialog-root");
         dialogs.forEach(function (d) {
-            // Try standard close buttons: aria-label="close" for
-            // regular dialogs, aria-label="close administration"
-            // for the admin panel.
-            var closeBtn = d.querySelector('[aria-label="close"]') ||
-                d.querySelector('[aria-label="close administration"]');
+            // Find any close button — different dialogs use different
+            // aria-labels: "close", "close administration",
+            // "close edit group", etc.
+            var closeBtn = d.querySelector('[aria-label^="close"]') ||
+                d.querySelector('[data-testid="CloseIcon"]')?.closest("button");
             if (closeBtn) {
                 closeBtn.click();
             }
         });
+        // Also close dashboard overlays (query detail, etc.)
+        var overlayClose = document.querySelector('[aria-label="Close overlay"]');
+        if (overlayClose) { overlayClose.click(); }
     }
 
     // -----------------------------------------------------------------------
@@ -1232,34 +1235,45 @@
         // Part 5: Blackout Windows (steps 27-28)
         // -------------------------------------------------------------------
 
-        // Step 27 — Blackout Windows
+        // Step 27 — Blackout Windows (intro)
         //
-        // Close any open dialog, return to main dashboard, then
-        // open the blackout management dialog.
+        // Close everything, return to dashboard. The next step
+        // opens the blackout dialog.
         {
-            element: ".MuiDialog-root",
             popover: {
                 title: "Blackout Windows",
                 description:
-                    "Schedule maintenance windows during which alerts are " +
-                    "suppressed. Create one-time blackouts for immediate " +
-                    "use, or recurring schedules using cron expressions. " +
-                    "Blackouts can be scoped to specific servers, clusters, " +
-                    "or the entire estate.",
+                    "Next we will look at blackout scheduling — " +
+                    "maintenance windows during which alerts are suppressed. " +
+                    "Blackouts can be one-time or recurring, and scoped to " +
+                    "specific servers, clusters, or the entire estate.",
+                side: "over",
+                align: "center",
+            },
+            onHighlightStarted: function () {
+                closeAnyDialog();
+                scrollPanelToTop();
+            },
+        },
+
+        // Step 28 — Blackout Management dialog
+        //
+        // Open and highlight the blackout dialog.
+        {
+            element: ".MuiDialog-root",
+            popover: {
+                title: "Blackout Manager",
+                description:
+                    "View active and scheduled blackouts. Use the buttons " +
+                    "at the bottom to create one-time or recurring blackouts.",
                 side: "right",
                 align: "start",
             },
             onHighlightStarted: function () {
-                // Close any admin dialog first
-                closeAnyDialog();
-                // Open the blackout management dialog after a delay
-                // to let the admin dialog close
-                setTimeout(function () {
-                    var btn = document.querySelector(
-                        '[aria-label="Blackout management"]'
-                    );
-                    if (btn) { btn.click(); }
-                }, 500);
+                var btn = document.querySelector(
+                    '[aria-label="Blackout management"]'
+                );
+                if (btn) { btn.click(); }
             },
         },
 
@@ -1280,16 +1294,20 @@
                 align: "start",
             },
             onHighlightStarted: function () {
-                // Find and click "New Scheduled Blackout" button
+                // Find and click "New Scheduled Blackout" button.
                 var dialog = document.querySelector(".MuiDialog-root");
                 if (dialog) {
+                    var target = null;
                     var btns = dialog.querySelectorAll("button");
                     for (var i = 0; i < btns.length; i++) {
-                        if (btns[i].textContent.indexOf(
-                                "New Scheduled Blackout") !== -1) {
-                            btns[i].click();
+                        var txt = (btns[i].innerText || btns[i].textContent || "").trim();
+                        if (txt.indexOf("Scheduled Blackout") !== -1) {
+                            target = btns[i];
                             break;
                         }
+                    }
+                    if (target) {
+                        setTimeout(function () { target.click(); }, 300);
                     }
                 }
             },

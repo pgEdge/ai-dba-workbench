@@ -25,7 +25,7 @@ all: build
 build:
 	@echo "Building ai-dba-collector..."
 	@mkdir -p $(ABS_BIN_DIR)
-	cd src && go build -o $(ABS_BIN_DIR)/$(BINARY) .
+	cd src && go build -ldflags="-s -w" -o $(ABS_BIN_DIR)/$(BINARY) .
 
 # Run tests
 test: killall

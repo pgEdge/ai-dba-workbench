@@ -151,7 +151,7 @@ jobs:
                   GOOS: ${{ matrix.goos }}
                   GOARCH: ${{ matrix.goarch }}
                   CGO_ENABLED: '0'
-              run: go build -o ../../ai-dba-server ./cmd/mcp-server
+              run: go build -ldflags="-s -w" -o ../../ai-dba-server ./cmd/mcp-server
 
             - name: Build ai-dba-collector
               working-directory: collector/src
@@ -159,7 +159,7 @@ jobs:
                   GOOS: ${{ matrix.goos }}
                   GOARCH: ${{ matrix.goarch }}
                   CGO_ENABLED: '0'
-              run: go build -o ../../ai-dba-collector .
+              run: go build -ldflags="-s -w" -o ../../ai-dba-collector .
 
             - name: Build ai-dba-alerter
               working-directory: alerter/src
@@ -167,7 +167,7 @@ jobs:
                   GOOS: ${{ matrix.goos }}
                   GOARCH: ${{ matrix.goarch }}
                   CGO_ENABLED: '0'
-              run: go build -o ../../ai-dba-alerter ./cmd/ai-dba-alerter
+              run: go build -ldflags="-s -w" -o ../../ai-dba-alerter ./cmd/ai-dba-alerter
 
             - name: Create archives
               run: |

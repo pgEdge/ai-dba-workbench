@@ -25,7 +25,7 @@ all: build
 build:
 	@echo "Building ai-dba-alerter..."
 	@mkdir -p $(ABS_BIN_DIR)
-	cd src && go build -o $(ABS_BIN_DIR)/$(BINARY) ./cmd/ai-dba-alerter
+	cd src && go build -ldflags="-s -w" -o $(ABS_BIN_DIR)/$(BINARY) ./cmd/ai-dba-alerter
 
 # Run tests
 test: killall

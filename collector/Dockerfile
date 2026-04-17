@@ -24,7 +24,7 @@ WORKDIR /build/collector
 RUN go mod download
 
 # Build the binary
-RUN CGO_ENABLED=0 go build -o /build/ai-dba-collector ./src
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /build/ai-dba-collector ./src
 
 # Stage 2: Runtime image
 FROM debian:bookworm-slim

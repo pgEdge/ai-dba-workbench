@@ -24,7 +24,7 @@ WORKDIR /build/server/src
 RUN go mod download
 
 # Build the binary (pure Go, no CGO required)
-RUN CGO_ENABLED=0 go build -o /build/ai-dba-server ./cmd/mcp-server
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /build/ai-dba-server ./cmd/mcp-server
 
 # Stage 2: Runtime image
 FROM debian:bookworm-slim

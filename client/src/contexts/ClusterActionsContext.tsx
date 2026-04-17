@@ -69,15 +69,15 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
             // Auto-detected groups: send the group ID as-is
             await apiPut(`/api/v1/cluster-groups/${groupIdStr}`, { name: newName });
         } else {
-            // Database-backed groups: extract numeric ID
-            if (!/^group-\d+$/.test(groupIdStr)) {
-                throw new Error('Invalid group ID format');
-            }
+            // Extract suffix after "group-" prefix
+            const suffix = groupIdStr.replace('group-', '');
 
-            // Extract numeric ID from group ID format (e.g., "group-1" -> 1)
-            const numericId = parseInt(groupIdStr.replace('group-', ''), 10);
+            // Use numeric ID for database-backed groups, full ID for named groups
+            const groupIdentifier = /^\d+$/.test(suffix)
+                ? parseInt(suffix, 10)
+                : groupIdStr;
 
-            await apiPut(`/api/v1/cluster-groups/${numericId}`, { name: newName });
+            await apiPut(`/api/v1/cluster-groups/${groupIdentifier}`, { name: newName });
         }
 
         // Refresh cluster data to reflect the change

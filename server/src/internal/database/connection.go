@@ -89,7 +89,7 @@ func (c *Client) Connect() error {
 			connStr = os.Getenv("PGEDGE_POSTGRES_CONNECTION_STRING")
 			if connStr == "" {
 				connStr = "postgres://localhost/postgres?sslmode=prefer"
-				log.Printf("[WARN] No database connection string configured, using fallback: %s", connStr)
+				log.Printf("[WARN] No database connection string configured, using fallback: %s", SanitizeConnStr(connStr))
 			}
 		}
 

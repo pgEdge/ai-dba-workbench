@@ -220,7 +220,7 @@ func EnsurePartition(ctx context.Context, conn *pgxpool.Conn, tableName string, 
 // Rows result set. Doing so surfaces as a "conn busy" error. The two
 // catalog queries used here are therefore fully drained and closed
 // before any DROP TABLE is issued against the same connection.
-func DropExpiredPartitions(ctx context.Context, conn *pgxpool.Conn, tableName string, retentionDays int) error {
+func DropExpiredPartitions(ctx context.Context, conn *pgxpool.Conn, tableName string, retentionDays int) (int, error) {
 	// Calculate the cutoff timestamp
 	cutoff := time.Now().AddDate(0, 0, -retentionDays)
 
@@ -230,7 +230,7 @@ func DropExpiredPartitions(ctx context.Context, conn *pgxpool.Conn, tableName st
 	// never be dropped, regardless of age.
 	protectedPartitions, err := loadProtectedPartitions(ctx, conn, tableName)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	// Collect candidate partitions fully into memory before any DROP
@@ -238,7 +238,7 @@ func DropExpiredPartitions(ctx context.Context, conn *pgxpool.Conn, tableName st
 	// Rows result when we later call Exec on it.
 	candidates, err := loadPartitionCandidates(ctx, conn, tableName)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	var droppedCount int
@@ -271,7 +271,7 @@ func DropExpiredPartitions(ctx context.Context, conn *pgxpool.Conn, tableName st
 		logger.Infof("Dropped %d expired partition(s) for table %s", droppedCount, tableName)
 	}
 
-	return nil
+	return droppedCount, nil
 }
 
 // partitionCandidate is a partition row returned by

@@ -425,17 +425,25 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, mode }) => {
             }: {
                 href?: string;
                 children?: React.ReactNode;
-            }) => (
-                <Box
-                    component="a"
-                    href={href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    sx={getMdLinkSx(theme)}
-                >
-                    {children}
-                </Box>
-            ),
+            }) => {
+                const safeHref =
+                    href && /^(https?:\/\/|mailto:)/i.test(href)
+                        ? href
+                        : undefined;
+                return safeHref ? (
+                    <Box
+                        component="a"
+                        href={safeHref}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        sx={getMdLinkSx(theme)}
+                    >
+                        {children}
+                    </Box>
+                ) : (
+                    <>{children}</>
+                );
+            },
             blockquote: ({ children }: { children?: React.ReactNode }) => (
                 <Box component="blockquote" sx={getMdBlockquoteSx(theme)}>
                     {children}

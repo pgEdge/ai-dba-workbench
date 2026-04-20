@@ -12,6 +12,7 @@ package resources
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
@@ -310,7 +311,7 @@ func (r *ContextAwareRegistry) getClient(ctx context.Context) (*database.Client,
 		session, err := r.authStore.GetConnectionSession(tokenHash)
 		if err != nil {
 			// Log warning but continue to fallback
-			fmt.Printf("WARNING: Failed to get connection session: %v\n", err)
+			fmt.Fprintf(os.Stderr, "WARNING: Failed to get connection session: %v\n", err)
 		}
 
 		if session != nil {

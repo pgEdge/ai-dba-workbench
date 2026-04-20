@@ -22,8 +22,8 @@ test:
 	@echo "Running tests..."
 	npm run test
 
-# Run all tests (same as test for client)
-test-all: test
+# Run all tests (test + lint)
+test-all: test lint
 
 # Run tests with coverage
 coverage:
@@ -54,7 +54,7 @@ help:
 	@echo "  all              - Build the client (default)"
 	@echo "  build            - Build the client"
 	@echo "  test             - Run tests"
-	@echo "  test-all         - Run all tests"
+	@echo "  test-all         - Run all tests and lint"
 	@echo "  coverage         - Run tests with coverage"
 	@echo "  lint             - Run ESLint"
 	@echo "  format           - Format code with Prettier"

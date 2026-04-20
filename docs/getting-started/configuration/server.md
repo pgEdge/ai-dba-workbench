@@ -146,6 +146,7 @@ builtins:
     get_alert_history: true
     get_alert_rules: true
     get_metric_baselines: true
+    get_blackouts: true
     query_datastore: true
     generate_embedding: true
     search_knowledgebase: true
@@ -517,6 +518,7 @@ builtins:
     get_alert_history: true
     get_alert_rules: true
     get_metric_baselines: true
+    get_blackouts: true
     query_datastore: true
     generate_embedding: true
     search_knowledgebase: true

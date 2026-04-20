@@ -59,6 +59,8 @@ project adheres to
   `dismissed` flag on rediscovery, and `GetCluster`
   now filters dismissed rows from single-cluster
   lookups. (#36)
+- Fix partitions not being dropped at the appropriate
+  time by the collector. (#62)
 
 ### Security
 

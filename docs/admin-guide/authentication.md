@@ -305,7 +305,7 @@ Administrators assign two types of privileges to groups:
 
 Admin permissions control access to management
 operations in the admin panel and REST API. The system
-defines the following eight admin permissions:
+defines the following ten admin permissions:
 
 - `manage_connections` allows creating, editing, and
   deleting monitored database connections.
@@ -323,6 +323,10 @@ defines the following eight admin permissions:
   retention, and enabled state.
 - `manage_alert_rules` allows configuring alert rule
   defaults and per-connection overrides.
+- `manage_notification_channels` allows creating,
+  editing, and deleting alert notification channels.
+- `store_system_memory` allows storing and deleting
+  system-scoped chat memories visible to all users.
 
 Superusers bypass all permission checks and have full
 access to every operation.

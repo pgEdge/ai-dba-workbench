@@ -13,11 +13,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sync/atomic"
 	"time"
 )
 
 // LogLevel represents the severity of a log message
-type LogLevel int
+type LogLevel int32
 
 const (
 	LevelDebug LogLevel = iota
@@ -27,10 +28,15 @@ const (
 )
 
 var (
-	// currentLevel is the minimum log level to output
-	// Default to ERROR to avoid cluttering CLI output with operational logs
-	currentLevel = LevelError
+	// currentLevel is the minimum log level to output.
+	// Default to ERROR to avoid cluttering CLI output with operational logs.
+	// Uses atomic access for safe concurrent reads and writes.
+	currentLevel atomic.Int32
 )
+
+func init() {
+	currentLevel.Store(int32(LevelError))
+}
 
 // levelString returns the string representation of a log level
 func (l LogLevel) String() string {
@@ -58,7 +64,7 @@ type logEntry struct {
 
 // log writes a structured log message if the level is enabled
 func log(level LogLevel, message string, keyvals ...any) {
-	if level < currentLevel {
+	if int32(level) < currentLevel.Load() {
 		return
 	}
 
@@ -110,10 +116,10 @@ func Error(message string, keyvals ...any) {
 
 // SetLevel sets the minimum log level to output
 func SetLevel(level LogLevel) {
-	currentLevel = level
+	currentLevel.Store(int32(level))
 }
 
 // GetLevel returns the current minimum log level
 func GetLevel() LogLevel {
-	return currentLevel
+	return LogLevel(currentLevel.Load())
 }

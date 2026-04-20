@@ -221,17 +221,25 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
                 {children}
             </Box>
         ),
-        a: ({ href, children }) => (
-            <Box
-                component="a"
-                href={href}
-                target="_blank"
-                rel="noopener noreferrer"
-                sx={getLinkSx(theme)}
-            >
-                {children}
-            </Box>
-        ),
+        a: ({ href, children }) => {
+            const safeHref =
+                href && /^(https?:\/\/|mailto:)/i.test(href)
+                    ? href
+                    : undefined;
+            return safeHref ? (
+                <Box
+                    component="a"
+                    href={safeHref}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    sx={getLinkSx(theme)}
+                >
+                    {children}
+                </Box>
+            ) : (
+                <>{children}</>
+            );
+        },
         blockquote: ({ children }) => (
             <Box component="blockquote" sx={getBlockquoteSx(theme)}>
                 {children}

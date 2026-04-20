@@ -113,6 +113,7 @@ table describes the available tools:
 | `store_memory` | Stores a persistent memory for future recall. |
 | `recall_memories` | Searches stored memories by semantic similarity. |
 | `delete_memory` | Removes a stored memory by its ID. |
+| `get_blackouts` | Queries blackout periods and recurring schedules. |
 
 ## Chat Memory
 

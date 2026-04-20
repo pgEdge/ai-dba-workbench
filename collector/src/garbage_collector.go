@@ -133,13 +133,12 @@ func (gc *GarbageCollector) collectGarbageForProbe(ctx context.Context, conn *pg
 	}
 
 	// Drop expired partitions
-	err := probes.DropExpiredPartitions(ctx, conn, tableName, config.RetentionDays)
+	dropped, err := probes.DropExpiredPartitions(ctx, conn, tableName, config.RetentionDays)
 	if err != nil {
 		return 0, err
 	}
 
-	// Note: DropExpiredPartitions logs the count internally
-	return 0, nil
+	return dropped, nil
 }
 
 // getProbeTableName returns the table name for a probe

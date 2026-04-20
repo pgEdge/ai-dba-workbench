@@ -103,9 +103,13 @@ const DatabaseSummariesSection: React.FC<ServerSectionProps> = ({
     const [error, setError] = useState<string | null>(null);
     const isMountedRef = useRef<boolean>(true);
     const initialLoadDoneRef = useRef<boolean>(false);
+    const userRef = useRef(user);
+    userRef.current = user;
+
+    const isLoggedIn = !!user;
 
     const fetchData = useCallback(async (): Promise<void> => {
-        if (!user) { return; }
+        if (!userRef.current) { return; }
 
         const url = `/api/v1/metrics/database-summaries`
             + `?connection_id=${connectionId}&time_range=24h`;
@@ -147,7 +151,7 @@ const DatabaseSummariesSection: React.FC<ServerSectionProps> = ({
                 setLoading(false);
             }
         }
-    }, [user, connectionId]);
+    }, [connectionId]);
 
     useEffect(() => {
         initialLoadDoneRef.current = false;
@@ -156,14 +160,14 @@ const DatabaseSummariesSection: React.FC<ServerSectionProps> = ({
     useEffect(() => {
         isMountedRef.current = true;
 
-        if (user) {
+        if (isLoggedIn) {
             fetchData();
         }
 
         return () => {
             isMountedRef.current = false;
         };
-    }, [user, fetchData, refreshTrigger]);
+    }, [isLoggedIn, fetchData, refreshTrigger]);
 
     const tileSx = useMemo(() => getDashboardTileSx(theme), [theme]);
 

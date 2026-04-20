@@ -119,9 +119,13 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
     const [hideCollectorQueries, setHideCollectorQueries] = useState<boolean>(true);
     const isMountedRef = useRef<boolean>(true);
     const initialLoadDoneRef = useRef<boolean>(false);
+    const userRef = useRef(user);
+    userRef.current = user;
+
+    const isLoggedIn = !!user;
 
     const fetchData = useCallback(async (): Promise<void> => {
-        if (!user) { return; }
+        if (!userRef.current) { return; }
 
         const params = new URLSearchParams({
             connection_id: connectionId.toString(),
@@ -171,7 +175,7 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
                 setLoading(false);
             }
         }
-    }, [user, connectionId, hideCollectorQueries]);
+    }, [connectionId, hideCollectorQueries]);
 
     useEffect(() => {
         initialLoadDoneRef.current = false;
@@ -180,14 +184,14 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
     useEffect(() => {
         isMountedRef.current = true;
 
-        if (user) {
+        if (isLoggedIn) {
             fetchData();
         }
 
         return () => {
             isMountedRef.current = false;
         };
-    }, [user, fetchData, refreshTrigger]);
+    }, [isLoggedIn, fetchData, refreshTrigger]);
 
     const handleQueryClick = useCallback((query: TopQueryRow): void => {
         pushOverlay({

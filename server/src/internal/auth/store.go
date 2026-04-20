@@ -564,6 +564,31 @@ func ValidatePassword(password string) error {
 	return nil
 }
 
+// ValidateUsername checks that a username meets format requirements.
+func ValidateUsername(username string) error {
+	n := utf8.RuneCountInString(username)
+	if n == 0 {
+		return fmt.Errorf("username must not be empty")
+	}
+	if n > 128 {
+		return fmt.Errorf("username must be at most 128 characters")
+	}
+	first := true
+	for _, r := range username {
+		if first {
+			if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+				return fmt.Errorf("username must start with a letter or digit")
+			}
+			first = false
+			continue
+		}
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' && r != '.' && r != '@' && r != '-' {
+			return fmt.Errorf("username contains invalid character: %c", r)
+		}
+	}
+	return nil
+}
+
 // =============================================================================
 // User Management
 // =============================================================================
@@ -597,6 +622,10 @@ func scanUser(row scannable) (*StoredUser, error) {
 
 // CreateUser creates a new user
 func (s *AuthStore) CreateUser(username, password, annotation, displayName, email string) error {
+	if err := ValidateUsername(username); err != nil {
+		return err
+	}
+
 	if err := ValidatePassword(password); err != nil {
 		return err
 	}
@@ -1352,6 +1381,10 @@ func (s *AuthStore) CreateToken(ownerUsername, annotation string, requestedExpir
 // Service accounts have no password and cannot authenticate via login.
 // They can only be used via API tokens.
 func (s *AuthStore) CreateServiceAccount(username, annotation, displayName, email string) error {
+	if err := ValidateUsername(username); err != nil {
+		return err
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

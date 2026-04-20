@@ -107,6 +107,8 @@ export function buildTooltip(show: boolean): object {
     return {
         show,
         trigger: 'axis',
+        confine: false,
+        appendToBody: true,
         formatter: (params: TooltipParam | TooltipParam[]) => {
             const list = Array.isArray(params) ? params : [params];
             if (list.length === 0) {return '';}

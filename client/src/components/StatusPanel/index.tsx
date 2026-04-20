@@ -408,10 +408,10 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
         if (unacknowledgingRef.current.has(alertId)) {return;}
         unacknowledgingRef.current.add(alertId);
 
-        // Capture the previous alert object so we can roll back on
-        // failure. Read from the current state outside of a setState
-        // updater to keep behaviour predictable under React strict
-        // mode (updaters may run twice).
+        // Capture the previous alert from inside the setAlerts updater
+        // so we can roll back on failure. React strict mode may invoke
+        // this updater twice; both invocations observe the same `prev`
+        // snapshot so `previousAlert` stays consistent either way.
         let previousAlert = null;
         setAlerts(prev => {
             const found = prev.find(a => a.id === alertId);
@@ -469,6 +469,11 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
             });
         }
     };
+
+    const isUnacknowledging = useCallback(
+        (id: number | string) => unacknowledgingIds.has(id),
+        [unacknowledgingIds],
+    );
 
     // Fetch alerts data function
     const fetchAlertsData = useCallback(async () => {
@@ -700,7 +705,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                     showServer={selection.type !== 'server'}
                     onAcknowledge={handleAcknowledge}
                     onUnacknowledge={handleUnacknowledge}
-                    isUnacknowledging={(id) => unacknowledgingIds.has(id)}
+                    isUnacknowledging={isUnacknowledging}
                     onAnalyze={aiEnabled ? handleAnalyze : undefined}
                     onEditOverride={hasPermission('manage_alert_rules') ? handleEditOverride : undefined}
                     onAcknowledgeGroup={handleAcknowledgeGroup}

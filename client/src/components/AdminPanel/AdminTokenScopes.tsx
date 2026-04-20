@@ -299,18 +299,26 @@ const AdminTokenScopes: React.FC = () => {
                 }
                 // Filter MCP privileges to those the user has
                 const allowedMcp = data.mcp_privileges || [];
-                setOwnerMcpPrivileges(
-                    mcpPrivileges.filter((p: McpPrivilege) =>
-                        allowedMcp.includes(p.identifier)
-                    )
-                );
+                if (allowedMcp.includes('*')) {
+                    setOwnerMcpPrivileges(mcpPrivileges);
+                } else {
+                    setOwnerMcpPrivileges(
+                        mcpPrivileges.filter((p: McpPrivilege) =>
+                            allowedMcp.includes(p.identifier)
+                        )
+                    );
+                }
                 // Filter admin permissions to those the user has
                 const allowedAdmin = data.admin_permissions || [];
-                setOwnerAdminPermissions(
-                    ADMIN_PERMISSIONS.filter(p =>
-                        allowedAdmin.includes(p.id)
-                    )
-                );
+                if (allowedAdmin.includes('*')) {
+                    setOwnerAdminPermissions(ADMIN_PERMISSIONS);
+                } else {
+                    setOwnerAdminPermissions(
+                        ADMIN_PERMISSIONS.filter(p =>
+                            allowedAdmin.includes(p.id)
+                        )
+                    );
+                }
             }
         } catch {
             // If privilege fetch fails, show all options as fallback
@@ -424,17 +432,25 @@ const AdminTokenScopes: React.FC = () => {
                         );
                     }
                     const allowedMcp = data.mcp_privileges || [];
-                    setEditAvailableMcpPrivileges(
-                        mcpPrivileges.filter((p: McpPrivilege) =>
-                            allowedMcp.includes(p.identifier)
-                        )
-                    );
+                    if (allowedMcp.includes('*')) {
+                        setEditAvailableMcpPrivileges(mcpPrivileges);
+                    } else {
+                        setEditAvailableMcpPrivileges(
+                            mcpPrivileges.filter((p: McpPrivilege) =>
+                                allowedMcp.includes(p.identifier)
+                            )
+                        );
+                    }
                     const allowedAdmin = data.admin_permissions || [];
-                    setEditAvailableAdminPermissions(
-                        ADMIN_PERMISSIONS.filter(p =>
-                            allowedAdmin.includes(p.id)
-                        )
-                    );
+                    if (allowedAdmin.includes('*')) {
+                        setEditAvailableAdminPermissions(ADMIN_PERMISSIONS);
+                    } else {
+                        setEditAvailableAdminPermissions(
+                            ADMIN_PERMISSIONS.filter(p =>
+                                allowedAdmin.includes(p.id)
+                            )
+                        );
+                    }
                 }
             } catch {
                 setEditOwnerIsSuperuser(false);

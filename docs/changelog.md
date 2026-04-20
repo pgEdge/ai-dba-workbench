@@ -48,6 +48,11 @@ project adheres to
   exposes a nullable `last_updated` RFC3339 timestamp
   and the StatusPanel surfaces it alongside
   "Triggered" when the two differ. (#64)
+- Fix the cluster Topology tab "Add server" dropdown
+  silently excluding servers that had been re-claimed
+  by an auto-detected Spock cluster; the connections
+  API now returns the `membership_source` field the
+  client filter requires. (#25, #46)
 
 ## [1.0.0-alpha3] - 2026-04-08
 

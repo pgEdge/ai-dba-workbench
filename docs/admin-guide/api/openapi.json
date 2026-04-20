@@ -9584,6 +9584,10 @@
             "type": "boolean",
             "description": "Whether the connection is shared"
           },
+          "membership_source": {
+            "type": "string",
+            "description": "How the connection was assigned to its cluster: auto (by auto-detection) or manual (by a user)"
+          },
           "name": {
             "type": "string",
             "description": "Display name"

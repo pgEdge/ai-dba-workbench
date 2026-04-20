@@ -169,20 +169,21 @@ func (h *ConnectionHandler) listConnections(w http.ResponseWriter, r *http.Reque
 		}
 
 		filtered := connections[:0]
-		for _, conn := range connections {
+		for i := range connections {
+			conn := &connections[i]
 			// Always include the user's own connections
 			if conn.OwnerUsername == currentUsername {
-				filtered = append(filtered, conn)
+				filtered = append(filtered, *conn)
 				continue
 			}
 			// Include shared connections that are not group-restricted
 			if conn.IsShared && (accessibleSet == nil || accessibleSet[conn.ID]) {
-				filtered = append(filtered, conn)
+				filtered = append(filtered, *conn)
 				continue
 			}
 			// Include group-accessible connections
 			if accessibleSet != nil && accessibleSet[conn.ID] {
-				filtered = append(filtered, conn)
+				filtered = append(filtered, *conn)
 				continue
 			}
 			// If no group restrictions exist (accessibleSet is nil),

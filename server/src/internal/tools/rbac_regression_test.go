@@ -194,7 +194,7 @@ func TestGetMetricBaselinesTool_RBAC_NoAccessDeniesEmptyResult(t *testing.T) {
 // connection_id for an unshared connection must receive a generic
 // "connection not found or not accessible" error. Previously the tool
 // executed the existence probe and, on miss, echoed up to 20 valid
-// connection IDs/names in the error body. Both behaviours leaked
+// connection IDs/names in the error body. Both behaviors leaked
 // visibility information.
 func TestQueryMetricsTool_RBAC_DeniesUnsharedConnection(t *testing.T) {
 	store, cleanup := newRBACRegressionTestStore(t)

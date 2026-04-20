@@ -26,7 +26,7 @@ import (
 // The rbacChecker is consulted before any datastore read so that callers cannot
 // query metrics for connections they are not permitted to see. It may be nil
 // in unit tests or when auth is not configured; a nil checker opens access
-// (matching the behaviour of other tools in this package).
+// (matching the behavior of other tools in this package).
 func QueryMetricsTool(pool *pgxpool.Pool, rbacChecker *auth.RBACChecker) Tool {
 	return Tool{
 		Definition: mcp.Tool{

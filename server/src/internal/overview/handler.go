@@ -56,7 +56,7 @@ func NewHandler(generator *Generator, hub *Hub) *Handler {
 
 // NewHandlerWithRBAC creates a new overview handler that enforces scope
 // visibility against the caller's RBAC view. A nil rbacChecker or
-// datastore disables the gate (preserves pre-RBAC behaviour for tests).
+// datastore disables the gate (preserves pre-RBAC behavior for tests).
 func NewHandlerWithRBAC(generator *Generator, hub *Hub, rbacChecker *auth.RBACChecker, datastore *database.Datastore) *Handler {
 	return &Handler{
 		generator:   generator,
@@ -404,7 +404,7 @@ func (h *Handler) filterConnectionIDs(ctx context.Context, w http.ResponseWriter
 // true) is returned so the caller can use the full-scope snapshot path.
 // On denial the function writes a 404 response and returns ok=false.
 // The caller must return immediately when ok is false. Matching the
-// behaviour of sibling handlers, 404 is used for scope-denial to avoid
+// behavior of sibling handlers, 404 is used for scope-denial to avoid
 // leaking the existence of scopes the caller cannot see.
 func (h *Handler) scopeVisible(ctx context.Context, w http.ResponseWriter, scopeType string, scopeID int) (intersect []int, unrestricted bool, ok bool) {
 	if h.rbacChecker == nil || h.datastore == nil {

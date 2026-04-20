@@ -68,3 +68,34 @@ partitions hit the `"2006-01-02 15:04:05-07:00"` or
 - Do not emit timestamp literals without an offset when storing into
   `timestamptz` columns or `timestamptz` range partitions; the
   session `TimeZone` will silently change the absolute instant.
+
+## Dropping Partitions and pgx "conn busy"
+
+A single `*pgx.Conn` (or the `*pgxpool.Conn` wrapper) has a single
+PostgreSQL protocol stream. It cannot service a second command while
+a prior `Rows` result is still open. Attempting it returns the
+error `"conn busy"`. This is distinct from pool exhaustion, which
+surfaces as an acquire timeout.
+
+`DropExpiredPartitions` in
+`collector/src/probes/base.go` previously tripped this by calling
+`conn.Exec(ctx, dropSQL)` inside a `for rows.Next()` loop that was
+iterating the partition catalog on the same connection. It was
+fixed (issue #62) by reading the catalog query fully into a slice,
+letting the Rows close, and only then issuing the DROP statements.
+
+Rules for the datastore connection shared across a GC pass:
+
+- Fully drain any `Rows` and call `Close()` before issuing another
+  command on the same connection. A deferred `rows.Close()` at the
+  top of a long function is not enough; either scope the iteration
+  into its own helper that returns after closing, or materialise
+  the rows into memory and release them before the next command.
+- Do not assume `rows.Next()` returning `false` is sufficient to
+  free the connection; call `Close()` explicitly if the next
+  operation on that connection happens before the outer function
+  returns.
+- Do not paper over `"conn busy"` with a retry loop. It is a
+  client-side protocol violation, not transient contention, and
+  retries will only succeed because the loop body has moved past
+  the busy state — the underlying bug stays.

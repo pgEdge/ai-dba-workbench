@@ -460,3 +460,66 @@ func TestPartitionBoundLayoutIncludesUTCOffset(t *testing.T) {
 		t.Errorf("to literal: got %q, want %q", gotTo, wantTo)
 	}
 }
+
+// TestParsePartitionEnd verifies that parsePartitionEnd extracts the
+// upper bound timestamp from all three supported literal formats, and
+// that malformed inputs fail gracefully rather than returning a bogus
+// time. This is the helper used by DropExpiredPartitions to decide
+// whether a partition is fully expired.
+func TestParsePartitionEnd(t *testing.T) {
+	tests := []struct {
+		name  string
+		bound string
+		want  time.Time
+		ok    bool
+	}{
+		{
+			name:  "tz with minutes",
+			bound: "FOR VALUES FROM ('2025-11-03 00:00:00+00:00') TO ('2025-11-10 00:00:00+00:00')",
+			want:  time.Date(2025, 11, 10, 0, 0, 0, 0, time.UTC),
+			ok:    true,
+		},
+		{
+			name:  "tz without minutes",
+			bound: "FOR VALUES FROM ('2025-11-03 00:00:00+00') TO ('2025-11-10 00:00:00+00')",
+			want:  time.Date(2025, 11, 10, 0, 0, 0, 0, time.UTC),
+			ok:    true,
+		},
+		{
+			name:  "legacy no tz",
+			bound: "FOR VALUES FROM ('2025-11-03 00:00:00') TO ('2025-11-10 00:00:00')",
+			want:  time.Date(2025, 11, 10, 0, 0, 0, 0, time.UTC),
+			ok:    true,
+		},
+		{
+			name:  "missing TO clause",
+			bound: "FOR VALUES IN ('foo')",
+			want:  time.Time{},
+			ok:    false,
+		},
+		{
+			name:  "missing closing quote",
+			bound: "FOR VALUES FROM ('2025-11-03 00:00:00') TO ('2025-11-10 00:00:00",
+			want:  time.Time{},
+			ok:    false,
+		},
+		{
+			name:  "unparseable timestamp",
+			bound: "FOR VALUES FROM ('a') TO ('not-a-timestamp')",
+			want:  time.Time{},
+			ok:    false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := parsePartitionEnd("test_part", tc.bound)
+			if ok != tc.ok {
+				t.Fatalf("ok: got %v, want %v", ok, tc.ok)
+			}
+			if ok && !got.Equal(tc.want) {
+				t.Errorf("time: got %s, want %s", got, tc.want)
+			}
+		})
+	}
+}

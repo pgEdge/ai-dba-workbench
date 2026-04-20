@@ -206,15 +206,12 @@ func (rc *RBACChecker) CanAccessConnection(ctx context.Context, connectionID int
 		return false, ""
 	}
 
-	// Check if user has access to this connection (specific or via "all connections")
-	accessLevel, hasAccess := privileges[connectionID]
-	allLevel, hasAll := privileges[ConnectionIDAll]
-	if !hasAccess && !hasAll {
+	// Check if user has access to this connection (specific or via "all
+	// connections"), preferring the higher of the two levels when both
+	// are present.
+	accessLevel, hasAccess := resolveConnectionAccess(privileges, connectionID)
+	if !hasAccess {
 		return false, ""
-	}
-	// Use the higher of the two access levels
-	if hasAll && (!hasAccess || allLevel == AccessLevelReadWrite) {
-		accessLevel = allLevel
 	}
 
 	// Check token scoping (if applicable)
@@ -229,12 +226,49 @@ func (rc *RBACChecker) CanAccessConnection(ctx context.Context, connectionID int
 			return false, ""
 		}
 		// Apply minimum access level: token scope can restrict but not elevate
-		if scopeAccessLevel != "" && scopeAccessLevel == AccessLevelRead {
-			accessLevel = AccessLevelRead
-		}
+		accessLevel = applyTokenCeiling(scopeAccessLevel, accessLevel)
 	}
 
 	return true, accessLevel
+}
+
+// resolveConnectionAccess returns the user's effective access level for a
+// specific connection ID given their raw ConnectionPrivileges map,
+// preferring a specific grant over ConnectionIDAll but elevating when the
+// wildcard grants ReadWrite. Returns ("", false) when the user has no
+// access. Mirrors the lookup semantics used by CanAccessConnection.
+func resolveConnectionAccess(privs map[int]string, connID int) (string, bool) {
+	specificLevel, hasSpecific := privs[connID]
+	wildcardLevel, hasWildcard := privs[ConnectionIDAll]
+	if !hasSpecific && !hasWildcard {
+		return "", false
+	}
+
+	// If only one side is present, use it directly.
+	if !hasSpecific {
+		return wildcardLevel, true
+	}
+	if !hasWildcard {
+		return specificLevel, true
+	}
+
+	// Both are present: prefer the higher of the two access levels. The
+	// lattice is {Read, ReadWrite}, so any ReadWrite wins.
+	if wildcardLevel == AccessLevelReadWrite {
+		return AccessLevelReadWrite, true
+	}
+	return specificLevel, true
+}
+
+// applyTokenCeiling returns the minimum of the token's scoped access level
+// and the user's effective level over the {Read, ReadWrite} lattice. An
+// empty tokenLevel means the token scope did not specify a level and only
+// the user's level applies.
+func applyTokenCeiling(tokenLevel, userLevel string) string {
+	if tokenLevel == AccessLevelRead || userLevel == AccessLevelRead {
+		return AccessLevelRead
+	}
+	return userLevel
 }
 
 // GetEffectivePrivileges returns all effective privileges for the current context
@@ -316,40 +350,24 @@ func (rc *RBACChecker) GetEffectivePrivileges(ctx context.Context) *EffectivePri
 					// Non-wildcard token scope: intersect the token's
 					// explicit connection IDs against the user's group
 					// grants. The user's grants may come from a specific
-					// row OR from the ConnectionIDAll wildcard; if both
-					// are present we prefer the higher access level, to
-					// mirror CanAccessConnection. See issue #83: a prior
-					// implementation ignored the wildcard and silently
-					// dropped scoped connections whose access arrived via
-					// ConnectionIDAll, producing an empty list.
-					userWildcardLevel, userHasWildcard := result.ConnectionPrivileges[ConnectionIDAll]
+					// row OR from the ConnectionIDAll wildcard; see issue
+					// #83: a prior implementation ignored the wildcard
+					// and silently dropped scoped connections whose
+					// access arrived via ConnectionIDAll, producing an
+					// empty list. resolveConnectionAccess mirrors the
+					// lookup semantics used by CanAccessConnection.
 					scopedConnPrivs := make(map[int]string)
 					for _, sc := range scope.Connections {
-						specificLevel, userHasSpecific := result.ConnectionPrivileges[sc.ConnectionID]
-						if !userHasSpecific && !userHasWildcard {
+						userLevel, userHasAccess := resolveConnectionAccess(
+							result.ConnectionPrivileges, sc.ConnectionID)
+						if !userHasAccess {
 							// No group grant for this connection via
 							// either path: drop it from the scoped set.
 							continue
 						}
-
-						// Resolve the user's effective level for this
-						// connection. Prefer the higher of the specific
-						// and wildcard grants when both exist.
-						userLevel := specificLevel
-						if !userHasSpecific {
-							userLevel = userWildcardLevel
-						} else if userHasWildcard && userWildcardLevel == AccessLevelReadWrite {
-							userLevel = AccessLevelReadWrite
-						}
-
-						// Token scope can restrict but not elevate: the
-						// effective access is the minimum of the token's
-						// scoped level and the user's level.
-						if sc.AccessLevel == AccessLevelRead || userLevel == AccessLevelRead {
-							scopedConnPrivs[sc.ConnectionID] = AccessLevelRead
-						} else {
-							scopedConnPrivs[sc.ConnectionID] = userLevel
-						}
+						// Token scope can restrict but not elevate.
+						scopedConnPrivs[sc.ConnectionID] = applyTokenCeiling(
+							sc.AccessLevel, userLevel)
 					}
 					result.ConnectionPrivileges = scopedConnPrivs
 				}

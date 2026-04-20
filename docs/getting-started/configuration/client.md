@@ -114,8 +114,8 @@ client files; a separate web server is required.
 ### Nginx Configuration
 
 In the following example, the Nginx configuration
-serves the web client and proxies API requests to the
-MCP server:
+serves the web client and proxies API, MCP, and
+health check requests to the server:
 
 ```nginx
 server {
@@ -125,21 +125,53 @@ server {
     root /opt/ai-workbench/client;
     index index.html;
 
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-
     location /api/ {
         proxy_pass http://localhost:8080;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For
+            $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto
+            $scheme;
+    }
+
+    location /mcp/ {
+        proxy_pass http://localhost:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For
+            $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto
+            $scheme;
+
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 300s;
+    }
+
+    location = /health {
+        proxy_pass http://localhost:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For
+            $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto
+            $scheme;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
     }
 }
 ```
 
-The `try_files` directive ensures that client-side
-routing works correctly by falling back to
-`index.html` for all unmatched paths.
+The `/mcp/` location disables proxy buffering and
+caching because MCP requests may use server-sent
+events or streaming responses. The `/health`
+location proxies health check requests to the
+server. The `try_files` directive ensures that
+client-side routing works correctly by falling back
+to `index.html` for all unmatched paths.
 
 ## Theme Settings
 

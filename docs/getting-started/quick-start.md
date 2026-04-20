@@ -33,7 +33,9 @@ sudo cp ai-dba-collector /opt/ai-workbench/
 sudo cp ai-dba-server /opt/ai-workbench/
 sudo cp ai-dba-alerter /opt/ai-workbench/
 sudo chmod +x /opt/ai-workbench/ai-dba-*
-sudo cp -r client /opt/ai-workbench/client
+sudo mkdir -p /opt/ai-workbench/client
+sudo tar xzf ai-dba-client.tar.gz \
+    -C /opt/ai-workbench/client
 ```
 
 !!! note

@@ -44,8 +44,8 @@ Each release includes the following components:
   service.
 - The `ai-dba-server` binary for the server service.
 - The `ai-dba-alerter` binary for the alerter service.
-- The `client` directory containing pre-built web
-  client files.
+- The `ai-dba-client.tar.gz` archive containing
+  pre-built web client files.
 
 ### Install Server-Side Binaries
 
@@ -65,11 +65,16 @@ sudo chmod +x /opt/ai-workbench/ai-dba-*
 
 ### Install the Web Client
 
-Copy the pre-built web client files to the
-deployment directory:
+Extract the pre-built web client archive to the
+deployment directory.
+
+In the following example, the commands create the
+client directory and extract the archive:
 
 ```bash
-sudo cp -r client /opt/ai-workbench/client
+sudo mkdir -p /opt/ai-workbench/client
+sudo tar xzf ai-dba-client.tar.gz \
+    -C /opt/ai-workbench/client
 ```
 
 Serve the web client files using a reverse proxy or

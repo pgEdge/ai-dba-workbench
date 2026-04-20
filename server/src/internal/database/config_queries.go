@@ -572,15 +572,24 @@ func (d *Datastore) resolveConnectionHierarchy(ctx context.Context, connectionID
 					fmt.Errorf("failed to create cluster entry: %w", insertErr)
 			}
 
+			// Re-select the cluster along with its real group. A
+			// concurrent transaction could have won the
+			// auto_cluster_key with a different group_id than our
+			// default, turning the INSERT above into a no-op; in
+			// that case we must return the winner's group, not the
+			// default group we would have inserted. Issue #36.
 			var newClusterID int
 			var newClusterName string
+			var newGroupID *int
+			var newGroupName *string
 			selectErr := d.pool.QueryRow(ctx, `
-				SELECT id, name
-				FROM clusters
-				WHERE auto_cluster_key = $1
-				  AND dismissed = FALSE`,
+				SELECT cl.id, cl.name, cg.id, cg.name
+				FROM clusters cl
+				LEFT JOIN cluster_groups cg ON cl.group_id = cg.id
+				WHERE cl.auto_cluster_key = $1
+				  AND cl.dismissed = FALSE`,
 				foundKey,
-			).Scan(&newClusterID, &newClusterName)
+			).Scan(&newClusterID, &newClusterName, &newGroupID, &newGroupName)
 			if selectErr != nil {
 				if errors.Is(selectErr, pgx.ErrNoRows) {
 					// A dismissed row already existed and the
@@ -593,9 +602,7 @@ func (d *Datastore) resolveConnectionHierarchy(ctx context.Context, connectionID
 					fmt.Errorf("failed to load cluster entry: %w", selectErr)
 			}
 
-			gID := defaultGroup.ID
-			gName := defaultGroup.Name
-			return &newClusterID, &newClusterName, &gID, &gName, nil
+			return &newClusterID, &newClusterName, newGroupID, newGroupName, nil
 		}
 		return nil, nil, nil, nil, fmt.Errorf("failed to look up cluster by auto key: %w", err)
 	}

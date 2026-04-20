@@ -63,22 +63,84 @@ func (s *AuthStore) UpdateGroup(id int64, name, description string) error {
 	return nil
 }
 
-// DeleteGroup deletes a group (cascade deletes memberships via foreign key)
+// DeleteGroup deletes a group and all of its dependent rows in a single
+// atomic transaction. This removes the group's memberships (both as a
+// parent and as a nested child), its MCP and connection privilege grants,
+// and its admin permissions. The schema declares ON DELETE CASCADE on
+// these foreign keys, but SQLite does not enforce foreign keys by default
+// (and this codebase does not enable the pragma), so dependent rows must
+// be removed explicitly to avoid leaving orphaned privilege rows that
+// could be attached to a future group reusing the same id.
 func (s *AuthStore) DeleteGroup(id int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	result, err := s.db.Exec("DELETE FROM user_groups WHERE id = ?", id)
+	tx, err := s.db.Begin()
 	if err != nil {
-		return fmt.Errorf("failed to delete group: %w", err)
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			//nolint:errcheck // Rollback error is not critical; the outer
+			// error is already being returned to the caller.
+			tx.Rollback()
+		}
+	}()
+
+	// Remove the group's membership rows. A group can appear either as the
+	// parent_group_id (its own direct members) or as a nested
+	// member_group_id inside another group; both sides must be cleared.
+	if _, err = tx.Exec(
+		"DELETE FROM group_memberships WHERE parent_group_id = ? OR member_group_id = ?",
+		id, id,
+	); err != nil {
+		return fmt.Errorf("failed to delete group memberships: %w", err)
 	}
 
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
+	// Remove MCP privilege grants held by this group.
+	if _, err = tx.Exec(
+		"DELETE FROM group_mcp_privileges WHERE group_id = ?", id,
+	); err != nil {
+		return fmt.Errorf("failed to delete group MCP privileges: %w", err)
+	}
+
+	// Remove connection privilege grants held by this group.
+	if _, err = tx.Exec(
+		"DELETE FROM connection_privileges WHERE group_id = ?", id,
+	); err != nil {
+		return fmt.Errorf("failed to delete group connection privileges: %w", err)
+	}
+
+	// Remove admin permission grants held by this group.
+	if _, err = tx.Exec(
+		"DELETE FROM group_admin_permissions WHERE group_id = ?", id,
+	); err != nil {
+		return fmt.Errorf("failed to delete group admin permissions: %w", err)
+	}
+
+	// Finally, delete the group itself. We use RowsAffected on this
+	// statement to report the "not found" case; the dependent deletes
+	// above are no-ops when the group never existed, so they cannot
+	// mask a missing-group error here.
+	result, execErr := tx.Exec("DELETE FROM user_groups WHERE id = ?", id)
+	if execErr != nil {
+		err = fmt.Errorf("failed to delete group: %w", execErr)
+		return err
+	}
+
+	rows, rowsErr := result.RowsAffected()
+	if rowsErr != nil {
+		err = fmt.Errorf("failed to get rows affected: %w", rowsErr)
+		return err
 	}
 	if rows == 0 {
-		return fmt.Errorf("group not found: %d", id)
+		err = fmt.Errorf("group not found: %d", id)
+		return err
+	}
+
+	if commitErr := tx.Commit(); commitErr != nil {
+		err = fmt.Errorf("failed to commit group deletion: %w", commitErr)
+		return err
 	}
 
 	return nil

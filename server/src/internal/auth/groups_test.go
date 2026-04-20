@@ -155,6 +155,159 @@ func TestDeleteNonExistentGroup(t *testing.T) {
 	}
 }
 
+// TestDeleteGroupCleansUpDependentRows verifies that deleting a group
+// removes every row that references the group, including memberships,
+// MCP privilege grants, connection privilege grants, and admin
+// permission grants. Regression test for the orphan-rows bug tracked
+// in GitHub issue #51: previously the handler relied on ON DELETE
+// CASCADE foreign keys that SQLite does not enforce, so users who
+// belonged to a deleted group retained all privileges the group
+// granted indefinitely.
+func TestDeleteGroupCleansUpDependentRows(t *testing.T) {
+	store, cleanup := createTestAuthStoreForGroups(t)
+	defer cleanup()
+
+	// Create a user that will be a member of the group under test.
+	if err := store.CreateUser("alice", "Password1", "", "", ""); err != nil {
+		t.Fatalf("Failed to create user: %v", err)
+	}
+	userID, err := store.GetUserID("alice")
+	if err != nil {
+		t.Fatalf("Failed to get user ID: %v", err)
+	}
+
+	// Create the group under test and a nested child group so we exercise
+	// both sides of the group_memberships self-reference.
+	groupID, err := store.CreateGroup("target-group", "Group to delete")
+	if err != nil {
+		t.Fatalf("Failed to create target group: %v", err)
+	}
+	childID, err := store.CreateGroup("child-group", "Nested child")
+	if err != nil {
+		t.Fatalf("Failed to create child group: %v", err)
+	}
+
+	// Create a second, unrelated group whose rows must NOT be touched by
+	// the deletion. This guards against the DELETE statements missing a
+	// WHERE clause.
+	otherID, err := store.CreateGroup("other-group", "Unrelated group")
+	if err != nil {
+		t.Fatalf("Failed to create other group: %v", err)
+	}
+
+	// Memberships: add the user to the target, nest the child inside the
+	// target, and add an unrelated membership on the other group.
+	if err := store.AddUserToGroup(groupID, userID); err != nil {
+		t.Fatalf("Failed to add user to target group: %v", err)
+	}
+	if err := store.AddGroupToGroup(groupID, childID); err != nil {
+		t.Fatalf("Failed to add child group to target group: %v", err)
+	}
+	if err := store.AddUserToGroup(otherID, userID); err != nil {
+		t.Fatalf("Failed to add user to other group: %v", err)
+	}
+
+	// Register an MCP privilege and grant it to both groups.
+	privID, err := store.RegisterMCPPrivilege("tool.test", MCPPrivilegeTypeTool, "Test tool", false)
+	if err != nil {
+		t.Fatalf("Failed to register MCP privilege: %v", err)
+	}
+	if err := store.GrantMCPPrivilege(groupID, privID); err != nil {
+		t.Fatalf("Failed to grant MCP privilege to target group: %v", err)
+	}
+	if err := store.GrantMCPPrivilege(otherID, privID); err != nil {
+		t.Fatalf("Failed to grant MCP privilege to other group: %v", err)
+	}
+
+	// Grant a connection privilege and an admin permission to both groups.
+	if err := store.GrantConnectionPrivilege(groupID, 42, "read_write"); err != nil {
+		t.Fatalf("Failed to grant connection privilege to target group: %v", err)
+	}
+	if err := store.GrantConnectionPrivilege(otherID, 42, "read"); err != nil {
+		t.Fatalf("Failed to grant connection privilege to other group: %v", err)
+	}
+	if err := store.GrantAdminPermission(groupID, "manage_users"); err != nil {
+		t.Fatalf("Failed to grant admin permission to target group: %v", err)
+	}
+	if err := store.GrantAdminPermission(otherID, "manage_groups"); err != nil {
+		t.Fatalf("Failed to grant admin permission to other group: %v", err)
+	}
+
+	// Delete the target group. All of its dependent rows must disappear.
+	if err := store.DeleteGroup(groupID); err != nil {
+		t.Fatalf("Failed to delete target group: %v", err)
+	}
+
+	// Helper that counts rows matching a predicate on a given table and
+	// fails the test with a descriptive message if the count is non-zero.
+	assertNoRows := func(label, query string, args ...any) {
+		t.Helper()
+		var count int
+		if err := store.db.QueryRow(query, args...).Scan(&count); err != nil {
+			t.Fatalf("Failed to query %s: %v", label, err)
+		}
+		if count != 0 {
+			t.Errorf("Expected 0 orphan rows in %s for deleted group, got %d", label, count)
+		}
+	}
+
+	// No membership rows may reference the deleted group in either slot.
+	assertNoRows("group_memberships (parent)",
+		"SELECT COUNT(*) FROM group_memberships WHERE parent_group_id = ?", groupID)
+	assertNoRows("group_memberships (member)",
+		"SELECT COUNT(*) FROM group_memberships WHERE member_group_id = ?", groupID)
+	assertNoRows("group_mcp_privileges",
+		"SELECT COUNT(*) FROM group_mcp_privileges WHERE group_id = ?", groupID)
+	assertNoRows("connection_privileges",
+		"SELECT COUNT(*) FROM connection_privileges WHERE group_id = ?", groupID)
+	assertNoRows("group_admin_permissions",
+		"SELECT COUNT(*) FROM group_admin_permissions WHERE group_id = ?", groupID)
+
+	// Sanity check: the unrelated group's rows must survive unchanged.
+	assertRowCount := func(label, query string, want int, args ...any) {
+		t.Helper()
+		var count int
+		if err := store.db.QueryRow(query, args...).Scan(&count); err != nil {
+			t.Fatalf("Failed to query %s: %v", label, err)
+		}
+		if count != want {
+			t.Errorf("Expected %d rows in %s for unrelated group, got %d", want, label, count)
+		}
+	}
+	assertRowCount("group_memberships (other)",
+		"SELECT COUNT(*) FROM group_memberships WHERE parent_group_id = ?", 1, otherID)
+	assertRowCount("group_mcp_privileges (other)",
+		"SELECT COUNT(*) FROM group_mcp_privileges WHERE group_id = ?", 1, otherID)
+	assertRowCount("connection_privileges (other)",
+		"SELECT COUNT(*) FROM connection_privileges WHERE group_id = ?", 1, otherID)
+	assertRowCount("group_admin_permissions (other)",
+		"SELECT COUNT(*) FROM group_admin_permissions WHERE group_id = ?", 1, otherID)
+
+	// End-to-end check: the user must no longer report membership of the
+	// deleted group. Before the fix, the membership row survived and
+	// GetUserGroups would still list the deleted group id.
+	groupIDs, err := store.GetUserGroups(userID)
+	if err != nil {
+		t.Fatalf("Failed to get user groups: %v", err)
+	}
+	for _, gid := range groupIDs {
+		if gid == groupID {
+			t.Errorf("User still reports membership of deleted group %d", groupID)
+		}
+	}
+
+	// The child group itself is NOT deleted (we only deleted the parent),
+	// so it must still exist as a standalone group. This guards against
+	// an overzealous fix that accidentally deletes nested groups.
+	child, err := store.GetGroup(childID)
+	if err != nil {
+		t.Fatalf("Failed to get child group: %v", err)
+	}
+	if child == nil {
+		t.Error("Nested child group was unexpectedly deleted along with its parent")
+	}
+}
+
 func TestListGroups(t *testing.T) {
 	store, cleanup := createTestAuthStoreForGroups(t)
 	defer cleanup()

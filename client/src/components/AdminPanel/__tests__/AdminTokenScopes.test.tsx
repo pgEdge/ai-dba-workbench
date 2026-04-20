@@ -72,15 +72,10 @@ const installClipboardMock = (
 };
 
 /**
- * Drive the component into the "token created" dialog state. The cheapest
- * path is through the real handleCreateToken flow: list tokens/connections/
- * mcp/users, open the create dialog, fill required fields, submit.
+ * Install mockApiGet responders covering the create-token flow. Extracted
+ * so tests that reopen the dialog in the same render can re-use them.
  */
-const openCreatedDialog = async () => {
-    const user = userEvent.setup({ delay: null });
-
-    // Initial fetchData() kicks off four parallel calls. Use implementation
-    // based routing so we can respond by URL.
+const installCreateFlowApiMocks = () => {
     mockApiGet.mockImplementation((url: string) => {
         if (url === '/api/v1/rbac/tokens') {
             return Promise.resolve({ tokens: [] });
@@ -107,16 +102,16 @@ const openCreatedDialog = async () => {
         }
         return Promise.resolve({});
     });
+};
 
-    mockApiPost.mockResolvedValue({ id: 42, token: CREATED_TOKEN });
-
-    renderPanel();
-
-    // Wait for the initial load to complete.
-    await waitFor(() => {
-        expect(screen.getByText('Create Token')).toBeInTheDocument();
-    });
-
+/**
+ * Walk the user through the "Create Token" flow in the currently rendered
+ * panel, stopping once the "Token created" success dialog appears. Reusable
+ * to reopen the dialog within a single render.
+ */
+const walkCreateFlow = async (
+    user: ReturnType<typeof userEvent.setup>
+) => {
     // Open the create dialog.
     await user.click(screen.getByText('Create Token'));
 
@@ -139,6 +134,56 @@ const openCreatedDialog = async () => {
     // The created-token dialog should now be visible.
     await waitFor(() => {
         expect(screen.getByText('Token created')).toBeInTheDocument();
+    });
+};
+
+/**
+ * Drive the component into the "token created" dialog state. The cheapest
+ * path is through the real handleCreateToken flow: list tokens/connections/
+ * mcp/users, open the create dialog, fill required fields, submit.
+ */
+const openCreatedDialog = async () => {
+    const user = userEvent.setup({ delay: null });
+
+    // Initial fetchData() kicks off four parallel calls. Use implementation
+    // based routing so we can respond by URL.
+    installCreateFlowApiMocks();
+
+    mockApiPost.mockResolvedValue({ id: 42, token: CREATED_TOKEN });
+
+    renderPanel();
+
+    // Wait for the initial load to complete.
+    await waitFor(() => {
+        expect(screen.getByText('Create Token')).toBeInTheDocument();
+    });
+
+    await walkCreateFlow(user);
+
+    return user;
+};
+
+/**
+ * Click the copy-to-clipboard icon button and wait for the UI to flip to
+ * the "copied" state (CheckIcon visible). Asserts writeText was called.
+ */
+const clickCopyAndAwaitCopiedState = async (
+    writeTextMock: ReturnType<typeof vi.fn>
+) => {
+    const copyButton = screen.getByRole('button', {
+        name: /copy token/i,
+    });
+
+    await act(async () => {
+        fireEvent.click(copyButton);
+    });
+
+    await waitFor(() => {
+        expect(writeTextMock).toHaveBeenCalledWith(CREATED_TOKEN);
+    });
+
+    await waitFor(() => {
+        expect(screen.getByTestId('CheckIcon')).toBeInTheDocument();
     });
 };
 
@@ -172,26 +217,12 @@ describe('AdminTokenScopes - copy-to-clipboard behaviour', () => {
                 screen.queryByTestId('CheckIcon')
             ).not.toBeInTheDocument();
 
-            const copyButton = screen.getByRole('button', {
-                name: /copy token/i,
-            });
-
-            await act(async () => {
-                fireEvent.click(copyButton);
-            });
+            await clickCopyAndAwaitCopiedState(writeTextMock);
 
             // writeText should have been called exactly once with the token.
-            await waitFor(() => {
-                expect(writeTextMock).toHaveBeenCalledTimes(1);
-            });
-            expect(writeTextMock).toHaveBeenCalledWith(CREATED_TOKEN);
+            expect(writeTextMock).toHaveBeenCalledTimes(1);
 
-            // UI should flip to the copied state.
-            await waitFor(() => {
-                expect(
-                    screen.getByTestId('CheckIcon')
-                ).toBeInTheDocument();
-            });
+            // The CopyIcon should no longer be visible after the flip.
             expect(
                 screen.queryByTestId('ContentCopyIcon')
             ).not.toBeInTheDocument();
@@ -233,22 +264,11 @@ describe('AdminTokenScopes - copy-to-clipboard behaviour', () => {
 
     it('resets the copied state when the created-token dialog is closed',
         async () => {
-            await openCreatedDialog();
+            const user = await openCreatedDialog();
             installClipboardMock(writeTextMock);
 
-            const copyButton = screen.getByRole('button', {
-                name: /copy token/i,
-            });
-
-            await act(async () => {
-                fireEvent.click(copyButton);
-            });
-
-            await waitFor(() => {
-                expect(
-                    screen.getByTestId('CheckIcon')
-                ).toBeInTheDocument();
-            });
+            // Click copy so the dialog is in the "copied" (CheckIcon) state.
+            await clickCopyAndAwaitCopiedState(writeTextMock);
 
             // Close the dialog via the Close action.
             const closeButton = screen.getByRole('button', { name: /^Close$/ });
@@ -261,6 +281,19 @@ describe('AdminTokenScopes - copy-to-clipboard behaviour', () => {
                     screen.queryByText('Token created')
                 ).not.toBeInTheDocument();
             });
+
+            // Reopen the created-token dialog via the real flow. The copy
+            // icon should have reset: ContentCopyIcon present, CheckIcon
+            // absent, demonstrating the copied-state did not leak across
+            // dialog open/close cycles.
+            await walkCreateFlow(user);
+
+            expect(
+                screen.getByTestId('ContentCopyIcon')
+            ).toBeInTheDocument();
+            expect(
+                screen.queryByTestId('CheckIcon')
+            ).not.toBeInTheDocument();
         }
     );
 });

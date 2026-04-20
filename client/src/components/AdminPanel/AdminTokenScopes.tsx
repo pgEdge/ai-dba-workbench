@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
     Box,
     Typography,
@@ -180,6 +180,7 @@ const AdminTokenScopes: React.FC = () => {
     const [createdToken, setCreatedToken] = useState<string | null>(null);
     const [createdDialogOpen, setCreatedDialogOpen] = useState(false);
     const [tokenCopied, setTokenCopied] = useState(false);
+    const copyResetTimerRef = useRef<number | null>(null);
 
     // Create dialog - owner privilege filtering
     const [ownerConnections, setOwnerConnections] = useState<Connection[]>([]);
@@ -505,24 +506,34 @@ const AdminTokenScopes: React.FC = () => {
     // Copy token to clipboard. Surfaces short-lived feedback via the copy
     // button (icon swap + tooltip), and reports clipboard failures through
     // the shared error channel so the user is never left wondering whether
-    // the click did anything.
-    const handleCopyToken = useCallback(() => {
+    // the click did anything. The Clipboard API is undefined on non-secure
+    // contexts, so we guard access before calling it to avoid a synchronous
+    // TypeError that would bypass our error reporting.
+    const handleCopyToken = useCallback(async () => {
         if (!createdToken) {
             return;
         }
-        navigator.clipboard.writeText(createdToken).then(
-            () => {
-                setTokenCopied(true);
-                setTimeout(() => setTokenCopied(false), 2000);
-            },
-            (err: unknown) => {
-                setError(
-                    err instanceof Error
-                        ? `Failed to copy token: ${err.message}`
-                        : 'Failed to copy token to clipboard.'
-                );
+        try {
+            if (!navigator.clipboard?.writeText) {
+                throw new Error('Clipboard API unavailable in this context.');
             }
-        );
+            await navigator.clipboard.writeText(createdToken);
+            setError(null);
+            setTokenCopied(true);
+            if (copyResetTimerRef.current !== null) {
+                window.clearTimeout(copyResetTimerRef.current);
+            }
+            copyResetTimerRef.current = window.setTimeout(() => {
+                setTokenCopied(false);
+                copyResetTimerRef.current = null;
+            }, 2000);
+        } catch (err: unknown) {
+            setError(
+                err instanceof Error
+                    ? `Failed to copy token: ${err.message}`
+                    : 'Failed to copy token to clipboard.'
+            );
+        }
     }, [createdToken]);
 
     // Close the "token created" dialog and clear the copied-feedback state
@@ -530,6 +541,22 @@ const AdminTokenScopes: React.FC = () => {
     const handleCloseCreatedDialog = useCallback(() => {
         setCreatedDialogOpen(false);
         setTokenCopied(false);
+        if (copyResetTimerRef.current !== null) {
+            window.clearTimeout(copyResetTimerRef.current);
+            copyResetTimerRef.current = null;
+        }
+    }, []);
+
+    // Ensure the copy-reset timer does not outlive the component; if the
+    // user navigates away while the "Copied!" feedback is still showing,
+    // the timer would otherwise fire a state update on an unmounted tree.
+    useEffect(() => {
+        return () => {
+            if (copyResetTimerRef.current !== null) {
+                window.clearTimeout(copyResetTimerRef.current);
+                copyResetTimerRef.current = null;
+            }
+        };
     }, []);
 
     // Format expiry date

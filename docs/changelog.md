@@ -62,11 +62,9 @@ project adheres to
 - Fix partitions not being dropped at the appropriate
   time by the collector. (#62)
 - Fix the copy-to-clipboard button in the Admin Tokens
-  "Token created" dialog; the button now confirms a
-  successful copy by swapping to a check mark and
-  showing a "Copied!" tooltip for two seconds, and it
-  reports clipboard failures through the existing error
-  alert. (#71)
+  "Token created" dialog. (#71)
+- Show a check mark and a "Copied!" tooltip on success;
+  show the existing error alert on clipboard failures. (#71)
 
 ### Security
 

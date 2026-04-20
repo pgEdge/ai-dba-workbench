@@ -960,7 +960,11 @@ func (d *Datastore) GetClustersInGroup(ctx context.Context, groupID int) ([]Clus
 	return clusters, nil
 }
 
-// GetCluster returns a single cluster by ID
+// GetCluster returns a single cluster by ID. Dismissed (soft-deleted)
+// clusters are excluded so callers never surface them to end users. Code
+// paths that need to see dismissed rows (for example, the dismiss-aware
+// auto-detection upsert) must query the clusters table directly rather
+// than going through this helper.
 func (d *Datastore) GetCluster(ctx context.Context, id int) (*Cluster, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -969,6 +973,7 @@ func (d *Datastore) GetCluster(ctx context.Context, id int) (*Cluster, error) {
         SELECT id, group_id, name, description, replication_type, auto_cluster_key, created_at, updated_at
         FROM clusters
         WHERE id = $1
+          AND dismissed = FALSE
     `
 
 	var c Cluster
@@ -1244,10 +1249,15 @@ func (d *Datastore) UpsertAutoDetectedCluster(ctx context.Context, autoKey strin
 		return &c, nil
 	}
 
-	// Cluster exists, update it
-	// Build dynamic update based on what's provided; clear dismissed
-	// since the user is explicitly editing this cluster
-	setClauses := []string{"updated_at = CURRENT_TIMESTAMP", "dismissed = FALSE"}
+	// Cluster exists, update it.
+	// Build dynamic update based on what's provided. Preserve the
+	// dismissed flag here: if auto-detection (or any repeat call with the
+	// same auto_cluster_key) rediscovers a cluster the user previously
+	// dismissed, we must not silently un-dismiss it. Issue #36. Users
+	// that want to restore a dismissed auto-detected cluster go through
+	// UpsertClusterByAutoKey (rename) or UpdateCluster / UpdateClusterPartial,
+	// which clear dismissed explicitly.
+	setClauses := []string{"updated_at = CURRENT_TIMESTAMP"}
 	args := []any{}
 	argNum := 1
 

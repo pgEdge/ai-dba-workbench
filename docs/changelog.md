@@ -53,6 +53,12 @@ project adheres to
   by an auto-detected Spock cluster; the connections
   API now returns the `membership_source` field the
   client filter requires. (#25, #46)
+- Fix dismissed auto-detected clusters reappearing
+  after the collector's next auto-detection run;
+  `UpsertAutoDetectedCluster` no longer clears the
+  `dismissed` flag on rediscovery, and `GetCluster`
+  now filters dismissed rows from single-cluster
+  lookups. (#36)
 
 ### Security
 

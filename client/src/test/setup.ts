@@ -13,6 +13,16 @@ import { configure as configureDom } from '@testing-library/dom';
 import { act } from '@testing-library/react';
 
 /*
+ * Capture a reference to the native `setTimeout` at module init so the
+ * asyncWrapper below keeps working when a test calls
+ * `vi.useFakeTimers()`. Without this, RTL async helpers (`findBy*`,
+ * `waitFor`) invoked under fake timers would deadlock because the
+ * replaced global `setTimeout` never fires until the fake clock is
+ * advanced.
+ */
+const nativeSetTimeout = globalThis.setTimeout;
+
+/*
  * React Testing Library (RTL) ships with its own nested copy of
  * `@testing-library/dom` (v9) and, on import, patches THAT copy's
  * `asyncWrapper` / `eventWrapper` / `unstable_advanceTimersWrapper`
@@ -54,7 +64,7 @@ configureDom({
         try {
             const result = await cb();
             await new Promise<void>((resolve) => {
-                setTimeout(() => resolve(), 0);
+                nativeSetTimeout(() => resolve(), 0);
             });
             return result;
         } finally {

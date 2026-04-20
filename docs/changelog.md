@@ -59,6 +59,12 @@ project adheres to
   `dismissed` flag on rediscovery, and `GetCluster`
   now filters dismissed rows from single-cluster
   lookups. (#36)
+- Fix dismissed auto-detected clusters reappearing in
+  the Server creation dialog's cluster dropdown after
+  alert or connection context was fetched; the
+  connection hierarchy resolver now skips dismissed
+  rows and no longer resurrects them through its
+  upsert fallback. (#36)
 - Fix partitions not being dropped at the appropriate
   time by the collector. (#62)
 

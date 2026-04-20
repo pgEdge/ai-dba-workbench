@@ -27,10 +27,10 @@ jobs:
 
         steps:
             - name: Checkout code
-              uses: actions/checkout@v4
+              uses: actions/checkout@v6
 
             - name: Set up Node.js ${{ matrix.node-version }}
-              uses: actions/setup-node@v4
+              uses: actions/setup-node@v6
               with:
                   node-version: ${{ matrix.node-version }}
                   cache: 'npm'
@@ -56,7 +56,7 @@ jobs:
 
             - name: Upload build artifact
               if: matrix.node-version == '20'
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@v7
               with:
                   name: ai-dba-client-dist
                   path: client/dist/
@@ -64,7 +64,7 @@ jobs:
 
             - name: Upload coverage artifact
               if: matrix.node-version == '20'
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@v7
               with:
                   name: client-coverage
                   path: client/coverage/

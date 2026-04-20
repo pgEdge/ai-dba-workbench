@@ -36,10 +36,10 @@ jobs:
 
         steps:
             - name: Checkout code
-              uses: actions/checkout@v4
+              uses: actions/checkout@v6
 
             - name: Set up Node.js 20
-              uses: actions/setup-node@v4
+              uses: actions/setup-node@v6
               with:
                   node-version: '20'
                   cache: 'npm'
@@ -52,7 +52,7 @@ jobs:
               run: npm run build
 
             - name: Upload client artifact
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@v7
               with:
                   name: ai-dba-client-dist
                   path: client/dist/
@@ -67,10 +67,10 @@ jobs:
 
         steps:
             - name: Checkout code
-              uses: actions/checkout@v4
+              uses: actions/checkout@v6
 
             - name: Set up Python 3.11
-              uses: actions/setup-python@v5
+              uses: actions/setup-python@v6
               with:
                   python-version: '3.11'
                   cache: 'pip'
@@ -87,7 +87,7 @@ jobs:
                   mkdocs build -v
 
             - name: Upload documentation artifact
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@v7
               with:
                   name: ai-workbench-docs-site
                   path: site/
@@ -107,16 +107,16 @@ jobs:
 
         steps:
             - name: Checkout code
-              uses: actions/checkout@v4
+              uses: actions/checkout@v6
 
             - name: Set up Go 1.26
-              uses: actions/setup-go@v5
+              uses: actions/setup-go@v6
               with:
                   go-version: '1.26'
                   cache: false
 
             - name: Cache Go modules (server)
-              uses: actions/cache@v4
+              uses: actions/cache@v5
               with:
                   path: |
                       ~/go/pkg/mod
@@ -126,7 +126,7 @@ jobs:
                       ${{ runner.os }}-go-1.26-release-server-
 
             - name: Cache Go modules (collector)
-              uses: actions/cache@v4
+              uses: actions/cache@v5
               with:
                   path: |
                       ~/go/pkg/mod
@@ -136,7 +136,7 @@ jobs:
                       ${{ runner.os }}-go-1.26-release-collector-
 
             - name: Cache Go modules (alerter)
-              uses: actions/cache@v4
+              uses: actions/cache@v5
               with:
                   path: |
                       ~/go/pkg/mod
@@ -176,21 +176,21 @@ jobs:
                   tar czf ai-dba-alerter-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz ai-dba-alerter
 
             - name: Upload server archive
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@v7
               with:
                   name: ai-dba-server-${{ matrix.goos }}-${{ matrix.goarch }}
                   path: ai-dba-server-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
                   retention-days: 1
 
             - name: Upload collector archive
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@v7
               with:
                   name: ai-dba-collector-${{ matrix.goos }}-${{ matrix.goarch }}
                   path: ai-dba-collector-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
                   retention-days: 1
 
             - name: Upload alerter archive
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@v7
               with:
                   name: ai-dba-alerter-${{ matrix.goos }}-${{ matrix.goarch }}
                   path: ai-dba-alerter-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
@@ -206,7 +206,7 @@ jobs:
 
         steps:
             - name: Download all artifacts
-              uses: actions/download-artifact@v4
+              uses: actions/download-artifact@v8
               with:
                   path: artifacts
 

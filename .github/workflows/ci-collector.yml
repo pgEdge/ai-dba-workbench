@@ -38,16 +38,16 @@ jobs:
 
         steps:
             - name: Checkout code
-              uses: actions/checkout@v4
+              uses: actions/checkout@v6
 
             - name: Set up Go ${{ matrix.go-version }}
-              uses: actions/setup-go@v5
+              uses: actions/setup-go@v6
               with:
                   go-version: ${{ matrix.go-version }}
                   cache: false
 
             - name: Cache Go modules
-              uses: actions/cache@v4
+              uses: actions/cache@v5
               with:
                   path: |
                       ~/go/pkg/mod
@@ -118,7 +118,7 @@ jobs:
 
             - name: Upload build artifact
               if: matrix.go-version == '1.26' && matrix.postgres-version == '18'
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@v7
               with:
                   name: ai-dba-collector-linux-amd64
                   path: collector/ai-dba-collector
@@ -126,7 +126,7 @@ jobs:
 
             - name: Upload coverage artifact
               if: matrix.go-version == '1.26' && matrix.postgres-version == '18'
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@v7
               with:
                   name: collector-coverage
                   path: |

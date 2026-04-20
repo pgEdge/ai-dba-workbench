@@ -10,6 +10,7 @@
 package overview
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -17,6 +18,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/pgedge/ai-workbench/server/internal/auth"
+	"github.com/pgedge/ai-workbench/server/internal/database"
 )
 
 // openAPISpecPath is the path to the OpenAPI specification for RFC 8631
@@ -34,15 +38,31 @@ var validScopeTypes = map[string]bool{
 // endpoint. It satisfies the routeRegistrar interface used by the
 // server's handler setup.
 type Handler struct {
-	generator *Generator
-	hub       *Hub
+	generator   *Generator
+	hub         *Hub
+	rbacChecker *auth.RBACChecker
+	datastore   *database.Datastore
 }
 
 // NewHandler creates a new overview handler backed by the given generator.
+// RBAC filtering is disabled when called without an rbacChecker; use
+// NewHandlerWithRBAC to enable scope visibility enforcement.
 func NewHandler(generator *Generator, hub *Hub) *Handler {
 	return &Handler{
 		generator: generator,
 		hub:       hub,
+	}
+}
+
+// NewHandlerWithRBAC creates a new overview handler that enforces scope
+// visibility against the caller's RBAC view. A nil rbacChecker or
+// datastore disables the gate (preserves pre-RBAC behaviour for tests).
+func NewHandlerWithRBAC(generator *Generator, hub *Hub, rbacChecker *auth.RBACChecker, datastore *database.Datastore) *Handler {
+	return &Handler{
+		generator:   generator,
+		hub:         hub,
+		rbacChecker: rbacChecker,
+		datastore:   datastore,
 	}
 }
 
@@ -89,7 +109,18 @@ func (h *Handler) handleOverview(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		overview, err := h.generator.GetConnectionsSummary(connectionIDs, scopeName, refresh)
+		filtered, ok := h.filterConnectionIDs(r.Context(), w, connectionIDs)
+		if !ok {
+			return
+		}
+		if len(filtered) == 0 {
+			if err := json.NewEncoder(w).Encode(generatingResponse{Status: "empty", Summary: nil}); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: overview: failed to encode empty response: %v\n", err)
+			}
+			return
+		}
+
+		overview, err := h.generator.GetConnectionsSummary(filtered, scopeName, refresh)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: overview: connections summary failed: %v\n", err)
 			http.Error(w, "Failed to generate connections summary", http.StatusInternalServerError)
@@ -129,7 +160,21 @@ func (h *Handler) handleOverview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	overview, err := h.generator.GetScopedSummary(scopeType, scopeID, refresh)
+	intersect, unrestricted, ok := h.scopeVisible(r.Context(), w, scopeType, scopeID)
+	if !ok {
+		return
+	}
+
+	var overview *Overview
+	if unrestricted {
+		overview, err = h.generator.GetScopedSummary(scopeType, scopeID, refresh)
+	} else {
+		// Restricted visibility: generate a summary over only the scope
+		// members the caller may see. The scope name is still useful for
+		// the LLM prompt; fetch it so the summary reads correctly.
+		scopeName := h.resolveScopeName(r.Context(), scopeType, scopeID)
+		overview, err = h.generator.GetConnectionsSummary(intersect, scopeName, refresh)
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: overview: scoped summary failed: %v\n", err)
 		http.Error(w, "Failed to generate scoped summary", http.StatusInternalServerError)
@@ -193,14 +238,20 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 	// Build the scope key for subscribing.
 	// Estate-wide subscribers use an empty key.
 	var scopeKey string
+	var filteredConnectionIDs []int
 	if connectionIDsStr != "" {
 		connectionIDs, err := parseConnectionIDs(connectionIDsStr)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		sorted := make([]int, len(connectionIDs))
-		copy(sorted, connectionIDs)
+		filtered, ok := h.filterConnectionIDs(r.Context(), w, connectionIDs)
+		if !ok {
+			return
+		}
+		filteredConnectionIDs = filtered
+		sorted := make([]int, len(filtered))
+		copy(sorted, filtered)
 		sortInts(sorted)
 		parts := make([]string, len(sorted))
 		for i, id := range sorted {
@@ -221,7 +272,28 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "scope_id must be a positive integer", http.StatusBadRequest)
 			return
 		}
-		scopeKey = fmt.Sprintf("%s:%d", scopeType, scopeID)
+		intersect, unrestricted, ok := h.scopeVisible(r.Context(), w, scopeType, scopeID)
+		if !ok {
+			return
+		}
+		if unrestricted {
+			scopeKey = fmt.Sprintf("%s:%d", scopeType, scopeID)
+		} else {
+			// Restricted visibility routes through the connections-summary
+			// path. Reuse the sorted-ID cache key scheme so two users with
+			// different visibility never share a cache entry.
+			filteredConnectionIDs = intersect
+			sorted := make([]int, len(intersect))
+			copy(sorted, intersect)
+			sortInts(sorted)
+			parts := make([]string, len(sorted))
+			for i, id := range sorted {
+				parts[i] = fmt.Sprintf("%d", id)
+			}
+			scopeKey = "connections:" + strings.Join(parts, ",")
+			// When the intersection is empty we still accept the
+			// subscription but will not kick off generation below.
+		}
 	}
 
 	// Set SSE headers and flush immediately so the client receives the
@@ -243,18 +315,27 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 			h.writeSSEEvent(w, current)
 			flusher.Flush()
 		}
-	} else if connectionIDsStr != "" {
-		// For connections scope, trigger generation in a goroutine.
-		// The generator will broadcast when complete.
-		connectionIDs, err := parseConnectionIDs(connectionIDsStr)
-		if err != nil {
-			return // Already validated above.
-		}
-		go func() {
-			if _, err := h.generator.GetConnectionsSummary(connectionIDs, scopeName, false); err != nil {
-				fmt.Fprintf(os.Stderr, "overview: scoped generation failed: %v\n", err)
+	} else if connectionIDsStr != "" || len(filteredConnectionIDs) > 0 {
+		// For connections scope (either explicit connection_ids or a
+		// scope request that was restricted to a visibility subset),
+		// trigger generation in a goroutine. The generator will
+		// broadcast when complete. If the caller has no visible
+		// connections in the set we skip generation but keep the SSE
+		// connection open for keepalives.
+		if len(filteredConnectionIDs) > 0 {
+			ids := filteredConnectionIDs
+			effectiveName := scopeName
+			if effectiveName == "" && scopeType != "" && scopeIDStr != "" {
+				if id, convErr := strconv.Atoi(scopeIDStr); convErr == nil {
+					effectiveName = h.resolveScopeName(r.Context(), scopeType, id)
+				}
 			}
-		}()
+			go func() {
+				if _, err := h.generator.GetConnectionsSummary(ids, effectiveName, false); err != nil {
+					fmt.Fprintf(os.Stderr, "overview: scoped generation failed: %v\n", err)
+				}
+			}()
+		}
 	} else if scopeType != "" {
 		scopeID, err := strconv.Atoi(scopeIDStr)
 		if err != nil {
@@ -286,6 +367,184 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+}
+
+// filterConnectionIDs restricts the supplied connection ID list to those
+// visible to the caller. When RBAC is not configured (nil checker or
+// nil datastore) the list is returned unchanged. The second return
+// value is false when the function wrote an error response and the
+// caller must return immediately.
+func (h *Handler) filterConnectionIDs(ctx context.Context, w http.ResponseWriter, ids []int) ([]int, bool) {
+	if h.rbacChecker == nil || h.datastore == nil {
+		return ids, true
+	}
+	visible, allConnections, err := h.resolveVisible(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: overview: failed to resolve visible connections: %v\n", err)
+		http.Error(w, "Failed to resolve connection visibility", http.StatusInternalServerError)
+		return nil, false
+	}
+	if allConnections {
+		return ids, true
+	}
+	out := make([]int, 0, len(ids))
+	for _, id := range ids {
+		if visible[id] {
+			out = append(out, id)
+		}
+	}
+	return out, true
+}
+
+// scopeVisible reports whether the caller may see the requested scope
+// and, when they can, returns the intersection of the scope's member
+// connection IDs with the caller's visible set. When RBAC is not
+// configured the check is skipped and (nil, true, true) is returned.
+// When the caller is a superuser or has a wildcard grant, (nil, true,
+// true) is returned so the caller can use the full-scope snapshot path.
+// On denial the function writes a 404 response and returns ok=false.
+// The caller must return immediately when ok is false. Matching the
+// behaviour of sibling handlers, 404 is used for scope-denial to avoid
+// leaking the existence of scopes the caller cannot see.
+func (h *Handler) scopeVisible(ctx context.Context, w http.ResponseWriter, scopeType string, scopeID int) (intersect []int, unrestricted bool, ok bool) {
+	if h.rbacChecker == nil || h.datastore == nil {
+		return nil, true, true
+	}
+	visible, allConnections, err := h.resolveVisible(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: overview: failed to resolve visible connections: %v\n", err)
+		http.Error(w, "Failed to resolve connection visibility", http.StatusInternalServerError)
+		return nil, false, false
+	}
+	if allConnections {
+		return nil, true, true
+	}
+
+	switch scopeType {
+	case "server":
+		if !visible[scopeID] {
+			http.Error(w, "Scope not found", http.StatusNotFound)
+			return nil, false, false
+		}
+		return []int{scopeID}, false, true
+	case "cluster":
+		ids, lookupErr := h.datastore.GetConnectionIDsForCluster(ctx, scopeID)
+		if lookupErr != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: overview: failed to check cluster %d visibility: %v\n", scopeID, lookupErr)
+			http.Error(w, "Failed to check scope visibility", http.StatusInternalServerError)
+			return nil, false, false
+		}
+		intersect = intersectVisible(ids, visible)
+	case "group":
+		ids, lookupErr := h.datastore.GetConnectionIDsForGroup(ctx, scopeID)
+		if lookupErr != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: overview: failed to check group %d visibility: %v\n", scopeID, lookupErr)
+			http.Error(w, "Failed to check scope visibility", http.StatusInternalServerError)
+			return nil, false, false
+		}
+		intersect = intersectVisible(ids, visible)
+	default:
+		http.Error(w, "Invalid scope_type", http.StatusBadRequest)
+		return nil, false, false
+	}
+
+	if len(intersect) == 0 {
+		http.Error(w, "Scope not found", http.StatusNotFound)
+		return nil, false, false
+	}
+	return intersect, false, true
+}
+
+// intersectVisible returns the subset of members that are also in the
+// visible set, preserving the original order.
+func intersectVisible(members []int, visible map[int]bool) []int {
+	out := make([]int, 0, len(members))
+	for _, id := range members {
+		if visible[id] {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// resolveScopeName fetches the human-readable name for a scope so that
+// the generator prompt can include it in the summary. Returns an empty
+// string when the lookup fails; the generator tolerates an empty name.
+func (h *Handler) resolveScopeName(ctx context.Context, scopeType string, scopeID int) string {
+	if h.datastore == nil {
+		return ""
+	}
+	switch scopeType {
+	case "server":
+		conn, err := h.datastore.GetConnection(ctx, scopeID)
+		if err != nil || conn == nil {
+			return ""
+		}
+		return conn.Name
+	case "cluster":
+		cluster, err := h.datastore.GetCluster(ctx, scopeID)
+		if err != nil || cluster == nil {
+			return ""
+		}
+		return cluster.Name
+	case "group":
+		group, err := h.datastore.GetClusterGroup(ctx, scopeID)
+		if err != nil || group == nil {
+			return ""
+		}
+		return group.Name
+	}
+	return ""
+}
+
+// resolveVisible returns the caller's visible connection-ID set via the
+// overview handler's RBAC checker. The allConnections flag is true when
+// the caller has unrestricted visibility (superuser or wildcard grant).
+func (h *Handler) resolveVisible(ctx context.Context) (map[int]bool, bool, error) {
+	lister := newOverviewVisibilityLister(h.datastore)
+	ids, all, err := h.rbacChecker.VisibleConnectionIDs(ctx, lister)
+	if err != nil {
+		return nil, false, err
+	}
+	if all {
+		return nil, true, nil
+	}
+	visible := make(map[int]bool, len(ids))
+	for _, id := range ids {
+		visible[id] = true
+	}
+	return visible, false, nil
+}
+
+// overviewVisibilityLister adapts *database.Datastore.GetAllConnections
+// to the auth.ConnectionVisibilityLister interface. This duplicates the
+// api-package adapter so the overview package does not depend on the
+// api package.
+type overviewVisibilityLister struct {
+	ds *database.Datastore
+}
+
+func newOverviewVisibilityLister(ds *database.Datastore) auth.ConnectionVisibilityLister {
+	if ds == nil {
+		return nil
+	}
+	return &overviewVisibilityLister{ds: ds}
+}
+
+func (l *overviewVisibilityLister) GetAllConnections(ctx context.Context) ([]auth.ConnectionVisibilityInfo, error) {
+	conns, err := l.ds.GetAllConnections(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]auth.ConnectionVisibilityInfo, 0, len(conns))
+	for i := range conns {
+		result = append(result, auth.ConnectionVisibilityInfo{
+			ID:            conns[i].ID,
+			IsShared:      conns[i].IsShared,
+			OwnerUsername: conns[i].OwnerUsername,
+		})
+	}
+	return result, nil
 }
 
 // writeSSEEvent marshals an Overview to JSON and writes it as an SSE event.

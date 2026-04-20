@@ -83,6 +83,60 @@ project adheres to
   `docs/admin-guide/api/openapi.json` now document
   the `403 Forbidden` response on the affected
   single-resource endpoints. (#35)
+- Fix server and cluster visibility leaks through the
+  cluster list, cluster group, and cluster-membership
+  REST endpoints; `GET /api/v1/clusters/list`,
+  `GET /api/v1/clusters/{id}`,
+  `GET /api/v1/clusters/{id}/servers`,
+  `GET /api/v1/cluster-groups`, and
+  `GET /api/v1/cluster-groups/{id}` now filter clusters,
+  groups, and member servers to the caller's visible
+  connections and return `404 Not Found` for clusters or
+  groups that contain no visible members. (#35)
+- Fix additional RBAC leaks surfaced by the follow-up
+  security audit; the overview REST and SSE endpoints
+  (`GET /api/v1/overview` and `GET /api/v1/overview/stream`)
+  now verify scope visibility for scoped requests and
+  filter `connection_ids` lists to the caller's visible
+  set; the blackout list and get endpoints
+  (`GET /api/v1/blackouts` and
+  `GET /api/v1/blackouts/{id}`) hide blackouts whose
+  referenced connection, cluster, or group is not
+  visible to the caller; the alert, probe, and channel
+  override list endpoints
+  (`GET /api/v1/alert-overrides/{scope}/{scopeId}`,
+  `GET /api/v1/probe-overrides/{scope}/{scopeId}`, and
+  `GET /api/v1/channel-overrides/{scope}/{scopeId}`)
+  return `404 Not Found` when the caller cannot see the
+  requested scope; and the MCP connection resolver now
+  checks RBAC before loading credentials and returns a
+  generic "connection not found or not accessible"
+  message for both missing and denied cases. (#35)
+- Fix remaining RBAC leaks flagged by the third-round
+  security audit; the `query_metrics` and `get_alert_rules`
+  MCP tools now check `CanAccessConnection` before any
+  datastore read and return a generic "connection not
+  found or not accessible" error for both missing and
+  denied connections, closing the ID/name enumeration
+  that the previous error path exposed. The overview
+  scoped-snapshot path
+  (`GET /api/v1/overview?scope_type=cluster|group`) now
+  intersects the scope's member connection IDs with the
+  caller's visible set and generates the summary from
+  the intersection through the existing connections-
+  summary path, so two callers with different visibility
+  never share a cache entry; scope denial now returns
+  `404 Not Found` to match sibling handlers. The blackout
+  schedule list and get endpoints
+  (`GET /api/v1/blackout-schedules` and
+  `GET /api/v1/blackout-schedules/{id}`) apply the same
+  visibility filter as the blackout endpoints, and the
+  alert override context endpoint
+  (`GET /api/v1/alert-overrides/context/{connectionId}/{ruleId}`)
+  now gates on `scopeVisibleToCaller` before reading
+  override hierarchy. The MCP connection resolver logs
+  RBAC denials so operators can correlate without
+  widening the caller-visible surface. (#35)
 
 ## [1.0.0-alpha3] - 2026-04-08
 

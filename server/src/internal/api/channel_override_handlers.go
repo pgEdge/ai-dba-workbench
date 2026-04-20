@@ -113,6 +113,10 @@ func (h *ChannelOverrideHandler) handleChannelOverrides(w http.ResponseWriter, r
 
 // listOverrides handles GET /api/v1/channel-overrides/{scope}/{scopeId}
 func (h *ChannelOverrideHandler) listOverrides(w http.ResponseWriter, r *http.Request, scope string, scopeID int) {
+	if !scopeVisibleToCaller(r.Context(), w, h.rbacChecker, h.datastore, scope, scopeID, "Channel override scope not found") {
+		return
+	}
+
 	var overrides []database.ChannelOverride
 	var err error
 

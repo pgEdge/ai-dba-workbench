@@ -16,13 +16,18 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
 	"github.com/pgedge/ai-workbench/server/internal/metrics"
 	"github.com/pgedge/ai-workbench/server/internal/tsv"
 )
 
-// QueryMetricsTool creates the query_metrics tool for querying collected metrics
-func QueryMetricsTool(pool *pgxpool.Pool) Tool {
+// QueryMetricsTool creates the query_metrics tool for querying collected metrics.
+// The rbacChecker is consulted before any datastore read so that callers cannot
+// query metrics for connections they are not permitted to see. It may be nil
+// in unit tests or when auth is not configured; a nil checker opens access
+// (matching the behaviour of other tools in this package).
+func QueryMetricsTool(pool *pgxpool.Pool, rbacChecker *auth.RBACChecker) Tool {
 	return Tool{
 		Definition: mcp.Tool{
 			Name: "query_metrics",
@@ -171,30 +176,24 @@ To manage response sizes:
 				return mcp.NewToolError("Missing or invalid 'connection_id' parameter. If you haven't selected a database connection, use list_connections to find available connection IDs, then specify connection_id explicitly.")
 			}
 
-			// Verify the connection_id exists in the connections table
+			// RBAC: verify the caller may access this connection before any
+			// datastore read. Combined with the unified error below, this
+			// prevents the tool from being used to enumerate connection IDs
+			// or names the caller cannot see.
+			if rbacChecker != nil {
+				canAccess, _ := rbacChecker.CanAccessConnection(ctx, connectionID)
+				if !canAccess {
+					return mcp.NewToolError("connection not found or not accessible")
+				}
+			}
+
+			// Verify the connection_id exists in the connections table.
+			// On missing or error return a generic message; never echo the
+			// list of valid IDs/names, which would leak visibility.
 			var connName string
 			err = pool.QueryRow(ctx, "SELECT name FROM connections WHERE id = $1", connectionID).Scan(&connName)
 			if err != nil {
-				// Connection doesn't exist - provide helpful error with valid IDs
-				rows, qerr := pool.Query(ctx, "SELECT id, name FROM connections ORDER BY id LIMIT 20")
-				if qerr == nil {
-					defer rows.Close()
-					var validIDs []string
-					for rows.Next() {
-						var id int
-						var name string
-						if rows.Scan(&id, &name) == nil {
-							validIDs = append(validIDs, fmt.Sprintf("%d (%s)", id, name))
-						}
-					}
-					if len(validIDs) > 0 {
-						return mcp.NewToolError(fmt.Sprintf(
-							"Connection ID %d does not exist. Valid connection IDs are: %s. "+
-								"Use list_connections to see all available connections.",
-							connectionID, strings.Join(validIDs, ", ")))
-					}
-				}
-				return mcp.NewToolError(fmt.Sprintf("Connection ID %d does not exist. Use list_connections to see available connections.", connectionID))
+				return mcp.NewToolError("connection not found or not accessible")
 			}
 
 			// Parse time range

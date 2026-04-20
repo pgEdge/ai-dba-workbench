@@ -10,6 +10,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -257,6 +258,29 @@ func (h *BlackoutHandler) listBlackouts(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	visible, allConnections, err := resolveVisibleConnectionSet(r.Context(), h.rbacChecker, h.datastore)
+	if err != nil {
+		log.Printf("[ERROR] Failed to resolve visible connections for blackouts: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch blackouts")
+		return
+	}
+	if !allConnections && result != nil {
+		filtered := make([]database.Blackout, 0, len(result.Blackouts))
+		for i := range result.Blackouts {
+			ok, err := h.blackoutVisible(r.Context(), &result.Blackouts[i], visible)
+			if err != nil {
+				log.Printf("[ERROR] Failed to check blackout visibility: %v", err)
+				RespondError(w, http.StatusInternalServerError, "Failed to fetch blackouts")
+				return
+			}
+			if ok {
+				filtered = append(filtered, result.Blackouts[i])
+			}
+		}
+		result.Blackouts = filtered
+		result.TotalCount = len(filtered)
+	}
+
 	RespondJSON(w, http.StatusOK, result)
 }
 
@@ -273,7 +297,50 @@ func (h *BlackoutHandler) getBlackout(w http.ResponseWriter, r *http.Request, id
 		return
 	}
 
+	visible, allConnections, err := resolveVisibleConnectionSet(r.Context(), h.rbacChecker, h.datastore)
+	if err != nil {
+		log.Printf("[ERROR] Failed to resolve visible connections for blackout %d: %v", id, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch blackout")
+		return
+	}
+	if !allConnections {
+		ok, err := h.blackoutVisible(r.Context(), blackout, visible)
+		if err != nil {
+			log.Printf("[ERROR] Failed to check blackout visibility (id=%d): %v", id, err)
+			RespondError(w, http.StatusInternalServerError, "Failed to fetch blackout")
+			return
+		}
+		if !ok {
+			RespondError(w, http.StatusNotFound, "Blackout not found")
+			return
+		}
+	}
+
 	RespondJSON(w, http.StatusOK, blackout)
+}
+
+// blackoutVisible reports whether the caller may see the given blackout
+// given the precomputed visible connection set. A blackout with no
+// resource reference (estate/global scope) is visible to everyone; a
+// blackout tied to a connection, cluster, or group is visible only when
+// the referenced resource contains at least one visible connection.
+func (h *BlackoutHandler) blackoutVisible(ctx context.Context, b *database.Blackout, visible map[int]bool) (bool, error) {
+	if b == nil {
+		return false, nil
+	}
+	if b.ConnectionID == nil && b.ClusterID == nil && b.GroupID == nil {
+		return true, nil
+	}
+	if b.ConnectionID != nil {
+		return visible[*b.ConnectionID], nil
+	}
+	if b.ClusterID != nil {
+		return clusterHasVisibleConnectionFn(ctx, h.datastore, *b.ClusterID, visible)
+	}
+	if b.GroupID != nil {
+		return groupHasVisibleConnectionFn(ctx, h.datastore, *b.GroupID, visible)
+	}
+	return false, nil
 }
 
 // createBlackout handles POST /api/v1/blackouts
@@ -481,6 +548,29 @@ func (h *BlackoutHandler) listBlackoutSchedules(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	visible, allConnections, err := resolveVisibleConnectionSet(r.Context(), h.rbacChecker, h.datastore)
+	if err != nil {
+		log.Printf("[ERROR] Failed to resolve visible connections for blackout schedules: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch blackout schedules")
+		return
+	}
+	if !allConnections && result != nil {
+		filtered := make([]database.BlackoutSchedule, 0, len(result.Schedules))
+		for i := range result.Schedules {
+			ok, err := h.blackoutScheduleVisible(r.Context(), &result.Schedules[i], visible)
+			if err != nil {
+				log.Printf("[ERROR] Failed to check blackout schedule visibility: %v", err)
+				RespondError(w, http.StatusInternalServerError, "Failed to fetch blackout schedules")
+				return
+			}
+			if ok {
+				filtered = append(filtered, result.Schedules[i])
+			}
+		}
+		result.Schedules = filtered
+		result.TotalCount = len(filtered)
+	}
+
 	RespondJSON(w, http.StatusOK, result)
 }
 
@@ -497,7 +587,51 @@ func (h *BlackoutHandler) getBlackoutSchedule(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	visible, allConnections, err := resolveVisibleConnectionSet(r.Context(), h.rbacChecker, h.datastore)
+	if err != nil {
+		log.Printf("[ERROR] Failed to resolve visible connections for blackout schedule %d: %v", id, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch blackout schedule")
+		return
+	}
+	if !allConnections {
+		ok, err := h.blackoutScheduleVisible(r.Context(), schedule, visible)
+		if err != nil {
+			log.Printf("[ERROR] Failed to check blackout schedule visibility (id=%d): %v", id, err)
+			RespondError(w, http.StatusInternalServerError, "Failed to fetch blackout schedule")
+			return
+		}
+		if !ok {
+			RespondError(w, http.StatusNotFound, "Blackout schedule not found")
+			return
+		}
+	}
+
 	RespondJSON(w, http.StatusOK, schedule)
+}
+
+// blackoutScheduleVisible reports whether the caller may see the given
+// blackout schedule given the precomputed visible connection set. A
+// schedule with no resource reference (estate/global scope) is visible
+// to everyone; one tied to a connection, cluster, or group is visible
+// only when the referenced resource contains at least one visible
+// connection.
+func (h *BlackoutHandler) blackoutScheduleVisible(ctx context.Context, s *database.BlackoutSchedule, visible map[int]bool) (bool, error) {
+	if s == nil {
+		return false, nil
+	}
+	if s.ConnectionID == nil && s.ClusterID == nil && s.GroupID == nil {
+		return true, nil
+	}
+	if s.ConnectionID != nil {
+		return visible[*s.ConnectionID], nil
+	}
+	if s.ClusterID != nil {
+		return clusterHasVisibleConnectionFn(ctx, h.datastore, *s.ClusterID, visible)
+	}
+	if s.GroupID != nil {
+		return groupHasVisibleConnectionFn(ctx, h.datastore, *s.GroupID, visible)
+	}
+	return false, nil
 }
 
 // createBlackoutSchedule handles POST /api/v1/blackout-schedules

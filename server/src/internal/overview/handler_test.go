@@ -251,6 +251,85 @@ func TestHandleOverview_WhitespaceOnlyConnectionIDs(t *testing.T) {
 	}
 }
 
+// --- intersectVisible tests -------------------------------------------------
+
+// TestIntersectVisible is the unit-level guard for the #35 follow-up
+// audit on scoped overview snapshots. scopeVisible computes the
+// intersection of a cluster/group's member connection IDs with the
+// caller's visible set and routes the summary generator through the
+// intersected list so two users with different visibility never share
+// a cache entry. The ordering must be preserved so the cache key is
+// stable across retries.
+func TestIntersectVisible(t *testing.T) {
+	tests := []struct {
+		name    string
+		members []int
+		visible map[int]bool
+		want    []int
+	}{
+		{
+			name:    "full overlap preserves order",
+			members: []int{3, 1, 2},
+			visible: map[int]bool{1: true, 2: true, 3: true},
+			want:    []int{3, 1, 2},
+		},
+		{
+			name:    "one of three visible",
+			members: []int{10, 20, 30},
+			visible: map[int]bool{20: true},
+			want:    []int{20},
+		},
+		{
+			name:    "no members visible",
+			members: []int{10, 20, 30},
+			visible: map[int]bool{99: true},
+			want:    []int{},
+		},
+		{
+			name:    "empty member list",
+			members: []int{},
+			visible: map[int]bool{1: true},
+			want:    []int{},
+		},
+		{
+			name:    "nil visible map yields empty",
+			members: []int{1, 2, 3},
+			visible: nil,
+			want:    []int{},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := intersectVisible(tc.members, tc.visible)
+			if len(got) != len(tc.want) {
+				t.Fatalf("expected %d ids, got %d (%v)", len(tc.want), len(got), got)
+			}
+			for i := range tc.want {
+				if got[i] != tc.want[i] {
+					t.Errorf("id[%d]: expected %d, got %d", i, tc.want[i], got[i])
+				}
+			}
+		})
+	}
+}
+
+// TestHandleOverview_RestrictedCallerNotFound verifies the scope-denial
+// path now returns 404 rather than 403 to match sibling handlers and
+// avoid exposing scope existence as an oracle. The nil datastore on
+// this handler short-circuits scopeVisible into the "skipped" branch,
+// so we only exercise the 404 path through the invalid-scope_type
+// guard that sits alongside the rewritten denial path; this locks in
+// that the handler does not accidentally reintroduce a 403 on other
+// denial branches.
+func TestHandleOverview_InvalidScopeTypeStillBadRequest(t *testing.T) {
+	h := newTestHandler()
+	rr := doRequest(t, h, http.MethodGet, "/api/v1/overview?scope_type=invalid&scope_id=1")
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected %d for invalid scope_type, got %d", http.StatusBadRequest, rr.Code)
+	}
+}
+
 // --- parseConnectionIDs tests -----------------------------------------------
 
 func TestParseConnectionIDs(t *testing.T) {

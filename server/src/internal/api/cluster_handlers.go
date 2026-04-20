@@ -192,6 +192,43 @@ func filterTopologyServers(servers []database.TopologyServerInfo, visible map[in
 	return out
 }
 
+// resolveVisibleConnections delegates to the package-level helper.
+func (h *ClusterHandler) resolveVisibleConnections(ctx context.Context) (map[int]bool, bool, error) {
+	return resolveVisibleConnectionSet(ctx, h.rbacChecker, h.datastore)
+}
+
+// clusterHasVisibleConnection delegates to the package-level helper.
+func (h *ClusterHandler) clusterHasVisibleConnection(ctx context.Context, clusterID int, visible map[int]bool) (bool, error) {
+	return clusterHasVisibleConnectionFn(ctx, h.datastore, clusterID, visible)
+}
+
+// groupHasVisibleConnection delegates to the package-level helper.
+func (h *ClusterHandler) groupHasVisibleConnection(ctx context.Context, groupID int, visible map[int]bool) (bool, error) {
+	return groupHasVisibleConnectionFn(ctx, h.datastore, groupID, visible)
+}
+
+// clusterConnectionMembership delegates to the package-level helper.
+func (h *ClusterHandler) clusterConnectionMembership(ctx context.Context, clusterIDs []int) (map[int][]int, error) {
+	return clusterConnectionMembershipFn(ctx, h.datastore, clusterIDs)
+}
+
+// clusterMembersVisible returns true when at least one connection ID in
+// members appears in the visible set. A cluster with no member
+// connections is treated as not visible to any non-privileged caller.
+func clusterMembersVisible(members []int, visible map[int]bool) bool {
+	for _, id := range members {
+		if visible[id] {
+			return true
+		}
+	}
+	return false
+}
+
+// filterGroupsByVisibility delegates to the package-level helper.
+func (h *ClusterHandler) filterGroupsByVisibility(ctx context.Context, groups []database.ClusterGroup, visible map[int]bool) ([]database.ClusterGroup, error) {
+	return filterGroupsByVisibilityFn(ctx, h.datastore, groups, visible)
+}
+
 // handleClusterSubpath handles /api/v1/clusters/{id}
 func (h *ClusterHandler) handleClusterSubpath(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/clusters/")
@@ -390,6 +427,22 @@ func (h *ClusterHandler) listClusterGroups(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	visible, allConnections, err := h.resolveVisibleConnections(r.Context())
+	if err != nil {
+		log.Printf("[ERROR] Failed to resolve visible connections for cluster groups: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to filter cluster groups")
+		return
+	}
+	if !allConnections {
+		filtered, err := h.filterGroupsByVisibility(ctx, groups, visible)
+		if err != nil {
+			log.Printf("[ERROR] Failed to filter cluster groups by visibility: %v", err)
+			RespondError(w, http.StatusInternalServerError, "Failed to filter cluster groups")
+			return
+		}
+		groups = filtered
+	}
+
 	RespondJSON(w, http.StatusOK, groups)
 }
 
@@ -402,6 +455,25 @@ func (h *ClusterHandler) getClusterGroup(w http.ResponseWriter, r *http.Request,
 		log.Printf("[ERROR] Cluster group not found (id=%d): %v", id, err)
 		RespondError(w, http.StatusNotFound, "Cluster group not found")
 		return
+	}
+
+	visible, allConnections, err := h.resolveVisibleConnections(r.Context())
+	if err != nil {
+		log.Printf("[ERROR] Failed to resolve visible connections for cluster group %d: %v", id, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to load cluster group")
+		return
+	}
+	if !allConnections {
+		ok, err := h.groupHasVisibleConnection(ctx, id, visible)
+		if err != nil {
+			log.Printf("[ERROR] Failed to check cluster group visibility (id=%d): %v", id, err)
+			RespondError(w, http.StatusInternalServerError, "Failed to load cluster group")
+			return
+		}
+		if !ok {
+			RespondError(w, http.StatusNotFound, "Cluster group not found")
+			return
+		}
 	}
 
 	RespondJSON(w, http.StatusOK, group)
@@ -530,6 +602,32 @@ func (h *ClusterHandler) listClustersInGroup(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	visible, allConnections, err := h.resolveVisibleConnections(r.Context())
+	if err != nil {
+		log.Printf("[ERROR] Failed to resolve visible connections for group %d: %v", groupID, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to filter clusters")
+		return
+	}
+	if !allConnections {
+		ids := make([]int, 0, len(clusters))
+		for i := range clusters {
+			ids = append(ids, clusters[i].ID)
+		}
+		membership, err := h.clusterConnectionMembership(ctx, ids)
+		if err != nil {
+			log.Printf("[ERROR] Failed to resolve cluster membership for group %d: %v", groupID, err)
+			RespondError(w, http.StatusInternalServerError, "Failed to filter clusters")
+			return
+		}
+		filtered := make([]database.Cluster, 0, len(clusters))
+		for i := range clusters {
+			if clusterMembersVisible(membership[clusters[i].ID], visible) {
+				filtered = append(filtered, clusters[i])
+			}
+		}
+		clusters = filtered
+	}
+
 	RespondJSON(w, http.StatusOK, clusters)
 }
 
@@ -566,6 +664,25 @@ func (h *ClusterHandler) getCluster(w http.ResponseWriter, r *http.Request, id i
 		log.Printf("[ERROR] Cluster not found (id=%d): %v", id, err)
 		RespondError(w, http.StatusNotFound, "Cluster not found")
 		return
+	}
+
+	visible, allConnections, err := h.resolveVisibleConnections(r.Context())
+	if err != nil {
+		log.Printf("[ERROR] Failed to resolve visible connections for cluster %d: %v", id, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to load cluster")
+		return
+	}
+	if !allConnections {
+		ok, err := h.clusterHasVisibleConnection(ctx, id, visible)
+		if err != nil {
+			log.Printf("[ERROR] Failed to check cluster visibility (id=%d): %v", id, err)
+			RespondError(w, http.StatusInternalServerError, "Failed to load cluster")
+			return
+		}
+		if !ok {
+			RespondError(w, http.StatusNotFound, "Cluster not found")
+			return
+		}
 	}
 
 	RespondJSON(w, http.StatusOK, cluster)
@@ -754,6 +871,32 @@ func (h *ClusterHandler) listServersInCluster(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	visible, allConnections, err := h.resolveVisibleConnections(r.Context())
+	if err != nil {
+		log.Printf("[ERROR] Failed to resolve visible connections for cluster %d servers: %v", clusterID, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to list servers")
+		return
+	}
+	if !allConnections {
+		ok, err := h.clusterHasVisibleConnection(ctx, clusterID, visible)
+		if err != nil {
+			log.Printf("[ERROR] Failed to check cluster visibility (id=%d): %v", clusterID, err)
+			RespondError(w, http.StatusInternalServerError, "Failed to list servers")
+			return
+		}
+		if !ok {
+			RespondError(w, http.StatusNotFound, "Cluster not found")
+			return
+		}
+		filtered := make([]database.ServerInfo, 0, len(servers))
+		for i := range servers {
+			if visible[servers[i].ID] {
+				filtered = append(filtered, servers[i])
+			}
+		}
+		servers = filtered
+	}
+
 	RespondJSON(w, http.StatusOK, servers)
 }
 
@@ -844,6 +987,32 @@ func (h *ClusterHandler) handleListClusters(w http.ResponseWriter, r *http.Reque
 		log.Printf("[ERROR] Failed to list clusters: %v", err)
 		RespondError(w, http.StatusInternalServerError, "Failed to list clusters")
 		return
+	}
+
+	visible, allConnections, err := h.resolveVisibleConnections(r.Context())
+	if err != nil {
+		log.Printf("[ERROR] Failed to resolve visible connections for cluster autocomplete: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to list clusters")
+		return
+	}
+	if !allConnections {
+		ids := make([]int, 0, len(clusters))
+		for i := range clusters {
+			ids = append(ids, clusters[i].ID)
+		}
+		membership, err := h.clusterConnectionMembership(ctx, ids)
+		if err != nil {
+			log.Printf("[ERROR] Failed to resolve cluster membership for autocomplete: %v", err)
+			RespondError(w, http.StatusInternalServerError, "Failed to list clusters")
+			return
+		}
+		filtered := make([]database.ClusterSummary, 0, len(clusters))
+		for i := range clusters {
+			if clusterMembersVisible(membership[clusters[i].ID], visible) {
+				filtered = append(filtered, clusters[i])
+			}
+		}
+		clusters = filtered
 	}
 
 	RespondJSON(w, http.StatusOK, clusters)

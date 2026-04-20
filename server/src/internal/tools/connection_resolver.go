@@ -12,6 +12,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
@@ -123,26 +124,34 @@ func (r *ConnectionResolver) resolveExplicit(
 	ctx context.Context,
 	ca connectionArgs,
 ) (*ResolvedConnection, *mcp.ToolResponse) {
-	// Look up connection credentials.
-	conn, password, err := r.datastore.GetConnectionWithPassword(ctx, ca.ConnectionID)
-	if err != nil {
+	// RBAC: verify access before touching credentials. Using a generic
+	// "not found or not accessible" message for both missing and denied
+	// cases prevents the caller from using the resolver as a probe to
+	// enumerate connection IDs they cannot see. CanAccessConnection
+	// folds lookup errors into a denied decision; log the deny with the
+	// connection ID so operators can correlate without widening the
+	// surface the caller sees. Fail-closed: we keep the deny even if
+	// the underlying cause was a transient lookup error.
+	canAccess, _ := r.rbacChecker.CanAccessConnection(ctx, ca.ConnectionID)
+	if !canAccess {
+		fmt.Fprintf(os.Stderr, "WARNING: connection_resolver: RBAC denied access to connection %d\n", ca.ConnectionID)
 		resp := mcp.ToolResponse{
 			Content: []mcp.ContentItem{{
 				Type: "text",
-				Text: fmt.Sprintf("Failed to look up connection ID %d: %v", ca.ConnectionID, err),
+				Text: "connection not found or not accessible",
 			}},
 			IsError: true,
 		}
 		return nil, &resp
 	}
 
-	// RBAC: verify the caller may access this connection.
-	canAccess, _ := r.rbacChecker.CanAccessConnection(ctx, ca.ConnectionID)
-	if !canAccess {
+	// Look up connection credentials.
+	conn, password, err := r.datastore.GetConnectionWithPassword(ctx, ca.ConnectionID)
+	if err != nil {
 		resp := mcp.ToolResponse{
 			Content: []mcp.ContentItem{{
 				Type: "text",
-				Text: fmt.Sprintf("Access denied: you do not have permission to access connection ID %d", ca.ConnectionID),
+				Text: "connection not found or not accessible",
 			}},
 			IsError: true,
 		}

@@ -139,6 +139,10 @@ func (h *AlertOverrideHandler) handleAlertOverrides(w http.ResponseWriter, r *ht
 
 // listOverrides handles GET /api/v1/alert-overrides/{scope}/{scopeId}
 func (h *AlertOverrideHandler) listOverrides(w http.ResponseWriter, r *http.Request, scope string, scopeID int) {
+	if !scopeVisibleToCaller(r.Context(), w, h.rbacChecker, h.datastore, scope, scopeID, "Alert override scope not found") {
+		return
+	}
+
 	var overrides []database.AlertOverride
 	var err error
 
@@ -200,6 +204,13 @@ func (h *AlertOverrideHandler) deleteOverride(w http.ResponseWriter, r *http.Req
 // getOverrideContext handles GET /api/v1/alert-overrides/context/{connectionId}/{ruleId}
 func (h *AlertOverrideHandler) getOverrideContext(w http.ResponseWriter, r *http.Request, connectionID int, ruleID int64) {
 	if !h.checkPermission(w, r) {
+		return
+	}
+
+	// Gate by scope visibility so a caller cannot enumerate the
+	// override-context hierarchy for a connection they cannot see.
+	// scopeVisibleToCaller writes a 404 and logs when the caller is denied.
+	if !scopeVisibleToCaller(r.Context(), w, h.rbacChecker, h.datastore, "server", connectionID, "Connection not found") {
 		return
 	}
 

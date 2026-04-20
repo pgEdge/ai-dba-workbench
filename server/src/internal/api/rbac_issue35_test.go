@@ -52,31 +52,6 @@ import (
 // distinctive value makes it easy to spot in failing diagnostics.
 const rbacUnsharedConnID = 42
 
-// sharingInfo records one connection's sharing / ownership state for the
-// shared visibility lookup used by CanAccessConnection.
-type sharingInfo struct {
-	isShared bool
-	owner    string
-}
-
-// multiSharingChecker returns an RBACChecker whose ConnectionSharingLookup
-// dispatches on connection ID, so a single test can express scenarios
-// that involve BOTH a shared and an unshared connection (for example,
-// list handler tests that verify only visible rows are returned).
-// Connection IDs not in the map are reported as private to a fictional
-// owner "ghost" so unexpected lookups deterministically deny access.
-func multiSharingChecker(t *testing.T, store *auth.AuthStore, conns map[int]sharingInfo) *auth.RBACChecker {
-	t.Helper()
-	checker := auth.NewRBACChecker(store)
-	checker.SetConnectionSharingLookup(func(_ context.Context, id int) (bool, string, error) {
-		if info, ok := conns[id]; ok {
-			return info.isShared, info.owner, nil
-		}
-		return false, "ghost", nil
-	})
-	return checker
-}
-
 // stubVisibilityLister is a test-only ConnectionVisibilityLister that
 // returns a fixed list of connection visibility records. It mirrors the
 // in-package stub used by auth/access_test.go so handler tests can

@@ -1,0 +1,33 @@
+name: CI - Walkthrough
+
+on:
+    push:
+        branches: [ main, master ]
+        paths:
+            - 'examples/walkthrough/**'
+            - '.github/workflows/ci-walkthrough.yml'
+    pull_request:
+        branches: [ main, master ]
+        paths:
+            - 'examples/walkthrough/**'
+            - '.github/workflows/ci-walkthrough.yml'
+    workflow_dispatch:
+
+concurrency:
+    group: '${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}'
+    cancel-in-progress: true
+
+jobs:
+    validate:
+        name: Validate
+        runs-on: ubuntu-22.04
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Validate Docker Compose
+              run: docker compose -f examples/walkthrough/docker-compose.yml config --quiet
+
+            - name: Run ShellCheck
+              run: shellcheck -x --source-path=examples/walkthrough examples/walkthrough/guide.sh examples/walkthrough/setup.sh examples/walkthrough/runner.sh

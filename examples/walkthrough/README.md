@@ -71,6 +71,8 @@ The walkthrough requires the following tools and resources:
 - Ports 3000 and 8080 are used by default; the setup script
   finds available alternatives automatically if they are
   busy.
+- Approximately 500 MB of free disk space is needed for
+  Docker images and the seed database.
 - An API key for Anthropic, OpenAI, or Google Gemini is
   optional; the script prompts you during setup. AI features
   work without a key; you just will not see live AI
@@ -170,6 +172,28 @@ API key during initial setup. It supports Anthropic,
 OpenAI, and Google Gemini. Run `guide.sh` again to change
 the LLM configuration on an existing stack.
 
+### Selector Compatibility
+
+The in-browser tour in `tour.js` uses CSS selectors that
+are coupled to the React component structure and Material
+UI class names. These selectors may break if the client
+application updates its MUI version or restructures its
+component hierarchy.
+
+When modifying the client application, verify that the
+tour still highlights the correct elements by running the
+walkthrough end to end. The following selector patterns
+are particularly fragile:
+
+- `.MuiAppBar-root` and related layout selectors depend
+  on the top-level MUI AppBar structure.
+- `:has()` selectors targeting `aria-label` attributes
+  depend on the exact label text in React components.
+
+A future improvement would add `data-tour` attributes to
+key components in the main client codebase, decoupling
+the tour from internal class names.
+
 ## File Structure
 
 ```text
@@ -225,3 +249,17 @@ features like Ask Ellie and alert analysis will be
 unavailable without a key. Run `guide.sh` again and
 choose option 4 to change the LLM configuration on a
 running stack.
+
+### Windows Support
+
+Windows support is experimental. The walkthrough requires
+a bash-compatible shell; PowerShell is not supported.
+
+- Use [Git Bash](https://gitforwindows.org/) (recommended)
+  or Windows Subsystem for Linux (WSL) to run the
+  walkthrough scripts.
+- The `guide.sh` script detects Git Bash and adapts port
+  detection accordingly, but not all features have been
+  tested on Windows.
+- Docker Desktop for Windows must be installed and running
+  before starting the walkthrough.

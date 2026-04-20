@@ -24,7 +24,7 @@ header "AI DBA Workbench Walkthrough -- Prerequisites Check"
 explain "Checking that required tools are installed..."
 echo ""
 
-REQUIRED_CMDS=(docker curl)
+REQUIRED_CMDS=(docker curl openssl)
 MISSING=()
 
 for cmd in "${REQUIRED_CMDS[@]}"; do
@@ -50,6 +50,10 @@ if [[ ${#MISSING[@]} -gt 0 ]]; then
         ;;
       curl)
         explain "  curl    -- https://curl.se/download.html"
+        ;;
+      openssl)
+        explain "  openssl -- included with Git Bash on Windows"
+        explain "            https://www.openssl.org/source/"
         ;;
     esac
   done

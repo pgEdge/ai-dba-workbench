@@ -7,6 +7,14 @@
 # This software is released under The PostgreSQL License
 #
 #--------------------------------------------------------------------------
+
+# Require bash — sh, dash, and PowerShell will not work.
+if [ -z "$BASH_VERSION" ]; then
+  echo "Error: This script requires bash." >&2
+  echo "On Windows, use Git Bash or WSL." >&2
+  exit 1
+fi
+
 set -euo pipefail
 
 # guide.sh -- Interactive guided walkthrough for the pgEdge AI DBA Workbench.
@@ -17,7 +25,16 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/runner.sh"
 
 # Ensure echo is restored if the script exits unexpectedly
-trap 'stty echo 2>/dev/null || true' EXIT
+cleanup() {
+    local pids
+    pids=$(jobs -p 2>/dev/null) || true
+    if [[ -n "$pids" ]]; then
+        # shellcheck disable=SC2086
+        kill $pids 2>/dev/null || true
+    fi
+    stty echo 2>/dev/null || true
+}
+trap cleanup EXIT
 
 OS="$(uname -s)"
 
@@ -65,6 +82,7 @@ select_llm_provider() {
     echo ""
     printf "%s" "Enter your API key"
     echo ""
+    # shellcheck disable=SC2059
     printf "${DIM}(input is hidden, paste is OK)${RESET}: "
 
     printf '\e[?2004l' >/dev/tty 2>/dev/null || true
@@ -272,10 +290,14 @@ find_free_port() {
   echo "$p"
 }
 
-export WT_CLIENT_PORT=$(find_free_port 3000)
-export WT_SERVER_PORT=$(find_free_port 8080)
-export WT_DATASTORE_PORT=$(find_free_port 5432)
-export WT_DEMO_PORT=$(find_free_port $((WT_DATASTORE_PORT + 1)))
+WT_CLIENT_PORT=$(find_free_port 3000)
+export WT_CLIENT_PORT
+WT_SERVER_PORT=$(find_free_port 8080)
+export WT_SERVER_PORT
+WT_DATASTORE_PORT=$(find_free_port 5432)
+export WT_DATASTORE_PORT
+WT_DEMO_PORT=$(find_free_port $((WT_DATASTORE_PORT + 1)))
+export WT_DEMO_PORT
 
 # ── Prerequisites ────────────────────────────────────────────────────
 
@@ -308,12 +330,7 @@ echo ""
 explain "Generating secrets..."
 
 mkdir -p "$SCRIPT_DIR/secret"
-# DEMO ONLY: This is a fixed secret that matches the pre-baked seed data.
-# The seed contains encrypted passwords that were encrypted with
-# this exact secret. Using a different secret would prevent the
-# collector from decrypting connection passwords.
-# Do NOT reuse this secret in production deployments.
-echo "q0xZ579yK4gFREb5LHlqhlyPgmKHt0S5j4O2deRKRhs=" > "$SCRIPT_DIR/secret/ai-dba.secret"
+openssl rand -base64 32 > "$SCRIPT_DIR/secret/ai-dba.secret"
 echo "postgres" > "$SCRIPT_DIR/secret/pg-password"
 echo "$SELECTED_LLM_KEY" > "$SCRIPT_DIR/secret/llm-api-key"
 chmod 600 "$SCRIPT_DIR/secret/"*
@@ -371,11 +388,11 @@ while [[ $ELAPSED -lt $TIMEOUT ]]; do
   SERVER_OK=false
   CLIENT_OK=false
 
-  if curl -sf http://localhost:${WT_SERVER_PORT}/health >/dev/null 2>&1; then
+  if curl -sf "http://localhost:${WT_SERVER_PORT}/health" >/dev/null 2>&1; then
     SERVER_OK=true
   fi
 
-  if curl -sf http://localhost:${WT_CLIENT_PORT} >/dev/null 2>&1; then
+  if curl -sf "http://localhost:${WT_CLIENT_PORT}" >/dev/null 2>&1; then
     CLIENT_OK=true
   fi
 
@@ -427,8 +444,8 @@ echo ""
 
 explain "Creating admin user..."
 
-docker exec wt-server sh -c \
-  'echo "DemoPass2026" > /tmp/pw && ai-dba-server -add-user -username admin -password-file /tmp/pw -full-name "Demo Admin" -email "admin@demo.local" -user-note "Walkthrough admin" -data-dir /data -config /etc/pgedge/ai-dba-server.yaml && rm /tmp/pw' \
+echo "DemoPass2026" | docker exec -i wt-server sh -c \
+  'cat > /tmp/pw && ai-dba-server -add-user -username admin -password-file /tmp/pw -full-name "Demo Admin" -email "admin@demo.local" -user-note "Walkthrough admin" -data-dir /data -config /etc/pgedge/ai-dba-server.yaml && rm /tmp/pw' \
   2>/dev/null || warn "Admin user may already exist (continuing)."
 
 docker exec wt-server \
@@ -440,8 +457,8 @@ echo ""
 
 # ── Connection and cluster ───────────────────────────────────────────
 # The demo connection, cluster group, and cluster are pre-baked in the
-# datastore seed. However, the encrypted password was created by the
-# recording session's server instance. Re-encrypt it with the current
+# datastore seed. The seed's encrypted password does not match this
+# installation's generated secret. Re-encrypt it with the current
 # server so the collector can decrypt it and connect to pg-demo.
 
 explain "Re-encrypting demo connection password..."
@@ -520,8 +537,8 @@ else
 fi
 
 echo ""
-explain "${DIM}Note: This uses a demo-only encryption secret.${RESET}"
-explain "${DIM}Do not reuse this installation for production.${RESET}"
+explain "${DIM}Note: This is a demo installation.${RESET}"
+explain "${DIM}Do not reuse it for production workloads.${RESET}"
 echo ""
 explain "${DIM}To reconfigure or${RESET}"
 explain "${DIM}  uninstall:${RESET}       cd $SCRIPT_DIR && bash guide.sh"

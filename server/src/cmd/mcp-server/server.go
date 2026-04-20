@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
+	"github.com/pgedge/ai-workbench/server/internal/chat"
 	"github.com/pgedge/ai-workbench/server/internal/config"
 	"github.com/pgedge/ai-workbench/server/internal/conversations"
 	"github.com/pgedge/ai-workbench/server/internal/database"
@@ -116,10 +117,35 @@ func NewServer(sc *ServerConfig) (*Server, error) {
 		fmt.Fprintf(os.Stderr, "         Conversation history will not be available\n")
 	}
 
+	s.initLLMHTTPClient()
+
 	s.startTokenCleanup()
 	s.startOverviewGenerator()
 
 	return s, nil
+}
+
+// initLLMHTTPClient configures the shared HTTP client used by all LLM
+// providers, applying the configured timeout and any globally-defined
+// custom headers. Provider-specific headers are applied per-request by
+// the llmproxy layer, not here.
+func (s *Server) initLLMHTTPClient() {
+	timeout := time.Duration(s.cfg.LLM.TimeoutSeconds) * time.Second
+
+	// Load global custom headers (YAML, files, and env). Provider-specific
+	// headers are intentionally left out of the shared client; they are
+	// injected per-request by the providers themselves.
+	headers, err := s.cfg.LLM.LoadCustomHeaders()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "WARNING: Failed to load global LLM custom headers: %v\n", err)
+		headers = nil
+	}
+
+	chat.InitHTTPClient(headers, timeout)
+
+	if timeout > 0 {
+		fmt.Fprintf(os.Stderr, "LLM HTTP client: timeout=%s\n", timeout)
+	}
 }
 
 // initTracing initializes tracing if configured

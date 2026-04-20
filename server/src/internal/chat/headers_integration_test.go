@@ -35,7 +35,7 @@ func TestCustomHeaders_EndToEnd(t *testing.T) {
 	// Initialize with global headers
 	InitHTTPClient(map[string]string{
 		"X-Global-Header": "global-value",
-	})
+	}, 0)
 
 	// Create client with provider headers
 	client := NewOllamaClient(server.URL, "test", false, false, map[string]string{

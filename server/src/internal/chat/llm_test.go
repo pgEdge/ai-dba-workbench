@@ -950,7 +950,7 @@ func TestBuildUserContext(t *testing.T) {
 
 func TestInitHTTPClient_WithHeaders(t *testing.T) {
 	headers := map[string]string{"X-Test": "value"}
-	InitHTTPClient(headers)
+	InitHTTPClient(headers, 0)
 
 	if sharedHTTPClient == nil {
 		t.Fatal("sharedHTTPClient should not be nil")
@@ -961,16 +961,59 @@ func TestInitHTTPClient_WithHeaders(t *testing.T) {
 	if _, ok := sharedHTTPClient.Transport.(*HeaderTransport); !ok {
 		t.Error("Transport should be HeaderTransport when headers provided")
 	}
+	if sharedHTTPClient.Timeout != defaultLLMHTTPTimeout {
+		t.Errorf("expected default timeout %v, got %v", defaultLLMHTTPTimeout, sharedHTTPClient.Timeout)
+	}
 }
 
 func TestInitHTTPClient_WithoutHeaders(t *testing.T) {
-	InitHTTPClient(nil)
+	InitHTTPClient(nil, 0)
 
 	if sharedHTTPClient == nil {
 		t.Fatal("sharedHTTPClient should not be nil")
 	}
 	if _, ok := sharedHTTPClient.Transport.(*HeaderTransport); ok {
 		t.Error("Transport should not be HeaderTransport when no headers")
+	}
+	if sharedHTTPClient.Timeout != defaultLLMHTTPTimeout {
+		t.Errorf("expected default timeout %v, got %v", defaultLLMHTTPTimeout, sharedHTTPClient.Timeout)
+	}
+}
+
+func TestInitHTTPClient_TimeoutFallbacks(t *testing.T) {
+	t.Cleanup(func() {
+		// Restore the default configuration for any subsequent tests
+		// that rely on sharedHTTPClient.
+		InitHTTPClient(nil, 0)
+	})
+
+	cases := []struct {
+		name    string
+		in      time.Duration
+		want    time.Duration
+		headers map[string]string
+	}{
+		{name: "zero falls back to default", in: 0, want: defaultLLMHTTPTimeout},
+		{name: "negative falls back to default", in: -5 * time.Second, want: defaultLLMHTTPTimeout},
+		{name: "positive is applied", in: 300 * time.Second, want: 300 * time.Second},
+		{
+			name:    "positive with headers is applied",
+			in:      45 * time.Second,
+			want:    45 * time.Second,
+			headers: map[string]string{"X-Test": "value"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			InitHTTPClient(tc.headers, tc.in)
+			if sharedHTTPClient == nil {
+				t.Fatal("sharedHTTPClient should not be nil")
+			}
+			if sharedHTTPClient.Timeout != tc.want {
+				t.Errorf("expected timeout %v, got %v", tc.want, sharedHTTPClient.Timeout)
+			}
+		})
 	}
 }
 

@@ -44,6 +44,9 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.LLM.Temperature != 0.7 {
 		t.Errorf("Expected default temperature 0.7, got %f", cfg.LLM.Temperature)
 	}
+	if cfg.LLM.TimeoutSeconds != 120 {
+		t.Errorf("Expected default LLM timeout 120 seconds, got %d", cfg.LLM.TimeoutSeconds)
+	}
 
 	// Test knowledgebase defaults
 	if cfg.Knowledgebase.Enabled {

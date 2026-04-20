@@ -352,9 +352,39 @@ contain a valid key.
 | `temperature` | float | `0.7` | Sampling temperature |
 | `max_iterations` | int | `50` | Max tool-call iterations |
 | `compact_tool_descriptions` | string | `auto` | Tool description mode |
+| `timeout_seconds` | int | `120` | LLM HTTP request timeout |
 | `anthropic_base_url` | string | `https://api.anthropic.com/v1` | Anthropic base URL |
 | `openai_base_url` | string | `https://api.openai.com/v1` | OpenAI base URL |
 | `gemini_base_url` | string | `https://generativelanguage.googleapis.com` | Gemini base URL |
+
+#### Request Timeout (`timeout_seconds`)
+
+The `timeout_seconds` option sets the HTTP client
+timeout, in seconds, for every request the server
+makes to the configured LLM provider. The timeout
+applies uniformly to Anthropic, OpenAI, Gemini, and
+Ollama, including Ask Ellie chat requests. The
+default value is `120` seconds; values less than or
+equal to zero fall back to the default.
+
+Increase this value when running local models on
+low-resource hardware or when full-context prompts
+regularly exceed the default; large prompts that
+combine schema, metrics, and connection data can
+take longer than 120 seconds on slow Ollama hosts.
+Raising the timeout to `300` prevents `context
+deadline exceeded` errors in these environments.
+
+In the following example, the `llm` section extends
+the timeout for a slow local Ollama server:
+
+```yaml
+llm:
+  provider: "ollama"
+  model: "llama3:latest"
+  ollama_url: "http://localhost:11434"
+  timeout_seconds: 300
+```
 
 #### Tool Descriptions (`compact_tool_descriptions`)
 

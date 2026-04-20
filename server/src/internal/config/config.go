@@ -280,6 +280,7 @@ type LLMConfig struct {
 	MaxTokens               int     `yaml:"max_tokens"`                // Maximum tokens for LLM response (default: 4096)
 	MaxIterations           int     `yaml:"max_iterations"`            // Maximum agentic loop iterations (default: 50)
 	Temperature             float64 `yaml:"temperature"`               // Temperature for LLM sampling (default: 0.7)
+	TimeoutSeconds          int     `yaml:"timeout_seconds"`           // HTTP client timeout for LLM requests in seconds (default: 120)
 	CompactToolDescriptions string  `yaml:"compact_tool_descriptions"` // "auto" (default), "true", or "false"
 	// Custom headers for LLM requests
 	CustomHeaders          map[string]string `yaml:"custom_headers"`           // Global headers applied to all providers
@@ -527,6 +528,7 @@ func defaultConfig() *Config {
 			MaxTokens:       4096,                     // Default max tokens
 			MaxIterations:   50,                       // Default max agentic loop iterations
 			Temperature:     0.7,                      // Default temperature
+			TimeoutSeconds:  120,                      // Default HTTP client timeout in seconds
 		},
 		Knowledgebase: KnowledgebaseConfig{
 			Enabled:               false,                                     // Disabled by default (opt-in)
@@ -691,6 +693,9 @@ func mergeConfig(dest, src *Config) {
 	}
 	if src.LLM.Temperature != 0 {
 		dest.LLM.Temperature = src.LLM.Temperature
+	}
+	if src.LLM.TimeoutSeconds != 0 {
+		dest.LLM.TimeoutSeconds = src.LLM.TimeoutSeconds
 	}
 	if src.LLM.CompactToolDescriptions != "" {
 		dest.LLM.CompactToolDescriptions = src.LLM.CompactToolDescriptions

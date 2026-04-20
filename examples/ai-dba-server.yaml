@@ -324,6 +324,15 @@ llm:
   # Default: 0.7
   temperature: 0.7
 
+  # HTTP client timeout for LLM requests, in seconds.
+  # The default of 120 seconds suits most hosted providers. Increase
+  # this when running a local model (for example, Ollama) on a
+  # resource-constrained host, where full-context prompts can take
+  # longer than two minutes to complete and would otherwise fail with
+  # "context deadline exceeded".
+  # Default: 120
+  # timeout_seconds: 120
+
   # Control tool description verbosity for chat requests.
   # "auto" (default): compact for localhost LLM endpoints,
   # verbose for remote APIs. "true": always compact. "false":

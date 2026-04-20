@@ -10,6 +10,13 @@ project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- Add the `llm.timeout_seconds` server configuration
+  option to control the HTTP client timeout for
+  requests to the configured LLM provider; the
+  default remains 120 seconds. (#60)
+
 ### Changed
 
 - Default the knowledgebase `database_path` to the

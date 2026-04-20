@@ -304,25 +304,36 @@ func BuildUserContext(base string, info *UserInfo) string {
 }
 
 // sharedHTTPClient is a reusable HTTP client for all LLM providers.
-// The timeout is set to 120 seconds to accommodate large LLM requests
-// with extensive context windows.
+// The default timeout is 120 seconds to accommodate large LLM requests
+// with extensive context windows. The timeout can be overridden via
+// configuration (see LLMConfig.TimeoutSeconds).
 var sharedHTTPClient *http.Client
 
+// defaultLLMHTTPTimeout is the fallback HTTP client timeout used when no
+// explicit timeout is configured.
+const defaultLLMHTTPTimeout = 120 * time.Second
+
 func init() {
-	InitHTTPClient(nil)
+	// Pass 0 to use the default timeout until configuration is loaded.
+	InitHTTPClient(nil, 0)
 }
 
-// InitHTTPClient creates the shared HTTP client with optional custom headers.
-// If headers is non-empty, a HeaderTransport is used to inject them.
-func InitHTTPClient(headers map[string]string) {
+// InitHTTPClient creates the shared HTTP client with optional custom
+// headers and an optional timeout. If headers is non-empty, a
+// HeaderTransport is used to inject them. If timeout is zero or
+// negative, defaultLLMHTTPTimeout is used.
+func InitHTTPClient(headers map[string]string, timeout time.Duration) {
+	if timeout <= 0 {
+		timeout = defaultLLMHTTPTimeout
+	}
 	if len(headers) > 0 {
 		sharedHTTPClient = &http.Client{
-			Timeout:   120 * time.Second,
+			Timeout:   timeout,
 			Transport: NewHeaderTransport(headers),
 		}
 	} else {
 		sharedHTTPClient = &http.Client{
-			Timeout: 120 * time.Second,
+			Timeout: timeout,
 		}
 	}
 }

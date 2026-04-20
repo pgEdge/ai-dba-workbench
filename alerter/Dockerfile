@@ -24,7 +24,7 @@ WORKDIR /build/alerter/src
 RUN go mod download
 
 # Build the binary
-RUN CGO_ENABLED=0 go build -o /build/ai-dba-alerter ./cmd/ai-dba-alerter
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /build/ai-dba-alerter ./cmd/ai-dba-alerter
 
 # Stage 2: Runtime image
 FROM debian:bookworm-slim

@@ -1,45 +1,39 @@
-version: "2"
-run:
-  tests: true
-linters:
-  enable:
-    - gosec
-    - misspell
-  settings:
+linters-settings:
     errcheck:
-      check-type-assertions: true
-      check-blank: true
+        check-type-assertions: true
+        check-blank: true
     govet:
-      disable:
-        - fieldalignment
-        - shadow
-      enable-all: true
+        enable-all: true
+        disable:
+            - fieldalignment
+            - shadow
     misspell:
-      locale: US
-  exclusions:
-    generated: lax
-    presets:
-      - comments
-      - common-false-positives
-      - legacy
-      - std-error-handling
-    rules:
-      - linters:
-          - gosec
-        path: _test\.go
-      - linters:
-          - errcheck
-        path: _test\.go
-        text: Error return value of.*Close.*not checked
-    paths:
-      - vendor
-      - third_party$
-      - builtin$
-      - examples$
-formatters:
-  exclusions:
-    generated: lax
-    paths:
-      - third_party$
-      - builtin$
-      - examples$
+        locale: US
+
+linters:
+    enable:
+        - errcheck      # Check for unchecked errors (enabled by default)
+        - govet         # Vet examines Go source code (enabled by default)
+        - ineffassign   # Detects unused assignments (enabled by default)
+        - staticcheck   # Advanced static analysis (enabled by default)
+        - unused        # Checks for unused code (enabled by default)
+        - misspell      # Finds commonly misspelled English words
+        - gosec         # Inspects source code for security problems
+
+issues:
+    exclude-dirs:
+        - vendor
+    exclude-rules:
+        # Exclude some linters from running on tests files
+        - path: _test\.go
+          linters:
+              - gosec
+        # Exclude known issues with defer Close() in tests
+        - path: _test\.go
+          linters:
+              - errcheck
+          text: "Error return value of.*Close.*not checked"
+
+run:
+    timeout: 5m
+    tests: true

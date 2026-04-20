@@ -61,6 +61,12 @@ project adheres to
   lookups. (#36)
 - Fix partitions not being dropped at the appropriate
   time by the collector. (#62)
+- Fix `GET /api/v1/connections` returning an empty
+  array for scoped API tokens when the token owner's
+  read access came from a wildcard group grant; the
+  scoped connections are now returned as expected,
+  and token scopes continue to restrict but not
+  elevate the owner's privileges. (#83)
 
 ### Security
 

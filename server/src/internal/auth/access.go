@@ -313,15 +313,42 @@ func (rc *RBACChecker) GetEffectivePrivileges(ctx context.Context) *EffectivePri
 					}
 					// read_write wildcard: no further filtering needed
 				} else {
+					// Non-wildcard token scope: intersect the token's
+					// explicit connection IDs against the user's group
+					// grants. The user's grants may come from a specific
+					// row OR from the ConnectionIDAll wildcard; if both
+					// are present we prefer the higher access level, to
+					// mirror CanAccessConnection. See issue #83: a prior
+					// implementation ignored the wildcard and silently
+					// dropped scoped connections whose access arrived via
+					// ConnectionIDAll, producing an empty list.
+					userWildcardLevel, userHasWildcard := result.ConnectionPrivileges[ConnectionIDAll]
 					scopedConnPrivs := make(map[int]string)
 					for _, sc := range scope.Connections {
-						if userLevel, ok := result.ConnectionPrivileges[sc.ConnectionID]; ok {
-							// Take minimum access level
-							if sc.AccessLevel == AccessLevelRead || userLevel == AccessLevelRead {
-								scopedConnPrivs[sc.ConnectionID] = AccessLevelRead
-							} else {
-								scopedConnPrivs[sc.ConnectionID] = userLevel
-							}
+						specificLevel, userHasSpecific := result.ConnectionPrivileges[sc.ConnectionID]
+						if !userHasSpecific && !userHasWildcard {
+							// No group grant for this connection via
+							// either path: drop it from the scoped set.
+							continue
+						}
+
+						// Resolve the user's effective level for this
+						// connection. Prefer the higher of the specific
+						// and wildcard grants when both exist.
+						userLevel := specificLevel
+						if !userHasSpecific {
+							userLevel = userWildcardLevel
+						} else if userHasWildcard && userWildcardLevel == AccessLevelReadWrite {
+							userLevel = AccessLevelReadWrite
+						}
+
+						// Token scope can restrict but not elevate: the
+						// effective access is the minimum of the token's
+						// scoped level and the user's level.
+						if sc.AccessLevel == AccessLevelRead || userLevel == AccessLevelRead {
+							scopedConnPrivs[sc.ConnectionID] = AccessLevelRead
+						} else {
+							scopedConnPrivs[sc.ConnectionID] = userLevel
 						}
 					}
 					result.ConnectionPrivileges = scopedConnPrivs

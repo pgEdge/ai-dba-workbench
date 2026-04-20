@@ -61,6 +61,13 @@ project adheres to
   lookups. (#36)
 - Fix partitions not being dropped at the appropriate
   time by the collector. (#62)
+- Fix servers assigned to a manually created cluster
+  continuing to appear under a re-created
+  auto-detected cluster after the next topology
+  refresh; auto-detected Spock, binary-replication,
+  and logical-replication grouping now skip
+  connections with `membership_source = 'manual'`.
+  (#74)
 
 ### Security
 

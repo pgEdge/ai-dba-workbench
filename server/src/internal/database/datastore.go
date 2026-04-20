@@ -2309,10 +2309,13 @@ func (d *Datastore) buildAutoDetectedClusters(connections []connectionWithRole, 
 	}
 
 	// Process Spock clusters
+	// Exclude connections with membership_source = 'manual'; those are
+	// pinned to a manually created cluster and must not be re-grouped
+	// into an auto-detected cluster on the next topology refresh.
 	spockNodes := make([]*connectionWithRole, 0)
 	for i := range connections {
 		conn := &connections[i]
-		if conn.HasSpock && conn.PrimaryRole != "binary_standby" {
+		if conn.HasSpock && conn.PrimaryRole != "binary_standby" && conn.MembershipSource != "manual" {
 			spockNodes = append(spockNodes, conn)
 		}
 	}
@@ -2325,9 +2328,14 @@ func (d *Datastore) buildAutoDetectedClusters(connections []connectionWithRole, 
 	}
 
 	// Process binary replication clusters
+	// Skip connections pinned to a manual cluster (membership_source =
+	// 'manual'); they must not feed auto-detected cluster creation.
 	for i := range connections {
 		conn := &connections[i]
 		if assignedConnections[conn.ID] {
+			continue
+		}
+		if conn.MembershipSource == "manual" {
 			continue
 		}
 		if !conn.HasSpock && (conn.PrimaryRole == "binary_primary" && len(childrenMap[conn.ID]) > 0) {
@@ -3470,13 +3478,16 @@ func (d *Datastore) buildTopologyHierarchy(connections []connectionWithRole, clu
 	}
 
 	// Identify Spock nodes (has_spock=true AND not a standby)
-	// These are the actual Spock multi-master nodes
+	// These are the actual Spock multi-master nodes.
+	// Connections with membership_source = 'manual' are pinned to a
+	// manually created cluster and must be excluded from auto-detected
+	// Spock grouping; otherwise they would appear in both clusters.
 	spockNodes := make([]*connectionWithRole, 0)
 	for i := range connections {
 		conn := &connections[i]
 		// A Spock node has Spock installed and is not a binary standby
 		// (binary standbys with Spock are hot standbys of Spock nodes)
-		if conn.HasSpock && conn.PrimaryRole != "binary_standby" {
+		if conn.HasSpock && conn.PrimaryRole != "binary_standby" && conn.MembershipSource != "manual" {
 			spockNodes = append(spockNodes, conn)
 		}
 	}
@@ -3497,10 +3508,15 @@ func (d *Datastore) buildTopologyHierarchy(connections []connectionWithRole, clu
 	}
 
 	// 2. Create entries for non-Spock primaries with standbys (binary replication)
-	// These now get a cluster wrapper with type "binary" so UI shows cluster header
+	// These now get a cluster wrapper with type "binary" so UI shows cluster header.
+	// Skip connections pinned to a manual cluster (membership_source =
+	// 'manual'); they must not feed auto-detected cluster creation.
 	for i := range connections {
 		conn := &connections[i]
 		if assignedConnections[conn.ID] {
+			continue
+		}
+		if conn.MembershipSource == "manual" {
 			continue
 		}
 		// Check if this is a primary with standbys (and not a Spock node)
@@ -3673,12 +3689,18 @@ func (d *Datastore) groupLogicalReplicationByPublisher(
 	assignedConnections map[int]bool,
 	overrides map[string]clusterOverride,
 ) []TopologyCluster {
-	// Build publisher->subscribers map by matching publisher_host:port to connections
+	// Build publisher->subscribers map by matching publisher_host:port to connections.
+	// Subscribers or publishers with membership_source = 'manual' are
+	// pinned to a manually created cluster and must not be used to build
+	// an auto-detected logical-replication cluster.
 	subscribersByPublisher := make(map[int][]*connectionWithRole) // publisher connection ID -> subscribers
 
 	for i := range connections {
 		conn := &connections[i]
 		if assignedConnections[conn.ID] {
+			continue
+		}
+		if conn.MembershipSource == "manual" {
 			continue
 		}
 
@@ -3702,7 +3724,7 @@ func (d *Datastore) groupLogicalReplicationByPublisher(
 			publisher = pub
 		}
 
-		if publisher != nil && !assignedConnections[publisher.ID] {
+		if publisher != nil && !assignedConnections[publisher.ID] && publisher.MembershipSource != "manual" {
 			subscribersByPublisher[publisher.ID] = append(subscribersByPublisher[publisher.ID], conn)
 		}
 	}

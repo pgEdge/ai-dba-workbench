@@ -135,23 +135,37 @@ func (bp *BaseMetricsProbe) GetConfig() *ProbeConfig {
 	return bp.config
 }
 
-// EnsurePartition creates a partition for the given week if it doesn't exist
-func EnsurePartition(ctx context.Context, conn *pgxpool.Conn, tableName string, timestamp time.Time) error {
-	// Calculate the start and end of the week containing the timestamp
-	// Use Monday as the start of week
-	weekday := timestamp.Weekday()
-	daysFromMonday := int(weekday)
-	if weekday == time.Sunday {
+// weeklyPartitionBounds returns the partition name suffix and the
+// [from, to) instants for the Monday-aligned week that contains t.
+// All math is performed in UTC so the partition naming and range
+// boundaries always refer to the same instant regardless of the
+// caller's local timezone.
+func weeklyPartitionBounds(t time.Time) (nameSuffix string, from, to time.Time) {
+	utc := t.UTC()
+	daysFromMonday := int(utc.Weekday())
+	if utc.Weekday() == time.Sunday {
 		daysFromMonday = 6
 	} else {
 		daysFromMonday--
 	}
 
-	weekStart := timestamp.AddDate(0, 0, -daysFromMonday).Truncate(24 * time.Hour)
-	weekEnd := weekStart.AddDate(0, 0, 7)
+	year, month, day := utc.Date()
+	from = time.Date(year, month, day-daysFromMonday, 0, 0, 0, 0, time.UTC)
+	to = from.AddDate(0, 0, 7)
+	nameSuffix = from.Format("20060102")
+	return nameSuffix, from, to
+}
 
-	// Format partition name as tablename_YYYYMMDD (start of week)
-	partitionName := fmt.Sprintf("%s_%s", tableName, weekStart.Format("20060102"))
+// partitionBoundLiteral formats a time for use as a Postgres range
+// boundary literal with an explicit UTC offset so the datastore
+// session's TimeZone setting cannot reinterpret it.
+const partitionBoundLayout = "2006-01-02 15:04:05Z07:00"
+
+// EnsurePartition creates a partition for the given week if it doesn't exist
+func EnsurePartition(ctx context.Context, conn *pgxpool.Conn, tableName string, timestamp time.Time) error {
+	nameSuffix, weekStart, weekEnd := weeklyPartitionBounds(timestamp)
+
+	partitionName := fmt.Sprintf("%s_%s", tableName, nameSuffix)
 	fullTableName := fmt.Sprintf("metrics.%s", tableName)
 	fullPartitionName := fmt.Sprintf("metrics.%s", partitionName)
 
@@ -179,8 +193,8 @@ func EnsurePartition(ctx context.Context, conn *pgxpool.Conn, tableName string, 
 		PARTITION OF %s
 		FOR VALUES FROM ('%s') TO ('%s')
 	`, fullPartitionName, fullTableName,
-		weekStart.Format("2006-01-02 15:04:05"),
-		weekEnd.Format("2006-01-02 15:04:05"))
+		weekStart.Format(partitionBoundLayout),
+		weekEnd.Format(partitionBoundLayout))
 
 	_, err = conn.Exec(ctx, createSQL)
 	if err != nil {

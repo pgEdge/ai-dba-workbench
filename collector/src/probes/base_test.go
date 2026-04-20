@@ -11,6 +11,7 @@ package probes
 
 import (
 	"testing"
+	"time"
 )
 
 // stringer is a test type that implements fmt.Stringer.
@@ -326,5 +327,136 @@ func TestNormalizeValueUnknownType(t *testing.T) {
 	got := normalizeValue(input)
 	if got != input {
 		t.Errorf("expected unknown type to pass through, got %v [%T]", got, got)
+	}
+}
+
+func TestWeeklyPartitionBounds(t *testing.T) {
+	plusFive := time.FixedZone("plus5", 5*60*60)
+	plusNine := time.FixedZone("plus9", 9*60*60)
+	minusFive := time.FixedZone("minus5", -5*60*60)
+
+	tests := []struct {
+		name       string
+		input      time.Time
+		wantSuffix string
+		wantFrom   time.Time
+		wantTo     time.Time
+	}{
+		{
+			name:       "monday midnight utc",
+			input:      time.Date(2026, 4, 6, 0, 0, 0, 0, time.UTC),
+			wantSuffix: "20260406",
+			wantFrom:   time.Date(2026, 4, 6, 0, 0, 0, 0, time.UTC),
+			wantTo:     time.Date(2026, 4, 13, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			name:       "sunday just before midnight utc",
+			input:      time.Date(2026, 4, 12, 23, 59, 59, 0, time.UTC),
+			wantSuffix: "20260406",
+			wantFrom:   time.Date(2026, 4, 6, 0, 0, 0, 0, time.UTC),
+			wantTo:     time.Date(2026, 4, 13, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			name:       "mid week wednesday utc",
+			input:      time.Date(2026, 4, 8, 12, 34, 56, 0, time.UTC),
+			wantSuffix: "20260406",
+			wantFrom:   time.Date(2026, 4, 6, 0, 0, 0, 0, time.UTC),
+			wantTo:     time.Date(2026, 4, 13, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			// 2026-04-13 02:30:00 +05 == 2026-04-12 21:30:00 UTC (Sunday in UTC).
+			// Local-clock math would pick Monday 2026-04-13 as week start;
+			// UTC-consistent math must pick Monday 2026-04-06.
+			name:       "local monday but still sunday in utc",
+			input:      time.Date(2026, 4, 13, 2, 30, 0, 0, plusFive),
+			wantSuffix: "20260406",
+			wantFrom:   time.Date(2026, 4, 6, 0, 0, 0, 0, time.UTC),
+			wantTo:     time.Date(2026, 4, 13, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			// 2026-04-13 08:00:00 +09 == 2026-04-12 23:00:00 UTC (Sunday in UTC).
+			name:       "local monday morning jp but still sunday in utc",
+			input:      time.Date(2026, 4, 13, 8, 0, 0, 0, plusNine),
+			wantSuffix: "20260406",
+			wantFrom:   time.Date(2026, 4, 6, 0, 0, 0, 0, time.UTC),
+			wantTo:     time.Date(2026, 4, 13, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			// 2026-04-12 22:00:00 -05 == 2026-04-13 03:00:00 UTC (Monday in UTC).
+			// Local-clock math would pick previous Monday (2026-04-06);
+			// UTC-consistent math must pick 2026-04-13.
+			name:       "local sunday night but already monday in utc",
+			input:      time.Date(2026, 4, 12, 22, 0, 0, 0, minusFive),
+			wantSuffix: "20260413",
+			wantFrom:   time.Date(2026, 4, 13, 0, 0, 0, 0, time.UTC),
+			wantTo:     time.Date(2026, 4, 20, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			name:       "sunday afternoon utc",
+			input:      time.Date(2026, 4, 12, 15, 0, 0, 0, time.UTC),
+			wantSuffix: "20260406",
+			wantFrom:   time.Date(2026, 4, 6, 0, 0, 0, 0, time.UTC),
+			wantTo:     time.Date(2026, 4, 13, 0, 0, 0, 0, time.UTC),
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			gotSuffix, gotFrom, gotTo := weeklyPartitionBounds(tc.input)
+			if gotSuffix != tc.wantSuffix {
+				t.Errorf("suffix: got %q, want %q", gotSuffix, tc.wantSuffix)
+			}
+			if !gotFrom.Equal(tc.wantFrom) {
+				t.Errorf("from: got %s, want %s", gotFrom, tc.wantFrom)
+			}
+			if !gotTo.Equal(tc.wantTo) {
+				t.Errorf("to: got %s, want %s", gotTo, tc.wantTo)
+			}
+			if gotFrom.Location() != time.UTC {
+				t.Errorf("from location: got %s, want UTC", gotFrom.Location())
+			}
+			if gotTo.Location() != time.UTC {
+				t.Errorf("to location: got %s, want UTC", gotTo.Location())
+			}
+			if gotFrom.Weekday() != time.Monday {
+				t.Errorf("from weekday: got %s, want Monday", gotFrom.Weekday())
+			}
+			if gotTo.Sub(gotFrom) != 7*24*time.Hour {
+				t.Errorf("range width: got %s, want 168h", gotTo.Sub(gotFrom))
+			}
+		})
+	}
+}
+
+func TestWeeklyPartitionBoundsConsecutiveWeeks(t *testing.T) {
+	// Two timestamps that are 6 local-days apart across a DST-like
+	// boundary must still land on adjacent, non-overlapping Monday
+	// weeks when computed in UTC.
+	tz := time.FixedZone("plus5", 5*60*60)
+	first := time.Date(2026, 4, 12, 23, 59, 59, 0, tz)      // Sun local, 18:59:59 UTC => Sun UTC, week 2026-04-06
+	second := time.Date(2026, 4, 13, 12, 0, 0, 0, time.UTC) // Mon UTC, week 2026-04-13
+
+	_, fromA, toA := weeklyPartitionBounds(first)
+	_, fromB, toB := weeklyPartitionBounds(second)
+
+	if !toA.Equal(fromB) {
+		t.Errorf("adjacent weeks must touch: toA=%s fromB=%s", toA, fromB)
+	}
+	if toB.Sub(fromA) != 14*24*time.Hour {
+		t.Errorf("combined span: got %s, want 336h", toB.Sub(fromA))
+	}
+}
+
+func TestPartitionBoundLayoutIncludesUTCOffset(t *testing.T) {
+	_, from, to := weeklyPartitionBounds(time.Date(2026, 4, 8, 12, 0, 0, 0, time.UTC))
+	gotFrom := from.Format(partitionBoundLayout)
+	gotTo := to.Format(partitionBoundLayout)
+	wantFrom := "2026-04-06 00:00:00Z"
+	wantTo := "2026-04-13 00:00:00Z"
+	if gotFrom != wantFrom {
+		t.Errorf("from literal: got %q, want %q", gotFrom, wantFrom)
+	}
+	if gotTo != wantTo {
+		t.Errorf("to literal: got %q, want %q", gotTo, wantTo)
 	}
 }

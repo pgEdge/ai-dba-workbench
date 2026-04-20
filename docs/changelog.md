@@ -22,6 +22,9 @@ project adheres to
   example server configuration files; the server
   only accepts API keys through the corresponding
   `*_file` variants. (#54)
+- Fix spurious "partition would overlap" errors from
+  the collector on non-UTC hosts when the weekly
+  partition rolled over. (#55)
 
 ## [1.0.0-alpha3] - 2026-04-08
 

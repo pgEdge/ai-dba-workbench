@@ -79,6 +79,7 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 	if p.datastore != nil {
 		// Register metrics tools if datastore is configured
 		datastorePool := p.datastore.GetPool()
+		visibilityLister := newDatastoreVisibilityLister(p.datastore)
 		if p.cfg.Builtins.Tools.IsToolEnabled("list_probes") {
 			registry.Register("list_probes", ListProbesTool(datastorePool))
 		}
@@ -92,19 +93,19 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 			registry.Register("list_connections", ListConnectionsTool(datastorePool))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_alert_history") {
-			registry.Register("get_alert_history", GetAlertHistoryTool(datastorePool, p.rbacChecker))
+			registry.Register("get_alert_history", GetAlertHistoryTool(datastorePool, p.rbacChecker, visibilityLister))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_alert_rules") {
 			registry.Register("get_alert_rules", GetAlertRulesTool(datastorePool))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_metric_baselines") {
-			registry.Register("get_metric_baselines", GetMetricBaselinesTool(datastorePool, p.rbacChecker))
+			registry.Register("get_metric_baselines", GetMetricBaselinesTool(datastorePool, p.rbacChecker, visibilityLister))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("query_datastore") {
 			registry.Register("query_datastore", QueryDatastoreTool(datastorePool))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_blackouts") {
-			registry.Register("get_blackouts", GetBlackoutsTool(datastorePool, p.rbacChecker))
+			registry.Register("get_blackouts", GetBlackoutsTool(datastorePool, p.rbacChecker, visibilityLister))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("store_memory") && p.memoryStore != nil {
 			registry.Register("store_memory", StoreMemoryTool(p.memoryStore, p.cfg, p.rbacChecker))
@@ -116,7 +117,9 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 			registry.Register("delete_memory", DeleteMemoryTool(p.memoryStore))
 		}
 	} else {
-		// Register tools with nil pool - they'll return helpful errors
+		// Register tools with nil pool - they'll return helpful errors.
+		// A nil datastore yields a nil visibility lister; the tools handle
+		// that by falling back to group/token-granted IDs only.
 		if p.cfg.Builtins.Tools.IsToolEnabled("list_probes") {
 			registry.Register("list_probes", ListProbesTool(nil))
 		}
@@ -130,19 +133,19 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 			registry.Register("list_connections", ListConnectionsTool(nil))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_alert_history") {
-			registry.Register("get_alert_history", GetAlertHistoryTool(nil, p.rbacChecker))
+			registry.Register("get_alert_history", GetAlertHistoryTool(nil, p.rbacChecker, nil))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_alert_rules") {
 			registry.Register("get_alert_rules", GetAlertRulesTool(nil))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_metric_baselines") {
-			registry.Register("get_metric_baselines", GetMetricBaselinesTool(nil, p.rbacChecker))
+			registry.Register("get_metric_baselines", GetMetricBaselinesTool(nil, p.rbacChecker, nil))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("query_datastore") {
 			registry.Register("query_datastore", QueryDatastoreTool(nil))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_blackouts") {
-			registry.Register("get_blackouts", GetBlackoutsTool(nil, p.rbacChecker))
+			registry.Register("get_blackouts", GetBlackoutsTool(nil, p.rbacChecker, nil))
 		}
 	}
 }

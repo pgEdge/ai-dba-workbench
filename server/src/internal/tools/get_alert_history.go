@@ -21,8 +21,13 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/tsv"
 )
 
-// GetAlertHistoryTool creates the get_alert_history tool for querying historic alerts
-func GetAlertHistoryTool(pool *pgxpool.Pool, rbacChecker *auth.RBACChecker) Tool {
+// GetAlertHistoryTool creates the get_alert_history tool for querying historic alerts.
+//
+// The visibilityLister argument is used to resolve the set of connections
+// the caller may see. It may be nil in unit tests or when no datastore is
+// configured; auth.RBACChecker.VisibleConnectionIDs tolerates a nil lister
+// by falling back to group/token-granted IDs only.
+func GetAlertHistoryTool(pool *pgxpool.Pool, rbacChecker *auth.RBACChecker, visibilityLister auth.ConnectionVisibilityLister) Tool {
 	return Tool{
 		Definition: mcp.Tool{
 			Name: "get_alert_history",
@@ -197,12 +202,20 @@ Returns TSV data with:
 				}
 			}
 
-			// Build accessible connection filter for multi-connection mode
+			// Build accessible connection filter for multi-connection mode.
+			// VisibleConnectionIDs honors ownership and sharing in addition
+			// to group/token grants; unlike GetAccessibleConnections its
+			// return values are unambiguous.
 			var accessibleIDs []int
+			allConnections := true
 			if !singleConnection && rbacChecker != nil {
-				accessibleIDs = rbacChecker.GetAccessibleConnections(ctx)
-				// nil means superuser (all connections); non-nil is the explicit list
-				if accessibleIDs != nil && len(accessibleIDs) == 0 {
+				ids, all, err := rbacChecker.VisibleConnectionIDs(ctx, visibilityLister)
+				if err != nil {
+					return mcp.NewToolError(fmt.Sprintf("Failed to resolve accessible connections: %v", err))
+				}
+				accessibleIDs = ids
+				allConnections = all
+				if !allConnections && len(accessibleIDs) == 0 {
 					return mcp.NewToolSuccess("No alerts found. You do not have access to any connections.")
 				}
 			}
@@ -283,7 +296,7 @@ Returns TSV data with:
 				return alertHistorySingleConnection(ctx, pool, connectionID, connName,
 					timeStart, statusParam, statusFilter, ruleID, metricName, limit, offset)
 			}
-			return alertHistoryAllConnections(ctx, pool, accessibleIDs,
+			return alertHistoryAllConnections(ctx, pool, allConnections, accessibleIDs,
 				timeStart, statusParam, statusFilter, ruleID, metricName, limit, offset)
 		},
 	}
@@ -397,12 +410,12 @@ func alertHistorySingleConnection(
 // alertHistoryAllConnections queries alerts across all accessible connections
 func alertHistoryAllConnections(
 	ctx context.Context, pool *pgxpool.Pool,
-	accessibleIDs []int,
+	allConnections bool, accessibleIDs []int,
 	timeStart *time.Time, statusParam *string, statusFilter string,
 	ruleID *int, metricName *string, limit, offset int,
 ) (mcp.ToolResponse, error) {
 	// Build connection filter clause
-	connFilter, connArgs := buildConnectionFilter("a.connection_id", accessibleIDs)
+	connFilter, connArgs := buildConnectionFilter("a.connection_id", allConnections, accessibleIDs)
 
 	// Build the parameterised query; parameter positions start after connection args
 	paramIdx := len(connArgs) + 1

@@ -19,15 +19,19 @@ import (
 
 // TimelineHandler handles REST API requests for timeline events
 type TimelineHandler struct {
-	datastore *database.Datastore
-	authStore *auth.AuthStore
+	datastore   *database.Datastore
+	authStore   *auth.AuthStore
+	rbacChecker *auth.RBACChecker
 }
 
-// NewTimelineHandler creates a new timeline handler
-func NewTimelineHandler(datastore *database.Datastore, authStore *auth.AuthStore) *TimelineHandler {
+// NewTimelineHandler creates a new timeline handler. The rbacChecker is
+// used to filter events to the connections the caller is allowed to
+// see.
+func NewTimelineHandler(datastore *database.Datastore, authStore *auth.AuthStore, rbacChecker *auth.RBACChecker) *TimelineHandler {
 	return &TimelineHandler{
-		datastore: datastore,
-		authStore: authStore,
+		datastore:   datastore,
+		authStore:   authStore,
+		rbacChecker: rbacChecker,
 	}
 }
 
@@ -105,6 +109,53 @@ func (h *TimelineHandler) handleTimelineEvents(w http.ResponseWriter, r *http.Re
 
 	// Parse limit (optional, default 500, max 1000)
 	filter.Limit = ParseLimitWithDefaults(r, 500, 1000)
+
+	// RBAC: restrict to visible connections. VisibleConnectionIDs
+	// returns allConnections=true for superusers and wildcard token
+	// scopes; otherwise it returns the explicit set of visible IDs.
+	if h.rbacChecker != nil {
+		lister := newConnectionVisibilityLister(h.datastore)
+		accessibleIDs, allConnections, err := h.rbacChecker.VisibleConnectionIDs(r.Context(), lister)
+		if err != nil {
+			log.Printf("[ERROR] Failed to resolve visible connections for timeline: %v", err)
+			RespondError(w, http.StatusInternalServerError, "Failed to fetch timeline events")
+			return
+		}
+		if !allConnections {
+			// Empty visible set -> return an empty result without
+			// hitting the datastore.
+			if len(accessibleIDs) == 0 {
+				RespondJSON(w, http.StatusOK, &database.TimelineResult{Events: []database.TimelineEvent{}, TotalCount: 0})
+				return
+			}
+			accessibleSet := make(map[int]bool, len(accessibleIDs))
+			for _, id := range accessibleIDs {
+				accessibleSet[id] = true
+			}
+			if filter.ConnectionID != nil {
+				if !accessibleSet[*filter.ConnectionID] {
+					RespondJSON(w, http.StatusOK, &database.TimelineResult{Events: []database.TimelineEvent{}, TotalCount: 0})
+					return
+				}
+			}
+			if len(filter.ConnectionIDs) > 0 {
+				intersected := make([]int, 0, len(filter.ConnectionIDs))
+				for _, id := range filter.ConnectionIDs {
+					if accessibleSet[id] {
+						intersected = append(intersected, id)
+					}
+				}
+				if len(intersected) == 0 {
+					RespondJSON(w, http.StatusOK, &database.TimelineResult{Events: []database.TimelineEvent{}, TotalCount: 0})
+					return
+				}
+				filter.ConnectionIDs = intersected
+			} else if filter.ConnectionID == nil {
+				// No user filter -- restrict to visible connections.
+				filter.ConnectionIDs = accessibleIDs
+			}
+		}
+	}
 
 	// Fetch timeline events
 	result, err := h.datastore.GetTimelineEvents(r.Context(), filter)

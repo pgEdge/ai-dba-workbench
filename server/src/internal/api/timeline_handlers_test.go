@@ -17,7 +17,7 @@ import (
 )
 
 func TestNewTimelineHandler(t *testing.T) {
-	handler := NewTimelineHandler(nil, nil)
+	handler := NewTimelineHandler(nil, nil, nil)
 	if handler == nil {
 		t.Fatal("NewTimelineHandler returned nil")
 	}
@@ -56,7 +56,7 @@ func TestTimelineHandler_HandleNotConfigured(t *testing.T) {
 }
 
 func TestTimelineHandler_HandleTimelineEvents_MethodNotAllowed(t *testing.T) {
-	handler := NewTimelineHandler(nil, nil)
+	handler := NewTimelineHandler(nil, nil, nil)
 
 	methods := []string{
 		http.MethodPost,
@@ -86,7 +86,7 @@ func TestTimelineHandler_HandleTimelineEvents_MethodNotAllowed(t *testing.T) {
 }
 
 func TestTimelineHandler_HandleTimelineEvents_MissingStartTime(t *testing.T) {
-	handler := NewTimelineHandler(nil, nil)
+	handler := NewTimelineHandler(nil, nil, nil)
 
 	// Missing start_time
 	req := httptest.NewRequest(http.MethodGet,
@@ -110,7 +110,7 @@ func TestTimelineHandler_HandleTimelineEvents_MissingStartTime(t *testing.T) {
 }
 
 func TestTimelineHandler_HandleTimelineEvents_MissingEndTime(t *testing.T) {
-	handler := NewTimelineHandler(nil, nil)
+	handler := NewTimelineHandler(nil, nil, nil)
 
 	// Missing end_time
 	req := httptest.NewRequest(http.MethodGet,
@@ -134,7 +134,7 @@ func TestTimelineHandler_HandleTimelineEvents_MissingEndTime(t *testing.T) {
 }
 
 func TestTimelineHandler_HandleTimelineEvents_InvalidStartTime(t *testing.T) {
-	handler := NewTimelineHandler(nil, nil)
+	handler := NewTimelineHandler(nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet,
 		"/api/v1/timeline/events?start_time=invalid&end_time=2026-01-31T00:00:00Z", nil)
@@ -148,7 +148,7 @@ func TestTimelineHandler_HandleTimelineEvents_InvalidStartTime(t *testing.T) {
 }
 
 func TestTimelineHandler_HandleTimelineEvents_InvalidEndTime(t *testing.T) {
-	handler := NewTimelineHandler(nil, nil)
+	handler := NewTimelineHandler(nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet,
 		"/api/v1/timeline/events?start_time=2026-01-30T00:00:00Z&end_time=invalid", nil)
@@ -162,7 +162,7 @@ func TestTimelineHandler_HandleTimelineEvents_InvalidEndTime(t *testing.T) {
 }
 
 func TestTimelineHandler_HandleTimelineEvents_InvalidTimeRange(t *testing.T) {
-	handler := NewTimelineHandler(nil, nil)
+	handler := NewTimelineHandler(nil, nil, nil)
 
 	// end_time before start_time
 	req := httptest.NewRequest(http.MethodGet,
@@ -186,7 +186,7 @@ func TestTimelineHandler_HandleTimelineEvents_InvalidTimeRange(t *testing.T) {
 }
 
 func TestTimelineHandler_HandleTimelineEvents_InvalidEventType(t *testing.T) {
-	handler := NewTimelineHandler(nil, nil)
+	handler := NewTimelineHandler(nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet,
 		"/api/v1/timeline/events?start_time=2026-01-30T00:00:00Z&end_time=2026-01-31T00:00:00Z&event_types=invalid_type", nil)
@@ -210,7 +210,7 @@ func TestTimelineHandler_HandleTimelineEvents_InvalidEventType(t *testing.T) {
 }
 
 func TestTimelineHandler_HandleTimelineEvents_InvalidConnectionID(t *testing.T) {
-	handler := NewTimelineHandler(nil, nil)
+	handler := NewTimelineHandler(nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet,
 		"/api/v1/timeline/events?start_time=2026-01-30T00:00:00Z&end_time=2026-01-31T00:00:00Z&connection_id=abc", nil)
@@ -224,7 +224,7 @@ func TestTimelineHandler_HandleTimelineEvents_InvalidConnectionID(t *testing.T) 
 }
 
 func TestTimelineHandler_HandleTimelineEvents_InvalidConnectionIDs(t *testing.T) {
-	handler := NewTimelineHandler(nil, nil)
+	handler := NewTimelineHandler(nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet,
 		"/api/v1/timeline/events?start_time=2026-01-30T00:00:00Z&end_time=2026-01-31T00:00:00Z&connection_ids=1,abc,3", nil)
@@ -238,7 +238,7 @@ func TestTimelineHandler_HandleTimelineEvents_InvalidConnectionIDs(t *testing.T)
 }
 
 func TestTimelineHandler_RegisterRoutes_NotConfigured(t *testing.T) {
-	handler := NewTimelineHandler(nil, nil)
+	handler := NewTimelineHandler(nil, nil, nil)
 	mux := http.NewServeMux()
 	noopWrapper := func(h http.HandlerFunc) http.HandlerFunc { return h }
 

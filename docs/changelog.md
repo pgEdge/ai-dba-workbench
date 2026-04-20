@@ -54,6 +54,28 @@ project adheres to
   API now returns the `membership_source` field the
   client filter requires. (#25, #46)
 
+### Security
+
+- Fix several REST endpoints and MCP tools leaking
+  unshared connections owned by other users; the
+  connection detail, database listing, connection
+  context, cluster topology, alerts, alert
+  acknowledgement, alert analysis, timeline, and
+  current-connection endpoints now apply the same
+  ownership, sharing, group, and token-scope checks
+  as `GET /api/v1/connections`, returning
+  `403 Forbidden` for single-resource requests and
+  filtering list responses to the caller's visible
+  connections. The `get_alert_history`,
+  `get_metric_baselines`, and `get_blackouts` MCP
+  tools applied no connection filter for callers
+  with zero explicit grants; all three now restrict
+  results to connections the caller is permitted to
+  see. The OpenAPI specification and the static
+  `docs/admin-guide/api/openapi.json` now document
+  the `403 Forbidden` response on the affected
+  single-resource endpoints. (#35)
+
 ## [1.0.0-alpha3] - 2026-04-08
 
 ### Added

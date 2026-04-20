@@ -157,7 +157,11 @@ func (h *ConnectionHandler) listConnections(w http.ResponseWriter, r *http.Reque
 	isSuperuser := h.rbacChecker.IsSuperuser(r.Context())
 	if !isSuperuser {
 		currentUsername := auth.GetUsernameFromContext(r.Context())
-		accessibleIDs := h.rbacChecker.GetAccessibleConnections(r.Context())
+		// Safe use of the deprecated helper: the superuser gate above
+		// handles the "all connections" branch, and the per-row checks
+		// below explicitly validate sharing and ownership. See the
+		// GetAccessibleConnections godoc for details.
+		accessibleIDs := h.rbacChecker.GetAccessibleConnections(r.Context()) //nolint:staticcheck // SA1019: intentional, see comment above
 
 		// Build a set of group-accessible connection IDs
 		var accessibleSet map[int]bool
@@ -377,20 +381,12 @@ func (h *ConnectionHandler) handleConnectionSubpath(w http.ResponseWriter, r *ht
 
 // getConnection handles GET /api/v1/connections/{id}
 func (h *ConnectionHandler) getConnection(w http.ResponseWriter, r *http.Request, id int) {
-	// Check RBAC access to this connection
-	accessibleIDs := h.rbacChecker.GetAccessibleConnections(r.Context())
-	if accessibleIDs != nil {
-		found := false
-		for _, aid := range accessibleIDs {
-			if aid == id {
-				found = true
-				break
-			}
-		}
-		if !found {
-			RespondError(w, http.StatusForbidden, "Access denied")
-			return
-		}
+	// Check RBAC access to this connection. CanAccessConnection honors
+	// ownership, sharing, group grants, and token scope; it also covers
+	// the superuser bypass.
+	if canAccess, _ := h.rbacChecker.CanAccessConnection(r.Context(), id); !canAccess {
+		RespondError(w, http.StatusForbidden, "Access denied")
+		return
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -545,20 +541,10 @@ func (h *ConnectionHandler) deleteConnection(w http.ResponseWriter, r *http.Requ
 
 // listDatabases handles GET /api/v1/connections/{id}/databases
 func (h *ConnectionHandler) listDatabases(w http.ResponseWriter, r *http.Request, connectionID int) {
-	// Check RBAC access to this connection
-	accessibleIDs := h.rbacChecker.GetAccessibleConnections(r.Context())
-	if accessibleIDs != nil {
-		found := false
-		for _, aid := range accessibleIDs {
-			if aid == connectionID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			RespondError(w, http.StatusForbidden, "Access denied")
-			return
-		}
+	// Check RBAC access to this connection.
+	if canAccess, _ := h.rbacChecker.CanAccessConnection(r.Context(), connectionID); !canAccess {
+		RespondError(w, http.StatusForbidden, "Access denied")
+		return
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
@@ -612,6 +598,14 @@ func (h *ConnectionHandler) getCurrentConnection(w http.ResponseWriter, r *http.
 		return
 	}
 
+	// Verify the caller may access the session's connection. A session
+	// may outlive a revoked grant or ownership change, so re-check on
+	// every read rather than trusting the stored selection.
+	if canAccess, _ := h.rbacChecker.CanAccessConnection(r.Context(), session.ConnectionID); !canAccess {
+		RespondError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+
 	// Get connection details
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
@@ -644,6 +638,13 @@ func (h *ConnectionHandler) setCurrentConnection(w http.ResponseWriter, r *http.
 
 	if req.ConnectionID <= 0 {
 		RespondError(w, http.StatusBadRequest, "connection_id is required")
+		return
+	}
+
+	// Check RBAC access before persisting the session; otherwise a
+	// caller could pin their session to a connection they cannot use.
+	if canAccess, _ := h.rbacChecker.CanAccessConnection(r.Context(), req.ConnectionID); !canAccess {
+		RespondError(w, http.StatusForbidden, "Access denied")
 		return
 	}
 
@@ -692,20 +693,10 @@ func (h *ConnectionHandler) clearCurrentConnection(w http.ResponseWriter, r *htt
 
 // getConnectionContext handles GET /api/v1/connections/{id}/context
 func (h *ConnectionHandler) getConnectionContext(w http.ResponseWriter, r *http.Request, connectionID int) {
-	// Check RBAC access to this connection
-	accessibleIDs := h.rbacChecker.GetAccessibleConnections(r.Context())
-	if accessibleIDs != nil {
-		found := false
-		for _, aid := range accessibleIDs {
-			if aid == connectionID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			RespondError(w, http.StatusForbidden, "Access denied")
-			return
-		}
+	// Check RBAC access to this connection.
+	if canAccess, _ := h.rbacChecker.CanAccessConnection(r.Context(), connectionID); !canAccess {
+		RespondError(w, http.StatusForbidden, "Access denied")
+		return
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
@@ -739,20 +730,10 @@ type connectionClusterResponse struct {
 
 // handleGetConnectionCluster handles GET /api/v1/connections/{id}/cluster
 func (h *ConnectionHandler) handleGetConnectionCluster(w http.ResponseWriter, r *http.Request, connectionID int) {
-	// Check RBAC access to this connection
-	accessibleIDs := h.rbacChecker.GetAccessibleConnections(r.Context())
-	if accessibleIDs != nil {
-		found := false
-		for _, aid := range accessibleIDs {
-			if aid == connectionID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			RespondError(w, http.StatusForbidden, "Access denied")
-			return
-		}
+	// Check RBAC access to this connection.
+	if canAccess, _ := h.rbacChecker.CanAccessConnection(r.Context(), connectionID); !canAccess {
+		RespondError(w, http.StatusForbidden, "Access denied")
+		return
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -800,20 +781,10 @@ func (h *ConnectionHandler) handleGetConnectionCluster(w http.ResponseWriter, r 
 
 // handleUpdateConnectionCluster handles PUT /api/v1/connections/{id}/cluster
 func (h *ConnectionHandler) handleUpdateConnectionCluster(w http.ResponseWriter, r *http.Request, connectionID int) {
-	// Check RBAC access to this connection
-	accessibleIDs := h.rbacChecker.GetAccessibleConnections(r.Context())
-	if accessibleIDs != nil {
-		found := false
-		for _, aid := range accessibleIDs {
-			if aid == connectionID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			RespondError(w, http.StatusForbidden, "Access denied")
-			return
-		}
+	// Check RBAC access to this connection.
+	if canAccess, _ := h.rbacChecker.CanAccessConnection(r.Context(), connectionID); !canAccess {
+		RespondError(w, http.StatusForbidden, "Access denied")
+		return
 	}
 
 	var req ConnectionClusterUpdateRequest

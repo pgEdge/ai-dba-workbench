@@ -54,3 +54,40 @@ func RequireAdminPermission(rbac *auth.RBACChecker, permission string, descripti
 		return true
 	}
 }
+
+// connectionVisibilityLister adapts *database.Datastore.GetAllConnections
+// to the auth.ConnectionVisibilityLister interface. A single call loads
+// sharing metadata for every connection; this lets VisibleConnectionIDs
+// compute the visible set without issuing one query per connection.
+type connectionVisibilityLister struct {
+	ds *database.Datastore
+}
+
+// newConnectionVisibilityLister returns a lister that wraps the given
+// datastore. A nil datastore yields a nil lister; callers must handle
+// that case.
+func newConnectionVisibilityLister(ds *database.Datastore) auth.ConnectionVisibilityLister {
+	if ds == nil {
+		return nil
+	}
+	return &connectionVisibilityLister{ds: ds}
+}
+
+// GetAllConnections implements auth.ConnectionVisibilityLister by
+// projecting database.ConnectionListItem into the minimal struct the
+// auth package needs.
+func (l *connectionVisibilityLister) GetAllConnections(ctx context.Context) ([]auth.ConnectionVisibilityInfo, error) {
+	conns, err := l.ds.GetAllConnections(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]auth.ConnectionVisibilityInfo, 0, len(conns))
+	for i := range conns {
+		result = append(result, auth.ConnectionVisibilityInfo{
+			ID:            conns[i].ID,
+			IsShared:      conns[i].IsShared,
+			OwnerUsername: conns[i].OwnerUsername,
+		})
+	}
+	return result, nil
+}

@@ -1024,3 +1024,230 @@ func TestRBACEnforcement_GetUserPrivileges(t *testing.T) {
 		requireStatus(t, rec, http.StatusNotFound)
 	})
 }
+
+// =============================================================================
+// Section 7: Connection Visibility Regression Tests (issue #35)
+//
+// These tests exercise the handler-level RBAC gates on endpoints that
+// previously leaked unshared connections owned by other users. The
+// datastore is intentionally nil; the RBAC gate runs before any
+// datastore call so 403s can be asserted without a real database.
+// =============================================================================
+
+// withUsername adds a username to the request context. The username is
+// required for CanAccessConnection / VisibleConnectionIDs to apply the
+// ownership rule that lets owners see their own unshared connections.
+func withUsername(req *http.Request, username string) *http.Request {
+	ctx := context.WithValue(req.Context(), auth.UsernameContextKey, username)
+	return req.WithContext(ctx)
+}
+
+// mockSharingChecker returns an RBACChecker whose sharing lookup reports
+// the given connection as unshared and owned by ownerUsername. All other
+// connection IDs are reported as not found (i.e. access is denied).
+func mockSharingChecker(t *testing.T, store *auth.AuthStore, connectionID int, ownerUsername string, isShared bool) *auth.RBACChecker {
+	t.Helper()
+	checker := auth.NewRBACChecker(store)
+	checker.SetConnectionSharingLookup(func(_ context.Context, id int) (bool, string, error) {
+		if id == connectionID {
+			return isShared, ownerUsername, nil
+		}
+		// Unknown connection -> treat as private to owner "alice"; this
+		// keeps CanAccessConnection deterministic for non-targeted IDs.
+		return false, "alice", nil
+	})
+	return checker
+}
+
+func TestConnectionHandler_GetConnection_NonOwnerUnshared_403(t *testing.T) {
+	_, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	// Non-owner user: bob; resource owned by alice and NOT shared.
+	if err := store.CreateUser("bob", "Password1", "", "", ""); err != nil {
+		t.Fatalf("CreateUser bob: %v", err)
+	}
+	bobID, _ := store.GetUserID("bob")
+
+	checker := mockSharingChecker(t, store, 42, "alice", false)
+	handler := NewConnectionHandler(nil, store, checker)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/42", nil)
+	req = withUser(req, bobID)
+	req = withUsername(req, "bob")
+	rec := httptest.NewRecorder()
+
+	handler.getConnection(rec, req, 42)
+
+	requireStatus(t, rec, http.StatusForbidden)
+}
+
+func TestConnectionHandler_GetConnection_Superuser_NotDenied(t *testing.T) {
+	_, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	checker := mockSharingChecker(t, store, 42, "alice", false)
+	handler := NewConnectionHandler(nil, store, checker)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/42", nil)
+	req = withSuperuser(req)
+	rec := httptest.NewRecorder()
+
+	// Nil datastore would panic after RBAC passes; trap the panic and
+	// require the status code never reached 403.
+	func() {
+		defer func() { recover() }() //nolint:errcheck // nil-datastore panic is expected
+		handler.getConnection(rec, req, 42)
+	}()
+
+	if rec.Code == http.StatusForbidden {
+		t.Errorf("Superuser should not be denied, got 403. Body: %s", rec.Body.String())
+	}
+}
+
+func TestConnectionHandler_GetConnection_Owner_NotDenied(t *testing.T) {
+	_, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	if err := store.CreateUser("alice", "Password1", "", "", ""); err != nil {
+		t.Fatalf("CreateUser alice: %v", err)
+	}
+	aliceID, _ := store.GetUserID("alice")
+
+	checker := mockSharingChecker(t, store, 42, "alice", false)
+	handler := NewConnectionHandler(nil, store, checker)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/42", nil)
+	req = withUser(req, aliceID)
+	req = withUsername(req, "alice")
+	rec := httptest.NewRecorder()
+
+	func() {
+		defer func() { recover() }() //nolint:errcheck // nil-datastore panic is expected
+		handler.getConnection(rec, req, 42)
+	}()
+
+	if rec.Code == http.StatusForbidden {
+		t.Errorf("Owner should not be denied, got 403. Body: %s", rec.Body.String())
+	}
+}
+
+func TestConnectionHandler_GetConnection_SharedNonOwner_NotDenied(t *testing.T) {
+	_, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	if err := store.CreateUser("bob", "Password1", "", "", ""); err != nil {
+		t.Fatalf("CreateUser bob: %v", err)
+	}
+	bobID, _ := store.GetUserID("bob")
+
+	// Shared resource: non-owner should have access.
+	checker := mockSharingChecker(t, store, 42, "alice", true)
+	handler := NewConnectionHandler(nil, store, checker)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/42", nil)
+	req = withUser(req, bobID)
+	req = withUsername(req, "bob")
+	rec := httptest.NewRecorder()
+
+	func() {
+		defer func() { recover() }() //nolint:errcheck // nil-datastore panic is expected
+		handler.getConnection(rec, req, 42)
+	}()
+
+	if rec.Code == http.StatusForbidden {
+		t.Errorf("Non-owner with shared connection should not be denied, got 403. Body: %s",
+			rec.Body.String())
+	}
+}
+
+func TestConnectionHandler_GetConnection_GroupGrantedUser_NotDenied(t *testing.T) {
+	_, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	// Create user bob with a group that grants access to connection 42.
+	if err := store.CreateUser("bob", "Password1", "", "", ""); err != nil {
+		t.Fatalf("CreateUser bob: %v", err)
+	}
+	bobID, _ := store.GetUserID("bob")
+	groupID, err := store.CreateGroup("conn42_group", "")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	if err := store.AddUserToGroup(groupID, bobID); err != nil {
+		t.Fatalf("AddUserToGroup: %v", err)
+	}
+	if err := store.GrantConnectionPrivilege(groupID, 42, auth.AccessLevelRead); err != nil {
+		t.Fatalf("GrantConnectionPrivilege: %v", err)
+	}
+
+	checker := mockSharingChecker(t, store, 42, "alice", false)
+	handler := NewConnectionHandler(nil, store, checker)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/42", nil)
+	req = withUser(req, bobID)
+	req = withUsername(req, "bob")
+	rec := httptest.NewRecorder()
+
+	func() {
+		defer func() { recover() }() //nolint:errcheck // nil-datastore panic is expected
+		handler.getConnection(rec, req, 42)
+	}()
+
+	if rec.Code == http.StatusForbidden {
+		t.Errorf("Group-granted user should not be denied, got 403. Body: %s",
+			rec.Body.String())
+	}
+}
+
+func TestTimelineHandler_NoVisibleConnections_EmptyResult(t *testing.T) {
+	_, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	// Bob has no grants and owns nothing; VisibleConnectionIDs will
+	// return an empty set, and the handler must short-circuit to an
+	// empty result without ever hitting the (nil) datastore.
+	if err := store.CreateUser("bob", "Password1", "", "", ""); err != nil {
+		t.Fatalf("CreateUser bob: %v", err)
+	}
+	bobID, _ := store.GetUserID("bob")
+
+	checker := auth.NewRBACChecker(store)
+	// Non-nil datastore is required in production, but the handler
+	// passes the datastore through newConnectionVisibilityLister before
+	// VisibleConnectionIDs runs. With a nil datastore the wrapper
+	// returns a nil lister, which VisibleConnectionIDs handles by
+	// falling back to group/token grants only (still empty for bob).
+	handler := NewTimelineHandler(nil, store, checker)
+	// Re-inject the datastore reference to force the handler to
+	// execute the filter path; the RegisterRoutes guard that returns
+	// "Timeline not configured" is not exercised here because we call
+	// handleTimelineEvents directly.
+	handler.datastore = nil
+
+	url := "/api/v1/timeline/events?start_time=2026-01-01T00:00:00Z&end_time=2026-01-02T00:00:00Z"
+	req := httptest.NewRequest(http.MethodGet, url, nil)
+	req = withUser(req, bobID)
+	req = withUsername(req, "bob")
+	rec := httptest.NewRecorder()
+
+	handler.handleTimelineEvents(rec, req)
+
+	// With no visible connections the handler must return 200 + empty
+	// result before touching the datastore.
+	requireStatus(t, rec, http.StatusOK)
+
+	var body struct {
+		Events     []interface{} `json:"events"`
+		TotalCount int           `json:"total_count"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if len(body.Events) != 0 {
+		t.Errorf("Expected empty events, got %d", len(body.Events))
+	}
+	if body.TotalCount != 0 {
+		t.Errorf("Expected total_count=0, got %d", body.TotalCount)
+	}
+}

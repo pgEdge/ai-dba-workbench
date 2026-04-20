@@ -21,8 +21,13 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/tsv"
 )
 
-// GetBlackoutsTool creates the get_blackouts tool for querying blackout periods
-func GetBlackoutsTool(pool *pgxpool.Pool, rbacChecker *auth.RBACChecker) Tool {
+// GetBlackoutsTool creates the get_blackouts tool for querying blackout periods.
+//
+// The visibilityLister argument is used to resolve the set of connections
+// the caller may see. It may be nil in unit tests or when no datastore is
+// configured; auth.RBACChecker.VisibleConnectionIDs tolerates a nil lister
+// by falling back to group/token-granted IDs only.
+func GetBlackoutsTool(pool *pgxpool.Pool, rbacChecker *auth.RBACChecker, visibilityLister auth.ConnectionVisibilityLister) Tool {
 	return Tool{
 		Definition: mcp.Tool{
 			Name: "get_blackouts",
@@ -178,11 +183,20 @@ If include_schedules is true, a second section shows recurring schedules:
 				}
 			}
 
-			// Build accessible connection filter for multi-connection mode
+			// Build accessible connection filter for multi-connection mode.
+			// VisibleConnectionIDs honors ownership and sharing in addition
+			// to group/token grants; unlike GetAccessibleConnections its
+			// return values are unambiguous.
 			var accessibleIDs []int
+			allConnections := true
 			if !singleConnection && rbacChecker != nil {
-				accessibleIDs = rbacChecker.GetAccessibleConnections(ctx)
-				if accessibleIDs != nil && len(accessibleIDs) == 0 {
+				ids, all, err := rbacChecker.VisibleConnectionIDs(ctx, visibilityLister)
+				if err != nil {
+					return mcp.NewToolError(fmt.Sprintf("Failed to resolve accessible connections: %v", err))
+				}
+				accessibleIDs = ids
+				allConnections = all
+				if !allConnections && len(accessibleIDs) == 0 {
 					return mcp.NewToolSuccess("No blackouts found. You do not have access to any connections.")
 				}
 			}
@@ -213,7 +227,7 @@ If include_schedules is true, a second section shows recurring schedules:
 			if singleConnection {
 				return blackoutsSingleConnection(ctx, pool, connectionID, connName, activeOnly, includeSchedules, limit)
 			}
-			return blackoutsAllConnections(ctx, pool, accessibleIDs, activeOnly, includeSchedules, limit)
+			return blackoutsAllConnections(ctx, pool, allConnections, accessibleIDs, activeOnly, includeSchedules, limit)
 		},
 	}
 }
@@ -399,14 +413,14 @@ func blackoutSchedulesSingleConnection(
 // blackoutsAllConnections queries blackouts across all accessible connections
 func blackoutsAllConnections(
 	ctx context.Context, pool *pgxpool.Pool,
-	accessibleIDs []int,
+	allConnections bool, accessibleIDs []int,
 	activeOnly, includeSchedules bool, limit int,
 ) (mcp.ToolResponse, error) {
 	// For multi-connection mode we query all blackouts and filter by accessible
 	// connections for server-scoped blackouts. Estate-scoped blackouts are always
 	// included. Group and cluster scoped blackouts are included when the user has
 	// access to at least one connection in that group/cluster.
-	connFilter, connArgs := buildConnectionFilter("b.connection_id", accessibleIDs)
+	connFilter, connArgs := buildConnectionFilter("b.connection_id", allConnections, accessibleIDs)
 
 	paramIdx := len(connArgs) + 1
 	query := fmt.Sprintf(`
@@ -519,7 +533,7 @@ func blackoutsAllConnections(
 
 	// Optionally include recurring blackout schedules
 	if includeSchedules {
-		scheduleResult, err := blackoutSchedulesAllConnections(ctx, pool, accessibleIDs, limit)
+		scheduleResult, err := blackoutSchedulesAllConnections(ctx, pool, allConnections, accessibleIDs, limit)
 		if err != nil {
 			return mcp.NewToolError(fmt.Sprintf("Failed to query blackout schedules: %v", err))
 		}
@@ -532,9 +546,9 @@ func blackoutsAllConnections(
 // blackoutSchedulesAllConnections queries recurring schedules across all accessible connections
 func blackoutSchedulesAllConnections(
 	ctx context.Context, pool *pgxpool.Pool,
-	accessibleIDs []int, limit int,
+	allConnections bool, accessibleIDs []int, limit int,
 ) (string, error) {
-	connFilter, connArgs := buildConnectionFilter("s.connection_id", accessibleIDs)
+	connFilter, connArgs := buildConnectionFilter("s.connection_id", allConnections, accessibleIDs)
 
 	paramIdx := len(connArgs) + 1
 	query := fmt.Sprintf(`

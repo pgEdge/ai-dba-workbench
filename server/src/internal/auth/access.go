@@ -382,8 +382,18 @@ func (rc *RBACChecker) GetEffectivePrivileges(ctx context.Context) *EffectivePri
 	return result
 }
 
-// GetAccessibleConnections returns a list of connection IDs the current context can access
-// This is useful for filtering connection lists in the UI
+// GetAccessibleConnections returns a list of connection IDs the current
+// context can access through group/token grants.
+//
+// Deprecated: the nil return value is ambiguous. It means "full access"
+// for a superuser or a wildcard token scope, but it ALSO means "no
+// group-granted connections" for an ordinary user. Callers that treat a
+// nil result as "unrestricted" will leak unshared connections owned by
+// other users. Prefer VisibleConnectionIDs for list filtering and
+// CanAccessConnection for per-ID membership checks. This function is
+// kept for callers that already handle the ambiguity correctly (for
+// example, listConnections pairs the nil-check with an explicit
+// IsSuperuser gate and a per-row sharing decision).
 func (rc *RBACChecker) GetAccessibleConnections(ctx context.Context) []int {
 	privs := rc.GetEffectivePrivileges(ctx)
 	if privs.IsSuperuser {
@@ -396,6 +406,108 @@ func (rc *RBACChecker) GetAccessibleConnections(ctx context.Context) []int {
 		connections = append(connections, connID)
 	}
 	return connections
+}
+
+// ConnectionVisibilityLister returns the list of all connections with
+// their sharing metadata. It is implemented by *database.Datastore via
+// GetAllConnections and is used by VisibleConnectionIDs to avoid N+1
+// lookups of sharing info.
+type ConnectionVisibilityLister interface {
+	GetAllConnections(ctx context.Context) ([]ConnectionVisibilityInfo, error)
+}
+
+// ConnectionVisibilityInfo holds the minimum data VisibleConnectionIDs
+// needs to reason about visibility: the connection's id, its sharing
+// flag, and its owner username.
+type ConnectionVisibilityInfo struct {
+	ID            int
+	IsShared      bool
+	OwnerUsername string
+}
+
+// VisibleConnectionIDs returns the set of connection IDs the caller may
+// see.
+//
+// If allConnections is true, ids is nil and the caller has visibility to
+// every connection (superuser, or a token/user with the ConnectionIDAll
+// wildcard granting at least read access). Otherwise ids is an explicit
+// slice combining:
+//
+//   - connections owned by the caller;
+//   - connections with is_shared=true that are not excluded by group or
+//     token restrictions;
+//   - connections explicitly granted via group or token scope.
+//
+// The caller provides a lister that enumerates connections with their
+// sharing metadata; this allows the function to apply visibility rules
+// without performing an N+1 per-connection lookup.
+func (rc *RBACChecker) VisibleConnectionIDs(ctx context.Context, lister ConnectionVisibilityLister) (ids []int, allConnections bool, err error) {
+	// Nil store - full access.
+	if rc.authStore == nil {
+		return nil, true, nil
+	}
+
+	// Superuser bypass.
+	if IsSuperuserFromContext(ctx) {
+		return nil, true, nil
+	}
+
+	privs := rc.GetEffectivePrivileges(ctx)
+
+	// Check for the ConnectionIDAll wildcard in the effective privileges.
+	// Token scoping is already applied by GetEffectivePrivileges; a
+	// wildcard survives only if both group grants and token scope allow
+	// it.
+	if _, hasWildcard := privs.ConnectionPrivileges[ConnectionIDAll]; hasWildcard {
+		return nil, true, nil
+	}
+
+	// Accumulate the explicit ID set. Use a map to deduplicate.
+	seen := make(map[int]bool)
+	for connID := range privs.ConnectionPrivileges {
+		seen[connID] = true
+	}
+
+	// Determine ownership and shared-visibility additions. A nil lister
+	// means the caller is unable to enumerate connections; in that case
+	// we return only the group/token-granted IDs.
+	if lister != nil {
+		username := GetUsernameFromContext(ctx)
+		all, listErr := lister.GetAllConnections(ctx)
+		if listErr != nil {
+			return nil, false, listErr
+		}
+
+		// If the caller has zero explicit grants, there are no
+		// group-based restrictions to honor; shared and owned
+		// connections are visible. If the caller DOES have explicit
+		// grants, those define an allow-list that further restricts
+		// shared connections to entries that appear in the allow-list.
+		hasExplicitGrants := len(privs.ConnectionPrivileges) > 0
+
+		for i := range all {
+			info := &all[i]
+			// Owner always sees their own connection.
+			if username != "" && info.OwnerUsername == username {
+				seen[info.ID] = true
+				continue
+			}
+			if info.IsShared {
+				if !hasExplicitGrants || seen[info.ID] {
+					seen[info.ID] = true
+				}
+			}
+		}
+	}
+
+	if len(seen) == 0 {
+		return nil, false, nil
+	}
+	result := make([]int, 0, len(seen))
+	for id := range seen {
+		result = append(result, id)
+	}
+	return result, false, nil
 }
 
 // HasAdminPermission checks if the current context has a specific admin permission

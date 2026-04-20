@@ -99,11 +99,19 @@ func (h *AlertHandler) handleAlerts(w http.ResponseWriter, r *http.Request) {
 	filter.Limit = ParseLimitWithDefaults(r, 100, 1000)
 	filter.Offset = ParseOffsetWithDefault(r, 0)
 
-	// RBAC: restrict to accessible connections
-	accessibleIDs := h.rbacChecker.GetAccessibleConnections(r.Context())
-	if accessibleIDs != nil {
+	// RBAC: restrict to visible connections. VisibleConnectionIDs loads
+	// sharing info once and returns the full allow-list including owned
+	// connections and shared ones the caller may see.
+	lister := newConnectionVisibilityLister(h.datastore)
+	accessibleIDs, allConnections, err := h.rbacChecker.VisibleConnectionIDs(r.Context(), lister)
+	if err != nil {
+		log.Printf("[ERROR] Failed to resolve visible connections for alerts: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to list alerts")
+		return
+	}
+	if !allConnections {
 		if filter.ConnectionID != nil {
-			// Check single connection_id is accessible
+			// Check single connection_id is visible.
 			found := false
 			for _, aid := range accessibleIDs {
 				if aid == *filter.ConnectionID {
@@ -117,7 +125,7 @@ func (h *AlertHandler) handleAlerts(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if len(filter.ConnectionIDs) > 0 {
-			// Intersect user-specified IDs with accessible IDs
+			// Intersect user-specified IDs with visible IDs.
 			accessibleSet := make(map[int]bool, len(accessibleIDs))
 			for _, id := range accessibleIDs {
 				accessibleSet[id] = true
@@ -134,12 +142,15 @@ func (h *AlertHandler) handleAlerts(w http.ResponseWriter, r *http.Request) {
 			}
 			filter.ConnectionIDs = intersected
 		} else if filter.ConnectionID == nil {
-			// No user filter -- restrict to accessible connections only
+			// No user filter -- restrict to visible connections only.
+			if len(accessibleIDs) == 0 {
+				RespondJSON(w, http.StatusOK, &database.AlertListResult{Alerts: []database.Alert{}, Total: 0})
+				return
+			}
 			filter.ConnectionIDs = accessibleIDs
 		}
 	}
 
-	// Fetch alerts
 	result, err := h.datastore.GetAlerts(r.Context(), filter)
 	if err != nil {
 		log.Printf("[ERROR] Failed to fetch alerts: %v", err)
@@ -165,9 +176,17 @@ func (h *AlertHandler) handleAlertCounts(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// RBAC: filter counts to accessible connections only
-	accessibleIDs := h.rbacChecker.GetAccessibleConnections(r.Context())
-	if accessibleIDs != nil {
+	// RBAC: filter counts to visible connections only. Visibility
+	// includes owned and shared connections, not just group/token
+	// grants.
+	lister := newConnectionVisibilityLister(h.datastore)
+	accessibleIDs, allConnections, err := h.rbacChecker.VisibleConnectionIDs(r.Context(), lister)
+	if err != nil {
+		log.Printf("[ERROR] Failed to resolve visible connections for alert counts: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch alert counts")
+		return
+	}
+	if !allConnections {
 		accessibleSet := make(map[int]bool, len(accessibleIDs))
 		for _, id := range accessibleIDs {
 			accessibleSet[id] = true
@@ -220,26 +239,16 @@ func (h *AlertHandler) acknowledgeAlert(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// RBAC: verify the user has access to the alert's connection
-	accessibleIDs := h.rbacChecker.GetAccessibleConnections(r.Context())
-	if accessibleIDs != nil {
-		connID, err := h.datastore.GetAlertConnectionID(r.Context(), req.AlertID)
-		if err != nil {
-			log.Printf("[ERROR] Failed to look up alert connection: %v", err)
-			RespondError(w, http.StatusNotFound, "Alert not found")
-			return
-		}
-		found := false
-		for _, aid := range accessibleIDs {
-			if aid == connID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			RespondError(w, http.StatusForbidden, "Access denied")
-			return
-		}
+	// RBAC: verify the user has access to the alert's connection.
+	connID, err := h.datastore.GetAlertConnectionID(r.Context(), req.AlertID)
+	if err != nil {
+		log.Printf("[ERROR] Failed to look up alert connection: %v", err)
+		RespondError(w, http.StatusNotFound, "Alert not found")
+		return
+	}
+	if canAccess, _ := h.rbacChecker.CanAccessConnection(r.Context(), connID); !canAccess {
+		RespondError(w, http.StatusForbidden, "Access denied")
+		return
 	}
 
 	// Get the username from the auth context
@@ -279,26 +288,16 @@ func (h *AlertHandler) unacknowledgeAlert(w http.ResponseWriter, r *http.Request
 		return // Error already sent
 	}
 
-	// RBAC: verify the user has access to the alert's connection
-	accessibleIDs := h.rbacChecker.GetAccessibleConnections(r.Context())
-	if accessibleIDs != nil {
-		connID, err := h.datastore.GetAlertConnectionID(r.Context(), alertID)
-		if err != nil {
-			log.Printf("[ERROR] Failed to look up alert connection: %v", err)
-			RespondError(w, http.StatusNotFound, "Alert not found")
-			return
-		}
-		found := false
-		for _, aid := range accessibleIDs {
-			if aid == connID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			RespondError(w, http.StatusForbidden, "Access denied")
-			return
-		}
+	// RBAC: verify the user has access to the alert's connection.
+	connID, err := h.datastore.GetAlertConnectionID(r.Context(), alertID)
+	if err != nil {
+		log.Printf("[ERROR] Failed to look up alert connection: %v", err)
+		RespondError(w, http.StatusNotFound, "Alert not found")
+		return
+	}
+	if canAccess, _ := h.rbacChecker.CanAccessConnection(r.Context(), connID); !canAccess {
+		RespondError(w, http.StatusForbidden, "Access denied")
+		return
 	}
 
 	// Unacknowledge the alert
@@ -339,26 +338,16 @@ func (h *AlertHandler) handleSaveAnalysis(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// RBAC: verify the user has access to the alert's connection
-	accessibleIDs := h.rbacChecker.GetAccessibleConnections(r.Context())
-	if accessibleIDs != nil {
-		connID, err := h.datastore.GetAlertConnectionID(r.Context(), req.AlertID)
-		if err != nil {
-			log.Printf("[ERROR] Failed to look up alert connection: %v", err)
-			RespondError(w, http.StatusNotFound, "Alert not found")
-			return
-		}
-		found := false
-		for _, aid := range accessibleIDs {
-			if aid == connID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			RespondError(w, http.StatusForbidden, "Access denied")
-			return
-		}
+	// RBAC: verify the user has access to the alert's connection.
+	connID, err := h.datastore.GetAlertConnectionID(r.Context(), req.AlertID)
+	if err != nil {
+		log.Printf("[ERROR] Failed to look up alert connection: %v", err)
+		RespondError(w, http.StatusNotFound, "Alert not found")
+		return
+	}
+	if canAccess, _ := h.rbacChecker.CanAccessConnection(r.Context(), connID); !canAccess {
+		RespondError(w, http.StatusForbidden, "Access denied")
+		return
 	}
 
 	if err := h.datastore.SaveAlertAnalysis(r.Context(), req.AlertID, req.Analysis, req.MetricValue); err != nil {

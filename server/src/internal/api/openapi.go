@@ -1384,6 +1384,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonResponse("Connection", "Connection details"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Access denied"),
 					"404": jsonResponse("ErrorResponse", "Connection not found"),
 				},
 			},
@@ -1430,6 +1431,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonArrayResponse("DatabaseInfo", "List of databases"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Access denied"),
 					"404": jsonResponse("ErrorResponse", "Connection not found"),
 					"500": jsonResponse("ErrorResponse", "Failed to list databases"),
 				},
@@ -1460,6 +1462,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"200": jsonResponse("CurrentConnectionResponse", "Connection selected"),
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Access denied"),
 				},
 			},
 			Delete: &OpenAPIOperation{
@@ -1754,6 +1757,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					},
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Access denied"),
 					"500": jsonResponse("ErrorResponse", "Failed to acknowledge"),
 				},
 			},
@@ -1780,6 +1784,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					},
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Access denied"),
 					"500": jsonResponse("ErrorResponse", "Failed to unacknowledge"),
 				},
 			},
@@ -2179,6 +2184,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					},
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Access denied"),
 				},
 			},
 		},

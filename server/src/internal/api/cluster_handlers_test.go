@@ -1389,3 +1389,156 @@ func TestClusterHandler_UpdateAutoDetectedGroup_Integration_HappyPath(t *testing
 		t.Errorf("Expected exactly 1 auto-keyed row after second PUT, got %d", count)
 	}
 }
+
+// =============================================================================
+// Topology visibility filter (regression coverage for issue #35)
+// =============================================================================
+
+// buildTestTopology constructs a two-group topology in which each server
+// has a distinct connection ID. This gives the filter tests a realistic
+// tree with nested children.
+func buildTestTopology() []database.TopologyGroup {
+	return []database.TopologyGroup{
+		{
+			ID:   "g1",
+			Name: "Group A",
+			Clusters: []database.TopologyCluster{
+				{
+					ID:   "c1",
+					Name: "Cluster 1",
+					Servers: []database.TopologyServerInfo{
+						{ID: 1, Name: "a-primary", Children: []database.TopologyServerInfo{
+							{ID: 2, Name: "a-replica"},
+						}},
+						{ID: 3, Name: "a-standalone"},
+					},
+				},
+				{
+					ID:   "c2",
+					Name: "Cluster 2",
+					Servers: []database.TopologyServerInfo{
+						{ID: 4, Name: "b-primary"},
+					},
+				},
+			},
+		},
+		{
+			ID:   "g2",
+			Name: "Group B",
+			Clusters: []database.TopologyCluster{
+				{
+					ID:   "c3",
+					Name: "Cluster 3",
+					Servers: []database.TopologyServerInfo{
+						{ID: 5, Name: "c-primary"},
+					},
+				},
+			},
+		},
+	}
+}
+
+// topologyServerIDs returns all server IDs in a topology, including
+// nested children, to make assertions concise.
+func topologyServerIDs(groups []database.TopologyGroup) map[int]bool {
+	ids := make(map[int]bool)
+	var walk func([]database.TopologyServerInfo)
+	walk = func(servers []database.TopologyServerInfo) {
+		for _, s := range servers {
+			ids[s.ID] = true
+			if len(s.Children) > 0 {
+				walk(s.Children)
+			}
+		}
+	}
+	for _, g := range groups {
+		for _, c := range g.Clusters {
+			walk(c.Servers)
+		}
+	}
+	return ids
+}
+
+func TestFilterTopologyByVisibility_DropsHiddenServersClustersAndGroups(t *testing.T) {
+	// Visible: servers 1, 2 only. This keeps cluster 1 (with server 1
+	// and its child 2, dropping server 3), drops cluster 2 entirely
+	// (server 4 hidden), and drops group B entirely (server 5 hidden).
+	visible := []int{1, 2}
+
+	filtered := filterTopologyByVisibility(buildTestTopology(), visible)
+
+	if len(filtered) != 1 {
+		t.Fatalf("Expected 1 group after filter, got %d", len(filtered))
+	}
+	if filtered[0].ID != "g1" {
+		t.Errorf("Expected group g1, got %q", filtered[0].ID)
+	}
+	if len(filtered[0].Clusters) != 1 {
+		t.Fatalf("Expected 1 cluster in g1, got %d", len(filtered[0].Clusters))
+	}
+	if filtered[0].Clusters[0].ID != "c1" {
+		t.Errorf("Expected cluster c1, got %q", filtered[0].Clusters[0].ID)
+	}
+
+	got := topologyServerIDs(filtered)
+	want := map[int]bool{1: true, 2: true}
+	if len(got) != len(want) {
+		t.Errorf("Expected server set %v, got %v", want, got)
+	}
+	for id := range want {
+		if !got[id] {
+			t.Errorf("Expected server %d to be visible", id)
+		}
+	}
+	if got[3] || got[4] || got[5] {
+		t.Errorf("Unexpected hidden servers visible: %v", got)
+	}
+}
+
+func TestFilterTopologyByVisibility_EmptyVisibleSet_ReturnsEmpty(t *testing.T) {
+	filtered := filterTopologyByVisibility(buildTestTopology(), []int{})
+	if len(filtered) != 0 {
+		t.Errorf("Expected no groups when nothing is visible, got %d", len(filtered))
+	}
+}
+
+func TestFilterTopologyByVisibility_DropsHiddenParent_WithVisibleChild(t *testing.T) {
+	// Server 1 (hidden) has child 2 (visible). Dropping the parent must
+	// also drop the child because the child is only meaningful under an
+	// accessible parent.
+	visible := []int{2, 3}
+
+	filtered := filterTopologyByVisibility(buildTestTopology(), visible)
+	got := topologyServerIDs(filtered)
+
+	if got[1] || got[2] {
+		t.Errorf("Child of hidden parent must be dropped; got %v", got)
+	}
+	if !got[3] {
+		t.Error("Expected server 3 to remain visible")
+	}
+}
+
+func TestFilterTopologyServers_PreservesNestedChildren(t *testing.T) {
+	servers := []database.TopologyServerInfo{
+		{ID: 10, Name: "root", Children: []database.TopologyServerInfo{
+			{ID: 11, Name: "mid", Children: []database.TopologyServerInfo{
+				{ID: 12, Name: "leaf-visible"},
+				{ID: 13, Name: "leaf-hidden"},
+			}},
+		}},
+	}
+	visible := map[int]bool{10: true, 11: true, 12: true}
+
+	got := filterTopologyServers(servers, visible)
+	if len(got) != 1 || got[0].ID != 10 {
+		t.Fatalf("Expected single root server, got %v", got)
+	}
+	if len(got[0].Children) != 1 || got[0].Children[0].ID != 11 {
+		t.Fatalf("Expected single mid child, got %v", got[0].Children)
+	}
+	if len(got[0].Children[0].Children) != 1 || got[0].Children[0].Children[0].ID != 12 {
+		t.Errorf("Expected only visible leaf 12 retained, got %v",
+			got[0].Children[0].Children)
+	}
+}

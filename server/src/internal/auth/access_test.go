@@ -1157,3 +1157,293 @@ func TestCanAccessConnection_NoLookupFuncAllowsAccess(t *testing.T) {
 		t.Errorf("Expected read_write, got %s", level)
 	}
 }
+
+// =============================================================================
+// VisibleConnectionIDs Tests (regression coverage for issue #35)
+// =============================================================================
+
+// stubVisibilityLister is a testing implementation of
+// ConnectionVisibilityLister that returns a fixed list of connections.
+type stubVisibilityLister struct {
+	connections []ConnectionVisibilityInfo
+	err         error
+}
+
+func (s *stubVisibilityLister) GetAllConnections(_ context.Context) ([]ConnectionVisibilityInfo, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.connections, nil
+}
+
+// idSet converts a slice of IDs into a set for order-independent assertions.
+func idSet(ids []int) map[int]bool {
+	out := make(map[int]bool, len(ids))
+	for _, id := range ids {
+		out[id] = true
+	}
+	return out
+}
+
+func TestVisibleConnectionIDs_Superuser_AllConnections(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store)
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, true)
+
+	ids, all, err := checker.VisibleConnectionIDs(ctx, nil)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if !all {
+		t.Error("Expected allConnections=true for superuser")
+	}
+	if ids != nil {
+		t.Errorf("Expected nil ids for superuser, got %v", ids)
+	}
+}
+
+func TestVisibleConnectionIDs_WildcardTokenScope_AllConnections(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	// Create a user and a group with a wildcard connection grant.
+	if err := store.CreateUser("wc", "Password1", "", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	userID, _ := store.GetUserID("wc")
+	groupID, err := store.CreateGroup("wc_group", "")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	if err := store.AddUserToGroup(groupID, userID); err != nil {
+		t.Fatalf("AddUserToGroup: %v", err)
+	}
+	if err := store.GrantConnectionPrivilege(groupID, ConnectionIDAll, AccessLevelReadWrite); err != nil {
+		t.Fatalf("GrantConnectionPrivilege: %v", err)
+	}
+
+	checker := NewRBACChecker(store)
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+	ctx = context.WithValue(ctx, UsernameContextKey, "wc")
+
+	ids, all, err := checker.VisibleConnectionIDs(ctx, &stubVisibilityLister{})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if !all {
+		t.Error("Expected allConnections=true for wildcard group grant")
+	}
+	if ids != nil {
+		t.Errorf("Expected nil ids for wildcard, got %v", ids)
+	}
+}
+
+func TestVisibleConnectionIDs_OwnerSeesOwnUnshared(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	if err := store.CreateUser("alice", "Password1", "", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	userID, _ := store.GetUserID("alice")
+
+	checker := NewRBACChecker(store)
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+	ctx = context.WithValue(ctx, UsernameContextKey, "alice")
+
+	lister := &stubVisibilityLister{
+		connections: []ConnectionVisibilityInfo{
+			{ID: 1, IsShared: false, OwnerUsername: "alice"},
+			{ID: 2, IsShared: false, OwnerUsername: "bob"},
+		},
+	}
+
+	ids, all, err := checker.VisibleConnectionIDs(ctx, lister)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if all {
+		t.Error("Expected allConnections=false for non-superuser")
+	}
+	set := idSet(ids)
+	if !set[1] {
+		t.Error("Expected alice to see her own unshared connection 1")
+	}
+	if set[2] {
+		t.Error("Expected alice NOT to see bob's unshared connection 2")
+	}
+}
+
+func TestVisibleConnectionIDs_NonOwnerDeniedUnshared(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	if err := store.CreateUser("bob", "Password1", "", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	userID, _ := store.GetUserID("bob")
+
+	checker := NewRBACChecker(store)
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+	ctx = context.WithValue(ctx, UsernameContextKey, "bob")
+
+	lister := &stubVisibilityLister{
+		connections: []ConnectionVisibilityInfo{
+			{ID: 1, IsShared: false, OwnerUsername: "alice"},
+			{ID: 2, IsShared: false, OwnerUsername: "carol"},
+		},
+	}
+
+	// Bob has zero explicit grants and does not own either connection;
+	// he must see neither.
+	ids, all, err := checker.VisibleConnectionIDs(ctx, lister)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if all {
+		t.Error("Expected allConnections=false")
+	}
+	if len(ids) != 0 {
+		t.Errorf("Expected empty visible set, got %v", ids)
+	}
+}
+
+func TestVisibleConnectionIDs_SharedVisibleWithoutGrant(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	if err := store.CreateUser("bob", "Password1", "", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	userID, _ := store.GetUserID("bob")
+
+	checker := NewRBACChecker(store)
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+	ctx = context.WithValue(ctx, UsernameContextKey, "bob")
+
+	lister := &stubVisibilityLister{
+		connections: []ConnectionVisibilityInfo{
+			{ID: 1, IsShared: true, OwnerUsername: "alice"},
+			{ID: 2, IsShared: false, OwnerUsername: "alice"},
+		},
+	}
+
+	ids, all, err := checker.VisibleConnectionIDs(ctx, lister)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if all {
+		t.Error("Expected allConnections=false")
+	}
+	set := idSet(ids)
+	if !set[1] {
+		t.Error("Expected bob to see shared connection 1")
+	}
+	if set[2] {
+		t.Error("Expected bob NOT to see unshared connection 2")
+	}
+}
+
+func TestVisibleConnectionIDs_ExplicitGrantIntersectsSharedVisibility(t *testing.T) {
+	// When a user has explicit group/token grants, those grants act as an
+	// allow-list that further restricts shared-connection visibility.
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	if err := store.CreateUser("carol", "Password1", "", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	userID, _ := store.GetUserID("carol")
+	groupID, err := store.CreateGroup("carol_group", "")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	if err := store.AddUserToGroup(groupID, userID); err != nil {
+		t.Fatalf("AddUserToGroup: %v", err)
+	}
+	// Grant only connection 5. Connection 1 is shared but not granted.
+	if err := store.GrantConnectionPrivilege(groupID, 5, AccessLevelRead); err != nil {
+		t.Fatalf("GrantConnectionPrivilege: %v", err)
+	}
+
+	checker := NewRBACChecker(store)
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+	ctx = context.WithValue(ctx, UsernameContextKey, "carol")
+
+	lister := &stubVisibilityLister{
+		connections: []ConnectionVisibilityInfo{
+			{ID: 1, IsShared: true, OwnerUsername: "alice"},
+			{ID: 5, IsShared: false, OwnerUsername: "alice"},
+			{ID: 7, IsShared: false, OwnerUsername: "alice"},
+		},
+	}
+
+	ids, all, err := checker.VisibleConnectionIDs(ctx, lister)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if all {
+		t.Error("Expected allConnections=false")
+	}
+	set := idSet(ids)
+	if !set[5] {
+		t.Error("Expected carol to see explicitly granted connection 5")
+	}
+	if set[1] {
+		t.Error("Explicit grants should restrict shared visibility: conn 1 should be hidden")
+	}
+	if set[7] {
+		t.Error("Expected carol NOT to see unshared connection 7")
+	}
+}
+
+func TestVisibleConnectionIDs_NilStore_AllConnections(t *testing.T) {
+	checker := NewRBACChecker(nil)
+
+	ids, all, err := checker.VisibleConnectionIDs(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if !all {
+		t.Error("Expected allConnections=true for nil store")
+	}
+	if ids != nil {
+		t.Errorf("Expected nil ids, got %v", ids)
+	}
+}
+
+func TestVisibleConnectionIDs_ListerError_Propagates(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	if err := store.CreateUser("dave", "Password1", "", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	userID, _ := store.GetUserID("dave")
+
+	checker := NewRBACChecker(store)
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+	ctx = context.WithValue(ctx, UsernameContextKey, "dave")
+
+	lister := &stubVisibilityLister{err: fmt.Errorf("boom")}
+
+	_, _, err := checker.VisibleConnectionIDs(ctx, lister)
+	if err == nil {
+		t.Fatal("Expected error from lister to propagate, got nil")
+	}
+}

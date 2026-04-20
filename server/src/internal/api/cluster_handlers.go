@@ -121,7 +121,75 @@ func (h *ClusterHandler) getClusterTopology(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// RBAC: prune servers, clusters, and groups the caller cannot see.
+	// VisibleConnectionIDs loads sharing metadata once so this filter
+	// does not issue per-server lookups.
+	lister := newConnectionVisibilityLister(h.datastore)
+	visibleIDs, allConnections, err := h.rbacChecker.VisibleConnectionIDs(r.Context(), lister)
+	if err != nil {
+		log.Printf("[ERROR] Failed to resolve visible connections for topology: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to filter cluster topology")
+		return
+	}
+	if !allConnections {
+		topology = filterTopologyByVisibility(topology, visibleIDs)
+	}
+
 	RespondJSON(w, http.StatusOK, topology)
+}
+
+// filterTopologyByVisibility removes servers, clusters, and groups that
+// the caller is not allowed to see. A cluster with no visible servers
+// is dropped; a group with no visible clusters is dropped. The
+// visibleIDs slice is converted to a set once so the filter walks the
+// topology in linear time.
+func filterTopologyByVisibility(groups []database.TopologyGroup, visibleIDs []int) []database.TopologyGroup {
+	visible := make(map[int]bool, len(visibleIDs))
+	for _, id := range visibleIDs {
+		visible[id] = true
+	}
+
+	filtered := make([]database.TopologyGroup, 0, len(groups))
+	for i := range groups {
+		group := groups[i]
+		clusters := make([]database.TopologyCluster, 0, len(group.Clusters))
+		for j := range group.Clusters {
+			cluster := group.Clusters[j]
+			servers := filterTopologyServers(cluster.Servers, visible)
+			if len(servers) == 0 {
+				continue
+			}
+			cluster.Servers = servers
+			clusters = append(clusters, cluster)
+		}
+		if len(clusters) == 0 {
+			continue
+		}
+		group.Clusters = clusters
+		filtered = append(filtered, group)
+	}
+	return filtered
+}
+
+// filterTopologyServers walks the server tree, retaining only servers
+// whose connection ID is in the visible set. Child servers are filtered
+// recursively so a hidden parent with visible children is dropped along
+// with those children; this matches the existing "cluster visibility"
+// contract where children are only meaningful under an accessible
+// parent.
+func filterTopologyServers(servers []database.TopologyServerInfo, visible map[int]bool) []database.TopologyServerInfo {
+	out := make([]database.TopologyServerInfo, 0, len(servers))
+	for i := range servers {
+		s := servers[i]
+		if !visible[s.ID] {
+			continue
+		}
+		if len(s.Children) > 0 {
+			s.Children = filterTopologyServers(s.Children, visible)
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 // handleClusterSubpath handles /api/v1/clusters/{id}

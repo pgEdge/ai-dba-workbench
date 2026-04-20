@@ -15,18 +15,24 @@ import (
 )
 
 // buildConnectionFilter constructs a SQL WHERE clause fragment and positional
-// parameters that restrict a query to the given set of accessible connection
-// IDs. The column argument is the fully qualified column name to filter on
+// parameters that restrict a query to the caller's visible connection IDs.
+// The column argument is the fully qualified column name to filter on
 // (e.g. "a.connection_id").
 //
-// When accessibleIDs is nil the caller is a superuser and all connections are
-// allowed, so the returned clause is "TRUE" with no extra parameters.
+// When allConnections is true the caller has visibility to every connection
+// (superuser or wildcard token scope); the returned clause is "TRUE" with no
+// extra parameters.
 //
-// When accessibleIDs is non-nil the returned clause uses positional parameters
-// ($1, $2, ...) for each ID so the filter is injection-safe.
-func buildConnectionFilter(column string, accessibleIDs []int) (string, []any) {
-	if accessibleIDs == nil {
-		// Superuser: no restriction
+// When allConnections is false and accessibleIDs is empty the caller has
+// access to no connections; the returned clause is "FALSE" so the query
+// returns an empty result set.
+//
+// When allConnections is false and accessibleIDs is non-empty the returned
+// clause uses positional parameters ($1, $2, ...) for each ID so the filter
+// is injection-safe.
+func buildConnectionFilter(column string, allConnections bool, accessibleIDs []int) (string, []any) {
+	if allConnections {
+		// Unrestricted visibility (superuser or wildcard scope).
 		return "TRUE", nil
 	}
 

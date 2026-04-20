@@ -199,7 +199,7 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		registerDatastoreHandler(mux, serverInfoHandler, authWrapper, "Server info", deps.Datastore)
 
 		// Timeline endpoints (for EventTimeline component)
-		timelineHandler := api.NewTimelineHandler(deps.Datastore, deps.AuthStore)
+		timelineHandler := api.NewTimelineHandler(deps.Datastore, deps.AuthStore, rbacChecker)
 		registerDatastoreHandler(mux, timelineHandler, authWrapper, "Timeline events", deps.Datastore)
 
 		// Performance summary endpoint (for performance dashboard)

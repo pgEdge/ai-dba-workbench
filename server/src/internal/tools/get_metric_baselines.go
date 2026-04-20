@@ -20,8 +20,13 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
 )
 
-// GetMetricBaselinesTool creates the get_metric_baselines tool for querying statistical baselines
-func GetMetricBaselinesTool(pool *pgxpool.Pool, rbacChecker *auth.RBACChecker) Tool {
+// GetMetricBaselinesTool creates the get_metric_baselines tool for querying statistical baselines.
+//
+// The visibilityLister argument is used to resolve the set of connections
+// the caller may see. It may be nil in unit tests or when no datastore is
+// configured; auth.RBACChecker.VisibleConnectionIDs tolerates a nil lister
+// by falling back to group/token-granted IDs only.
+func GetMetricBaselinesTool(pool *pgxpool.Pool, rbacChecker *auth.RBACChecker, visibilityLister auth.ConnectionVisibilityLister) Tool {
 	return Tool{
 		Definition: mcp.Tool{
 			Name: "get_metric_baselines",
@@ -154,11 +159,20 @@ Returns TSV data with:
 				}
 			}
 
-			// Build accessible connection filter for multi-connection mode
+			// Build accessible connection filter for multi-connection mode.
+			// VisibleConnectionIDs honors ownership and sharing in addition
+			// to group/token grants; unlike GetAccessibleConnections its
+			// return values are unambiguous.
 			var accessibleIDs []int
+			allConnections := true
 			if !singleConnection && rbacChecker != nil {
-				accessibleIDs = rbacChecker.GetAccessibleConnections(ctx)
-				if accessibleIDs != nil && len(accessibleIDs) == 0 {
+				ids, all, err := rbacChecker.VisibleConnectionIDs(ctx, visibilityLister)
+				if err != nil {
+					return mcp.NewToolError(fmt.Sprintf("Failed to resolve accessible connections: %v", err))
+				}
+				accessibleIDs = ids
+				allConnections = all
+				if !allConnections && len(accessibleIDs) == 0 {
 					return mcp.NewToolSuccess("No metric baselines found. You do not have access to any connections.")
 				}
 			}
@@ -172,7 +186,7 @@ Returns TSV data with:
 			if singleConnection {
 				return baselinesSingleConnection(ctx, pool, connectionID, connName, metricName)
 			}
-			return baselinesAllConnections(ctx, pool, accessibleIDs, metricName)
+			return baselinesAllConnections(ctx, pool, allConnections, accessibleIDs, metricName)
 		},
 	}
 }
@@ -261,9 +275,9 @@ func baselinesSingleConnection(
 // baselinesAllConnections queries baselines across all accessible connections
 func baselinesAllConnections(
 	ctx context.Context, pool *pgxpool.Pool,
-	accessibleIDs []int, metricName *string,
+	allConnections bool, accessibleIDs []int, metricName *string,
 ) (mcp.ToolResponse, error) {
-	connFilter, connArgs := buildConnectionFilter("mb.connection_id", accessibleIDs)
+	connFilter, connArgs := buildConnectionFilter("mb.connection_id", allConnections, accessibleIDs)
 
 	paramIdx := len(connArgs) + 1
 	query := fmt.Sprintf(`

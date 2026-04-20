@@ -433,8 +433,7 @@ explain "Rebasing metric timestamps to current time..."
 # Collector and alerter are not running yet (started with --scale=0)
 
 if [[ -x "$SCRIPT_DIR/seed/rebase-timestamps.sh" ]]; then
-  "$SCRIPT_DIR/seed/rebase-timestamps.sh" wt-datastore ai_workbench \
-    || warn "Timestamp rebase had issues (continuing)."
+  "$SCRIPT_DIR/seed/rebase-timestamps.sh" wt-datastore ai_workbench
   info "Timestamps rebased."
 else
   warn "rebase-timestamps.sh not found (skipping)."

@@ -32,6 +32,11 @@ services:
             retries: 10
         ports:
             - "127.0.0.1:${WT_DATASTORE_PORT:-5432}:5432"
+        deploy:
+            resources:
+                limits:
+                    memory: 512M
+                    cpus: "1.0"
 
     server:
         image: ghcr.io/pgedge/ai-dba-server:latest
@@ -56,6 +61,11 @@ services:
             interval: 5s
             timeout: 5s
             retries: 10
+        deploy:
+            resources:
+                limits:
+                    memory: 128M
+                    cpus: "0.5"
 
     collector:
         image: ghcr.io/pgedge/ai-dba-collector:latest
@@ -68,6 +78,11 @@ services:
             - ./secret/ai-dba.secret:/etc/pgedge/secret/ai-dba.secret:ro
             - ./secret/pg-password:/etc/pgedge/secret/pg-password:ro
         restart: unless-stopped
+        deploy:
+            resources:
+                limits:
+                    memory: 128M
+                    cpus: "0.5"
 
     alerter:
         image: ghcr.io/pgedge/ai-dba-alerter:latest
@@ -80,6 +95,11 @@ services:
             - ./secret/ai-dba.secret:/etc/pgedge/secret/ai-dba.secret:ro
             - ./secret/pg-password:/etc/pgedge/secret/pg-password:ro
         restart: unless-stopped
+        deploy:
+            resources:
+                limits:
+                    memory: 64M
+                    cpus: "0.25"
 
     client:
         image: ghcr.io/pgedge/ai-dba-client:latest
@@ -93,6 +113,11 @@ services:
         ports:
             - "127.0.0.1:${WT_CLIENT_PORT:-3000}:80"
         restart: unless-stopped
+        deploy:
+            resources:
+                limits:
+                    memory: 64M
+                    cpus: "0.25"
 
     pg-demo:
         image: ghcr.io/pgedge/pgedge-postgres:18-spock5-standard
@@ -127,6 +152,11 @@ services:
             start_period: 10s
         ports:
             - "127.0.0.1:${WT_DEMO_PORT:-5433}:5432"
+        deploy:
+            resources:
+                limits:
+                    memory: 256M
+                    cpus: "1.0"
 
     workload:
         image: postgres:18
@@ -144,6 +174,11 @@ services:
             PGUSER: postgres
             PGPASSWORD: postgres
         restart: unless-stopped
+        deploy:
+            resources:
+                limits:
+                    memory: 64M
+                    cpus: "0.5"
 
 volumes:
     wt-datastore-data:

@@ -31,3 +31,90 @@ jobs:
 
             - name: Run ShellCheck
               run: shellcheck -x --source-path=examples/walkthrough examples/walkthrough/guide.sh examples/walkthrough/setup.sh examples/walkthrough/runner.sh
+
+    smoke-test:
+        name: Smoke Test
+        needs: [validate]
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Log in to GHCR
+              uses: docker/login-action@v3
+              with:
+                  registry: ghcr.io
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Create secret files
+              run: |
+                  mkdir -p examples/walkthrough/secret
+                  openssl rand -base64 32 > examples/walkthrough/secret/ai-dba.secret
+                  echo "postgres" > examples/walkthrough/secret/pg-password
+                  echo "" > examples/walkthrough/secret/llm-api-key
+
+            - name: Start services
+              run: docker compose -f examples/walkthrough/docker-compose.yml up -d
+
+            - name: Wait for all services to be healthy
+              run: |
+                  echo "Waiting for all services to be healthy..."
+                  timeout=120
+                  elapsed=0
+                  while [ $elapsed -lt $timeout ]; do
+                    if docker compose -f examples/walkthrough/docker-compose.yml ps | grep -v "healthy" | grep -qE "starting|unhealthy"; then
+                      sleep 5
+                      elapsed=$((elapsed + 5))
+                    else
+                      echo "All services are healthy"
+                      docker compose -f examples/walkthrough/docker-compose.yml ps
+                      break
+                    fi
+                  done
+                  if [ $elapsed -ge $timeout ]; then
+                    echo "ERROR: Services failed to become healthy within ${timeout}s"
+                    docker compose -f examples/walkthrough/docker-compose.yml ps
+                    docker compose -f examples/walkthrough/docker-compose.yml logs
+                    exit 1
+                  fi
+
+            - name: Run rebase-timestamps
+              run: bash examples/walkthrough/seed/rebase-timestamps.sh wt-datastore ai_workbench
+
+            - name: Test client UI returns HTTP 200
+              run: |
+                  status=$(curl -sf -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/)
+                  echo "HTTP status: $status"
+                  if [ "$status" != "200" ]; then
+                    echo "ERROR: Expected HTTP 200, got $status"
+                    exit 1
+                  fi
+                  echo "Client UI is accessible"
+
+            - name: Verify tour loader is injected
+              run: |
+                  echo "Checking for loader.js in page source..."
+                  curl -sf http://127.0.0.1:3000/ | grep -q loader.js
+                  echo "Tour loader is injected"
+
+            - name: Check no services have exited
+              run: |
+                  echo "=== Service Status ==="
+                  docker compose -f examples/walkthrough/docker-compose.yml ps
+                  if docker compose -f examples/walkthrough/docker-compose.yml ps | grep -E "Exit|exited"; then
+                    echo "ERROR: Some services have exited"
+                    docker compose -f examples/walkthrough/docker-compose.yml logs
+                    exit 1
+                  fi
+                  echo "All services are running"
+
+            - name: View service logs on failure
+              if: failure()
+              run: docker compose -f examples/walkthrough/docker-compose.yml logs
+
+            - name: Cleanup
+              if: always()
+              run: docker compose -f examples/walkthrough/docker-compose.yml down -v

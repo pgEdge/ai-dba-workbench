@@ -10,10 +10,11 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
     Alert,
     Box,
+    Snackbar,
     Typography,
     alpha,
 } from '@mui/material';
@@ -32,7 +33,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useAICapabilities } from '../../contexts/AICapabilitiesContext';
 import { useClusterData } from '../../contexts/ClusterDataContext';
 import { useDashboard } from '../../contexts/DashboardContext';
-import { apiPost, apiGet, apiDelete } from '../../utils/apiClient';
+import { apiPost, apiGet, apiDelete, ApiError } from '../../utils/apiClient';
 import { collectServers } from '../../utils/clusterHelpers';
 import EventTimeline from '../EventTimeline';
 import BlackoutPanel from '../BlackoutPanel';
@@ -129,6 +130,18 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
     const [overrideDialogOpen, setOverrideDialogOpen] = useState(false);
     const [overrideAlert, setOverrideAlert] = useState(null);
     const [serverAnalysisOpen, setServerAnalysisOpen] = useState(false);
+    // Tracks IDs currently being unacknowledged so the UI can disable
+    // the button and ignore duplicate clicks.
+    const [unacknowledgingIds, setUnacknowledgingIds] = useState<Set<number | string>>(new Set());
+    // Mirror of unacknowledgingIds used for synchronous guards. The
+    // state-based set lags behind by a render so rapid double-clicks
+    // would otherwise race past the `has(id)` check; reading and
+    // writing through a ref closes the window.
+    const unacknowledgingRef = useRef<Set<number | string>>(new Set());
+    // In-component error state used to surface unacknowledge failures
+    // to the user. A dedicated notification framework is not yet in
+    // place, so a minimal MUI Snackbar+Alert is rendered here.
+    const [errorMessage, setErrorMessage] = useState<string | null>(null);
     const { clearOverlays } = useDashboard();
 
     // Clear dashboard overlay stack when the selection changes
@@ -379,16 +392,81 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
         }
     };
 
-    // Handle unacknowledging an alert
+    // Handle unacknowledging an alert.
+    //
+    // Applies an optimistic update that immediately clears the
+    // acknowledgment fields on the targeted alert so the row moves out
+    // of the acknowledged list without waiting for the API round trip.
+    // On failure the previous alert object is restored and a
+    // user-visible error message is surfaced via the local Snackbar.
+    // Concurrent clicks on the same alert are ignored while a request
+    // is in flight.
     const handleUnacknowledge = async (alertId) => {
-        if (!user || !alertId) {return;}
+        if (!user || alertId == null) {return;}
+        // Synchronous guard: block rapid duplicate clicks that fire
+        // before React has re-rendered with the updated state.
+        if (unacknowledgingRef.current.has(alertId)) {return;}
+        unacknowledgingRef.current.add(alertId);
+
+        // Capture the previous alert object so we can roll back on
+        // failure. Read from the current state outside of a setState
+        // updater to keep behaviour predictable under React strict
+        // mode (updaters may run twice).
+        let previousAlert = null;
+        setAlerts(prev => {
+            const found = prev.find(a => a.id === alertId);
+            if (!found) {
+                // Nothing to optimistically update; leave state alone.
+                return prev;
+            }
+            previousAlert = found;
+            return prev.map(a => (
+                a.id === alertId
+                    ? {
+                        ...a,
+                        acknowledgedAt: undefined,
+                        acknowledgedBy: undefined,
+                        ackMessage: undefined,
+                        falsePositive: undefined,
+                    }
+                    : a
+            ));
+        });
+
+        setUnacknowledgingIds(prev => {
+            const next = new Set(prev);
+            next.add(alertId);
+            return next;
+        });
 
         try {
             await apiDelete(`/api/v1/alerts/acknowledge?alert_id=${alertId}`);
-            // Refresh alerts to show updated status
-            fetchAlertsData();
+            // Reconcile with server truth and beat the race with the
+            // periodic cluster refresh.
+            await fetchAlertsData();
         } catch (err) {
+            // Roll back the optimistic update.
+            if (previousAlert) {
+                const restored = previousAlert;
+                setAlerts(prev => prev.map(a => (
+                    a.id === alertId ? restored : a
+                )));
+            }
+            const message = err instanceof ApiError
+                ? `Failed to restore alert: ${err.message}`
+                : err instanceof Error
+                    ? `Failed to restore alert: ${err.message}`
+                    : 'Failed to restore alert';
+            setErrorMessage(message);
             console.error('Error unacknowledging alert:', err);
+        } finally {
+            unacknowledgingRef.current.delete(alertId);
+            setUnacknowledgingIds(prev => {
+                if (!prev.has(alertId)) {return prev;}
+                const next = new Set(prev);
+                next.delete(alertId);
+                return next;
+            });
         }
     };
 
@@ -622,6 +700,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                     showServer={selection.type !== 'server'}
                     onAcknowledge={handleAcknowledge}
                     onUnacknowledge={handleUnacknowledge}
+                    isUnacknowledging={(id) => unacknowledgingIds.has(id)}
                     onAnalyze={aiEnabled ? handleAnalyze : undefined}
                     onEditOverride={hasPermission('manage_alert_rules') ? handleEditOverride : undefined}
                     onAcknowledgeGroup={handleAcknowledgeGroup}
@@ -705,6 +784,23 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                     onClose={() => setServerAnalysisOpen(false)}
                 />
             )}
+
+            {/* Transient error notifications (e.g. unacknowledge failures) */}
+            <Snackbar
+                open={!!errorMessage}
+                autoHideDuration={6000}
+                onClose={() => setErrorMessage(null)}
+                anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+            >
+                <Alert
+                    severity="error"
+                    variant="filled"
+                    onClose={() => setErrorMessage(null)}
+                    sx={{ width: '100%' }}
+                >
+                    {errorMessage}
+                </Alert>
+            </Snackbar>
         </Box>
     );
 };

@@ -61,6 +61,11 @@ project adheres to
   lookups. (#36)
 - Fix partitions not being dropped at the appropriate
   time by the collector. (#62)
+- Fix the StatusPanel "Restore to active" action
+  silently failing on error; the alert now leaves the
+  acknowledged list optimistically, rolls back and
+  surfaces a Snackbar error on API failure, and
+  guards against double-click submissions. (#72)
 
 ### Security
 

@@ -1579,20 +1579,30 @@ func (d *Datastore) UpdateAnomalyCandidate(ctx context.Context, c *AnomalyCandid
 // GetHistoricalMetricValues retrieves historical metric values for baseline calculation.
 // It returns values with timestamps from the specified lookback period to enable
 // grouping by hour of day and day of week for time-aware baselines.
+//
+// Every query branch INNER JOINs against the connections table so rows for
+// connections that have been deleted (but whose metric rows have not yet aged
+// out of the metrics.* tables) are filtered at query time. Without that
+// filter, downstream UpsertMetricBaseline calls would fail with foreign key
+// violations on metric_baselines.connection_id. See GitHub issue #56.
 func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName string, lookbackDays int) ([]HistoricalMetricValue, error) {
 	var results []HistoricalMetricValue
 
 	// Parse metric name to determine table and aggregation
 	switch metricName {
 	case "pg_settings.max_connections":
+		// INNER JOIN against connections filters out orphaned metric rows
+		// whose connection_id no longer exists (e.g., after a connection
+		// was deleted). Otherwise baseline upserts fail with FK violations.
 		rows, err := d.pool.Query(ctx, `
-			SELECT DISTINCT ON (connection_id)
-			       connection_id, NULL::text as database_name,
-			       setting::float as value, collected_at
-			FROM metrics.pg_settings
-			WHERE name = 'max_connections'
-			  AND collected_at > NOW() - INTERVAL '1 day' * $1
-			ORDER BY connection_id, collected_at DESC
+			SELECT DISTINCT ON (ps.connection_id)
+			       ps.connection_id, NULL::text as database_name,
+			       ps.setting::float as value, ps.collected_at
+			FROM metrics.pg_settings ps
+			JOIN connections c ON c.id = ps.connection_id
+			WHERE ps.name = 'max_connections'
+			  AND ps.collected_at > NOW() - INTERVAL '1 day' * $1
+			ORDER BY ps.connection_id, ps.collected_at DESC
 		`, lookbackDays)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query historical %s: %w", metricName, err)
@@ -1612,18 +1622,22 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 		}
 
 	case "connection_utilization_percent":
+		// INNER JOIN against connections filters out orphaned metric rows
+		// whose connection_id no longer exists in the connections table.
 		rows, err := d.pool.Query(ctx, `
 			WITH activity_counts AS (
-				SELECT connection_id, collected_at, COUNT(*) as active
-				FROM metrics.pg_stat_activity
-				WHERE collected_at > NOW() - INTERVAL '1 day' * $1
-				GROUP BY connection_id, collected_at
+				SELECT psa.connection_id, psa.collected_at, COUNT(*) as active
+				FROM metrics.pg_stat_activity psa
+				JOIN connections c ON c.id = psa.connection_id
+				WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
+				GROUP BY psa.connection_id, psa.collected_at
 			),
 			max_conns AS (
-				SELECT DISTINCT ON (connection_id) connection_id, setting::float as max_connections
-				FROM metrics.pg_settings
-				WHERE name = 'max_connections'
-				ORDER BY connection_id, collected_at DESC
+				SELECT DISTINCT ON (ps.connection_id) ps.connection_id, ps.setting::float as max_connections
+				FROM metrics.pg_settings ps
+				JOIN connections c ON c.id = ps.connection_id
+				WHERE ps.name = 'max_connections'
+				ORDER BY ps.connection_id, ps.collected_at DESC
 			)
 			SELECT a.connection_id, NULL::text as database_name,
 			       (a.active / NULLIF(m.max_connections, 0)) * 100 as value,
@@ -1650,14 +1664,16 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 		}
 
 	case "pg_stat_activity.count":
+		// INNER JOIN against connections filters out orphaned metric rows.
 		rows, err := d.pool.Query(ctx, `
-			SELECT connection_id, NULL::text as database_name,
-			       COUNT(*)::float as value, collected_at
-			FROM metrics.pg_stat_activity
-			WHERE collected_at > NOW() - INTERVAL '1 day' * $1
-			  AND backend_type = 'client backend'
-			GROUP BY connection_id, collected_at
-			ORDER BY connection_id, collected_at
+			SELECT psa.connection_id, NULL::text as database_name,
+			       COUNT(*)::float as value, psa.collected_at
+			FROM metrics.pg_stat_activity psa
+			JOIN connections c ON c.id = psa.connection_id
+			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
+			  AND psa.backend_type = 'client backend'
+			GROUP BY psa.connection_id, psa.collected_at
+			ORDER BY psa.connection_id, psa.collected_at
 		`, lookbackDays)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query historical %s: %w", metricName, err)
@@ -1677,14 +1693,16 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 		}
 
 	case "pg_stat_activity.blocked_count":
+		// INNER JOIN against connections filters out orphaned metric rows.
 		rows, err := d.pool.Query(ctx, `
-			SELECT connection_id, NULL::text as database_name,
-			       COUNT(*)::float as value, collected_at
-			FROM metrics.pg_stat_activity
-			WHERE collected_at > NOW() - INTERVAL '1 day' * $1
-			  AND wait_event_type = 'Lock'
-			GROUP BY connection_id, collected_at
-			ORDER BY connection_id, collected_at
+			SELECT psa.connection_id, NULL::text as database_name,
+			       COUNT(*)::float as value, psa.collected_at
+			FROM metrics.pg_stat_activity psa
+			JOIN connections c ON c.id = psa.connection_id
+			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
+			  AND psa.wait_event_type = 'Lock'
+			GROUP BY psa.connection_id, psa.collected_at
+			ORDER BY psa.connection_id, psa.collected_at
 		`, lookbackDays)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query historical %s: %w", metricName, err)
@@ -1704,16 +1722,18 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 		}
 
 	case "pg_stat_activity.idle_in_transaction_seconds":
+		// INNER JOIN against connections filters out orphaned metric rows.
 		rows, err := d.pool.Query(ctx, `
-			SELECT connection_id, NULL::text as database_name,
-			       COALESCE(MAX(EXTRACT(EPOCH FROM (collected_at - xact_start))), 0)::float as value,
-			       collected_at
-			FROM metrics.pg_stat_activity
-			WHERE collected_at > NOW() - INTERVAL '1 day' * $1
-			  AND state = 'idle in transaction'
-			  AND xact_start IS NOT NULL
-			GROUP BY connection_id, collected_at
-			ORDER BY connection_id, collected_at
+			SELECT psa.connection_id, NULL::text as database_name,
+			       COALESCE(MAX(EXTRACT(EPOCH FROM (psa.collected_at - psa.xact_start))), 0)::float as value,
+			       psa.collected_at
+			FROM metrics.pg_stat_activity psa
+			JOIN connections c ON c.id = psa.connection_id
+			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
+			  AND psa.state = 'idle in transaction'
+			  AND psa.xact_start IS NOT NULL
+			GROUP BY psa.connection_id, psa.collected_at
+			ORDER BY psa.connection_id, psa.collected_at
 		`, lookbackDays)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query historical %s: %w", metricName, err)
@@ -1733,16 +1753,18 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 		}
 
 	case "pg_stat_activity.max_query_duration_seconds":
+		// INNER JOIN against connections filters out orphaned metric rows.
 		rows, err := d.pool.Query(ctx, `
-			SELECT connection_id, NULL::text as database_name,
-			       COALESCE(MAX(EXTRACT(EPOCH FROM (collected_at - query_start))), 0)::float as value,
-			       collected_at
-			FROM metrics.pg_stat_activity
-			WHERE collected_at > NOW() - INTERVAL '1 day' * $1
-			  AND state = 'active'
-			  AND query_start IS NOT NULL
-			GROUP BY connection_id, collected_at
-			ORDER BY connection_id, collected_at
+			SELECT psa.connection_id, NULL::text as database_name,
+			       COALESCE(MAX(EXTRACT(EPOCH FROM (psa.collected_at - psa.query_start))), 0)::float as value,
+			       psa.collected_at
+			FROM metrics.pg_stat_activity psa
+			JOIN connections c ON c.id = psa.connection_id
+			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
+			  AND psa.state = 'active'
+			  AND psa.query_start IS NOT NULL
+			GROUP BY psa.connection_id, psa.collected_at
+			ORDER BY psa.connection_id, psa.collected_at
 		`, lookbackDays)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query historical %s: %w", metricName, err)
@@ -1762,15 +1784,17 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 		}
 
 	case "pg_stat_activity.max_xact_duration_seconds":
+		// INNER JOIN against connections filters out orphaned metric rows.
 		rows, err := d.pool.Query(ctx, `
-			SELECT connection_id, NULL::text as database_name,
-			       COALESCE(MAX(EXTRACT(EPOCH FROM (collected_at - xact_start))), 0)::float as value,
-			       collected_at
-			FROM metrics.pg_stat_activity
-			WHERE collected_at > NOW() - INTERVAL '1 day' * $1
-			  AND xact_start IS NOT NULL
-			GROUP BY connection_id, collected_at
-			ORDER BY connection_id, collected_at
+			SELECT psa.connection_id, NULL::text as database_name,
+			       COALESCE(MAX(EXTRACT(EPOCH FROM (psa.collected_at - psa.xact_start))), 0)::float as value,
+			       psa.collected_at
+			FROM metrics.pg_stat_activity psa
+			JOIN connections c ON c.id = psa.connection_id
+			WHERE psa.collected_at > NOW() - INTERVAL '1 day' * $1
+			  AND psa.xact_start IS NOT NULL
+			GROUP BY psa.connection_id, psa.collected_at
+			ORDER BY psa.connection_id, psa.collected_at
 		`, lookbackDays)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query historical %s: %w", metricName, err)
@@ -1790,13 +1814,15 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 		}
 
 	case "pg_sys_cpu_usage_info.processor_time_percent":
+		// INNER JOIN against connections filters out orphaned metric rows.
 		rows, err := d.pool.Query(ctx, `
-			SELECT connection_id, NULL::text as database_name,
-			       COALESCE(processor_time_percent, 0)::float as value,
-			       collected_at
-			FROM metrics.pg_sys_cpu_usage_info
-			WHERE collected_at > NOW() - INTERVAL '1 day' * $1
-			ORDER BY connection_id, collected_at
+			SELECT m.connection_id, NULL::text as database_name,
+			       COALESCE(m.processor_time_percent, 0)::float as value,
+			       m.collected_at
+			FROM metrics.pg_sys_cpu_usage_info m
+			JOIN connections c ON c.id = m.connection_id
+			WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
+			ORDER BY m.connection_id, m.collected_at
 		`, lookbackDays)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query historical %s: %w", metricName, err)
@@ -1816,17 +1842,19 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 		}
 
 	case "pg_sys_memory_info.used_percent":
+		// INNER JOIN against connections filters out orphaned metric rows.
 		rows, err := d.pool.Query(ctx, `
-			SELECT connection_id, NULL::text as database_name,
+			SELECT m.connection_id, NULL::text as database_name,
 			       CASE
-			           WHEN total_memory > 0
-			           THEN (used_memory::float / total_memory) * 100
+			           WHEN m.total_memory > 0
+			           THEN (m.used_memory::float / m.total_memory) * 100
 			           ELSE 0
 			       END as value,
-			       collected_at
-			FROM metrics.pg_sys_memory_info
-			WHERE collected_at > NOW() - INTERVAL '1 day' * $1
-			ORDER BY connection_id, collected_at
+			       m.collected_at
+			FROM metrics.pg_sys_memory_info m
+			JOIN connections c ON c.id = m.connection_id
+			WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
+			ORDER BY m.connection_id, m.collected_at
 		`, lookbackDays)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query historical %s: %w", metricName, err)
@@ -1846,13 +1874,15 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 		}
 
 	case "pg_sys_load_avg_info.load_avg_fifteen_minutes":
+		// INNER JOIN against connections filters out orphaned metric rows.
 		rows, err := d.pool.Query(ctx, `
-			SELECT connection_id, NULL::text as database_name,
-			       COALESCE(load_avg_fifteen_minutes, 0)::float as value,
-			       collected_at
-			FROM metrics.pg_sys_load_avg_info
-			WHERE collected_at > NOW() - INTERVAL '1 day' * $1
-			ORDER BY connection_id, collected_at
+			SELECT m.connection_id, NULL::text as database_name,
+			       COALESCE(m.load_avg_fifteen_minutes, 0)::float as value,
+			       m.collected_at
+			FROM metrics.pg_sys_load_avg_info m
+			JOIN connections c ON c.id = m.connection_id
+			WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
+			ORDER BY m.connection_id, m.collected_at
 		`, lookbackDays)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query historical %s: %w", metricName, err)
@@ -1872,14 +1902,16 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 		}
 
 	case "pg_sys_disk_info.used_percent":
+		// INNER JOIN against connections filters out orphaned metric rows.
 		rows, err := d.pool.Query(ctx, `
 			WITH disk_data AS (
-				SELECT connection_id, collected_at,
-				       MAX((used_space::float / NULLIF(total_space, 0)) * 100) as value
-				FROM metrics.pg_sys_disk_info
-				WHERE collected_at > NOW() - INTERVAL '1 day' * $1
-				  AND total_space > 0
-				GROUP BY connection_id, collected_at
+				SELECT m.connection_id, m.collected_at,
+				       MAX((m.used_space::float / NULLIF(m.total_space, 0)) * 100) as value
+				FROM metrics.pg_sys_disk_info m
+				JOIN connections c ON c.id = m.connection_id
+				WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
+				  AND m.total_space > 0
+				GROUP BY m.connection_id, m.collected_at
 			)
 			SELECT connection_id, NULL::text as database_name,
 			       value::float, collected_at
@@ -1904,25 +1936,29 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 		}
 
 	case "pg_stat_database.cache_hit_ratio":
+		// INNER JOIN against connections filters out orphaned metric rows
+		// before computing window-function deltas, so rows whose
+		// connection_id no longer exists never reach the baseline upsert.
 		rows, err := d.pool.Query(ctx, `
 			WITH db_blocks AS (
-				SELECT connection_id,
-				       database_name,
-				       blks_hit,
-				       blks_read,
-				       collected_at,
-				       LAG(blks_hit) OVER (
-				           PARTITION BY connection_id, database_name
-				           ORDER BY collected_at
+				SELECT m.connection_id,
+				       m.database_name,
+				       m.blks_hit,
+				       m.blks_read,
+				       m.collected_at,
+				       LAG(m.blks_hit) OVER (
+				           PARTITION BY m.connection_id, m.database_name
+				           ORDER BY m.collected_at
 				       ) as prev_blks_hit,
-				       LAG(blks_read) OVER (
-				           PARTITION BY connection_id, database_name
-				           ORDER BY collected_at
+				       LAG(m.blks_read) OVER (
+				           PARTITION BY m.connection_id, m.database_name
+				           ORDER BY m.collected_at
 				       ) as prev_blks_read
-				FROM metrics.pg_stat_database
-				WHERE collected_at > NOW() - INTERVAL '1 day' * $1
-				  AND datname IS NOT NULL
-				  AND datname NOT LIKE 'template%'
+				FROM metrics.pg_stat_database m
+				JOIN connections c ON c.id = m.connection_id
+				WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
+				  AND m.datname IS NOT NULL
+				  AND m.datname NOT LIKE 'template%'
 			),
 			deltas AS (
 				SELECT connection_id,
@@ -1965,17 +2001,20 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 		}
 
 	case "pg_stat_database.deadlocks_delta":
+		// INNER JOIN against connections filters out orphaned metric rows
+		// before computing window-function deltas.
 		rows, err := d.pool.Query(ctx, `
 			WITH db_deadlocks AS (
-				SELECT connection_id, database_name, deadlocks, collected_at,
-				       LAG(deadlocks) OVER (
-				           PARTITION BY connection_id, database_name
-				           ORDER BY collected_at
+				SELECT m.connection_id, m.database_name, m.deadlocks, m.collected_at,
+				       LAG(m.deadlocks) OVER (
+				           PARTITION BY m.connection_id, m.database_name
+				           ORDER BY m.collected_at
 				       ) as prev_deadlocks
-				FROM metrics.pg_stat_database
-				WHERE collected_at > NOW() - INTERVAL '1 day' * $1
-				  AND datname IS NOT NULL
-				  AND datname NOT LIKE 'template%'
+				FROM metrics.pg_stat_database m
+				JOIN connections c ON c.id = m.connection_id
+				WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
+				  AND m.datname IS NOT NULL
+				  AND m.datname NOT LIKE 'template%'
 			)
 			SELECT connection_id, database_name,
 			       (deadlocks - COALESCE(prev_deadlocks, deadlocks))::float as value,
@@ -2004,17 +2043,20 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 		}
 
 	case "pg_stat_database.temp_files_delta":
+		// INNER JOIN against connections filters out orphaned metric rows
+		// before computing window-function deltas.
 		rows, err := d.pool.Query(ctx, `
 			WITH db_temp_files AS (
-				SELECT connection_id, database_name, temp_files, collected_at,
-				       LAG(temp_files) OVER (
-				           PARTITION BY connection_id, database_name
-				           ORDER BY collected_at
+				SELECT m.connection_id, m.database_name, m.temp_files, m.collected_at,
+				       LAG(m.temp_files) OVER (
+				           PARTITION BY m.connection_id, m.database_name
+				           ORDER BY m.collected_at
 				       ) as prev_temp_files
-				FROM metrics.pg_stat_database
-				WHERE collected_at > NOW() - INTERVAL '1 day' * $1
-				  AND datname IS NOT NULL
-				  AND datname NOT LIKE 'template%'
+				FROM metrics.pg_stat_database m
+				JOIN connections c ON c.id = m.connection_id
+				WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
+				  AND m.datname IS NOT NULL
+				  AND m.datname NOT LIKE 'template%'
 			)
 			SELECT connection_id, database_name,
 			       (temp_files - COALESCE(prev_temp_files, temp_files))::float as value,

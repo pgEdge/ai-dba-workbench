@@ -25,6 +25,10 @@ project adheres to
 - Fix spurious "partition would overlap" errors from
   the collector on non-UTC hosts when the weekly
   partition rolled over. (#55)
+- Fix foreign key violations during alerter baseline
+  calculation when metric rows outlive their
+  connection; historical metric queries now filter
+  through the connections table. (#56)
 
 ## [1.0.0-alpha3] - 2026-04-08
 

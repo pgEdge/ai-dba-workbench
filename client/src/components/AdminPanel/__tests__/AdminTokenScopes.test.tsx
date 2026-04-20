@@ -67,6 +67,18 @@ const setupApiGetMock = () => {
     });
 };
 
+const expectedAdminLabels = [
+    'Manage Connections',
+    'Manage Groups',
+    'Manage Permissions',
+    'Manage Users',
+    'Manage Token Scopes',
+    'Manage Blackouts',
+    'Manage Probes',
+    'Manage Alert Rules',
+    'Manage Notification Channels',
+];
+
 describe('AdminTokenScopes', () => {
     beforeEach(() => {
         vi.clearAllMocks();
@@ -122,17 +134,88 @@ describe('AdminTokenScopes', () => {
         expect(
             within(adminListbox).getByRole('option', { name: 'All Admin Permissions' }),
         ).toBeInTheDocument();
-        const expectedAdminLabels = [
-            'Manage Connections',
-            'Manage Groups',
-            'Manage Permissions',
-            'Manage Users',
-            'Manage Token Scopes',
-            'Manage Blackouts',
-            'Manage Probes',
-            'Manage Alert Rules',
-            'Manage Notification Channels',
-        ];
+        for (const label of expectedAdminLabels) {
+            expect(
+                within(adminListbox).getByRole('option', { name: label }),
+            ).toBeInTheDocument();
+        }
+    });
+
+    it('exposes all MCP and admin options in edit dialog when owner has wildcard privileges', async () => {
+        const TOKEN = {
+            id: 7,
+            name: 'alice-token',
+            token_prefix: 'abc',
+            username: 'alice',
+            user_id: USERS[0].id,
+            is_service_account: false,
+            is_superuser: false,
+            expires_at: null,
+            scope: { scoped: false },
+        };
+
+        mockApiGet.mockImplementation((url: string) => {
+            if (url === '/api/v1/rbac/tokens') {
+                return Promise.resolve({ tokens: [TOKEN] });
+            }
+            if (url === '/api/v1/connections') {
+                return Promise.resolve({ connections: CONNECTIONS });
+            }
+            if (url === '/api/v1/rbac/privileges/mcp') {
+                return Promise.resolve(MCP_PRIVILEGES);
+            }
+            if (url === '/api/v1/rbac/users') {
+                return Promise.resolve({ users: USERS });
+            }
+            if (url === `/api/v1/rbac/users/${USERS[0].id}/privileges`) {
+                return Promise.resolve({
+                    is_superuser: false,
+                    connection_privileges: {},
+                    mcp_privileges: ['*'],
+                    admin_permissions: ['*'],
+                });
+            }
+            return Promise.reject(new Error(`Unexpected URL: ${url}`));
+        });
+
+        const user = userEvent.setup({ delay: null });
+        render(<AdminTokenScopes />);
+
+        const editButton = await screen.findByRole('button', { name: /edit token/i });
+        await user.click(editButton);
+
+        await waitFor(() => {
+            expect(mockApiGet).toHaveBeenCalledWith(
+                `/api/v1/rbac/users/${USERS[0].id}/privileges`,
+            );
+        });
+
+        const mcpCombo = await screen.findByRole('combobox', {
+            name: /allowed mcp privileges/i,
+        });
+        await user.click(mcpCombo);
+
+        const mcpListbox = await screen.findByRole('listbox');
+        expect(
+            within(mcpListbox).getByRole('option', { name: 'All MCP Privileges' }),
+        ).toBeInTheDocument();
+        for (const priv of MCP_PRIVILEGES) {
+            expect(
+                within(mcpListbox).getByRole('option', { name: priv.identifier }),
+            ).toBeInTheDocument();
+        }
+
+        await user.keyboard('{Escape}');
+
+        const adminCombo = screen.getByRole('combobox', {
+            name: /allowed admin permissions/i,
+        });
+        await user.click(adminCombo);
+
+        const adminListbox = await screen.findByRole('listbox');
+        expect(
+            within(adminListbox).getByRole('option', { name: 'All Admin Permissions' }),
+        ).toBeInTheDocument();
         for (const label of expectedAdminLabels) {
             expect(
                 within(adminListbox).getByRole('option', { name: label }),

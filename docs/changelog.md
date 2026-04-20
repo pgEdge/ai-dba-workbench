@@ -36,6 +36,11 @@ project adheres to
   calculation when metric rows outlive their
   connection; historical metric queries now filter
   through the connections table. (#56)
+- Fix MCP tool invocations failing with TLS
+  certificate verification errors against servers
+  that require a custom `sslrootcert`, `sslcert`, or
+  `sslkey`; the server now forwards these fields on
+  the database connection string. (#57)
 
 ## [1.0.0-alpha3] - 2026-04-08
 

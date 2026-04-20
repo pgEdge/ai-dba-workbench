@@ -2480,6 +2480,153 @@ func TestBuildConnectionString(t *testing.T) {
 			databaseOverride: "",
 			wantContains:     []string{"postgres://user%40domain@localhost:5432/mydb"},
 		},
+		{
+			name: "with sslrootcert only",
+			conn: &MonitoredConnection{
+				Host:         "db.example.com",
+				Port:         5432,
+				DatabaseName: "mydb",
+				Username:     "user",
+				SSLMode: sql.NullString{
+					String: "verify-full",
+					Valid:  true,
+				},
+				SSLRootCert: sql.NullString{
+					String: "/etc/ssl/rds-ca.pem",
+					Valid:  true,
+				},
+			},
+			password:         "",
+			databaseOverride: "",
+			wantContains: []string{
+				"sslmode=verify-full",
+				"sslrootcert=%2Fetc%2Fssl%2Frds-ca.pem",
+			},
+			wantNotContains: []string{"sslcert=", "sslkey="},
+		},
+		{
+			name: "with sslcert and sslkey (client auth)",
+			conn: &MonitoredConnection{
+				Host:         "localhost",
+				Port:         5432,
+				DatabaseName: "mydb",
+				Username:     "user",
+				SSLMode: sql.NullString{
+					String: "require",
+					Valid:  true,
+				},
+				SSLCert: sql.NullString{
+					String: "/etc/ssl/client.crt",
+					Valid:  true,
+				},
+				SSLKey: sql.NullString{
+					String: "/etc/ssl/client.key",
+					Valid:  true,
+				},
+			},
+			password:         "",
+			databaseOverride: "",
+			wantContains: []string{
+				"sslmode=require",
+				"sslcert=%2Fetc%2Fssl%2Fclient.crt",
+				"sslkey=%2Fetc%2Fssl%2Fclient.key",
+			},
+			wantNotContains: []string{"sslrootcert="},
+		},
+		{
+			name: "with sslrootcert, sslcert, and sslkey together",
+			conn: &MonitoredConnection{
+				Host:         "db.example.com",
+				Port:         5432,
+				DatabaseName: "mydb",
+				Username:     "user",
+				SSLMode: sql.NullString{
+					String: "verify-full",
+					Valid:  true,
+				},
+				SSLRootCert: sql.NullString{
+					String: "/etc/ssl/rds-ca.pem",
+					Valid:  true,
+				},
+				SSLCert: sql.NullString{
+					String: "/etc/ssl/client.crt",
+					Valid:  true,
+				},
+				SSLKey: sql.NullString{
+					String: "/etc/ssl/client.key",
+					Valid:  true,
+				},
+			},
+			password:         "secret",
+			databaseOverride: "",
+			wantContains: []string{
+				"sslmode=verify-full",
+				"sslrootcert=%2Fetc%2Fssl%2Frds-ca.pem",
+				"sslcert=%2Fetc%2Fssl%2Fclient.crt",
+				"sslkey=%2Fetc%2Fssl%2Fclient.key",
+				"&sslrootcert=",
+				"&sslcert=",
+				"&sslkey=",
+			},
+		},
+		{
+			name: "sslrootcert path with space is URL encoded",
+			conn: &MonitoredConnection{
+				Host:         "localhost",
+				Port:         5432,
+				DatabaseName: "mydb",
+				Username:     "user",
+				SSLMode: sql.NullString{
+					String: "verify-full",
+					Valid:  true,
+				},
+				SSLRootCert: sql.NullString{
+					String: "/etc/ssl/my certs/rds ca.pem",
+					Valid:  true,
+				},
+			},
+			password:         "",
+			databaseOverride: "",
+			wantContains: []string{
+				"sslrootcert=%2Fetc%2Fssl%2Fmy+certs%2Frds+ca.pem",
+			},
+			wantNotContains: []string{"my certs", "rds ca.pem"},
+		},
+		{
+			name: "ssl cert fields invalid are not appended",
+			conn: &MonitoredConnection{
+				Host:         "localhost",
+				Port:         5432,
+				DatabaseName: "mydb",
+				Username:     "user",
+				SSLMode: sql.NullString{
+					String: "require",
+					Valid:  true,
+				},
+				SSLRootCert: sql.NullString{Valid: false},
+				SSLCert:     sql.NullString{Valid: false},
+				SSLKey:      sql.NullString{Valid: false},
+			},
+			password:         "",
+			databaseOverride: "",
+			wantContains:     []string{"sslmode=require"},
+			wantNotContains:  []string{"sslrootcert", "sslcert", "sslkey"},
+		},
+		{
+			name: "ssl cert fields valid but empty are not appended",
+			conn: &MonitoredConnection{
+				Host:         "localhost",
+				Port:         5432,
+				DatabaseName: "mydb",
+				Username:     "user",
+				SSLRootCert:  sql.NullString{String: "", Valid: true},
+				SSLCert:      sql.NullString{String: "", Valid: true},
+				SSLKey:       sql.NullString{String: "", Valid: true},
+			},
+			password:         "",
+			databaseOverride: "",
+			wantNotContains:  []string{"sslrootcert", "sslcert", "sslkey"},
+		},
 	}
 
 	for _, tt := range tests {

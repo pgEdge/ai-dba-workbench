@@ -637,9 +637,33 @@ func (d *Datastore) BuildConnectionString(conn *MonitoredConnection, password st
 
 	connStr += fmt.Sprintf("@%s:%d/%s", host, conn.Port, database)
 
+	// Collect query parameters so per-connection SSL settings flow
+	// through to the pgx driver (e.g., verify-full with a custom CA).
+	// Use "?" for the first parameter and "&" for subsequent ones.
+	sep := "?"
+	appendParam := func(key, value string) {
+		connStr += sep + key + "=" + url.QueryEscape(value)
+		sep = "&"
+	}
+
 	// Add SSL mode
 	if conn.SSLMode.Valid && conn.SSLMode.String != "" {
-		connStr += "?sslmode=" + conn.SSLMode.String
+		appendParam("sslmode", conn.SSLMode.String)
+	}
+
+	// Add SSL root certificate path (CA bundle used to verify the server)
+	if conn.SSLRootCert.Valid && conn.SSLRootCert.String != "" {
+		appendParam("sslrootcert", conn.SSLRootCert.String)
+	}
+
+	// Add SSL client certificate path (mutual TLS)
+	if conn.SSLCert.Valid && conn.SSLCert.String != "" {
+		appendParam("sslcert", conn.SSLCert.String)
+	}
+
+	// Add SSL client key path (mutual TLS)
+	if conn.SSLKey.Valid && conn.SSLKey.String != "" {
+		appendParam("sslkey", conn.SSLKey.String)
 	}
 
 	return connStr

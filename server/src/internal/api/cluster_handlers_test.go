@@ -11,10 +11,17 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strconv"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/server/internal/auth"
+	"github.com/pgedge/ai-workbench/server/internal/database"
 )
 
 func TestNewClusterHandler(t *testing.T) {
@@ -715,5 +722,670 @@ func TestValidRelationshipTypes(t *testing.T) {
 		if validRelationshipTypes[rt] {
 			t.Errorf("Expected %q to be an invalid relationship type", rt)
 		}
+	}
+}
+
+// =============================================================================
+// PUT /api/v1/cluster-groups/{id} tests
+//
+// Regression coverage for GitHub issue #58. Users saw "Invalid group ID
+// format" errors when saving changes to an existing cluster group. The bug
+// itself was frontend-only (PR #59) but these tests exercise the backend
+// update endpoint to ensure it stays correct: path parsing, auth gating,
+// body validation, method dispatch, and the auto-detected-group branch.
+// =============================================================================
+
+// TestClusterHandler_UpdateClusterGroup_InvalidIDFormat confirms a non-numeric,
+// non-auto group id in the path returns 400 with the "Invalid group ID"
+// message — matching the user-visible error that prompted issue #58.
+func TestClusterHandler_UpdateClusterGroup_InvalidIDFormat(t *testing.T) {
+	handler := NewClusterHandler(nil, nil, nil)
+
+	body := `{"name": "Renamed"}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/cluster-groups/not-a-number",
+		bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterGroupSubpath(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d. Body: %s",
+			http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if response.Error != "Invalid group ID" {
+		t.Errorf("Expected 'Invalid group ID', got %q", response.Error)
+	}
+}
+
+// TestClusterHandler_UpdateClusterGroup_NoAuth confirms an unauthenticated
+// PUT returns 401, not 400 or 500, and does not reach the datastore.
+func TestClusterHandler_UpdateClusterGroup_NoAuth(t *testing.T) {
+	// A real auth store is required so ValidateSessionToken runs; we pass
+	// nil datastore because the handler short-circuits before using it
+	// when authentication fails.
+	_, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+	checker := auth.NewRBACChecker(store)
+	handler := NewClusterHandler(nil, store, checker)
+
+	body, _ := json.Marshal(ClusterGroupRequest{Name: "Renamed"})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/cluster-groups/42",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	// No Authorization header
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterGroupSubpath(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("Expected status %d, got %d. Body: %s",
+			http.StatusUnauthorized, rec.Code, rec.Body.String())
+	}
+
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if response.Error != "Invalid or missing authentication token" {
+		t.Errorf("Expected auth error, got %q", response.Error)
+	}
+}
+
+// TestClusterHandler_UpdateClusterGroup_BadToken confirms an unknown bearer
+// token is rejected with 401.
+func TestClusterHandler_UpdateClusterGroup_BadToken(t *testing.T) {
+	_, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+	checker := auth.NewRBACChecker(store)
+	handler := NewClusterHandler(nil, store, checker)
+
+	body, _ := json.Marshal(ClusterGroupRequest{Name: "Renamed"})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/cluster-groups/42",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer not-a-real-session-token")
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterGroupSubpath(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("Expected status %d, got %d. Body: %s",
+			http.StatusUnauthorized, rec.Code, rec.Body.String())
+	}
+}
+
+// TestClusterHandler_UpdateClusterGroup_MethodNotAllowed confirms methods
+// other than GET/PUT/DELETE return 405 with the correct Allow header.
+func TestClusterHandler_UpdateClusterGroup_MethodNotAllowed(t *testing.T) {
+	handler := NewClusterHandler(nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/cluster-groups/1",
+		bytes.NewBufferString(`{"name":"x"}`))
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterGroupSubpath(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("Expected status %d, got %d", http.StatusMethodNotAllowed, rec.Code)
+	}
+
+	allowed := rec.Header().Get("Allow")
+	if allowed != "GET, PUT, DELETE" {
+		t.Errorf("Expected Allow header 'GET, PUT, DELETE', got %q", allowed)
+	}
+}
+
+// TestClusterHandler_UpdateAutoDetectedGroup_MethodNotAllowed confirms that
+// the auto-detected branch only accepts PUT (GET/DELETE not supported).
+func TestClusterHandler_UpdateAutoDetectedGroup_MethodNotAllowed(t *testing.T) {
+	handler := NewClusterHandler(nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cluster-groups/group-auto", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterGroupSubpath(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("Expected status %d, got %d", http.StatusMethodNotAllowed, rec.Code)
+	}
+
+	allowed := rec.Header().Get("Allow")
+	if allowed != "PUT" {
+		t.Errorf("Expected Allow header 'PUT', got %q", allowed)
+	}
+}
+
+// TestClusterHandler_UpdateAutoDetectedGroup_PermissionDenied confirms the
+// auto-detected branch requires manage_connections permission and returns
+// 403 for users without it.
+func TestClusterHandler_UpdateAutoDetectedGroup_PermissionDenied(t *testing.T) {
+	_, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+	checker := auth.NewRBACChecker(store)
+	handler := NewClusterHandler(nil, store, checker)
+
+	// Create an unprivileged user.
+	if err := store.CreateUser("noperm", "Password1", "", "", ""); err != nil {
+		t.Fatalf("Failed to create user: %v", err)
+	}
+	userID, err := store.GetUserID("noperm")
+	if err != nil {
+		t.Fatalf("Failed to get user id: %v", err)
+	}
+
+	body, _ := json.Marshal(ClusterGroupRequest{Name: "My Renamed Auto Group"})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/cluster-groups/group-auto",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withUser(req, userID)
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterGroupSubpath(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("Expected status %d, got %d. Body: %s",
+			http.StatusForbidden, rec.Code, rec.Body.String())
+	}
+}
+
+// TestClusterHandler_UpdateAutoDetectedGroup_MissingName confirms the
+// auto-detected branch validates that Name is non-empty, even when the
+// caller has the required permission.
+func TestClusterHandler_UpdateAutoDetectedGroup_MissingName(t *testing.T) {
+	_, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+	checker := auth.NewRBACChecker(store)
+	handler := NewClusterHandler(nil, store, checker)
+
+	// Superuser bypass grants the permission check; we still expect 400
+	// because the request body is missing Name.
+	body := `{}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/cluster-groups/group-auto",
+		bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withSuperuser(req)
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterGroupSubpath(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d. Body: %s",
+			http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if response.Error != "Name is required" {
+		t.Errorf("Expected 'Name is required', got %q", response.Error)
+	}
+}
+
+// TestClusterHandler_UpdateAutoDetectedGroup_InvalidJSON confirms malformed
+// bodies return 400 from the auto-detected branch.
+func TestClusterHandler_UpdateAutoDetectedGroup_InvalidJSON(t *testing.T) {
+	_, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+	checker := auth.NewRBACChecker(store)
+	handler := NewClusterHandler(nil, store, checker)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/cluster-groups/group-auto",
+		bytes.NewBufferString("not json"))
+	req.Header.Set("Content-Type", "application/json")
+	req = withSuperuser(req)
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterGroupSubpath(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d. Body: %s",
+			http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+}
+
+// =============================================================================
+// PUT /api/v1/cluster-groups/{id} — end-to-end datastore integration
+//
+// These tests exercise the full create → update → verify flow against a
+// real PostgreSQL instance. They are skipped when TEST_AI_WORKBENCH_SERVER
+// is not set, matching the convention documented in
+// .claude/golang-expert/testing-strategy.md and used by
+// server/src/internal/resources/integration_test.go.
+// =============================================================================
+
+// clusterGroupsTestSchema creates the minimum set of tables the datastore's
+// cluster group operations touch. It is a trimmed copy of the collector
+// migration and is intentionally limited to the columns and constraints
+// referenced by GetClusterGroup, CreateClusterGroup, UpdateClusterGroup,
+// DeleteClusterGroup, GetDefaultGroupID, and UpsertGroupByAutoKey.
+const clusterGroupsTestSchema = `
+DROP TABLE IF EXISTS cluster_groups CASCADE;
+CREATE TABLE cluster_groups (
+    id SERIAL PRIMARY KEY,
+    owner_username VARCHAR(255),
+    owner_token VARCHAR(255),
+    is_shared BOOLEAN NOT NULL DEFAULT TRUE,
+    is_default BOOLEAN NOT NULL DEFAULT FALSE,
+    auto_group_key VARCHAR(255) UNIQUE,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT cluster_groups_name_unique UNIQUE (name)
+);
+CREATE UNIQUE INDEX idx_cluster_groups_is_default
+    ON cluster_groups (is_default) WHERE is_default = TRUE;
+`
+
+// newTestDatastore returns a *database.Datastore wired to the Postgres
+// instance named by TEST_AI_WORKBENCH_SERVER. The test is skipped if the
+// env var is missing or the connection cannot be established. The caller
+// receives a cleanup function that drops the test schema and closes the
+// pool.
+func newTestDatastore(t *testing.T) (*database.Datastore, *pgxpool.Pool, func()) {
+	t.Helper()
+
+	if os.Getenv("SKIP_DB_TESTS") != "" {
+		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
+	}
+	connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
+	if connStr == "" {
+		t.Skip("TEST_AI_WORKBENCH_SERVER not set, skipping datastore integration test")
+	}
+
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, connStr)
+	if err != nil {
+		t.Skipf("Could not connect to test database: %v", err)
+	}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		t.Skipf("Test database ping failed: %v", err)
+	}
+
+	if _, err := pool.Exec(ctx, clusterGroupsTestSchema); err != nil {
+		pool.Close()
+		t.Fatalf("Failed to create test schema: %v", err)
+	}
+
+	ds := database.NewTestDatastore(pool)
+
+	cleanup := func() {
+		// Best-effort teardown of the test schema.
+		_, _ = pool.Exec(context.Background(), "DROP TABLE IF EXISTS cluster_groups CASCADE")
+		pool.Close()
+	}
+
+	return ds, pool, cleanup
+}
+
+// setupGroupUpdateHandler builds a ClusterHandler backed by the given
+// datastore, creates a user with manage_connections permission, and
+// authenticates that user so the caller has a real session token to put
+// in the Authorization header.
+//
+// updateClusterGroup uses two different auth surfaces: getUserInfoCompat
+// validates a bearer token via the auth store, while rbacChecker.
+// HasAdminPermission reads the user ID from the request context (the
+// production middleware populates that context from the same token).
+// Handler-level tests bypass the middleware, so callers must set BOTH
+// the Authorization header (via withBearer) AND the user context (via
+// withUser). The returned userID lets callers do the latter.
+//
+// Returns the handler, the auth store, the user's ID, the user's session
+// token, and a cleanup function for the auth store.
+func setupGroupUpdateHandler(t *testing.T, ds *database.Datastore) (*ClusterHandler, *auth.AuthStore, int64, string, func()) {
+	t.Helper()
+
+	_, store, storeCleanup := createTestRBACHandler(t)
+	userID := setupUserWithPermission(t, store, "group_updater",
+		auth.PermManageConnections)
+	token, _, err := store.AuthenticateUser("group_updater", "Password1")
+	if err != nil {
+		storeCleanup()
+		t.Fatalf("Failed to authenticate test user: %v", err)
+	}
+	checker := auth.NewRBACChecker(store)
+	handler := NewClusterHandler(ds, store, checker)
+
+	return handler, store, userID, token, storeCleanup
+}
+
+// withBearer sets an Authorization: Bearer header on the request.
+func withBearer(req *http.Request, token string) *http.Request {
+	req.Header.Set("Authorization", "Bearer "+token)
+	return req
+}
+
+// TestClusterHandler_UpdateClusterGroup_Integration_HappyPath exercises the
+// full create → PUT → verify flow for a numeric-ID cluster group. This is
+// the primary regression test for GitHub issue #58.
+func TestClusterHandler_UpdateClusterGroup_Integration_HappyPath(t *testing.T) {
+	ds, pool, cleanupDS := newTestDatastore(t)
+	defer cleanupDS()
+
+	handler, _, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
+	defer cleanupStore()
+
+	ctx := context.Background()
+	originalDesc := "original description"
+	created, err := ds.CreateClusterGroup(ctx, "Integration Original", &originalDesc)
+	if err != nil {
+		t.Fatalf("Failed to create cluster group: %v", err)
+	}
+
+	newDesc := "updated description"
+	body, _ := json.Marshal(ClusterGroupRequest{
+		Name:        "Integration Renamed",
+		Description: &newDesc,
+	})
+	req := httptest.NewRequest(http.MethodPut,
+		"/api/v1/cluster-groups/"+strconv.Itoa(created.ID), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withBearer(req, token)
+	req = withUser(req, userID)
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterGroupSubpath(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var resp database.ClusterGroup
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if resp.ID != created.ID {
+		t.Errorf("Response ID = %d, want %d", resp.ID, created.ID)
+	}
+	if resp.Name != "Integration Renamed" {
+		t.Errorf("Response Name = %q, want %q", resp.Name, "Integration Renamed")
+	}
+	if resp.Description == nil || *resp.Description != newDesc {
+		t.Errorf("Response Description = %v, want %q", resp.Description, newDesc)
+	}
+
+	// Verify the change was actually persisted.
+	var dbName string
+	var dbDesc *string
+	err = pool.QueryRow(ctx,
+		"SELECT name, description FROM cluster_groups WHERE id = $1",
+		created.ID).Scan(&dbName, &dbDesc)
+	if err != nil {
+		t.Fatalf("Failed to read updated row: %v", err)
+	}
+	if dbName != "Integration Renamed" {
+		t.Errorf("Persisted name = %q, want %q", dbName, "Integration Renamed")
+	}
+	if dbDesc == nil || *dbDesc != newDesc {
+		t.Errorf("Persisted description = %v, want %q", dbDesc, newDesc)
+	}
+}
+
+// TestClusterHandler_UpdateClusterGroup_Integration_NameOnly confirms a PUT
+// that only updates the name (no description) still succeeds and leaves
+// the description column untouched.
+func TestClusterHandler_UpdateClusterGroup_Integration_NameOnly(t *testing.T) {
+	ds, pool, cleanupDS := newTestDatastore(t)
+	defer cleanupDS()
+
+	handler, _, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
+	defer cleanupStore()
+
+	ctx := context.Background()
+	origDesc := "keep me"
+	created, err := ds.CreateClusterGroup(ctx, "Name Only Original", &origDesc)
+	if err != nil {
+		t.Fatalf("Failed to create cluster group: %v", err)
+	}
+
+	body := `{"name": "Name Only Renamed"}`
+	req := httptest.NewRequest(http.MethodPut,
+		"/api/v1/cluster-groups/"+strconv.Itoa(created.ID), bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withBearer(req, token)
+	req = withUser(req, userID)
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterGroupSubpath(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	// The UpdateClusterGroup SQL sets description to the value in the
+	// request. With description omitted from the JSON body, the request
+	// struct's Description pointer is nil, so the row's description
+	// becomes NULL. Capture the current contract so any future change
+	// is deliberate.
+	var dbName string
+	var dbDesc *string
+	err = pool.QueryRow(ctx,
+		"SELECT name, description FROM cluster_groups WHERE id = $1",
+		created.ID).Scan(&dbName, &dbDesc)
+	if err != nil {
+		t.Fatalf("Failed to read updated row: %v", err)
+	}
+	if dbName != "Name Only Renamed" {
+		t.Errorf("Persisted name = %q, want %q", dbName, "Name Only Renamed")
+	}
+	if dbDesc != nil {
+		t.Errorf("Persisted description = %v, want nil (omitted fields "+
+			"are cleared by current handler contract)", *dbDesc)
+	}
+}
+
+// TestClusterHandler_UpdateClusterGroup_Integration_MissingName confirms
+// the endpoint rejects requests with an empty Name even after the
+// ownership/permission check passes.
+func TestClusterHandler_UpdateClusterGroup_Integration_MissingName(t *testing.T) {
+	ds, _, cleanupDS := newTestDatastore(t)
+	defer cleanupDS()
+
+	handler, _, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
+	defer cleanupStore()
+
+	ctx := context.Background()
+	created, err := ds.CreateClusterGroup(ctx, "Needs Name", nil)
+	if err != nil {
+		t.Fatalf("Failed to create cluster group: %v", err)
+	}
+
+	body := `{"description": "only a description"}`
+	req := httptest.NewRequest(http.MethodPut,
+		"/api/v1/cluster-groups/"+strconv.Itoa(created.ID), bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withBearer(req, token)
+	req = withUser(req, userID)
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterGroupSubpath(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d. Body: %s",
+			http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if response.Error != "Name is required" {
+		t.Errorf("Expected 'Name is required', got %q", response.Error)
+	}
+}
+
+// TestClusterHandler_UpdateClusterGroup_Integration_NotFound confirms that
+// PUT against a non-existent numeric group ID returns 404. This is the
+// legitimate "group does not exist" path, distinct from the "invalid id
+// format" 400 path.
+func TestClusterHandler_UpdateClusterGroup_Integration_NotFound(t *testing.T) {
+	ds, _, cleanupDS := newTestDatastore(t)
+	defer cleanupDS()
+
+	handler, _, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
+	defer cleanupStore()
+
+	body, _ := json.Marshal(ClusterGroupRequest{Name: "Ghost"})
+	req := httptest.NewRequest(http.MethodPut,
+		"/api/v1/cluster-groups/999999", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withBearer(req, token)
+	req = withUser(req, userID)
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterGroupSubpath(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("Expected status %d, got %d. Body: %s",
+			http.StatusNotFound, rec.Code, rec.Body.String())
+	}
+
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if response.Error != "Cluster group not found" {
+		t.Errorf("Expected 'Cluster group not found', got %q", response.Error)
+	}
+}
+
+// TestClusterHandler_UpdateClusterGroup_Integration_Forbidden confirms that
+// an authenticated user with no manage_connections permission who is not
+// the owner of the target group is rejected with 403. The group in this
+// test is created with no owner, so the ownership branch also returns
+// false, meaning the combined "not owner and not privileged" rule fires.
+func TestClusterHandler_UpdateClusterGroup_Integration_Forbidden(t *testing.T) {
+	ds, _, cleanupDS := newTestDatastore(t)
+	defer cleanupDS()
+
+	_, store, cleanupStore := createTestRBACHandler(t)
+	defer cleanupStore()
+
+	// A user with no admin permissions at all.
+	if err := store.CreateUser("outsider", "Password1", "", "", ""); err != nil {
+		t.Fatalf("Failed to create user: %v", err)
+	}
+	userID, err := store.GetUserID("outsider")
+	if err != nil {
+		t.Fatalf("Failed to get outsider user id: %v", err)
+	}
+	token, _, err := store.AuthenticateUser("outsider", "Password1")
+	if err != nil {
+		t.Fatalf("Failed to authenticate outsider: %v", err)
+	}
+
+	checker := auth.NewRBACChecker(store)
+	handler := NewClusterHandler(ds, store, checker)
+
+	ctx := context.Background()
+	created, err := ds.CreateClusterGroup(ctx, "Forbidden Target", nil)
+	if err != nil {
+		t.Fatalf("Failed to create cluster group: %v", err)
+	}
+
+	body, _ := json.Marshal(ClusterGroupRequest{Name: "Attempt"})
+	req := httptest.NewRequest(http.MethodPut,
+		"/api/v1/cluster-groups/"+strconv.Itoa(created.ID), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withBearer(req, token)
+	req = withUser(req, userID)
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterGroupSubpath(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("Expected status %d, got %d. Body: %s",
+			http.StatusForbidden, rec.Code, rec.Body.String())
+	}
+}
+
+// TestClusterHandler_UpdateAutoDetectedGroup_Integration_HappyPath exercises
+// the auto-detected branch (PUT /api/v1/cluster-groups/group-auto) end to
+// end: upsert the row, rename it via the API, and verify the persisted
+// name.
+func TestClusterHandler_UpdateAutoDetectedGroup_Integration_HappyPath(t *testing.T) {
+	ds, pool, cleanupDS := newTestDatastore(t)
+	defer cleanupDS()
+
+	_, store, cleanupStore := createTestRBACHandler(t)
+	defer cleanupStore()
+	checker := auth.NewRBACChecker(store)
+	handler := NewClusterHandler(ds, store, checker)
+
+	body, _ := json.Marshal(ClusterGroupRequest{Name: "Custom Auto Name"})
+	req := httptest.NewRequest(http.MethodPut,
+		"/api/v1/cluster-groups/group-auto", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withSuperuser(req) // manage_connections is satisfied by superuser
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterGroupSubpath(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var resp database.ClusterGroup
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if resp.Name != "Custom Auto Name" {
+		t.Errorf("Response Name = %q, want %q", resp.Name, "Custom Auto Name")
+	}
+
+	// Verify the upsert landed with auto_group_key = "auto".
+	var dbName, dbAutoKey string
+	err := pool.QueryRow(context.Background(),
+		"SELECT name, auto_group_key FROM cluster_groups WHERE auto_group_key = $1",
+		"auto").Scan(&dbName, &dbAutoKey)
+	if err != nil {
+		t.Fatalf("Failed to read upserted row: %v", err)
+	}
+	if dbName != "Custom Auto Name" {
+		t.Errorf("Persisted name = %q, want %q", dbName, "Custom Auto Name")
+	}
+	if dbAutoKey != "auto" {
+		t.Errorf("Persisted auto_group_key = %q, want %q", dbAutoKey, "auto")
+	}
+
+	// A second PUT with a different name should update the existing row
+	// (upsert), not create a second row.
+	body2, _ := json.Marshal(ClusterGroupRequest{Name: "Custom Auto Name 2"})
+	req2 := httptest.NewRequest(http.MethodPut,
+		"/api/v1/cluster-groups/group-auto", bytes.NewReader(body2))
+	req2.Header.Set("Content-Type", "application/json")
+	req2 = withSuperuser(req2)
+	rec2 := httptest.NewRecorder()
+
+	handler.handleClusterGroupSubpath(rec2, req2)
+
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("Second PUT: expected status %d, got %d. Body: %s",
+			http.StatusOK, rec2.Code, rec2.Body.String())
+	}
+
+	var count int
+	err = pool.QueryRow(context.Background(),
+		"SELECT COUNT(*) FROM cluster_groups WHERE auto_group_key = $1",
+		"auto").Scan(&count)
+	if err != nil {
+		t.Fatalf("Failed to count auto rows: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("Expected exactly 1 auto-keyed row after second PUT, got %d", count)
 	}
 }

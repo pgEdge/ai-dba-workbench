@@ -385,7 +385,67 @@ the `skipIfNoDatabase` helper to skip when no database is available.
 For examples, see:
 
 - `server/src/internal/api/rbac_integration_test.go`
+- `server/src/internal/api/cluster_handlers_test.go` (PUT
+  cluster-groups update tests)
 - `server/src/internal/resources/integration_test.go`
+
+### HTTP Handler Integration Tests: Bearer + Context
+
+Handlers in `internal/api/` that require authentication and RBAC use
+TWO independent auth surfaces:
+
+1. `getUserInfoCompat(r, h.authStore)` validates a bearer token from
+   the `Authorization` header via `authStore.ValidateSessionToken`.
+2. `rbacChecker.HasAdminPermission(r.Context(), perm)` reads
+   `auth.UserIDContextKey` / `auth.IsSuperuserContextKey` from the
+   request context.
+
+In production, middleware extracts the bearer token and populates the
+context. Handler-level tests bypass that middleware, so you must set
+BOTH: a real session token on the request AND the corresponding user
+context values. Setting only one causes confusing 401s or 403s that
+look like ownership or permission bugs but are actually test-harness
+gaps.
+
+Use the existing helpers together. The `rbac_handlers_test.go`
+helpers `withUser(req, userID)` and `withSuperuser(req)` set
+context. A handful of `cluster_handlers_test.go` helpers show the
+combined pattern:
+
+```go
+// Create a user with the required admin permission, authenticate
+// them, and return BOTH the userID and the raw session token.
+handler, _, userID, token, cleanup := setupGroupUpdateHandler(t, ds)
+defer cleanup()
+
+req := httptest.NewRequest(http.MethodPut, "/api/v1/cluster-groups/42",
+    bytes.NewReader(body))
+req.Header.Set("Content-Type", "application/json")
+req = withBearer(req, token)     // satisfies getUserInfoCompat
+req = withUser(req, userID)      // satisfies HasAdminPermission
+```
+
+When a test does not care about the user identity (only that
+permission gating fires), `withSuperuser(req)` plus no bearer is NOT
+sufficient if the handler calls `getUserInfoCompat`. Either skip that
+test at the level that does not use bearer auth (for example, the
+auto-detected-group branch only uses context-based RBAC and no
+bearer), or pair `withBearer` and `withSuperuser`. Inspect the
+handler source to see which surfaces it touches.
+
+### Datastore-Backed Handler Tests
+
+When a handler touches the datastore, construct a `*database.Datastore`
+from a test pool via `database.NewTestDatastore(pool)` (defined in
+`server/src/internal/database/test_helpers.go`). The fields on
+`Datastore` are unexported, so tests in other packages cannot build
+one directly. `NewTestDatastore` wraps a caller-owned pool and leaves
+`Close` responsibility with the caller.
+
+Minimal schemas work fine: `cluster_handlers_test.go` uses
+`clusterGroupsTestSchema` which creates only the `cluster_groups`
+table the exercised code path needs, not the full collector schema.
+This keeps the tests fast and decoupled from unrelated migrations.
 
 ## Security Testing Patterns
 

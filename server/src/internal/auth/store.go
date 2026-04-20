@@ -55,7 +55,7 @@ const (
 	DefaultSessionExpiry = 24 * time.Hour
 
 	// Schema version for migrations
-	schemaVersion = 2
+	schemaVersion = 3
 )
 
 // AuthStore manages users and tokens in SQLite
@@ -117,7 +117,15 @@ func NewAuthStore(dataDir string, maxUserTokenDays, maxFailedAttempts int) (*Aut
 	}
 
 	dbPath := filepath.Join(dataDir, "auth.db")
-	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
+	// Enable foreign key enforcement via DSN pragma. SQLite ships with
+	// foreign keys disabled by default for historical compatibility
+	// reasons, so every ON DELETE CASCADE declared in the schema is a
+	// silent no-op until this pragma is set. The modernc.org/sqlite
+	// driver applies each "_pragma=NAME(VALUE)" parameter as a PRAGMA
+	// statement on every new connection in the pool, so the setting is
+	// applied consistently regardless of connection churn.
+	dsn := dbPath + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open auth database: %w", err)
 	}
@@ -126,6 +134,23 @@ func NewAuthStore(dataDir string, maxUserTokenDays, maxFailedAttempts int) (*Aut
 	// other users on the system cannot read password hashes or tokens.
 	if chmodErr := os.Chmod(dbPath, 0600); chmodErr != nil {
 		log.Printf("[AUTH] WARNING: Failed to set permissions on %s: %v", dbPath, chmodErr)
+	}
+
+	// Verify that the foreign_keys pragma is actually active. SQLite
+	// silently ignores the pragma if it was compiled without foreign key
+	// support (SQLITE_OMIT_FOREIGN_KEY) or if the DSN parameter was not
+	// parsed. We want to fail loudly in that case because several
+	// delete paths in this package rely on ON DELETE CASCADE for
+	// defense in depth and a future regression would silently leave
+	// orphan rows behind.
+	var fkEnabled int
+	if err := db.QueryRow("PRAGMA foreign_keys").Scan(&fkEnabled); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to verify foreign_keys pragma: %w", err)
+	}
+	if fkEnabled != 1 {
+		db.Close()
+		return nil, fmt.Errorf("foreign_keys pragma is not active (value=%d); SQLite build must support foreign keys", fkEnabled)
 	}
 
 	store := &AuthStore{
@@ -170,6 +195,105 @@ func (s *AuthStore) migrateV1ToV2() error {
 	return nil
 }
 
+// migrateV2ToV3 rebuilds group_mcp_privileges and token_mcp_scope without
+// the FOREIGN KEY constraint on privilege_identifier_id. The FK was
+// incompatible with the wildcard sentinel (privilege_identifier_id = 0)
+// that represents "all MCP privileges"; once PRAGMA foreign_keys = ON is
+// enabled every wildcard INSERT would fail. We rebuild the tables in a
+// transaction so the upgrade is atomic.
+//
+// The FK target table (mcp_privilege_identifiers) is never deleted from
+// in this codebase, so removing the CASCADE behavior changes nothing in
+// practice.
+func (s *AuthStore) migrateV2ToV3() error {
+	// Temporarily disable foreign_keys for the duration of the migration
+	// so the ALTER-via-rebuild pattern below does not trip on any
+	// transient inconsistencies. The DSN sets foreign_keys(1) on every
+	// new connection, so the effect is scoped to this migration.
+	if _, err := s.db.Exec("PRAGMA foreign_keys = OFF"); err != nil {
+		return fmt.Errorf("failed to disable foreign_keys during migration: %w", err)
+	}
+	defer func() {
+		//nolint:errcheck // Best effort; the DSN pragma re-enables FKs
+		// on every new connection anyway, so a failure here only
+		// affects the current connection's residual state.
+		s.db.Exec("PRAGMA foreign_keys = ON")
+	}()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin migration transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			//nolint:errcheck // Rollback error is not critical; the
+			// outer error is already being returned.
+			tx.Rollback()
+		}
+	}()
+
+	// Rebuild group_mcp_privileges without the FK on privilege_identifier_id.
+	rebuildGroupMCP := []string{
+		`CREATE TABLE group_mcp_privileges_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
+            privilege_identifier_id INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(group_id, privilege_identifier_id)
+        )`,
+		`INSERT INTO group_mcp_privileges_new (id, group_id, privilege_identifier_id, created_at)
+         SELECT id, group_id, privilege_identifier_id, created_at
+         FROM group_mcp_privileges`,
+		`DROP TABLE group_mcp_privileges`,
+		`ALTER TABLE group_mcp_privileges_new RENAME TO group_mcp_privileges`,
+		`CREATE INDEX IF NOT EXISTS idx_group_mcp_privs_group ON group_mcp_privileges(group_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_group_mcp_privs_priv ON group_mcp_privileges(privilege_identifier_id)`,
+	}
+	for _, stmt := range rebuildGroupMCP {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("failed to rebuild group_mcp_privileges: %w", err)
+		}
+	}
+
+	// Rebuild token_mcp_scope without the FK on privilege_identifier_id.
+	rebuildTokenMCP := []string{
+		`CREATE TABLE token_mcp_scope_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token_id INTEGER NOT NULL REFERENCES tokens(id) ON DELETE CASCADE,
+            privilege_identifier_id INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(token_id, privilege_identifier_id)
+        )`,
+		`INSERT INTO token_mcp_scope_new (id, token_id, privilege_identifier_id, created_at)
+         SELECT id, token_id, privilege_identifier_id, created_at
+         FROM token_mcp_scope`,
+		`DROP TABLE token_mcp_scope`,
+		`ALTER TABLE token_mcp_scope_new RENAME TO token_mcp_scope`,
+		`CREATE INDEX IF NOT EXISTS idx_token_mcp_scope_token ON token_mcp_scope(token_id)`,
+	}
+	for _, stmt := range rebuildTokenMCP {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("failed to rebuild token_mcp_scope: %w", err)
+		}
+	}
+
+	// Bump schema version inside the same transaction.
+	if _, err := tx.Exec("DELETE FROM schema_version"); err != nil {
+		return fmt.Errorf("failed to clear schema version: %w", err)
+	}
+	if _, err := tx.Exec("INSERT INTO schema_version (version) VALUES (?)", 3); err != nil {
+		return fmt.Errorf("failed to set schema version: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit migration: %w", err)
+	}
+	committed = true
+
+	return nil
+}
+
 // initSchema creates the database tables if they don't exist
 func (s *AuthStore) initSchema() error {
 	// Check current schema version
@@ -186,6 +310,12 @@ func (s *AuthStore) initSchema() error {
 			return fmt.Errorf("failed to migrate from v1 to v2: %w", err)
 		}
 		currentVersion = 2
+	}
+	if currentVersion == 2 {
+		if err := s.migrateV2ToV3(); err != nil {
+			return fmt.Errorf("failed to migrate from v2 to v3: %w", err)
+		}
+		currentVersion = 3
 	}
 
 	if currentVersion < schemaVersion {
@@ -275,12 +405,18 @@ func (s *AuthStore) initSchema() error {
     CREATE INDEX IF NOT EXISTS idx_mcp_privileges_identifier ON mcp_privilege_identifiers(identifier);
     CREATE INDEX IF NOT EXISTS idx_mcp_privileges_type ON mcp_privilege_identifiers(item_type);
 
-    -- Group-to-MCP privilege mappings
+    -- Group-to-MCP privilege mappings.
+    -- privilege_identifier_id intentionally has no FOREIGN KEY declaration
+    -- because the value 0 is used as a "wildcard / all MCP privileges"
+    -- sentinel and will never match a real row in
+    -- mcp_privilege_identifiers. With PRAGMA foreign_keys = ON an FK on
+    -- this column would reject every wildcard grant, and nothing ever
+    -- deletes from mcp_privilege_identifiers so the CASCADE behavior is
+    -- not needed in practice.
     CREATE TABLE IF NOT EXISTS group_mcp_privileges (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         group_id INTEGER NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
-        privilege_identifier_id INTEGER NOT NULL
-            REFERENCES mcp_privilege_identifiers(id) ON DELETE CASCADE,
+        privilege_identifier_id INTEGER NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(group_id, privilege_identifier_id)
     );
@@ -312,12 +448,14 @@ func (s *AuthStore) initSchema() error {
     );
     CREATE INDEX IF NOT EXISTS idx_token_conn_scope_token ON token_connection_scope(token_id);
 
-    -- Token-to-MCP privilege scope restrictions
+    -- Token-to-MCP privilege scope restrictions.
+    -- privilege_identifier_id intentionally has no FOREIGN KEY declaration
+    -- for the same reason as group_mcp_privileges above: 0 is used as a
+    -- wildcard sentinel that will never match a real privilege row.
     CREATE TABLE IF NOT EXISTS token_mcp_scope (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         token_id INTEGER NOT NULL REFERENCES tokens(id) ON DELETE CASCADE,
-        privilege_identifier_id INTEGER NOT NULL
-            REFERENCES mcp_privilege_identifiers(id) ON DELETE CASCADE,
+        privilege_identifier_id INTEGER NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(token_id, privilege_identifier_id)
     );
@@ -719,22 +857,109 @@ func (s *AuthStore) UpdateUserEmail(username, email string) error {
 	return nil
 }
 
-// DeleteUser removes a user
+// DeleteUser removes a user and all of its dependent rows in a single
+// atomic transaction. This removes every row that references the user:
+// tokens (and their scope rows via the token delete cascade), group
+// memberships, and connection_sessions rows for any of the user's
+// tokens.
+//
+// With PRAGMA foreign_keys = ON enabled in NewAuthStore, the ON DELETE
+// CASCADE foreign keys declared in the schema would remove most of
+// these rows automatically. These explicit deletes are intentionally
+// kept as defense in depth: they document exactly which tables are
+// touched, survive accidental pragma regression, and clean up
+// connection_sessions rows which reference token_hash without an FK.
 func (s *AuthStore) DeleteUser(username string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	result, err := s.db.Exec("DELETE FROM users WHERE username = ?", username)
+	tx, err := s.db.Begin()
 	if err != nil {
-		return fmt.Errorf("failed to delete user: %w", err)
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			//nolint:errcheck // Rollback error is not critical; the
+			// outer error is already being returned to the caller.
+			tx.Rollback()
+		}
+	}()
+
+	// Look up the user ID first so we can fail fast on "not found" and
+	// drive the dependent deletes by id rather than by username.
+	var userID int64
+	if err = tx.QueryRow("SELECT id FROM users WHERE username = ?", username).Scan(&userID); err != nil {
+		if err == sql.ErrNoRows {
+			err = fmt.Errorf("user '%s' not found", username)
+			return err
+		}
+		return fmt.Errorf("failed to look up user: %w", err)
 	}
 
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
+	// Remove connection_sessions rows for every token owned by this
+	// user. connection_sessions references tokens.token_hash but has
+	// no declared FK, so SQLite will never cascade-delete these even
+	// with foreign_keys pragma on.
+	if _, err = tx.Exec(
+		`DELETE FROM connection_sessions
+         WHERE token_hash IN (SELECT token_hash FROM tokens WHERE owner_id = ?)`,
+		userID,
+	); err != nil {
+		return fmt.Errorf("failed to delete user's connection sessions: %w", err)
+	}
+
+	// Remove per-token scope rows for every token owned by this user.
+	// These would cascade via tokens' ON DELETE CASCADE, but we delete
+	// them explicitly so a pragma regression cannot leave them behind.
+	scopeTables := []string{
+		"token_connection_scope",
+		"token_mcp_scope",
+		"token_admin_scope",
+	}
+	for _, table := range scopeTables {
+		//nolint:gosec // table name is from a static allow-list above
+		stmt := "DELETE FROM " + table + " WHERE token_id IN (SELECT id FROM tokens WHERE owner_id = ?)"
+		if _, err = tx.Exec(stmt, userID); err != nil {
+			return fmt.Errorf("failed to delete %s rows: %w", table, err)
+		}
+	}
+
+	// Remove the user's tokens. tokens.owner_id has ON DELETE CASCADE
+	// so the user-row delete below would take these out anyway; we
+	// delete them first so the scope-row cleanup above has a stable
+	// set to operate on and so the behavior is obvious to readers.
+	if _, err = tx.Exec("DELETE FROM tokens WHERE owner_id = ?", userID); err != nil {
+		return fmt.Errorf("failed to delete user's tokens: %w", err)
+	}
+
+	// Remove group memberships that reference this user directly.
+	if _, err = tx.Exec(
+		"DELETE FROM group_memberships WHERE member_user_id = ?", userID,
+	); err != nil {
+		return fmt.Errorf("failed to delete user's group memberships: %w", err)
+	}
+
+	// Finally, delete the user row itself.
+	result, execErr := tx.Exec("DELETE FROM users WHERE id = ?", userID)
+	if execErr != nil {
+		err = fmt.Errorf("failed to delete user: %w", execErr)
+		return err
+	}
+	rows, rowsErr := result.RowsAffected()
+	if rowsErr != nil {
+		err = fmt.Errorf("failed to get rows affected: %w", rowsErr)
+		return err
 	}
 	if rows == 0 {
-		return fmt.Errorf("user '%s' not found", username)
+		// This should be unreachable because we already looked the
+		// user up above, but guard against races anyway.
+		err = fmt.Errorf("user '%s' not found", username)
+		return err
+	}
+
+	if commitErr := tx.Commit(); commitErr != nil {
+		err = fmt.Errorf("failed to commit user deletion: %w", commitErr)
+		return err
 	}
 
 	s.InvalidateUserSessions(username)
@@ -1163,28 +1388,24 @@ func (s *AuthStore) ListUserTokens(username string) ([]*StoredToken, error) {
 }
 
 // DeleteUserToken deletes a token (only if owned by the specified user)
+// and removes every row that references that token in a single atomic
+// transaction: its connection scope, MCP scope, admin scope, and the
+// connection_sessions row keyed on its token_hash.
+//
+// With PRAGMA foreign_keys = ON enabled in NewAuthStore, the scope rows
+// would cascade via ON DELETE CASCADE. These explicit deletes are
+// intentionally kept as defense in depth and also clean up
+// connection_sessions, which references token_hash without an FK.
 func (s *AuthStore) DeleteUserToken(username string, tokenID int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	result, err := s.db.Exec(
-		`DELETE FROM tokens
-         WHERE id = ? AND owner_id = (SELECT id FROM users WHERE username = ?)`,
-		tokenID, username,
+	return s.deleteTokensByFilter(
+		// Filter to token IDs owned by the named user.
+		"id = ? AND owner_id = (SELECT id FROM users WHERE username = ?)",
+		[]any{tokenID, username},
+		"token not found or not owned by user",
 	)
-	if err != nil {
-		return fmt.Errorf("failed to delete token: %w", err)
-	}
-
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
-	}
-	if rows == 0 {
-		return fmt.Errorf("token not found or not owned by user")
-	}
-
-	return nil
 }
 
 // =============================================================================
@@ -1260,39 +1481,136 @@ func (s *AuthStore) ListAllTokens() ([]*StoredToken, error) {
 	return s.scanTokens(rows)
 }
 
-// DeleteToken deletes a token by ID or hash prefix (admin use, no owner check)
+// DeleteToken deletes a token by ID or hash prefix (admin use, no owner
+// check) and removes every row that references that token in a single
+// atomic transaction: its connection scope, MCP scope, admin scope, and
+// the connection_sessions row keyed on its token_hash.
+//
+// With PRAGMA foreign_keys = ON enabled in NewAuthStore, the scope rows
+// would cascade via ON DELETE CASCADE. These explicit deletes are
+// intentionally kept as defense in depth and also clean up
+// connection_sessions, which references token_hash without an FK.
 func (s *AuthStore) DeleteToken(identifier string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Try by ID first
-	result, err := s.db.Exec(
-		"DELETE FROM tokens WHERE id = ?",
-		identifier,
-	)
-	if err == nil {
-		//nolint:errcheck // RowsAffected error non-critical, we try hash prefix next
-		if rows, _ := result.RowsAffected(); rows > 0 {
-			return nil
-		}
+	// Try by exact ID first. The callers pass strings, and the tokens
+	// table id column is INTEGER, so SQLite will coerce the string
+	// safely. A non-numeric identifier matches nothing here and falls
+	// through to the hash-prefix branch below.
+	if err := s.deleteTokensByFilter("id = ?", []any{identifier}, ""); err == nil {
+		return nil
 	}
 
-	// Try by hash prefix
+	// Try by hash prefix. Require at least 8 characters to avoid
+	// matching a huge swath of tokens on short inputs.
 	if len(identifier) >= 8 {
-		result, err = s.db.Exec(
-			"DELETE FROM tokens WHERE token_hash LIKE ?",
-			identifier+"%",
-		)
-		if err != nil {
-			return fmt.Errorf("failed to delete token: %w", err)
-		}
-		//nolint:errcheck // RowsAffected error non-critical for conditional check
-		if rows, _ := result.RowsAffected(); rows > 0 {
+		if err := s.deleteTokensByFilter(
+			"token_hash LIKE ?", []any{identifier + "%"}, "",
+		); err == nil {
 			return nil
 		}
 	}
 
 	return fmt.Errorf("token not found")
+}
+
+// deleteTokensByFilter deletes every token matched by the supplied
+// WHERE clause along with every row that references those tokens,
+// atomically. The whereClause is embedded in "SELECT id FROM tokens
+// WHERE <clause>", so it must not contain user-supplied text; all
+// dynamic values belong in the args slice. notFoundMsg, when non-empty,
+// is returned (wrapped in an error) if the filter matches no rows.
+// When empty, a zero-rows-affected outcome returns a generic
+// "token not found" error so callers can chain filters.
+func (s *AuthStore) deleteTokensByFilter(whereClause string, args []any, notFoundMsg string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			//nolint:errcheck // Rollback error is not critical; the
+			// outer error is already being returned to the caller.
+			tx.Rollback()
+		}
+	}()
+
+	// Collect the set of (id, token_hash) pairs that match. We need
+	// token_hash so we can clean up connection_sessions rows, which
+	// are keyed on the raw hash and have no declared FK.
+	//nolint:gosec // whereClause is a static SQL fragment from callers in this package
+	selectStmt := "SELECT id, token_hash FROM tokens WHERE " + whereClause
+	rows, err := tx.Query(selectStmt, args...)
+	if err != nil {
+		return fmt.Errorf("failed to query tokens: %w", err)
+	}
+	type tokenRef struct {
+		id   int64
+		hash string
+	}
+	var matches []tokenRef
+	for rows.Next() {
+		var ref tokenRef
+		if scanErr := rows.Scan(&ref.id, &ref.hash); scanErr != nil {
+			rows.Close()
+			err = fmt.Errorf("failed to scan token row: %w", scanErr)
+			return err
+		}
+		matches = append(matches, ref)
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		rows.Close()
+		err = fmt.Errorf("error iterating tokens: %w", rowsErr)
+		return err
+	}
+	rows.Close()
+
+	if len(matches) == 0 {
+		if notFoundMsg != "" {
+			err = fmt.Errorf("%s", notFoundMsg)
+		} else {
+			err = fmt.Errorf("token not found")
+		}
+		return err
+	}
+
+	// Delete the per-token scope rows explicitly (defense in depth;
+	// FK cascades would handle this when the pragma is on).
+	scopeTables := []string{
+		"token_connection_scope",
+		"token_mcp_scope",
+		"token_admin_scope",
+	}
+	for _, ref := range matches {
+		for _, table := range scopeTables {
+			//nolint:gosec // table name is from a static allow-list above
+			stmt := "DELETE FROM " + table + " WHERE token_id = ?"
+			if _, err = tx.Exec(stmt, ref.id); err != nil {
+				return fmt.Errorf("failed to delete %s rows: %w", table, err)
+			}
+		}
+		// Clear the connection_sessions row keyed on this hash.
+		if _, err = tx.Exec(
+			"DELETE FROM connection_sessions WHERE token_hash = ?", ref.hash,
+		); err != nil {
+			return fmt.Errorf("failed to delete connection session: %w", err)
+		}
+	}
+
+	// Delete the token rows themselves.
+	//nolint:gosec // whereClause is a static SQL fragment from callers in this package
+	deleteStmt := "DELETE FROM tokens WHERE " + whereClause
+	if _, err = tx.Exec(deleteStmt, args...); err != nil {
+		return fmt.Errorf("failed to delete tokens: %w", err)
+	}
+
+	if commitErr := tx.Commit(); commitErr != nil {
+		err = fmt.Errorf("failed to commit token deletion: %w", commitErr)
+		return err
+	}
+
+	return nil
 }
 
 // CleanupExpiredTokens removes all expired tokens

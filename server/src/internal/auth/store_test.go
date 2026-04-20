@@ -1314,3 +1314,411 @@ func TestUpdateUserAtomic_NonExistentUser(t *testing.T) {
 		t.Error("Expected error when updating non-existent user")
 	}
 }
+
+// TestForeignKeyPragmaIsEnabled asserts that NewAuthStore opens the
+// database with PRAGMA foreign_keys = ON. Without the pragma, every
+// ON DELETE CASCADE in the schema is a silent no-op, which is the
+// root cause of the orphan-row bug class addressed alongside GitHub
+// issue #51.
+func TestForeignKeyPragmaIsEnabled(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	var fkEnabled int
+	if err := store.db.QueryRow("PRAGMA foreign_keys").Scan(&fkEnabled); err != nil {
+		t.Fatalf("Failed to read foreign_keys pragma: %v", err)
+	}
+	if fkEnabled != 1 {
+		t.Errorf("Expected foreign_keys=1, got %d", fkEnabled)
+	}
+
+	// Cross-check using the pragma_foreign_keys virtual table, which
+	// surfaces the same setting through a regular SELECT. Reading it
+	// both ways guards against driver quirks that might let one form
+	// succeed while the other does not.
+	var viaVirtualTable int
+	err := store.db.QueryRow(
+		"SELECT foreign_keys FROM pragma_foreign_keys",
+	).Scan(&viaVirtualTable)
+	if err != nil {
+		t.Fatalf("Failed to read pragma_foreign_keys virtual table: %v", err)
+	}
+	if viaVirtualTable != 1 {
+		t.Errorf("Expected pragma_foreign_keys.foreign_keys=1, got %d", viaVirtualTable)
+	}
+}
+
+// TestDeleteUserCleansUpDependentRows verifies that deleting a user
+// removes every row that references the user: the user's tokens and
+// all of their per-token scope rows, connection_sessions rows keyed on
+// those tokens, and group memberships that reference the user.
+// Regression test for the orphan-rows bug identified as part of the
+// issue #51 follow-up: previously the handler relied on ON DELETE
+// CASCADE foreign keys that SQLite does not enforce, so orphan tokens
+// and memberships accumulated after every user deletion.
+func TestDeleteUserCleansUpDependentRows(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	// Create the target user plus an unrelated second user whose rows
+	// must remain untouched.
+	if err := store.CreateUser("alice", "Password1", "", "", ""); err != nil {
+		t.Fatalf("Failed to create target user: %v", err)
+	}
+	if err := store.CreateUser("bob", "Password1", "", "", ""); err != nil {
+		t.Fatalf("Failed to create second user: %v", err)
+	}
+	aliceID, err := store.GetUserID("alice")
+	if err != nil {
+		t.Fatalf("Failed to get alice's ID: %v", err)
+	}
+	bobID, err := store.GetUserID("bob")
+	if err != nil {
+		t.Fatalf("Failed to get bob's ID: %v", err)
+	}
+
+	// Create a group and add both users so we can verify that alice's
+	// membership row is removed while bob's remains.
+	groupID, err := store.CreateGroup("team", "Test team")
+	if err != nil {
+		t.Fatalf("Failed to create group: %v", err)
+	}
+	if err := store.AddUserToGroup(groupID, aliceID); err != nil {
+		t.Fatalf("Failed to add alice to group: %v", err)
+	}
+	if err := store.AddUserToGroup(groupID, bobID); err != nil {
+		t.Fatalf("Failed to add bob to group: %v", err)
+	}
+
+	// Give alice two tokens (so we exercise deletion of multiple
+	// tokens) and bob one token (to verify his rows survive).
+	_, aliceToken1, err := store.CreateToken("alice", "alice token 1", nil)
+	if err != nil {
+		t.Fatalf("Failed to create alice's first token: %v", err)
+	}
+	_, aliceToken2, err := store.CreateToken("alice", "alice token 2", nil)
+	if err != nil {
+		t.Fatalf("Failed to create alice's second token: %v", err)
+	}
+	_, bobToken, err := store.CreateToken("bob", "bob token", nil)
+	if err != nil {
+		t.Fatalf("Failed to create bob's token: %v", err)
+	}
+
+	// Register an MCP privilege so we can populate token_mcp_scope.
+	privID, err := store.RegisterMCPPrivilege(
+		"tool.test", MCPPrivilegeTypeTool, "Test tool", false,
+	)
+	if err != nil {
+		t.Fatalf("Failed to register MCP privilege: %v", err)
+	}
+
+	// Populate per-token scope rows for each of alice's tokens and for
+	// bob's token.
+	for _, tok := range []*StoredToken{aliceToken1, aliceToken2, bobToken} {
+		if err := store.SetTokenConnectionScope(tok.ID, []ScopedConnection{
+			{ConnectionID: 42, AccessLevel: "read_write"},
+		}); err != nil {
+			t.Fatalf("Failed to set connection scope for token %d: %v", tok.ID, err)
+		}
+		if err := store.SetTokenMCPScope(tok.ID, []int64{privID}); err != nil {
+			t.Fatalf("Failed to set MCP scope for token %d: %v", tok.ID, err)
+		}
+		if err := store.SetTokenAdminScope(tok.ID, []string{"manage_users"}); err != nil {
+			t.Fatalf("Failed to set admin scope for token %d: %v", tok.ID, err)
+		}
+	}
+
+	// Populate connection_sessions rows for every token. These rows
+	// are keyed on token_hash and have no FK, so they must be cleaned
+	// up explicitly by DeleteUser.
+	for _, tok := range []*StoredToken{aliceToken1, aliceToken2, bobToken} {
+		if err := store.SetConnectionSession(tok.TokenHash, 42, nil); err != nil {
+			t.Fatalf("Failed to set connection session for token %d: %v", tok.ID, err)
+		}
+	}
+
+	// Capture alice's token IDs and hashes for post-deletion queries.
+	aliceTokenIDs := []int64{aliceToken1.ID, aliceToken2.ID}
+	aliceTokenHashes := []string{aliceToken1.TokenHash, aliceToken2.TokenHash}
+
+	// Delete alice.
+	if err := store.DeleteUser("alice"); err != nil {
+		t.Fatalf("Failed to delete user: %v", err)
+	}
+
+	// Helper to assert a zero row count for a specific query.
+	assertNoRows := func(label, query string, args ...any) {
+		t.Helper()
+		var count int
+		if err := store.db.QueryRow(query, args...).Scan(&count); err != nil {
+			t.Fatalf("Failed to query %s: %v", label, err)
+		}
+		if count != 0 {
+			t.Errorf("Expected 0 orphan rows in %s, got %d", label, count)
+		}
+	}
+
+	// The user row itself must be gone.
+	assertNoRows("users", "SELECT COUNT(*) FROM users WHERE id = ?", aliceID)
+
+	// No tokens owned by alice may remain. Check both by owner_id and
+	// by the captured IDs (which catches cases where owner_id is
+	// still populated but pointing at a now-nonexistent user).
+	assertNoRows("tokens (owner)", "SELECT COUNT(*) FROM tokens WHERE owner_id = ?", aliceID)
+	for _, tid := range aliceTokenIDs {
+		assertNoRows("tokens (id)", "SELECT COUNT(*) FROM tokens WHERE id = ?", tid)
+	}
+
+	// No per-token scope rows may reference alice's former token IDs.
+	for _, tid := range aliceTokenIDs {
+		assertNoRows(
+			"token_connection_scope",
+			"SELECT COUNT(*) FROM token_connection_scope WHERE token_id = ?", tid,
+		)
+		assertNoRows(
+			"token_mcp_scope",
+			"SELECT COUNT(*) FROM token_mcp_scope WHERE token_id = ?", tid,
+		)
+		assertNoRows(
+			"token_admin_scope",
+			"SELECT COUNT(*) FROM token_admin_scope WHERE token_id = ?", tid,
+		)
+	}
+
+	// No connection_sessions rows may reference alice's former token
+	// hashes.
+	for _, hash := range aliceTokenHashes {
+		assertNoRows(
+			"connection_sessions",
+			"SELECT COUNT(*) FROM connection_sessions WHERE token_hash = ?", hash,
+		)
+	}
+
+	// Alice's group membership must be gone; bob's must survive.
+	assertNoRows(
+		"group_memberships (alice)",
+		"SELECT COUNT(*) FROM group_memberships WHERE member_user_id = ?", aliceID,
+	)
+
+	var bobMembershipCount int
+	err = store.db.QueryRow(
+		"SELECT COUNT(*) FROM group_memberships WHERE member_user_id = ?", bobID,
+	).Scan(&bobMembershipCount)
+	if err != nil {
+		t.Fatalf("Failed to query bob's memberships: %v", err)
+	}
+	if bobMembershipCount != 1 {
+		t.Errorf("Expected bob to retain 1 membership, got %d", bobMembershipCount)
+	}
+
+	// Bob's token and all of his dependent rows must survive unchanged.
+	var bobTokenCount int
+	if err := store.db.QueryRow(
+		"SELECT COUNT(*) FROM tokens WHERE id = ?", bobToken.ID,
+	).Scan(&bobTokenCount); err != nil {
+		t.Fatalf("Failed to query bob's token: %v", err)
+	}
+	if bobTokenCount != 1 {
+		t.Errorf("Expected bob's token to survive, got %d rows", bobTokenCount)
+	}
+	var bobScopeCount int
+	if err := store.db.QueryRow(
+		"SELECT COUNT(*) FROM token_connection_scope WHERE token_id = ?", bobToken.ID,
+	).Scan(&bobScopeCount); err != nil {
+		t.Fatalf("Failed to query bob's token connection scope: %v", err)
+	}
+	if bobScopeCount != 1 {
+		t.Errorf("Expected bob's connection scope to survive, got %d rows", bobScopeCount)
+	}
+	var bobSessionCount int
+	if err := store.db.QueryRow(
+		"SELECT COUNT(*) FROM connection_sessions WHERE token_hash = ?", bobToken.TokenHash,
+	).Scan(&bobSessionCount); err != nil {
+		t.Fatalf("Failed to query bob's connection session: %v", err)
+	}
+	if bobSessionCount != 1 {
+		t.Errorf("Expected bob's connection session to survive, got %d rows", bobSessionCount)
+	}
+}
+
+// TestDeleteTokenCleansUpDependentRows verifies that DeleteToken (the
+// admin-scoped variant that deletes by ID or hash prefix) removes
+// every row that references the deleted token: its connection scope,
+// MCP scope, admin scope, and the connection_sessions row keyed on
+// its hash.
+func TestDeleteTokenCleansUpDependentRows(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	if err := store.CreateUser("alice", "Password1", "", "", ""); err != nil {
+		t.Fatalf("Failed to create user: %v", err)
+	}
+
+	// Create two tokens; we'll delete the first and verify the
+	// second's dependent rows are untouched.
+	_, target, err := store.CreateToken("alice", "target", nil)
+	if err != nil {
+		t.Fatalf("Failed to create target token: %v", err)
+	}
+	_, survivor, err := store.CreateToken("alice", "survivor", nil)
+	if err != nil {
+		t.Fatalf("Failed to create survivor token: %v", err)
+	}
+
+	privID, err := store.RegisterMCPPrivilege(
+		"tool.test", MCPPrivilegeTypeTool, "Test tool", false,
+	)
+	if err != nil {
+		t.Fatalf("Failed to register MCP privilege: %v", err)
+	}
+
+	// Populate dependent rows for both tokens.
+	for _, tok := range []*StoredToken{target, survivor} {
+		if err := store.SetTokenConnectionScope(tok.ID, []ScopedConnection{
+			{ConnectionID: 1, AccessLevel: "read"},
+		}); err != nil {
+			t.Fatalf("Failed to set connection scope: %v", err)
+		}
+		if err := store.SetTokenMCPScope(tok.ID, []int64{privID}); err != nil {
+			t.Fatalf("Failed to set MCP scope: %v", err)
+		}
+		if err := store.SetTokenAdminScope(tok.ID, []string{"manage_users"}); err != nil {
+			t.Fatalf("Failed to set admin scope: %v", err)
+		}
+		if err := store.SetConnectionSession(tok.TokenHash, 1, nil); err != nil {
+			t.Fatalf("Failed to set connection session: %v", err)
+		}
+	}
+
+	// Delete the target token by hash prefix. The first 8 characters
+	// of the hash are unique enough for this synthetic fixture.
+	prefix := target.TokenHash[:8]
+	if err := store.DeleteToken(prefix); err != nil {
+		t.Fatalf("Failed to delete token: %v", err)
+	}
+
+	assertNoRows := func(label, query string, args ...any) {
+		t.Helper()
+		var count int
+		if err := store.db.QueryRow(query, args...).Scan(&count); err != nil {
+			t.Fatalf("Failed to query %s: %v", label, err)
+		}
+		if count != 0 {
+			t.Errorf("Expected 0 orphan rows in %s, got %d", label, count)
+		}
+	}
+
+	assertNoRows("tokens", "SELECT COUNT(*) FROM tokens WHERE id = ?", target.ID)
+	assertNoRows(
+		"token_connection_scope",
+		"SELECT COUNT(*) FROM token_connection_scope WHERE token_id = ?", target.ID,
+	)
+	assertNoRows(
+		"token_mcp_scope",
+		"SELECT COUNT(*) FROM token_mcp_scope WHERE token_id = ?", target.ID,
+	)
+	assertNoRows(
+		"token_admin_scope",
+		"SELECT COUNT(*) FROM token_admin_scope WHERE token_id = ?", target.ID,
+	)
+	assertNoRows(
+		"connection_sessions",
+		"SELECT COUNT(*) FROM connection_sessions WHERE token_hash = ?", target.TokenHash,
+	)
+
+	// Survivor's rows must remain intact.
+	assertRowCount := func(label, query string, want int, args ...any) {
+		t.Helper()
+		var count int
+		if err := store.db.QueryRow(query, args...).Scan(&count); err != nil {
+			t.Fatalf("Failed to query %s: %v", label, err)
+		}
+		if count != want {
+			t.Errorf("Expected %d rows in %s, got %d", want, label, count)
+		}
+	}
+	assertRowCount("tokens (survivor)",
+		"SELECT COUNT(*) FROM tokens WHERE id = ?", 1, survivor.ID)
+	assertRowCount("token_connection_scope (survivor)",
+		"SELECT COUNT(*) FROM token_connection_scope WHERE token_id = ?", 1, survivor.ID)
+	assertRowCount("token_mcp_scope (survivor)",
+		"SELECT COUNT(*) FROM token_mcp_scope WHERE token_id = ?", 1, survivor.ID)
+	assertRowCount("token_admin_scope (survivor)",
+		"SELECT COUNT(*) FROM token_admin_scope WHERE token_id = ?", 1, survivor.ID)
+	assertRowCount("connection_sessions (survivor)",
+		"SELECT COUNT(*) FROM connection_sessions WHERE token_hash = ?", 1, survivor.TokenHash)
+}
+
+// TestDeleteUserTokenCleansUpDependentRows verifies that the owner-
+// scoped DeleteUserToken path removes the same dependent rows as
+// DeleteToken. The only difference between the two paths is the
+// "owned by user" guard, so we still assert the dependents here
+// because the two functions have independent SQL.
+func TestDeleteUserTokenCleansUpDependentRows(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	if err := store.CreateUser("alice", "Password1", "", "", ""); err != nil {
+		t.Fatalf("Failed to create user: %v", err)
+	}
+	_, target, err := store.CreateToken("alice", "target", nil)
+	if err != nil {
+		t.Fatalf("Failed to create token: %v", err)
+	}
+
+	privID, err := store.RegisterMCPPrivilege(
+		"tool.test", MCPPrivilegeTypeTool, "Test tool", false,
+	)
+	if err != nil {
+		t.Fatalf("Failed to register MCP privilege: %v", err)
+	}
+
+	if err := store.SetTokenConnectionScope(target.ID, []ScopedConnection{
+		{ConnectionID: 7, AccessLevel: "read_write"},
+	}); err != nil {
+		t.Fatalf("Failed to set connection scope: %v", err)
+	}
+	if err := store.SetTokenMCPScope(target.ID, []int64{privID}); err != nil {
+		t.Fatalf("Failed to set MCP scope: %v", err)
+	}
+	if err := store.SetTokenAdminScope(target.ID, []string{"manage_users"}); err != nil {
+		t.Fatalf("Failed to set admin scope: %v", err)
+	}
+	if err := store.SetConnectionSession(target.TokenHash, 7, nil); err != nil {
+		t.Fatalf("Failed to set connection session: %v", err)
+	}
+
+	if err := store.DeleteUserToken("alice", target.ID); err != nil {
+		t.Fatalf("Failed to delete user token: %v", err)
+	}
+
+	assertNoRows := func(label, query string, args ...any) {
+		t.Helper()
+		var count int
+		if err := store.db.QueryRow(query, args...).Scan(&count); err != nil {
+			t.Fatalf("Failed to query %s: %v", label, err)
+		}
+		if count != 0 {
+			t.Errorf("Expected 0 orphan rows in %s, got %d", label, count)
+		}
+	}
+
+	assertNoRows("tokens", "SELECT COUNT(*) FROM tokens WHERE id = ?", target.ID)
+	assertNoRows(
+		"token_connection_scope",
+		"SELECT COUNT(*) FROM token_connection_scope WHERE token_id = ?", target.ID,
+	)
+	assertNoRows(
+		"token_mcp_scope",
+		"SELECT COUNT(*) FROM token_mcp_scope WHERE token_id = ?", target.ID,
+	)
+	assertNoRows(
+		"token_admin_scope",
+		"SELECT COUNT(*) FROM token_admin_scope WHERE token_id = ?", target.ID,
+	)
+	assertNoRows(
+		"connection_sessions",
+		"SELECT COUNT(*) FROM connection_sessions WHERE token_hash = ?", target.TokenHash,
+	)
+}

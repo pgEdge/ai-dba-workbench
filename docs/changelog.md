@@ -61,6 +61,12 @@ project adheres to
   lookups. (#36)
 - Fix partitions not being dropped at the appropriate
   time by the collector. (#62)
+- Fix the copy-to-clipboard button in the Admin Tokens
+  "Token created" dialog; the button now confirms a
+  successful copy by swapping to a check mark and
+  showing a "Copied!" tooltip for two seconds, and it
+  reports clipboard failures through the existing error
+  alert. (#71)
 
 ### Security
 

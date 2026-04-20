@@ -32,6 +32,7 @@ import {
     TextField,
     MenuItem,
     Collapse,
+    Tooltip,
 } from '@mui/material';
 import { alpha, useTheme } from '@mui/material/styles';
 import {
@@ -40,6 +41,7 @@ import {
     Delete as DeleteIcon,
     Close as CloseIcon,
     ContentCopy as CopyIcon,
+    Check as CheckIcon,
     ExpandMore as ExpandMoreIcon,
     ExpandLess as ExpandLessIcon,
 } from '@mui/icons-material';
@@ -177,6 +179,7 @@ const AdminTokenScopes: React.FC = () => {
     // Token created success dialog
     const [createdToken, setCreatedToken] = useState<string | null>(null);
     const [createdDialogOpen, setCreatedDialogOpen] = useState(false);
+    const [tokenCopied, setTokenCopied] = useState(false);
 
     // Create dialog - owner privilege filtering
     const [ownerConnections, setOwnerConnections] = useState<Connection[]>([]);
@@ -499,12 +502,35 @@ const AdminTokenScopes: React.FC = () => {
         }
     };
 
-    // Copy token to clipboard
-    const handleCopyToken = async () => {
-        if (createdToken) {
-            await navigator.clipboard.writeText(createdToken);
+    // Copy token to clipboard. Surfaces short-lived feedback via the copy
+    // button (icon swap + tooltip), and reports clipboard failures through
+    // the shared error channel so the user is never left wondering whether
+    // the click did anything.
+    const handleCopyToken = useCallback(() => {
+        if (!createdToken) {
+            return;
         }
-    };
+        navigator.clipboard.writeText(createdToken).then(
+            () => {
+                setTokenCopied(true);
+                setTimeout(() => setTokenCopied(false), 2000);
+            },
+            (err: unknown) => {
+                setError(
+                    err instanceof Error
+                        ? `Failed to copy token: ${err.message}`
+                        : 'Failed to copy token to clipboard.'
+                );
+            }
+        );
+    }, [createdToken]);
+
+    // Close the "token created" dialog and clear the copied-feedback state
+    // so it does not leak into a subsequent open.
+    const handleCloseCreatedDialog = useCallback(() => {
+        setCreatedDialogOpen(false);
+        setTokenCopied(false);
+    }, []);
 
     // Format expiry date
     const formatExpiry = (expiresAt: string | null | undefined) => {
@@ -970,7 +996,7 @@ curl -s -X POST -H "Authorization: Bearer <token>" \\
             {/* Token Created Success Dialog */}
             <Dialog
                 open={createdDialogOpen}
-                onClose={() => setCreatedDialogOpen(false)}
+                onClose={handleCloseCreatedDialog}
                 maxWidth="sm"
                 fullWidth
             >
@@ -997,17 +1023,26 @@ curl -s -X POST -H "Authorization: Bearer <token>" \\
                         <Box sx={{ flex: 1 }}>
                             {createdToken}
                         </Box>
-                        <IconButton
-                            onClick={handleCopyToken}
-                            size="small"
-                            aria-label="copy token"
+                        <Tooltip
+                            title={tokenCopied ? 'Copied!' : 'Copy to clipboard'}
+                            placement="top"
                         >
-                            <CopyIcon fontSize="small" />
-                        </IconButton>
+                            <IconButton
+                                onClick={handleCopyToken}
+                                size="small"
+                                aria-label="copy token"
+                            >
+                                {tokenCopied ? (
+                                    <CheckIcon fontSize="small" />
+                                ) : (
+                                    <CopyIcon fontSize="small" />
+                                )}
+                            </IconButton>
+                        </Tooltip>
                     </Box>
                 </DialogContent>
                 <DialogActions sx={dialogActionsSx}>
-                    <Button onClick={() => setCreatedDialogOpen(false)}>
+                    <Button onClick={handleCloseCreatedDialog}>
                         Close
                     </Button>
                 </DialogActions>

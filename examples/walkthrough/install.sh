@@ -16,17 +16,6 @@ WORK_DIR="${WALKTHROUGH_DIR:-pgedge-workbench-walkthrough}"
 BRANCH="${PGEDGE_BRANCH:-main}"
 BASE_URL="https://raw.githubusercontent.com/pgEdge/ai-dba-workbench/${BRANCH}"
 
-# NOTE: The walkthrough currently builds Docker images from source,
-# which requires the full ai-dba-workbench repository. For now,
-# clone the repo and run guide.sh directly:
-#
-#   git clone https://github.com/pgEdge/ai-dba-workbench.git
-#   cd ai-dba-workbench/examples/walkthrough
-#   bash guide.sh
-#
-# A future release will use pre-built images from GHCR, enabling
-# the curl-pipe install without cloning.
-
 # --- Header ---
 
 echo ""
@@ -85,30 +74,6 @@ chmod +x "$WORK_DIR/examples/walkthrough/guide.sh" \
          "$WORK_DIR/examples/walkthrough/seed/rebase-timestamps.sh"
 
 echo "  Downloaded ${#FILES[@]} files."
-echo ""
-
-# --- Download Dockerfiles and source needed for build ---
-# The compose file builds from ../../ context, so we need the
-# project Dockerfiles. For the curl-pipe install these are fetched
-# individually.
-
-echo "  Downloading build files..."
-
-BUILD_DIRS=(
-  server
-  collector
-  alerter
-  client
-)
-
-for dir in "${BUILD_DIRS[@]}"; do
-  mkdir -p "$WORK_DIR/$dir"
-  if ! curl -fsSL "$BASE_URL/$dir/Dockerfile" -o "$WORK_DIR/$dir/Dockerfile"; then
-    echo "  Warning: failed to download $dir/Dockerfile" >&2
-  fi
-done
-
-echo "  Done."
 echo ""
 
 cd "$WORK_DIR"

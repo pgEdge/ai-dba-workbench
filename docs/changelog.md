@@ -16,6 +16,9 @@ project adheres to
   option to control the HTTP client timeout for
   requests to the configured LLM provider; the
   default remains 120 seconds. (#60)
+- Add a guided walkthrough example with pre-seeded
+  demo data and an in-browser Driver.js tour covering
+  the workbench's major features.
 
 ### Changed
 

@@ -498,6 +498,7 @@ echo ""
   sleep 120
   cd "$SCRIPT_DIR" && docker compose up -d alerter 2>/dev/null
 ) &
+disown
 info "Alert evaluation will start in ~2 minutes (collector gathering data)."
 echo ""
 

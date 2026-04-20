@@ -40,7 +40,7 @@ Git Bash (Windows).
 
 ```bash
 curl -fsSL \
-  https://raw.githubusercontent.com/AntTheLimey/ai-dba-walkthrough/main/install.sh \
+  https://raw.githubusercontent.com/pgEdge/ai-dba-workbench/main/examples/walkthrough/install.sh \
   | bash
 ```
 
@@ -51,8 +51,8 @@ directly. This is useful for development or when you want
 to modify the tour.
 
 ```bash
-git clone https://github.com/AntTheLimey/ai-dba-walkthrough.git
-cd ai-dba-walkthrough
+git clone https://github.com/pgEdge/ai-dba-workbench.git
+cd ai-dba-workbench/examples/walkthrough
 bash guide.sh
 ```
 
@@ -107,22 +107,22 @@ Sign In to start the tour.
 
 The in-browser tour covers seven sections.
 
-- **The Big Picture** introduces the estate dashboard,
+- The Big Picture introduces the estate dashboard,
   navigator, and server selection.
-- **Diagnosing a Problem** explores the AI overview, event
+- Diagnosing a Problem explores the AI overview, event
   timeline, server metrics, active alerts, and AI alert
   analysis.
-- **Ask Ellie** demonstrates the AI chat assistant with
+- Ask Ellie demonstrates the AI chat assistant with
   natural language queries, SQL execution, and follow-up
   questions.
-- **How It's Configured** covers probe defaults, alert
+- How It's Configured covers probe defaults, alert
   rules, email and Slack notification channels.
-- **Server Settings** shows per-server configuration for
+- Server Settings shows per-server configuration for
   alert overrides, probe intervals, and notification
   channels.
-- **Blackout Windows** walks through blackout scheduling
+- Blackout Windows walks through blackout scheduling
   with one-time and recurring maintenance windows.
-- **Who Can Access What** covers user management, API
+- Who Can Access What covers user management, API
   tokens, and AI memories.
 
 ## Cleaning Up

@@ -424,6 +424,8 @@ llm:
 | `embedding_provider` | string | `ollama` | Embedding provider |
 | `embedding_model` | string | `nomic-embed-text` | Embedding model |
 | `embedding_ollama_url` | string | `http://localhost:11434` | Ollama URL |
+| `embedding_voyage_api_key_file` | string | | Voyage API key path |
+| `embedding_openai_api_key_file` | string | | OpenAI key path |
 | `embedding_voyage_base_url` | string | `https://api.voyageai.com/v1/embeddings` | Voyage base URL |
 | `embedding_openai_base_url` | string | `https://api.openai.com/v1` | OpenAI base URL |
 

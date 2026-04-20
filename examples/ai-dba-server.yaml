@@ -213,20 +213,18 @@ embedding:
   # Voyage AI Configuration
   #-----------------------------------------------------------------------
 
-  # Voyage AI API key (or use voyage_api_key_file)
-  # voyage_api_key: ""
-
-  # Path to file containing Voyage API key
+  # Voyage AI API key — provide the path to a file containing the
+  # key via voyage_api_key_file (raw keys cannot be set inline for
+  # security).
   # voyage_api_key_file: "~/.voyage-api-key"
 
   #-----------------------------------------------------------------------
   # OpenAI Configuration
   #-----------------------------------------------------------------------
 
-  # OpenAI API key for embeddings (or use openai_api_key_file)
-  # openai_api_key: ""
-
-  # Path to file containing OpenAI API key
+  # OpenAI API key for embeddings — provide the path to a file
+  # containing the key via openai_api_key_file (raw keys cannot be
+  # set inline for security).
   # openai_api_key_file: "~/.openai-api-key"
 
   #-----------------------------------------------------------------------
@@ -258,10 +256,9 @@ llm:
   # Anthropic Configuration
   #-----------------------------------------------------------------------
 
-  # Anthropic API key (or use anthropic_api_key_file)
-  # anthropic_api_key: ""
-
-  # Path to file containing Anthropic API key
+  # Anthropic API key — provide the path to a file containing the
+  # key via anthropic_api_key_file (raw keys cannot be set inline
+  # for security).
   # anthropic_api_key_file: "~/.anthropic-api-key"
 
   #-----------------------------------------------------------------------
@@ -281,12 +278,10 @@ llm:
   #   EXO:        http://localhost:52415/v1
   #
 
-  # OpenAI API key (or use openai_api_key_file)
-  # Optional when using a custom base URL with a local server
-  # openai_api_key: ""
-
-  # Path to file containing OpenAI API key
-  # Optional when using a custom base URL with a local server
+  # OpenAI API key — provide the path to a file containing the
+  # key via openai_api_key_file (raw keys cannot be set inline for
+  # security). The key is optional when using a custom base URL
+  # with a local server.
   # openai_api_key_file: "~/.openai-api-key"
 
   # Base URL for the OpenAI API
@@ -297,10 +292,9 @@ llm:
   # Google Gemini Configuration
   #-----------------------------------------------------------------------
 
-  # Google Gemini API key (or use gemini_api_key_file)
-  # gemini_api_key: ""
-
-  # Path to file containing Google Gemini API key
+  # Google Gemini API key — provide the path to a file containing
+  # the key via gemini_api_key_file (raw keys cannot be set inline
+  # for security).
   # gemini_api_key_file: "~/.gemini-api-key"
 
   # Base URL for Gemini API
@@ -372,11 +366,17 @@ knowledgebase:
   # Default: http://localhost:11434
   embedding_ollama_url: "http://localhost:11434"
 
-  # Voyage API key for knowledgebase embeddings
-  # embedding_voyage_api_key: ""
+  # Voyage API key for knowledgebase embeddings — provide the
+  # path to a file containing the key via
+  # embedding_voyage_api_key_file (raw keys cannot be set inline
+  # for security).
+  # embedding_voyage_api_key_file: "~/.voyage-api-key"
 
-  # OpenAI API key for knowledgebase embeddings
-  # embedding_openai_api_key: ""
+  # OpenAI API key for knowledgebase embeddings — provide the
+  # path to a file containing the key via
+  # embedding_openai_api_key_file (raw keys cannot be set inline
+  # for security).
+  # embedding_openai_api_key_file: "~/.openai-api-key"
 
 #=========================================================================
 # BUILT-IN TOOLS, RESOURCES, AND PROMPTS

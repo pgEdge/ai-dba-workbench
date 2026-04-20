@@ -16,6 +16,13 @@ project adheres to
   pgEdge package install path at
   `/usr/share/pgedge/postgres-mcp-kb/kb.db`. (#52)
 
+### Fixed
+
+- Remove misleading raw API key options from the
+  example server configuration files; the server
+  only accepts API keys through the corresponding
+  `*_file` variants. (#54)
+
 ## [1.0.0-alpha3] - 2026-04-08
 
 ### Added

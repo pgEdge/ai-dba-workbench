@@ -88,8 +88,6 @@ clean:
 	@cd alerter && $(MAKE) clean BIN_DIR=../$(BIN_DIR)
 	@echo "Cleaning client..."
 	@cd client && $(MAKE) clean
-	@echo "Removing bin directory..."
-	@rm -rf $(BIN_DIR)
 	@echo "All sub-projects cleaned!"
 
 # Kill all running processes

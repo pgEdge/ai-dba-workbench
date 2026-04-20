@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #--------------------------------------------------------------------------
 #
 # pgEdge AI DBA Workbench
@@ -11,7 +11,7 @@
 # Generates: slow queries, lock contention, connection pressure,
 #            session churn (bloat), and INSERT traffic.
 
-set -e
+set -euo pipefail
 
 echo "Waiting 30s for database initialization..."
 sleep 30
@@ -19,7 +19,9 @@ sleep 30
 echo "Starting production workload..."
 
 run_query() {
-    psql -q -c "$1" 2>/dev/null || true
+    if ! psql -q -c "$1" 2>/dev/null; then
+        echo "Query failed: ${1:0:60}..." >&2
+    fi
 }
 
 while true; do
@@ -45,7 +47,7 @@ while true; do
                ORDER BY month DESC, revenue DESC;"
 
     # --- Lock contention: concurrent inventory updates ---
-    for j in $(seq 1 3); do
+    for _ in $(seq 1 3); do
         run_query "UPDATE inventory SET quantity = quantity - 1,
                    last_updated = now()
                    WHERE product_id = $((RANDOM % 100 + 1))

@@ -70,7 +70,11 @@ SPINNER_PID=""
 
 start_spinner() {
   local msg="$1"
-  local chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+  if [[ ${BASH_VERSINFO[0]} -ge 4 ]]; then
+    local chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+  else
+    local chars='/-*|'
+  fi
   (
     while true; do
       for (( i=0; i<${#chars}; i++ )); do

@@ -283,8 +283,8 @@ find_free_port() {
   while port_in_use "$p"; do
     p=$((p + 1))
     if [[ $p -gt 65530 ]]; then
-      echo "$start"
-      return
+      error "No free port found starting from $start."
+      exit 1
     fi
   done
   echo "$p"
@@ -417,6 +417,11 @@ else
   echo ""
 fi
 
+# Verify tour injection is working
+if ! curl -sf "http://localhost:${WT_CLIENT_PORT}" 2>/dev/null | grep -q "loader.js"; then
+  warn "Tour injection not detected (walkthrough overlay may not appear)."
+fi
+
 # ── Rebase timestamps ───────────────────────────────────────────────
 # Shift all pre-baked metric timestamps so the data looks like it was
 # collected in the last few hours, not whenever the seed was recorded.
@@ -463,10 +468,16 @@ echo ""
 
 explain "Re-encrypting demo connection password..."
 
-SESSION=$(curl -sf -D - -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"DemoPass2026"}' \
-  "http://localhost:${WT_SERVER_PORT}/api/v1/auth/login" 2>/dev/null \
-  | grep session_token | sed 's/.*session_token=//;s/;.*//' | tr -d '\r\n')
+COOKIE_JAR=$(mktemp)
+curl -sf -c "$COOKIE_JAR" -H 'Content-Type: application/json' \
+  --data @- \
+  "http://localhost:${WT_SERVER_PORT}/api/v1/auth/login" \
+  >/dev/null 2>&1 <<'AUTH'
+{"username":"admin","password":"DemoPass2026"}
+AUTH
+
+SESSION=$(awk '/session_token/ {print $NF}' "$COOKIE_JAR" 2>/dev/null)
+rm -f "$COOKIE_JAR"
 
 if [[ -z "$SESSION" ]]; then
   warn "Could not authenticate for password re-encryption (continuing)."

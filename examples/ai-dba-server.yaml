@@ -350,8 +350,10 @@ knowledgebase:
   enabled: false
 
   # Path to SQLite knowledgebase database
-  # Required if knowledgebase is enabled
-  # database_path: "/var/lib/ai-workbench/knowledgebase.db"
+  # Defaults to the pgEdge package install path; only set this to
+  # override the default location.
+  # Default: /usr/share/pgedge/postgres-mcp-kb/kb.db
+  # database_path: "/usr/share/pgedge/postgres-mcp-kb/kb.db"
 
   #-----------------------------------------------------------------------
   # Knowledgebase Embedding Configuration

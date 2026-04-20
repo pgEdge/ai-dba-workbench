@@ -66,6 +66,9 @@ func (p *ContextAwareProvider) registerStatelessTools(registry *Registry) {
 		p.cfg.Builtins.Tools.IsToolEnabled("search_knowledgebase") {
 		if _, err := os.Stat(p.cfg.Knowledgebase.DatabasePath); err == nil {
 			registry.Register("search_knowledgebase", SearchKnowledgebaseTool(p.cfg.Knowledgebase.DatabasePath, p.cfg))
+		} else {
+			fmt.Fprintf(os.Stderr, "WARNING: knowledgebase enabled but database file not found at %s: %v; search_knowledgebase tool will not be registered\n",
+				p.cfg.Knowledgebase.DatabasePath, err)
 		}
 	}
 }

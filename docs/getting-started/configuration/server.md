@@ -117,7 +117,7 @@ llm:
 #=====================================================
 knowledgebase:
   enabled: false
-  # database_path: "/var/lib/ai-workbench/kb.db"
+  # database_path: "/usr/share/pgedge/postgres-mcp-kb/kb.db"
   embedding_provider: "ollama"
   embedding_model: "nomic-embed-text"
   embedding_ollama_url: "http://localhost:11434"
@@ -420,7 +420,7 @@ llm:
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `enabled` | bool | `false` | Enable knowledgebase |
-| `database_path` | string | | SQLite database path |
+| `database_path` | string | `/usr/share/pgedge/postgres-mcp-kb/kb.db` | SQLite database path |
 | `embedding_provider` | string | `ollama` | Embedding provider |
 | `embedding_model` | string | `nomic-embed-text` | Embedding model |
 | `embedding_ollama_url` | string | `http://localhost:11434` | Ollama URL |

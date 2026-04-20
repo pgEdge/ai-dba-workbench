@@ -10,6 +10,12 @@ project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- Default the knowledgebase `database_path` to the
+  pgEdge package install path at
+  `/usr/share/pgedge/postgres-mcp-kb/kb.db`. (#52)
+
 ## [1.0.0-alpha3] - 2026-04-08
 
 ### Added

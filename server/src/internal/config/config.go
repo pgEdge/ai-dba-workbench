@@ -529,13 +529,13 @@ func defaultConfig() *Config {
 			Temperature:     0.7,                      // Default temperature
 		},
 		Knowledgebase: KnowledgebaseConfig{
-			Enabled:               false,                    // Disabled by default (opt-in)
-			DatabasePath:          "",                       // Must be provided if enabled
-			EmbeddingProvider:     "ollama",                 // Default provider for KB embeddings
-			EmbeddingModel:        "nomic-embed-text",       // Default Ollama model
-			EmbeddingOllamaURL:    "http://localhost:11434", // Default Ollama URL
-			EmbeddingVoyageAPIKey: "",                       // Must be provided if using Voyage
-			EmbeddingOpenAIAPIKey: "",                       // Must be provided if using OpenAI
+			Enabled:               false,                                     // Disabled by default (opt-in)
+			DatabasePath:          "/usr/share/pgedge/postgres-mcp-kb/kb.db", // Default pgEdge package path
+			EmbeddingProvider:     "ollama",                                  // Default provider for KB embeddings
+			EmbeddingModel:        "nomic-embed-text",                        // Default Ollama model
+			EmbeddingOllamaURL:    "http://localhost:11434",                  // Default Ollama URL
+			EmbeddingVoyageAPIKey: "",                                        // Must be provided if using Voyage
+			EmbeddingOpenAIAPIKey: "",                                        // Must be provided if using OpenAI
 		},
 		Memory: MemoryConfig{
 			Enabled: boolPtr(true), // Enabled by default

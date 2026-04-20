@@ -35,6 +35,7 @@ import {
     getSeverityColors,
     getFriendlyTitle,
     formatThresholdInfo,
+    hasDistinctLastUpdated,
     CHIP_LABEL_SX,
     CHIP_LABEL_075_SX,
     EXPAND_BUTTON_SX,
@@ -47,6 +48,7 @@ import {
     INSTANCE_TIME_SX,
     INSTANCE_THRESHOLD_SX,
     ALERT_ACK_TEXT_SX,
+    ALERT_LAST_UPDATED_SX,
     GROUP_TITLE_SX,
     GROUP_INSTANCES_LIST_SX,
 } from './styles';
@@ -58,6 +60,7 @@ const GroupedAlertInstance = ({ alert, showServer, onAcknowledge, onUnacknowledg
     const theme = useTheme();
     const isAcknowledged = !!alert.acknowledgedAt;
     const thresholdInfo = formatThresholdInfo(alert);
+    const showLastUpdated = hasDistinctLastUpdated(alert);
 
     const containerSx = useMemo(() => ({
         display: 'flex',
@@ -179,9 +182,17 @@ const GroupedAlertInstance = ({ alert, showServer, onAcknowledge, onUnacknowledg
                 </Box>
 
                 {/* Time */}
-                <Typography sx={INSTANCE_TIME_SX}>
-                    {alert.time}
-                </Typography>
+                {showLastUpdated ? (
+                    <Tooltip title="Triggered" placement="top" arrow>
+                        <Typography sx={INSTANCE_TIME_SX}>
+                            {alert.time}
+                        </Typography>
+                    </Tooltip>
+                ) : (
+                    <Typography sx={INSTANCE_TIME_SX}>
+                        {alert.time}
+                    </Typography>
+                )}
 
                 {/* Analyze button */}
                 {onAnalyze && (
@@ -237,6 +248,15 @@ const GroupedAlertInstance = ({ alert, showServer, onAcknowledge, onUnacknowledg
                     </IconButton>
                 </Tooltip>
             </Box>
+
+            {/* Last updated (only when distinct from triggered_at) */}
+            {showLastUpdated && (
+                <Box sx={{ display: 'flex', alignItems: 'center', ml: 1 }}>
+                    <Typography sx={ALERT_LAST_UPDATED_SX}>
+                        Last updated {alert.lastUpdatedTime}
+                    </Typography>
+                </Box>
+            )}
 
             {/* Ack info - only shown when acknowledged */}
             {isAcknowledged && (

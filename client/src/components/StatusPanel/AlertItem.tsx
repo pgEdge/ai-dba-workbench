@@ -32,6 +32,7 @@ import {
     getSeverityColors,
     getFriendlyTitle,
     formatThresholdInfo,
+    hasDistinctLastUpdated,
     CHIP_LABEL_SX,
     FLEX_1_MIN0_SX,
     ICON_16_SX,
@@ -40,6 +41,7 @@ import {
     ALERT_THRESHOLD_SX,
     ALERT_DESCRIPTION_SX,
     ALERT_ACK_TEXT_SX,
+    ALERT_LAST_UPDATED_SX,
     ALERT_TIME_SX,
     SEVERITY_CHIP_BASE_SX,
     ALERT_TYPE_CHIP_BASE_SX,
@@ -57,6 +59,7 @@ const AlertItem = ({ alert, showServer = false, onAcknowledge, onUnacknowledge, 
     const SeverityIcon = alert.severity === 'critical' ? ErrorIcon : WarningIcon;
     const thresholdInfo = formatThresholdInfo(alert);
     const friendlyTitle = getFriendlyTitle(alert.title);
+    const showLastUpdated = hasDistinctLastUpdated(alert);
 
     const containerSx = useMemo(() => ({
         display: 'flex',
@@ -204,6 +207,13 @@ const AlertItem = ({ alert, showServer = false, onAcknowledge, onUnacknowledge, 
                     </Typography>
                 )}
 
+                {/* Last updated (only when distinct from triggered_at) */}
+                {showLastUpdated && (
+                    <Typography sx={ALERT_LAST_UPDATED_SX}>
+                        Last updated {alert.lastUpdatedTime}
+                    </Typography>
+                )}
+
                 {/* Ack info if acknowledged */}
                 {isAcknowledged && (
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mt: 0.25 }}>
@@ -219,9 +229,17 @@ const AlertItem = ({ alert, showServer = false, onAcknowledge, onUnacknowledge, 
 
             {/* Time and severity */}
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexShrink: 0 }}>
-                <Typography sx={ALERT_TIME_SX}>
-                    {alert.time}
-                </Typography>
+                {showLastUpdated ? (
+                    <Tooltip title="Triggered" placement="top" arrow>
+                        <Typography sx={ALERT_TIME_SX}>
+                            {alert.time}
+                        </Typography>
+                    </Tooltip>
+                ) : (
+                    <Typography sx={ALERT_TIME_SX}>
+                        {alert.time}
+                    </Typography>
+                )}
                 <Chip label={alert.severity} size="small" sx={severityChipSx} />
             </Box>
 

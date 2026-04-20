@@ -388,6 +388,7 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"threshold_value": {Type: "number", Description: "Threshold that was exceeded", Nullable: true},
 				"fired_at":        {Type: "string", Format: "date-time", Description: "When the alert fired"},
 				"cleared_at":      {Type: "string", Format: "date-time", Description: "When the alert was cleared", Nullable: true},
+				"last_updated":    {Type: "string", Format: "date-time", Description: "When the alert state was last updated by the alerter (severity changes, metric value updates, reactivation)", Nullable: true},
 				"acknowledged_at": {Type: "string", Format: "date-time", Description: "When the alert was acknowledged", Nullable: true},
 				"acknowledged_by": {Type: "string", Description: "Who acknowledged the alert", Nullable: true},
 				"ack_message":     {Type: "string", Description: "Acknowledgement message", Nullable: true},

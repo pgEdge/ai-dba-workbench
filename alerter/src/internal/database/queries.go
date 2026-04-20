@@ -1298,16 +1298,51 @@ func (d *Datastore) ClearAlert(ctx context.Context, alertID int64) error {
 	return err
 }
 
-// ReactivateAlert sets an acknowledged alert back to active status.
-// This is used when the severity of a threshold alert changes while
-// the alert is acknowledged, so the user sees the severity change.
+// ReactivateAlert sets an acknowledged alert back to active status and
+// clears any acknowledgment rows so the UI no longer shows the alert as
+// acknowledged. This is used when the severity of a threshold alert
+// changes while the alert is acknowledged, so the user sees the severity
+// change. The update is gated on status = 'acknowledged' to avoid
+// clobbering ack rows for alerts that are not currently acknowledged;
+// the delete only runs when the update actually reactivated the alert.
+// Both statements execute in a single transaction so the alert cannot be
+// left in a half-reactivated state (active status with a stale ack row,
+// or vice versa).
 func (d *Datastore) ReactivateAlert(ctx context.Context, alertID int64) error {
-	_, err := d.pool.Exec(ctx, `
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	//nolint:errcheck // Rollback is a no-op if the tx was already committed.
+	defer tx.Rollback(ctx)
+
+	result, err := tx.Exec(ctx, `
 		UPDATE alerts
 		SET status = 'active', last_updated = $1
 		WHERE id = $2 AND status = 'acknowledged'
 	`, time.Now(), alertID)
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to update alert status: %w", err)
+	}
+
+	// Only clear acknowledgment rows when the UPDATE actually flipped an
+	// alert back to active. A no-op UPDATE (alert not found, already
+	// active, or cleared) must not delete ack history for unrelated
+	// state.
+	if result.RowsAffected() == 0 {
+		return tx.Commit(ctx)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM alert_acknowledgments WHERE alert_id = $1
+	`, alertID); err != nil {
+		return fmt.Errorf("failed to clear alert acknowledgments: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+	return nil
 }
 
 // IsBlackoutActive checks if any blackout is currently active for a connection.

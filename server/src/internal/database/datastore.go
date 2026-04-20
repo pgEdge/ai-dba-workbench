@@ -64,6 +64,7 @@ type MonitoredConnection struct {
 	OwnerToken        sql.NullString `json:"-"`
 	IsMonitored       bool           `json:"-"`
 	IsShared          bool           `json:"-"`
+	MembershipSource  string         `json:"-"`
 }
 
 // MarshalJSON serializes MonitoredConnection for API responses.
@@ -73,31 +74,33 @@ type MonitoredConnection struct {
 // sql.NullString produces by default.
 func (mc MonitoredConnection) MarshalJSON() ([]byte, error) {
 	type jsonConn struct {
-		ID           int     `json:"id"`
-		Name         string  `json:"name"`
-		Description  string  `json:"description"`
-		Host         string  `json:"host"`
-		Port         int     `json:"port"`
-		DatabaseName string  `json:"database_name"`
-		Username     string  `json:"username"`
-		SSLMode      *string `json:"ssl_mode,omitempty"`
-		SSLCert      *string `json:"ssl_cert_path,omitempty"`
-		SSLKey       *string `json:"ssl_key_path,omitempty"`
-		SSLRootCert  *string `json:"ssl_root_cert_path,omitempty"`
-		IsMonitored  bool    `json:"is_monitored"`
-		IsShared     bool    `json:"is_shared"`
+		ID               int     `json:"id"`
+		Name             string  `json:"name"`
+		Description      string  `json:"description"`
+		Host             string  `json:"host"`
+		Port             int     `json:"port"`
+		DatabaseName     string  `json:"database_name"`
+		Username         string  `json:"username"`
+		SSLMode          *string `json:"ssl_mode,omitempty"`
+		SSLCert          *string `json:"ssl_cert_path,omitempty"`
+		SSLKey           *string `json:"ssl_key_path,omitempty"`
+		SSLRootCert      *string `json:"ssl_root_cert_path,omitempty"`
+		IsMonitored      bool    `json:"is_monitored"`
+		IsShared         bool    `json:"is_shared"`
+		MembershipSource string  `json:"membership_source,omitempty"`
 	}
 
 	out := jsonConn{
-		ID:           mc.ID,
-		Name:         mc.Name,
-		Description:  mc.Description,
-		Host:         mc.Host,
-		Port:         mc.Port,
-		DatabaseName: mc.DatabaseName,
-		Username:     mc.Username,
-		IsMonitored:  mc.IsMonitored,
-		IsShared:     mc.IsShared,
+		ID:               mc.ID,
+		Name:             mc.Name,
+		Description:      mc.Description,
+		Host:             mc.Host,
+		Port:             mc.Port,
+		DatabaseName:     mc.DatabaseName,
+		Username:         mc.Username,
+		IsMonitored:      mc.IsMonitored,
+		IsShared:         mc.IsShared,
+		MembershipSource: mc.MembershipSource,
 	}
 
 	if mc.SSLMode.Valid && mc.SSLMode.String != "" {
@@ -122,16 +125,17 @@ func (mc MonitoredConnection) MarshalJSON() ([]byte, error) {
 
 // ConnectionListItem is a simplified connection for API responses
 type ConnectionListItem struct {
-	ID            int    `json:"id"`
-	Name          string `json:"name"`
-	Description   string `json:"description"`
-	Host          string `json:"host"`
-	Port          int    `json:"port"`
-	DatabaseName  string `json:"database_name"`
-	IsMonitored   bool   `json:"is_monitored"`
-	IsShared      bool   `json:"is_shared"`
-	OwnerUsername string `json:"owner_username"`
-	ClusterID     *int   `json:"cluster_id"`
+	ID               int    `json:"id"`
+	Name             string `json:"name"`
+	Description      string `json:"description"`
+	Host             string `json:"host"`
+	Port             int    `json:"port"`
+	DatabaseName     string `json:"database_name"`
+	IsMonitored      bool   `json:"is_monitored"`
+	IsShared         bool   `json:"is_shared"`
+	OwnerUsername    string `json:"owner_username"`
+	ClusterID        *int   `json:"cluster_id"`
+	MembershipSource string `json:"membership_source"`
 }
 
 // DatabaseInfo represents a database on a PostgreSQL server
@@ -273,7 +277,8 @@ func (d *Datastore) GetAllConnections(ctx context.Context) ([]ConnectionListItem
 
 	query := `
         SELECT id, name, description, host, port, database_name,
-               is_monitored, is_shared, COALESCE(owner_username, ''), cluster_id
+               is_monitored, is_shared, COALESCE(owner_username, ''),
+               cluster_id, membership_source
         FROM connections
         ORDER BY name
     `
@@ -287,7 +292,7 @@ func (d *Datastore) GetAllConnections(ctx context.Context) ([]ConnectionListItem
 	var connections []ConnectionListItem
 	for rows.Next() {
 		var conn ConnectionListItem
-		if err := rows.Scan(&conn.ID, &conn.Name, &conn.Description, &conn.Host, &conn.Port, &conn.DatabaseName, &conn.IsMonitored, &conn.IsShared, &conn.OwnerUsername, &conn.ClusterID); err != nil {
+		if err := rows.Scan(&conn.ID, &conn.Name, &conn.Description, &conn.Host, &conn.Port, &conn.DatabaseName, &conn.IsMonitored, &conn.IsShared, &conn.OwnerUsername, &conn.ClusterID, &conn.MembershipSource); err != nil {
 			return nil, fmt.Errorf("failed to scan connection: %w", err)
 		}
 		connections = append(connections, conn)
@@ -321,7 +326,8 @@ func (d *Datastore) GetConnection(ctx context.Context, id int) (*MonitoredConnec
 	query := `
         SELECT id, name, description, host, hostaddr, port, database_name, username,
                password_encrypted, sslmode, sslcert, sslkey, sslrootcert,
-               owner_username, owner_token, is_monitored, is_shared
+               owner_username, owner_token, is_monitored, is_shared,
+               membership_source
         FROM connections
         WHERE id = $1
     `
@@ -332,6 +338,7 @@ func (d *Datastore) GetConnection(ctx context.Context, id int) (*MonitoredConnec
 		&conn.DatabaseName, &conn.Username, &conn.PasswordEncrypted,
 		&conn.SSLMode, &conn.SSLCert, &conn.SSLKey, &conn.SSLRootCert,
 		&conn.OwnerUsername, &conn.OwnerToken, &conn.IsMonitored, &conn.IsShared,
+		&conn.MembershipSource,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get connection: %w", err)
@@ -373,7 +380,8 @@ func (d *Datastore) UpdateConnectionName(ctx context.Context, id int, name strin
         WHERE id = $1
         RETURNING id, name, description, host, hostaddr, port, database_name, username,
                   password_encrypted, sslmode, sslcert, sslkey, sslrootcert,
-                  owner_username, owner_token, is_monitored, is_shared
+                  owner_username, owner_token, is_monitored, is_shared,
+                  membership_source
     `
 
 	var conn MonitoredConnection
@@ -382,6 +390,7 @@ func (d *Datastore) UpdateConnectionName(ctx context.Context, id int, name strin
 		&conn.DatabaseName, &conn.Username, &conn.PasswordEncrypted,
 		&conn.SSLMode, &conn.SSLCert, &conn.SSLKey, &conn.SSLRootCert,
 		&conn.OwnerUsername, &conn.OwnerToken, &conn.IsMonitored, &conn.IsShared,
+		&conn.MembershipSource,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update connection: %w", err)
@@ -435,7 +444,8 @@ func (d *Datastore) CreateConnection(ctx context.Context, params ConnectionCreat
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         RETURNING id, name, description, host, hostaddr, port, database_name, username,
                   password_encrypted, sslmode, sslcert, sslkey, sslrootcert,
-                  owner_username, owner_token, is_monitored, is_shared
+                  owner_username, owner_token, is_monitored, is_shared,
+                  membership_source
     `
 
 	var conn MonitoredConnection
@@ -449,6 +459,7 @@ func (d *Datastore) CreateConnection(ctx context.Context, params ConnectionCreat
 		&conn.DatabaseName, &conn.Username, &conn.PasswordEncrypted,
 		&conn.SSLMode, &conn.SSLCert, &conn.SSLKey, &conn.SSLRootCert,
 		&conn.OwnerUsername, &conn.OwnerToken, &conn.IsMonitored, &conn.IsShared,
+		&conn.MembershipSource,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create connection: %w", err)
@@ -593,7 +604,8 @@ func (d *Datastore) UpdateConnectionFull(ctx context.Context, id int, params Con
         WHERE id = $%d
         RETURNING id, name, description, host, hostaddr, port, database_name, username,
                   password_encrypted, sslmode, sslcert, sslkey, sslrootcert,
-                  owner_username, owner_token, is_monitored, is_shared
+                  owner_username, owner_token, is_monitored, is_shared,
+                  membership_source
     `, strings.Join(setClauses, ", "), argNum)
 
 	var conn MonitoredConnection
@@ -602,6 +614,7 @@ func (d *Datastore) UpdateConnectionFull(ctx context.Context, id int, params Con
 		&conn.DatabaseName, &conn.Username, &conn.PasswordEncrypted,
 		&conn.SSLMode, &conn.SSLCert, &conn.SSLKey, &conn.SSLRootCert,
 		&conn.OwnerUsername, &conn.OwnerToken, &conn.IsMonitored, &conn.IsShared,
+		&conn.MembershipSource,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update connection: %w", err)
@@ -3952,6 +3965,7 @@ type Alert struct {
 	Status         string     `json:"status"`
 	TriggeredAt    time.Time  `json:"triggered_at"`
 	ClearedAt      *time.Time `json:"cleared_at,omitempty"`
+	LastUpdated    *time.Time `json:"last_updated,omitempty"`
 	AnomalyScore   *float64   `json:"anomaly_score,omitempty"`
 	AnomalyDetails *string    `json:"anomaly_details,omitempty"`
 	ServerName     string     `json:"server_name,omitempty"`
@@ -4081,7 +4095,7 @@ func (d *Datastore) GetAlerts(ctx context.Context, filter AlertListFilter) (*Ale
 		       a.object_name, a.probe_name, a.metric_name, a.metric_value, r.metric_unit,
 		       a.threshold_value, a.operator, a.severity, a.title, a.description,
 		       a.correlation_id, a.status, a.triggered_at, a.cleared_at,
-		       a.anomaly_score, a.anomaly_details,
+		       a.last_updated, a.anomaly_score, a.anomaly_details,
 		       COALESCE(c.name, 'Unknown') as server_name,
 		       ack.acknowledged_at, ack.acknowledged_by, ack.message, ack.false_positive,
 		       a.ai_analysis, a.ai_analysis_metric_value
@@ -4117,7 +4131,8 @@ func (d *Datastore) GetAlerts(ctx context.Context, filter AlertListFilter) (*Ale
 			&alert.MetricValue, &alert.MetricUnit, &alert.ThresholdValue, &alert.Operator,
 			&alert.Severity, &alert.Title, &alert.Description,
 			&alert.CorrelationID, &alert.Status, &alert.TriggeredAt,
-			&alert.ClearedAt, &alert.AnomalyScore, &alert.AnomalyDetails,
+			&alert.ClearedAt, &alert.LastUpdated,
+			&alert.AnomalyScore, &alert.AnomalyDetails,
 			&alert.ServerName,
 			&alert.AcknowledgedAt, &alert.AcknowledgedBy, &alert.AckMessage,
 			&alert.FalsePositive,
@@ -4281,13 +4296,24 @@ func (d *Datastore) AcknowledgeAlert(ctx context.Context, req AcknowledgeAlertRe
 }
 
 // UnacknowledgeAlert removes acknowledgment from an alert, returning it
-// to active status
+// to active status and deleting any alert_acknowledgments rows so the
+// server's alert listing query no longer surfaces the alert as
+// acknowledged. Both statements run in a single transaction so the alert
+// cannot end up with status = 'active' while a stale acknowledgment row
+// still exists (or the reverse).
 func (d *Datastore) UnacknowledgeAlert(ctx context.Context, alertID int64) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	// Update alert status back to active
-	result, err := d.pool.Exec(ctx, `
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	//nolint:errcheck // Rollback is a no-op if the tx was already committed.
+	defer tx.Rollback(ctx)
+
+	// Update alert status back to active.
+	result, err := tx.Exec(ctx, `
 		UPDATE alerts
 		SET status = 'active'
 		WHERE id = $1 AND status = 'acknowledged'
@@ -4298,6 +4324,18 @@ func (d *Datastore) UnacknowledgeAlert(ctx context.Context, alertID int64) error
 
 	if result.RowsAffected() == 0 {
 		return fmt.Errorf("alert not found or not acknowledged")
+	}
+
+	// Clear acknowledgment rows so the LATERAL join in GetAlerts no
+	// longer returns a stale acknowledged_at for this alert.
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM alert_acknowledgments WHERE alert_id = $1
+	`, alertID); err != nil {
+		return fmt.Errorf("failed to clear alert acknowledgments: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	return nil

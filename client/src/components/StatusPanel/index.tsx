@@ -238,6 +238,14 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
             title: alert.title,
             description: alert.description,
             time: formatRelativeTime(alert.triggered_at),
+            // Preserve raw timestamps so display components can decide
+            // whether `last_updated` differs from `triggered_at` and
+            // should be surfaced separately.
+            triggeredAt: alert.triggered_at,
+            lastUpdated: alert.last_updated,
+            lastUpdatedTime: alert.last_updated
+                ? formatRelativeTime(alert.last_updated)
+                : undefined,
             server: alert.server_name,
             connectionId: alert.connection_id,
             databaseName: alert.database_name,

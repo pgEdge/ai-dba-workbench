@@ -8661,6 +8661,12 @@
             "format": "int64",
             "description": "Alert ID"
           },
+          "last_updated": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the alert state was last updated by the alerter (severity changes, metric value updates, reactivation)",
+            "nullable": true
+          },
           "message": {
             "type": "string",
             "description": "Alert message"

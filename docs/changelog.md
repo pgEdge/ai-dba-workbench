@@ -41,6 +41,13 @@ project adheres to
   that require a custom `sslrootcert`, `sslcert`, or
   `sslkey`; the server now forwards these fields on
   the database connection string. (#57)
+- Fix reactivated alerts continuing to appear as
+  acknowledged in the GUI by clearing stale
+  `alert_acknowledgments` rows when an alert leaves
+  the acknowledged state; the alerts API now also
+  exposes a nullable `last_updated` RFC3339 timestamp
+  and the StatusPanel surfaces it alongside
+  "Triggered" when the two differ. (#64)
 
 ## [1.0.0-alpha3] - 2026-04-08
 

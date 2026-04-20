@@ -19,6 +19,28 @@ import { getFriendlyTitle } from '../../utils/friendlyNames';
 // Re-export so existing imports from this module continue to work
 export { getFriendlyTitle } from '../../utils/friendlyNames';
 
+/**
+ * Return true when an alert has a `lastUpdated` timestamp that is
+ * meaningfully different from its `triggeredAt` timestamp. Used to
+ * decide whether to surface a separate "Last updated" line in the
+ * alert display; reactivated alerts will have the two timestamps
+ * diverge, freshly-triggered alerts will not.
+ */
+export const hasDistinctLastUpdated = (alert) => {
+    if (!alert?.lastUpdated || !alert?.triggeredAt) {
+        return false;
+    }
+    const triggered = new Date(alert.triggeredAt).getTime();
+    const updated = new Date(alert.lastUpdated).getTime();
+    if (isNaN(triggered) || isNaN(updated)) {
+        return false;
+    }
+    // Treat timestamps within one second of each other as "the same"
+    // since the backend writes them at effectively the same instant
+    // when an alert is first created.
+    return Math.abs(updated - triggered) >= 1000;
+};
+
 // Format threshold info for display
 export const formatThresholdInfo = (alert) => {
     if (alert.alertType !== 'threshold' || !alert.metricValue || !alert.thresholdValue) {
@@ -166,6 +188,14 @@ export const ALERT_TIME_SX = {
     display: 'flex',
     alignItems: 'center',
     gap: 0.25,
+};
+
+// "Last updated" line style, used when an alert's last_updated
+// timestamp differs from its triggered_at timestamp (e.g. after
+// reactivation).
+export const ALERT_LAST_UPDATED_SX = {
+    color: 'text.secondary',
+    fontSize: '0.875rem',
 };
 
 export const SEVERITY_CHIP_BASE_SX = {

@@ -22,6 +22,15 @@ export interface TransformedAlert {
     title: string;
     description?: string;
     time: string;
+    // Raw ISO timestamp for the alert's original trigger time.
+    triggeredAt?: string;
+    // Raw ISO timestamp for the alert's most recent re-evaluation /
+    // reactivation. When present and different from triggeredAt, it is
+    // surfaced in the UI so users can see that a reactivated alert is
+    // not stale.
+    lastUpdated?: string;
+    // Pre-formatted relative time for lastUpdated (mirrors `time`).
+    lastUpdatedTime?: string;
     server?: string;
     connectionId?: number;
     databaseName?: string;

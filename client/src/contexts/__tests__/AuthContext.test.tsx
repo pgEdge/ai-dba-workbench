@@ -11,7 +11,7 @@
 import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { AuthProvider, useAuth } from '../AuthContext';
+import { ADMIN_PERMISSION_WILDCARD, AuthProvider, useAuth } from '../AuthContext';
 
 // Mock fetch
 const mockFetch = vi.fn();
@@ -664,7 +664,7 @@ describe('AuthContext', () => {
             mockCheckAuthAuthenticated({
                 username: 'testuser',
                 is_superuser: false,
-                admin_permissions: ['*'],
+                admin_permissions: [ADMIN_PERMISSION_WILDCARD],
             });
 
             const { result } = renderHook(() => useAuth(), { wrapper });
@@ -683,7 +683,7 @@ describe('AuthContext', () => {
             mockCheckAuthAuthenticated({
                 username: 'testuser',
                 is_superuser: false,
-                admin_permissions: ['*', 'manage_users'],
+                admin_permissions: [ADMIN_PERMISSION_WILDCARD, 'manage_users'],
             });
 
             const { result } = renderHook(() => useAuth(), { wrapper });

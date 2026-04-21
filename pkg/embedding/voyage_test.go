@@ -255,3 +255,37 @@ func TestVoyageProvider_Embed_EmptyResponse(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
+
+func TestVoyageProvider_Embed_MalformedJSON(t *testing.T) {
+	// Create mock server that returns malformed JSON
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := w.Write([]byte(`{invalid json`)); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}))
+	defer server.Close()
+
+	provider := &VoyageProvider{
+		apiKey:  "pa-test-key-12345678",
+		model:   "voyage-3-lite",
+		baseURL: server.URL,
+		client:  server.Client(),
+	}
+
+	_, err := provider.Embed(context.Background(), "test text")
+	if err == nil {
+		t.Fatal("expected error for malformed JSON")
+	}
+}
+
+func TestVoyageProvider_CustomBaseURL(t *testing.T) {
+	provider, err := NewVoyageProvider("pa-test-key-12345678", "voyage-3", "https://custom.voyageai.com/v1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if provider.baseURL != "https://custom.voyageai.com/v1" {
+		t.Errorf("expected custom base URL, got %q", provider.baseURL)
+	}
+}

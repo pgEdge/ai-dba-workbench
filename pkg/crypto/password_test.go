@@ -355,3 +355,178 @@ func TestBinaryDataAsPassword(t *testing.T) {
 		t.Errorf("binary data round-trip failed")
 	}
 }
+
+// Tests for the GCM functions directly
+
+func TestEncryptGCM_Success(t *testing.T) {
+	key := make([]byte, 32) // AES-256 requires 32-byte key
+	for i := range key {
+		key[i] = byte(i)
+	}
+	plaintext := []byte("test plaintext data")
+
+	ciphertext, err := EncryptGCM(key, plaintext)
+	if err != nil {
+		t.Fatalf("EncryptGCM failed: %v", err)
+	}
+
+	// Ciphertext should be longer than plaintext (includes nonce + auth tag)
+	if len(ciphertext) <= len(plaintext) {
+		t.Error("ciphertext should be longer than plaintext")
+	}
+}
+
+func TestDecryptGCM_Success(t *testing.T) {
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i)
+	}
+	plaintext := []byte("test plaintext data for decrypt")
+
+	ciphertext, err := EncryptGCM(key, plaintext)
+	if err != nil {
+		t.Fatalf("EncryptGCM failed: %v", err)
+	}
+
+	decrypted, err := DecryptGCM(key, ciphertext)
+	if err != nil {
+		t.Fatalf("DecryptGCM failed: %v", err)
+	}
+
+	if string(decrypted) != string(plaintext) {
+		t.Errorf("DecryptGCM() = %q, want %q", decrypted, plaintext)
+	}
+}
+
+func TestEncryptGCM_InvalidKeySize(t *testing.T) {
+	// AES requires key sizes of 16, 24, or 32 bytes
+	invalidKey := make([]byte, 15) // Invalid size
+	plaintext := []byte("test")
+
+	_, err := EncryptGCM(invalidKey, plaintext)
+	if err == nil {
+		t.Error("EncryptGCM should fail with invalid key size")
+	}
+}
+
+func TestDecryptGCM_InvalidKeySize(t *testing.T) {
+	invalidKey := make([]byte, 15)
+	ciphertext := make([]byte, 50)
+
+	_, err := DecryptGCM(invalidKey, ciphertext)
+	if err == nil {
+		t.Error("DecryptGCM should fail with invalid key size")
+	}
+}
+
+func TestDecryptGCM_CiphertextTooShort(t *testing.T) {
+	key := make([]byte, 32)
+	// GCM nonce is 12 bytes, so anything shorter should fail
+	shortCiphertext := make([]byte, 5)
+
+	_, err := DecryptGCM(key, shortCiphertext)
+	if err == nil {
+		t.Error("DecryptGCM should fail with ciphertext shorter than nonce")
+	}
+	if !strings.Contains(err.Error(), "too short") {
+		t.Errorf("expected 'too short' in error, got: %v", err)
+	}
+}
+
+func TestDecryptGCM_TamperedCiphertext(t *testing.T) {
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i)
+	}
+	plaintext := []byte("test plaintext")
+
+	ciphertext, err := EncryptGCM(key, plaintext)
+	if err != nil {
+		t.Fatalf("EncryptGCM failed: %v", err)
+	}
+
+	// Tamper with the ciphertext (flip a byte after the nonce)
+	if len(ciphertext) > 15 {
+		ciphertext[15] ^= 0xFF
+	}
+
+	_, err = DecryptGCM(key, ciphertext)
+	if err == nil {
+		t.Error("DecryptGCM should fail with tampered ciphertext")
+	}
+}
+
+func TestDecryptGCM_WrongKey(t *testing.T) {
+	key1 := make([]byte, 32)
+	key2 := make([]byte, 32)
+	for i := range key1 {
+		key1[i] = byte(i)
+		key2[i] = byte(i + 1) // Different key
+	}
+	plaintext := []byte("test plaintext")
+
+	ciphertext, err := EncryptGCM(key1, plaintext)
+	if err != nil {
+		t.Fatalf("EncryptGCM failed: %v", err)
+	}
+
+	_, err = DecryptGCM(key2, ciphertext)
+	if err == nil {
+		t.Error("DecryptGCM should fail with wrong key")
+	}
+}
+
+func TestEncryptGCM_EmptyPlaintext(t *testing.T) {
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i)
+	}
+
+	ciphertext, err := EncryptGCM(key, []byte{})
+	if err != nil {
+		t.Fatalf("EncryptGCM failed with empty plaintext: %v", err)
+	}
+
+	decrypted, err := DecryptGCM(key, ciphertext)
+	if err != nil {
+		t.Fatalf("DecryptGCM failed: %v", err)
+	}
+
+	if len(decrypted) != 0 {
+		t.Errorf("expected empty decrypted data, got %d bytes", len(decrypted))
+	}
+}
+
+func TestEncryptGCM_LargePlaintext(t *testing.T) {
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i)
+	}
+	// 1MB of data
+	plaintext := make([]byte, 1024*1024)
+	for i := range plaintext {
+		plaintext[i] = byte(i % 256)
+	}
+
+	ciphertext, err := EncryptGCM(key, plaintext)
+	if err != nil {
+		t.Fatalf("EncryptGCM failed with large plaintext: %v", err)
+	}
+
+	decrypted, err := DecryptGCM(key, ciphertext)
+	if err != nil {
+		t.Fatalf("DecryptGCM failed: %v", err)
+	}
+
+	if len(decrypted) != len(plaintext) {
+		t.Errorf("decrypted length = %d, want %d",
+			len(decrypted), len(plaintext))
+	}
+
+	for i := range plaintext {
+		if decrypted[i] != plaintext[i] {
+			t.Errorf("decrypted[%d] = %d, want %d", i, decrypted[i], plaintext[i])
+			break
+		}
+	}
+}

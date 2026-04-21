@@ -240,3 +240,263 @@ func TestLoadOptionalYAMLFile(t *testing.T) {
 		t.Errorf("LoadOptionalYAMLFile() modified cfg for non-existent file: %+v", emptyCfg)
 	}
 }
+
+func TestFileExists(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a test file
+	existingFile := filepath.Join(tmpDir, "exists.txt")
+	if err := os.WriteFile(existingFile, []byte("test"), 0600); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+
+	// Test existing file
+	if !FileExists(existingFile) {
+		t.Error("FileExists() returned false for existing file")
+	}
+
+	// Test non-existing file
+	if FileExists(filepath.Join(tmpDir, "nonexistent.txt")) {
+		t.Error("FileExists() returned true for non-existing file")
+	}
+
+	// Test directory (should return true since it exists)
+	if !FileExists(tmpDir) {
+		t.Error("FileExists() returned false for existing directory")
+	}
+}
+
+func TestGetDefaultConfigPath(t *testing.T) {
+	// Test when system path does not exist (common case)
+	result := GetDefaultConfigPath("/usr/local/bin/myapp", "myapp.yaml")
+
+	// Since /etc/pgedge/myapp.yaml likely doesn't exist, it should
+	// return the path relative to the binary
+	expected := "/usr/local/bin/myapp.yaml"
+	if result != expected {
+		// If the system path exists, that's fine too
+		if result != "/etc/pgedge/myapp.yaml" {
+			t.Errorf("GetDefaultConfigPath() = %q, want %q or system path",
+				result, expected)
+		}
+	}
+}
+
+func TestGetDefaultConfigPathWithDifferentBinaryPaths(t *testing.T) {
+	tests := []struct {
+		name           string
+		binaryPath     string
+		configFilename string
+		expected       string
+	}{
+		{
+			name:           "absolute path",
+			binaryPath:     "/opt/app/bin/service",
+			configFilename: "service.yaml",
+			expected:       "/opt/app/bin/service.yaml",
+		},
+		{
+			name:           "home directory",
+			binaryPath:     "/home/user/bin/collector",
+			configFilename: "collector.yaml",
+			expected:       "/home/user/bin/collector.yaml",
+		},
+		{
+			name:           "with dots in filename",
+			binaryPath:     "/usr/bin/app",
+			configFilename: "app.config.yaml",
+			expected:       "/usr/bin/app.config.yaml",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := GetDefaultConfigPath(tt.binaryPath, tt.configFilename)
+			// System config might exist, so accept either
+			if result != tt.expected &&
+				result != filepath.Join("/etc/pgedge", tt.configFilename) {
+				t.Errorf("GetDefaultConfigPath(%q, %q) = %q, want %q",
+					tt.binaryPath, tt.configFilename, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestReadOptionalTrimmedFileError(t *testing.T) {
+	// Test with a directory (should fail when trying to read)
+	tmpDir := t.TempDir()
+
+	// Create a subdirectory
+	subDir := filepath.Join(tmpDir, "subdir")
+	if err := os.Mkdir(subDir, 0755); err != nil {
+		t.Fatalf("failed to create subdirectory: %v", err)
+	}
+
+	// Attempting to read a directory should fail
+	_, err := ReadOptionalTrimmedFile(subDir)
+	if err == nil {
+		t.Error("ReadOptionalTrimmedFile() should fail when reading directory")
+	}
+}
+
+func TestReadTrimmedFileWithWhitespaceVariants(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	tests := []struct {
+		name     string
+		content  string
+		expected string
+	}{
+		{"leading spaces", "   hello", "hello"},
+		{"trailing spaces", "hello   ", "hello"},
+		{"leading tabs", "\t\thello", "hello"},
+		{"trailing tabs", "hello\t\t", "hello"},
+		{"leading newlines", "\n\nhello", "hello"},
+		{"trailing newlines", "hello\n\n", "hello"},
+		{"mixed whitespace", " \t\n hello world \n\t ", "hello world"},
+		{"only whitespace", "   \t\n  ", ""},
+		{"carriage returns", "\r\nhello\r\n", "hello"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filePath := filepath.Join(tmpDir, tt.name+".txt")
+			if err := os.WriteFile(filePath, []byte(tt.content), 0600); err != nil {
+				t.Fatalf("failed to write test file: %v", err)
+			}
+
+			result, err := ReadTrimmedFile(filePath)
+			if err != nil {
+				t.Fatalf("ReadTrimmedFile() error: %v", err)
+			}
+			if result != tt.expected {
+				t.Errorf("ReadTrimmedFile() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestLoadYAMLFileWithNestedStructure(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	type NestedConfig struct {
+		Server struct {
+			Host string `yaml:"host"`
+			Port int    `yaml:"port"`
+		} `yaml:"server"`
+		Database struct {
+			Name     string `yaml:"name"`
+			Username string `yaml:"username"`
+		} `yaml:"database"`
+	}
+
+	yamlContent := `
+server:
+  host: localhost
+  port: 8080
+database:
+  name: testdb
+  username: admin
+`
+
+	filePath := filepath.Join(tmpDir, "nested.yaml")
+	if err := os.WriteFile(filePath, []byte(yamlContent), 0600); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	var cfg NestedConfig
+	if err := LoadYAMLFile(filePath, &cfg); err != nil {
+		t.Fatalf("LoadYAMLFile() error: %v", err)
+	}
+
+	if cfg.Server.Host != "localhost" {
+		t.Errorf("Server.Host = %q, want %q", cfg.Server.Host, "localhost")
+	}
+	if cfg.Server.Port != 8080 {
+		t.Errorf("Server.Port = %d, want %d", cfg.Server.Port, 8080)
+	}
+	if cfg.Database.Name != "testdb" {
+		t.Errorf("Database.Name = %q, want %q", cfg.Database.Name, "testdb")
+	}
+	if cfg.Database.Username != "admin" {
+		t.Errorf("Database.Username = %q, want %q",
+			cfg.Database.Username, "admin")
+	}
+}
+
+func TestReadTrimmedFileWithTildeError(t *testing.T) {
+	// Test when file doesn't exist after tilde expansion
+	_, err := ReadTrimmedFileWithTilde("~/nonexistent_file_12345.txt")
+	if err == nil {
+		t.Error("ReadTrimmedFileWithTilde() expected error for non-existent file")
+	}
+}
+
+func TestGetDefaultConfigPathSystemPath(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a mock /etc/pgedge directory and config file
+	// Note: We can't actually test the /etc/pgedge path without root access
+	// So we test the fallback behavior
+
+	result := GetDefaultConfigPath(
+		filepath.Join(tmpDir, "binary"),
+		"test.yaml",
+	)
+
+	// Since /etc/pgedge/test.yaml doesn't exist, should return binary path
+	expected := filepath.Join(tmpDir, "test.yaml")
+	if result != expected {
+		// May have hit the /etc/pgedge case if it exists
+		if result != "/etc/pgedge/test.yaml" {
+			t.Errorf("GetDefaultConfigPath() = %q, want %q", result, expected)
+		}
+	}
+}
+
+func TestExpandTildePathWithSlash(t *testing.T) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("failed to get home directory: %v", err)
+	}
+
+	// Test with just tilde and slash
+	result, err := ExpandTildePath("~/")
+	if err != nil {
+		t.Fatalf("ExpandTildePath() error: %v", err)
+	}
+	expected := filepath.Join(homeDir, "/")
+	if result != expected {
+		t.Errorf("ExpandTildePath(\"~/\") = %q, want %q", result, expected)
+	}
+
+	// Test with deeply nested path
+	result, err = ExpandTildePath("~/.config/app/settings.yaml")
+	if err != nil {
+		t.Fatalf("ExpandTildePath() error: %v", err)
+	}
+	expected = filepath.Join(homeDir, ".config/app/settings.yaml")
+	if result != expected {
+		t.Errorf("ExpandTildePath() = %q, want %q", result, expected)
+	}
+}
+
+func TestLoadOptionalYAMLFileInvalidYAML(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	type TestConfig struct {
+		Name string `yaml:"name"`
+	}
+
+	// Create an invalid YAML file
+	invalidPath := filepath.Join(tmpDir, "invalid.yaml")
+	if err := os.WriteFile(invalidPath, []byte("invalid: [yaml: content"), 0600); err != nil {
+		t.Fatalf("failed to write invalid yaml file: %v", err)
+	}
+
+	var cfg TestConfig
+	err := LoadOptionalYAMLFile(invalidPath, &cfg)
+	if err == nil {
+		t.Error("LoadOptionalYAMLFile() expected error for invalid YAML")
+	}
+}

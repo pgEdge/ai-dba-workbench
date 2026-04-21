@@ -184,3 +184,153 @@ func TestInit(t *testing.T) {
 			buf.String())
 	}
 }
+
+// TestDebugVerboseModes tests that Debug/Debugf respect verbose mode
+func TestDebugVerboseModes(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+
+	// Test Debug in non-verbose mode
+	SetVerbose(false)
+	buf.Reset()
+	Debug("debug message")
+	if buf.String() != "" {
+		t.Errorf("Expected no output in non-verbose mode, got: %s",
+			buf.String())
+	}
+
+	// Test Debug in verbose mode
+	SetVerbose(true)
+	buf.Reset()
+	Debug("debug message")
+	if !strings.Contains(buf.String(), "debug message") {
+		t.Errorf("Expected debug message in verbose mode, got: %s",
+			buf.String())
+	}
+
+	// Test Debugf in non-verbose mode
+	SetVerbose(false)
+	buf.Reset()
+	Debugf("formatted debug %s %d", "test", 456)
+	if buf.String() != "" {
+		t.Errorf("Expected no output in non-verbose mode, got: %s",
+			buf.String())
+	}
+
+	// Test Debugf in verbose mode
+	SetVerbose(true)
+	buf.Reset()
+	Debugf("formatted debug %s %d", "test", 456)
+	if !strings.Contains(buf.String(), "formatted debug test 456") {
+		t.Errorf("Expected formatted debug in verbose mode, got: %s",
+			buf.String())
+	}
+
+	// Reset verbose mode
+	SetVerbose(false)
+}
+
+// TestMultipleLogCalls tests multiple log calls in sequence
+func TestMultipleLogCalls(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+
+	SetVerbose(true)
+	buf.Reset()
+
+	Info("first message")
+	Info("second message")
+	Debug("third message")
+
+	output := buf.String()
+	if !strings.Contains(output, "first message") {
+		t.Error("Expected first message in output")
+	}
+	if !strings.Contains(output, "second message") {
+		t.Error("Expected second message in output")
+	}
+	if !strings.Contains(output, "third message") {
+		t.Error("Expected third message in output")
+	}
+
+	SetVerbose(false)
+}
+
+// TestLogWithVariousTypes tests logging with various argument types
+func TestLogWithVariousTypes(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+
+	SetVerbose(true)
+	buf.Reset()
+
+	Info("string", 123, true, 3.14)
+	output := buf.String()
+	if !strings.Contains(output, "string") {
+		t.Error("Expected string in output")
+	}
+	if !strings.Contains(output, "123") {
+		t.Error("Expected integer in output")
+	}
+	if !strings.Contains(output, "true") {
+		t.Error("Expected boolean in output")
+	}
+	if !strings.Contains(output, "3.14") {
+		t.Error("Expected float in output")
+	}
+
+	SetVerbose(false)
+}
+
+// TestErrorfFormatting tests that Errorf properly formats strings
+func TestErrorfFormatting(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+
+	buf.Reset()
+	Errorf("Error: %s (code: %d, retry: %v)", "connection failed", 503, true)
+
+	output := buf.String()
+	expected := "Error: connection failed (code: 503, retry: true)"
+	if !strings.Contains(output, expected) {
+		t.Errorf("Expected %q in output, got: %s", expected, output)
+	}
+}
+
+// TestStartupfFormatting tests that Startupf properly formats strings
+func TestStartupfFormatting(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+
+	buf.Reset()
+	Startupf("Server starting on %s:%d", "0.0.0.0", 8080)
+
+	output := buf.String()
+	expected := "Server starting on 0.0.0.0:8080"
+	if !strings.Contains(output, expected) {
+		t.Errorf("Expected %q in output, got: %s", expected, output)
+	}
+}
+
+// TestVerboseToggle tests rapidly toggling verbose mode
+func TestVerboseToggle(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+
+	for i := 0; i < 10; i++ {
+		SetVerbose(true)
+		if !IsVerbose() {
+			t.Errorf("Iteration %d: Expected verbose to be true", i)
+		}
+		SetVerbose(false)
+		if IsVerbose() {
+			t.Errorf("Iteration %d: Expected verbose to be false", i)
+		}
+	}
+}

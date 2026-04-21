@@ -174,3 +174,89 @@ func TestConfigStruct(t *testing.T) {
 		t.Errorf("expected OllamaURL 'http://localhost:11434', got %q", cfg.OllamaURL)
 	}
 }
+
+func TestNewProvider_Gemini(t *testing.T) {
+	t.Run("valid config", func(t *testing.T) {
+		cfg := Config{
+			Provider:     "gemini",
+			Model:        "text-embedding-004",
+			GeminiAPIKey: "AIza-test-key-12345678",
+		}
+
+		provider, err := NewProvider(cfg)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if provider == nil {
+			t.Fatal("expected non-nil provider")
+		}
+		if provider.ProviderName() != "gemini" {
+			t.Errorf("expected provider name 'gemini', got %q", provider.ProviderName())
+		}
+	})
+
+	t.Run("missing API key", func(t *testing.T) {
+		cfg := Config{
+			Provider: "gemini",
+			Model:    "text-embedding-004",
+		}
+
+		_, err := NewProvider(cfg)
+		if err == nil {
+			t.Fatal("expected error for missing API key")
+		}
+	})
+
+	t.Run("with custom base URL", func(t *testing.T) {
+		cfg := Config{
+			Provider:      "gemini",
+			Model:         "text-embedding-004",
+			GeminiAPIKey:  "AIza-test-key-12345678",
+			GeminiBaseURL: "https://custom.example.com",
+		}
+
+		provider, err := NewProvider(cfg)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if provider == nil {
+			t.Fatal("expected non-nil provider")
+		}
+	})
+}
+
+func TestNewProvider_Voyage_CustomBaseURL(t *testing.T) {
+	cfg := Config{
+		Provider:      "voyage",
+		Model:         "voyage-3-lite",
+		VoyageAPIKey:  "pa-test-key-12345678",
+		VoyageBaseURL: "https://custom.voyageai.com/v1/embeddings",
+	}
+
+	provider, err := NewProvider(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if provider == nil {
+		t.Fatal("expected non-nil provider")
+	}
+}
+
+func TestNewProvider_EmptyProvider(t *testing.T) {
+	cfg := Config{
+		Provider: "",
+	}
+
+	_, err := NewProvider(cfg)
+	if err == nil {
+		t.Fatal("expected error for empty provider")
+	}
+}
+
+func TestProviderInterface(t *testing.T) {
+	// Verify that all providers implement the Provider interface
+	var _ Provider = (*VoyageProvider)(nil)
+	var _ Provider = (*OpenAIProvider)(nil)
+	var _ Provider = (*GeminiProvider)(nil)
+	var _ Provider = (*OllamaProvider)(nil)
+}

@@ -276,3 +276,78 @@ func TestOpenAIProvider_Embed_EmptyResponse(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
+
+func TestOpenAIProvider_Embed_MalformedJSON(t *testing.T) {
+	// Create mock server that returns malformed JSON
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := w.Write([]byte(`{invalid json`)); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}))
+	defer server.Close()
+
+	provider := &OpenAIProvider{
+		apiKey:  "sk-test-key-12345678",
+		model:   "text-embedding-3-small",
+		baseURL: server.URL,
+		client:  server.Client(),
+	}
+
+	_, err := provider.Embed(context.Background(), "test text")
+	if err == nil {
+		t.Fatal("expected error for malformed JSON")
+	}
+}
+
+func TestOpenAIProvider_Embed_NoAuthWithCustomURL(t *testing.T) {
+	// Create mock server
+	authHeaderPresent := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			authHeaderPresent = true
+		}
+
+		response := openaiEmbeddingResponse{
+			Object: "list",
+			Data: []struct {
+				Object    string    `json:"object"`
+				Embedding []float64 `json:"embedding"`
+				Index     int       `json:"index"`
+			}{
+				{
+					Object:    "embedding",
+					Embedding: make([]float64, 1536),
+					Index:     0,
+				},
+			},
+			Model: "text-embedding-3-small",
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}))
+	defer server.Close()
+
+	// Provider with empty API key (allowed with custom URL)
+	provider := &OpenAIProvider{
+		apiKey:  "",
+		model:   "text-embedding-3-small",
+		baseURL: server.URL,
+		client:  server.Client(),
+	}
+
+	_, err := provider.Embed(context.Background(), "test text")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Authorization header should not be present
+	if authHeaderPresent {
+		t.Error("expected no Authorization header when API key is empty")
+	}
+}

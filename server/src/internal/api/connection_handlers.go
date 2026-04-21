@@ -163,12 +163,15 @@ func (h *ConnectionHandler) listConnections(w http.ResponseWriter, r *http.Reque
 	// RBAC: restrict to visible connections. VisibleConnectionIDs
 	// returns allConnections=true for superusers and wildcard token
 	// scopes; otherwise it returns the explicit set of visible IDs
-	// (owned, shared, and group/token granted).
+	// (owned, shared, and group/token granted). Reuse the slice we
+	// just loaded so visibility resolution and the response body are
+	// computed from the same snapshot and we avoid a second
+	// datastore read on every request.
 	var lister auth.ConnectionVisibilityLister
 	if h.visibilityListerFn != nil {
 		lister = h.visibilityListerFn()
 	} else {
-		lister = newConnectionVisibilityLister(h.datastore)
+		lister = newConnectionSliceVisibilityLister(connections)
 	}
 	visibleIDs, allConnections, err := h.rbacChecker.VisibleConnectionIDs(ctx, lister)
 	if err != nil {

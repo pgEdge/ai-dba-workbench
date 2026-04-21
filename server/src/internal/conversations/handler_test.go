@@ -184,3 +184,146 @@ func TestHandleDeleteAll_MethodNotAllowed(t *testing.T) {
 		t.Errorf("Expected %d, got %d", http.StatusMethodNotAllowed, rr.Code)
 	}
 }
+
+func TestNewHandler(t *testing.T) {
+	store := NewStore(nil)
+	handler := NewHandler(store, nil)
+
+	if handler == nil {
+		t.Fatal("Expected non-nil handler")
+	}
+	if handler.store != store {
+		t.Error("Expected store to be set")
+	}
+}
+
+func TestHandleList_Unauthorized(t *testing.T) {
+	store := NewStore(nil)
+	h := NewHandler(store, nil)
+
+	// Request without auth token
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/conversations", nil)
+	rr := httptest.NewRecorder()
+
+	h.HandleList(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("Expected %d, got %d", http.StatusUnauthorized, rr.Code)
+	}
+}
+
+func TestHandleGet_Unauthorized(t *testing.T) {
+	store := NewStore(nil)
+	h := NewHandler(store, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/conversations/123", nil)
+	rr := httptest.NewRecorder()
+
+	h.HandleGet(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("Expected %d, got %d", http.StatusUnauthorized, rr.Code)
+	}
+}
+
+func TestHandleCreate_Unauthorized(t *testing.T) {
+	store := NewStore(nil)
+	h := NewHandler(store, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/conversations", nil)
+	rr := httptest.NewRecorder()
+
+	h.HandleCreate(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("Expected %d, got %d", http.StatusUnauthorized, rr.Code)
+	}
+}
+
+func TestHandleUpdate_Unauthorized(t *testing.T) {
+	store := NewStore(nil)
+	h := NewHandler(store, nil)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/conversations/123", nil)
+	rr := httptest.NewRecorder()
+
+	h.HandleUpdate(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("Expected %d, got %d", http.StatusUnauthorized, rr.Code)
+	}
+}
+
+func TestHandleRename_Unauthorized(t *testing.T) {
+	store := NewStore(nil)
+	h := NewHandler(store, nil)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/conversations/123", nil)
+	rr := httptest.NewRecorder()
+
+	h.HandleRename(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("Expected %d, got %d", http.StatusUnauthorized, rr.Code)
+	}
+}
+
+func TestHandleDelete_Unauthorized(t *testing.T) {
+	store := NewStore(nil)
+	h := NewHandler(store, nil)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/conversations/123", nil)
+	rr := httptest.NewRecorder()
+
+	h.HandleDelete(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("Expected %d, got %d", http.StatusUnauthorized, rr.Code)
+	}
+}
+
+func TestHandleDeleteAll_Unauthorized(t *testing.T) {
+	store := NewStore(nil)
+	h := NewHandler(store, nil)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/conversations?all=true", nil)
+	rr := httptest.NewRecorder()
+
+	h.HandleDeleteAll(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("Expected %d, got %d", http.StatusUnauthorized, rr.Code)
+	}
+}
+
+func TestHandleGet_MissingIDWithoutAuth(t *testing.T) {
+	store := NewStore(nil)
+	h := NewHandler(store, nil)
+
+	// Request without auth token should fail with unauthorized
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/conversations/", nil)
+	rr := httptest.NewRecorder()
+
+	h.HandleGet(rr, req)
+
+	// Without a valid auth token, this will fail on auth first
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("Expected %d (auth fails first), got %d", http.StatusUnauthorized, rr.Code)
+	}
+}
+
+func TestSentinelErrors(t *testing.T) {
+	if ErrNotFound == nil {
+		t.Error("ErrNotFound should not be nil")
+	}
+	if ErrAccessDenied == nil {
+		t.Error("ErrAccessDenied should not be nil")
+	}
+
+	if ErrNotFound.Error() != "conversation not found" {
+		t.Errorf("Unexpected ErrNotFound message: %q", ErrNotFound.Error())
+	}
+	if ErrAccessDenied.Error() != "access denied" {
+		t.Errorf("Unexpected ErrAccessDenied message: %q", ErrAccessDenied.Error())
+	}
+}

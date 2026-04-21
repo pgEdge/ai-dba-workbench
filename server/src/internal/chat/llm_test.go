@@ -1130,3 +1130,306 @@ func TestBuildSystemPrompt(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractTextFromContent(t *testing.T) {
+	tests := []struct {
+		name    string
+		content any
+		want    string
+	}{
+		{
+			name:    "string content",
+			content: "hello world",
+			want:    "hello world",
+		},
+		{
+			name:    "byte slice content",
+			content: []byte("hello bytes"),
+			want:    "hello bytes",
+		},
+		{
+			name: "array of text blocks",
+			content: []any{
+				map[string]any{
+					"type": "text",
+					"text": "first text",
+				},
+				map[string]any{
+					"type": "text",
+					"text": "second text",
+				},
+			},
+			want: "first text\nsecond text",
+		},
+		{
+			name: "array with non-text blocks",
+			content: []any{
+				map[string]any{
+					"type": "image",
+					"url":  "http://example.com/image.png",
+				},
+				map[string]any{
+					"type": "text",
+					"text": "caption",
+				},
+			},
+			want: "caption",
+		},
+		{
+			name: "array with no text blocks",
+			content: []any{
+				map[string]any{
+					"type": "image",
+					"url":  "http://example.com/image.png",
+				},
+			},
+			want: `[{"type":"image","url":"http://example.com/image.png"}]`,
+		},
+		{
+			name:    "map content serialized to JSON",
+			content: map[string]any{"key": "value"},
+			want:    `{"key":"value"}`,
+		},
+		{
+			name:    "integer content",
+			content: 42,
+			want:    "42",
+		},
+		{
+			name:    "nil content",
+			content: nil,
+			want:    "null",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractTextFromContent(tt.content)
+			if got != tt.want {
+				t.Errorf("extractTextFromContent() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestConvertToMCPTools(t *testing.T) {
+	tests := []struct {
+		name    string
+		tools   any
+		wantLen int
+		wantErr bool
+	}{
+		{
+			name:    "nil tools",
+			tools:   nil,
+			wantLen: 0,
+			wantErr: false,
+		},
+		{
+			name: "valid tools slice",
+			tools: []map[string]any{
+				{
+					"name":        "test_tool",
+					"description": "A test tool",
+					"inputSchema": map[string]any{
+						"type": "object",
+					},
+				},
+			},
+			wantLen: 1,
+			wantErr: false,
+		},
+		{
+			name: "mcp.Tool slice",
+			tools: []mcp.Tool{
+				{
+					Name:        "tool1",
+					Description: "First tool",
+				},
+				{
+					Name:        "tool2",
+					Description: "Second tool",
+				},
+			},
+			wantLen: 2,
+			wantErr: false,
+		},
+		{
+			name:    "empty slice",
+			tools:   []map[string]any{},
+			wantLen: 0,
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := convertToMCPTools(tt.tools)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("convertToMCPTools() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if len(got) != tt.wantLen {
+				t.Errorf("convertToMCPTools() returned %d tools, want %d", len(got), tt.wantLen)
+			}
+		})
+	}
+}
+
+func TestSanitizeMemoryField(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "no special characters",
+			input: "hello world",
+			want:  "hello world",
+		},
+		{
+			name:  "newline replaced",
+			input: "line1\nline2",
+			want:  "line1 line2",
+		},
+		{
+			name:  "carriage return replaced",
+			input: "line1\rline2",
+			want:  "line1 line2",
+		},
+		{
+			name:  "both newline and carriage return",
+			input: "line1\r\nline2\nline3\rline4",
+			want:  "line1  line2 line3 line4",
+		},
+		{
+			name:  "empty string",
+			input: "",
+			want:  "",
+		},
+		{
+			name:  "only newlines",
+			input: "\n\n\n",
+			want:  "   ",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeMemoryField(tt.input)
+			if got != tt.want {
+				t.Errorf("sanitizeMemoryField(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLogTokenUsage(t *testing.T) {
+	// logTokenUsage writes to stderr, so we just verify it doesn't panic
+	// with various inputs
+
+	tests := []struct {
+		name                   string
+		provider               string
+		prompt, comp, total    int
+		cacheCreate, cacheRead int
+		savings                float64
+	}{
+		{
+			name:        "with cache stats",
+			provider:    "test",
+			prompt:      100,
+			comp:        50,
+			total:       150,
+			cacheCreate: 20,
+			cacheRead:   80,
+			savings:     53.3,
+		},
+		{
+			name:        "without cache stats",
+			provider:    "test",
+			prompt:      100,
+			comp:        50,
+			total:       150,
+			cacheCreate: 0,
+			cacheRead:   0,
+			savings:     0,
+		},
+		{
+			name:        "zero tokens",
+			provider:    "test",
+			prompt:      0,
+			comp:        0,
+			total:       0,
+			cacheCreate: 0,
+			cacheRead:   0,
+			savings:     0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Just verify no panic
+			logTokenUsage(tt.provider, tt.prompt, tt.comp, tt.total, tt.cacheCreate, tt.cacheRead, tt.savings)
+		})
+	}
+}
+
+func TestBuildSystemPrompt_MaxPinnedMemories(t *testing.T) {
+	// Create more than maxPinnedMemoriesInPrompt memories
+	var memories []memory.Memory
+	for i := 0; i < 25; i++ {
+		memories = append(memories, memory.Memory{
+			Scope:    "user",
+			Category: "test",
+			Content:  "memory content",
+			Pinned:   true,
+		})
+	}
+
+	result := BuildSystemPrompt("Base.", memories)
+
+	// Count the number of memory entries in the result
+	count := strings.Count(result, "- [user/test]")
+
+	// Should be capped at maxPinnedMemoriesInPrompt (20)
+	if count != 20 {
+		t.Errorf("Expected 20 memories, got %d", count)
+	}
+}
+
+func TestBuildSystemPrompt_ContentTruncation(t *testing.T) {
+	// Create a memory with very long content
+	longContent := strings.Repeat("a", 500)
+	memories := []memory.Memory{
+		{
+			Scope:    "user",
+			Category: "test",
+			Content:  longContent,
+			Pinned:   true,
+		},
+	}
+
+	result := BuildSystemPrompt("Base.", memories)
+
+	// Content should be truncated to ~400 chars + "..."
+	if !strings.Contains(result, "...") {
+		t.Error("Expected truncation indicator '...' in result")
+	}
+
+	// The full 500-char content should not appear
+	if strings.Contains(result, longContent) {
+		t.Error("Full content should have been truncated")
+	}
+}
+
+func TestSystemPrompt_NotEmpty(t *testing.T) {
+	if SystemPrompt == "" {
+		t.Error("SystemPrompt should not be empty")
+	}
+
+	// Verify it mentions Ellie (the AI assistant persona)
+	if !strings.Contains(SystemPrompt, "Ellie") {
+		t.Error("SystemPrompt should mention Ellie")
+	}
+}

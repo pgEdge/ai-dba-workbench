@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -248,40 +249,108 @@ func (h *BlackoutHandler) listBlackouts(w http.ResponseWriter, r *http.Request) 
 		filter.Active = &active
 	}
 
-	filter.Limit = ParseLimitWithDefaults(r, 100, 1000)
-	filter.Offset = ParseOffsetWithDefault(r, 0)
+	reqLimit := ParseLimitWithDefaults(r, 100, 1000)
+	reqOffset := ParseOffsetWithDefault(r, 0)
 
-	result, err := h.datastore.ListBlackouts(r.Context(), filter)
-	if err != nil {
-		log.Printf("[ERROR] Failed to fetch blackouts: %v", err)
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch blackouts")
-		return
-	}
-
+	// Resolve the caller's visibility up front. When the caller has
+	// unrestricted visibility (superuser or wildcard grant) we can push
+	// Limit/Offset down to the datastore unchanged, preserving the
+	// efficient path. Otherwise we must fetch the unpaginated result,
+	// apply the visibility filter, recompute TotalCount, and paginate
+	// in-memory: filtering after SQL-side LIMIT/OFFSET would silently
+	// drop hidden rows into page slots and report the wrong total.
 	visible, allConnections, err := resolveVisibleConnectionSet(r.Context(), h.rbacChecker, h.datastore)
 	if err != nil {
 		log.Printf("[ERROR] Failed to resolve visible connections for blackouts: %v", err)
 		RespondError(w, http.StatusInternalServerError, "Failed to fetch blackouts")
 		return
 	}
-	if !allConnections && result != nil {
-		filtered := make([]database.Blackout, 0, len(result.Blackouts))
-		for i := range result.Blackouts {
-			ok, err := h.blackoutVisible(r.Context(), &result.Blackouts[i], visible)
-			if err != nil {
-				log.Printf("[ERROR] Failed to check blackout visibility: %v", err)
-				RespondError(w, http.StatusInternalServerError, "Failed to fetch blackouts")
-				return
-			}
-			if ok {
-				filtered = append(filtered, result.Blackouts[i])
-			}
+
+	if allConnections {
+		filter.Limit = reqLimit
+		filter.Offset = reqOffset
+		result, err := h.datastore.ListBlackouts(r.Context(), filter)
+		if err != nil {
+			log.Printf("[ERROR] Failed to fetch blackouts: %v", err)
+			RespondError(w, http.StatusInternalServerError, "Failed to fetch blackouts")
+			return
 		}
-		result.Blackouts = filtered
-		result.TotalCount = len(filtered)
+		RespondJSON(w, http.StatusOK, result)
+		return
 	}
 
+	// Fetch the full filtered set without SQL-side pagination. MaxInt32
+	// is passed as the limit because the datastore interprets Limit<=0
+	// as the legacy default of 100, which would re-introduce the bug.
+	filter.Limit = visibilityFilterFetchLimit
+	filter.Offset = 0
+	result, err := h.datastore.ListBlackouts(r.Context(), filter)
+	if err != nil {
+		log.Printf("[ERROR] Failed to fetch blackouts: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch blackouts")
+		return
+	}
+	if result == nil {
+		RespondJSON(w, http.StatusOK, result)
+		return
+	}
+
+	filtered := make([]database.Blackout, 0, len(result.Blackouts))
+	for i := range result.Blackouts {
+		ok, err := h.blackoutVisible(r.Context(), &result.Blackouts[i], visible)
+		if err != nil {
+			log.Printf("[ERROR] Failed to check blackout visibility: %v", err)
+			RespondError(w, http.StatusInternalServerError, "Failed to fetch blackouts")
+			return
+		}
+		if ok {
+			filtered = append(filtered, result.Blackouts[i])
+		}
+	}
+	result.TotalCount = len(filtered)
+	result.Blackouts = paginateBlackouts(filtered, reqOffset, reqLimit)
+
 	RespondJSON(w, http.StatusOK, result)
+}
+
+// visibilityFilterFetchLimit is the upper bound passed to the datastore
+// when the blackout list endpoints must fetch the unpaginated result
+// set for post-query RBAC filtering. MaxInt32 leaves LIMIT effectively
+// unbounded while avoiding the Limit<=0 legacy default of 100.
+const visibilityFilterFetchLimit = math.MaxInt32
+
+// paginateBlackouts applies the request's Limit/Offset to an in-memory
+// slice. Negative offsets are treated as zero. A non-positive limit is
+// treated as "return everything past offset" to match the datastore's
+// convention when no pagination is requested.
+func paginateBlackouts(in []database.Blackout, offset, limit int) []database.Blackout {
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= len(in) {
+		return []database.Blackout{}
+	}
+	end := len(in)
+	if limit > 0 && offset+limit < end {
+		end = offset + limit
+	}
+	return in[offset:end]
+}
+
+// paginateSchedules applies the request's Limit/Offset to an in-memory
+// slice. See paginateBlackouts for pagination semantics.
+func paginateSchedules(in []database.BlackoutSchedule, offset, limit int) []database.BlackoutSchedule {
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= len(in) {
+		return []database.BlackoutSchedule{}
+	}
+	end := len(in)
+	if limit > 0 && offset+limit < end {
+		end = offset + limit
+	}
+	return in[offset:end]
 }
 
 // getBlackout handles GET /api/v1/blackouts/{id}
@@ -538,38 +607,60 @@ func (h *BlackoutHandler) listBlackoutSchedules(w http.ResponseWriter, r *http.R
 		filter.Active = &enabled
 	}
 
-	filter.Limit = ParseLimitWithDefaults(r, 100, 1000)
-	filter.Offset = ParseOffsetWithDefault(r, 0)
+	reqLimit := ParseLimitWithDefaults(r, 100, 1000)
+	reqOffset := ParseOffsetWithDefault(r, 0)
 
-	result, err := h.datastore.ListBlackoutSchedules(r.Context(), filter)
-	if err != nil {
-		log.Printf("[ERROR] Failed to fetch blackout schedules: %v", err)
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch blackout schedules")
-		return
-	}
-
+	// Resolve visibility first. Superusers and wildcard-granted callers
+	// use the efficient SQL-side pagination path. Restricted callers
+	// must fetch the full set, filter, recompute TotalCount, then
+	// paginate in-memory; see listBlackouts for the rationale.
 	visible, allConnections, err := resolveVisibleConnectionSet(r.Context(), h.rbacChecker, h.datastore)
 	if err != nil {
 		log.Printf("[ERROR] Failed to resolve visible connections for blackout schedules: %v", err)
 		RespondError(w, http.StatusInternalServerError, "Failed to fetch blackout schedules")
 		return
 	}
-	if !allConnections && result != nil {
-		filtered := make([]database.BlackoutSchedule, 0, len(result.Schedules))
-		for i := range result.Schedules {
-			ok, err := h.blackoutScheduleVisible(r.Context(), &result.Schedules[i], visible)
-			if err != nil {
-				log.Printf("[ERROR] Failed to check blackout schedule visibility: %v", err)
-				RespondError(w, http.StatusInternalServerError, "Failed to fetch blackout schedules")
-				return
-			}
-			if ok {
-				filtered = append(filtered, result.Schedules[i])
-			}
+
+	if allConnections {
+		filter.Limit = reqLimit
+		filter.Offset = reqOffset
+		result, err := h.datastore.ListBlackoutSchedules(r.Context(), filter)
+		if err != nil {
+			log.Printf("[ERROR] Failed to fetch blackout schedules: %v", err)
+			RespondError(w, http.StatusInternalServerError, "Failed to fetch blackout schedules")
+			return
 		}
-		result.Schedules = filtered
-		result.TotalCount = len(filtered)
+		RespondJSON(w, http.StatusOK, result)
+		return
 	}
+
+	filter.Limit = visibilityFilterFetchLimit
+	filter.Offset = 0
+	result, err := h.datastore.ListBlackoutSchedules(r.Context(), filter)
+	if err != nil {
+		log.Printf("[ERROR] Failed to fetch blackout schedules: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch blackout schedules")
+		return
+	}
+	if result == nil {
+		RespondJSON(w, http.StatusOK, result)
+		return
+	}
+
+	filtered := make([]database.BlackoutSchedule, 0, len(result.Schedules))
+	for i := range result.Schedules {
+		ok, err := h.blackoutScheduleVisible(r.Context(), &result.Schedules[i], visible)
+		if err != nil {
+			log.Printf("[ERROR] Failed to check blackout schedule visibility: %v", err)
+			RespondError(w, http.StatusInternalServerError, "Failed to fetch blackout schedules")
+			return
+		}
+		if ok {
+			filtered = append(filtered, result.Schedules[i])
+		}
+	}
+	result.TotalCount = len(filtered)
+	result.Schedules = paginateSchedules(filtered, reqOffset, reqLimit)
 
 	RespondJSON(w, http.StatusOK, result)
 }

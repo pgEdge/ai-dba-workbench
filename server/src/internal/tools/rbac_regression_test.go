@@ -294,6 +294,19 @@ func TestGetAlertRulesTool_RBAC_DeniesUnsharedConnection(t *testing.T) {
 	if !strings.Contains(body, "connection not found or not accessible") {
 		t.Errorf("Expected generic RBAC denial message, got: %q", body)
 	}
+	// Must not leak enumeration hints: the unshared connection's owner
+	// name, its ID, any adjacent connection identifiers the tool
+	// previously echoed back, or the "Valid connection IDs" list header.
+	leakers := []string{
+		"alice",                // unshared connection's owner
+		"42",                   // unshared connection's ID
+		"Valid connection IDs", // legacy enumeration header
+	}
+	for _, s := range leakers {
+		if strings.Contains(body, s) {
+			t.Errorf("Response leaked enumeration data %q: %q", s, body)
+		}
+	}
 }
 
 // TestGetBlackoutsTool_RBAC_NoAccessDeniesEmptyResult mirrors the above

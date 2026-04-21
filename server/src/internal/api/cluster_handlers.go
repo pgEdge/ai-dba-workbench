@@ -427,7 +427,7 @@ func (h *ClusterHandler) listClusterGroups(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	visible, allConnections, err := h.resolveVisibleConnections(r.Context())
+	visible, allConnections, err := h.resolveVisibleConnections(ctx)
 	if err != nil {
 		log.Printf("[ERROR] Failed to resolve visible connections for cluster groups: %v", err)
 		RespondError(w, http.StatusInternalServerError, "Failed to filter cluster groups")
@@ -457,7 +457,7 @@ func (h *ClusterHandler) getClusterGroup(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	visible, allConnections, err := h.resolveVisibleConnections(r.Context())
+	visible, allConnections, err := h.resolveVisibleConnections(ctx)
 	if err != nil {
 		log.Printf("[ERROR] Failed to resolve visible connections for cluster group %d: %v", id, err)
 		RespondError(w, http.StatusInternalServerError, "Failed to load cluster group")
@@ -602,7 +602,7 @@ func (h *ClusterHandler) listClustersInGroup(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	visible, allConnections, err := h.resolveVisibleConnections(r.Context())
+	visible, allConnections, err := h.resolveVisibleConnections(ctx)
 	if err != nil {
 		log.Printf("[ERROR] Failed to resolve visible connections for group %d: %v", groupID, err)
 		RespondError(w, http.StatusInternalServerError, "Failed to filter clusters")
@@ -666,7 +666,7 @@ func (h *ClusterHandler) getCluster(w http.ResponseWriter, r *http.Request, id i
 		return
 	}
 
-	visible, allConnections, err := h.resolveVisibleConnections(r.Context())
+	visible, allConnections, err := h.resolveVisibleConnections(ctx)
 	if err != nil {
 		log.Printf("[ERROR] Failed to resolve visible connections for cluster %d: %v", id, err)
 		RespondError(w, http.StatusInternalServerError, "Failed to load cluster")
@@ -871,7 +871,7 @@ func (h *ClusterHandler) listServersInCluster(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	visible, allConnections, err := h.resolveVisibleConnections(r.Context())
+	visible, allConnections, err := h.resolveVisibleConnections(ctx)
 	if err != nil {
 		log.Printf("[ERROR] Failed to resolve visible connections for cluster %d servers: %v", clusterID, err)
 		RespondError(w, http.StatusInternalServerError, "Failed to list servers")
@@ -989,7 +989,7 @@ func (h *ClusterHandler) handleListClusters(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	visible, allConnections, err := h.resolveVisibleConnections(r.Context())
+	visible, allConnections, err := h.resolveVisibleConnections(ctx)
 	if err != nil {
 		log.Printf("[ERROR] Failed to resolve visible connections for cluster autocomplete: %v", err)
 		RespondError(w, http.StatusInternalServerError, "Failed to list clusters")

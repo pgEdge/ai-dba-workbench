@@ -249,12 +249,11 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
+		// filterConnectionIDs returns a deduplicated, sorted slice so the
+		// cache/SSE scope key is stable across equivalent inputs.
 		filteredConnectionIDs = filtered
-		sorted := make([]int, len(filtered))
-		copy(sorted, filtered)
-		sortInts(sorted)
-		parts := make([]string, len(sorted))
-		for i, id := range sorted {
+		parts := make([]string, len(filtered))
+		for i, id := range filtered {
 			parts[i] = fmt.Sprintf("%d", id)
 		}
 		scopeKey = "connections:" + strings.Join(parts, ",")
@@ -280,14 +279,12 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 			scopeKey = fmt.Sprintf("%s:%d", scopeType, scopeID)
 		} else {
 			// Restricted visibility routes through the connections-summary
-			// path. Reuse the sorted-ID cache key scheme so two users with
-			// different visibility never share a cache entry.
+			// path. intersectVisible returns a deduplicated, sorted slice
+			// so two users with different visibility never share a cache
+			// entry.
 			filteredConnectionIDs = intersect
-			sorted := make([]int, len(intersect))
-			copy(sorted, intersect)
-			sortInts(sorted)
-			parts := make([]string, len(sorted))
-			for i, id := range sorted {
+			parts := make([]string, len(intersect))
+			for i, id := range intersect {
 				parts[i] = fmt.Sprintf("%d", id)
 			}
 			scopeKey = "connections:" + strings.Join(parts, ",")
@@ -371,12 +368,18 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 
 // filterConnectionIDs restricts the supplied connection ID list to those
 // visible to the caller. When RBAC is not configured (nil checker or
-// nil datastore) the list is returned unchanged. The second return
-// value is false when the function wrote an error response and the
-// caller must return immediately.
+// nil datastore) the list is deduplicated and sorted but not filtered.
+// The second return value is false when the function wrote an error
+// response and the caller must return immediately.
+//
+// The output is deduplicated and sorted so that equivalent input lists
+// (same members, different order or duplicates) produce the same
+// "connections:" cache key and SSE scope key, preventing duplicate cache
+// entries and duplicate connection IDs from reaching the summary
+// generator.
 func (h *Handler) filterConnectionIDs(ctx context.Context, w http.ResponseWriter, ids []int) ([]int, bool) {
 	if h.rbacChecker == nil || h.datastore == nil {
-		return ids, true
+		return dedupeAndSort(ids), true
 	}
 	visible, allConnections, err := h.resolveVisible(ctx)
 	if err != nil {
@@ -385,15 +388,41 @@ func (h *Handler) filterConnectionIDs(ctx context.Context, w http.ResponseWriter
 		return nil, false
 	}
 	if allConnections {
-		return ids, true
+		return dedupeAndSort(ids), true
 	}
+	seen := make(map[int]struct{}, len(ids))
 	out := make([]int, 0, len(ids))
 	for _, id := range ids {
-		if visible[id] {
-			out = append(out, id)
+		if !visible[id] {
+			continue
 		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
 	}
+	sortInts(out)
 	return out, true
+}
+
+// dedupeAndSort returns a new slice containing the unique elements of
+// ids in ascending order. The input is not modified.
+func dedupeAndSort(ids []int) []int {
+	if len(ids) == 0 {
+		return []int{}
+	}
+	seen := make(map[int]struct{}, len(ids))
+	out := make([]int, 0, len(ids))
+	for _, id := range ids {
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	sortInts(out)
+	return out
 }
 
 // scopeVisible reports whether the caller may see the requested scope
@@ -456,14 +485,26 @@ func (h *Handler) scopeVisible(ctx context.Context, w http.ResponseWriter, scope
 }
 
 // intersectVisible returns the subset of members that are also in the
-// visible set, preserving the original order.
+// visible set. The result is deduplicated and sorted in ascending order
+// so that equivalent inputs (same members in different order or with
+// duplicates) produce the same cache/SSE scope key downstream.
 func intersectVisible(members []int, visible map[int]bool) []int {
+	if len(members) == 0 {
+		return []int{}
+	}
+	seen := make(map[int]struct{}, len(members))
 	out := make([]int, 0, len(members))
 	for _, id := range members {
-		if visible[id] {
-			out = append(out, id)
+		if !visible[id] {
+			continue
 		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
 	}
+	sortInts(out)
 	return out
 }
 

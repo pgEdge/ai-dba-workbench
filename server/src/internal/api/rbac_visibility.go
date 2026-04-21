@@ -74,6 +74,10 @@ func groupHasVisibleConnectionFn(ctx context.Context, ds rbacVisibilityDatastore
 // values are the connection IDs assigned to each cluster. Clusters
 // absent from the map have no connections. The implementation issues
 // one datastore call per cluster.
+//
+// TODO(#35 follow-up): the per-cluster lookup is intentional at
+// autocomplete scale (tens of clusters per caller); batch via the
+// datastore if cluster count grows large enough to become a hot path.
 func clusterConnectionMembershipFn(ctx context.Context, ds rbacVisibilityDatastore, clusterIDs []int) (map[int][]int, error) {
 	out := make(map[int][]int, len(clusterIDs))
 	for _, id := range clusterIDs {
@@ -128,6 +132,10 @@ func scopeVisibleToCaller(ctx context.Context, w http.ResponseWriter, rbac *auth
 // filterGroupsByVisibilityFn drops cluster groups whose clusters contain
 // no visible member connections. It issues one datastore lookup per
 // group via GetConnectionIDsForGroup.
+//
+// TODO(#35 follow-up): the per-group lookup is intentional at
+// autocomplete scale (tens of groups per caller); batch via the
+// datastore if group count grows large enough to become a hot path.
 func filterGroupsByVisibilityFn(ctx context.Context, ds rbacVisibilityDatastore, groups []database.ClusterGroup, visible map[int]bool) ([]database.ClusterGroup, error) {
 	out := make([]database.ClusterGroup, 0, len(groups))
 	for i := range groups {

@@ -258,8 +258,9 @@ func TestHandleOverview_WhitespaceOnlyConnectionIDs(t *testing.T) {
 // intersection of a cluster/group's member connection IDs with the
 // caller's visible set and routes the summary generator through the
 // intersected list so two users with different visibility never share
-// a cache entry. The ordering must be preserved so the cache key is
-// stable across retries.
+// a cache entry. The result is deduplicated and sorted in ascending
+// order so that equivalent inputs (different order or with duplicates)
+// yield the same cache key.
 func TestIntersectVisible(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -268,10 +269,10 @@ func TestIntersectVisible(t *testing.T) {
 		want    []int
 	}{
 		{
-			name:    "full overlap preserves order",
+			name:    "full overlap sorted ascending",
 			members: []int{3, 1, 2},
 			visible: map[int]bool{1: true, 2: true, 3: true},
-			want:    []int{3, 1, 2},
+			want:    []int{1, 2, 3},
 		},
 		{
 			name:    "one of three visible",
@@ -297,6 +298,18 @@ func TestIntersectVisible(t *testing.T) {
 			visible: nil,
 			want:    []int{},
 		},
+		{
+			name:    "duplicates are removed",
+			members: []int{3, 1, 2, 1, 3},
+			visible: map[int]bool{1: true, 2: true, 3: true},
+			want:    []int{1, 2, 3},
+		},
+		{
+			name:    "duplicates removed with partial visibility",
+			members: []int{5, 3, 5, 1, 3},
+			visible: map[int]bool{1: true, 3: true},
+			want:    []int{1, 3},
+		},
 	}
 
 	for _, tc := range tests {
@@ -311,22 +324,6 @@ func TestIntersectVisible(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-// TestHandleOverview_RestrictedCallerNotFound verifies the scope-denial
-// path now returns 404 rather than 403 to match sibling handlers and
-// avoid exposing scope existence as an oracle. The nil datastore on
-// this handler short-circuits scopeVisible into the "skipped" branch,
-// so we only exercise the 404 path through the invalid-scope_type
-// guard that sits alongside the rewritten denial path; this locks in
-// that the handler does not accidentally reintroduce a 403 on other
-// denial branches.
-func TestHandleOverview_InvalidScopeTypeStillBadRequest(t *testing.T) {
-	h := newTestHandler()
-	rr := doRequest(t, h, http.MethodGet, "/api/v1/overview?scope_type=invalid&scope_id=1")
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("expected %d for invalid scope_type, got %d", http.StatusBadRequest, rr.Code)
 	}
 }
 

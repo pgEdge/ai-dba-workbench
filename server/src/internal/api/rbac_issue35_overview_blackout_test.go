@@ -108,8 +108,10 @@ func TestOverrideListHandlers_ServerScope_NonOwnerUnshared_404(t *testing.T) {
 
 // TestOverrideListHandlers_ServerScope_Superuser_NotDenied verifies a
 // superuser bypasses the gate. With a nil datastore the handler panics
-// after the gate; the test recovers and asserts the response never
-// became 404 or 403.
+// after the gate is cleared; noRespPanic recovers the panic before any
+// response is written, leaving rec.Code at the httptest default (200).
+// Asserting on the default status confirms the gate passed AND that no
+// error response (403/404/500) was written before the datastore call.
 func TestOverrideListHandlers_ServerScope_Superuser_NotDenied(t *testing.T) {
 	for _, tc := range overrideListInvokers {
 		tc := tc
@@ -128,8 +130,14 @@ func TestOverrideListHandlers_ServerScope_Superuser_NotDenied(t *testing.T) {
 				tc.invoke(store, checker, rec, req, "server", rbacUnsharedConnID)
 			})
 
-			if rec.Code == http.StatusNotFound || rec.Code == http.StatusForbidden {
-				t.Errorf("%s/superuser: gate wrote %d; expected gate to pass. Body: %s",
+			// The gate must not write any error status. The datastore
+			// call that follows panics on nil and noRespPanic recovers
+			// before any status is written, so rec.Code remains the
+			// httptest default of 200. Anything else (403, 404, or a
+			// 500 from a premature error response) indicates the gate
+			// path is broken.
+			if rec.Code != http.StatusOK {
+				t.Errorf("%s/superuser: gate wrote %d; expected gate to pass (rec.Code should remain default 200). Body: %s",
 					tc.name, rec.Code, rec.Body.String())
 			}
 		})
@@ -139,7 +147,9 @@ func TestOverrideListHandlers_ServerScope_Superuser_NotDenied(t *testing.T) {
 // TestOverrideListHandlers_ServerScope_GroupGranted_NotDenied verifies
 // that a user with an explicit group grant clears the gate. The explicit
 // grant lets the handler's resolver see the connection via the auth
-// store without needing a datastore-backed lister.
+// store without needing a datastore-backed lister. noRespPanic recovers
+// the nil-datastore panic that follows the gate, leaving rec.Code at
+// the httptest default (200) when the gate passes cleanly.
 func TestOverrideListHandlers_ServerScope_GroupGranted_NotDenied(t *testing.T) {
 	for _, tc := range overrideListInvokers {
 		tc := tc
@@ -161,8 +171,11 @@ func TestOverrideListHandlers_ServerScope_GroupGranted_NotDenied(t *testing.T) {
 				tc.invoke(store, checker, rec, req, "server", rbacUnsharedConnID)
 			})
 
-			if rec.Code == http.StatusNotFound || rec.Code == http.StatusForbidden {
-				t.Errorf("%s/group-granted: gate wrote %d; expected gate to pass. Body: %s",
+			// See TestOverrideListHandlers_ServerScope_Superuser_NotDenied
+			// for why the expected status is the default 200. Anything
+			// else (403, 404, 500) indicates the gate wrote an error.
+			if rec.Code != http.StatusOK {
+				t.Errorf("%s/group-granted: gate wrote %d; expected gate to pass (rec.Code should remain default 200). Body: %s",
 					tc.name, rec.Code, rec.Body.String())
 			}
 		})

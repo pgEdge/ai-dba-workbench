@@ -70,12 +70,10 @@ project adheres to
   upsert fallback. (#36)
 - Fix partitions not being dropped at the appropriate
   time by the collector. (#62)
-- Fix `GET /api/v1/connections` returning an empty
-  array for scoped API tokens when the token owner's
-  read access came from a wildcard group grant; the
-  scoped connections are now returned as expected,
-  and token scopes continue to restrict but not
-  elevate the owner's privileges. (#83)
+- Fix the copy-to-clipboard button in the Admin Tokens
+  "Token created" dialog; the button now shows a check
+  mark and "Copied!" tooltip on success and surfaces
+  clipboard failures through the error alert. (#71)
 - Fix servers assigned to a manually created cluster
   continuing to appear under a re-created
   auto-detected cluster after the next topology
@@ -83,6 +81,12 @@ project adheres to
   and logical-replication grouping now skip
   connections with `membership_source = 'manual'`.
   (#74)
+- Fix `GET /api/v1/connections` returning an empty
+  array for scoped API tokens when the token owner's
+  read access came from a wildcard group grant; the
+  scoped connections are now returned as expected,
+  and token scopes continue to restrict but not
+  elevate the owner's privileges. (#83)
 
 ### Security
 

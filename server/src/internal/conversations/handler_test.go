@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/pgedge/ai-workbench/server/internal/api"
+	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
 
 func TestRespondJSON(t *testing.T) {
@@ -186,8 +187,14 @@ func TestHandleDeleteAll_MethodNotAllowed(t *testing.T) {
 }
 
 func TestNewHandler(t *testing.T) {
+	// AuthStore has only unexported fields, but we can still pass a
+	// zero-value pointer to verify that NewHandler wires the argument
+	// into the handler's authStore field. Fully initializing AuthStore
+	// would require an on-disk SQLite database, which is unnecessary
+	// for this wiring check.
 	store := NewStore(nil)
-	handler := NewHandler(store, nil)
+	authStore := &auth.AuthStore{}
+	handler := NewHandler(store, authStore)
 
 	if handler == nil {
 		t.Fatal("Expected non-nil handler")
@@ -195,104 +202,81 @@ func TestNewHandler(t *testing.T) {
 	if handler.store != store {
 		t.Error("Expected store to be set")
 	}
-}
-
-func TestHandleList_Unauthorized(t *testing.T) {
-	store := NewStore(nil)
-	h := NewHandler(store, nil)
-
-	// Request without auth token
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/conversations", nil)
-	rr := httptest.NewRecorder()
-
-	h.HandleList(rr, req)
-
-	if rr.Code != http.StatusUnauthorized {
-		t.Errorf("Expected %d, got %d", http.StatusUnauthorized, rr.Code)
+	if handler.authStore != authStore {
+		t.Error("Expected authStore to be set")
 	}
 }
 
-func TestHandleGet_Unauthorized(t *testing.T) {
+func TestHandle_Unauthorized(t *testing.T) {
+	// Every authenticated handler must reject requests that lack a
+	// bearer token with 401 Unauthorized. This table-driven test
+	// exercises each handler so the auth gate cannot silently regress
+	// on any individual endpoint.
 	store := NewStore(nil)
 	h := NewHandler(store, nil)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/conversations/123", nil)
-	rr := httptest.NewRecorder()
-
-	h.HandleGet(rr, req)
-
-	if rr.Code != http.StatusUnauthorized {
-		t.Errorf("Expected %d, got %d", http.StatusUnauthorized, rr.Code)
+	tests := []struct {
+		name    string
+		method  string
+		target  string
+		handler http.HandlerFunc
+	}{
+		{
+			name:    "list",
+			method:  http.MethodGet,
+			target:  "/api/v1/conversations",
+			handler: h.HandleList,
+		},
+		{
+			name:    "get",
+			method:  http.MethodGet,
+			target:  "/api/v1/conversations/123",
+			handler: h.HandleGet,
+		},
+		{
+			name:    "create",
+			method:  http.MethodPost,
+			target:  "/api/v1/conversations",
+			handler: h.HandleCreate,
+		},
+		{
+			name:    "update",
+			method:  http.MethodPut,
+			target:  "/api/v1/conversations/123",
+			handler: h.HandleUpdate,
+		},
+		{
+			name:    "rename",
+			method:  http.MethodPatch,
+			target:  "/api/v1/conversations/123",
+			handler: h.HandleRename,
+		},
+		{
+			name:    "delete",
+			method:  http.MethodDelete,
+			target:  "/api/v1/conversations/123",
+			handler: h.HandleDelete,
+		},
+		{
+			name:    "delete all",
+			method:  http.MethodDelete,
+			target:  "/api/v1/conversations?all=true",
+			handler: h.HandleDeleteAll,
+		},
 	}
-}
 
-func TestHandleCreate_Unauthorized(t *testing.T) {
-	store := NewStore(nil)
-	h := NewHandler(store, nil)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, tt.target, nil)
+			rr := httptest.NewRecorder()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/conversations", nil)
-	rr := httptest.NewRecorder()
+			tt.handler(rr, req)
 
-	h.HandleCreate(rr, req)
-
-	if rr.Code != http.StatusUnauthorized {
-		t.Errorf("Expected %d, got %d", http.StatusUnauthorized, rr.Code)
-	}
-}
-
-func TestHandleUpdate_Unauthorized(t *testing.T) {
-	store := NewStore(nil)
-	h := NewHandler(store, nil)
-
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/conversations/123", nil)
-	rr := httptest.NewRecorder()
-
-	h.HandleUpdate(rr, req)
-
-	if rr.Code != http.StatusUnauthorized {
-		t.Errorf("Expected %d, got %d", http.StatusUnauthorized, rr.Code)
-	}
-}
-
-func TestHandleRename_Unauthorized(t *testing.T) {
-	store := NewStore(nil)
-	h := NewHandler(store, nil)
-
-	req := httptest.NewRequest(http.MethodPatch, "/api/v1/conversations/123", nil)
-	rr := httptest.NewRecorder()
-
-	h.HandleRename(rr, req)
-
-	if rr.Code != http.StatusUnauthorized {
-		t.Errorf("Expected %d, got %d", http.StatusUnauthorized, rr.Code)
-	}
-}
-
-func TestHandleDelete_Unauthorized(t *testing.T) {
-	store := NewStore(nil)
-	h := NewHandler(store, nil)
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/conversations/123", nil)
-	rr := httptest.NewRecorder()
-
-	h.HandleDelete(rr, req)
-
-	if rr.Code != http.StatusUnauthorized {
-		t.Errorf("Expected %d, got %d", http.StatusUnauthorized, rr.Code)
-	}
-}
-
-func TestHandleDeleteAll_Unauthorized(t *testing.T) {
-	store := NewStore(nil)
-	h := NewHandler(store, nil)
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/conversations?all=true", nil)
-	rr := httptest.NewRecorder()
-
-	h.HandleDeleteAll(rr, req)
-
-	if rr.Code != http.StatusUnauthorized {
-		t.Errorf("Expected %d, got %d", http.StatusUnauthorized, rr.Code)
+			if rr.Code != http.StatusUnauthorized {
+				t.Errorf("Expected %d, got %d",
+					http.StatusUnauthorized, rr.Code)
+			}
+		})
 	}
 }
 

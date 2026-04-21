@@ -1260,6 +1260,37 @@ func TestConvertToMCPTools(t *testing.T) {
 			wantLen: 0,
 			wantErr: false,
 		},
+		{
+			// json.Marshal accepts a string; json.Unmarshal to []mcp.Tool
+			// fails with a type error.
+			name:    "non-slice string fails unmarshal",
+			tools:   "not a slice",
+			wantErr: true,
+		},
+		{
+			// Unmarshalling a plain number into a slice fails.
+			name:    "non-slice int fails unmarshal",
+			tools:   42,
+			wantErr: true,
+		},
+		{
+			// Unmarshalling an object into a slice fails.
+			name:    "object fails unmarshal",
+			tools:   map[string]any{"name": "tool"},
+			wantErr: true,
+		},
+		{
+			// Channels cannot be marshalled by encoding/json.
+			name:    "channel fails marshal",
+			tools:   make(chan int),
+			wantErr: true,
+		},
+		{
+			// Functions cannot be marshalled by encoding/json.
+			name:    "function fails marshal",
+			tools:   func() {},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1378,7 +1409,7 @@ func TestLogTokenUsage(t *testing.T) {
 func TestBuildSystemPrompt_MaxPinnedMemories(t *testing.T) {
 	// Create more than maxPinnedMemoriesInPrompt memories
 	var memories []memory.Memory
-	for i := 0; i < 25; i++ {
+	for i := 0; i < maxPinnedMemoriesInPrompt+5; i++ {
 		memories = append(memories, memory.Memory{
 			Scope:    "user",
 			Category: "test",
@@ -1392,15 +1423,16 @@ func TestBuildSystemPrompt_MaxPinnedMemories(t *testing.T) {
 	// Count the number of memory entries in the result
 	count := strings.Count(result, "- [user/test]")
 
-	// Should be capped at maxPinnedMemoriesInPrompt (20)
-	if count != 20 {
-		t.Errorf("Expected 20 memories, got %d", count)
+	// Should be capped at maxPinnedMemoriesInPrompt
+	if count != maxPinnedMemoriesInPrompt {
+		t.Errorf("Expected %d memories, got %d",
+			maxPinnedMemoriesInPrompt, count)
 	}
 }
 
 func TestBuildSystemPrompt_ContentTruncation(t *testing.T) {
 	// Create a memory with very long content
-	longContent := strings.Repeat("a", 500)
+	longContent := strings.Repeat("a", maxMemoryCharsInPrompt+100)
 	memories := []memory.Memory{
 		{
 			Scope:    "user",
@@ -1412,12 +1444,13 @@ func TestBuildSystemPrompt_ContentTruncation(t *testing.T) {
 
 	result := BuildSystemPrompt("Base.", memories)
 
-	// Content should be truncated to ~400 chars + "..."
-	if !strings.Contains(result, "...") {
-		t.Error("Expected truncation indicator '...' in result")
+	// Content should be truncated to maxMemoryCharsInPrompt + "..."
+	expectedTruncated := strings.Repeat("a", maxMemoryCharsInPrompt) + "..."
+	if !strings.Contains(result, expectedTruncated) {
+		t.Errorf("Expected truncated form %q in result", expectedTruncated)
 	}
 
-	// The full 500-char content should not appear
+	// The full oversized content should not appear
 	if strings.Contains(result, longContent) {
 		t.Error("Full content should have been truncated")
 	}

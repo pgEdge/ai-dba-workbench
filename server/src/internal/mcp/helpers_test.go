@@ -13,6 +13,26 @@ import (
 	"testing"
 )
 
+// assertSingleTextContent verifies that contents contains exactly one
+// "text" item whose payload equals expectedText. It reports failures
+// against the calling test via t so assertion errors surface at the
+// correct line.
+func assertSingleTextContent(t *testing.T, contents []ContentItem, expectedText string) {
+	t.Helper()
+
+	if len(contents) != 1 {
+		t.Fatalf("Expected 1 content item, got %d", len(contents))
+	}
+
+	if contents[0].Type != "text" {
+		t.Errorf("Expected content type 'text', got %q", contents[0].Type)
+	}
+
+	if contents[0].Text != expectedText {
+		t.Errorf("Expected text %q, got %q", expectedText, contents[0].Text)
+	}
+}
+
 func TestNewToolError(t *testing.T) {
 	resp, err := NewToolError("test error message")
 	if err != nil {
@@ -23,17 +43,7 @@ func TestNewToolError(t *testing.T) {
 		t.Error("Expected IsError to be true")
 	}
 
-	if len(resp.Content) != 1 {
-		t.Fatalf("Expected 1 content item, got %d", len(resp.Content))
-	}
-
-	if resp.Content[0].Type != "text" {
-		t.Errorf("Expected content type 'text', got %q", resp.Content[0].Type)
-	}
-
-	if resp.Content[0].Text != "test error message" {
-		t.Errorf("Expected text 'test error message', got %q", resp.Content[0].Text)
-	}
+	assertSingleTextContent(t, resp.Content, "test error message")
 }
 
 func TestNewToolSuccess(t *testing.T) {
@@ -46,17 +56,7 @@ func TestNewToolSuccess(t *testing.T) {
 		t.Error("Expected IsError to be false")
 	}
 
-	if len(resp.Content) != 1 {
-		t.Fatalf("Expected 1 content item, got %d", len(resp.Content))
-	}
-
-	if resp.Content[0].Type != "text" {
-		t.Errorf("Expected content type 'text', got %q", resp.Content[0].Type)
-	}
-
-	if resp.Content[0].Text != "success message" {
-		t.Errorf("Expected text 'success message', got %q", resp.Content[0].Text)
-	}
+	assertSingleTextContent(t, resp.Content, "success message")
 }
 
 func TestNewResourceError(t *testing.T) {
@@ -69,17 +69,7 @@ func TestNewResourceError(t *testing.T) {
 		t.Errorf("Expected URI 'pg://test', got %q", content.URI)
 	}
 
-	if len(content.Contents) != 1 {
-		t.Fatalf("Expected 1 content item, got %d", len(content.Contents))
-	}
-
-	if content.Contents[0].Type != "text" {
-		t.Errorf("Expected content type 'text', got %q", content.Contents[0].Type)
-	}
-
-	if content.Contents[0].Text != "resource error" {
-		t.Errorf("Expected text 'resource error', got %q", content.Contents[0].Text)
-	}
+	assertSingleTextContent(t, content.Contents, "resource error")
 }
 
 func TestNewResourceSuccess(t *testing.T) {
@@ -96,13 +86,7 @@ func TestNewResourceSuccess(t *testing.T) {
 		t.Errorf("Expected MimeType 'application/json', got %q", content.MimeType)
 	}
 
-	if len(content.Contents) != 1 {
-		t.Fatalf("Expected 1 content item, got %d", len(content.Contents))
-	}
-
-	if content.Contents[0].Text != `{"table": "users"}` {
-		t.Errorf("Expected JSON content, got %q", content.Contents[0].Text)
-	}
+	assertSingleTextContent(t, content.Contents, `{"table": "users"}`)
 }
 
 func TestDatabaseNotReadyErrors(t *testing.T) {

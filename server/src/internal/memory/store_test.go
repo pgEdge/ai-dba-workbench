@@ -10,7 +10,9 @@
 package memory
 
 import (
+	"encoding/json"
 	"testing"
+	"time"
 )
 
 func TestNewStore(t *testing.T) {
@@ -73,7 +75,10 @@ func TestFormatEmbedding(t *testing.T) {
 }
 
 func TestMemoryStruct(t *testing.T) {
-	// Test that Memory struct fields are accessible
+	// Test that Memory struct fields are accessible and survive a JSON
+	// round-trip. The round-trip guards against accidental JSON tag
+	// changes or type substitutions that would silently break clients.
+	now := time.Now().UTC().Truncate(time.Second)
 	mem := Memory{
 		ID:        123,
 		Username:  "testuser",
@@ -82,6 +87,8 @@ func TestMemoryStruct(t *testing.T) {
 		Content:   "test content",
 		Pinned:    true,
 		ModelName: "test-model",
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 
 	if mem.ID != 123 {
@@ -104,6 +111,40 @@ func TestMemoryStruct(t *testing.T) {
 	}
 	if mem.ModelName != "test-model" {
 		t.Errorf("Expected ModelName 'test-model', got %q", mem.ModelName)
+	}
+	if mem.CreatedAt.IsZero() {
+		t.Error("Expected CreatedAt to be non-zero")
+	}
+	if mem.UpdatedAt.IsZero() {
+		t.Error("Expected UpdatedAt to be non-zero")
+	}
+
+	// JSON round-trip.
+	data, err := json.Marshal(mem)
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
+	}
+	var decoded Memory
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal failed: %v", err)
+	}
+	if decoded.ID != mem.ID ||
+		decoded.Username != mem.Username ||
+		decoded.Scope != mem.Scope ||
+		decoded.Category != mem.Category ||
+		decoded.Content != mem.Content ||
+		decoded.Pinned != mem.Pinned ||
+		decoded.ModelName != mem.ModelName {
+		t.Errorf("JSON round-trip mismatch: got %+v, want %+v",
+			decoded, mem)
+	}
+	if !decoded.CreatedAt.Equal(mem.CreatedAt) {
+		t.Errorf("CreatedAt round-trip mismatch: got %v, want %v",
+			decoded.CreatedAt, mem.CreatedAt)
+	}
+	if !decoded.UpdatedAt.Equal(mem.UpdatedAt) {
+		t.Errorf("UpdatedAt round-trip mismatch: got %v, want %v",
+			decoded.UpdatedAt, mem.UpdatedAt)
 	}
 }
 

@@ -504,6 +504,294 @@ func TestTopologyExcludesManualSubscriberFromAutoLogicalCluster(t *testing.T) {
 	}
 }
 
+// TestTopologyAutoPrimaryWithManualStandby verifies that when an auto
+// primary has both an auto standby and a manual standby, only the auto
+// standby appears as a child in the auto-detected binary cluster. The
+// manual standby must NOT be pulled in via buildServerWithChildren.
+func TestTopologyAutoPrimaryWithManualStandby(t *testing.T) {
+	ds := &Datastore{}
+
+	conns := []connectionWithRole{
+		{
+			ID:               501,
+			Name:             "auto-primary",
+			Host:             "10.0.5.1",
+			Port:             5432,
+			DatabaseName:     "app",
+			Username:         "postgres",
+			PrimaryRole:      "binary_primary",
+			MembershipSource: "auto",
+			Status:           "online",
+		},
+		{
+			ID:                 502,
+			Name:               "auto-standby",
+			Host:               "10.0.5.2",
+			Port:               5432,
+			DatabaseName:       "app",
+			Username:           "postgres",
+			PrimaryRole:        "binary_standby",
+			MembershipSource:   "auto",
+			Status:             "online",
+			IsStreamingStandby: true,
+			UpstreamHost:       sql.NullString{String: "10.0.5.1", Valid: true},
+			UpstreamPort:       sql.NullInt32{Int32: 5432, Valid: true},
+		},
+		{
+			ID:                 503,
+			Name:               "manual-standby",
+			Host:               "10.0.5.3",
+			Port:               5432,
+			DatabaseName:       "app",
+			Username:           "postgres",
+			PrimaryRole:        "binary_standby",
+			MembershipSource:   "manual",
+			Status:             "online",
+			IsStreamingStandby: true,
+			UpstreamHost:       sql.NullString{String: "10.0.5.1", Valid: true},
+			UpstreamPort:       sql.NullInt32{Int32: 5432, Valid: true},
+			ClusterID:          sql.NullInt64{Int64: 55, Valid: true},
+		},
+	}
+
+	overrides := map[string]clusterOverride{}
+
+	// buildAutoDetectedClusters should form a binary cluster with the
+	// auto primary and auto standby, but NOT include the manual standby.
+	autoClusters := ds.buildAutoDetectedClusters(conns, overrides)
+	cluster, ok := autoClusters["binary:501"]
+	if !ok {
+		t.Fatalf("expected auto binary cluster binary:501; got keys %v",
+			keysOf(autoClusters))
+	}
+	if len(cluster.Servers) != 1 {
+		t.Fatalf("expected 1 top-level server in binary cluster, got %d",
+			len(cluster.Servers))
+	}
+	primary := cluster.Servers[0]
+	if primary.ID != 501 {
+		t.Fatalf("expected primary server ID 501, got %d", primary.ID)
+	}
+	if len(primary.Children) != 1 {
+		t.Fatalf("expected 1 child (auto standby) under primary, got %d",
+			len(primary.Children))
+	}
+	if primary.Children[0].ID != 502 {
+		t.Fatalf("expected child ID 502 (auto standby), got %d",
+			primary.Children[0].ID)
+	}
+
+	// Verify the manual standby does not appear anywhere in the cluster.
+	for _, s := range primary.Children {
+		if s.ID == 503 {
+			t.Fatalf("manual standby 503 was pulled into auto binary cluster")
+		}
+	}
+
+	// buildTopologyHierarchy should produce the same result.
+	defaultGroup := &defaultGroupInfo{ID: 1, Name: "Servers/Clusters"}
+	groups := ds.buildTopologyHierarchy(conns, overrides, map[string]bool{}, defaultGroup)
+	if len(groups) != 1 {
+		t.Fatalf("expected 1 topology group, got %d", len(groups))
+	}
+	for _, cl := range groups[0].Clusters {
+		if cl.ClusterType == "binary" {
+			if len(cl.Servers) != 1 {
+				t.Fatalf("expected 1 top-level server in hierarchy binary cluster, got %d",
+					len(cl.Servers))
+			}
+			hier := cl.Servers[0]
+			for _, child := range hier.Children {
+				if child.MembershipSource == "manual" {
+					t.Fatalf("manual standby %d leaked into hierarchy binary cluster",
+						child.ID)
+				}
+			}
+		}
+	}
+}
+
+// TestTopologyManualPrimaryWithAutoStandby verifies that a manual
+// primary is filtered out at the binary-cluster level, so no binary
+// cluster forms. In buildAutoDetectedClusters the manual primary still
+// appears as a standalone wrapper (no ClusterID filter there); the auto
+// standby becomes its child. In buildTopologyHierarchy, however, the
+// manual primary is skipped from standalone processing (ClusterID is
+// set), so the auto standby ends up standalone on its own.
+func TestTopologyManualPrimaryWithAutoStandby(t *testing.T) {
+	ds := &Datastore{}
+
+	conns := []connectionWithRole{
+		{
+			ID:               601,
+			Name:             "manual-primary",
+			Host:             "10.0.6.1",
+			Port:             5432,
+			DatabaseName:     "app",
+			Username:         "postgres",
+			PrimaryRole:      "binary_primary",
+			MembershipSource: "manual",
+			Status:           "online",
+			ClusterID:        sql.NullInt64{Int64: 77, Valid: true},
+		},
+		{
+			ID:                 602,
+			Name:               "auto-standby",
+			Host:               "10.0.6.2",
+			Port:               5432,
+			DatabaseName:       "app",
+			Username:           "postgres",
+			PrimaryRole:        "binary_standby",
+			MembershipSource:   "auto",
+			Status:             "online",
+			IsStreamingStandby: true,
+			UpstreamHost:       sql.NullString{String: "10.0.6.1", Valid: true},
+			UpstreamPort:       sql.NullInt32{Int32: 5432, Valid: true},
+		},
+	}
+
+	overrides := map[string]clusterOverride{}
+
+	// buildAutoDetectedClusters: no binary cluster should form because
+	// the primary is manual.
+	autoClusters := ds.buildAutoDetectedClusters(conns, overrides)
+	if cluster, ok := autoClusters["binary:601"]; ok {
+		t.Fatalf("manual primary regrouped into auto binary cluster %q with %d servers",
+			cluster.AutoClusterKey, len(cluster.Servers))
+	}
+
+	// buildTopologyHierarchy: the manual primary (ClusterID set) is
+	// skipped from both binary-cluster and standalone processing. The
+	// auto standby should appear as a standalone server.
+	defaultGroup := &defaultGroupInfo{ID: 1, Name: "Servers/Clusters"}
+	groups := ds.buildTopologyHierarchy(conns, overrides, map[string]bool{}, defaultGroup)
+	if len(groups) != 1 {
+		t.Fatalf("expected 1 topology group, got %d", len(groups))
+	}
+	for _, cl := range groups[0].Clusters {
+		if cl.ClusterType == "binary" {
+			t.Fatalf("buildTopologyHierarchy produced binary cluster %q for manual primary",
+				cl.AutoClusterKey)
+		}
+	}
+	// Verify auto standby appears as standalone (type "server").
+	found := false
+	for _, cl := range groups[0].Clusters {
+		if cl.ClusterType == "server" {
+			for _, s := range cl.Servers {
+				if s.ID == 602 {
+					found = true
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("auto standby 602 not found as standalone server in hierarchy")
+	}
+}
+
+// TestTopologyAutoPublisherWithManualSubscriber verifies that a logical
+// cluster does not form when the subscriber is manual, even though the
+// publisher is auto. The subscriber filter in
+// groupLogicalReplicationByPublisher should skip it.
+func TestTopologyAutoPublisherWithManualSubscriber(t *testing.T) {
+	ds := &Datastore{}
+
+	conns := []connectionWithRole{
+		{
+			ID:               701,
+			Name:             "auto-publisher",
+			Host:             "10.0.7.1",
+			Port:             5432,
+			DatabaseName:     "app",
+			Username:         "postgres",
+			PrimaryRole:      "logical_publisher",
+			MembershipSource: "auto",
+			Status:           "online",
+		},
+		{
+			ID:               702,
+			Name:             "manual-subscriber",
+			Host:             "10.0.7.2",
+			Port:             5432,
+			DatabaseName:     "app",
+			Username:         "postgres",
+			PrimaryRole:      "logical_subscriber",
+			MembershipSource: "manual",
+			Status:           "online",
+			PublisherHost:    sql.NullString{String: "10.0.7.1", Valid: true},
+			PublisherPort:    sql.NullInt32{Int32: 5432, Valid: true},
+			ClusterID:        sql.NullInt64{Int64: 88, Valid: true},
+		},
+	}
+
+	overrides := map[string]clusterOverride{}
+
+	// No logical cluster should form because the subscriber is manual.
+	autoClusters := ds.buildAutoDetectedClusters(conns, overrides)
+	if cluster, ok := autoClusters["logical:701"]; ok {
+		t.Fatalf("auto publisher + manual subscriber formed logical cluster %q with %d servers",
+			cluster.AutoClusterKey, len(cluster.Servers))
+	}
+	for key, cluster := range autoClusters {
+		if cluster.ClusterType == "logical" {
+			t.Fatalf("unexpected logical cluster %q formed with manual subscriber",
+				key)
+		}
+	}
+}
+
+// TestTopologyManualPublisherWithAutoSubscriber verifies that a logical
+// cluster does not form when the publisher is manual, even though the
+// subscriber is auto. The publisher filter in
+// groupLogicalReplicationByPublisher should reject it.
+func TestTopologyManualPublisherWithAutoSubscriber(t *testing.T) {
+	ds := &Datastore{}
+
+	conns := []connectionWithRole{
+		{
+			ID:               801,
+			Name:             "manual-publisher",
+			Host:             "10.0.8.1",
+			Port:             5432,
+			DatabaseName:     "app",
+			Username:         "postgres",
+			PrimaryRole:      "logical_publisher",
+			MembershipSource: "manual",
+			Status:           "online",
+			ClusterID:        sql.NullInt64{Int64: 99, Valid: true},
+		},
+		{
+			ID:               802,
+			Name:             "auto-subscriber",
+			Host:             "10.0.8.2",
+			Port:             5432,
+			DatabaseName:     "app",
+			Username:         "postgres",
+			PrimaryRole:      "logical_subscriber",
+			MembershipSource: "auto",
+			Status:           "online",
+			PublisherHost:    sql.NullString{String: "10.0.8.1", Valid: true},
+			PublisherPort:    sql.NullInt32{Int32: 5432, Valid: true},
+		},
+	}
+
+	overrides := map[string]clusterOverride{}
+
+	// No logical cluster should form because the publisher is manual.
+	autoClusters := ds.buildAutoDetectedClusters(conns, overrides)
+	if cluster, ok := autoClusters["logical:801"]; ok {
+		t.Fatalf("manual publisher + auto subscriber formed logical cluster %q with %d servers",
+			cluster.AutoClusterKey, len(cluster.Servers))
+	}
+	for key, cluster := range autoClusters {
+		if cluster.ClusterType == "logical" {
+			t.Fatalf("unexpected logical cluster %q formed with manual publisher",
+				key)
+		}
+	}
+}
+
 // keysOf returns the keys of a map[string]TopologyCluster for readable
 // test failure messages.
 func keysOf(m map[string]TopologyCluster) []string {

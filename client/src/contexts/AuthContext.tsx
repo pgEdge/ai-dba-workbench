@@ -15,6 +15,11 @@ import { clearAlertAnalysisCache } from '../hooks/useAlertAnalysis';
 import { clearChartAnalysisCache } from '../hooks/useChartAnalysis';
 import { clearAnalysisCache as clearServerAnalysisCache } from '../hooks/useServerAnalysis';
 
+// Wildcard entry in admin_permissions that grants every admin permission.
+// Mirrors the server-side constant AdminPermissionWildcard in
+// server/src/internal/auth/token_scope.go.
+export const ADMIN_PERMISSION_WILDCARD = '*';
+
 export interface User {
     authenticated: boolean;
     username: string;
@@ -147,6 +152,7 @@ export const AuthProvider = ({ children }: AuthProviderProps): React.ReactElemen
     // Check if the user has a specific admin permission
     const hasPermission = useCallback((perm: string): boolean => {
         if (user?.isSuperuser) {return true;}
+        if (adminPermissions.includes(ADMIN_PERMISSION_WILDCARD)) {return true;}
         return adminPermissions.includes(perm);
     }, [user?.isSuperuser, adminPermissions]);
 

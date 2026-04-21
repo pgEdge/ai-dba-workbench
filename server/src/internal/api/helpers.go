@@ -91,3 +91,36 @@ func (l *connectionVisibilityLister) GetAllConnections(ctx context.Context) ([]a
 	}
 	return result, nil
 }
+
+// connectionSliceVisibilityLister adapts an already-loaded slice of
+// database.ConnectionListItem to auth.ConnectionVisibilityLister. It
+// lets callers that have already fetched the full connection list
+// reuse that snapshot for visibility resolution, avoiding a second
+// datastore read and eliminating the race where the filter set and
+// the served slice come from different snapshots.
+type connectionSliceVisibilityLister struct {
+	connections []database.ConnectionListItem
+}
+
+// newConnectionSliceVisibilityLister returns a lister that projects
+// the provided slice into auth.ConnectionVisibilityInfo values. The
+// caller retains ownership of the slice; the lister does not modify
+// it.
+func newConnectionSliceVisibilityLister(connections []database.ConnectionListItem) auth.ConnectionVisibilityLister {
+	return connectionSliceVisibilityLister{connections: connections}
+}
+
+// GetAllConnections implements auth.ConnectionVisibilityLister over
+// the pre-loaded slice. It never returns an error because no I/O is
+// performed; the context is accepted only to satisfy the interface.
+func (l connectionSliceVisibilityLister) GetAllConnections(_ context.Context) ([]auth.ConnectionVisibilityInfo, error) {
+	result := make([]auth.ConnectionVisibilityInfo, 0, len(l.connections))
+	for i := range l.connections {
+		result = append(result, auth.ConnectionVisibilityInfo{
+			ID:            l.connections[i].ID,
+			IsShared:      l.connections[i].IsShared,
+			OwnerUsername: l.connections[i].OwnerUsername,
+		})
+	}
+	return result, nil
+}

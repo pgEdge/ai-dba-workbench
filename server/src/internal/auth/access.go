@@ -432,32 +432,6 @@ func (rc *RBACChecker) GetEffectivePrivileges(ctx context.Context) *EffectivePri
 	return result
 }
 
-// GetAccessibleConnections returns a list of connection IDs the current
-// context can access through group/token grants.
-//
-// Deprecated: the nil return value is ambiguous. It means "full access"
-// for a superuser or a wildcard token scope, but it ALSO means "no
-// group-granted connections" for an ordinary user. Callers that treat a
-// nil result as "unrestricted" will leak unshared connections owned by
-// other users. Prefer VisibleConnectionIDs for list filtering and
-// CanAccessConnection for per-ID membership checks. This function is
-// kept for callers that already handle the ambiguity correctly (for
-// example, listConnections pairs the nil-check with an explicit
-// IsSuperuser gate and a per-row sharing decision).
-func (rc *RBACChecker) GetAccessibleConnections(ctx context.Context) []int {
-	privs := rc.GetEffectivePrivileges(ctx)
-	if privs.IsSuperuser {
-		// Superusers have access to all - return nil to indicate "all"
-		return nil
-	}
-
-	var connections []int
-	for connID := range privs.ConnectionPrivileges {
-		connections = append(connections, connID)
-	}
-	return connections
-}
-
 // ConnectionVisibilityLister returns the list of all connections with
 // their sharing metadata. It is implemented by *database.Datastore via
 // GetAllConnections and is used by VisibleConnectionIDs to avoid N+1

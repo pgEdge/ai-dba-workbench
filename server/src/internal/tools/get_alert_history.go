@@ -204,8 +204,9 @@ Returns TSV data with:
 
 			// Build accessible connection filter for multi-connection mode.
 			// VisibleConnectionIDs honors ownership and sharing in addition
-			// to group/token grants; unlike GetAccessibleConnections its
-			// return values are unambiguous.
+			// to group/token grants, and returns an explicit
+			// allConnections flag so callers cannot confuse "full access"
+			// with "no grants".
 			var accessibleIDs []int
 			allConnections := true
 			if !singleConnection && rbacChecker != nil {

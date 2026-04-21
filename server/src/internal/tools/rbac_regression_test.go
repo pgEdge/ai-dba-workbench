@@ -87,10 +87,11 @@ func nonSuperuserContext(userID int64, username string) context.Context {
 // A non-superuser user with zero group-granted connections, who is not the
 // owner of the target connection and for whom the target is not shared,
 // must NOT see any alerts from that connection when invoking
-// get_alert_history without an explicit connection_id. Previously the
-// tool treated the nil return value of GetAccessibleConnections as "all
-// connections" and produced a SQL WHERE clause of TRUE, leaking every
-// alert in the datastore.
+// get_alert_history without an explicit connection_id. Previously a
+// helper collapsed the "full access" and "no grants" cases into a single
+// nil return value, and the tool treated that nil as "all connections",
+// producing a SQL WHERE clause of TRUE that leaked every alert in the
+// datastore.
 func TestGetAlertHistoryTool_RBAC_NoAccessDeniesEmptyResult(t *testing.T) {
 	store, cleanup := newRBACRegressionTestStore(t)
 	defer cleanup()

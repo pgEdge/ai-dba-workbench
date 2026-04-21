@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -523,11 +524,11 @@ CREATE TABLE connections (
 );
 `
 
-// newListConnectionsIssue83Datastore wires a *database.Datastore to the
+// newListConnectionsTestDatastore wires a *database.Datastore to the
 // Postgres instance named by TEST_AI_WORKBENCH_SERVER and installs the
 // trimmed schema above. The test is skipped when the environment is not
 // configured to run database-backed tests.
-func newListConnectionsIssue83Datastore(t *testing.T) (*database.Datastore, *pgxpool.Pool, func()) {
+func newListConnectionsTestDatastore(t *testing.T) (*database.Datastore, *pgxpool.Pool, func()) {
 	t.Helper()
 
 	if os.Getenv("SKIP_DB_TESTS") != "" {
@@ -568,7 +569,7 @@ func newListConnectionsIssue83Datastore(t *testing.T) (*database.Datastore, *pgx
 // during intersection with the user's wildcard grant. After the fix,
 // connection 11 appears in the response.
 func TestListConnectionsScopedTokenReturnsScopedConnection(t *testing.T) {
-	ds, pool, cleanupDS := newListConnectionsIssue83Datastore(t)
+	ds, pool, cleanupDS := newListConnectionsTestDatastore(t)
 	defer cleanupDS()
 
 	// Auth store with a user "bob" whose ONLY connection access comes
@@ -688,5 +689,343 @@ func TestListConnectionsScopedTokenReturnsScopedConnection(t *testing.T) {
 	if foundOther {
 		t.Errorf("Expected connection 12 NOT in response (token not scoped to it), got %+v",
 			got)
+	}
+}
+
+// =============================================================================
+// Regression Tests for GitHub Issue #68 (listConnections migrated to
+// VisibleConnectionIDs)
+//
+// Issue #68 deletes the ambiguous GetAccessibleConnections helper and
+// migrates listConnections to the VisibleConnectionIDs contract used by
+// the alert and timeline handlers. These tests exercise listConnections
+// across the four visibility branches the helper must support:
+// superuser, owner-of-unshared, non-owner-zero-grant, and
+// shared-visible-to-non-owner. A fifth test forces GetAllConnections to
+// fail so the handler's error path is exercised. Together they lift
+// listConnections coverage past the project's 90% floor without
+// depending on the production schema.
+// =============================================================================
+
+// seedListConnectionsIssue68Fixture inserts a canonical pair of
+// connections into the issue #68 schema: an unshared connection owned
+// by alice, and a shared connection also owned by alice. Tests drive
+// listConnections against different identities to assert the
+// visibility contract.
+func seedListConnectionsIssue68Fixture(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	ctx := context.Background()
+	_, err := pool.Exec(ctx, `
+        INSERT INTO connections (id, name, description, host, port,
+            database_name, username, is_shared, owner_username,
+            membership_source)
+        VALUES
+            (21, 'alice-unshared', '', 'u.example.com', 5432, 'postgres',
+             'alice', FALSE, 'alice', 'manual'),
+            (22, 'alice-shared', '', 's.example.com', 5432, 'postgres',
+             'alice', TRUE, 'alice', 'manual')
+    `)
+	if err != nil {
+		t.Fatalf("Seed issue #68 fixture: %v", err)
+	}
+}
+
+// callListConnections invokes handleConnections and returns the decoded
+// response body plus the HTTP status. Using handleConnections rather
+// than listConnections directly matches the production wiring and
+// exercises the method dispatch that feeds listConnections.
+func callListConnections(t *testing.T, h *ConnectionHandler, ctx context.Context) (int, []database.ConnectionListItem) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	h.handleConnections(rec, req)
+	if rec.Code != http.StatusOK {
+		return rec.Code, nil
+	}
+	var got []database.ConnectionListItem
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("Decode response: %v", err)
+	}
+	return rec.Code, got
+}
+
+// newListConnectionsIssue68Handler builds the checker/handler pair each
+// issue #68 test uses. The checker is wired to the datastore sharing
+// lookup so CanAccessConnection and VisibleConnectionIDs see the same
+// is_shared flags as production.
+func newListConnectionsIssue68Handler(ds *database.Datastore, store *auth.AuthStore) *ConnectionHandler {
+	checker := auth.NewRBACChecker(store)
+	checker.SetConnectionSharingLookup(
+		func(ctx context.Context, id int) (bool, string, error) {
+			return ds.GetConnectionSharingInfo(ctx, id)
+		},
+	)
+	return NewConnectionHandler(ds, store, checker)
+}
+
+// TestListConnections_Issue68_Superuser_ReturnsAllConnections locks in
+// the superuser branch: VisibleConnectionIDs returns
+// allConnections=true and the handler skips filtering entirely.
+func TestListConnections_Issue68_Superuser_ReturnsAllConnections(t *testing.T) {
+	ds, pool, cleanupDS := newListConnectionsTestDatastore(t)
+	defer cleanupDS()
+	seedListConnectionsIssue68Fixture(t, pool)
+
+	_, store, cleanupStore := createTestRBACHandler(t)
+	defer cleanupStore()
+
+	handler := newListConnectionsIssue68Handler(ds, store)
+
+	ctx := context.WithValue(context.Background(), auth.IsSuperuserContextKey, true)
+	status, got := callListConnections(t, handler, ctx)
+	if status != http.StatusOK {
+		t.Fatalf("Expected 200, got %d", status)
+	}
+	ids := make(map[int]bool)
+	for _, c := range got {
+		ids[c.ID] = true
+	}
+	if !ids[21] || !ids[22] {
+		t.Errorf("Superuser should see all connections, got %+v", got)
+	}
+}
+
+// TestListConnections_Issue68_OwnerSeesOwnUnshared locks in the owner
+// branch: VisibleConnectionIDs includes unshared connections owned by
+// the caller.
+func TestListConnections_Issue68_OwnerSeesOwnUnshared(t *testing.T) {
+	ds, pool, cleanupDS := newListConnectionsTestDatastore(t)
+	defer cleanupDS()
+	seedListConnectionsIssue68Fixture(t, pool)
+
+	_, store, cleanupStore := createTestRBACHandler(t)
+	defer cleanupStore()
+
+	if err := store.CreateUser("alice", "Password1", "Alice", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	aliceID, err := store.GetUserID("alice")
+	if err != nil {
+		t.Fatalf("GetUserID: %v", err)
+	}
+
+	handler := newListConnectionsIssue68Handler(ds, store)
+
+	ctx := context.WithValue(context.Background(), auth.IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, auth.UserIDContextKey, aliceID)
+	ctx = context.WithValue(ctx, auth.UsernameContextKey, "alice")
+
+	status, got := callListConnections(t, handler, ctx)
+	if status != http.StatusOK {
+		t.Fatalf("Expected 200, got %d", status)
+	}
+	ids := make(map[int]bool)
+	for _, c := range got {
+		ids[c.ID] = true
+	}
+	if !ids[21] {
+		t.Error("Owner should see her own unshared connection 21")
+	}
+	if !ids[22] {
+		t.Error("Owner should see her own shared connection 22")
+	}
+}
+
+// TestListConnections_Issue68_NonOwnerZeroGrant_SeesSharedOnly locks in
+// the core issue #68 regression: a non-owner with zero group grants
+// must see shared connections but NOT unshared ones owned by someone
+// else. The old helper returned nil in this case and the previous
+// logic would have leaked the unshared row.
+func TestListConnections_Issue68_NonOwnerZeroGrant_SeesSharedOnly(t *testing.T) {
+	ds, pool, cleanupDS := newListConnectionsTestDatastore(t)
+	defer cleanupDS()
+	seedListConnectionsIssue68Fixture(t, pool)
+
+	_, store, cleanupStore := createTestRBACHandler(t)
+	defer cleanupStore()
+
+	if err := store.CreateUser("bob", "Password1", "Bob", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	bobID, err := store.GetUserID("bob")
+	if err != nil {
+		t.Fatalf("GetUserID: %v", err)
+	}
+
+	handler := newListConnectionsIssue68Handler(ds, store)
+
+	ctx := context.WithValue(context.Background(), auth.IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, auth.UserIDContextKey, bobID)
+	ctx = context.WithValue(ctx, auth.UsernameContextKey, "bob")
+
+	status, got := callListConnections(t, handler, ctx)
+	if status != http.StatusOK {
+		t.Fatalf("Expected 200, got %d", status)
+	}
+	ids := make(map[int]bool)
+	for _, c := range got {
+		ids[c.ID] = true
+	}
+	if ids[21] {
+		t.Error("Non-owner zero-grant user must NOT see unshared connection 21 " +
+			"(issue #68 regression)")
+	}
+	if !ids[22] {
+		t.Error("Non-owner zero-grant user should see shared connection 22")
+	}
+}
+
+// TestListConnections_Issue68_GetAllConnectionsError_Returns500 locks
+// in the datastore-error branch: when GetAllConnections fails the
+// handler must respond with 500 without attempting to filter a nil
+// slice or panic.
+func TestListConnections_Issue68_GetAllConnectionsError_Returns500(t *testing.T) {
+	ds, pool, cleanupDS := newListConnectionsTestDatastore(t)
+	defer cleanupDS()
+
+	// Drop the connections table so GetAllConnections returns an error.
+	// The cleanup function still drops the table; running the drop
+	// twice is harmless.
+	if _, err := pool.Exec(context.Background(),
+		"DROP TABLE IF EXISTS connections CASCADE"); err != nil {
+		t.Fatalf("DROP TABLE: %v", err)
+	}
+
+	_, store, cleanupStore := createTestRBACHandler(t)
+	defer cleanupStore()
+
+	handler := newListConnectionsIssue68Handler(ds, store)
+
+	ctx := context.WithValue(context.Background(), auth.IsSuperuserContextKey, true)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	handler.handleConnections(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("Expected 500 when GetAllConnections fails, got %d. Body: %s",
+			rec.Code, rec.Body.String())
+	}
+}
+
+// failingVisibilityLister implements auth.ConnectionVisibilityLister by
+// returning a fixed error. It is used to exercise the handler's
+// VisibleConnectionIDs error branch in isolation; the production
+// lister wraps *database.Datastore which cannot fail independently of
+// the surrounding GetAllConnections call made moments earlier.
+type failingVisibilityLister struct {
+	err error
+}
+
+func (l *failingVisibilityLister) GetAllConnections(_ context.Context) ([]auth.ConnectionVisibilityInfo, error) {
+	return nil, l.err
+}
+
+// TestListConnections_Issue68_VisibleConnectionIDsError_Returns500
+// covers the defensive lister-error branch inside listConnections.
+// The handler injects a failing lister via the visibilityListerFn
+// hook so VisibleConnectionIDs propagates an error back to the
+// handler without needing to break the underlying Postgres.
+func TestListConnections_Issue68_VisibleConnectionIDsError_Returns500(t *testing.T) {
+	ds, pool, cleanupDS := newListConnectionsTestDatastore(t)
+	defer cleanupDS()
+	seedListConnectionsIssue68Fixture(t, pool)
+
+	_, store, cleanupStore := createTestRBACHandler(t)
+	defer cleanupStore()
+
+	if err := store.CreateUser("bob", "Password1", "Bob", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	bobID, err := store.GetUserID("bob")
+	if err != nil {
+		t.Fatalf("GetUserID: %v", err)
+	}
+
+	handler := newListConnectionsIssue68Handler(ds, store)
+	// Inject a failing lister: GetAllConnections on the datastore
+	// succeeds (the table is still present), but VisibleConnectionIDs
+	// uses this lister and propagates the error.
+	handler.visibilityListerFn = func() auth.ConnectionVisibilityLister {
+		return &failingVisibilityLister{err: fmt.Errorf("injected lister failure")}
+	}
+
+	ctx := context.WithValue(context.Background(), auth.IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, auth.UserIDContextKey, bobID)
+	ctx = context.WithValue(ctx, auth.UsernameContextKey, "bob")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	handler.handleConnections(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("Expected 500 when VisibleConnectionIDs fails, got %d. Body: %s",
+			rec.Code, rec.Body.String())
+	}
+}
+
+// TestConnectionSliceVisibilityLister_ProjectsAllFields ensures the
+// slice-backed lister copies every sharing-relevant field into the
+// auth.ConnectionVisibilityInfo projection in the same order as the
+// input slice. The lister is the hot path for listConnections now
+// that it reuses the already-loaded slice instead of hitting the
+// datastore a second time, so the projection must be faithful.
+func TestConnectionSliceVisibilityLister_ProjectsAllFields(t *testing.T) {
+	input := []database.ConnectionListItem{
+		{ID: 1, Name: "owned", IsShared: false, OwnerUsername: "alice"},
+		{ID: 2, Name: "shared", IsShared: true, OwnerUsername: "bob"},
+		{ID: 3, Name: "other", IsShared: false, OwnerUsername: "carol"},
+	}
+
+	lister := newConnectionSliceVisibilityLister(input)
+	got, err := lister.GetAllConnections(context.Background())
+	if err != nil {
+		t.Fatalf("GetAllConnections returned unexpected error: %v", err)
+	}
+	if len(got) != len(input) {
+		t.Fatalf("Expected %d infos, got %d", len(input), len(got))
+	}
+	for i := range input {
+		if got[i].ID != input[i].ID {
+			t.Errorf("index %d: ID mismatch: got %d want %d",
+				i, got[i].ID, input[i].ID)
+		}
+		if got[i].IsShared != input[i].IsShared {
+			t.Errorf("index %d: IsShared mismatch: got %v want %v",
+				i, got[i].IsShared, input[i].IsShared)
+		}
+		if got[i].OwnerUsername != input[i].OwnerUsername {
+			t.Errorf("index %d: OwnerUsername mismatch: got %q want %q",
+				i, got[i].OwnerUsername, input[i].OwnerUsername)
+		}
+	}
+}
+
+// TestConnectionSliceVisibilityLister_EmptyAndNil confirms the
+// lister tolerates empty and nil inputs without error and returns a
+// non-nil, zero-length slice in both cases. listConnections passes
+// through whatever GetAllConnections returned, which can legitimately
+// be an empty result.
+func TestConnectionSliceVisibilityLister_EmptyAndNil(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []database.ConnectionListItem
+	}{
+		{name: "empty", in: []database.ConnectionListItem{}},
+		{name: "nil", in: nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			lister := newConnectionSliceVisibilityLister(tc.in)
+			got, err := lister.GetAllConnections(context.Background())
+			if err != nil {
+				t.Fatalf("GetAllConnections returned unexpected error: %v", err)
+			}
+			if got == nil {
+				t.Fatal("Expected non-nil slice, got nil")
+			}
+			if len(got) != 0 {
+				t.Fatalf("Expected zero-length slice, got %d", len(got))
+			}
+		})
 	}
 }

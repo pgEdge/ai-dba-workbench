@@ -150,7 +150,9 @@ The primary agent follows this workflow for all tasks:
    parallel as appropriate.
 
 4. **Verify** - After sub-agents complete their work, run `make test-all`
-   to ensure all tests pass.
+   to ensure all tests pass. Confirm every sub-agent delivering code has
+   also delivered tests that meet the 90% coverage floor described in
+   the Tests section; reject output that does not.
 
 5. **Review** - For security-sensitive changes (auth, input handling,
    queries), delegate to **security-auditor** for review.
@@ -311,6 +313,28 @@ At the end of each README:
 - Include linting in standard test suites using locally installable tools.
 
 - Enable coverage checking in standard test suites.
+
+- All new and modified code must reach at least 90% line coverage;
+  this is a hard floor, not an aspirational target.
+
+- The 90% floor applies to every change, no matter how small; when
+  you modify a file or package whose current coverage is below 90%,
+  raise the touched unit to 90% as part of the same change.
+
+- Measure Go coverage per sub-project with `cd <subproject> && make
+  coverage`, which runs `go test -coverprofile=coverage.out ./...`;
+  inspect the numeric result with `go tool cover -func=coverage.out`.
+
+- Measure client coverage with `cd client && make coverage`, which
+  runs `npm run test:coverage` (Vitest with `@vitest/coverage-v8`);
+  the text reporter prints per-file line coverage.
+
+- Run `make test-all` from the repository root to execute the full
+  suite across all sub-projects before completing a task.
+
+- A task is not complete until new and modified code meets the 90%
+  coverage floor, verified by the coverage tooling above; do not
+  mark work done on the basis of passing tests alone.
 
 - Run `gofmt` on all Go files.
 

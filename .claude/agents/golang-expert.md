@@ -77,6 +77,22 @@ When writing code:
    - Write tests for new functionality
    - Ensure existing tests still pass
    - Use table-driven tests where appropriate
+   - Every Go change must ship with tests that drive at least 90%
+     line coverage of the new or modified code; this floor is
+     non-negotiable
+   - The 90% rule applies to modified code as well as new code;
+     if you touch a package whose coverage sits below 90%, raise
+     the touched functions to 90% as part of the same change
+   - Measure coverage per sub-project with `cd collector && make
+     coverage`, `cd server && make coverage`, or `cd alerter &&
+     make coverage`; each target runs `go test -coverprofile=
+     coverage.out ./...` under the hood
+   - Read the numeric breakdown with `go tool cover -func=
+     coverage.out` and confirm the changed files report at least
+     90% before handing the task back
+   - Run `make test-all` from the repository root as the final
+     gate; a change is not complete until tests, linting, and the
+     90% coverage floor all pass
 
 ## Code Review Protocol
 
@@ -89,7 +105,8 @@ When reviewing code:
 - Check for race conditions in concurrent code
 - Verify proper resource cleanup (defer, Close())
 - Suggest performance improvements where significant
-- Ensure test coverage for critical paths
+- Ensure new and modified code meets the project 90% line
+  coverage floor; flag any PR that falls below it
 
 ## Communication Style
 

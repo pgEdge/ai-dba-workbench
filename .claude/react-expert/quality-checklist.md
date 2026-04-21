@@ -174,10 +174,17 @@ existing instances do not need to be fixed in unrelated changes.
 
 ## Coverage Requirements
 
-These are project coverage targets and should be enforced in CI.
-If `vitest.config.js` does not yet configure coverage gates,
-add them as a follow-up task with an owner and due date.
+New and modified client code must reach at least 90% line coverage;
+this is a non-negotiable floor, not an aspirational target.
 
-- Business logic and hooks: 90% target.
-- API handlers and utilities: 80% target.
-- UI components: 70% target.
+The 90% floor applies to modified code as well as new code; if you
+touch a module whose coverage sits below 90%, raise the touched
+units to 90% as part of the same change.
+
+Measure coverage with `cd client && make coverage`, which runs
+`npm run test:coverage` (Vitest with `@vitest/coverage-v8`); review
+the text reporter output to confirm the changed files report at
+least 90% line coverage.
+
+If `vitest.config.js` does not yet configure coverage gates, add
+them as a follow-up task with an owner and due date.

@@ -223,6 +223,12 @@ func TestConversationStruct(t *testing.T) {
 	if len(conv.Messages) != 1 {
 		t.Errorf("Expected 1 message, got %d", len(conv.Messages))
 	}
+	if !conv.CreatedAt.Equal(now) {
+		t.Errorf("Expected CreatedAt %v, got %v", now, conv.CreatedAt)
+	}
+	if !conv.UpdatedAt.Equal(now) {
+		t.Errorf("Expected UpdatedAt %v, got %v", now, conv.UpdatedAt)
+	}
 }
 
 func TestConversationSummaryStruct(t *testing.T) {
@@ -247,6 +253,12 @@ func TestConversationSummaryStruct(t *testing.T) {
 	}
 	if summary.Preview != "This is a preview..." {
 		t.Errorf("Expected Preview, got %q", summary.Preview)
+	}
+	if !summary.CreatedAt.Equal(now) {
+		t.Errorf("Expected CreatedAt %v, got %v", now, summary.CreatedAt)
+	}
+	if !summary.UpdatedAt.Equal(now) {
+		t.Errorf("Expected UpdatedAt %v, got %v", now, summary.UpdatedAt)
 	}
 }
 

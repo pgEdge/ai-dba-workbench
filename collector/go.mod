@@ -2,7 +2,7 @@ module github.com/pgedge/ai-workbench/collector
 
 go 1.26.0
 
-toolchain go1.26.2
+toolchain go1.26.1
 
 require (
 	github.com/jackc/pgx/v5 v5.7.6

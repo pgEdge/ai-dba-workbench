@@ -16,7 +16,10 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
 
 func TestHandleHealthCheck(t *testing.T) {
@@ -718,6 +721,159 @@ func TestRunHTTP_NilConfig(t *testing.T) {
 	err := server.RunHTTP(nil)
 	if err == nil {
 		t.Error("expected error for nil config")
+	}
+}
+
+// TestValidateCORSOrigin exercises the pure CORS validation helper used by
+// RunHTTP. Each case covers one branch: empty (same-origin), explicit URL
+// (with and without auth), wildcard with and without auth, and a malformed
+// URL. The wildcard+auth case is the fix for issue #81: browsers silently
+// reject Access-Control-Allow-Origin: * paired with
+// Access-Control-Allow-Credentials: true, so the server must fail fast.
+func TestValidateCORSOrigin(t *testing.T) {
+	tests := []struct {
+		name        string
+		origin      string
+		authEnabled bool
+		wantErr     bool
+		wantSubstr  []string // substrings expected in the error message
+	}{
+		{
+			name:        "empty origin with auth",
+			origin:      "",
+			authEnabled: true,
+			wantErr:     false,
+		},
+		{
+			name:        "empty origin without auth",
+			origin:      "",
+			authEnabled: false,
+			wantErr:     false,
+		},
+		{
+			name:        "explicit origin with auth",
+			origin:      "https://dba.example.com",
+			authEnabled: true,
+			wantErr:     false,
+		},
+		{
+			name:        "explicit origin without auth",
+			origin:      "https://dba.example.com",
+			authEnabled: false,
+			wantErr:     false,
+		},
+		{
+			name:        "wildcard with auth enabled rejected",
+			origin:      "*",
+			authEnabled: true,
+			wantErr:     true,
+			wantSubstr: []string{
+				`cors_origin "*"`,
+				"authentication is enabled",
+				"Access-Control-Allow-Origin: *",
+				"Access-Control-Allow-Credentials: true",
+				"Fetch spec",
+				"https://dba.example.com",
+				"same-origin",
+			},
+		},
+		{
+			name:        "wildcard without auth allowed",
+			origin:      "*",
+			authEnabled: false,
+			wantErr:     false,
+		},
+		{
+			name:        "invalid origin rejected",
+			origin:      "not a url",
+			authEnabled: true,
+			wantErr:     true,
+			wantSubstr:  []string{"invalid CORS origin"},
+		},
+		{
+			name:        "invalid origin rejected without auth",
+			origin:      "not a url",
+			authEnabled: false,
+			wantErr:     true,
+			wantSubstr:  []string{"invalid CORS origin"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateCORSOrigin(tt.origin, tt.authEnabled)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("validateCORSOrigin(%q, %v): expected error, got nil",
+						tt.origin, tt.authEnabled)
+				}
+				for _, sub := range tt.wantSubstr {
+					if !strings.Contains(err.Error(), sub) {
+						t.Errorf("error message %q does not contain %q",
+							err.Error(), sub)
+					}
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("validateCORSOrigin(%q, %v): unexpected error: %v",
+						tt.origin, tt.authEnabled, err)
+				}
+			}
+		})
+	}
+}
+
+// TestRunHTTP_WildcardCORSWithAuthRejected verifies that RunHTTP returns an
+// error (before binding any listener) when CORSOrigin == "*" and an
+// AuthStore is configured. This ensures the fail-fast behavior is wired
+// into the startup path, not only the pure helper.
+func TestRunHTTP_WildcardCORSWithAuthRejected(t *testing.T) {
+	tools := &mockToolProvider{}
+	server := NewServer(tools)
+
+	config := &HTTPConfig{
+		Addr:       ":0",
+		CORSOrigin: "*",
+		AuthStore:  &auth.AuthStore{}, // non-nil => auth enabled in this path
+	}
+
+	err := server.RunHTTP(config)
+	if err == nil {
+		t.Fatal("expected RunHTTP to reject wildcard CORS with auth enabled")
+	}
+
+	msg := err.Error()
+	wantSubstrs := []string{
+		`cors_origin "*"`,
+		"authentication is enabled",
+		"Fetch spec",
+	}
+	for _, sub := range wantSubstrs {
+		if !strings.Contains(msg, sub) {
+			t.Errorf("error message %q does not contain %q", msg, sub)
+		}
+	}
+}
+
+// TestRunHTTP_InvalidCORSOriginRejected verifies that RunHTTP still rejects
+// a malformed non-wildcard origin before binding any listener, preserving
+// the pre-existing validation behavior.
+func TestRunHTTP_InvalidCORSOriginRejected(t *testing.T) {
+	tools := &mockToolProvider{}
+	server := NewServer(tools)
+
+	config := &HTTPConfig{
+		Addr:       ":0",
+		CORSOrigin: "not a url",
+		AuthStore:  &auth.AuthStore{},
+	}
+
+	err := server.RunHTTP(config)
+	if err == nil {
+		t.Fatal("expected RunHTTP to reject invalid CORS origin")
+	}
+	if !strings.Contains(err.Error(), "invalid CORS origin") {
+		t.Errorf("unexpected error message: %v", err)
 	}
 }
 

@@ -286,6 +286,43 @@ builtins:
 | `auth.rate_limit_window_minutes` | int | `15` | Rate limit window |
 | `auth.rate_limit_max_attempts` | int | `10` | Max attempts per window |
 
+#### CORS Origin (`cors_origin`)
+
+The `cors_origin` option sets the value the server
+returns in the `Access-Control-Allow-Origin` response
+header for cross-origin browser requests. The empty
+default is appropriate for same-origin deployments,
+where the web client and the server share a single
+origin; the server then omits CORS headers entirely.
+
+Set `cors_origin` to an explicit origin, such as
+`https://workbench.example.com`, when the web client
+runs on a different origin than the server. The server
+also enables credentialed CORS responses by returning
+`Access-Control-Allow-Credentials: true`, which lets
+the browser attach session cookies to cross-origin
+requests.
+
+The server rejects a `cors_origin` value of `"*"` at
+startup when authentication is enabled. Browsers reject
+the combination of `Access-Control-Allow-Origin: *` and
+`Access-Control-Allow-Credentials: true` per the Fetch
+spec, so the wildcard would silently break every
+authenticated cross-origin response. Use an explicit
+origin instead, or leave the option empty for
+same-origin deployments.
+
+In the following example, the `http` section allows
+cross-origin requests from a dedicated workbench host:
+
+```yaml
+http:
+  address: ":8443"
+  cors_origin: "https://workbench.example.com"
+  auth:
+    enabled: true
+```
+
 ### Connection Security (`connection_security`)
 
 The connection security section controls SSRF

@@ -10,6 +10,18 @@ project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- Reject `cors_origin: "*"` at server startup when
+  authentication is enabled; browsers discard
+  credentialed responses that combine
+  `Access-Control-Allow-Origin: *` with
+  `Access-Control-Allow-Credentials: true` per the
+  Fetch spec, so the server now fails fast and
+  instructs the operator to configure an explicit
+  origin or leave the option empty for same-origin
+  deployments. (#81)
+
 ## [1.0.0-beta1] - 2026-04-21
 
 ### Added

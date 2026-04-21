@@ -1447,3 +1447,150 @@ func TestVisibleConnectionIDs_ListerError_Propagates(t *testing.T) {
 		t.Fatal("Expected error from lister to propagate, got nil")
 	}
 }
+
+// =============================================================================
+// GetEffectivePrivileges Scoped Token Intersection Tests (Issue #83)
+//
+// Issue #83: GET /api/v1/connections returned an empty array when a
+// scoped token's connection list intersected with the user's access
+// that came through a ConnectionIDAll wildcard grant. The intersection
+// in GetEffectivePrivileges ignored the wildcard entry and silently
+// dropped every scoped connection. These tests pin the corrected
+// behavior: a scoped token keeps its connection IDs whenever the user
+// has access via either a specific grant OR the wildcard, honoring the
+// "token scope can restrict but not elevate" rule.
+// =============================================================================
+
+func TestGetEffectivePrivilegesScopedTokenWithUserWildcard(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store)
+
+	// User has access to all connections via the ConnectionIDAll
+	// wildcard at read_write. Prior to the fix, a scoped token that
+	// named a specific connection would be intersected against the
+	// ConnectionPrivileges map and the scoped entry would be dropped
+	// because only ConnectionIDAll (0) was present.
+	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	userID, _ := store.GetUserID("testuser")
+	groupID, _ := store.CreateGroup("test-group", "Test")
+	store.AddUserToGroup(groupID, userID)
+	store.GrantConnectionPrivilege(groupID, ConnectionIDAll, AccessLevelReadWrite)
+
+	// Token scoped to connection 11 with read-only access.
+	_, storedToken, _ := store.CreateToken("testuser", "Scoped token", nil)
+	store.SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
+		{ConnectionID: 11, AccessLevel: AccessLevelRead},
+	})
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+	ctx = context.WithValue(ctx, TokenIDContextKey, storedToken.ID)
+
+	privs := checker.GetEffectivePrivileges(ctx)
+
+	if len(privs.ConnectionPrivileges) != 1 {
+		t.Fatalf("Expected exactly 1 connection privilege, got %d: %+v",
+			len(privs.ConnectionPrivileges), privs.ConnectionPrivileges)
+	}
+	level, ok := privs.ConnectionPrivileges[11]
+	if !ok {
+		t.Fatalf("Expected connection 11 in privileges, got %+v",
+			privs.ConnectionPrivileges)
+	}
+	if level != AccessLevelRead {
+		t.Errorf("Expected read for connection 11 (token ceiling), got %q",
+			level)
+	}
+	// ConnectionIDAll must not survive a non-wildcard token scope.
+	if _, hasAll := privs.ConnectionPrivileges[ConnectionIDAll]; hasAll {
+		t.Error("Expected ConnectionIDAll to be removed by non-wildcard scope")
+	}
+}
+
+func TestGetEffectivePrivilegesScopedTokenIntersectsSpecificGrant(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store)
+
+	// User has access ONLY to connection 11 (no wildcard). A token
+	// scoped to {11, 12} must keep 11 and drop 12 because 12 is not in
+	// the user's grant map.
+	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	userID, _ := store.GetUserID("testuser")
+	groupID, _ := store.CreateGroup("test-group", "Test")
+	store.AddUserToGroup(groupID, userID)
+	store.GrantConnectionPrivilege(groupID, 11, AccessLevelReadWrite)
+
+	_, storedToken, _ := store.CreateToken("testuser", "Scoped token", nil)
+	store.SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
+		{ConnectionID: 11, AccessLevel: AccessLevelRead},
+		{ConnectionID: 12, AccessLevel: AccessLevelRead},
+	})
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+	ctx = context.WithValue(ctx, TokenIDContextKey, storedToken.ID)
+
+	privs := checker.GetEffectivePrivileges(ctx)
+
+	if len(privs.ConnectionPrivileges) != 1 {
+		t.Fatalf("Expected exactly 1 connection privilege, got %d: %+v",
+			len(privs.ConnectionPrivileges), privs.ConnectionPrivileges)
+	}
+	level, ok := privs.ConnectionPrivileges[11]
+	if !ok {
+		t.Fatalf("Expected connection 11 in privileges, got %+v",
+			privs.ConnectionPrivileges)
+	}
+	if level != AccessLevelRead {
+		t.Errorf("Expected read for connection 11 (token ceiling), got %q",
+			level)
+	}
+	if _, has12 := privs.ConnectionPrivileges[12]; has12 {
+		t.Error("Expected connection 12 to be dropped (no user grant)")
+	}
+}
+
+func TestGetEffectivePrivilegesScopedTokenWildcardUserReadOnly(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store)
+
+	// User's wildcard grant is read-only. A token scope that requests
+	// read_write for connection 11 must be capped to read; the user's
+	// access is the ceiling, not the token's scope.
+	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	userID, _ := store.GetUserID("testuser")
+	groupID, _ := store.CreateGroup("test-group", "Test")
+	store.AddUserToGroup(groupID, userID)
+	store.GrantConnectionPrivilege(groupID, ConnectionIDAll, AccessLevelRead)
+
+	_, storedToken, _ := store.CreateToken("testuser", "Scoped token", nil)
+	store.SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
+		{ConnectionID: 11, AccessLevel: AccessLevelReadWrite},
+	})
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+	ctx = context.WithValue(ctx, TokenIDContextKey, storedToken.ID)
+
+	privs := checker.GetEffectivePrivileges(ctx)
+
+	if len(privs.ConnectionPrivileges) != 1 {
+		t.Fatalf("Expected exactly 1 connection privilege, got %d: %+v",
+			len(privs.ConnectionPrivileges), privs.ConnectionPrivileges)
+	}
+	level, ok := privs.ConnectionPrivileges[11]
+	if !ok {
+		t.Fatalf("Expected connection 11 in privileges, got %+v",
+			privs.ConnectionPrivileges)
+	}
+	if level != AccessLevelRead {
+		t.Errorf("Expected read for connection 11 (user ceiling), got %q",
+			level)
+	}
+}

@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
     Box,
     Typography,
@@ -32,6 +32,7 @@ import {
     TextField,
     MenuItem,
     Collapse,
+    Tooltip,
 } from '@mui/material';
 import { alpha, useTheme } from '@mui/material/styles';
 import {
@@ -40,6 +41,7 @@ import {
     Delete as DeleteIcon,
     Close as CloseIcon,
     ContentCopy as CopyIcon,
+    Check as CheckIcon,
     ExpandMore as ExpandMoreIcon,
     ExpandLess as ExpandLessIcon,
 } from '@mui/icons-material';
@@ -153,6 +155,25 @@ interface UserPrivilegesResponse {
     admin_permissions?: string[];
 }
 
+const filterMcpPrivileges = (
+    allPrivileges: McpPrivilege[],
+    allowedIdentifiers: string[],
+): McpPrivilege[] => {
+    if (allowedIdentifiers.includes('*')) {
+        return allPrivileges;
+    }
+    return allPrivileges.filter((p) => allowedIdentifiers.includes(p.identifier));
+};
+
+const filterAdminPermissions = (
+    allowedPermissionIds: string[],
+): AdminPermissionEntry[] => {
+    if (allowedPermissionIds.includes('*')) {
+        return ADMIN_PERMISSIONS;
+    }
+    return ADMIN_PERMISSIONS.filter((p) => allowedPermissionIds.includes(p.id));
+};
+
 const AdminTokenScopes: React.FC = () => {
     const theme = useTheme();
     const [tokens, setTokens] = useState<Token[]>([]);
@@ -177,6 +198,8 @@ const AdminTokenScopes: React.FC = () => {
     // Token created success dialog
     const [createdToken, setCreatedToken] = useState<string | null>(null);
     const [createdDialogOpen, setCreatedDialogOpen] = useState(false);
+    const [tokenCopied, setTokenCopied] = useState(false);
+    const copyResetTimerRef = useRef<number | null>(null);
 
     // Create dialog - owner privilege filtering
     const [ownerConnections, setOwnerConnections] = useState<Connection[]>([]);
@@ -298,19 +321,9 @@ const AdminTokenScopes: React.FC = () => {
                     );
                 }
                 // Filter MCP privileges to those the user has
-                const allowedMcp = data.mcp_privileges || [];
-                setOwnerMcpPrivileges(
-                    mcpPrivileges.filter((p: McpPrivilege) =>
-                        allowedMcp.includes(p.identifier)
-                    )
-                );
+                setOwnerMcpPrivileges(filterMcpPrivileges(mcpPrivileges, data.mcp_privileges || []));
                 // Filter admin permissions to those the user has
-                const allowedAdmin = data.admin_permissions || [];
-                setOwnerAdminPermissions(
-                    ADMIN_PERMISSIONS.filter(p =>
-                        allowedAdmin.includes(p.id)
-                    )
-                );
+                setOwnerAdminPermissions(filterAdminPermissions(data.admin_permissions || []));
             }
         } catch {
             // If privilege fetch fails, show all options as fallback
@@ -423,18 +436,8 @@ const AdminTokenScopes: React.FC = () => {
                             )
                         );
                     }
-                    const allowedMcp = data.mcp_privileges || [];
-                    setEditAvailableMcpPrivileges(
-                        mcpPrivileges.filter((p: McpPrivilege) =>
-                            allowedMcp.includes(p.identifier)
-                        )
-                    );
-                    const allowedAdmin = data.admin_permissions || [];
-                    setEditAvailableAdminPermissions(
-                        ADMIN_PERMISSIONS.filter(p =>
-                            allowedAdmin.includes(p.id)
-                        )
-                    );
+                    setEditAvailableMcpPrivileges(filterMcpPrivileges(mcpPrivileges, data.mcp_privileges || []));
+                    setEditAvailableAdminPermissions(filterAdminPermissions(data.admin_permissions || []));
                 }
             } catch {
                 setEditOwnerIsSuperuser(false);
@@ -499,12 +502,61 @@ const AdminTokenScopes: React.FC = () => {
         }
     };
 
-    // Copy token to clipboard
-    const handleCopyToken = async () => {
-        if (createdToken) {
-            await navigator.clipboard.writeText(createdToken);
+    // Copy token to clipboard. Surfaces short-lived feedback via the copy
+    // button (icon swap + tooltip), and reports clipboard failures through
+    // the shared error channel so the user is never left wondering whether
+    // the click did anything. The Clipboard API is undefined on non-secure
+    // contexts, so we guard access before calling it to avoid a synchronous
+    // TypeError that would bypass our error reporting.
+    const handleCopyToken = useCallback(async () => {
+        if (!createdToken) {
+            return;
         }
-    };
+        try {
+            if (!navigator.clipboard?.writeText) {
+                throw new Error('Clipboard API unavailable in this context.');
+            }
+            await navigator.clipboard.writeText(createdToken);
+            setError(null);
+            setTokenCopied(true);
+            if (copyResetTimerRef.current !== null) {
+                window.clearTimeout(copyResetTimerRef.current);
+            }
+            copyResetTimerRef.current = window.setTimeout(() => {
+                setTokenCopied(false);
+                copyResetTimerRef.current = null;
+            }, 2000);
+        } catch (err: unknown) {
+            setError(
+                err instanceof Error
+                    ? `Failed to copy token: ${err.message}`
+                    : 'Failed to copy token to clipboard.'
+            );
+        }
+    }, [createdToken]);
+
+    // Close the "token created" dialog and clear the copied-feedback state
+    // so it does not leak into a subsequent open.
+    const handleCloseCreatedDialog = useCallback(() => {
+        setCreatedDialogOpen(false);
+        setTokenCopied(false);
+        if (copyResetTimerRef.current !== null) {
+            window.clearTimeout(copyResetTimerRef.current);
+            copyResetTimerRef.current = null;
+        }
+    }, []);
+
+    // Ensure the copy-reset timer does not outlive the component; if the
+    // user navigates away while the "Copied!" feedback is still showing,
+    // the timer would otherwise fire a state update on an unmounted tree.
+    useEffect(() => {
+        return () => {
+            if (copyResetTimerRef.current !== null) {
+                window.clearTimeout(copyResetTimerRef.current);
+                copyResetTimerRef.current = null;
+            }
+        };
+    }, []);
 
     // Format expiry date
     const formatExpiry = (expiresAt: string | null | undefined) => {
@@ -970,7 +1022,7 @@ curl -s -X POST -H "Authorization: Bearer <token>" \\
             {/* Token Created Success Dialog */}
             <Dialog
                 open={createdDialogOpen}
-                onClose={() => setCreatedDialogOpen(false)}
+                onClose={handleCloseCreatedDialog}
                 maxWidth="sm"
                 fullWidth
             >
@@ -997,17 +1049,26 @@ curl -s -X POST -H "Authorization: Bearer <token>" \\
                         <Box sx={{ flex: 1 }}>
                             {createdToken}
                         </Box>
-                        <IconButton
-                            onClick={handleCopyToken}
-                            size="small"
-                            aria-label="copy token"
+                        <Tooltip
+                            title={tokenCopied ? 'Copied!' : 'Copy to clipboard'}
+                            placement="top"
                         >
-                            <CopyIcon fontSize="small" />
-                        </IconButton>
+                            <IconButton
+                                onClick={handleCopyToken}
+                                size="small"
+                                aria-label="copy token"
+                            >
+                                {tokenCopied ? (
+                                    <CheckIcon fontSize="small" color="success" />
+                                ) : (
+                                    <CopyIcon fontSize="small" />
+                                )}
+                            </IconButton>
+                        </Tooltip>
                     </Box>
                 </DialogContent>
                 <DialogActions sx={dialogActionsSx}>
-                    <Button onClick={() => setCreatedDialogOpen(false)}>
+                    <Button onClick={handleCloseCreatedDialog}>
                         Close
                     </Button>
                 </DialogActions>

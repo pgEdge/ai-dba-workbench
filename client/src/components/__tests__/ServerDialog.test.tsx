@@ -9,10 +9,11 @@
  */
 
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import ServerDialog from '../ServerDialog';
+import { renderWithTheme } from '../../test/renderWithTheme';
 
 // Mock AlertOverridesPanel to avoid fetch calls during ServerDialog tests
 vi.mock('../AlertOverridesPanel', () => ({
@@ -54,18 +55,18 @@ describe('ServerDialog', () => {
 
     describe('rendering', () => {
         it('renders dialog with Add Server title in create mode', () => {
-            render(<ServerDialog {...defaultProps} />);
+            renderWithTheme(<ServerDialog {...defaultProps} />);
             expect(screen.getByText('Add Server')).toBeInTheDocument();
         });
 
         it('renders dialog with Server Settings title in edit mode', () => {
             const server = { id: 1, name: 'Test Server', host: 'localhost', port: 5432, database: 'postgres', username: 'user', password: '', sslmode: 'prefer' };
-            render(<ServerDialog {...defaultProps} mode="edit" server={server} />);
+            renderWithTheme(<ServerDialog {...defaultProps} mode="edit" server={server} />);
             expect(screen.getByText('Server Settings: Test Server')).toBeInTheDocument();
         });
 
         it('renders all required form fields', () => {
-            render(<ServerDialog {...defaultProps} />);
+            renderWithTheme(<ServerDialog {...defaultProps} />);
 
             expect(getNameField()).toBeInTheDocument();
             expect(getHostField()).toBeInTheDocument();
@@ -76,34 +77,34 @@ describe('ServerDialog', () => {
         });
 
         it('renders monitor checkbox checked by default', () => {
-            render(<ServerDialog {...defaultProps} />);
+            renderWithTheme(<ServerDialog {...defaultProps} />);
             const monitorCheckbox = screen.getByLabelText(/monitor this server/i);
             expect(monitorCheckbox).toBeChecked();
         });
 
         it('does not render shared checkbox for non-superusers', () => {
-            render(<ServerDialog {...defaultProps} isSuperuser={false} />);
+            renderWithTheme(<ServerDialog {...defaultProps} isSuperuser={false} />);
             expect(screen.queryByLabelText(/share with all users/i)).not.toBeInTheDocument();
         });
 
         it('renders shared checkbox for superusers', () => {
-            render(<ServerDialog {...defaultProps} isSuperuser={true} />);
+            renderWithTheme(<ServerDialog {...defaultProps} isSuperuser={true} />);
             expect(screen.getByLabelText(/share with all users/i)).toBeInTheDocument();
         });
 
         it('renders SSL Settings accordion', () => {
-            render(<ServerDialog {...defaultProps} />);
+            renderWithTheme(<ServerDialog {...defaultProps} />);
             expect(screen.getByText(/ssl settings/i)).toBeInTheDocument();
         });
 
         it('renders Cancel and Save buttons', () => {
-            render(<ServerDialog {...defaultProps} />);
+            renderWithTheme(<ServerDialog {...defaultProps} />);
             expect(screen.getByRole('button', { name: /cancel/i })).toBeInTheDocument();
             expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
         });
 
         it('does not render when open is false', () => {
-            render(<ServerDialog {...defaultProps} open={false} />);
+            renderWithTheme(<ServerDialog {...defaultProps} open={false} />);
             expect(screen.queryByText('Add Server')).not.toBeInTheDocument();
         });
     });
@@ -124,7 +125,7 @@ describe('ServerDialog', () => {
         };
 
         it('pre-populates fields with existing server data', () => {
-            render(
+            renderWithTheme(
                 <ServerDialog
                     {...defaultProps}
                     mode="edit"
@@ -140,7 +141,7 @@ describe('ServerDialog', () => {
         });
 
         it('does not pre-populate password field', () => {
-            render(
+            renderWithTheme(
                 <ServerDialog
                     {...defaultProps}
                     mode="edit"
@@ -152,7 +153,7 @@ describe('ServerDialog', () => {
         });
 
         it('shows helper text for password in edit mode', () => {
-            render(
+            renderWithTheme(
                 <ServerDialog
                     {...defaultProps}
                     mode="edit"
@@ -167,7 +168,7 @@ describe('ServerDialog', () => {
     describe('validation', () => {
         it('shows error when name is empty', async () => {
             const user = userEvent.setup({ delay: null });
-            render(<ServerDialog {...defaultProps} />);
+            renderWithTheme(<ServerDialog {...defaultProps} />);
 
             await user.click(screen.getByRole('button', { name: /save/i }));
 
@@ -178,7 +179,7 @@ describe('ServerDialog', () => {
 
         it('shows error when host is empty', async () => {
             const user = userEvent.setup({ delay: null });
-            render(<ServerDialog {...defaultProps} />);
+            renderWithTheme(<ServerDialog {...defaultProps} />);
 
             await user.type(getNameField(), 'Test Server');
             await user.click(screen.getByRole('button', { name: /save/i }));
@@ -188,7 +189,7 @@ describe('ServerDialog', () => {
 
         it('shows error for invalid port', async () => {
             const user = userEvent.setup({ delay: null });
-            render(<ServerDialog {...defaultProps} />);
+            renderWithTheme(<ServerDialog {...defaultProps} />);
 
             await user.type(getNameField(), 'Test Server');
             await user.type(getHostField(), 'localhost');
@@ -201,7 +202,7 @@ describe('ServerDialog', () => {
 
         it('shows error when maintenance database is empty', async () => {
             const user = userEvent.setup({ delay: null });
-            render(<ServerDialog {...defaultProps} />);
+            renderWithTheme(<ServerDialog {...defaultProps} />);
 
             await user.type(getNameField(), 'Test Server');
             await user.type(getHostField(), 'localhost');
@@ -214,7 +215,7 @@ describe('ServerDialog', () => {
 
         it('shows error when username is empty', async () => {
             const user = userEvent.setup({ delay: null });
-            render(<ServerDialog {...defaultProps} />);
+            renderWithTheme(<ServerDialog {...defaultProps} />);
 
             await user.type(getNameField(), 'Test Server');
             await user.type(getHostField(), 'localhost');
@@ -228,7 +229,7 @@ describe('ServerDialog', () => {
 
         it('shows error when password is empty in create mode', async () => {
             const user = userEvent.setup({ delay: null });
-            render(<ServerDialog {...defaultProps} />);
+            renderWithTheme(<ServerDialog {...defaultProps} />);
 
             await user.type(getNameField(), 'Test Server');
             await user.type(getHostField(), 'localhost');
@@ -250,7 +251,7 @@ describe('ServerDialog', () => {
                 username: 'admin',
             };
 
-            render(
+            renderWithTheme(
                 <ServerDialog
                     {...defaultProps}
                     mode="edit"
@@ -268,7 +269,7 @@ describe('ServerDialog', () => {
 
         it('clears field error when user types', async () => {
             const user = userEvent.setup({ delay: null });
-            render(<ServerDialog {...defaultProps} />);
+            renderWithTheme(<ServerDialog {...defaultProps} />);
 
             // Trigger validation error
             await user.click(screen.getByRole('button', { name: /save/i }));
@@ -287,7 +288,7 @@ describe('ServerDialog', () => {
         it('calls onSave with trimmed form data', async () => {
             const user = userEvent.setup({ delay: null });
             const onSave = vi.fn().mockResolvedValue();
-            render(<ServerDialog {...defaultProps} onSave={onSave} />);
+            renderWithTheme(<ServerDialog {...defaultProps} onSave={onSave} />);
 
             await user.type(getNameField(), '  Test Server  ');
             await user.type(getHostField(), '  localhost  ');
@@ -317,7 +318,7 @@ describe('ServerDialog', () => {
         it('shows success message after successful save', async () => {
             const user = userEvent.setup({ delay: null });
             const onSave = vi.fn().mockResolvedValue();
-            render(<ServerDialog {...defaultProps} onSave={onSave} />);
+            renderWithTheme(<ServerDialog {...defaultProps} onSave={onSave} />);
 
             await user.type(getNameField(), 'Test Server');
             await user.type(getHostField(), 'localhost');
@@ -335,7 +336,7 @@ describe('ServerDialog', () => {
         it('shows error alert when save fails', async () => {
             const user = userEvent.setup({ delay: null });
             const onSave = vi.fn().mockRejectedValue(new Error('Connection refused'));
-            render(<ServerDialog {...defaultProps} onSave={onSave} />);
+            renderWithTheme(<ServerDialog {...defaultProps} onSave={onSave} />);
 
             await user.type(getNameField(), 'Test Server');
             await user.type(getHostField(), 'localhost');
@@ -354,7 +355,7 @@ describe('ServerDialog', () => {
             const user = userEvent.setup({ delay: null });
             const onSave = vi.fn().mockRejectedValue(new Error('Failed'));
             const onClose = vi.fn();
-            render(<ServerDialog {...defaultProps} onSave={onSave} onClose={onClose} />);
+            renderWithTheme(<ServerDialog {...defaultProps} onSave={onSave} onClose={onClose} />);
 
             await user.type(getNameField(), 'Test Server');
             await user.type(getHostField(), 'localhost');
@@ -373,13 +374,14 @@ describe('ServerDialog', () => {
 
         it('disables form during save', async () => {
             const user = userEvent.setup({ delay: null });
-            // Create a promise that we control
-            let resolvePromise: (value: unknown) => void;
+            // Create a promise we control so the save stays pending while
+            // we assert on the disabled fields.
+            let resolvePromise: (value: unknown) => void = () => undefined;
             const savePromise = new Promise((resolve) => {
                 resolvePromise = resolve;
             });
             const onSave = vi.fn().mockReturnValue(savePromise);
-            render(<ServerDialog {...defaultProps} onSave={onSave} />);
+            renderWithTheme(<ServerDialog {...defaultProps} onSave={onSave} />);
 
             await user.type(getNameField(), 'Test Server');
             await user.type(getHostField(), 'localhost');
@@ -395,8 +397,18 @@ describe('ServerDialog', () => {
             });
             expect(getHostField()).toBeDisabled();
 
-            // Resolve the promise to clean up
-            resolvePromise();
+            // Resolve the promise inside `act` and wait for the dialog's
+            // `finally { setIsSaving(false) }` branch to flush before the
+            // test returns. Without this, the trailing `setIsSaving`
+            // commits after the test function resolves and emits a
+            // `not wrapped in act(...)` warning.
+            await act(async () => {
+                resolvePromise(undefined);
+                await savePromise;
+            });
+            await waitFor(() => {
+                expect(getNameField()).not.toBeDisabled();
+            });
         });
     });
 
@@ -404,7 +416,7 @@ describe('ServerDialog', () => {
         it('calls onClose when Cancel button is clicked', async () => {
             const user = userEvent.setup({ delay: null });
             const onClose = vi.fn();
-            render(<ServerDialog {...defaultProps} onClose={onClose} />);
+            renderWithTheme(<ServerDialog {...defaultProps} onClose={onClose} />);
 
             await user.click(screen.getByRole('button', { name: /cancel/i }));
 
@@ -413,7 +425,7 @@ describe('ServerDialog', () => {
 
         it('resets form when reopened', async () => {
             const user = userEvent.setup({ delay: null });
-            const { rerender } = render(<ServerDialog {...defaultProps} />);
+            const { rerender } = renderWithTheme(<ServerDialog {...defaultProps} />);
 
             await user.type(getNameField(), 'Test Server');
 
@@ -428,7 +440,7 @@ describe('ServerDialog', () => {
     describe('SSL settings', () => {
         it('expands SSL section when clicked', async () => {
             const user = userEvent.setup({ delay: null });
-            render(<ServerDialog {...defaultProps} />);
+            renderWithTheme(<ServerDialog {...defaultProps} />);
 
             // Click the accordion
             await user.click(screen.getByText(/ssl settings/i));
@@ -444,7 +456,7 @@ describe('ServerDialog', () => {
         it('includes SSL settings in save data', async () => {
             const user = userEvent.setup({ delay: null });
             const onSave = vi.fn().mockResolvedValue();
-            render(<ServerDialog {...defaultProps} onSave={onSave} />);
+            renderWithTheme(<ServerDialog {...defaultProps} onSave={onSave} />);
 
             // Fill required fields
             await user.type(getNameField(), 'Test Server');
@@ -476,7 +488,7 @@ describe('ServerDialog', () => {
         it('includes is_monitored in save data', async () => {
             const user = userEvent.setup({ delay: null });
             const onSave = vi.fn().mockResolvedValue();
-            render(<ServerDialog {...defaultProps} onSave={onSave} />);
+            renderWithTheme(<ServerDialog {...defaultProps} onSave={onSave} />);
 
             // Fill required fields
             await user.type(getNameField(), 'Test Server');
@@ -502,7 +514,7 @@ describe('ServerDialog', () => {
         it('includes is_shared in save data when superuser', async () => {
             const user = userEvent.setup({ delay: null });
             const onSave = vi.fn().mockResolvedValue();
-            render(<ServerDialog {...defaultProps} onSave={onSave} isSuperuser={true} />);
+            renderWithTheme(<ServerDialog {...defaultProps} onSave={onSave} isSuperuser={true} />);
 
             // Fill required fields
             await user.type(getNameField(), 'Test Server');
@@ -537,14 +549,14 @@ describe('ServerDialog', () => {
         };
 
         it('does not render tabs in create mode', () => {
-            render(<ServerDialog {...defaultProps} mode="create" />);
+            renderWithTheme(<ServerDialog {...defaultProps} mode="create" />);
 
             expect(screen.queryByRole('tab', { name: /details/i })).not.toBeInTheDocument();
             expect(screen.queryByRole('tab', { name: /alert overrides/i })).not.toBeInTheDocument();
         });
 
         it('renders Details and Alert Overrides tabs in edit mode', () => {
-            render(
+            renderWithTheme(
                 <ServerDialog
                     {...defaultProps}
                     mode="edit"
@@ -558,7 +570,7 @@ describe('ServerDialog', () => {
 
         it('renders AlertOverridesPanel when Alert Overrides tab is clicked', async () => {
             const user = userEvent.setup({ delay: null });
-            render(
+            renderWithTheme(
                 <ServerDialog
                     {...defaultProps}
                     mode="edit"
@@ -576,7 +588,7 @@ describe('ServerDialog', () => {
 
         it('shows Save button on Details tab and Close button on Alert Overrides tab', async () => {
             const user = userEvent.setup({ delay: null });
-            render(
+            renderWithTheme(
                 <ServerDialog
                     {...defaultProps}
                     mode="edit"

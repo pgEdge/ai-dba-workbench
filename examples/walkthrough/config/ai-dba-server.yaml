@@ -1,0 +1,25 @@
+http:
+    address: ":8080"
+    tls:
+        enabled: false
+    auth:
+        enabled: true
+
+connection_security:
+    allow_internal_networks: true
+
+database:
+    host: postgres
+    port: 5432
+    database: ai_workbench
+    user: postgres
+    password: postgres
+    sslmode: disable
+
+secret_file: /etc/pgedge/secret/ai-dba.secret
+data_dir: /data
+
+llm:
+    provider: anthropic
+    model: claude-sonnet-4-5
+    anthropic_api_key_file: /etc/pgedge/secret/llm-api-key

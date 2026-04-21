@@ -11,12 +11,16 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
+	"github.com/pgedge/ai-workbench/server/internal/database"
 )
 
 func TestNewConnectionHandler(t *testing.T) {
@@ -470,5 +474,219 @@ func TestConnectionHandler_HandleSubpath_EmptyPath(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("Expected status %d, got %d", http.StatusNotFound, rec.Code)
+	}
+}
+
+// =============================================================================
+// Regression Test for GitHub Issue #83
+//
+// Issue #83: GET /api/v1/connections returned an empty array for a
+// scoped token when the token owner's access to the scoped connection
+// came through the ConnectionIDAll group wildcard instead of a specific
+// group grant. GetEffectivePrivileges intersected the scoped connection
+// IDs against the user's explicit privileges map and silently dropped
+// the entry because only ConnectionIDAll (0) was present in the map.
+//
+// This test exercises the full HTTP handler path with a real datastore
+// and auth store: it seeds a connection owned by "alice", gives "bob" a
+// wildcard group grant, creates a scoped token for bob whose scope
+// names that specific connection, and asserts the listing contains the
+// scoped connection.
+// =============================================================================
+
+// listConnectionsIssue83TestSchema creates the minimum columns listed in
+// database.ConnectionListItem. The schema is intentionally trimmed to
+// only what GetAllConnections selects.
+//
+// NOTE: This is a trimmed snapshot of the production connections table
+// DDL. It must track the columns selected by GetAllConnections in
+// database/datastore.go. If the production schema adds NOT NULL columns
+// or renames fields, update this constant to match.
+const listConnectionsIssue83TestSchema = `
+DROP TABLE IF EXISTS connections CASCADE;
+CREATE TABLE connections (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    host VARCHAR(255) NOT NULL,
+    hostaddr VARCHAR(255),
+    port INTEGER NOT NULL DEFAULT 5432,
+    database_name VARCHAR(255) NOT NULL,
+    username VARCHAR(255),
+    is_monitored BOOLEAN NOT NULL DEFAULT FALSE,
+    is_shared BOOLEAN NOT NULL DEFAULT FALSE,
+    owner_username VARCHAR(255),
+    cluster_id INTEGER,
+    membership_source VARCHAR(16) NOT NULL DEFAULT 'auto',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+`
+
+// newListConnectionsIssue83Datastore wires a *database.Datastore to the
+// Postgres instance named by TEST_AI_WORKBENCH_SERVER and installs the
+// trimmed schema above. The test is skipped when the environment is not
+// configured to run database-backed tests.
+func newListConnectionsIssue83Datastore(t *testing.T) (*database.Datastore, *pgxpool.Pool, func()) {
+	t.Helper()
+
+	if os.Getenv("SKIP_DB_TESTS") != "" {
+		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
+	}
+	connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
+	if connStr == "" {
+		t.Skip("TEST_AI_WORKBENCH_SERVER not set, skipping issue #83 integration test")
+	}
+
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, connStr)
+	if err != nil {
+		t.Skipf("Could not connect to test database: %v", err)
+	}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		t.Skipf("Test database ping failed: %v", err)
+	}
+
+	if _, err := pool.Exec(ctx, listConnectionsIssue83TestSchema); err != nil {
+		pool.Close()
+		t.Fatalf("Failed to create issue #83 test schema: %v", err)
+	}
+
+	ds := database.NewTestDatastore(pool)
+	cleanup := func() {
+		_, _ = pool.Exec(context.Background(),
+			"DROP TABLE IF EXISTS connections CASCADE")
+		pool.Close()
+	}
+	return ds, pool, cleanup
+}
+
+// TestListConnectionsScopedTokenReturnsScopedConnection is the handler-
+// level regression test for issue #83. Before the fix, the body would
+// be "[]" because GetEffectivePrivileges dropped the scoped connection
+// during intersection with the user's wildcard grant. After the fix,
+// connection 11 appears in the response.
+func TestListConnectionsScopedTokenReturnsScopedConnection(t *testing.T) {
+	ds, pool, cleanupDS := newListConnectionsIssue83Datastore(t)
+	defer cleanupDS()
+
+	// Auth store with a user "bob" whose ONLY connection access comes
+	// through a group-wide ConnectionIDAll read_write grant. The bug
+	// reproducer requires that the group grant not name connection 11
+	// explicitly.
+	_, store, cleanupStore := createTestRBACHandler(t)
+	defer cleanupStore()
+
+	if err := store.CreateUser("bob", "Password1", "Bob", "", ""); err != nil {
+		t.Fatalf("CreateUser bob: %v", err)
+	}
+	bobID, err := store.GetUserID("bob")
+	if err != nil {
+		t.Fatalf("GetUserID bob: %v", err)
+	}
+	groupID, err := store.CreateGroup("bob-group", "Bob's group")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	if err := store.AddUserToGroup(groupID, bobID); err != nil {
+		t.Fatalf("AddUserToGroup: %v", err)
+	}
+	if err := store.GrantConnectionPrivilege(groupID, auth.ConnectionIDAll,
+		auth.AccessLevelReadWrite); err != nil {
+		t.Fatalf("GrantConnectionPrivilege: %v", err)
+	}
+
+	// Seed connection 11 (unshared) owned by someone other than bob so
+	// the listConnections "owner" branch does not rescue it.
+	const scopedConnID = 11
+	_, err = pool.Exec(context.Background(), `
+        INSERT INTO connections (id, name, description, host, port,
+            database_name, username, is_shared, owner_username,
+            membership_source)
+        VALUES ($1, 'scoped-conn', '', 'db.example.com', 5432, 'postgres',
+            'alice', FALSE, 'alice', 'manual')
+    `, scopedConnID)
+	if err != nil {
+		t.Fatalf("Seed connection: %v", err)
+	}
+	// Also seed a second unshared connection owned by alice that bob's
+	// token is NOT scoped to. Without the fix this could mask the bug by
+	// accidentally being present; after the fix the scoped token must
+	// exclude it.
+	_, err = pool.Exec(context.Background(), `
+        INSERT INTO connections (id, name, description, host, port,
+            database_name, username, is_shared, owner_username,
+            membership_source)
+        VALUES (12, 'other-conn', '', 'db2.example.com', 5432, 'postgres',
+            'alice', FALSE, 'alice', 'manual')
+    `)
+	if err != nil {
+		t.Fatalf("Seed second connection: %v", err)
+	}
+
+	// Create a scoped token for bob naming connection 11 only.
+	_, token, err := store.CreateToken("bob", "Scoped token", nil)
+	if err != nil {
+		t.Fatalf("CreateToken: %v", err)
+	}
+	if err := store.SetTokenConnectionScope(token.ID, []auth.ScopedConnection{
+		{ConnectionID: scopedConnID, AccessLevel: auth.AccessLevelRead},
+	}); err != nil {
+		t.Fatalf("SetTokenConnectionScope: %v", err)
+	}
+
+	// Build the handler with a real checker wired to the datastore's
+	// sharing lookup. The listConnections handler reads the context
+	// directly, so we populate the same values the middleware would set
+	// in production: user ID, username, token ID, and the
+	// not-a-superuser flag.
+	checker := auth.NewRBACChecker(store)
+	checker.SetConnectionSharingLookup(
+		func(ctx context.Context, id int) (bool, string, error) {
+			return ds.GetConnectionSharingInfo(ctx, id)
+		},
+	)
+	handler := NewConnectionHandler(ds, store, checker)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections", nil)
+	ctx := req.Context()
+	ctx = context.WithValue(ctx, auth.IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, auth.UserIDContextKey, bobID)
+	ctx = context.WithValue(ctx, auth.UsernameContextKey, "bob")
+	ctx = context.WithValue(ctx, auth.TokenIDContextKey, token.ID)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	handler.handleConnections(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d. Body: %s",
+			rec.Code, rec.Body.String())
+	}
+
+	var got []database.ConnectionListItem
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("Decode response: %v", err)
+	}
+
+	// The scoped connection must be present. Before the fix this was []
+	// and the test would fail.
+	var foundScoped, foundOther bool
+	for _, c := range got {
+		switch c.ID {
+		case scopedConnID:
+			foundScoped = true
+		case 12:
+			foundOther = true
+		}
+	}
+	if !foundScoped {
+		t.Errorf("Expected connection %d in response, got %+v (issue #83 regression)",
+			scopedConnID, got)
+	}
+	if foundOther {
+		t.Errorf("Expected connection 12 NOT in response (token not scoped to it), got %+v",
+			got)
 	}
 }

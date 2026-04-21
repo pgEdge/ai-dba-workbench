@@ -16,6 +16,9 @@ project adheres to
   option to control the HTTP client timeout for
   requests to the configured LLM provider; the
   default remains 120 seconds. (#60)
+- Add a guided walkthrough example with pre-seeded
+  demo data and an in-browser Driver.js tour covering
+  the workbench's major features.
 
 ### Changed
 
@@ -59,13 +62,36 @@ project adheres to
   `dismissed` flag on rediscovery, and `GetCluster`
   now filters dismissed rows from single-cluster
   lookups. (#36)
+- Fix dismissed auto-detected clusters reappearing in
+  the Server creation dialog's cluster dropdown after
+  alert or connection context was fetched; the
+  connection hierarchy resolver now skips dismissed
+  rows and no longer resurrects them through its
+  upsert fallback. (#36)
 - Fix partitions not being dropped at the appropriate
   time by the collector. (#62)
+- Fix the copy-to-clipboard button in the Admin Tokens
+  "Token created" dialog; the button now shows a check
+  mark and "Copied!" tooltip on success and surfaces
+  clipboard failures through the error alert. (#71)
 - Fix the StatusPanel "Restore to active" action
   silently failing on error; the alert now leaves the
   acknowledged list optimistically, rolls back and
   surfaces a Snackbar error on API failure, and
   guards against double-click submissions. (#72)
+- Fix servers assigned to a manually created cluster
+  continuing to appear under a re-created
+  auto-detected cluster after the next topology
+  refresh; auto-detected Spock, binary-replication,
+  and logical-replication grouping now skip
+  connections with `membership_source = 'manual'`.
+  (#74)
+- Fix `GET /api/v1/connections` returning an empty
+  array for scoped API tokens when the token owner's
+  read access came from a wildcard group grant; the
+  scoped connections are now returned as expected,
+  and token scopes continue to restrict but not
+  elevate the owner's privileges. (#83)
 
 ### Security
 

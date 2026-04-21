@@ -512,15 +512,23 @@ func TestConfigApplyFlags_EmptyFlagsPreserveDefaults(t *testing.T) {
 	config := NewConfig()
 	// Pre-set all fields so we can detect any unwanted overwrite.
 	config.Datastore.Host = "preserved"
+	config.Datastore.HostAddr = "preserved-addr"
 	config.Datastore.Database = "preserved-db"
 	config.Datastore.Username = "preserved-user"
+	config.Datastore.PasswordFile = "/preserved/password"
 	config.Datastore.Port = 1234
 	config.Datastore.SSLMode = "preserved-mode"
+	config.Datastore.SSLCert = "/preserved/cert"
+	config.Datastore.SSLKey = "/preserved/key"
+	config.Datastore.SSLRootCert = "/preserved/root"
 
 	config.ApplyFlags()
 
 	if config.Datastore.Host != "preserved" {
 		t.Errorf("Host should not have changed, got %q", config.Datastore.Host)
+	}
+	if config.Datastore.HostAddr != "preserved-addr" {
+		t.Errorf("HostAddr should not have changed, got %q", config.Datastore.HostAddr)
 	}
 	if config.Datastore.Database != "preserved-db" {
 		t.Errorf("Database should not have changed, got %q", config.Datastore.Database)
@@ -528,11 +536,23 @@ func TestConfigApplyFlags_EmptyFlagsPreserveDefaults(t *testing.T) {
 	if config.Datastore.Username != "preserved-user" {
 		t.Errorf("Username should not have changed, got %q", config.Datastore.Username)
 	}
+	if config.Datastore.PasswordFile != "/preserved/password" {
+		t.Errorf("PasswordFile should not have changed, got %q", config.Datastore.PasswordFile)
+	}
 	if config.Datastore.Port != 1234 {
 		t.Errorf("Port should not have changed, got %d", config.Datastore.Port)
 	}
 	if config.Datastore.SSLMode != "preserved-mode" {
 		t.Errorf("SSLMode should not have changed, got %q", config.Datastore.SSLMode)
+	}
+	if config.Datastore.SSLCert != "/preserved/cert" {
+		t.Errorf("SSLCert should not have changed, got %q", config.Datastore.SSLCert)
+	}
+	if config.Datastore.SSLKey != "/preserved/key" {
+		t.Errorf("SSLKey should not have changed, got %q", config.Datastore.SSLKey)
+	}
+	if config.Datastore.SSLRootCert != "/preserved/root" {
+		t.Errorf("SSLRootCert should not have changed, got %q", config.Datastore.SSLRootCert)
 	}
 }
 

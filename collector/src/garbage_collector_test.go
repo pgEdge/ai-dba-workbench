@@ -74,15 +74,15 @@ func TestGarbageCollector_Stop_NoStart(t *testing.T) {
 }
 
 // TestGarbageCollector_StartShutdownBeforeFirstCollection exercises the
-// Start -> Stop path where the shutdownChan fires before the 5-minute
-// startup delay elapses. This verifies the early-exit branch of run().
+// run() method's early-exit path where the shutdownChan is closed before
+// the 5-minute startup delay elapses. We call run() directly (rather than
+// the public Start method) to avoid spawning background goroutines that
+// require a real datastore connection.
 func TestGarbageCollector_StartShutdownBeforeFirstCollection(t *testing.T) {
 	gc := NewGarbageCollector(nil)
 
-	// Don't call Start via its public method because that would call
-	// logger.Info (safe) but also spawn a goroutine that needs a
-	// datastore. Instead spawn run() directly with a canceled context
-	// and then close shutdownChan to exit via the first select.
+	// Spawn run() directly with a context we can cancel, and immediately
+	// close shutdownChan to trigger the early-exit branch.
 	gc.wg.Add(1)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

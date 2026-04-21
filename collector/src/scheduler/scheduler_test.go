@@ -231,6 +231,7 @@ func TestConfigReloadLoop_ExitsOnShutdown(t *testing.T) {
 func TestConfigReloadLoop_ExitsOnContextCancel(t *testing.T) {
 	ps := NewProbeScheduler(nil, nil, testConfig{}, "")
 	ps.configReloader = time.NewTicker(time.Hour)
+	t.Cleanup(func() { ps.configReloader.Stop() })
 
 	ps.wg.Add(1)
 	go ps.configReloadLoop()

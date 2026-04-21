@@ -109,12 +109,18 @@ func TestLoadConfiguration_SecretFileMissing(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "cfg.yaml")
-	cfgYAML := "datastore:\n  host: h\n  database: d\n  username: u\n"
+	// Point secret_file to a known-missing path within our temp directory
+	// to avoid relying on ambient secret discovery.
+	missingSecret := filepath.Join(tmpDir, "missing.secret")
+	cfgYAML := "datastore:\n" +
+		"  host: h\n" +
+		"  database: d\n" +
+		"  username: u\n" +
+		"secret_file: \"" + missingSecret + "\"\n"
 	if err := os.WriteFile(configPath, []byte(cfgYAML), 0600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
-	// Do not create any secret file anywhere discoverable.
 	*configFile = configPath
 	_, err := loadConfiguration()
 	if err == nil {
@@ -124,32 +130,26 @@ func TestLoadConfiguration_SecretFileMissing(t *testing.T) {
 
 // TestLoadConfiguration_Success exercises the full happy path of
 // loadConfiguration(): it writes a config file, a password file, and a
-// secret file next to the test binary so LoadSecret's default search
-// finds it.
+// secret file all within the temp directory and explicitly references
+// them in the config YAML.
 func TestLoadConfiguration_Success(t *testing.T) {
 	defer saveAndClearFlags(t)()
 
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "cfg.yaml")
 	pwPath := filepath.Join(tmpDir, "pw.txt")
+	secretPath := filepath.Join(tmpDir, "test.secret")
 
-	// Secret file must live next to the running test binary so that
-	// LoadSecret's default search can find it via os.Executable().
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatalf("os.Executable: %v", err)
-	}
-	secretPath := filepath.Join(filepath.Dir(exe), "ai-dba-collector.secret")
 	if err := os.WriteFile(secretPath, []byte("main-test-secret"), 0600); err != nil {
 		t.Fatalf("write secret: %v", err)
 	}
-	t.Cleanup(func() { _ = os.Remove(secretPath) })
 
 	cfgYAML := "datastore:\n" +
 		"  host: testhost\n" +
 		"  database: testdb\n" +
 		"  username: testuser\n" +
-		"  password_file: " + pwPath + "\n"
+		"  password_file: " + pwPath + "\n" +
+		"secret_file: \"" + secretPath + "\"\n"
 	if err := os.WriteFile(configPath, []byte(cfgYAML), 0600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -190,14 +190,20 @@ func TestLoadConfiguration_NoConfigFileUsesDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("os.Executable: %v", err)
 	}
-	secretPath := filepath.Join(filepath.Dir(exe), "ai-dba-collector.secret")
-	_ = os.Remove(secretPath)
+
+	// Use GetDefaultConfigPath and GetDefaultSecretPath to check the same
+	// paths that loadConfiguration() will check, rather than manually
+	// constructing them.
+	defaultYAML := GetDefaultConfigPath(exe)
+	defaultSecret := GetDefaultSecretPath(exe)
+
+	// Remove secret file if it exists from a previous test run.
+	_ = os.Remove(defaultSecret)
 
 	// Pre-flight: also ensure the default config path doesn't exist. If
 	// it somehow does (CI cache, etc.) the test still passes so long as
 	// the function returns *some* result; we just skip stronger
 	// assertions in that case.
-	defaultYAML := filepath.Join(filepath.Dir(exe), "ai-dba-collector.yaml")
 	_, cfgStatErr := os.Stat(defaultYAML)
 	if cfgStatErr == nil {
 		t.Skipf("default config file unexpectedly exists at %s; skipping", defaultYAML)

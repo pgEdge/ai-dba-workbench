@@ -46,4 +46,4 @@ EXPOSE 8080
 VOLUME /data
 
 ENTRYPOINT ["/usr/local/bin/ai-dba-server"]
-CMD ["--config", "/etc/pgedge/ai-dba-server.yaml"]
+CMD ["--config", "/etc/pgedge/ai-dba-server.yaml", "--data-dir", "/data"]

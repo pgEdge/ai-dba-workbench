@@ -30,7 +30,7 @@ const CopyCodeButton: React.FC<CopyCodeButtonProps> = ({ code, theme }) => {
         navigator.clipboard.writeText(code).then(() => {
             setCopied(true);
             setTimeout(() => setCopied(false), 2000);
-        });
+        }).catch(() => {});
     }, [code]);
 
     return (

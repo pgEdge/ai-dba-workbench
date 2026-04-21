@@ -260,7 +260,7 @@ export function Chart(props: ChartProps) {
         const id = setInterval(() => {
             onDataRefresh().then((refreshed) => {
                 setLiveData(refreshed);
-            });
+            }).catch(() => {});
         }, updateInterval);
 
         return () => clearInterval(id);
@@ -284,7 +284,7 @@ export function Chart(props: ChartProps) {
         if (onDataRefresh) {
             onDataRefresh().then((refreshed) => {
                 setLiveData(refreshed);
-            });
+            }).catch(() => {});
         }
     }, [onDataRefresh]);
 

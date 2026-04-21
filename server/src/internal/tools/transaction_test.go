@@ -19,16 +19,20 @@ import (
 
 func TestManagedTxCommitMarksCommitted(t *testing.T) {
 	// We cannot test the full transaction flow without a database,
-	// but we can verify the struct fields and behavior.
-	mt := &ManagedTx{
-		Tx:        nil,
-		ctx:       nil,
-		committed: false,
-	}
+	// but we can verify the zero-value behavior of the struct.
+	mt := &ManagedTx{}
 
 	// Before commit, committed should be false
 	if mt.committed {
 		t.Error("expected committed to be false initially")
+	}
+
+	// Tx and ctx start as their zero values.
+	if mt.Tx != nil {
+		t.Error("expected Tx to be nil initially")
+	}
+	if mt.ctx != nil {
+		t.Error("expected ctx to be nil initially")
 	}
 }
 

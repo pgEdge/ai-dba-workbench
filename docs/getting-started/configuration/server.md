@@ -288,29 +288,25 @@ builtins:
 
 #### CORS Origin (`cors_origin`)
 
-The `cors_origin` option sets the value the server
-returns in the `Access-Control-Allow-Origin` response
-header for cross-origin browser requests. The empty
-default is appropriate for same-origin deployments,
-where the web client and the server share a single
-origin; the server then omits CORS headers entirely.
+The `cors_origin` option sets the value for the
+`Access-Control-Allow-Origin` response header. The empty
+default suits same-origin deployments, where the web
+client and the server share an origin. The server omits
+CORS headers entirely in that case.
 
-Set `cors_origin` to an explicit origin, such as
-`https://workbench.example.com`, when the web client
-runs on a different origin than the server. The server
-also enables credentialed CORS responses by returning
-`Access-Control-Allow-Credentials: true`, which lets
-the browser attach session cookies to cross-origin
-requests.
+Set `cors_origin` to an explicit origin when the web
+client runs on a different origin than the server. For
+example, use `https://workbench.example.com` as the
+value. The server returns
+`Access-Control-Allow-Credentials: true` so browsers can
+attach session cookies to cross-origin requests.
 
 The server rejects a `cors_origin` value of `"*"` at
-startup when authentication is enabled. Browsers reject
-the combination of `Access-Control-Allow-Origin: *` and
+startup when authentication is enabled. Browsers disallow
+combining `Access-Control-Allow-Origin: *` with
 `Access-Control-Allow-Credentials: true` per the Fetch
-spec, so the wildcard would silently break every
-authenticated cross-origin response. Use an explicit
-origin instead, or leave the option empty for
-same-origin deployments.
+spec. Use an explicit origin, or leave the option empty
+for same-origin deployments.
 
 In the following example, the `http` section allows
 cross-origin requests from a dedicated workbench host:

@@ -156,7 +156,7 @@ Use count_rows to efficiently determine data volume:
 			defer cleanup()
 
 			var count int64
-			err := rot.Tx.QueryRow(ctx, sqlQuery).Scan(&count) // nosemgrep: go-sql-concat-sqli
+			err := rot.Tx.QueryRow(ctx, sqlQuery).Scan(&count)
 			if err != nil {
 				return mcp.NewToolError(fmt.Sprintf("SQL Query:\n%s\n\nError: %v", sqlQuery, err))
 			}

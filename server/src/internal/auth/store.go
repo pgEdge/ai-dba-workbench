@@ -948,7 +948,7 @@ func (s *AuthStore) DeleteUser(username string) error {
 	for _, table := range scopeTables {
 		//nolint:gosec // table name is from a static allow-list above
 		stmt := "DELETE FROM " + table + " WHERE token_id IN (SELECT id FROM tokens WHERE owner_id = ?)"
-		if _, err = tx.Exec(stmt, userID); err != nil { // nosemgrep: go-sql-concat-sqli
+		if _, err = tx.Exec(stmt, userID); err != nil {
 			return fmt.Errorf("failed to delete %s rows: %w", table, err)
 		}
 	}
@@ -1574,7 +1574,7 @@ func (s *AuthStore) deleteTokensByFilter(whereClause string, args []any, notFoun
 	// are keyed on the raw hash and have no declared FK.
 	//nolint:gosec // whereClause is a static SQL fragment from callers in this package
 	selectStmt := "SELECT id, token_hash FROM tokens WHERE " + whereClause
-	rows, err := tx.Query(selectStmt, args...) // nosemgrep: go-sql-concat-sqli
+	rows, err := tx.Query(selectStmt, args...)
 	if err != nil {
 		return fmt.Errorf("failed to query tokens: %w", err)
 	}
@@ -1619,7 +1619,7 @@ func (s *AuthStore) deleteTokensByFilter(whereClause string, args []any, notFoun
 		for _, table := range scopeTables {
 			//nolint:gosec // table name is from a static allow-list above
 			stmt := "DELETE FROM " + table + " WHERE token_id = ?"
-			if _, err = tx.Exec(stmt, ref.id); err != nil { // nosemgrep: go-sql-concat-sqli
+			if _, err = tx.Exec(stmt, ref.id); err != nil {
 				return fmt.Errorf("failed to delete %s rows: %w", table, err)
 			}
 		}
@@ -1634,7 +1634,7 @@ func (s *AuthStore) deleteTokensByFilter(whereClause string, args []any, notFoun
 	// Delete the token rows themselves.
 	//nolint:gosec // whereClause is a static SQL fragment from callers in this package
 	deleteStmt := "DELETE FROM tokens WHERE " + whereClause
-	if _, err = tx.Exec(deleteStmt, args...); err != nil { // nosemgrep: go-sql-concat-sqli
+	if _, err = tx.Exec(deleteStmt, args...); err != nil {
 		return fmt.Errorf("failed to delete tokens: %w", err)
 	}
 

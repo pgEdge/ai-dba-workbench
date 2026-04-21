@@ -703,7 +703,7 @@ func runStatement(ctx context.Context, q queryable, stmt string, limit int, conn
 	}
 
 	// Execute the statement
-	rows, err := q.Query(ctx, sqlQuery) // nosemgrep: go-sql-concat-sqli
+	rows, err := q.Query(ctx, sqlQuery)
 	if err != nil {
 		log.Printf("[ERROR] Query execution failed (connection=%d): %v", connectionID, err)
 		return statementResult{

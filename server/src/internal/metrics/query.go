@@ -485,7 +485,7 @@ func QueryTimeSeries(
 			return nil, fmt.Errorf("failed to build query: %w", err)
 		}
 
-		rows, err := pool.Query(ctx, query, queryArgs...) // nosemgrep: go-sql-concat-sqli
+		rows, err := pool.Query(ctx, query, queryArgs...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query metrics for connection %d: %w", connID, err)
 		}
@@ -635,7 +635,7 @@ func QueryBaselines(
             ORDER BY metric_name
         `, metricFilter)
 
-		rows2, err := pool.Query(ctx, aggQuery, queryArgs...) // nosemgrep: go-sql-concat-sqli
+		rows2, err := pool.Query(ctx, aggQuery, queryArgs...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query aggregated baselines: %w", err)
 		}

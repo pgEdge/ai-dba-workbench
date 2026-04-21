@@ -124,7 +124,6 @@ func (s *Store) Create(ctx context.Context, username, provider, model, connectio
 		return nil, fmt.Errorf("failed to marshal messages: %w", err)
 	}
 
-	// nosemgrep: go-sql-concat-sqli
 	_, err = s.pool.Exec(ctx,
 		`INSERT INTO conversations (id, username, title, provider, model, connection, messages, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,

@@ -112,7 +112,7 @@ DO NOT use for:
 
 			// Try EXPLAIN on the full query first
 			explainQuery := "EXPLAIN " + query
-			rows, err := rot.Tx.Query(ctx, explainQuery) // nosemgrep: go-sql-concat-sqli
+			rows, err := rot.Tx.Query(ctx, explainQuery)
 			if err != nil {
 				// Check if the error is about multiple statements
 				if isMultipleStatementError(err) {
@@ -124,7 +124,7 @@ DO NOT use for:
 
 					for i, stmt := range statements {
 						stmtExplain := "EXPLAIN " + stmt
-						stmtRows, stmtErr := rot.Tx.Query(ctx, stmtExplain) // nosemgrep: go-sql-concat-sqli
+						stmtRows, stmtErr := rot.Tx.Query(ctx, stmtExplain)
 						if stmtErr != nil {
 							return mcp.NewToolError(fmt.Sprintf(
 								"Statement %d is invalid: %v\n\nStatement: %s",

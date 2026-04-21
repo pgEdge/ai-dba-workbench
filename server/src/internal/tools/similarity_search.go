@@ -613,7 +613,7 @@ func sampleTableData(ctx context.Context, dbClient *database.Client, tableName s
 	colList := strings.Join(quotedCols, ", ")
 	query := fmt.Sprintf("SELECT %s FROM %s LIMIT %d", colList, quoteQualifiedTableName(tableName), sampleSize)
 
-	rows, err := pool.Query(ctx, query) // nosemgrep: go-sql-concat-sqli
+	rows, err := pool.Query(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -770,7 +770,7 @@ func performWeightedVectorSearch(
 	// Convert embedding to PostgreSQL array format
 	embeddingStr := formatEmbeddingForPostgres(queryEmbedding)
 
-	rows, err := pool.Query(ctx, query, embeddingStr, topN) // nosemgrep: go-sql-concat-sqli
+	rows, err := pool.Query(ctx, query, embeddingStr, topN)
 	if err != nil {
 		return nil, err
 	}

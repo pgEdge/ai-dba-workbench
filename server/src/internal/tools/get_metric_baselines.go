@@ -295,7 +295,7 @@ func baselinesAllConnections(
 	queryArgs = append(queryArgs, connArgs...)
 	queryArgs = append(queryArgs, metricName)
 
-	rows, err := pool.Query(ctx, query, queryArgs...) // nosemgrep: go-sql-concat-sqli
+	rows, err := pool.Query(ctx, query, queryArgs...)
 	if err != nil {
 		return mcp.NewToolError(fmt.Sprintf("Failed to query metric baselines: %v", err))
 	}

@@ -1185,7 +1185,7 @@ func (h *PerfSummaryHandler) handleTopQueries(
         LIMIT $2
     `, queryIDClause, excludeCollectorClause, orderBy, order)
 
-	rows, err := tx.Query(ctx, query, args...) // nosemgrep: go-sql-concat-sqli
+	rows, err := tx.Query(ctx, query, args...)
 	if err != nil {
 		log.Printf("[DEBUG] No top queries data for connection %d: %v",
 			connID, err)

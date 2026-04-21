@@ -89,7 +89,6 @@ func (s *Store) Store(
 		UpdatedAt: now,
 	}
 
-	// nosemgrep: go-sql-concat-sqli
 	err := s.pool.QueryRow(ctx,
 		`INSERT INTO chat_memories
              (username, scope, category, content, pinned, embedding,

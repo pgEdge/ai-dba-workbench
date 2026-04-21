@@ -81,7 +81,6 @@ func (d *Datastore) CreateConnectionAlert(ctx context.Context, connectionID int,
 		TriggeredAt:  time.Now(),
 	}
 
-	// nosemgrep: go-sql-concat-sqli
 	err := d.pool.QueryRow(ctx, `
 		INSERT INTO alerts (alert_type, connection_id, severity, title, description, status, triggered_at)
 		VALUES ('connection', $1, 'critical', $2, $3, 'active', NOW())
@@ -2143,7 +2142,6 @@ func (d *Datastore) StoreAnomalyEmbedding(ctx context.Context, candidateID int64
 	// Convert []float32 to PostgreSQL vector format
 	vectorStr := float32SliceToVectorString(embedding)
 
-	// nosemgrep: go-sql-concat-sqli
 	_, err := d.pool.Exec(ctx, `
 		INSERT INTO anomaly_embeddings (candidate_id, embedding, model_name)
 		VALUES ($1, $2::vector, $3)
@@ -2175,7 +2173,6 @@ func (d *Datastore) FindSimilarAnomalies(ctx context.Context, embedding []float3
 	// Convert []float32 to PostgreSQL vector format
 	vectorStr := float32SliceToVectorString(embedding)
 
-	// nosemgrep: go-sql-concat-sqli
 	rows, err := d.pool.Query(ctx, `
 		SELECT
 			c.id,

@@ -94,7 +94,7 @@ func (d *Datastore) GetTimelineEvents(ctx context.Context, filter TimelineFilter
 	query := buildUnionQuery(connCondition, timeCondition, "", filter, limit, argNum)
 
 	// Execute main query
-	rows, err := d.pool.Query(queryCtx, query, allArgs...) // nosemgrep: go-sql-concat-sqli
+	rows, err := d.pool.Query(queryCtx, query, allArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query timeline events: %w", err)
 	}
@@ -129,7 +129,6 @@ func (d *Datastore) GetTimelineEvents(ctx context.Context, filter TimelineFilter
 	// Get total count (without limit)
 	countQuery := buildCountQuery(connCondition, timeCondition, "", filter)
 	var totalCount int
-	// nosemgrep: go-sql-concat-sqli
 	err = d.pool.QueryRow(queryCtx, countQuery, allArgs...).Scan(&totalCount)
 	if err != nil {
 		return nil, fmt.Errorf("failed to count timeline events: %w", err)

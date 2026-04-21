@@ -206,7 +206,7 @@ READ ONLY transaction to prevent side effects. However, be cautious with:
 			defer cleanup()
 
 			// Execute EXPLAIN
-			rows, err := rot.Tx.Query(ctx, explainQuery) // nosemgrep: go-sql-concat-sqli
+			rows, err := rot.Tx.Query(ctx, explainQuery)
 			if err != nil {
 				return mcp.NewToolError(fmt.Sprintf("Error executing EXPLAIN: %v\n\nQuery: %s", err, explainQuery))
 			}

@@ -216,9 +216,7 @@ describe('EffectivePermissionsPanel', () => {
     });
 
     it('displays groups when provided', () => {
-        // The component expects groups as string array despite the interface
-        // (the actual usage shows key={g} and label={g} expecting strings)
-        const groups = ['Admins', 'Developers'] as unknown as Array<{ id: number; name: string }>;
+        const groups = ['Admins', 'Developers'];
 
         renderWithTheme(
             <EffectivePermissionsPanel groups={groups} />

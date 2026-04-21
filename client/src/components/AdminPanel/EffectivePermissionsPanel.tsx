@@ -60,13 +60,15 @@ const EmptyState = () => (
 );
 
 interface EffectivePermissionsPanelProps {
-    connectionPrivileges?: Record<string, string[]> | Array<{ server_id: number; privileges: string[] }>;
+    connectionPrivileges?:
+        | Record<string, string[]>
+        | Array<{ connection_id: string | number; access_level: string }>;
     adminPermissions?: string[];
-    mcpPrivileges?: Record<string, string[]> | Array<{ server_id: number; tools: string[] }>;
+    mcpPrivileges?: Array<string | { privilege?: string; name?: string }>;
     isSuperuser?: boolean;
     connections?: Array<{ id: number; name: string }>;
     isDark?: boolean;
-    groups?: Array<{ id: number; name: string }>;
+    groups?: string[];
 }
 
 const EffectivePermissionsPanel: React.FC<EffectivePermissionsPanelProps> = ({

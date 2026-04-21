@@ -53,7 +53,11 @@ const ImmediateTransition = React.forwardRef<
     const onExitRef = React.useRef(onExit);
     const onExitingRef = React.useRef(onExiting);
     const onExitedRef = React.useRef(onExited);
-    React.useEffect(() => {
+    // Use useLayoutEffect (not useEffect) so ref sync runs before the
+    // lifecycle useLayoutEffect below in the same commit. With useEffect,
+    // the lifecycle effect would fire against stale refs whenever handler
+    // identities change between renders.
+    React.useLayoutEffect(() => {
         onEnterRef.current = onEnter;
         onEnteringRef.current = onEntering;
         onEnteredRef.current = onEntered;

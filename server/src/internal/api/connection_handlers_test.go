@@ -962,3 +962,70 @@ func TestListConnections_Issue68_VisibleConnectionIDsError_Returns500(t *testing
 			rec.Code, rec.Body.String())
 	}
 }
+
+// TestConnectionSliceVisibilityLister_ProjectsAllFields ensures the
+// slice-backed lister copies every sharing-relevant field into the
+// auth.ConnectionVisibilityInfo projection in the same order as the
+// input slice. The lister is the hot path for listConnections now
+// that it reuses the already-loaded slice instead of hitting the
+// datastore a second time, so the projection must be faithful.
+func TestConnectionSliceVisibilityLister_ProjectsAllFields(t *testing.T) {
+	input := []database.ConnectionListItem{
+		{ID: 1, Name: "owned", IsShared: false, OwnerUsername: "alice"},
+		{ID: 2, Name: "shared", IsShared: true, OwnerUsername: "bob"},
+		{ID: 3, Name: "other", IsShared: false, OwnerUsername: "carol"},
+	}
+
+	lister := newConnectionSliceVisibilityLister(input)
+	got, err := lister.GetAllConnections(context.Background())
+	if err != nil {
+		t.Fatalf("GetAllConnections returned unexpected error: %v", err)
+	}
+	if len(got) != len(input) {
+		t.Fatalf("Expected %d infos, got %d", len(input), len(got))
+	}
+	for i := range input {
+		if got[i].ID != input[i].ID {
+			t.Errorf("index %d: ID mismatch: got %d want %d",
+				i, got[i].ID, input[i].ID)
+		}
+		if got[i].IsShared != input[i].IsShared {
+			t.Errorf("index %d: IsShared mismatch: got %v want %v",
+				i, got[i].IsShared, input[i].IsShared)
+		}
+		if got[i].OwnerUsername != input[i].OwnerUsername {
+			t.Errorf("index %d: OwnerUsername mismatch: got %q want %q",
+				i, got[i].OwnerUsername, input[i].OwnerUsername)
+		}
+	}
+}
+
+// TestConnectionSliceVisibilityLister_EmptyAndNil confirms the
+// lister tolerates empty and nil inputs without error and returns a
+// non-nil, zero-length slice in both cases. listConnections passes
+// through whatever GetAllConnections returned, which can legitimately
+// be an empty result.
+func TestConnectionSliceVisibilityLister_EmptyAndNil(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []database.ConnectionListItem
+	}{
+		{name: "empty", in: []database.ConnectionListItem{}},
+		{name: "nil", in: nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			lister := newConnectionSliceVisibilityLister(tc.in)
+			got, err := lister.GetAllConnections(context.Background())
+			if err != nil {
+				t.Fatalf("GetAllConnections returned unexpected error: %v", err)
+			}
+			if got == nil {
+				t.Fatal("Expected non-nil slice, got nil")
+			}
+			if len(got) != 0 {
+				t.Fatalf("Expected zero-length slice, got %d", len(got))
+			}
+		})
+	}
+}

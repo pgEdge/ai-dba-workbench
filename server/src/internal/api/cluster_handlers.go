@@ -114,7 +114,7 @@ func (h *ClusterHandler) getClusterTopology(w http.ResponseWriter, r *http.Reque
 	// a topology build. VisibleConnectionIDs loads sharing metadata once
 	// so this check does not issue per-server lookups.
 	lister := newConnectionVisibilityLister(h.datastore)
-	visibleIDs, allConnections, err := h.rbacChecker.VisibleConnectionIDs(r.Context(), lister)
+	visibleIDs, allConnections, err := h.rbacChecker.VisibleConnectionIDs(ctx, lister)
 	if err != nil {
 		log.Printf("[ERROR] Failed to resolve visible connections for topology: %v", err)
 		RespondError(w, http.StatusInternalServerError, "Failed to filter cluster topology")
@@ -198,7 +198,9 @@ func filterTopologyByVisibility(groups []database.TopologyGroup, visibleIDs []in
 // recursively so a hidden parent with visible children is dropped along
 // with those children; this matches the existing "cluster visibility"
 // contract where children are only meaningful under an accessible
-// parent.
+// parent. Relationships pointing at hidden peers are also dropped so
+// TargetServerID and TargetServerName never leak across the visibility
+// boundary at the handler layer.
 func filterTopologyServers(servers []database.TopologyServerInfo, visible map[int]bool) []database.TopologyServerInfo {
 	out := make([]database.TopologyServerInfo, 0, len(servers))
 	for i := range servers {
@@ -209,6 +211,16 @@ func filterTopologyServers(servers []database.TopologyServerInfo, visible map[in
 		if len(s.Children) > 0 {
 			s.Children = filterTopologyServers(s.Children, visible)
 		}
+		if len(s.Relationships) > 0 {
+			rels := make([]database.TopologyRelationship, 0, len(s.Relationships))
+			for _, rel := range s.Relationships {
+				if visible[rel.TargetServerID] {
+					rels = append(rels, rel)
+				}
+			}
+			s.Relationships = rels
+		}
+		s.IsExpandable = len(s.Children) > 0
 		out = append(out, s)
 	}
 	return out

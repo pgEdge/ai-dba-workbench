@@ -2063,7 +2063,9 @@ func pruneTopologyByVisibility(groups []TopologyGroup, visibleIDs []int) []Topol
 }
 
 // pruneTopologyServers returns the subset of servers whose connection IDs
-// appear in the visible set, recursing into Children.
+// appear in the visible set, recursing into Children. Relationships
+// pointing at hidden peers are also dropped so TargetServerID and
+// TargetServerName never leak across the visibility boundary.
 func pruneTopologyServers(servers []TopologyServerInfo, visible map[int]bool) []TopologyServerInfo {
 	out := make([]TopologyServerInfo, 0, len(servers))
 	for i := range servers {
@@ -2074,6 +2076,16 @@ func pruneTopologyServers(servers []TopologyServerInfo, visible map[int]bool) []
 		if len(s.Children) > 0 {
 			s.Children = pruneTopologyServers(s.Children, visible)
 		}
+		if len(s.Relationships) > 0 {
+			rels := make([]TopologyRelationship, 0, len(s.Relationships))
+			for _, rel := range s.Relationships {
+				if visible[rel.TargetServerID] {
+					rels = append(rels, rel)
+				}
+			}
+			s.Relationships = rels
+		}
+		s.IsExpandable = len(s.Children) > 0
 		out = append(out, s)
 	}
 	return out
@@ -4360,6 +4372,9 @@ func (d *Datastore) GetAlertCounts(ctx context.Context, connectionIDs []int) (*A
 			return nil, fmt.Errorf("failed to scan alert count: %w", err)
 		}
 		byServer[connID] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate alert counts: %w", err)
 	}
 
 	return &AlertCountsResult{

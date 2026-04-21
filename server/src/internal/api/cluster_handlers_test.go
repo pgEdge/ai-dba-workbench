@@ -1542,3 +1542,113 @@ func TestFilterTopologyServers_PreservesNestedChildren(t *testing.T) {
 			got[0].Children[0].Children)
 	}
 }
+
+// TestFilterTopologyServers_FiltersRelationshipsToHiddenPeers verifies
+// that the handler-layer filter strips TopologyRelationship entries
+// pointing at hidden peers so TargetServerID and TargetServerName never
+// leak across the visibility boundary. Relationships targeting visible
+// peers must survive.
+func TestFilterTopologyServers_FiltersRelationshipsToHiddenPeers(t *testing.T) {
+	servers := []database.TopologyServerInfo{
+		{
+			ID:           1,
+			Name:         "visible-1",
+			IsExpandable: true,
+			Relationships: []database.TopologyRelationship{
+				{
+					TargetServerID:   2,
+					TargetServerName: "visible-peer",
+					RelationshipType: "spock_subscriber",
+				},
+				{
+					TargetServerID:   99,
+					TargetServerName: "hidden-peer",
+					RelationshipType: "spock_subscriber",
+				},
+			},
+		},
+		{
+			ID:   2,
+			Name: "visible-2",
+			Relationships: []database.TopologyRelationship{
+				{
+					TargetServerID:   77,
+					TargetServerName: "another-hidden",
+					RelationshipType: "spock_provider",
+				},
+			},
+		},
+	}
+	visible := map[int]bool{1: true, 2: true}
+
+	got := filterTopologyServers(servers, visible)
+
+	if len(got) != 2 {
+		t.Fatalf("Expected 2 servers, got %d", len(got))
+	}
+	if len(got[0].Relationships) != 1 {
+		t.Fatalf("Expected 1 relationship on server 1, got %d",
+			len(got[0].Relationships))
+	}
+	if got[0].Relationships[0].TargetServerID != 2 {
+		t.Errorf("Expected relationship target 2, got %d",
+			got[0].Relationships[0].TargetServerID)
+	}
+	if got[0].Relationships[0].TargetServerName != "visible-peer" {
+		t.Errorf("Expected visible-peer target name, got %q",
+			got[0].Relationships[0].TargetServerName)
+	}
+	if len(got[1].Relationships) != 0 {
+		t.Errorf("Expected relationships to hidden peers to be dropped, got %d",
+			len(got[1].Relationships))
+	}
+	// Server 1 has no visible children, so IsExpandable must reflect the
+	// pruned state rather than the pre-populated flag.
+	if got[0].IsExpandable {
+		t.Errorf("Expected IsExpandable=false when no children remain")
+	}
+}
+
+// TestFilterTopologyServers_IsExpandableReflectsVisibleChildren verifies
+// that IsExpandable is recomputed from the pruned Children slice at the
+// handler layer. A server whose only children are hidden must become
+// non-expandable, and a server with a remaining visible child stays
+// expandable.
+func TestFilterTopologyServers_IsExpandableReflectsVisibleChildren(t *testing.T) {
+	servers := []database.TopologyServerInfo{
+		{
+			ID:           1,
+			Name:         "parent-all-hidden-children",
+			IsExpandable: true,
+			Children: []database.TopologyServerInfo{
+				{ID: 98, Name: "hidden-child-a"},
+				{ID: 99, Name: "hidden-child-b"},
+			},
+		},
+		{
+			ID:           2,
+			Name:         "parent-mixed",
+			IsExpandable: true,
+			Children: []database.TopologyServerInfo{
+				{ID: 3, Name: "visible-child"},
+				{ID: 97, Name: "hidden-child"},
+			},
+		},
+	}
+	visible := map[int]bool{1: true, 2: true, 3: true}
+
+	got := filterTopologyServers(servers, visible)
+
+	if len(got) != 2 {
+		t.Fatalf("Expected 2 top-level servers, got %d", len(got))
+	}
+	if got[0].IsExpandable {
+		t.Errorf("Expected IsExpandable=false when all children hidden")
+	}
+	if !got[1].IsExpandable {
+		t.Errorf("Expected IsExpandable=true when one child is visible")
+	}
+	if len(got[1].Children) != 1 || got[1].Children[0].ID != 3 {
+		t.Errorf("Expected single visible child ID=3, got %+v", got[1].Children)
+	}
+}

@@ -265,17 +265,242 @@ func TestTopologyIncludesAutoMembersInAutoClusters(t *testing.T) {
 			MembershipSource: "auto",
 			Status:           "online",
 		},
+		{
+			ID:               403,
+			Name:             "pg17-node3",
+			Host:             "10.0.3.3",
+			Port:             5432,
+			DatabaseName:     "app",
+			Username:         "postgres",
+			PrimaryRole:      "spock_node",
+			HasSpock:         true,
+			MembershipSource: "auto",
+			Status:           "online",
+		},
 	}
 
 	overrides := map[string]clusterOverride{}
 	autoClusters := ds.buildAutoDetectedClusters(conns, overrides)
 	cluster, ok := autoClusters["spock:pg17"]
 	if !ok {
-		t.Fatalf("expected auto Spock cluster %q for two auto Spock nodes; got keys %v",
+		t.Fatalf("expected auto Spock cluster %q for three auto Spock nodes; got keys %v",
 			"spock:pg17", keysOf(autoClusters))
 	}
-	if len(cluster.Servers) != 2 {
-		t.Fatalf("expected 2 servers in auto Spock cluster, got %d", len(cluster.Servers))
+	if len(cluster.Servers) != 3 {
+		t.Fatalf("expected 3 servers in auto Spock cluster, got %d", len(cluster.Servers))
+	}
+}
+
+// TestTopologyExcludesManualChildrenFromAutoBinaryCluster is a
+// regression test for the follow-up to issue #74: a child connection
+// pinned to a manual cluster must not be pulled into the auto-detected
+// tree rooted at a still-auto primary. Prior to the fix,
+// buildServerWithChildren recursed over childrenMap without inspecting
+// MembershipSource, so an auto binary primary with a manually-pinned
+// streaming standby child produced an auto cluster that contained the
+// manual standby in its Children tree.
+func TestTopologyExcludesManualChildrenFromAutoBinaryCluster(t *testing.T) {
+	ds := &Datastore{}
+
+	conns := []connectionWithRole{
+		{
+			ID:               401,
+			Name:             "auto-primary",
+			Host:             "10.0.4.1",
+			Port:             5432,
+			DatabaseName:     "app",
+			Username:         "postgres",
+			PrimaryRole:      "binary_primary",
+			MembershipSource: "auto",
+			Status:           "online",
+		},
+		{
+			ID:                 402,
+			Name:               "manual-standby",
+			Host:               "10.0.4.2",
+			Port:               5432,
+			DatabaseName:       "app",
+			Username:           "postgres",
+			PrimaryRole:        "binary_standby",
+			MembershipSource:   "manual",
+			Status:             "online",
+			IsStreamingStandby: true,
+			UpstreamHost:       sql.NullString{String: "10.0.4.1", Valid: true},
+			UpstreamPort:       sql.NullInt32{Int32: 5432, Valid: true},
+			ClusterID:          sql.NullInt64{Int64: 55, Valid: true},
+		},
+	}
+
+	overrides := map[string]clusterOverride{}
+
+	// buildAutoDetectedClusters must produce the auto binary cluster for
+	// the primary (it still has the standby linked via childrenMap), but
+	// the Children list of that primary must not contain the manually
+	// pinned standby.
+	autoClusters := ds.buildAutoDetectedClusters(conns, overrides)
+	cluster, ok := autoClusters["binary:401"]
+	if !ok {
+		t.Fatalf("expected auto binary cluster %q for auto primary; got keys %v",
+			"binary:401", keysOf(autoClusters))
+	}
+	if len(cluster.Servers) != 1 {
+		t.Fatalf("expected 1 top-level server in auto binary cluster, got %d",
+			len(cluster.Servers))
+	}
+	primary := cluster.Servers[0]
+	if primary.ID != 401 {
+		t.Fatalf("expected primary ID 401 at the top of the auto cluster, got %d", primary.ID)
+	}
+	for _, child := range primary.Children {
+		if child.MembershipSource == "manual" {
+			t.Fatalf("manual child %d (%s) leaked into auto binary cluster %q (issue #74 follow-up)",
+				child.ID, child.Name, cluster.AutoClusterKey)
+		}
+		if child.ID == 402 {
+			t.Fatalf("manual standby 402 leaked into auto binary cluster %q (issue #74 follow-up)",
+				cluster.AutoClusterKey)
+		}
+	}
+
+	// buildTopologyHierarchy must likewise keep the manual standby out of
+	// the auto binary cluster tree in the default group.
+	defaultGroup := &defaultGroupInfo{ID: 1, Name: "Servers/Clusters"}
+	groups := ds.buildTopologyHierarchy(conns, overrides, map[string]bool{}, defaultGroup)
+	if len(groups) != 1 {
+		t.Fatalf("expected 1 topology group, got %d", len(groups))
+	}
+	foundAutoBinary := false
+	for _, c := range groups[0].Clusters {
+		if c.AutoClusterKey != "binary:401" {
+			continue
+		}
+		foundAutoBinary = true
+		if len(c.Servers) != 1 {
+			t.Fatalf("expected 1 top-level server in auto binary cluster, got %d",
+				len(c.Servers))
+		}
+		for _, child := range c.Servers[0].Children {
+			if child.MembershipSource == "manual" {
+				t.Fatalf("manual child %d (%s) leaked into auto binary cluster %q via buildTopologyHierarchy (issue #74 follow-up)",
+					child.ID, child.Name, c.AutoClusterKey)
+			}
+			if child.ID == 402 {
+				t.Fatalf("manual standby 402 leaked into auto binary cluster %q via buildTopologyHierarchy (issue #74 follow-up)",
+					c.AutoClusterKey)
+			}
+		}
+	}
+	if !foundAutoBinary {
+		t.Fatalf("expected buildTopologyHierarchy to return auto binary cluster %q; clusters: %+v",
+			"binary:401", groups[0].Clusters)
+	}
+}
+
+// TestTopologyExcludesManualSubscriberFromAutoLogicalCluster verifies
+// that an auto-detected logical publisher does not pick up a manually
+// pinned logical subscriber. The auto cluster is only created when the
+// publisher has at least one non-manual subscriber; a manual subscriber
+// must never appear in an auto logical cluster.
+func TestTopologyExcludesManualSubscriberFromAutoLogicalCluster(t *testing.T) {
+	ds := &Datastore{}
+
+	conns := []connectionWithRole{
+		{
+			ID:               501,
+			Name:             "auto-pub",
+			Host:             "10.0.5.1",
+			Port:             5432,
+			DatabaseName:     "app",
+			Username:         "postgres",
+			PrimaryRole:      "logical_publisher",
+			MembershipSource: "auto",
+			Status:           "online",
+		},
+		{
+			ID:               502,
+			Name:             "auto-sub",
+			Host:             "10.0.5.2",
+			Port:             5432,
+			DatabaseName:     "app",
+			Username:         "postgres",
+			PrimaryRole:      "logical_subscriber",
+			MembershipSource: "auto",
+			Status:           "online",
+			PublisherHost:    sql.NullString{String: "10.0.5.1", Valid: true},
+			PublisherPort:    sql.NullInt32{Int32: 5432, Valid: true},
+		},
+		{
+			ID:               503,
+			Name:             "manual-sub",
+			Host:             "10.0.5.3",
+			Port:             5432,
+			DatabaseName:     "app",
+			Username:         "postgres",
+			PrimaryRole:      "logical_subscriber",
+			MembershipSource: "manual",
+			Status:           "online",
+			PublisherHost:    sql.NullString{String: "10.0.5.1", Valid: true},
+			PublisherPort:    sql.NullInt32{Int32: 5432, Valid: true},
+			ClusterID:        sql.NullInt64{Int64: 77, Valid: true},
+		},
+	}
+
+	overrides := map[string]clusterOverride{}
+
+	autoClusters := ds.buildAutoDetectedClusters(conns, overrides)
+	cluster, ok := autoClusters["logical:501"]
+	if !ok {
+		t.Fatalf("expected auto logical cluster %q for auto publisher; got keys %v",
+			"logical:501", keysOf(autoClusters))
+	}
+	if len(cluster.Servers) != 1 {
+		t.Fatalf("expected 1 top-level server in auto logical cluster, got %d",
+			len(cluster.Servers))
+	}
+	publisher := cluster.Servers[0]
+	if publisher.ID != 501 {
+		t.Fatalf("expected publisher ID 501 at the top of the auto cluster, got %d", publisher.ID)
+	}
+	for _, child := range publisher.Children {
+		if child.MembershipSource == "manual" {
+			t.Fatalf("manual subscriber %d (%s) leaked into auto logical cluster %q (issue #74 follow-up)",
+				child.ID, child.Name, cluster.AutoClusterKey)
+		}
+		if child.ID == 503 {
+			t.Fatalf("manual subscriber 503 leaked into auto logical cluster %q (issue #74 follow-up)",
+				cluster.AutoClusterKey)
+		}
+	}
+
+	defaultGroup := &defaultGroupInfo{ID: 1, Name: "Servers/Clusters"}
+	groups := ds.buildTopologyHierarchy(conns, overrides, map[string]bool{}, defaultGroup)
+	if len(groups) != 1 {
+		t.Fatalf("expected 1 topology group, got %d", len(groups))
+	}
+	foundAutoLogical := false
+	for _, c := range groups[0].Clusters {
+		if c.AutoClusterKey != "logical:501" {
+			continue
+		}
+		foundAutoLogical = true
+		if len(c.Servers) != 1 {
+			t.Fatalf("expected 1 top-level server in auto logical cluster, got %d",
+				len(c.Servers))
+		}
+		for _, child := range c.Servers[0].Children {
+			if child.MembershipSource == "manual" {
+				t.Fatalf("manual subscriber %d (%s) leaked into auto logical cluster %q via buildTopologyHierarchy (issue #74 follow-up)",
+					child.ID, child.Name, c.AutoClusterKey)
+			}
+			if child.ID == 503 {
+				t.Fatalf("manual subscriber 503 leaked into auto logical cluster %q via buildTopologyHierarchy (issue #74 follow-up)",
+					c.AutoClusterKey)
+			}
+		}
+	}
+	if !foundAutoLogical {
+		t.Fatalf("expected buildTopologyHierarchy to return auto logical cluster %q; clusters: %+v",
+			"logical:501", groups[0].Clusters)
 	}
 }
 

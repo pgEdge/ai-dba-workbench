@@ -2339,7 +2339,8 @@ func (d *Datastore) buildAutoDetectedClusters(connections []connectionWithRole, 
 			continue
 		}
 		if !conn.HasSpock && (conn.PrimaryRole == "binary_primary" && len(childrenMap[conn.ID]) > 0) {
-			server := d.buildServerWithChildren(conn, childrenMap, connByID, assignedConnections)
+			// Auto binary cluster: exclude manually pinned children.
+			server := d.buildServerWithChildren(conn, childrenMap, connByID, assignedConnections, false)
 			autoKey := fmt.Sprintf("binary:%d", conn.ID)
 			clusterName := conn.Name
 			clusterDescription := ""
@@ -2373,8 +2374,9 @@ func (d *Datastore) buildAutoDetectedClusters(connections []connectionWithRole, 
 		if assignedConnections[conn.ID] {
 			continue
 		}
-		// Build server info
-		server := d.buildServerWithChildren(conn, childrenMap, connByID, assignedConnections)
+		// Build server info. Standalone is an auto-detected entry, so
+		// manually pinned children must not be pulled into it.
+		server := d.buildServerWithChildren(conn, childrenMap, connByID, assignedConnections, false)
 		autoKey := fmt.Sprintf("standalone:%d", conn.ID)
 		clusterName := conn.Name
 		clusterDescription := ""
@@ -3529,8 +3531,9 @@ func (d *Datastore) buildTopologyHierarchy(connections []connectionWithRole, clu
 				continue
 			}
 
-			// Build server with children
-			server := d.buildServerWithChildren(conn, childrenMap, connByID, assignedConnections)
+			// Build server with children. This is an auto binary
+			// cluster, so manually pinned standbys must be excluded.
+			server := d.buildServerWithChildren(conn, childrenMap, connByID, assignedConnections, false)
 
 			clusterName := conn.Name
 			clusterDescription := ""
@@ -3584,8 +3587,10 @@ func (d *Datastore) buildTopologyHierarchy(connections []connectionWithRole, clu
 			continue
 		}
 
-		// Build server (with any children if applicable)
-		server := d.buildServerWithChildren(conn, childrenMap, connByID, assignedConnections)
+		// Build server (with any children if applicable). Standalone is
+		// an auto-detected entry, so manually pinned children must not
+		// leak into its tree.
+		server := d.buildServerWithChildren(conn, childrenMap, connByID, assignedConnections, false)
 		standaloneDescription := ""
 		if override, ok := clusterOverrides[autoKey]; ok {
 			standaloneDescription = override.Description
@@ -3668,8 +3673,10 @@ func (d *Datastore) groupSpockNodesByClusters(
 		}
 
 		for _, node := range nodes {
-			// Use buildServerWithChildren to include hot standbys as children
-			server := d.buildServerWithChildren(node, childrenMap, connByID, assignedConnections)
+			// Use buildServerWithChildren to include hot standbys as
+			// children. This is an auto Spock (or Spock HA) cluster, so
+			// manually pinned hot standbys must be excluded.
+			server := d.buildServerWithChildren(node, childrenMap, connByID, assignedConnections, false)
 			cluster.Servers = append(cluster.Servers, server)
 		}
 
@@ -3876,12 +3883,20 @@ func (d *Datastore) extractClusterPrefix(name string) string {
 	return name
 }
 
-// buildServerWithChildren recursively builds server tree with standbys as children
+// buildServerWithChildren recursively builds server tree with standbys as children.
+//
+// The allowManual parameter controls whether children whose
+// MembershipSource is "manual" are included in the returned tree. Auto
+// cluster builders (binary, spock, standalone) must pass false so that a
+// child pinned to a manual cluster does not leak into the auto-detected
+// tree; manual cluster builders (which legitimately include every server
+// they own) must pass true. See issue #74.
 func (d *Datastore) buildServerWithChildren(
 	conn *connectionWithRole,
 	childrenMap map[int][]int,
 	connByID map[int]*connectionWithRole,
 	assignedConnections map[int]bool,
+	allowManual bool,
 ) TopologyServerInfo {
 	assignedConnections[conn.ID] = true
 
@@ -3941,12 +3956,20 @@ func (d *Datastore) buildServerWithChildren(
 		server.ConnectionError = conn.ConnectionError.String
 	}
 
-	// Recursively add children
+	// Recursively add children. When allowManual is false, skip any
+	// child whose MembershipSource is "manual": that connection has been
+	// pinned to a manually created cluster and must not leak into the
+	// auto-detected tree (issue #74).
 	for _, childID := range childrenMap[conn.ID] {
-		if child, exists := connByID[childID]; exists && !assignedConnections[childID] {
-			childServer := d.buildServerWithChildren(child, childrenMap, connByID, assignedConnections)
-			server.Children = append(server.Children, childServer)
+		child, exists := connByID[childID]
+		if !exists || assignedConnections[childID] {
+			continue
 		}
+		if !allowManual && child.MembershipSource == "manual" {
+			continue
+		}
+		childServer := d.buildServerWithChildren(child, childrenMap, connByID, assignedConnections, allowManual)
+		server.Children = append(server.Children, childServer)
 	}
 
 	return server

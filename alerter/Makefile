@@ -103,4 +103,4 @@ help:
 # Kill all running alerter processes
 killall:
 	@pkill -9 ai-dba-alerter 2>/dev/null || true
-	@pkill -9 -f "go run.*alerter" 2>/dev/null || true
+	@pkill -9 -f "[g]o run.*alerter" 2>/dev/null || true

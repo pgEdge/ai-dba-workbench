@@ -109,4 +109,4 @@ help:
 # Kill all running server processes
 killall:
 	@pkill -9 ai-dba-server 2>/dev/null || true
-	@pkill -9 -f "go run.*mcp-server" 2>/dev/null || true
+	@pkill -9 -f "[g]o run.*mcp-server" 2>/dev/null || true

@@ -609,6 +609,20 @@ func (h *ClusterHandler) listClustersInGroup(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if !allConnections {
+		// Gate on parent-group visibility before per-cluster filtering so
+		// the response mirrors getClusterGroup: callers who cannot see
+		// the group at all must receive 404 rather than an empty list
+		// that leaks the group's existence.
+		groupVisible, err := h.groupHasVisibleConnection(ctx, groupID, visible)
+		if err != nil {
+			log.Printf("[ERROR] Failed to check cluster group visibility (id=%d): %v", groupID, err)
+			RespondError(w, http.StatusInternalServerError, "Failed to filter clusters")
+			return
+		}
+		if !groupVisible {
+			RespondError(w, http.StatusNotFound, "Cluster group not found")
+			return
+		}
 		ids := make([]int, 0, len(clusters))
 		for i := range clusters {
 			ids = append(ids, clusters[i].ID)

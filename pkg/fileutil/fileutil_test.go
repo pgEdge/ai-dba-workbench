@@ -270,14 +270,21 @@ func TestGetDefaultConfigPath(t *testing.T) {
 	// Test when system path does not exist (common case)
 	result := GetDefaultConfigPath("/usr/local/bin/myapp", "myapp.yaml")
 
-	// Since /etc/pgedge/myapp.yaml likely doesn't exist, it should
-	// return the path relative to the binary
-	expected := "/usr/local/bin/myapp.yaml"
-	if result != expected {
-		// If the system path exists, that's fine too
-		if result != "/etc/pgedge/myapp.yaml" {
-			t.Errorf("GetDefaultConfigPath() = %q, want %q or system path",
-				result, expected)
+	// Check if /etc/pgedge/myapp.yaml exists
+	systemPath := "/etc/pgedge/myapp.yaml"
+	fallbackPath := "/usr/local/bin/myapp.yaml"
+
+	if FileExists(systemPath) {
+		// System path exists, should prefer it
+		if result != systemPath {
+			t.Errorf("GetDefaultConfigPath() = %q, want system path %q",
+				result, systemPath)
+		}
+	} else {
+		// System path doesn't exist, should use fallback
+		if result != fallbackPath {
+			t.Errorf("GetDefaultConfigPath() = %q, want fallback path %q",
+				result, fallbackPath)
 		}
 	}
 }
@@ -287,36 +294,45 @@ func TestGetDefaultConfigPathWithDifferentBinaryPaths(t *testing.T) {
 		name           string
 		binaryPath     string
 		configFilename string
-		expected       string
+		fallbackPath   string
 	}{
 		{
 			name:           "absolute path",
 			binaryPath:     "/opt/app/bin/service",
 			configFilename: "service.yaml",
-			expected:       "/opt/app/bin/service.yaml",
+			fallbackPath:   "/opt/app/bin/service.yaml",
 		},
 		{
 			name:           "home directory",
 			binaryPath:     "/home/user/bin/collector",
 			configFilename: "collector.yaml",
-			expected:       "/home/user/bin/collector.yaml",
+			fallbackPath:   "/home/user/bin/collector.yaml",
 		},
 		{
 			name:           "with dots in filename",
 			binaryPath:     "/usr/bin/app",
 			configFilename: "app.config.yaml",
-			expected:       "/usr/bin/app.config.yaml",
+			fallbackPath:   "/usr/bin/app.config.yaml",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := GetDefaultConfigPath(tt.binaryPath, tt.configFilename)
-			// System config might exist, so accept either
-			if result != tt.expected &&
-				result != filepath.Join("/etc/pgedge", tt.configFilename) {
-				t.Errorf("GetDefaultConfigPath(%q, %q) = %q, want %q",
-					tt.binaryPath, tt.configFilename, result, tt.expected)
+			systemPath := filepath.Join("/etc/pgedge", tt.configFilename)
+
+			if FileExists(systemPath) {
+				// System path exists, should prefer it
+				if result != systemPath {
+					t.Errorf("GetDefaultConfigPath(%q, %q) = %q, want system path %q",
+						tt.binaryPath, tt.configFilename, result, systemPath)
+				}
+			} else {
+				// System path doesn't exist, should use fallback
+				if result != tt.fallbackPath {
+					t.Errorf("GetDefaultConfigPath(%q, %q) = %q, want fallback path %q",
+						tt.binaryPath, tt.configFilename, result, tt.fallbackPath)
+				}
 			}
 		})
 	}
@@ -435,21 +451,25 @@ func TestReadTrimmedFileWithTildeError(t *testing.T) {
 func TestGetDefaultConfigPathSystemPath(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Create a mock /etc/pgedge directory and config file
-	// Note: We can't actually test the /etc/pgedge path without root access
-	// So we test the fallback behavior
-
 	result := GetDefaultConfigPath(
 		filepath.Join(tmpDir, "binary"),
 		"test.yaml",
 	)
 
-	// Since /etc/pgedge/test.yaml doesn't exist, should return binary path
-	expected := filepath.Join(tmpDir, "test.yaml")
-	if result != expected {
-		// May have hit the /etc/pgedge case if it exists
-		if result != "/etc/pgedge/test.yaml" {
-			t.Errorf("GetDefaultConfigPath() = %q, want %q", result, expected)
+	systemPath := "/etc/pgedge/test.yaml"
+	fallbackPath := filepath.Join(tmpDir, "test.yaml")
+
+	if FileExists(systemPath) {
+		// System path exists, should prefer it
+		if result != systemPath {
+			t.Errorf("GetDefaultConfigPath() = %q, want system path %q",
+				result, systemPath)
+		}
+	} else {
+		// System path doesn't exist, should use fallback
+		if result != fallbackPath {
+			t.Errorf("GetDefaultConfigPath() = %q, want fallback path %q",
+				result, fallbackPath)
 		}
 	}
 }

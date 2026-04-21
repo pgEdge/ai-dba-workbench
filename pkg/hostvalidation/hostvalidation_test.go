@@ -261,7 +261,7 @@ func TestValidateURLHost_DNSResolution(t *testing.T) {
 	t.Run("nonexistent hostname", func(t *testing.T) {
 		err := ValidateURLHost("https://this-hostname-definitely-does-not-exist-12345.invalid/webhook")
 		if err == nil {
-			t.Error("expected error for nonexistent hostname")
+			t.Fatal("expected error for nonexistent hostname")
 		}
 		if !containsCI(err.Error(), "cannot resolve") {
 			t.Errorf("expected 'cannot resolve' in error, got: %v", err)

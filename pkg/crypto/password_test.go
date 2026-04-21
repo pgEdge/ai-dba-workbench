@@ -426,7 +426,7 @@ func TestDecryptGCM_CiphertextTooShort(t *testing.T) {
 
 	_, err := DecryptGCM(key, shortCiphertext)
 	if err == nil {
-		t.Error("DecryptGCM should fail with ciphertext shorter than nonce")
+		t.Fatal("DecryptGCM should fail with ciphertext shorter than nonce")
 	}
 	if !strings.Contains(err.Error(), "too short") {
 		t.Errorf("expected 'too short' in error, got: %v", err)

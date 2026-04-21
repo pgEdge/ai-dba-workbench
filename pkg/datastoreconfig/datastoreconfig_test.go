@@ -239,9 +239,22 @@ func TestDatastoreConfigSSLModeValues(t *testing.T) {
 
 	for _, mode := range sslModes {
 		t.Run(mode, func(t *testing.T) {
+			// Create config with SSLMode, marshal to YAML, unmarshal back
 			cfg := DatastoreConfig{SSLMode: mode}
-			if cfg.SSLMode != mode {
-				t.Errorf("SSLMode = %q, want %q", cfg.SSLMode, mode)
+
+			data, err := yaml.Marshal(&cfg)
+			if err != nil {
+				t.Fatalf("failed to marshal config: %v", err)
+			}
+
+			var cfg2 DatastoreConfig
+			if err := yaml.Unmarshal(data, &cfg2); err != nil {
+				t.Fatalf("failed to unmarshal config: %v", err)
+			}
+
+			if cfg2.SSLMode != mode {
+				t.Errorf("SSLMode round-trip failed: got %q, want %q",
+					cfg2.SSLMode, mode)
 			}
 		})
 	}

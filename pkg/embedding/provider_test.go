@@ -222,6 +222,15 @@ func TestNewProvider_Gemini(t *testing.T) {
 		if provider == nil {
 			t.Fatal("expected non-nil provider")
 		}
+		// Verify the custom base URL was propagated to the provider
+		geminiProvider, ok := provider.(*GeminiProvider)
+		if !ok {
+			t.Fatal("expected provider to be *GeminiProvider")
+		}
+		if geminiProvider.baseURL != "https://custom.example.com" {
+			t.Errorf("expected base URL 'https://custom.example.com', got %q",
+				geminiProvider.baseURL)
+		}
 	})
 }
 
@@ -239,6 +248,15 @@ func TestNewProvider_Voyage_CustomBaseURL(t *testing.T) {
 	}
 	if provider == nil {
 		t.Fatal("expected non-nil provider")
+	}
+	// Verify the custom base URL was propagated to the provider
+	voyageProvider, ok := provider.(*VoyageProvider)
+	if !ok {
+		t.Fatal("expected provider to be *VoyageProvider")
+	}
+	if voyageProvider.baseURL != "https://custom.voyageai.com/v1/embeddings" {
+		t.Errorf("expected base URL 'https://custom.voyageai.com/v1/embeddings', got %q",
+			voyageProvider.baseURL)
 	}
 }
 

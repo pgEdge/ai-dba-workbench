@@ -217,9 +217,27 @@ describe('ConversationHistory', () => {
                 <ConversationHistory {...defaultProps} currentId="1" />
             );
 
-            // The button containing the current conversation should be styled
-            // We verify by checking the conversation is rendered
-            expect(screen.getByText('First Conversation')).toBeInTheDocument();
+            const activeButton = screen
+                .getByText('First Conversation')
+                .closest('.MuiListItemButton-root') as HTMLElement;
+            const inactiveButton = screen
+                .getByText('Second Conversation')
+                .closest('.MuiListItemButton-root') as HTMLElement;
+
+            expect(activeButton).not.toBeNull();
+            expect(inactiveButton).not.toBeNull();
+
+            const activeBg =
+                window.getComputedStyle(activeButton).backgroundColor;
+            const inactiveBg =
+                window.getComputedStyle(inactiveButton).backgroundColor;
+
+            // Active item must have a non-transparent background that
+            // differs from the inactive item's background.
+            expect(activeBg).not.toBe(inactiveBg);
+            expect(activeBg).not.toBe('');
+            expect(activeBg).not.toBe('transparent');
+            expect(activeBg).not.toBe('rgba(0, 0, 0, 0)');
         });
     });
 });

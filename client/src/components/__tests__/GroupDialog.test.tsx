@@ -9,7 +9,7 @@
  */
 
 import React from 'react';
-import { screen, waitFor, act } from '@testing-library/react';
+import { screen, waitFor, act, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import GroupDialog from '../GroupDialog';
@@ -445,7 +445,12 @@ describe('GroupDialog', () => {
                 expect(getNameField()).toBeDisabled();
             });
 
-            // Cancel is disabled, so we verify onClose is not called
+            const cancelButton = screen.getByRole('button', {
+                name: /cancel/i,
+            });
+            expect(cancelButton).toBeDisabled();
+            fireEvent.click(cancelButton);
+
             expect(onClose).not.toHaveBeenCalled();
         });
 

@@ -187,6 +187,9 @@ describe('ChatInput', () => {
             );
 
             const textarea = getNativeTextarea(container);
+            fireEvent.change(textarea, {
+                target: { value: 'Should not send' },
+            });
             fireEvent.keyDown(textarea, { key: 'Enter' });
 
             expect(onSend).not.toHaveBeenCalled();

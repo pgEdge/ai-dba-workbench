@@ -191,6 +191,7 @@ describe('ChatMessage', () => {
             renderWithTheme(<ChatMessage message={message} mode="dark" />);
 
             expect(screen.getByText('Text content')).toBeInTheDocument();
+            expect(screen.queryByText('some_tool')).not.toBeInTheDocument();
         });
     });
 

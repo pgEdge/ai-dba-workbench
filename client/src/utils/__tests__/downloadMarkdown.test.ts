@@ -22,6 +22,10 @@ describe('downloadAsMarkdown', () => {
     let mockRevokeObjectURL: ReturnType<typeof vi.fn>;
     let mockLink: HTMLAnchorElement;
 
+    // Save original URL methods to restore after tests
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+
     beforeEach(() => {
         // Create a mock anchor element
         mockLink = {
@@ -50,6 +54,9 @@ describe('downloadAsMarkdown', () => {
 
     afterEach(() => {
         vi.restoreAllMocks();
+        // Restore original URL methods to prevent cross-test pollution
+        URL.createObjectURL = originalCreateObjectURL;
+        URL.revokeObjectURL = originalRevokeObjectURL;
     });
 
     describe('basic functionality', () => {

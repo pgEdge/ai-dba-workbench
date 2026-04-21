@@ -23,7 +23,7 @@ import (
 // Server-specific constants
 const (
 	ServerName    = "pgedge-postgres-mcp"
-	ServerVersion = "1.0.0-alpha3"
+	ServerVersion = "1.0.0-beta1"
 )
 
 // ProtocolVersion is re-exported from the shared MCP package

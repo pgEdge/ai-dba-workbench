@@ -148,7 +148,7 @@ func TestInitializeParamsMarshal(t *testing.T) {
 		Capabilities:    map[string]any{"tools": true},
 		ClientInfo: ClientInfo{
 			Name:    "test-client",
-			Version: "1.0.0-alpha3",
+			Version: "1.0.0-beta1",
 		},
 	}
 

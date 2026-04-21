@@ -24,7 +24,7 @@ import (
 
 var (
 	// Version information
-	Version = "1.0.0-alpha3"
+	Version = "1.0.0-beta1"
 
 	// Command line flags
 	configFile = flag.String("config", "", "Path to configuration file")

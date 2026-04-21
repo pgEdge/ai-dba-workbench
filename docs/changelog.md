@@ -10,6 +10,8 @@ project adheres to
 
 ## [Unreleased]
 
+## [1.0.0-beta1] - 2026-04-21
+
 ### Added
 
 - Add the `llm.timeout_seconds` server configuration

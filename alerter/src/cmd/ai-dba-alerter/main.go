@@ -24,7 +24,7 @@ import (
 )
 
 // Version information
-const Version = "1.0.0-alpha3"
+const Version = "1.0.0-beta1"
 
 func main() {
 	fmt.Fprintf(os.Stderr, "pgEdge AI DBA Workbench Alerter v%s starting...\n", Version)

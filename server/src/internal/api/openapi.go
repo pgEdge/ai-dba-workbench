@@ -118,7 +118,7 @@ func BuildOpenAPISpec() *OpenAPISpec {
 		OpenAPI: "3.0.3",
 		Info: OpenAPIInfo{
 			Title:       "AI DBA Workbench API",
-			Version:     "1.0.0-alpha3",
+			Version:     "1.0.0-beta1",
 			Description: "REST API for AI DBA Workbench - PostgreSQL monitoring and AI-assisted database administration",
 		},
 		Servers: []OpenAPIServer{

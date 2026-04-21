@@ -296,4 +296,37 @@ describe('AdminTokenScopes - copy-to-clipboard behaviour', () => {
             ).not.toBeInTheDocument();
         }
     );
+
+    it('resets the 2-second timer when copy is clicked again while already in copied state',
+        async () => {
+            await openCreatedDialog();
+            installClipboardMock(writeTextMock);
+
+            // Click copy and wait for the copied (CheckIcon) state.
+            await clickCopyAndAwaitCopiedState(writeTextMock);
+
+            // Click copy again while still in the copied state.
+            const copyButton = screen.getByRole('button', {
+                name: /copy token/i,
+            });
+
+            await act(async () => {
+                fireEvent.click(copyButton);
+            });
+
+            // writeText should have been called twice total.
+            await waitFor(() => {
+                expect(writeTextMock).toHaveBeenCalledTimes(2);
+            });
+
+            // The CheckIcon should still be visible (state did not
+            // flash back to CopyIcon between the two clicks).
+            expect(
+                screen.getByTestId('CheckIcon')
+            ).toBeInTheDocument();
+            expect(
+                screen.queryByTestId('ContentCopyIcon')
+            ).not.toBeInTheDocument();
+        }
+    );
 });

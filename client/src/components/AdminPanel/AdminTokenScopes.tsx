@@ -1060,7 +1060,7 @@ curl -s -X POST -H "Authorization: Bearer <token>" \\
                                 aria-label="copy token"
                             >
                                 {tokenCopied ? (
-                                    <CheckIcon fontSize="small" />
+                                    <CheckIcon fontSize="small" color="success" />
                                 ) : (
                                     <CopyIcon fontSize="small" />
                                 )}

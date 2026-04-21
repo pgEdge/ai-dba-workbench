@@ -9,7 +9,7 @@
  */
 
 import React from 'react';
-import { screen } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import renderWithTheme from '../../../test/renderWithTheme';
 import EffectivePermissionsPanel from '../EffectivePermissionsPanel';
@@ -31,9 +31,10 @@ describe('EffectivePermissionsPanel', () => {
             <EffectivePermissionsPanel connectionPrivileges={{}} />
         );
 
-        // Should show None for empty connections
-        const noneElements = screen.getAllByText('None');
-        expect(noneElements.length).toBeGreaterThan(0);
+        // Scope the assertion to the Connections section so we verify the
+        // empty state renders in the correct card.
+        const connectionsSection = screen.getByTestId('connection-privileges-section');
+        expect(within(connectionsSection).getByText('None')).toBeInTheDocument();
     });
 
     it('displays connection privileges when provided as object', () => {
@@ -54,7 +55,11 @@ describe('EffectivePermissionsPanel', () => {
             />
         );
 
-        expect(screen.getByText('Connections')).toBeInTheDocument();
+        // Verify the object-based branch actually rendered the connection
+        // names inside the Connections section.
+        const connectionsSection = screen.getByTestId('connection-privileges-section');
+        expect(within(connectionsSection).getByText(/Primary DB/)).toBeInTheDocument();
+        expect(within(connectionsSection).getByText(/Replica DB/)).toBeInTheDocument();
     });
 
     it('displays connection privileges when provided as array', () => {
@@ -204,8 +209,10 @@ describe('EffectivePermissionsPanel', () => {
             <EffectivePermissionsPanel mcpPrivileges={[]} />
         );
 
-        const noneElements = screen.getAllByText('None');
-        expect(noneElements.length).toBeGreaterThan(0);
+        // Scope the assertion to the MCP section so we verify the empty
+        // state renders in the correct card.
+        const mcpSection = screen.getByTestId('mcp-privileges-section');
+        expect(within(mcpSection).getByText('None')).toBeInTheDocument();
     });
 
     it('displays groups when provided', () => {

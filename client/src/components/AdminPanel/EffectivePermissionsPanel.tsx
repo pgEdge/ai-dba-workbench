@@ -37,11 +37,12 @@ const ADMIN_PERMISSION_LABELS: Record<string, string> = {
 interface CategoryCardProps {
     icon: SvgIconComponent;
     label: string;
+    testId?: string;
     children: React.ReactNode;
 }
 
-const CategoryCard: React.FC<CategoryCardProps> = ({ icon: Icon, label, children }) => (
-    <Box>
+const CategoryCard: React.FC<CategoryCardProps> = ({ icon: Icon, label, testId, children }) => (
+    <Box data-testid={testId}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 1 }}>
             <Icon sx={{ fontSize: 16, color: 'text.secondary' }} />
             <Typography sx={categoryLabelSx}>
@@ -125,7 +126,7 @@ const EffectivePermissionsPanel: React.FC<EffectivePermissionsPanelProps> = ({
             )}
 
             <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 2 }}>
-                <CategoryCard icon={ConnectionIcon} label="Connections">
+                <CategoryCard icon={ConnectionIcon} label="Connections" testId="connection-privileges-section">
                     {connArray.length > 0 ? (
                         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
                             {connArray.map((cp, i) => (
@@ -144,7 +145,7 @@ const EffectivePermissionsPanel: React.FC<EffectivePermissionsPanelProps> = ({
                 </CategoryCard>
 
                 {isSuperuser && (
-                    <CategoryCard icon={AdminIcon} label="Admin">
+                    <CategoryCard icon={AdminIcon} label="Admin" testId="admin-permissions-section">
                         {adminPermissions && adminPermissions.length > 0 ? (
                             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
                                 {adminPermissions.map((perm) => (
@@ -163,7 +164,7 @@ const EffectivePermissionsPanel: React.FC<EffectivePermissionsPanelProps> = ({
                     </CategoryCard>
                 )}
 
-                <CategoryCard icon={McpIcon} label="MCP">
+                <CategoryCard icon={McpIcon} label="MCP" testId="mcp-privileges-section">
                     {mcpPrivileges && mcpPrivileges.length > 0 ? (
                         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
                             {mcpPrivileges.map((priv, i) => {

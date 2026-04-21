@@ -76,6 +76,12 @@ vi.mock('../../../contexts/AICapabilitiesContext', () => ({
 describe('AdminPanel', () => {
     const mockOnClose = vi.fn();
 
+    // Small helper to reduce repetition of the renderWithTheme(<AdminPanel ... />)
+    // call. `open` defaults to true; pass `{ open: false }` to test the
+    // closed state.
+    const renderAdminPanel = ({ open = true }: { open?: boolean } = {}) =>
+        renderWithTheme(<AdminPanel open={open} onClose={mockOnClose} />);
+
     beforeEach(() => {
         vi.clearAllMocks();
         mockHasPermission.mockReturnValue(true);
@@ -86,34 +92,26 @@ describe('AdminPanel', () => {
     });
 
     it('renders the panel when open is true', () => {
-        renderWithTheme(
-            <AdminPanel open={true} onClose={mockOnClose} />
-        );
+        renderAdminPanel();
 
         expect(screen.getByText('Administration')).toBeInTheDocument();
     });
 
     it('does not render content when open is false', () => {
-        renderWithTheme(
-            <AdminPanel open={false} onClose={mockOnClose} />
-        );
+        renderAdminPanel({ open: false });
 
         expect(screen.queryByText('Administration')).not.toBeInTheDocument();
     });
 
     it('renders the close button', () => {
-        renderWithTheme(
-            <AdminPanel open={true} onClose={mockOnClose} />
-        );
+        renderAdminPanel();
 
         const closeButton = screen.getByRole('button', { name: /close administration/i });
         expect(closeButton).toBeInTheDocument();
     });
 
     it('calls onClose when the close button is clicked', () => {
-        renderWithTheme(
-            <AdminPanel open={true} onClose={mockOnClose} />
-        );
+        renderAdminPanel();
 
         const closeButton = screen.getByRole('button', { name: /close administration/i });
         fireEvent.click(closeButton);
@@ -122,9 +120,7 @@ describe('AdminPanel', () => {
     });
 
     it('renders Security section with navigation items', () => {
-        renderWithTheme(
-            <AdminPanel open={true} onClose={mockOnClose} />
-        );
+        renderAdminPanel();
 
         expect(screen.getByText('Security')).toBeInTheDocument();
         expect(screen.getByText('Users')).toBeInTheDocument();
@@ -134,9 +130,7 @@ describe('AdminPanel', () => {
     });
 
     it('renders Monitoring section with navigation items', () => {
-        renderWithTheme(
-            <AdminPanel open={true} onClose={mockOnClose} />
-        );
+        renderAdminPanel();
 
         expect(screen.getByText('Monitoring')).toBeInTheDocument();
         expect(screen.getByText('Probe Defaults')).toBeInTheDocument();
@@ -144,9 +138,7 @@ describe('AdminPanel', () => {
     });
 
     it('renders Notifications section with navigation items', () => {
-        renderWithTheme(
-            <AdminPanel open={true} onClose={mockOnClose} />
-        );
+        renderAdminPanel();
 
         expect(screen.getByText('Notifications')).toBeInTheDocument();
         expect(screen.getByText('Email Channels')).toBeInTheDocument();
@@ -156,18 +148,14 @@ describe('AdminPanel', () => {
     });
 
     it('renders AI section when aiEnabled is true', () => {
-        renderWithTheme(
-            <AdminPanel open={true} onClose={mockOnClose} />
-        );
+        renderAdminPanel();
 
         expect(screen.getByText('AI')).toBeInTheDocument();
         expect(screen.getByText('Memories')).toBeInTheDocument();
     });
 
     it('shows the first component when dialog opens', async () => {
-        renderWithTheme(
-            <AdminPanel open={true} onClose={mockOnClose} />
-        );
+        renderAdminPanel();
 
         // Wait for the first component (Users) to be selected and rendered
         await waitFor(() => {
@@ -175,32 +163,28 @@ describe('AdminPanel', () => {
         });
     });
 
-    it('all navigation buttons exist and are clickable', async () => {
-        renderWithTheme(
-            <AdminPanel open={true} onClose={mockOnClose} />
-        );
+    it('navigates to Groups when the Groups button is clicked', async () => {
+        renderAdminPanel();
 
         // Wait for initial render - Users should be selected
         await waitFor(() => {
             expect(screen.getByTestId('admin-users')).toBeInTheDocument();
         });
 
-        const usersButton = screen.getByRole('button', { name: 'Users' });
-        const groupsButton = screen.getByRole('button', { name: 'Groups' });
+        // Click the Groups nav item. MUI's ListItemButton renders as a div
+        // with role="button" and accepts regular DOM click events.
+        fireEvent.click(screen.getByText('Groups'));
 
-        // Initially Users is selected
-        expect(usersButton.className).toContain('Mui-selected');
-        expect(groupsButton.className).not.toContain('Mui-selected');
-
-        // Verify both buttons are in the document and clickable
-        expect(usersButton).toBeEnabled();
-        expect(groupsButton).toBeEnabled();
+        // After clicking Groups, the Groups component should render and the
+        // Users component should no longer be in the document.
+        await waitFor(() => {
+            expect(screen.getByTestId('admin-groups')).toBeInTheDocument();
+        });
+        expect(screen.queryByTestId('admin-users')).not.toBeInTheDocument();
     });
 
     it('nav buttons have correct role and are accessible', async () => {
-        renderWithTheme(
-            <AdminPanel open={true} onClose={mockOnClose} />
-        );
+        renderAdminPanel();
 
         await waitFor(() => {
             expect(screen.getByTestId('admin-users')).toBeInTheDocument();

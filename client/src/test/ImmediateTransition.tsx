@@ -41,20 +41,42 @@ const ImmediateTransition = React.forwardRef<
         onExited,
     } = props;
 
+    // Keep the latest callback refs without making the lifecycle effect
+    // depend on their identity. Parent components often pass fresh
+    // function identities on every render (e.g., `TransitionProps={{
+    // onEnter: handleEnter }}` with a non-memoised handler), which would
+    // otherwise cause this effect to re-fire on every parent render and
+    // clobber state changes that happened after the initial enter.
+    const onEnterRef = React.useRef(onEnter);
+    const onEnteringRef = React.useRef(onEntering);
+    const onEnteredRef = React.useRef(onEntered);
+    const onExitRef = React.useRef(onExit);
+    const onExitingRef = React.useRef(onExiting);
+    const onExitedRef = React.useRef(onExited);
+    React.useEffect(() => {
+        onEnterRef.current = onEnter;
+        onEnteringRef.current = onEntering;
+        onEnteredRef.current = onEntered;
+        onExitRef.current = onExit;
+        onExitingRef.current = onExiting;
+        onExitedRef.current = onExited;
+    });
+
     // useLayoutEffect runs synchronously inside the same commit that
     // userEvent's act() wraps, so the setState calls that Modal/Dialog
     // fire from these lifecycle callbacks stay inside the act boundary.
+    // Only fire when `inProp` toggles, not on every render.
     React.useLayoutEffect(() => {
         if (inProp) {
-            onEnter?.(null as unknown as HTMLElement, false);
-            onEntering?.(null as unknown as HTMLElement, false);
-            onEntered?.(null as unknown as HTMLElement, false);
+            onEnterRef.current?.(null as unknown as HTMLElement, false);
+            onEnteringRef.current?.(null as unknown as HTMLElement, false);
+            onEnteredRef.current?.(null as unknown as HTMLElement, false);
         } else {
-            onExit?.(null as unknown as HTMLElement);
-            onExiting?.(null as unknown as HTMLElement);
-            onExited?.(null as unknown as HTMLElement);
+            onExitRef.current?.(null as unknown as HTMLElement);
+            onExitingRef.current?.(null as unknown as HTMLElement);
+            onExitedRef.current?.(null as unknown as HTMLElement);
         }
-    }, [inProp, onEnter, onEntering, onEntered, onExit, onExiting, onExited]);
+    }, [inProp]);
 
     if (!inProp) {
         return null;

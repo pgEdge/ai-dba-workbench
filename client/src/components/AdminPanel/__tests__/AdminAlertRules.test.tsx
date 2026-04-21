@@ -9,7 +9,7 @@
  */
 
 import React from 'react';
-import { screen, fireEvent, waitFor } from '@testing-library/react';
+import { screen, fireEvent, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import renderWithTheme from '../../../test/renderWithTheme';
@@ -152,7 +152,7 @@ describe('AdminAlertRules', () => {
         expect(screen.getByText('> 100')).toBeInTheDocument();
     });
 
-    it('displays severity chips with appropriate colors', async () => {
+    it('displays severity labels for each severity level', async () => {
         mockApiGet.mockResolvedValue({ alert_rules: MOCK_ALERT_RULES });
 
         renderWithTheme(<AdminAlertRules />);
@@ -449,16 +449,11 @@ describe('AdminAlertRules', () => {
             expect(screen.getByLabelText('Threshold')).toBeInTheDocument();
         });
 
-        // Find the switch in the dialog
-        const switches = screen.getAllByRole('checkbox');
-        const enabledSwitch = switches.find((s) =>
-            s.closest('[class*="MuiDialogContent"]')
-        );
-        expect(enabledSwitch).toBeDefined();
+        // Find the switch in the dialog by its aria-label
+        const dialog = screen.getByRole('dialog');
+        const enabledSwitch = within(dialog).getByRole('checkbox', { name: /enabled/i });
         expect(enabledSwitch).toBeChecked();
-
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-        await user.click(enabledSwitch!);
+        await user.click(enabledSwitch);
 
         await user.click(screen.getByRole('button', { name: /Save/i }));
 

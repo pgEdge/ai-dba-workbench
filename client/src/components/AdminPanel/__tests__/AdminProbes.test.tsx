@@ -99,14 +99,19 @@ describe('AdminProbes', () => {
         expect(mockApiGet).toHaveBeenCalledWith('/api/v1/probe-configs');
     });
 
-    it('handles API returning probe_configs wrapped', async () => {
-        mockApiGet.mockResolvedValue({ probe_configs: MOCK_PROBES });
+    it('handles API returning a raw array response', async () => {
+        // Exercise the fallback branch in AdminProbes where the response is
+        // not wrapped in `probe_configs` but is a raw array instead.
+        mockApiGet.mockResolvedValue(MOCK_PROBES);
 
         renderWithTheme(<AdminProbes />);
 
         await waitFor(() => {
             expect(screen.getByText('Database Activity')).toBeInTheDocument();
         });
+
+        expect(screen.getByText('Database Statistics')).toBeInTheDocument();
+        expect(screen.getByText('Replication Status')).toBeInTheDocument();
     });
 
     it('displays probe names with technical names as caption', async () => {

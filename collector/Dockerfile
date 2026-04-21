@@ -33,8 +33,7 @@ RUN mkdir -p /etc/pgedge
 
 COPY --from=builder /build/ai-dba-collector /usr/local/bin/ai-dba-collector
 
-RUN groupadd -r appuser && useradd -r -g appuser -d /nonexistent -s /usr/sbin/nologin appuser && \
-    chown -R appuser:appuser /etc/pgedge
+RUN groupadd -r appuser && useradd -r -g appuser -d /nonexistent -s /usr/sbin/nologin appuser
 USER appuser
 
 ENTRYPOINT ["/usr/local/bin/ai-dba-collector"]

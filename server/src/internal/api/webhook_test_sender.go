@@ -23,6 +23,14 @@ import (
 func sendTestGenericWebhook(endpointURL, httpMethod string, headers map[string]string, authType, authCredentials string) error {
 	client := &http.Client{
 		Timeout: 30 * time.Second,
+		// Refuse to follow redirects. hostValidator.ValidateHost is
+		// applied to the originally configured URL only; following a
+		// 3xx Location header would allow an attacker-controlled
+		// endpoint to bounce the request to a private/metadata host
+		// and bypass SSRF protections.
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 	}
 
 	if httpMethod == "" {
@@ -36,7 +44,11 @@ func sendTestGenericWebhook(endpointURL, httpMethod string, headers map[string]s
 		reqBody = strings.NewReader(body)
 	}
 
-	req, err := http.NewRequest(httpMethod, endpointURL, reqBody)
+	// The endpoint URL host is validated by hostValidator.ValidateHost at
+	// the call site to reject private/loopback/metadata endpoints before
+	// the request is ever dispatched, so this is not an unchecked
+	// user-supplied URL.
+	req, err := http.NewRequest(httpMethod, endpointURL, reqBody) //nolint:gosec // G704: URL host validated upstream; DNS rebinding between validation and dial is a known, admin-scope residual risk
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -69,7 +81,7 @@ func sendTestGenericWebhook(endpointURL, httpMethod string, headers map[string]s
 		}
 	}
 
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) //nolint:gosec // G704: URL host validated upstream and redirects disabled so the validated host cannot be bypassed via Location header; DNS rebinding between validation and dial is a known, admin-scope residual risk
 	if err != nil {
 		return fmt.Errorf("failed to send request: %w", err)
 	}
@@ -90,6 +102,14 @@ func sendTestGenericWebhook(endpointURL, httpMethod string, headers map[string]s
 func sendTestWebhook(webhookURL string, channelType string) error {
 	client := &http.Client{
 		Timeout: 30 * time.Second,
+		// Refuse to follow redirects. hostValidator.ValidateHost is
+		// applied to the originally configured URL only; following a
+		// 3xx Location header would allow an attacker-controlled
+		// endpoint to bounce the request to a private/metadata host
+		// and bypass SSRF protections.
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 	}
 
 	body := fmt.Sprintf(
@@ -97,13 +117,17 @@ func sendTestWebhook(webhookURL string, channelType string) error {
 		channelType,
 	)
 
-	req, err := http.NewRequest(http.MethodPost, webhookURL, strings.NewReader(body))
+	// The webhook URL host is validated by hostValidator.ValidateHost at
+	// the call site to reject private/loopback/metadata endpoints before
+	// the request is ever dispatched, so this is not an unchecked
+	// user-supplied URL.
+	req, err := http.NewRequest(http.MethodPost, webhookURL, strings.NewReader(body)) //nolint:gosec // G704: URL host validated upstream; DNS rebinding between validation and dial is a known, admin-scope residual risk
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) //nolint:gosec // G704: URL host validated upstream and redirects disabled so the validated host cannot be bypassed via Location header; DNS rebinding between validation and dial is a known, admin-scope residual risk
 	if err != nil {
 		return fmt.Errorf("failed to send request: %w", err)
 	}

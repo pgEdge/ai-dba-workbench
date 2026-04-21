@@ -305,20 +305,20 @@ func (c *Compactor) messagesEqual(m1, m2 Message) bool {
 
 // createSummary creates a summary of the compacted messages.
 func (c *Compactor) createSummary(middle, kept []Message) *Summary {
-	context := c.extractContext(middle)
+	extracted := c.extractContext(middle)
 
-	topics := make([]string, 0, len(context.Topics))
-	for topic := range context.Topics {
+	topics := make([]string, 0, len(extracted.Topics))
+	for topic := range extracted.Topics {
 		topics = append(topics, topic)
 	}
 
-	tables := make([]string, 0, len(context.Tables))
-	for table := range context.Tables {
+	tables := make([]string, 0, len(extracted.Tables))
+	for table := range extracted.Tables {
 		tables = append(tables, table)
 	}
 
-	tools := make([]string, 0, len(context.Tools))
-	for tool := range context.Tools {
+	tools := make([]string, 0, len(extracted.Tools))
+	for tool := range extracted.Tools {
 		tools = append(tools, tool)
 	}
 
@@ -335,7 +335,7 @@ func (c *Compactor) createSummary(middle, kept []Message) *Summary {
 
 // extractContext extracts context information from messages.
 func (c *Compactor) extractContext(messages []Message) ExtractedContext {
-	context := ExtractedContext{
+	extracted := ExtractedContext{
 		Topics: make(map[string]bool),
 		Tables: make(map[string]bool),
 		Tools:  make(map[string]bool),
@@ -351,7 +351,7 @@ func (c *Compactor) extractContext(messages []Message) ExtractedContext {
 				tableName := strings.ToLower(match[1])
 				// Filter out SQL keywords
 				if !c.isSQLKeyword(tableName) {
-					context.Tables[tableName] = true
+					extracted.Tables[tableName] = true
 				}
 			}
 		}
@@ -359,7 +359,7 @@ func (c *Compactor) extractContext(messages []Message) ExtractedContext {
 		// Extract tool names
 		toolNames := c.classifier.extractToolNames(msg)
 		for _, tool := range toolNames {
-			context.Tools[tool] = true
+			extracted.Tools[tool] = true
 		}
 
 		// Extract topics from user messages
@@ -372,12 +372,12 @@ func (c *Compactor) extractContext(messages []Message) ExtractedContext {
 				if len(topic) > 80 {
 					topic = topic[:80] + "..."
 				}
-				context.Topics[topic] = true
+				extracted.Topics[topic] = true
 			}
 		}
 	}
 
-	return context
+	return extracted
 }
 
 // isSQLKeyword checks if a word is a SQL keyword.

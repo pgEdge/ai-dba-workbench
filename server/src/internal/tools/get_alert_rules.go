@@ -187,8 +187,8 @@ Returns TSV data with:
 			if category != nil {
 				catInfo = fmt.Sprintf("category: %s", *category)
 			}
-			sb.WriteString(fmt.Sprintf("Alert Rules | %s | %s | enabled_only: %t\n\n",
-				connInfo, catInfo, enabledOnly))
+			fmt.Fprintf(&sb, "Alert Rules | %s | %s | enabled_only: %t\n\n",
+				connInfo, catInfo, enabledOnly)
 
 			// Header
 			sb.WriteString("rule_id\tname\tcategory\tmetric_name\toperator\tthreshold\tseverity\tenabled\tdescription\n")
@@ -214,7 +214,7 @@ Returns TSV data with:
 				}
 
 				// Format row
-				sb.WriteString(fmt.Sprintf("%d\t%s\t%s\t%s\t%s\t%v\t%s\t%t\t%s\n",
+				fmt.Fprintf(&sb, "%d\t%s\t%s\t%s\t%s\t%v\t%s\t%t\t%s\n",
 					id,
 					tsv.FormatValue(name),
 					cat,
@@ -223,8 +223,7 @@ Returns TSV data with:
 					threshold,
 					severity,
 					enabled,
-					tsv.FormatValue(description),
-				))
+					tsv.FormatValue(description))
 				rowCount++
 			}
 
@@ -236,7 +235,7 @@ Returns TSV data with:
 				return mcp.NewToolSuccess("No alert rules found matching the specified criteria.")
 			}
 
-			sb.WriteString(fmt.Sprintf("\n(%d rules)\n", rowCount))
+			fmt.Fprintf(&sb, "\n(%d rules)\n", rowCount)
 
 			return mcp.NewToolSuccess(sb.String())
 		},

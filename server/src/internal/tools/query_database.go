@@ -240,7 +240,7 @@ To avoid rate limits (30,000 input tokens/minute):
 			// Always show current database context (unless already shown via connection message)
 			if connectionMessage == "" {
 				sanitizedConn := database.SanitizeConnStr(connStr)
-				sb.WriteString(fmt.Sprintf("Database: %s\n\n", sanitizedConn))
+				fmt.Fprintf(&sb, "Database: %s\n\n", sanitizedConn)
 			} else {
 				sb.WriteString(connectionMessage)
 			}

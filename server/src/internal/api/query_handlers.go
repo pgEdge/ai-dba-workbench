@@ -80,7 +80,7 @@ func scanDollarTag(sql string, i int) string {
 		return ""
 	}
 	ch := sql[j]
-	if !((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || ch == '_') {
+	if (ch < 'A' || ch > 'Z') && (ch < 'a' || ch > 'z') && ch != '_' {
 		return ""
 	}
 	j++
@@ -89,8 +89,8 @@ func scanDollarTag(sql string, i int) string {
 		if ch == '$' {
 			return sql[i : j+1]
 		}
-		if !((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
-			(ch >= '0' && ch <= '9') || ch == '_') {
+		if (ch < 'A' || ch > 'Z') && (ch < 'a' || ch > 'z') &&
+			(ch < '0' || ch > '9') && ch != '_' {
 			return ""
 		}
 		j++

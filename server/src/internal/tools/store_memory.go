@@ -156,21 +156,21 @@ func StoreMemoryTool(memoryStore *memory.Store, cfg *config.Config, rbacChecker 
 			sb.WriteString("Memory Stored Successfully\n")
 			sb.WriteString(strings.Repeat("=", 50))
 			sb.WriteString("\n\n")
-			sb.WriteString(fmt.Sprintf("ID:       %d\n", mem.ID))
-			sb.WriteString(fmt.Sprintf("Scope:    %s\n", mem.Scope))
-			sb.WriteString(fmt.Sprintf("Category: %s\n", mem.Category))
+			fmt.Fprintf(&sb, "ID:       %d\n", mem.ID)
+			fmt.Fprintf(&sb, "Scope:    %s\n", mem.Scope)
+			fmt.Fprintf(&sb, "Category: %s\n", mem.Category)
 			if mem.Pinned {
 				sb.WriteString("Pinned:   yes\n")
 			} else {
 				sb.WriteString("Pinned:   no\n")
 			}
 			if embeddingVec != nil {
-				sb.WriteString(fmt.Sprintf("Embedding: generated (%d dimensions, model: %s)\n", len(embeddingVec), modelName))
+				fmt.Fprintf(&sb, "Embedding: generated (%d dimensions, model: %s)\n", len(embeddingVec), modelName)
 			} else {
 				sb.WriteString("Embedding: none (embedding generation unavailable)\n")
 			}
-			sb.WriteString(fmt.Sprintf("Created:  %s\n", mem.CreatedAt.Format("2006-01-02 15:04:05 UTC")))
-			sb.WriteString(fmt.Sprintf("\nContent:\n  %s\n", mem.Content))
+			fmt.Fprintf(&sb, "Created:  %s\n", mem.CreatedAt.Format("2006-01-02 15:04:05 UTC"))
+			fmt.Fprintf(&sb, "\nContent:\n  %s\n", mem.Content)
 
 			return mcp.NewToolSuccess(sb.String())
 		},

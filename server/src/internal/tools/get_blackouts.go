@@ -273,8 +273,8 @@ func blackoutsSingleConnection(
 	if activeOnly {
 		activeLabel = "active only"
 	}
-	sb.WriteString(fmt.Sprintf("Blackouts | Connection: %d (%s) | Filter: %s | Limit: %d\n\n",
-		connectionID, connName, activeLabel, limit))
+	fmt.Fprintf(&sb, "Blackouts | Connection: %d (%s) | Filter: %s | Limit: %d\n\n",
+		connectionID, connName, activeLabel, limit)
 
 	// Header
 	sb.WriteString("id\tscope\treason\tstart_time\tend_time\tis_active\n")
@@ -296,14 +296,13 @@ func blackoutsSingleConnection(
 			return mcp.NewToolError(fmt.Sprintf("Failed to scan row: %v", err))
 		}
 
-		sb.WriteString(fmt.Sprintf("%d\t%s\t%s\t%s\t%s\t%t\n",
+		fmt.Fprintf(&sb, "%d\t%s\t%s\t%s\t%s\t%t\n",
 			id,
 			scope,
 			tsv.FormatValue(reason),
 			startTime.Format(time.RFC3339),
 			endTime.Format(time.RFC3339),
-			isActive,
-		))
+			isActive)
 		rowCount++
 	}
 
@@ -318,7 +317,7 @@ func blackoutsSingleConnection(
 			sb.WriteString("(no blackouts found)\n")
 		}
 	} else {
-		sb.WriteString(fmt.Sprintf("\n(%d rows)\n", rowCount))
+		fmt.Fprintf(&sb, "\n(%d rows)\n", rowCount)
 	}
 
 	// Optionally include recurring blackout schedules
@@ -385,7 +384,7 @@ func blackoutSchedulesSingleConnection(
 			return "", fmt.Errorf("failed to scan schedule row: %w", err)
 		}
 
-		sb.WriteString(fmt.Sprintf("%d\t%s\t%s\t%s\t%d\t%s\t%s\t%t\n",
+		fmt.Fprintf(&sb, "%d\t%s\t%s\t%s\t%d\t%s\t%s\t%t\n",
 			id,
 			scope,
 			tsv.FormatValue(name),
@@ -393,8 +392,7 @@ func blackoutSchedulesSingleConnection(
 			durationMinutes,
 			timezone,
 			tsv.FormatValue(reason),
-			enabled,
-		))
+			enabled)
 		schedCount++
 	}
 
@@ -405,7 +403,7 @@ func blackoutSchedulesSingleConnection(
 	if schedCount == 0 {
 		sb.WriteString("(no blackout schedules found)\n")
 	} else {
-		sb.WriteString(fmt.Sprintf("\n(%d rows)\n", schedCount))
+		fmt.Fprintf(&sb, "\n(%d rows)\n", schedCount)
 	}
 
 	return sb.String(), nil
@@ -471,8 +469,8 @@ func blackoutsAllConnections(
 	if activeOnly {
 		activeLabel = "active only"
 	}
-	sb.WriteString(fmt.Sprintf("Blackouts | All accessible connections | Filter: %s | Limit: %d\n\n",
-		activeLabel, limit))
+	fmt.Fprintf(&sb, "Blackouts | All accessible connections | Filter: %s | Limit: %d\n\n",
+		activeLabel, limit)
 
 	// Header - includes connection identification columns
 	sb.WriteString("id\tscope\tconnection_id\tconnection_name\treason\tstart_time\tend_time\tis_active\n")
@@ -505,7 +503,7 @@ func blackoutsAllConnections(
 			connNameStr = tsv.FormatValue(*connNameVal)
 		}
 
-		sb.WriteString(fmt.Sprintf("%d\t%s\t%s\t%s\t%s\t%s\t%s\t%t\n",
+		fmt.Fprintf(&sb, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%t\n",
 			id,
 			scope,
 			connIDStr,
@@ -513,8 +511,7 @@ func blackoutsAllConnections(
 			tsv.FormatValue(reason),
 			startTime.Format(time.RFC3339),
 			endTime.Format(time.RFC3339),
-			isActive,
-		))
+			isActive)
 		rowCount++
 	}
 
@@ -529,7 +526,7 @@ func blackoutsAllConnections(
 			sb.WriteString("(no blackouts found)\n")
 		}
 	} else {
-		sb.WriteString(fmt.Sprintf("\n(%d rows)\n", rowCount))
+		fmt.Fprintf(&sb, "\n(%d rows)\n", rowCount)
 	}
 
 	// Optionally include recurring blackout schedules
@@ -621,7 +618,7 @@ func blackoutSchedulesAllConnections(
 			connNameStr = tsv.FormatValue(*connNameVal)
 		}
 
-		sb.WriteString(fmt.Sprintf("%d\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%t\n",
+		fmt.Fprintf(&sb, "%d\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%t\n",
 			id,
 			scope,
 			connIDStr,
@@ -631,8 +628,7 @@ func blackoutSchedulesAllConnections(
 			durationMinutes,
 			timezone,
 			tsv.FormatValue(reason),
-			enabled,
-		))
+			enabled)
 		schedCount++
 	}
 
@@ -643,7 +639,7 @@ func blackoutSchedulesAllConnections(
 	if schedCount == 0 {
 		sb.WriteString("(no blackout schedules found)\n")
 	} else {
-		sb.WriteString(fmt.Sprintf("\n(%d rows)\n", schedCount))
+		fmt.Fprintf(&sb, "\n(%d rows)\n", schedCount)
 	}
 
 	return sb.String(), nil

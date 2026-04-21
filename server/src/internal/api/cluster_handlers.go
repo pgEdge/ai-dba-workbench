@@ -20,6 +20,7 @@ import (
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
+	"github.com/pgedge/ai-workbench/server/internal/logging"
 )
 
 // ClusterHandler handles REST API requests for cluster hierarchy management
@@ -849,7 +850,7 @@ func (h *ClusterHandler) updateAutoDetectedCluster(w http.ResponseWriter, r *htt
 	// Update cluster record (name and/or group_id)
 	cluster, err := h.datastore.UpsertAutoDetectedCluster(ctx, autoKey, req.Name, req.Description, req.GroupID)
 	if err != nil {
-		log.Printf("[ERROR] Failed to update auto-detected cluster %s: %v", clusterID, err)
+		log.Printf("[ERROR] Failed to update auto-detected cluster %s: %v", logging.SanitizeForLog(clusterID), err) //nolint:gosec // G706: clusterID passed through logging.SanitizeForLog
 		RespondError(w, http.StatusInternalServerError, "Failed to update auto-detected cluster")
 		return
 	}
@@ -909,7 +910,7 @@ func (h *ClusterHandler) updateAutoDetectedGroup(w http.ResponseWriter, r *http.
 	// Upsert group record with custom name
 	group, err := h.datastore.UpsertGroupByAutoKey(ctx, autoKey, req.Name)
 	if err != nil {
-		log.Printf("[ERROR] Failed to update auto-detected group %s: %v", groupID, err)
+		log.Printf("[ERROR] Failed to update auto-detected group %s: %v", logging.SanitizeForLog(groupID), err) //nolint:gosec // G706: groupID passed through logging.SanitizeForLog
 		RespondError(w, http.StatusInternalServerError, "Failed to update auto-detected group")
 		return
 	}

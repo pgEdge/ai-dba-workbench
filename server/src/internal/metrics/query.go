@@ -165,12 +165,12 @@ func IsValidIdentifier(s string) bool {
 	}
 	for i, c := range s {
 		if i == 0 {
-			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_') {
+			if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && c != '_' {
 				return false
 			}
 		} else {
-			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-				(c >= '0' && c <= '9') || c == '_') {
+			if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') &&
+				(c < '0' || c > '9') && c != '_' {
 				return false
 			}
 		}

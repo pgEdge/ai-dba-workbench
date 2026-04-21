@@ -306,11 +306,11 @@ To manage response sizes:
 
 			// Build TSV output
 			var sb strings.Builder
-			sb.WriteString(fmt.Sprintf("Probe: %s | Connection: %d | Time: %s to %s | Buckets: %d | Aggregation: %s\n\n",
+			fmt.Fprintf(&sb, "Probe: %s | Connection: %d | Time: %s to %s | Buckets: %d | Aggregation: %s\n\n",
 				probeName, connectionID,
 				timeStart.Format(time.RFC3339),
 				timeEnd.Format(time.RFC3339),
-				buckets, aggregation))
+				buckets, aggregation)
 
 			// Header
 			sb.WriteString("bucket_time")
@@ -356,7 +356,7 @@ To manage response sizes:
 				return mcp.NewToolSuccess(fmt.Sprintf("No metrics data found for probe '%s' in the specified time range.", probeName))
 			}
 
-			sb.WriteString(fmt.Sprintf("\n(%d rows)\n", rowCount))
+			fmt.Fprintf(&sb, "\n(%d rows)\n", rowCount)
 
 			return mcp.NewToolSuccess(sb.String())
 		},

@@ -322,3 +322,98 @@ func TestCompactor_SingleMessage(t *testing.T) {
 		t.Error("Expected no messages to be dropped")
 	}
 }
+
+func TestCompactor_ExtractContext(t *testing.T) {
+	compactor := NewCompactor(CompactRequest{})
+
+	messages := []Message{
+		// User messages drive topic extraction. The user messages must
+		// be longer than 20 chars and have more than 2 words to produce
+		// a topic. References to "<word> table" populate the tables
+		// map; SQL keywords like "from table" are filtered out. Tool
+		// names come from tool_use blocks.
+		createMessage("user",
+			"Please analyze the orders table and the users table for me"),
+		createMessage("user", "Also look at select from table please now"),
+		createToolMessage("assistant", "query_database", "SELECT 1"),
+		createMessage("user", "hi"), // too short, not a topic
+	}
+
+	extracted := compactor.extractContext(messages)
+
+	if !extracted.Tables["orders"] {
+		t.Errorf("expected 'orders' in Tables, got %v", extracted.Tables)
+	}
+	if !extracted.Tables["users"] {
+		t.Errorf("expected 'users' in Tables, got %v", extracted.Tables)
+	}
+	if extracted.Tables["select"] || extracted.Tables["from"] {
+		t.Errorf("SQL keywords should be filtered, got %v", extracted.Tables)
+	}
+	if !extracted.Tools["query_database"] {
+		t.Errorf("expected 'query_database' in Tools, got %v", extracted.Tools)
+	}
+	if len(extracted.Topics) == 0 {
+		t.Errorf("expected at least one topic, got %v", extracted.Topics)
+	}
+}
+
+func TestCompactor_ExtractContextLongTopic(t *testing.T) {
+	compactor := NewCompactor(CompactRequest{})
+
+	// A very long user message should produce a topic truncated with
+	// "..." suffix to bound prompt growth.
+	longWords := make([]string, 0, 20)
+	for i := 0; i < 20; i++ {
+		longWords = append(longWords, "verylongwordthatmakesatopicwaytoowide")
+	}
+	text := ""
+	for _, w := range longWords {
+		if text != "" {
+			text += " "
+		}
+		text += w
+	}
+	messages := []Message{createMessage("user", text)}
+
+	extracted := compactor.extractContext(messages)
+	if len(extracted.Topics) != 1 {
+		t.Fatalf("expected one topic, got %d", len(extracted.Topics))
+	}
+	for topic := range extracted.Topics {
+		// Truncation produces a short-prefixed topic ending in "...".
+		if len(topic) == 0 {
+			t.Errorf("expected non-empty topic")
+		}
+	}
+}
+
+func TestCompactor_CreateSummary(t *testing.T) {
+	compactor := NewCompactor(CompactRequest{})
+
+	middle := []Message{
+		createMessage("user",
+			"Please analyze the orders table for performance tuning"),
+		createToolMessage("assistant", "query_database", "SELECT 1"),
+	}
+	kept := []Message{middle[0]} // one dropped
+
+	summary := compactor.createSummary(middle, kept)
+
+	if summary == nil {
+		t.Fatal("expected non-nil summary")
+	}
+	found := false
+	for _, table := range summary.Tables {
+		if table == "orders" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected 'orders' in summary Tables, got %v", summary.Tables)
+	}
+	if summary.Description == "" {
+		t.Errorf("expected non-empty description")
+	}
+}

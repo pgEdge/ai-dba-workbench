@@ -240,14 +240,14 @@ func listKBProducts(kbPath string) (string, error) {
 			if currentProduct != "" {
 				sb.WriteString("\n")
 			}
-			sb.WriteString(fmt.Sprintf("Product: %s\n", name))
+			fmt.Fprintf(&sb, "Product: %s\n", name)
 			currentProduct = name
 		}
 
 		if version != "" {
-			sb.WriteString(fmt.Sprintf("  - Version %s (%d chunks)\n", version, count))
+			fmt.Fprintf(&sb, "  - Version %s (%d chunks)\n", version, count)
 		} else {
-			sb.WriteString(fmt.Sprintf("  - (no version) (%d chunks)\n", count))
+			fmt.Fprintf(&sb, "  - (no version) (%d chunks)\n", count)
 		}
 		totalChunks += count
 	}
@@ -258,7 +258,7 @@ func listKBProducts(kbPath string) (string, error) {
 
 	sb.WriteString("\n")
 	sb.WriteString(strings.Repeat("=", 50))
-	sb.WriteString(fmt.Sprintf("\nTotal: %d chunks across all products\n", totalChunks))
+	fmt.Fprintf(&sb, "\nTotal: %d chunks across all products\n", totalChunks)
 
 	return sb.String(), nil
 }
@@ -311,13 +311,17 @@ func searchKB(kbPath string, queryEmbedding []float32, projectNames, projectVers
 	}
 	defer db.Close()
 
-	// Build query
-	query := `
+	// Build query. The IN clauses are extended only with hard-coded "?"
+	// placeholder strings; the actual project name/version values flow in
+	// via the args slice and are bound as query parameters, never
+	// interpolated into SQL, so this is safe from SQL injection.
+	var queryBuilder strings.Builder
+	queryBuilder.WriteString(`
         SELECT text, title, section, project_name, project_version, file_path,
                openai_embedding, voyage_embedding, ollama_embedding
         FROM chunks
         WHERE 1=1
-    `
+    `)
 	args := []any{}
 
 	// Add project_names filter with IN clause
@@ -327,7 +331,9 @@ func searchKB(kbPath string, queryEmbedding []float32, projectNames, projectVers
 			placeholders[i] = "?"
 			args = append(args, name)
 		}
-		query += fmt.Sprintf(" AND project_name IN (%s)", strings.Join(placeholders, ", "))
+		queryBuilder.WriteString(" AND project_name IN (")
+		queryBuilder.WriteString(strings.Join(placeholders, ", "))
+		queryBuilder.WriteString(")")
 	}
 
 	// Add project_versions filter with IN clause
@@ -337,10 +343,13 @@ func searchKB(kbPath string, queryEmbedding []float32, projectNames, projectVers
 			placeholders[i] = "?"
 			args = append(args, version)
 		}
-		query += fmt.Sprintf(" AND project_version IN (%s)", strings.Join(placeholders, ", "))
+		queryBuilder.WriteString(" AND project_version IN (")
+		queryBuilder.WriteString(strings.Join(placeholders, ", "))
+		queryBuilder.WriteString(")")
 	}
 
-	rows, err := db.Query(query, args...)
+	query := queryBuilder.String()
+	rows, err := db.Query(query, args...) //nolint:gosec // G202: IN-clause is built from hard-coded "?" placeholders; values are bound parameters
 	if err != nil {
 		return nil, fmt.Errorf("query failed: %w", err)
 	}
@@ -424,12 +433,12 @@ func deserializeEmbedding(data []byte) []float32 {
 		return nil
 	}
 
-	embedding := make([]float32, len(data)/4)
-	for i := range embedding {
+	vec := make([]float32, len(data)/4)
+	for i := range vec {
 		bits := binary.LittleEndian.Uint32(data[i*4:])
-		embedding[i] = math.Float32frombits(bits)
+		vec[i] = math.Float32frombits(bits)
 	}
-	return embedding
+	return vec
 }
 
 func cosineSimilarity(a, b []float32) float64 {
@@ -454,35 +463,35 @@ func cosineSimilarity(a, b []float32) float64 {
 func formatKBResults(results []KBSearchResult, query string, projectNames, projectVersions []string) string {
 	var sb strings.Builder
 
-	sb.WriteString(fmt.Sprintf("Knowledgebase Search Results: %q\n", query))
+	fmt.Fprintf(&sb, "Knowledgebase Search Results: %q\n", query)
 	if len(projectNames) > 0 {
-		sb.WriteString(fmt.Sprintf("Filter - Projects: %s", strings.Join(projectNames, ", ")))
+		fmt.Fprintf(&sb, "Filter - Projects: %s", strings.Join(projectNames, ", "))
 		if len(projectVersions) > 0 {
-			sb.WriteString(fmt.Sprintf("; Versions: %s", strings.Join(projectVersions, ", ")))
+			fmt.Fprintf(&sb, "; Versions: %s", strings.Join(projectVersions, ", "))
 		}
 		sb.WriteString("\n")
 	} else if len(projectVersions) > 0 {
-		sb.WriteString(fmt.Sprintf("Filter - Versions: %s\n", strings.Join(projectVersions, ", ")))
+		fmt.Fprintf(&sb, "Filter - Versions: %s\n", strings.Join(projectVersions, ", "))
 	}
 	sb.WriteString(strings.Repeat("=", 80))
 	sb.WriteString("\n\n")
 
-	sb.WriteString(fmt.Sprintf("Found %d relevant chunks:\n\n", len(results)))
+	fmt.Fprintf(&sb, "Found %d relevant chunks:\n\n", len(results))
 
 	for i, result := range results {
-		sb.WriteString(fmt.Sprintf("Result %d/%d\n", i+1, len(results)))
+		fmt.Fprintf(&sb, "Result %d/%d\n", i+1, len(results))
 		if result.ProjectVersion != "" {
-			sb.WriteString(fmt.Sprintf("Project: %s %s\n", result.ProjectName, result.ProjectVersion))
+			fmt.Fprintf(&sb, "Project: %s %s\n", result.ProjectName, result.ProjectVersion)
 		} else {
-			sb.WriteString(fmt.Sprintf("Project: %s\n", result.ProjectName))
+			fmt.Fprintf(&sb, "Project: %s\n", result.ProjectName)
 		}
 		if result.Title != "" {
-			sb.WriteString(fmt.Sprintf("Title: %s\n", result.Title))
+			fmt.Fprintf(&sb, "Title: %s\n", result.Title)
 		}
 		if result.Section != "" {
-			sb.WriteString(fmt.Sprintf("Section: %s\n", result.Section))
+			fmt.Fprintf(&sb, "Section: %s\n", result.Section)
 		}
-		sb.WriteString(fmt.Sprintf("Similarity: %.3f\n\n", result.Similarity))
+		fmt.Fprintf(&sb, "Similarity: %.3f\n\n", result.Similarity)
 		sb.WriteString(result.Text)
 		sb.WriteString("\n\n")
 		sb.WriteString(strings.Repeat("-", 80))
@@ -490,7 +499,7 @@ func formatKBResults(results []KBSearchResult, query string, projectNames, proje
 	}
 
 	sb.WriteString(strings.Repeat("=", 80))
-	sb.WriteString(fmt.Sprintf("\nTotal: %d results\n", len(results)))
+	fmt.Fprintf(&sb, "\nTotal: %d results\n", len(results))
 
 	return sb.String()
 }

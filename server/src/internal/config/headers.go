@@ -14,6 +14,8 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+
+	"github.com/pgedge/ai-workbench/server/internal/logging"
 )
 
 // parseHeadersEnvVar parses a comma-separated list of KEY=VALUE pairs.
@@ -33,7 +35,7 @@ func parseHeadersEnvVar(envVal string) (map[string]string, error) {
 		}
 		idx := strings.Index(pair, "=")
 		if idx == -1 {
-			slog.Warn("skipping malformed header entry", "entry", pair)
+			slog.Warn("skipping malformed header entry", "entry", logging.SanitizeForLog(pair)) //nolint:gosec // G706: entry passed through logging.SanitizeForLog
 			continue
 		}
 		key := strings.TrimSpace(pair[:idx])

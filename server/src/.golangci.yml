@@ -1,77 +1,85 @@
-# golangci-lint configuration for v1.x
-# To install: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-# Note: This config is NOT compatible with golangci-lint v2
-
-linters-settings:
-  errcheck:
-    check-type-assertions: true
-    check-blank: true
-  govet:
-    enable-all: true
-    disable:
-      - fieldalignment
-      - shadow
-  gocyclo:
-    min-complexity: 50
-  dupl:
-    threshold: 150
-  goconst:
-    min-len: 3
-    min-occurrences: 5
-  misspell:
-    locale: US
-  lll:
-    line-length: 120
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - performance
-      - style
-    disabled-checks:
-      - commentedOutCode
-      - hugeParam
-      - octalLiteral
-      - httpNoBody
-      - paramTypeCombine
-      - appendCombine
-      - ifElseChain
-      - unnamedResult
-      - exitAfterDefer
-
+# golangci-lint v2 configuration.
+# To install:
+#   go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+# Migrated from v1 with `golangci-lint migrate`; the set of enabled linters
+# and per-path exclusions is preserved.
+version: "2"
+run:
+  tests: true
 linters:
   enable:
-    - errcheck
-    - govet
-    - ineffassign
-    - staticcheck
-    - unused
-    - misspell
     - gocritic
-    - gosec         # Inspects source code for security problems
-
-issues:
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - gocyclo
-        - dupl
-        - goconst
-        - errcheck
-        - gocritic
-        - gosec
-    - path: test/
-      linters:
-        - gocyclo
-        - dupl
-        - goconst
-        - errcheck
-        - gocritic
-  exclude-dirs:
-    - vendor
-    - bin
-  exclude-files:
-    - ".*\\.pb\\.go$"
-
-run:
-  timeout: 5m
-  tests: true
+    - gosec
+    - misspell
+  settings:
+    dupl:
+      threshold: 150
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+    goconst:
+      min-len: 3
+      min-occurrences: 5
+    gocritic:
+      disabled-checks:
+        - commentedOutCode
+        - hugeParam
+        - octalLiteral
+        - httpNoBody
+        - paramTypeCombine
+        - appendCombine
+        - ifElseChain
+        - unnamedResult
+        - exitAfterDefer
+      enabled-tags:
+        - diagnostic
+        - performance
+        - style
+    gocyclo:
+      min-complexity: 50
+    govet:
+      disable:
+        - fieldalignment
+        - shadow
+      enable-all: true
+    lll:
+      line-length: 120
+    misspell:
+      locale: US
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - dupl
+          - errcheck
+          - goconst
+          - gocritic
+          - gocyclo
+          - gosec
+        path: _test\.go
+      - linters:
+          - dupl
+          - errcheck
+          - goconst
+          - gocritic
+          - gocyclo
+        path: test/
+    paths:
+      - .*\.pb\.go$
+      - vendor
+      - bin
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

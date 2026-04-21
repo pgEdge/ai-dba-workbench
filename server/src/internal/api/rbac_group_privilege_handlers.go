@@ -15,6 +15,7 @@ import (
 	"strconv"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
+	"github.com/pgedge/ai-workbench/server/internal/logging"
 )
 
 // =============================================================================
@@ -59,7 +60,7 @@ func (h *RBACHandler) handleGroupMCPPrivileges(w http.ResponseWriter, r *http.Re
 			}
 
 			if err := h.authStore.GrantMCPPrivilegeByName(groupID, req.Privilege); err != nil {
-				log.Printf("[ERROR] Failed to grant MCP privilege %s to group %d: %v", req.Privilege, groupID, err)
+				log.Printf("[ERROR] Failed to grant MCP privilege %s to group %d: %v", logging.SanitizeForLog(req.Privilege), groupID, err) //nolint:gosec // G706: privilege passed through logging.SanitizeForLog
 				RespondError(w, http.StatusInternalServerError, "Failed to grant MCP privilege")
 				return
 			}
@@ -73,7 +74,7 @@ func (h *RBACHandler) handleGroupMCPPrivileges(w http.ResponseWriter, r *http.Re
 			}
 
 			if err := h.authStore.RevokeMCPPrivilegeByName(groupID, privilege); err != nil {
-				log.Printf("[ERROR] Failed to revoke MCP privilege %s from group %d: %v", privilege, groupID, err)
+				log.Printf("[ERROR] Failed to revoke MCP privilege %s from group %d: %v", logging.SanitizeForLog(privilege), groupID, err) //nolint:gosec // G706: privilege passed through logging.SanitizeForLog
 				RespondError(w, http.StatusInternalServerError, "Failed to revoke MCP privilege")
 				return
 			}
@@ -217,7 +218,7 @@ func (h *RBACHandler) grantGroupPermission(w http.ResponseWriter, r *http.Reques
 	}
 
 	if err := h.authStore.GrantAdminPermission(groupID, req.Permission); err != nil {
-		log.Printf("[ERROR] Failed to grant permission %s to group %d: %v", req.Permission, groupID, err)
+		log.Printf("[ERROR] Failed to grant permission %s to group %d: %v", logging.SanitizeForLog(req.Permission), groupID, err) //nolint:gosec // G706: permission passed through logging.SanitizeForLog
 		RespondError(w, http.StatusInternalServerError, "Failed to grant permission")
 		return
 	}
@@ -227,7 +228,7 @@ func (h *RBACHandler) grantGroupPermission(w http.ResponseWriter, r *http.Reques
 
 func (h *RBACHandler) revokeGroupPermission(w http.ResponseWriter, r *http.Request, groupID int64, permission string) {
 	if err := h.authStore.RevokeAdminPermission(groupID, permission); err != nil {
-		log.Printf("[ERROR] Failed to revoke permission %s from group %d: %v", permission, groupID, err)
+		log.Printf("[ERROR] Failed to revoke permission %s from group %d: %v", logging.SanitizeForLog(permission), groupID, err) //nolint:gosec // G706: permission passed through logging.SanitizeForLog
 		RespondError(w, http.StatusInternalServerError, "Failed to revoke permission")
 		return
 	}

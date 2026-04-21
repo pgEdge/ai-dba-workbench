@@ -226,7 +226,7 @@ func BuildSystemPrompt(base string, memories []memory.Memory) string {
 		if len(runes) > maxMemoryCharsInPrompt {
 			content = string(runes[:maxMemoryCharsInPrompt]) + "..."
 		}
-		sb.WriteString(fmt.Sprintf("- [%s/%s] %s\n", scope, category, content))
+		fmt.Fprintf(&sb, "- [%s/%s] %s\n", scope, category, content)
 	}
 	sb.WriteString("</user-stored-memories>")
 	return sb.String()
@@ -263,14 +263,14 @@ func BuildUserContext(base string, info *UserInfo) string {
 	sb.WriteString("\n\n<current-user>\n")
 	sb.WriteString("The following describes the current user. Use this to personalise responses.\n\n")
 
-	sb.WriteString(fmt.Sprintf("- Username: %s\n", sanitizeMemoryField(info.Username)))
+	fmt.Fprintf(&sb, "- Username: %s\n", sanitizeMemoryField(info.Username))
 
 	if info.DisplayName != "" {
-		sb.WriteString(fmt.Sprintf("- Display name: %s\n", sanitizeMemoryField(info.DisplayName)))
+		fmt.Fprintf(&sb, "- Display name: %s\n", sanitizeMemoryField(info.DisplayName))
 	}
 
 	if info.Notes != "" {
-		sb.WriteString(fmt.Sprintf("- Notes: %s\n", sanitizeMemoryField(info.Notes)))
+		fmt.Fprintf(&sb, "- Notes: %s\n", sanitizeMemoryField(info.Notes))
 	}
 
 	if info.IsSuperuser {
@@ -284,7 +284,7 @@ func BuildUserContext(base string, info *UserInfo) string {
 		for i, g := range info.Groups {
 			sanitized[i] = sanitizeMemoryField(g)
 		}
-		sb.WriteString(fmt.Sprintf("- Groups: %s\n", strings.Join(sanitized, ", ")))
+		fmt.Fprintf(&sb, "- Groups: %s\n", strings.Join(sanitized, ", "))
 	} else {
 		sb.WriteString("- Groups: (none)\n")
 	}
@@ -294,7 +294,7 @@ func BuildUserContext(base string, info *UserInfo) string {
 		for i, p := range info.AdminPerms {
 			sanitized[i] = sanitizeMemoryField(p)
 		}
-		sb.WriteString(fmt.Sprintf("- Admin permissions: %s\n", strings.Join(sanitized, ", ")))
+		fmt.Fprintf(&sb, "- Admin permissions: %s\n", strings.Join(sanitized, ", "))
 	} else {
 		sb.WriteString("- Admin permissions: (none)\n")
 	}

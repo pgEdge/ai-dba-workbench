@@ -697,6 +697,45 @@ func TestChatResponseStruct(t *testing.T) {
 	}
 }
 
+func TestIsValidModelName(t *testing.T) {
+	// Build a 257-character string of all 'a' to exceed the 256 limit.
+	tooLong := make([]byte, 257)
+	for i := range tooLong {
+		tooLong[i] = 'a'
+	}
+
+	tests := []struct {
+		name  string
+		model string
+		want  bool
+	}{
+		{"empty", "", false},
+		{"too long", string(tooLong), false},
+		{"simple lowercase", "gpt-4", true},
+		{"simple uppercase", "GPT-4", true},
+		{"with digits", "claude-3-5-sonnet", true},
+		{"with dot", "gpt-4.1", true},
+		{"with colon", "llama3:70b", true},
+		{"with slash", "meta/llama-3", true},
+		{"with underscore", "custom_model", true},
+		{"all allowed", "abc-123.456:foo/bar_baz", true},
+		{"space rejected", "bad model", false},
+		{"tab rejected", "bad\tmodel", false},
+		{"newline rejected", "bad\nmodel", false},
+		{"hash rejected", "model#1", false},
+		{"paren rejected", "model(1)", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isValidModelName(tt.model); got != tt.want {
+				t.Errorf("isValidModelName(%q) = %v, want %v",
+					tt.model, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestModelsResponseStruct(t *testing.T) {
 	resp := ModelsResponse{
 		Models: []ModelInfo{

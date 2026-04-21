@@ -234,8 +234,8 @@ READ ONLY transaction to prevent side effects. However, be cautious with:
 			// Format the output
 			var result strings.Builder
 			sanitizedConn := database.SanitizeConnStr(connStr)
-			result.WriteString(fmt.Sprintf("Database: %s\n\n", sanitizedConn))
-			result.WriteString(fmt.Sprintf("Query:\n%s\n\n", query))
+			fmt.Fprintf(&result, "Database: %s\n\n", sanitizedConn)
+			fmt.Fprintf(&result, "Query:\n%s\n\n", query)
 			result.WriteString("Execution Plan:\n")
 			result.WriteString(strings.Repeat("=", 80))
 			result.WriteString("\n")
@@ -346,7 +346,7 @@ func analyzeExplainOutput(explainText string) string {
 	if len(issues) > 0 {
 		analysis.WriteString("<issues>\n")
 		for _, issue := range issues {
-			analysis.WriteString(fmt.Sprintf("%s\n", issue))
+			fmt.Fprintf(&analysis, "%s\n", issue)
 		}
 		analysis.WriteString("</issues>\n\n")
 	}
@@ -354,7 +354,7 @@ func analyzeExplainOutput(explainText string) string {
 	if len(recommendations) > 0 {
 		analysis.WriteString("<recommendations>\n")
 		for i, rec := range recommendations {
-			analysis.WriteString(fmt.Sprintf("%d. %s\n", i+1, rec))
+			fmt.Fprintf(&analysis, "%d. %s\n", i+1, rec)
 		}
 		analysis.WriteString("</recommendations>\n")
 	}

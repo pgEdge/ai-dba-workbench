@@ -175,9 +175,9 @@ Use count_rows to efficiently determine data volume:
 
 			// Build response
 			var sb strings.Builder
-			sb.WriteString(fmt.Sprintf("Database: %s\n\n", database.SanitizeConnStr(connStr)))
-			sb.WriteString(fmt.Sprintf("SQL Query:\n%s\n\n", sqlQuery))
-			sb.WriteString(fmt.Sprintf("Count: %d", count))
+			fmt.Fprintf(&sb, "Database: %s\n\n", database.SanitizeConnStr(connStr))
+			fmt.Fprintf(&sb, "SQL Query:\n%s\n\n", sqlQuery)
+			fmt.Fprintf(&sb, "Count: %d", count)
 
 			return mcp.NewToolSuccess(sb.String())
 		},

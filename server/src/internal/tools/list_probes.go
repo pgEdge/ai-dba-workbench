@@ -119,11 +119,11 @@ Returns a TSV table with:
 
 			// Format as TSV
 			var sb strings.Builder
-			sb.WriteString(fmt.Sprintf("Found %d metrics probes:\n\n", len(probes)))
+			fmt.Fprintf(&sb, "Found %d metrics probes:\n\n", len(probes))
 			sb.WriteString("name\tdescription\trow_count\tscope\n")
 			for _, probe := range probes {
-				sb.WriteString(fmt.Sprintf("%s\t%s\t%d\t%s\n",
-					probe.Name, probe.Description, probe.RowCount, probe.Scope))
+				fmt.Fprintf(&sb, "%s\t%s\t%d\t%s\n",
+					probe.Name, probe.Description, probe.RowCount, probe.Scope)
 			}
 
 			return mcp.NewToolSuccess(sb.String())

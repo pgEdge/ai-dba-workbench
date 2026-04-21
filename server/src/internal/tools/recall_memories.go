@@ -157,19 +157,19 @@ func RecallMemoriesTool(memoryStore *memory.Store, cfg *config.Config) Tool {
 			sb.WriteString("Memory Recall Results\n")
 			sb.WriteString(strings.Repeat("=", 50))
 			sb.WriteString("\n")
-			sb.WriteString(fmt.Sprintf("Query: %s\n", query))
+			fmt.Fprintf(&sb, "Query: %s\n", query)
 			if category != "" {
-				sb.WriteString(fmt.Sprintf("Category Filter: %s\n", category))
+				fmt.Fprintf(&sb, "Category Filter: %s\n", category)
 			}
 			if scope != "" {
-				sb.WriteString(fmt.Sprintf("Scope Filter: %s\n", scope))
+				fmt.Fprintf(&sb, "Scope Filter: %s\n", scope)
 			}
 			if queryEmbedding != nil {
 				sb.WriteString("Search Mode: semantic similarity\n")
 			} else {
 				sb.WriteString("Search Mode: text matching\n")
 			}
-			sb.WriteString(fmt.Sprintf("Total Results: %d\n", len(final)))
+			fmt.Fprintf(&sb, "Total Results: %d\n", len(final))
 			sb.WriteString("\n")
 
 			if len(final) == 0 {
@@ -178,17 +178,17 @@ func RecallMemoriesTool(memoryStore *memory.Store, cfg *config.Config) Tool {
 			}
 
 			for i := range final {
-				sb.WriteString(fmt.Sprintf("--- Memory #%d ---\n", i+1))
-				sb.WriteString(fmt.Sprintf("  ID:       %d\n", final[i].ID))
-				sb.WriteString(fmt.Sprintf("  Scope:    %s\n", final[i].Scope))
-				sb.WriteString(fmt.Sprintf("  Category: %s\n", final[i].Category))
+				fmt.Fprintf(&sb, "--- Memory #%d ---\n", i+1)
+				fmt.Fprintf(&sb, "  ID:       %d\n", final[i].ID)
+				fmt.Fprintf(&sb, "  Scope:    %s\n", final[i].Scope)
+				fmt.Fprintf(&sb, "  Category: %s\n", final[i].Category)
 				if final[i].Pinned {
 					sb.WriteString("  Pinned:   yes\n")
 				} else {
 					sb.WriteString("  Pinned:   no\n")
 				}
-				sb.WriteString(fmt.Sprintf("  Created:  %s\n", final[i].CreatedAt.Format("2006-01-02 15:04:05 UTC")))
-				sb.WriteString(fmt.Sprintf("  Content:\n    %s\n", final[i].Content))
+				fmt.Fprintf(&sb, "  Created:  %s\n", final[i].CreatedAt.Format("2006-01-02 15:04:05 UTC"))
+				fmt.Fprintf(&sb, "  Content:\n    %s\n", final[i].Content)
 				sb.WriteString("\n")
 			}
 

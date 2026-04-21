@@ -343,8 +343,8 @@ func alertHistorySingleConnection(
 	if timeStart != nil {
 		timeInfo = "since " + timeStart.Format(time.RFC3339)
 	}
-	sb.WriteString(fmt.Sprintf("Alerts | Connection: %d (%s) | Status: %s | Time: %s | Limit: %d\n\n",
-		connectionID, connName, statusFilter, timeInfo, limit))
+	fmt.Fprintf(&sb, "Alerts | Connection: %d (%s) | Status: %s | Time: %s | Limit: %d\n\n",
+		connectionID, connName, statusFilter, timeInfo, limit)
 
 	// Header
 	sb.WriteString("id\ttriggered_at\tseverity\ttitle\tmetric_value\tthreshold_value\tstatus\tcleared_at\tfalse_positive\tacknowledged_by\tnotes\n")
@@ -376,7 +376,7 @@ func alertHistorySingleConnection(
 		}
 
 		// Format row
-		sb.WriteString(fmt.Sprintf("%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(&sb, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			id,
 			triggeredAt.Format(time.RFC3339),
 			severity,
@@ -387,8 +387,7 @@ func alertHistorySingleConnection(
 			formatOptionalTime(clearedAt),
 			formatOptionalBool(falsePositive),
 			formatOptionalString(acknowledgedBy),
-			formatOptionalStringEscaped(ackMessage),
-		))
+			formatOptionalStringEscaped(ackMessage))
 		rowCount++
 	}
 
@@ -403,7 +402,7 @@ func alertHistorySingleConnection(
 		return mcp.NewToolSuccess(fmt.Sprintf("No alerts found for connection %d (%s) with status='%s' in the specified time range.", connectionID, connName, statusFilter))
 	}
 
-	sb.WriteString(fmt.Sprintf("\n(%d rows)\n", rowCount))
+	fmt.Fprintf(&sb, "\n(%d rows)\n", rowCount)
 
 	return mcp.NewToolSuccess(sb.String())
 }
@@ -466,8 +465,8 @@ func alertHistoryAllConnections(
 	if timeStart != nil {
 		timeInfo = "since " + timeStart.Format(time.RFC3339)
 	}
-	sb.WriteString(fmt.Sprintf("Alerts | All accessible connections | Status: %s | Time: %s | Limit: %d\n\n",
-		statusFilter, timeInfo, limit))
+	fmt.Fprintf(&sb, "Alerts | All accessible connections | Status: %s | Time: %s | Limit: %d\n\n",
+		statusFilter, timeInfo, limit)
 
 	// Header - includes connection_id and connection_name columns
 	sb.WriteString("connection_id\tconnection_name\tid\ttriggered_at\tseverity\ttitle\tmetric_value\tthreshold_value\tstatus\tcleared_at\tfalse_positive\tacknowledged_by\tnotes\n")
@@ -500,7 +499,7 @@ func alertHistoryAllConnections(
 			return mcp.NewToolError(fmt.Sprintf("Failed to scan row: %v", err))
 		}
 
-		sb.WriteString(fmt.Sprintf("%d\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(&sb, "%d\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			connID,
 			tsv.FormatValue(connNameVal),
 			id,
@@ -513,8 +512,7 @@ func alertHistoryAllConnections(
 			formatOptionalTime(clearedAt),
 			formatOptionalBool(falsePositive),
 			formatOptionalString(acknowledgedBy),
-			formatOptionalStringEscaped(ackMessage),
-		))
+			formatOptionalStringEscaped(ackMessage))
 		rowCount++
 	}
 
@@ -529,7 +527,7 @@ func alertHistoryAllConnections(
 		return mcp.NewToolSuccess(fmt.Sprintf("No alerts found across accessible connections with status='%s' in the specified time range.", statusFilter))
 	}
 
-	sb.WriteString(fmt.Sprintf("\n(%d rows)\n", rowCount))
+	fmt.Fprintf(&sb, "\n(%d rows)\n", rowCount)
 
 	return mcp.NewToolSuccess(sb.String())
 }

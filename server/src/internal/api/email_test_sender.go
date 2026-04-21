@@ -18,6 +18,14 @@ import (
 	"time"
 )
 
+// sanitizeSMTPHeader removes CR/LF characters from an SMTP header or
+// envelope value. Stripping control characters prevents SMTP command and
+// MIME header injection when user-supplied values are written to the
+// wire.
+func sanitizeSMTPHeader(s string) string {
+	return strings.NewReplacer("\r", "", "\n", "").Replace(s)
+}
+
 // sendTestEmail sends a test email via SMTP to verify channel configuration.
 // It mirrors the alerter's SMTP logic but is self-contained with no
 // external dependencies beyond the standard library.
@@ -62,8 +70,12 @@ func sendTestEmail(
 // test email.
 func buildTestEmailMessage(fromHeader string, toAddresses []string) []byte {
 	var msg strings.Builder
-	msg.WriteString(fmt.Sprintf("From: %s\r\n", fromHeader))
-	msg.WriteString(fmt.Sprintf("To: %s\r\n", strings.Join(toAddresses, ", ")))
+	fmt.Fprintf(&msg, "From: %s\r\n", sanitizeSMTPHeader(fromHeader))
+	sanitizedTo := make([]string, len(toAddresses))
+	for i, addr := range toAddresses {
+		sanitizedTo[i] = sanitizeSMTPHeader(addr)
+	}
+	fmt.Fprintf(&msg, "To: %s\r\n", strings.Join(sanitizedTo, ", "))
 	msg.WriteString("Subject: AI DBA Workbench - Test Email\r\n")
 	msg.WriteString("MIME-Version: 1.0\r\n")
 	msg.WriteString("Content-Type: text/html; charset=\"UTF-8\"\r\n")
@@ -121,7 +133,10 @@ func sendWithSTARTTLS(
 	msg []byte,
 	smtpHost string,
 ) error {
-	conn, err := net.DialTimeout("tcp", addr, 30*time.Second)
+	// The SMTP host in `addr` is validated by the caller via
+	// hostValidator.ValidateHost before this function is invoked, so the
+	// connection target is not an unchecked user-controlled URL.
+	conn, err := net.DialTimeout("tcp", addr, 30*time.Second) //nolint:gosec // G704: SMTP host validated upstream; DNS rebinding between validation and dial is a known, admin-scope residual risk
 	if err != nil {
 		return fmt.Errorf("failed to connect to SMTP server: %w", err)
 	}
@@ -165,7 +180,10 @@ func sendPlainSMTP(
 	msg []byte,
 	smtpHost string,
 ) error {
-	conn, err := net.DialTimeout("tcp", addr, 30*time.Second)
+	// The SMTP host in `addr` is validated by the caller via
+	// hostValidator.ValidateHost before this function is invoked, so the
+	// connection target is not an unchecked user-controlled URL.
+	conn, err := net.DialTimeout("tcp", addr, 30*time.Second) //nolint:gosec // G704: SMTP host validated upstream; DNS rebinding between validation and dial is a known, admin-scope residual risk
 	if err != nil {
 		return fmt.Errorf("failed to connect to SMTP server: %w", err)
 	}
@@ -191,14 +209,17 @@ func sendPlainSMTP(
 }
 
 // sendViaSMTPClient sends the email using an established SMTP client.
+// SMTP envelope addresses are sanitized before being issued as commands
+// to prevent SMTP command injection via CR/LF sequences.
 func sendViaSMTPClient(client *smtp.Client, from string, to []string, msg []byte) error {
-	if err := client.Mail(from); err != nil {
+	if err := client.Mail(sanitizeSMTPHeader(from)); err != nil { //nolint:gosec // G707: address sanitized via sanitizeSMTPHeader
 		return fmt.Errorf("SMTP MAIL FROM failed: %w", err)
 	}
 
 	for _, addr := range to {
-		if err := client.Rcpt(addr); err != nil {
-			return fmt.Errorf("SMTP RCPT TO failed for %s: %w", addr, err)
+		safeAddr := sanitizeSMTPHeader(addr)
+		if err := client.Rcpt(safeAddr); err != nil { //nolint:gosec // G707: address sanitized via sanitizeSMTPHeader
+			return fmt.Errorf("SMTP RCPT TO failed for %s: %w", safeAddr, err)
 		}
 	}
 

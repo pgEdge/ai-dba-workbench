@@ -27,6 +27,8 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 	_ "modernc.org/sqlite"
+
+	"github.com/pgedge/ai-workbench/server/internal/logging"
 )
 
 const (
@@ -1227,7 +1229,7 @@ func (s *AuthStore) ValidateSessionToken(token string) (string, error) {
 	if !user.Enabled {
 		// Log the actual reason for audit purposes, but return generic error
 		// to prevent user enumeration attacks
-		log.Printf("[AUTH] Session validation failed for user %s: account is disabled", session.Username)
+		log.Printf("[AUTH] Session validation failed for user %s: account is disabled", logging.SanitizeForLog(session.Username)) //nolint:gosec // G706: username passed through logging.SanitizeForLog
 		s.sessions.Delete(tokenHash)
 		return "", fmt.Errorf("invalid session token")
 	}

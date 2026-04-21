@@ -151,11 +151,11 @@ Returns TSV with:
 
 			// Format as TSV
 			var sb strings.Builder
-			sb.WriteString(fmt.Sprintf("Probe: %s\n", probeName))
+			fmt.Fprintf(&sb, "Probe: %s\n", probeName)
 			if tableDesc != "" {
-				sb.WriteString(fmt.Sprintf("Description: %s\n", tableDesc))
+				fmt.Fprintf(&sb, "Description: %s\n", tableDesc)
 			}
-			sb.WriteString(fmt.Sprintf("Columns: %d\n\n", len(columns)))
+			fmt.Fprintf(&sb, "Columns: %d\n\n", len(columns))
 
 			sb.WriteString("column_name\tdata_type\tdescription\tcolumn_type\n")
 			for _, col := range columns {
@@ -165,8 +165,8 @@ Returns TSV with:
 				}
 				// Clean up description (remove newlines)
 				desc := strings.ReplaceAll(col.Description, "\n", " ")
-				sb.WriteString(fmt.Sprintf("%s\t%s\t%s\t%s\n",
-					col.Name, col.DataType, desc, colType))
+				fmt.Fprintf(&sb, "%s\t%s\t%s\t%s\n",
+					col.Name, col.DataType, desc, colType)
 			}
 
 			return mcp.NewToolSuccess(sb.String())

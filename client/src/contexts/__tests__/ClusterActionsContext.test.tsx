@@ -111,6 +111,22 @@ describe('ClusterActionsContext', () => {
             expect(mockFetchClusterData).toHaveBeenCalled();
         });
 
+        it('passes through auto-detected ids with a key suffix', async () => {
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await act(async () => {
+                await result.current.updateGroupName(
+                    'group-auto-some-key',
+                    'Auto Prod',
+                );
+            });
+
+            expect(mockApiPut).toHaveBeenCalledWith(
+                '/api/v1/cluster-groups/group-auto-some-key',
+                { name: 'Auto Prod' },
+            );
+        });
+
         it('uses numeric id for database-backed groups', async () => {
             const { result } = renderHook(() => useClusterActions(), { wrapper });
 
@@ -124,17 +140,22 @@ describe('ClusterActionsContext', () => {
             );
         });
 
-        it('uses the full id for named (non-numeric) database groups', async () => {
+        it('rejects ids without the "group-" prefix', async () => {
             const { result } = renderHook(() => useClusterActions(), { wrapper });
 
-            await act(async () => {
-                await result.current.updateGroupName('group-named', 'X');
-            });
+            await expect(
+                result.current.updateGroupName('42', 'Bad'),
+            ).rejects.toThrow('Invalid group ID');
+            expect(mockApiPut).not.toHaveBeenCalled();
+        });
 
-            expect(mockApiPut).toHaveBeenCalledWith(
-                '/api/v1/cluster-groups/group-named',
-                { name: 'X' },
-            );
+        it('rejects ids with a non-numeric, non-auto suffix', async () => {
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await expect(
+                result.current.updateGroupName('group-named', 'Bad'),
+            ).rejects.toThrow('Invalid group ID');
+            expect(mockApiPut).not.toHaveBeenCalled();
         });
     });
 
@@ -337,16 +358,25 @@ describe('ClusterActionsContext', () => {
             });
 
             expect(mockApiDelete).toHaveBeenCalledWith('/api/v1/cluster-groups/42');
+            expect(mockFetchClusterData).toHaveBeenCalled();
         });
 
-        it('deleteGroup accepts raw numeric IDs', async () => {
+        it('deleteGroup rejects ids without a numeric suffix', async () => {
             const { result } = renderHook(() => useClusterActions(), { wrapper });
 
-            await act(async () => {
-                await result.current.deleteGroup(7);
-            });
+            await expect(
+                result.current.deleteGroup('group-auto'),
+            ).rejects.toThrow('Invalid group ID');
+            expect(mockApiDelete).not.toHaveBeenCalled();
+        });
 
-            expect(mockApiDelete).toHaveBeenCalledWith('/api/v1/cluster-groups/7');
+        it('deleteGroup rejects ids without the "group-" prefix', async () => {
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await expect(
+                result.current.deleteGroup('42'),
+            ).rejects.toThrow('Invalid group ID');
+            expect(mockApiDelete).not.toHaveBeenCalled();
         });
     });
 

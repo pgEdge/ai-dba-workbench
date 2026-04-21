@@ -135,10 +135,24 @@ interface GroupDialogProps {
     onClose: () => void;
     onSave: (data: GroupData) => Promise<void>;
     mode?: 'create' | 'edit';
-    group?: { id?: number; name?: string; description?: string; is_shared?: boolean } | null;
+    group?: { id?: string; name?: string; description?: string; is_shared?: boolean } | null;
     isSuperuser?: boolean;
     initialTab?: number;
 }
+
+/**
+ * Extract the numeric scope id from a "group-{id}" formatted id.
+ * Override panel endpoints require a numeric scope id; the "group-auto"
+ * bucket has no backing database row and therefore no numeric id.
+ * Returns undefined when the id does not match the numeric shape.
+ */
+const extractNumericGroupId = (groupId?: string): number | undefined => {
+    if (!groupId) {return undefined;}
+    const match = /^group-(\d+)$/.exec(groupId);
+    if (!match) {return undefined;}
+    const parsed = parseInt(match[1], 10);
+    return Number.isNaN(parsed) ? undefined : parsed;
+};
 
 /**
  * GroupDialog - Dialog for creating and editing cluster groups
@@ -160,6 +174,11 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
     const [isSaving, setIsSaving] = useState(false);
     const [activeTab, setActiveTab] = useState(0);
     const prevOpenRef = useRef(false);
+
+    // Override panel endpoints address groups by their numeric database id.
+    // The group id arrives in the "group-{id}" form; extract the tail here
+    // so the string id can flow through the rest of the edit flow unchanged.
+    const numericGroupId = extractNumericGroupId(group?.id);
 
     // Reset form only when dialog opens (false -> true transition)
     useEffect(() => {
@@ -382,22 +401,40 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
                         </Box>
                     )}
                     {activeTab === 1 && (
-                        <AlertOverridesPanel
-                            scope="group"
-                            scopeId={group?.id as number}
-                        />
+                        numericGroupId !== undefined ? (
+                            <AlertOverridesPanel
+                                scope="group"
+                                scopeId={numericGroupId}
+                            />
+                        ) : (
+                            <Alert severity="info" sx={alertSx}>
+                                Overrides are not available for auto-detected groups.
+                            </Alert>
+                        )
                     )}
                     {activeTab === 2 && (
-                        <ProbeOverridesPanel
-                            scope="group"
-                            scopeId={group?.id as number}
-                        />
+                        numericGroupId !== undefined ? (
+                            <ProbeOverridesPanel
+                                scope="group"
+                                scopeId={numericGroupId}
+                            />
+                        ) : (
+                            <Alert severity="info" sx={alertSx}>
+                                Overrides are not available for auto-detected groups.
+                            </Alert>
+                        )
                     )}
                     {activeTab === 3 && (
-                        <ChannelOverridesPanel
-                            scope="group"
-                            scopeId={group?.id as number}
-                        />
+                        numericGroupId !== undefined ? (
+                            <ChannelOverridesPanel
+                                scope="group"
+                                scopeId={numericGroupId}
+                            />
+                        ) : (
+                            <Alert severity="info" sx={alertSx}>
+                                Overrides are not available for auto-detected groups.
+                            </Alert>
+                        )
                     )}
                 </Box>
             </Dialog>

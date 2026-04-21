@@ -30,6 +30,22 @@ project adheres to
   regression tests cover every affected handler.
   (#67)
 
+### Fixed
+
+- Fix the ClusterNavigator group-editing flow
+  round-tripping string group ids (`"group-{x}"`)
+  through numeric parses; the string id now travels
+  unchanged through `handleConfigureGroup`,
+  `handleSaveGroup`, and the cluster actions context,
+  and the one `strconv.Atoi`-compatible conversion
+  happens at the `GroupDialog` override-panel
+  boundary. Auto-detected groups without a numeric
+  backing row now display an info alert explaining
+  that alert, probe, and channel overrides are
+  unavailable instead of silently passing `NaN` to
+  the override panels. This removes the root cause
+  patched symptomatically in #59. (#63)
+
 ## [1.0.0-beta1] - 2026-04-21
 
 ### Added

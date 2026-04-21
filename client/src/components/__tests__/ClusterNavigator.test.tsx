@@ -9,7 +9,8 @@
  */
 
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { ThemeProvider } from '@mui/material/styles';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import ClusterNavigator from '../ClusterNavigator';
@@ -18,20 +19,53 @@ import { createPgedgeTheme } from '../../theme/pgedgeTheme';
 const lightTheme = createPgedgeTheme('light');
 const darkTheme = createPgedgeTheme('dark');
 
+// Hoisted mock handles so tests can assert on the calls made by handlers
+// inside the component.
+const {
+    mockUpdateGroupName,
+    mockUpdateClusterName,
+    mockUpdateServerName,
+    mockDeleteCluster,
+    mockCreateGroup,
+    mockDeleteGroup,
+    mockMoveClusterToGroup,
+    mockFetchClusterData,
+    mockUseAuth,
+} = vi.hoisted(() => ({
+    mockUpdateGroupName: vi.fn(),
+    mockUpdateClusterName: vi.fn(),
+    mockUpdateServerName: vi.fn(),
+    mockDeleteCluster: vi.fn(),
+    mockCreateGroup: vi.fn(),
+    mockDeleteGroup: vi.fn(),
+    mockMoveClusterToGroup: vi.fn(),
+    mockFetchClusterData: vi.fn(),
+    mockUseAuth: vi.fn(() => ({ user: { isSuperuser: false } })),
+}));
+
 // Mock the AuthContext
 vi.mock('../../contexts/AuthContext', () => ({
-    useAuth: () => ({
-        user: { isSuperuser: false },
-    }),
+    useAuth: () => mockUseAuth(),
 }));
 
 // Mock the ClusterContext
 vi.mock('../../contexts/ClusterContext', () => ({
     useCluster: () => ({
-        updateGroupName: vi.fn(),
-        updateClusterName: vi.fn(),
-        updateServerName: vi.fn(),
-        deleteCluster: vi.fn(),
+        updateGroupName: mockUpdateGroupName,
+        updateClusterName: mockUpdateClusterName,
+        updateServerName: mockUpdateServerName,
+        deleteCluster: mockDeleteCluster,
+        createGroup: mockCreateGroup,
+        deleteGroup: mockDeleteGroup,
+        moveClusterToGroup: mockMoveClusterToGroup,
+        fetchClusterData: mockFetchClusterData,
+        autoRefreshEnabled: false,
+        setAutoRefreshEnabled: vi.fn(),
+        lastRefresh: null,
+        getServer: vi.fn(),
+        createServer: vi.fn(),
+        updateServer: vi.fn(),
+        deleteServer: vi.fn(),
     }),
 }));
 
@@ -62,6 +96,31 @@ vi.mock('../../contexts/BlackoutContext', () => ({
         deleteBlackout: vi.fn(),
         fetchBlackouts: vi.fn(),
     }),
+}));
+
+// Mock override panels so they don't fetch data from the API
+vi.mock('../AlertOverridesPanel', () => ({
+    default: ({ scope, scopeId }: { scope: string; scopeId: number }) => (
+        <div data-testid="alert-overrides-panel">
+            AlertOverridesPanel: {scope} {scopeId}
+        </div>
+    ),
+}));
+
+vi.mock('../ProbeOverridesPanel', () => ({
+    default: ({ scope, scopeId }: { scope: string; scopeId: number }) => (
+        <div data-testid="probe-overrides-panel">
+            ProbeOverridesPanel: {scope} {scopeId}
+        </div>
+    ),
+}));
+
+vi.mock('../ChannelOverridesPanel', () => ({
+    default: ({ scope, scopeId }: { scope: string; scopeId: number }) => (
+        <div data-testid="channel-overrides-panel">
+            ChannelOverridesPanel: {scope} {scopeId}
+        </div>
+    ),
 }));
 
 // Mock data
@@ -113,6 +172,17 @@ describe('ClusterNavigator', () => {
     beforeEach(() => {
         onSelectServer = vi.fn();
         onRefresh = vi.fn();
+        mockUpdateGroupName.mockReset().mockResolvedValue(undefined);
+        mockUpdateClusterName.mockReset().mockResolvedValue(undefined);
+        mockUpdateServerName.mockReset().mockResolvedValue(undefined);
+        mockDeleteCluster.mockReset().mockResolvedValue(undefined);
+        mockCreateGroup.mockReset().mockResolvedValue({});
+        mockDeleteGroup.mockReset().mockResolvedValue(undefined);
+        mockMoveClusterToGroup.mockReset().mockResolvedValue(undefined);
+        mockFetchClusterData.mockReset().mockResolvedValue(undefined);
+        mockUseAuth.mockReset().mockReturnValue({
+            user: { isSuperuser: false },
+        });
     });
 
     it('renders the component with header', () => {
@@ -410,5 +480,145 @@ describe('ClusterNavigator', () => {
 
         // Verify scroll container exists
         expect(scrollContainer).toBeInTheDocument();
+    });
+
+    describe('configure group round-trip (issue #63)', () => {
+        it('passes the unchanged "group-{id}" string from configure to updateGroupName', async () => {
+            // Superuser is required to see the settings (configure) button
+            mockUseAuth.mockReturnValue({ user: { isSuperuser: true } });
+
+            const user = userEvent.setup({ delay: null });
+            renderWithTheme(
+                <ClusterNavigator
+                    data={mockClusterData}
+                    onSelectServer={onSelectServer}
+                    onRefresh={onRefresh}
+                />
+            );
+
+            // Open the configure dialog for the "Production" (group-1) group.
+            // The settings icon sits inside the action-buttons group on each
+            // row; click the first one which belongs to group-1.
+            const settingsButtons = document.querySelectorAll(
+                '.action-buttons button'
+            );
+            expect(settingsButtons.length).toBeGreaterThan(0);
+            fireEvent.click(settingsButtons[0]);
+
+            // Verify the edit dialog shows the correct group name
+            await waitFor(() => {
+                expect(
+                    screen.getByText(/Group Settings: Production/)
+                ).toBeInTheDocument();
+            });
+
+            // Name field should be pre-populated from the group data
+            const nameField = screen.getByRole('textbox', { name: /^name/i });
+            expect(nameField).toHaveValue('Production');
+
+            // Change the name and submit
+            await user.clear(nameField);
+            await user.type(nameField, 'Production Renamed');
+
+            const saveButton = screen.getByRole('button', { name: /^save$/i });
+            fireEvent.click(saveButton);
+
+            // Root-cause check: updateGroupName must receive the original
+            // "group-1" string, not "1" and not the number 1.
+            await waitFor(() => {
+                expect(mockUpdateGroupName).toHaveBeenCalledWith(
+                    'group-1',
+                    'Production Renamed'
+                );
+            });
+            // Type-level sanity: the first argument must be a string.
+            const [firstArg] = mockUpdateGroupName.mock.calls[0];
+            expect(typeof firstArg).toBe('string');
+            expect(firstArg).toBe('group-1');
+        });
+
+        it('calls createGroup (not updateGroupName) when saving from the Add Group flow', async () => {
+            mockUseAuth.mockReturnValue({ user: { isSuperuser: true } });
+
+            const user = userEvent.setup({ delay: null });
+            renderWithTheme(
+                <ClusterNavigator
+                    data={mockClusterData}
+                    onSelectServer={onSelectServer}
+                    onRefresh={onRefresh}
+                />
+            );
+
+            // Open the add menu via the "+" button in the header
+            const addButton = screen.getByRole('button', {
+                name: /add server or group/i,
+            });
+            fireEvent.click(addButton);
+
+            // Click the "Add Cluster Group" option in the menu
+            await waitFor(() => {
+                expect(
+                    screen.getByRole('menuitem', { name: /add cluster group/i })
+                ).toBeInTheDocument();
+            });
+            fireEvent.click(
+                screen.getByRole('menuitem', { name: /add cluster group/i })
+            );
+
+            // Dialog opens in create mode
+            await waitFor(() => {
+                expect(
+                    screen.getByText('Add Cluster Group')
+                ).toBeInTheDocument();
+            });
+
+            const nameField = screen.getByRole('textbox', { name: /^name/i });
+            await user.type(nameField, 'New Group');
+
+            fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+            await waitFor(() => {
+                expect(mockCreateGroup).toHaveBeenCalledWith(
+                    expect.objectContaining({ name: 'New Group' })
+                );
+            });
+            expect(mockUpdateGroupName).not.toHaveBeenCalled();
+        });
+
+        it('renders the Alert overrides panel with a numeric scopeId extracted from "group-{id}"', async () => {
+            mockUseAuth.mockReturnValue({ user: { isSuperuser: true } });
+
+            const user = userEvent.setup({ delay: null });
+            renderWithTheme(
+                <ClusterNavigator
+                    data={mockClusterData}
+                    onSelectServer={onSelectServer}
+                    onRefresh={onRefresh}
+                />
+            );
+
+            const settingsButtons = document.querySelectorAll(
+                '.action-buttons button'
+            );
+            fireEvent.click(settingsButtons[0]);
+
+            await waitFor(() => {
+                expect(
+                    screen.getByText(/Group Settings: Production/)
+                ).toBeInTheDocument();
+            });
+
+            await user.click(
+                screen.getByRole('tab', { name: /alert overrides/i })
+            );
+
+            // The panel mock echoes its scope/scopeId props; this asserts
+            // that the numeric 1 (not the string "group-1") reached the panel.
+            await waitFor(() => {
+                expect(
+                    screen.getByTestId('alert-overrides-panel')
+                ).toHaveTextContent('AlertOverridesPanel: group 1');
+            });
+        });
     });
 });

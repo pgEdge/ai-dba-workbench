@@ -37,7 +37,7 @@ export interface ClusterActionsContextValue {
     deleteServer: (serverId: number) => Promise<void>;
     deleteCluster: (clusterId: string) => Promise<void>;
     createGroup: (groupData: GroupData) => Promise<unknown>;
-    deleteGroup: (groupId: string | number) => Promise<void>;
+    deleteGroup: (groupId: string) => Promise<void>;
     moveClusterToGroup: (clusterId: string, targetGroupId: string | null, autoClusterKey?: string, clusterName?: string) => Promise<void>;
 }
 
@@ -53,75 +53,73 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
     const { selectedServer, clearSelection } = useClusterSelection();
 
     /**
-     * Update a cluster group's name
-     * Handles both database-backed groups (group-{id}) and
-     * auto-detected groups (group-auto)
+     * Update a cluster group's name.
+     * Group ids always arrive as "group-{suffix}" strings, where the suffix
+     * is either the numeric database id (e.g. "group-42") or the auto-
+     * detected bucket key (e.g. "group-auto"). For database-backed groups
+     * the server expects a bare numeric id, so strip the prefix; the auto
+     * bucket is addressed by its full "group-auto..." form.
      */
     const updateGroupName = useCallback(async (groupId: string, newName: string): Promise<void> => {
         if (!user) {throw new Error('Not authenticated');}
 
-        const groupIdStr = groupId.toString();
-
-        // Check if it's an auto-detected group (group-auto)
-        const isAutoDetected = /^group-auto/.test(groupIdStr);
-
-        if (isAutoDetected) {
-            // Auto-detected groups: send the group ID as-is
-            await apiPut(`/api/v1/cluster-groups/${groupIdStr}`, { name: newName });
-        } else {
-            // Extract suffix after "group-" prefix
-            const suffix = groupIdStr.replace('group-', '');
-
-            // Use numeric ID for database-backed groups, full ID for named groups
-            const groupIdentifier = /^\d+$/.test(suffix)
-                ? parseInt(suffix, 10)
-                : groupIdStr;
-
-            await apiPut(`/api/v1/cluster-groups/${groupIdentifier}`, { name: newName });
+        if (!/^group-/.test(groupId)) {
+            throw new Error('Invalid group ID');
         }
+
+        const isAutoDetected = /^group-auto/.test(groupId);
+        const groupIdentifier = isAutoDetected
+            ? groupId
+            : groupId.slice('group-'.length);
+
+        if (!isAutoDetected && !/^\d+$/.test(groupIdentifier)) {
+            throw new Error('Invalid group ID');
+        }
+
+        await apiPut(`/api/v1/cluster-groups/${groupIdentifier}`, { name: newName });
 
         // Refresh cluster data to reflect the change
         await fetchClusterData();
     }, [user, fetchClusterData]);
 
     /**
-     * Update a cluster's name
-     * Handles both database-backed clusters (cluster-{id}) and
-     * auto-detected clusters (server-{id}, cluster-spock-{prefix})
+     * Update a cluster's name.
+     * Cluster ids arrive as either "cluster-{numeric}" (database-backed),
+     * "server-{numeric}", or "cluster-spock-{prefix}" (auto-detected);
+     * group ids always arrive as "group-{numeric}" strings.
      */
     const updateClusterName = useCallback(async (clusterId: string, newName: string, groupId: string, autoClusterKey?: string): Promise<void> => {
         if (!user) {throw new Error('Not authenticated');}
 
-        const clusterIdStr = clusterId.toString();
-
-        // Check if it's an auto-detected cluster
-        const isAutoDetected = /^(server-\d+|cluster-spock-.+)$/.test(clusterIdStr);
-
-        if (isAutoDetected) {
-            // Auto-detected clusters: send the cluster ID as-is and include auto_cluster_key
+        // Auto-detected clusters: send the cluster ID as-is so the server
+        // can match against server-{id} / cluster-spock-{prefix} shapes.
+        if (/^(server-\d+|cluster-spock-.+)$/.test(clusterId)) {
             const body: Record<string, unknown> = { name: newName };
             if (autoClusterKey) {
                 body.auto_cluster_key = autoClusterKey;
             }
 
-            await apiPut(`/api/v1/clusters/${clusterIdStr}`, body);
-        } else {
-            // Database-backed clusters: extract numeric IDs
-            const numericId = parseInt(clusterIdStr.replace('cluster-', ''), 10);
-            if (isNaN(numericId)) {
-                throw new Error('Invalid cluster ID');
-            }
-
-            // Extract numeric group ID
-            const numericGroupId = parseInt(groupId.toString().replace('group-', ''), 10);
-            if (isNaN(numericGroupId)) {
-                throw new Error('Invalid group ID');
-            }
-
-            await apiPut(`/api/v1/clusters/${numericId}`, { name: newName, group_id: numericGroupId });
+            await apiPut(`/api/v1/clusters/${clusterId}`, body);
+            await fetchClusterData();
+            return;
         }
 
-        // Refresh cluster data to reflect the change
+        // Database-backed clusters: extract numeric ids for both.
+        const clusterMatch = /^cluster-(\d+)$/.exec(clusterId);
+        if (!clusterMatch) {
+            throw new Error('Invalid cluster ID');
+        }
+
+        const groupMatch = /^group-(\d+)$/.exec(groupId);
+        if (!groupMatch) {
+            throw new Error('Invalid group ID');
+        }
+
+        await apiPut(`/api/v1/clusters/${clusterMatch[1]}`, {
+            name: newName,
+            group_id: parseInt(groupMatch[1], 10),
+        });
+
         await fetchClusterData();
     }, [user, fetchClusterData]);
 
@@ -210,17 +208,20 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
     }, [user, fetchClusterData]);
 
     /**
-     * Delete a cluster group
+     * Delete a cluster group.
+     * Group ids always arrive as "group-{numeric}" strings. Auto-detected
+     * groups are not deletable (the UI hides the delete affordance), so a
+     * bare numeric id is always the correct server-side addressing.
      */
-    const deleteGroup = useCallback(async (groupId: string | number): Promise<void> => {
+    const deleteGroup = useCallback(async (groupId: string): Promise<void> => {
         if (!user) {throw new Error('Not authenticated');}
 
-        // Extract numeric ID from group-{id} format if needed
-        const numericId = typeof groupId === 'string' && groupId.startsWith('group-')
-            ? parseInt(groupId.replace('group-', ''), 10)
-            : groupId;
+        const match = /^group-(\d+)$/.exec(groupId);
+        if (!match) {
+            throw new Error('Invalid group ID');
+        }
 
-        await apiDelete(`/api/v1/cluster-groups/${numericId}`);
+        await apiDelete(`/api/v1/cluster-groups/${match[1]}`);
 
         await fetchClusterData();
     }, [user, fetchClusterData]);

@@ -127,6 +127,9 @@ func TestGetAlertRulesInvalidCategory(t *testing.T) {
 	if !response.IsError {
 		t.Error("expected error response")
 	}
+	if len(response.Content) == 0 {
+		t.Fatal("expected error message in response content")
+	}
 	// Should fail on nil pool first
 	if !strings.Contains(response.Content[0].Text, "Datastore not configured") {
 		t.Errorf("expected 'Datastore not configured' error, got: %s",

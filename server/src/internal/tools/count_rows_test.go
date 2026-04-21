@@ -434,6 +434,9 @@ func TestCountRowsValidTableAndSchemaPassValidation(t *testing.T) {
 
 	// Without a resolver, we expect a different error (not about table/schema)
 	if response.IsError {
+		if len(response.Content) == 0 {
+			t.Fatal("expected error message in response content")
+		}
 		text := response.Content[0].Text
 		if strings.Contains(text, "Invalid table name") ||
 			strings.Contains(text, "Invalid schema name") {

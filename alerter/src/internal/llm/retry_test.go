@@ -196,16 +196,19 @@ func TestDoRequestWithRetry_RetriesOn5xxThenReturnsResponse(t *testing.T) {
 		t.Fatalf("NewRequestWithContext: %v", err)
 	}
 	resp, err := doRequestWithRetry(ctx, newTestClient(), req)
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
 	// The first server 5xx response triggers a retry with backoff. The
 	// context times out inside sleep(), and doRequestWithRetry returns
 	// ErrContextCanceled.
-	if !errors.Is(err, ErrContextCanceled) {
-		if resp != nil {
-			_ = resp.Body.Close()
+	if err != nil {
+		if !errors.Is(err, ErrContextCanceled) {
+			t.Fatalf("unexpected error: %v", err)
 		}
-		if err == nil {
-			t.Fatalf("expected ErrContextCanceled, got nil")
-		}
+		// expected context canceled, continue
+	} else {
+		t.Fatalf("expected ErrContextCanceled, got nil")
 	}
 	if n := atomic.LoadInt32(&calls); n < 1 {
 		t.Errorf("calls = %d, want >=1", n)

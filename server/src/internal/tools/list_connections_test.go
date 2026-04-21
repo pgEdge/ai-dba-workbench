@@ -15,7 +15,7 @@ import (
 )
 
 func TestListConnectionsTool_Definition(t *testing.T) {
-	tool := ListConnectionsTool(nil)
+	tool := ListConnectionsTool(nil, nil, nil)
 
 	if tool.Definition.Name != "list_connections" {
 		t.Errorf("Expected tool name 'list_connections', got '%s'", tool.Definition.Name)
@@ -36,7 +36,7 @@ func TestListConnectionsTool_Definition(t *testing.T) {
 }
 
 func TestListConnectionsTool_NoDatastore(t *testing.T) {
-	tool := ListConnectionsTool(nil)
+	tool := ListConnectionsTool(nil, nil, nil)
 
 	// Execute with no datastore - should return error
 	response, err := tool.Handler(map[string]any{})

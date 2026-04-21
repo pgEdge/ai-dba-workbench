@@ -90,7 +90,7 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 			registry.Register("query_metrics", QueryMetricsTool(datastorePool, p.rbacChecker))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("list_connections") {
-			registry.Register("list_connections", ListConnectionsTool(datastorePool))
+			registry.Register("list_connections", ListConnectionsTool(datastorePool, p.rbacChecker, visibilityLister))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_alert_history") {
 			registry.Register("get_alert_history", GetAlertHistoryTool(datastorePool, p.rbacChecker, visibilityLister))
@@ -130,7 +130,7 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 			registry.Register("query_metrics", QueryMetricsTool(nil, p.rbacChecker))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("list_connections") {
-			registry.Register("list_connections", ListConnectionsTool(nil))
+			registry.Register("list_connections", ListConnectionsTool(nil, p.rbacChecker, nil))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_alert_history") {
 			registry.Register("get_alert_history", GetAlertHistoryTool(nil, p.rbacChecker, nil))

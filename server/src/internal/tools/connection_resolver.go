@@ -181,10 +181,11 @@ func (r *ConnectionResolver) resolveExplicit(
 
 	client, err := r.clientManager.GetClientForSession(sessionInfo, connStr)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: connection_resolver: failed to connect to connection %d: %v\n", ca.ConnectionID, err)
 		resp := mcp.ToolResponse{
 			Content: []mcp.ContentItem{{
 				Type: "text",
-				Text: fmt.Sprintf("Failed to connect to connection ID %d: %v", ca.ConnectionID, err),
+				Text: "Failed to establish database connection",
 			}},
 			IsError: true,
 		}
@@ -198,10 +199,11 @@ func (r *ConnectionResolver) resolveExplicit(
 
 	pool := client.GetPoolFor(connStr)
 	if pool == nil {
+		fmt.Fprintf(os.Stderr, "ERROR: connection_resolver: pool not available for connection %d\n", ca.ConnectionID)
 		resp := mcp.ToolResponse{
 			Content: []mcp.ContentItem{{
 				Type: "text",
-				Text: fmt.Sprintf("Connection pool not available for connection ID %d", ca.ConnectionID),
+				Text: "Failed to establish database connection",
 			}},
 			IsError: true,
 		}

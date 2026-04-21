@@ -16,10 +16,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 )
 
@@ -728,5 +730,110 @@ func TestHandleSSE_SubscriberCleanupOnDisconnect(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	if hub.Count() != 0 {
 		t.Errorf("expected 0 subscribers after disconnect, got %d", hub.Count())
+	}
+}
+
+// --- RBAC estate-wide filtering tests --------------------------------------
+
+// newRBACTestStore creates a throwaway SQLite auth store for RBAC tests.
+// The caller must invoke the returned cleanup function when finished.
+func newRBACTestStore(t *testing.T) (*auth.AuthStore, func()) {
+	t.Helper()
+	tmpDir, err := os.MkdirTemp("", "overview-rbac-test-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	store, err := auth.NewAuthStore(tmpDir, 0, 0)
+	if err != nil {
+		os.RemoveAll(tmpDir)
+		t.Fatalf("NewAuthStore: %v", err)
+	}
+	return store, func() {
+		store.Close()
+		os.RemoveAll(tmpDir)
+	}
+}
+
+// doRequestWithContext sends an HTTP request with context to the handler.
+func doRequestWithContext(t *testing.T, h *Handler, ctx context.Context, method, target string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, target, nil).WithContext(ctx)
+	rr := httptest.NewRecorder()
+	h.handleOverview(rr, req)
+	return rr
+}
+
+func TestHandleOverview_EstateWideRBAC_SuperuserBypass(t *testing.T) {
+	// When RBAC is configured but the caller is a superuser, the handler
+	// must serve the estate-wide overview without RBAC filtering.
+	store, cleanup := newRBACTestStore(t)
+	defer cleanup()
+
+	g := &Generator{
+		scopedCache: make(map[string]*scopedEntry),
+	}
+	g.current = newTestOverview("Full estate overview.")
+
+	rbac := auth.NewRBACChecker(store)
+	// A zero-value Datastore is non-nil, which is enough to enter the
+	// RBAC path. The superuser context causes VisibleConnectionIDs to
+	// return (nil, true, nil) before the lister is called, so the nil
+	// pool inside the Datastore is never touched.
+	ds := &database.Datastore{}
+	h := NewHandlerWithRBAC(g, NewHub(), rbac, ds)
+
+	ctx := context.WithValue(context.Background(), auth.IsSuperuserContextKey, true)
+
+	rr := doRequestWithContext(t, h, ctx, http.MethodGet, "/api/v1/overview")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rr.Code)
+	}
+
+	var resp Overview
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.Summary != "Full estate overview." {
+		t.Errorf("expected full estate summary, got %q", resp.Summary)
+	}
+}
+
+func TestHandleOverview_EstateWideRBAC_RestrictedCaller(t *testing.T) {
+	// When RBAC is configured and the caller is a restricted non-superuser,
+	// the handler must NOT serve the estate-wide overview. Instead it must
+	// attempt to resolve the caller's visible connections (which involves
+	// calling the datastore via the visibility lister). With a zero-value
+	// Datastore the lister panics on the nil pool, proving that the RBAC
+	// filtering path was entered.
+	store, cleanup := newRBACTestStore(t)
+	defer cleanup()
+
+	if err := store.CreateUser("restricted", "Password1", "", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	userID, err := store.GetUserID("restricted")
+	if err != nil {
+		t.Fatalf("GetUserID: %v", err)
+	}
+
+	g := &Generator{
+		scopedCache: make(map[string]*scopedEntry),
+	}
+	g.current = newTestOverview("Full estate overview - should NOT be served.")
+
+	rbac := auth.NewRBACChecker(store)
+	ds := &database.Datastore{}
+	h := NewHandlerWithRBAC(g, NewHub(), rbac, ds)
+
+	ctx := context.WithValue(context.Background(), auth.IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, auth.UserIDContextKey, userID)
+	ctx = context.WithValue(ctx, auth.UsernameContextKey, "restricted")
+
+	panicked := invokePanics(func() {
+		doRequestWithContext(t, h, ctx, http.MethodGet, "/api/v1/overview")
+	})
+	if !panicked {
+		t.Error("expected resolveVisible to panic on nil datastore pool, " +
+			"proving the handler entered the RBAC filtering path for restricted callers")
 	}
 }

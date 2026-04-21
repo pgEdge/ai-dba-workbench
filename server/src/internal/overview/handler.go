@@ -134,8 +134,41 @@ func (h *Handler) handleOverview(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// When no scope parameters are provided, return the estate-wide
-	// overview using the existing behavior.
+	// overview. Restricted callers receive a scoped summary covering
+	// only their visible connections instead of the full estate
+	// snapshot.
 	if scopeType == "" && scopeIDStr == "" {
+		if h.rbacChecker != nil && h.datastore != nil {
+			visible, allConns, err := h.resolveVisible(r.Context())
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: overview: failed to resolve visible connections: %v\n", err)
+				http.Error(w, "Failed to resolve connection visibility", http.StatusInternalServerError)
+				return
+			}
+			if !allConns {
+				ids := make([]int, 0, len(visible))
+				for id := range visible {
+					ids = append(ids, id)
+				}
+				ids = dedupeAndSort(ids)
+				if len(ids) == 0 {
+					if err := json.NewEncoder(w).Encode(generatingResponse{Status: "empty", Summary: nil}); err != nil {
+						fmt.Fprintf(os.Stderr, "ERROR: overview: failed to encode empty response: %v\n", err)
+					}
+					return
+				}
+				overview, err := h.generator.GetConnectionsSummary(ids, "", refresh)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "ERROR: overview: connections summary failed: %v\n", err)
+					http.Error(w, "Failed to generate connections summary", http.StatusInternalServerError)
+					return
+				}
+				if err := json.NewEncoder(w).Encode(overview); err != nil {
+					fmt.Fprintf(os.Stderr, "ERROR: overview: failed to encode connections response: %v\n", err)
+				}
+				return
+			}
+		}
 		if refresh {
 			h.generator.ForceRefresh()
 		}
@@ -290,6 +323,33 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 			scopeKey = "connections:" + strings.Join(parts, ",")
 			// When the intersection is empty we still accept the
 			// subscription but will not kick off generation below.
+		}
+	}
+
+	// When no scope params are given, check RBAC. Restricted callers
+	// receive a scoped SSE feed covering only their visible connections
+	// instead of the full estate-wide stream.
+	if scopeKey == "" && h.rbacChecker != nil && h.datastore != nil {
+		visible, allConns, err := h.resolveVisible(r.Context())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: overview/sse: failed to resolve visible connections: %v\n", err)
+			http.Error(w, "Failed to resolve connection visibility", http.StatusInternalServerError)
+			return
+		}
+		if !allConns {
+			ids := make([]int, 0, len(visible))
+			for id := range visible {
+				ids = append(ids, id)
+			}
+			ids = dedupeAndSort(ids)
+			filteredConnectionIDs = ids
+			parts := make([]string, len(ids))
+			for i, id := range ids {
+				parts[i] = fmt.Sprintf("%d", id)
+			}
+			if len(ids) > 0 {
+				scopeKey = "connections:" + strings.Join(parts, ",")
+			}
 		}
 	}
 

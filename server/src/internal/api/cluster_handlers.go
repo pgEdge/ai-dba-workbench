@@ -556,6 +556,25 @@ func (h *ClusterHandler) deleteClusterGroup(w http.ResponseWriter, r *http.Reque
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
+	visible, allConnections, err := h.resolveVisibleConnections(ctx)
+	if err != nil {
+		log.Printf("[ERROR] Failed to resolve visible connections for cluster group %d: %v", id, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to delete cluster group")
+		return
+	}
+	if !allConnections {
+		ok, err := h.groupHasVisibleConnection(ctx, id, visible)
+		if err != nil {
+			log.Printf("[ERROR] Failed to check cluster group visibility (id=%d): %v", id, err)
+			RespondError(w, http.StatusInternalServerError, "Failed to delete cluster group")
+			return
+		}
+		if !ok {
+			RespondError(w, http.StatusNotFound, "Cluster group not found")
+			return
+		}
+	}
+
 	// Protect the default group from deletion
 	defaultGroupID, err := h.datastore.GetDefaultGroupID(ctx)
 	if err == nil && defaultGroupID == id {
@@ -717,6 +736,25 @@ func (h *ClusterHandler) updateCluster(w http.ResponseWriter, r *http.Request, i
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
+	visible, allConnections, err := h.resolveVisibleConnections(ctx)
+	if err != nil {
+		log.Printf("[ERROR] Failed to resolve visible connections for cluster %d: %v", id, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to update cluster")
+		return
+	}
+	if !allConnections {
+		ok, err := h.clusterHasVisibleConnection(ctx, id, visible)
+		if err != nil {
+			log.Printf("[ERROR] Failed to check cluster visibility (id=%d): %v", id, err)
+			RespondError(w, http.StatusInternalServerError, "Failed to update cluster")
+			return
+		}
+		if !ok {
+			RespondError(w, http.StatusNotFound, "Cluster not found")
+			return
+		}
+	}
+
 	cluster, err := h.datastore.UpdateClusterPartial(ctx, id, req.GroupID, req.Name, req.Description, req.ReplicationType)
 	if err != nil {
 		log.Printf("[ERROR] Failed to update cluster (id=%d): %v", id, err)
@@ -731,7 +769,26 @@ func (h *ClusterHandler) deleteCluster(w http.ResponseWriter, r *http.Request, i
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	err := h.datastore.DeleteCluster(ctx, id)
+	visible, allConnections, err := h.resolveVisibleConnections(ctx)
+	if err != nil {
+		log.Printf("[ERROR] Failed to resolve visible connections for cluster %d: %v", id, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to delete cluster")
+		return
+	}
+	if !allConnections {
+		ok, err := h.clusterHasVisibleConnection(ctx, id, visible)
+		if err != nil {
+			log.Printf("[ERROR] Failed to check cluster visibility (id=%d): %v", id, err)
+			RespondError(w, http.StatusInternalServerError, "Failed to delete cluster")
+			return
+		}
+		if !ok {
+			RespondError(w, http.StatusNotFound, "Cluster not found")
+			return
+		}
+	}
+
+	err = h.datastore.DeleteCluster(ctx, id)
 	if err != nil {
 		log.Printf("[ERROR] Failed to delete cluster (id=%d): %v", id, err)
 		if errors.Is(err, database.ErrClusterNotFound) {
@@ -929,7 +986,30 @@ func (h *ClusterHandler) addServerToCluster(w http.ResponseWriter, r *http.Reque
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	err := h.datastore.AddServerToCluster(ctx, clusterID, req.ConnectionID, req.Role)
+	visible, allConnections, err := h.resolveVisibleConnections(ctx)
+	if err != nil {
+		log.Printf("[ERROR] Failed to resolve visible connections for cluster %d: %v", clusterID, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to add server to cluster")
+		return
+	}
+	if !allConnections {
+		ok, err := h.clusterHasVisibleConnection(ctx, clusterID, visible)
+		if err != nil {
+			log.Printf("[ERROR] Failed to check cluster visibility (id=%d): %v", clusterID, err)
+			RespondError(w, http.StatusInternalServerError, "Failed to add server to cluster")
+			return
+		}
+		if !ok {
+			RespondError(w, http.StatusNotFound, "Cluster not found")
+			return
+		}
+		if !visible[req.ConnectionID] {
+			RespondError(w, http.StatusNotFound, "Connection not found")
+			return
+		}
+	}
+
+	err = h.datastore.AddServerToCluster(ctx, clusterID, req.ConnectionID, req.Role)
 	if err != nil {
 		if errors.Is(err, database.ErrClusterNotFound) {
 			RespondError(w, http.StatusNotFound, "Cluster not found")
@@ -962,7 +1042,26 @@ func (h *ClusterHandler) handleRemoveServerFromCluster(w http.ResponseWriter, r 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	err := h.datastore.RemoveServerFromCluster(ctx, clusterID, connectionID)
+	visible, allConnections, err := h.resolveVisibleConnections(ctx)
+	if err != nil {
+		log.Printf("[ERROR] Failed to resolve visible connections for cluster %d: %v", clusterID, err)
+		RespondError(w, http.StatusInternalServerError, "Failed to remove server from cluster")
+		return
+	}
+	if !allConnections {
+		ok, err := h.clusterHasVisibleConnection(ctx, clusterID, visible)
+		if err != nil {
+			log.Printf("[ERROR] Failed to check cluster visibility (id=%d): %v", clusterID, err)
+			RespondError(w, http.StatusInternalServerError, "Failed to remove server from cluster")
+			return
+		}
+		if !ok {
+			RespondError(w, http.StatusNotFound, "Cluster not found")
+			return
+		}
+	}
+
+	err = h.datastore.RemoveServerFromCluster(ctx, clusterID, connectionID)
 	if err != nil {
 		if errors.Is(err, database.ErrConnectionNotFound) {
 			RespondError(w, http.StatusNotFound, "Connection not found in this cluster")

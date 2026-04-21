@@ -15,6 +15,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/pgedge/ai-workbench/server/internal/database"
 )
 
 func TestNewAlertHandler(t *testing.T) {
@@ -27,6 +29,24 @@ func TestNewAlertHandler(t *testing.T) {
 	}
 	if handler.authStore != nil {
 		t.Error("Expected nil authStore")
+	}
+	if handler.alertResolver != nil {
+		t.Error("Expected nil alertResolver for nil-datastore constructor")
+	}
+}
+
+// TestNewAlertHandler_WiresResolver verifies that when the datastore is
+// non-nil the constructor installs it as the alertResolver. The
+// resolver unblocks RBAC-first mutation flows without needing tests to
+// call setAlertResolver explicitly.
+func TestNewAlertHandler_WiresResolver(t *testing.T) {
+	ds := &database.Datastore{}
+	handler := NewAlertHandler(ds, nil, nil)
+	if handler == nil {
+		t.Fatal("NewAlertHandler returned nil")
+	}
+	if handler.alertResolver == nil {
+		t.Error("Expected alertResolver to be wired to the datastore")
 	}
 }
 
@@ -270,6 +290,60 @@ func TestAcknowledgeRequest_JSON(t *testing.T) {
 	}
 	if _, ok := rawJSON["false_positive"]; !ok {
 		t.Error("Expected 'false_positive' key in JSON")
+	}
+}
+
+// TestAlertHandler_SaveAnalysis_Validation covers the input-validation
+// branches of handleSaveAnalysis: method-not-allowed, invalid JSON,
+// missing alert_id, missing analysis. These run BEFORE the resolver so
+// no datastore is required.
+func TestAlertHandler_SaveAnalysis_Validation(t *testing.T) {
+	cases := []struct {
+		name     string
+		method   string
+		body     string
+		wantCode int
+	}{
+		{
+			name:     "method-not-allowed",
+			method:   http.MethodPost,
+			wantCode: http.StatusMethodNotAllowed,
+		},
+		{
+			name:     "invalid-json",
+			method:   http.MethodPut,
+			body:     "not json",
+			wantCode: http.StatusBadRequest,
+		},
+		{
+			name:     "missing-alert-id",
+			method:   http.MethodPut,
+			body:     `{"analysis":"x"}`,
+			wantCode: http.StatusBadRequest,
+		},
+		{
+			name:     "missing-analysis",
+			method:   http.MethodPut,
+			body:     `{"alert_id":42}`,
+			wantCode: http.StatusBadRequest,
+		},
+	}
+	handler := NewAlertHandler(nil, nil, nil)
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, "/api/v1/alerts/analysis",
+				bytes.NewBufferString(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+
+			handler.handleSaveAnalysis(rec, req)
+
+			if rec.Code != tc.wantCode {
+				t.Errorf("case %q: expected %d, got %d (body=%q)",
+					tc.name, tc.wantCode, rec.Code, rec.Body.String())
+			}
+		})
 	}
 }
 

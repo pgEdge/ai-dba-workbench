@@ -109,21 +109,10 @@ func (h *ClusterHandler) getClusterTopology(w http.ResponseWriter, r *http.Reque
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	// Sync cluster_id assignments before reading topology
-	if err := h.datastore.RefreshClusterAssignments(ctx); err != nil {
-		log.Printf("[WARN] Failed to refresh cluster assignments: %v", err)
-	}
-
-	topology, err := h.datastore.GetClusterTopology(ctx)
-	if err != nil {
-		log.Printf("[ERROR] Failed to get cluster topology: %v", err)
-		RespondError(w, http.StatusInternalServerError, "Failed to get cluster topology")
-		return
-	}
-
-	// RBAC: prune servers, clusters, and groups the caller cannot see.
-	// VisibleConnectionIDs loads sharing metadata once so this filter
-	// does not issue per-server lookups.
+	// RBAC first: resolve the caller's visible connection set before any
+	// datastore work so a zero-grant caller never triggers a refresh or
+	// a topology build. VisibleConnectionIDs loads sharing metadata once
+	// so this check does not issue per-server lookups.
 	lister := newConnectionVisibilityLister(h.datastore)
 	visibleIDs, allConnections, err := h.rbacChecker.VisibleConnectionIDs(r.Context(), lister)
 	if err != nil {
@@ -131,6 +120,39 @@ func (h *ClusterHandler) getClusterTopology(w http.ResponseWriter, r *http.Reque
 		RespondError(w, http.StatusInternalServerError, "Failed to filter cluster topology")
 		return
 	}
+
+	// Zero-grant caller: return an empty topology without refreshing
+	// cluster assignments or reading the topology table. This is the
+	// defense-in-depth gate that makes issue #67 regressions catchable
+	// at the HTTP boundary without a datastore mock.
+	if !allConnections && len(visibleIDs) == 0 {
+		RespondJSON(w, http.StatusOK, []database.TopologyGroup{})
+		return
+	}
+
+	// Sync cluster_id assignments before reading topology
+	if err := h.datastore.RefreshClusterAssignments(ctx); err != nil {
+		log.Printf("[WARN] Failed to refresh cluster assignments: %v", err)
+	}
+
+	// Push the caller's allow-list into the topology query. A nil slice
+	// (superuser or wildcard scope) means "no filter"; a non-nil slice
+	// prunes servers, empty clusters, and empty groups inside the
+	// datastore before the result crosses the boundary.
+	var filterIDs []int
+	if !allConnections {
+		filterIDs = visibleIDs
+	}
+	topology, err := h.datastore.GetClusterTopology(ctx, filterIDs)
+	if err != nil {
+		log.Printf("[ERROR] Failed to get cluster topology: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to get cluster topology")
+		return
+	}
+
+	// Belt-and-suspenders: re-apply the handler-level pruning in case
+	// the datastore query missed a join. This keeps filterTopologyByVisibility
+	// as a defensive net that runs on every response.
 	if !allConnections {
 		topology = filterTopologyByVisibility(topology, visibleIDs)
 	}

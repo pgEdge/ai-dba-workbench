@@ -21,6 +21,15 @@ project adheres to
   origin or leave the option empty for same-origin
   deployments. (#81)
 
+- Hoist RBAC access-control checks above all
+  datastore calls in the alert-counts, alert
+  acknowledgement, alert unacknowledgement, alert
+  analysis, and cluster-topology handlers; zero-grant
+  callers now short-circuit to an empty response
+  without touching the database, and HTTP-level
+  regression tests cover every affected handler.
+  (#67)
+
 ## [1.0.0-beta1] - 2026-04-21
 
 ### Added

@@ -315,7 +315,7 @@ At the end of each README:
 - Enable coverage checking in standard test suites.
 
 - All new and modified code must reach at least 90% line coverage;
-  this is a hard floor, not an aspirational target.
+  this is a hard, non-negotiable floor and not an aspirational target.
 
 - The 90% floor applies to every change, no matter how small; when
   you modify a file or package whose current coverage is below 90%,

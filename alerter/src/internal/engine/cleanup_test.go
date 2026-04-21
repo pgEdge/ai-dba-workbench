@@ -10,6 +10,7 @@
 package engine
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
@@ -64,7 +65,7 @@ func TestCheckAlertResolvedMissingFields(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Should return early without panic when required fields are nil
-			engine.checkAlertResolved(nil, tt.alert)
+			engine.checkAlertResolved(context.TODO(), tt.alert)
 		})
 	}
 }
@@ -78,18 +79,17 @@ func TestAlertTypeConstants(t *testing.T) {
 	}
 
 	// Verify the alert type check pattern
-	if alert.AlertType != "threshold" || alert.RuleID == nil {
-		t.Error("Alert should have threshold type and rule ID")
+	if alert.ID != 1 || alert.AlertType != "threshold" || alert.RuleID == nil {
+		t.Error("Alert should have ID, threshold type, and rule ID")
 	}
 
 	anomalyAlert := &database.Alert{
 		ID:        2,
 		AlertType: "anomaly",
-		RuleID:    nil,
 	}
 
-	if anomalyAlert.AlertType != "anomaly" {
-		t.Error("Anomaly alert should have anomaly type")
+	if anomalyAlert.ID != 2 || anomalyAlert.AlertType != "anomaly" {
+		t.Error("Anomaly alert should have ID and anomaly type")
 	}
 }
 

@@ -17,7 +17,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/pgedge/ai-workbench/alerter/internal/config"
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 )
 
@@ -120,7 +119,8 @@ CREATE TABLE alerts (
     last_reevaluated_at TIMESTAMPTZ,
     reevaluation_count INTEGER NOT NULL DEFAULT 0,
     anomaly_score REAL,
-    anomaly_details JSONB
+    anomaly_details JSONB,
+    ai_analysis TEXT
 );
 
 CREATE TABLE alert_acknowledgments (
@@ -296,18 +296,6 @@ func getAlertStatus(t *testing.T, pool *pgxpool.Pool, alertID int64) string {
 	return status
 }
 
-// countAlerts counts alerts matching the given status.
-func countAlerts(t *testing.T, pool *pgxpool.Pool, status string) int {
-	t.Helper()
-	var count int
-	err := pool.QueryRow(context.Background(),
-		`SELECT COUNT(*) FROM alerts WHERE status = $1`, status).Scan(&count)
-	if err != nil {
-		t.Fatalf("Failed to count alerts with status %s: %v", status, err)
-	}
-	return count
-}
-
 // countAcknowledgments counts acknowledgments for an alert.
 func countAcknowledgments(t *testing.T, pool *pgxpool.Pool, alertID int64) int {
 	t.Helper()
@@ -318,21 +306,6 @@ func countAcknowledgments(t *testing.T, pool *pgxpool.Pool, alertID int64) int {
 		t.Fatalf("Failed to count acknowledgments for alert %d: %v", alertID, err)
 	}
 	return count
-}
-
-// newTestConfig creates a minimal config for testing.
-func newTestConfig() *config.Config {
-	return &config.Config{
-		Threshold: config.ThresholdConfig{
-			EvaluationIntervalSeconds: 60,
-		},
-		Baselines: config.BaselineConfig{
-			RefreshIntervalSeconds: 3600,
-		},
-		Anomaly: config.AnomalyConfig{
-			Enabled: false, // Disable anomaly detection for these tests
-		},
-	}
 }
 
 // TestEngine_AlertCRUD_Integration tests the basic alert CRUD operations

@@ -69,6 +69,9 @@ func TestNotificationJobTypes(t *testing.T) {
 				notifTyp: tt.notifTyp,
 			}
 
+			if job.alert == nil || job.alert.ID != 1 {
+				t.Error("job.alert should be set with ID 1")
+			}
 			if job.notifTyp != tt.notifTyp {
 				t.Errorf("job.notifTyp = %v, expected %v", job.notifTyp, tt.notifTyp)
 			}

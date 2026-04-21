@@ -4750,6 +4750,22 @@ func (d *Datastore) getConnectionIDsForGroup(ctx context.Context, groupID int) (
 	return ids, rows.Err()
 }
 
+// GetConnectionIDsForCluster returns all connection IDs that belong to
+// the given cluster. It is an exported wrapper around the internal
+// helper so other packages (notably the API handlers that apply RBAC
+// visibility filtering) can enumerate a cluster's members without
+// duplicating the SQL.
+func (d *Datastore) GetConnectionIDsForCluster(ctx context.Context, clusterID int) ([]int, error) {
+	return d.getConnectionIDsForCluster(ctx, clusterID)
+}
+
+// GetConnectionIDsForGroup returns all connection IDs that belong to
+// any cluster in the given group. Exported companion to
+// GetConnectionIDsForCluster for group-scoped RBAC checks.
+func (d *Datastore) GetConnectionIDsForGroup(ctx context.Context, groupID int) ([]int, error) {
+	return d.getConnectionIDsForGroup(ctx, groupID)
+}
+
 // gatherScopedServerData populates server status counts for a specific
 // set of connection IDs by walking the full topology and filtering.
 func (d *Datastore) gatherScopedServerData(ctx context.Context, snapshot *EstateSnapshot, connectionIDs []int) {

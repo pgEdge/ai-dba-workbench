@@ -12,9 +12,11 @@ package tools
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
 )
 
@@ -30,8 +32,11 @@ type MonitoredConnectionInfo struct {
 	ConnectionError string `json:"connection_error,omitempty"`
 }
 
-// ListConnectionsTool creates the list_connections tool for listing monitored connections
-func ListConnectionsTool(pool *pgxpool.Pool) Tool {
+// ListConnectionsTool creates the list_connections tool for listing monitored connections.
+// When rbacChecker and visibilityLister are non-nil, the returned list is
+// filtered to connections the caller can see. Pass nil for both in tests
+// or when RBAC is not configured.
+func ListConnectionsTool(pool *pgxpool.Pool, rbacChecker *auth.RBACChecker, visibilityLister auth.ConnectionVisibilityLister) Tool {
 	return Tool{
 		Definition: mcp.Tool{
 			Name: "list_connections",
@@ -154,6 +159,26 @@ CRITICAL: Never silently analyze multiple connections. Always get explicit user 
 
 			if err := rows.Err(); err != nil {
 				return mcp.NewToolError(fmt.Sprintf("Error iterating connections: %v", err))
+			}
+
+			// RBAC: filter connections to the caller's visible set.
+			if rbacChecker != nil {
+				visible, allConns, visErr := rbacChecker.VisibleConnectionIDs(ctx, visibilityLister)
+				if visErr != nil {
+					fmt.Fprintf(os.Stderr, "ERROR: list_connections: failed to resolve visible connections: %v\n", visErr)
+				} else if !allConns {
+					visibleSet := make(map[int]bool, len(visible))
+					for _, id := range visible {
+						visibleSet[id] = true
+					}
+					filtered := make([]MonitoredConnectionInfo, 0, len(connections))
+					for _, conn := range connections {
+						if visibleSet[conn.ID] {
+							filtered = append(filtered, conn)
+						}
+					}
+					connections = filtered
+				}
 			}
 
 			if len(connections) == 0 {

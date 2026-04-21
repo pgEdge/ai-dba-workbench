@@ -18,7 +18,7 @@ import (
 )
 
 func TestQueryMetrics_NilPool(t *testing.T) {
-	tool := QueryMetricsTool(nil)
+	tool := QueryMetricsTool(nil, nil)
 
 	if tool.Definition.Name != "query_metrics" {
 		t.Errorf("Expected tool name 'query_metrics', got '%s'", tool.Definition.Name)
@@ -39,7 +39,7 @@ func TestQueryMetrics_NilPool(t *testing.T) {
 }
 
 func TestQueryMetrics_MissingParameters(t *testing.T) {
-	tool := QueryMetricsTool(nil)
+	tool := QueryMetricsTool(nil, nil)
 
 	tests := []struct {
 		name string

@@ -15,12 +15,16 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
 	"github.com/pgedge/ai-workbench/server/internal/tsv"
 )
 
-// GetAlertRulesTool creates the get_alert_rules tool for querying alert rules and thresholds
-func GetAlertRulesTool(pool *pgxpool.Pool) Tool {
+// GetAlertRulesTool creates the get_alert_rules tool for querying alert rules and thresholds.
+// When the caller supplies a connection_id, rbacChecker is consulted before
+// the datastore is read so that a caller cannot use the effective-threshold
+// lookup to probe connections they are not permitted to see.
+func GetAlertRulesTool(pool *pgxpool.Pool, rbacChecker *auth.RBACChecker) Tool {
 	return Tool{
 		Definition: mcp.Tool{
 			Name: "get_alert_rules",
@@ -92,12 +96,28 @@ Returns TSV data with:
 				return mcp.NewToolError("Datastore not configured. The get_alert_rules tool requires a datastore connection.")
 			}
 
+			// Extract context from args (injected by registry.Execute).
+			// Done here so the RBAC check below can use it.
+			ctx, ok := args["__context"].(context.Context)
+			if !ok {
+				ctx = context.Background()
+			}
+
 			// Parse optional connection_id
 			var connectionID *int
 			if _, ok := args["connection_id"]; ok {
 				cid, err := parseIntArg(args, "connection_id")
 				if err != nil {
 					return mcp.NewToolError("Invalid 'connection_id' parameter: must be an integer")
+				}
+				// RBAC: verify the caller may access this connection before
+				// reading its effective thresholds. Missing and denied cases
+				// share a message to avoid an existence oracle.
+				if rbacChecker != nil {
+					canAccess, _ := rbacChecker.CanAccessConnection(ctx, cid)
+					if !canAccess {
+						return mcp.NewToolError("connection not found or not accessible")
+					}
 				}
 				connectionID = &cid
 			}
@@ -127,12 +147,6 @@ Returns TSV data with:
 			enabledOnly := true
 			if eo, ok := args["enabled_only"].(bool); ok {
 				enabledOnly = eo
-			}
-
-			// Extract context from args (injected by registry.Execute)
-			ctx, ok := args["__context"].(context.Context)
-			if !ok {
-				ctx = context.Background()
 			}
 
 			// Build the query

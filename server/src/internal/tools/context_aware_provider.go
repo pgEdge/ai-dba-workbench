@@ -87,16 +87,16 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 			registry.Register("describe_probe", DescribeProbeTool(datastorePool))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("query_metrics") {
-			registry.Register("query_metrics", QueryMetricsTool(datastorePool))
+			registry.Register("query_metrics", QueryMetricsTool(datastorePool, p.rbacChecker))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("list_connections") {
-			registry.Register("list_connections", ListConnectionsTool(datastorePool))
+			registry.Register("list_connections", ListConnectionsTool(datastorePool, p.rbacChecker, visibilityLister))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_alert_history") {
 			registry.Register("get_alert_history", GetAlertHistoryTool(datastorePool, p.rbacChecker, visibilityLister))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_alert_rules") {
-			registry.Register("get_alert_rules", GetAlertRulesTool(datastorePool))
+			registry.Register("get_alert_rules", GetAlertRulesTool(datastorePool, p.rbacChecker))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_metric_baselines") {
 			registry.Register("get_metric_baselines", GetMetricBaselinesTool(datastorePool, p.rbacChecker, visibilityLister))
@@ -127,16 +127,16 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 			registry.Register("describe_probe", DescribeProbeTool(nil))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("query_metrics") {
-			registry.Register("query_metrics", QueryMetricsTool(nil))
+			registry.Register("query_metrics", QueryMetricsTool(nil, p.rbacChecker))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("list_connections") {
-			registry.Register("list_connections", ListConnectionsTool(nil))
+			registry.Register("list_connections", ListConnectionsTool(nil, p.rbacChecker, nil))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_alert_history") {
 			registry.Register("get_alert_history", GetAlertHistoryTool(nil, p.rbacChecker, nil))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_alert_rules") {
-			registry.Register("get_alert_rules", GetAlertRulesTool(nil))
+			registry.Register("get_alert_rules", GetAlertRulesTool(nil, p.rbacChecker))
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_metric_baselines") {
 			registry.Register("get_metric_baselines", GetMetricBaselinesTool(nil, p.rbacChecker, nil))

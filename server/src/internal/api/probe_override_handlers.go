@@ -113,6 +113,10 @@ func (h *ProbeOverrideHandler) handleProbeOverrides(w http.ResponseWriter, r *ht
 
 // listOverrides handles GET /api/v1/probe-overrides/{scope}/{scopeId}
 func (h *ProbeOverrideHandler) listOverrides(w http.ResponseWriter, r *http.Request, scope string, scopeID int) {
+	if !scopeVisibleToCaller(r.Context(), w, h.rbacChecker, h.datastore, scope, scopeID, "Probe override scope not found") {
+		return
+	}
+
 	var overrides []database.ProbeOverride
 	var err error
 

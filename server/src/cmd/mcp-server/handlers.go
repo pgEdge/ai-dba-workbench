@@ -216,7 +216,7 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 
 		// AI Overview endpoint (for estate overview summary)
 		if deps.OverviewGen != nil {
-			overviewHandler := overview.NewHandler(deps.OverviewGen, deps.OverviewHub)
+			overviewHandler := overview.NewHandlerWithRBAC(deps.OverviewGen, deps.OverviewHub, rbacChecker, deps.Datastore)
 			overviewHandler.RegisterRoutes(mux, authWrapper)
 			deps.OverviewGen.OnRestart(func() {
 				serverInfoHandler.InvalidateCache()

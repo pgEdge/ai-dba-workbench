@@ -11,7 +11,7 @@
 import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { AuthProvider, useAuth } from '../AuthContext';
+import { ADMIN_PERMISSION_WILDCARD, AuthProvider, useAuth } from '../AuthContext';
 
 // Mock fetch
 const mockFetch = vi.fn();
@@ -658,6 +658,82 @@ describe('AuthContext', () => {
             expect(result.current.hasPermission('manage_users')).toBe(true);
             expect(result.current.hasPermission('manage_probes')).toBe(true);
             expect(result.current.hasPermission('any_permission')).toBe(true);
+        });
+
+        it('hasPermission returns true for any admin permission when wildcard is granted', async () => {
+            mockCheckAuthAuthenticated({
+                username: 'testuser',
+                is_superuser: false,
+                admin_permissions: [ADMIN_PERMISSION_WILDCARD],
+            });
+
+            const { result } = renderHook(() => useAuth(), { wrapper });
+
+            await waitFor(() => {
+                expect(result.current.loading).toBe(false);
+            });
+
+            expect(result.current.hasPermission('manage_users')).toBe(true);
+            expect(result.current.hasPermission('manage_groups')).toBe(true);
+            expect(result.current.hasPermission('manage_permissions')).toBe(true);
+            expect(result.current.hasPermission('manage_token_scopes')).toBe(true);
+        });
+
+        it('hasPermission returns true for all permissions when wildcard is combined with specific perms', async () => {
+            mockCheckAuthAuthenticated({
+                username: 'testuser',
+                is_superuser: false,
+                admin_permissions: [ADMIN_PERMISSION_WILDCARD, 'manage_users'],
+            });
+
+            const { result } = renderHook(() => useAuth(), { wrapper });
+
+            await waitFor(() => {
+                expect(result.current.loading).toBe(false);
+            });
+
+            expect(result.current.hasPermission('manage_users')).toBe(true);
+            expect(result.current.hasPermission('manage_groups')).toBe(true);
+            expect(result.current.hasPermission('manage_permissions')).toBe(true);
+            expect(result.current.hasPermission('manage_token_scopes')).toBe(true);
+        });
+
+        it('hasPermission returns false for any permission when admin_permissions is empty', async () => {
+            mockCheckAuthAuthenticated({
+                username: 'testuser',
+                is_superuser: false,
+                admin_permissions: [],
+            });
+
+            const { result } = renderHook(() => useAuth(), { wrapper });
+
+            await waitFor(() => {
+                expect(result.current.loading).toBe(false);
+            });
+
+            expect(result.current.hasPermission('manage_users')).toBe(false);
+            expect(result.current.hasPermission('manage_groups')).toBe(false);
+            expect(result.current.hasPermission('manage_permissions')).toBe(false);
+            expect(result.current.hasPermission('manage_token_scopes')).toBe(false);
+        });
+
+        it('hasPermission does not treat a specific permission as a wildcard (regression guard)', async () => {
+            mockCheckAuthAuthenticated({
+                username: 'testuser',
+                is_superuser: false,
+                admin_permissions: ['manage_users'],
+            });
+
+            const { result } = renderHook(() => useAuth(), { wrapper });
+
+            await waitFor(() => {
+                expect(result.current.loading).toBe(false);
+            });
+
+            expect(result.current.hasPermission('manage_users')).toBe(true);
+            expect(result.current.hasPermission('manage_groups')).toBe(false);
+            expect(result.current.hasPermission('manage_permissions')).toBe(false);
+            expect(result.current.hasPermission('manage_token_scopes')).toBe(false);
         });
 
         it('hasAnyAdminAccess is true for superusers', async () => {

@@ -153,6 +153,25 @@ interface UserPrivilegesResponse {
     admin_permissions?: string[];
 }
 
+const filterMcpPrivileges = (
+    allPrivileges: McpPrivilege[],
+    allowedIdentifiers: string[],
+): McpPrivilege[] => {
+    if (allowedIdentifiers.includes('*')) {
+        return allPrivileges;
+    }
+    return allPrivileges.filter((p) => allowedIdentifiers.includes(p.identifier));
+};
+
+const filterAdminPermissions = (
+    allowedPermissionIds: string[],
+): AdminPermissionEntry[] => {
+    if (allowedPermissionIds.includes('*')) {
+        return ADMIN_PERMISSIONS;
+    }
+    return ADMIN_PERMISSIONS.filter((p) => allowedPermissionIds.includes(p.id));
+};
+
 const AdminTokenScopes: React.FC = () => {
     const theme = useTheme();
     const [tokens, setTokens] = useState<Token[]>([]);
@@ -298,19 +317,9 @@ const AdminTokenScopes: React.FC = () => {
                     );
                 }
                 // Filter MCP privileges to those the user has
-                const allowedMcp = data.mcp_privileges || [];
-                setOwnerMcpPrivileges(
-                    mcpPrivileges.filter((p: McpPrivilege) =>
-                        allowedMcp.includes(p.identifier)
-                    )
-                );
+                setOwnerMcpPrivileges(filterMcpPrivileges(mcpPrivileges, data.mcp_privileges || []));
                 // Filter admin permissions to those the user has
-                const allowedAdmin = data.admin_permissions || [];
-                setOwnerAdminPermissions(
-                    ADMIN_PERMISSIONS.filter(p =>
-                        allowedAdmin.includes(p.id)
-                    )
-                );
+                setOwnerAdminPermissions(filterAdminPermissions(data.admin_permissions || []));
             }
         } catch {
             // If privilege fetch fails, show all options as fallback
@@ -423,18 +432,8 @@ const AdminTokenScopes: React.FC = () => {
                             )
                         );
                     }
-                    const allowedMcp = data.mcp_privileges || [];
-                    setEditAvailableMcpPrivileges(
-                        mcpPrivileges.filter((p: McpPrivilege) =>
-                            allowedMcp.includes(p.identifier)
-                        )
-                    );
-                    const allowedAdmin = data.admin_permissions || [];
-                    setEditAvailableAdminPermissions(
-                        ADMIN_PERMISSIONS.filter(p =>
-                            allowedAdmin.includes(p.id)
-                        )
-                    );
+                    setEditAvailableMcpPrivileges(filterMcpPrivileges(mcpPrivileges, data.mcp_privileges || []));
+                    setEditAvailableAdminPermissions(filterAdminPermissions(data.admin_permissions || []));
                 }
             } catch {
                 setEditOwnerIsSuperuser(false);

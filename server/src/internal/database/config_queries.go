@@ -530,50 +530,87 @@ func (d *Datastore) resolveConnectionHierarchy(ctx context.Context, connectionID
 		return nil, nil, nil, nil, nil
 	}
 
-	// Look up the cluster in the clusters table by auto_cluster_key
+	// Look up the cluster in the clusters table by auto_cluster_key.
+	// Read the dismissed flag so we can distinguish three cases below:
+	//   (a) no row -> safe to insert a fresh auto-detected cluster,
+	//   (b) live row (dismissed = FALSE) -> use it,
+	//   (c) dismissed row -> user has explicitly hidden this auto cluster;
+	//       we must NOT silently resurrect it. Issue #36.
 	var clusterID int
 	var clusterName string
 	var groupID *int
 	var groupName *string
+	var dismissed bool
 	err = d.pool.QueryRow(ctx, `
-		SELECT cl.id, cl.name, cg.id, cg.name
+		SELECT cl.id, cl.name, cg.id, cg.name, cl.dismissed
 		FROM clusters cl
 		LEFT JOIN cluster_groups cg ON cl.group_id = cg.id
 		WHERE cl.auto_cluster_key = $1`, foundKey).Scan(
-		&clusterID, &clusterName, &groupID, &groupName,
+		&clusterID, &clusterName, &groupID, &groupName, &dismissed,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// The auto-detected cluster has no persisted entry.
 			// Create one now, assigned to the default group, so the
 			// override system always has a cluster and group to work
-			// with.
+			// with. Use ON CONFLICT DO NOTHING + a follow-up SELECT
+			// that filters dismissed = FALSE so that a concurrently
+			// dismissed row is not resurrected here. Issue #36.
 			defaultGroup, dgErr := d.getDefaultGroupInternal(ctx)
 			if dgErr != nil {
 				return nil, nil, nil, nil,
 					fmt.Errorf("failed to get default group: %w", dgErr)
 			}
 
-			var newClusterID int
-			var newClusterName string
-			insertErr := d.pool.QueryRow(ctx, `
+			if _, insertErr := d.pool.Exec(ctx, `
 				INSERT INTO clusters (name, auto_cluster_key, group_id)
 				VALUES ($1, $2, $3)
-				ON CONFLICT (auto_cluster_key)
-				    DO UPDATE SET updated_at = CURRENT_TIMESTAMP
-				RETURNING id, name`,
+				ON CONFLICT (auto_cluster_key) DO NOTHING`,
 				foundName, foundKey, defaultGroup.ID,
-			).Scan(&newClusterID, &newClusterName)
-			if insertErr != nil {
+			); insertErr != nil {
 				return nil, nil, nil, nil,
 					fmt.Errorf("failed to create cluster entry: %w", insertErr)
 			}
 
-			gID := defaultGroup.ID
-			gName := defaultGroup.Name
-			return &newClusterID, &newClusterName, &gID, &gName, nil
+			// Re-select the cluster along with its real group. A
+			// concurrent transaction could have won the
+			// auto_cluster_key with a different group_id than our
+			// default, turning the INSERT above into a no-op; in
+			// that case we must return the winner's group, not the
+			// default group we would have inserted. Issue #36.
+			var newClusterID int
+			var newClusterName string
+			var newGroupID *int
+			var newGroupName *string
+			selectErr := d.pool.QueryRow(ctx, `
+				SELECT cl.id, cl.name, cg.id, cg.name
+				FROM clusters cl
+				LEFT JOIN cluster_groups cg ON cl.group_id = cg.id
+				WHERE cl.auto_cluster_key = $1
+				  AND cl.dismissed = FALSE`,
+				foundKey,
+			).Scan(&newClusterID, &newClusterName, &newGroupID, &newGroupName)
+			if selectErr != nil {
+				if errors.Is(selectErr, pgx.ErrNoRows) {
+					// A dismissed row already existed and the
+					// INSERT was a no-op. Treat the connection as
+					// unassigned rather than surfacing the hidden
+					// cluster. Issue #36.
+					return nil, nil, nil, nil, nil
+				}
+				return nil, nil, nil, nil,
+					fmt.Errorf("failed to load cluster entry: %w", selectErr)
+			}
+
+			return &newClusterID, &newClusterName, newGroupID, newGroupName, nil
 		}
 		return nil, nil, nil, nil, fmt.Errorf("failed to look up cluster by auto key: %w", err)
+	}
+
+	if dismissed {
+		// The user dismissed this auto-detected cluster. Do not
+		// re-attach it or revive the row. Issue #36.
+		return nil, nil, nil, nil, nil
 	}
 
 	return &clusterID, &clusterName, groupID, groupName, nil

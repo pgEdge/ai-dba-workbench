@@ -16,6 +16,9 @@ project adheres to
   option to control the HTTP client timeout for
   requests to the configured LLM provider; the
   default remains 120 seconds. (#60)
+- Add a guided walkthrough example with pre-seeded
+  demo data and an in-browser Driver.js tour covering
+  the workbench's major features.
 
 ### Changed
 
@@ -59,6 +62,12 @@ project adheres to
   `dismissed` flag on rediscovery, and `GetCluster`
   now filters dismissed rows from single-cluster
   lookups. (#36)
+- Fix dismissed auto-detected clusters reappearing in
+  the Server creation dialog's cluster dropdown after
+  alert or connection context was fetched; the
+  connection hierarchy resolver now skips dismissed
+  rows and no longer resurrects them through its
+  upsert fallback. (#36)
 - Fix partitions not being dropped at the appropriate
   time by the collector. (#62)
 - Fix `GET /api/v1/connections` returning an empty
@@ -67,6 +76,13 @@ project adheres to
   scoped connections are now returned as expected,
   and token scopes continue to restrict but not
   elevate the owner's privileges. (#83)
+- Fix servers assigned to a manually created cluster
+  continuing to appear under a re-created
+  auto-detected cluster after the next topology
+  refresh; auto-detected Spock, binary-replication,
+  and logical-replication grouping now skip
+  connections with `membership_source = 'manual'`.
+  (#74)
 
 ### Security
 

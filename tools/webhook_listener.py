@@ -60,7 +60,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
 
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 9999
-    server = HTTPServer(("0.0.0.0", port), WebhookHandler)
+    server = HTTPServer(("127.0.0.1", port), WebhookHandler)
     print(f"Webhook listener running on http://localhost:{port}")
     print("Press Ctrl+C to stop.\n")
     try:

@@ -252,19 +252,31 @@ export function Chart(props: ChartProps) {
         return options;
     }, [themedOptions, colorPalette, echartsOptions]);
 
+    /* Shared callback that fetches fresh chart data and updates
+       local state. Used by both the periodic timer and the manual
+       refresh toolbar button. */
+    const refreshData = useCallback(() => {
+        if (!onDataRefresh) {
+            return;
+        }
+        onDataRefresh()
+            .then((refreshed) => {
+                setLiveData(refreshed);
+            })
+            .catch((err: unknown) => {
+                console.error('Chart refresh failed:', err);
+            });
+    }, [onDataRefresh]);
+
     useEffect(() => {
         if (!liveUpdate || !onDataRefresh) {
             return;
         }
 
-        const id = setInterval(() => {
-            onDataRefresh().then((refreshed) => {
-                setLiveData(refreshed);
-            });
-        }, updateInterval);
+        const id = setInterval(refreshData, updateInterval);
 
         return () => clearInterval(id);
-    }, [liveUpdate, onDataRefresh, updateInterval]);
+    }, [liveUpdate, onDataRefresh, updateInterval, refreshData]);
 
     const handleChartReady = useCallback(
         (instance: EChartsInstance) => {
@@ -279,14 +291,6 @@ export function Chart(props: ChartProps) {
             exportChartAsPng(chartRef.current, exportFilename);
         }
     }, [exportFilename]);
-
-    const handleRefresh = useCallback(() => {
-        if (onDataRefresh) {
-            onDataRefresh().then((refreshed) => {
-                setLiveData(refreshed);
-            });
-        }
-    }, [onDataRefresh]);
 
     const handleAnalyze = useCallback(() => setAnalysisOpen(true), []);
     const handleAnalysisClose = useCallback(() => setAnalysisOpen(false), []);
@@ -319,7 +323,7 @@ export function Chart(props: ChartProps) {
                         showRefresh={liveUpdate}
                         onAnalyze={handleAnalyze}
                         onExport={handleExport}
-                        onRefresh={handleRefresh}
+                        onRefresh={refreshData}
                     />
                 )}
                 <ReactEChartsCore

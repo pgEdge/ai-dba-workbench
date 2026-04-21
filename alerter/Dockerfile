@@ -8,7 +8,7 @@
 #--------------------------------------------------------------------------
 
 # Stage 1: Build the alerter binary
-FROM golang:1.26 AS builder
+FROM golang:1.26.2 AS builder
 
 WORKDIR /build
 
@@ -32,6 +32,10 @@ FROM debian:bookworm-slim
 RUN mkdir -p /etc/pgedge
 
 COPY --from=builder /build/ai-dba-alerter /usr/local/bin/ai-dba-alerter
+
+RUN groupadd -r appuser && useradd -r -g appuser -d /nonexistent -s /usr/sbin/nologin appuser && \
+    chown -R appuser:appuser /etc/pgedge
+USER appuser
 
 ENTRYPOINT ["/usr/local/bin/ai-dba-alerter"]
 CMD ["--config", "/etc/pgedge/ai-dba-alerter.yaml"]

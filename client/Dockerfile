@@ -28,4 +28,6 @@ COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80
 
+# nginx starts as root to bind port 80, then drops to the
+# nginx user for worker processes via its own configuration.
 CMD ["nginx", "-g", "daemon off;"]

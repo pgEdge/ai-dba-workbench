@@ -36,10 +36,10 @@ jobs:
 
         steps:
             - name: Checkout code
-              uses: actions/checkout@v6
+              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
             - name: Set up Node.js 20
-              uses: actions/setup-node@v6
+              uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
               with:
                   node-version: '20'
                   cache: 'npm'
@@ -52,7 +52,7 @@ jobs:
               run: npm run build
 
             - name: Upload client artifact
-              uses: actions/upload-artifact@v7
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
               with:
                   name: ai-dba-client-dist
                   path: client/dist/
@@ -67,10 +67,10 @@ jobs:
 
         steps:
             - name: Checkout code
-              uses: actions/checkout@v6
+              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
             - name: Set up Python 3.11
-              uses: actions/setup-python@v6
+              uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
               with:
                   python-version: '3.11'
                   cache: 'pip'
@@ -87,7 +87,7 @@ jobs:
                   mkdocs build -v
 
             - name: Upload documentation artifact
-              uses: actions/upload-artifact@v7
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
               with:
                   name: ai-workbench-docs-site
                   path: site/
@@ -107,16 +107,16 @@ jobs:
 
         steps:
             - name: Checkout code
-              uses: actions/checkout@v6
+              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
             - name: Set up Go 1.26
-              uses: actions/setup-go@v6
+              uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
               with:
-                  go-version: '1.26'
+                  go-version: '1.26.2'
                   cache: false
 
             - name: Cache Go modules (server)
-              uses: actions/cache@v5
+              uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
               with:
                   path: |
                       ~/go/pkg/mod
@@ -126,7 +126,7 @@ jobs:
                       ${{ runner.os }}-go-1.26-release-server-
 
             - name: Cache Go modules (collector)
-              uses: actions/cache@v5
+              uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
               with:
                   path: |
                       ~/go/pkg/mod
@@ -136,7 +136,7 @@ jobs:
                       ${{ runner.os }}-go-1.26-release-collector-
 
             - name: Cache Go modules (alerter)
-              uses: actions/cache@v5
+              uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
               with:
                   path: |
                       ~/go/pkg/mod
@@ -176,21 +176,21 @@ jobs:
                   tar czf ai-dba-alerter-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz ai-dba-alerter
 
             - name: Upload server archive
-              uses: actions/upload-artifact@v7
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
               with:
                   name: ai-dba-server-${{ matrix.goos }}-${{ matrix.goarch }}
                   path: ai-dba-server-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
                   retention-days: 1
 
             - name: Upload collector archive
-              uses: actions/upload-artifact@v7
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
               with:
                   name: ai-dba-collector-${{ matrix.goos }}-${{ matrix.goarch }}
                   path: ai-dba-collector-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
                   retention-days: 1
 
             - name: Upload alerter archive
-              uses: actions/upload-artifact@v7
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
               with:
                   name: ai-dba-alerter-${{ matrix.goos }}-${{ matrix.goarch }}
                   path: ai-dba-alerter-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
@@ -206,7 +206,7 @@ jobs:
 
         steps:
             - name: Download all artifacts
-              uses: actions/download-artifact@v8
+              uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
               with:
                   path: artifacts
 
@@ -238,7 +238,7 @@ jobs:
                   cat release/checksums.txt
 
             - name: Create GitHub release
-              uses: softprops/action-gh-release@v2
+              uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
               with:
                   name: ${{ github.ref_name }}
                   draft: false

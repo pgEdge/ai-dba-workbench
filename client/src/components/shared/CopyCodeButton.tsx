@@ -26,11 +26,14 @@ interface CopyCodeButtonProps {
 const CopyCodeButton: React.FC<CopyCodeButtonProps> = ({ code, theme }) => {
     const [copied, setCopied] = useState(false);
 
-    const handleCopy = useCallback(() => {
-        navigator.clipboard.writeText(code).then(() => {
+    const handleCopy = useCallback(async () => {
+        try {
+            await navigator.clipboard.writeText(code);
             setCopied(true);
             setTimeout(() => setCopied(false), 2000);
-        });
+        } catch (err) {
+            console.error('Failed to copy code:', err);
+        }
     }, [code]);
 
     return (

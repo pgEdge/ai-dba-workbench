@@ -81,6 +81,19 @@ When writing code:
    - Write tests for new functionality
    - Ensure existing tests still pass
    - Test accessibility requirements
+   - Every client change must ship with tests that drive at
+     least 90% line coverage of the new or modified code; this
+     floor is non-negotiable
+   - The 90% rule applies to modified code as well as new code;
+     if you touch a module whose coverage sits below 90%, raise
+     the touched units to 90% as part of the same change
+   - Measure coverage with `cd client && make coverage`, which
+     runs `npm run test:coverage` (Vitest with
+     `@vitest/coverage-v8`); review the text reporter output to
+     confirm the changed files report at least 90% line coverage
+   - Run `make test-all` from the repository root as the final
+     gate; a change is not complete until tests, linting, and the
+     90% coverage floor all pass
 
 ## Code Review Protocol
 
@@ -93,7 +106,8 @@ When reviewing code:
 - Check for proper TypeScript usage
 - Verify responsive design implementation
 - Suggest performance improvements
-- Ensure test coverage
+- Ensure new and modified code meets the project 90% line
+  coverage floor; flag any PR that falls below it
 
 ## Communication Style
 

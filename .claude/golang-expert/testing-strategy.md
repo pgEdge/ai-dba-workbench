@@ -18,8 +18,9 @@ for the pgEdge AI DBA Workbench Go backend.
 1. **Test Behavior, Not Implementation:** Focus on what the code does.
 2. **Isolate Units:** Test components independently using mocking.
 3. **Test Realistic Scenarios:** Integration tests use real databases.
-4. **Maintain High Coverage:** Aim for >80% overall; >90% critical; 100%
-   security.
+4. **Maintain High Coverage:** New and modified code must reach at
+   least 90% line coverage; this floor is non-negotiable, and
+   security-sensitive paths (encryption, validation) must reach 100%.
 5. **Fast Feedback:** Unit tests run in milliseconds.
 6. **Reliable Tests:** No flaky tests; consistent results.
 
@@ -514,19 +515,32 @@ func TestAuthorization(t *testing.T) {
 
 ### Coverage Targets
 
-- **Overall**: >80%
-- **Critical paths** (auth, RBAC, connection handling): >90%
-- **Security functions** (encryption, validation): 100%
-- **Lower priority** (main entry points, logging, simple getters):
-  acceptable lower coverage
+New and modified Go code must reach at least 90% line coverage;
+this is a non-negotiable floor, not an aspirational target.
+
+The 90% floor applies to modified code as well as new code; if you
+touch a package whose coverage sits below 90%, raise the touched
+functions to 90% as part of the same change.
+
+Security-sensitive functions (encryption, validation) must reach
+100% line coverage; a higher floor still applies where one exists.
 
 ### Coverage Commands
+
+Measure coverage per sub-project with `cd collector && make
+coverage`, `cd server && make coverage`, or `cd alerter && make
+coverage`; each target runs `go test -coverprofile=coverage.out
+./...` under the hood.
+
+Read the numeric breakdown with `go tool cover -func=coverage.out`
+and confirm the changed files report at least 90% before handing
+the task back.
 
 ```bash
 go test -coverprofile=coverage.out ./...
 go tool cover -func=coverage.out | grep total        # Summary
 go tool cover -html=coverage.out -o coverage.html     # HTML report
-go tool cover -func=coverage.out | awk '$3 < 80.0'   # Low-coverage files
+go tool cover -func=coverage.out | awk '$3 < 90.0'   # Low-coverage files
 ```
 
 ### Coverage Modes

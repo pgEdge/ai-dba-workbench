@@ -28,9 +28,12 @@ build:
 	cd src && go build -ldflags="-s -w" -o $(ABS_BIN_DIR)/$(BINARY) ./cmd/ai-dba-alerter
 
 # Run tests
+# Use -p=1 to serialize per-package test binaries. Integration tests in
+# internal/database and internal/engine share Postgres schema (DROP/CREATE
+# the same tables), so running their test binaries concurrently races.
 test: killall
 	@echo "Running tests..."
-	cd src && go test -v ./...
+	cd src && go test -p=1 -v ./...
 	@$(MAKE) --no-print-directory killall
 
 # Run linting
@@ -54,9 +57,10 @@ fmt-check:
 	@test -z "$$(cd src && gofmt -l .)" || (echo "Files not formatted:"; cd src && gofmt -l .; exit 1)
 
 # Run tests with coverage
+# Use -p=1 to serialize per-package test binaries (see note on the test target).
 coverage:
 	@echo "Running tests with coverage..."
-	cd src && go test -coverprofile=coverage.out ./...
+	cd src && go test -p=1 -coverprofile=coverage.out ./...
 	cd src && go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated: src/coverage.html"
 

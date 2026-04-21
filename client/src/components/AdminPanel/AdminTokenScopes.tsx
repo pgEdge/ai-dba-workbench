@@ -49,6 +49,7 @@ import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
 import { SELECT_FIELD_SX } from '../shared/formStyles';
 import EffectivePermissionsPanel from './EffectivePermissionsPanel';
 import { apiGet, apiPost, apiPut, apiDelete } from '../../utils/apiClient';
+import { copyToClipboard } from '../../utils/clipboard';
 import {
     tableHeaderCellSx,
     dialogTitleSx,
@@ -505,18 +506,14 @@ const AdminTokenScopes: React.FC = () => {
     // Copy token to clipboard. Surfaces short-lived feedback via the copy
     // button (icon swap + tooltip), and reports clipboard failures through
     // the shared error channel so the user is never left wondering whether
-    // the click did anything. The Clipboard API is undefined on non-secure
-    // contexts, so we guard access before calling it to avoid a synchronous
-    // TypeError that would bypass our error reporting.
+    // the click did anything. Uses the shared copyToClipboard utility which
+    // falls back to execCommand('copy') on non-secure (HTTP) contexts.
     const handleCopyToken = useCallback(async () => {
         if (!createdToken) {
             return;
         }
         try {
-            if (!navigator.clipboard?.writeText) {
-                throw new Error('Clipboard API unavailable in this context.');
-            }
-            await navigator.clipboard.writeText(createdToken);
+            await copyToClipboard(createdToken);
             setError(null);
             setTokenCopied(true);
             if (copyResetTimerRef.current !== null) {

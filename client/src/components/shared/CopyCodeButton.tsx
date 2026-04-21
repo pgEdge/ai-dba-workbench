@@ -17,6 +17,7 @@ import {
     Check as CheckIcon,
 } from '@mui/icons-material';
 import { getCopyButtonSx } from './markdownStyles';
+import { copyToClipboard } from '../../utils/clipboard';
 
 interface CopyCodeButtonProps {
     code: string;
@@ -28,7 +29,7 @@ const CopyCodeButton: React.FC<CopyCodeButtonProps> = ({ code, theme }) => {
 
     const handleCopy = useCallback(async () => {
         try {
-            await navigator.clipboard.writeText(code);
+            await copyToClipboard(code);
             setCopied(true);
             setTimeout(() => setCopied(false), 2000);
         } catch (err) {

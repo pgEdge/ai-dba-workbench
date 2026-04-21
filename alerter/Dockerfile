@@ -8,7 +8,7 @@
 #--------------------------------------------------------------------------
 
 # Stage 1: Build the alerter binary
-FROM golang:1.26 AS builder
+FROM golang:1.26.2 AS builder
 
 WORKDIR /build
 

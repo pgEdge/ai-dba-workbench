@@ -1280,13 +1280,13 @@ func TestConvertToMCPTools(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			// Channels cannot be marshalled by encoding/json.
+			// Channels cannot be marshaled by encoding/json.
 			name:    "channel fails marshal",
 			tools:   make(chan int),
 			wantErr: true,
 		},
 		{
-			// Functions cannot be marshalled by encoding/json.
+			// Functions cannot be marshaled by encoding/json.
 			name:    "function fails marshal",
 			tools:   func() {},
 			wantErr: true,

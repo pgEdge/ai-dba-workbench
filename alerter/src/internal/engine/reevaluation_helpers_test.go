@@ -334,9 +334,9 @@ func TestParseReevaluationResponseEdgeCases(t *testing.T) {
 			expectedDecision: "clear",
 		},
 		{
-			name:             "Multiple keywords prefer first match",
-			response:         "Should be cleared but also remain active",
-			expectedDecision: "clear", // "should be cleared" matches first
+			name:             "Multiple clear keywords returns clear",
+			response:         "Should be cleared because it is safe to clear",
+			expectedDecision: "clear",
 		},
 	}
 

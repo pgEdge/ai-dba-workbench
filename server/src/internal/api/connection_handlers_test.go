@@ -524,11 +524,11 @@ CREATE TABLE connections (
 );
 `
 
-// newListConnectionsIssue83Datastore wires a *database.Datastore to the
+// newListConnectionsTestDatastore wires a *database.Datastore to the
 // Postgres instance named by TEST_AI_WORKBENCH_SERVER and installs the
 // trimmed schema above. The test is skipped when the environment is not
 // configured to run database-backed tests.
-func newListConnectionsIssue83Datastore(t *testing.T) (*database.Datastore, *pgxpool.Pool, func()) {
+func newListConnectionsTestDatastore(t *testing.T) (*database.Datastore, *pgxpool.Pool, func()) {
 	t.Helper()
 
 	if os.Getenv("SKIP_DB_TESTS") != "" {
@@ -569,7 +569,7 @@ func newListConnectionsIssue83Datastore(t *testing.T) (*database.Datastore, *pgx
 // during intersection with the user's wildcard grant. After the fix,
 // connection 11 appears in the response.
 func TestListConnectionsScopedTokenReturnsScopedConnection(t *testing.T) {
-	ds, pool, cleanupDS := newListConnectionsIssue83Datastore(t)
+	ds, pool, cleanupDS := newListConnectionsTestDatastore(t)
 	defer cleanupDS()
 
 	// Auth store with a user "bob" whose ONLY connection access comes
@@ -767,7 +767,7 @@ func newListConnectionsIssue68Handler(ds *database.Datastore, store *auth.AuthSt
 // the superuser branch: VisibleConnectionIDs returns
 // allConnections=true and the handler skips filtering entirely.
 func TestListConnections_Issue68_Superuser_ReturnsAllConnections(t *testing.T) {
-	ds, pool, cleanupDS := newListConnectionsIssue83Datastore(t)
+	ds, pool, cleanupDS := newListConnectionsTestDatastore(t)
 	defer cleanupDS()
 	seedListConnectionsIssue68Fixture(t, pool)
 
@@ -794,7 +794,7 @@ func TestListConnections_Issue68_Superuser_ReturnsAllConnections(t *testing.T) {
 // branch: VisibleConnectionIDs includes unshared connections owned by
 // the caller.
 func TestListConnections_Issue68_OwnerSeesOwnUnshared(t *testing.T) {
-	ds, pool, cleanupDS := newListConnectionsIssue83Datastore(t)
+	ds, pool, cleanupDS := newListConnectionsTestDatastore(t)
 	defer cleanupDS()
 	seedListConnectionsIssue68Fixture(t, pool)
 
@@ -837,7 +837,7 @@ func TestListConnections_Issue68_OwnerSeesOwnUnshared(t *testing.T) {
 // else. The old helper returned nil in this case and the previous
 // logic would have leaked the unshared row.
 func TestListConnections_Issue68_NonOwnerZeroGrant_SeesSharedOnly(t *testing.T) {
-	ds, pool, cleanupDS := newListConnectionsIssue83Datastore(t)
+	ds, pool, cleanupDS := newListConnectionsTestDatastore(t)
 	defer cleanupDS()
 	seedListConnectionsIssue68Fixture(t, pool)
 
@@ -880,7 +880,7 @@ func TestListConnections_Issue68_NonOwnerZeroGrant_SeesSharedOnly(t *testing.T) 
 // handler must respond with 500 without attempting to filter a nil
 // slice or panic.
 func TestListConnections_Issue68_GetAllConnectionsError_Returns500(t *testing.T) {
-	ds, pool, cleanupDS := newListConnectionsIssue83Datastore(t)
+	ds, pool, cleanupDS := newListConnectionsTestDatastore(t)
 	defer cleanupDS()
 
 	// Drop the connections table so GetAllConnections returns an error.
@@ -926,7 +926,7 @@ func (l *failingVisibilityLister) GetAllConnections(_ context.Context) ([]auth.C
 // hook so VisibleConnectionIDs propagates an error back to the
 // handler without needing to break the underlying Postgres.
 func TestListConnections_Issue68_VisibleConnectionIDsError_Returns500(t *testing.T) {
-	ds, pool, cleanupDS := newListConnectionsIssue83Datastore(t)
+	ds, pool, cleanupDS := newListConnectionsTestDatastore(t)
 	defer cleanupDS()
 	seedListConnectionsIssue68Fixture(t, pool)
 

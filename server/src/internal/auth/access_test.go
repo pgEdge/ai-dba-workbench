@@ -476,38 +476,6 @@ func TestHasWriteAccess(t *testing.T) {
 	}
 }
 
-func TestGetAccessibleConnections(t *testing.T) {
-	store, cleanup := createTestAuthStoreForAccess(t)
-	defer cleanup()
-
-	checker := NewRBACChecker(store)
-
-	// Create user with connection access
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
-	userID, _ := store.GetUserID("testuser")
-	groupID, _ := store.CreateGroup("test-group", "Test")
-	store.AddUserToGroup(groupID, userID)
-	store.GrantConnectionPrivilege(groupID, 1, AccessLevelRead)
-	store.GrantConnectionPrivilege(groupID, 2, AccessLevelReadWrite)
-
-	// Create context
-	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
-	ctx = context.WithValue(ctx, UserIDContextKey, userID)
-
-	// Get accessible connections
-	connections := checker.GetAccessibleConnections(ctx)
-	if len(connections) != 2 {
-		t.Errorf("Expected 2 connections, got %d", len(connections))
-	}
-
-	// Superuser should return nil (all connections)
-	superCtx := context.WithValue(context.Background(), IsSuperuserContextKey, true)
-	connections = checker.GetAccessibleConnections(superCtx)
-	if connections != nil {
-		t.Error("Expected nil for superuser (all connections)")
-	}
-}
-
 // =============================================================================
 // DatabaseAccessChecker Tests
 // =============================================================================

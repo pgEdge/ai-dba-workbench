@@ -27,6 +27,13 @@ type ConnectionHandler struct {
 	authStore     *auth.AuthStore
 	hostValidator *HostValidator
 	rbacChecker   *auth.RBACChecker
+
+	// visibilityListerFn builds the auth.ConnectionVisibilityLister passed
+	// to RBACChecker.VisibleConnectionIDs. Tests can substitute a stub to
+	// exercise the lister-error branch of listConnections without
+	// breaking the shared datastore. When nil the handler falls back to
+	// newConnectionVisibilityLister(h.datastore).
+	visibilityListerFn func() auth.ConnectionVisibilityLister
 }
 
 // NewConnectionHandler creates a new connection handler
@@ -153,45 +160,33 @@ func (h *ConnectionHandler) listConnections(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Filter connections based on RBAC privileges and sharing status
-	isSuperuser := h.rbacChecker.IsSuperuser(r.Context())
-	if !isSuperuser {
-		currentUsername := auth.GetUsernameFromContext(r.Context())
-		// Safe use of the deprecated helper: the superuser gate above
-		// handles the "all connections" branch, and the per-row checks
-		// below explicitly validate sharing and ownership. See the
-		// GetAccessibleConnections godoc for details.
-		accessibleIDs := h.rbacChecker.GetAccessibleConnections(r.Context()) //nolint:staticcheck // SA1019: intentional, see comment above
-
-		// Build a set of group-accessible connection IDs
-		var accessibleSet map[int]bool
-		if accessibleIDs != nil {
-			accessibleSet = make(map[int]bool, len(accessibleIDs))
-			for _, id := range accessibleIDs {
-				accessibleSet[id] = true
-			}
+	// RBAC: restrict to visible connections. VisibleConnectionIDs
+	// returns allConnections=true for superusers and wildcard token
+	// scopes; otherwise it returns the explicit set of visible IDs
+	// (owned, shared, and group/token granted).
+	var lister auth.ConnectionVisibilityLister
+	if h.visibilityListerFn != nil {
+		lister = h.visibilityListerFn()
+	} else {
+		lister = newConnectionVisibilityLister(h.datastore)
+	}
+	visibleIDs, allConnections, err := h.rbacChecker.VisibleConnectionIDs(r.Context(), lister)
+	if err != nil {
+		log.Printf("[ERROR] Failed to resolve visible connections: %v", err)
+		RespondError(w, http.StatusInternalServerError,
+			"Failed to list connections")
+		return
+	}
+	if !allConnections {
+		visibleSet := make(map[int]bool, len(visibleIDs))
+		for _, id := range visibleIDs {
+			visibleSet[id] = true
 		}
-
 		filtered := connections[:0]
 		for i := range connections {
-			conn := &connections[i]
-			// Always include the user's own connections
-			if conn.OwnerUsername == currentUsername {
-				filtered = append(filtered, *conn)
-				continue
+			if visibleSet[connections[i].ID] {
+				filtered = append(filtered, connections[i])
 			}
-			// Include shared connections that are not group-restricted
-			if conn.IsShared && (accessibleSet == nil || accessibleSet[conn.ID]) {
-				filtered = append(filtered, *conn)
-				continue
-			}
-			// Include group-accessible connections
-			if accessibleSet != nil && accessibleSet[conn.ID] {
-				filtered = append(filtered, *conn)
-				continue
-			}
-			// If no group restrictions exist (accessibleSet is nil),
-			// only include shared connections (already handled above)
 		}
 		connections = filtered
 	}

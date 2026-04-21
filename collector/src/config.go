@@ -242,3 +242,9 @@ func (c *Config) GetMonitoredPoolMaxWaitSeconds() int { return c.Pool.MonitoredM
 func GetDefaultConfigPath(binaryPath string) string {
 	return fileutil.GetDefaultConfigPath(binaryPath, "ai-dba-collector.yaml")
 }
+
+// GetDefaultSecretPath returns the default secret file path
+// Searches /etc/pgedge/ first, then binary directory
+func GetDefaultSecretPath(binaryPath string) string {
+	return fileutil.GetDefaultConfigPath(binaryPath, "ai-dba-collector.secret")
+}

@@ -38,8 +38,9 @@ RUN mkdir -p /etc/pgedge /data
 
 COPY --from=builder /build/ai-dba-server /usr/local/bin/ai-dba-server
 
-RUN groupadd -r appuser && useradd -r -g appuser -d /nonexistent -s /usr/sbin/nologin appuser && \
-    chown -R appuser:appuser /etc/pgedge /data
+RUN mkdir -p /usr/local/bin/data && \
+    groupadd -r appuser && useradd -r -g appuser -d /nonexistent -s /usr/sbin/nologin appuser && \
+    chown -R appuser:appuser /etc/pgedge /data /usr/local/bin/data
 USER appuser
 
 EXPOSE 8080

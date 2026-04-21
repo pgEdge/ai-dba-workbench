@@ -120,7 +120,8 @@ CREATE TABLE alerts (
     reevaluation_count INTEGER NOT NULL DEFAULT 0,
     anomaly_score REAL,
     anomaly_details JSONB,
-    ai_analysis TEXT
+    ai_analysis TEXT,
+    ai_analysis_metric_value REAL
 );
 
 CREATE TABLE alert_acknowledgments (

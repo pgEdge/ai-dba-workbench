@@ -1090,6 +1090,9 @@ func (d *Datastore) GetActiveThresholdAlert(ctx context.Context, ruleID int64, c
 		&alert.AnomalyDetails)
 
 	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return &alert, nil

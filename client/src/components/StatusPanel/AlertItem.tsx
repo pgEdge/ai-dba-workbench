@@ -51,10 +51,19 @@ import {
 /**
  * AlertItem - Compact alert entry with severity indicator and ack functionality
  */
-const AlertItem = ({ alert, showServer = false, onAcknowledge, onUnacknowledge, onAnalyze, onEditOverride }) => {
+const AlertItem = ({
+    alert,
+    showServer = false,
+    onAcknowledge,
+    onUnacknowledge,
+    isUnacknowledging,
+    onAnalyze,
+    onEditOverride,
+}) => {
     const theme = useTheme();
     const severityColors = getSeverityColors(theme);
     const isAcknowledged = !!alert.acknowledgedAt;
+    const ackInFlight = !!isUnacknowledging?.(alert.id);
     const baseColor = isAcknowledged ? theme.palette.grey[500] : (severityColors[alert.severity] || severityColors.info);
     const SeverityIcon = alert.severity === 'critical' ? ErrorIcon : WarningIcon;
     const thresholdInfo = formatThresholdInfo(alert);
@@ -277,24 +286,27 @@ const AlertItem = ({ alert, showServer = false, onAcknowledge, onUnacknowledge, 
 
             {/* Ack/Unack button */}
             <Tooltip title={isAcknowledged ? 'Restore to active' : 'Acknowledge'} placement="left">
-                <IconButton
-                    size="small"
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        if (isAcknowledged) {
-                            onUnacknowledge?.(alert.id);
-                        } else {
-                            onAcknowledge?.(alert);
-                        }
-                    }}
-                    sx={ackButtonSx}
-                >
-                    {isAcknowledged ? (
-                        <UnackIcon sx={ICON_16_SX} />
-                    ) : (
-                        <AckIcon sx={ICON_16_SX} />
-                    )}
-                </IconButton>
+                <span>
+                    <IconButton
+                        size="small"
+                        disabled={isAcknowledged && ackInFlight}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            if (isAcknowledged) {
+                                onUnacknowledge?.(alert.id);
+                            } else {
+                                onAcknowledge?.(alert);
+                            }
+                        }}
+                        sx={ackButtonSx}
+                    >
+                        {isAcknowledged ? (
+                            <UnackIcon sx={ICON_16_SX} />
+                        ) : (
+                            <AckIcon sx={ICON_16_SX} />
+                        )}
+                    </IconButton>
+                </span>
             </Tooltip>
         </Box>
     );

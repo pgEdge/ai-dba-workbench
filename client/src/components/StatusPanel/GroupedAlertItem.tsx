@@ -56,9 +56,18 @@ import {
 /**
  * GroupedAlertInstance - A single instance row within a grouped alert panel
  */
-const GroupedAlertInstance = ({ alert, showServer, onAcknowledge, onUnacknowledge, onAnalyze, onEditOverride }) => {
+const GroupedAlertInstance = ({
+    alert,
+    showServer,
+    onAcknowledge,
+    onUnacknowledge,
+    isUnacknowledging,
+    onAnalyze,
+    onEditOverride,
+}) => {
     const theme = useTheme();
     const isAcknowledged = !!alert.acknowledgedAt;
+    const ackInFlight = !!isUnacknowledging?.(alert.id);
     const thresholdInfo = formatThresholdInfo(alert);
     const showLastUpdated = hasDistinctLastUpdated(alert);
 
@@ -228,24 +237,27 @@ const GroupedAlertInstance = ({ alert, showServer, onAcknowledge, onUnacknowledg
 
                 {/* Ack/Unack button */}
                 <Tooltip title={isAcknowledged ? 'Restore to active' : 'Acknowledge'} placement="left">
-                    <IconButton
-                        size="small"
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            if (isAcknowledged) {
-                                onUnacknowledge?.(alert.id);
-                            } else {
-                                onAcknowledge?.(alert);
-                            }
-                        }}
-                        sx={ackButtonSx}
-                    >
-                        {isAcknowledged ? (
-                            <UnackIcon sx={ICON_14_SX} />
-                        ) : (
-                            <AckIcon sx={ICON_14_SX} />
-                        )}
-                    </IconButton>
+                    <span>
+                        <IconButton
+                            size="small"
+                            disabled={isAcknowledged && ackInFlight}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                if (isAcknowledged) {
+                                    onUnacknowledge?.(alert.id);
+                                } else {
+                                    onAcknowledge?.(alert);
+                                }
+                            }}
+                            sx={ackButtonSx}
+                        >
+                            {isAcknowledged ? (
+                                <UnackIcon sx={ICON_14_SX} />
+                            ) : (
+                                <AckIcon sx={ICON_14_SX} />
+                            )}
+                        </IconButton>
+                    </span>
                 </Tooltip>
             </Box>
 
@@ -276,7 +288,17 @@ const GroupedAlertInstance = ({ alert, showServer, onAcknowledge, onUnacknowledg
 /**
  * GroupedAlertItem - Display a group of alerts with the same title in a single panel
  */
-const GroupedAlertItem = ({ title, alerts, showServer = false, onAcknowledge, onUnacknowledge, onAnalyze, onEditOverride, onAcknowledgeGroup }) => {
+const GroupedAlertItem = ({
+    title,
+    alerts,
+    showServer = false,
+    onAcknowledge,
+    onUnacknowledge,
+    isUnacknowledging,
+    onAnalyze,
+    onEditOverride,
+    onAcknowledgeGroup,
+}) => {
     const theme = useTheme();
     const severityColors = getSeverityColors(theme);
     const [expanded, setExpanded] = useState(true);
@@ -382,6 +404,7 @@ const GroupedAlertItem = ({ title, alerts, showServer = false, onAcknowledge, on
                             showServer={showServer}
                             onAcknowledge={onAcknowledge}
                             onUnacknowledge={onUnacknowledge}
+                            isUnacknowledging={isUnacknowledging}
                             onAnalyze={onAnalyze}
                             onEditOverride={onEditOverride}
                         />

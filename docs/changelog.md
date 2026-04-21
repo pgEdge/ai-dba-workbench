@@ -74,6 +74,11 @@ project adheres to
   "Token created" dialog; the button now shows a check
   mark and "Copied!" tooltip on success and surfaces
   clipboard failures through the error alert. (#71)
+- Fix the StatusPanel "Restore to active" action
+  silently failing on error; the alert now leaves the
+  acknowledged list optimistically, rolls back and
+  surfaces a Snackbar error on API failure, and
+  guards against double-click submissions. (#72)
 - Fix servers assigned to a manually created cluster
   continuing to appear under a re-created
   auto-detected cluster after the next topology

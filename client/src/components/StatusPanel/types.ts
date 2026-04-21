@@ -54,6 +54,11 @@ export interface AlertItemProps {
     showServer?: boolean;
     onAcknowledge?: (alert: TransformedAlert) => void;
     onUnacknowledge?: (alertId: number | string) => void;
+    // Optional predicate that returns true while an unacknowledge
+    // request for the given alert id is in flight. When true, the
+    // ack/unack button renders disabled so the user cannot trigger
+    // duplicate requests.
+    isUnacknowledging?: (alertId: number | string) => boolean;
     onAnalyze?: (alert: TransformedAlert) => void;
     onEditOverride?: (alert: TransformedAlert) => void;
 }
@@ -63,6 +68,7 @@ export interface GroupedAlertInstanceProps {
     showServer: boolean;
     onAcknowledge?: (alert: TransformedAlert) => void;
     onUnacknowledge?: (alertId: number | string) => void;
+    isUnacknowledging?: (alertId: number | string) => boolean;
     onAnalyze?: (alert: TransformedAlert) => void;
     onEditOverride?: (alert: TransformedAlert) => void;
 }
@@ -73,6 +79,7 @@ export interface GroupedAlertItemProps {
     showServer?: boolean;
     onAcknowledge?: (alert: TransformedAlert) => void;
     onUnacknowledge?: (alertId: number | string) => void;
+    isUnacknowledging?: (alertId: number | string) => boolean;
     onAnalyze?: (alert: TransformedAlert) => void;
     onEditOverride?: (alert: TransformedAlert) => void;
     onAcknowledgeGroup?: (alerts: TransformedAlert[]) => void;
@@ -93,6 +100,7 @@ export interface AlertsSectionProps {
     showServer?: boolean;
     onAcknowledge?: (alert: TransformedAlert) => void;
     onUnacknowledge?: (alertId: number | string) => void;
+    isUnacknowledging?: (alertId: number | string) => boolean;
     onAnalyze?: (alert: TransformedAlert) => void;
     onEditOverride?: (alert: TransformedAlert) => void;
     onAcknowledgeGroup?: (alerts: TransformedAlert[]) => void;

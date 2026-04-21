@@ -495,7 +495,7 @@ notifications:
 # datastore:
 #   host: datastore.internal.example.com
 #   database: ai_workbench_prod
-#   username: alerter
+#   username: ai_workbench
 #   password_file: /var/secrets/ai-workbench/db-password.txt
 #   port: 5432
 #   sslmode: verify-full

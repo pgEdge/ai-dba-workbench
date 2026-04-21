@@ -94,7 +94,7 @@ Edit the configuration with your settings:
 datastore:
   host: localhost
   database: ai_workbench_dev
-  username: collector_dev
+  username: ai_workbench_dev
   password_file: dev-password.txt
   sslmode: disable
 

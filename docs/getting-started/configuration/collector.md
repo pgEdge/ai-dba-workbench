@@ -104,7 +104,7 @@ datastore connection.
 - Default: `postgres`
 - Required: Yes
 - Command-line: `-pg-username`
-- Example: `username: collector`
+- Example: `username: ai_workbench`
 
 ### datastore.password_file
 
@@ -505,7 +505,7 @@ datastore:
 datastore:
   host: db.internal.example.com
   database: ai_workbench_prod
-  username: collector_prod
+  username: ai_workbench
   password_file: /var/secrets/password.txt
   port: 5432
   sslmode: verify-full

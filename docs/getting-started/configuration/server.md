@@ -664,7 +664,7 @@ database:
   host: "db.internal.example.com"
   port: 5432
   database: "ai_workbench_prod"
-  user: "mcp_server"
+  user: "ai_workbench"
   sslmode: "verify-full"
   pool_max_conns: 10
 embedding:

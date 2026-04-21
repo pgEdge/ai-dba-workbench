@@ -226,7 +226,7 @@ pool:
 # datastore:
 #   host: datastore.internal.example.com
 #   database: ai_workbench_prod
-#   username: collector
+#   username: ai_workbench
 #   password_file: /var/secrets/ai-workbench/db-password.txt
 #   port: 5432
 #   sslmode: verify-full
@@ -248,7 +248,7 @@ pool:
 # datastore:
 #   host: metrics-db.internal.example.com
 #   database: ai_workbench
-#   username: collector
+#   username: ai_workbench
 #   password_file: /etc/ai-workbench/password.txt
 #   sslmode: require
 # pool:

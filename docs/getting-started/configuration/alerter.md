@@ -109,7 +109,7 @@ verification:
 datastore:
   host: db.example.com
   database: ai_workbench
-  username: alerter
+  username: ai_workbench
   password_file: /etc/ai-workbench/password.txt
   port: 5432
   sslmode: verify-full

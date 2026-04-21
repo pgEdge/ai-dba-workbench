@@ -263,7 +263,7 @@ export function Chart(props: ChartProps) {
             .then((refreshed) => {
                 setLiveData(refreshed);
             })
-            .catch((err) => {
+            .catch((err: unknown) => {
                 console.error('Chart refresh failed:', err);
             });
     }, [onDataRefresh]);

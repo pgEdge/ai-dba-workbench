@@ -2,6 +2,9 @@
 .claude/settings.local.json
 .playwright-cli/
 
+# Git
+.worktrees/
+
 # Build output directory (including runtime configs copied there)
 bin/
 
@@ -63,3 +66,4 @@ CLAUDE.local.md
 WORK_TODO.md
 collector/src/ai-dba-collector
 examples/walkthrough/secret/
+

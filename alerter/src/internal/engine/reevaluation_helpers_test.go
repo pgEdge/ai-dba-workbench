@@ -10,6 +10,7 @@
 package engine
 
 import (
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -239,7 +240,10 @@ func TestBuildReevaluationPromptWithConnectionAlerts(t *testing.T) {
 	}
 
 	// Should NOT include Alert 1 since it's the same as the main alert
-	// Actually checking the logic: Alert 1 is skipped because ca.ID == alert.ID
+	// (skipped because ca.ID == alert.ID).
+	if strings.Contains(prompt, "Alert 1") {
+		t.Errorf("prompt should not contain %q (filtered by ca.ID == alert.ID)", "Alert 1")
+	}
 }
 
 // TestBuildReevaluationPromptWithClusterContext tests with cluster peers and alerts
@@ -294,58 +298,76 @@ func TestBuildReevaluationPromptWithClusterContext(t *testing.T) {
 // TestParseReevaluationResponseEdgeCases tests edge cases in parsing
 func TestParseReevaluationResponseEdgeCases(t *testing.T) {
 	tests := []struct {
-		name             string
-		response         string
-		expectedDecision string
+		name                string
+		response            string
+		expectedDecision    string
+		expectedConfidence  float64
+		confidenceTolerance float64
 	}{
 		{
-			name:             "JSON with whitespace",
-			response:         `  { "decision" : "clear" , "confidence" : 0.9 }  `,
-			expectedDecision: "clear",
+			name:               "JSON with whitespace",
+			response:           `  { "decision" : "clear" , "confidence" : 0.9 }  `,
+			expectedDecision:   "clear",
+			expectedConfidence: 0.9,
 		},
 		{
-			name:             "JSON with nested reasoning",
-			response:         `{"decision": "keep", "confidence": 0.8, "reasoning": "The {\"nested\": \"json\"} is complex"}`,
-			expectedDecision: "keep",
+			name:               "JSON with nested reasoning",
+			response:           `{"decision": "keep", "confidence": 0.8, "reasoning": "The {\"nested\": \"json\"} is complex"}`,
+			expectedDecision:   "keep",
+			expectedConfidence: 0.8,
 		},
 		{
-			name:             "Very low confidence",
-			response:         `{"decision": "clear", "confidence": 0.001}`,
-			expectedDecision: "clear",
+			name:               "Very low confidence",
+			response:           `{"decision": "clear", "confidence": 0.001}`,
+			expectedDecision:   "clear",
+			expectedConfidence: 0.001,
 		},
 		{
-			name:             "Very high confidence",
-			response:         `{"decision": "keep", "confidence": 0.999}`,
-			expectedDecision: "keep",
+			name:               "Very high confidence",
+			response:           `{"decision": "keep", "confidence": 0.999}`,
+			expectedDecision:   "keep",
+			expectedConfidence: 0.999,
 		},
 		{
-			name:             "Zero confidence",
-			response:         `{"decision": "clear", "confidence": 0}`,
-			expectedDecision: "clear",
+			name:               "Zero confidence",
+			response:           `{"decision": "clear", "confidence": 0}`,
+			expectedDecision:   "clear",
+			expectedConfidence: 0,
 		},
 		{
-			name:             "Negative confidence accepted",
-			response:         `{"decision": "keep", "confidence": -0.5}`,
-			expectedDecision: "keep",
+			name:               "Negative confidence accepted",
+			response:           `{"decision": "keep", "confidence": -0.5}`,
+			expectedDecision:   "keep",
+			expectedConfidence: -0.5,
 		},
 		{
-			name:             "Mixed case text safe to clear",
-			response:         "This is Safe To Clear based on user input",
-			expectedDecision: "clear",
+			name:               "Mixed case text safe to clear",
+			response:           "This is Safe To Clear based on user input",
+			expectedDecision:   "clear",
+			expectedConfidence: 0.5,
 		},
 		{
-			name:             "Multiple clear keywords returns clear",
-			response:         "Should be cleared because it is safe to clear",
-			expectedDecision: "clear",
+			name:               "Multiple clear keywords returns clear",
+			response:           "Should be cleared because it is safe to clear",
+			expectedDecision:   "clear",
+			expectedConfidence: 0.5,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			decision, _ := parseReevaluationResponse(tt.response)
+			decision, confidence := parseReevaluationResponse(tt.response)
 			if decision != tt.expectedDecision {
 				t.Errorf("parseReevaluationResponse(%q) = %q, expected %q",
 					tt.response, decision, tt.expectedDecision)
+			}
+			tolerance := tt.confidenceTolerance
+			if tolerance == 0 {
+				tolerance = 1e-9
+			}
+			if math.Abs(confidence-tt.expectedConfidence) > tolerance {
+				t.Errorf("parseReevaluationResponse(%q) confidence = %v, expected %v (tolerance %v)",
+					tt.response, confidence, tt.expectedConfidence, tolerance)
 			}
 		})
 	}

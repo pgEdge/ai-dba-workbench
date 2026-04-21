@@ -292,7 +292,6 @@ const AlertItem = ({
                         disabled={isAcknowledged && ackInFlight}
                         onClick={(e) => {
                             e.stopPropagation();
-                            if (isAcknowledged && ackInFlight) {return;}
                             if (isAcknowledged) {
                                 onUnacknowledge?.(alert.id);
                             } else {

@@ -392,89 +392,6 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
         }
     };
 
-    // Handle unacknowledging an alert.
-    //
-    // Applies an optimistic update that immediately clears the
-    // acknowledgment fields on the targeted alert so the row moves out
-    // of the acknowledged list without waiting for the API round trip.
-    // On failure the previous alert object is restored and a
-    // user-visible error message is surfaced via the local Snackbar.
-    // Concurrent clicks on the same alert are ignored while a request
-    // is in flight.
-    const handleUnacknowledge = async (alertId) => {
-        if (!user || alertId == null) {return;}
-        // Synchronous guard: block rapid duplicate clicks that fire
-        // before React has re-rendered with the updated state.
-        if (unacknowledgingRef.current.has(alertId)) {return;}
-        unacknowledgingRef.current.add(alertId);
-
-        // Capture the previous alert from inside the setAlerts updater
-        // so we can roll back on failure. React strict mode may invoke
-        // this updater twice; both invocations observe the same `prev`
-        // snapshot so `previousAlert` stays consistent either way.
-        let previousAlert = null;
-        setAlerts(prev => {
-            const found = prev.find(a => a.id === alertId);
-            if (!found) {
-                // Nothing to optimistically update; leave state alone.
-                return prev;
-            }
-            previousAlert = found;
-            return prev.map(a => (
-                a.id === alertId
-                    ? {
-                        ...a,
-                        acknowledgedAt: undefined,
-                        acknowledgedBy: undefined,
-                        ackMessage: undefined,
-                        falsePositive: undefined,
-                    }
-                    : a
-            ));
-        });
-
-        setUnacknowledgingIds(prev => {
-            const next = new Set(prev);
-            next.add(alertId);
-            return next;
-        });
-
-        try {
-            await apiDelete(`/api/v1/alerts/acknowledge?alert_id=${alertId}`);
-            // Reconcile with server truth and beat the race with the
-            // periodic cluster refresh.
-            await fetchAlertsData();
-        } catch (err) {
-            // Roll back the optimistic update.
-            if (previousAlert) {
-                const restored = previousAlert;
-                setAlerts(prev => prev.map(a => (
-                    a.id === alertId ? restored : a
-                )));
-            }
-            const message = err instanceof ApiError
-                ? `Failed to restore alert: ${err.message}`
-                : err instanceof Error
-                    ? `Failed to restore alert: ${err.message}`
-                    : 'Failed to restore alert';
-            setErrorMessage(message);
-            console.error('Error unacknowledging alert:', err);
-        } finally {
-            unacknowledgingRef.current.delete(alertId);
-            setUnacknowledgingIds(prev => {
-                if (!prev.has(alertId)) {return prev;}
-                const next = new Set(prev);
-                next.delete(alertId);
-                return next;
-            });
-        }
-    };
-
-    const isUnacknowledging = useCallback(
-        (id: number | string) => unacknowledgingIds.has(id),
-        [unacknowledgingIds],
-    );
-
     // Fetch alerts data function
     const fetchAlertsData = useCallback(async () => {
         if (!user || !selection) {
@@ -534,6 +451,89 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
             setLoading(false);
         }
     }, [user, selection, transformAlerts]);
+
+    // Handle unacknowledging an alert.
+    //
+    // Applies an optimistic update that immediately clears the
+    // acknowledgment fields on the targeted alert so the row moves out
+    // of the acknowledged list without waiting for the API round trip.
+    // On failure the previous alert object is restored and a
+    // user-visible error message is surfaced via the local Snackbar.
+    // Concurrent clicks on the same alert are ignored while a request
+    // is in flight.
+    const handleUnacknowledge = useCallback(async (alertId) => {
+        if (!user || !alertId) {return;}
+        // Synchronous guard: block rapid duplicate clicks that fire
+        // before React has re-rendered with the updated state.
+        if (unacknowledgingRef.current.has(alertId)) {return;}
+        unacknowledgingRef.current.add(alertId);
+
+        // Capture the previous alert from inside the setAlerts updater
+        // so we can roll back on failure. React strict mode may invoke
+        // this updater twice; both invocations observe the same `prev`
+        // snapshot so `previousAlert` stays consistent either way.
+        let previousAlert = null;
+        setAlerts(prev => {
+            const found = prev.find(a => a.id === alertId);
+            if (!found) {
+                // Nothing to optimistically update; leave state alone.
+                return prev;
+            }
+            previousAlert = found;
+            return prev.map(a => (
+                a.id === alertId
+                    ? {
+                        ...a,
+                        acknowledgedAt: undefined,
+                        acknowledgedBy: undefined,
+                        ackMessage: undefined,
+                        falsePositive: undefined,
+                    }
+                    : a
+            ));
+        });
+
+        setUnacknowledgingIds(prev => {
+            const next = new Set(prev);
+            next.add(alertId);
+            return next;
+        });
+
+        try {
+            await apiDelete(`/api/v1/alerts/acknowledge?alert_id=${alertId}`);
+            // Reconcile with server truth and beat the race with the
+            // periodic cluster refresh.
+            await fetchAlertsData();
+        } catch (err) {
+            // Roll back the optimistic update.
+            if (previousAlert) {
+                const restored = previousAlert;
+                setAlerts(prev => prev.map(a => (
+                    a.id === alertId ? restored : a
+                )));
+            }
+            const message = err instanceof ApiError
+                ? `Failed to restore alert: ${err.message} (HTTP ${err.statusCode})`
+                : err instanceof Error
+                    ? `Failed to restore alert: ${err.message}`
+                    : 'Failed to restore alert';
+            setErrorMessage(message);
+            console.error('Error unacknowledging alert:', err);
+        } finally {
+            unacknowledgingRef.current.delete(alertId);
+            setUnacknowledgingIds(prev => {
+                if (!prev.has(alertId)) {return prev;}
+                const next = new Set(prev);
+                next.delete(alertId);
+                return next;
+            });
+        }
+    }, [user, fetchAlertsData]);
+
+    const isUnacknowledging = useCallback(
+        (id: number | string) => unacknowledgingIds.has(id),
+        [unacknowledgingIds],
+    );
 
     // Reset initial load state when selection changes
     useEffect(() => {

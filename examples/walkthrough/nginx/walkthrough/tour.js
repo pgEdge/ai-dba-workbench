@@ -70,7 +70,7 @@
             container = container.parentElement;
         }
         // Fallback: no scroll container found, try regular scroll
-        scrollPanelTo(el);
+        el.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
 
     /**

@@ -266,12 +266,10 @@ func TestDatastoreConfigEmptyYAML(t *testing.T) {
 		t.Fatalf("failed to unmarshal empty YAML: %v", err)
 	}
 
-	// All fields should be zero values
-	if cfg.Host != "" {
-		t.Errorf("Host = %q, want empty string", cfg.Host)
-	}
-	if cfg.Port != 0 {
-		t.Errorf("Port = %d, want 0", cfg.Port)
+	// All fields should be zero values - compare to zero-value struct
+	want := DatastoreConfig{}
+	if cfg != want {
+		t.Errorf("cfg = %+v, want %+v", cfg, want)
 	}
 }
 

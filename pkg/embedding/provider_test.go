@@ -278,3 +278,54 @@ func TestProviderInterface(t *testing.T) {
 	var _ Provider = (*GeminiProvider)(nil)
 	var _ Provider = (*OllamaProvider)(nil)
 }
+
+func TestNewProvider_OpenAI_CustomBaseURL(t *testing.T) {
+	cfg := Config{
+		Provider:      "openai",
+		Model:         "text-embedding-3-small",
+		OpenAIAPIKey:  "test-api-key-12345678",
+		OpenAIBaseURL: "https://custom.openai.example.com/v1",
+	}
+
+	provider, err := NewProvider(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if provider == nil {
+		t.Fatal("expected non-nil provider")
+	}
+	// Verify the custom base URL was propagated to the provider
+	openaiProvider, ok := provider.(*OpenAIProvider)
+	if !ok {
+		t.Fatal("expected provider to be *OpenAIProvider")
+	}
+	if openaiProvider.baseURL != "https://custom.openai.example.com/v1" {
+		t.Errorf("expected base URL 'https://custom.openai.example.com/v1', got %q",
+			openaiProvider.baseURL)
+	}
+}
+
+func TestNewProvider_Ollama_CustomBaseURL(t *testing.T) {
+	cfg := Config{
+		Provider:  "ollama",
+		Model:     "nomic-embed-text",
+		OllamaURL: "http://custom-ollama.local:11434",
+	}
+
+	provider, err := NewProvider(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if provider == nil {
+		t.Fatal("expected non-nil provider")
+	}
+	// Verify the custom base URL was propagated to the provider
+	ollamaProvider, ok := provider.(*OllamaProvider)
+	if !ok {
+		t.Fatal("expected provider to be *OllamaProvider")
+	}
+	if ollamaProvider.baseURL != "http://custom-ollama.local:11434" {
+		t.Errorf("expected base URL 'http://custom-ollama.local:11434', got %q",
+			ollamaProvider.baseURL)
+	}
+}

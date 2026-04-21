@@ -10,7 +10,7 @@
 
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import MetricOverlay from '../MetricOverlay';
 import { OverlayEntry } from '../types';
@@ -64,6 +64,10 @@ describe('MetricOverlay', () => {
         vi.clearAllMocks();
         mockCurrentOverlay = null;
         mockOverlayStack = [];
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
     });
 
     it('renders nothing when currentOverlay is null', () => {

@@ -10,7 +10,7 @@
 
 import React from 'react';
 import { render, screen } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import EstateDashboard from '../index';
 
@@ -70,6 +70,10 @@ describe('EstateDashboard', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         vi.mocked(localStorage.getItem).mockReturnValue(null);
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
     });
 
     it('renders Health Overview section', () => {

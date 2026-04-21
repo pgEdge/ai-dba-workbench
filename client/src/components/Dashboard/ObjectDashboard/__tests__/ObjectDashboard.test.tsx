@@ -10,7 +10,7 @@
 
 import React from 'react';
 import { render, screen } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import ObjectDashboard from '../index';
 import { ObjectType, OverlayEntry } from '../../types';
@@ -120,6 +120,10 @@ describe('ObjectDashboard', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mockCurrentOverlay = null;
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
     });
 
     describe('header rendering', () => {

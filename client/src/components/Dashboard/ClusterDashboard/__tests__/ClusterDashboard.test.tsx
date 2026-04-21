@@ -10,7 +10,7 @@
 
 import React from 'react';
 import { render, screen } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import ClusterDashboard from '../index';
 
@@ -61,6 +61,10 @@ describe('ClusterDashboard', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         vi.mocked(localStorage.getItem).mockReturnValue(null);
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
     });
 
     it('renders Replication Lag section', () => {

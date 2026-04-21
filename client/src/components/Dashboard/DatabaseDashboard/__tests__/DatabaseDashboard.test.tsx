@@ -10,7 +10,7 @@
 
 import React from 'react';
 import { render, screen } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import DatabaseDashboard from '../index';
 
@@ -115,6 +115,10 @@ const renderDatabaseDashboard = (props: Partial<DatabaseDashboardProps> = {}) =>
 describe('DatabaseDashboard', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
     });
 
     it('renders database name in header', () => {

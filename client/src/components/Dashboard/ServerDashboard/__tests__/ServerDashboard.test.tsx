@@ -10,7 +10,7 @@
 
 import React from 'react';
 import { render, screen } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import ServerDashboard from '../index';
 
@@ -91,6 +91,10 @@ const renderServerDashboard = (selection: Record<string, unknown> = createSelect
 describe('ServerDashboard', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
     });
 
     it('renders all sections when valid selection is provided', () => {

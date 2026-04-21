@@ -170,7 +170,7 @@ func (h *ConnectionHandler) listConnections(w http.ResponseWriter, r *http.Reque
 	} else {
 		lister = newConnectionVisibilityLister(h.datastore)
 	}
-	visibleIDs, allConnections, err := h.rbacChecker.VisibleConnectionIDs(r.Context(), lister)
+	visibleIDs, allConnections, err := h.rbacChecker.VisibleConnectionIDs(ctx, lister)
 	if err != nil {
 		log.Printf("[ERROR] Failed to resolve visible connections: %v", err)
 		RespondError(w, http.StatusInternalServerError,

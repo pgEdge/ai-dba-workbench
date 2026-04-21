@@ -20,8 +20,5 @@ import (
 // This function exists because the Datastore fields are unexported,
 // so tests in other packages cannot construct one directly.
 func NewTestDatastore(pool *pgxpool.Pool) *Datastore {
-	return &Datastore{
-		pool:   pool,
-		config: nil,
-	}
+	return &Datastore{pool: pool}
 }

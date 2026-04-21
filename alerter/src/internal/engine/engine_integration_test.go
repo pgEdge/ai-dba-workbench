@@ -166,13 +166,6 @@ DROP TABLE IF EXISTS clusters CASCADE;
 DROP TABLE IF EXISTS cluster_groups CASCADE;
 `
 
-// testDatastore wraps a pool for testing and satisfies the engine's needs.
-// It is a minimal wrapper that embeds database.Datastore functionality
-// without requiring the full config-based constructor.
-type testDatastore struct {
-	pool *pgxpool.Pool
-}
-
 // newEngineIntegrationTestEnv creates a test environment with schema and
 // returns the datastore, pool, and cleanup function. The test is skipped
 // if TEST_AI_WORKBENCH_SERVER is not set.

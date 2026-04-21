@@ -83,6 +83,17 @@ func (s *Server) RunHTTP(config *HTTPConfig) error {
 		}
 	}
 
+	// Validate CORS configuration before binding any listener so
+	// misconfigurations fail fast at startup rather than producing
+	// browsers that silently reject responses at runtime.
+	// Auth is enabled whenever AuthStore is non-nil: AuthMiddleware below
+	// is always constructed with enabled=true, so it authenticates every
+	// request (issuing Set-Cookie / reading Authorization headers)
+	// precisely when AuthStore != nil.
+	if err := validateCORSOrigin(config.CORSOrigin, config.AuthStore != nil); err != nil {
+		return err
+	}
+
 	// Wrap with auth middleware
 	var handler http.Handler = mux
 	handler = auth.AuthMiddleware(config.AuthStore, true)(handler)
@@ -92,15 +103,6 @@ func (s *Server) RunHTTP(config *HTTPConfig) error {
 
 	// Apply CORS middleware if an origin is configured (skip for same-origin deployments)
 	if config.CORSOrigin != "" {
-		if config.CORSOrigin == "*" {
-			fmt.Fprintf(os.Stderr, "WARNING: CORS origin is set to wildcard (*). "+
-				"Using a wildcard origin with credentials is not recommended "+
-				"for production deployments.\n")
-		} else {
-			if _, err := url.ParseRequestURI(config.CORSOrigin); err != nil {
-				return fmt.Errorf("invalid CORS origin %q: %w", config.CORSOrigin, err)
-			}
-		}
 		handler = CORSMiddleware(config.CORSOrigin)(handler)
 	}
 
@@ -512,6 +514,35 @@ func MaxBytesMiddleware(maxBytes int64) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// validateCORSOrigin validates a configured CORS origin. An empty origin
+// is allowed (same-origin deployments skip CORS entirely). A wildcard
+// origin ("*") is rejected when auth is enabled because the Fetch spec
+// forbids combining Access-Control-Allow-Origin: * with
+// Access-Control-Allow-Credentials: true, causing browsers to silently
+// drop responses. Any non-wildcard origin must parse as a valid URI.
+func validateCORSOrigin(origin string, authEnabled bool) error {
+	if origin == "" {
+		return nil
+	}
+	if origin == "*" {
+		if authEnabled {
+			return fmt.Errorf(
+				"cors_origin %q cannot be used when authentication is "+
+					"enabled: browsers reject Access-Control-Allow-Origin: * "+
+					"with Access-Control-Allow-Credentials: true (per the "+
+					"Fetch spec). Set cors_origin to an explicit origin "+
+					"(e.g., https://dba.example.com) or leave it empty for "+
+					"same-origin deployments.",
+				origin)
+		}
+		return nil
+	}
+	if _, err := url.ParseRequestURI(origin); err != nil {
+		return fmt.Errorf("invalid CORS origin %q: %w", origin, err)
+	}
+	return nil
 }
 
 // CORSMiddleware adds Cross-Origin Resource Sharing headers for the specified origin.

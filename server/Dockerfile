@@ -29,6 +29,7 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /build/ai-dba-server ./cmd/mcp-se
 # Stage 2: Runtime image
 FROM debian:bookworm-slim
 
+# hadolint ignore=DL3008
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates && \
     rm -rf /var/lib/apt/lists/*
@@ -36,6 +37,9 @@ RUN apt-get update && \
 RUN mkdir -p /etc/pgedge /data
 
 COPY --from=builder /build/ai-dba-server /usr/local/bin/ai-dba-server
+
+RUN groupadd -r appuser && useradd -r -g appuser -d /nonexistent -s /usr/sbin/nologin appuser
+USER appuser
 
 EXPOSE 8080
 VOLUME /data

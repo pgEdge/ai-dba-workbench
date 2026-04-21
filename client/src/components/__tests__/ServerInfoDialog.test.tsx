@@ -541,9 +541,14 @@ describe('ServerInfoDialog', () => {
                 expect(screen.getByText('appdb')).toBeInTheDocument();
             });
 
-            // AI skeletons should be visible in the Databases section
-            const skeletons = document.querySelectorAll('.MuiSkeleton-root');
-            expect(skeletons.length).toBeGreaterThan(0);
+            // The AI loading skeleton renders after a second useEffect
+            // sets aiLoading=true, which happens asynchronously after the
+            // server info data lands. Use waitFor so the assertion retries
+            // until that state update and re-render completes.
+            await waitFor(() => {
+                const skeletons = document.querySelectorAll('.MuiSkeleton-root');
+                expect(skeletons.length).toBeGreaterThan(0);
+            });
 
             // Clean up
             resolveAi!(makeAiAnalysisResponse());

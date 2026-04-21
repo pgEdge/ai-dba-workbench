@@ -296,6 +296,7 @@ const AdminAlertRules: React.FC = () => {
                             checked={editEnabled}
                             onChange={(e) => setEditEnabled(e.target.checked)}
                             disabled={saving}
+                            inputProps={{ 'aria-label': 'Enabled' }}
                         />
                     </Box>
                     <TextField

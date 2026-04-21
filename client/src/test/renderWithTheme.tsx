@@ -58,6 +58,23 @@ import { ThemeProvider, createTheme } from '@mui/material/styles';
 import ImmediateTransition from './ImmediateTransition';
 
 const noTransitionsTheme = createTheme({
+    palette: {
+        custom: {
+            status: {
+                connected: '#22B8CF',
+                online: '#40C057',
+                sky: '#339AF0',
+                skyDark: '#1C7ED6',
+                skyLight: '#74C0FC',
+                purple: '#9775FA',
+                purpleLight: '#B197FC',
+                cyan: '#15AABF',
+            },
+            accent: '#15AABF',
+            accentHover: '#0C8599',
+            accentLight: '#22B8CF',
+        },
+    },
     transitions: {
         create: () => 'none',
         duration: {

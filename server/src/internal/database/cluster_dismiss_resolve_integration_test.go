@@ -321,3 +321,142 @@ func TestResolveConnectionHierarchy_DoesNotResurrectDismissedCluster(t *testing.
 		}
 	}
 }
+
+// TestResolveConnectionHierarchy_InsertBranchDoesNotResurrect exercises
+// the INSERT fallback inside resolveConnectionHierarchy when a dismissed
+// cluster row already occupies the auto_cluster_key. The row is pre-seeded
+// directly via SQL (bypassing DeleteCluster) so the test isolates the
+// INSERT … ON CONFLICT DO NOTHING + re-SELECT WHERE dismissed = FALSE
+// path. Before the fix, the ON CONFLICT … DO UPDATE SET updated_at
+// clause would silently surface the dismissed row by returning it via
+// RETURNING.
+//
+// With the fixed initial SELECT that reads cl.dismissed, the presence of
+// the dismissed row causes the function to return nil before reaching the
+// INSERT branch. This test therefore also validates the SELECT-path
+// dismissed check from a different angle: the row was never part of the
+// normal upsert-then-dismiss lifecycle. It was dismissed from birth, as
+// would happen if a previous process created and dismissed it and only
+// the tombstone remains.
+func TestResolveConnectionHierarchy_InsertBranchDoesNotResurrect(t *testing.T) {
+	ds, pool, cleanup := newResolveHierarchyTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// 1) Default group.
+	var groupID int
+	if err := pool.QueryRow(ctx, `
+        INSERT INTO cluster_groups (name, description, is_shared, is_default)
+        VALUES ('Servers/Clusters', 'default', TRUE, TRUE)
+        RETURNING id
+    `).Scan(&groupID); err != nil {
+		t.Fatalf("insert default group: %v", err)
+	}
+
+	// 2) Pre-seed a dismissed cluster row directly. We intentionally
+	//    bypass DeleteCluster so the row starts as dismissed. This
+	//    simulates a cluster that was dismissed in a previous session
+	//    and only exists as a tombstone in the database.
+	autoKey := "spock:pg17"
+	var dismissedClusterID int
+	if err := pool.QueryRow(ctx, `
+        INSERT INTO clusters (name, auto_cluster_key, group_id, dismissed)
+        VALUES ('pg17 Spock', $1, $2, TRUE)
+        RETURNING id`, autoKey, groupID).Scan(&dismissedClusterID); err != nil {
+		t.Fatalf("pre-seed dismissed cluster: %v", err)
+	}
+
+	// Sanity: the row is dismissed.
+	var dismissed bool
+	if err := pool.QueryRow(ctx,
+		`SELECT dismissed FROM clusters WHERE id = $1`,
+		dismissedClusterID).Scan(&dismissed); err != nil {
+		t.Fatalf("read pre-seeded dismissed flag: %v", err)
+	}
+	if !dismissed {
+		t.Fatalf("pre-seeded cluster is not dismissed")
+	}
+
+	// 3) Two Spock connections that form a cluster keyed 'spock:pg17'.
+	//    Two nodes are needed so the cluster type is "spock" rather than
+	//    "server" (standalone servers are skipped by the resolver).
+	var connID int
+	for _, name := range []string{"pg17-node1", "pg17-node2"} {
+		var id int
+		if err := pool.QueryRow(ctx, `
+            INSERT INTO connections (
+                name, host, port, database_name, username,
+                owner_username, is_monitored, membership_source
+            )
+            VALUES ($1, '10.0.0.1', 5432, 'postgres', 'postgres',
+                    'alice', TRUE, 'auto')
+            RETURNING id`, name).Scan(&id); err != nil {
+			t.Fatalf("insert connection %s: %v", name, err)
+		}
+		if connID == 0 {
+			connID = id
+		}
+		if _, err := pool.Exec(ctx, `
+            INSERT INTO metrics.pg_connectivity (connection_id, collected_at)
+            VALUES ($1, NOW())`, id); err != nil {
+			t.Fatalf("insert pg_connectivity for %s: %v", name, err)
+		}
+		if _, err := pool.Exec(ctx, `
+            INSERT INTO metrics.pg_node_role (
+                connection_id, primary_role, has_spock,
+                binary_standby_count, is_streaming_standby, collected_at
+            )
+            VALUES ($1, 'primary', TRUE, 0, FALSE, NOW())`, id); err != nil {
+			t.Fatalf("insert pg_node_role for %s: %v", name, err)
+		}
+	}
+
+	// 4) resolveConnectionHierarchy must return nil hierarchy because
+	//    the matching cluster is dismissed. Before the fix, this call
+	//    would return the dismissed cluster's id and name.
+	cID, cName, gID, gName, err := ds.resolveConnectionHierarchy(ctx, connID)
+	if err != nil {
+		t.Fatalf("resolveConnectionHierarchy: %v", err)
+	}
+	if cID != nil || cName != nil || gID != nil || gName != nil {
+		t.Fatalf("resolver resurrected a pre-seeded dismissed cluster: "+
+			"cID=%v cName=%v gID=%v gName=%v (issue #36)",
+			cID, cName, gID, gName)
+	}
+
+	// 5) The dismissed row must be unchanged: still dismissed, and no
+	//    second (live) row inserted alongside it.
+	if err := pool.QueryRow(ctx,
+		`SELECT dismissed FROM clusters WHERE id = $1`,
+		dismissedClusterID).Scan(&dismissed); err != nil {
+		t.Fatalf("read dismissed flag after resolve: %v", err)
+	}
+	if !dismissed {
+		t.Fatalf("resolver cleared dismissed flag on pre-seeded row (issue #36)")
+	}
+
+	var totalRows, liveRows int
+	if err := pool.QueryRow(ctx, `
+        SELECT
+            COUNT(*),
+            COUNT(*) FILTER (WHERE dismissed = FALSE)
+        FROM clusters
+        WHERE auto_cluster_key = $1`, autoKey).Scan(&totalRows, &liveRows); err != nil {
+		t.Fatalf("count clusters by auto key: %v", err)
+	}
+	if totalRows != 1 || liveRows != 0 {
+		t.Fatalf("unexpected cluster rows: total=%d live=%d (issue #36)",
+			totalRows, liveRows)
+	}
+
+	// 6) ListClustersForAutocomplete must not return the dismissed cluster.
+	summaries, err := ds.ListClustersForAutocomplete(ctx)
+	if err != nil {
+		t.Fatalf("ListClustersForAutocomplete: %v", err)
+	}
+	if containsClusterID(summaries, dismissedClusterID) {
+		t.Fatalf("dropdown returned dismissed cluster %d after resolve (issue #36)",
+			dismissedClusterID)
+	}
+}

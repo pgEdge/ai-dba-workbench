@@ -103,4 +103,4 @@ help:
 # Kill all running collector processes
 killall:
 	@pkill -9 ai-dba-collector 2>/dev/null || true
-	@pkill -9 -f "go run.*collector" 2>/dev/null || true
+	@pkill -9 -f "[g]o run.*collector" 2>/dev/null || true

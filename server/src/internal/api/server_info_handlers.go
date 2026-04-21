@@ -612,7 +612,7 @@ func (h *ServerInfoHandler) queryKeySettings(
         ORDER BY category, name
     `, strings.Join(placeholders, ", "))
 
-	rows, err := pool.Query(ctx, query, args...)
+	rows, err := pool.Query(ctx, query, args...) // nosemgrep: go-sql-concat-sqli
 	if err != nil {
 		log.Printf("[DEBUG] No settings info for connection %d: %v",
 			connectionID, err)

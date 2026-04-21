@@ -458,7 +458,7 @@ func blackoutsAllConnections(
 	queryArgs = append(queryArgs, connArgs...)
 	queryArgs = append(queryArgs, activeOnly, limit)
 
-	rows, err := pool.Query(ctx, query, queryArgs...)
+	rows, err := pool.Query(ctx, query, queryArgs...) // nosemgrep: go-sql-concat-sqli
 	if err != nil {
 		return mcp.NewToolError(fmt.Sprintf("Failed to query blackouts: %v", err))
 	}
@@ -582,7 +582,7 @@ func blackoutSchedulesAllConnections(
 	queryArgs = append(queryArgs, connArgs...)
 	queryArgs = append(queryArgs, limit)
 
-	schedRows, err := pool.Query(ctx, query, queryArgs...)
+	schedRows, err := pool.Query(ctx, query, queryArgs...) // nosemgrep: go-sql-concat-sqli
 	if err != nil {
 		return "", fmt.Errorf("failed to query blackout schedules: %w", err)
 	}

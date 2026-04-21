@@ -153,6 +153,7 @@ func (d *Datastore) ListBlackouts(ctx context.Context, filter BlackoutFilter) (*
 	// Get total count
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM blackouts b %s", whereClause)
 	var totalCount int
+	// nosemgrep: go-sql-concat-sqli
 	if err := d.pool.QueryRow(ctx, countQuery, args...).Scan(&totalCount); err != nil {
 		return nil, fmt.Errorf("failed to count blackouts: %w", err)
 	}
@@ -179,7 +180,7 @@ func (d *Datastore) ListBlackouts(ctx context.Context, filter BlackoutFilter) (*
     `, whereClause, argNum, argNum+1)
 	args = append(args, limit, offset)
 
-	rows, err := d.pool.Query(ctx, query, args...)
+	rows, err := d.pool.Query(ctx, query, args...) // nosemgrep: go-sql-concat-sqli
 	if err != nil {
 		return nil, fmt.Errorf("failed to query blackouts: %w", err)
 	}

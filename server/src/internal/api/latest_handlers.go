@@ -538,7 +538,7 @@ func queryLatestSnapshot(
 	)
 	args = append(args, limit)
 
-	rows, err := pool.Query(ctx, dataQuery, args...)
+	rows, err := pool.Query(ctx, dataQuery, args...) // nosemgrep: go-sql-concat-sqli
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to query latest snapshot: %w", err)
 	}

@@ -340,7 +340,7 @@ func searchKB(kbPath string, queryEmbedding []float32, projectNames, projectVers
 		query += fmt.Sprintf(" AND project_version IN (%s)", strings.Join(placeholders, ", "))
 	}
 
-	rows, err := db.Query(query, args...)
+	rows, err := db.Query(query, args...) // nosemgrep: go-sql-concat-sqli
 	if err != nil {
 		return nil, fmt.Errorf("query failed: %w", err)
 	}

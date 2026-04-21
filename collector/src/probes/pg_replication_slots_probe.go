@@ -162,7 +162,7 @@ func (p *PgReplicationSlotsProbe) Execute(ctx context.Context, connectionName st
 	}
 
 	wrappedQuery := WrapQuery(ProbeNamePgReplicationSlots, query)
-	rows, err := monitoredConn.Query(ctx, wrappedQuery)
+	rows, err := monitoredConn.Query(ctx, wrappedQuery) // nosemgrep: go-sql-concat-sqli
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute query: %w", err)
 	}

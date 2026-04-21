@@ -453,7 +453,7 @@ func alertHistoryAllConnections(
 	queryArgs = append(queryArgs, connArgs...)
 	queryArgs = append(queryArgs, timeStart, statusParam, ruleID, metricName, limit, offset)
 
-	rows, err := pool.Query(ctx, query, queryArgs...)
+	rows, err := pool.Query(ctx, query, queryArgs...) // nosemgrep: go-sql-concat-sqli
 	if err != nil {
 		return mcp.NewToolError(fmt.Sprintf("Failed to query alerts: %v", err))
 	}

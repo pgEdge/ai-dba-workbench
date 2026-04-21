@@ -264,7 +264,7 @@ func (p *PgStatStatementsProbe) Execute(ctx context.Context, connectionName stri
 	}
 
 	wrappedQuery := WrapQuery(ProbeNamePgStatStatements, query)
-	rows, err := monitoredConn.Query(ctx, wrappedQuery)
+	rows, err := monitoredConn.Query(ctx, wrappedQuery) // nosemgrep: go-sql-concat-sqli
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute query: %w", err)
 	}

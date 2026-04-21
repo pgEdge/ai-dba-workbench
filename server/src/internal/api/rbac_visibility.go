@@ -32,7 +32,7 @@ type rbacVisibilityDatastore interface {
 // filtering entirely. The visible map is nil when allConnections is
 // true.
 func resolveVisibleConnectionSet(ctx context.Context, rbac *auth.RBACChecker, ds *database.Datastore) (map[int]bool, bool, error) {
-	// Defence-in-depth: NewBlackoutHandler and NewClusterHandler both
+	// Defense-in-depth: NewBlackoutHandler and NewClusterHandler both
 	// accept a nil rbacChecker (and are exercised with nil in tests),
 	// so treat a nil checker as unrestricted visibility rather than
 	// panicking on the method call below.

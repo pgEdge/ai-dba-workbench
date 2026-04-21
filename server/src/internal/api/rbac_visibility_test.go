@@ -15,7 +15,7 @@ import (
 )
 
 // TestResolveVisibleConnectionSet_NilRBAC_ReturnsAllConnections verifies
-// the defence-in-depth nil guard added after CodeRabbit's follow-up
+// the defense-in-depth nil guard added after CodeRabbit's follow-up
 // review on issue #35. NewBlackoutHandler and NewClusterHandler both
 // accept a nil rbacChecker (the blackout and cluster handler tests
 // construct handlers that way), so resolveVisibleConnectionSet must

@@ -233,8 +233,8 @@ describe('ClusterSelectionContext', () => {
 
             const { result } = renderHook(() => useClusterSelection(), { wrapper });
 
-            // Give the effect a chance to run.
-            await new Promise((r) => setTimeout(r, 20));
+            // Wait for the effect to call the API, then verify state remains null.
+            await waitFor(() => expect(mockApiGet).toHaveBeenCalled());
             expect(result.current.selectedServer).toBeNull();
         });
     });

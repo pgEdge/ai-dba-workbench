@@ -1,0 +1,33 @@
+datastore:
+    host: postgres
+    database: ai_workbench
+    username: postgres
+    password_file: /etc/pgedge/secret/pg-password
+    port: 5432
+    sslmode: disable
+
+pool:
+    max_connections: 10
+
+threshold:
+    evaluation_interval_seconds: 60
+
+anomaly:
+    enabled: true
+    tier1:
+        enabled: true
+        default_sensitivity: 2.5
+        evaluation_interval_seconds: 60
+    tier2:
+        enabled: false
+    tier3:
+        enabled: false
+
+baselines:
+    refresh_interval_seconds: 3600
+    lookback_days: 1
+
+correlation:
+    window_seconds: 120
+
+secret_file: /etc/pgedge/secret/ai-dba.secret

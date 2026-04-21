@@ -533,7 +533,13 @@ func TestEngine_ConnectionErrorAlerts_Integration(t *testing.T) {
 			t.Fatalf("UpdateConnectionAlertDescription failed: %v", err)
 		}
 
-		_, desc, _, _ := ds.GetActiveConnectionAlert(ctx, connID)
+		_, desc, found, err := ds.GetActiveConnectionAlert(ctx, connID)
+		if err != nil {
+			t.Fatalf("GetActiveConnectionAlert failed: %v", err)
+		}
+		if !found {
+			t.Fatalf("Expected to find active connection alert for conn %d", connID)
+		}
 		if desc != "Timeout after 30s" {
 			t.Errorf("Description = %q, want \"Timeout after 30s\"", desc)
 		}

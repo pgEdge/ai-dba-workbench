@@ -324,7 +324,7 @@ func TestParseReevaluationResponseEdgeCases(t *testing.T) {
 			expectedDecision: "clear",
 		},
 		{
-			name:             "Negative confidence treated as zero",
+			name:             "Negative confidence accepted",
 			response:         `{"decision": "keep", "confidence": -0.5}`,
 			expectedDecision: "keep",
 		},

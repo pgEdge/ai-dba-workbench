@@ -69,29 +69,3 @@ func TestCheckAlertResolvedMissingFields(t *testing.T) {
 		})
 	}
 }
-
-// TestAlertTypeConstants tests that alert type constants are used correctly
-func TestAlertTypeConstants(t *testing.T) {
-	alert := &database.Alert{
-		ID:        1,
-		AlertType: "threshold",
-		RuleID:    int64Ptr(10),
-	}
-
-	// Verify the alert type check pattern
-	if alert.ID != 1 || alert.AlertType != "threshold" || alert.RuleID == nil {
-		t.Error("Alert should have ID, threshold type, and rule ID")
-	}
-
-	anomalyAlert := &database.Alert{
-		ID:        2,
-		AlertType: "anomaly",
-	}
-
-	if anomalyAlert.ID != 2 || anomalyAlert.AlertType != "anomaly" {
-		t.Error("Anomaly alert should have ID and anomaly type")
-	}
-}
-
-// int64Ptr is a helper to create *int64
-func int64Ptr(i int64) *int64 { return &i }

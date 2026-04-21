@@ -13,10 +13,82 @@ import (
 	"bytes"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
 )
+
+// stderrCaptureMu serializes access to os.Stderr when tests replace it with a
+// pipe. Without this guard, parallel tests that each mutate os.Stderr can
+// interleave writes or race on the restore, leading to flaky output.
+var stderrCaptureMu sync.Mutex
+
+// captureStderr runs fn while redirecting os.Stderr to a pipe, and returns
+// the captured output. It acquires a package-level mutex so concurrent
+// tests cannot clobber each other's stderr redirection. Cleanup (closing
+// both pipe ends, restoring os.Stderr, and releasing the mutex) is
+// registered via t.Cleanup so the original state is always restored even
+// if fn panics or the caller fails the test.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+
+	stderrCaptureMu.Lock()
+	mutexReleased := false
+	releaseMutex := func() {
+		if !mutexReleased {
+			mutexReleased = true
+			stderrCaptureMu.Unlock()
+		}
+	}
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		releaseMutex()
+		t.Fatalf("os.Pipe failed: %v", err)
+	}
+
+	oldStderr := os.Stderr
+	os.Stderr = w
+
+	writerClosed := false
+	closeWriter := func() {
+		if !writerClosed {
+			writerClosed = true
+			if cerr := w.Close(); cerr != nil {
+				t.Errorf("failed to close stderr pipe writer: %v", cerr)
+			}
+		}
+	}
+
+	readerClosed := false
+	closeReader := func() {
+		if !readerClosed {
+			readerClosed = true
+			if cerr := r.Close(); cerr != nil {
+				t.Errorf("failed to close stderr pipe reader: %v", cerr)
+			}
+		}
+	}
+
+	t.Cleanup(func() {
+		os.Stderr = oldStderr
+		closeWriter()
+		closeReader()
+		releaseMutex()
+	})
+
+	fn()
+
+	// Close the writer before reading so ReadFrom observes EOF.
+	closeWriter()
+
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(r); err != nil {
+		t.Fatalf("failed to read captured stderr: %v", err)
+	}
+	return buf.String()
+}
 
 // TestNewEngineWithNilParams tests NewEngine with nil config and datastore
 func TestNewEngineWithNilParams(t *testing.T) {
@@ -142,19 +214,9 @@ func TestStopNotificationWorkersNilPool(t *testing.T) {
 func TestLogMethod(t *testing.T) {
 	engine := &Engine{}
 
-	// Capture stderr
-	oldStderr := os.Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
-
-	engine.log("test message %d", 42)
-
-	w.Close()
-	os.Stderr = oldStderr
-
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-	output := buf.String()
+	output := captureStderr(t, func() {
+		engine.log("test message %d", 42)
+	})
 
 	if !strings.Contains(output, "[alerter]") {
 		t.Error("log output should contain [alerter] prefix")
@@ -170,19 +232,9 @@ func TestDebugLogMethod(t *testing.T) {
 	t.Run("debug enabled", func(t *testing.T) {
 		engine := &Engine{debug: true}
 
-		// Capture stderr
-		oldStderr := os.Stderr
-		r, w, _ := os.Pipe()
-		os.Stderr = w
-
-		engine.debugLog("debug message %s", "test")
-
-		w.Close()
-		os.Stderr = oldStderr
-
-		var buf bytes.Buffer
-		buf.ReadFrom(r)
-		output := buf.String()
+		output := captureStderr(t, func() {
+			engine.debugLog("debug message %s", "test")
+		})
 
 		if !strings.Contains(output, "debug message test") {
 			t.Error("debugLog should output message when debug is true")
@@ -192,19 +244,9 @@ func TestDebugLogMethod(t *testing.T) {
 	t.Run("debug disabled", func(t *testing.T) {
 		engine := &Engine{debug: false}
 
-		// Capture stderr
-		oldStderr := os.Stderr
-		r, w, _ := os.Pipe()
-		os.Stderr = w
-
-		engine.debugLog("debug message %s", "test")
-
-		w.Close()
-		os.Stderr = oldStderr
-
-		var buf bytes.Buffer
-		buf.ReadFrom(r)
-		output := buf.String()
+		output := captureStderr(t, func() {
+			engine.debugLog("debug message %s", "test")
+		})
 
 		if strings.Contains(output, "debug message test") {
 			t.Error("debugLog should not output message when debug is false")

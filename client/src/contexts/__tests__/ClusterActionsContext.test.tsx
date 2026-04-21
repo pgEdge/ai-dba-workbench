@@ -1,0 +1,429 @@
+/*-------------------------------------------------------------------------
+ *
+ * pgEdge AI DBA Workbench - ClusterActionsContext Tests
+ *
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-------------------------------------------------------------------------
+ */
+
+import React from 'react';
+import { renderHook, act } from '@testing-library/react';
+import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
+import {
+    ClusterActionsProvider,
+    useClusterActions,
+} from '../ClusterActionsContext';
+
+vi.mock('../../utils/apiClient', () => ({
+    apiGet: vi.fn(),
+    apiPost: vi.fn(),
+    apiPut: vi.fn(),
+    apiDelete: vi.fn(),
+}));
+
+let mockUser: { username: string } | null = { username: 'testuser' };
+const mockFetchClusterData = vi.fn(async () => {});
+const mockClearSelection = vi.fn(async () => {});
+let mockSelectedServer: { id: number } | null = null;
+
+vi.mock('../AuthContext', () => ({
+    useAuth: () => ({ user: mockUser }),
+}));
+vi.mock('../ClusterDataContext', () => ({
+    useClusterData: () => ({ fetchClusterData: mockFetchClusterData }),
+}));
+vi.mock('../ClusterSelectionContext', () => ({
+    useClusterSelection: () => ({
+        selectedServer: mockSelectedServer,
+        clearSelection: mockClearSelection,
+    }),
+}));
+
+import {
+    apiGet,
+    apiPost,
+    apiPut,
+    apiDelete,
+} from '../../utils/apiClient';
+
+const mockApiGet = apiGet as unknown as ReturnType<typeof vi.fn>;
+const mockApiPost = apiPost as unknown as ReturnType<typeof vi.fn>;
+const mockApiPut = apiPut as unknown as ReturnType<typeof vi.fn>;
+const mockApiDelete = apiDelete as unknown as ReturnType<typeof vi.fn>;
+
+describe('ClusterActionsContext', () => {
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+        <ClusterActionsProvider>{children}</ClusterActionsProvider>
+    );
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockUser = { username: 'testuser' };
+        mockSelectedServer = null;
+        mockApiGet.mockResolvedValue({});
+        mockApiPost.mockResolvedValue({});
+        mockApiPut.mockResolvedValue({});
+        mockApiDelete.mockResolvedValue({});
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    describe('auth gating', () => {
+        it.each([
+            ['updateGroupName', ['group-1', 'new']],
+            ['updateClusterName', ['cluster-1', 'x', 'group-1']],
+            ['updateServerName', [1, 'x']],
+            ['getServer', [1]],
+            ['createServer', [{ name: 'x' }]],
+            ['updateServer', [1, { name: 'x' }]],
+            ['deleteServer', [1]],
+            ['deleteCluster', ['cluster-1']],
+            ['createGroup', [{ name: 'x' }]],
+            ['deleteGroup', ['group-1']],
+            ['moveClusterToGroup', ['cluster-1', 'group-2']],
+        ] as const)('%s throws when user is null', async (fn, args) => {
+            mockUser = null;
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await expect(
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                (result.current as any)[fn](...args),
+            ).rejects.toThrow('Not authenticated');
+        });
+    });
+
+    describe('updateGroupName', () => {
+        it('uses group id as-is for auto-detected groups', async () => {
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await act(async () => {
+                await result.current.updateGroupName('group-auto', 'My Auto');
+            });
+
+            expect(mockApiPut).toHaveBeenCalledWith(
+                '/api/v1/cluster-groups/group-auto',
+                { name: 'My Auto' },
+            );
+            expect(mockFetchClusterData).toHaveBeenCalled();
+        });
+
+        it('uses numeric id for database-backed groups', async () => {
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await act(async () => {
+                await result.current.updateGroupName('group-42', 'Prod');
+            });
+
+            expect(mockApiPut).toHaveBeenCalledWith(
+                '/api/v1/cluster-groups/42',
+                { name: 'Prod' },
+            );
+        });
+
+        it('uses the full id for named (non-numeric) database groups', async () => {
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await act(async () => {
+                await result.current.updateGroupName('group-named', 'X');
+            });
+
+            expect(mockApiPut).toHaveBeenCalledWith(
+                '/api/v1/cluster-groups/group-named',
+                { name: 'X' },
+            );
+        });
+    });
+
+    describe('updateClusterName', () => {
+        it('sends auto_cluster_key for auto-detected clusters', async () => {
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await act(async () => {
+                await result.current.updateClusterName(
+                    'server-5',
+                    'my cluster',
+                    'group-1',
+                    'auto-key',
+                );
+            });
+
+            expect(mockApiPut).toHaveBeenCalledWith(
+                '/api/v1/clusters/server-5',
+                { name: 'my cluster', auto_cluster_key: 'auto-key' },
+            );
+        });
+
+        it('omits auto_cluster_key when not provided for auto clusters', async () => {
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await act(async () => {
+                await result.current.updateClusterName(
+                    'cluster-spock-abc',
+                    'pg-cluster',
+                    'group-1',
+                );
+            });
+
+            expect(mockApiPut).toHaveBeenCalledWith(
+                '/api/v1/clusters/cluster-spock-abc',
+                { name: 'pg-cluster' },
+            );
+        });
+
+        it('updates database-backed clusters with numeric ids', async () => {
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await act(async () => {
+                await result.current.updateClusterName(
+                    'cluster-7',
+                    'db cluster',
+                    'group-3',
+                );
+            });
+
+            expect(mockApiPut).toHaveBeenCalledWith(
+                '/api/v1/clusters/7',
+                { name: 'db cluster', group_id: 3 },
+            );
+        });
+
+        it('throws when cluster id is not numeric and not auto-detected', async () => {
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await expect(
+                result.current.updateClusterName(
+                    'cluster-not-a-number',
+                    'x',
+                    'group-1',
+                ),
+            ).rejects.toThrow('Invalid cluster ID');
+        });
+
+        it('throws when group id is not numeric', async () => {
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await expect(
+                result.current.updateClusterName(
+                    'cluster-1',
+                    'x',
+                    'group-named',
+                ),
+            ).rejects.toThrow('Invalid group ID');
+        });
+    });
+
+    describe('updateServerName', () => {
+        it('PUTs /connections and refetches', async () => {
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await act(async () => {
+                await result.current.updateServerName(1, 'New');
+            });
+
+            expect(mockApiPut).toHaveBeenCalledWith(
+                '/api/v1/connections/1',
+                { name: 'New' },
+            );
+            expect(mockFetchClusterData).toHaveBeenCalled();
+        });
+    });
+
+    describe('getServer / createServer / updateServer / deleteServer', () => {
+        it('getServer GETs the connection and returns the payload', async () => {
+            mockApiGet.mockResolvedValueOnce({ id: 1, name: 'x' });
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            let payload: unknown;
+            await act(async () => {
+                payload = await result.current.getServer(1);
+            });
+
+            expect(mockApiGet).toHaveBeenCalledWith('/api/v1/connections/1');
+            expect(payload).toEqual({ id: 1, name: 'x' });
+        });
+
+        it('createServer POSTs and refetches', async () => {
+            mockApiPost.mockResolvedValueOnce({ id: 99 });
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            let created: unknown;
+            await act(async () => {
+                created = await result.current.createServer({ name: 'new' });
+            });
+
+            expect(mockApiPost).toHaveBeenCalledWith('/api/v1/connections', {
+                name: 'new',
+            });
+            expect(mockFetchClusterData).toHaveBeenCalled();
+            expect(created).toEqual({ id: 99 });
+        });
+
+        it('updateServer PUTs and refetches', async () => {
+            mockApiPut.mockResolvedValueOnce({ id: 1 });
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await act(async () => {
+                await result.current.updateServer(1, { name: 'edited' });
+            });
+
+            expect(mockApiPut).toHaveBeenCalledWith('/api/v1/connections/1', {
+                name: 'edited',
+            });
+            expect(mockFetchClusterData).toHaveBeenCalled();
+        });
+
+        it('deleteServer calls clearSelection when selected server is deleted', async () => {
+            mockSelectedServer = { id: 5 };
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await act(async () => {
+                await result.current.deleteServer(5);
+            });
+
+            expect(mockApiDelete).toHaveBeenCalledWith('/api/v1/connections/5');
+            expect(mockClearSelection).toHaveBeenCalled();
+        });
+
+        it('deleteServer leaves selection alone when deleting a different server', async () => {
+            mockSelectedServer = { id: 5 };
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await act(async () => {
+                await result.current.deleteServer(6);
+            });
+
+            expect(mockClearSelection).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('deleteCluster', () => {
+        it('DELETEs the cluster and refetches', async () => {
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await act(async () => {
+                await result.current.deleteCluster('cluster-1');
+            });
+
+            expect(mockApiDelete).toHaveBeenCalledWith('/api/v1/clusters/cluster-1');
+            expect(mockFetchClusterData).toHaveBeenCalled();
+        });
+    });
+
+    describe('createGroup and deleteGroup', () => {
+        it('createGroup POSTs and refetches', async () => {
+            mockApiPost.mockResolvedValueOnce({ id: 10 });
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            let created: unknown;
+            await act(async () => {
+                created = await result.current.createGroup({ name: 'new-group' });
+            });
+
+            expect(mockApiPost).toHaveBeenCalledWith('/api/v1/cluster-groups', {
+                name: 'new-group',
+            });
+            expect(created).toEqual({ id: 10 });
+        });
+
+        it('deleteGroup extracts numeric id from group- prefix', async () => {
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await act(async () => {
+                await result.current.deleteGroup('group-42');
+            });
+
+            expect(mockApiDelete).toHaveBeenCalledWith('/api/v1/cluster-groups/42');
+        });
+
+        it('deleteGroup accepts raw numeric IDs', async () => {
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await act(async () => {
+                await result.current.deleteGroup(7);
+            });
+
+            expect(mockApiDelete).toHaveBeenCalledWith('/api/v1/cluster-groups/7');
+        });
+    });
+
+    describe('moveClusterToGroup', () => {
+        it('sends numeric group_id extracted from group-NN format', async () => {
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await act(async () => {
+                await result.current.moveClusterToGroup('cluster-1', 'group-42');
+            });
+
+            expect(mockApiPut).toHaveBeenCalledWith('/api/v1/clusters/cluster-1', {
+                group_id: 42,
+            });
+        });
+
+        it('sends group_id = null when targetGroupId is null', async () => {
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await act(async () => {
+                await result.current.moveClusterToGroup('cluster-1', null);
+            });
+
+            expect(mockApiPut).toHaveBeenCalledWith('/api/v1/clusters/cluster-1', {
+                group_id: null,
+            });
+        });
+
+        it('includes auto_cluster_key and name when provided', async () => {
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await act(async () => {
+                await result.current.moveClusterToGroup(
+                    'server-3',
+                    'group-1',
+                    'auto-key-abc',
+                    'My Cluster',
+                );
+            });
+
+            expect(mockApiPut).toHaveBeenCalledWith('/api/v1/clusters/server-3', {
+                group_id: 1,
+                auto_cluster_key: 'auto-key-abc',
+                name: 'My Cluster',
+            });
+        });
+
+        it('leaves group_id null when target format is unrecognized', async () => {
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await act(async () => {
+                await result.current.moveClusterToGroup(
+                    'cluster-1',
+                    'not-a-group-ref',
+                );
+            });
+
+            expect(mockApiPut).toHaveBeenCalledWith(
+                '/api/v1/clusters/cluster-1',
+                { group_id: null },
+            );
+        });
+    });
+
+    describe('hook outside provider', () => {
+        it('throws when used outside provider', () => {
+            const originalError = console.error;
+            console.error = vi.fn();
+            try {
+                expect(() => {
+                    renderHook(() => useClusterActions());
+                }).toThrow(
+                    'useClusterActions must be used within a ClusterActionsProvider',
+                );
+            } finally {
+                console.error = originalError;
+            }
+        });
+    });
+});

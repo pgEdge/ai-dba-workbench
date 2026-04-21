@@ -102,6 +102,18 @@ func clusterConnectionMembershipFn(ctx context.Context, ds rbacVisibilityDatasto
 // return immediately when this function returns false. The scope
 // argument must be one of "server", "cluster", or "group".
 func scopeVisibleToCaller(ctx context.Context, w http.ResponseWriter, rbac *auth.RBACChecker, ds *database.Datastore, scope string, scopeID int, notFoundMsg string) bool {
+	// Validate the scope string before any visibility shortcut so that
+	// unrestricted callers (superuser or wildcard grant) cannot bypass
+	// the documented "server" | "cluster" | "group" contract by passing
+	// garbage. Restricted callers hit the same check, keeping the 400
+	// response consistent across caller types.
+	switch scope {
+	case "server", "cluster", "group":
+	default:
+		RespondError(w, http.StatusBadRequest, "Invalid scope")
+		return false
+	}
+
 	visible, allConnections, err := resolveVisibleConnectionSet(ctx, rbac, ds)
 	if err != nil {
 		log.Printf("[ERROR] Failed to resolve visible connections for %s scope %d: %v", scope, scopeID, err)
@@ -120,9 +132,6 @@ func scopeVisibleToCaller(ctx context.Context, w http.ResponseWriter, rbac *auth
 		ok, err = clusterHasVisibleConnectionFn(ctx, ds, scopeID, visible)
 	case "group":
 		ok, err = groupHasVisibleConnectionFn(ctx, ds, scopeID, visible)
-	default:
-		RespondError(w, http.StatusBadRequest, "Invalid scope")
-		return false
 	}
 	if err != nil {
 		log.Printf("[ERROR] Failed to check %s scope %d visibility: %v", scope, scopeID, err)
